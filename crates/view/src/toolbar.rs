@@ -385,11 +385,7 @@ pub(crate) fn location_bar<'a>(location: Location) -> Element<'a, Message> {
                 text(said)
                     .size(11.5)
                     .font(SEMIBOLD)
-                    .style(move |theme: &iced::Theme| {
-                        iced::widget::text::Style {
-                            color: Some(color(theme::palette(theme))),
-                        }
-                    }),
+                    .style(theme::text_in(color)),
             ]
             .spacing(6)
             .align_y(Alignment::Center),

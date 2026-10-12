@@ -1986,10 +1986,8 @@ pub fn driven_pill(theme: &Theme, over_viewport: bool) -> container::Style {
 }
 
 /// The equals sign before a driven size, in [`SketchColors::driven`].
-pub fn driven_mark(theme: &Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(palette(theme).sketching.driven),
-    }
+pub fn driven_mark(theme: &Theme) -> text::Style {
+    text_in(|p| p.sketching.driven)(theme)
 }
 
 /// Corner radius of a [`driven_pill`]: round at its ends.
@@ -2065,11 +2063,16 @@ pub fn changed_bar(theme: &Theme) -> container::Style {
     filled(p.accent, p.text)
 }
 
+/// Text in the colour `pick` takes from the palette.
+pub fn text_in(pick: impl Fn(&Palette) -> Color) -> impl Fn(&Theme) -> text::Style {
+    move |theme| text::Style {
+        color: Some(pick(palette(theme))),
+    }
+}
+
 /// The accent colour, for what's asked of the user, like picking a plane.
 pub fn accent_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).accent),
-    }
+    text_in(|p| p.accent)(theme)
 }
 
 /// The toolbar's context while editing a sketch: its name on the soft
@@ -2093,50 +2096,36 @@ pub fn tag(theme: &Theme) -> container::Style {
 }
 
 pub fn muted_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).muted),
-    }
+    text_in(|p| p.muted)(theme)
 }
 
 pub fn faint_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).faint),
-    }
+    text_in(|p| p.faint)(theme)
 }
 
 /// The success colour, for what went through: an MCP edit applied.
 pub fn ok_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).ok),
-    }
+    text_in(|p| p.ok)(theme)
 }
 
 pub fn danger_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).danger),
-    }
+    text_in(|p| p.danger)(theme)
 }
 
 /// The strong danger colour, for what failed: a failed feature's name.
 pub fn failed_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).danger_strong),
-    }
+    text_in(|p| p.danger_strong)(theme)
 }
 
 /// The exclusions' purple (the Create tools' handles' colour), for what a blend
 /// names to leave out: an edge around a face it names.
 pub fn excluded_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).sketching.handle),
-    }
+    text_in(|p| p.sketching.handle)(theme)
 }
 
 /// The warning colour, for what may go wrong but isn't wrong yet.
 pub fn warning_text(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).warning),
-    }
+    text_in(|p| p.warning)(theme)
 }
 
 pub fn separator(theme: &Theme) -> rule::Style {

@@ -110,15 +110,9 @@ impl<'a> Measuring<'a> {
         };
         let shown =
             varde_expr::Shown::current().format(gap.distance, Some(self.state.units.into()));
-        let chip = container(
-            text(shown)
-                .size(12)
-                .style(|theme: &iced::Theme| text::Style {
-                    color: Some(theme::palette(theme).text),
-                }),
-        )
-        .padding([1, 4])
-        .style(|theme| theme::glyph(theme, false));
+        let chip = container(text(shown).size(12).style(theme::text_in(|p| p.text)))
+            .padding([1, 4])
+            .style(|theme| theme::glyph(theme, false));
         let anchored = Anchors::new(*camera, placement, [(DVec2::ZERO, chip.into())]);
         Some(anchored.into())
     }

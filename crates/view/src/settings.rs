@@ -1446,18 +1446,14 @@ fn reset_popup<'a>(changed: Vec<SettingChange>) -> Element<'a, Message> {
     let rows = changed.into_iter().map(|change| {
         container(
             row![
-                text(change.name).width(Length::Fill).style(|theme| {
-                    iced::widget::text::Style {
-                        color: Some(theme::palette(theme).text),
-                    }
-                }),
+                text(change.name)
+                    .width(Length::Fill)
+                    .style(theme::text_in(|p| p.text)),
                 text(change.from).style(theme::muted_text),
                 text("→"),
-                text(change.to).font(theme::SEMIBOLD).style(|theme| {
-                    iced::widget::text::Style {
-                        color: Some(theme::palette(theme).text),
-                    }
-                }),
+                text(change.to)
+                    .font(theme::SEMIBOLD)
+                    .style(theme::text_in(|p| p.text)),
             ]
             .spacing(8),
         )
