@@ -78,7 +78,7 @@ pub(super) fn evaluate_face_draft(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let body = draft.body().expect("a checked draft has faces");
+    let body = draft.body().ok_or(message::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let faces = place.regions(&draft.faces, message::draft_face_not_found);
     let plane = resolve_plane(&draft.neutral, &NEUTRAL_PLANE, evaluation, tolerance, cache);

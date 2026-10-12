@@ -66,7 +66,7 @@ pub(super) fn evaluate_offset_face(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let body = offset.body().expect("a checked offset face has faces");
+    let body = offset.body().ok_or(message::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let faces = place.regions(&offset.faces, message::offset_face_not_found)?;
     let distance = offset.signed_distance();

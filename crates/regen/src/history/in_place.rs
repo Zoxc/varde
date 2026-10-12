@@ -10,7 +10,7 @@ use std::sync::Arc;
 use varde_document::{BodyId, Document, FaceRef, FeatureId};
 use varde_kernel_compat::{Budget, Evidence, Failure, Solid, Tolerance, Topology};
 
-use super::{Evaluation, Failed, own_solid};
+use super::{BodySolid, Evaluation, Failed, own_solid};
 use crate::ErrorGeometry;
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
@@ -140,10 +140,11 @@ impl<'a> InPlace<'a> {
             }
             Ok(made)
         })?;
-        if let Some(made) = (evaluation.bodies.iter_mut()).find(|made| made.body == self.body) {
-            made.solid = result;
-            made.key = key;
-        }
+        evaluation.replace(BodySolid {
+            body: self.body,
+            solid: result,
+            key,
+        });
         Ok(())
     }
 }

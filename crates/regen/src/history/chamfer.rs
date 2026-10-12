@@ -55,9 +55,7 @@ pub(super) fn evaluate_chamfer(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     // A checked document's chamfer has edges or faces, all on one body.
-    let Some(body) = chamfer.body() else {
-        return Ok(());
-    };
+    let body = chamfer.body().ok_or(message::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let (solid, topology) = (&*place.solid, &*place.topology);
     let found = find_edges(&place, &chamfer.edges)?;

@@ -60,9 +60,7 @@ pub(super) fn evaluate_fillet(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     // A checked document's fillet has edges or faces, all on one body.
-    let Some(body) = fillet.body() else {
-        return Ok(());
-    };
+    let body = fillet.body().ok_or(message::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let (solid, topology) = (&*place.solid, &*place.topology);
     let found = find_edges(&place, &fillet.edges)?;
