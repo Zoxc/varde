@@ -22,6 +22,21 @@ pub(crate) struct Deleting {
     generation: Generation,
 }
 
+impl Deleting {
+    /// Whether it was worked out of the document at `generation`, as it
+    /// is: the prompt is only for that.
+    fn current(&self, generation: Generation) -> bool {
+        self.generation == generation
+    }
+}
+
+/// The joins, cuts and intersects a removal leaves to fail, and the bodies
+/// they worked on, see [`Doc::worked`].
+struct Worked {
+    features: Vec<FeatureId>,
+    bodies: Vec<BodyId>,
+}
+
 impl Doc {
     /// Removes `target` and what depends on it, as one undo step: at once
     /// if no other feature goes with it (a feature's own bodies, or a
@@ -64,7 +79,7 @@ impl Doc {
         let Some(deleting) = self.deleting.take() else {
             return;
         };
-        if deleting.generation == self.editor.generation() {
+        if deleting.current(self.editor.generation()) {
             let removal = if only {
                 self.editor.document().breaking_removal(&deleting.targets)
             } else {
@@ -87,7 +102,7 @@ impl Doc {
     pub(crate) fn delete_asked(&self) -> bool {
         self.deleting
             .as_ref()
-            .is_some_and(|deleting| deleting.generation == self.editor.generation())
+            .is_some_and(|deleting| deleting.current(self.editor.generation()))
     }
 
     /// Removes `target` now, as [`Doc::remove`] says, without asking if
@@ -119,8 +134,9 @@ impl Doc {
             Removable::Body(_) => removal.bodies.iter().all(picked),
             Removable::Feature(_) => true,
         });
-        let quiet =
-            removal.features.len() <= targets.len() && alone && self.worked(&removal).0.is_empty();
+        let quiet = removal.features.len() <= targets.len()
+            && alone
+            && self.worked(&removal).features.is_empty();
         if quiet || confirmed.as_ref() == Some(&removal) {
             let command = command(self.editor.document(), &targets);
             self.apply(command);
@@ -143,7 +159,7 @@ impl Doc {
         if self
             .deleting
             .as_ref()
-            .is_some_and(|deleting| deleting.generation != generation)
+            .is_some_and(|deleting| !deleting.current(generation))
         {
             self.deleting = None;
         }
@@ -162,7 +178,7 @@ impl Doc {
     /// earlier joins (or combines using their tools up) merged into it
     /// counts as those too: one of them staying takes its place once it
     /// goes.
-    fn worked(&self, removal: &Removal) -> (Vec<FeatureId>, Vec<BodyId>) {
+    fn worked(&self, removal: &Removal) -> Worked {
         let document = self.editor.document();
         let shown = self.feed.touched_features();
         let mut features = Vec::new();
@@ -219,14 +235,17 @@ impl Doc {
             .map(|body| body.id)
             .filter(|body| worked_on.binary_search(body).is_ok())
             .collect();
-        (features, worked_on)
+        Worked {
+            features,
+            bodies: worked_on,
+        }
     }
 
     /// The delete prompt, if the user is being asked.
     pub(crate) fn delete_prompt(&self) -> Option<DeletePrompt<'_>> {
         let deleting = self.deleting.as_ref()?;
         let document = self.editor.document();
-        if deleting.generation != self.editor.generation() {
+        if !deleting.current(self.editor.generation()) {
             return None;
         }
         // Several are named by the first.
@@ -234,7 +253,7 @@ impl Doc {
             Removable::Feature(id) => &document.feature(id)?.name,
             Removable::Body(id) => &document.body(id)?.name,
         };
-        let (worked, worked_on) = self.worked(&deleting.removal);
+        let worked = self.worked(&deleting.removal);
         let only = document.breaking_removal(&deleting.targets);
         Some(DeletePrompt {
             name,
@@ -246,12 +265,10 @@ impl Doc {
             bodies: (deleting.removal.bodies.iter())
                 .filter_map(|&id| document.body(id))
                 .collect(),
-            worked: worked
-                .iter()
+            worked: (worked.features.iter())
                 .filter_map(|&id| document.feature(id))
                 .collect(),
-            worked_on: worked_on
-                .iter()
+            worked_on: (worked.bodies.iter())
                 .filter_map(|&id| document.body(id))
                 .collect(),
             keeping: only.features.len() < deleting.removal.features.len(),
