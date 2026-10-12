@@ -1882,14 +1882,10 @@ fn delete_question(prompt: &DeletePrompt<'_>) -> String {
     } else {
         (prompt.features.len().saturating_sub(1), prompt.bodies.len())
     };
-    let parts: Vec<_> = [
+    let parts = counts([
         (features, "feature", "features"),
         (bodies, "body", "bodies"),
-    ]
-    .into_iter()
-    .filter(|(n, ..)| *n > 0)
-    .map(|(n, one, many)| counted(n, one, many))
-    .collect();
+    ]);
     if parts.is_empty() {
         return format!("Delete {}?", prompt.name);
     }
@@ -2266,17 +2262,13 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
             let vertices = count(|item| matches!(item, Selected::Vertex { .. }));
             let bodies = count(|item| matches!(item, Selected::Body(_)));
             let sketch_items = count(|item| matches!(item, Selected::SketchItem { .. }));
-            let parts: Vec<String> = [
+            let parts = counts([
                 (faces, "face", "faces"),
                 (edges, "edge", "edges"),
                 (vertices, "vertex", "vertices"),
                 (bodies, "body", "bodies"),
                 (sketch_items, "sketch item", "sketch items"),
-            ]
-            .into_iter()
-            .filter(|&(n, _, _)| n > 0)
-            .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
-            .collect();
+            ]);
             (format!("{} selected", items.len()), parts.join(" · "), "")
         }
     };
@@ -2469,7 +2461,7 @@ pub(crate) fn sketch_summary(sketch: &Sketch) -> String {
             .filter(|entry| entry.curve.kind() == kind && entry.corner.is_some() == corner)
             .count()
     };
-    let counts = [
+    let parts = counts([
         (count(Kind::Line, false), "line", "lines"),
         (count(Kind::Circle, false), "circle", "circles"),
         (count(Kind::Arc, false), "arc", "arcs"),
@@ -2477,12 +2469,7 @@ pub(crate) fn sketch_summary(sketch: &Sketch) -> String {
         (count(Kind::Line, true), "chamfer", "chamfers"),
         (count(Kind::Spline, false), "spline", "splines"),
         (sketch.points.len(), "point", "points"),
-    ];
-    let parts: Vec<_> = counts
-        .into_iter()
-        .filter(|(n, ..)| *n > 0)
-        .map(|(n, one, many)| counted(n, one, many))
-        .collect();
+    ]);
     if parts.is_empty() {
         "Empty".to_owned()
     } else {
@@ -2506,6 +2493,15 @@ fn profile_count(sketch: &SketchState<'_>) -> Option<String> {
 /// `n` and what it counts, `one` or `many` of them: "1 line", "2 lines".
 pub(crate) fn counted(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Each of `kinds` there is, [`counted`] by its `(n, one, many)`, in
+/// order: "2 lines", "1 point".
+fn counts<const N: usize>(kinds: [(usize, &str, &str); N]) -> Vec<String> {
+    (kinds.into_iter())
+        .filter(|&(n, ..)| n > 0)
+        .map(|(n, one, many)| counted(n, one, many))
+        .collect()
 }
 
 /// What the status bar tells of the model and the file, whatever else
