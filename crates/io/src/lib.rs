@@ -550,166 +550,166 @@ impl Request {
     /// The answer to this request should handling it fail with `error`:
     /// every request has one.
     pub(crate) fn failed(self, error: String) -> Response {
-        match self {
-            Request::Open { id, from } => Response::Opened {
-                id,
-                path: from.into_path(),
-                result: Err(error),
-            },
-            Request::OpenRecovered { id, path } => Response::Opened {
-                id,
-                path: Some(path),
-                result: Err(error),
-            },
-            Request::OpenFound { id, .. } => Response::Opened {
-                id,
-                path: None,
-                result: Err(error),
-            },
-            Request::New { id } => Response::Created {
-                id,
-                result: Err(error),
-            },
-            Request::Save { file, revision, .. } => Response::Saved {
-                file,
-                revision,
-                result: Err(SaveError::Failed(error)),
-            },
-            Request::SaveAs {
-                file, to, revision, ..
-            } => Response::SavedAs {
-                file,
-                to: to.into(),
-                revision,
-                result: Err(SaveError::Failed(error)),
-            },
-            Request::AutoSave { file, revision, .. } => Response::AutoSaved {
-                file,
-                revision,
-                result: Err(error),
-            },
-            Request::DiscardRecovery { file } => Response::RecoveryDiscarded {
-                file,
-                result: Err(error),
-            },
-            Request::Close { file, .. } => Response::Closed {
-                file,
-                result: Err(error),
-            },
-            Request::Abandon { id } => Response::Abandoned {
-                id,
-                result: Err(error),
-            },
-            Request::LoadRecent => Response::RecentLoaded {
-                entries: Vec::new(),
-                home: None,
-            },
-            Request::LoadThumbnails { .. } => Response::ThumbnailsLoaded {
-                thumbnails: Vec::new(),
-            },
-            Request::WriteRecent { .. } => Response::RecentWritten { result: Err(error) },
-            Request::ListRecovered => Response::RecoveredListed {
-                designs: Vec::new(),
-            },
-            Request::DiscardRecovered { path } => Response::RecoveredDiscarded {
-                path,
-                result: Err(error),
-            },
-            Request::ListBrowser => Response::BrowserListed {
-                designs: Vec::new(),
-            },
-            Request::Rename { file, name } => Response::Renamed {
-                file,
-                name,
-                result: Err(error),
-            },
-            Request::DeleteFromBrowser { name } => Response::DeletedFromBrowser {
-                name,
-                result: Err(error),
-            },
-            Request::RecordDownload { file, .. } => Response::DownloadRecorded {
-                file,
-                result: Err(error),
-            },
-            Request::DownloadFromBrowser { name } => Response::DownloadedFromBrowser {
-                name,
-                result: Err(error),
-                not_recorded: None,
-            },
-            Request::Export { to, .. } => Response::Exported {
-                to: to.into(),
-                result: Err(error),
-            },
-            Request::Flush => Response::Flushed,
-            Request::LoadSettings => Response::SettingsLoaded {
-                settings: Settings::default(),
-            },
-            Request::WriteSettings { .. } => Response::SettingsWritten { result: Err(error) },
-            Request::LoadPanic => Response::PanicLoaded { panic: None },
-            Request::DiscardPanic { .. } => Response::PanicDiscarded { result: Err(error) },
-            #[cfg(not(target_arch = "wasm32"))]
-            Request::LoadMcpToken => Response::McpToken {
-                regenerated: false,
-                result: Err(error),
-            },
-            #[cfg(not(target_arch = "wasm32"))]
-            Request::RegenerateMcpToken => Response::McpToken {
-                regenerated: true,
-                result: Err(error),
-            },
-            #[cfg(not(target_arch = "wasm32"))]
-            Request::EncodePng { owner, tag, .. } => Response::PngEncoded {
-                owner,
-                tag,
-                result: Err(error),
-            },
-        }
+        self.failure()(error)
     }
 
     /// [`Request::failed`], for a request about to be moved into its
-    /// handler: keeps only what the answer needs.
-    pub(crate) fn failure(&self) -> impl FnOnce(String) -> Response + use<> {
-        let request = match self {
-            // The answer has none of the list.
-            Request::WriteRecent { .. } => Request::WriteRecent {
-                entries: Vec::new(),
-            },
-            // Nor of the bodies, which may be large.
-            Request::Export { to, title, .. } => Request::Export {
-                to: to.clone(),
-                title: title.clone(),
-                bodies: Vec::new(),
-            },
-            // Nor of the thumbnail's pixels, nor of the paths.
-            Request::Save {
+    /// handler: keeps only what the answer needs, ids, names and paths,
+    /// none of the documents, bodies, lists or pixels.
+    pub(crate) fn failure(&self) -> Box<dyn FnOnce(String) -> Response> {
+        match *self {
+            Request::Open { id, ref from } => {
+                let path = from.clone().into_path();
+                Box::new(move |error| Response::Opened {
+                    id,
+                    path,
+                    result: Err(error),
+                })
+            }
+            Request::OpenRecovered { id, ref path } => {
+                let path = Some(path.clone());
+                Box::new(move |error| Response::Opened {
+                    id,
+                    path,
+                    result: Err(error),
+                })
+            }
+            Request::OpenFound { id, .. } => Box::new(move |error| Response::Opened {
+                id,
+                path: None,
+                result: Err(error),
+            }),
+            Request::New { id } => Box::new(move |error| Response::Created {
+                id,
+                result: Err(error),
+            }),
+            Request::Save { file, revision, .. } => Box::new(move |error| Response::Saved {
                 file,
                 revision,
-                document,
-                ..
-            } => Request::Save {
-                file: *file,
-                revision: *revision,
-                document: document.clone(),
-                thumbnail: None,
-            },
+                result: Err(SaveError::Failed(error)),
+            }),
             Request::SaveAs {
                 file,
-                to,
+                ref to,
                 revision,
-                document,
                 ..
-            } => Request::SaveAs {
-                file: *file,
-                to: to.clone(),
-                revision: *revision,
-                document: document.clone(),
-                thumbnail: None,
-            },
-            Request::LoadThumbnails { .. } => Request::LoadThumbnails { paths: Vec::new() },
-            // Snapshots are shared, so this clone is cheap.
-            request => request.clone(),
-        };
-        move |error| request.failed(error)
+            } => {
+                let to = to.clone().into();
+                Box::new(move |error| Response::SavedAs {
+                    file,
+                    to,
+                    revision,
+                    result: Err(SaveError::Failed(error)),
+                })
+            }
+            Request::AutoSave { file, revision, .. } => {
+                Box::new(move |error| Response::AutoSaved {
+                    file,
+                    revision,
+                    result: Err(error),
+                })
+            }
+            Request::DiscardRecovery { file } => {
+                Box::new(move |error| Response::RecoveryDiscarded {
+                    file,
+                    result: Err(error),
+                })
+            }
+            Request::Close { file, .. } => Box::new(move |error| Response::Closed {
+                file,
+                result: Err(error),
+            }),
+            Request::Abandon { id } => Box::new(move |error| Response::Abandoned {
+                id,
+                result: Err(error),
+            }),
+            Request::LoadRecent => Box::new(|_| Response::RecentLoaded {
+                entries: Vec::new(),
+                home: None,
+            }),
+            Request::LoadThumbnails { .. } => Box::new(|_| Response::ThumbnailsLoaded {
+                thumbnails: Vec::new(),
+            }),
+            Request::WriteRecent { .. } => {
+                Box::new(|error| Response::RecentWritten { result: Err(error) })
+            }
+            Request::ListRecovered => Box::new(|_| Response::RecoveredListed {
+                designs: Vec::new(),
+            }),
+            Request::DiscardRecovered { ref path } => {
+                let path = path.clone();
+                Box::new(move |error| Response::RecoveredDiscarded {
+                    path,
+                    result: Err(error),
+                })
+            }
+            Request::ListBrowser => Box::new(|_| Response::BrowserListed {
+                designs: Vec::new(),
+            }),
+            Request::Rename { file, ref name } => {
+                let name = name.clone();
+                Box::new(move |error| Response::Renamed {
+                    file,
+                    name,
+                    result: Err(error),
+                })
+            }
+            Request::DeleteFromBrowser { ref name } => {
+                let name = name.clone();
+                Box::new(move |error| Response::DeletedFromBrowser {
+                    name,
+                    result: Err(error),
+                })
+            }
+            Request::RecordDownload { file, .. } => {
+                Box::new(move |error| Response::DownloadRecorded {
+                    file,
+                    result: Err(error),
+                })
+            }
+            Request::DownloadFromBrowser { ref name } => {
+                let name = name.clone();
+                Box::new(move |error| Response::DownloadedFromBrowser {
+                    name,
+                    result: Err(error),
+                    not_recorded: None,
+                })
+            }
+            Request::Export { ref to, .. } => {
+                let to = to.clone().into();
+                Box::new(move |error| Response::Exported {
+                    to,
+                    result: Err(error),
+                })
+            }
+            Request::Flush => Box::new(|_| Response::Flushed),
+            Request::LoadSettings => Box::new(|_| Response::SettingsLoaded {
+                settings: Settings::default(),
+            }),
+            Request::WriteSettings { .. } => {
+                Box::new(|error| Response::SettingsWritten { result: Err(error) })
+            }
+            Request::LoadPanic => Box::new(|_| Response::PanicLoaded { panic: None }),
+            Request::DiscardPanic { .. } => {
+                Box::new(|error| Response::PanicDiscarded { result: Err(error) })
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::LoadMcpToken => Box::new(|error| Response::McpToken {
+                regenerated: false,
+                result: Err(error),
+            }),
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::RegenerateMcpToken => Box::new(|error| Response::McpToken {
+                regenerated: true,
+                result: Err(error),
+            }),
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::EncodePng { owner, tag, .. } => Box::new(move |error| Response::PngEncoded {
+                owner,
+                tag,
+                result: Err(error),
+            }),
+        }
     }
 }
 

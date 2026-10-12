@@ -12,7 +12,7 @@ use super::files::Files;
 use crate::queue::{Queue, Queued};
 use crate::web::message_bytes;
 use crate::wire::{self, ToWorker};
-use crate::{Request, Response, Stores};
+use crate::{Request, Stores};
 
 /// A request the worker was posted, with its number and what was posted
 /// along with it, see `page::picked`.
@@ -87,10 +87,9 @@ async fn answer(seq: u64, files: &mut Files, request: Request, object: Option<Ha
         // A response too large to post loses only its request: the first
         // answers the one posted, any after it a listing of the recovered
         // designs.
-        let failed: Box<dyn FnOnce(String) -> Response> = match first.take() {
-            Some(failed) => Box::new(failed),
-            None => Box::new(Request::ListRecovered.failure()),
-        };
+        let failed = first
+            .take()
+            .unwrap_or_else(|| Request::ListRecovered.failure());
         let bytes = wire::encode_response(seq, response, failed, wire::MAX_MESSAGE_BYTES)
             .unwrap_or_else(|e| wasm_bindgen::throw_str(&e.to_string()));
         worker::post(&[&bytes]);
