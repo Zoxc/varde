@@ -129,9 +129,7 @@ impl Doc {
                 if self.propose(SketchEdit::Add(add)) {
                     drawing.restart();
                     if let Some(chain) = chain {
-                        drawing.placed = vec![click.at];
-                        drawing.targets = vec![Some(Target::Point(chain.last))];
-                        drawing.chain = Some(chain);
+                        drawing.resume_chain(chain, click.at);
                     }
                     self.set_drawing(drawing);
                 }

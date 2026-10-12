@@ -130,6 +130,67 @@ impl SketchSession {
         self.inserting = false;
     }
 
+    /// Prunes it against `committed`, the sketch it edits as the document
+    /// has it, or the sketch waiting on the solver if there is one: what's
+    /// selected, hovered, measured, edited, drawn on or snapped to that's
+    /// gone, and a drag of another `generation` than the editor's.
+    fn prune(&mut self, committed: &Sketch, generation: Generation) {
+        // What's selected and drawn on may be waiting on the solver.
+        let waiting = self.waiting.take();
+        let sketch = waiting
+            .as_ref()
+            .map_or(committed, |waiting| &waiting.sketch);
+        self.selection.retain(|&id| sketch.selectable(id));
+        self.expanded.retain(|&id| sketch.curve(id).is_some());
+        follow_selection(&self.selection, &mut self.listed_on, sketch);
+        self.hovered = self.hovered.filter(|&id| sketch.selectable(id));
+        // What's measured or edited may be gone, by undo, say.
+        let dimension = |id| sketch.dimension(id).is_some();
+        if self.label.is_some_and(|label| !dimension(label.id)) {
+            self.label = None;
+        }
+        let target = self.value.as_ref().map(|field| &field.target);
+        let placed = match target {
+            Some(ValueTarget::Dimension(id)) => dimension(*id),
+            Some(ValueTarget::New { measure, .. }) => {
+                measure.items().all(|(id, _)| sketch.kind(id).is_some())
+            }
+            // See below.
+            Some(ValueTarget::Field(_)) | None => true,
+        };
+        if !placed {
+            self.value = None;
+        }
+        if self
+            .drag
+            .as_ref()
+            .is_some_and(|drag| drag.generation != generation)
+        {
+            self.drag = None;
+        }
+        if let Some(drawing) = &mut self.tool {
+            drawing.prune(sketch);
+        }
+        // Where the next click snaps isn't on what's gone: `Enter`
+        // places at the aim.
+        let has = |id: Id| sketch.kind(id).is_some();
+        self.snap = self.snap.map(|snap| snap.within(has));
+        self.snap = self.snap.filter(Snap::snapped);
+        self.aim = self
+            .aim
+            .map(|click| click.snapped(click.snap().within(has)));
+        // A drawing tool's field goes with the shape having it.
+        if let Some(ValueTarget::Field(field)) = self.value.as_ref().map(|f| &f.target)
+            && !self
+                .tool
+                .as_ref()
+                .is_some_and(|drawing| drawing.fields().contains(field))
+        {
+            self.value = None;
+        }
+        self.waiting = waiting;
+    }
+
     fn new(feature: FeatureId, placement: Placement, entered: Sketch) -> Self {
         Self {
             feature,
@@ -306,6 +367,40 @@ impl Drawing {
     /// Whether it has anything of a shape placed, or picked to measure.
     pub(crate) fn started(&self) -> bool {
         !(self.placed.is_empty() && self.picked.is_empty())
+    }
+
+    /// Prunes it against `sketch`: the shape starts again if what it
+    /// picked is gone, a target placed on what's gone is let go of, and a
+    /// chain whose lines are gone, by undo, say, is over.
+    fn prune(&mut self, sketch: &Sketch) {
+        if self.picked.iter().any(|&id| !sketch.selectable(id))
+            || !shape::still_picked(sketch, self)
+        {
+            self.restart();
+        }
+        for target in &mut self.targets {
+            if target
+                .and_then(|target| target.item())
+                .is_some_and(|item| sketch.kind(item).is_none())
+            {
+                *target = None;
+            }
+        }
+        if let Some(chain) = self.chain {
+            match sketch.point(chain.last) {
+                Some(last) if sketch.point(chain.first).is_some() => {
+                    self.resume_chain(chain, last.at);
+                }
+                _ => self.restart(),
+            }
+        }
+    }
+
+    /// Goes on with the Line tool's `chain` from its last point, at `at`.
+    fn resume_chain(&mut self, chain: Chain, at: DVec2) {
+        self.placed = vec![at];
+        self.targets = vec![Some(Target::Point(chain.last))];
+        self.chain = Some(chain);
     }
 
     /// Starts the shape again, keeping the tool.
@@ -1099,85 +1194,7 @@ impl Doc {
             Some(Feature {
                 kind: FeatureKind::Sketch { sketch, .. },
                 ..
-            }) => {
-                // What's selected and drawn on may be waiting on the
-                // solver.
-                let waiting = session.waiting.take();
-                let sketch = waiting.as_ref().map_or(sketch, |waiting| &waiting.sketch);
-                session.selection.retain(|&id| sketch.selectable(id));
-                session.expanded.retain(|&id| sketch.curve(id).is_some());
-                follow_selection(&session.selection, &mut session.listed_on, sketch);
-                session.hovered = session.hovered.filter(|&id| sketch.selectable(id));
-                // What's measured or edited may be gone, by undo, say.
-                let dimension = |id| sketch.dimension(id).is_some();
-                if session.label.is_some_and(|label| !dimension(label.id)) {
-                    session.label = None;
-                }
-                let target = session.value.as_ref().map(|field| &field.target);
-                let placed = match target {
-                    Some(ValueTarget::Dimension(id)) => dimension(*id),
-                    Some(ValueTarget::New { measure, .. }) => {
-                        measure.items().all(|(id, _)| sketch.kind(id).is_some())
-                    }
-                    // See below.
-                    Some(ValueTarget::Field(_)) | None => true,
-                };
-                if !placed {
-                    session.value = None;
-                }
-                if let Some(drawing) = &mut session.tool
-                    && (drawing.picked.iter().any(|&id| !sketch.selectable(id))
-                        || !shape::still_picked(sketch, drawing))
-                {
-                    drawing.restart();
-                }
-                if session
-                    .drag
-                    .as_ref()
-                    .is_some_and(|drag| drag.generation != self.editor.generation())
-                {
-                    session.drag = None;
-                }
-                // A chain whose lines are gone, by undo, say, is over, and a
-                // point placed isn't on what's gone.
-                if let Some(drawing) = &mut session.tool {
-                    for target in &mut drawing.targets {
-                        if target
-                            .and_then(|target| target.item())
-                            .is_some_and(|item| sketch.kind(item).is_none())
-                        {
-                            *target = None;
-                        }
-                    }
-                    if let Some(chain) = drawing.chain {
-                        match sketch.point(chain.last) {
-                            Some(last) if sketch.point(chain.first).is_some() => {
-                                drawing.placed = vec![last.at];
-                                drawing.targets = vec![Some(Target::Point(chain.last))];
-                            }
-                            _ => drawing.restart(),
-                        }
-                    }
-                }
-                // Where the next click snaps isn't on what's gone: `Enter`
-                // places at the aim.
-                let has = |id: Id| sketch.kind(id).is_some();
-                session.snap = session.snap.map(|snap| snap.within(has));
-                session.snap = session.snap.filter(Snap::snapped);
-                session.aim = session
-                    .aim
-                    .map(|click| click.snapped(click.snap().within(has)));
-                // A drawing tool's field goes with the shape having it.
-                if let Some(ValueTarget::Field(field)) = session.value.as_ref().map(|f| &f.target)
-                    && !session
-                        .tool
-                        .as_ref()
-                        .is_some_and(|drawing| drawing.fields().contains(field))
-                {
-                    session.value = None;
-                }
-                session.waiting = waiting;
-            }
+            }) => session.prune(sketch, self.editor.generation()),
             _ => self.end_session(),
         }
     }
