@@ -9,7 +9,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
-use crate::{BodyId, FaceRef, FeatureId, MAX_COORD, MAX_EXTRUDE_REGIONS, PlaneError, PlaneRef};
+use crate::{BodyId, FaceRef, FeatureId, MAX_EXTRUDE_REGIONS, PlaneError, PlaneRef};
 
 /// The most curves a split's open chain may hold.
 pub const MAX_SPLIT_CURVES: usize = 256;
@@ -205,13 +205,12 @@ impl Split {
                 }
             }
             SplitTool::Regions { regions, .. } => {
-                let count = regions.len();
-                if !(1..=MAX_EXTRUDE_REGIONS).contains(&count) {
-                    return Err(SplitError::Regions(count));
-                }
-                for region in regions {
-                    (region.check(f64::from(MAX_COORD))).map_err(SplitError::Region)?;
-                }
+                crate::extrude::check_regions(
+                    regions,
+                    MAX_EXTRUDE_REGIONS,
+                    SplitError::Regions,
+                    SplitError::Region,
+                )?;
             }
             SplitTool::Chain { curves, .. } => {
                 let count = curves.len();

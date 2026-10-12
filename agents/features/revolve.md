@@ -61,7 +61,8 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
   RevolveError)`): its sketch a sketch feature before it; 1..=256
   regions, each passing `RegionRef::check`; angles as above; its new
   body there and naming it, excluded bodies sorted and made earlier
-  (shared with extrudes, `Document::check_uses`). `Revolve::check_own`
+  (shared with extrudes, sweeps and lofts, `Document::check_uses`, as
+  `RevolveError::Operation(OperationError)`). `Revolve::check_own`
   is the part needing only the revolve and the design, cheap enough for
   a panel to run on every view.
 - **Axis check**: only on `AddFeature` / `SetFeature`

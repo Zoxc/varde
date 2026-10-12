@@ -37,7 +37,7 @@ pub struct CurveChain { pub sketch: FeatureId, pub curves: Vec<Id> }    // 1..=M
   (`RailOrder`), no rail twice (`RailRepeated`). `Document::check`
   adds: every section's and rail's sketch a sketch feature before it
   (`Sketch`, `RailSketch`), and the operation as an extrude's
-  (`NewBody`, `Excluded`, `ExcludedOrder`). On `AddFeature` and
+  (`Operation(OperationError)`). On `AddFeature` and
   `SetFeature` only (`check_new`, `Loft::check_names`): a start point
   and a point section's point are points of their sketch (`Start`,
   `Point`), a rail's curves curves of its sketch (`RailCurve`); a later

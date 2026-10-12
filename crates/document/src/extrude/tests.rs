@@ -286,18 +286,18 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
     refused(
         &excluding(vec![second, first]),
         join,
-        ExtrudeError::ExcludedOrder,
+        ExtrudeError::Operation(crate::OperationError::ExcludedOrder),
     );
     refused(
         &excluding(vec![first, first]),
         join,
-        ExtrudeError::ExcludedOrder,
+        ExtrudeError::Operation(crate::OperationError::ExcludedOrder),
     );
     let missing = BodyId(document.next_id);
     refused(
         &excluding(vec![first, missing]),
         join,
-        ExtrudeError::Excluded(missing),
+        ExtrudeError::Operation(crate::OperationError::Excluded(missing)),
     );
 
     // Made a cut, the second extrude may exclude the first body; the
@@ -317,7 +317,7 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
         editor.apply(Command::SetFeature { feature: first_extrude, kind: Box::new((*cut(vec![second])).into()) }),
         Err(EditError::Invalid(crate::CheckError::Extrude(
             feature,
-            ExtrudeError::Excluded(body)
+            ExtrudeError::Operation(crate::OperationError::Excluded(body))
         ))) if feature == first_extrude && body == second
     ));
     editor

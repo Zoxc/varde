@@ -9,8 +9,8 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_of, plate, with_body};
 use crate::{
-    CheckError, Command, Document, EditError, Editor, Extent, FeatureKind, LengthUnit, Removable,
-    Targets,
+    CheckError, Command, Document, EditError, Editor, Extent, FeatureKind, LengthUnit, MAX_COORD,
+    Removable, Targets,
 };
 
 fn angle(text: &str) -> Value {
@@ -313,7 +313,7 @@ fn a_revolve_must_use_an_earlier_sketch_and_own_its_body() {
     wrong.bodies.pop();
     assert!(matches!(
         wrong.check(),
-        Err(CheckError::Revolve(feature, RevolveError::NewBody(body)))
+        Err(CheckError::Revolve(feature, RevolveError::Operation(crate::OperationError::NewBody(body))))
             if feature == id && body == first
     ));
     // A body it no longer makes names it as its maker.
@@ -337,10 +337,18 @@ fn a_revolve_must_use_an_earlier_sketch_and_own_its_body() {
     assert_eq!(ok.check(), Ok(()));
     let mut own = join(vec![made]);
     own.bodies.pop();
-    refused(&own, id, RevolveError::Excluded(made));
+    refused(
+        &own,
+        id,
+        RevolveError::Operation(crate::OperationError::Excluded(made)),
+    );
     let mut twice = join(vec![first, first]);
     twice.bodies.pop();
-    refused(&twice, id, RevolveError::ExcludedOrder);
+    refused(
+        &twice,
+        id,
+        RevolveError::Operation(crate::OperationError::ExcludedOrder),
+    );
 }
 
 #[test]

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 use varde_sketch::{Curve, Id, RegionRef, RegionRefError, Sketch};
 
-use crate::{BodyId, Design, EdgeError, EdgeRef, FeatureId, MAX_COORD, Operation};
+use crate::{BodyId, Design, EdgeError, EdgeRef, FeatureId, Operation, OperationError};
 
 /// The most regions one revolve may take, as [`MAX_EXTRUDE_REGIONS`]
 /// for an extrude.
@@ -149,15 +149,12 @@ impl Revolve {
     /// and the axis line [`Revolve::check_axis`]'s. Cheap, for a panel to
     /// run on every view, as [`Extrude::check_own`](crate::Extrude::check_own).
     pub fn check_own(&self, design: &Design) -> Result<(), RevolveError> {
-        let count = self.regions.len();
-        if !(1..=MAX_REVOLVE_REGIONS).contains(&count) {
-            return Err(RevolveError::Regions(count));
-        }
-        for region in &self.regions {
-            region
-                .check(f64::from(MAX_COORD))
-                .map_err(RevolveError::Region)?;
-        }
+        crate::extrude::check_regions(
+            &self.regions,
+            MAX_REVOLVE_REGIONS,
+            RevolveError::Regions,
+            RevolveError::Region,
+        )?;
         let ask = Turn::ask(design);
         for value in self.extent.values() {
             value.check(&ask).map_err(|_| RevolveError::Angle)?;
@@ -206,12 +203,8 @@ pub enum RevolveError {
     /// Its axis, this curve, isn't a line of its sketch (when added or
     /// set, see [`Revolve::check_axis`]).
     Axis(Id),
-    /// The body it makes, this one, isn't there, or names another maker.
-    NewBody(BodyId),
-    /// It excludes this body, which no feature before it makes.
-    Excluded(BodyId),
-    /// Its excluded bodies aren't sorted, or one is repeated.
-    ExcludedOrder,
+    /// Its operation's new or excluded bodies are wrong.
+    Operation(OperationError),
     /// Its axis edge's reference fails its own check
     /// ([`EdgeRef::check_own`]).
     Edge(EdgeError),
@@ -241,19 +234,7 @@ impl fmt::Display for RevolveError {
             RevolveError::Angle => f.write_str("an angle's expression doesn't give its value"),
             RevolveError::Turn => f.write_str("its two sides come to over a turn"),
             RevolveError::Axis(id) => write!(f, "its axis, curve {id}, isn't a line of its sketch"),
-            RevolveError::NewBody(body) => write!(
-                f,
-                "makes body {}, which isn't there or has another maker",
-                body.0
-            ),
-            RevolveError::Excluded(body) => write!(
-                f,
-                "excludes body {}, which no earlier feature makes",
-                body.0
-            ),
-            RevolveError::ExcludedOrder => {
-                f.write_str("its excluded bodies are out of order or repeated")
-            }
+            RevolveError::Operation(why) => why.fmt(f),
             RevolveError::Edge(why) => write!(f, "its axis: {why}"),
             RevolveError::EdgeBody(body) => write!(
                 f,
@@ -273,6 +254,7 @@ impl std::error::Error for RevolveError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             RevolveError::Region(why) => Some(why),
+            RevolveError::Operation(why) => Some(why),
             RevolveError::Edge(why) => Some(why),
             _ => None,
         }

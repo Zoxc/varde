@@ -9,7 +9,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
-use crate::{BodyId, CurveChain, FeatureId, MAX_COORD, Operation};
+use crate::{CurveChain, FeatureId, MAX_COORD, Operation, OperationError};
 
 /// The most sections one loft may have.
 pub const MAX_LOFT_SECTIONS: usize = 64;
@@ -238,12 +238,8 @@ pub enum LoftError {
     Point(Id),
     /// A rail names this curve, which its sketch doesn't have.
     RailCurve(Id),
-    /// The body it makes, this one, isn't there, or names another maker.
-    NewBody(BodyId),
-    /// It excludes this body, which no feature before it makes.
-    Excluded(BodyId),
-    /// Its excluded bodies aren't sorted, or one is repeated.
-    ExcludedOrder,
+    /// Its operation's new or excluded bodies are wrong.
+    Operation(OperationError),
 }
 
 impl fmt::Display for LoftError {
@@ -303,19 +299,7 @@ impl fmt::Display for LoftError {
                 "a rail names curve {}, which its sketch doesn't have",
                 id.get()
             ),
-            LoftError::NewBody(body) => write!(
-                f,
-                "makes body {}, which isn't there or has another maker",
-                body.0
-            ),
-            LoftError::Excluded(body) => write!(
-                f,
-                "excludes body {}, which no earlier feature makes",
-                body.0
-            ),
-            LoftError::ExcludedOrder => {
-                f.write_str("its excluded bodies are out of order or repeated")
-            }
+            LoftError::Operation(why) => why.fmt(f),
         }
     }
 }
@@ -324,6 +308,7 @@ impl std::error::Error for LoftError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             LoftError::Region(why) => Some(why),
+            LoftError::Operation(why) => Some(why),
             _ => None,
         }
     }

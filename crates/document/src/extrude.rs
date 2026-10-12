@@ -222,15 +222,12 @@ impl Extrude {
     /// whether OK can be pressed, so it has to stay cheap and depend on
     /// nothing more than the extrude and the design.
     pub fn check_own(&self, design: &Design) -> Result<(), ExtrudeError> {
-        let count = self.regions.len();
-        if !(1..=MAX_EXTRUDE_REGIONS).contains(&count) {
-            return Err(ExtrudeError::Regions(count));
-        }
-        for region in &self.regions {
-            region
-                .check(f64::from(MAX_COORD))
-                .map_err(ExtrudeError::Region)?;
-        }
+        crate::extrude::check_regions(
+            &self.regions,
+            MAX_EXTRUDE_REGIONS,
+            ExtrudeError::Regions,
+            ExtrudeError::Region,
+        )?;
         let ask = Extent::ask(design);
         for value in self.extent.values() {
             value.check(&ask).map_err(|_| ExtrudeError::Distance)?;
@@ -253,6 +250,24 @@ impl Extrude {
     }
 }
 
+/// Checks the regions a profile feature (extrude, revolve, sweep, split)
+/// takes: `1..=max` of them, each passing its own check, saying what's
+/// wrong by `count` or `region`.
+pub(crate) fn check_regions<E>(
+    regions: &[RegionRef],
+    max: usize,
+    count: impl FnOnce(usize) -> E,
+    region: impl Fn(RegionRefError) -> E,
+) -> Result<(), E> {
+    if !(1..=max).contains(&regions.len()) {
+        return Err(count(regions.len()));
+    }
+    for each in regions {
+        each.check(f64::from(MAX_COORD)).map_err(&region)?;
+    }
+    Ok(())
+}
+
 /// What's wrong with an extrude, see
 /// [`CheckError::Extrude`](crate::CheckError::Extrude).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -273,12 +288,8 @@ pub enum ExtrudeError {
     Taper,
     /// It goes through all, but doesn't cut.
     ThroughAll,
-    /// The body it makes, this one, isn't there, or names another maker.
-    NewBody(BodyId),
-    /// It excludes this body, which no feature before it makes.
-    Excluded(BodyId),
-    /// Its excluded bodies aren't sorted, or one is repeated.
-    ExcludedOrder,
+    /// Its operation's new or excluded bodies are wrong.
+    Operation(OperationError),
 }
 
 impl fmt::Display for ExtrudeError {
@@ -298,27 +309,50 @@ impl fmt::Display for ExtrudeError {
             ExtrudeError::Length => write!(f, "its two sides come to over {MAX_COORD} mm"),
             ExtrudeError::Taper => f.write_str("its taper isn't an angle under 90° either way"),
             ExtrudeError::ThroughAll => f.write_str("only a cut can go through all"),
-            ExtrudeError::NewBody(body) => write!(
+            ExtrudeError::Operation(why) => why.fmt(f),
+        }
+    }
+}
+
+/// What's wrong with the bodies an [`Operation`] names, which the
+/// kinds that take one (extrude, revolve, sweep, loft) share.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OperationError {
+    /// The body it makes, this one, isn't there, or names another maker.
+    NewBody(BodyId),
+    /// It excludes this body, which no feature before it makes.
+    Excluded(BodyId),
+    /// Its excluded bodies aren't sorted, or one is repeated.
+    ExcludedOrder,
+}
+
+impl fmt::Display for OperationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OperationError::NewBody(body) => write!(
                 f,
                 "makes body {}, which isn't there or has another maker",
                 body.0
             ),
-            ExtrudeError::Excluded(body) => write!(
+            OperationError::Excluded(body) => write!(
                 f,
                 "excludes body {}, which no earlier feature makes",
                 body.0
             ),
-            ExtrudeError::ExcludedOrder => {
+            OperationError::ExcludedOrder => {
                 f.write_str("its excluded bodies are out of order or repeated")
             }
         }
     }
 }
 
+impl std::error::Error for OperationError {}
+
 impl std::error::Error for ExtrudeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ExtrudeError::Region(why) => Some(why),
+            ExtrudeError::Operation(why) => Some(why),
             _ => None,
         }
     }

@@ -225,7 +225,10 @@ fn check_refuses_a_body_no_extrude_makes() {
     orphan.bodies.clear();
     assert_eq!(
         orphan.check(),
-        Err(CheckError::Extrude(extrude, ExtrudeError::NewBody(body)))
+        Err(CheckError::Extrude(
+            extrude,
+            ExtrudeError::Operation(crate::OperationError::NewBody(body))
+        ))
     );
 }
 

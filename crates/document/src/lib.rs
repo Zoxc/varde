@@ -45,7 +45,9 @@ pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use edge::{EdgeError, EdgeRef};
 pub use editor::{Command, Editor, EditorState, Generation, RestoreError, Revision};
-pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
+pub use extrude::{
+    Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, OperationError, Targets,
+};
 pub use face_draft::{FaceDraft, FaceDraftError, MAX_DRAFT_FACES};
 pub use feature::{Feature, FeatureId, FeatureKind};
 pub use fillet::{Fillet, FilletError};
@@ -801,13 +803,8 @@ impl Document {
             return Err(ExtrudeError::Sketch(extrude.sketch));
         }
         extrude.check_own(&self.design())?;
-        self.check_uses(index, extrude.sketch, &extrude.operation)
-            .map_err(|why| match why {
-                Uses::Sketch(sketch) => ExtrudeError::Sketch(sketch),
-                Uses::NewBody(body) => ExtrudeError::NewBody(body),
-                Uses::Excluded(body) => ExtrudeError::Excluded(body),
-                Uses::ExcludedOrder => ExtrudeError::ExcludedOrder,
-            })
+        self.check_uses(index, &extrude.operation)
+            .map_err(ExtrudeError::Operation)
     }
 
     /// Checks `revolve`, feature `index`, see [`Document::check`].
@@ -819,13 +816,8 @@ impl Document {
         if let AxisLine::Edge(edge) = &revolve.axis {
             self.check_edge(index, edge)?;
         }
-        self.check_uses(index, revolve.sketch, &revolve.operation)
-            .map_err(|why| match why {
-                Uses::Sketch(sketch) => RevolveError::Sketch(sketch),
-                Uses::NewBody(body) => RevolveError::NewBody(body),
-                Uses::Excluded(body) => RevolveError::Excluded(body),
-                Uses::ExcludedOrder => RevolveError::ExcludedOrder,
-            })
+        self.check_uses(index, &revolve.operation)
+            .map_err(RevolveError::Operation)
     }
 
     /// Checks `edge`, the axis of a revolve at feature `index` (the
@@ -879,15 +871,8 @@ impl Document {
             return Err(LoftError::RailSketch(rail.sketch));
         }
         loft.check_own()?;
-        // Checked above: it has sections, each of a sketch before it.
-        let sketch = loft.sections[0].sketch();
-        self.check_uses(index, sketch, &loft.operation)
-            .map_err(|why| match why {
-                Uses::Sketch(sketch) => LoftError::Sketch(sketch),
-                Uses::NewBody(body) => LoftError::NewBody(body),
-                Uses::Excluded(body) => LoftError::Excluded(body),
-                Uses::ExcludedOrder => LoftError::ExcludedOrder,
-            })
+        self.check_uses(index, &loft.operation)
+            .map_err(LoftError::Operation)
     }
 
     /// Checks `combine`, feature `index`, see [`Document::check`]: its own
@@ -1151,13 +1136,8 @@ impl Document {
         }
         sweep.check_own(&self.design())?;
         self.check_path(index, sweep.sketch, &sweep.path)?;
-        self.check_uses(index, sweep.sketch, &sweep.operation)
-            .map_err(|why| match why {
-                Uses::Sketch(sketch) => SweepError::Sketch(sketch),
-                Uses::NewBody(body) => SweepError::NewBody(body),
-                Uses::Excluded(body) => SweepError::Excluded(body),
-                Uses::ExcludedOrder => SweepError::ExcludedOrder,
-            })
+        self.check_uses(index, &sweep.operation)
+            .map_err(SweepError::Operation)
     }
 
     /// Checks what `path` names as the path of a sweep at feature `index`
@@ -1239,28 +1219,20 @@ impl Document {
         }
     }
 
-    /// Checks what extrudes, revolves and lofts share, of feature `index`: its
-    /// sketch `sketch` is a sketch feature before it, and `operation`'s
-    /// new body names it as its maker and its excluded bodies are sorted
-    /// and made by features before it.
-    fn check_uses(
-        &self,
-        index: usize,
-        sketch: FeatureId,
-        operation: &Operation,
-    ) -> Result<(), Uses> {
-        if !self.sketch_ref_before(index, sketch) {
-            return Err(Uses::Sketch(sketch));
-        }
+    /// Checks what extrudes, revolves, sweeps and lofts share, of feature
+    /// `index`: `operation`'s new body names it as its maker and its
+    /// excluded bodies are sorted and made by features before it. Each
+    /// caller checks its sketch before its own parts, so that comes first.
+    fn check_uses(&self, index: usize, operation: &Operation) -> Result<(), OperationError> {
         let id = self.features[index].id;
         if let Some(body) = operation.new_body()
             && self.body(body).is_none_or(|body| body.created_by != id)
         {
-            return Err(Uses::NewBody(body));
+            return Err(OperationError::NewBody(body));
         }
         let excluded = operation.excluded();
         if !excluded.windows(2).all(|pair| pair[0] < pair[1]) {
-            return Err(Uses::ExcludedOrder);
+            return Err(OperationError::ExcludedOrder);
         }
         // Removing a body drops it from the lists, so they never name one
         // that isn't there.
@@ -1269,20 +1241,11 @@ impl Document {
                 .body(body)
                 .is_some_and(|body| self.maker_before(index, body.created_by))
             {
-                return Err(Uses::Excluded(body));
+                return Err(OperationError::Excluded(body));
             }
         }
         Ok(())
     }
-}
-
-/// What [`Document::check_uses`] finds wrong, which each kind's error
-/// says in its own words.
-enum Uses {
-    Sketch(FeatureId),
-    NewBody(BodyId),
-    Excluded(BodyId),
-    ExcludedOrder,
 }
 
 /// Why a [`Document`] fails [`Document::check`], and where.

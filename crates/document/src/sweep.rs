@@ -12,8 +12,8 @@ use varde_expr::{Ask, Value};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
 use crate::{
-    AxisRef, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, MAX_COORD, MotionError,
-    Operation,
+    AxisRef, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, MotionError, Operation,
+    OperationError,
 };
 
 /// The most regions one sweep may take, as an extrude's.
@@ -211,15 +211,12 @@ impl Sweep {
     /// the curves [`Sweep::check_curves`]'. Cheap, for a panel to run on
     /// every view.
     pub fn check_own(&self, design: &Design) -> Result<(), SweepError> {
-        let count = self.regions.len();
-        if !(1..=MAX_SWEEP_REGIONS).contains(&count) {
-            return Err(SweepError::Regions(count));
-        }
-        for region in &self.regions {
-            region
-                .check(f64::from(MAX_COORD))
-                .map_err(SweepError::Region)?;
-        }
+        crate::extrude::check_regions(
+            &self.regions,
+            MAX_SWEEP_REGIONS,
+            SweepError::Regions,
+            SweepError::Region,
+        )?;
         match &self.path {
             PathRef::Chain(parts) => check_parts(parts)?,
             PathRef::Helix(helix) => {
@@ -385,12 +382,8 @@ pub enum SweepError {
     /// Its twist's expression doesn't give its value, or the value isn't
     /// an angle [`Sweep::twist_ask`] takes.
     Twist,
-    /// The body it makes, this one, isn't there, or names another maker.
-    NewBody(BodyId),
-    /// It excludes this body, which no feature before it makes.
-    Excluded(BodyId),
-    /// Its excluded bodies aren't sorted, or one is repeated.
-    ExcludedOrder,
+    /// Its operation's new or excluded bodies are wrong.
+    Operation(OperationError),
 }
 
 impl fmt::Display for SweepError {
@@ -471,19 +464,7 @@ impl fmt::Display for SweepError {
                 "its twist's expression doesn't give its value, or it isn't an angle within \
                  {MAX_TWIST_TURNS} turns"
             ),
-            SweepError::NewBody(body) => write!(
-                f,
-                "makes body {}, which isn't there or has another maker",
-                body.0
-            ),
-            SweepError::Excluded(body) => write!(
-                f,
-                "excludes body {}, which no earlier feature makes",
-                body.0
-            ),
-            SweepError::ExcludedOrder => {
-                f.write_str("its excluded bodies are out of order or repeated")
-            }
+            SweepError::Operation(why) => why.fmt(f),
         }
     }
 }
@@ -492,6 +473,7 @@ impl std::error::Error for SweepError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             SweepError::Region(why) => Some(why),
+            SweepError::Operation(why) => Some(why),
             SweepError::Edge(why) => Some(why),
             SweepError::Axis(why) => Some(why),
             _ => None,

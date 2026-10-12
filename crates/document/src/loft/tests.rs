@@ -4,8 +4,8 @@ use varde_sketch::Curve;
 use super::*;
 use crate::testing::with_body;
 use crate::{
-    CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, OriginPlane, Plane,
-    Removable, Targets,
+    BodyId, CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, OriginPlane,
+    Plane, Removable, Targets,
 };
 
 /// The sketches a loft is made from in [`lofted`]'s document.
@@ -426,7 +426,7 @@ fn what_it_names_is_checked() {
                     held: None,
                 });
             }),
-            LoftError::Excluded(BodyId(999)),
+            LoftError::Operation(crate::OperationError::Excluded(BodyId(999))),
         ),
     ];
     for (loft, why) in cases {
