@@ -15,8 +15,10 @@ pub(crate) fn shell_note(shell: &Shell, units: LengthUnit) -> String {
 pub fn shell_info(shell: &Shell, units: LengthUnit) -> String {
     let faces = match shell.open.len() {
         0 => "Closed".to_owned(),
-        1 => "1 face removed".to_owned(),
-        count => format!("{count} faces removed"),
+        count => format!(
+            "{} removed",
+            crate::document::counted(count, "face", "faces")
+        ),
     };
     let side = if shell.outward { "outward" } else { "inward" };
     format!("{faces} · {} {side}", shell_note(shell, units))

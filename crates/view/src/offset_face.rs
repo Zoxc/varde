@@ -3,23 +3,18 @@
 
 use varde_document::{LengthUnit, OffsetFace};
 
+use crate::document::counted;
 use crate::panels::length_note;
-
-/// "1 face", "3 faces".
-fn faces(count: usize) -> String {
-    if count == 1 {
-        "1 face".to_owned()
-    } else {
-        format!("{count} faces")
-    }
-}
 
 /// An offset face's Timeline note: its distance and the faces it moves,
 /// "2 mm · 3 faces", the distance "in" when it moves them inward.
 pub(crate) fn offset_note(offset: &OffsetFace, units: LengthUnit) -> String {
     let distance = length_note(&offset.distance, units);
     let side = if offset.inward { " in" } else { "" };
-    format!("{distance}{side} · {}", faces(offset.faces.len()))
+    format!(
+        "{distance}{side} · {}",
+        counted(offset.faces.len(), "face", "faces")
+    )
 }
 
 /// What the status bar says of a selected offset face, in the style of
@@ -29,7 +24,7 @@ pub fn offset_info(offset: &OffsetFace, units: LengthUnit) -> String {
     let side = if offset.inward { "inward" } else { "outward" };
     format!(
         "{} · {} {side}",
-        faces(offset.faces.len()),
+        counted(offset.faces.len(), "face", "faces"),
         length_note(&offset.distance, units)
     )
 }

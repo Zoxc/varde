@@ -59,13 +59,7 @@ mod tests;
 /// bar: "2 edges", "1 face · 1 edge", and those it leaves out, "1 face ·
 /// 2 left out".
 pub(crate) fn blend_count(edges: &[EdgeRef], faces: &[FaceRef]) -> String {
-    let counted = |count: usize, one: &str, many: &str| {
-        if count == 1 {
-            format!("1 {one}")
-        } else {
-            format!("{count} {many}")
-        }
-    };
+    use crate::document::counted;
     let out = (edges.iter())
         .filter(|edge| blend_excludes(edge, faces))
         .count();

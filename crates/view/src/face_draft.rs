@@ -3,16 +3,8 @@
 
 use varde_document::{Document, FaceDraft};
 
+use crate::document::counted;
 use crate::panels::angle_note;
-
-/// "1 face", "3 faces".
-fn faces(count: usize) -> String {
-    if count == 1 {
-        "1 face".to_owned()
-    } else {
-        format!("{count} faces")
-    }
-}
 
 /// A draft's Timeline note: its angle and the faces it turns, "3° · 4
 /// faces".
@@ -20,7 +12,7 @@ pub(crate) fn draft_note(draft: &FaceDraft) -> String {
     format!(
         "{} · {}",
         angle_note(draft.angle.value),
-        faces(draft.faces.len())
+        counted(draft.faces.len(), "face", "faces")
     )
 }
 
@@ -31,7 +23,7 @@ pub fn draft_info(document: &Document, draft: &FaceDraft) -> String {
     let flipped = if draft.flip { ", flipped" } else { "" };
     format!(
         "{} · {} from {neutral}{flipped}",
-        faces(draft.faces.len()),
+        counted(draft.faces.len(), "face", "faces"),
         angle_note(draft.angle.value)
     )
 }
