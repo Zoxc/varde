@@ -134,6 +134,34 @@ pub(crate) enum Made {
 }
 
 impl Made {
+    /// The feature the edit made or changed, applied to `doc`'s design,
+    /// if it names one: the one its result gives the id of.
+    fn feature(&self, doc: &Doc) -> Option<FeatureId> {
+        let named = |name: &str| {
+            let features = doc.editor.document().features();
+            (features.iter())
+                .find(|feature| feature.name == name)
+                .map(|feature| feature.id)
+        };
+        match self {
+            Made::Renamed {
+                target: Named::Feature(id),
+                ..
+            }
+            | Made::Set(id)
+            | Made::Sketch(id)
+            | Made::Link { feature: id, .. }
+            | Made::Drawn { feature: id, .. } => Some(*id),
+            Made::Added { name, .. } | Made::NewSketch { name, .. } => named(name),
+            Made::Renamed { .. }
+            | Made::Body(_)
+            | Made::Removed { .. }
+            | Made::Parameter(_)
+            | Made::ParameterRemoved(_)
+            | Made::Design => None,
+        }
+    }
+
     /// What the edit made, applied to `doc`'s design: its result's data.
     fn result(&self, doc: &Doc) -> Value {
         let document = doc.editor.document();
@@ -750,8 +778,8 @@ impl Doc {
                 self.client_applied(tag, &from);
                 self.proposals.client_applied();
                 let again = matches!(made, Made::Link { .. }).then(|| made.clone());
+                let feature = made.feature(self).map(FeatureId::get);
                 let made = made.result(self);
-                let feature = made.get("id").and_then(Value::as_u64);
                 (self.mcp).applied(&from, &call, self.editor.revision(), feature);
                 self.mcp.add(Waiter {
                     tag,
@@ -764,6 +792,7 @@ impl Doc {
                         again,
                         before: super::waiting::Before(state),
                         undid: None,
+                        feature,
                     },
                 });
             }
@@ -785,6 +814,7 @@ impl Doc {
                 again,
                 before,
                 undid,
+                feature,
             } = waiter.waits
             else {
                 continue;
@@ -804,7 +834,8 @@ impl Doc {
                 data["result"] = json!(super::undo::REDONE);
                 reply = ToolReply::data(data.take());
             }
-            (self.mcp).answer_applied(waiter.from, waiter.call, reply, (before.0, after), undid);
+            let edit = (before.0, after);
+            (self.mcp).answer_applied(waiter.from, waiter.call, reply, edit, undid, feature);
         }
     }
 

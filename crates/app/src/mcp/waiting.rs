@@ -333,6 +333,9 @@ pub(crate) enum Wait {
         before: Before,
         /// An `undo`'s: what it took back.
         undid: Option<Undid>,
+        /// The number of the feature it made or changed, if it names
+        /// one: its row's Show in Timeline.
+        feature: Option<u64>,
     },
 }
 
@@ -504,6 +507,9 @@ pub(crate) struct Done {
     pub(crate) edit: Option<(EditorState, Revision)>,
     /// An `undo` applied: what it took back, for its row.
     pub(crate) undid: Option<Undid>,
+    /// The number of the feature an edit applied made or changed, if it
+    /// names one, for its row.
+    pub(crate) feature: Option<u64>,
 }
 
 impl Waiting {
@@ -564,12 +570,14 @@ impl Waiting {
             state,
             edit: None,
             undid: None,
+            feature: None,
         });
     }
 
     /// Puts the edit `call`, from `from`, by as done and applied,
     /// answered `reply`, with the design `before` it and the revision it
-    /// made, `after`; an `undo`'s with what it took back, `undid`.
+    /// made, `after`; an `undo`'s with what it took back, `undid`; the
+    /// number of the feature it made or changed, `feature`.
     pub(crate) fn answer_applied(
         &mut self,
         from: From,
@@ -577,6 +585,7 @@ impl Waiting {
         reply: ToolReply,
         (before, after): (EditorState, Revision),
         undid: Option<Undid>,
+        feature: Option<u64>,
     ) {
         self.finished.push(Done {
             from,
@@ -585,6 +594,7 @@ impl Waiting {
             state: McpCallState::Applied,
             edit: Some((before, after)),
             undid,
+            feature,
         });
     }
 
@@ -756,6 +766,7 @@ impl Waiting {
                 before,
                 after,
                 undid,
+                feature,
                 ..
             } => {
                 // What an undo took back, through the links' amends since
@@ -763,13 +774,15 @@ impl Waiting {
                 for undone in undid.iter_mut().flat_map(|undid| &mut undid.afters) {
                     *undone = self.amended_to(*undone);
                 }
-                Some(((before.0.clone(), *after), undid.clone()))
+                Some(((before.0.clone(), *after), undid.clone(), *feature))
             }
             _ => None,
         };
         match waits.ended(edits, why, done) {
             Ok(reply) => match edit {
-                Some((edit, undid)) => self.answer_applied(from, call, reply, edit, undid),
+                Some((edit, undid, feature)) => {
+                    self.answer_applied(from, call, reply, edit, undid, feature)
+                }
                 None => self.answer_as(from, call, reply, McpCallState::Applied),
             },
             Err(refused) if edits => self.not_applied(tag, from, call, refused),

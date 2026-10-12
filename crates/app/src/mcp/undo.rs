@@ -160,6 +160,7 @@ impl Doc {
                 again: None,
                 before: Before(before),
                 undid: Some(undid),
+                feature: None,
             },
         });
     }

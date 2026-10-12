@@ -713,8 +713,6 @@ impl Mcp {
         );
         for done in doc.mcp.finished() {
             self.log_answer(done.from.serial, &done.call, &done.reply, done.state);
-            let feature =
-                (done.reply.structured.as_ref()).and_then(|data| data.get("id")?.as_u64());
             let session_open = self.open_session() == Some(&done.from.session);
             let cancelled = untold(&done.from);
             let (reply, told) = match cancelled {
@@ -759,7 +757,7 @@ impl Mcp {
                     before: Some(before),
                     after: doc.editor.state_of(after),
                     after_revision: after,
-                    feature,
+                    feature: done.feature,
                     not_told,
                     undid: Vec::new(),
                 });
