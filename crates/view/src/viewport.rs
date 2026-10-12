@@ -158,49 +158,59 @@ impl ModelPicking<'_> {
     }
 }
 
-/// The 3D viewport showing `mesh` and the finished `sketches` from
-/// `camera`, with the controls over its top-right corner, and in a sketch
-/// the sketch being edited, with the layer of widgets anchored to it, or
-/// setting up an operation, an extrude's regions and handle or a
-/// revolve's regions and axis, and `panel`, floating
-/// over the viewport's right under the controls, the parameters' popup
-/// `params`, already placed, and the tool `rail`
-/// over its left, and the list of what `overlaps` where the left button
-/// was held, over all of them. `pivot`, the point the camera orbits if one was picked,
-/// is marked, and `highlight` (its hover over what hides it too if
+/// What the viewport's scene shows: the model `mesh`, each of its parts
+/// as opaque as `opacity` says (see [`Frame::opacity`]) and in the colour
+/// `tints` says (see [`Frame::tints`]), and the finished `sketches`, from
+/// `camera`. `pivot`, the point the camera orbits if one was picked, is
+/// marked, and `highlight` (its hover over what hides it too if
 /// `hover_through`) and the failures' `errors` drawn over the model, with
-/// what `origin` says of the world's origin, axes and planes. With `picking`, the cursor picks the model, drawn as the view
-/// `options` say: the edges the model hides dashed if asked for, outside
-/// a sketch, every patch's edges and every triangle's faint if asked
-/// for, and lit with their shading. Each of the mesh's parts is drawn as
-/// opaque as `opacity` says, see [`Frame::opacity`], in the colour `tints`
-/// says, see [`Frame::tints`].
-#[expect(clippy::too_many_arguments)]
+/// what `origin` says of the world's origin, axes and planes, the grid
+/// faded as `fade` says, and the preview renders asked for in `previews`.
+/// The model is drawn as the view `options` say: the edges the model
+/// hides dashed if asked for, outside a sketch, every patch's edges and
+/// every triangle's faint if asked for, and lit with their shading.
+pub(crate) struct SceneInput<'a> {
+    pub mesh: &'a Arc<RenderMesh>,
+    pub opacity: Arc<[f32]>,
+    pub tints: Arc<[Option<BodyTint>]>,
+    pub sketches: &'a Arc<RenderLines>,
+    pub camera: &'a Camera,
+    pub pivot: Option<Pivot>,
+    pub fade: (f32, Option<GridPlane>),
+    pub highlight: Option<&'a Arc<ModelHighlight>>,
+    pub hover_through: bool,
+    pub errors: &'a Arc<ShownErrors>,
+    pub origin: OriginShown,
+    pub options: ViewOptions,
+    pub previews: Arc<[Arc<PreviewRequest>]>,
+}
+
+/// The widgets floating over the viewport: `panel` over its right under
+/// the controls, the parameters' popup `params`, already placed, the
+/// tool `rail` over its left, and the list of what `overlaps` where the
+/// left button was held, over all of them.
+pub(crate) struct Overlays<'a> {
+    pub panel: Option<Element<'a, Message>>,
+    pub params: Option<Element<'a, Message>>,
+    pub rail: Element<'a, Message>,
+    pub overlaps: Option<Element<'a, Message>>,
+}
+
+/// The 3D viewport showing `scene`, with the controls over its top-right
+/// corner and the `overlays`, and in a sketch the sketch being edited,
+/// with the layer of widgets anchored to it, or setting up an operation,
+/// an extrude's regions and handle or a revolve's regions and axis. With
+/// `picking`, the cursor picks the model.
 pub(crate) fn viewport<'a>(
-    mesh: &Arc<RenderMesh>,
-    opacity: Arc<[f32]>,
-    tints: Arc<[Option<BodyTint>]>,
-    sketches: &Arc<RenderLines>,
-    camera: &'a Camera,
-    pivot: Option<Pivot>,
-    fade: (f32, Option<GridPlane>),
+    scene: SceneInput<'a>,
     picking: Option<ModelPicking<'a>>,
-    highlight: Option<&Arc<ModelHighlight>>,
-    hover_through: bool,
-    errors: &Arc<ShownErrors>,
-    origin: OriginShown,
-    options: ViewOptions,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     operating: Option<Operating<'a>>,
-    panel: Option<Element<'a, Message>>,
-    params: Option<Element<'a, Message>>,
-    rail: Element<'a, Message>,
-    overlaps: Option<Element<'a, Message>>,
-    thumbnail: Option<&Arc<PreviewRequest>>,
-    renders: &[Arc<PreviewRequest>],
+    overlays: Overlays<'a>,
     aspect: Option<f32>,
 ) -> Element<'a, Message> {
+    let camera = scene.camera;
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
     // put; the value field, in a layer of its own so its state stays its
     // own as labels come and go; the glyph of where a drawing tool snaps,
@@ -236,25 +246,8 @@ pub(crate) fn viewport<'a>(
         };
         knobs.unwrap_or_else(|| iced::widget::Space::new().into())
     });
-    let sketching = sketching.map(|sketching| sketching.snapping(options.mouse.sketch_snap));
-    let mut program = Program {
-        picking,
-        highlight: highlight.cloned().unwrap_or_else(|| NO_HIGHLIGHT.clone()),
-        aspect,
-        mouse: options.mouse,
-        ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
-    };
-    program.scene.hidden_edges = options.hidden_edges;
-    program.scene.wireframe = options.edges == Edges::Wireframe;
-    program.scene.tessellation = options.edges == Edges::Tessellation;
-    program.scene.shading = options.shading;
-    program.scene.opacity = opacity;
-    program.scene.tints = tints;
-    program.scene.previews = thumbnail.into_iter().chain(renders).cloned().collect();
-    program.scene.errors = errors.clone();
-    program.scene.hover_through = hover_through;
-    program.scene.origin = origin;
-    (program.scene.fade, program.scene.fading_grid) = fade;
+    let sketching = sketching.map(|sketching| sketching.snapping(scene.options.mouse.sketch_snap));
+    let program = Program::new(scene, picking, palette, sketching, operating, aspect);
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -265,6 +258,12 @@ pub(crate) fn viewport<'a>(
     // let the rest through to it.
     // Clear of the viewport's bottom too: the panel's body scrolls rather
     // than run past it.
+    let Overlays {
+        panel,
+        params,
+        rail,
+        overlaps,
+    } = overlays;
     let panel = panel.map(placed);
     stack![scene]
         .extend(anchors.into_iter().flatten())
@@ -277,10 +276,64 @@ pub(crate) fn viewport<'a>(
         .into()
 }
 
+impl<'a> Program<'a> {
+    /// The shader program drawing `input` in `palette`'s colors, in
+    /// `sketching`'s sketch if there is one, or setting up `operating`'s
+    /// operation, picking with `picking`.
+    fn new(
+        input: SceneInput<'_>,
+        picking: Option<ModelPicking<'a>>,
+        palette: &Palette,
+        sketching: Option<Sketching<'a>>,
+        operating: Option<Operating<'a>>,
+        aspect: Option<f32>,
+    ) -> Self {
+        let options = input.options;
+        Program {
+            scene: Scene {
+                mesh: input.mesh.clone(),
+                opacity: input.opacity,
+                tints: input.tints,
+                sketches: input.sketches.clone(),
+                camera: *input.camera,
+                pivot: input.pivot,
+                colors: palette.scene,
+                excluded: {
+                    let purple = palette.sketching.handle;
+                    varde_render::Srgb([purple.r, purple.g, purple.b])
+                },
+                sketch_plane: sketching.as_ref().map(Sketching::grid),
+                fade: input.fade.0,
+                fading_grid: input.fade.1,
+                hidden_edges: options.hidden_edges,
+                wireframe: options.edges == Edges::Wireframe,
+                tessellation: options.edges == Edges::Tessellation,
+                shading: options.shading,
+                previews: input.previews,
+                errors: input.errors.clone(),
+                hover_through: input.hover_through,
+                origin: input.origin,
+            },
+            sketching,
+            operating,
+            picking,
+            highlight: input
+                .highlight
+                .cloned()
+                .unwrap_or_else(|| NO_HIGHLIGHT.clone()),
+            sketch_colors: palette.sketching,
+            aspect,
+            mouse: options.mouse,
+        }
+    }
+}
+
 /// The shader program drawing `mesh` and `sketches` from `camera` in
 /// `palette`'s colors, in `sketching`'s sketch if there is one, or
 /// setting up `operating`'s operation, with the edges the model hides,
-/// every part opaque.
+/// every part opaque, the grid shown in full in a sketch, and the
+/// default view options.
+#[cfg(test)]
 fn program<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
@@ -290,39 +343,22 @@ fn program<'a>(
     sketching: Option<Sketching<'a>>,
     operating: Option<Operating<'a>>,
 ) -> Program<'a> {
-    Program {
-        scene: Scene {
-            mesh: mesh.clone(),
-            opacity: Arc::new([]),
-            tints: Arc::new([]),
-            sketches: sketches.clone(),
-            camera: *camera,
-            pivot,
-            colors: palette.scene,
-            excluded: {
-                let purple = palette.sketching.handle;
-                varde_render::Srgb([purple.r, purple.g, purple.b])
-            },
-            sketch_plane: sketching.as_ref().map(Sketching::grid),
-            fade: if sketching.is_some() { 1.0 } else { 0.0 },
-            fading_grid: None,
-            hidden_edges: true,
-            wireframe: false,
-            tessellation: false,
-            shading: Shading::Regular,
-            previews: Arc::new([]),
-            errors: NO_ERRORS.clone(),
-            hover_through: false,
-            origin: OriginShown::DEFAULT,
-        },
-        sketching,
-        operating,
-        picking: None,
-        highlight: NO_HIGHLIGHT.clone(),
-        sketch_colors: palette.sketching,
-        aspect: None,
-        mouse: MouseOptions::default(),
-    }
+    let input = SceneInput {
+        mesh,
+        opacity: Arc::new([]),
+        tints: Arc::new([]),
+        sketches,
+        camera,
+        pivot,
+        fade: (if sketching.is_some() { 1.0 } else { 0.0 }, None),
+        highlight: None,
+        hover_through: false,
+        errors: &NO_ERRORS,
+        origin: OriginShown::DEFAULT,
+        options: ViewOptions::default(),
+        previews: Arc::new([]),
+    };
+    Program::new(input, None, palette, sketching, operating, None)
 }
 
 /// What's drawn over the model while nothing is: one for all frames, so
@@ -338,6 +374,7 @@ static NO_MESH: std::sync::LazyLock<RenderMesh> = std::sync::LazyLock::new(Rende
 static NO_LAYER: std::sync::LazyLock<Arc<SketchLayer>> = std::sync::LazyLock::new(Arc::default);
 
 /// What's drawn of failures while none show: one for all frames.
+#[cfg(test)]
 static NO_ERRORS: std::sync::LazyLock<Arc<ShownErrors>> = std::sync::LazyLock::new(Arc::default);
 
 /// The viewport's shader program: handles input and hands iced the scene it

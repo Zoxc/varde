@@ -979,36 +979,44 @@ fn viewport_stack<'a>(
     // The status bar floats over the viewport's bottom right.
     Element::from(stack![
         viewport::viewport(
-            state.mesh,
-            state.part_opacity(),
-            state.part_tints(),
-            state.sketches,
-            state.camera,
-            state.pivot,
-            (state.fade, state.fading_grid),
+            viewport::SceneInput {
+                mesh: state.mesh,
+                opacity: state.part_opacity(),
+                tints: state.part_tints(),
+                sketches: state.sketches,
+                camera: state.camera,
+                pivot: state.pivot,
+                fade: (state.fade, state.fading_grid),
+                highlight: state.highlight,
+                hover_through: state.hover_through,
+                errors: state.errors,
+                origin: state.origin_drawn(),
+                options: state.options,
+                previews: state
+                    .thumbnail
+                    .into_iter()
+                    .chain(state.renders)
+                    .cloned()
+                    .collect(),
+            },
             state.picking.clone(),
-            state.highlight,
-            state.hover_through,
-            state.errors,
-            state.origin_drawn(),
-            state.options,
             state.mode.palette(),
             state
                 .sketch
                 .map(|sketch| viewport::Sketching::new(sketch, editable)),
             operating(state),
-            panel,
-            params,
-            crate::rail::rail(state),
-            state.overlaps.map(|overlaps| crate::overlaps::view(
-                overlaps,
-                (state.sketch.as_ref()).map(|sketch| (sketch.sketch, sketch.selection)),
-                state.model_selection,
-                state.overlap_ticks.as_deref(),
-                state.editor.document(),
-            )),
-            state.thumbnail,
-            state.renders,
+            viewport::Overlays {
+                panel,
+                params,
+                rail: crate::rail::rail(state),
+                overlaps: state.overlaps.map(|overlaps| crate::overlaps::view(
+                    overlaps,
+                    (state.sketch.as_ref()).map(|sketch| (sketch.sketch, sketch.selection)),
+                    state.model_selection,
+                    state.overlap_ticks.as_deref(),
+                    state.editor.document(),
+                )),
+            },
             Some(state.aspect.unwrap_or(0.0)),
         ),
         (state.options.names)
