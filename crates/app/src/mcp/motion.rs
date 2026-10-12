@@ -20,7 +20,7 @@
 use std::borrow::Cow;
 
 use varde_document::{Axis3, BodyId, Command, OriginPlane};
-use varde_mcp::tools::{self, Item, ItemKind, Reference, WorldAxis, WorldPlane};
+use varde_mcp::tools::{self, Item, ItemKind, Reference, Worded, WorldAxis, WorldPlane};
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode, Pick,
     PickIndex, ScaleMode,
@@ -356,10 +356,11 @@ pub(super) fn set_scale(
         (sent.iter()).find(|&&(name, present, wants)| given.sent(name, present) && wants != mode)
     {
         let word = match wants {
-            ScaleMode::Uniform => "uniform",
-            ScaleMode::PerAxis => "per_axis",
-            ScaleMode::EdgeLength => "edge_length",
-        };
+            ScaleMode::Uniform => tools::ScaleMode::Uniform,
+            ScaleMode::PerAxis => tools::ScaleMode::PerAxis,
+            ScaleMode::EdgeLength => tools::ScaleMode::EdgeLength,
+        }
+        .word();
         return Err(goes_with(name, &format!("mode {word}")));
     }
     if given.has("mode") {

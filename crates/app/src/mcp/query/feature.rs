@@ -27,7 +27,7 @@ use varde_document::{
     Feature, FeatureId, FeatureKind, Operation, OriginPlane, PathPart, PatternKind, Plane,
     PlaneRef, PointRef, RegionRef, ScaleFactor, Section, SplitTool,
 };
-use varde_mcp::tools::{ItemKind, Page, ToolReply, World, WorldAxis, WorldPlane};
+use varde_mcp::tools::{self, ItemKind, Page, ToolReply, Worded, WorldAxis, WorldPlane};
 use varde_view::MotionField;
 
 use super::failure;
@@ -169,11 +169,12 @@ fn axis_word(axis: varde_document::Axis3) -> &'static str {
 /// The word an extrude's, revolve's, sweep's or loft's operation is.
 fn operation_word(operation: &Operation) -> &'static str {
     match operation {
-        Operation::NewBody(_) => "new_body",
-        Operation::Join(_) => "join",
-        Operation::Cut(_) => "cut",
-        Operation::Intersect(_) => "intersect",
+        Operation::NewBody(_) => tools::Operation::NewBody,
+        Operation::Join(_) => tools::Operation::Join,
+        Operation::Cut(_) => tools::Operation::Cut,
+        Operation::Intersect(_) => tools::Operation::Intersect,
     }
+    .word()
 }
 
 /// What's said in place of a reference that can't be named.
@@ -240,12 +241,12 @@ impl<'a> Shape<'a> {
                 put("sketch", self.feature_name(extrude.sketch));
                 put("profiles", self.regions(extrude.sketch, &extrude.regions));
                 let (word, distances) = match &extrude.extent {
-                    varde_document::Extent::OneSide(_) => ("one_side", 1),
-                    varde_document::Extent::Symmetric(_) => ("symmetric", 1),
-                    varde_document::Extent::TwoSides(..) => ("two_sides", 2),
-                    varde_document::Extent::ThroughAll => ("through_all", 0),
+                    varde_document::Extent::OneSide(_) => (tools::ExtrudeExtent::OneSide, 1),
+                    varde_document::Extent::Symmetric(_) => (tools::ExtrudeExtent::Symmetric, 1),
+                    varde_document::Extent::TwoSides(..) => (tools::ExtrudeExtent::TwoSides, 2),
+                    varde_document::Extent::ThroughAll => (tools::ExtrudeExtent::ThroughAll, 0),
                 };
-                put("extent", json!(word));
+                put("extent", json!(word.word()));
                 if distances >= 1 {
                     put("distance", json!(session.sides.fields[0].text));
                 }
@@ -270,12 +271,12 @@ impl<'a> Shape<'a> {
                     },
                 );
                 let (word, angles) = match &revolve.extent {
-                    varde_document::Turn::Full => ("full", 0),
-                    varde_document::Turn::OneSide(_) => ("one_side", 1),
-                    varde_document::Turn::Symmetric(_) => ("symmetric", 1),
-                    varde_document::Turn::TwoSides(..) => ("two_sides", 2),
+                    varde_document::Turn::Full => (tools::RevolveExtent::Full, 0),
+                    varde_document::Turn::OneSide(_) => (tools::RevolveExtent::OneSide, 1),
+                    varde_document::Turn::Symmetric(_) => (tools::RevolveExtent::Symmetric, 1),
+                    varde_document::Turn::TwoSides(..) => (tools::RevolveExtent::TwoSides, 2),
                 };
-                put("extent", json!(word));
+                put("extent", json!(word.word()));
                 if angles >= 1 {
                     put("angle", json!(session.sides.fields[0].text));
                 }
@@ -289,12 +290,12 @@ impl<'a> Shape<'a> {
                 let session = CombineSession::editing(id, combine);
                 put("target", self.body(combine.target));
                 put("tools", self.bodies(&combine.tools));
-                let word = match session.op {
-                    varde_document::BodyOp::Union => "union",
-                    varde_document::BodyOp::Subtract => "subtract",
-                    varde_document::BodyOp::Intersect => "intersect",
+                let op = match session.op {
+                    varde_document::BodyOp::Union => tools::BodyOp::Union,
+                    varde_document::BodyOp::Subtract => tools::BodyOp::Subtract,
+                    varde_document::BodyOp::Intersect => tools::BodyOp::Intersect,
                 };
-                put("operation", json!(word));
+                put("operation", json!(op.word()));
                 put("keep_tools", json!(session.keep_tools));
             }
             kind => {
@@ -322,16 +323,21 @@ impl<'a> Shape<'a> {
                     }
                     FeatureKind::Pattern(pattern) => {
                         let linear = matches!(pattern.kind, PatternKind::Linear { .. });
-                        put("kind", json!(if linear { "linear" } else { "circular" }));
+                        let kind = if linear {
+                            tools::PatternKind::Linear
+                        } else {
+                            tools::PatternKind::Circular
+                        };
+                        put("kind", json!(kind.word()));
                         put("bodies", self.bodies(&pattern.bodies));
                         put("axis", self.axis(pattern.kind.axis()));
                         put("count", text(MotionField::Count));
                         let mode = match session.mode {
-                            varde_view::PatternMode::Spacing => "spacing",
-                            varde_view::PatternMode::Total => "total",
-                            varde_view::PatternMode::Full => "full",
+                            varde_view::PatternMode::Spacing => tools::PatternMode::Spacing,
+                            varde_view::PatternMode::Total => tools::PatternMode::Total,
+                            varde_view::PatternMode::Full => tools::PatternMode::Full,
                         };
-                        put("mode", json!(mode));
+                        put("mode", json!(mode.word()));
                         if session.mode != varde_view::PatternMode::Full {
                             put("spread", text(MotionField::Spread));
                         }
@@ -353,11 +359,11 @@ impl<'a> Shape<'a> {
                         put("point", self.point(&scale.about));
                         match &scale.factor {
                             ScaleFactor::Uniform(_) => {
-                                put("mode", json!("uniform"));
+                                put("mode", json!(tools::ScaleMode::Uniform.word()));
                                 put("factor", text(MotionField::Factor));
                             }
                             ScaleFactor::PerAxis(_) => {
-                                put("mode", json!("per_axis"));
+                                put("mode", json!(tools::ScaleMode::PerAxis.word()));
                                 for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
                                     let axis = varde_document::Axis3::ALL[axis];
                                     put(key, text(MotionField::AxisFactor(axis)));
@@ -366,7 +372,7 @@ impl<'a> Shape<'a> {
                             ScaleFactor::EdgeLength {
                                 edge, axis_only, ..
                             } => {
-                                put("mode", json!("edge_length"));
+                                put("mode", json!(tools::ScaleMode::EdgeLength.word()));
                                 put("edge", self.edge_key(edge));
                                 put("length", text(MotionField::Length));
                                 put("axis_only", json!(axis_only));
@@ -390,14 +396,15 @@ impl<'a> Shape<'a> {
                         };
                         put("tool", tool);
                         let side = |side: varde_document::Side| match side {
-                            varde_document::Side::Front => "front",
-                            varde_document::Side::Back => "back",
+                            varde_document::Side::Front => tools::SplitSide::Front.word(),
+                            varde_document::Side::Back => tools::SplitSide::Back.word(),
                         };
                         let keep = match split.keep {
-                            varde_document::Keep::Both => "both",
-                            varde_document::Keep::Front => "front",
-                            varde_document::Keep::Back => "back",
-                        };
+                            varde_document::Keep::Both => tools::SplitKeep::Both,
+                            varde_document::Keep::Front => tools::SplitKeep::Front,
+                            varde_document::Keep::Back => tools::SplitKeep::Back,
+                        }
+                        .word();
                         if split.keep == varde_document::Keep::Both {
                             put("original", json!(side(split.original)));
                         }
@@ -410,8 +417,12 @@ impl<'a> Shape<'a> {
                         }
                         put("faces", self.face_keys(&shell.open));
                         put("thickness", text(MotionField::Thickness));
-                        let direction = if shell.outward { "outward" } else { "inward" };
-                        put("direction", json!(direction));
+                        let direction = if shell.outward {
+                            tools::ShellDirection::Outward
+                        } else {
+                            tools::ShellDirection::Inward
+                        };
+                        put("direction", json!(direction.word()));
                     }
                     FeatureKind::OffsetFace(offset) => {
                         put("faces", self.face_keys(&offset.faces));
@@ -432,17 +443,17 @@ impl<'a> Shape<'a> {
                         let distance = text(MotionField::ChamferDistance);
                         match &chamfer.distances {
                             ChamferSize::Equal(_) => {
-                                put("type", json!("equal"));
+                                put("type", json!(tools::ChamferType::Equal.word()));
                                 put("distance", distance);
                             }
                             ChamferSize::Two(..) => {
-                                put("type", json!("two_distances"));
+                                put("type", json!(tools::ChamferType::TwoDistances.word()));
                                 put("distance", distance);
                                 put("second_distance", text(MotionField::ChamferSecond));
                                 put("flip", json!(chamfer.flip));
                             }
                             ChamferSize::Angle(..) => {
-                                put("type", json!("distance_angle"));
+                                put("type", json!(tools::ChamferType::DistanceAngle.word()));
                                 put("distance", distance);
                                 put("angle", text(MotionField::ChamferAngle));
                                 put("flip", json!(chamfer.flip));
@@ -533,10 +544,10 @@ impl<'a> Shape<'a> {
                             .collect();
                         put("sections", json!(sections));
                         let mode = match loft.mode {
-                            varde_document::LoftMode::Smooth => "smooth",
-                            varde_document::LoftMode::Ruled => "ruled",
+                            varde_document::LoftMode::Smooth => tools::LoftMode::Smooth,
+                            varde_document::LoftMode::Ruled => tools::LoftMode::Ruled,
                         };
-                        put("mode", json!(mode));
+                        put("mode", json!(mode.word()));
                         put("closed", json!(loft.closed));
                         let rails: Vec<Value> = (loft.rails.iter())
                             .map(|chain| {

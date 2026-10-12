@@ -41,7 +41,7 @@ use varde_mcp::server::Event;
 use varde_mcp::session::{self, SessionId};
 use varde_mcp::tools::{
     Axis, Call, Direction, ItemKind, LinkFrom, LinkKind, Profiles, Reference, SplitWith,
-    SweepAlong, Target, ToolReply, World,
+    SweepAlong, Target, ToolReply, Worded, World,
 };
 use varde_view::{McpCallState, McpTool};
 
@@ -982,7 +982,7 @@ fn args(call: &Call) -> String {
             vec![format!("{name} = {value}")]
         }
         Call::RenameParameter { name, to } => vec![format!("{name} to {to}")],
-        Call::SetUnits(units) => vec![units.symbol().to_owned()],
+        Call::SetUnits(units) => vec![units.word().to_owned()],
         Call::SetTolerance { tolerance } => vec![tolerance.clone()],
         Call::SetRollback { before } => vec![match before {
             Some(name) => format!("before {name}"),

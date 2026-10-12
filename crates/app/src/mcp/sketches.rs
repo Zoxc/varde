@@ -22,7 +22,7 @@
 
 use serde_json::{Value, json};
 use varde_document::{Command, Document, FeatureId, FeatureKind, OutsideRef, Plane};
-use varde_mcp::tools::{self, AddLink, Call, ItemKind, LinkFrom, Reference, WorldPlane};
+use varde_mcp::tools::{self, AddLink, Call, ItemKind, LinkFrom, Reference, Worded, WorldPlane};
 use varde_sketch::{Id, LinkKind, SketchEdit};
 use varde_view::{Picked, PlanePick, SketchItem, Tool};
 
@@ -261,10 +261,13 @@ pub(super) fn link_made(doc: &Doc, feature: FeatureId, link: Id) -> Value {
     let sketch = sketch_of(doc.editor.document(), feature);
     if let Some(link) = sketch.and_then(|sketch| sketch.link(link)) {
         let ids = |ids: &[Id]| ids.iter().map(|id| json!(id.get())).collect::<Vec<_>>();
-        made["kind"] = json!(match link.kind {
-            LinkKind::Project => "project",
-            LinkKind::Intersect => "intersect",
-        });
+        made["kind"] = json!(
+            match link.kind {
+                LinkKind::Project => tools::LinkKind::Project,
+                LinkKind::Intersect => tools::LinkKind::Intersect,
+            }
+            .word()
+        );
         made["points"] = json!(ids(&link.points));
         made["curves"] = json!(ids(&link.curves));
     }

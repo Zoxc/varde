@@ -11,7 +11,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, edit_once, id, sketch};
+use super::{
+    Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, edit_once, id, sketch, words,
+};
 
 /// The most operations one `edit_sketch` takes: a sketch of a few
 /// shapes, their constraints and dimensions in one call, each
@@ -496,14 +498,6 @@ impl Arguments<'_> {
         Ok(label.to_owned())
     }
 
-    /// One of `choices` by its word, required.
-    fn required_choice<T: Copy>(&self, key: &str, choices: &[(&str, T)]) -> Result<T, CallError> {
-        if matches!(self.map.get(key), None | Some(Value::Null)) {
-            return Err(self.error(format_args!("{key} is required")));
-        }
-        self.choice(key, choices)
-    }
-
     /// A point `[x, y]`, required: typed text or numbers.
     fn coordinates(&self, key: &str) -> Result<[String; 2], CallError> {
         (self.map.get(key)).and_then(pair).ok_or_else(|| {
@@ -642,8 +636,6 @@ fn operation_schemas() -> Vec<Value> {
     });
     let size = json!({ "type": ["string", "number"], "description": "A length" });
     let items = |least: usize, most: usize| json!({ "type": "array", "items": item.clone(), "minItems": least, "maxItems": most });
-    let constraints: Vec<&str> = CONSTRAINT_WORDS.iter().map(|(word, _)| *word).collect();
-    let measures: Vec<&str> = MEASURE_WORDS.iter().map(|(word, _)| *word).collect();
     // The schema of `key` as `word` takes it.
     let property = |word: &str, key: &str| -> Value {
         match (word, key) {
@@ -655,7 +647,7 @@ fn operation_schemas() -> Vec<Value> {
             }
             ("spline", "closed") => json!({ "type": "boolean", "description": "default false" }),
             ("spline", "kind") => {
-                json!({ "enum": ["through", "control"], "description": "Through fit points (default) or by control points" })
+                json!({ "enum": words(SPLINE_KINDS), "description": "Through fit points (default) or by control points" })
             }
             ("rectangle", "size") => {
                 json!({ "type": "array", "items": size.clone(), "minItems": 2, "maxItems": 2, "description": "[width, height], from a corner either way by sign" })
@@ -663,8 +655,8 @@ fn operation_schemas() -> Vec<Value> {
             ("polygon", "sides") => {
                 json!({ "type": "integer", "minimum": MIN_SIDES, "maximum": MAX_SIDES })
             }
-            ("constraint", "kind") => json!({ "enum": constraints }),
-            ("dimension", "kind") => json!({ "enum": measures }),
+            ("constraint", "kind") => json!({ "enum": words(CONSTRAINT_WORDS) }),
+            ("dimension", "kind") => json!({ "enum": words(MEASURE_WORDS) }),
             ("dimension", "items") => items(1, 2),
             (_, "items") => items(1, MAX_ITEMS),
             ("dimension", "value") => {

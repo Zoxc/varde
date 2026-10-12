@@ -274,8 +274,7 @@ largest component so squaring can't overflow or underflow.
   `"edge_length"`, `edge` a key. `bodies` 1 to `MAX_ITEMS` names. What
   a motion refers to is a `Reference<W>`: a world word (`WorldAxis`
   `"x"`, `"y"`, `"z"`; `WorldPlane` `"xy"`, `"xz"`, `"yz"`; `"origin"`
-  for a point, `W = ()`; each a `World`, whose `word` the call's row
-  says, read off the same table the parser reads), in any case, or `{"face": key}`, `{"edge":
+  for a point, `W = ()`; each a `World`), in any case, or `{"face": key}`, `{"edge":
   key}` or `{"corner": key}` (`Item`, its `ItemKind`), only the kinds
   the argument takes (an axis or direction an edge or face, a point a
   corner or edge, a plane a face). Align and Scale are boxed, so `Call`
@@ -324,6 +323,15 @@ largest component so squaring can't overflow or underflow.
   `list` appends to the literal of the rest: one `json!` literal with
   them passes the macro's recursion limit. Their parsers share
   `Arguments::flag`, `optional_name` and `optional_choice`.
+
+Every choice is a `(&str, T)` table (`UNITS`, `OPERATIONS`,
+`SCALE_MODES`, `NAMED_VIEWS`, `PROJECTIONS`, ...): the schemas list it
+with `words`, the parsers read it with `Arguments::choice` or
+`required_choice`, and every word, wherever taken, is looked up by one
+rule (`lookup`: trimmed, any ASCII case). Each choice enum is
+`Worded`, its `word` read off its table (`World` is `Worded`); the app
+answers in those (`feature`'s choices, a refusal's `mode per_axis`,
+the call's row) rather than spelling the words again.
 
 The app's tests check `TEXT_BYTES`, `MIN_OPACITY` and `MAX_SATURATION`
 against the constants they mirror (`varde-mcp` depends on no design
@@ -1792,7 +1800,7 @@ end of the Timeline).
   `RevolveSession::editing`, `CombineSession::editing`,
   `MotionSession::editing` with `Doc::pattern_shapes`; now
   `pub(crate)`, as is `MotionSession::field`); choices in the tools'
-  words, only those the panel shows for the mode (an extrude's
+  words (mapped to the tools' enums and their `Worded::word`), only those the panel shows for the mode (an extrude's
   `second_distance` with two sides alone, a pattern's `flip` when
   linear, a split's `original` while both are kept, a shell's `body`
   without faces, exclude without new body, a chamfer's and fillet's

@@ -280,15 +280,8 @@ pub enum Units {
     In,
 }
 
-impl Units {
-    /// As typed and shown.
-    pub fn symbol(self) -> &'static str {
-        match self {
-            Units::Mm => "mm",
-            Units::In => "in",
-        }
-    }
-}
+/// The words `units` takes, as typed and shown.
+const UNITS: &[(&str, Units)] = &[("mm", Units::Mm), ("in", Units::In)];
 
 /// The most profiles, excluded bodies, tools, faces or curves a feature
 /// tool takes: `varde_document`'s `MAX_EXTRUDE_REGIONS`,
@@ -332,6 +325,59 @@ const BODY_OPS: &[(&str, BodyOp)] = &[
 /// The words of `choices`, for a schema's `enum`.
 fn words<T>(choices: &[(&str, T)]) -> Value {
     choices.iter().map(|(word, _)| json!(word)).collect()
+}
+
+/// The one with `word` among `choices`, by one rule for every argument:
+/// trimmed and ignoring ASCII case.
+fn lookup<T: Copy>(choices: &[(&str, T)], word: &str) -> Option<T> {
+    let word = word.trim();
+    (choices.iter())
+        .find(|(said, _)| word.eq_ignore_ascii_case(said))
+        .map(|&(_, choice)| choice)
+}
+
+/// A choice the tools name by a word from a table, which the tool
+/// parsers take and the app answers in.
+pub trait Worded: Copy + PartialEq + 'static {
+    /// The words it's named by, the default first where there is one.
+    const WORDS: &'static [(&'static str, Self)];
+
+    /// The word it's named by, as the client gives it.
+    fn word(self) -> &'static str {
+        (Self::WORDS.iter())
+            .find(|(_, choice)| *choice == self)
+            .map_or("", |(word, _)| word)
+    }
+}
+
+/// Implements [`Worded`] for each type by its table.
+macro_rules! worded {
+    ($($ty:ty => $table:ident),* $(,)?) => {
+        $(impl Worded for $ty {
+            const WORDS: &'static [(&'static str, Self)] = $table;
+        })*
+    };
+}
+
+worded! {
+    Units => UNITS,
+    ExtrudeExtent => EXTRUDE_EXTENTS,
+    RevolveExtent => REVOLVE_EXTENTS,
+    Operation => OPERATIONS,
+    BodyOp => BODY_OPS,
+    WorldAxis => WORLD_AXES,
+    WorldPlane => WORLD_PLANES,
+    () => ORIGIN,
+    PatternKind => PATTERN_KINDS,
+    PatternMode => PATTERN_MODES,
+    ScaleMode => SCALE_MODES,
+    SplitSide => SPLIT_SIDES,
+    SplitKeep => SPLIT_KEEPS,
+    ShellDirection => SHELL_DIRECTIONS,
+    ChamferType => CHAMFER_TYPES,
+    LoftMode => LOFT_MODES,
+    LinkKind => LINK_KINDS,
+    NamedView => NAMED_VIEWS,
 }
 
 /// The regions of a sketch a feature takes.
@@ -499,29 +545,13 @@ const ORIGIN: &[(&str, ())] = &[("origin", ())];
 
 /// One of the world's a motion refers to: a world axis, an origin
 /// plane, or the origin (`()`), with the word it's named by.
-pub trait World: Copy + PartialEq + 'static {
-    /// The words it's named by.
-    const WORDS: &'static [(&'static str, Self)];
+pub trait World: Worded {}
 
-    /// The word it's named by, as the client gives it.
-    fn word(self) -> &'static str {
-        (Self::WORDS.iter())
-            .find(|(_, world)| *world == self)
-            .map_or("", |(word, _)| word)
-    }
-}
+impl World for WorldAxis {}
 
-impl World for WorldAxis {
-    const WORDS: &'static [(&'static str, Self)] = WORLD_AXES;
-}
+impl World for WorldPlane {}
 
-impl World for WorldPlane {
-    const WORDS: &'static [(&'static str, Self)] = WORLD_PLANES;
-}
-
-impl World for () {
-    const WORDS: &'static [(&'static str, Self)] = ORIGIN;
-}
+impl World for () {}
 
 /// What a key from `body_topology` names, as the argument wraps it:
 /// `{"face": key}`, `{"edge": key}` or `{"corner": key}`.
@@ -1403,12 +1433,7 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
         },
         "set_units" => {
             args.only(&["units"])?;
-            let units = match args.map.get("units").and_then(Value::as_str) {
-                Some("mm") => Units::Mm,
-                Some("in") => Units::In,
-                _ => return Err(args.error("units is \"mm\" or \"in\"")),
-            };
-            Call::SetUnits(units)
+            Call::SetUnits(args.required_choice("units", UNITS)?)
         }
         "set_tolerance" => {
             args.only(&["tolerance"])?;
@@ -1942,9 +1967,8 @@ fn topology(args: &mut Arguments) -> Result<Topology, CallError> {
 fn render(args: &Arguments) -> Result<Render, CallError> {
     let from = match args.map.get("from") {
         None | Some(Value::Null) => RenderFrom::View(NamedView::Iso),
-        Some(Value::String(word)) => (NAMED_VIEWS.iter())
-            .find(|(said, _)| word.trim().eq_ignore_ascii_case(said))
-            .map(|&(_, view)| RenderFrom::View(view))
+        Some(Value::String(word)) => lookup(NAMED_VIEWS, word)
+            .map(RenderFrom::View)
             .ok_or_else(|| args.error(RENDER_FROM))?,
         Some(Value::Object(map)) => {
             let from = args.nested(map);
@@ -1961,10 +1985,7 @@ fn render(args: &Arguments) -> Result<Render, CallError> {
         }
         Some(_) => return Err(args.error(RENDER_FROM)),
     };
-    let perspective = args.choice(
-        "projection",
-        &[("orthographic", false), ("perspective", true)],
-    )?;
+    let perspective = args.choice("projection", PROJECTIONS)?;
     let zoom = match args.map.get("zoom") {
         None | Some(Value::Null) => 1.0,
         Some(_) => args.number_in(
@@ -2005,6 +2026,10 @@ fn render(args: &Arguments) -> Result<Render, CallError> {
         size,
     })
 }
+
+/// The words `render`'s `projection` takes, the default first: whether
+/// it's perspective.
+const PROJECTIONS: &[(&str, bool)] = &[("orthographic", false), ("perspective", true)];
 
 /// What `render`'s `from` takes, in words.
 const RENDER_FROM: &str = "from is \"iso\", \"front\", \"back\", \"left\", \"right\", \"top\" \
@@ -2242,6 +2267,14 @@ impl<'a> Arguments<'a> {
             .ok_or_else(|| self.error(format_args!("{key} is a whole number, 0 or more")))
     }
 
+    /// One of `choices` by its word, required.
+    fn required_choice<T: Copy>(&self, key: &str, choices: &[(&str, T)]) -> Result<T, CallError> {
+        if matches!(self.map.get(key), None | Some(Value::Null)) {
+            return Err(self.error(format_args!("{key} is required")));
+        }
+        self.choice(key, choices)
+    }
+
     /// One of `choices` by its word, the first if not sent.
     fn choice<T: Copy>(&self, key: &str, choices: &[(&str, T)]) -> Result<T, CallError> {
         let word = match self.map.get(key) {
@@ -2249,8 +2282,7 @@ impl<'a> Arguments<'a> {
             Some(Value::String(word)) => Some(word.as_str()),
             Some(_) => None,
         };
-        let found = choices.iter().find(|(said, _)| Some(*said) == word);
-        found.map(|&(_, choice)| choice).ok_or_else(|| {
+        word.and_then(|word| lookup(choices, word)).ok_or_else(|| {
             let words: Vec<String> = choices
                 .iter()
                 .map(|(said, _)| format!("{said:?}"))
@@ -2475,9 +2507,8 @@ impl<'a> Arguments<'a> {
         let map = match self.map.get("tool") {
             None | Some(Value::Null) => return Err(self.error("tool is required")),
             Some(Value::String(word)) => {
-                return (WORLD_PLANES.iter())
-                    .find(|(said, _)| word.trim().eq_ignore_ascii_case(said))
-                    .map(|&(_, plane)| SplitWith::Surface(Reference::World(plane)))
+                return lookup(WORLD_PLANES, word)
+                    .map(|plane| SplitWith::Surface(Reference::World(plane)))
                     .ok_or_else(|| self.error(SAID));
             }
             Some(Value::Object(map)) => map,
@@ -2575,9 +2606,8 @@ impl<'a> Arguments<'a> {
         };
         match self.map.get(key) {
             None | Some(Value::Null) => Ok(None),
-            Some(Value::String(word)) => (worlds.iter())
-                .find(|(said, _)| word.trim().eq_ignore_ascii_case(said))
-                .map(|&(_, world)| Some(Reference::World(world)))
+            Some(Value::String(word)) => lookup(worlds, word)
+                .map(|world| Some(Reference::World(world)))
                 .ok_or_else(said),
             Some(Value::Object(map)) if map.len() == 1 => {
                 let item = self.keyed(map, kinds)?.ok_or_else(said)?;
@@ -2935,7 +2965,7 @@ pub fn list() -> Value {
                     "from": {
                         "description": "A named view, or {yaw, pitch} as typed angles (\"30 deg\") or numbers of degrees",
                         "oneOf": [
-                            { "type": "string", "enum": ["iso", "front", "back", "left", "right", "top", "bottom"] },
+                            { "type": "string", "enum": words(NAMED_VIEWS) },
                             {
                                 "type": "object",
                                 "properties": {
@@ -2947,7 +2977,7 @@ pub fn list() -> Value {
                             }
                         ]
                     },
-                    "projection": { "type": "string", "enum": ["orthographic", "perspective"], "description": "Default orthographic" },
+                    "projection": { "type": "string", "enum": words(PROJECTIONS), "description": "Default orthographic" },
                     "zoom": { "type": "number", "minimum": MIN_ZOOM, "maximum": MAX_ZOOM, "description": "A factor on the framing, default 1; above 1 closes in on the bodies' centre, below 1 shows more around them, the camera staying outside them in either projection" },
                     "highlight": {
                         "type": "array",
@@ -3133,7 +3163,7 @@ pub fn list() -> Value {
                 changes size: expressions get the old units written in. One undo step.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "units": { "type": "string", "enum": ["mm", "in"] } },
+                "properties": { "units": { "type": "string", "enum": words(UNITS) } },
                 "required": ["units"],
                 "additionalProperties": false
             },

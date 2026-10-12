@@ -2038,3 +2038,23 @@ fn feature_tools_are_listed_once_and_named_apart() {
         );
     }
 }
+
+#[test]
+fn every_word_is_looked_up_one_way() {
+    assert_eq!(
+        call("set_units", json!({ "units": " IN " })),
+        Ok(Call::SetUnits(Units::In))
+    );
+    assert!(refused("set_units", json!({})).contains("units is required"));
+    assert_eq!(lookup(OPERATIONS, "Cut"), Some(Operation::Cut));
+    assert_eq!(lookup(WORLD_PLANES, " XY"), Some(WorldPlane::Xy));
+    assert_eq!(lookup(UNITS, "cm"), None);
+}
+
+#[test]
+fn a_choice_says_its_tables_word() {
+    assert_eq!(Units::Mm.word(), "mm");
+    assert_eq!(ScaleMode::PerAxis.word(), "per_axis");
+    assert_eq!(ChamferType::DistanceAngle.word(), "distance_angle");
+    assert_eq!(LinkKind::Intersect.word(), "intersect");
+}
