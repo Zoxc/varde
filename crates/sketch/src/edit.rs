@@ -204,12 +204,7 @@ impl SketchEdit {
         match self {
             SketchEdit::Add(add) => {
                 auto = add.apply(&mut next)?;
-                let new = next
-                    .dimensions
-                    .iter()
-                    .filter(|entry| entry.id.0 >= sketch.next_id);
-                if new
-                    .filter(|entry| entry.dimension.driving)
+                if added_driving(sketch, &next)
                     .any(|entry| next.same_place(&entry.dimension.measure))
                 {
                     return Err(EditError::SamePlace);
@@ -305,16 +300,23 @@ fn dimension(sketch: &mut Sketch, id: Id) -> Result<&mut Dimension, EditError> {
         .ok_or(EditError::Target(id))
 }
 
+/// The driving dimensions in `after` that weren't in `before`: an
+/// [`Add`]'s new ones, as its ids start at `before`'s `next_id`.
+fn added_driving<'a>(
+    before: &Sketch,
+    after: &'a Sketch,
+) -> impl Iterator<Item = &'a crate::DimensionEntry> + 'a {
+    let next_id = before.next_id;
+    (after.dimensions.iter()).filter(move |entry| entry.id.0 >= next_id && entry.dimension.driving)
+}
+
 impl SketchEdit {
     /// The driving dimensions the edit adds, or makes driving, in the
     /// sketch `applied` it made of `sketch`: those a refusal of it names
     /// as [`Rejected::Driving`](crate::Rejected::Driving).
     pub(crate) fn driving(&self, sketch: &Sketch, applied: &Sketch) -> Vec<Id> {
         match self {
-            SketchEdit::Add(_) => applied
-                .dimensions
-                .iter()
-                .filter(|entry| entry.id.0 >= sketch.next_id && entry.dimension.driving)
+            SketchEdit::Add(_) => added_driving(sketch, applied)
                 .map(|entry| entry.id)
                 .collect(),
             SketchEdit::SetDriving { id, driving: true } => sketch
