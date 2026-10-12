@@ -438,11 +438,7 @@ impl Camera {
         let along = [self.right(), self.up(), self.backward()].map(|axis| offset.dot(axis));
         self.turn(rotation, delta_yaw, delta_pitch);
         let turned = self.right() * along[0] + self.up() * along[1] + self.backward() * along[2];
-        let target = pivot + turned;
-        if target.is_finite() {
-            let extent = Vec3::splat(Self::EXTENT);
-            self.target = target.clamp(-extent, extent);
-        }
+        self.set_target(pivot + turned);
     }
 
     /// Moves the target in the view plane. `delta` is in fractions of the
@@ -452,7 +448,8 @@ impl Camera {
     pub fn pan(&mut self, delta_x: f32, delta_y: f32) {
         let offset = (-self.right() * delta_x + self.up() * delta_y) * self.view_height();
         if offset.is_finite() {
-            // Clamped rather than ignored if the sum overflows.
+            // Clamped rather than ignored if the sum overflows, so not
+            // through `set_target`.
             let extent = Vec3::splat(Self::EXTENT);
             self.target = (self.target + offset).clamp(-extent, extent);
         }
@@ -466,11 +463,7 @@ impl Camera {
     pub fn center_on(&mut self, point: Vec3) {
         let offset = point - self.target;
         let across = self.right() * offset.dot(self.right()) + self.up() * offset.dot(self.up());
-        let target = self.target + across;
-        if target.is_finite() {
-            let extent = Vec3::splat(Self::EXTENT);
-            self.target = target.clamp(-extent, extent);
-        }
+        self.set_target(self.target + across);
     }
 
     /// Looks at the target from `view`, keeping the distance. The same as
@@ -602,11 +595,7 @@ impl Camera {
         // moves towards `at` by the same proportion, so the view's scale
         // about it changes as it does about the target.
         let scaled = self.distance / distance;
-        let target = at + (self.target - at) * scaled;
-        if target.is_finite() {
-            let extent = Vec3::splat(Self::EXTENT);
-            self.target = target.clamp(-extent, extent);
-        }
+        self.set_target(at + (self.target - at) * scaled);
     }
 }
 
