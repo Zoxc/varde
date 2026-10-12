@@ -182,6 +182,21 @@ fn unresolved(why: impl Into<String>) -> Value {
     json!({ "unresolved": why.into() })
 }
 
+/// A feature's settings as they're shaped, by key.
+#[derive(Default)]
+struct Said(Map<String, Value>);
+
+impl Said {
+    fn put(&mut self, key: &str, value: Value) {
+        self.0.insert(key.to_owned(), value);
+    }
+}
+
+/// A motion panel's field as its text shows.
+fn text(session: &MotionSession, field: MotionField) -> Value {
+    json!(session.field(field).text)
+}
+
 /// Shapes features of `doc`'s design.
 pub(crate) struct Shape<'a> {
     doc: &'a Doc,
@@ -227,352 +242,386 @@ impl<'a> Shape<'a> {
     }
 
     /// `feature`'s settings as its tool takes them: none for a sketch.
+    /// Each kind's are shaped by its own method, the mirror of its setter.
     pub(crate) fn of(&self, feature: &Feature) -> Option<Map<String, Value>> {
-        let document = self.document;
         let id = feature.id;
-        let mut map = Map::new();
-        let mut put = |key: &str, value: Value| {
-            map.insert(key.to_owned(), value);
-        };
+        let mut said = Said::default();
         match &feature.kind {
             FeatureKind::Sketch { .. } => return None,
-            FeatureKind::Extrude(extrude) => {
-                let session = ExtrudeSession::editing_for_client(document, id, extrude);
-                put("sketch", self.feature_name(extrude.sketch));
-                put("profiles", self.regions(extrude.sketch, &extrude.regions));
-                let (word, distances) = match &extrude.extent {
-                    varde_document::Extent::OneSide(_) => (tools::ExtrudeExtent::OneSide, 1),
-                    varde_document::Extent::Symmetric(_) => (tools::ExtrudeExtent::Symmetric, 1),
-                    varde_document::Extent::TwoSides(..) => (tools::ExtrudeExtent::TwoSides, 2),
-                    varde_document::Extent::ThroughAll => (tools::ExtrudeExtent::ThroughAll, 0),
-                };
-                put("extent", json!(word.word()));
-                if distances >= 1 {
-                    put("distance", json!(session.sides.fields[0].text));
-                }
-                if distances >= 2 {
-                    put("second_distance", json!(session.sides.fields[1].text));
-                }
-                put("flip", json!(extrude.flip));
-                put("taper", json!(session.taper.text));
-                self.operation(&mut put, &extrude.operation);
-            }
-            FeatureKind::Revolve(revolve) => {
-                let session = RevolveSession::editing(document, id, revolve);
-                put("sketch", self.feature_name(revolve.sketch));
-                put("profiles", self.regions(revolve.sketch, &revolve.regions));
-                put(
-                    "axis",
-                    match &revolve.axis {
-                        AxisLine::SketchX => json!("x"),
-                        AxisLine::SketchY => json!("y"),
-                        AxisLine::Curve(line) => json!({ "line": line.get() }),
-                        AxisLine::Edge(edge) => self.edge(edge),
-                    },
-                );
-                let (word, angles) = match &revolve.extent {
-                    varde_document::Turn::Full => (tools::RevolveExtent::Full, 0),
-                    varde_document::Turn::OneSide(_) => (tools::RevolveExtent::OneSide, 1),
-                    varde_document::Turn::Symmetric(_) => (tools::RevolveExtent::Symmetric, 1),
-                    varde_document::Turn::TwoSides(..) => (tools::RevolveExtent::TwoSides, 2),
-                };
-                put("extent", json!(word.word()));
-                if angles >= 1 {
-                    put("angle", json!(session.sides.fields[0].text));
-                }
-                if angles >= 2 {
-                    put("second_angle", json!(session.sides.fields[1].text));
-                }
-                put("flip", json!(revolve.flip));
-                self.operation(&mut put, &revolve.operation);
-            }
-            FeatureKind::Combine(combine) => {
-                let session = CombineSession::editing(id, combine);
-                put("target", self.body(combine.target));
-                put("tools", self.bodies(&combine.tools));
-                let op = match session.op {
-                    varde_document::BodyOp::Union => tools::BodyOp::Union,
-                    varde_document::BodyOp::Subtract => tools::BodyOp::Subtract,
-                    varde_document::BodyOp::Intersect => tools::BodyOp::Intersect,
-                };
-                put("operation", json!(op.word()));
-                put("keep_tools", json!(session.keep_tools));
-            }
+            FeatureKind::Extrude(extrude) => self.extrude(&mut said, id, extrude),
+            FeatureKind::Revolve(revolve) => self.revolve(&mut said, id, revolve),
+            FeatureKind::Combine(combine) => self.combine(&mut said, id, combine),
             kind => {
                 let shape = self.doc.pattern_shapes.get(&id);
-                let session = MotionSession::editing_for_client(document, id, shape)?;
-                let text = |field: MotionField| json!(session.field(field).text);
+                let session = MotionSession::editing_for_client(self.document, id, shape)?;
+                let session = &session;
                 match kind {
-                    FeatureKind::Move(moved) => {
-                        put("bodies", self.bodies(&moved.bodies));
-                        for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
-                            put(
-                                key,
-                                text(MotionField::Offset(varde_document::Axis3::ALL[axis])),
-                            );
-                        }
-                        if let Some((axis, _)) = &moved.turn {
-                            put("angle", text(MotionField::Angle));
-                            put("axis", self.axis(axis));
-                        }
-                    }
-                    FeatureKind::Mirror(mirror) => {
-                        put("bodies", self.bodies(&mirror.bodies));
-                        put("plane", self.plane(&mirror.plane));
-                        put("keep_original", json!(mirror.keep_original));
-                    }
-                    FeatureKind::Pattern(pattern) => {
-                        let linear = matches!(pattern.kind, PatternKind::Linear { .. });
-                        let kind = if linear {
-                            tools::PatternKind::Linear
-                        } else {
-                            tools::PatternKind::Circular
-                        };
-                        put("kind", json!(kind.word()));
-                        put("bodies", self.bodies(&pattern.bodies));
-                        put("axis", self.axis(pattern.kind.axis()));
-                        put("count", text(MotionField::Count));
-                        let mode = match session.mode {
-                            varde_view::PatternMode::Spacing => tools::PatternMode::Spacing,
-                            varde_view::PatternMode::Total => tools::PatternMode::Total,
-                            varde_view::PatternMode::Full => tools::PatternMode::Full,
-                        };
-                        put("mode", json!(mode.word()));
-                        if session.mode != varde_view::PatternMode::Full {
-                            put("spread", text(MotionField::Spread));
-                        }
-                        if linear {
-                            put("flip", json!(session.flip));
-                        }
-                        put("join", json!(pattern.copies == Copies::Joined));
-                    }
-                    FeatureKind::Align(align) => {
-                        put("body", self.body(align.body));
-                        put("from", self.align_side(&align.from));
-                        put("to", self.align_side(&align.to));
-                        put("flip", json!(align.flip));
-                        put("distance", text(MotionField::Distance));
-                        put("angle", text(MotionField::Angle));
-                    }
-                    FeatureKind::Scale(scale) => {
-                        put("bodies", self.bodies(&scale.bodies));
-                        put("point", self.point(&scale.about));
-                        match &scale.factor {
-                            ScaleFactor::Uniform(_) => {
-                                put("mode", json!(tools::ScaleMode::Uniform.word()));
-                                put("factor", text(MotionField::Factor));
-                            }
-                            ScaleFactor::PerAxis(_) => {
-                                put("mode", json!(tools::ScaleMode::PerAxis.word()));
-                                for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
-                                    let axis = varde_document::Axis3::ALL[axis];
-                                    put(key, text(MotionField::AxisFactor(axis)));
-                                }
-                            }
-                            ScaleFactor::EdgeLength {
-                                edge, axis_only, ..
-                            } => {
-                                put("mode", json!(tools::ScaleMode::EdgeLength.word()));
-                                put("edge", self.edge_key(edge));
-                                put("length", text(MotionField::Length));
-                                put("axis_only", json!(axis_only));
-                            }
-                        }
-                    }
-                    FeatureKind::Split(split) => {
-                        put("body", self.body(split.body));
-                        let tool = match &split.tool {
-                            SplitTool::Plane(plane) => self.plane(plane),
-                            SplitTool::Face(face) => self.face(face),
-                            SplitTool::Body(body) => json!({ "body": self.body(*body) }),
-                            SplitTool::Regions { sketch, regions } => json!({
-                                "sketch": self.feature_name(*sketch),
-                                "profiles": self.regions(*sketch, regions),
-                            }),
-                            SplitTool::Chain { sketch, curves } => json!({
-                                "sketch": self.feature_name(*sketch),
-                                "curves": curves.iter().map(|id| id.get()).collect::<Vec<_>>(),
-                            }),
-                        };
-                        put("tool", tool);
-                        let side = |side: varde_document::Side| match side {
-                            varde_document::Side::Front => tools::SplitSide::Front.word(),
-                            varde_document::Side::Back => tools::SplitSide::Back.word(),
-                        };
-                        let keep = match split.keep {
-                            varde_document::Keep::Both => tools::SplitKeep::Both,
-                            varde_document::Keep::Front => tools::SplitKeep::Front,
-                            varde_document::Keep::Back => tools::SplitKeep::Back,
-                        }
-                        .word();
-                        if split.keep == varde_document::Keep::Both {
-                            put("original", json!(side(split.original)));
-                        }
-                        put("keep", json!(keep));
-                    }
-                    FeatureKind::Shell(shell) => {
-                        // A shell's body is its faces' when it has any.
-                        if shell.open.is_empty() {
-                            put("body", self.body(shell.body));
-                        }
-                        put("faces", self.face_keys(&shell.open));
-                        put("thickness", text(MotionField::Thickness));
-                        let direction = if shell.outward {
-                            tools::ShellDirection::Outward
-                        } else {
-                            tools::ShellDirection::Inward
-                        };
-                        put("direction", json!(direction.word()));
-                    }
-                    FeatureKind::OffsetFace(offset) => {
-                        put("faces", self.face_keys(&offset.faces));
-                        put("distance", text(MotionField::Distance));
-                        put("inward", json!(offset.inward));
-                        put("tangent", json!(offset.tangent));
-                    }
-                    FeatureKind::FaceDraft(draft) => {
-                        put("faces", self.face_keys(&draft.faces));
-                        put("neutral", self.plane(&draft.neutral));
-                        put("angle", text(MotionField::Angle));
-                        put("flip", json!(draft.flip));
-                        put("tangent", json!(draft.tangent));
-                    }
-                    FeatureKind::Chamfer(chamfer) => {
-                        put("edges", self.edge_keys(&chamfer.edges));
-                        put("faces", self.face_keys(&chamfer.faces));
-                        let distance = text(MotionField::ChamferDistance);
-                        match &chamfer.distances {
-                            ChamferSize::Equal(_) => {
-                                put("type", json!(tools::ChamferType::Equal.word()));
-                                put("distance", distance);
-                            }
-                            ChamferSize::Two(..) => {
-                                put("type", json!(tools::ChamferType::TwoDistances.word()));
-                                put("distance", distance);
-                                put("second_distance", text(MotionField::ChamferSecond));
-                                put("flip", json!(chamfer.flip));
-                            }
-                            ChamferSize::Angle(..) => {
-                                put("type", json!(tools::ChamferType::DistanceAngle.word()));
-                                put("distance", distance);
-                                put("angle", text(MotionField::ChamferAngle));
-                                put("flip", json!(chamfer.flip));
-                            }
-                        }
-                        // The panel's tick, on as it opens: the edges are stored each
-                        // of its own.
-                        put("tangent", json!(session.blend.chains));
-                    }
-                    FeatureKind::Fillet(fillet) => {
-                        put("edges", self.edge_keys(&fillet.edges));
-                        put("faces", self.face_keys(&fillet.faces));
-                        put("radius", text(MotionField::Radius));
-                        put("tangent", json!(session.blend.chains));
-                    }
-                    FeatureKind::Sweep(sweep) => {
-                        put("sketch", self.feature_name(sweep.sketch));
-                        put("profiles", self.regions(sweep.sketch, &sweep.regions));
-                        match &sweep.path {
-                            varde_document::PathRef::Chain(parts) => {
-                                let mut curves = Vec::new();
-                                let mut edges = Vec::new();
-                                let mut tangent = None;
-                                for part in parts {
-                                    match part {
-                                        PathPart::Curves(chain) => curves.push(json!({
-                                            "sketch": self.feature_name(chain.sketch),
-                                            "curve": chain.curves.first().map(|id| id.get()),
-                                        })),
-                                        PathPart::Edges {
-                                            edges: some,
-                                            tangent: tick,
-                                        } => {
-                                            edges.extend(some.iter().map(|e| self.edge_key(e)));
-                                            tangent.get_or_insert(*tick);
-                                        }
-                                    }
-                                }
-                                put(
-                                    "path",
-                                    json!({
-                                        "curves": curves,
-                                        "edges": edges,
-                                        "tangent": tangent.unwrap_or(true),
-                                    }),
-                                );
-                                let keep = sweep.orientation == varde_document::Orientation::Keep;
-                                put("keep_orientation", json!(keep));
-                                put("twist", text(MotionField::Twist));
-                            }
-                            varde_document::PathRef::Helix(helix) => put(
-                                "helix",
-                                json!({
-                                    "axis": self.axis(&helix.axis),
-                                    "pitch": text(MotionField::Pitch),
-                                    "turns": text(MotionField::Turns),
-                                    "left_handed": helix.left_handed,
-                                    "flip": helix.flip,
-                                }),
-                            ),
-                        }
-                        self.operation(&mut put, &sweep.operation);
-                    }
-                    FeatureKind::Loft(loft) => {
-                        let sections: Vec<Value> = (loft.sections.iter())
-                            .map(|section| match section {
-                                Section::Region {
-                                    sketch,
-                                    region,
-                                    start,
-                                } => {
-                                    let regions =
-                                        self.regions(*sketch, std::slice::from_ref(region));
-                                    let mut said = json!({
-                                        "sketch": self.feature_name(*sketch),
-                                        "region": regions.get(0).cloned().unwrap_or(Value::Null),
-                                    });
-                                    if let Some(start) = start {
-                                        said["start"] = json!(start.get());
-                                    }
-                                    said
-                                }
-                                Section::Point { sketch, point } => json!({
-                                    "sketch": self.feature_name(*sketch),
-                                    "point": point.get(),
-                                }),
-                            })
-                            .collect();
-                        put("sections", json!(sections));
-                        let mode = match loft.mode {
-                            varde_document::LoftMode::Smooth => tools::LoftMode::Smooth,
-                            varde_document::LoftMode::Ruled => tools::LoftMode::Ruled,
-                        };
-                        put("mode", json!(mode.word()));
-                        put("closed", json!(loft.closed));
-                        let rails: Vec<Value> = (loft.rails.iter())
-                            .map(|chain| {
-                                json!({
-                                    "sketch": self.feature_name(chain.sketch),
-                                    "curve": chain.curves.first().map(|id| id.get()),
-                                })
-                            })
-                            .collect();
-                        put("rails", json!(rails));
-                        self.operation(&mut put, &loft.operation);
-                    }
+                    FeatureKind::Move(moved) => self.move_body(&mut said, session, moved),
+                    FeatureKind::Mirror(mirror) => self.mirror(&mut said, mirror),
+                    FeatureKind::Pattern(pattern) => self.pattern(&mut said, session, pattern),
+                    FeatureKind::Align(align) => self.align(&mut said, session, align),
+                    FeatureKind::Scale(scale) => self.scale(&mut said, session, scale),
+                    FeatureKind::Split(split) => self.split(&mut said, split),
+                    FeatureKind::Shell(shell) => self.shell(&mut said, session, shell),
+                    FeatureKind::OffsetFace(offset) => self.offset_face(&mut said, session, offset),
+                    FeatureKind::FaceDraft(draft) => self.draft(&mut said, session, draft),
+                    FeatureKind::Chamfer(chamfer) => self.chamfer(&mut said, session, chamfer),
+                    FeatureKind::Fillet(fillet) => self.fillet(&mut said, session, fillet),
+                    FeatureKind::Sweep(sweep) => self.sweep(&mut said, session, sweep),
+                    FeatureKind::Loft(loft) => self.loft(&mut said, loft),
                     _ => return None,
                 }
             }
         }
-        Some(map)
+        Some(said.0)
+    }
+
+    fn extrude(&self, said: &mut Said, id: FeatureId, extrude: &varde_document::Extrude) {
+        let session = ExtrudeSession::editing_for_client(self.document, id, extrude);
+        said.put("sketch", self.feature_name(extrude.sketch));
+        said.put("profiles", self.regions(extrude.sketch, &extrude.regions));
+        let (word, distances) = match &extrude.extent {
+            varde_document::Extent::OneSide(_) => (tools::ExtrudeExtent::OneSide, 1),
+            varde_document::Extent::Symmetric(_) => (tools::ExtrudeExtent::Symmetric, 1),
+            varde_document::Extent::TwoSides(..) => (tools::ExtrudeExtent::TwoSides, 2),
+            varde_document::Extent::ThroughAll => (tools::ExtrudeExtent::ThroughAll, 0),
+        };
+        said.put("extent", json!(word.word()));
+        if distances >= 1 {
+            said.put("distance", json!(session.sides.fields[0].text));
+        }
+        if distances >= 2 {
+            said.put("second_distance", json!(session.sides.fields[1].text));
+        }
+        said.put("flip", json!(extrude.flip));
+        said.put("taper", json!(session.taper.text));
+        self.operation(said, &extrude.operation);
+    }
+
+    fn revolve(&self, said: &mut Said, id: FeatureId, revolve: &varde_document::Revolve) {
+        let session = RevolveSession::editing(self.document, id, revolve);
+        said.put("sketch", self.feature_name(revolve.sketch));
+        said.put("profiles", self.regions(revolve.sketch, &revolve.regions));
+        let axis = match &revolve.axis {
+            AxisLine::SketchX => json!("x"),
+            AxisLine::SketchY => json!("y"),
+            AxisLine::Curve(line) => json!({ "line": line.get() }),
+            AxisLine::Edge(edge) => self.edge(edge),
+        };
+        said.put("axis", axis);
+        let (word, angles) = match &revolve.extent {
+            varde_document::Turn::Full => (tools::RevolveExtent::Full, 0),
+            varde_document::Turn::OneSide(_) => (tools::RevolveExtent::OneSide, 1),
+            varde_document::Turn::Symmetric(_) => (tools::RevolveExtent::Symmetric, 1),
+            varde_document::Turn::TwoSides(..) => (tools::RevolveExtent::TwoSides, 2),
+        };
+        said.put("extent", json!(word.word()));
+        if angles >= 1 {
+            said.put("angle", json!(session.sides.fields[0].text));
+        }
+        if angles >= 2 {
+            said.put("second_angle", json!(session.sides.fields[1].text));
+        }
+        said.put("flip", json!(revolve.flip));
+        self.operation(said, &revolve.operation);
+    }
+
+    fn combine(&self, said: &mut Said, id: FeatureId, combine: &varde_document::Combine) {
+        let session = CombineSession::editing(id, combine);
+        said.put("target", self.body(combine.target));
+        said.put("tools", self.bodies(&combine.tools));
+        let op = match session.op {
+            varde_document::BodyOp::Union => tools::BodyOp::Union,
+            varde_document::BodyOp::Subtract => tools::BodyOp::Subtract,
+            varde_document::BodyOp::Intersect => tools::BodyOp::Intersect,
+        };
+        said.put("operation", json!(op.word()));
+        said.put("keep_tools", json!(session.keep_tools));
+    }
+
+    fn move_body(&self, said: &mut Said, session: &MotionSession, moved: &varde_document::Move) {
+        said.put("bodies", self.bodies(&moved.bodies));
+        for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
+            let axis = varde_document::Axis3::ALL[axis];
+            said.put(key, text(session, MotionField::Offset(axis)));
+        }
+        if let Some((axis, _)) = &moved.turn {
+            said.put("angle", text(session, MotionField::Angle));
+            said.put("axis", self.axis(axis));
+        }
+    }
+
+    fn mirror(&self, said: &mut Said, mirror: &varde_document::Mirror) {
+        said.put("bodies", self.bodies(&mirror.bodies));
+        said.put("plane", self.plane(&mirror.plane));
+        said.put("keep_original", json!(mirror.keep_original));
+    }
+
+    fn pattern(&self, said: &mut Said, session: &MotionSession, pattern: &varde_document::Pattern) {
+        let linear = matches!(pattern.kind, PatternKind::Linear { .. });
+        let kind = if linear {
+            tools::PatternKind::Linear
+        } else {
+            tools::PatternKind::Circular
+        };
+        said.put("kind", json!(kind.word()));
+        said.put("bodies", self.bodies(&pattern.bodies));
+        said.put("axis", self.axis(pattern.kind.axis()));
+        said.put("count", text(session, MotionField::Count));
+        let mode = match session.mode {
+            varde_view::PatternMode::Spacing => tools::PatternMode::Spacing,
+            varde_view::PatternMode::Total => tools::PatternMode::Total,
+            varde_view::PatternMode::Full => tools::PatternMode::Full,
+        };
+        said.put("mode", json!(mode.word()));
+        if session.mode != varde_view::PatternMode::Full {
+            said.put("spread", text(session, MotionField::Spread));
+        }
+        if linear {
+            said.put("flip", json!(session.flip));
+        }
+        said.put("join", json!(pattern.copies == Copies::Joined));
+    }
+
+    fn align(&self, said: &mut Said, session: &MotionSession, align: &varde_document::Align) {
+        said.put("body", self.body(align.body));
+        said.put("from", self.align_side(&align.from));
+        said.put("to", self.align_side(&align.to));
+        said.put("flip", json!(align.flip));
+        said.put("distance", text(session, MotionField::Distance));
+        said.put("angle", text(session, MotionField::Angle));
+    }
+
+    fn scale(&self, said: &mut Said, session: &MotionSession, scale: &varde_document::Scale) {
+        said.put("bodies", self.bodies(&scale.bodies));
+        said.put("point", self.point(&scale.about));
+        match &scale.factor {
+            ScaleFactor::Uniform(_) => {
+                said.put("mode", json!(tools::ScaleMode::Uniform.word()));
+                said.put("factor", text(session, MotionField::Factor));
+            }
+            ScaleFactor::PerAxis(_) => {
+                said.put("mode", json!(tools::ScaleMode::PerAxis.word()));
+                for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
+                    let axis = varde_document::Axis3::ALL[axis];
+                    said.put(key, text(session, MotionField::AxisFactor(axis)));
+                }
+            }
+            ScaleFactor::EdgeLength {
+                edge, axis_only, ..
+            } => {
+                said.put("mode", json!(tools::ScaleMode::EdgeLength.word()));
+                said.put("edge", self.edge_key(edge));
+                said.put("length", text(session, MotionField::Length));
+                said.put("axis_only", json!(axis_only));
+            }
+        }
+    }
+
+    fn split(&self, said: &mut Said, split: &varde_document::Split) {
+        said.put("body", self.body(split.body));
+        let tool = match &split.tool {
+            SplitTool::Plane(plane) => self.plane(plane),
+            SplitTool::Face(face) => self.face(face),
+            SplitTool::Body(body) => json!({ "body": self.body(*body) }),
+            SplitTool::Regions { sketch, regions } => json!({
+                "sketch": self.feature_name(*sketch),
+                "profiles": self.regions(*sketch, regions),
+            }),
+            SplitTool::Chain { sketch, curves } => json!({
+                "sketch": self.feature_name(*sketch),
+                "curves": curves.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            }),
+        };
+        said.put("tool", tool);
+        let side = |side: varde_document::Side| match side {
+            varde_document::Side::Front => tools::SplitSide::Front.word(),
+            varde_document::Side::Back => tools::SplitSide::Back.word(),
+        };
+        let keep = match split.keep {
+            varde_document::Keep::Both => tools::SplitKeep::Both,
+            varde_document::Keep::Front => tools::SplitKeep::Front,
+            varde_document::Keep::Back => tools::SplitKeep::Back,
+        }
+        .word();
+        if split.keep == varde_document::Keep::Both {
+            said.put("original", json!(side(split.original)));
+        }
+        said.put("keep", json!(keep));
+    }
+
+    fn shell(&self, said: &mut Said, session: &MotionSession, shell: &varde_document::Shell) {
+        // A shell's body is its faces' when it has any.
+        if shell.open.is_empty() {
+            said.put("body", self.body(shell.body));
+        }
+        said.put("faces", self.face_keys(&shell.open));
+        said.put("thickness", text(session, MotionField::Thickness));
+        let direction = if shell.outward {
+            tools::ShellDirection::Outward
+        } else {
+            tools::ShellDirection::Inward
+        };
+        said.put("direction", json!(direction.word()));
+    }
+
+    fn offset_face(
+        &self,
+        said: &mut Said,
+        session: &MotionSession,
+        offset: &varde_document::OffsetFace,
+    ) {
+        said.put("faces", self.face_keys(&offset.faces));
+        said.put("distance", text(session, MotionField::Distance));
+        said.put("inward", json!(offset.inward));
+        said.put("tangent", json!(offset.tangent));
+    }
+
+    fn draft(&self, said: &mut Said, session: &MotionSession, draft: &varde_document::FaceDraft) {
+        said.put("faces", self.face_keys(&draft.faces));
+        said.put("neutral", self.plane(&draft.neutral));
+        said.put("angle", text(session, MotionField::Angle));
+        said.put("flip", json!(draft.flip));
+        said.put("tangent", json!(draft.tangent));
+    }
+
+    fn chamfer(&self, said: &mut Said, session: &MotionSession, chamfer: &varde_document::Chamfer) {
+        said.put("edges", self.edge_keys(&chamfer.edges));
+        said.put("faces", self.face_keys(&chamfer.faces));
+        let distance = text(session, MotionField::ChamferDistance);
+        match &chamfer.distances {
+            ChamferSize::Equal(_) => {
+                said.put("type", json!(tools::ChamferType::Equal.word()));
+                said.put("distance", distance);
+            }
+            ChamferSize::Two(..) => {
+                said.put("type", json!(tools::ChamferType::TwoDistances.word()));
+                said.put("distance", distance);
+                said.put("second_distance", text(session, MotionField::ChamferSecond));
+                said.put("flip", json!(chamfer.flip));
+            }
+            ChamferSize::Angle(..) => {
+                said.put("type", json!(tools::ChamferType::DistanceAngle.word()));
+                said.put("distance", distance);
+                said.put("angle", text(session, MotionField::ChamferAngle));
+                said.put("flip", json!(chamfer.flip));
+            }
+        }
+        // The panel's tick, on as it opens: the edges are stored each
+        // of its own.
+        said.put("tangent", json!(session.blend.chains));
+    }
+
+    fn fillet(&self, said: &mut Said, session: &MotionSession, fillet: &varde_document::Fillet) {
+        said.put("edges", self.edge_keys(&fillet.edges));
+        said.put("faces", self.face_keys(&fillet.faces));
+        said.put("radius", text(session, MotionField::Radius));
+        said.put("tangent", json!(session.blend.chains));
+    }
+
+    fn sweep(&self, said: &mut Said, session: &MotionSession, sweep: &varde_document::Sweep) {
+        said.put("sketch", self.feature_name(sweep.sketch));
+        said.put("profiles", self.regions(sweep.sketch, &sweep.regions));
+        match &sweep.path {
+            varde_document::PathRef::Chain(parts) => {
+                said.put("path", self.sweep_path(parts));
+                let keep = sweep.orientation == varde_document::Orientation::Keep;
+                said.put("keep_orientation", json!(keep));
+                said.put("twist", text(session, MotionField::Twist));
+            }
+            varde_document::PathRef::Helix(helix) => said.put(
+                "helix",
+                json!({
+                    "axis": self.axis(&helix.axis),
+                    "pitch": text(session, MotionField::Pitch),
+                    "turns": text(session, MotionField::Turns),
+                    "left_handed": helix.left_handed,
+                    "flip": helix.flip,
+                }),
+            ),
+        }
+        self.operation(said, &sweep.operation);
+    }
+
+    /// A sweep's chained path: its sketch curves and model edges.
+    fn sweep_path(&self, parts: &[PathPart]) -> Value {
+        let mut curves = Vec::new();
+        let mut edges = Vec::new();
+        let mut tangent = None;
+        for part in parts {
+            match part {
+                PathPart::Curves(chain) => curves.push(self.chain_start(chain)),
+                PathPart::Edges {
+                    edges: some,
+                    tangent: tick,
+                } => {
+                    edges.extend(some.iter().map(|e| self.edge_key(e)));
+                    tangent.get_or_insert(*tick);
+                }
+            }
+        }
+        json!({
+            "curves": curves,
+            "edges": edges,
+            "tangent": tangent.unwrap_or(true),
+        })
+    }
+
+    fn loft(&self, said: &mut Said, loft: &varde_document::Loft) {
+        let sections: Vec<Value> = loft.sections.iter().map(|s| self.loft_section(s)).collect();
+        said.put("sections", json!(sections));
+        let mode = match loft.mode {
+            varde_document::LoftMode::Smooth => tools::LoftMode::Smooth,
+            varde_document::LoftMode::Ruled => tools::LoftMode::Ruled,
+        };
+        said.put("mode", json!(mode.word()));
+        said.put("closed", json!(loft.closed));
+        let rails: Vec<Value> = loft.rails.iter().map(|c| self.chain_start(c)).collect();
+        said.put("rails", json!(rails));
+        self.operation(said, &loft.operation);
+    }
+
+    /// A loft's section: a sketch's region (and its start point if
+    /// set) or point.
+    fn loft_section(&self, section: &Section) -> Value {
+        match section {
+            Section::Region {
+                sketch,
+                region,
+                start,
+            } => {
+                let regions = self.regions(*sketch, std::slice::from_ref(region));
+                let mut said = json!({
+                    "sketch": self.feature_name(*sketch),
+                    "region": regions.get(0).cloned().unwrap_or(Value::Null),
+                });
+                if let Some(start) = start {
+                    said["start"] = json!(start.get());
+                }
+                said
+            }
+            Section::Point { sketch, point } => json!({
+                "sketch": self.feature_name(*sketch),
+                "point": point.get(),
+            }),
+        }
+    }
+
+    /// A chain of sketch curves (a sweep path's part, a loft's rail) by
+    /// its sketch and first curve.
+    fn chain_start(&self, chain: &varde_document::CurveChain) -> Value {
+        json!({
+            "sketch": self.feature_name(chain.sketch),
+            "curve": chain.curves.first().map(|id| id.get()),
+        })
     }
 
     /// An operation and, for a join, cut or intersect, the bodies it
     /// leaves out.
-    fn operation(&self, put: &mut impl FnMut(&str, Value), operation: &Operation) {
-        put("operation", json!(operation_word(operation)));
+    fn operation(&self, said: &mut Said, operation: &Operation) {
+        said.put("operation", json!(operation_word(operation)));
         if !matches!(operation, Operation::NewBody(_)) {
-            put("exclude", self.bodies(operation.excluded()));
+            said.put("exclude", self.bodies(operation.excluded()));
         }
     }
 
