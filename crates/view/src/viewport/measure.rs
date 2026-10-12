@@ -16,11 +16,12 @@ use iced::widget::{container, text};
 use varde_document::Placement;
 use varde_render::{Camera, Colors, LineStyle, SketchLayer};
 
-use super::sketch::{mark_dot, opaque, srgba};
+use super::sketch::{mark_dot, srgba};
 use crate::Message;
 use crate::anchors::Anchors;
 use crate::measure::{MeasureSlot, MeasureState};
 use crate::pick::{Pick, PickIndex};
+use crate::theme::opaque;
 use crate::theme::{self, SketchColors};
 
 /// How wide a snap dot is to its rim's outside, and the one the cursor

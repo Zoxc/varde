@@ -21,7 +21,7 @@ use iced::{Alignment, Color, Element, Event, Padding, Rectangle, Vector};
 use varde_document::{MAX_COORD, Placement};
 use varde_expr::LengthUnit;
 use varde_kernel_compat::RenderLines;
-use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgb, Srgba};
+use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
     Curve, CurveEntry, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Selectable,
     Side, Sketch, SplineKind, cut_line, foot,
@@ -2202,11 +2202,6 @@ pub(super) fn fill_region_in(layer: &mut SketchLayer, space: Space, region: &Reg
 /// `color` for the renderer.
 pub(super) fn srgba(color: Color) -> Srgba {
     Srgba([color.r, color.g, color.b, color.a])
-}
-
-/// `color`, opaque, as iced's.
-pub(super) fn opaque(Srgb([r, g, b]): Srgb) -> Color {
-    Color::from_rgb(r, g, b)
 }
 
 /// A dot the tools mark a point with: `radius` pixels with a rim of

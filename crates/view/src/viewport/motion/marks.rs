@@ -9,8 +9,9 @@ use super::Moving;
 use crate::motion::{AlignView, ScaleView};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
+use crate::theme::opaque;
 use crate::viewport::handle;
-use crate::viewport::sketch::{line, mark_dot, opaque, srgba};
+use crate::viewport::sketch::{line, mark_dot, srgba};
 
 /// How wide the axis and the plane's outline are drawn, in pixels.
 const LINE_WIDTH: f32 = 2.5;

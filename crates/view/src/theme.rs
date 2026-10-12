@@ -213,6 +213,18 @@ const fn srgb(color: Color) -> Srgb {
     Srgb([color.r, color.g, color.b])
 }
 
+/// `color` from the renderer, opaque, as iced's.
+pub(crate) const fn opaque(Srgb([r, g, b]): Srgb) -> Color {
+    Color { r, g, b, a: 1.0 }
+}
+
+/// The model's colour as the viewport draws it, tinted by `tint` if it
+/// has one.
+fn model_color(p: &Palette, tint: Option<BodyTint>) -> Color {
+    let model = p.scene.model;
+    opaque(tint.map_or(model, |tint| model.tinted(tint)))
+}
+
 /// `color` with the opacity `a`.
 const fn alpha(color: Color, a: f32) -> Color {
     Color { a, ..color }
@@ -1328,10 +1340,8 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
 pub fn body_swatch(tint: Option<BodyTint>) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = palette(theme);
-        let model = p.scene.model;
-        let Srgb([r, g, b]) = tint.map_or(model, |tint| model.tinted(tint));
         container::Style {
-            background: Some(Background::Color(Color::from_rgb(r, g, b))),
+            background: Some(Background::Color(model_color(p, tint))),
             border: border::rounded(3.0).color(p.line).width(1.0),
             ..container::Style::default()
         }
@@ -1385,14 +1395,13 @@ pub fn color_slider(
 ) -> impl Fn(&Theme, slide::Status) -> slide::Style {
     let plain = slider(enabled);
     move |theme, status| {
-        let model = palette(theme).scene.model;
-        let Srgb([r, g, b]) = handle.map_or(model, |tint| model.tinted(tint));
+        let handle = model_color(palette(theme), handle);
         let mut style = plain(theme, status);
         style.rail.backgrounds = (
             Background::Color(Color::TRANSPARENT),
             Background::Color(Color::TRANSPARENT),
         );
-        style.handle.background = Background::Color(Color::from_rgb(r, g, b));
+        style.handle.background = Background::Color(handle);
         style
     }
 }
@@ -1493,9 +1502,7 @@ pub fn color_rail_strip(
 /// The model colour tinted by `tint` (none for the theme's own), faded
 /// unless `enabled`: one stop of a [`color_rail`].
 fn rail_color(p: &Palette, tint: Option<BodyTint>, enabled: bool) -> Color {
-    let model = p.scene.model;
-    let Srgb([r, g, b]) = tint.map_or(model, |tint| model.tinted(tint));
-    fade_unless(enabled, Color::from_rgb(r, g, b))
+    fade_unless(enabled, model_color(p, tint))
 }
 
 /// The height of a [`color_rail`].
@@ -1528,8 +1535,7 @@ pub fn scrollbar(theme: &Theme, status: scrollable::Status) -> scrollable::Style
 /// The welcome page behind its content, the colour of the viewport's top.
 pub fn welcome(theme: &Theme) -> container::Style {
     let p = palette(theme);
-    let Srgb([r, g, b]) = p.scene.background_top;
-    filled(Color::from_rgb(r, g, b), p.text)
+    filled(opaque(p.scene.background_top), p.text)
 }
 
 /// A clickable card, like a recent file on the welcome page.
@@ -1643,14 +1649,13 @@ pub fn drop_zone(lit: bool) -> impl Fn(&Theme, button::Status) -> button::Style 
 /// the hover border while `hovered`, else the text 18% into the welcome
 /// page's background. Opaque, as an SVG's tint takes no alpha.
 pub fn drop_zone_line(p: &Palette, lit: bool, hovered: bool) -> Color {
+    let background = opaque(p.scene.background_top);
     if lit {
         p.accent
     } else if hovered {
-        let Srgb([r, g, b]) = p.scene.background_top;
-        mix(p.hl_line, Color::from_rgb(r, g, b), p.hl_line.a)
+        mix(p.hl_line, background, p.hl_line.a)
     } else {
-        let Srgb([r, g, b]) = p.scene.background_top;
-        mix(p.text, Color::from_rgb(r, g, b), 0.18)
+        mix(p.text, background, 0.18)
     }
 }
 
@@ -2139,8 +2144,7 @@ fn brighten(color: Color, factor: f32) -> Color {
 pub fn pick_tag(second: bool) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let scene = palette(theme).scene;
-        let [r, g, b] = if second { scene.second } else { scene.selected }.0;
-        let fill = Color::from_rgb(r, g, b);
+        let fill = opaque(if second { scene.second } else { scene.selected });
         container::Style {
             border: border::rounded(4),
             ..filled(fill, tag_text(fill))

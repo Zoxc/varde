@@ -9,7 +9,7 @@ use iced::widget::canvas::{self, Action, Frame, Geometry, LineCap, LineJoin, Pat
 use iced::widget::text::Alignment;
 use iced::{Color, Element, Event, Font, Length, Point, Radians, Rectangle, Renderer, Theme, font};
 use iced::{Vector, mouse};
-use varde_render::{Camera, Srgb, View};
+use varde_render::{Camera, View};
 
 use crate::theme::{self, Palette};
 use crate::{Look, Message};
@@ -262,8 +262,7 @@ fn axes(basis: &Basis) -> [Option<Axis>; 3] {
 
 /// The colour of axis `index`, as the scene draws it.
 fn axis_color(palette: &Palette, index: usize) -> Color {
-    let Srgb([r, g, b]) = palette.scene.axes[index];
-    Color::from_rgb(r, g, b)
+    crate::theme::opaque(palette.scene.axes[index])
 }
 
 /// The strokes of the letter of axis `index`, centred on the origin, a

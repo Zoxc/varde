@@ -14,10 +14,11 @@ use crate::anchors::Anchors;
 use crate::motion::{KnobTone, LoftShape, LoftView, MotionLook, MotionPick, SketchLines};
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
+use crate::theme::opaque;
 use crate::theme::{self, SketchColors};
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::regions::{Regions, grid_plane};
-use crate::viewport::sketch::{fill_region_in, line, mark_dot, opaque, srgba};
+use crate::viewport::sketch::{fill_region_in, line, mark_dot, srgba};
 use crate::viewport::sketch_pick::{
     Points, SELECTED_WIDTH, SketchHit, curve_under, loose, point_under,
 };
