@@ -11,6 +11,7 @@ use glam::DVec2;
 use varde_expr::Value;
 
 use super::offset_shift;
+use crate::bounds;
 use crate::{BSpline, Curve, EditError, Id, MAX_SPLINE_POINTS, Side, Sketch, Spline, SplineKind};
 
 /// How closely a spline's copy follows its exact offset where it's made,
@@ -106,12 +107,8 @@ impl Sketch {
             let fitted = BSpline::through(&places, closed)
                 .ok_or(EditError::NothingLeft)?
                 .path();
-            let (low, high) = places
-                .iter()
-                .fold((places[0], places[0]), |(low, high), &p| {
-                    (low.min(p), high.max(p))
-                });
-            let within = SPLINE_FIT * (high - low).max_element().max(distance);
+            let within =
+                SPLINE_FIT * bounds::size(bounds::of(places.iter().copied())).max(distance);
             // The spans the copy strays too far in, worst first, each
             // from a fit point's parameter to the next's, a closed one's
             // last round to 1.

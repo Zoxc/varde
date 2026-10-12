@@ -60,6 +60,7 @@ use glam::DVec2;
 use varde_expr::Value;
 
 use crate::angle;
+use crate::bounds;
 use crate::intersect::{Geom, meet, tolerance};
 use crate::{
     Constraint, Curve, Design, Dimension, EditError, Id, Kind, Measure, Side, Sketch, arc_sweep,
@@ -581,9 +582,6 @@ impl Sketch {
         }
         let bounds: Vec<(DVec2, DVec2)> = raws.iter().map(|raw| raw.geom.bounds()).collect();
         let edge_bounds: Vec<(DVec2, DVec2)> = edges.iter().map(Geom::bounds).collect();
-        let overlap = |(a_min, a_max): (DVec2, DVec2), (b_min, b_max): (DVec2, DVec2)| {
-            a_min.cmple(b_max + tol).all() && b_min.cmple(a_max + tol).all()
-        };
         let mut kept = Vec::new();
         let mut found = Vec::new();
         for (index, raw) in raws.iter().enumerate() {
@@ -598,7 +596,7 @@ impl Sketch {
                 .chain(edges.iter().zip(edge_bounds.iter().copied()));
             for (other, other_bounds) in others {
                 work.spend(1)?;
-                if !overlap(bounds[index], other_bounds) {
+                if !bounds::overlap(bounds[index], other_bounds, tol) {
                     continue;
                 }
                 found.clear();

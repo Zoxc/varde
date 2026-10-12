@@ -8,6 +8,7 @@ use glam::DVec2;
 use super::basis::curvature;
 use crate::CIRCLE_SEGMENTS;
 use crate::angle;
+use crate::bounds::{self, overlap};
 use crate::intersect::{CHORD_COST, Geom};
 
 /// How far a spline's polyline may stray from it, as a share of its size
@@ -109,11 +110,6 @@ fn hull_box(b: &Bezier) -> (DVec2, DVec2) {
     (min, max)
 }
 
-/// Whether the boxes `a` and `b`, each grown by `tolerance`, overlap.
-fn overlap(a: (DVec2, DVec2), b: (DVec2, DVec2), tolerance: f64) -> bool {
-    !((a.0 - tolerance).cmpgt(b.1).any() || (b.0 - tolerance).cmpgt(a.1).any())
-}
-
 /// How far `b`'s inner control points are from the line through its
 /// ends, or from its start where its ends are one place: how far it
 /// strays from its chord at most.
@@ -165,8 +161,7 @@ impl Path {
             closed,
             flat: 0.0,
         };
-        let (min, max) = path.bounds();
-        path.flat = (max - min).max_element() * FLATNESS;
+        path.flat = bounds::size(path.bounds()) * FLATNESS;
         path
     }
 
@@ -183,8 +178,7 @@ impl Path {
     /// rounding.
     pub(crate) fn is_sound(&self) -> bool {
         let (min, max) = self.bounds();
-        let scale = min.abs().max(max.abs()).max_element();
-        let size = (max - min).max_element();
+        let (scale, size) = (bounds::reach((min, max)), bounds::size((min, max)));
         min.is_finite() && max.is_finite() && size > 16.0 * f64::EPSILON * scale
     }
 
@@ -260,10 +254,8 @@ impl Path {
 
     /// The box its control points lie in, which it lies in.
     pub(crate) fn bounds(&self) -> (DVec2, DVec2) {
-        self.segments.iter().map(hull_box).fold(
-            (DVec2::INFINITY, DVec2::NEG_INFINITY),
-            |(min, max), (a, b)| (min.min(a), max.max(b)),
-        )
+        (self.segments.iter().map(hull_box))
+            .fold((DVec2::INFINITY, DVec2::NEG_INFINITY), bounds::union)
     }
 
     /// The parts of segments from `u0` to `u1`, in the order travelled:
@@ -423,9 +415,7 @@ impl Path {
         let mut best = (f64::INFINITY, 0.0);
         for (s, b) in self.segments.iter().enumerate() {
             *work = work.saturating_add(1);
-            let (min, max) = hull_box(b);
-            let outside = (min - at).max(at - max).max(DVec2::ZERO);
-            if outside.length_squared() > best.0 {
+            if bounds::outside(hull_box(b), at).length_squared() > best.0 {
                 continue;
             }
             *work = work.saturating_add(CLOSEST_COST);
@@ -729,8 +719,8 @@ fn bezier_pair(
         if !steps.take() {
             return;
         }
-        let ((amin, amax), (bmin, bmax)) = (hull_box(&pa), hull_box(&pb));
-        if !overlap((amin, amax), (bmin, bmax), tolerance) {
+        let (abox, bbox) = (hull_box(&pa), hull_box(&pb));
+        if !overlap(abox, bbox, tolerance) {
             continue;
         }
         let (fa, fb) = (flatness(&pa), flatness(&pb));
@@ -744,7 +734,7 @@ fn bezier_pair(
         // The larger, flat or not: a straight piece is flat at once, but
         // halving only the other would keep every piece of it in the
         // straight one's box, however far from it.
-        let (asize, bsize) = ((amax - amin).max_element(), (bmax - bmin).max_element());
+        let (asize, bsize) = (bounds::size(abox), bounds::size(bbox));
         if asize >= bsize {
             let (first, second) = halves(&pa);
             let middle = (a0 + a1) / 2.0;

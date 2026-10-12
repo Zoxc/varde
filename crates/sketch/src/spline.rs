@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
+use crate::bounds;
 use crate::{Curve, EditError, Id, OutOfIds, Sketch};
 
 /// The most fit or control points a spline may have. Interpolating
@@ -734,11 +735,7 @@ impl Sketch {
         // Curving below rounding's reach of the spline's size reads as
         // straight, so a flat spline (or a flat stretch) has no noise of
         // teeth flipping side.
-        let (low, high) = evals.iter().fold(
-            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
-            |(low, high), [place, ..]| (low.min(*place), high.max(*place)),
-        );
-        let least = COMB_FLAT / (high - low).max_element();
+        let least = COMB_FLAT / bounds::size(bounds::of(evals.iter().map(|[place, ..]| *place)));
         let teeth = evals
             .into_iter()
             .map(|[place, first, second]| {

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use glam::DVec2;
 
 use crate::angle;
+use crate::bounds;
 use crate::flatten::arc_segments;
 use crate::spline::bezier::{self, Path};
 use crate::{Curve, Id, Sketch, arc_sweep, crossing, foot};
@@ -44,10 +45,7 @@ pub(crate) const CHORD_COST: usize = 16;
 pub(crate) fn tolerance<'g>(geoms: impl IntoIterator<Item = &'g Geom>) -> f64 {
     let size = geoms
         .into_iter()
-        .map(|geom| {
-            let (min, max) = geom.bounds();
-            min.abs().max(max.abs()).max_element()
-        })
+        .map(|geom| bounds::reach(geom.bounds()))
         .fold(MIN_SIZE, f64::max);
     size * RELATIVE_TOLERANCE
 }
@@ -462,9 +460,8 @@ pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>
         for u in from.cuts() {
             let end = from.at(u);
             let v = match path {
-                Some((path, (min, max))) => {
-                    let outside = (min - end).max(end - max).max(DVec2::ZERO);
-                    if outside.length() > tolerance {
+                Some((path, bounds)) => {
+                    if bounds::outside(bounds, end).length() > tolerance {
                         continue;
                     }
                     let near = path.at(path.closest_counting(end, &mut work));

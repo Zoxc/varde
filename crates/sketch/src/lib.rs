@@ -22,6 +22,7 @@
 //! after [`Sketch::check`].
 
 pub mod angle;
+mod bounds;
 mod check;
 mod close;
 mod constraint;
