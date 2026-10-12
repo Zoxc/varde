@@ -87,38 +87,70 @@ impl Settings {
     }
 }
 
+/// Declares each pair of a stored enum and its options twin once, as
+/// `fn of(Stored) -> Options / fn stored { Stored = Options, .. }`, and
+/// makes both directions' functions from it, so the two can't disagree.
+macro_rules! mirror {
+    ($(fn $of:ident($stored:ident) -> $shown:ident / fn $back:ident {
+        $($a:ident = $b:ident),+ $(,)?
+    })*) => {$(
+        fn $of(stored: $stored) -> $shown {
+            match stored {
+                $($stored::$a => $shown::$b,)+
+            }
+        }
+
+        fn $back(shown: $shown) -> $stored {
+            match shown {
+                $($shown::$b => $stored::$a,)+
+            }
+        }
+    )*};
+}
+
+mirror! {
+    fn theme_of(Theme) -> ThemeChoice / fn stored_theme {
+        Auto = Auto, Light = Light, Dark = Dark,
+    }
+    fn projection_of(StoredProjection) -> Projection / fn stored_projection {
+        Orthographic = Orthographic, Perspective = Perspective,
+    }
+    fn shading_of(StoredShading) -> Shading / fn stored_shading {
+        Regular = Regular, Flat = Flat, Metal = Metal, FlatMetal = FlatMetal,
+    }
+    fn edges_of(StoredEdges) -> Edges / fn stored_edges {
+        Default = Default, Wireframe = Wireframe, Tessellation = Tessellation,
+    }
+    fn angle_unit_of(StoredAngleUnit) -> AngleUnit / fn stored_angle_unit {
+        Deg = Deg, Rad = Rad,
+    }
+    fn drag_of(Drag) -> DragAction / fn stored_drag {
+        Orbit = Orbit, Pan = Pan, Zoom = Zoom, Nothing = Nothing,
+    }
+    fn rotation_of(StoredRotation) -> Rotation / fn stored_rotation {
+        Turntable = Turntable, OverTheTop = OverTheTop, Trackball = Trackball,
+    }
+    fn rotation_point_of(StoredRotationPoint) -> RotationPoint / fn stored_rotation_point {
+        Clicked = Clicked, Pointer = Pointer, Centre = Centre,
+    }
+    fn pivot_click_of(SetRotationPoint) -> PivotClick / fn stored_pivot_click {
+        MiddleClick = Middle, MiddleDoubleClick = MiddleDouble, ShiftMiddleClick = ShiftMiddle,
+    }
+}
+
 /// The settings `stored` holds.
 pub(crate) fn options_of(stored: Stored) -> ViewOptions {
     ViewOptions {
-        theme: match stored.theme {
-            Theme::Auto => ThemeChoice::Auto,
-            Theme::Light => ThemeChoice::Light,
-            Theme::Dark => ThemeChoice::Dark,
-        },
+        theme: theme_of(stored.theme),
         mouse_hints: stored.mouse_hints,
         hidden_edges: stored.hidden_edges,
         names: stored.names,
-        projection: match stored.projection {
-            StoredProjection::Orthographic => Projection::Orthographic,
-            StoredProjection::Perspective => Projection::Perspective,
-        },
-        shading: match stored.shading {
-            StoredShading::Regular => Shading::Regular,
-            StoredShading::Flat => Shading::Flat,
-            StoredShading::Metal => Shading::Metal,
-            StoredShading::FlatMetal => Shading::FlatMetal,
-        },
-        edges: match stored.edges {
-            StoredEdges::Default => Edges::Default,
-            StoredEdges::Wireframe => Edges::Wireframe,
-            StoredEdges::Tessellation => Edges::Tessellation,
-        },
+        projection: projection_of(stored.projection),
+        shading: shading_of(stored.shading),
+        edges: edges_of(stored.edges),
         length_unit: stored.length_unit,
         interface_scale: stored.interface_scale.percent(),
-        angle_unit: match stored.angle_unit {
-            StoredAngleUnit::Deg => AngleUnit::Deg,
-            StoredAngleUnit::Rad => AngleUnit::Rad,
-        },
+        angle_unit: angle_unit_of(stored.angle_unit),
         decimals: match stored.decimals {
             Decimals::Auto => None,
             Decimals::Places(count) => Some(count),
@@ -127,21 +159,9 @@ pub(crate) fn options_of(stored: Stored) -> ViewOptions {
             left: drag_of(stored.left_drag),
             middle: drag_of(stored.middle_drag),
             right: drag_of(stored.right_drag),
-            rotation: match stored.rotation {
-                StoredRotation::Turntable => Rotation::Turntable,
-                StoredRotation::OverTheTop => Rotation::OverTheTop,
-                StoredRotation::Trackball => Rotation::Trackball,
-            },
-            rotation_point: match stored.rotation_point {
-                StoredRotationPoint::Clicked => RotationPoint::Clicked,
-                StoredRotationPoint::Pointer => RotationPoint::Pointer,
-                StoredRotationPoint::Centre => RotationPoint::Centre,
-            },
-            pivot_click: match stored.set_rotation_point {
-                SetRotationPoint::MiddleClick => PivotClick::Middle,
-                SetRotationPoint::MiddleDoubleClick => PivotClick::MiddleDouble,
-                SetRotationPoint::ShiftMiddleClick => PivotClick::ShiftMiddle,
-            },
+            rotation: rotation_of(stored.rotation),
+            rotation_point: rotation_point_of(stored.rotation_point),
+            pivot_click: pivot_click_of(stored.set_rotation_point),
             wheel_down_zooms_in: stored.zoom_direction == ZoomDirection::WheelDown,
             zoom_to_pointer: stored.zoom_to_pointer,
             sketch_snap: stored.sketch_snap,
@@ -153,58 +173,21 @@ pub(crate) fn options_of(stored: Stored) -> ViewOptions {
     }
 }
 
-fn drag_of(stored: Drag) -> DragAction {
-    match stored {
-        Drag::Orbit => DragAction::Orbit,
-        Drag::Pan => DragAction::Pan,
-        Drag::Zoom => DragAction::Zoom,
-        Drag::Nothing => DragAction::Nothing,
-    }
-}
-
-fn stored_drag(drag: DragAction) -> Drag {
-    match drag {
-        DragAction::Orbit => Drag::Orbit,
-        DragAction::Pan => Drag::Pan,
-        DragAction::Zoom => Drag::Zoom,
-        DragAction::Nothing => Drag::Nothing,
-    }
-}
-
 /// What's stored of `options`.
 pub(crate) fn stored_of(options: ViewOptions) -> Stored {
     Stored {
-        theme: match options.theme {
-            ThemeChoice::Auto => Theme::Auto,
-            ThemeChoice::Light => Theme::Light,
-            ThemeChoice::Dark => Theme::Dark,
-        },
+        theme: stored_theme(options.theme),
         mouse_hints: options.mouse_hints,
         hidden_edges: options.hidden_edges,
         names: options.names,
-        projection: match options.projection {
-            Projection::Orthographic => StoredProjection::Orthographic,
-            Projection::Perspective => StoredProjection::Perspective,
-        },
-        shading: match options.shading {
-            Shading::Regular => StoredShading::Regular,
-            Shading::Flat => StoredShading::Flat,
-            Shading::Metal => StoredShading::Metal,
-            Shading::FlatMetal => StoredShading::FlatMetal,
-        },
-        edges: match options.edges {
-            Edges::Default => StoredEdges::Default,
-            Edges::Wireframe => StoredEdges::Wireframe,
-            Edges::Tessellation => StoredEdges::Tessellation,
-        },
+        projection: stored_projection(options.projection),
+        shading: stored_shading(options.shading),
+        edges: stored_edges(options.edges),
         length_unit: options.length_unit,
         // Values the page doesn't offer, which it never sets, are stored
         // as the defaults.
         interface_scale: InterfaceScale::new(options.interface_scale).unwrap_or_default(),
-        angle_unit: match options.angle_unit {
-            AngleUnit::Deg => StoredAngleUnit::Deg,
-            AngleUnit::Rad => StoredAngleUnit::Rad,
-        },
+        angle_unit: stored_angle_unit(options.angle_unit),
         decimals: options
             .decimals
             .and_then(Decimals::places)
@@ -212,21 +195,9 @@ pub(crate) fn stored_of(options: ViewOptions) -> Stored {
         left_drag: stored_drag(options.mouse.left),
         middle_drag: stored_drag(options.mouse.middle),
         right_drag: stored_drag(options.mouse.right),
-        rotation: match options.mouse.rotation {
-            Rotation::Turntable => StoredRotation::Turntable,
-            Rotation::OverTheTop => StoredRotation::OverTheTop,
-            Rotation::Trackball => StoredRotation::Trackball,
-        },
-        rotation_point: match options.mouse.rotation_point {
-            RotationPoint::Clicked => StoredRotationPoint::Clicked,
-            RotationPoint::Pointer => StoredRotationPoint::Pointer,
-            RotationPoint::Centre => StoredRotationPoint::Centre,
-        },
-        set_rotation_point: match options.mouse.pivot_click {
-            PivotClick::Middle => SetRotationPoint::MiddleClick,
-            PivotClick::MiddleDouble => SetRotationPoint::MiddleDoubleClick,
-            PivotClick::ShiftMiddle => SetRotationPoint::ShiftMiddleClick,
-        },
+        rotation: stored_rotation(options.mouse.rotation),
+        rotation_point: stored_rotation_point(options.mouse.rotation_point),
+        set_rotation_point: stored_pivot_click(options.mouse.pivot_click),
         zoom_direction: if options.mouse.wheel_down_zooms_in {
             ZoomDirection::WheelDown
         } else {
