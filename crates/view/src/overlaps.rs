@@ -173,71 +173,38 @@ pub(crate) fn view<'a>(
     ticks: Option<&[OverlapTick]>,
     document: &Document,
 ) -> Element<'a, Message> {
-    let selected = |pick: &Pick, targets: &[Picked]| {
-        model_selection.model() == Some(pick.model) && targets.contains(&pick.target)
-    };
-    let checked: Vec<bool> = match (&overlaps.items, ticks) {
-        (OverlapItems::Model(_), Some(ticks)) => ticks.iter().map(|tick| tick.ticked).collect(),
-        (OverlapItems::Sketch(ids), _) => (ids.iter())
-            .map(|id| sketch.is_some_and(|(_, selection)| selection.contains(id)))
-            .collect(),
-        (OverlapItems::Model(items), None) => {
-            let targets: Vec<Picked> = model_selection.targets().collect();
-            let items_selected: Vec<SketchItem> = model_selection.sketch_items().collect();
-            (items.iter())
-                .map(|item| match item {
-                    OverlapItem::Model(pick) => selected(pick, &targets),
-                    OverlapItem::Sketch(item) => items_selected.contains(item),
-                    OverlapItem::Origin(_) => false,
-                })
-                .collect()
-        }
-    };
-    let sketch = sketch.map(|(sketch, _)| sketch);
-    let names: Vec<String> = match &overlaps.items {
-        OverlapItems::Sketch(ids) => (ids.iter())
-            .map(|&id| {
-                sketch
-                    .and_then(|sketch| sketch.selectable_name(id))
-                    .unwrap_or_default()
-            })
-            .collect(),
-        OverlapItems::Model(items) => (items.iter().enumerate())
-            .map(|(row, item)| match *item {
-                OverlapItem::Model(pick) => {
-                    let body = document.body(pick.body).map(|body| body.name.as_str());
-                    let tick = ticks.and_then(|ticks| ticks.get(row));
-                    let note = tick.map_or(OverlapNote::None, |tick| tick.note);
-                    model_name(pick.target, body, note)
-                }
-                OverlapItem::Sketch(item) => sketch_item_name(document, item),
-                OverlapItem::Origin(plane) => format!("{} plane", plane.name()),
-            })
-            .collect(),
-    };
-    let rows = names.into_iter().enumerate().map(|(index, name)| {
-        let only = (ticks.and_then(|ticks| ticks.get(index))).is_some_and(|tick| tick.only);
-        let tick = (!only).then(|| {
-            checkbox(checked.get(index).copied().unwrap_or(false))
-                .size(15)
-                .style(theme::tick)
-                .on_toggle(move |_| Message::Look(Look::ToggleOverlap(index)))
-        });
-        let label = row![tick, text(name)]
-            .spacing(8)
-            .height(Length::Fill)
-            .align_y(Alignment::Center);
-        let row = button(label)
-            .width(Length::Fill)
-            .height(ROW_HEIGHT)
-            .padding([0, 8])
-            .style(theme::flat_button(false, theme::Tone::Text))
-            .on_press(Message::Look(Look::ChooseOverlap { index, add: false }));
-        mouse_area(row)
-            .on_enter(Message::Look(Look::HoverOverlap(Some(index))))
-            .on_exit(Message::Look(Look::LeaveOverlap(index)))
-            .into()
-    });
+    let rows = rows(overlaps, sketch, model_selection, ticks, document);
+    let rows = rows.into_iter().enumerate().map(
+        |(
+            index,
+            OverlapRow {
+                name,
+                checked,
+                only,
+            },
+        )| {
+            let tick = (!only).then(|| {
+                checkbox(checked)
+                    .size(15)
+                    .style(theme::tick)
+                    .on_toggle(move |_| Message::Look(Look::ToggleOverlap(index)))
+            });
+            let label = row![tick, text(name)]
+                .spacing(8)
+                .height(Length::Fill)
+                .align_y(Alignment::Center);
+            let row = button(label)
+                .width(Length::Fill)
+                .height(ROW_HEIGHT)
+                .padding([0, 8])
+                .style(theme::flat_button(false, theme::Tone::Text))
+                .on_press(Message::Look(Look::ChooseOverlap { index, add: false }));
+            mouse_area(row)
+                .on_enter(Message::Look(Look::HoverOverlap(Some(index))))
+                .on_exit(Message::Look(Look::LeaveOverlap(index)))
+                .into()
+        },
+    );
     let list = container(column(rows).width(WIDTH))
         .padding(PADDING)
         .style(theme::menu);
@@ -255,6 +222,69 @@ pub(crate) fn view<'a>(
         .x(overlaps.held.x as f32 - reach)
         .y(overlaps.held.y as f32 - reach);
     stack![away, ring, list].into()
+}
+
+/// A row of the list as shown: its item's name, whether it's ticked, and
+/// whether it picks its item only alone ([`OverlapTick::only`]).
+struct OverlapRow {
+    name: String,
+    checked: bool,
+    only: bool,
+}
+
+/// The rows of `overlaps`, as [`view`] shows them, each item's tick (from
+/// `ticks`, the session's, where given) read beside it.
+fn rows(
+    overlaps: &Overlaps,
+    sketch: Option<(&Sketch, &BTreeSet<Selectable>)>,
+    model_selection: &Selection,
+    ticks: Option<&[OverlapTick]>,
+    document: &Document,
+) -> Vec<OverlapRow> {
+    match &overlaps.items {
+        OverlapItems::Sketch(ids) => (ids.iter())
+            .map(|&id| OverlapRow {
+                name: (sketch.and_then(|(sketch, _)| sketch.selectable_name(id)))
+                    .unwrap_or_default(),
+                checked: sketch.is_some_and(|(_, selection)| selection.contains(&id)),
+                only: false,
+            })
+            .collect(),
+        OverlapItems::Model(items) => {
+            let targets: Vec<Picked> = model_selection.targets().collect();
+            let items_selected: Vec<SketchItem> = model_selection.sketch_items().collect();
+            // A session's own picks are ticked as it has them, alone.
+            let session = ticks.is_some();
+            let ticks = (ticks.into_iter().flatten().map(Some)).chain(std::iter::repeat(None));
+            (items.iter().zip(ticks))
+                .map(|(item, tick)| {
+                    let checked = match item {
+                        _ if session => tick.is_some_and(|tick| tick.ticked),
+                        OverlapItem::Model(pick) => {
+                            model_selection.model() == Some(pick.model)
+                                && targets.contains(&pick.target)
+                        }
+                        OverlapItem::Sketch(item) => items_selected.contains(item),
+                        OverlapItem::Origin(_) => false,
+                    };
+                    let name = match *item {
+                        OverlapItem::Model(pick) => {
+                            let body = document.body(pick.body).map(|body| body.name.as_str());
+                            let note = tick.map_or(OverlapNote::None, |tick| tick.note);
+                            model_name(pick.target, body, note)
+                        }
+                        OverlapItem::Sketch(item) => sketch_item_name(document, item),
+                        OverlapItem::Origin(plane) => format!("{} plane", plane.name()),
+                    };
+                    OverlapRow {
+                        name,
+                        checked,
+                        only: tick.is_some_and(|tick| tick.only),
+                    }
+                })
+                .collect()
+        }
+    }
 }
 
 /// A face, edge or vertex of the model as a row names it: "Face of Body
