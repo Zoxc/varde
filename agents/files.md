@@ -303,7 +303,7 @@ hold up closing: closing comes after them in the lane's queue and deletes
 what they wrote. The recent files list is written to a temporary file of
 its own name and renamed over the list, so two instances writing at once
 don't mix, and an entry of it that doesn't parse loses only itself. The
-settings are written the same way (`io/src/native/config.rs`); on the web
+settings are written the same way (`io/src/native/config.rs`, by `atomic.rs`, as exports are); on the web
 through the file's sync access handle. A theme chosen while quitting is
 ignored, as it would be written after the flush.
 

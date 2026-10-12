@@ -5,6 +5,7 @@
 //! exported files (`export`), the panic recorded (`panicked`), and the
 //! platform's file dialogs (`pick`).
 
+mod atomic;
 mod config;
 mod export;
 pub(crate) mod files;
