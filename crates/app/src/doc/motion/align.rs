@@ -161,13 +161,32 @@ impl Side {
         })
     }
 
+    /// What's picked for `role`, if anything.
+    fn get(&self, role: AlignRole) -> Option<Taken> {
+        match role {
+            AlignRole::Point => self.point.map(Taken::Point),
+            AlignRole::Primary => self.primary.map(Taken::Direction),
+            AlignRole::Secondary => self.secondary.map(Taken::Direction),
+        }
+    }
+
+    /// Picks `taken` for `role`; false, and nothing picked, where it's
+    /// a point for a direction or the other way round.
+    fn put(&mut self, role: AlignRole, taken: Taken) -> bool {
+        match (role, taken) {
+            (AlignRole::Point, Taken::Point(point)) => self.point = Some(point),
+            (AlignRole::Primary, Taken::Direction(direction)) => self.primary = Some(direction),
+            (AlignRole::Secondary, Taken::Direction(direction)) => {
+                self.secondary = Some(direction);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Whether `role` is picked.
     fn has(&self, role: AlignRole) -> bool {
-        match role {
-            AlignRole::Point => self.point.is_some(),
-            AlignRole::Primary => self.primary.is_some(),
-            AlignRole::Secondary => self.secondary.is_some(),
-        }
+        self.get(role).is_some()
     }
 
     /// Whether its direction is the axis of the round edge whose centre
@@ -237,24 +256,27 @@ impl AlignSetup {
         &self.sides[side.index()]
     }
 
+    fn mark_mut(&mut self, slot: AlignSlot) -> &mut Option<Mark> {
+        &mut self.marks[slot.side.index()][slot.role.index()]
+    }
+
+    /// Forgets that `slot` is gone or merged, picked again or taken out.
+    fn forget(&mut self, slot: AlignSlot) {
+        self.gone.retain(|&gone| gone != slot);
+        self.merged.retain(|&merged| merged != slot);
+    }
+
     /// Picks `taken` for `slot`, picked on `mark`. A point replaced
     /// takes its rim's axis out with it ([`Side::rim_axis`]).
     fn set(&mut self, slot: AlignSlot, taken: Taken, mark: Option<Mark>) {
         if slot.role == AlignRole::Point && self.side(slot.side).rim_axis() {
             self.clear(AlignSlot::new(slot.side, AlignRole::Primary));
         }
-        let side = &mut self.sides[slot.side.index()];
-        match (slot.role, taken) {
-            (AlignRole::Point, Taken::Point(point)) => side.point = Some(point),
-            (AlignRole::Primary, Taken::Direction(direction)) => side.primary = Some(direction),
-            (AlignRole::Secondary, Taken::Direction(direction)) => {
-                side.secondary = Some(direction);
-            }
-            _ => return,
+        if !self.sides[slot.side.index()].put(slot.role, taken) {
+            return;
         }
-        self.marks[slot.side.index()][slot.role.index()] = mark;
-        self.gone.retain(|&gone| gone != slot);
-        self.merged.retain(|&merged| merged != slot);
+        *self.mark_mut(slot) = mark;
+        self.forget(slot);
     }
 
     /// Takes `slot` out; a point, its rim's axis with it
@@ -264,9 +286,8 @@ impl AlignSetup {
             self.clear(AlignSlot::new(slot.side, AlignRole::Primary));
         }
         self.sides[slot.side.index()].clear(slot.role);
-        self.marks[slot.side.index()][slot.role.index()] = None;
-        self.gone.retain(|&gone| gone != slot);
-        self.merged.retain(|&merged| merged != slot);
+        *self.mark_mut(slot) = None;
+        self.forget(slot);
     }
 
     /// Takes out what's picked on the moved side on another body than
@@ -310,20 +331,12 @@ impl AlignSetup {
             if merged.and_then(|on| merges.holder(on)) != Some(body) {
                 continue;
             }
-            let side = &mut self.sides[AlignSide::Moved.index()];
-            match (role, taken.on(body)) {
-                (AlignRole::Point, Taken::Point(point)) => side.point = Some(point),
-                (AlignRole::Primary, Taken::Direction(direction)) => {
-                    side.primary = Some(direction);
-                }
-                (AlignRole::Secondary, Taken::Direction(direction)) => {
-                    side.secondary = Some(direction);
-                }
-                _ => continue,
+            if !self.sides[AlignSide::Moved.index()].put(role, taken.on(body)) {
+                continue;
             }
             // Found again on the next model shown, on the body holding
             // it there ([`AlignSetup::follow`]).
-            self.marks[AlignSide::Moved.index()][role.index()] = None;
+            *self.mark_mut(slot) = None;
         }
     }
 
@@ -355,24 +368,18 @@ impl AlignSetup {
         for side in [AlignSide::Moved, AlignSide::Target] {
             for role in AlignRole::ALL {
                 let slot = AlignSlot::new(side, role);
-                let mark = &self.marks[side.index()][role.index()];
-                if mark.is_some_and(|mark| mark.model == model) {
+                if self.mark_mut(slot).is_some_and(|mark| mark.model == model) {
                     continue;
                 }
                 let found = self.taken(slot).map(|taken| taken.found(index, &shown));
-                self.marks[side.index()][role.index()] = found;
+                *self.mark_mut(slot) = found;
             }
         }
     }
 
     /// What's picked for `slot`, if anything.
     pub(crate) fn taken(&self, slot: AlignSlot) -> Option<Taken> {
-        let side = self.side(slot.side);
-        match slot.role {
-            AlignRole::Point => side.point.map(Taken::Point),
-            AlignRole::Primary => side.primary.map(Taken::Direction),
-            AlignRole::Secondary => side.secondary.map(Taken::Direction),
-        }
+        self.side(slot.side).get(slot.role)
     }
 
     /// What a click picks next once one is picked: the first of the
