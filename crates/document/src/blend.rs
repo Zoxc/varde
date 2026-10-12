@@ -74,12 +74,8 @@ impl Document {
         let named = (edges.iter().map(|edge| (edge.body, edge.makers().to_vec())))
             .chain(faces.iter().map(|face| (face.body, vec![face.maker()])));
         for (body, makers) in named {
-            if !self.body_before(index, body) {
-                return Err(BlendEdgesError::Body(body));
-            }
-            if let Some(&maker) = (makers.iter()).find(|&&m| !self.maker_before(index, m)) {
-                return Err(BlendEdgesError::RefMaker(maker));
-            }
+            (self.refers_before(index, body, &makers))
+                .map_err(|late| late.or(BlendEdgesError::Body, BlendEdgesError::RefMaker))?;
         }
         Ok(())
     }

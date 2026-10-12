@@ -76,7 +76,7 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
   axis's reference passes `EdgeRef::check_own` (`RevolveError::Edge`:
   keys sorted and different, point in bounds); its body is made before
   the revolve (`EdgeBody`) and both keys' features come before it
-  (`EdgeMaker`), as a sketch on a face's (`Document::made_before`,
+  (`EdgeMaker`), as a sketch on a face's (`Document::refers_before`,
   `body_before`, shared): one that isn't there is allowed with an id
   below `next_id`, one no later body or feature can take. Whether the
   edge is there, straight and in the plane is regeneration's.

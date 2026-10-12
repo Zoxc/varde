@@ -670,13 +670,8 @@ impl Document {
             return Ok(());
         };
         face.check_own()?;
-        if !self.body_before(index, face.body) {
-            return Err(PlaneError::Body(face.body));
-        }
-        if !self.maker_before(index, face.maker()) {
-            return Err(PlaneError::Maker(face.maker()));
-        }
-        Ok(())
+        self.refers_before(index, face.body, &[face.maker()])
+            .map_err(|late| late.or(PlaneError::Body, PlaneError::Maker))
     }
 
     /// Checks the sources of the links of `sketch`, feature `index`: one
@@ -720,29 +715,21 @@ impl Document {
                 }
                 OutsideRef::Edge(edge) => {
                     edge.check_own().map_err(|why| LinkError::Edge(id, why))?;
-                    let makers_before = edge.makers().iter().all(|&m| self.maker_before(index, m));
-                    if !self.body_before(index, edge.body) || !makers_before {
-                        return Err(LinkError::Later(id));
-                    }
+                    (self.refers_before(index, edge.body, &edge.makers()))
+                        .map_err(|_| LinkError::Later(id))?;
                 }
                 OutsideRef::Face(face) => {
                     face.check_own().map_err(|why| LinkError::Face(id, why))?;
-                    if !self.body_before(index, face.body)
-                        || !self.maker_before(index, face.maker())
-                    {
-                        return Err(LinkError::Later(id));
-                    }
+                    (self.refers_before(index, face.body, &[face.maker()]))
+                        .map_err(|_| LinkError::Later(id))?;
                 }
                 OutsideRef::Corner(corner) => {
                     let (PointRef::Corner { body, .. }, Ok(())) = (corner, corner.check_own())
                     else {
                         return Err(LinkError::Corner(id));
                     };
-                    let makers_before =
-                        (corner.makers().iter()).all(|&m| self.maker_before(index, m));
-                    if !self.body_before(index, *body) || !makers_before {
-                        return Err(LinkError::Later(id));
-                    }
+                    (self.refers_before(index, *body, &corner.makers()))
+                        .map_err(|_| LinkError::Later(id))?;
                 }
             }
         }
@@ -757,6 +744,21 @@ impl Document {
         match self.feature_index(feature) {
             Some(maker) => maker < index,
             None => feature.0 < self.next_id,
+        }
+    }
+
+    /// Checks that `body` and `makers`, as what a reference of feature
+    /// `index` names (a face's or edge's body and the makers of its
+    /// faces), come before it ([`Document::body_before`],
+    /// [`Document::maker_before`]): the body first, then the makers in
+    /// order, the first that doesn't the error.
+    fn refers_before(&self, index: usize, body: BodyId, makers: &[FeatureId]) -> Result<(), Late> {
+        if !self.body_before(index, body) {
+            return Err(Late::Body(body));
+        }
+        match makers.iter().find(|&&m| !self.maker_before(index, m)) {
+            Some(&maker) => Err(Late::Maker(maker)),
+            None => Ok(()),
         }
     }
 
@@ -801,13 +803,8 @@ impl Document {
     /// its edge by as the document changes under it.
     pub fn check_edge(&self, index: usize, edge: &EdgeRef) -> Result<(), RevolveError> {
         edge.check_own().map_err(RevolveError::Edge)?;
-        if !self.body_before(index, edge.body) {
-            return Err(RevolveError::EdgeBody(edge.body));
-        }
-        if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
-            return Err(RevolveError::EdgeMaker(maker));
-        }
-        Ok(())
+        (self.refers_before(index, edge.body, &edge.makers()))
+            .map_err(|late| late.or(RevolveError::EdgeBody, RevolveError::EdgeMaker))
     }
 
     /// Checks `axis` as the axis of a move at feature `index` (at the
@@ -883,14 +880,8 @@ impl Document {
             return Err(MotionError::Body(body));
         }
         if let Some(referred) = referred {
-            if !self.body_before(index, referred.body()) {
-                return Err(MotionError::RefBody(referred.body()));
-            }
-            if let Some(&maker) =
-                (referred.makers().iter()).find(|&&m| !self.maker_before(index, m))
-            {
-                return Err(MotionError::RefMaker(maker));
-            }
+            (self.refers_before(index, referred.body(), &referred.makers()))
+                .map_err(|late| late.or(MotionError::RefBody, MotionError::RefMaker))?;
         }
         Ok(())
     }
@@ -961,12 +952,8 @@ impl Document {
             direction.check_own()?;
         }
         for named in refs.named() {
-            if !self.body_before(index, named.body) {
-                return Err(AlignError::RefBody(named.body));
-            }
-            if let Some(&maker) = (named.makers.iter()).find(|&&m| !self.maker_before(index, m)) {
-                return Err(AlignError::RefMaker(maker));
-            }
+            (self.refers_before(index, named.body, &named.makers))
+                .map_err(|late| late.or(AlignError::RefBody, AlignError::RefMaker))?;
         }
         Ok(())
     }
@@ -989,12 +976,8 @@ impl Document {
     /// their own parts are [`Scale::check_own`]'s.
     pub fn check_scale_refs(&self, index: usize, scale: &Scale) -> Result<(), ScaleError> {
         for (body, makers) in scale.named() {
-            if !self.body_before(index, body) {
-                return Err(ScaleError::RefBody(body));
-            }
-            if let Some(&maker) = (makers.iter()).find(|&&m| !self.maker_before(index, m)) {
-                return Err(ScaleError::RefMaker(maker));
-            }
+            (self.refers_before(index, body, &makers))
+                .map_err(|late| late.or(ScaleError::RefBody, ScaleError::RefMaker))?;
         }
         Ok(())
     }
@@ -1068,13 +1051,9 @@ impl Document {
         body: BodyId,
         faces: &[FaceRef],
     ) -> Result<(), FaceSetError> {
-        if !self.body_before(index, body) {
-            return Err(FaceSetError::Body(body));
-        }
-        match (faces.iter()).find(|face| !self.maker_before(index, face.maker())) {
-            Some(face) => Err(FaceSetError::RefMaker(face.maker())),
-            None => Ok(()),
-        }
+        let makers: Vec<_> = faces.iter().map(FaceRef::maker).collect();
+        (self.refers_before(index, body, &makers))
+            .map_err(|late| late.or(FaceSetError::Body, FaceSetError::RefMaker))
     }
 
     /// Checks `neutral` as the neutral plane of a draft at feature
@@ -1093,13 +1072,8 @@ impl Document {
             return Ok(());
         };
         face.check_own().map_err(FaceDraftError::Neutral)?;
-        if !self.body_before(index, face.body) {
-            return Err(FaceDraftError::NeutralBody(face.body));
-        }
-        if !self.maker_before(index, face.maker()) {
-            return Err(FaceDraftError::NeutralMaker(face.maker()));
-        }
-        Ok(())
+        (self.refers_before(index, face.body, &[face.maker()]))
+            .map_err(|late| late.or(FaceDraftError::NeutralBody, FaceDraftError::NeutralMaker))
     }
 
     /// Checks `sweep`, feature `index`, see [`Document::check`].
@@ -1142,14 +1116,9 @@ impl Document {
                         }
                         PathPart::Edges { edges, .. } => {
                             for edge in edges {
-                                if !self.body_before(index, edge.body) {
-                                    return Err(SweepError::EdgeBody(edge.body));
-                                }
-                                if let Some(&maker) =
-                                    (edge.makers().iter()).find(|&&m| !self.maker_before(index, m))
-                                {
-                                    return Err(SweepError::EdgeMaker(maker));
-                                }
+                                (self.refers_before(index, edge.body, &edge.makers())).map_err(
+                                    |late| late.or(SweepError::EdgeBody, SweepError::EdgeMaker),
+                                )?;
                             }
                         }
                     }
@@ -1157,14 +1126,8 @@ impl Document {
             }
             PathRef::Helix(helix) => {
                 if let Some(referred) = helix.axis.refers() {
-                    if !self.body_before(index, referred.body()) {
-                        return Err(SweepError::AxisBody(referred.body()));
-                    }
-                    if let Some(&maker) =
-                        (referred.makers().iter()).find(|&&m| !self.maker_before(index, m))
-                    {
-                        return Err(SweepError::AxisMaker(maker));
-                    }
+                    (self.refers_before(index, referred.body(), &referred.makers()))
+                        .map_err(|late| late.or(SweepError::AxisBody, SweepError::AxisMaker))?;
                 }
             }
         }
@@ -1218,6 +1181,29 @@ impl Document {
             }
         }
         Ok(())
+    }
+}
+
+/// What of a reference comes after the feature naming it, see
+/// [`Document::refers_before`].
+pub(crate) enum Late {
+    /// Its body.
+    Body(BodyId),
+    /// One of its faces' makers.
+    Maker(FeatureId),
+}
+
+impl Late {
+    /// As the error `body` or `maker` makes of it.
+    pub(crate) fn or<E>(
+        self,
+        body: impl FnOnce(BodyId) -> E,
+        maker: impl FnOnce(FeatureId) -> E,
+    ) -> E {
+        match self {
+            Late::Body(id) => body(id),
+            Late::Maker(id) => maker(id),
+        }
     }
 }
 
