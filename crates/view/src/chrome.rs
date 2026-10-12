@@ -24,15 +24,16 @@ pub(crate) fn tip<'a>(
     content: impl Into<Element<'a, Message>>,
     tip: Text<'a>,
 ) -> Element<'a, Message> {
-    tooltip(
-        content,
-        container(tip.size(12))
-            .padding([3, 6])
-            .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
-            .style(theme::menu),
-        tooltip::Position::Bottom,
-    )
-    .into()
+    tooltip(content, tip_box(tip.size(12)), tooltip::Position::Bottom).into()
+}
+
+/// A tooltip's box around `tip`: small, padded, no wider than about one
+/// and a half side panels.
+pub(crate) fn tip_box<'a>(tip: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
+    container(tip)
+        .padding([3, 6])
+        .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
+        .style(theme::menu)
 }
 
 /// `content` telling, below it while hovered in a box as [`tip`]'s, why it
@@ -60,15 +61,7 @@ pub(crate) fn failure_tip<'a>(
         words,
     ]
     .spacing(5);
-    tooltip(
-        content,
-        container(tip)
-            .padding([3, 6])
-            .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
-            .style(theme::menu),
-        tooltip::Position::Bottom,
-    )
-    .into()
+    tooltip(content, tip_box(tip), tooltip::Position::Bottom).into()
 }
 
 /// `content` telling `label` and its `key` at once while hovered, right

@@ -359,10 +359,7 @@ fn file_cell<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     }
     tooltip(
         cell,
-        container(column(lines).spacing(1))
-            .padding([4, 7])
-            .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
-            .style(theme::menu),
+        crate::chrome::tip_box(column(lines).spacing(1)).padding([4, 7]),
         tooltip::Position::Bottom,
     )
     .gap(4)
