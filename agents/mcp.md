@@ -225,7 +225,10 @@ largest component so squaring can't overflow or underflow.
   construction, op}`, `Op` one variant per `op`, items `ItemRef` (an id
   or a label text), a shape's points `At` (`[x, y]` as text, or an
   item), sizes as text; the bounds, and each error prefixed
-  `edit_sketch: operations[i]:`, there. After `add_link`, not
+  `edit_sketch: operations[i]:`, there. One table, `OPS` (`OpSpec`:
+  word, keys, those required, whether it takes `label` and
+  `construction`; a point takes no `construction`), gives the parser's
+  known keys, the op list in errors and each op's schema. After `add_link`, not
   idempotent.
 - `set_feature {name, ...patch}`: `Call::SetFeature(SetFeature { name,
   patch })`, the patch the other arguments as sent (at least one; bounded

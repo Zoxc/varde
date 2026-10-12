@@ -1979,3 +1979,44 @@ fn reads_undo() {
     assert_eq!(undo["annotations"]["idempotentHint"], false);
     assert!(undo.get("outputSchema").is_none());
 }
+
+/// `edit_sketch`'s schema offers each op the arguments its parser
+/// takes: none of them is refused as unknown, and a point takes no
+/// `construction`.
+#[test]
+fn edit_sketch_schema_matches_its_parser() {
+    let tool = super::draw::edit_sketch_tool();
+    let schemas = tool["inputSchema"]["properties"]["operations"]["items"]["oneOf"]
+        .as_array()
+        .expect("a list of operations");
+    assert_eq!(schemas.len(), 11);
+    for schema in schemas {
+        let properties = schema["properties"].as_object().expect("properties");
+        let operation: Map<String, Value> = (properties.iter())
+            .map(|(key, property)| match key.as_str() {
+                "op" => (key.clone(), property["const"].clone()),
+                _ => (key.clone(), Value::Null),
+            })
+            .collect();
+        let word = operation["op"].clone();
+        let args = json!({ "sketch": "S", "operations": [operation] });
+        if let Err(error) = call("edit_sketch", args) {
+            assert!(
+                !format!("{error:?}").contains("no argument named"),
+                "{word}: {error:?}"
+            );
+        }
+        assert_eq!(
+            properties.contains_key("construction"),
+            word != "point" && properties.contains_key("label")
+        );
+    }
+    let point = json!({ "op": "point", "at": [0, 0], "construction": true });
+    assert!(
+        refused(
+            "edit_sketch",
+            json!({ "sketch": "S", "operations": [point] })
+        )
+        .contains("no argument named \"construction\"")
+    );
+}

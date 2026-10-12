@@ -226,6 +226,59 @@ pub enum Op {
     },
 }
 
+/// An `edit_sketch` operation as its `op` names it: what it takes
+/// besides `op`, those of them required, and whether it takes a `label`
+/// and `construction`. The parser and the schema both read it.
+struct OpSpec {
+    word: &'static str,
+    keys: &'static [&'static str],
+    required: &'static [&'static str],
+    labelled: bool,
+    construction: bool,
+}
+
+impl OpSpec {
+    const fn new(
+        word: &'static str,
+        keys: &'static [&'static str],
+        required: &'static [&'static str],
+        labelled: bool,
+        construction: bool,
+    ) -> OpSpec {
+        OpSpec {
+            word,
+            keys,
+            required,
+            labelled,
+            construction,
+        }
+    }
+}
+
+/// Every operation, in [`Op`]'s order. A point is labelled but isn't a
+/// curve, so it takes no `construction`.
+#[rustfmt::skip]
+const OPS: &[OpSpec] = &[
+    OpSpec::new("point", &["at"], &["at"], true, false),
+    OpSpec::new("line", &["start", "end"], &["start", "end"], true, true),
+    OpSpec::new("arc", &["start", "end", "through"], &["start", "end", "through"], true, true),
+    OpSpec::new("circle", &["center", "diameter"], &["center", "diameter"], true, true),
+    OpSpec::new("spline", &["points", "closed", "kind"], &["points"], true, true),
+    OpSpec::new("rectangle", &["corner", "center", "size"], &["size"], true, true),
+    OpSpec::new("polygon", &["center", "sides", "corner", "diameter"], &["center", "sides"], true, true),
+    OpSpec::new("constraint", &["kind", "items"], &["kind", "items"], false, false),
+    OpSpec::new("dimension", &["kind", "items", "value", "driving"], &["kind", "items"], false, false),
+    OpSpec::new("delete", &["items"], &["items"], false, false),
+    OpSpec::new("move", &["point", "to"], &["point", "to"], false, false),
+];
+
+/// The operations' words, for errors: "point, line, ... or move".
+fn op_words() -> String {
+    let (last, rest) = OPS.split_last().expect("there are operations");
+    let rest: Vec<&str> = rest.iter().map(|spec| spec.word).collect();
+    format!("{} or {}", rest.join(", "), last.word)
+}
+
 impl Op {
     /// The operation's name, as `op` gives it.
     pub fn word(&self) -> &'static str {
@@ -291,41 +344,21 @@ impl Arguments<'_> {
     fn operation(&self) -> Result<SketchOp, CallError> {
         let word = match self.map.get("op") {
             Some(Value::String(word)) => word.as_str(),
-            _ => {
-                return Err(self.error(
-                    "op is required: point, line, arc, circle, spline, rectangle, polygon, \
-                     constraint, dimension, delete or move",
-                ));
-            }
+            _ => return Err(self.error(format_args!("op is required: {}", op_words()))),
         };
-        // What each takes besides `op`, and whether it makes something
-        // to label and curves to make construction.
-        let (known, labelled, curves): (&[&str], bool, bool) = match word {
-            "point" => (&["at"], true, false),
-            "line" => (&["start", "end"], true, true),
-            "arc" => (&["start", "end", "through"], true, true),
-            "circle" => (&["center", "diameter"], true, true),
-            "spline" => (&["points", "closed", "kind"], true, true),
-            "rectangle" => (&["corner", "center", "size"], true, true),
-            "polygon" => (&["center", "sides", "corner", "diameter"], true, true),
-            "constraint" => (&["kind", "items"], false, false),
-            "dimension" => (&["kind", "items", "value", "driving"], false, false),
-            "delete" => (&["items"], false, false),
-            "move" => (&["point", "to"], false, false),
-            _ => {
-                return Err(self.error(format_args!(
-                    "no op named {:?}: point, line, arc, circle, spline, rectangle, polygon, \
-                     constraint, dimension, delete or move",
-                    super::shown(word)
-                )));
-            }
+        let Some(spec) = OPS.iter().find(|spec| spec.word == word) else {
+            return Err(self.error(format_args!(
+                "no op named {:?}: {}",
+                super::shown(word),
+                op_words()
+            )));
         };
         let mut all: Vec<&str> = vec!["op"];
-        all.extend_from_slice(known);
-        if labelled {
+        all.extend_from_slice(spec.keys);
+        if spec.labelled {
             all.push("label");
         }
-        if curves {
+        if spec.construction {
             all.push("construction");
         }
         self.only(&all)?;
@@ -441,8 +474,9 @@ impl Arguments<'_> {
                     to: self.coordinates("to")?,
                 }
             }
-            _ => unreachable!("the words are matched above"),
+            _ => unreachable!("every word in OPS is built here"),
         };
+        debug_assert_eq!(op.word(), spec.word);
         Ok(SketchOp {
             label,
             construction,
@@ -626,15 +660,56 @@ fn operation_schemas() -> Vec<Value> {
     });
     let size = json!({ "type": ["string", "number"], "description": "A length" });
     let items = |least: usize, most: usize| json!({ "type": "array", "items": item.clone(), "minItems": least, "maxItems": most });
-    // An operation's schema: its `op`, its own properties, and those
-    // `required`; a label and construction where `drawn`.
-    let one = |op: &str, mut properties: Map<String, Value>, required: &[&str], drawn: bool| {
-        properties.insert("op".into(), json!({ "const": op }));
-        if drawn {
+    let constraints: Vec<&str> = CONSTRAINT_WORDS.iter().map(|(word, _)| *word).collect();
+    let measures: Vec<&str> = MEASURE_WORDS.iter().map(|(word, _)| *word).collect();
+    // The schema of `key` as `word` takes it.
+    let property = |word: &str, key: &str| -> Value {
+        match (word, key) {
+            ("point" | "arc", "at" | "through") | (_, "to") => coordinates.clone(),
+            (_, "start" | "end" | "center" | "corner") => at.clone(),
+            (_, "diameter") => size.clone(),
+            ("spline", "points") => {
+                json!({ "type": "array", "items": at.clone(), "minItems": 2, "maxItems": SPLINE_POINTS })
+            }
+            ("spline", "closed") => json!({ "type": "boolean", "description": "default false" }),
+            ("spline", "kind") => {
+                json!({ "enum": ["through", "control"], "description": "Through fit points (default) or by control points" })
+            }
+            ("rectangle", "size") => {
+                json!({ "type": "array", "items": size.clone(), "minItems": 2, "maxItems": 2, "description": "[width, height], from a corner either way by sign" })
+            }
+            ("polygon", "sides") => {
+                json!({ "type": "integer", "minimum": MIN_SIDES, "maximum": MAX_SIDES })
+            }
+            ("constraint", "kind") => json!({ "enum": constraints }),
+            ("dimension", "kind") => json!({ "enum": measures }),
+            ("dimension", "items") => items(1, 2),
+            (_, "items") => items(1, MAX_ITEMS),
+            ("dimension", "value") => {
+                json!({ "type": "string", "maxLength": TEXT_BYTES, "description": "As typed in the value field; without it, what it measures now" })
+            }
+            ("dimension", "driving") => {
+                json!({ "type": "boolean", "description": "default true; false for a reference, which takes no value" })
+            }
+            ("move", "point") => item.clone(),
+            _ => unreachable!("{word} takes no {key}"),
+        }
+    };
+    // An operation's schema: its `op`, its keys, those required, and a
+    // label and construction where it takes them.
+    let one = |spec: &OpSpec| {
+        let mut properties: Map<String, Value> = Map::new();
+        properties.insert("op".into(), json!({ "const": spec.word }));
+        for key in spec.keys {
+            properties.insert((*key).into(), property(spec.word, key));
+        }
+        if spec.labelled {
             properties.insert("label".into(), label.clone());
+        }
+        if spec.construction {
             properties.insert("construction".into(), construction.clone());
         }
-        let mut required: Vec<&str> = required.to_vec();
+        let mut required: Vec<&str> = spec.required.to_vec();
         required.insert(0, "op");
         json!({
             "type": "object",
@@ -643,123 +718,5 @@ fn operation_schemas() -> Vec<Value> {
             "additionalProperties": false
         })
     };
-    let props = |pairs: Vec<(&str, Value)>| -> Map<String, Value> {
-        pairs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect()
-    };
-    let constraints: Vec<&str> = CONSTRAINT_WORDS.iter().map(|(word, _)| *word).collect();
-    let measures: Vec<&str> = MEASURE_WORDS.iter().map(|(word, _)| *word).collect();
-    vec![
-        one(
-            "point",
-            props(vec![("at", coordinates.clone())]),
-            &["at"],
-            true,
-        ),
-        one(
-            "line",
-            props(vec![("start", at.clone()), ("end", at.clone())]),
-            &["start", "end"],
-            true,
-        ),
-        one(
-            "arc",
-            props(vec![
-                ("start", at.clone()),
-                ("end", at.clone()),
-                ("through", coordinates.clone()),
-            ]),
-            &["start", "end", "through"],
-            true,
-        ),
-        one(
-            "circle",
-            props(vec![("center", at.clone()), ("diameter", size.clone())]),
-            &["center", "diameter"],
-            true,
-        ),
-        one(
-            "spline",
-            props(vec![
-                (
-                    "points",
-                    json!({ "type": "array", "items": at.clone(), "minItems": 2, "maxItems": SPLINE_POINTS }),
-                ),
-                (
-                    "closed",
-                    json!({ "type": "boolean", "description": "default false" }),
-                ),
-                (
-                    "kind",
-                    json!({ "enum": ["through", "control"], "description": "Through fit points (default) or by control points" }),
-                ),
-            ]),
-            &["points"],
-            true,
-        ),
-        one(
-            "rectangle",
-            props(vec![
-                ("corner", at.clone()),
-                ("center", at.clone()),
-                (
-                    "size",
-                    json!({ "type": "array", "items": size.clone(), "minItems": 2, "maxItems": 2, "description": "[width, height], from a corner either way by sign" }),
-                ),
-            ]),
-            &["size"],
-            true,
-        ),
-        one(
-            "polygon",
-            props(vec![
-                ("center", at.clone()),
-                (
-                    "sides",
-                    json!({ "type": "integer", "minimum": MIN_SIDES, "maximum": MAX_SIDES }),
-                ),
-                ("corner", at.clone()),
-                ("diameter", size.clone()),
-            ]),
-            &["center", "sides"],
-            true,
-        ),
-        one(
-            "constraint",
-            props(vec![
-                ("kind", json!({ "enum": constraints })),
-                ("items", items(1, MAX_ITEMS)),
-            ]),
-            &["kind", "items"],
-            false,
-        ),
-        one(
-            "dimension",
-            props(vec![
-                ("kind", json!({ "enum": measures })),
-                ("items", items(1, 2)),
-                (
-                    "value",
-                    json!({ "type": "string", "maxLength": TEXT_BYTES, "description": "As typed in the value field; without it, what it measures now" }),
-                ),
-                (
-                    "driving",
-                    json!({ "type": "boolean", "description": "default true; false for a reference, which takes no value" }),
-                ),
-            ]),
-            &["kind", "items"],
-            false,
-        ),
-        one(
-            "delete",
-            props(vec![("items", items(1, MAX_ITEMS))]),
-            &["items"],
-            false,
-        ),
-        one(
-            "move",
-            props(vec![("point", item.clone()), ("to", coordinates.clone())]),
-            &["point", "to"],
-            false,
-        ),
-    ]
+    OPS.iter().map(one).collect()
 }
