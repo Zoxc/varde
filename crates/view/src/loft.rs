@@ -23,7 +23,7 @@ pub fn loft_info(loft: &Loft) -> String {
     }
     match loft.rails.len() {
         0 => {}
-        rails => parts.push(crate::document::counted(rails, "rail", "rails")),
+        rails => parts.push(crate::words::counted(rails, "rail", "rails")),
     }
     parts.push(OperationKind::of(&loft.operation).label().to_owned());
     parts.join(" · ")

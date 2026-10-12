@@ -3,8 +3,8 @@
 
 use varde_document::{Document, FaceDraft};
 
-use crate::document::counted;
 use crate::panels::angle_note;
+use crate::words::counted;
 
 /// A draft's Timeline note: its angle and the faces it turns, "3° · 4
 /// faces".

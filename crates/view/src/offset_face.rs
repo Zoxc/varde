@@ -3,8 +3,8 @@
 
 use varde_document::{LengthUnit, OffsetFace};
 
-use crate::document::counted;
 use crate::panels::length_note;
+use crate::words::counted;
 
 /// An offset face's Timeline note: its distance and the faces it moves,
 /// "2 mm · 3 faces", the distance "in" when it moves them inward.
