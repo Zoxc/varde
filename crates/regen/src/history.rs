@@ -264,6 +264,56 @@ impl Evaluation {
             .any(|made| made.body == body)
             .then_some(body)
     }
+
+    /// `find` on the solid holding `body` ([`Evaluation::holder`]),
+    /// `None` if none does. Where `missing` says what it looks for isn't
+    /// there, it's followed through the splits: into the bodies splits
+    /// made of it, the first split first, and back into the bodies
+    /// splits made it of (a split that swapped which piece keeps the id
+    /// moves it there), and on from those; the first answer not missing,
+    /// else the holder's.
+    pub(crate) fn following_splits<T>(
+        &self,
+        body: BodyId,
+        mut find: impl FnMut(&BodySolid) -> T,
+        missing: impl Fn(&T) -> bool,
+    ) -> Option<T> {
+        let holder = self.holder(body)?;
+        let made = self.bodies.iter().find(|made| made.body == holder)?;
+        let first = find(made);
+        if !missing(&first) {
+            return Some(first);
+        }
+        let mut on = vec![made.body];
+        let mut at = 0;
+        while let Some(&body) = on.get(at) {
+            at += 1;
+            for &(split, new) in &self.splits {
+                let (Some(split), Some(new)) = (self.holder(split), self.holder(new)) else {
+                    continue;
+                };
+                let next = if split == body {
+                    new
+                } else if new == body {
+                    split
+                } else {
+                    continue;
+                };
+                if on.contains(&next) {
+                    continue;
+                }
+                on.push(next);
+                let Some(made) = self.bodies.iter().find(|made| made.body == next) else {
+                    continue;
+                };
+                let followed = find(made);
+                if !missing(&followed) {
+                    return Some(followed);
+                }
+            }
+        }
+        Some(first)
+    }
 }
 
 /// Notes in `merged`, a list like [`Evaluation::merged`], that a join
@@ -1235,47 +1285,13 @@ pub(crate) fn place_on_face(
     tolerance: &Tolerance,
     cache: &mut Cache,
 ) -> Result<Placement, Failed> {
-    let holder = evaluation.holder(face.body);
-    let made = (evaluation.bodies.iter())
-        .find(|made| Some(made.body) == holder)
-        .ok_or(message::FACE_BODY_GONE)?;
-    let placed = place_on(made, face, tolerance, cache);
-    if not_found(&placed) {
-        // Followed through the splits: into the bodies splits made of
-        // it, the first split first, and back into the bodies splits made
-        // it of (a split that swapped which piece keeps the id moves the
-        // face there), and on from those.
-        let mut on = vec![made.body];
-        let mut at = 0;
-        while let Some(&body) = on.get(at) {
-            at += 1;
-            for &(split, new) in &evaluation.splits {
-                let (Some(split), Some(new)) = (evaluation.holder(split), evaluation.holder(new))
-                else {
-                    continue;
-                };
-                let next = if split == body {
-                    new
-                } else if new == body {
-                    split
-                } else {
-                    continue;
-                };
-                if on.contains(&next) {
-                    continue;
-                }
-                on.push(next);
-                let Some(made) = evaluation.bodies.iter().find(|made| made.body == next) else {
-                    continue;
-                };
-                let followed = place_on(made, face, tolerance, cache);
-                if !not_found(&followed) {
-                    return followed;
-                }
-            }
-        }
-    }
-    placed
+    evaluation
+        .following_splits(
+            face.body,
+            |made| place_on(made, face, tolerance, cache),
+            not_found,
+        )
+        .unwrap_or(Err(message::FACE_BODY_GONE.into()))
 }
 
 /// Whether [`place_on`] found no face of the name on its body, which a

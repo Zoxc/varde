@@ -292,43 +292,13 @@ fn affine(from: &Placement, to: &Placement) -> DAffine2 {
 fn on_body<T>(
     body: BodyId,
     evaluation: &Evaluation,
-    mut find: impl FnMut(&BodySolid) -> Result<T, String>,
+    find: impl FnMut(&BodySolid) -> Result<T, String>,
 ) -> Result<T, String> {
-    let made = super::motion::holding(body, evaluation).ok_or(BODY_GONE)?;
-    let first = find(made);
-    if !first.as_ref().is_err_and(|why| not_there(why)) {
-        return first;
-    }
-    let mut on = vec![made.body];
-    let mut at = 0;
-    while let Some(&body) = on.get(at) {
-        at += 1;
-        for &(split, new) in &evaluation.splits {
-            let (Some(split), Some(new)) = (evaluation.holder(split), evaluation.holder(new))
-            else {
-                continue;
-            };
-            let next = if split == body {
-                new
-            } else if new == body {
-                split
-            } else {
-                continue;
-            };
-            if on.contains(&next) {
-                continue;
-            }
-            on.push(next);
-            let Some(made) = evaluation.bodies.iter().find(|made| made.body == next) else {
-                continue;
-            };
-            let followed = find(made);
-            if !followed.as_ref().is_err_and(|why| not_there(why)) {
-                return followed;
-            }
-        }
-    }
-    first
+    evaluation
+        .following_splits(body, find, |found| {
+            found.as_ref().is_err_and(|why| not_there(why))
+        })
+        .unwrap_or(Err(BODY_GONE.into()))
 }
 
 /// Whether `why` says what was looked for isn't on the body, which a

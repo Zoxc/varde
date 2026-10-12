@@ -58,8 +58,8 @@ found where the sketch is in the history (`link::find`): another sketch's
 item on that sketch as it is, at its placement, projected through the
 affine map from its plane into this one's (`Sketch::project_item`); a
 model edge, face or corner on its body among those the features before
-made, through `Evaluation::holder` and then the splits before (`on_body`,
-as `place_on_face` follows a sketch's face), so a later split moving it
+made, through `Evaluation::holder` and then the splits before (`on_body`, by
+`Evaluation::following_splits` as `place_on_face` follows a sketch's face), so a later split moving it
 onto another body doesn't lose it, and a face or edge isn't looked for in
 the final model. A model edge projected is sampled along its conics
 (`varde_kernel::section::sample`, 32 places a conic) and fitted
