@@ -2780,19 +2780,6 @@ fn normalize(v: [f64; 3]) -> Option<[f64; 3]> {
 
 /// The `tools/list` result: the tools built so far.
 pub fn list() -> Value {
-    let read_only = json!({ "readOnlyHint": true, "openWorldHint": false });
-    let edit = json!({
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-    });
-    let destructive = json!({
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-    });
     let parameter = json!({ "type": "string", "description": "The parameter's name" });
     let expression = json!({
         "type": "string",
@@ -2827,7 +2814,7 @@ pub fn list() -> Value {
                 "additionalProperties": false
             },
             "outputSchema": design_summary_output(),
-            "annotations": read_only,
+            "annotations": read_only(),
         },
         {
             "name": "feature",
@@ -2850,7 +2837,7 @@ pub fn list() -> Value {
                 "required": ["name"],
                 "additionalProperties": false
             },
-            "annotations": read_only,
+            "annotations": read_only(),
         },
         {
             "name": "body_topology",
@@ -2892,7 +2879,7 @@ pub fn list() -> Value {
                 "additionalProperties": false
             },
             "outputSchema": body_topology_output(),
-            "annotations": read_only,
+            "annotations": read_only(),
         },
         {
             "name": "sketch",
@@ -2915,7 +2902,7 @@ pub fn list() -> Value {
                 "additionalProperties": false
             },
             "outputSchema": sketch_output(),
-            "annotations": read_only,
+            "annotations": read_only(),
         },
         {
             "name": "measure",
@@ -2937,7 +2924,7 @@ pub fn list() -> Value {
                 "required": ["a"],
                 "additionalProperties": false
             },
-            "annotations": read_only,
+            "annotations": read_only(),
         },
         {
             "name": "render",
@@ -2990,7 +2977,7 @@ pub fn list() -> Value {
                 },
                 "additionalProperties": false
             },
-            "annotations": read_only,
+            "annotations": read_only(),
         },
         {
             "name": "rename",
@@ -3010,7 +2997,7 @@ pub fn list() -> Value {
                 "required": ["to"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "set_visible",
@@ -3022,7 +3009,7 @@ pub fn list() -> Value {
                 "required": ["body", "visible"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "set_color",
@@ -3053,7 +3040,7 @@ pub fn list() -> Value {
                 "required": ["body", "color"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "set_opacity",
@@ -3069,7 +3056,7 @@ pub fn list() -> Value {
                 "required": ["body", "opacity"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "remove_feature",
@@ -3085,7 +3072,7 @@ pub fn list() -> Value {
                 "required": ["feature"],
                 "additionalProperties": false
             },
-            "annotations": destructive,
+            "annotations": destructive(),
         },
         {
             "name": "remove_body",
@@ -3099,7 +3086,7 @@ pub fn list() -> Value {
                 "required": ["body"],
                 "additionalProperties": false
             },
-            "annotations": destructive,
+            "annotations": destructive(),
         },
         {
             "name": "add_parameter",
@@ -3127,7 +3114,7 @@ pub fn list() -> Value {
                 "required": ["name", "value"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "rename_parameter",
@@ -3155,7 +3142,7 @@ pub fn list() -> Value {
                 "required": ["name"],
                 "additionalProperties": false
             },
-            "annotations": destructive,
+            "annotations": destructive(),
         },
         {
             "name": "set_units",
@@ -3168,7 +3155,7 @@ pub fn list() -> Value {
                 "required": ["units"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "set_tolerance",
@@ -3182,7 +3169,7 @@ pub fn list() -> Value {
                 "required": ["tolerance"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
         {
             "name": "set_rollback",
@@ -3201,7 +3188,7 @@ pub fn list() -> Value {
                 "required": ["before"],
                 "additionalProperties": false
             },
-            "annotations": edit,
+            "annotations": edit(),
         },
     ]);
     let features = json!([
@@ -3407,12 +3394,7 @@ fn set_sketch_plane_tool() -> Value {
             "required": ["sketch", "plane"],
             "additionalProperties": false
         },
-        "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": false,
-            "idempotentHint": true,
-            "openWorldHint": false
-        },
+        "annotations": edit(),
     })
 }
 
@@ -3973,21 +3955,38 @@ fn undo_tool() -> Value {
             },
             "additionalProperties": false
         },
-        "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true,
-            "idempotentHint": false,
-            "openWorldHint": false
-        },
+        "annotations": destructive(),
     })
+}
+
+/// A read-only tool's annotations.
+fn read_only() -> Value {
+    json!({ "readOnlyHint": true, "openWorldHint": false })
+}
+
+/// An edit tool's annotations, asked twice the second changing nothing.
+fn edit() -> Value {
+    edit_hints(false, true)
 }
 
 /// An edit tool's annotations, asked twice the second failing or adding another.
 fn edit_once() -> Value {
+    edit_hints(false, false)
+}
+
+/// The annotations of an edit tool that takes away what was there: a
+/// removal, undo.
+fn destructive() -> Value {
+    edit_hints(true, false)
+}
+
+/// An edit tool's annotations, by whether it's `destructive` and
+/// `idempotent`.
+fn edit_hints(destructive: bool, idempotent: bool) -> Value {
     json!({
         "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
         "openWorldHint": false
     })
 }
