@@ -231,21 +231,26 @@ impl Region {
 /// Whether a ray from `point` to the right crosses the closed `polyline`
 /// an odd number of times.
 fn crosses_odd(polyline: &[DVec2], point: DVec2) -> bool {
-    let mut odd = false;
-    let mut before = match polyline.last() {
-        Some(&last) => last,
-        None => return false,
-    };
-    for &at in polyline {
-        if (at.y > point.y) != (before.y > point.y) {
-            let x = before.x + (point.y - before.y) / (at.y - before.y) * (at.x - before.x);
-            if point.x < x {
-                odd = !odd;
-            }
-        }
-        before = at;
-    }
-    odd
+    closed_edges(polyline)
+        .filter_map(|(before, at)| crossing_x(before, at, point.y))
+        .filter(|&x| point.x < x)
+        .count()
+        % 2
+        == 1
+}
+
+/// The edges of the closed `polyline`, each from a point to the next,
+/// the first from its last point.
+fn closed_edges(polyline: &[DVec2]) -> impl Iterator<Item = (DVec2, DVec2)> + '_ {
+    let before = polyline.last().into_iter().chain(polyline);
+    before.copied().zip(polyline.iter().copied())
+}
+
+/// Where the edge from `before` to `at` crosses the horizontal line at
+/// `y`, if it does: one end above it, the other not.
+fn crossing_x(before: DVec2, at: DVec2, y: f64) -> Option<f64> {
+    ((at.y > y) != (before.y > y))
+        .then(|| before.x + (y - before.y) / (at.y - before.y) * (at.x - before.x))
 }
 
 impl Sketch {

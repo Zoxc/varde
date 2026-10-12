@@ -6,7 +6,7 @@ use std::fmt;
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
-use super::{Piece, Profiles, Region};
+use super::{Piece, Profiles, Region, closed_edges, crossing_x};
 use crate::{Id, MAX_CURVES};
 
 /// The most curve ids a [`RegionRef`] may hold, its outer loop's and its
@@ -116,19 +116,10 @@ impl Region {
             let y = min.y + (max.y - min.y) * k as f64 / (SCANLINES + 1) as f64;
             crossings.clear();
             for polyline in &self.outline {
-                let Some(&last) = polyline.last() else {
-                    continue;
-                };
-                let mut before = last;
                 // As `crosses_odd` counts them.
-                for &at in polyline {
-                    if (at.y > y) != (before.y > y) {
-                        crossings.push(
-                            before.x + (y - before.y) / (at.y - before.y) * (at.x - before.x),
-                        );
-                    }
-                    before = at;
-                }
+                crossings.extend(
+                    closed_edges(polyline).filter_map(|(before, at)| crossing_x(before, at, y)),
+                );
             }
             crossings.sort_by(f64::total_cmp);
             let widest = crossings
@@ -152,11 +143,7 @@ impl Region {
     fn clearance(&self, point: DVec2) -> f64 {
         let mut nearest = f64::INFINITY;
         for polyline in &self.outline {
-            let Some(&last) = polyline.last() else {
-                continue;
-            };
-            let mut before = last;
-            for &at in polyline {
+            for (before, at) in closed_edges(polyline) {
                 let edge = at - before;
                 let along = (point - before).dot(edge) / edge.length_squared();
                 let foot = if along.is_finite() {
@@ -165,7 +152,6 @@ impl Region {
                     before
                 };
                 nearest = nearest.min(point.distance(foot));
-                before = at;
             }
         }
         nearest
