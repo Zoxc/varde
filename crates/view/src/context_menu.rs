@@ -4,7 +4,7 @@
 
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
-use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use iced::{Element, Event, Point, Rectangle, Size, Vector};
 
 use crate::Message;
 
@@ -44,6 +44,11 @@ struct State {
 }
 
 impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenu<'_> {
+    crate::wrap::pass_to!(
+        content, iced::Theme, iced::Renderer;
+        size, size_hint, layout, mouse_interaction, draw, operate
+    );
+
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<State>()
     }
@@ -67,23 +72,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenu<'_> {
         if self.menu.is_none() {
             tree.state.downcast_mut::<State>().at = None;
         }
-    }
-
-    fn size(&self) -> Size<Length> {
-        self.content.as_widget().size()
-    }
-
-    fn size_hint(&self) -> Size<Length> {
-        self.content.as_widget().size_hint()
-    }
-
-    fn layout(
-        &mut self,
-        tree: &mut Tree,
-        renderer: &iced::Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
-        (self.content.as_widget_mut()).layout(&mut tree.children[0], renderer, limits)
     }
 
     fn update(
@@ -117,54 +105,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenu<'_> {
             shell.publish(self.on_open.clone());
             shell.capture_event();
         }
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &iced::Renderer,
-    ) -> mouse::Interaction {
-        self.content.as_widget().mouse_interaction(
-            &tree.children[0],
-            layout,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn draw(
-        &self,
-        tree: &Tree,
-        renderer: &mut iced::Renderer,
-        theme: &iced::Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-    ) {
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn operate(
-        &mut self,
-        tree: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &iced::Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        (self.content.as_widget_mut()).operate(&mut tree.children[0], layout, renderer, operation);
     }
 
     fn overlay<'b>(

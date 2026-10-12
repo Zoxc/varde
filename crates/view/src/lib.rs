@@ -72,6 +72,7 @@ mod view_choices;
 mod view_cube;
 mod viewport;
 mod welcome;
+mod wrap;
 
 use std::path::PathBuf;
 
