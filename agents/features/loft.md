@@ -171,7 +171,7 @@ and the Bodies list.
   knobs' puck, in the count's teal, its arrow along the outer loop
   towards the next corner), picking or not, while the loft can be
   changed: it takes the mouse ahead of what the loft picks and the model
-  (`viewport/motion.rs`, `SeamInput`, `seam_pucks`; a grab hand over
+  (`viewport/motion/loft.rs`, `SeamInput`, `seam_pucks`; a grab hand over
   it, the model's hover let go of); pressed and dragged, the section's
   start goes to its corner nearest the cursor on the screen, each corner
   reached sent once (`MotionLook::LoftStart`), its section's corners

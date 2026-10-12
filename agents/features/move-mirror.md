@@ -261,7 +261,7 @@ whose angle is zero shows its axis only while it's being picked. The
 labels' layer is an empty placeholder: the handles are drawn by the
 renderer with the rest.
 
-**A move's handles** (`viewport/motion.rs`, question 13's decision: typed
+**A move's handles** (`viewport/motion/handles.rs`, question 13's decision: typed
 fields and handles): at a pivot of the bodies (`MotionState::centre`):
 the centre of their box in the model shown (`MotionState::bounds`,
 merged bodies as their holders) found once, taken back through the move

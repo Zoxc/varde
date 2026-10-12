@@ -549,7 +549,9 @@ but 540 px wide and, while an operation's panel shows, left of it
 (`PANEL_MARGIN + PANEL_WIDTH + PANEL_MARGIN` in from the right); a
 narrow viewport narrows it, 12 px clear of its left.
 
-A move's handles (`viewport/motion.rs`, `Moving`; their look and
+A move's handles (`viewport/motion/handles.rs`, on `Moving` from `viewport/motion.rs`,
+which keeps the shared state and dispatch beside a module per kind:
+`split.rs`, `sweep.rs`, `loft.rs`, `marks.rs`; their look and
 what they set in `agents/features/move-mirror.md`, Move and mirror) are drawn in the
 live layer on top of the model and hit tested in the `Program`, not as
 widgets: the rings are curves on the screen. `Moving::mouse` runs

@@ -3,12 +3,21 @@ use iced::{Event, Size};
 use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 
+use glam::DVec3;
+use iced::Point;
+use varde_document::Axis3;
+use varde_sketch::angle;
+
+use super::handles::{ORB_PIXELS, turned_about};
 use super::*;
+use crate::Look;
 use crate::motion::PatternMode;
+use crate::motion::{MotionLook, MotionPick, SplitView};
 use crate::operation_panel::TypedField;
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
 use crate::theme::Mode;
+use crate::viewport::handle::angle_step;
 use crate::viewport::{Interaction, ModelPicking, Operating, Program, program};
 
 fn field(value: f64) -> TypedField<'static> {

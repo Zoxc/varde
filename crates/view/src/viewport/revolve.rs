@@ -29,7 +29,7 @@ use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::{Curve, Sketch, angle};
 
 use super::handle::{self, Puck};
-use super::motion::{angle_step, wrapped};
+use super::handle::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
 use super::sketch_pick::HIT_PIXELS;

@@ -22,7 +22,7 @@ use varde_render::{Camera, SketchLayer};
 use varde_sketch::angle;
 
 use super::handle::{self, Puck};
-use super::motion::{angle_step, wrapped};
+use super::handle::{angle_step, wrapped};
 use crate::extrude::snap_step;
 use crate::motion::{KnobPath, KnobRadius, KnobSnap, MotionLook, OpKnob};
 use crate::projection::Projector;
