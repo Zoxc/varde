@@ -555,27 +555,16 @@ impl MotionSession {
         self.field(field).error.as_ref()
     }
 
-    /// Takes the world axis `axis` as a move's or pattern's axis, the
-    /// clicks handed back to the bodies, or a sweep's helix's, the
-    /// clicks going to nothing (its helix shows as set up).
+    /// Takes the world axis `axis` as a move's or pattern's axis, or a
+    /// sweep's helix's ([`MotionSession::take_reference`]).
     pub(crate) fn origin_axis(&mut self, axis: Axis3) {
-        self.axis = Some(AxisRef::Origin(axis));
-        self.picking = if self.kind == MotionKind::Sweep {
-            MotionPick::Nothing
-        } else {
-            MotionPick::Bodies
-        };
+        self.take_reference(Reference::Axis(AxisRef::Origin(axis)));
     }
 
     /// Takes the origin plane `plane` as a mirror's plane or a draft's
-    /// neutral plane, the clicks handed back to the bodies or the faces.
+    /// neutral plane ([`MotionSession::take_reference`]).
     pub(crate) fn origin_plane(&mut self, plane: varde_document::OriginPlane) {
-        self.plane = Some(PlaneRef::Origin(plane));
-        self.picking = if self.kind.picks_faces() {
-            MotionPick::Faces
-        } else {
-            MotionPick::Bodies
-        };
+        self.take_reference(Reference::Plane(PlaneRef::Origin(plane)));
     }
 
     /// Sets a pattern's mode, if its kind offers it: whether it does.
