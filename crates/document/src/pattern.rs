@@ -244,7 +244,7 @@ impl Pattern {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), MotionError> {
-        check_bodies(&self.bodies)?;
+        check_bodies(&self.bodies).map_err(MotionError::Bodies)?;
         (self.kind.count_value())
             .check(&Pattern::count_ask(design))
             .map_err(|_| MotionError::Count)?;
@@ -269,7 +269,7 @@ impl Pattern {
                 .map_err(|_| MotionError::Angle)?,
         }
         if let Some(referred) = self.kind.axis().refers() {
-            referred.check_own()?;
+            referred.check_own().map_err(MotionError::Ref)?;
         }
         Ok(())
     }

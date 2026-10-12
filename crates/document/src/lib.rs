@@ -54,7 +54,7 @@ pub use fillet::{Fillet, FilletError};
 pub use loft::{
     Loft, LoftError, LoftMode, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
-pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
+pub use motion::{Axis3, AxisRef, BodiesError, Mirror, MotionError, Move, PlaneRef, RefError};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};
@@ -844,7 +844,7 @@ impl Document {
     /// sets up one the document takes.
     pub fn check_axis_ref(&self, index: usize, axis: &AxisRef) -> Result<(), MotionError> {
         if let Some(referred) = axis.refers() {
-            referred.check_own()?;
+            referred.check_own().map_err(MotionError::Ref)?;
         }
         self.check_motion(index, &[], axis.refers())
     }
@@ -853,7 +853,7 @@ impl Document {
     /// name it, as [`Document::check_axis_ref`] does a move's axis.
     pub fn check_plane_ref(&self, index: usize, plane: &PlaneRef) -> Result<(), MotionError> {
         if let Some(referred) = plane.refers() {
-            referred.check_own()?;
+            referred.check_own().map_err(MotionError::Ref)?;
         }
         self.check_motion(index, &[], plane.refers())
     }

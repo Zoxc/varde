@@ -107,17 +107,17 @@ fn bodies_are_bounded_sorted_and_made_before() {
     refused(
         &mut editor,
         shift(&document, &[], ["1", "0", "0"]).into(),
-        MotionError::Bodies(0),
+        MotionError::Bodies(BodiesError::Count(0)),
     );
     refused(
         &mut editor,
         shift(&document, &[b, a], ["1", "0", "0"]).into(),
-        MotionError::BodyOrder,
+        MotionError::Bodies(BodiesError::Order),
     );
     refused(
         &mut editor,
         mirror(&[a, a], plane).into(),
-        MotionError::BodyOrder,
+        MotionError::Bodies(BodiesError::Order),
     );
     let many: Vec<BodyId> = (0..=MAX_FEATURE_BODIES as u64)
         .map(|k| BodyId(1000 + k))
@@ -125,7 +125,7 @@ fn bodies_are_bounded_sorted_and_made_before() {
     refused(
         &mut editor,
         mirror(&many, plane).into(),
-        MotionError::Bodies(MAX_FEATURE_BODIES + 1),
+        MotionError::Bodies(BodiesError::Count(MAX_FEATURE_BODIES + 1)),
     );
     let missing = BodyId(document.next_id + 3);
     refused(
@@ -197,15 +197,18 @@ fn offsets_and_angles_are_checked() {
     turned.turn = Some((AxisRef::Edge(edge), angle(document, "30")));
     assert_eq!(
         turned.check_own(&design),
-        Err(MotionError::Edge(EdgeError::Faces))
+        Err(MotionError::Ref(RefError::Edge(EdgeError::Faces)))
     );
     let mut far = face(a, first);
     far.near.x = f64::INFINITY;
     turned.turn = Some((AxisRef::Face(far), angle(document, "30")));
-    assert_eq!(turned.check_own(&design), Err(MotionError::Near(far.near)));
+    assert_eq!(
+        turned.check_own(&design),
+        Err(MotionError::Ref(RefError::Near(far.near)))
+    );
     assert_eq!(
         mirror(&[a], PlaneRef::Face(far)).check_own(),
-        Err(MotionError::Near(far.near))
+        Err(MotionError::Ref(RefError::Near(far.near)))
     );
 }
 
@@ -420,7 +423,7 @@ fn a_move_and_a_mirror_are_the_fifth_and_sixth_kinds() {
 #[test]
 fn errors_say_what_is_wrong() {
     assert_eq!(
-        MotionError::Bodies(300).to_string(),
+        MotionError::Bodies(BodiesError::Count(300)).to_string(),
         "names 300 bodies, not 1 to 256"
     );
     assert_eq!(
@@ -428,7 +431,7 @@ fn errors_say_what_is_wrong() {
         "its axis or plane is on body 4, which isn't made before it"
     );
     assert_eq!(
-        MotionError::Edge(EdgeError::Faces).to_string(),
+        MotionError::Ref(RefError::Edge(EdgeError::Faces)).to_string(),
         "its axis: its edge's faces are out of order or the same"
     );
     assert_eq!(Axis3::Y.name(), "Y");

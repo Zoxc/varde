@@ -4,8 +4,8 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
-    Axis3, CheckError, Command, Document, EdgeError, EdgeRef, EditError, Editor, FaceRef,
-    FeatureId, FeatureKind, LengthUnit, MAX_FEATURE_BODIES, Removable,
+    Axis3, BodiesError, CheckError, Command, Document, EdgeError, EdgeRef, EditError, Editor,
+    FaceRef, FeatureId, FeatureKind, LengthUnit, MAX_FEATURE_BODIES, RefError, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -174,16 +174,18 @@ fn counts_spacings_and_angles_are_checked() {
     // Bodies as a move's.
     assert_eq!(
         linear(&document, &[], "2", "1").check_own(&design),
-        Err(MotionError::Bodies(0))
+        Err(MotionError::Bodies(BodiesError::Count(0)))
     );
     assert_eq!(
         linear(&document, &[a, a], "2", "1").check_own(&design),
-        Err(MotionError::BodyOrder)
+        Err(MotionError::Bodies(BodiesError::Order))
     );
     let many: Vec<BodyId> = (0..=MAX_FEATURE_BODIES as u64).map(BodyId).collect();
     assert_eq!(
         linear(&document, &many, "2", "1").check_own(&design),
-        Err(MotionError::Bodies(MAX_FEATURE_BODIES + 1))
+        Err(MotionError::Bodies(BodiesError::Count(
+            MAX_FEATURE_BODIES + 1
+        )))
     );
     // An axis edge's own parts.
     let key = FaceKey {
@@ -199,7 +201,7 @@ fn counts_spacings_and_angles_are_checked() {
     });
     assert_eq!(
         edged.check_own(&design),
-        Err(MotionError::Edge(EdgeError::Faces))
+        Err(MotionError::Ref(RefError::Edge(EdgeError::Faces)))
     );
 }
 

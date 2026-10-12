@@ -42,12 +42,14 @@ pub enum PlaneRef { Origin(OriginPlane), Face(FaceRef) }
   mirrored in its own face).
 - **Checks** (`CheckError::Move` / `Mirror(id, MotionError)`):
   `Move::check_own(design)` / `Mirror::check_own()` (cheap, for a
-  panel): 1 to 256 bodies (`Bodies(n)`), sorted without repeats
-  (`BodyOrder`), each offset a length `Move::offset_ask` takes (within
+  panel): 1 to 256 bodies, sorted without repeats
+  (`check_bodies`: `Bodies(BodiesError::Count(n) | Order)`, shared with
+  pattern and scale), each offset a length `Move::offset_ask` takes (within
   `MAX_COORD` of zero; zero and negative allowed: `Offset`), the angle
   one `Move::angle_ask` takes (within a turn either way: `Angle`), an
-  axis edge's own check (`Edge`) and a face's point finite and within
-  `MAX_COORD` (`Near`). `Document::check` then wants every body moved
+  axis edge's own check and a face's point finite and within
+  `MAX_COORD` (`Referred::check_own`: `Ref(RefError::Edge | Near)`, shared
+  with pattern, a sweep's helix axis and align's directions). `Document::check` then wants every body moved
   there and made by a feature before it (`Body(id)`, as a combine's: an
   edit making its maker stop making it is refused), and the axis's or
   plane's body and faces' makers before it, or not there with ids no

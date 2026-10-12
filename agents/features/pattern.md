@@ -75,13 +75,12 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
   round model edges, round faces, found on the bodies as the features
   before it leave them).
 - **Checks** (`CheckError::Pattern(id, MotionError)`):
-  `Pattern::check_own(design)`: bodies as a move's (`Bodies`,
-  `BodyOrder`), the count by `Pattern::count_ask` (`Ask::number(…,
+  `Pattern::check_own(design)`: bodies as a move's (`Bodies(BodiesError)`), the count by `Pattern::count_ask` (`Ask::number(…,
   1024).whole().at_least(2)`: `Count`), a linear spacing by
   `Pattern::spacing_ask` (a length within `MAX_COORD` of zero) and not
   zero (`Spacing`), a circular angle by `Pattern::angle_ask` (above zero,
   at most a turn: `Angle`), unjoined at most `MAX_PATTERN_BODIES` copy
-  bodies (`Separate(n)`), the axis's own parts (`Edge`, `Near`).
+  bodies (`Separate(n)`), the axis's own parts (`Ref(RefError)`).
   `Document::check` then wants the bodies made before it (`Body`) and
   the axis's body and makers before it (`RefBody`, `RefMaker`), as a
   move's, and its copy bodies as laid out (`CopyBodies`): joined, no

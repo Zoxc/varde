@@ -142,10 +142,10 @@ pub(crate) enum Referred<'a> {
 impl Referred<'_> {
     /// Checks what needs only the reference: an edge's
     /// [`EdgeRef::check_own`], a face's point in bounds.
-    pub(crate) fn check_own(&self) -> Result<(), MotionError> {
+    pub(crate) fn check_own(&self) -> Result<(), RefError> {
         match self {
-            Referred::Edge(edge) => edge.check_own().map_err(MotionError::Edge),
-            Referred::Face(face) => face.check_own().map_err(|_| MotionError::Near(face.near)),
+            Referred::Edge(edge) => edge.check_own().map_err(RefError::Edge),
+            Referred::Face(face) => face.check_own().map_err(|_| RefError::Near(face.near)),
         }
     }
 
@@ -168,15 +168,66 @@ impl Referred<'_> {
 
 /// Checks a feature's body list: `1..=`[`MAX_FEATURE_BODIES`], sorted
 /// without repeats.
-pub(crate) fn check_bodies(bodies: &[BodyId]) -> Result<(), MotionError> {
+pub(crate) fn check_bodies(bodies: &[BodyId]) -> Result<(), BodiesError> {
     let count = bodies.len();
     if !(1..=MAX_FEATURE_BODIES).contains(&count) {
-        return Err(MotionError::Bodies(count));
+        return Err(BodiesError::Count(count));
     }
     if !bodies.windows(2).all(|pair| pair[0] < pair[1]) {
-        return Err(MotionError::BodyOrder);
+        return Err(BodiesError::Order);
     }
     Ok(())
+}
+
+/// What's wrong with a feature's body list, see [`check_bodies`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BodiesError {
+    /// It names this many bodies: none, or over [`MAX_FEATURE_BODIES`].
+    Count(usize),
+    /// Its bodies aren't sorted, or one is repeated.
+    Order,
+}
+
+impl fmt::Display for BodiesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BodiesError::Count(count) => {
+                write!(f, "names {count} bodies, not 1 to {MAX_FEATURE_BODIES}")
+            }
+            BodiesError::Order => f.write_str("its bodies are out of order or repeated"),
+        }
+    }
+}
+
+impl std::error::Error for BodiesError {}
+
+/// What's wrong with an axis's or plane's edge or face on its own, see
+/// [`Referred::check_own`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RefError {
+    /// Its edge fails its own check ([`EdgeRef::check_own`]).
+    Edge(EdgeError),
+    /// Its face's point isn't finite, or is further from zero than
+    /// [`MAX_COORD`].
+    Near(DVec3),
+}
+
+impl fmt::Display for RefError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RefError::Edge(why) => write!(f, "its axis: {why}"),
+            RefError::Near(at) => write!(f, "its face's point {at} is out of bounds"),
+        }
+    }
+}
+
+impl std::error::Error for RefError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            RefError::Edge(why) => Some(why),
+            RefError::Near(_) => None,
+        }
+    }
 }
 
 impl Move {
@@ -205,7 +256,7 @@ impl Move {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view, as [`Extrude::check_own`](crate::Extrude::check_own).
     pub fn check_own(&self, design: &Design) -> Result<(), MotionError> {
-        check_bodies(&self.bodies)?;
+        check_bodies(&self.bodies).map_err(MotionError::Bodies)?;
         let ask = Move::offset_ask(design);
         for value in &self.offset {
             value.check(&ask).map_err(|_| MotionError::Offset)?;
@@ -215,7 +266,7 @@ impl Move {
                 .check(&Move::angle_ask(design))
                 .map_err(|_| MotionError::Angle)?;
             if let Some(referred) = axis.refers() {
-                referred.check_own()?;
+                referred.check_own().map_err(MotionError::Ref)?;
             }
         }
         Ok(())
@@ -237,9 +288,9 @@ impl Mirror {
     /// face plane's point. What the bodies and the face name is
     /// [`Document::check`](crate::Document::check)'s.
     pub fn check_own(&self) -> Result<(), MotionError> {
-        check_bodies(&self.bodies)?;
+        check_bodies(&self.bodies).map_err(MotionError::Bodies)?;
         if let Some(referred) = self.plane.refers() {
-            referred.check_own()?;
+            referred.check_own().map_err(MotionError::Ref)?;
         }
         Ok(())
     }
@@ -256,10 +307,8 @@ impl Mirror {
 /// [`CheckError::Pattern`](crate::CheckError::Pattern).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MotionError {
-    /// It names this many bodies: none, or over [`MAX_FEATURE_BODIES`].
-    Bodies(usize),
-    /// Its bodies aren't sorted, or one is repeated.
-    BodyOrder,
+    /// Its body list is wrong ([`check_bodies`]).
+    Bodies(BodiesError),
     /// It names this body, which isn't there or which no feature before
     /// it makes.
     Body(BodyId),
@@ -287,11 +336,8 @@ pub enum MotionError {
     /// them out: not one per copy, repeated, not the pattern's own, or a
     /// body it makes isn't listed (or a joined one makes bodies).
     CopyBodies,
-    /// Its axis edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
-    /// Its axis's or plane's face's point isn't finite, or is further
-    /// from zero than [`MAX_COORD`].
-    Near(DVec3),
+    /// Its axis's edge or face, or its plane's face, fails its own check.
+    Ref(RefError),
     /// Its axis's or plane's body, this one, is made by the feature or one
     /// after it, or isn't there and has an id a body made later could
     /// take.
@@ -305,10 +351,7 @@ pub enum MotionError {
 impl fmt::Display for MotionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MotionError::Bodies(count) => {
-                write!(f, "names {count} bodies, not 1 to {MAX_FEATURE_BODIES}")
-            }
-            MotionError::BodyOrder => f.write_str("its bodies are out of order or repeated"),
+            MotionError::Bodies(why) => why.fmt(f),
             MotionError::Body(body) => write!(
                 f,
                 "names body {}, which isn't there or no earlier feature makes",
@@ -328,8 +371,7 @@ impl fmt::Display for MotionError {
             MotionError::CopyBodies => {
                 f.write_str("its copy bodies aren't one of its own per copy")
             }
-            MotionError::Edge(why) => write!(f, "its axis: {why}"),
-            MotionError::Near(at) => write!(f, "its face's point {at} is out of bounds"),
+            MotionError::Ref(why) => why.fmt(f),
             MotionError::RefBody(body) => write!(
                 f,
                 "its axis or plane is on body {}, which isn't made before it",
@@ -347,7 +389,8 @@ impl fmt::Display for MotionError {
 impl std::error::Error for MotionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            MotionError::Edge(why) => Some(why),
+            MotionError::Bodies(why) => Some(why),
+            MotionError::Ref(why) => Some(why),
             _ => None,
         }
     }

@@ -179,7 +179,7 @@ fn bodies_and_references_are_checked() {
             bodies: vec![],
             ..good.clone()
         },
-        ScaleError::Bodies(0),
+        ScaleError::Bodies(BodiesError::Count(0)),
     );
     refused(
         &mut editor,
@@ -187,7 +187,7 @@ fn bodies_and_references_are_checked() {
             bodies: vec![b, a],
             ..good.clone()
         },
-        ScaleError::BodyOrder,
+        ScaleError::Bodies(BodiesError::Order),
     );
     let missing = BodyId(document.next_id + 3);
     refused(

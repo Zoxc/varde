@@ -12,8 +12,8 @@ use varde_expr::{Ask, Value};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
 use crate::{
-    AxisRef, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, MotionError, Operation,
-    OperationError,
+    AxisRef, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, Operation, OperationError,
+    RefError,
 };
 
 /// The most regions one sweep may take, as an extrude's.
@@ -365,7 +365,7 @@ pub enum SweepError {
     /// A helix sweep keeps its orientation or has a twist.
     HelixOptions,
     /// Its helix's axis fails its own check, as a move's would.
-    Axis(MotionError),
+    Axis(RefError),
     /// Its helix's axis's body, this one, isn't there or no feature
     /// before it makes it.
     AxisBody(BodyId),

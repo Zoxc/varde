@@ -10,7 +10,9 @@ use varde_expr::Value;
 use varde_kernel::mesh::FaceKey;
 
 use crate::motion::Referred;
-use crate::{Axis3, AxisRef, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, Move};
+use crate::{
+    Axis3, AxisRef, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, Move, RefError,
+};
 
 /// An align: `body` moved so `from`, picked on it, meets `to`, picked on
 /// bodies features before it make (not `body`) or the origin. The point
@@ -150,13 +152,13 @@ impl DirRef {
 
     /// Checks what needs only the reference, as [`PointRef::check_own`].
     pub fn check_own(&self) -> Result<(), AlignError> {
-        match self.refers() {
-            Some(Referred::Edge(edge)) => edge.check_own().map_err(AlignError::Edge),
-            Some(Referred::Face(face)) => {
-                (face.check_own()).map_err(|_| AlignError::Near(face.near))
-            }
-            None => Ok(()),
-        }
+        let Some(referred) = self.refers() else {
+            return Ok(());
+        };
+        referred.check_own().map_err(|why| match why {
+            RefError::Edge(why) => AlignError::Edge(why),
+            RefError::Near(near) => AlignError::Near(near),
+        })
     }
 }
 

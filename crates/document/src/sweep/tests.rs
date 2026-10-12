@@ -375,7 +375,7 @@ fn its_own_parts_are_checked() {
     }
     assert!(matches!(
         check_helix(&|s| helix_of(s).axis = AxisRef::Edge(swapped)),
-        Err(SweepError::Axis(MotionError::Edge(EdgeError::Faces)))
+        Err(SweepError::Axis(RefError::Edge(EdgeError::Faces)))
     ));
 }
 
@@ -695,7 +695,7 @@ fn errors_say_what_is_wrong() {
         "its path names 1025 curves and edges, more than 1024"
     );
     assert_eq!(
-        SweepError::Axis(MotionError::Edge(EdgeError::Faces)).to_string(),
+        SweepError::Axis(RefError::Edge(EdgeError::Faces)).to_string(),
         "its helix: its axis: its edge's faces are out of order or the same"
     );
 }

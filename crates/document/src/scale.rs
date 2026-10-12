@@ -7,10 +7,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::motion::check_bodies;
-use crate::{
-    AlignError, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, MotionError, PointRef,
-};
+use crate::motion::{BodiesError, check_bodies};
+use crate::{AlignError, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, PointRef};
 
 /// The largest factor a scale takes, and the inverse of the smallest:
 /// `1e-3 ..= 1e3`, whether typed or worked out from an edge's length.
@@ -89,10 +87,7 @@ impl Scale {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), ScaleError> {
-        check_bodies(&self.bodies).map_err(|why| match why {
-            MotionError::Bodies(count) => ScaleError::Bodies(count),
-            _ => ScaleError::BodyOrder,
-        })?;
+        check_bodies(&self.bodies).map_err(ScaleError::Bodies)?;
         self.about.check_own().map_err(ScaleError::About)?;
         let factor = Scale::factor_ask(design);
         match &self.factor {
@@ -139,11 +134,8 @@ impl Scale {
 /// [`CheckError::Scale`](crate::CheckError::Scale).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScaleError {
-    /// It names this many bodies: none, or over
-    /// [`MAX_FEATURE_BODIES`](crate::MAX_FEATURE_BODIES).
-    Bodies(usize),
-    /// Its bodies aren't sorted, or one is repeated.
-    BodyOrder,
+    /// Its body list is wrong, as a move's would be.
+    Bodies(BodiesError),
     /// It scales this body, which isn't there or which no feature before
     /// it makes.
     Body(BodyId),
@@ -172,12 +164,7 @@ pub enum ScaleError {
 impl fmt::Display for ScaleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ScaleError::Bodies(count) => write!(
-                f,
-                "names {count} bodies, not 1 to {}",
-                crate::MAX_FEATURE_BODIES
-            ),
-            ScaleError::BodyOrder => f.write_str("its bodies are out of order or repeated"),
+            ScaleError::Bodies(why) => why.fmt(f),
             ScaleError::Body(body) => write!(
                 f,
                 "scales body {}, which isn't there or no earlier feature makes",
