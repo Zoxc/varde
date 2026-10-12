@@ -95,11 +95,8 @@ impl Persist {
             target,
             creating,
             saved_revision,
-            auto_save: AutoSave {
-                // What it was loaded as is saved, or in its store entry.
-                sent: Some(revision),
-                ..AutoSave::default()
-            },
+            // What it was loaded as is saved, or in its store entry.
+            auto_save: AutoSave::at(revision),
             recovered,
             damaged_file: damage.is_some_and(|damage| damage.kept_as_it_is()),
             damage: damage.filter(FileDamage::has_banner),
@@ -344,6 +341,15 @@ pub(crate) struct AutoSave {
 }
 
 impl AutoSave {
+    /// Known to be where an auto-save of `revision` would be, with no
+    /// change waiting.
+    pub(crate) fn at(revision: Revision) -> Self {
+        Self {
+            sent: Some(revision),
+            since: None,
+        }
+    }
+
     /// Whether to auto-save `revision` at `now`, if it's `wanted` at all,
     /// once `wait` has passed since the first change not auto-saved was
     /// seen. Once it says so, it's taken to be sent.
@@ -379,6 +385,14 @@ impl AutoSave {
     pub(crate) fn not_saved(&mut self, revision: Revision) {
         if self.sent == Some(revision) {
             self.sent = None;
+        }
+    }
+
+    /// The document moved from revision `was` to `now` without changing:
+    /// if `was` was auto-saved, so is `now`.
+    pub(crate) fn moved(&mut self, was: Revision, now: Revision) {
+        if self.sent == Some(was) {
+            self.sent = Some(now);
         }
     }
 }
@@ -534,9 +548,7 @@ impl Doc {
         if self.persist.saved_revision == Some(was) {
             self.persist.saved_revision = Some(now);
         }
-        if self.persist.auto_save.sent == Some(was) {
-            self.persist.auto_save.sent = Some(now);
-        }
+        self.persist.auto_save.moved(was, now);
     }
 
     /// The editor revision last saved, see [`Persist::saved_revision`].
@@ -823,10 +835,7 @@ impl Doc {
             return;
         }
         io.send(IoRequest::DiscardRecovery { file });
-        self.persist.auto_save = AutoSave {
-            sent: Some(revision),
-            ..AutoSave::default()
-        };
+        self.persist.auto_save = AutoSave::at(revision);
     }
 
     /// Where to auto-save the document to, if it's to be auto-saved at
@@ -844,10 +853,7 @@ impl Doc {
             revision,
             document: self.editor.snapshot(),
         });
-        self.persist.auto_save = AutoSave {
-            sent: Some(revision),
-            ..AutoSave::default()
-        };
+        self.persist.auto_save = AutoSave::at(revision);
     }
 
     /// The answer to an auto-save to `file`, if it's still where the

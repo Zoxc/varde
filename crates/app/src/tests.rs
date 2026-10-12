@@ -2386,10 +2386,7 @@ const SECOND: Duration = Duration::from_secs(1);
 fn auto_save_comes_a_minute_after_the_first_change() {
     let start = Instant::now();
     let at = |seconds: u64| start + SECOND * seconds as u32;
-    let mut auto_save = AutoSave {
-        sent: Some(Revision::from(0)),
-        ..AutoSave::default()
-    };
+    let mut auto_save = AutoSave::at(Revision::from(0));
     assert_eq!(AUTO_SAVE_WAIT, SECOND * 60);
     // Nothing edited.
     assert!(!auto_save.due(Revision::from(0), true, at(0), AUTO_SAVE_WAIT));
@@ -2428,10 +2425,7 @@ fn auto_save_waits_as_chosen() {
         let wait_for = SECOND * wait as u32;
         let start = Instant::now();
         let at = |seconds: u64| start + SECOND * seconds as u32;
-        let mut auto_save = AutoSave {
-            sent: Some(Revision::from(0)),
-            ..AutoSave::default()
-        };
+        let mut auto_save = AutoSave::at(Revision::from(0));
         // One edit, then nothing.
         assert!(!auto_save.due(Revision::from(1), true, at(10), wait_for));
         for second in 11..10 + wait {
