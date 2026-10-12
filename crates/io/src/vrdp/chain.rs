@@ -208,17 +208,13 @@ impl Chain {
     /// none and nothing is damaged; none with damage is
     /// [`Error::Corrupt`].
     pub(super) fn open<P: Payload>(&self, bytes: &[u8]) -> Result<Option<Opened<P>>> {
-        let found = match self.end {
-            End::Searched(found) => found,
-            _ => None,
-        };
+        let found = self.searched();
         let Some(record) = self.records.last().copied().or(found) else {
             return match self.damage {
                 Some(offset) => Err(Error::Corrupt { offset }),
                 None => Ok(None),
             };
         };
-        let (payload, time) = decode_record(bytes, &record)?;
         let outcome = match self.end {
             End::Searched(found) => Outcome::Damaged {
                 found: found
@@ -233,43 +229,51 @@ impl Chain {
             End::Torn => Outcome::TornTail,
             End::File => Outcome::Intact,
         };
-        Ok(Some(Opened {
-            payload,
-            id: self.id,
-            // `None` with no record in the chain, opening the search's
-            // newest, which is never saved to.
-            before: self.before_newest,
-            tail: record.tail(),
-            report: Report {
-                outcome,
-                time,
-                unreadable: self.unreadable,
-            },
-        }))
+        // `before` is `None` with no record in the chain, opening the
+        // search's newest, which is never saved to.
+        self.opened(bytes, &record, self.before_newest, outcome)
+            .map(Some)
     }
-}
 
-impl Chain {
     /// The newest record the search found past damage, and what it holds,
     /// read from `bytes`, all of the file, if [`Chain::open`] opened
     /// another, the newest the chain proves, and it decodes: the file
     /// opened at it instead, as [`Outcome::Damaged`] with nothing else
     /// found.
     pub(super) fn open_found<P: Payload>(&self, bytes: &[u8]) -> Option<Opened<P>> {
-        let End::Searched(Some(found)) = self.end else {
-            return None;
-        };
+        let found = self.searched()?;
         // Otherwise the search's newest is what `open` opened.
         self.records.last()?;
-        let (payload, time) = decode_record(bytes, &found).ok()?;
-        Some(Opened {
+        // Never saved to, see [`Outcome::Damaged`].
+        let outcome = Outcome::Damaged { found: None };
+        self.opened(bytes, &found, None, outcome).ok()
+    }
+
+    /// The newest record the search found, if the chain ended in one.
+    fn searched(&self) -> Option<Block> {
+        match self.end {
+            End::Searched(found) => found,
+            _ => None,
+        }
+    }
+
+    /// `record`, decoded from `bytes`, all of the file, opened with
+    /// `before` and `outcome`.
+    fn opened<P: Payload>(
+        &self,
+        bytes: &[u8],
+        record: &Block,
+        before: Option<u64>,
+        outcome: Outcome,
+    ) -> Result<Opened<P>> {
+        let (payload, time) = decode_record(bytes, record)?;
+        Ok(Opened {
             payload,
             id: self.id,
-            // Never saved to, see [`Outcome::Damaged`].
-            before: None,
-            tail: found.tail(),
+            before,
+            tail: record.tail(),
             report: Report {
-                outcome: Outcome::Damaged { found: None },
+                outcome,
                 time,
                 unreadable: self.unreadable,
             },
