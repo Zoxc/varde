@@ -247,7 +247,7 @@ impl<'a> Moving<'a> {
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
-        let Some(loft) = &self.state.loft else {
+        let Some(loft) = self.state.loft() else {
             *input = SeamInput::default();
             return None;
         };
@@ -293,7 +293,7 @@ impl<'a> Moving<'a> {
     /// (regions, sketch points and its sections' corners) or its rails'
     /// curves. The model isn't picked meanwhile.
     pub(super) fn loft_picking(&self) -> Option<MotionPick> {
-        self.state.loft.as_ref()?;
+        self.state.loft()?;
         let picking = self.state.picking;
         (self.state.editable && matches!(picking, MotionPick::Regions | MotionPick::Path))
             .then_some(picking)
@@ -348,7 +348,7 @@ impl<'a> Moving<'a> {
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
-        let loft = self.state.loft.as_ref()?;
+        let loft = self.state.loft()?;
         match event {
             mouse::Event::CursorMoved { .. } => {
                 let over = local_cursor(bounds, cursor);

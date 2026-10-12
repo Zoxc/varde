@@ -54,7 +54,7 @@ pub(super) fn body<'a>(
     state: &MotionState<'a>,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(offset) = &state.offset_face else {
+    let Some(offset) = state.offset_face() else {
         return column![].into();
     };
     let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));

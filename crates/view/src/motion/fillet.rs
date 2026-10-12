@@ -25,7 +25,7 @@ pub(super) fn body<'a>(
     state: &MotionState<'a>,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(fillet) = &state.fillet else {
+    let Some(fillet) = state.fillet() else {
         return column![].into();
     };
     column![

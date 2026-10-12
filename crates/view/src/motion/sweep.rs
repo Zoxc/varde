@@ -109,7 +109,7 @@ pub(super) fn body<'a>(
     reference: Element<'a, Message>,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(sweep) = &state.sweep else {
+    let Some(sweep) = state.sweep() else {
         return column![].into();
     };
     let editable = state.editable;

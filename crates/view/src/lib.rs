@@ -108,10 +108,10 @@ pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, BlendFace,
     ChamferType, ChamferView, DraftView, FaceHandle, FilletView, KnobPath, KnobRadius, KnobScale,
     KnobSnap, KnobTone, LoftSection, LoftShape, LoftView, MotionField, MotionKind, MotionLook,
-    MotionPick, MotionState, OffsetFaceView, OpKnob, PatternMode, PickedFace, PickedFaces,
-    ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView,
-    SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name, pattern_copies,
-    plane_name, point_name, scale_info, split_info,
+    MotionParts, MotionPick, MotionState, OffsetFaceView, OpKnob, PatternMode, PickedFace,
+    PickedFaces, ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode,
+    SplitPiece, SplitView, SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name,
+    pattern_copies, plane_name, point_name, scale_info, split_info,
 };
 pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
 pub use naming::{Naming, Shown, Unnamed};

@@ -185,7 +185,7 @@ pub(super) fn body<'a>(
 ) -> Element<'a, Message> {
     let editable = state.editable;
     let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
-    let Some(split) = &state.split else {
+    let Some(split) = state.split() else {
         return body;
     };
     let modes = SplitMode::ALL.iter().map(|&mode| {

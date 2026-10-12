@@ -64,16 +64,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         accept: false,
         editable: true,
         hover: None,
-        align: None,
-        scale: None,
-        split: None,
-        chamfer: None,
-        shell: None,
-        fillet: None,
-        offset_face: None,
-        draft: None,
-        sweep: None,
-        loft: None,
+        parts: MotionParts::None,
         knobs: Vec::new(),
     }
 }
@@ -347,7 +338,7 @@ fn an_align_s_panel_has_its_sides_flip_and_offset() {
     let mut state = state_of(MotionKind::Align, vec![body("Body 2")]);
     state.reference = None;
     state.picking = MotionPick::Align(AlignSlot::new(AlignSide::Target, AlignRole::Point));
-    state.align = Some(Box::new(AlignView {
+    state.parts = MotionParts::Align(Box::new(AlignView {
         names: [
             [
                 Some("Centre of an edge of Body 2".to_owned()),
@@ -383,7 +374,7 @@ fn an_align_s_panel_has_its_sides_flip_and_offset() {
     }
     assert!(!has(&shown, "Translate") && !has(&shown, "Bodies"));
     assert_eq!(status_info(&state), "Body 2");
-    if let Some(align) = &mut state.align {
+    if let MotionParts::Align(align) = &mut state.parts {
         align.info = Some("Body 2 to Body 1".to_owned());
     }
     assert_eq!(status_info(&state), "Body 2 to Body 1");
@@ -486,7 +477,7 @@ fn a_scale_s_panel_has_its_point_modes_and_fields() {
         info: None,
         snaps: None,
     };
-    state.scale = Some(Box::new(view(ScaleMode::Uniform, true)));
+    state.parts = MotionParts::Scale(Box::new(view(ScaleMode::Uniform, true)));
     let shown = texts_of(&state);
     let order = [
         "New scale",
@@ -507,12 +498,12 @@ fn a_scale_s_panel_has_its_point_modes_and_fields() {
     assert!(has(&shown, "Per axis") && has(&shown, "Edge length"));
     assert!(!has(&shown, "Translate") && !has(&shown, "Edge of Body 1"));
 
-    state.scale = Some(Box::new(view(ScaleMode::PerAxis, true)));
+    state.parts = MotionParts::Scale(Box::new(view(ScaleMode::PerAxis, true)));
     let shown = texts_of(&state);
     assert!(["X", "Y", "Z"].iter().all(|axis| has(&shown, axis)));
     assert!(!has(&shown, "Factor"));
 
-    state.scale = Some(Box::new(view(ScaleMode::EdgeLength, true)));
+    state.parts = MotionParts::Scale(Box::new(view(ScaleMode::EdgeLength, true)));
     let shown = texts_of(&state);
     let order = ["Edge", "Edge of Body 1", "Length", "Along its axis only"];
     let mut y = f32::MIN;
@@ -525,11 +516,11 @@ fn a_scale_s_panel_has_its_point_modes_and_fields() {
     let edge = found(&shown, "Edge of Body 1").bounds;
     let length = found(&shown, "60 mm").bounds;
     assert!((length.y - edge.y).abs() < 4.0 && length.x > edge.x);
-    state.scale = Some(Box::new(view(ScaleMode::EdgeLength, false)));
+    state.parts = MotionParts::Scale(Box::new(view(ScaleMode::EdgeLength, false)));
     assert!(!has(&texts_of(&state), "Along its axis only"));
 
     assert_eq!(status_info(&state), "Body 1");
-    if let Some(scale) = &mut state.scale {
+    if let MotionParts::Scale(scale) = &mut state.parts {
         scale.info = Some("Body 1 ×2".to_owned());
     }
     assert_eq!(status_info(&state), "Body 1 ×2");
@@ -560,7 +551,7 @@ fn split_view(tool: Option<(&str, Option<&str>)>) -> SplitView<'static> {
 fn a_split_s_panel_has_its_body_tool_and_what_it_keeps() {
     let mut state = state_of(MotionKind::Split, vec![body("Body 1")]);
     state.reference = None;
-    state.split = Some(Box::new(split_view(Some(("Sketch 2", Some("2 regions"))))));
+    state.parts = MotionParts::Split(Box::new(split_view(Some(("Sketch 2", Some("2 regions"))))));
     let shown = texts_of(&state);
     let order = [
         "New split",
@@ -592,11 +583,11 @@ fn a_split_s_panel_has_its_body_tool_and_what_it_keeps() {
 
     // Picking its tool, with none yet: where to click.
     state.picking = MotionPick::Tool;
-    state.split = Some(Box::new(split_view(None)));
+    state.parts = MotionParts::Split(Box::new(split_view(None)));
     found(&texts_of(&state), "Click regions of a sketch");
 
     // The later features' warning, under which piece keeps the id.
-    if let Some(split) = &mut state.split {
+    if let MotionParts::Split(split) = &mut state.parts {
         split.later = Some("2 later features use Body 1: they'll get the back piece".to_owned());
     }
     let shown = texts_of(&state);
@@ -608,7 +599,7 @@ fn a_split_s_panel_has_its_body_tool_and_what_it_keeps() {
     assert!(warning.bounds.y < found(&shown, "Both").bounds.y);
 
     assert_eq!(status_info(&state), "Body 1");
-    if let Some(split) = &mut state.split {
+    if let MotionParts::Split(split) = &mut state.parts {
         split.info = Some("Body 1 by XY".to_owned());
     }
     state.need = None;
@@ -678,7 +669,7 @@ fn a_chamfer_s_panel_is_the_mock_s() {
         ("Edge 1", Some("60 mm"), false),
         ("Edge 2", Some("Ø16 mm"), true),
     ];
-    state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Equal)));
+    state.parts = MotionParts::Chamfer(Box::new(chamfer_view(&edges, ChamferType::Equal)));
     let shown = texts_of(&state);
     let order = [
         "New chamfer",
@@ -715,7 +706,7 @@ fn a_chamfer_s_panel_is_the_mock_s() {
     }
 
     // Two distances: Distance 1 and 2, then Flip sides.
-    state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Two)));
+    state.parts = MotionParts::Chamfer(Box::new(chamfer_view(&edges, ChamferType::Two)));
     state.picking = MotionPick::Nothing;
     let shown = texts_of(&state);
     assert!(!has(&shown, "Click edges or faces"), "not picking");
@@ -726,7 +717,7 @@ fn a_chamfer_s_panel_is_the_mock_s() {
         y = at;
     }
     // Distance and angle.
-    state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Angle)));
+    state.parts = MotionParts::Chamfer(Box::new(chamfer_view(&edges, ChamferType::Angle)));
     let shown = texts_of(&state);
     let mut y = f32::MIN;
     for text in ["Distance", "Angle", "Flip sides", "Tangent chain"] {
@@ -739,7 +730,7 @@ fn a_chamfer_s_panel_is_the_mock_s() {
     state.need = Some("pick the edges to chamfer");
     assert_eq!(status_info(&state), "pick the edges to chamfer");
     state.need = None;
-    if let Some(chamfer) = &mut state.chamfer {
+    if let MotionParts::Chamfer(chamfer) = &mut state.parts {
         chamfer.info = Some("2 edges · Equal · 1 mm · Tangent chain".to_owned());
     }
     assert_eq!(
@@ -760,7 +751,7 @@ fn a_fillet_s_panel_is_the_mock_s() {
         ("Edge 2", Some("Ø16 mm"), true),
     ];
     let edges = chamfer_view(&edges, ChamferType::Equal).edges;
-    state.fillet = Some(Box::new(FilletView { edges, info: None }));
+    state.parts = MotionParts::Fillet(Box::new(FilletView { edges, info: None }));
     let shown = texts_of(&state);
     let order = [
         "New fillet",
@@ -793,7 +784,7 @@ fn a_fillet_s_panel_is_the_mock_s() {
     state.need = Some("pick the edges to fillet");
     assert_eq!(status_info(&state), "pick the edges to fillet");
     state.need = None;
-    if let Some(fillet) = &mut state.fillet {
+    if let MotionParts::Fillet(fillet) = &mut state.parts {
         fillet.info = Some("2 edges · R2 mm · Tangent chain".to_owned());
     }
     assert_eq!(status_info(&state), "2 edges · R2 mm · Tangent chain");
@@ -835,7 +826,7 @@ fn a_shell_s_panel_is_the_mock_s() {
     state.reference = None;
     state.picking = MotionPick::Faces;
     let faces = [("Face 1", Some("Planar face")), ("Face 2", None)];
-    state.shell = Some(Box::new(shell_view(&faces, ShellDirection::Inward)));
+    state.parts = MotionParts::Shell(Box::new(shell_view(&faces, ShellDirection::Inward)));
     let shown = texts_of(&state);
     let order = [
         "New shell",
@@ -866,7 +857,7 @@ fn a_shell_s_panel_is_the_mock_s() {
     state.picking = MotionPick::Nothing;
     assert!(!has(&texts_of(&state), "Click faces"));
     // None: where to click, and the mock's warning in the foot.
-    state.shell = Some(Box::new(shell_view(&[], ShellDirection::Outward)));
+    state.parts = MotionParts::Shell(Box::new(shell_view(&[], ShellDirection::Outward)));
     let warning = "No faces removed: the body becomes closed and hollow";
     state.warning = Some(warning.to_owned());
     let shown = texts_of(&state);
@@ -879,7 +870,7 @@ fn a_shell_s_panel_is_the_mock_s() {
         "pick faces to remove, or the body to hollow"
     );
     state.need = None;
-    if let Some(shell) = &mut state.shell {
+    if let MotionParts::Shell(shell) = &mut state.parts {
         shell.info = Some("Closed · 2 mm outward".to_owned());
     }
     assert_eq!(status_info(&state), "Closed · 2 mm outward");
@@ -895,7 +886,7 @@ fn an_offset_face_s_panel() {
     state.reference = None;
     state.picking = MotionPick::Faces;
     let faces = shell_view(&[("Face 1", Some("Planar face"))], ShellDirection::Inward).faces;
-    state.offset_face = Some(Box::new(crate::OffsetFaceView {
+    state.parts = MotionParts::OffsetFace(Box::new(crate::OffsetFaceView {
         faces,
         inward: false,
         tangent: true,
@@ -936,7 +927,7 @@ fn a_draft_s_panel() {
     state.reference = Some("XY plane".to_owned());
     state.picking = MotionPick::Faces;
     let faces = shell_view(&[("Face 1", Some("Planar face"))], ShellDirection::Inward).faces;
-    state.draft = Some(Box::new(crate::DraftView {
+    state.parts = MotionParts::Draft(Box::new(crate::DraftView {
         faces,
         flip: false,
         tangent: true,

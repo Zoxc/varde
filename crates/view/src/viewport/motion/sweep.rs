@@ -93,7 +93,7 @@ impl<'a> Moving<'a> {
     /// regions, or its path's curves (the model's edges are picked as the
     /// model is, where no curve is under the cursor).
     pub(super) fn sweep_picking(&self) -> Option<MotionPick> {
-        self.state.sweep.as_ref()?;
+        self.state.sweep()?;
         let picking = self.state.picking;
         (self.state.editable && matches!(picking, MotionPick::Regions | MotionPick::Path))
             .then_some(picking)
@@ -113,7 +113,7 @@ impl<'a> Moving<'a> {
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
-        let sweep = self.state.sweep.as_ref()?;
+        let sweep = self.state.sweep()?;
         let regions = sweep_regions(sweep, None);
         let (redraw, input) = (&mut input.redraw, &mut input.sweep);
         match event {
@@ -214,7 +214,7 @@ impl<'a> Moving<'a> {
         bounds: Rectangle,
         hovered: bool,
     ) -> Option<Action<Message>> {
-        self.state.sweep.as_ref()?;
+        self.state.sweep()?;
         let changed = self.sweep_hover(picking, &mut input.sweep, at, camera, bounds);
         match input.sweep.curve {
             // The model isn't hovered under a path curve.
@@ -241,7 +241,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) -> bool {
-        let Some(sweep) = self.state.sweep.as_ref() else {
+        let Some(sweep) = self.state.sweep() else {
             return false;
         };
         let (region, curve) = match picking {

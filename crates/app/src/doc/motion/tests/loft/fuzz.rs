@@ -364,7 +364,7 @@ fn check_session(plates: &Plates, what: &str) {
     }
     assert!(session.bodies.is_empty(), "{what}: {:?}", session.bodies);
     let state = plates.doc.motion_state().expect("a session's state");
-    let view = state.loft.as_ref().expect("a loft's view");
+    let view = state.loft().expect("a loft's view");
     assert_eq!(view.sections.len(), setup.sections.len(), "{what}");
     for (shown, section) in view.sections.iter().zip(&setup.sections) {
         if let (false, Section::Region { start: Some(_), .. }) = (shown.gone, section)

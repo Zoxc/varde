@@ -180,7 +180,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     let state = plates.doc.motion_state().unwrap();
     assert!(!state.ready && state.accept);
     // No pieces to label: the body is shown whole.
-    assert!(state.split.as_ref().unwrap().pieces.is_empty());
+    assert!(state.split().unwrap().pieces.is_empty());
     let features = plates.doc.editor.document().features().len();
     key_in(&mut plates.doc, enter());
     assert_eq!(plates.doc.editor.document().features().len(), features);
@@ -278,7 +278,7 @@ fn a_body_splits_another_its_pieces_tinted_and_labelled() {
     // The front, the plate in the disc, keeps the id.
     assert!(boxed(&plates, plate, [15.0, -5.0, 0.0], [25.0, 5.0, 10.0]));
     let state = plates.doc.motion_state().unwrap();
-    let pieces = &state.split.as_ref().unwrap().pieces;
+    let pieces = &state.split().unwrap().pieces;
     assert_eq!(pieces.len(), 2, "{pieces:?}");
     assert_eq!((pieces[0].name.as_str(), pieces[0].keeps), ("Body 1", true));
     assert!(near(pieces[0].at, DVec3::new(20.0, 0.0, 5.0)));
@@ -321,7 +321,7 @@ fn a_body_splits_another_its_pieces_tinted_and_labelled() {
     plates.answer();
     assert!(boxed(&plates, plate, [15.0, -5.0, 0.0], [25.0, 5.0, 10.0]));
     let state = plates.doc.motion_state().unwrap();
-    let pieces = &state.split.as_ref().unwrap().pieces;
+    let pieces = &state.split().unwrap().pieces;
     assert_eq!(pieces.len(), 1);
     assert!(shows(&plates, "Body 1 by Body 2 · front only"));
     let bodies = plates.doc.editor.document().bodies().len();
@@ -383,7 +383,7 @@ fn regions_of_a_sketch_and_an_open_line_split_a_body() {
         "the sketch's, not the model"
     );
     let state = plates.doc.motion_state().unwrap();
-    let view = state.split.as_ref().unwrap();
+    let view = state.split().unwrap();
     assert!(
         (view.candidates.iter()).any(|candidate| candidate.feature == sketch),
         "the sketch's regions show"
@@ -410,7 +410,7 @@ fn regions_of_a_sketch_and_an_open_line_split_a_body() {
     plates.motion(MotionLook::SplitWith(SplitMode::Line));
     assert_eq!(picking(&plates), MotionPick::Tool);
     let state = plates.doc.motion_state().unwrap();
-    let view = state.split.as_ref().unwrap();
+    let view = state.split().unwrap();
     assert!((view.lines.iter()).any(|lines| lines.feature == sketch));
     plates.motion(MotionLook::SplitCurve {
         sketch,
@@ -471,7 +471,7 @@ fn editing_a_split_from_the_timeline_cancel_and_undo() {
         [30.0, 20.0, 10.0]
     ));
     let state = plates.doc.motion_state().unwrap();
-    let pieces = &state.split.as_ref().unwrap().pieces;
+    let pieces = &state.split().unwrap().pieces;
     assert_eq!(pieces.len(), 2);
     assert_eq!(pieces[1].name, "Body 4", "the new body as named");
     key_in(&mut plates.doc, enter());
@@ -571,7 +571,7 @@ fn later_features_are_warned_of_and_a_named_new_body_may_go() {
     plates.doc.look(Look::EditFeature(id));
     let warned = |plates: &Plates| {
         let state = plates.doc.motion_state().unwrap();
-        state.split.as_ref().unwrap().later.clone()
+        state.split().unwrap().later.clone()
     };
     assert_eq!(
         warned(&plates).as_deref(),
@@ -746,7 +746,7 @@ fn a_line_gone_is_picked_again_from_any_sketch() {
     assert!(gone(&plates));
     assert!(shows(&plates, "The line is gone: pick its curves again"));
     let state = plates.doc.motion_state().unwrap();
-    let view = state.split.as_ref().unwrap();
+    let view = state.split().unwrap();
     assert!(
         (view.lines.iter()).any(|lines| lines.feature == second),
         "the other sketch's curves are offered"
@@ -858,7 +858,7 @@ fn regions_gone_are_picked_again_from_any_sketch() {
     plates.answer();
     assert!(gone(&plates));
     let state = plates.doc.motion_state().unwrap();
-    let view = state.split.as_ref().unwrap();
+    let view = state.split().unwrap();
     assert!(
         (view.candidates.iter()).any(|candidate| candidate.feature == second),
         "the other sketch's regions are offered"

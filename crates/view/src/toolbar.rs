@@ -582,8 +582,9 @@ fn ops<'a>(
                     })
                     .collect()
             };
-            let split_face =
-                (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face);
+            let split_face = motion
+                .split()
+                .is_some_and(|split| split.mode == SplitMode::Face);
             let buttons: Vec<Element<'a, Message>> = match motion.picking {
                 // A scale's point may be the origin.
                 MotionPick::Point => origin(),
@@ -848,7 +849,9 @@ pub(crate) fn picks_origin_planes(state: &DocumentState<'_>) -> bool {
     let Some(motion) = state.motion() else {
         return state.picking_plane.is_some();
     };
-    let split_face = (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face);
+    let split_face = motion
+        .split()
+        .is_some_and(|split| split.mode == SplitMode::Face);
     motion_picks_origin_planes(motion.kind, motion.picking, split_face)
 }
 

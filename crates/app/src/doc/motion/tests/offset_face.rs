@@ -31,7 +31,7 @@ fn drafted(plates: &Plates) -> Option<OffsetFace> {
 /// The handle the panel's view has, if any.
 fn handle(plates: &Plates) -> Option<varde_view::FaceHandle> {
     let state = plates.doc.motion_state()?;
-    state.offset_face?.handle
+    state.offset_face()?.handle
 }
 
 /// The box's top, at z 10 (or wherever the model shown has it).

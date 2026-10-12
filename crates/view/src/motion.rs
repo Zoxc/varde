@@ -699,26 +699,8 @@ pub struct MotionState<'a> {
     /// The row of the panel the cursor is over, if any: the viewport
     /// lights it up too.
     pub hover: Option<PanelHover>,
-    /// An align's own parts, for an align.
-    pub align: Option<Box<AlignView<'a>>>,
-    /// A scale's own parts, for a scale.
-    pub scale: Option<Box<ScaleView<'a>>>,
-    /// A split's own parts, for a split.
-    pub split: Option<Box<SplitView<'a>>>,
-    /// A chamfer's own parts, for a chamfer.
-    pub chamfer: Option<Box<ChamferView>>,
-    /// A shell's own parts, for a shell.
-    pub shell: Option<Box<ShellView>>,
-    /// A fillet's own parts, for a fillet.
-    pub fillet: Option<Box<FilletView>>,
-    /// An offset face's own parts, for an offset face.
-    pub offset_face: Option<Box<OffsetFaceView>>,
-    /// A draft's own parts, for a draft.
-    pub draft: Option<Box<DraftView>>,
-    /// A sweep's own parts, for a sweep.
-    pub sweep: Option<Box<SweepView<'a>>>,
-    /// A loft's own parts, for a loft.
-    pub loft: Option<Box<LoftView<'a>>>,
+    /// The kind's own parts, for the kinds with any.
+    pub parts: MotionParts<'a>,
     /// The knobs of its handle, for an offset face, a shell, a draft, a
     /// chamfer, a fillet, a scale and an align, once the app knows where
     /// they stand ([`OpKnob`]): none while it doesn't, or the document
@@ -726,7 +708,126 @@ pub struct MotionState<'a> {
     pub knobs: Vec<OpKnob>,
 }
 
+/// The parts of a [`MotionState`] only its kind has: one kind's at
+/// most, matching [`MotionState::kind`].
+#[derive(Debug, Clone, Default)]
+pub enum MotionParts<'a> {
+    /// A move's, mirror's or pattern's: none of their own here.
+    #[default]
+    None,
+    Align(Box<AlignView<'a>>),
+    Scale(Box<ScaleView<'a>>),
+    Split(Box<SplitView<'a>>),
+    Chamfer(Box<ChamferView>),
+    Shell(Box<ShellView>),
+    Fillet(Box<FilletView>),
+    OffsetFace(Box<OffsetFaceView>),
+    Draft(Box<DraftView>),
+    Sweep(Box<SweepView<'a>>),
+    Loft(Box<LoftView<'a>>),
+}
+
+impl<'a> MotionParts<'a> {
+    /// What the status bar says of the kind's own set-up, if it says
+    /// anything.
+    pub fn info(&self) -> Option<&str> {
+        match self {
+            Self::None => None,
+            Self::Align(parts) => parts.info.as_deref(),
+            Self::Scale(parts) => parts.info.as_deref(),
+            Self::Split(parts) => parts.info.as_deref(),
+            Self::Chamfer(parts) => parts.info.as_deref(),
+            Self::Shell(parts) => parts.info.as_deref(),
+            Self::Fillet(parts) => parts.info.as_deref(),
+            Self::OffsetFace(parts) => parts.info.as_deref(),
+            Self::Draft(parts) => parts.info.as_deref(),
+            Self::Sweep(parts) => parts.info.as_deref(),
+            Self::Loft(parts) => parts.info.as_deref(),
+        }
+    }
+}
+
 impl<'a> MotionState<'a> {
+    /// An align's own parts, for an align.
+    pub fn align(&self) -> Option<&AlignView<'a>> {
+        match &self.parts {
+            MotionParts::Align(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A scale's own parts, for a scale.
+    pub fn scale(&self) -> Option<&ScaleView<'a>> {
+        match &self.parts {
+            MotionParts::Scale(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A split's own parts, for a split.
+    pub fn split(&self) -> Option<&SplitView<'a>> {
+        match &self.parts {
+            MotionParts::Split(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A chamfer's own parts, for a chamfer.
+    pub fn chamfer(&self) -> Option<&ChamferView> {
+        match &self.parts {
+            MotionParts::Chamfer(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A shell's own parts, for a shell.
+    pub fn shell(&self) -> Option<&ShellView> {
+        match &self.parts {
+            MotionParts::Shell(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A fillet's own parts, for a fillet.
+    pub fn fillet(&self) -> Option<&FilletView> {
+        match &self.parts {
+            MotionParts::Fillet(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// An offset face's own parts, for an offset face.
+    pub fn offset_face(&self) -> Option<&OffsetFaceView> {
+        match &self.parts {
+            MotionParts::OffsetFace(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A draft's own parts, for a draft.
+    pub fn draft(&self) -> Option<&DraftView> {
+        match &self.parts {
+            MotionParts::Draft(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A sweep's own parts, for a sweep.
+    pub fn sweep(&self) -> Option<&SweepView<'a>> {
+        match &self.parts {
+            MotionParts::Sweep(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A loft's own parts, for a loft.
+    pub fn loft(&self) -> Option<&LoftView<'a>> {
+        match &self.parts {
+            MotionParts::Loft(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
     /// The panel's title: the feature edited's name, or "New move".
     pub fn title(&self) -> &'a str {
         self.editing.unwrap_or(self.kind.new_title())
@@ -959,37 +1060,7 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
             Some(copies) => format!("{bodies} · {copies}"),
             None => bodies,
         },
-        (MotionKind::Align, _) => (state.align.as_ref())
-            .and_then(|align| align.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Scale, _) => (state.scale.as_ref())
-            .and_then(|scale| scale.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Split, _) => (state.split.as_ref())
-            .and_then(|split| split.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Chamfer, _) => (state.chamfer.as_ref())
-            .and_then(|chamfer| chamfer.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Shell, _) => (state.shell.as_ref())
-            .and_then(|shell| shell.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Fillet, _) => (state.fillet.as_ref())
-            .and_then(|fillet| fillet.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::OffsetFace, _) => (state.offset_face.as_ref())
-            .and_then(|offset| offset.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Draft, _) => (state.draft.as_ref())
-            .and_then(|draft| draft.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Sweep, _) => (state.sweep.as_ref())
-            .and_then(|sweep| sweep.info.clone())
-            .unwrap_or(bodies),
-        (MotionKind::Loft, _) => (state.loft.as_ref())
-            .and_then(|loft| loft.info.clone())
-            .unwrap_or(bodies),
-        _ => bodies,
+        _ => state.parts.info().map_or(bodies, str::to_owned),
     }
 }
 

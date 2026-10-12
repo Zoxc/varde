@@ -12,7 +12,7 @@ use super::handles::{ORB_PIXELS, turned_about};
 use super::*;
 use crate::Look;
 use crate::motion::PatternMode;
-use crate::motion::{MotionLook, MotionPick, SplitView};
+use crate::motion::{MotionLook, MotionParts, MotionPick, SplitView};
 use crate::operation_panel::TypedField;
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
@@ -61,16 +61,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         accept: false,
         editable: true,
         hover: None,
-        align: None,
-        scale: None,
-        split: None,
-        chamfer: None,
-        shell: None,
-        fillet: None,
-        offset_face: None,
-        draft: None,
-        sweep: None,
-        loft: None,
+        parts: MotionParts::None,
         knobs: Vec::new(),
     }
 }
@@ -210,7 +201,7 @@ fn an_align_draws_its_points_and_directions() {
     let layers = |marks: [crate::AlignMark; 2]| {
         let mut state = state(MotionKind::Align, MotionPick::Nothing, None);
         state.reference = None;
-        state.align = Some(Box::new(crate::AlignView {
+        state.parts = MotionParts::Align(Box::new(crate::AlignView {
             names: Default::default(),
             info: None,
             marks,
@@ -244,7 +235,7 @@ fn a_scale_draws_its_point() {
     let layers = |at: Option<DVec3>| {
         let mut state = state(MotionKind::Scale, MotionPick::Bodies, None);
         state.reference = None;
-        state.scale = Some(Box::new(crate::ScaleView {
+        state.parts = MotionParts::Scale(Box::new(crate::ScaleView {
             mode: crate::ScaleMode::Uniform,
             point: "Origin".to_owned(),
             at,
@@ -558,7 +549,7 @@ fn a_split_s_line_and_regions_are_picked_in_their_sketch() {
     let index = plate();
     for mode in [SplitMode::Line, SplitMode::Regions] {
         let mut state: MotionState<'_> = state(MotionKind::Split, MotionPick::Tool, None);
-        state.split = Some(Box::new(SplitView {
+        state.parts = MotionParts::Split(Box::new(SplitView {
             mode,
             tool: None,
             body: Some("Body 1"),
@@ -628,7 +619,7 @@ fn a_split_s_pieces_are_labelled() {
     let camera = front();
     let view = |pieces: Vec<crate::SplitPiece>| {
         let mut state = state(MotionKind::Split, MotionPick::Nothing, None);
-        state.split = Some(Box::new(SplitView {
+        state.parts = MotionParts::Split(Box::new(SplitView {
             mode: SplitMode::Body,
             tool: Some(("Body 2".to_owned(), None)),
             body: Some("Body 1"),
@@ -795,7 +786,7 @@ fn a_move_s_handle_left_hovered_lets_go_in_a_session_picking_sketches() {
     assert_eq!(input.motion.hover, Some(Grip::Arrow(Axis3::Z)));
     let index = plate();
     let mut sweep = state(MotionKind::Sweep, MotionPick::Path, None);
-    sweep.sweep = Some(Box::new(SweepView {
+    sweep.parts = MotionParts::Sweep(Box::new(SweepView {
         path: SweepPath::Path,
         candidates: Vec::new(),
         source: None,
@@ -931,7 +922,7 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
     let index = plate();
     for picking in [MotionPick::Regions, MotionPick::Path] {
         let mut state: MotionState<'_> = state(MotionKind::Sweep, picking, None);
-        state.sweep = Some(Box::new(SweepView {
+        state.parts = MotionParts::Sweep(Box::new(SweepView {
             path: SweepPath::Path,
             candidates: vec![crate::Candidate {
                 feature: profile,
@@ -1063,7 +1054,7 @@ fn a_loft_s_sections_starts_and_rails_are_picked_in_their_sketches() {
         .collect();
     for picking in [MotionPick::Regions, MotionPick::Path] {
         let mut state: MotionState<'_> = state(MotionKind::Loft, picking, None);
-        state.loft = Some(Box::new(LoftView {
+        state.parts = MotionParts::Loft(Box::new(LoftView {
             candidates: vec![crate::Candidate {
                 feature: section_sketch,
                 placement,
@@ -1178,7 +1169,7 @@ fn a_loft_s_seam_knob_drags_its_start_round_its_corners() {
     let lofting = |editable: bool| {
         let mut state: MotionState<'_> = state(MotionKind::Loft, MotionPick::Nothing, None);
         state.editable = editable;
-        state.loft = Some(Box::new(LoftView {
+        state.parts = MotionParts::Loft(Box::new(LoftView {
             candidates: Vec::new(),
             lines: Vec::new(),
             sections: vec![LoftSection {
@@ -1258,7 +1249,7 @@ fn a_sweep_s_path_curve_and_the_model_hand_the_hover_over_as_the_camera_moves() 
     let index = plate();
     let state = || {
         let mut state: MotionState<'_> = state(MotionKind::Sweep, MotionPick::Path, None);
-        state.sweep = Some(Box::new(SweepView {
+        state.parts = MotionParts::Sweep(Box::new(SweepView {
             path: SweepPath::Path,
             candidates: Vec::new(),
             source: None,
@@ -1376,7 +1367,7 @@ fn a_loft_s_and_a_split_s_curves_are_hovered_again_as_the_camera_moves() {
     };
     let loft = || {
         let mut state: MotionState<'_> = state(MotionKind::Loft, MotionPick::Path, None);
-        state.loft = Some(Box::new(LoftView {
+        state.parts = MotionParts::Loft(Box::new(LoftView {
             candidates: Vec::new(),
             lines: lines(),
             sections: Vec::new(),
@@ -1392,7 +1383,7 @@ fn a_loft_s_and_a_split_s_curves_are_hovered_again_as_the_camera_moves() {
     };
     let split = || {
         let mut state: MotionState<'_> = state(MotionKind::Split, MotionPick::Tool, None);
-        state.split = Some(Box::new(SplitView {
+        state.parts = MotionParts::Split(Box::new(SplitView {
             mode: SplitMode::Line,
             tool: None,
             body: Some("Body 1"),
@@ -1520,7 +1511,7 @@ fn a_loft_s_and_a_split_s_regions_and_corners_are_hovered_again_as_the_camera_mo
         } else {
             Vec::new()
         };
-        state.loft = Some(Box::new(LoftView {
+        state.parts = MotionParts::Loft(Box::new(LoftView {
             candidates: candidates(),
             lines: Vec::new(),
             sections,
@@ -1536,7 +1527,7 @@ fn a_loft_s_and_a_split_s_regions_and_corners_are_hovered_again_as_the_camera_mo
     };
     let split = || {
         let mut state: MotionState<'_> = state(MotionKind::Split, MotionPick::Tool, None);
-        state.split = Some(Box::new(SplitView {
+        state.parts = MotionParts::Split(Box::new(SplitView {
             mode: SplitMode::Regions,
             tool: None,
             body: Some("Body 1"),

@@ -53,9 +53,9 @@ use varde_regen::Summary;
 use varde_render::Camera;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
-    MotionKind, MotionLook, MotionPick, MotionState, OperationKind, PanelHover, PatternMode, Pick,
-    PickIndex, Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name, pattern_copies,
-    plane_name,
+    MotionKind, MotionLook, MotionParts, MotionPick, MotionState, OperationKind, PanelHover,
+    PatternMode, Pick, PickIndex, Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name,
+    pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
@@ -2768,20 +2768,24 @@ impl Doc {
             accept: self.offers_accept(self.motion_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
-            align: (session.kind == MotionKind::Align).then(|| Box::new(self.align_view(session))),
-            scale: (session.kind == MotionKind::Scale).then(|| Box::new(self.scale_view(session))),
-            split: (session.kind == MotionKind::Split).then(|| Box::new(self.split_view(session))),
-            chamfer: (session.kind == MotionKind::Chamfer)
-                .then(|| Box::new(self.chamfer_view(session))),
-            shell: (session.kind == MotionKind::Shell).then(|| Box::new(self.shell_view(session))),
-            fillet: (session.kind == MotionKind::Fillet)
-                .then(|| Box::new(self.fillet_view(session))),
-            offset_face: (session.kind == MotionKind::OffsetFace)
-                .then(|| Box::new(self.offset_face_view(session))),
-            draft: (session.kind == MotionKind::Draft)
-                .then(|| Box::new(self.face_draft_view(session))),
-            sweep: (session.kind == MotionKind::Sweep).then(|| Box::new(self.sweep_view(session))),
-            loft: (session.kind == MotionKind::Loft).then(|| Box::new(self.loft_view(session))),
+            parts: match session.kind {
+                MotionKind::Align => MotionParts::Align(Box::new(self.align_view(session))),
+                MotionKind::Scale => MotionParts::Scale(Box::new(self.scale_view(session))),
+                MotionKind::Split => MotionParts::Split(Box::new(self.split_view(session))),
+                MotionKind::Chamfer => MotionParts::Chamfer(Box::new(self.chamfer_view(session))),
+                MotionKind::Shell => MotionParts::Shell(Box::new(self.shell_view(session))),
+                MotionKind::Fillet => MotionParts::Fillet(Box::new(self.fillet_view(session))),
+                MotionKind::OffsetFace => {
+                    MotionParts::OffsetFace(Box::new(self.offset_face_view(session)))
+                }
+                MotionKind::Draft => MotionParts::Draft(Box::new(self.face_draft_view(session))),
+                MotionKind::Sweep => MotionParts::Sweep(Box::new(self.sweep_view(session))),
+                MotionKind::Loft => MotionParts::Loft(Box::new(self.loft_view(session))),
+                MotionKind::Move
+                | MotionKind::Mirror
+                | MotionKind::LinearPattern
+                | MotionKind::CircularPattern => MotionParts::None,
+            },
             knobs: self.motion_knobs(session, bounds),
         })
     }

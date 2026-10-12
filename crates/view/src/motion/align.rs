@@ -95,7 +95,7 @@ pub(super) fn body<'a>(
 ) -> Element<'a, Message> {
     let editable = state.editable;
     let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
-    let Some(align) = &state.align else {
+    let Some(align) = state.align() else {
         return body;
     };
     let side = |side: AlignSide| {

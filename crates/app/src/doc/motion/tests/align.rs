@@ -261,7 +261,7 @@ fn face_to_face() -> (Plates, [BodyId; 2], varde_document::FeatureId) {
     assert_eq!(plates.doc.feed.draft_error(), None);
     // What regenerating found is drawn: both corners, both normals.
     let state = plates.doc.motion_state().unwrap();
-    let marks = state.align.as_ref().unwrap().marks;
+    let marks = state.align().unwrap().marks;
     assert_eq!(marks[0].point, Some(DVec3::new(30.0, 20.0, -3.0)));
     assert_eq!(marks[1].point, Some(DVec3::new(30.0, 20.0, 10.0)));
     assert_eq!(marks[1].directions[0], Some(DVec3::Z));
@@ -723,7 +723,7 @@ fn an_edited_aligns_references_are_found_on_the_model_shown() {
         [vec![Picked::Face(bottom)], vec![Picked::Face(top_face)]]
     );
     let state = plates.doc.motion_state().unwrap();
-    let marks = state.align.as_ref().unwrap().marks;
+    let marks = state.align().unwrap().marks;
     let point = |k: usize| marks[k].point.expect("drawn");
     assert!(near(point(0), DVec3::new(30.0, 20.0, -3.0)), "{}", point(0));
     assert!(near(point(1), DVec3::new(30.0, 20.0, 10.0)), "{}", point(1));
@@ -1005,7 +1005,7 @@ fn two_arcs_with_the_same_keys() {
         "the far arc lit"
     );
     let state = plates.doc.motion_state().unwrap();
-    let point = state.align.as_ref().unwrap().marks[1].point.expect("drawn");
+    let point = state.align().unwrap().marks[1].point.expect("drawn");
     assert!(near(point, DVec3::new(0.0, 0.0, 10.0)), "{point}");
     // Done: the pin in the hole, its foot at the top.
     plates.motion(MotionLook::Picking(MotionPick::Nothing));

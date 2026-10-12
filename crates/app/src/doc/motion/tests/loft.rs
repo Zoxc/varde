@@ -227,7 +227,7 @@ fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
         assert!(shows(plates, text), "{text}");
     }
     let state = plates.doc.motion_state().unwrap();
-    let view = state.loft.as_ref().unwrap();
+    let view = state.loft().unwrap();
     for sketch in [low, top, side] {
         assert!(
             (view.candidates.iter()).any(|candidate| candidate.feature == sketch),
@@ -378,7 +378,7 @@ fn a_click_on_a_corner_moves_the_start() {
     assert_eq!(*drafted_start, Some(far));
     // The view draws the dot there.
     let state = plates.doc.motion_state().unwrap();
-    let view = state.loft.as_ref().unwrap();
+    let view = state.loft().unwrap();
     assert_eq!(view.sections[1].shape.dot(), Some(DVec2::new(25.0, 5.0)));
     match &view.sections[1].shape {
         varde_view::LoftShape::Region { corners, .. } => assert_eq!(corners.len(), 4),
@@ -604,7 +604,7 @@ fn editing_a_loft_from_the_timeline_cancel_and_undo() {
         "as stored"
     );
     let state = plates.doc.motion_state().unwrap();
-    let view = state.loft.as_ref().unwrap();
+    let view = state.loft().unwrap();
     assert!(view.sections.iter().all(|section| !section.gone));
     assert_eq!(view.sections[1].shape.dot(), Some(DVec2::new(25.0, 5.0)));
     plates.motion(MotionLook::Cancel);
@@ -740,7 +740,7 @@ fn regions_with_holes_and_later_sketches_are_refused() {
     let later = add_holed(plates, (70.0, 70.0), (90.0, 90.0));
     plates.doc.look(Look::EditFeature(id));
     let state = plates.doc.motion_state().unwrap();
-    let view = state.loft.as_ref().unwrap();
+    let view = state.loft().unwrap();
     assert!(!(view.candidates.iter()).any(|candidate| candidate.feature == later));
     plates.motion(MotionLook::Picking(MotionPick::Regions));
     plates.motion(MotionLook::LoftRegion {
@@ -786,7 +786,7 @@ fn a_start_off_its_corners_shows_in_its_row() {
     plates.doc.sync();
     plates.answer();
     let state = plates.doc.motion_state().unwrap();
-    let view = state.loft.as_ref().unwrap();
+    let view = state.loft().unwrap();
     assert!(!view.sections[0].gone);
     assert!(view.sections[1].gone, "the start's section");
     assert!(shows(
@@ -956,7 +956,7 @@ fn a_loft_of_deferred_sketches_through_undo_and_redo() {
             plates.doc.editor.document().features().len()
         );
         let state = plates.doc.motion_state().unwrap();
-        let view = state.loft.as_ref().unwrap();
+        let view = state.loft().unwrap();
         assert!(view.sections.iter().all(|section| !section.gone), "{what}");
     };
     check(plates, "opened");
@@ -994,7 +994,7 @@ fn a_start_at_a_corner_s_second_point_is_drawn() {
     });
     assert_eq!(start(plates, 1), Some(second));
     let state = plates.doc.motion_state().unwrap();
-    let view = state.loft.as_ref().unwrap();
+    let view = state.loft().unwrap();
     assert!(!view.sections[1].gone);
     assert_eq!(view.sections[1].shape.dot(), Some(DVec2::new(25.0, 5.0)));
     assert!(plates.doc.motion_ready());

@@ -225,7 +225,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
         assert!(!shows(plates, text), "{text}");
     }
     let state = plates.doc.motion_state().unwrap();
-    let view = state.sweep.as_ref().unwrap();
+    let view = state.sweep().unwrap();
     assert!((view.candidates.iter()).any(|candidate| candidate.feature == profile));
     assert!(!(view.candidates.iter()).any(|candidate| candidate.feature == path));
     assert!(plates.last_draft().is_none());
@@ -238,7 +238,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
     assert!(shows(plates, "Region 1"));
     assert!(shows(plates, "pick the path"));
     let state = plates.doc.motion_state().unwrap();
-    let view = state.sweep.as_ref().unwrap();
+    let view = state.sweep().unwrap();
     assert!((view.lines.iter()).any(|lines| lines.feature == path));
     assert!(!(view.lines.iter()).any(|lines| lines.feature == profile));
     // The profile's own sketch is no path.
@@ -418,7 +418,7 @@ fn model_edges_are_path_parts_beside_sketch_chains() {
         region: 0,
     });
     assert_eq!(
-        plates.doc.motion_state().unwrap().sweep.unwrap().source,
+        plates.doc.motion_state().unwrap().sweep().unwrap().source,
         None
     );
     plates.motion(MotionLook::SweepRegion {

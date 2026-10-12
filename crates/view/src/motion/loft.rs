@@ -104,7 +104,7 @@ const MODES: [(LoftMode, Icon, &str); 2] = [
 /// The panel's body for a loft: Sections, the mode's tiles, Closed,
 /// Rails (not while closed), Operation and Bodies.
 pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
-    let Some(loft) = &state.loft else {
+    let Some(loft) = state.loft() else {
         return column![].into();
     };
     let editable = state.editable;

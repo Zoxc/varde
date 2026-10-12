@@ -59,7 +59,7 @@ impl<'a> Moving<'a> {
     /// The kind of a split's tool picked in its sketches, while one is:
     /// regions or a line, which then take the left button.
     pub(super) fn split_picking(&self) -> Option<SplitMode> {
-        let split = self.state.split.as_ref()?;
+        let split = self.state.split()?;
         let picking = self.state.picking == MotionPick::Tool && self.state.editable;
         (picking && matches!(split.mode, SplitMode::Regions | SplitMode::Line))
             .then_some(split.mode)
@@ -88,7 +88,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) -> bool {
-        let Some(split) = self.state.split.as_ref() else {
+        let Some(split) = self.state.split() else {
             return false;
         };
         let (region, curve) = match mode {
@@ -118,7 +118,7 @@ impl<'a> Moving<'a> {
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
-        let split = self.state.split.as_ref()?;
+        let split = self.state.split()?;
         let regions = split_regions(split);
         match event {
             mouse::Event::CursorMoved { .. } => {

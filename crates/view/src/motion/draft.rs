@@ -38,7 +38,7 @@ pub(super) fn body<'a>(
     neutral: Element<'a, Message>,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(draft) = &state.draft else {
+    let Some(draft) = state.draft() else {
         return column![].into();
     };
     let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));

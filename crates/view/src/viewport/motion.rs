@@ -230,20 +230,20 @@ impl<'a> Moving<'a> {
             camera,
             bounds,
         );
-        if let Some(align) = &self.state.align {
+        if let Some(align) = self.state.align() {
             self.align(&mut live, align, scene, colors, camera, bounds);
         }
-        if let Some(scale) = &self.state.scale {
+        if let Some(scale) = self.state.scale() {
             scale_marks(&mut live, scale, scene, colors);
         }
-        if let Some(sweep) = &self.state.sweep {
+        if let Some(sweep) = self.state.sweep() {
             return self.sweep_layers(live, sweep, input, colors, (camera, bounds));
         }
-        if let Some(loft) = &self.state.loft {
+        if let Some(loft) = self.state.loft() {
             self.loft_layers(&mut live, loft, input, scene, colors, (camera, bounds));
             return (super::NO_LAYER.clone(), live);
         }
-        if let Some(split) = &self.state.split {
+        if let Some(split) = self.state.split() {
             let picking = self.split_picking();
             if split.mode == SplitMode::Regions {
                 let regions = split_regions(split);
@@ -296,10 +296,10 @@ impl<'a> Moving<'a> {
     /// the one keeping the body's id in the accent: none while there are
     /// none.
     pub(crate) fn labels(&self, camera: &Camera) -> Option<Element<'a, Message>> {
-        if let Some(loft) = &self.state.loft {
+        if let Some(loft) = self.state.loft() {
             return loft_labels(loft, camera);
         }
-        let split = self.state.split.as_ref()?;
+        let split = self.state.split()?;
         if split.pieces.is_empty() {
             return None;
         }
@@ -405,7 +405,7 @@ impl<'a> Moving<'a> {
             return (self.split_hover(mode, &mut input.split, at, camera, bounds))
                 .then(Action::request_redraw);
         }
-        if let Some(loft) = &self.state.loft
+        if let Some(loft) = self.state.loft()
             && input.seams.drag.is_none()
         {
             let over = at.and_then(|at| self.seam_under(loft, at, camera, bounds));
@@ -414,7 +414,7 @@ impl<'a> Moving<'a> {
             }
         }
         if let Some(picking) = self.loft_picking()
-            && let Some(loft) = &self.state.loft
+            && let Some(loft) = self.state.loft()
         {
             let under = at.map_or_else(LoftInput::default, |at| {
                 self.loft_under(loft, picking, at, camera, bounds)
@@ -460,10 +460,11 @@ impl<'a> Moving<'a> {
     /// tool's, since it draws in the world; a split's regions' source's
     /// plane, whose regions its base layer draws.
     pub(crate) fn plane_of_layers(&self) -> GridPlane {
-        if let Some(sweep) = &self.state.sweep {
+        if let Some(sweep) = self.state.sweep() {
             return sweep_regions(sweep, None).plane();
         }
-        (self.state.split.as_ref())
+        self.state
+            .split()
             .filter(|split| split.mode == SplitMode::Regions)
             .map_or(GridPlane::XY, |split| split_regions(split).plane())
     }

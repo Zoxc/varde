@@ -173,7 +173,7 @@ fn a_plate_scaled_by_two_about_the_origin_and_ok() {
     ));
     // The point is drawn where regenerating found it, and named.
     let state = plates.doc.motion_state().unwrap();
-    assert_eq!(state.scale.as_ref().unwrap().at, Some(DVec3::ZERO));
+    assert_eq!(state.scale().unwrap().at, Some(DVec3::ZERO));
     assert!(shows(&plates, "Body 1 ×2"));
     // No fitted faces: no note.
     assert!(state.warning.is_none());
@@ -228,7 +228,7 @@ fn a_plate_scaled_about_a_corner_picked() {
         [90.0, 60.0, 20.0]
     ));
     let state = plates.doc.motion_state().unwrap();
-    let drawn = state.scale.as_ref().unwrap().at.expect("the point drawn");
+    let drawn = state.scale().unwrap().at.expect("the point drawn");
     assert!(near(drawn, at), "{drawn}");
 
     // A face is no point; the origin from the toolbar is one again.

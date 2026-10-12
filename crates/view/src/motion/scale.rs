@@ -93,7 +93,7 @@ pub(super) fn body<'a>(
 ) -> Element<'a, Message> {
     let editable = state.editable;
     let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
-    let Some(scale) = &state.scale else {
+    let Some(scale) = state.scale() else {
         return body;
     };
     let picked = |pick: MotionPick, icon: Icon, name: Option<String>, meta, place: &str| {
