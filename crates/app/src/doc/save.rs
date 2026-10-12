@@ -496,13 +496,7 @@ impl Doc {
     }
 
     /// Where the document is written, see [`Persist::target`].
-    #[cfg(test)]
     pub(crate) fn target(&self) -> &Target {
-        &self.persist.target
-    }
-
-    /// Where the document is written, for the view.
-    pub(super) fn persist_target(&self) -> &Target {
         &self.persist.target
     }
 

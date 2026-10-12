@@ -1903,11 +1903,10 @@ impl Doc {
             name: &self.name,
             unnamed: self.unnamed(),
             path: self.path.as_deref(),
-            location: self.persist_target().location(),
+            location: self.target().location(),
             downloads: self.download_status(),
             downloadable: offers.download,
-            rename: matches!(self.persist_target(), Target::Browser { .. })
-                .then(|| self.renamable()),
+            rename: matches!(self.target(), Target::Browser { .. }).then(|| self.renamable()),
             naming: self.naming().map(|naming| varde_view::NamePrompt {
                 name: &naming.name,
                 place: naming.place,
