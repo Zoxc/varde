@@ -13,19 +13,19 @@ use iced::widget::{column, text};
 use varde_document::{AxisLine, BodyId, Document, EdgeRef, FeatureId, Placement, RevolveError};
 use varde_sketch::{Curve, Id, Sketch, angle};
 
-use crate::extrude::{centroid, region_name};
+use crate::extrude::centroid;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, TypedField, bodies,
-    field, footer_message, message_text, missing_rows, operation_panel, pick_field, picked_row,
-    tile, tiles, toggle, value_field,
+    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, Side, Sides,
+    TypedField, bodies, field, footer_message, message_text, operation_panel, pick_field,
+    picked_row, region_rows, tile, tiles, toggle,
 };
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
-use crate::{Edit, Look, Message, VALUE_FIELD};
+use crate::{Edit, Look, Message};
 
 /// The field of a revolve's second angle, for two sides. The first is
-/// [`VALUE_FIELD`], which takes the focus as the session opens.
+/// [`VALUE_FIELD`](crate::VALUE_FIELD), which takes the focus as the session opens.
 const SECOND_FIELD: iced::widget::Id = iced::widget::Id::new("revolve-second");
 
 /// How far a sketch's axes reach at least, either side of its origin,
@@ -71,36 +71,28 @@ impl TurnKind {
 
     /// The angles it's given by.
     pub fn angles(self) -> &'static [Angle] {
-        match self {
-            TurnKind::Full => &[],
-            TurnKind::OneSide | TurnKind::Symmetric => &[Angle::First],
-            TurnKind::TwoSides => &[Angle::First, Angle::Second],
-        }
+        self.sides().fields()
     }
 
     /// Whether Flip changes it.
     pub fn flips(self) -> bool {
-        matches!(self, TurnKind::OneSide | TurnKind::TwoSides)
+        self.sides().flips()
+    }
+
+    /// How it spends its angles.
+    pub fn sides(self) -> Sides {
+        match self {
+            TurnKind::Full => Sides::None,
+            TurnKind::OneSide => Sides::One,
+            TurnKind::Symmetric => Sides::Symmetric,
+            TurnKind::TwoSides => Sides::Two,
+        }
     }
 }
 
 /// One of a revolve's angles: the first, which one side and symmetric
 /// have too, or the second of two sides, turning the other way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Angle {
-    First,
-    Second,
-}
-
-impl Angle {
-    /// Where it's kept in an array of both.
-    pub fn index(self) -> usize {
-        match self {
-            Angle::First => 0,
-            Angle::Second => 1,
-        }
-    }
-}
+pub type Angle = Side;
 
 /// What a click in the viewport picks first: regions, or the axis. A
 /// click on a region picks it either way; one on a line or one of the
@@ -247,8 +239,7 @@ pub struct RevolveState<'a> {
 impl<'a> RevolveState<'a> {
     /// The source sketch, if it's chosen.
     pub(crate) fn source(&self) -> Option<&Candidate<'a>> {
-        let source = self.source?;
-        self.candidates.iter().find(|c| c.feature == source)
+        Candidate::find(&self.candidates, self.source)
     }
 
     /// The axis's name, "Line 3", "X axis" or "Edge of Body 1", if one
@@ -340,26 +331,8 @@ impl RevolveState<'_> {
         if !(radial.length() > 1e-9 * scale && radial.is_finite()) {
             return None;
         }
-        let value = |angle: Angle| self.fields[angle.index()].value;
         let sign = if self.reversed() { -1.0 } else { 1.0 };
-        let knobs: Vec<(Angle, f64)> = match self.extent {
-            TurnKind::Full => Vec::new(),
-            TurnKind::OneSide => value(Angle::First)
-                .map(|a| (Angle::First, sign * a))
-                .into_iter()
-                .collect(),
-            TurnKind::Symmetric => value(Angle::First)
-                .map(|a| (Angle::First, a / 2.0))
-                .into_iter()
-                .collect(),
-            TurnKind::TwoSides => [
-                value(Angle::First).map(|a| (Angle::First, sign * a)),
-                value(Angle::Second).map(|b| (Angle::Second, -sign * b)),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
-        };
+        let knobs = (self.extent.sides()).knobs(self.fields.map(|field| field.value), sign);
         Some(RevolveHandle {
             origin,
             axis,
@@ -486,32 +459,16 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
 
     let picking_regions = state.picking == RevolvePick::Regions;
     let pick_regions = send(RevolveLook::Picking(RevolvePick::Regions));
-    let rows: Vec<_> = (state.source.into_iter())
-        .flat_map(|sketch| {
-            let pick_regions = pick_regions.clone();
-            state.picked.iter().map(move |&region| {
-                picked_row(
-                    Icon::SeRegion,
-                    region_name(region),
-                    None,
-                    send(RevolveLook::PickRegion { sketch, region }),
-                    pick_regions.clone(),
-                    PanelHover::Region { sketch, region },
-                    state.hover,
-                )
-            })
-        })
-        .chain(missing_rows(
-            state.missing,
-            |index| send(RevolveLook::DropMissing(index)),
-            pick_regions.clone(),
-            state.hover,
-        ))
-        .collect();
-    let empty = state
-        .candidates
-        .iter()
-        .all(|candidate| candidate.profiles.regions.is_empty());
+    let rows = region_rows(
+        state.source,
+        state.picked,
+        state.missing,
+        |sketch, region| send(RevolveLook::PickRegion { sketch, region }),
+        |index| send(RevolveLook::DropMissing(index)),
+        pick_regions.clone(),
+        state.hover,
+    );
+    let empty = Candidate::none_closed(&state.candidates);
     let place = (rows.is_empty() || picking_regions).then(|| {
         if state.picked.is_empty() && empty {
             "No closed regions to revolve".to_owned()
@@ -574,14 +531,16 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
             send(RevolveLook::Extent(kind)),
         )
     });
-    let fields = state.extent.angles().iter().map(|&angle| {
-        let label = match (state.extent, angle) {
-            (TurnKind::TwoSides, Angle::First) => "Side 1",
-            (TurnKind::TwoSides, Angle::Second) => "Side 2",
-            _ => "Angle",
-        };
-        angle_field(label, angle, state.fields[angle.index()], editable)
-    });
+    let fields = state.extent.sides().value_fields(
+        "Angle",
+        SECOND_FIELD,
+        state.fields,
+        editable.then_some(|angle, text| {
+            Message::Look(Look::Revolve(RevolveLook::Input { angle, text }))
+        }),
+        Message::Edit(Edit::CommitRevolve),
+        Message::Look(Look::Revolve(RevolveLook::Cancel)),
+    );
     let flip = state.extent.flips().then(|| {
         toggle(
             Icon::TkFlip,
@@ -640,30 +599,6 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         cancel: Message::Look(Look::Revolve(RevolveLook::Cancel)),
         close: false,
     })
-}
-
-/// The field of `angle`, named `label`, showing why its text is refused
-/// under it. `Enter` in it is OK, `Esc` Cancel.
-fn angle_field<'a>(
-    label: &'a str,
-    angle: Angle,
-    field: TypedField<'a>,
-    editable: bool,
-) -> Element<'a, Message> {
-    let id = match angle {
-        Angle::First => VALUE_FIELD,
-        Angle::Second => SECOND_FIELD,
-    };
-    let input = editable
-        .then_some(move |text| Message::Look(Look::Revolve(RevolveLook::Input { angle, text })));
-    value_field(
-        label,
-        id,
-        field,
-        input,
-        Message::Edit(Edit::CommitRevolve),
-        Message::Look(Look::Revolve(RevolveLook::Cancel)),
-    )
 }
 
 #[cfg(test)]

@@ -39,8 +39,9 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
   where the extent takes it: under one that ignores it, the flip the
   edited feature stored under such an extent, else none, so OK after
   flipping and switching back writes no revision (extrude's Symmetric
-  and Through all alike; `stored_flip` in `doc/extrude.rs` and
-  `doc/revolve.rs`).
+  and Through all alike; `SideFields::stored_flip` in `doc/regions.rs`,
+  which holds both sessions' fields and flip and drags their knobs,
+  `drag_side`).
 - **Angles** are `varde_expr::Value`s asked by `Turn::ask`
   (`Ask::angle(units, TAU).positive()`): above zero, at most a turn, bare
   numbers in degrees, stored in radians. Two sides together at most a

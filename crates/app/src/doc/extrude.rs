@@ -12,7 +12,9 @@ use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_render::Camera;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind, PanelHover};
 
-use super::regions::{BodyTargets, ReadIn, RegionPick, TypedText};
+use super::regions::{
+    BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
+};
 use super::{Doc, Focus};
 
 /// The extrude being set up, while one is: [`Doc::operation`].
@@ -23,17 +25,8 @@ pub(crate) struct ExtrudeSession {
     /// The regions picked, and the sketch they're of.
     pub(crate) regions: RegionPick,
     pub(crate) extent: ExtentKind,
-    /// The first distance's field, and two sides' second.
-    pub(crate) fields: [TypedText; 2],
-    /// Whether one side goes the other way, or two sides swap: kept
-    /// while the extent ignores it (see [`ExtrudeSession::stored_flip`]), for when
-    /// it's switched back.
-    pub(crate) flip: bool,
-    /// The flip the extrude edited was stored with while its extent ignores
-    /// it, as old files may have it: written back as it was while the
-    /// extent set up ignores it too, so an edit changing nothing writes
-    /// nothing. False otherwise.
-    ignored_flip: bool,
+    /// The distances' fields, and the flip.
+    pub(crate) sides: SideFields,
     pub(crate) operation: OperationKind,
     /// The taper's field: an angle, 0° (stored as none) to begin with
     /// or the edited extrude's.
@@ -94,9 +87,7 @@ impl ExtrudeSession {
             feature: None,
             regions: RegionPick::new(source, MAX_EXTRUDE_REGIONS),
             extent: ExtentKind::OneSide,
-            fields: [distance.clone(), distance],
-            flip: false,
-            ignored_flip: false,
+            sides: SideFields::new([distance.clone(), distance]),
             operation: OperationKind::NewBody,
             taper,
             targets: BodyTargets::default(),
@@ -151,15 +142,9 @@ impl ExtrudeSession {
         };
         session.extent = extent;
         let ask = Extent::ask(&document.design());
-        let first = first.map(|first| TypedText::of(first, &ask));
-        if let Some(first) = &first {
-            session.fields = [first.clone(), first.clone()];
-        }
-        if let Some(second) = second {
-            session.fields[1] = TypedText::of(second, &ask);
-        }
-        session.flip = extrude.flip;
-        session.ignored_flip = extrude.flip && !session.extent.flips();
+        // Two sides switched to from one start with both its distance.
+        let flips = session.extent.flips();
+        (session.sides).open([first, second.or(first)], extrude.flip, flips, &ask);
         session.operation = OperationKind::of(&extrude.operation);
         if let Some(taper) = &extrude.taper {
             session.taper = TypedText::of(taper, &Extrude::taper_ask(&document.design()));
@@ -179,23 +164,8 @@ impl ExtrudeSession {
             return;
         };
         let (before, now) = (before.design(), self.read_in.design());
-        let (ask, now_ask) = (Extent::ask(&before), Extent::ask(&now));
-        for field in &mut self.fields {
-            field.follow(&ask, &now_ask);
-        }
+        (self.sides).follow(&Extent::ask(&before), &Extent::ask(&now));
         (self.taper).follow(&Extrude::taper_ask(&before), &Extrude::taper_ask(&now));
-    }
-
-    /// The flip to store: the one set up where the extent takes it,
-    /// else the one stored before if that extent ignored it too
-    /// ([`ExtrudeSession::ignored_flip`]), else none, so a flip left set
-    /// from another extent isn't stored where it changes nothing.
-    fn stored_flip(&self) -> bool {
-        if self.extent.flips() {
-            self.flip
-        } else {
-            self.ignored_flip
-        }
     }
 
     /// The extrude as set up, if it's whole: a source, regions picked, and
@@ -206,7 +176,7 @@ impl ExtrudeSession {
         if self.regions.references().is_empty() {
             return None;
         }
-        let value = |distance: Distance| self.fields[distance.index()].value.clone();
+        let value = |distance: Distance| self.sides.value(distance);
         let extent = match self.extent {
             ExtentKind::OneSide => Extent::OneSide(value(Distance::First)?),
             ExtentKind::Symmetric => Extent::Symmetric(value(Distance::First)?),
@@ -220,7 +190,7 @@ impl ExtrudeSession {
             sketch,
             regions: self.regions.references(),
             extent,
-            flip: self.stored_flip(),
+            flip: self.sides.stored_flip(self.extent.flips()),
             taper: (taper.value != 0.0).then_some(taper),
             operation: self.targets.operation(self.operation),
         })
@@ -256,8 +226,7 @@ impl ExtrudeSession {
 
     /// Reads `text` into the field of `distance`, in `document`'s design.
     pub(crate) fn input(&mut self, distance: Distance, text: String, document: &Document) {
-        let ask = Extent::ask(&document.design());
-        self.fields[distance.index()].input(text, &ask);
+        (self.sides).input(distance, text, &Extent::ask(&document.design()));
     }
 
     /// Reads `text` into the taper's field, in `document`'s design.
@@ -273,12 +242,7 @@ impl ExtrudeSession {
     /// document are the references to other features and bodies, which
     /// the session keeps valid.
     fn ready(&self, design: &Design) -> bool {
-        let typed = self
-            .extent
-            .distances()
-            .iter()
-            .all(|distance| self.fields[distance.index()].error.is_none())
-            && self.taper.error.is_none();
+        let typed = self.sides.typed(self.extent.sides()) && self.taper.error.is_none();
         typed
             && self
                 .extrude()
@@ -286,53 +250,20 @@ impl ExtrudeSession {
     }
 
     /// Moves the knob of `distance` to `to`, in millimetres along the
-    /// sketch plane's normal: one side's goes past the plane by flipping.
-    /// A knob on the plane changes nothing; one past what the field takes
-    /// stands at its least or most. Nothing changes where the field still
-    /// refuses the distance, or where the extrude's own check would
-    /// refuse it and didn't before (two sides together over the limit):
-    /// the knob stops there. Already over the limit, it only moves back
-    /// towards it.
+    /// sketch plane's normal ([`drag_side`]): two sides together can't
+    /// go over the limit by it.
     fn drag(&mut self, distance: Distance, to: f64, document: &Document) {
-        let (length, flip) = match (self.extent, distance) {
-            (ExtentKind::OneSide, Distance::First) => (to.abs(), Some(to < 0.0)),
-            (ExtentKind::Symmetric, Distance::First) => (2.0 * to.abs(), None),
-            (ExtentKind::TwoSides, _) => (to.abs(), None),
-            _ => return,
-        };
-        if !(length > 0.0 && length.is_finite()) {
-            return;
-        }
-        // Past what the field takes, as near as it goes.
-        let ask = Extent::ask(&document.design());
-        let length = length.min(ask.max).max(ask.min.unwrap_or(0.0));
-        let text = varde_expr::format(length, Some(Unit::Length(document.units())));
-        let mut field = self.fields[distance.index()].clone();
-        field.input(text, &ask);
-        if field.error.is_some() {
-            return;
-        }
         let design = document.design();
-        let before = self.refused(&design);
-        let old = std::mem::replace(&mut self.fields[distance.index()], field);
-        let old_flip = self.flip;
-        if let Some(flip) = flip {
-            self.flip = flip;
-        }
-        let worse = match (before, self.refused(&design)) {
-            (_, None) => false,
-            (None, Some(_)) => true,
-            // Already over the limit (typed so), the knob only goes back
-            // towards it.
-            (Some(_), Some(after)) => {
-                after == ExtrudeError::Length
-                    && old.value.as_ref().is_none_or(|old| length > old.value)
-            }
-        };
-        if worse {
-            self.fields[distance.index()] = old;
-            self.flip = old_flip;
-        }
+        drag_side(
+            self,
+            |session| &mut session.sides,
+            self.extent.sides(),
+            distance,
+            to,
+            (&Extent::ask(&design), Unit::Length(document.units())),
+            |session| session.refused(&design),
+            ExtrudeError::Length,
+        );
     }
 }
 
@@ -407,7 +338,7 @@ impl Doc {
                 session.set_extent(kind);
             }
             ExtrudeLook::Input { distance, text } => session.input(distance, text, document),
-            ExtrudeLook::Flip => session.flip = !session.flip,
+            ExtrudeLook::Flip => session.sides.flip = !session.sides.flip,
             ExtrudeLook::Taper(text) => session.input_taper(text, document),
             ExtrudeLook::Operation(kind) => session.set_operation(kind),
             ExtrudeLook::Target(body) => {
@@ -477,13 +408,9 @@ impl Doc {
         let Some(session) = self.operation.extrude_mut() else {
             return;
         };
-        let edited = session.feature.is_none_or(|feature| {
-            matches!(
-                document.feature(feature).map(|f| &f.kind),
-                Some(FeatureKind::Extrude(_))
-            )
-        });
-        if !(editable && !replaced && edited && session.regions.refresh(document)) {
+        let is_kind = |kind: &FeatureKind| matches!(kind, FeatureKind::Extrude(_));
+        let (feature, regions) = (session.feature, &mut session.regions);
+        if !regions_session_stays(document, feature, regions, editable, replaced, is_kind) {
             self.operation = None;
             return;
         }
@@ -514,11 +441,8 @@ impl Doc {
             picked: &session.regions.picked,
             missing: session.regions.missing,
             extent: session.extent,
-            fields: [
-                session.fields[0].field(self.params_in()),
-                session.fields[1].field(self.params_in()),
-            ],
-            flip: session.flip,
+            fields: (session.sides.fields.each_ref()).map(|field| field.field(self.params_in())),
+            flip: session.sides.flip,
             taper: session.taper.field(self.params_in()),
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),

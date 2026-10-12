@@ -160,7 +160,7 @@ pub(super) fn set_extrude(
     ] {
         if let Some(text) = text.filter(|_| given.has(said) || edited.is_none()) {
             session.input(distance, text.trim().to_owned(), document);
-            read(session.fields[distance.index()].error.as_ref(), said).map_err(wrong)?;
+            read(session.sides.fields[distance.index()].error.as_ref(), said).map_err(wrong)?;
         }
     }
     if let Some(text) = args.taper.as_ref().filter(|_| given.has("taper")) {
@@ -168,7 +168,7 @@ pub(super) fn set_extrude(
         read(session.taper.error.as_ref(), "taper").map_err(wrong)?;
     }
     if given.has("flip") {
-        session.flip = args.flip;
+        session.sides.flip = args.flip;
     }
     if given.has("exclude") {
         let new_body = session.operation == OperationKind::NewBody;
@@ -252,11 +252,11 @@ pub(super) fn set_revolve(
     ] {
         if let Some(text) = text.as_ref().filter(|_| given.has(said)) {
             session.input(angle, text.trim().to_owned(), document);
-            read(session.fields[angle.index()].error.as_ref(), said).map_err(wrong)?;
+            read(session.sides.fields[angle.index()].error.as_ref(), said).map_err(wrong)?;
         }
     }
     if given.has("flip") {
-        session.flip = args.flip;
+        session.sides.flip = args.flip;
     }
     if given.has("operation") {
         session.operation = operation(args.operation);

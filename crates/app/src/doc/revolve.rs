@@ -23,7 +23,9 @@ use varde_view::{
 };
 
 use super::extrude::is_sketch;
-use super::regions::{BodyTargets, ReadIn, RegionPick, TypedText};
+use super::regions::{
+    BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
+};
 use super::{Doc, Focus, OUT_OF_DATE};
 
 /// The revolve being set up, while one is: [`Doc::operation`].
@@ -51,17 +53,8 @@ pub(crate) struct RevolveSession {
     /// What a click picks first.
     pub(crate) picking: RevolvePick,
     pub(crate) extent: TurnKind,
-    /// The first angle's field, and two sides' second.
-    pub(crate) fields: [TypedText; 2],
-    /// Whether one side goes the other way, or two sides swap: kept
-    /// while the extent ignores it (see [`RevolveSession::stored_flip`]), for when
-    /// it's switched back.
-    pub(crate) flip: bool,
-    /// The flip the revolve edited was stored with while its extent ignores
-    /// it, as old files may have it: written back as it was while the
-    /// extent set up ignores it too, so an edit changing nothing writes
-    /// nothing. False otherwise.
-    ignored_flip: bool,
+    /// The angles' fields, and the flip.
+    pub(crate) sides: SideFields,
     pub(crate) operation: OperationKind,
     /// The bodies a join, cut or intersect leaves out: the edited
     /// revolve's to start with.
@@ -102,9 +95,7 @@ impl RevolveSession {
             axis_selected: None,
             picking: RevolvePick::Regions,
             extent: TurnKind::Full,
-            fields: DEFAULT_ANGLES.map(field),
-            flip: false,
-            ignored_flip: false,
+            sides: SideFields::new(DEFAULT_ANGLES.map(field)),
             operation: OperationKind::NewBody,
             targets: BodyTargets::default(),
             read_in: ReadIn::of(document),
@@ -137,14 +128,8 @@ impl RevolveSession {
             Turn::TwoSides(a, b) => (TurnKind::TwoSides, [Some(a), Some(b)]),
         };
         session.extent = extent;
-        if let Some(first) = first {
-            session.fields[0] = TypedText::of(first, &ask);
-        }
-        if let Some(second) = second {
-            session.fields[1] = TypedText::of(second, &ask);
-        }
-        session.flip = revolve.flip;
-        session.ignored_flip = revolve.flip && !session.extent.flips();
+        let flips = session.extent.flips();
+        (session.sides).open([first, second], revolve.flip, flips, &ask);
         session.operation = OperationKind::of(&revolve.operation);
         session.targets = BodyTargets::new(revolve.operation.excluded());
         session
@@ -252,23 +237,8 @@ impl RevolveSession {
         let Some(before) = self.read_in.follow(document) else {
             return;
         };
-        let ask = Turn::ask(&before.design());
         let now = Turn::ask(&self.read_in.design());
-        for field in &mut self.fields {
-            field.follow(&ask, &now);
-        }
-    }
-
-    /// The flip to store: the one set up where the extent takes it,
-    /// else the one stored before if that extent ignored it too
-    /// ([`RevolveSession::ignored_flip`]), else none, so a flip left set
-    /// from another extent isn't stored where it changes nothing.
-    fn stored_flip(&self) -> bool {
-        if self.extent.flips() {
-            self.flip
-        } else {
-            self.ignored_flip
-        }
+        self.sides.follow(&Turn::ask(&before.design()), &now);
     }
 
     /// The revolve as set up of `document`, if it's whole: a source,
@@ -280,7 +250,7 @@ impl RevolveSession {
             return None;
         }
         let axis = self.axis(document)?;
-        let value = |angle: Angle| self.fields[angle.index()].value.clone();
+        let value = |angle: Angle| self.sides.value(angle);
         let extent = match self.extent {
             TurnKind::Full => Turn::Full,
             TurnKind::OneSide => Turn::OneSide(value(Angle::First)?),
@@ -292,7 +262,7 @@ impl RevolveSession {
             regions: self.regions.references(),
             axis,
             extent,
-            flip: self.stored_flip(),
+            flip: self.sides.stored_flip(self.extent.flips()),
             operation: self.targets.operation(self.operation),
         })
     }
@@ -306,54 +276,25 @@ impl RevolveSession {
     }
 
     /// Types into `angle`'s field where its knob is dragged to: `to`
-    /// radians about the axis from the sketch plane. One side's angle is
-    /// how far round either way, a turn back past the plane flipping it;
-    /// symmetric's twice it; two sides' each how far its own way, a whole
-    /// turn at most. Nothing changes for none, nor for a drag that takes two sides further over a turn than they
-    /// were.
+    /// radians about the axis from the sketch plane ([`drag_side`]), a
+    /// whole turn at most: two sides together can't go over a turn by
+    /// it.
     fn drag(&mut self, angle: Angle, to: f64, document: &Document) {
-        let (turn, flip) = match (self.extent, angle) {
-            (TurnKind::OneSide, Angle::First) => (to.abs(), Some(to < 0.0)),
-            (TurnKind::Symmetric, Angle::First) => (2.0 * to.abs(), None),
-            (TurnKind::TwoSides, _) => (to.abs(), None),
-            _ => return,
-        };
-        if !(turn > 0.0 && turn.is_finite()) {
-            return;
-        }
-        // Past what the field takes, as near as it goes.
-        let ask = Turn::ask(&document.design());
-        let turn = turn.min(ask.max).max(ask.min.unwrap_or(0.0));
-        let text = varde_expr::format(turn, Some(Unit::Angle(AngleUnit::Deg)));
-        let mut field = self.fields[angle.index()].clone();
-        field.input(text, &ask);
-        if field.error.is_some() {
-            return;
-        }
-        let before = self.refused(document);
-        let old = std::mem::replace(&mut self.fields[angle.index()], field);
-        let old_flip = self.flip;
-        if let Some(flip) = flip {
-            self.flip = flip;
-        }
-        let worse = match (before, self.refused(document)) {
-            (_, None) => false,
-            (None, Some(_)) => true,
-            // Already over a turn (typed so), the knob only goes back.
-            (Some(_), Some(after)) => {
-                after == RevolveError::Turn && old.value.as_ref().is_none_or(|old| turn > old.value)
-            }
-        };
-        if worse {
-            self.fields[angle.index()] = old;
-            self.flip = old_flip;
-        }
+        drag_side(
+            self,
+            |session| &mut session.sides,
+            self.extent.sides(),
+            angle,
+            to,
+            (&Turn::ask(&document.design()), Unit::Angle(AngleUnit::Deg)),
+            |session| session.refused(document),
+            RevolveError::Turn,
+        );
     }
 
     /// Reads `text` into the field of `angle`, in `document`'s design.
     pub(crate) fn input(&mut self, angle: Angle, text: String, document: &Document) {
-        let ask = Turn::ask(&document.design());
-        self.fields[angle.index()].input(text, &ask);
+        (self.sides).input(angle, text, &Turn::ask(&document.design()));
     }
 
     /// Whether it can be committed to `document`: it's whole, none of the
@@ -363,8 +304,7 @@ impl RevolveSession {
     /// references to other features and bodies, which the session keeps
     /// valid.
     fn ready(&self, document: &Document) -> bool {
-        let typed =
-            (self.extent.angles().iter()).all(|angle| self.fields[angle.index()].error.is_none());
+        let typed = self.sides.typed(self.extent.sides());
         let design = document.design();
         typed
             && self
@@ -612,7 +552,7 @@ impl Doc {
             RevolveLook::Picking(picking) => session.picking = picking,
             RevolveLook::Extent(kind) => session.extent = kind,
             RevolveLook::Input { angle, text } => session.input(angle, text, document),
-            RevolveLook::Flip => session.flip = !session.flip,
+            RevolveLook::Flip => session.sides.flip = !session.sides.flip,
             RevolveLook::Operation(kind) => session.operation = kind,
             RevolveLook::Target(body) => {
                 let revision = self.feed.revision();
@@ -669,13 +609,9 @@ impl Doc {
         let Some(session) = self.operation.revolve_mut() else {
             return;
         };
-        let edited = session.feature.is_none_or(|feature| {
-            matches!(
-                document.feature(feature).map(|f| &f.kind),
-                Some(FeatureKind::Revolve(_))
-            )
-        });
-        if !(editable && !replaced && edited && session.regions.refresh(document)) {
+        let is_kind = |kind: &FeatureKind| matches!(kind, FeatureKind::Revolve(_));
+        let (feature, regions) = (session.feature, &mut session.regions);
+        if !regions_session_stays(document, feature, regions, editable, replaced, is_kind) {
             self.operation = None;
             return;
         }
@@ -719,11 +655,8 @@ impl Doc {
             resolution: document.tolerance().resolution(),
             picking: session.picking,
             extent: session.extent,
-            fields: [
-                session.fields[0].field(self.params_in()),
-                session.fields[1].field(self.params_in()),
-            ],
-            flip: session.flip,
+            fields: (session.sides.fields.each_ref()).map(|field| field.field(self.params_in())),
+            flip: session.sides.flip,
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             error: self.feed.shown_draft_error(),

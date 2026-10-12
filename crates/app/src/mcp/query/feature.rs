@@ -247,10 +247,10 @@ impl<'a> Shape<'a> {
                 };
                 put("extent", json!(word));
                 if distances >= 1 {
-                    put("distance", json!(session.fields[0].text));
+                    put("distance", json!(session.sides.fields[0].text));
                 }
                 if distances >= 2 {
-                    put("second_distance", json!(session.fields[1].text));
+                    put("second_distance", json!(session.sides.fields[1].text));
                 }
                 put("flip", json!(extrude.flip));
                 put("taper", json!(session.taper.text));
@@ -277,10 +277,10 @@ impl<'a> Shape<'a> {
                 };
                 put("extent", json!(word));
                 if angles >= 1 {
-                    put("angle", json!(session.fields[0].text));
+                    put("angle", json!(session.sides.fields[0].text));
                 }
                 if angles >= 2 {
-                    put("second_angle", json!(session.fields[1].text));
+                    put("second_angle", json!(session.sides.fields[1].text));
                 }
                 put("flip", json!(revolve.flip));
                 self.operation(&mut put, &revolve.operation);

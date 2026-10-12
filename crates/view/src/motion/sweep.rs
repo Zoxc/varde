@@ -21,10 +21,10 @@ use super::{
     BlendEdges, MotionField, MotionLook, MotionPick, MotionState, PickedRow, SketchLines,
     picks_field,
 };
-use crate::extrude::region_name;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, PanelHover, bodies, field, tile, tiles, toggle,
+    BodyTarget, Candidate, OperationKind, PanelHover, bodies, field, region_name, tile, tiles,
+    toggle,
 };
 use crate::{Look, Message};
 
@@ -145,7 +145,7 @@ pub(super) fn body<'a>(
         failed: true,
         excluded: false,
     }));
-    let empty = (sweep.candidates.iter()).all(|candidate| candidate.profiles.regions.is_empty());
+    let empty = Candidate::none_closed(&sweep.candidates);
     let place = if sweep.picked.is_empty() && empty {
         "No closed regions to sweep"
     } else {

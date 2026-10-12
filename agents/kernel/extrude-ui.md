@@ -90,8 +90,9 @@ for again without it.
 **The panel** (`view/src/extrude.rs`) floats at the viewport's right in
 the operation panel (`view/src/operation_panel.rs`, meant to hold every
 operation's panel, with the parts the extrude and the revolve share:
-`Candidate`, `TypedField`, `OperationKind`, `BodyTarget`, the choices,
-ticks, typed fields, Bodies list and footer message; the app's session
+`Candidate`, `TypedField`, `OperationKind`, `BodyTarget`, the two-sided
+extent's `Side` and `Sides` (its knobs and value fields), the region
+rows, the choices, ticks, typed fields, Bodies list and footer message; the app's session
 parts they share are in `app/src/doc/regions.rs`, see "UI" under
 Revolve in `agents/features/revolve.md`): a card as the tool rail's (the UI
 mock's `.opp`), a fixed head (the operation's icon, the title on one
@@ -190,7 +191,8 @@ stops where its field would refuse the distance, or where the extrude's
 own check would refuse the extrude and didn't before (two sides together
 over `MAX_COORD`; one side and symmetric only stop where the field
 would). Two sides typed over the limit already, a knob only moves back
-towards it. If the design's units change while the session is open, each
+towards it (`drag_side` in `app/src/doc/regions.rs`, the revolve's
+too). If the design's units change while the session is open, each
 distance's value is pinned as the document pins its own
 (`Value::pin_units` with the units it was read in,
 `ExtrudeSession::follow_design`, from `prune_extrude` as the change is

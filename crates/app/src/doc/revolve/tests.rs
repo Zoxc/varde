@@ -462,9 +462,9 @@ fn editing_a_revolve_reopens_it_with_its_values_and_sets_it_again() {
     assert_eq!(session.regions.picked, BTreeSet::from([lathe.rectangle()]));
     assert_eq!(session.axis, Some(AxisLine::Curve(lathe.construction)));
     assert_eq!(session.extent, TurnKind::TwoSides);
-    assert_eq!(session.fields[0].text, "100");
-    assert_eq!(session.fields[1].text, "20");
-    assert!(session.flip);
+    assert_eq!(session.sides.fields[0].text, "100");
+    assert_eq!(session.sides.fields[1].text, "20");
+    assert!(session.sides.flip);
     assert_eq!(session.operation, OperationKind::NewBody);
     let state = lathe.doc.revolve_state().unwrap();
     assert_eq!(state.editing, Some("Revolve 1"));
@@ -929,7 +929,7 @@ fn dragging_a_knob_types_its_angle() {
     near(span(&lathe), (0.0, PI / 3.0));
     drag(&mut lathe, Angle::First, -PI / 2.0);
     near(span(&lathe), (-PI / 2.0, 0.0));
-    assert!(lathe.doc.operation.revolve().unwrap().flip);
+    assert!(lathe.doc.operation.revolve().unwrap().sides.flip);
     // Onto the plane changes nothing; past a turn, a whole turn.
     drag(&mut lathe, Angle::First, 0.0);
     near(span(&lathe), (-PI / 2.0, 0.0));

@@ -11,9 +11,9 @@ use varde_document::{
     BodyId, Command, Design, Document, FeatureId, FeatureKind, LengthUnit, MAX_COORD, Operation,
     Params, Placement, RegionRef, Sketch, Targets,
 };
-use varde_expr::{Ask, Value};
+use varde_expr::{Ask, Unit, Value};
 use varde_sketch::{MAX_WORK, Profiles};
-use varde_view::{BodyTarget, Candidate, OperationKind, ParamsIn, TypedField};
+use varde_view::{BodyTarget, Candidate, OperationKind, ParamsIn, Side, Sides, TypedField};
 
 use super::Doc;
 use super::extrude::is_sketch;
@@ -619,6 +619,162 @@ impl TypedText {
             self.input(text, now);
         }
     }
+}
+
+/// The fields of a two-sided extent, an extrude's distances or a
+/// revolve's angles, and its flip: what the two sessions share of it.
+#[derive(Debug, Clone)]
+pub(crate) struct SideFields {
+    /// The first value's field, and two sides' second.
+    pub(crate) fields: [TypedText; 2],
+    /// Whether one side goes the other way, or two sides swap: kept
+    /// while the extent ignores it (see [`SideFields::stored_flip`]), for
+    /// when it's switched back.
+    pub(crate) flip: bool,
+    /// The flip the feature edited was stored with while its extent
+    /// ignores it, as old files may have it: written back as it was
+    /// while the extent set up ignores it too, so an edit changing
+    /// nothing writes nothing. False otherwise.
+    ignored_flip: bool,
+}
+
+impl SideFields {
+    /// The fields `fields`, not flipped.
+    pub(crate) fn new(fields: [TypedText; 2]) -> Self {
+        Self {
+            fields,
+            flip: false,
+            ignored_flip: false,
+        }
+    }
+
+    /// Takes an edited feature's: its `values` (each side's it has),
+    /// stored values asked for by `ask`, and `flip`, its extent taking
+    /// it if `flips`.
+    pub(crate) fn open(&mut self, values: [Option<&Value>; 2], flip: bool, flips: bool, ask: &Ask) {
+        for (field, value) in self.fields.iter_mut().zip(values) {
+            if let Some(value) = value {
+                *field = TypedText::of(value, ask);
+            }
+        }
+        self.flip = flip;
+        self.ignored_flip = flip && !flips;
+    }
+
+    /// The flip to store: the one set up where the extent takes it
+    /// (`flips`), else the one stored before if that extent ignored it
+    /// too ([`SideFields::ignored_flip`]), else none, so a flip left set
+    /// from another extent isn't stored where it changes nothing.
+    pub(crate) fn stored_flip(&self, flips: bool) -> bool {
+        if flips { self.flip } else { self.ignored_flip }
+    }
+
+    /// The value `side`'s field last gave.
+    pub(crate) fn value(&self, side: Side) -> Option<Value> {
+        self.fields[side.index()].value.clone()
+    }
+
+    /// Reads `text` into `side`'s field, for `ask`.
+    pub(crate) fn input(&mut self, side: Side, text: String, ask: &Ask) {
+        self.fields[side.index()].input(text, ask);
+    }
+
+    /// Whether none of the fields of `sides` is refused.
+    pub(crate) fn typed(&self, sides: Sides) -> bool {
+        (sides.fields().iter()).all(|side| self.fields[side.index()].error.is_none())
+    }
+
+    /// Follows the design changing from the one `before` asks in to the
+    /// one `now` does ([`TypedText::follow`]).
+    pub(crate) fn follow(&mut self, before: &Ask, now: &Ask) {
+        for field in &mut self.fields {
+            field.follow(before, now);
+        }
+    }
+}
+
+/// Moves the knob of `side`, of an extent spending its sides as `sides`,
+/// to `to` from the sketch plane (millimetres along its normal, or
+/// radians about the axis), typing it into the field of `session`'s
+/// [`SideFields`] (`fields`) asked for by `ask`, in `unit`. One side's
+/// value is how far either way, past the plane flipping it; symmetric's
+/// twice it; two sides' each how far its own way. A knob on the plane
+/// changes nothing; one past what the field takes stands at its least or
+/// most. Nothing changes where the field still refuses the value, or
+/// where the feature's own check (`refused`) would refuse it and didn't
+/// before (two sides together over the limit): the knob stops there.
+/// Already over the limit, refused `too_far`, it only moves back towards
+/// it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drag_side<S, E: PartialEq>(
+    session: &mut S,
+    fields: fn(&mut S) -> &mut SideFields,
+    sides: Sides,
+    side: Side,
+    to: f64,
+    (ask, unit): (&Ask, Unit),
+    refused: impl Fn(&S) -> Option<E>,
+    too_far: E,
+) {
+    let (value, flip) = match (sides, side) {
+        (Sides::One, Side::First) => (to.abs(), Some(to < 0.0)),
+        (Sides::Symmetric, Side::First) => (2.0 * to.abs(), None),
+        (Sides::Two, _) => (to.abs(), None),
+        _ => return,
+    };
+    if !(value > 0.0 && value.is_finite()) {
+        return;
+    }
+    // Past what the field takes, as near as it goes.
+    let value = value.min(ask.max).max(ask.min.unwrap_or(0.0));
+    let text = varde_expr::format(value, Some(unit));
+    let mut field = fields(session).fields[side.index()].clone();
+    field.input(text, ask);
+    if field.error.is_some() {
+        return;
+    }
+    let before = refused(session);
+    let own = fields(session);
+    let old = std::mem::replace(&mut own.fields[side.index()], field);
+    let old_flip = own.flip;
+    if let Some(flip) = flip {
+        own.flip = flip;
+    }
+    let worse = match (before, refused(session)) {
+        (_, None) => false,
+        (None, Some(_)) => true,
+        // Already over the limit (typed so), the knob only goes back
+        // towards it.
+        (Some(_), Some(after)) => {
+            after == too_far && old.value.as_ref().is_none_or(|old| value > old.value)
+        }
+    };
+    if worse {
+        let own = fields(session);
+        own.fields[side.index()] = old;
+        own.flip = old_flip;
+    }
+}
+
+/// Whether a session setting up a feature from `regions` (an extrude or
+/// a revolve), editing `feature` if it's `Some`, stays: what it's about
+/// is still there. It ends where the feature edited isn't one `is_kind`
+/// takes any more (undone away, say), the document can't be changed
+/// (`editable` false), it was replaced whole (`replaced`), or the
+/// regions' sketches can't be found again ([`RegionPick::refresh`],
+/// which finds them again if they changed).
+pub(crate) fn regions_session_stays(
+    document: &Document,
+    feature: Option<FeatureId>,
+    regions: &mut RegionPick,
+    editable: bool,
+    replaced: bool,
+    is_kind: fn(&FeatureKind) -> bool,
+) -> bool {
+    let edited = feature.is_none_or(|feature| {
+        (document.feature(feature)).is_some_and(|found| is_kind(&found.kind))
+    });
+    editable && !replaced && edited && regions.refresh(document)
 }
 
 impl Doc {

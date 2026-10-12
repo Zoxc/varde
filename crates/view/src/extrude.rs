@@ -16,15 +16,15 @@ use varde_sketch::{Region, angle};
 use crate::chrome::tip;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, TypedField, bodies,
-    field, footer_message, message_text, missing_rows, operation_panel, pick_field, picked_row,
-    tile, tiles, toggle, value_field,
+    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, Side, Sides,
+    TypedField, bodies, field, footer_message, message_text, operation_panel, pick_field,
+    region_rows, tile, tiles, toggle, value_field,
 };
 use crate::theme;
-use crate::{Edit, Look, Message, VALUE_FIELD};
+use crate::{Edit, Look, Message};
 
 /// The field of an extrude's second distance, for two sides. The first
-/// is [`VALUE_FIELD`], which takes the focus as the session opens.
+/// is [`VALUE_FIELD`](crate::VALUE_FIELD), which takes the focus as the session opens.
 const SECOND_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-second");
 
 /// The field of an extrude's taper.
@@ -74,36 +74,28 @@ impl ExtentKind {
 
     /// The distances it's given by.
     pub fn distances(self) -> &'static [Distance] {
-        match self {
-            ExtentKind::OneSide | ExtentKind::Symmetric => &[Distance::First],
-            ExtentKind::TwoSides => &[Distance::First, Distance::Second],
-            ExtentKind::ThroughAll => &[],
-        }
+        self.sides().fields()
     }
 
     /// Whether Flip changes it.
     pub fn flips(self) -> bool {
-        matches!(self, ExtentKind::OneSide | ExtentKind::TwoSides)
+        self.sides().flips()
+    }
+
+    /// How it spends its distances.
+    pub fn sides(self) -> Sides {
+        match self {
+            ExtentKind::OneSide => Sides::One,
+            ExtentKind::Symmetric => Sides::Symmetric,
+            ExtentKind::TwoSides => Sides::Two,
+            ExtentKind::ThroughAll => Sides::None,
+        }
     }
 }
 
 /// One of an extrude's distances: the first, which one side and
 /// symmetric have too, or the second of two sides, against the normal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Distance {
-    First,
-    Second,
-}
-
-impl Distance {
-    /// Where it's kept in an array of both.
-    pub fn index(self) -> usize {
-        match self {
-            Distance::First => 0,
-            Distance::Second => 1,
-        }
-    }
-}
+pub type Distance = Side;
 
 /// A change to the extrude being set up, see [`Look::Extrude`].
 #[derive(Debug, Clone, PartialEq)]
@@ -239,8 +231,7 @@ impl Handle {
 impl ExtrudeState<'_> {
     /// The source sketch, if it's chosen.
     pub(crate) fn source(&self) -> Option<&Candidate<'_>> {
-        let source = self.source?;
-        self.candidates.iter().find(|c| c.feature == source)
+        Candidate::find(&self.candidates, self.source)
     }
 
     /// The handle, once regions are picked and the extent has distances.
@@ -252,30 +243,12 @@ impl ExtrudeState<'_> {
             .filter_map(|&index| source.profiles.regions.get(index));
         let centre = centroid(regions)?;
         let placement = source.placement;
-        let value = |distance: Distance| self.fields[distance.index()].value;
         let sign = if self.flip && self.extent.flips() {
             -1.0
         } else {
             1.0
         };
-        let knobs: Vec<(Distance, f64)> = match self.extent {
-            ExtentKind::OneSide => value(Distance::First)
-                .map(|d| (Distance::First, sign * d))
-                .into_iter()
-                .collect(),
-            ExtentKind::Symmetric => value(Distance::First)
-                .map(|d| (Distance::First, d / 2.0))
-                .into_iter()
-                .collect(),
-            ExtentKind::TwoSides => [
-                value(Distance::First).map(|a| (Distance::First, sign * a)),
-                value(Distance::Second).map(|b| (Distance::Second, -sign * b)),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
-            ExtentKind::ThroughAll => Vec::new(),
-        };
+        let knobs = (self.extent.sides()).knobs(self.fields.map(|field| field.value), sign);
         let handle = Handle {
             origin: placement.to_world(centre),
             normal: placement.normal,
@@ -360,31 +333,16 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
 
     // The regions picked, each with a cross taking it out; clicks always
     // pick regions, so the field is always the one picking.
-    let rows = (state.source.into_iter())
-        .flat_map(|sketch| {
-            state.picked.iter().map(move |&region| {
-                picked_row(
-                    Icon::SeRegion,
-                    region_name(region),
-                    None,
-                    send(ExtrudeLook::PickRegion { sketch, region }),
-                    None,
-                    PanelHover::Region { sketch, region },
-                    state.hover,
-                )
-            })
-        })
-        .chain(missing_rows(
-            state.missing,
-            |index| send(ExtrudeLook::DropMissing(index)),
-            None,
-            state.hover,
-        ))
-        .collect();
-    let empty = state
-        .candidates
-        .iter()
-        .all(|candidate| candidate.profiles.regions.is_empty());
+    let rows = region_rows(
+        state.source,
+        state.picked,
+        state.missing,
+        |sketch, region| send(ExtrudeLook::PickRegion { sketch, region }),
+        |index| send(ExtrudeLook::DropMissing(index)),
+        None,
+        state.hover,
+    );
+    let empty = Candidate::none_closed(&state.candidates);
     let place = if state.picked.is_empty() && empty {
         "No closed regions to extrude"
     } else if state.picked.is_empty() {
@@ -408,14 +366,16 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             tile
         }
     });
-    let fields = state.extent.distances().iter().map(|&distance| {
-        let label = match (state.extent, distance) {
-            (ExtentKind::TwoSides, Distance::First) => "Side 1",
-            (ExtentKind::TwoSides, Distance::Second) => "Side 2",
-            _ => "Distance",
-        };
-        distance_field(label, distance, state.fields[distance.index()], editable)
-    });
+    let fields = state.extent.sides().value_fields(
+        "Distance",
+        SECOND_FIELD,
+        state.fields,
+        editable.then_some(|distance, text| {
+            Message::Look(Look::Extrude(ExtrudeLook::Input { distance, text }))
+        }),
+        Message::Edit(Edit::CommitExtrude),
+        Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
+    );
     let flip = state.extent.flips().then(|| {
         toggle(
             Icon::TkFlip,
@@ -483,36 +443,6 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
         close: false,
     })
-}
-
-/// What a region picked is called in the panel: "Region 1", by its index
-/// in its sketch's profiles.
-pub(crate) fn region_name(region: usize) -> String {
-    format!("Region {}", region.saturating_add(1))
-}
-
-/// The field of `distance`, named `label`, showing why its text is
-/// refused under it. `Enter` in it is OK, `Esc` Cancel.
-fn distance_field<'a>(
-    label: &'a str,
-    distance: Distance,
-    field: TypedField<'a>,
-    editable: bool,
-) -> Element<'a, Message> {
-    let id = match distance {
-        Distance::First => VALUE_FIELD,
-        Distance::Second => SECOND_FIELD,
-    };
-    let input = editable
-        .then_some(move |text| Message::Look(Look::Extrude(ExtrudeLook::Input { distance, text })));
-    value_field(
-        label,
-        id,
-        field,
-        input,
-        Message::Edit(Edit::CommitExtrude),
-        Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
-    )
 }
 
 #[cfg(test)]

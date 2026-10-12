@@ -329,7 +329,7 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     assert_eq!(session.regions.missing, 0);
     assert_eq!(session.extent, ExtentKind::OneSide);
     // Typed "10", it shows with its unit, as a new extrude's does.
-    assert_eq!(session.fields[0].text, "10 mm");
+    assert_eq!(session.sides.fields[0].text, "10 mm");
     assert_eq!(session.operation, OperationKind::NewBody);
     let state = doc.extrude_state().unwrap();
     assert_eq!(state.editing, Some("Extrude 1"));
@@ -473,19 +473,25 @@ fn the_handle_drags_the_distance_and_flips_one_side() {
         to,
     };
     extrude(&mut doc, drag(4.0));
-    assert_eq!(doc.operation.extrude().unwrap().fields[0].text, "10 mm");
+    assert_eq!(
+        doc.operation.extrude().unwrap().sides.fields[0].text,
+        "10 mm"
+    );
     extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
     extrude(&mut doc, drag(-4.0));
     let session = doc.operation.extrude().unwrap();
-    assert!(session.flip);
-    assert_eq!(session.fields[0].value.as_ref().unwrap().value, 4.0);
+    assert!(session.sides.flip);
+    assert_eq!(session.sides.fields[0].value.as_ref().unwrap().value, 4.0);
     assert_eq!(
         last_draft(&requests).unwrap().extrude.span(),
         Some((-4.0, 0.0))
     );
     // On the plane, it stays.
     extrude(&mut doc, drag(0.0));
-    assert_eq!(doc.operation.extrude().unwrap().fields[0].text, "4 mm");
+    assert_eq!(
+        doc.operation.extrude().unwrap().sides.fields[0].text,
+        "4 mm"
+    );
     extrude(&mut doc, ExtrudeLook::DropHandle);
     assert_eq!(doc.operation.extrude().unwrap().grabbed, None);
 }
@@ -554,7 +560,11 @@ fn a_two_sides_knob_stops_at_the_limit() {
         distance: Distance::Second,
         to,
     };
-    let second = |doc: &Doc| doc.operation.extrude().unwrap().fields[1].value.clone();
+    let second = |doc: &Doc| {
+        doc.operation.extrude().unwrap().sides.fields[1]
+            .value
+            .clone()
+    };
     let before = second(&doc);
     extrude(&mut doc, drag(-500000.0));
     assert_eq!(second(&doc), before);
@@ -584,7 +594,11 @@ fn plate_session(kind: ExtentKind, first: &str) -> (Doc, Requests) {
 
 #[test]
 fn one_side_and_symmetric_knobs_stop_only_where_the_field_would() {
-    let first = |doc: &Doc| doc.operation.extrude().unwrap().fields[0].value.clone();
+    let first = |doc: &Doc| {
+        doc.operation.extrude().unwrap().sides.fields[0]
+            .value
+            .clone()
+    };
     let drag = |to| ExtrudeLook::DragHandle {
         distance: Distance::First,
         to,
@@ -594,7 +608,7 @@ fn one_side_and_symmetric_knobs_stop_only_where_the_field_would() {
     extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
     extrude(&mut doc, drag(-1_000_000.0));
     assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
-    assert!(doc.operation.extrude().unwrap().flip);
+    assert!(doc.operation.extrude().unwrap().sides.flip);
     assert!(doc.extrude_state().unwrap().ready);
     extrude(&mut doc, drag(1_000_001.0));
     assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
@@ -1143,8 +1157,8 @@ fn a_bare_distance_keeps_its_length_when_the_units_change() {
     // and the document take.
     doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
     let session = doc.operation.extrude().unwrap();
-    assert_eq!(session.fields[0].value.as_ref().unwrap().value, 20.0);
-    assert_eq!(session.fields[0].error, None);
+    assert_eq!(session.sides.fields[0].value.as_ref().unwrap().value, 20.0);
+    assert_eq!(session.sides.fields[0].error, None);
     assert!(doc.extrude_state().unwrap().ready);
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.draft_error(), None);
@@ -1509,7 +1523,11 @@ fn a_two_sides_knob_over_the_limit_only_goes_back_towards_it() {
         distance: Distance::Second,
         to,
     };
-    let second = |doc: &Doc| doc.operation.extrude().unwrap().fields[1].value.clone();
+    let second = |doc: &Doc| {
+        doc.operation.extrude().unwrap().sides.fields[1]
+            .value
+            .clone()
+    };
     // Further over, it stays.
     extrude(&mut doc, drag(-700000.0));
     assert_eq!(second(&doc).unwrap().value, 600000.0);
@@ -1771,7 +1789,9 @@ fn plate_replaced() -> (Doc, FeatureId, Requests, Document, Document) {
 
 /// The first distance of the session's extrude edited, typed.
 fn first(doc: &Doc) -> String {
-    doc.operation.extrude().unwrap().fields[0].text.clone()
+    doc.operation.extrude().unwrap().sides.fields[0]
+        .text
+        .clone()
 }
 
 #[test]
@@ -2468,11 +2488,11 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
             region,
         },
     );
-    let flip = doc.operation.extrude().unwrap().flip;
+    let flip = doc.operation.extrude().unwrap().sides.flip;
     doc.apply(Command::SetFeatureVisible(plate, true));
     doc.sync();
     let session = doc.operation.extrude().unwrap();
-    assert_eq!(session.flip, flip);
+    assert_eq!(session.sides.flip, flip);
     assert_eq!(session.regions.source, None);
     assert_eq!(session.regions.skipped.len(), 1);
     assert_eq!(session.regions.worked_out, 2);
@@ -3423,7 +3443,11 @@ fn a_new_extrude_fits_the_camera_and_an_edited_one_keeps_its_distance() {
     let (mut doc, sketch, _requests) = plate();
     let distance = |doc: &Doc| {
         let session = doc.operation.extrude().expect("a session");
-        session.fields[0].value.as_ref().expect("a distance").value
+        session.sides.fields[0]
+            .value
+            .as_ref()
+            .expect("a distance")
+            .value
     };
     for (height, wanted) in [(40_000.0, 10_000.0), (40.0, 10.0), (0.3, 0.05)] {
         doc.camera.set_view_height(height);
@@ -3507,7 +3531,7 @@ fn a_distance_naming_a_parameter_follows_it_while_the_session_is_open() {
             text: "height / 2".into(),
         },
     );
-    let field = |doc: &Doc| doc.operation.extrude().unwrap().fields[0].clone();
+    let field = |doc: &Doc| doc.operation.extrude().unwrap().sides.fields[0].clone();
     assert_eq!(field(&doc).value.unwrap().value, 15.0);
     // The parameter changes: the field reads it again, and OK takes it.
     doc.apply(Command::SetParam {

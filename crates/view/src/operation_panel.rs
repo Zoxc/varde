@@ -19,6 +19,7 @@
 //! 8 px in.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use iced::advanced::widget::{Operation, Tree};
@@ -113,6 +114,163 @@ pub struct Candidate<'a> {
     /// The sketch, whose lines a revolve's axis is picked from.
     pub sketch: &'a Sketch,
     pub profiles: &'a Arc<Profiles>,
+}
+
+impl<'a> Candidate<'a> {
+    /// The candidate of `candidates` that's the sketch `source`, if it's
+    /// chosen and among them.
+    pub(crate) fn find<'c>(
+        candidates: &'c [Candidate<'a>],
+        source: Option<FeatureId>,
+    ) -> Option<&'c Candidate<'a>> {
+        let source = source?;
+        candidates.iter().find(|c| c.feature == source)
+    }
+
+    /// Whether none of `candidates` has a closed region to pick.
+    pub(crate) fn none_closed(candidates: &[Candidate<'_>]) -> bool {
+        (candidates.iter()).all(|candidate| candidate.profiles.regions.is_empty())
+    }
+}
+
+/// One of the values of a two-sided extent, an extrude's distances or a
+/// revolve's angles: the first, which one side and symmetric have too,
+/// or the second of two sides, going the other way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Side {
+    First,
+    Second,
+}
+
+impl Side {
+    /// Where it's kept in an array of both.
+    pub fn index(self) -> usize {
+        match self {
+            Side::First => 0,
+            Side::Second => 1,
+        }
+    }
+}
+
+/// How an extent spends its [`Side`]s: an extrude's
+/// [`ExtentKind`](crate::ExtentKind) or a revolve's
+/// [`TurnKind`](crate::TurnKind), but for what each goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sides {
+    /// None: through all, or a full turn.
+    None,
+    /// The first, one way, or the other way flipped.
+    One,
+    /// The first, half of it either way.
+    Symmetric,
+    /// Both, the first one way and the second the other, swapped flipped.
+    Two,
+}
+
+impl Sides {
+    /// The values it's given by.
+    pub fn fields(self) -> &'static [Side] {
+        match self {
+            Sides::None => &[],
+            Sides::One | Sides::Symmetric => &[Side::First],
+            Sides::Two => &[Side::First, Side::Second],
+        }
+    }
+
+    /// Whether Flip changes it.
+    pub fn flips(self) -> bool {
+        matches!(self, Sides::One | Sides::Two)
+    }
+
+    /// Where the handle's knobs go, each [`Side`] given in `values`: how
+    /// far along, `sign` -1 where flipped. One side's at its value,
+    /// symmetric's at half of it, two sides' each its own way.
+    pub(crate) fn knobs(self, values: [Option<f64>; 2], sign: f64) -> Vec<(Side, f64)> {
+        let [first, second] = values;
+        match self {
+            Sides::None => Vec::new(),
+            Sides::One => first.map(|a| (Side::First, sign * a)).into_iter().collect(),
+            Sides::Symmetric => first.map(|a| (Side::First, a / 2.0)).into_iter().collect(),
+            Sides::Two => [
+                first.map(|a| (Side::First, sign * a)),
+                second.map(|b| (Side::Second, -sign * b)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        }
+    }
+
+    /// The fields of the values it's given by, of `fields`: "Side 1" and
+    /// "Side 2" for two sides, else `single` (the first is
+    /// [`VALUE_FIELD`](crate::VALUE_FIELD), the second `second`), each
+    /// sending `input` as it's typed in, if it can be. `Enter` in one
+    /// is `commit`, `Esc` `cancel`.
+    pub(crate) fn value_fields<'a>(
+        self,
+        single: &'a str,
+        second: iced::widget::Id,
+        fields: [TypedField<'a>; 2],
+        input: Option<impl Fn(Side, String) -> Message + Copy + 'a>,
+        commit: Message,
+        cancel: Message,
+    ) -> Vec<Element<'a, Message>> {
+        (self.fields().iter())
+            .map(|&side| {
+                let (label, id) = match (self, side) {
+                    (Sides::Two, Side::First) => ("Side 1", crate::VALUE_FIELD),
+                    (Sides::Two, Side::Second) => ("Side 2", second.clone()),
+                    _ => (single, crate::VALUE_FIELD),
+                };
+                let input = input.map(|input| move |text| input(side, text));
+                value_field(
+                    label,
+                    id,
+                    fields[side.index()],
+                    input,
+                    commit.clone(),
+                    cancel.clone(),
+                )
+            })
+            .collect()
+    }
+}
+
+/// The rows of a profile's regions: those `picked` of the sketch
+/// `source`, each with a cross sending `pick` of it, then the edited
+/// feature's `missing` ones, each with a cross sending `drop_missing` of
+/// its place among them. A click on a row sends `press`.
+pub(crate) fn region_rows<'a>(
+    source: Option<FeatureId>,
+    picked: &BTreeSet<usize>,
+    missing: usize,
+    pick: impl Fn(FeatureId, usize) -> Option<Message>,
+    drop_missing: impl Fn(usize) -> Option<Message>,
+    press: Option<Message>,
+    hovered: Option<PanelHover>,
+) -> Vec<Element<'a, Message>> {
+    let picked =
+        (source.into_iter()).flat_map(|sketch| picked.iter().map(move |&region| (sketch, region)));
+    picked
+        .map(|(sketch, region)| {
+            picked_row(
+                Icon::SeRegion,
+                region_name(region),
+                None,
+                pick(sketch, region),
+                press.clone(),
+                PanelHover::Region { sketch, region },
+                hovered,
+            )
+        })
+        .chain(missing_rows(missing, drop_missing, press.clone(), hovered))
+        .collect()
+}
+
+/// What a region picked is called in the panel: "Region 1", by its index
+/// in its sketch's profiles.
+pub(crate) fn region_name(region: usize) -> String {
+    format!("Region {}", region.saturating_add(1))
 }
 
 /// A typed value's field, a distance or an angle: its text, and why it's

@@ -64,8 +64,7 @@ struct Base {
 impl<'s, 'a> Regions<'s, 'a> {
     /// The source sketch, if it's chosen.
     pub(crate) fn source(&self) -> Option<&'s Candidate<'a>> {
-        let source = self.source?;
-        self.candidates.iter().find(|c| c.feature == source)
+        Candidate::find(self.candidates, self.source)
     }
 
     /// Where the layers are drawn: on the source sketch's plane, or XY
