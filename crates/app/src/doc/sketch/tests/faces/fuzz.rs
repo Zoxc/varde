@@ -6,6 +6,7 @@
 //! replaced or read-only, answers late or out of order, checking after
 //! each step what must always hold.
 
+use crate::doc::OperationSlot;
 use varde_document::{AxisLine, BodyId, Operation, Revolve, Targets, Turn};
 use varde_regen::Response;
 use varde_view::RevolveLook;
@@ -444,10 +445,10 @@ fn run(seed: u64, steps: usize) {
                 if doc.sketch.is_some() {
                     doc.look(Look::FinishSketch);
                 }
-                if doc.revolve.is_some() {
+                if doc.operation.revolve().is_some() {
                     doc.look(Look::Escape);
                 }
-                if doc.extrude.is_none() {
+                if doc.operation.extrude().is_none() {
                     doc.look(Look::StartExtrude);
                 }
                 if let Some(id) = sketch {
@@ -467,10 +468,10 @@ fn run(seed: u64, steps: usize) {
                 if doc.sketch.is_some() {
                     doc.look(Look::FinishSketch);
                 }
-                if doc.extrude.is_some() {
+                if doc.operation.extrude().is_some() {
                     doc.look(Look::Escape);
                 }
-                if doc.revolve.is_none() {
+                if doc.operation.revolve().is_none() {
                     doc.look(Look::StartRevolve);
                 }
                 if let Some(id) = sketch {

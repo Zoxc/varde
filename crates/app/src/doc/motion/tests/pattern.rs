@@ -1,6 +1,7 @@
 //! The pattern sessions: `P` and the circular pattern, their modes, the
 //! mock's errors, editing from the Timeline, long texts, what's gone.
 
+use crate::doc::OperationSlot;
 use std::f64::consts::TAU;
 
 use glam::DVec3;
@@ -52,7 +53,7 @@ fn p_starts_a_linear_pattern_typing_a_count_and_spacing_previews_the_row() {
     let [low, high] = plates.bounds(right);
     plates.click(right);
     key_in(&mut plates.doc, character("p"));
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::LinearPattern);
     assert_eq!(session.bodies, [right]);
     assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::X)));
@@ -92,7 +93,7 @@ fn p_starts_a_linear_pattern_typing_a_count_and_spacing_previews_the_row() {
 
     // Enter commits it, one undo step, selected and named.
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let (id, _) = plates.last_feature();
     assert_eq!(last_pattern(&plates), pattern);
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -132,7 +133,7 @@ fn total_stores_the_spacing_it_comes_to_and_flip_turns_it() {
 
     // Edited again, it's in the mode it was set up in, as typed.
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.mode, PatternMode::Total);
     assert!(session.flip);
     assert_eq!(session.fields[MotionField::Spread.index()].text, "45 mm");
@@ -144,7 +145,7 @@ fn total_stores_the_spacing_it_comes_to_and_flip_turns_it() {
     // stores, flipped.
     plates.doc.pattern_shapes.clear();
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.mode, PatternMode::Spacing);
     assert!(session.flip);
     let field = &session.fields[MotionField::Spread.index()];
@@ -163,7 +164,7 @@ fn a_circular_pattern_full_turn_spreads_the_copies_round_the_axis() {
     let [_, right, _] = plates.bodies;
     plates.click(right);
     plates.doc.look(Look::StartCircularPattern);
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::CircularPattern);
     assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::Z)));
     assert_eq!(session.mode, PatternMode::Full);
@@ -251,7 +252,7 @@ fn editing_a_pattern_from_the_timeline_changes_it_as_one_undo_step() {
     // Enter on its row edits it with its values.
     plates.doc.look(Look::SelectFeature(id));
     key_in(&mut plates.doc, enter());
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.kind, MotionKind::LinearPattern);
     assert_eq!(session.bodies, [right]);
@@ -270,7 +271,7 @@ fn editing_a_pattern_from_the_timeline_changes_it_as_one_undo_step() {
         "{low} {high}"
     );
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let (same, changed) = plates.last_feature();
     assert_eq!(same, id);
     assert_ne!(changed, first);
@@ -315,7 +316,7 @@ fn a_spread_too_long_to_wrap_is_stored_as_its_value() {
     let long = format!("45{}", " + 0".repeat(63));
     assert!(long.len() <= varde_expr::MAX_LEN && long.len() + 6 > varde_expr::MAX_LEN);
     plates.input(MotionField::Spread, &long);
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert_eq!(session.fields[MotionField::Spread.index()].error, None);
     assert_eq!(session.spread_error(), None);
     assert!(plates.doc.motion_ready());
@@ -329,7 +330,7 @@ fn a_spread_too_long_to_wrap_is_stored_as_its_value() {
     assert_eq!(spread(&last_pattern(&plates)), -15.0);
     // Edited, it's as typed.
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.mode, PatternMode::Total);
     assert!(session.flip);
     plates.motion(MotionLook::Cancel);
@@ -352,7 +353,7 @@ fn a_spread_too_long_to_wrap_is_stored_as_its_value() {
         },
     );
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.mode, PatternMode::Spacing);
     assert!(session.flip);
     let field = &session.fields[MotionField::Spread.index()];
@@ -365,7 +366,7 @@ fn a_spread_too_long_to_wrap_is_stored_as_its_value() {
     plates.doc.look(Look::StartCircularPattern);
     plates.motion(MotionLook::Mode(PatternMode::Spacing));
     plates.input(MotionField::Spread, &format!("30{}", " + 0".repeat(63)));
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert_eq!(session.spread_error(), None);
     let pattern = drafted(&plates).expect("a draft");
     assert_eq!(pattern.step_degrees(), Some(30.0));
@@ -391,18 +392,18 @@ fn an_undo_swapping_the_pattern_s_kind_ends_its_session() {
     };
     set_pattern(&mut plates, id, circular);
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.kind, MotionKind::CircularPattern);
     assert_eq!(session.mode, PatternMode::Full);
     plates.doc.update(Edit::Undo);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     assert!(matches!(
         last_pattern(&plates).kind,
         PatternKind::Linear { .. }
     ));
     // The linear one edits as one again.
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.kind, MotionKind::LinearPattern);
 }
 
@@ -421,7 +422,7 @@ fn a_pattern_s_direction_on_a_body_taken_away_is_gone() {
     plates.answer();
     let wall = plates.face(later, |summary| matches!(summary, Summary::Cylinder { .. }));
     plates.click_at(later, Picked::Face(wall), DVec3::new(5.0, 30.0, 2.0));
-    let axis = plates.doc.motion.as_ref().unwrap().axis;
+    let axis = plates.doc.operation.motion().unwrap().axis;
     assert!(matches!(axis, Some(AxisRef::Face(face)) if face.body == later));
     plates.input(MotionField::Count, "2");
     plates.input(MotionField::Spread, "30");
@@ -453,12 +454,12 @@ fn a_pattern_s_direction_on_a_body_taken_away_is_gone() {
     plates.answer();
     assert!(plates.doc.editor.document().feature(id).is_some());
     plates.doc.look(Look::EditFeature(id));
-    assert!(plates.doc.motion.is_some());
+    assert!(plates.doc.operation.motion().is_some());
     assert!(
         shows(&plates, "The direction is gone: pick another"),
         "{:?} {:?}",
         screen_texts(&plates.doc),
-        plates.doc.motion
+        plates.doc.operation.motion()
     );
     assert!(!plates.doc.motion_ready());
     // Picking another: the bodies where the pattern finds them, by a
@@ -534,7 +535,7 @@ fn ok_on_a_pattern_opened_writes_nothing_however_it_was_typed() {
         plates.doc.look(Look::EditFeature(id));
         assert!(plates.doc.motion_ready(), "{kind:?}");
         plates.doc.update(Edit::CommitMotion);
-        assert!(plates.doc.motion.is_none());
+        assert!(plates.doc.operation.motion().is_none());
         assert_eq!(last_pattern(&plates).kind, kind);
         assert_eq!(plates.doc.editor.revision(), revision, "{kind:?}");
     }
@@ -562,10 +563,10 @@ fn what_goes_away_while_the_axis_is_picked_is_gone() {
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.doc.update(Edit::Undo);
     plates.answer();
-    assert!(plates.doc.motion.is_some());
+    assert!(plates.doc.operation.motion().is_some());
     assert!(plates.last_draft().is_none(), "nothing previewed");
     assert!(!plates.doc.motion_ready());
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert!(matches!(session.axis, Some(AxisRef::Face(face)) if face.body == later));
     plates.motion(MotionLook::OriginAxis(Axis3::Z));
     assert!(shows(&plates, "A picked body is gone"));
@@ -574,7 +575,7 @@ fn what_goes_away_while_the_axis_is_picked_is_gone() {
     plates.motion(MotionLook::Drop(later));
     assert!(plates.doc.motion_ready());
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let stored = last_pattern(&plates);
     assert_eq!(stored.bodies, [right]);
     assert_eq!(stored.kind.axis(), &AxisRef::Origin(Axis3::Z));

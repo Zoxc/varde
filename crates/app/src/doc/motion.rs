@@ -34,6 +34,7 @@
 //! edges and faces clicked are where the feature finds them. A click is
 //! taken only on the model answering what was asked last.
 
+use crate::doc::{OperationSession, OperationSlot};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -70,7 +71,7 @@ use super::regions::{ReadIn, TypedText};
 use super::{Doc, Focus, OUT_OF_DATE};
 
 /// The move, mirror or pattern being set up, while one is:
-/// [`Doc::motion`].
+/// [`Doc::operation`].
 #[derive(Debug, Clone)]
 pub(crate) struct MotionSession {
     pub(crate) kind: MotionKind,
@@ -1529,16 +1530,14 @@ impl Doc {
     /// operation being set up is dropped. A move's first offset field, or
     /// a pattern's count, takes the focus.
     pub(crate) fn start_motion(&mut self, kind: MotionKind) {
-        if (self.motion.take()).is_some_and(|session| session.kind == kind)
+        if (self.operation.take_motion()).is_some_and(|session| session.kind == kind)
             || !self.editable()
             || self.sketch.is_some()
         {
             return;
         }
         self.picking_plane = None;
-        self.extrude = None;
-        self.revolve = None;
-        self.combine = None;
+        self.operation = None;
         let picks = self.selection_picks();
         // A split with a face alone selected cuts with it: its body is
         // picked next.
@@ -1552,12 +1551,12 @@ impl Doc {
         if bodies.is_empty() && !split_face {
             bodies.extend(self.only_body());
         }
-        self.motion = Some(MotionSession::new(
+        self.operation = Some(OperationSession::Motion(MotionSession::new(
             kind,
             self.editor.document(),
             &self.camera,
             bodies,
-        ));
+        )));
         // A blend's edges and faces are those selected that it takes (an
         // edge selected around a face selected is left out); a sweep's
         // path's edges are those selected.
@@ -1593,7 +1592,7 @@ impl Doc {
                 if let Err(why) = self.split_tool(pick) {
                     self.notice = Some(why.into_owned());
                 }
-                if let Some(session) = &mut self.motion {
+                if let Some(session) = self.operation.motion_mut() {
                     session.picking = MotionPick::Bodies;
                 }
             }
@@ -1620,7 +1619,7 @@ impl Doc {
             let document = self.editor.document();
             let selected =
                 (self.selected_feature).filter(|&id| super::extrude::is_sketch(document, id));
-            if let Some(session) = &mut self.motion {
+            if let Some(session) = self.operation.motion_mut() {
                 session.sweep.regions =
                     super::regions::RegionPick::new(selected, varde_document::MAX_SWEEP_REGIONS);
                 session.sweep.regions.refresh(document);
@@ -1634,7 +1633,7 @@ impl Doc {
         // A loft's candidates' regions.
         if kind == MotionKind::Loft {
             let document = self.editor.document();
-            if let Some(session) = &mut self.motion {
+            if let Some(session) = self.operation.motion_mut() {
                 session.loft.regions.refresh(document);
             }
         }
@@ -1655,7 +1654,7 @@ impl Doc {
         curves: &[varde_sketch::Id],
     ) {
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         match kind {
@@ -1736,14 +1735,11 @@ impl Doc {
         // from the start.
         session.prune(document);
         self.picking_plane = None;
-        self.extrude = None;
-        self.revolve = None;
-        self.combine = None;
         self.selected_feature = Some(id);
         if !picks_first(session.kind) {
             self.focus = Some(Focus::All);
         }
-        self.motion = Some(session);
+        self.operation = Some(OperationSession::Motion(session));
         self.opened_operation();
     }
 
@@ -1751,11 +1747,11 @@ impl Doc {
     pub(crate) fn motion_look(&mut self, message: MotionLook) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         match message {
-            MotionLook::Cancel => self.motion = None,
+            MotionLook::Cancel => self.operation = None,
             _ if !editable => {}
             // A loft's own, and what it shares with others (picking, the
             // operation and bodies), all its own way.
@@ -2043,7 +2039,7 @@ impl Doc {
         let Some(pick) = pick.filter(|pick| pick.model == self.feed.model()) else {
             return;
         };
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return;
         };
         if !self.picks() || !self.editable() {
@@ -2085,7 +2081,7 @@ impl Doc {
         }
         let body = self.named_body(body);
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         // A chamfer's body is its edges', never picked itself.
@@ -2133,9 +2129,9 @@ impl Doc {
     /// no document holds) takes it apart from the document: none if
     /// nothing is set up.
     fn on_session<T>(&mut self, f: impl FnOnce(&Doc, &mut MotionSession) -> T) -> Option<T> {
-        let mut session = self.motion.take()?;
+        let mut session = self.operation.take_motion()?;
         let done = f(self, &mut session);
-        self.motion = Some(session);
+        self.operation = Some(OperationSession::Motion(session));
         Some(done)
     }
 
@@ -2225,7 +2221,7 @@ impl Doc {
     /// the session is ready ([`MotionSession::ready`]).
     pub(crate) fn motion_ready(&self) -> bool {
         let design = self.editor.document().design();
-        self.motion.as_ref().is_some_and(|session| {
+        self.operation.motion().is_some_and(|session| {
             self.editable()
                 && !self.users_proposing()
                 && session.ready(&design)
@@ -2236,7 +2232,7 @@ impl Doc {
     /// Why the sweep or loft being set up names what the document
     /// refuses at its place, if it does, so the panel says so at once.
     pub(crate) fn motion_held(&self) -> Option<String> {
-        self.motion_held_in(self.motion.as_ref()?)
+        self.motion_held_in(self.operation.motion()?)
     }
 
     /// Why the sweep or loft `session` sets up names what the document
@@ -2300,7 +2296,7 @@ impl Doc {
         if !self.commit_by(self.motion_ready(), accept) {
             return;
         }
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return;
         };
         let Some(kind) = session.kind() else {
@@ -2312,7 +2308,7 @@ impl Doc {
             (session.mode, session.flip, spread)
         });
         if self.commit_feature(edited, kind) {
-            self.motion = None;
+            self.operation = None;
             // Its shape is kept for editing it again: the feature edited,
             // or the one added, which is selected.
             if let (Some((mode, flip, Some(spread))), Some(id)) =
@@ -2330,7 +2326,7 @@ impl Doc {
     pub(crate) fn prune_motion(&mut self, replaced: bool) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         // The feature edited is still there, of the session's kind (an
@@ -2340,7 +2336,7 @@ impl Doc {
                 == Some(session.kind)
         });
         if !(editable && !replaced && edited) {
-            self.motion = None;
+            self.operation = None;
             return;
         }
         session.prune(document);
@@ -2352,11 +2348,11 @@ impl Doc {
     /// bodies holding them where the model shown has them merged before
     /// it ([`MotionSession::follow`]): whether they moved.
     pub(crate) fn follow_motion_merges(&mut self) -> bool {
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return false;
         };
         let merges = (self.feed).merged_before(self.editor.document(), session.feature);
-        (self.motion.as_mut()).is_some_and(|session| session.follow(&merges))
+        (self.operation.motion_mut()).is_some_and(|session| session.follow(&merges))
     }
 
     /// Finds where the handles of the move being set up stand
@@ -2369,7 +2365,7 @@ impl Doc {
         self.follow_offset_anchor();
         self.follow_knob_anchor();
         let generation = self.editor.generation();
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return;
         };
         let current =
@@ -2398,7 +2394,7 @@ impl Doc {
         let Some(at) = at.filter(|at| at.is_finite()) else {
             return;
         };
-        if let Some(session) = &mut self.motion {
+        if let Some(session) = self.operation.motion_mut() {
             session.pivot = Some(Pivot {
                 bodies: session.bodies.clone(),
                 generation,
@@ -2418,7 +2414,7 @@ impl Doc {
     /// The feature the move, mirror or pattern being set up would
     /// commit, if it's whole.
     pub(crate) fn motion_built(&self) -> Option<FeatureKind> {
-        self.motion.as_ref()?.kind()
+        self.operation.motion()?.kind()
     }
 
     /// The move, mirror or pattern being set up as the regeneration lane
@@ -2426,7 +2422,7 @@ impl Doc {
     /// loft the document refuses at its place: the model is then shown
     /// as committed, rather than as a failure.
     pub(crate) fn motion_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         let document = self.editor.document();
         // Held, the command modifier shows a blend's body as of the
         // feature, its edges there to pick again.
@@ -2447,7 +2443,7 @@ impl Doc {
     /// The edge or face hovered, if it's one a click takes as the axis or
     /// plane: lit as the cursor's over it.
     fn takes_reference(&self, pick: Pick) -> bool {
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return false;
         };
         // A blend's edges wait only for a model of the document as it is,
@@ -2486,7 +2482,7 @@ impl Doc {
         }
         self.follow_align();
         self.follow_scale();
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return;
         };
         let kind = session.kind;
@@ -2496,7 +2492,7 @@ impl Doc {
         if kind.blends() || kind.picks_faces() {
             self.follow_ref_marks::<FaceRef>();
         }
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return;
         };
         // A chamfer's edge or a shell's face whose row is hovered.
@@ -2622,7 +2618,7 @@ impl Doc {
         let mut highlight = index.highlight_with(&hover, &picked, &second);
         highlight.second_excluded = session.kind.blends();
         let highlight = Arc::new(highlight);
-        if let Some(session) = &mut self.motion {
+        if let Some(session) = self.operation.motion_mut() {
             session.highlight = highlight;
             session.built = Some(key);
         }
@@ -2631,7 +2627,7 @@ impl Doc {
     /// The move's or mirror's highlight, if one is set up and it's built
     /// for the model shown.
     pub(crate) fn motion_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         let current = (session.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());
         Some(&session.highlight).filter(|highlight| current && !highlight.is_empty())
     }
@@ -2698,7 +2694,7 @@ impl Doc {
 
     /// The move or mirror being set up, for the view.
     pub(crate) fn motion_state(&self) -> Option<MotionState<'_>> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         let document = self.editor.document();
         let design = document.design();
         // A body gone from the document stays listed, as the UI mock's.

@@ -20,6 +20,7 @@
 //! takes it over, asking about that edit, its buttons back (or, with
 //! nothing unfinished any more, just applies).
 
+use crate::doc::OperationSlot;
 use varde_mcp::tools::Call;
 use varde_view::McpTool;
 
@@ -99,14 +100,14 @@ impl Doc {
     /// The operation being set up, by the name of the feature it edits or
     /// as a new one ("a new extrude"), if one is.
     fn operation_name(&self) -> Option<String> {
-        let (feature, noun) = if let Some(session) = &self.extrude {
+        let (feature, noun) = if let Some(session) = self.operation.extrude() {
             (session.feature, "extrude")
-        } else if let Some(session) = &self.revolve {
+        } else if let Some(session) = self.operation.revolve() {
             (session.feature, "revolve")
-        } else if let Some(session) = &self.combine {
+        } else if let Some(session) = self.operation.combine() {
             (session.feature, "combine")
         } else {
-            let session = self.motion.as_ref()?;
+            let session = self.operation.motion()?;
             (session.feature, session.kind.noun())
         };
         let document = self.editor.document();

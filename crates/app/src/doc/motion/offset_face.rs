@@ -9,6 +9,7 @@
 //! first face and the document stay as they were, so the handle doesn't
 //! move with the face it moves (its knob does).
 
+use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{Design, FaceRef, FeatureKind, Generation, OffsetFace};
 use varde_render::Camera;
@@ -111,7 +112,7 @@ impl Doc {
     /// this session's offset.
     pub(super) fn follow_offset_anchor(&mut self) {
         let generation = self.editor.generation();
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return;
         };
         let Some(&first) = session.faces.refs.first() else {
@@ -144,7 +145,7 @@ impl Doc {
         if !at.is_finite() {
             return;
         }
-        if let Some(session) = &mut self.motion {
+        if let Some(session) = self.operation.motion_mut() {
             session.anchor = Some(Anchor {
                 face: first,
                 generation,

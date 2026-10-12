@@ -22,6 +22,7 @@
 //! check. Each split the model shows working cut its body in two: its
 //! pieces' volumes add up to the body's before it.
 
+use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, FeatureId, Operation, OriginPlane, Targets};
 use varde_view::PickIndex;
 
@@ -89,7 +90,7 @@ fn random_pick(plates: &Plates, rng: &mut Rng) -> Option<varde_view::Pick> {
 
 /// Holds the session, if it's a split's, to what the module's docs say.
 fn check_session(plates: &Plates, what: &str) {
-    let Some(session) = &plates.doc.motion else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     if session.kind != MotionKind::Split {
@@ -179,7 +180,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let Some(session) = plates.doc.motion.as_ref() else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     assert_eq!(session.feature, Some(id), "{what}");
@@ -191,7 +192,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.motion.is_none() {
+    if plates.doc.operation.motion().is_none() {
         assert_eq!(plates.doc.editor.revision(), revision, "{what}: wrote");
         assert_eq!(*plates.doc.editor.document(), document, "{what}");
     }
@@ -207,7 +208,7 @@ fn merge(plates: &mut Plates, rng: &mut Rng) {
         add_disc(&mut plates.doc.editor, (14.0, 0.0), extent, operation);
     } else {
         let document = plates.doc.editor.document();
-        let session = plates.doc.motion.as_ref();
+        let session = plates.doc.operation.motion();
         let pair = session
             .and_then(|session| Some((*session.bodies.first()?, session.split.body?)))
             .filter(|_| rng.below(2) == 0);
@@ -280,7 +281,7 @@ fn run(seed: u64, steps: usize) {
         .collect();
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
-        let open = plates.doc.motion.is_some();
+        let open = plates.doc.operation.motion().is_some();
         let roll = match rng.below(4) {
             0 if !open => 0,
             _ => rng.below(44),
@@ -368,7 +369,7 @@ fn run(seed: u64, steps: usize) {
             }
             24 if rng.below(2) == 0 => plates.doc.update(Edit::Redo),
             25 | 26 | 31 | 32 | 33 => {
-                let before = plates.doc.motion.as_ref().and_then(|session| {
+                let before = plates.doc.operation.motion().and_then(|session| {
                     let ready =
                         plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
                     (ready && session.kind == MotionKind::Split)
@@ -385,7 +386,7 @@ fn run(seed: u64, steps: usize) {
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(split))) = before {
                     assert!(
-                        plates.doc.motion.is_none(),
+                        plates.doc.operation.motion().is_none(),
                         "{what}: not committed: {:?}",
                         plates.doc.edit_error
                     );
@@ -446,7 +447,7 @@ fn run(seed: u64, steps: usize) {
             .check()
             .unwrap_or_else(|error| panic!("{what}: {error}"));
     }
-    plates.doc.motion = None;
+    plates.doc.operation = None;
     plates.doc.sync();
     plates.answer();
     check_volumes(&plates, &format!("seed {seed} at the end"));

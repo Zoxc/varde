@@ -11,6 +11,7 @@
 //! away writes nothing, a session never outlives the pattern it edits or
 //! its kind, and the document passes its check.
 
+use crate::doc::OperationSlot;
 use std::f64::consts::TAU;
 
 use varde_document::{BodyId, Document};
@@ -128,7 +129,7 @@ fn agrees(a: f64, b: f64) -> bool {
 /// one's angle a whole turn for Full 360°, the Total as typed, or a
 /// Spacing's times the count less one ([`agrees`]).
 fn check_ready(plates: &Plates, what: &str) {
-    let Some(session) = &plates.doc.motion else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     if !session.kind.pattern() || !plates.doc.motion_ready() {
@@ -194,7 +195,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.feature, Some(id), "{what}");
     let opened = session.pattern();
     let Ok(Some(opened)) = opened else {
@@ -205,7 +206,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.motion.is_none() {
+    if plates.doc.operation.motion().is_none() {
         assert_eq!(
             plates.doc.editor.revision(),
             revision,
@@ -265,7 +266,7 @@ fn run(seed: u64, steps: usize) {
             11 => plates.doc.update(Edit::Undo),
             12 => plates.doc.update(Edit::Redo),
             13 | 14 => {
-                let before = plates.doc.motion.as_ref().and_then(|session| {
+                let before = plates.doc.operation.motion().and_then(|session| {
                     // OK waits on a preview that failed.
                     let ready =
                         plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
@@ -275,11 +276,11 @@ fn run(seed: u64, steps: usize) {
                 if let Some((edited, Some(kind))) = before {
                     // Committed: the document holds what it drafted.
                     assert!(
-                        plates.doc.motion.is_none(),
+                        plates.doc.operation.motion().is_none(),
                         "{what}: not committed: {:?} {:?} {:?}",
                         plates.doc.feed.draft_error(),
                         plates.doc.edit_error,
-                        plates.doc.motion.as_ref().map(|s| (s.feature, s.kind()))
+                        plates.doc.operation.motion().map(|s| (s.feature, s.kind()))
                     );
                     let id = edited.unwrap_or_else(|| plates.last_feature().0);
                     let mut stored = plates
@@ -409,7 +410,7 @@ fn run(seed: u64, steps: usize) {
             assert_eq!(plates.doc.motion_draft(), None, "{what}");
         }
         // A session edits a pattern of its own kind that's there.
-        if let Some(session) = &plates.doc.motion
+        if let Some(session) = plates.doc.operation.motion()
             && let Some(id) = session.feature
         {
             let feature = plates.doc.editor.document().feature(id);

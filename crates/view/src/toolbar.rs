@@ -12,6 +12,7 @@ use varde_expr::LengthUnit;
 use varde_regen::Summary;
 use varde_sketch::Curve;
 
+use crate::OperationState;
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
@@ -84,7 +85,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                     Some((_, name)) => format!("{name}'s plane"),
                 })
             } else {
-                state.measure.as_ref().map(|_| "Measure".to_owned())
+                state.measure().map(|_| "Measure".to_owned())
             },
         ),
     };
@@ -161,36 +162,32 @@ struct Operation<'a> {
 
 /// The operation being set up, if one is.
 fn operation<'a>(state: &DocumentState<'a>) -> Option<Operation<'a>> {
-    if let Some(motion) = &state.motion {
-        return Some(Operation {
+    Some(match state.operation.as_ref()? {
+        OperationState::Motion(motion) => Operation {
             icon: motion.kind.icon(),
             name: motion.title(),
             ok: motion.ready.then_some(Message::Edit(Edit::CommitMotion)),
             cancel: Message::Look(Look::Motion(MotionLook::Cancel)),
-        });
-    }
-    if let Some(extrude) = &state.extrude {
-        return Some(Operation {
+        },
+        OperationState::Extrude(extrude) => Operation {
             icon: Icon::Extrude,
             name: extrude.editing.unwrap_or("New extrude"),
             ok: extrude.ready.then_some(Message::Edit(Edit::CommitExtrude)),
             cancel: Message::Look(Look::Extrude(crate::ExtrudeLook::Cancel)),
-        });
-    }
-    if let Some(revolve) = &state.revolve {
-        return Some(Operation {
+        },
+        OperationState::Revolve(revolve) => Operation {
             icon: Icon::Revolve,
             name: revolve.editing.unwrap_or("New revolve"),
             ok: revolve.ready.then_some(Message::Edit(Edit::CommitRevolve)),
             cancel: Message::Look(Look::Revolve(crate::RevolveLook::Cancel)),
-        });
-    }
-    let combine = state.combine.as_ref()?;
-    Some(Operation {
-        icon: Icon::Combine,
-        name: combine.editing.unwrap_or("New combine"),
-        ok: combine.ready.then_some(Message::Edit(Edit::CommitCombine)),
-        cancel: Message::Look(Look::Combine(crate::CombineLook::Cancel)),
+        },
+        OperationState::Combine(combine) => Operation {
+            icon: Icon::Combine,
+            name: combine.editing.unwrap_or("New combine"),
+            ok: combine.ready.then_some(Message::Edit(Edit::CommitCombine)),
+            cancel: Message::Look(Look::Combine(crate::CombineLook::Cancel)),
+        },
+        OperationState::Measure(_) => return None,
     })
 }
 
@@ -592,13 +589,13 @@ fn ops<'a>(
         Icon::Extrude,
         "Extrude",
         extrude_binding(keys),
-        state.extrude.is_some(),
+        state.extrude().is_some(),
     );
     let revolve = bound_op(
         Icon::Revolve,
         "Revolve",
         revolve_binding(keys),
-        state.revolve.is_some(),
+        state.revolve().is_some(),
     );
     if state.picking_plane.is_some() {
         // Picking a plane in the viewport comes with picking, so the
@@ -619,7 +616,7 @@ fn ops<'a>(
     // Chamfer, and Shell, after it, would each leave the bar too wide at
     // 1280 px (Fillet to 1210 px of 1160): the rail's Modify set has
     // them, and Offset face too, and Fillet has its key.
-    let moving = state.motion.as_ref().map(|motion| motion.kind);
+    let moving = state.motion().map(|motion| motion.kind);
     let chamfer = bound_op(
         Icon::BChamfer,
         "Chamfer",
@@ -631,7 +628,7 @@ fn ops<'a>(
         Icon::Combine,
         "Combine",
         combine_binding(keys),
-        state.combine.is_some(),
+        state.combine().is_some(),
     );
     // Move after Combine, as the mock's model bar orders them. Mirror
     // isn't on it (the mock's model bar has none: its body bar does),
@@ -655,7 +652,7 @@ fn ops<'a>(
     // Picking a move's or pattern's axis or a mirror's plane offers the
     // origin ones here, as picking a sketch's plane does: the viewport
     // picks the model's edges and faces.
-    let origins: Vec<Element<'a, Message>> = match &state.motion {
+    let origins: Vec<Element<'a, Message>> = match state.motion() {
         // An align's target may be the origin, or an origin axis.
         Some(motion) if matches!(motion.picking, MotionPick::Align(slot) if slot.side == AlignSide::Target) =>
         {
@@ -742,7 +739,7 @@ fn ops<'a>(
         Icon::Measure,
         "Measure",
         measure_binding(keys),
-        state.measure.is_some(),
+        state.measure().is_some(),
     );
     // While an operation is set up, the bar is Cancel and what the
     // operation picks, as the mock's: the operations would leave no room
@@ -933,7 +930,7 @@ fn sketch_items_bar(state: &DocumentState<'_>) -> Option<Vec<BarOp>> {
 /// The toolbar's button for `kind`, with its key, lit while it's set up.
 fn bar_op(state: &DocumentState<'_>, kind: BarOp) -> Element<'static, Message> {
     let keys = state.keys();
-    let moving = state.motion.as_ref().map(|motion| motion.kind);
+    let moving = state.motion().map(|motion| motion.kind);
     let motion = |icon, label, binding, kind| bound_op(icon, label, binding, moving == Some(kind));
     match kind {
         BarOp::Sketch => bound_op(
@@ -950,19 +947,19 @@ fn bar_op(state: &DocumentState<'_>, kind: BarOp) -> Element<'static, Message> {
             Icon::Extrude,
             "Extrude",
             extrude_binding(keys),
-            state.extrude.is_some(),
+            state.extrude().is_some(),
         ),
         BarOp::Revolve => bound_op(
             Icon::Revolve,
             "Revolve",
             revolve_binding(keys),
-            state.revolve.is_some(),
+            state.revolve().is_some(),
         ),
         BarOp::Combine => bound_op(
             Icon::Combine,
             "Combine",
             combine_binding(keys),
-            state.combine.is_some(),
+            state.combine().is_some(),
         ),
         BarOp::Sweep => motion(Icon::Sweep, "Sweep", sweep_binding(keys), MotionKind::Sweep),
         BarOp::Loft => motion(Icon::Loft, "Loft", loft_binding(keys), MotionKind::Loft),
@@ -1022,7 +1019,7 @@ fn bar_op(state: &DocumentState<'_>, kind: BarOp) -> Element<'static, Message> {
 /// plane, a split's tool by face, or a reference that may be a plane. The
 /// viewport shows them then, whether Objects has them shown or not.
 pub(crate) fn picks_origin_planes(state: &DocumentState<'_>) -> bool {
-    let Some(motion) = &state.motion else {
+    let Some(motion) = state.motion() else {
         return state.picking_plane.is_some();
     };
     let split_face = (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face);

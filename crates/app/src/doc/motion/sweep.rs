@@ -12,6 +12,7 @@
 //! twist for a path, and the operation and bodies as an extrude's. What
 //! the document no longer takes is kept and said to be gone.
 
+use crate::doc::OperationSlot;
 use std::borrow::Cow;
 
 use varde_document::{
@@ -545,7 +546,7 @@ impl Doc {
     pub(super) fn sweep_target(&mut self, body: BodyId) {
         let revision = self.feed.revision();
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         let feature = session.feature;

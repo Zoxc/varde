@@ -1,3 +1,4 @@
+use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -148,7 +149,7 @@ fn m_starts_a_move_typing_offsets_moves_the_preview_and_enter_commits_one_undo_s
     // The body selected is the one moved.
     plates.click(right);
     key_in(&mut plates.doc, character("m"));
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Move);
     assert_eq!(session.bodies, [right]);
     assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::Z)));
@@ -191,7 +192,7 @@ fn m_starts_a_move_typing_offsets_moves_the_preview_and_enter_commits_one_undo_s
 
     // Enter commits it, one undo step, selected and named.
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert_eq!(kind, draft);
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -221,7 +222,7 @@ fn a_move_turns_about_a_round_face_picked_whose_axis_regeneration_finds() {
     let [plate, right, _] = plates.bodies;
     plates.doc.look(Look::StartMove);
     plates.click(right);
-    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [right]);
+    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [right]);
     // The Axis field picks the axis: the toolbar offers the origin axes.
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     let shown = screen_texts(&plates.doc);
@@ -247,7 +248,7 @@ fn a_move_turns_about_a_round_face_picked_whose_axis_regeneration_finds() {
     // The disc's wall is: its axis, along Z through (20, 0).
     let wall = plates.face(right, |summary| matches!(summary, Summary::Cylinder { .. }));
     plates.click_at(right, Picked::Face(wall), DVec3::new(25.0, 0.0, 0.0));
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     let Some(AxisRef::Face(face)) = session.axis else {
         panic!("a face axis: {:?}", session.axis);
     };
@@ -257,7 +258,7 @@ fn a_move_turns_about_a_round_face_picked_whose_axis_regeneration_finds() {
     // finds the axis, which the viewport draws.
     plates.click(right);
     plates.click(plate);
-    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
     plates.input(MotionField::Angle, "90");
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
@@ -287,7 +288,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
     let [plate, right, _] = plates.bodies;
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartMirror);
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert_eq!(session.kind, MotionKind::Mirror);
     assert_eq!(session.picking, MotionPick::Bodies);
     assert!(session.keep_original, "Create copy is on to begin with");
@@ -321,13 +322,13 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
         plates.doc.notice.as_deref(),
         Some("Only a flat face can be the mirror plane")
     );
-    assert_eq!(plates.doc.motion.as_ref().unwrap().plane, None);
+    assert_eq!(plates.doc.operation.motion().unwrap().plane, None);
     // The plate's side at x = 30 is.
     let side = plates.face(plate, |summary| {
         matches!(summary, Summary::Plane { n, d } if n[0] > 0.5 && (d - 30.0).abs() < 1e-9)
     });
     plates.click_at(plate, Picked::Face(side), DVec3::new(30.0, 0.0, 5.0));
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     let Some(PlaneRef::Face(face)) = session.plane else {
         panic!("a face plane: {:?}", session.plane);
     };
@@ -389,7 +390,7 @@ fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
     // A double-click on its row, or Enter, edits it with its values.
     plates.doc.look(Look::SelectFeature(id));
     key_in(&mut plates.doc, enter());
-    let session = plates.doc.motion.as_ref().expect("editing it");
+    let session = plates.doc.operation.motion().expect("editing it");
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.bodies, [right]);
     let shown = screen_texts(&plates.doc);
@@ -411,7 +412,7 @@ fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
     // An origin axis from the toolbar hands the clicks back.
     plates.motion(MotionLook::OriginAxis(Axis3::X));
     assert_eq!(
-        plates.doc.motion.as_ref().unwrap().picking,
+        plates.doc.operation.motion().unwrap().picking,
         MotionPick::Bodies
     );
 
@@ -420,7 +421,7 @@ fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
     let [low, _] = plates.bounds(right);
     assert!((low.y - 15.0).abs() < 1e-3, "{low}");
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let (same, changed) = plates.last_feature();
     assert_eq!(same, id);
     assert_ne!(changed, first);
@@ -431,7 +432,7 @@ fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
     plates.doc.look(Look::EditFeature(id));
     plates.input(MotionField::Offset(Axis3::Y), "30");
     plates.doc.look(Look::Escape);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), committed);
 }
 
@@ -479,14 +480,14 @@ fn moves_and_mirrors_need_a_body_and_an_editable_document_outside_sketches() {
     assert!(press_in(&doc, character("m")).is_none());
     doc.look(Look::StartMove);
     // Look::StartMove still opens it (the binding is what's disabled).
-    assert!(doc.motion.is_some());
+    assert!(doc.operation.motion().is_some());
     doc.look(Look::StartMove);
-    assert!(doc.motion.is_none(), "again backs out of it");
+    assert!(doc.operation.motion().is_none(), "again backs out of it");
 
     let mut plates = plates();
     plates.doc.read_only = Some("read-only".to_owned());
     plates.doc.look(Look::StartMove);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
 }
 
 #[test]
@@ -525,7 +526,7 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
             .is_none()
     );
     assert_eq!(
-        plates.doc.motion.as_ref().unwrap().axis,
+        plates.doc.operation.motion().unwrap().axis,
         Some(AxisRef::Origin(Axis3::Z))
     );
 
@@ -539,7 +540,7 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
     };
     let right_rim = rim(right);
     plates.click_at(right, Picked::Edge(right_rim), DVec3::new(25.0, 10.0, 15.0));
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert!(
         matches!(session.axis, Some(AxisRef::Edge(found)) if found.body == right),
         "{:?}",
@@ -559,7 +560,7 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
         .expect("a straight edge of the plate");
     let middle = (ends[0] + ends[1]) / 2.0;
     plates.click_at(plate, Picked::Edge(edge), middle);
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert!(
         matches!(session.axis, Some(AxisRef::Edge(found)) if found.body == plate),
         "{:?}",
@@ -617,7 +618,7 @@ fn the_handles_set_the_offsets_and_a_ring_the_turn_committed_as_one_undo_step() 
         angle: "-90°".to_owned(),
         offset: [shift.x, shift.y, shift.z].map(|v| varde_expr::format(v, units)),
     });
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::Y)));
     let (_, draft) = plates.last_draft().expect("a draft");
     let FeatureKind::Move(moved) = &draft else {
@@ -637,7 +638,7 @@ fn the_handles_set_the_offsets_and_a_ring_the_turn_committed_as_one_undo_step() 
     // OK commits it, one undo step.
     assert!(plates.doc.motion_ready());
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     assert_eq!(plates.last_feature().1, draft);
     plates.doc.update(Edit::Undo);
     assert_eq!(*plates.doc.editor.document(), before);
@@ -655,7 +656,7 @@ fn a_ring_s_turn_does_nothing_to_a_mirror() {
         offset: ["1 mm", "2 mm", "3 mm"].map(str::to_owned),
     };
     plates.motion(turn);
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(session.axis, None);
     assert!(
         session.fields[..4]
@@ -680,7 +681,7 @@ fn a_ring_s_turn_is_taken_only_as_the_handles_offer_it() {
         offset: [x, "0 mm", "0 mm"].map(str::to_owned),
     };
     let state = |plates: &Plates| {
-        let session = plates.doc.motion.as_ref().expect("a session");
+        let session = plates.doc.operation.motion().expect("a session");
         let angle = session.fields[MotionField::Angle.index()].value.clone();
         let x = session.fields[MotionField::Offset(Axis3::X).index()]
             .value
@@ -754,7 +755,7 @@ fn ring(axis: Axis3, centre: DVec3, offset: DVec3, from: f64, angle: f64) -> Mot
 
 /// The offsets of the move being set up, as they read.
 fn offsets(doc: &Doc) -> DVec3 {
-    let session = doc.motion.as_ref().expect("a session");
+    let session = doc.operation.motion().expect("a session");
     let [x, y, z] = Axis3::ALL.map(|axis| {
         (session.fields[MotionField::Offset(axis).index()].value)
             .as_ref()
@@ -849,7 +850,7 @@ fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
         .expect("a rim");
     plates.click_at(right, Picked::Edge(rim), DVec3::new(25.0, 0.0, 15.0));
     assert!(matches!(
-        plates.doc.motion.as_ref().unwrap().axis,
+        plates.doc.operation.motion().unwrap().axis,
         Some(AxisRef::Edge(_))
     ));
     plates.input(MotionField::Angle, "120");
@@ -875,7 +876,7 @@ fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
 
     // A ring: about its world axis now, turning about the handles.
     plates.motion(ring(Axis3::X, start, DVec3::ZERO, 0.0, 30.0));
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::X)));
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
@@ -891,17 +892,17 @@ fn the_only_body_is_picked_for_a_new_move_or_mirror() {
     let (mut doc, _requests) = holding(Document::example());
     let plate = doc.editor.document().bodies()[0].id;
     doc.start_motion(MotionKind::Move);
-    let session = doc.motion.as_ref().expect("a move");
+    let session = doc.operation.motion().expect("a move");
     assert_eq!(session.bodies, [plate]);
     assert_eq!(session.picking, MotionPick::Bodies);
     doc.start_motion(MotionKind::Mirror);
-    let session = doc.motion.as_ref().expect("a mirror");
+    let session = doc.operation.motion().expect("a mirror");
     assert_eq!(session.bodies, [plate]);
     assert_eq!(session.picking, MotionPick::Reference);
 
     let mut plates = plates();
     plates.doc.start_motion(MotionKind::Move);
-    assert!(plates.doc.motion.as_ref().unwrap().bodies.is_empty());
+    assert!(plates.doc.operation.motion().unwrap().bodies.is_empty());
 }
 
 /// Adds a disc of radius 5 about (0, 30), 5 mm up and 1 down, as a new
@@ -937,7 +938,7 @@ fn a_picked_body_an_undo_takes_away_is_said_to_be_gone() {
     plates.doc.update(Edit::Undo);
     assert!(plates.last_draft().is_none(), "nothing previewed");
     plates.answer();
-    let session = plates.doc.motion.as_ref().expect("still set up");
+    let session = plates.doc.operation.motion().expect("still set up");
     assert_eq!(session.bodies, [right, later]);
     assert!(!plates.doc.motion_ready());
     let shown = screen_texts(&plates.doc);
@@ -949,7 +950,7 @@ fn a_picked_body_an_undo_takes_away_is_said_to_be_gone() {
         "{shown:?}"
     );
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.motion.is_some(), "not committed");
+    assert!(plates.doc.operation.motion().is_some(), "not committed");
 
     // Back with a redo.
     plates.doc.update(Edit::Redo);
@@ -982,7 +983,7 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     plates.answer();
     let wall = plates.face(later, |summary| matches!(summary, Summary::Cylinder { .. }));
     plates.click_at(later, Picked::Face(wall), DVec3::new(5.0, 30.0, 2.0));
-    let axis = plates.doc.motion.as_ref().unwrap().axis;
+    let axis = plates.doc.operation.motion().unwrap().axis;
     assert!(matches!(axis, Some(AxisRef::Face(face)) if face.body == later));
     plates.input(MotionField::Angle, "30");
     plates.answer();
@@ -992,7 +993,7 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     plates.doc.update(Edit::Undo);
     assert!(plates.last_draft().is_none(), "nothing previewed");
     plates.answer();
-    let session = plates.doc.motion.as_ref().expect("still set up");
+    let session = plates.doc.operation.motion().expect("still set up");
     assert_eq!(session.axis, axis, "kept, for a redo");
     assert!(!plates.doc.motion_ready());
     let shown = screen_texts(&plates.doc);
@@ -1029,7 +1030,7 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     );
     plates.click_at(later, Picked::Face(top), DVec3::new(0.0, 30.0, 5.0));
     assert!(matches!(
-        plates.doc.motion.as_ref().unwrap().plane,
+        plates.doc.operation.motion().unwrap().plane,
         Some(PlaneRef::Face(_))
     ));
     assert!(plates.doc.motion_ready());
@@ -1078,11 +1079,14 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
     plates.click(right);
     plates.input(MotionField::Offset(Axis3::Z), "20");
     plates.answer();
-    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate, right]);
+    assert_eq!(
+        plates.doc.operation.motion().unwrap().bodies,
+        [plate, right]
+    );
 
     plates.doc.update(Edit::Redo);
     plates.answer();
-    let session = plates.doc.motion.as_ref().expect("still set up");
+    let session = plates.doc.operation.motion().expect("still set up");
     assert_eq!(
         session.bodies,
         [plate],
@@ -1090,13 +1094,13 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
     );
     // A click on what was the tool picks the target, which it's in.
     plates.click(plate);
-    assert!(plates.doc.motion.as_ref().unwrap().bodies.is_empty());
+    assert!(plates.doc.operation.motion().unwrap().bodies.is_empty());
     plates.click_at(
         plate,
         Picked::Face(plates.face(plate, |summary| matches!(summary, Summary::Cylinder { .. }))),
         DVec3::new(25.0, 0.0, 12.0),
     );
-    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     let [moved_low, moved_high] = plates.bounds(plate);
@@ -1137,7 +1141,7 @@ fn fresh_lengths_fit_the_camera_and_it_stays() {
         let camera = plates.doc.camera;
         for (start, field, share) in starts.clone() {
             plates.doc.look(start.clone());
-            let session = plates.doc.motion.as_ref().expect("a session");
+            let session = plates.doc.operation.motion().expect("a session");
             let length = session.field(field).value.as_ref().expect("a length").value;
             let most = f64::from(height) * share;
             assert!(
@@ -1155,7 +1159,7 @@ fn fresh_lengths_fit_the_camera_and_it_stays() {
                 "{field:?} {length} is round"
             );
             assert_eq!(plates.doc.camera, camera, "{start:?} keeps the camera");
-            plates.doc.motion = None;
+            plates.doc.operation = None;
         }
     }
 }
@@ -1166,7 +1170,7 @@ fn an_edited_fillet_keeps_its_radius_zoomed_out() {
     let (mut plates, id) = fillet::made();
     plates.doc.camera.set_view_height(1e5);
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(
         session
             .field(MotionField::Radius)

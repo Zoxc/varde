@@ -2,6 +2,7 @@
 //! the face's frame, extruding from it, its placement following the
 //! history before it, and one whose placement failed.
 
+use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -381,7 +382,7 @@ fn an_extrude_from_the_top_previews_joined_and_follows_the_plate() {
         &mut doc,
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
     );
-    assert!(doc.extrude.is_none());
+    assert!(doc.operation.extrude().is_none());
     answer(&mut doc, &requests);
     assert!(doc.feed.failed_features().is_empty());
     assert_eq!(top_of_mesh(&doc), 20.0);
@@ -545,7 +546,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     doc.look(Look::StartExtrude);
     assert!(doc.extrude_state().unwrap().candidates.is_empty());
     doc.look(Look::StartExtrude);
-    assert!(doc.extrude.is_none());
+    assert!(doc.operation.extrude().is_none());
 
     // Listed in the Timeline, failing, its note naming the face as it
     // can: its maker and body are gone.
@@ -637,10 +638,10 @@ fn entering_a_sketch_whose_face_is_gone_ends_a_combine() {
     answer(&mut doc, &requests);
     assert_eq!(doc.placement(id), None);
     doc.look(Look::StartCombine);
-    assert!(doc.combine.is_some());
+    assert!(doc.operation.combine().is_some());
     doc.look(Look::EditFeature(id));
     assert!(doc.picking_plane.is_some());
-    assert!(doc.combine.is_none());
+    assert!(doc.operation.combine().is_none());
 }
 
 /// The sketch feature `id`'s drawing.

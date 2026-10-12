@@ -9,6 +9,7 @@
 //! merged into another before the feature takes them with it on to the
 //! holder.
 
+use crate::doc::OperationSlot;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -280,7 +281,7 @@ impl Doc {
     /// Those the feature itself makes (on its preview, or as stored) are
     /// refused by their names ([`Naming::before`]).
     pub(super) fn refs_model_current(&self) -> bool {
-        let new = self.motion.as_ref().is_some_and(|s| s.feature.is_none());
+        let new = self.operation.motion().is_some_and(|s| s.feature.is_none());
         self.feed.generation() == Some(self.editor.generation())
             && !self.feed.predates_replacement()
             && (self.feed.shows_draft_of_run() || (new && !self.feed.shows_draft()))
@@ -363,7 +364,7 @@ impl Doc {
     /// Whether a click on `pick` takes a reference of type `R` out: it's
     /// one picked, or one it grows into ([`Ref::grown`]).
     pub(super) fn ref_picked<R: Ref>(&self, pick: Pick) -> Option<usize> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         self.ref_picked_in::<R>(session, self.feed.pick_index(), pick)
     }
 
@@ -388,7 +389,7 @@ impl Doc {
     /// picks neither (or no session), or a draft picking its neutral
     /// plane, where a click takes the face as the plane.
     pub(crate) fn motion_has(&self, pick: Pick) -> Option<bool> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         if session.picking == MotionPick::Reference {
             return None;
         }
@@ -416,7 +417,7 @@ impl Doc {
     /// vertex, the point where on it.
     pub(crate) fn motion_tick(&self, pick: Pick) -> OverlapTick {
         let mut tick = OverlapTick::default();
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return tick;
         };
         if let Some(has) = self.motion_has(pick) {
@@ -468,7 +469,7 @@ impl Doc {
     /// Where the axis or plane of the session being set up is on the
     /// model shown, if it's an edge or face found there.
     fn reference_target(&self) -> Option<Picked> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         if session.kind.takes_axis() {
             match session.axis? {
                 AxisRef::Edge(edge) => self.shown_edge_ref(&edge),
@@ -486,7 +487,7 @@ impl Doc {
     /// The reference of the session's own (an edge or face it picks
     /// several of) a click on `pick` takes out, if one is: the first.
     pub(crate) fn motion_ref_at(&self, pick: Pick) -> Option<HeldRef> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         self.motion_has(pick)?;
         let face = matches!(pick.target, Picked::Face(_));
         if (session.kind.blends() && !face) || session.kind == MotionKind::Sweep {
@@ -500,7 +501,7 @@ impl Doc {
 
     /// Whether the session being set up still has `held`.
     pub(crate) fn motion_holds(&self, held: &HeldRef) -> bool {
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return false;
         };
         match held {
@@ -520,7 +521,7 @@ impl Doc {
         if !self.editable() {
             return;
         }
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         match held {
@@ -544,7 +545,7 @@ impl Doc {
     /// click would pick or take out.
     pub(super) fn refs_take<R: Ref>(&self, pick: Pick) -> bool {
         self.refs_model_current()
-            && self.motion.as_ref().is_some_and(|session| {
+            && self.operation.motion().is_some_and(|session| {
                 let index = self.feed.pick_index();
                 self.ref_picked_in::<R>(session, index, pick).is_some()
                     || self.ref_in::<R>(session, index, pick).is_ok()
@@ -558,7 +559,7 @@ impl Doc {
         if !self.refs_model_current() {
             return Err(OUT_OF_DATE.into());
         }
-        let unit = match &self.motion {
+        let unit = match self.operation.motion() {
             Some(session) => refs_unit_in::<R>(session, self.feed.pick_index(), pick),
             None => Vec::new(),
         };
@@ -666,10 +667,10 @@ impl Doc {
             // Every one picked a click on it lights takes out: a tangent
             // chain's edges picked apart all go with it.
             let grown = R::target(pick.target).map_or_else(Vec::new, |target| {
-                let session = self.motion.as_ref().expect("a session picked it");
+                let session = self.operation.motion().expect("a session picked it");
                 R::grown(self, session, self.feed.pick_index(), target)
             });
-            if let Some(session) = &mut self.motion {
+            if let Some(session) = self.operation.motion_mut() {
                 R::refs_mut(session).remove_all(pick.model, &grown);
                 session.refs_body();
             }
@@ -712,7 +713,7 @@ impl Doc {
             // its tangent chain while the tick is on), but never takes out
             // what's picked: one refused (on another body, made later) is
             // left out.
-            let unit = match &self.motion {
+            let unit = match self.operation.motion() {
                 Some(session) => refs_unit_in::<R>(session, self.feed.pick_index(), pick),
                 None => Vec::new(),
             };
@@ -728,7 +729,7 @@ impl Doc {
     /// shown, where they aren't marked yet, each on the body drawing its
     /// body there.
     pub(super) fn follow_ref_marks<R: Ref>(&mut self) {
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         let shown = |body| self.feed.shown_body(body);
@@ -738,7 +739,7 @@ impl Doc {
     /// Those of type `R` the session picked to light in the model shown,
     /// each grown as a click on it lights ([`Ref::grown`]).
     pub(super) fn refs_lit<R: Ref>(&self) -> Vec<Picked> {
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return Vec::new();
         };
         let index = self.feed.pick_index();
@@ -754,7 +755,7 @@ impl Doc {
     /// The one of type `R` whose row in the panel is hovered, if it's
     /// marked on the model shown.
     pub(super) fn ref_hovered<R: Ref>(&self, at: usize) -> Option<Picked> {
-        let session = self.motion.as_ref()?;
+        let session = self.operation.motion()?;
         let (_, found) = R::refs(session).found(self.feed.model()).nth(at)?;
         found.map(R::picked)
     }

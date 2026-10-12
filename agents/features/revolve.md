@@ -179,7 +179,7 @@ an extrude's.
 
 ## UI
 
-**The session** (`app/src/doc/revolve.rs`, `Doc::revolve`, a
+**The session** (`app/src/doc/revolve.rs`, `Doc::operation` holding a
 `RevolveSession`) follows the extrude's (see "The extrude UI" in
 `agents/kernel/extrude-ui.md`), sharing its parts (`app/src/doc/regions.rs`):
 `RegionPick` (the source sketch, the candidates' profiles found within

@@ -9,6 +9,7 @@
 //! preview and OK as one undo step; editing from the Timeline, Cancel and
 //! undo; a path an edit takes away said to be gone.
 
+use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     Axis3, AxisRef, BodyId, Command, Document, Editor, FeatureId, FeatureKind, Orientation,
@@ -196,7 +197,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
     let plates = &mut swept.plates;
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartSweep);
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Sweep);
     assert!(session.bodies.is_empty(), "a sweep picks no bodies");
     assert_eq!(picking(plates), MotionPick::Regions);
@@ -297,7 +298,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
     assert_eq!(plates.doc.editor.document().features().len(), features);
 
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert!(matches!(kind, FeatureKind::Sweep(_)));
     let document = plates.doc.editor.document();
@@ -340,7 +341,16 @@ fn a_straight_path_previews_and_ok_adds_one_undo_step() {
         sketch: path,
         curve: last,
     });
-    assert!(plates.doc.motion.as_ref().unwrap().sweep.chains.is_empty());
+    assert!(
+        plates
+            .doc
+            .operation
+            .motion()
+            .unwrap()
+            .sweep
+            .chains
+            .is_empty()
+    );
     assert!(!plates.doc.motion_ready());
     assert!(shows(plates, "pick the path"));
     plates.motion(MotionLook::SweepCurve {
@@ -359,7 +369,7 @@ fn a_straight_path_previews_and_ok_adds_one_undo_step() {
     assert!(boxed(plates, plate, [15.0, -5.0, 0.0], [25.0, 5.0, 30.0]));
 
     key_in(&mut plates.doc, super::enter());
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let (_, kind) = plates.last_feature();
     assert!(matches!(kind, FeatureKind::Sweep(_)));
     plates.answer();
@@ -428,7 +438,7 @@ fn model_edges_are_path_parts_beside_sketch_chains() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     assert!(boxed(plates, plate, [26.0, 16.0, 0.0], [30.0, 20.0, 10.0]));
-    let edge = (plates.doc.motion.as_ref().unwrap().blend.edges.refs)[0];
+    let edge = (plates.doc.operation.motion().unwrap().blend.edges.refs)[0];
     plates.motion(MotionLook::DropEdge(edge));
     assert!(!plates.doc.motion_ready(), "no path left");
 }
@@ -502,7 +512,15 @@ fn a_helix_is_set_up_about_an_origin_axis() {
     assert!(plates.doc.motion_ready());
     // Back to a path: its options as they were.
     plates.motion(MotionLook::SweepPath(SweepPath::Path));
-    assert!(plates.doc.motion.as_ref().unwrap().sweep.keep_orientation);
+    assert!(
+        plates
+            .doc
+            .operation
+            .motion()
+            .unwrap()
+            .sweep
+            .keep_orientation
+    );
     assert!(!plates.doc.motion_ready(), "no path yet");
 }
 
@@ -551,7 +569,7 @@ fn editing_a_sweep_from_the_timeline_cancel_and_undo() {
     let before = plates.doc.editor.document().clone();
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.motion.as_ref().expect("a session");
+    let session = plates.doc.operation.motion().expect("a session");
     assert_eq!(
         (session.kind, session.feature),
         (MotionKind::Sweep, Some(id))
@@ -578,14 +596,14 @@ fn editing_a_sweep_from_the_timeline_cancel_and_undo() {
         "as stored"
     );
     plates.motion(MotionLook::Cancel);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before);
 
     plates.doc.look(Look::EditFeature(id));
     plates.input(MotionField::Twist, "45");
     plates.answer();
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     let FeatureKind::Sweep(edited) = &plates.doc.editor.document().feature(id).unwrap().kind else {
         panic!("a sweep");
     };
@@ -631,7 +649,7 @@ fn a_path_an_edit_takes_away_is_said_to_be_gone() {
     plates.doc.apply(Command::RemoveFeature(profile));
     plates.doc.sync();
     plates.answer();
-    let session = plates.doc.motion.as_ref().expect("still set up");
+    let session = plates.doc.operation.motion().expect("still set up");
     assert_eq!(session.sweep.regions.source, None);
     assert!(session.sweep.regions.picked.is_empty());
     assert!(shows(plates, "The profile's sketch is gone"));
@@ -641,7 +659,7 @@ fn a_path_an_edit_takes_away_is_said_to_be_gone() {
     plates.doc.update(Edit::Undo);
     plates.doc.sync();
     plates.answer();
-    let session = plates.doc.motion.as_ref().expect("still set up");
+    let session = plates.doc.operation.motion().expect("still set up");
     assert_eq!(session.sweep.regions.source, Some(profile));
     assert_eq!(session.sweep.regions.picked.len(), 1);
     assert!(!shows(plates, "is gone"));
@@ -712,7 +730,10 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
             curve,
         });
     }
-    assert_eq!(plates.doc.motion.as_ref().unwrap().sweep.chains.len(), 64);
+    assert_eq!(
+        plates.doc.operation.motion().unwrap().sweep.chains.len(),
+        64
+    );
     // The newest only: each pick asked for the model again.
     plates.answer_newest();
     plates.doc.notice = None;
@@ -722,7 +743,7 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         "{:?}",
         plates.doc.notice
     );
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert!(session.blend.edges.refs.is_empty(), "no 65th part");
     let sweep = session.sweep().expect("whole");
     sweep
@@ -745,7 +766,10 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         "{:?}",
         plates.doc.notice
     );
-    assert_eq!(plates.doc.motion.as_ref().unwrap().sweep.chains.len(), 34);
+    assert_eq!(
+        plates.doc.operation.motion().unwrap().sweep.chains.len(),
+        34
+    );
     // With room for it, it's taken; an edge then is one too many.
     for _ in 0..34 {
         plates.motion(MotionLook::DropPart(0));
@@ -754,7 +778,13 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         sketch: long,
         curve,
     });
-    let sweep = plates.doc.motion.as_ref().unwrap().sweep().expect("whole");
+    let sweep = plates
+        .doc
+        .operation
+        .motion()
+        .unwrap()
+        .sweep()
+        .expect("whole");
     assert_eq!(
         sweep.path,
         PathRef::Chain(vec![PathPart::Curves(varde_document::CurveChain {
@@ -777,7 +807,7 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         "{:?}",
         plates.doc.notice
     );
-    let session = plates.doc.motion.as_ref().unwrap();
+    let session = plates.doc.operation.motion().unwrap();
     assert!(session.blend.edges.refs.is_empty());
     let sweep = session.sweep().expect("whole");
     sweep
@@ -796,9 +826,19 @@ fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
     let plates = &mut swept.plates;
     plates.answer();
     click_edge(plates, plate, CORNER);
-    let edges = |plates: &Plates| plates.doc.motion.as_ref().unwrap().blend.edges.refs.clone();
+    let edges = |plates: &Plates| {
+        plates
+            .doc
+            .operation
+            .motion()
+            .unwrap()
+            .blend
+            .edges
+            .refs
+            .clone()
+    };
     let first = edges(plates);
-    let chain = plates.doc.motion.as_ref().unwrap().sweep.chains[0].clone();
+    let chain = plates.doc.operation.motion().unwrap().sweep.chains[0].clone();
     plates.answer();
     plates.doc.update(Edit::AcceptError);
     let (id, FeatureKind::Sweep(stored)) = plates.last_feature() else {
@@ -833,7 +873,7 @@ fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.look(Look::EditFeature(id));
-    let opened = plates.doc.motion.as_ref().unwrap().sweep().unwrap();
+    let opened = plates.doc.operation.motion().unwrap().sweep().unwrap();
     // A body it makes is the document's to number.
     assert_eq!(
         Sweep {
@@ -846,7 +886,7 @@ fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
     plates.answer();
     plates.doc.update(Edit::CommitMotion);
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.motion.is_none());
+    assert!(plates.doc.operation.motion().is_none());
     assert_eq!(plates.doc.editor.revision(), revision);
     assert_eq!(*plates.doc.editor.document(), document);
 }

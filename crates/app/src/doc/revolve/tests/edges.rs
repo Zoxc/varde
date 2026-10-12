@@ -3,6 +3,7 @@
 //! previewed, committed and edited; the edges that can't be refused,
 //! saying why.
 
+use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     AxisLine, Command, EdgeRef, FaceKey, FeatureId, FeatureKind, PartKey, Placement, Plane,
@@ -117,7 +118,7 @@ fn a_model_edge_is_picked_as_the_axis_and_committed() {
     let (mut doc, requests, sketch) = on_the_front();
     let before = doc.editor.document().clone();
     start(&mut doc, sketch);
-    assert_eq!(doc.revolve.as_ref().unwrap().picking, RevolvePick::Axis);
+    assert_eq!(doc.operation.revolve().unwrap().picking, RevolvePick::Axis);
     let edge = edge_of(&doc, -DVec3::Y, 20.0, DVec3::new(0.0, -20.0, 10.0));
     let at = DVec3::new(3.0, -20.0, 10.0);
     pick_edge(&mut doc, edge, at);
@@ -129,7 +130,7 @@ fn a_model_edge_is_picked_as_the_axis_and_committed() {
         faces: [top.min(front), top.max(front)],
         near: at,
     };
-    let session = doc.revolve.as_ref().unwrap();
+    let session = doc.operation.revolve().unwrap();
     assert_eq!(session.axis, Some(AxisLine::Edge(expected)));
     assert_eq!(session.picking, RevolvePick::Regions);
     let state = doc.revolve_state().unwrap();
@@ -156,7 +157,7 @@ fn a_model_edge_is_picked_as_the_axis_and_committed() {
     assert_eq!(doc.feed.draft_error(), None);
 
     doc.update(Edit::CommitRevolve);
-    assert!(doc.revolve.is_none());
+    assert!(doc.operation.revolve().is_none());
     let [(_, revolve)] = &revolves(&doc)[..] else {
         panic!("one revolve");
     };
@@ -186,7 +187,7 @@ fn edges_that_cant_be_the_axis_are_refused() {
         doc.notice.as_deref(),
         Some("Pick the profile first, then its axis")
     );
-    assert_eq!(doc.revolve.as_ref().unwrap().axis, None);
+    assert_eq!(doc.operation.revolve().unwrap().axis, None);
 
     doc.look(Look::Revolve(RevolveLook::PickRegion { sketch, region: 0 }));
     assert_eq!(doc.notice, None);
@@ -202,13 +203,13 @@ fn edges_that_cant_be_the_axis_are_refused() {
         .expect("a round edge on the top");
     pick_edge(&mut doc, rim, DVec3::new(8.0, 0.0, 10.0));
     assert_eq!(doc.notice.as_deref(), Some(varde_view::EDGE_NOT_STRAIGHT));
-    assert_eq!(doc.revolve.as_ref().unwrap().axis, None);
+    assert_eq!(doc.operation.revolve().unwrap().axis, None);
 
     // The top back edge.
     let back = edge_of(&doc, DVec3::Y, 20.0, DVec3::new(0.0, 20.0, 10.0));
     pick_edge(&mut doc, back, DVec3::new(0.0, 20.0, 10.0));
     assert_eq!(doc.notice.as_deref(), Some(varde_view::EDGE_OFF_PLANE));
-    assert_eq!(doc.revolve.as_ref().unwrap().axis, None);
+    assert_eq!(doc.operation.revolve().unwrap().axis, None);
 
     // A pick of another model.
     let model = doc.feed.pick_index().model() + 1;
@@ -219,11 +220,11 @@ fn edges_that_cant_be_the_axis_are_refused() {
         at,
     }));
     assert!(doc.notice.as_deref().unwrap().contains("out of date"));
-    assert_eq!(doc.revolve.as_ref().unwrap().axis, None);
+    assert_eq!(doc.operation.revolve().unwrap().axis, None);
     // The right one still is.
     pick_edge(&mut doc, top_front, at);
     assert!(matches!(
-        doc.revolve.as_ref().unwrap().axis,
+        doc.operation.revolve().unwrap().axis,
         Some(AxisLine::Edge(_))
     ));
 }
@@ -256,7 +257,7 @@ fn editing_a_revolve_about_an_edge_keeps_it() {
     let (feature, committed) = (*feature, committed.clone());
 
     doc.look(Look::EditFeature(feature));
-    let session = doc.revolve.as_ref().expect("editing it");
+    let session = doc.operation.revolve().expect("editing it");
     assert_eq!(session.axis, Some(committed.axis));
     assert!(!session.axis_missing);
     assert!(session.edge_ends.is_some());
@@ -284,7 +285,7 @@ fn editing_a_revolve_about_an_edge_keeps_it() {
         doc.notice.as_deref(),
         Some("Only an edge made before the revolve can be its axis")
     );
-    assert_eq!(doc.revolve.as_ref().unwrap().axis, Some(committed.axis));
+    assert_eq!(doc.operation.revolve().unwrap().axis, Some(committed.axis));
 
     doc.look(Look::Revolve(RevolveLook::Extent(TurnKind::Full)));
     doc.update(Edit::CommitRevolve);
@@ -433,7 +434,7 @@ fn an_edge_between_bodies_a_combine_merged_before_is_the_axis() {
         near,
     };
     assert_eq!(
-        doc.revolve.as_ref().unwrap().axis,
+        doc.operation.revolve().unwrap().axis,
         Some(AxisLine::Edge(expected))
     );
     doc.update(Edit::CommitRevolve);
@@ -514,13 +515,13 @@ fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
     pick_edge(&mut doc, edge, near);
     assert_eq!(doc.notice, None);
     assert!(matches!(
-        doc.revolve.as_ref().unwrap().axis,
+        doc.operation.revolve().unwrap().axis,
         Some(AxisLine::Edge(edge)) if edge.body == body
     ));
     doc.update(Edit::Undo);
     answer(&mut doc, &requests);
     assert!(doc.editor.document().body(body).is_none());
-    let session = doc.revolve.as_ref().expect("still setting up");
+    let session = doc.operation.revolve().expect("still setting up");
     assert_eq!(session.axis, None);
     assert_eq!(session.edge_ends, None);
     assert_eq!(session.picking, RevolvePick::Axis);
@@ -528,7 +529,7 @@ fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
     // Redone, the body is back, but the axis is picked again.
     doc.update(Edit::Redo);
     answer(&mut doc, &requests);
-    assert_eq!(doc.revolve.as_ref().unwrap().axis, None);
+    assert_eq!(doc.operation.revolve().unwrap().axis, None);
 }
 
 /// The arrow on an edge picked as the axis follows the edge when an undo
@@ -555,11 +556,11 @@ fn the_arrow_follows_its_edge_through_an_undo() {
     start(&mut doc, sketch);
     let edge = edge_of(&doc, -DVec3::Y, 20.0, DVec3::new(0.0, -20.0, 11.0));
     pick_edge(&mut doc, edge, DVec3::new(0.0, -20.0, 11.0));
-    let [a, b] = doc.revolve.as_ref().unwrap().edge_ends.unwrap();
+    let [a, b] = doc.operation.revolve().unwrap().edge_ends.unwrap();
     assert_eq!((a.z, b.z), (11.0, 11.0));
     doc.update(Edit::Undo);
     answer(&mut doc, &requests);
-    let session = doc.revolve.as_ref().expect("still setting up");
+    let session = doc.operation.revolve().expect("still setting up");
     assert!(matches!(session.axis, Some(AxisLine::Edge(_))));
     let [a, b] = session.edge_ends.expect("the edge shown");
     assert_eq!((a.z, b.z), (10.0, 10.0));

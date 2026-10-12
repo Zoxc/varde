@@ -7,6 +7,7 @@
 //! Bodies list and the typed fields are the extrude's
 //! ([`super::regions`]).
 
+use crate::doc::{OperationSession, OperationSlot};
 use std::borrow::Cow;
 use std::f64::consts::PI;
 
@@ -25,7 +26,7 @@ use super::extrude::is_sketch;
 use super::regions::{BodyTargets, ReadIn, RegionPick, TypedText};
 use super::{Doc, Focus, OUT_OF_DATE};
 
-/// The revolve being set up, while one is: [`Doc::revolve`].
+/// The revolve being set up, while one is: [`Doc::operation`].
 #[derive(Debug)]
 pub(crate) struct RevolveSession {
     /// The revolve edited, or `None` for a new one.
@@ -408,13 +409,11 @@ impl Doc {
     /// or combine being set up is dropped. The first angle's field, if the extent has one, takes the
     /// focus.
     pub(crate) fn start_revolve(&mut self) {
-        if self.revolve.take().is_some() || !self.editable() || self.sketch.is_some() {
+        if self.operation.take_revolve().is_some() || !self.editable() || self.sketch.is_some() {
             return;
         }
         self.picking_plane = None;
-        self.extrude = None;
-        self.combine = None;
-        self.motion = None;
+        self.operation = None;
         let document = self.editor.document();
         // Or the first selected in Objects.
         let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
@@ -437,7 +436,7 @@ impl Doc {
             _ => None,
         };
         drop(items);
-        self.revolve = Some(session);
+        self.operation = Some(OperationSession::Revolve(session));
         self.focus = Some(Focus::All);
         self.axis_from_selection();
         self.opened_operation();
@@ -447,7 +446,7 @@ impl Doc {
     /// it has a profile and no axis, saying why if it can't be: tried
     /// once.
     fn axis_from_selection(&mut self) {
-        let Some(session) = &mut self.revolve else {
+        let Some(session) = self.operation.revolve_mut() else {
             return;
         };
         if session.axis.is_some() || session.regions.source.is_none() {
@@ -476,15 +475,12 @@ impl Doc {
             return;
         }
         self.picking_plane = None;
-        self.extrude = None;
-        self.combine = None;
-        self.motion = None;
         self.selected_feature = Some(id);
         let mut session = RevolveSession::editing(document, id, revolve);
         if let AxisLine::Edge(edge) = &revolve.axis {
             session.edge_ends = self.shown_edge(edge);
         }
-        self.revolve = Some(session);
+        self.operation = Some(OperationSession::Revolve(session));
         self.focus = Some(Focus::All);
         self.opened_operation();
     }
@@ -498,14 +494,14 @@ impl Doc {
         let Some(RevolveSession {
             axis: Some(AxisLine::Edge(edge)),
             ..
-        }) = &self.revolve
+        }) = self.operation.revolve()
         else {
             return;
         };
         let Some(ends) = self.shown_edge(edge) else {
             return;
         };
-        if let Some(session) = &mut self.revolve {
+        if let Some(session) = self.operation.revolve_mut() {
             session.edge_ends = Some(ends);
         }
     }
@@ -524,13 +520,13 @@ impl Doc {
     /// clicked at `at`, as the axis of the revolve being set up, or says
     /// why it can't be ([`Doc::axis_edge`]).
     fn pick_axis_edge(&mut self, model: u64, edge: u32, at: DVec3) {
-        let Some(session) = &self.revolve else {
+        let Some(session) = self.operation.revolve() else {
             return;
         };
         match self.axis_edge(session, model, edge, at) {
             Ok((reference, ends)) => {
                 let document = self.editor.document();
-                if let Some(session) = &mut self.revolve {
+                if let Some(session) = self.operation.revolve_mut() {
                     session.pick_edge_axis(reference, ends, document);
                 }
             }
@@ -593,11 +589,11 @@ impl Doc {
     pub(crate) fn revolve_look(&mut self, message: RevolveLook) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = &mut self.revolve else {
+        let Some(session) = self.operation.revolve_mut() else {
             return;
         };
         match message {
-            RevolveLook::Cancel => self.revolve = None,
+            RevolveLook::Cancel => self.operation = None,
             _ if !editable => {}
             RevolveLook::PickRegion { sketch, region } => {
                 // The axis is of the source: it stays while one is picked.
@@ -638,7 +634,7 @@ impl Doc {
     /// is ready ([`RevolveSession::ready`]), as for an extrude
     /// ([`Doc::extrude_ready`]).
     pub(crate) fn revolve_ready(&self) -> bool {
-        self.revolve.as_ref().is_some_and(|session| {
+        self.operation.revolve().is_some_and(|session| {
             self.editable() && !self.users_proposing() && session.ready(self.editor.document())
         })
     }
@@ -652,14 +648,14 @@ impl Doc {
         if !self.commit_by(self.revolve_ready(), accept) {
             return;
         }
-        let Some(session) = &self.revolve else {
+        let Some(session) = self.operation.revolve() else {
             return;
         };
         let Some(revolve) = session.revolve(self.editor.document()) else {
             return;
         };
         if self.commit_feature(session.feature, revolve.into()) {
-            self.revolve = None;
+            self.operation = None;
         }
     }
 
@@ -670,7 +666,7 @@ impl Doc {
     pub(crate) fn prune_revolve(&mut self, replaced: bool) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = &mut self.revolve else {
+        let Some(session) = self.operation.revolve_mut() else {
             return;
         };
         let edited = session.feature.is_none_or(|feature| {
@@ -680,7 +676,7 @@ impl Doc {
             )
         });
         if !(editable && !replaced && edited && session.regions.refresh(document)) {
-            self.revolve = None;
+            self.operation = None;
             return;
         }
         session.follow_design(document);
@@ -691,14 +687,14 @@ impl Doc {
     /// The revolve being set up as the regeneration lane previews it, and
     /// the revolve it edits, if it's whole.
     pub(crate) fn revolve_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
-        let session = self.revolve.as_ref()?;
+        let session = self.operation.revolve()?;
         let revolve = session.revolve(self.editor.document())?;
         Some((session.feature, revolve.into()))
     }
 
     /// The revolve being set up, for the view.
     pub(crate) fn revolve_state(&self) -> Option<RevolveState<'_>> {
-        let session = self.revolve.as_ref()?;
+        let session = self.operation.revolve()?;
         let document = self.editor.document();
         let editing = session
             .feature

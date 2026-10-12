@@ -1,3 +1,4 @@
+use crate::doc::OperationSlot;
 use glam::{DVec2, Vec3};
 use iced::mouse::{Cursor, Event};
 use varde_render::{Camera, View};
@@ -609,7 +610,7 @@ fn a_draft_still_shown_after_the_extrude_doesnt_drop_the_selection() {
     };
     assert!(!walls(&doc), "the draft has the wall");
     doc.look(Look::Escape);
-    assert!(doc.extrude.is_none());
+    assert!(doc.operation.extrude().is_none());
     assert!(doc.feed.shows_draft());
     assert!(!doc.picks());
     assert_eq!(doc.highlight(), None);

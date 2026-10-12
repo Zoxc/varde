@@ -3,6 +3,7 @@
 //! click on it would leave or take out), never as the model's selection,
 //! which the session doesn't change.
 
+use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_regen::Summary;
 use varde_view::{Look, MotionLook, MotionPick, OverlapItems, Overlaps, Pick, Picked};
@@ -60,17 +61,20 @@ fn a_move_ticks_its_bodies_and_its_axis_not_the_selection() {
     });
     assert!(!plates.doc.pick.selection.is_empty());
     plates.doc.look(Look::StartMove);
-    let session = plates.doc.motion.as_ref().expect("a move");
+    let session = plates.doc.operation.motion().expect("a move");
     assert_eq!(session.bodies, [plate], "the selection's body");
     plates.click(plate);
     plates.click(right);
-    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [right]);
+    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [right]);
     let picks = vec![top(&plates, plate), wall(&plates, right)];
     list(&mut plates, picks.clone());
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, true]));
     // Chosen with its tick, the plate's top picks the plate.
     plates.doc.look(Look::ToggleOverlap(0));
-    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate, right]);
+    assert_eq!(
+        plates.doc.operation.motion().unwrap().bodies,
+        [plate, right]
+    );
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true]));
 
     // The axis picked: nothing's ticked till the disc's wall is it.
@@ -96,7 +100,7 @@ fn a_combine_ticks_its_target_and_tools() {
     plates.doc.look(Look::StartCombine);
     plates.click(plate);
     plates.click(right);
-    let session = plates.doc.combine.as_ref().expect("a combine");
+    let session = plates.doc.operation.combine().expect("a combine");
     assert_eq!(
         (session.target, &session.tools[..]),
         (Some(plate), &[right][..])

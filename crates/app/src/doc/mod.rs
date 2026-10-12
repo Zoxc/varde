@@ -39,7 +39,8 @@ use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeco
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
-    DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, RowMenu, Snap, ViewOptions,
+    DocumentKeys, Edit, Look, Message as Ui, Mode, OperationState, Overlay, Panel, RowMenu, Snap,
+    ViewOptions,
 };
 
 #[cfg(test)]
@@ -198,17 +199,9 @@ pub(crate) struct Doc {
     pub(crate) color_preview: Option<(BodyId, Tint)>,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
-    /// The extrude being set up, if one is: never with a sketch.
-    pub(crate) extrude: Option<ExtrudeSession>,
-    /// The revolve being set up, if one is: never with a sketch or an
-    /// extrude.
-    pub(crate) revolve: Option<RevolveSession>,
-    /// The combine being set up, if one is: never with a sketch or another
-    /// operation.
-    pub(crate) combine: Option<CombineSession>,
-    /// The move, mirror or pattern being set up, if one is: never with a
-    /// sketch or another operation.
-    pub(crate) motion: Option<MotionSession>,
+    /// The extrude, revolve, combine, move, mirror or pattern being set
+    /// up, if one is: never with a sketch.
+    pub(crate) operation: Option<OperationSession>,
     /// The feature the extrude, revolve, combine or motion session open
     /// built as it opened ([`Doc::operation_built`]), none if it wasn't
     /// whole: it has nothing unfinished while it builds the same. Kept,
@@ -274,6 +267,90 @@ pub(crate) struct Doc {
 /// applied to the one opened after it. Unique within the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct DocId(u64);
+
+/// The operation being set up: one at a time, so opening one replaces
+/// another.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per open document, where all four sessions were held before"
+)]
+pub(crate) enum OperationSession {
+    Extrude(ExtrudeSession),
+    Revolve(RevolveSession),
+    Combine(CombineSession),
+    /// A move, mirror or pattern, or another motion kind.
+    Motion(MotionSession),
+}
+
+impl OperationSession {
+    /// The feature it edits, none for a new one.
+    fn feature(&self) -> Option<FeatureId> {
+        match self {
+            Self::Extrude(session) => session.feature,
+            Self::Revolve(session) => session.feature,
+            Self::Combine(session) => session.feature,
+            Self::Motion(session) => session.feature,
+        }
+    }
+}
+
+/// Each kind's session in the operation slot, if it's the one being set
+/// up: `$kind` and `$kind_mut` read it, `take_$kind` closes it, handing
+/// it back. On the field rather than [`Doc`], so it borrows the slot
+/// alone.
+pub(crate) trait OperationSlot {
+    fn extrude(&self) -> Option<&ExtrudeSession>;
+    fn extrude_mut(&mut self) -> Option<&mut ExtrudeSession>;
+    fn take_extrude(&mut self) -> Option<ExtrudeSession>;
+    fn revolve(&self) -> Option<&RevolveSession>;
+    fn revolve_mut(&mut self) -> Option<&mut RevolveSession>;
+    fn take_revolve(&mut self) -> Option<RevolveSession>;
+    fn combine(&self) -> Option<&CombineSession>;
+    fn combine_mut(&mut self) -> Option<&mut CombineSession>;
+    fn take_combine(&mut self) -> Option<CombineSession>;
+    fn motion(&self) -> Option<&MotionSession>;
+    fn motion_mut(&mut self) -> Option<&mut MotionSession>;
+    fn take_motion(&mut self) -> Option<MotionSession>;
+}
+
+macro_rules! slot_accessors {
+    ($($variant:ident: $session:ty => $get:ident, $get_mut:ident, $take:ident;)*) => {
+        $(
+            fn $get(&self) -> Option<&$session> {
+                match self {
+                    Some(OperationSession::$variant(session)) => Some(session),
+                    _ => None,
+                }
+            }
+
+            fn $get_mut(&mut self) -> Option<&mut $session> {
+                match self {
+                    Some(OperationSession::$variant(session)) => Some(session),
+                    _ => None,
+                }
+            }
+
+            fn $take(&mut self) -> Option<$session> {
+                match self.take() {
+                    Some(OperationSession::$variant(session)) => Some(session),
+                    other => {
+                        *self = other;
+                        None
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl OperationSlot for Option<OperationSession> {
+    slot_accessors! {
+        Extrude: ExtrudeSession => extrude, extrude_mut, take_extrude;
+        Revolve: RevolveSession => revolve, revolve_mut, take_revolve;
+        Combine: CombineSession => combine, combine_mut, take_combine;
+        Motion: MotionSession => motion, motion_mut, take_motion;
+    }
+}
 
 impl DocId {
     pub(crate) fn unique() -> Self {
@@ -472,10 +549,7 @@ impl Doc {
             body_look_hovered: false,
             color_preview: None,
             sketch: None,
-            extrude: None,
-            revolve: None,
-            combine: None,
-            motion: None,
+            operation: None,
             opened_with: None,
             command_held: false,
             pattern_shapes: HashMap::new(),
@@ -552,10 +626,13 @@ impl Doc {
         // Held, the command modifier shows the model before the
         // operation, what its preview covers there to see.
         let before = self.operation_before();
-        let draft = (self.extrude_draft())
-            .or_else(|| self.revolve_draft())
-            .or_else(|| self.combine_draft())
-            .or_else(|| self.motion_draft());
+        let draft = match self.operation {
+            Some(OperationSession::Extrude(_)) => self.extrude_draft(),
+            Some(OperationSession::Revolve(_)) => self.revolve_draft(),
+            Some(OperationSession::Combine(_)) => self.combine_draft(),
+            Some(OperationSession::Motion(_)) => self.motion_draft(),
+            None => None,
+        };
         // The draft's still known, its error and OK waiting on it kept,
         // but not applied.
         self.feed.hide_draft = before;
@@ -576,10 +653,7 @@ impl Doc {
     /// operation set up from a feature rather than a new one.
     pub(crate) fn opened_feature(&self) -> Option<FeatureId> {
         (self.sketch.as_ref().map(|session| session.feature))
-            .or(self.extrude.as_ref().and_then(|session| session.feature))
-            .or(self.revolve.as_ref().and_then(|session| session.feature))
-            .or(self.combine.as_ref().and_then(|session| session.feature))
-            .or(self.motion.as_ref().and_then(|session| session.feature))
+            .or_else(|| self.operation.as_ref()?.feature())
     }
 
     /// The feature the model is rolled back to before, if it is, and
@@ -616,33 +690,25 @@ impl Doc {
     /// Whether an operation is being set up: an extrude, a revolve, a
     /// combine, a move or a mirror.
     pub(crate) fn operating(&self) -> bool {
-        self.extrude.is_some()
-            || self.revolve.is_some()
-            || self.combine.is_some()
-            || self.motion.is_some()
+        self.operation.is_some()
     }
 
     /// Closes the operation being set up, if one is, leaving the
     /// document as it was: its Cancel, or `Esc`.
     pub(crate) fn close_operation(&mut self) {
-        self.extrude = None;
-        self.revolve = None;
-        self.combine = None;
-        self.motion = None;
+        self.operation = None;
     }
 
     /// Commits the operation being set up, if one is, as its OK would;
     /// its preview failed only if `accept` (see `commit_extrude`).
     /// Refused, it stays open, and why shows.
     pub(crate) fn commit_operation(&mut self, accept: bool) {
-        if self.extrude.is_some() {
-            self.commit_extrude(accept);
-        } else if self.revolve.is_some() {
-            self.commit_revolve(accept);
-        } else if self.combine.is_some() {
-            self.commit_combine(accept);
-        } else if self.motion.is_some() {
-            self.commit_motion(accept);
+        match self.operation {
+            Some(OperationSession::Extrude(_)) => self.commit_extrude(accept),
+            Some(OperationSession::Revolve(_)) => self.commit_revolve(accept),
+            Some(OperationSession::Combine(_)) => self.commit_combine(accept),
+            Some(OperationSession::Motion(_)) => self.commit_motion(accept),
+            None => {}
         }
     }
 
@@ -657,11 +723,24 @@ impl Doc {
     /// The feature the operation being set up would commit, if one is
     /// and it's whole.
     pub(crate) fn operation_built(&self) -> Option<FeatureKind> {
-        (self.extrude_draft())
-            .or_else(|| self.revolve_draft())
-            .or_else(|| self.combine_draft())
-            .map(|(_, kind)| kind)
-            .or_else(|| self.motion_built())
+        let draft = match self.operation.as_ref()? {
+            OperationSession::Extrude(_) => self.extrude_draft(),
+            OperationSession::Revolve(_) => self.revolve_draft(),
+            OperationSession::Combine(_) => self.combine_draft(),
+            OperationSession::Motion(_) => return self.motion_built(),
+        };
+        draft.map(|(_, kind)| kind)
+    }
+
+    /// The operation being set up, or else the measure tool, for the view.
+    fn operation_state(&self) -> Option<OperationState<'_>> {
+        match self.operation {
+            Some(OperationSession::Extrude(_)) => self.extrude_state().map(OperationState::Extrude),
+            Some(OperationSession::Revolve(_)) => self.revolve_state().map(OperationState::Revolve),
+            Some(OperationSession::Combine(_)) => self.combine_state().map(OperationState::Combine),
+            Some(OperationSession::Motion(_)) => self.motion_state().map(OperationState::Motion),
+            None => self.measure_state().map(OperationState::Measure),
+        }
     }
 
     /// Whether the operation being set up builds another feature than it
@@ -1263,14 +1342,22 @@ impl Doc {
             Look::ClickModel { pick, .. } if self.picks_outside() => {
                 self.outside_click(sketch::OutsideClick::Model(pick));
             }
-            Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
-            Look::ClickModel { pick, .. } if self.motion.is_some() => self.motion_click(pick),
+            Look::ClickModel { pick, .. } if self.operation.combine().is_some() => {
+                self.combine_click(pick)
+            }
+            Look::ClickModel { pick, .. } if self.operation.motion().is_some() => {
+                self.motion_click(pick)
+            }
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {
                 self.measure_click(pick, add, double);
             }
             Look::ClickModel { pick, add, double } => self.click_model(pick, add, double),
-            Look::ClickBody { body, .. } if self.combine.is_some() => self.combine_body(body),
-            Look::ClickBody { body, .. } if self.motion.is_some() => self.motion_body(body),
+            Look::ClickBody { body, .. } if self.operation.combine().is_some() => {
+                self.combine_body(body)
+            }
+            Look::ClickBody { body, .. } if self.operation.motion().is_some() => {
+                self.motion_body(body)
+            }
             Look::ClickBody { body, add } if self.measure.is_some() => self.measure_body(body, add),
             Look::ClickBody { body, add } => self.click_body(body, add),
             Look::ClickObject { row, add } => self.click_object(row, add),
@@ -1434,7 +1521,8 @@ impl Doc {
             // already part of the selection, which is kept.
             RowMenu::Body(id) => {
                 let shown = self.feed.shown_body(id);
-                let picking = self.combine.is_some() || self.motion.is_some();
+                let picking =
+                    self.operation.combine().is_some() || self.operation.motion().is_some();
                 if !picking
                     && self.measure.is_none()
                     && self.pick.selection.mode().takes_bodies()
@@ -1864,12 +1952,8 @@ impl Doc {
             overlaps: self.overlaps.as_ref().map(|listed| &listed.list),
             overlap_ticks: self.overlap_ticks(),
             sketch: self.sketch_state(),
-            extrude: self.extrude_state(),
-            revolve: self.revolve_state(),
-            combine: self.combine_state(),
+            operation: self.operation_state(),
             combinable: self.combinable(),
-            motion: self.motion_state(),
-            measure: self.measure_state(),
             params: self.params_state(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),

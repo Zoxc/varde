@@ -1,3 +1,4 @@
+use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::f64::consts::PI;
 
@@ -126,7 +127,7 @@ fn i_starts_and_leaves_the_measure_tool_and_so_does_the_rail() {
     doc.look(Look::StartMeasure);
     doc.look(Look::StartExtrude);
     assert!(doc.measure.is_none());
-    assert!(doc.extrude.is_some());
+    assert!(doc.operation.extrude().is_some());
     doc.look(Look::StartMeasure);
     assert!(doc.measure.is_none());
     doc.look(Look::Escape);

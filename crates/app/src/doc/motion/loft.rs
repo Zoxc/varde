@@ -11,6 +11,7 @@
 //! operation and bodies as an extrude's. What the document no longer
 //! takes is kept and said to be gone.
 
+use crate::doc::OperationSlot;
 use std::borrow::Cow;
 
 use glam::DVec2;
@@ -396,7 +397,7 @@ impl Doc {
     /// be changed ([`loft_message`]).
     pub(super) fn loft_look(&mut self, message: MotionLook) {
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         let refused = match message {
@@ -453,7 +454,7 @@ impl Doc {
     /// Notes what's gone of the loft being set up after a change to it.
     fn prune_loft_now(&mut self) {
         let document = self.editor.document();
-        if let Some(session) = &mut self.motion {
+        if let Some(session) = self.operation.motion_mut() {
             let index = session.index_in(document);
             session.prune_loft(document, index);
         }
@@ -560,7 +561,7 @@ impl Doc {
     fn loft_target(&mut self, body: BodyId) {
         let revision = self.feed.revision();
         let document = self.editor.document();
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         let feature = session.feature;

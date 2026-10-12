@@ -8,6 +8,7 @@
 //! OK adds it as one undo step. Editing a tapered extrude shows its
 //! taper; units changed mid-session keep it.
 
+use crate::doc::OperationSlot;
 use varde_document::{Command, Document, Editor, Extrude, FeatureKind, OriginPlane, Plane};
 use varde_view::{Edit, ExtrudeLook, Look, Message as Ui};
 
@@ -68,7 +69,7 @@ fn shows(doc: &Doc, wanted: &str) -> bool {
 fn a_typed_taper_is_previewed_and_add_anyway_keeps_it() {
     let (mut doc, requests) = rectangle_picked();
     let before = doc.editor.document().clone();
-    let session = doc.extrude.as_ref().unwrap();
+    let session = doc.operation.extrude().unwrap();
     assert_eq!(session.taper.text, "0°");
     assert!(shows(&doc, "Taper"));
     assert_eq!(drafted_taper(&requests), None);
@@ -86,10 +87,10 @@ fn a_typed_taper_is_previewed_and_add_anyway_keeps_it() {
     let features = doc.editor.document().features().len();
     key_in(&mut doc, enter());
     assert_eq!(doc.editor.document().features().len(), features);
-    assert!(doc.extrude.is_some());
+    assert!(doc.operation.extrude().is_some());
 
     doc.update(Edit::AcceptError);
-    assert!(doc.extrude.is_none());
+    assert!(doc.operation.extrude().is_none());
     let [tapered] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
@@ -141,7 +142,7 @@ fn a_tapered_rectangle_previews_and_ok_adds_it() {
     assert_eq!(doc.feed.draft_error(), None);
     assert!(doc.extrude_ready());
     key_in(&mut doc, enter());
-    assert!(doc.extrude.is_none());
+    assert!(doc.operation.extrude().is_none());
     let [tapered] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
@@ -165,7 +166,7 @@ fn editing_a_tapered_extrude_shows_and_changes_its_taper() {
     answer(&mut doc, &requests);
 
     doc.look(Look::EditFeature(id));
-    let session = doc.extrude.as_ref().expect("editing it");
+    let session = doc.operation.extrude().expect("editing it");
     assert_eq!(session.taper.text, "2 + 1");
     // Nothing changed, OK writes nothing.
     let revision = doc.editor.revision();
@@ -197,7 +198,7 @@ fn a_taper_keeps_its_angle_when_the_units_change() {
     let (mut doc, requests) = rectangle_picked();
     typed(&mut doc, "7.5");
     doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
-    let session = doc.extrude.as_ref().unwrap();
+    let session = doc.operation.extrude().unwrap();
     assert_eq!(session.taper.text, "7.5");
     assert_eq!(drafted_taper(&requests), Some(7.5f64.to_radians()));
     answer(&mut doc, &requests);
@@ -286,7 +287,7 @@ fn typed_tapers_are_taken_or_refused_never_out_of_range() {
     let mut last = None;
     for text in texts {
         typed(&mut doc, text);
-        let session = doc.extrude.as_ref().unwrap();
+        let session = doc.operation.extrude().unwrap();
         match &session.taper.error {
             Some(_) => {
                 assert_eq!(
@@ -349,7 +350,7 @@ fn a_taper_stays_through_extents_and_flips() {
             );
         }
     }
-    let session = doc.extrude.as_ref().unwrap();
+    let session = doc.operation.extrude().unwrap();
     assert_eq!(session.extent, ExtentKind::OneSide);
     assert!(doc.extrude_ready());
     key_in(&mut doc, enter());

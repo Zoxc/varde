@@ -11,6 +11,7 @@
 //! is, and in a sketch with Project or Intersect picked as that tool
 //! picks.
 
+use crate::doc::OperationSlot;
 use varde_view::{
     Look, OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps, Pick, PickIndex, Picked,
     Selected,
@@ -419,8 +420,8 @@ impl Doc {
             });
             return Some(ticks.collect());
         }
-        let own = self.combine.is_some()
-            || self.motion.is_some()
+        let own = self.operation.combine().is_some()
+            || self.operation.motion().is_some()
             || self.measure.is_some()
             || self.picking_plane.is_some();
         if !own {
@@ -453,9 +454,9 @@ impl Doc {
                 };
             }
             // As `look_at` hands a click on.
-            let ticked = if self.combine.is_some() {
+            let ticked = if self.operation.combine().is_some() {
                 self.combine_has(pick)
-            } else if self.motion.is_some() {
+            } else if self.operation.motion().is_some() {
                 return self.motion_tick(pick);
             } else if self.measure.is_some() {
                 self.measure_has(pick)

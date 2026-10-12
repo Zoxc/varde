@@ -3,6 +3,7 @@
 //! found and clicked in the model shown, what the screen says, and what
 //! the session picks.
 
+use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     BodyId, Command, Document, Editor, Extent, Extrude, FaceRef, Operation, OriginPlane, Plane,
@@ -24,12 +25,12 @@ pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {
 
 /// What the session being set up picks.
 pub(super) fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.motion.as_ref().expect("a session").picking
+    plates.doc.operation.motion().expect("a session").picking
 }
 
 /// The faces of the session being set up.
 pub(super) fn picked_faces(plates: &Plates) -> Vec<FaceRef> {
-    (plates.doc.motion.as_ref().expect("a session").faces.refs).clone()
+    (plates.doc.operation.motion().expect("a session").faces.refs).clone()
 }
 
 /// The doc holding `document`, its bodies in order.

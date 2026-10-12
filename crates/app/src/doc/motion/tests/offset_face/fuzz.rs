@@ -31,6 +31,7 @@
 //! working was of a box and gives the volume its box, faces and signed
 //! distance give.
 
+use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, FeatureId, Targets};
 use varde_expr::LengthUnit;
 use varde_view::{OverlapItems, Overlaps, PanelHover};
@@ -90,7 +91,7 @@ fn flat(plates: &Plates, face: u32) -> Option<(DVec3, f64)> {
 /// Holds the handle, if the session shows one, to what the module's
 /// docs say.
 fn check_handle(plates: &Plates, what: &str) {
-    let Some(session) = &plates.doc.motion else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     let Some(handle) = handle(plates) else {
@@ -159,7 +160,7 @@ fn check_handle(plates: &Plates, what: &str) {
 /// Holds the session, if it's an offset face's, to what the module's
 /// docs say.
 fn check_session(plates: &Plates, what: &str) {
-    let Some(session) = &plates.doc.motion else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     // The overlap list's ticks are the session's own while it picks;
@@ -230,7 +231,7 @@ fn check_session(plates: &Plates, what: &str) {
 /// Holds the faces lit on a model of the document as it is to the body
 /// drawing the faces' body.
 fn check_lit(plates: &Plates, what: &str) {
-    let Some(session) = &plates.doc.motion else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     let lit = plates.doc.faces_lit();
@@ -259,7 +260,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let Some(session) = plates.doc.motion.as_ref() else {
+    let Some(session) = plates.doc.operation.motion() else {
         return;
     };
     assert_eq!(session.feature, Some(id), "{what}");
@@ -267,7 +268,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.motion.is_none() {
+    if plates.doc.operation.motion().is_none() {
         assert_eq!(plates.doc.editor.revision(), revision, "{what}: wrote");
         assert_eq!(*plates.doc.editor.document(), document, "{what}");
     }
@@ -289,7 +290,7 @@ fn merge(plates: &mut Plates, rng: &mut Rng) {
         }
         let mut target = *rng.pick(&all);
         let mut tool = *rng.pick(&all);
-        let session = plates.doc.motion.as_ref();
+        let session = plates.doc.operation.motion();
         if let Some(&body) = session.and_then(|session| session.bodies.first())
             && rng.below(2) == 0
         {
@@ -423,7 +424,7 @@ fn run(seed: u64, steps: usize) {
     let base = plates.doc.editor.document().features().len();
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
-        let open = plates.doc.motion.is_some();
+        let open = plates.doc.operation.motion().is_some();
         let roll = match rng.below(4) {
             0 if !open => 0,
             _ => rng.below(52),
@@ -454,7 +455,7 @@ fn run(seed: u64, steps: usize) {
                 }
             }
             11 => {
-                let faces = (plates.doc.motion.as_ref())
+                let faces = (plates.doc.operation.motion())
                     .map(|session| session.faces.refs.clone())
                     .unwrap_or_default();
                 if !faces.is_empty() {
@@ -479,7 +480,7 @@ fn run(seed: u64, steps: usize) {
                             }
                         }
                         2 => {
-                            let first = (plates.doc.motion.as_ref())
+                            let first = (plates.doc.operation.motion())
                                 .and_then(|session| session.faces.refs.first().copied());
                             if let Some(first) = first {
                                 plates.motion(MotionLook::DropFace(first));
@@ -516,7 +517,7 @@ fn run(seed: u64, steps: usize) {
             }
             25 if rng.below(2) == 0 => plates.doc.update(Edit::Redo),
             26..=28 => {
-                let before = plates.doc.motion.as_ref().and_then(|session| {
+                let before = plates.doc.operation.motion().and_then(|session| {
                     let ready =
                         plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
                     (ready && session.kind == MotionKind::OffsetFace)
@@ -525,7 +526,7 @@ fn run(seed: u64, steps: usize) {
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(offset))) = before {
                     assert!(
-                        plates.doc.motion.is_none(),
+                        plates.doc.operation.motion().is_none(),
                         "{what}: not committed: {:?}",
                         plates.doc.edit_error
                     );
@@ -576,9 +577,9 @@ fn run(seed: u64, steps: usize) {
             35 => {
                 // An edit taking every face out, then its body merged.
                 let ids = offsets(&plates);
-                if !ids.is_empty() && plates.doc.motion.is_none() {
+                if !ids.is_empty() && plates.doc.operation.motion().is_none() {
                     plates.doc.look(Look::EditFeature(*rng.pick(&ids)));
-                    let faces = (plates.doc.motion.as_ref())
+                    let faces = (plates.doc.operation.motion())
                         .map(|session| session.faces.refs.clone())
                         .unwrap_or_default();
                     for face in faces {
@@ -655,7 +656,7 @@ fn run(seed: u64, steps: usize) {
             .check()
             .unwrap_or_else(|error| panic!("{what}: {error}"));
     }
-    plates.doc.motion = None;
+    plates.doc.operation = None;
     plates.doc.sync();
     plates.answer();
     check_volumes(&plates, &format!("seed {seed} at the end"));

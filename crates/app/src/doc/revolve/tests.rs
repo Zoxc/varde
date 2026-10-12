@@ -1,3 +1,4 @@
+use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::f64::consts::PI;
@@ -163,7 +164,7 @@ fn enter() -> keyboard::Key {
 fn regions_then_a_sketch_line_picked_are_previewed() {
     let mut lathe = lathe();
     lathe.doc.look(Look::StartRevolve);
-    let session = lathe.doc.revolve.as_ref().expect("a session");
+    let session = lathe.doc.operation.revolve().expect("a session");
     assert_eq!(session.regions.source, None);
     assert_eq!(session.picking, RevolvePick::Regions);
     let state = lathe.doc.revolve_state().unwrap();
@@ -174,7 +175,7 @@ fn regions_then_a_sketch_line_picked_are_previewed() {
     // A region picked sets the sketch, and the axis is picked next.
     let (sketch, region) = (lathe.sketch, lathe.rectangle());
     lathe.revolve(RevolveLook::PickRegion { sketch, region });
-    let session = lathe.doc.revolve.as_ref().unwrap();
+    let session = lathe.doc.operation.revolve().unwrap();
     assert_eq!(session.regions.source, Some(sketch));
     assert_eq!(session.regions.picked, BTreeSet::from([region]));
     assert_eq!(session.picking, RevolvePick::Axis);
@@ -229,7 +230,7 @@ fn a_built_in_axis_is_stored_as_the_sketch_s_and_a_construction_line_as_a_curve(
 fn a_circle_is_no_axis() {
     let mut lathe = lathe();
     lathe.set_up(AxisLine::Curve(lathe.circle));
-    let session = lathe.doc.revolve.as_ref().unwrap();
+    let session = lathe.doc.operation.revolve().unwrap();
     assert_eq!(session.axis, None);
     assert_eq!(session.picking, RevolvePick::Axis);
     assert!(lathe.last_draft().is_none());
@@ -353,7 +354,7 @@ fn enter_commits_the_revolve_as_one_undo_step() {
     lathe.answer();
 
     key_in(&mut lathe.doc, enter());
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     let [(feature, revolve)] = lathe.revolves()[..] else {
         panic!("one revolve");
     };
@@ -397,7 +398,7 @@ fn a_flip_left_from_one_side_is_not_stored_where_it_does_nothing() {
         lathe.revolve(RevolveLook::Flip);
         lathe.revolve(RevolveLook::Extent(kind));
         lathe.doc.update(Edit::CommitRevolve);
-        assert!(lathe.doc.revolve.is_none());
+        assert!(lathe.doc.operation.revolve().is_none());
         assert_eq!(lathe.doc.editor.revision(), revision);
         assert!(!lathe.revolves()[0].1.flip);
     };
@@ -420,7 +421,7 @@ fn escape_leaves_no_trace() {
     assert!(lathe.doc.feed.shown_draft().is_some());
 
     lathe.doc.look(Look::Escape);
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     assert_eq!(*lathe.doc.editor.document(), before);
     assert_eq!(lathe.doc.editor.revision(), revision);
     assert!(lathe.last_draft().is_none());
@@ -431,10 +432,10 @@ fn escape_leaves_no_trace() {
     // Cancel does the same, and so does starting it again.
     lathe.set_up(AxisLine::SketchY);
     lathe.revolve(RevolveLook::Cancel);
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     lathe.set_up(AxisLine::SketchY);
     lathe.doc.look(Look::StartRevolve);
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     assert_eq!(lathe.doc.editor.revision(), revision);
 }
 
@@ -455,7 +456,7 @@ fn editing_a_revolve_reopens_it_with_its_values_and_sets_it_again() {
     let features = lathe.doc.editor.document().features().len();
 
     lathe.doc.look(Look::EditFeature(feature));
-    let session = lathe.doc.revolve.as_ref().expect("editing it");
+    let session = lathe.doc.operation.revolve().expect("editing it");
     assert_eq!(session.feature, Some(feature));
     assert_eq!(session.regions.source, Some(lathe.sketch));
     assert_eq!(session.regions.picked, BTreeSet::from([lathe.rectangle()]));
@@ -483,7 +484,7 @@ fn editing_a_revolve_reopens_it_with_its_values_and_sets_it_again() {
     // OK with nothing changed writes nothing.
     let revision = lathe.doc.editor.revision();
     lathe.doc.update(Edit::CommitRevolve);
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     assert_eq!(lathe.doc.editor.revision(), revision);
 
     // Changed, it's set again in place, one undo step.
@@ -561,7 +562,7 @@ fn the_axis_keeps_its_sketch_and_waits_for_its_line_through_undo() {
     // Every region taken out, the sketch stays: the axis is on it.
     let (sketch, region) = (lathe.sketch, lathe.rectangle());
     lathe.revolve(RevolveLook::PickRegion { sketch, region });
-    let session = lathe.doc.revolve.as_ref().unwrap();
+    let session = lathe.doc.operation.revolve().unwrap();
     assert!(session.regions.picked.is_empty());
     assert_eq!(session.regions.source, Some(sketch));
     assert_eq!(lathe.doc.revolve_state().unwrap().candidates.len(), 1);
@@ -600,7 +601,7 @@ fn while_revolving_other_tools_swap_it() {
     lathe.doc.look(Look::StartRevolve);
     // The selected sketch is the source.
     assert_eq!(
-        lathe.doc.revolve.as_ref().unwrap().regions.source,
+        lathe.doc.operation.revolve().unwrap().regions.source,
         Some(lathe.sketch)
     );
     // No edit of the selected feature, nor does the cursor pick the
@@ -611,9 +612,9 @@ fn while_revolving_other_tools_swap_it() {
     let before = lathe.doc.editor.document().clone();
     let key = |c: &str| keyboard::Key::Character(c.into());
     key_in(&mut lathe.doc, key("x"));
-    assert!(lathe.doc.extrude.is_some() && lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.extrude().is_some() && lathe.doc.operation.revolve().is_none());
     lathe.doc.look(Look::StartRevolve);
-    assert!(lathe.doc.extrude.is_none() && lathe.doc.revolve.is_some());
+    assert!(lathe.doc.operation.extrude().is_none() && lathe.doc.operation.revolve().is_some());
     key_in(&mut lathe.doc, key("s"));
     assert!(!lathe.doc.operating() && lathe.doc.picking_plane.is_some());
     assert_eq!(*lathe.doc.editor.document(), before);
@@ -622,9 +623,9 @@ fn while_revolving_other_tools_swap_it() {
     // A read-only document has no session.
     lathe.doc.read_only = Some("read-only".to_owned());
     lathe.doc.sync();
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     lathe.doc.look(Look::StartRevolve);
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
 }
 
 /// What clicking each text `text` of `doc`'s screen sends, one click on
@@ -664,7 +665,7 @@ fn the_toolbar_s_revolve_button_starts_a_session_and_backs_out() {
         "{sent:?}"
     );
     lathe.doc.look(Look::StartRevolve);
-    assert!(lathe.doc.revolve.is_some());
+    assert!(lathe.doc.operation.revolve().is_some());
     // While it's set up, the toolbar has Cancel and not the operations,
     // as the mock's (the toolbar's tag "Revolve" sends nothing); Cancel
     // backs out.
@@ -677,11 +678,11 @@ fn the_toolbar_s_revolve_button_starts_a_session_and_backs_out() {
         "{sent:?}"
     );
     lathe.doc.look(Look::StartRevolve);
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     // An extrude being set up is swapped for it by its key.
     lathe.doc.look(Look::StartExtrude);
     key_in(&mut lathe.doc, keyboard::Key::Character("o".into()));
-    assert!(lathe.doc.extrude.is_none() && lathe.doc.revolve.is_some());
+    assert!(lathe.doc.operation.extrude().is_none() && lathe.doc.operation.revolve().is_some());
 }
 
 #[test]
@@ -689,9 +690,9 @@ fn o_starts_a_session_and_backs_out_and_the_rail_s_o_does_too() {
     let mut lathe = lathe();
     let o = || keyboard::Key::Character("o".into());
     key_in(&mut lathe.doc, o());
-    assert!(lathe.doc.revolve.is_some());
+    assert!(lathe.doc.operation.revolve().is_some());
     key_in(&mut lathe.doc, o());
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     // With the Create set's list open, O is its Revolve.
     lathe.doc.look(Look::Rail(varde_view::RailLook::Toggle(0)));
     assert!(matches!(
@@ -769,7 +770,7 @@ fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
             lathe.doc.look(look);
         }
     }
-    let session = lathe.doc.revolve.as_ref().expect("editing it");
+    let session = lathe.doc.operation.revolve().expect("editing it");
     assert_eq!(session.feature, Some(feature));
     assert_eq!(session.extent, TurnKind::TwoSides);
     assert_eq!(session.axis, Some(AxisLine::SketchY));
@@ -849,10 +850,10 @@ fn the_session_ends_when_its_revolve_or_its_document_goes() {
     // Undone away while it's edited, the session ends: OK would write
     // over whatever the id names.
     lathe.doc.look(Look::EditFeature(feature));
-    assert!(lathe.doc.revolve.is_some());
+    assert!(lathe.doc.operation.revolve().is_some());
     lathe.doc.update(Edit::Undo);
     assert!(lathe.revolves().is_empty());
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     assert!(lathe.last_draft().is_none());
 
     // Replaced whole (restoring recovered changes, say) by one still
@@ -865,7 +866,7 @@ fn the_session_ends_when_its_revolve_or_its_document_goes() {
     let replaced = replaced.document().clone();
     lathe.doc.apply(Command::Replace(Box::new(replaced)));
     lathe.doc.sync();
-    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.doc.operation.revolve().is_none());
     assert!(lathe.last_draft().is_none());
 }
 
@@ -928,7 +929,7 @@ fn dragging_a_knob_types_its_angle() {
     near(span(&lathe), (0.0, PI / 3.0));
     drag(&mut lathe, Angle::First, -PI / 2.0);
     near(span(&lathe), (-PI / 2.0, 0.0));
-    assert!(lathe.doc.revolve.as_ref().unwrap().flip);
+    assert!(lathe.doc.operation.revolve().unwrap().flip);
     // Onto the plane changes nothing; past a turn, a whole turn.
     drag(&mut lathe, Angle::First, 0.0);
     near(span(&lathe), (-PI / 2.0, 0.0));

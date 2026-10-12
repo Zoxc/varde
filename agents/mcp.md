@@ -812,7 +812,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   `key::found` and handed to the click paths with the committed model's
   index (`Doc::reference_in` then `take_reference`, `Doc::pick_align`,
   `pick_scale_point`, `pick_scale_edge`; the click handlers run the
-  same on `Doc::motion`, taken out meanwhile by `Doc::on_session`), so
+  same on `Doc::operation`'s motion session, taken out meanwhile by `Doc::on_session`), so
   their refusals are the panel's notices ("Only a flat face can be the
   mirror plane", "Pick it on Body 2, the body aligned", ...), prefixed
   with the argument (`motion::by_key`: `key::found` then the click path,
@@ -838,7 +838,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   `CLIENT_OFFSET`, 1 mm, where the panel's follow the view; a draft's 3°
   from XY and Tangent faces on are the panel's own. Faces by key go
   through `key::found` and `Doc::pick_face`, the face session's click
-  path (`Doc::take_ref_in`, which `refs_click` runs on `Doc::motion`),
+  path (`Doc::take_ref_in`, which `refs_click` runs on `Doc::operation`'s motion session),
   so another body's face, one made later or past the limit is refused
   in the panel's words ("A shell's faces are all on one body: pick faces
   of Body 1"), prefixed with `faces[i]`; a face named twice (two keys

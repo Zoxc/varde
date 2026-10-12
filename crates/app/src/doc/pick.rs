@@ -8,6 +8,7 @@
 //! the sketches shown are hovered and selected with the model
 //! ([`Doc::selectable_sketches`]).
 
+use crate::doc::OperationSlot;
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FeatureId, FeatureKind};
@@ -74,7 +75,7 @@ impl Doc {
     /// a combine's draft makes no body, so the bodies its model has are
     /// the document's.
     pub(crate) fn picks(&self) -> bool {
-        let combining = self.combine.is_some() || self.motion.is_some();
+        let combining = self.operation.combine().is_some() || self.operation.motion().is_some();
         (self.picks_outside()
             || (self.sketch.is_none()
                 && (combining || (!self.operating() && !self.feed.shows_draft()))))
@@ -91,17 +92,17 @@ impl Doc {
             }
             _ => true,
         };
-        if let Some(session) = &self.extrude {
+        if let Some(session) = self.operation.extrude() {
             return session
                 .hover
                 .filter(|&hover| region(&session.regions, hover));
         }
-        if let Some(session) = &self.revolve {
+        if let Some(session) = self.operation.revolve() {
             return session
                 .hover
                 .filter(|&hover| region(&session.regions, hover));
         }
-        if let Some(session) = &self.motion {
+        if let Some(session) = self.operation.motion() {
             return session.hover.filter(|&hover| match hover {
                 PanelHover::Body(body) => session.bodies.contains(&body),
                 PanelHover::Axis => true,
@@ -120,7 +121,7 @@ impl Doc {
                 PanelHover::Missing(_) => false,
             });
         }
-        let session = self.combine.as_ref()?;
+        let session = self.operation.combine()?;
         session.hover.filter(|&hover| match hover {
             PanelHover::Body(body) => session.target == Some(body) || session.tools.contains(&body),
             _ => false,
@@ -130,16 +131,16 @@ impl Doc {
     /// Hovers the row `hover` of the operation's panel, or none: the
     /// viewport lights it up too.
     pub(crate) fn hover_panel(&mut self, hover: Option<PanelHover>) {
-        if let Some(session) = &mut self.extrude {
+        if let Some(session) = self.operation.extrude_mut() {
             session.hover = hover;
         }
-        if let Some(session) = &mut self.revolve {
+        if let Some(session) = self.operation.revolve_mut() {
             session.hover = hover;
         }
-        if let Some(session) = &mut self.combine {
+        if let Some(session) = self.operation.combine_mut() {
             session.hover = hover;
         }
-        if let Some(session) = &mut self.motion {
+        if let Some(session) = self.operation.motion_mut() {
             session.hover = hover;
         }
         self.refresh_highlight();
@@ -148,10 +149,10 @@ impl Doc {
     /// Takes the cursor leaving the panel's row `left`: nothing's hovered,
     /// unless another row already is, entered before this one was left.
     pub(crate) fn leave_panel(&mut self, left: PanelHover) {
-        let hovered = (self.extrude.as_ref().map(|session| session.hover))
-            .or_else(|| self.revolve.as_ref().map(|session| session.hover))
-            .or_else(|| self.combine.as_ref().map(|session| session.hover))
-            .or_else(|| self.motion.as_ref().map(|session| session.hover))
+        let hovered = (self.operation.extrude().map(|session| session.hover))
+            .or_else(|| self.operation.revolve().map(|session| session.hover))
+            .or_else(|| self.operation.combine().map(|session| session.hover))
+            .or_else(|| self.operation.motion().map(|session| session.hover))
             .flatten();
         if hovered == Some(left) {
             self.hover_panel(None);
@@ -200,8 +201,8 @@ impl Doc {
             && self.sketch.is_none()
             && !self.operating()
             && self.measure.is_none()
-            && self.combine.is_none()
-            && self.motion.is_none()
+            && self.operation.combine().is_none()
+            && self.operation.motion().is_none()
             && self.picking_plane.is_none()
             && self.pick.selection.mode().takes_sketch_items()
     }
@@ -388,8 +389,8 @@ impl Doc {
         // Not in a combine's preview, which isn't the document's model.
         if self.picks()
             && self.sketch.is_none()
-            && self.combine.is_none()
-            && self.motion.is_none()
+            && self.operation.combine().is_none()
+            && self.operation.motion().is_none()
             && !self.pick.selection.holds_nothing()
         {
             let document = self.editor.document();
@@ -418,11 +419,11 @@ impl Doc {
             self.refresh_measure_highlight();
             return;
         }
-        if self.combine.is_some() {
+        if self.operation.combine().is_some() {
             self.refresh_combine_highlight();
             return;
         }
-        if self.motion.is_some() {
+        if self.operation.motion().is_some() {
             self.refresh_motion_highlight();
             return;
         }
@@ -464,7 +465,7 @@ impl Doc {
     /// was built. The preview keeps the bodies' ids, so the body is found
     /// in the model shown, preview or not.
     fn refresh_panel_highlight(&mut self) {
-        let operating = self.extrude.is_some() || self.revolve.is_some();
+        let operating = self.operation.extrude().is_some() || self.operation.revolve().is_some();
         let body = (self.panel_hover())
             .filter(|_| operating)
             .and_then(PanelHover::body);
@@ -501,14 +502,14 @@ impl Doc {
         let measuring = self.measure.is_some();
         // An align's point is picked as the measure tool picks points: on
         // what the cursor is over, at its snap points.
-        let pointing = (self.motion.as_ref()).is_some_and(|session| match session.picking {
+        let pointing = (self.operation.motion()).is_some_and(|session| match session.picking {
             MotionPick::Align(slot) => slot.role == AlignRole::Point,
             MotionPick::Point => true,
             _ => false,
         });
         // A split's regions or line are picked on its sketches, not on
         // the model.
-        if (self.motion.as_ref()).is_some_and(MotionSession::picks_sketches) {
+        if (self.operation.motion()).is_some_and(MotionSession::picks_sketches) {
             return None;
         }
         self.picks().then(|| ModelPicking {
@@ -530,7 +531,7 @@ impl Doc {
             },
             picks: if measuring || pointing || self.picks_outside() {
                 Picks::All
-            } else if let Some(session) = &self.motion {
+            } else if let Some(session) = self.operation.motion() {
                 match session.picking {
                     MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
                     MotionPick::Align(_) => Picks::EdgesAndFaces,
@@ -539,7 +540,7 @@ impl Doc {
                     MotionPick::Edge | MotionPick::Edges | MotionPick::Path => Picks::Edges,
                     _ => Picks::Faces,
                 }
-            } else if self.picking_plane.is_some() || self.combine.is_some() {
+            } else if self.picking_plane.is_some() || self.operation.combine().is_some() {
                 Picks::Faces
             } else {
                 self.pick.selection.mode().picks()
@@ -565,7 +566,7 @@ impl Doc {
     /// Whether an origin plane can be picked: a sketch's plane, or an
     /// operation's plane its toolbar offers.
     pub(crate) fn picks_origin_planes(&self) -> bool {
-        match &self.motion {
+        match self.operation.motion() {
             Some(session) => varde_view::motion_picks_origin_planes(
                 session.kind,
                 session.picking,
@@ -594,14 +595,14 @@ impl Doc {
         if self.measure.is_some() {
             return self.measure_highlight().filter(|_| self.picks());
         }
-        if self.combine.is_some() {
+        if self.operation.combine().is_some() {
             return self.combine_highlight().filter(|_| self.picks());
         }
-        if self.motion.is_some() {
+        if self.operation.motion().is_some() {
             return self.motion_highlight().filter(|_| self.picks());
         }
         // An extrude's or revolve's: the body hovered in its panel.
-        if self.extrude.is_some() || self.revolve.is_some() {
+        if self.operation.extrude().is_some() || self.operation.revolve().is_some() {
             let current =
                 (self.pick.panel_built).is_some_and(|(model, _)| model == self.feed.model());
             return current.then_some(&self.pick.panel_highlight);

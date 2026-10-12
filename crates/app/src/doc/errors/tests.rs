@@ -1,3 +1,4 @@
+use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -250,7 +251,7 @@ fn editing_a_failed_feature_shows_its_failure_and_then_its_draft_s() {
     let (mut doc, requests, revolve, _) = failing_revolve();
     let geometry = failure(&doc, revolve);
     doc.look(Look::EditFeature(revolve));
-    assert!(doc.revolve.is_some());
+    assert!(doc.operation.revolve().is_some());
     // Selected as it's edited, or not: its panel is open.
     doc.selected_feature = None;
     doc.look(Look::HoverFeature(None));
@@ -514,7 +515,7 @@ fn an_edited_failure_goes_once_its_draft_works() {
     assert!(lathe.doc.failure_geometry(revolve).is_some());
 
     lathe.doc.look(Look::EditFeature(revolve));
-    assert!(lathe.doc.revolve.is_some());
+    assert!(lathe.doc.operation.revolve().is_some());
     assert!(!lathe.doc.shown_errors().is_empty());
     // An axis that works, answered: the preview is whole, and no red is
     // over it.

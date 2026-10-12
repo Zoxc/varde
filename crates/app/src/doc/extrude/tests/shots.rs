@@ -7,6 +7,7 @@
 //! `agents/viewport.md`. Pixels differ by GPU and driver, so nothing is
 //! compared: the one check is that the viewport was drawn.
 
+use crate::doc::OperationSlot;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -592,7 +593,7 @@ fn shots_08_missing_region() {
         doc.sync();
         answer(&mut doc, &requests);
         doc.look(Look::EditFeature(feature));
-        assert!(doc.extrude.as_ref().unwrap().regions.missing > 0);
+        assert!(doc.operation.extrude().unwrap().regions.missing > 0);
         answer(&mut doc, &requests);
         camera.take(&doc, "08-missing-region", Shot::new());
         camera.take(&doc, "08-missing-region-dark", Shot::new().dark());
@@ -614,7 +615,7 @@ fn extruded(
     set(doc);
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.edit_error, None);
-    assert!(doc.extrude.is_none());
+    assert!(doc.operation.extrude().is_none());
     answer(doc, requests);
 }
 
@@ -685,7 +686,7 @@ fn shots_10_delete_prompts() {
     shooting(|camera| {
         let (mut doc, requests) = a_cut_of_many(11);
         doc.look(Look::Escape);
-        assert!(doc.extrude.is_none());
+        assert!(doc.operation.extrude().is_none());
         answer(&mut doc, &requests);
         let plate = doc.editor.document().features()[0].id;
         doc.update(Edit::RemoveFeature(plate));
@@ -1213,7 +1214,7 @@ fn shots_20_revolve() {
         );
         lathe.doc.update(Edit::CommitRevolve);
         lathe.answer();
-        assert!(lathe.doc.revolve.is_none());
+        assert!(lathe.doc.operation.revolve().is_none());
         lathe
             .doc
             .look(Look::SelectPanel(varde_view::Panel::Timeline));
@@ -1299,7 +1300,7 @@ fn shots_21_round_solids() {
         answer(&mut doc, &requests);
         doc.update(Edit::CommitRevolve);
         answer(&mut doc, &requests);
-        assert!(doc.revolve.is_none());
+        assert!(doc.operation.revolve().is_none());
         aim(&mut doc, -0.3, -0.25, 9.0);
         camera.take(&doc, "21-round-solids", Shot::new());
         camera.take(&doc, "21-round-solids-scale2", Shot::new().scale(2.0));

@@ -3,6 +3,7 @@
 //! plate (60 × 40 × 10 about the Z axis from z 0 up), and a knob dragged
 //! typed into its field.
 
+use crate::doc::OperationSlot;
 use std::f64::consts::{FRAC_1_SQRT_2, SQRT_2};
 
 use glam::DVec3;
@@ -262,7 +263,7 @@ fn no_knobs_read_only_or_editing() {
     plates.answer();
     let (id, _) = plates.last_feature();
     plates.doc.look(Look::EditFeature(id));
-    assert!(plates.doc.motion.is_some());
+    assert!(plates.doc.operation.motion().is_some());
     assert!(knobs(&plates).is_empty());
 }
 

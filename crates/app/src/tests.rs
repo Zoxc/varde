@@ -1,3 +1,4 @@
+use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -2833,10 +2834,10 @@ fn restoring_recovered_changes_ends_the_extrude_session() {
     let sketch = document(&varde).editor.document().features()[0].id;
     let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(sketch))));
     let _ = varde.update(Message::Ui(Ui::Look(Look::StartExtrude)));
-    assert!(document(&varde).extrude.is_some());
+    assert!(document(&varde).operation.extrude().is_some());
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
     assert_eq!(*document(&varde).editor.document(), Document::example());
-    assert!(document(&varde).extrude.is_none());
+    assert!(document(&varde).operation.extrude().is_none());
 }
 
 /// [`with_a_line`] with a second sketch, holding a point, and that

@@ -12,6 +12,7 @@
 //! themselves, so a body merged into another before the feature takes
 //! them with it on to the holder.
 
+use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{Document, EdgeRef, FaceRef, blend_body, blend_excludes};
 use varde_expr::Unit;
@@ -77,7 +78,7 @@ impl Doc {
     /// nothing of its body ([`MotionSession::unmoved`]).
     pub(crate) fn blend_before(&self) -> bool {
         self.command_held
-            && self.motion.as_ref().is_some_and(|session| {
+            && self.operation.motion().is_some_and(|session| {
                 session.kind.blends() && session.picking == MotionPick::Edges
             })
     }
@@ -136,8 +137,8 @@ impl Doc {
     /// picked: its edge, with its tangent chain while they take them in.
     pub(super) fn blend_hover(&self, pick: Pick) -> Vec<Picked> {
         let chains = self
-            .motion
-            .as_ref()
+            .operation
+            .motion()
             .is_some_and(|session| session.blend.chains);
         match pick.target {
             Picked::Edge(edge) => (chain_of(self.feed.pick_index(), edge, chains).into_iter())
@@ -152,7 +153,7 @@ impl Doc {
     /// tangent chain where it's stored taking them in, and the edges it leaves out
     /// (around a face it names) alone, in the exclusions' purple.
     pub(super) fn blend_lit_parts(&self) -> [Vec<Picked>; 2] {
-        let Some(session) = self.motion.as_ref().filter(|s| s.kind.blends()) else {
+        let Some(session) = self.operation.motion().filter(|s| s.kind.blends()) else {
             return [Vec::new(), Vec::new()];
         };
         let index = self.feed.pick_index();

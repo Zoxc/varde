@@ -294,11 +294,11 @@ impl Using {
             picking_plane: state
                 .picking_plane
                 .is_some_and(|pick| pick.sketch.is_none()),
-            extruding: state.extrude.is_some(),
-            revolving: state.revolve.is_some(),
-            combining: state.combine.is_some(),
-            motion: state.motion.as_ref().map(|motion| motion.kind),
-            measuring: state.measure.is_some(),
+            extruding: state.extrude().is_some(),
+            revolving: state.revolve().is_some(),
+            combining: state.combine().is_some(),
+            motion: state.motion().map(|motion| motion.kind),
+            measuring: state.measure().is_some(),
             params: state.params.is_some(),
             tool: sketch.and_then(|s| s.tool).map(|t| t.tool),
             constraining: sketch.is_some_and(|s| s.constraining),

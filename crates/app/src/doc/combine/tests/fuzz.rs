@@ -1,6 +1,7 @@
 //! Random sequences of what the user can do around the combine session,
 //! checking after each step what must always hold.
 
+use crate::doc::OperationSlot;
 use varde_document::{Command, Extent, Extrude, OriginPlane, Plane};
 use varde_view::{OperationKind, Pick};
 
@@ -84,8 +85,12 @@ fn check(plates: &Plates, step: usize, what: &str) {
     let doc = &plates.doc;
     let at = || format!("step {step}: {what}");
     // Sessions never overlap, nor run in a read-only document.
-    if doc.combine.is_some() {
-        assert!(doc.extrude.is_none() && doc.revolve.is_none(), "{}", at());
+    if doc.operation.combine().is_some() {
+        assert!(
+            doc.operation.extrude().is_none() && doc.operation.revolve().is_none(),
+            "{}",
+            at()
+        );
         assert!(doc.sketch.is_none() && doc.measure.is_none(), "{}", at());
         assert!(doc.picking_plane.is_none(), "{}", at());
         assert!(doc.editable(), "{}", at());
@@ -102,7 +107,7 @@ fn check(plates: &Plates, step: usize, what: &str) {
         assert_eq!(sent, wanted, "{}", at());
     }
     drop(requests);
-    let Some(session) = &doc.combine else {
+    let Some(session) = doc.operation.combine() else {
         return;
     };
     let document = doc.editor.document();
@@ -243,7 +248,7 @@ fn run(seed: u64, steps: usize) {
             }
             17 => plates.combine(CombineLook::KeepTools),
             18 => {
-                escaped = plates.doc.combine.is_some();
+                escaped = plates.doc.operation.combine().is_some();
                 plates.combine(CombineLook::Cancel);
             }
             19 => {
@@ -389,7 +394,7 @@ fn run(seed: u64, steps: usize) {
                     plates.doc.sync();
                 }
                 // Out of whatever else is open.
-                while plates.doc.combine.is_none()
+                while plates.doc.operation.combine().is_none()
                     && (plates.doc.operating()
                         || plates.doc.picking_plane.is_some()
                         || plates.doc.measure.is_some()
@@ -398,7 +403,7 @@ fn run(seed: u64, steps: usize) {
                 {
                     plates.doc.look(Look::Escape);
                 }
-                if plates.doc.combine.is_none() {
+                if plates.doc.operation.combine().is_none() {
                     plates.doc.look(Look::StartCombine);
                 }
                 let held: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
@@ -434,12 +439,18 @@ fn run(seed: u64, steps: usize) {
         if escaped {
             assert_eq!(*after, document, "step {step}: esc changed the document");
             assert_eq!(plates.doc.editor.revision(), revision, "step {step}");
-            assert!(plates.doc.combine.is_none(), "step {step}: {what}");
+            assert!(
+                plates.doc.operation.combine().is_none(),
+                "step {step}: {what}"
+            );
         }
         if committed && plates.doc.editor.revision() != revision {
             // One undo step, and redo puts it back.
             let made = after.clone();
-            assert!(plates.doc.combine.is_none(), "step {step}: committed");
+            assert!(
+                plates.doc.operation.combine().is_none(),
+                "step {step}: committed"
+            );
             plates.doc.update(Edit::Undo);
             assert_eq!(*plates.doc.editor.document(), document, "step {step}: undo");
             plates.doc.update(Edit::Redo);

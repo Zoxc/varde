@@ -385,10 +385,7 @@ impl Doc {
         if self.picking_plane.is_some() {
             self.stop_picking_plane();
         } else if self.editable() && self.sketch.is_none() {
-            self.extrude = None;
-            self.revolve = None;
-            self.combine = None;
-            self.motion = None;
+            self.operation = None;
             self.picking_plane = Some(PickingPlane {
                 pick: self.new_sketch_pick(),
                 enter: false,
@@ -735,10 +732,7 @@ impl Doc {
             {
                 let pick = self.change_pick(id, Some(why.clone()));
                 self.finish_sketch();
-                self.extrude = None;
-                self.revolve = None;
-                self.combine = None;
-                self.motion = None;
+                self.operation = None;
                 self.selected_feature = Some(id);
                 self.picking_plane = pick.map(|pick| PickingPlane { pick, enter: true });
                 return;
@@ -748,10 +742,7 @@ impl Doc {
             return;
         };
         self.picking_plane = None;
-        self.extrude = None;
-        self.revolve = None;
-        self.combine = None;
-        self.motion = None;
+        self.operation = None;
         self.selected_feature = Some(id);
         // The Timeline's rows go, with no exit: none is hovered once the
         // sketch is left, until the cursor moves onto one.

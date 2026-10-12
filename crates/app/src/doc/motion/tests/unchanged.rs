@@ -1,6 +1,7 @@
 //! OK on a feature opened for editing and left as it was writes nothing,
 //! for every kind of feature, as each kind's session made it.
 
+use crate::doc::OperationSlot;
 use varde_document::{AxisLine, BodyOp, Combine, FeatureId, FeatureKind, OriginPlane};
 use varde_view::{Angle, Edit, Look, MotionField, MotionLook, MotionPick, RevolveLook, TurnKind};
 
@@ -18,7 +19,7 @@ fn transformed(regen: &mut varde_regen::Regenerator) -> Plates {
     let commit = |plates: &mut Plates, regen: &mut varde_regen::Regenerator| {
         answer(plates, regen);
         plates.doc.update(Edit::CommitMotion);
-        assert!(plates.doc.motion.is_none(), "committed");
+        assert!(plates.doc.operation.motion().is_none(), "committed");
         answer(plates, regen);
     };
     plates.click(right);
@@ -68,7 +69,7 @@ fn revolved() -> Plates {
     lathe.input(Angle::First, "90");
     lathe.answer();
     lathe.doc.update(Edit::CommitRevolve);
-    assert!(lathe.doc.revolve.is_none(), "committed");
+    assert!(lathe.doc.operation.revolve().is_none(), "committed");
     let document = lathe.doc.editor.document().clone();
     let body = document.bodies()[0].id;
     let (doc, requests) = holding(document);
@@ -107,10 +108,10 @@ fn ok_writes_nothing(plates: &mut Plates, regen: &mut varde_regen::Regenerator, 
     };
     let open = |plates: &Plates| {
         let doc = &plates.doc;
-        doc.motion.is_some()
-            || doc.extrude.is_some()
-            || doc.revolve.is_some()
-            || doc.combine.is_some()
+        doc.operation.motion().is_some()
+            || doc.operation.extrude().is_some()
+            || doc.operation.revolve().is_some()
+            || doc.operation.combine().is_some()
     };
     assert!(open(plates), "not opened: {name}");
     plates.doc.update(commit);
@@ -180,7 +181,7 @@ fn a_new_body_dropped_and_made_again_in_one_edit_keeps_its_id() {
     split.motion(MotionLook::Keep(Keep::Both));
     split.answer();
     split.doc.update(Edit::CommitMotion);
-    assert!(split.doc.motion.is_none());
+    assert!(split.doc.operation.motion().is_none());
     assert_eq!(split.doc.editor.revision(), revision);
 
     let mut discs = plates();
@@ -201,7 +202,7 @@ fn a_new_body_dropped_and_made_again_in_one_edit_keeps_its_id() {
     )));
     discs.answer();
     discs.doc.update(Edit::CommitExtrude);
-    assert!(discs.doc.extrude.is_none());
+    assert!(discs.doc.operation.extrude().is_none());
     assert_eq!(discs.doc.editor.revision(), revision);
     let FeatureKind::Extrude(extrude) = &discs.doc.editor.document().feature(disc).unwrap().kind
     else {

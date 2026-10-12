@@ -11,6 +11,7 @@
 //! longer takes is kept and said to be gone; the preview's pieces are
 //! tinted apart and labelled.
 
+use crate::doc::OperationSlot;
 use std::borrow::Cow;
 
 use glam::DVec3;
@@ -410,7 +411,7 @@ impl Doc {
     /// the body holding it before the feature where a join merged it,
     /// and the body a split at or after the feature cut it from.
     pub(super) fn named_body(&self, body: BodyId) -> BodyId {
-        match &self.motion {
+        match self.operation.motion() {
             Some(session) => self.named_body_in(session, body, self.shown()),
             None => body,
         }
@@ -481,7 +482,7 @@ impl Doc {
     /// Whether `pick` is the tool of the split being set up, of the kind
     /// its mode picks: the face picked, or a face of the tool body.
     pub(super) fn split_tool_has(&self, pick: Pick) -> bool {
-        let Some(session) = &self.motion else {
+        let Some(session) = self.operation.motion() else {
             return false;
         };
         match session.split.mode {
@@ -524,7 +525,7 @@ impl Doc {
     /// feature can name it, taking it out as the tool body if it's that;
     /// clicks go on to its tool if it has none.
     pub(super) fn split_body(&mut self, body: BodyId) {
-        let Some(session) = &mut self.motion else {
+        let Some(session) = self.operation.motion_mut() else {
             return;
         };
         session.bodies = vec![body];
@@ -586,7 +587,11 @@ impl Doc {
     /// the body's id, as its preview shows them: tinted in the second
     /// colour.
     pub(super) fn split_lit(&self) -> Vec<Picked> {
-        let Some(session) = self.motion.as_ref().filter(|s| s.kind == MotionKind::Split) else {
+        let Some(session) = self
+            .operation
+            .motion()
+            .filter(|s| s.kind == MotionKind::Split)
+        else {
             return Vec::new();
         };
         let index = self.feed.pick_index();

@@ -38,6 +38,21 @@ use crate::{
     panels, theme, toolbar, viewport,
 };
 
+/// The operation being set up, or the measure tool in use: one at a
+/// time.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "built once per view, where all five states were held before"
+)]
+pub enum OperationState<'a> {
+    Extrude(ExtrudeState<'a>),
+    Revolve(RevolveState<'a>),
+    Combine(crate::CombineState<'a>),
+    /// A move, mirror or pattern, or another motion kind.
+    Motion(crate::MotionState<'a>),
+    Measure(crate::MeasureState<'a>),
+}
+
 /// Borrowed state needed to build the document screen.
 pub struct DocumentState<'a> {
     pub editor: &'a Editor,
@@ -200,23 +215,12 @@ pub struct DocumentState<'a> {
     pub overlap_ticks: Option<Vec<crate::OverlapTick>>,
     /// The sketch being edited, if one is.
     pub sketch: Option<SketchState<'a>>,
-    /// The extrude being set up, if one is: never with a sketch.
-    pub extrude: Option<ExtrudeState<'a>>,
-    /// The revolve being set up, if one is: never with a sketch or an
-    /// extrude.
-    pub revolve: Option<RevolveState<'a>>,
-    /// The combine being set up, if one is: never with a sketch or another
-    /// operation.
-    pub combine: Option<crate::CombineState<'a>>,
+    /// The operation being set up or the measure tool in use, if one
+    /// is: never with a sketch.
+    pub operation: Option<OperationState<'a>>,
     /// Whether the document has two bodies or more: the Combine tool works
     /// outside sketches then.
     pub combinable: bool,
-    /// The move or mirror being set up, if one is: never with a sketch or
-    /// another operation.
-    pub motion: Option<crate::MotionState<'a>>,
-    /// The measure tool, while it's in use: never with a sketch or an
-    /// operation being set up.
-    pub measure: Option<crate::MeasureState<'a>>,
     /// The parameters' popup, while it's open.
     pub params: Option<crate::ParamsState<'a>>,
     /// The sketches that don't solve, as regenerating found.
@@ -246,7 +250,47 @@ pub struct DocumentState<'a> {
     pub mcp: Option<crate::McpShown<'a>>,
 }
 
-impl DocumentState<'_> {
+impl<'a> DocumentState<'a> {
+    /// The extrude being set up, if it's the operation.
+    pub(crate) fn extrude(&self) -> Option<&ExtrudeState<'a>> {
+        match &self.operation {
+            Some(OperationState::Extrude(extrude)) => Some(extrude),
+            _ => None,
+        }
+    }
+
+    /// The revolve being set up, if it's the operation.
+    pub(crate) fn revolve(&self) -> Option<&RevolveState<'a>> {
+        match &self.operation {
+            Some(OperationState::Revolve(revolve)) => Some(revolve),
+            _ => None,
+        }
+    }
+
+    /// The combine being set up, if it's the operation.
+    pub(crate) fn combine(&self) -> Option<&crate::CombineState<'a>> {
+        match &self.operation {
+            Some(OperationState::Combine(combine)) => Some(combine),
+            _ => None,
+        }
+    }
+
+    /// The move, mirror or pattern being set up, if it's the operation.
+    pub(crate) fn motion(&self) -> Option<&crate::MotionState<'a>> {
+        match &self.operation {
+            Some(OperationState::Motion(motion)) => Some(motion),
+            _ => None,
+        }
+    }
+
+    /// The measure tool, if it's in use.
+    pub(crate) fn measure(&self) -> Option<&crate::MeasureState<'a>> {
+        match &self.operation {
+            Some(OperationState::Measure(measure)) => Some(measure),
+            _ => None,
+        }
+    }
+
     /// Whether a face and nothing else is selected in the model while the
     /// cursor picks it, outside picking a plane: what a new sketch goes
     /// on.
@@ -301,14 +345,11 @@ impl DocumentState<'_> {
                 (self.objects_selected.iter())
                     .any(|row| matches!(row, crate::ObjectRow::Sketch(_))),
             )
-            .with_extrude(self.extrude.as_ref())
-            .with_revolve(self.revolve.as_ref())
-            .with_combine(self.combinable, self.combine.as_ref())
-            .with_motion(
-                !self.editor.document().bodies().is_empty(),
-                self.motion.as_ref(),
-            )
-            .with_measure(self.measure.is_some())
+            .with_extrude(self.extrude())
+            .with_revolve(self.revolve())
+            .with_combine(self.combinable, self.combine())
+            .with_motion(!self.editor.document().bodies().is_empty(), self.motion())
+            .with_measure(self.measure().is_some())
             .with_picking_plane(self.picking_plane.is_some())
             .with_rail(self.rail)
             .with_edited(self.edited)
@@ -850,11 +891,13 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     let refused = (state.refused_edit)
         .map(|refused| container(refused_banner(refused)).style(theme::toolbar));
 
-    let panel = (state.extrude.as_ref().map(crate::extrude::panel))
-        .or_else(|| state.revolve.as_ref().map(crate::revolve::panel))
-        .or_else(|| state.combine.as_ref().map(crate::combine::panel))
-        .or_else(|| state.motion.as_ref().map(crate::motion::panel))
-        .or_else(|| state.measure.as_ref().map(crate::measure::panel));
+    let panel = state.operation.as_ref().map(|operation| match operation {
+        OperationState::Extrude(extrude) => crate::extrude::panel(extrude),
+        OperationState::Revolve(revolve) => crate::revolve::panel(revolve),
+        OperationState::Combine(combine) => crate::combine::panel(combine),
+        OperationState::Motion(motion) => crate::motion::panel(motion),
+        OperationState::Measure(measure) => crate::measure::panel(measure),
+    });
     // The parameters' popup, left of the operation's panel if one shows.
     let params = (state.params).map(|params| crate::params::popup(params, panel.is_some()));
     let ask = state.mcp.as_ref().and_then(crate::mcp::ask_popup);
@@ -994,14 +1037,21 @@ fn viewport_stack<'a>(
 
 /// The operation being set up, as the viewport shows it, if one is.
 fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
-    let extruding = state.extrude.clone().map(viewport::Extruding::new);
-    let revolving = state.revolve.clone().map(viewport::Revolving::new);
-    let measuring = state.measure.clone().map(viewport::Measuring::new);
-    let moving = state.motion.clone().map(viewport::Moving::new);
-    (extruding.map(|extruding| viewport::Operating::Extrude(Box::new(extruding))))
-        .or_else(|| revolving.map(viewport::Operating::Revolve))
-        .or_else(|| moving.map(viewport::Operating::Motion))
-        .or_else(|| measuring.map(viewport::Operating::Measure))
+    Some(match state.operation.as_ref()? {
+        OperationState::Extrude(extrude) => {
+            viewport::Operating::Extrude(Box::new(viewport::Extruding::new(extrude.clone())))
+        }
+        OperationState::Revolve(revolve) => {
+            viewport::Operating::Revolve(viewport::Revolving::new(revolve.clone()))
+        }
+        OperationState::Motion(motion) => {
+            viewport::Operating::Motion(viewport::Moving::new(motion.clone()))
+        }
+        OperationState::Measure(measure) => {
+            viewport::Operating::Measure(viewport::Measuring::new(measure.clone()))
+        }
+        OperationState::Combine(_) => return None,
+    })
 }
 
 /// How opaque each part of the mesh is drawn, the parts being of `parts`'
@@ -1098,112 +1148,127 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     let sketching = !left_orbits(state.sketch.as_ref());
     let keys: Vec<_> = if state.picking_plane.is_some() {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
-    } else if let Some(extrude) = &state.extrude {
-        let pick = extrude
-            .editable
-            .then(|| step_hint(MouseButton::Left, "Pick regions"));
-        let before = key_hint(Held::BEFORE, "Hide preview");
-        let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [
-            pick,
-            Some(before),
-            ok,
-            Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
-    } else if let Some(revolve) = &state.revolve {
-        let pick = revolve.editable.then(|| {
-            let what = match revolve.picking {
-                RevolvePick::Regions => "Pick regions",
-                RevolvePick::Axis => "Pick the axis",
-            };
-            step_hint(MouseButton::Left, what)
-        });
-        let before = key_hint(Held::BEFORE, "Hide preview");
-        let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [
-            pick,
-            Some(before),
-            ok,
-            Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
-    } else if let Some(combine) = &state.combine {
-        let pick = combine.editable.then(|| {
-            let what = match combine.picking {
-                crate::CombinePick::Target => "Pick the target",
-                crate::CombinePick::Tools => "Pick tools",
-            };
-            step_hint(MouseButton::Left, what)
-        });
-        let before = key_hint(Held::BEFORE, "Hide preview");
-        let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [
-            pick,
-            Some(before),
-            ok,
-            Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
-    } else if let Some(motion) = &state.motion {
-        let pick = motion.editable.then(|| {
-            let what = match (motion.picking, motion.kind) {
-                (crate::MotionPick::Nothing, _) => return None,
-                (crate::MotionPick::Bodies, crate::MotionKind::Align) => "Pick the body",
-                (crate::MotionPick::Align(slot), _) => match slot.role {
-                    crate::AlignRole::Point => "Pick the point",
-                    crate::AlignRole::Primary => "Pick the direction",
-                    crate::AlignRole::Secondary => "Pick the second direction",
-                },
-                (crate::MotionPick::Point, _) => "Pick the point",
-                (crate::MotionPick::Edge, _) => "Pick the edge",
-                (
-                    crate::MotionPick::Edges,
-                    crate::MotionKind::Chamfer | crate::MotionKind::Fillet,
-                ) => "Pick edges or faces",
-                (crate::MotionPick::Edges, _) => "Pick edges",
-                (crate::MotionPick::Faces, crate::MotionKind::Shell) => "Pick faces to remove",
-                (crate::MotionPick::Faces, crate::MotionKind::OffsetFace) => "Pick faces to move",
-                (crate::MotionPick::Faces, crate::MotionKind::Draft) => "Pick faces to draft",
-                (crate::MotionPick::Faces, _) => "Pick faces",
-                (crate::MotionPick::Tool, _) => {
-                    (motion.split.as_ref()).map_or("Pick the tool", |split| split.mode.hint())
-                }
-                (crate::MotionPick::Regions, crate::MotionKind::Loft) => {
-                    "Pick sections: regions or points"
-                }
-                (crate::MotionPick::Path, crate::MotionKind::Loft) => "Pick the rails' curves",
-                (crate::MotionPick::Regions, _) => "Pick regions",
-                (crate::MotionPick::Path, _) => "Pick the path's curves or edges",
-                (crate::MotionPick::Bodies, crate::MotionKind::Split) => "Pick the body",
-                (crate::MotionPick::Bodies, _) => "Pick bodies",
-                (crate::MotionPick::Reference, crate::MotionKind::LinearPattern) => {
-                    "Pick the direction"
-                }
-                (crate::MotionPick::Reference, crate::MotionKind::Mirror) => "Pick the plane",
-                (crate::MotionPick::Reference, crate::MotionKind::Draft) => {
-                    "Pick the neutral plane"
-                }
-                (crate::MotionPick::Reference, _) => "Pick the axis",
-            };
-            Some(step_hint(MouseButton::Left, what))
-        });
-        let pick = pick.flatten();
-        // Held, the key shows the model before the operation.
-        let before = Some(key_hint(Held::BEFORE, "Hide preview"));
-        let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [pick, before, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
-            .into_iter()
-            .flatten()
-            .collect()
-    } else if let Some(measure) = &state.measure {
-        measure_hints(measure)
+    } else if let Some(operation) = &state.operation {
+        match operation {
+            OperationState::Extrude(extrude) => {
+                let pick = extrude
+                    .editable
+                    .then(|| step_hint(MouseButton::Left, "Pick regions"));
+                let before = key_hint(Held::BEFORE, "Hide preview");
+                let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+                [
+                    pick,
+                    Some(before),
+                    ok,
+                    Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
+            }
+            OperationState::Revolve(revolve) => {
+                let pick = revolve.editable.then(|| {
+                    let what = match revolve.picking {
+                        RevolvePick::Regions => "Pick regions",
+                        RevolvePick::Axis => "Pick the axis",
+                    };
+                    step_hint(MouseButton::Left, what)
+                });
+                let before = key_hint(Held::BEFORE, "Hide preview");
+                let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+                [
+                    pick,
+                    Some(before),
+                    ok,
+                    Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
+            }
+            OperationState::Combine(combine) => {
+                let pick = combine.editable.then(|| {
+                    let what = match combine.picking {
+                        crate::CombinePick::Target => "Pick the target",
+                        crate::CombinePick::Tools => "Pick tools",
+                    };
+                    step_hint(MouseButton::Left, what)
+                });
+                let before = key_hint(Held::BEFORE, "Hide preview");
+                let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+                [
+                    pick,
+                    Some(before),
+                    ok,
+                    Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
+            }
+            OperationState::Motion(motion) => {
+                let pick = motion.editable.then(|| {
+                    let what = match (motion.picking, motion.kind) {
+                        (crate::MotionPick::Nothing, _) => return None,
+                        (crate::MotionPick::Bodies, crate::MotionKind::Align) => "Pick the body",
+                        (crate::MotionPick::Align(slot), _) => match slot.role {
+                            crate::AlignRole::Point => "Pick the point",
+                            crate::AlignRole::Primary => "Pick the direction",
+                            crate::AlignRole::Secondary => "Pick the second direction",
+                        },
+                        (crate::MotionPick::Point, _) => "Pick the point",
+                        (crate::MotionPick::Edge, _) => "Pick the edge",
+                        (
+                            crate::MotionPick::Edges,
+                            crate::MotionKind::Chamfer | crate::MotionKind::Fillet,
+                        ) => "Pick edges or faces",
+                        (crate::MotionPick::Edges, _) => "Pick edges",
+                        (crate::MotionPick::Faces, crate::MotionKind::Shell) => {
+                            "Pick faces to remove"
+                        }
+                        (crate::MotionPick::Faces, crate::MotionKind::OffsetFace) => {
+                            "Pick faces to move"
+                        }
+                        (crate::MotionPick::Faces, crate::MotionKind::Draft) => {
+                            "Pick faces to draft"
+                        }
+                        (crate::MotionPick::Faces, _) => "Pick faces",
+                        (crate::MotionPick::Tool, _) => (motion.split.as_ref())
+                            .map_or("Pick the tool", |split| split.mode.hint()),
+                        (crate::MotionPick::Regions, crate::MotionKind::Loft) => {
+                            "Pick sections: regions or points"
+                        }
+                        (crate::MotionPick::Path, crate::MotionKind::Loft) => {
+                            "Pick the rails' curves"
+                        }
+                        (crate::MotionPick::Regions, _) => "Pick regions",
+                        (crate::MotionPick::Path, _) => "Pick the path's curves or edges",
+                        (crate::MotionPick::Bodies, crate::MotionKind::Split) => "Pick the body",
+                        (crate::MotionPick::Bodies, _) => "Pick bodies",
+                        (crate::MotionPick::Reference, crate::MotionKind::LinearPattern) => {
+                            "Pick the direction"
+                        }
+                        (crate::MotionPick::Reference, crate::MotionKind::Mirror) => {
+                            "Pick the plane"
+                        }
+                        (crate::MotionPick::Reference, crate::MotionKind::Draft) => {
+                            "Pick the neutral plane"
+                        }
+                        (crate::MotionPick::Reference, _) => "Pick the axis",
+                    };
+                    Some(step_hint(MouseButton::Left, what))
+                });
+                let pick = pick.flatten();
+                // Held, the key shows the model before the operation.
+                let before = Some(key_hint(Held::BEFORE, "Hide preview"));
+                let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+                [pick, before, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            }
+            OperationState::Measure(measure) => measure_hints(measure),
+        }
     } else if let Some(sketch) = state.sketch {
         sketch_hints(&sketch, state.editable(), state.options.mouse.sketch_snap)
     } else if state.selected_feature.is_some() {
@@ -1972,89 +2037,92 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         }
         return Some(row(line).spacing(4).into());
     }
-    if let Some(extrude) = &state.extrude {
-        let regions = match extrude.picked.len() {
-            0 => "pick the regions to extrude".to_owned(),
-            n => format!("{} picked", counted(n, "region", "regions")),
-        };
-        return Some(
-            row![
-                text(extrude.editing.unwrap_or("New extrude"))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .font(theme::SEMIBOLD),
-                text(format!("· {regions}{}", status_suffix(state)))
+    match &state.operation {
+        Some(OperationState::Extrude(extrude)) => {
+            let regions = match extrude.picked.len() {
+                0 => "pick the regions to extrude".to_owned(),
+                n => format!("{} picked", counted(n, "region", "regions")),
+            };
+            return Some(
+                row![
+                    text(extrude.editing.unwrap_or("New extrude"))
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .font(theme::SEMIBOLD),
+                    text(format!("· {regions}{}", status_suffix(state)))
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .style(theme::muted_text),
+                ]
+                .spacing(4)
+                .into(),
+            );
+        }
+        Some(OperationState::Revolve(revolve)) => {
+            let regions = match revolve.picked.len() {
+                0 => "pick the regions to revolve".to_owned(),
+                n => format!("{} picked", counted(n, "region", "regions")),
+            };
+            let axis = match revolve.axis_name() {
+                Some(name) => format!("about {name}"),
+                None => "pick the axis".to_owned(),
+            };
+            return Some(
+                row![
+                    text(revolve.editing.unwrap_or("New revolve"))
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .font(theme::SEMIBOLD),
+                    text(format!("· {regions} · {axis}{}", status_suffix(state)))
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .style(theme::muted_text),
+                ]
+                .spacing(4)
+                .into(),
+            );
+        }
+        Some(OperationState::Combine(combine)) => {
+            return Some(
+                row![
+                    text(combine.editing.unwrap_or("New combine"))
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .font(theme::SEMIBOLD),
+                    text(format!(
+                        "· {}{}",
+                        combine_info(combine),
+                        status_suffix(state)
+                    ))
                     .size(12)
                     .wrapping(Wrapping::None)
                     .style(theme::muted_text),
-            ]
-            .spacing(4)
-            .into(),
-        );
-    }
-    if let Some(revolve) = &state.revolve {
-        let regions = match revolve.picked.len() {
-            0 => "pick the regions to revolve".to_owned(),
-            n => format!("{} picked", counted(n, "region", "regions")),
-        };
-        let axis = match revolve.axis_name() {
-            Some(name) => format!("about {name}"),
-            None => "pick the axis".to_owned(),
-        };
-        return Some(
-            row![
-                text(revolve.editing.unwrap_or("New revolve"))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .font(theme::SEMIBOLD),
-                text(format!("· {regions} · {axis}{}", status_suffix(state)))
+                ]
+                .spacing(4)
+                .into(),
+            );
+        }
+        Some(OperationState::Motion(motion)) => {
+            return Some(
+                row![
+                    text(motion.title())
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .font(theme::SEMIBOLD),
+                    text(format!(
+                        "· {}{}",
+                        crate::motion::status_info(motion),
+                        status_suffix(state)
+                    ))
                     .size(12)
                     .wrapping(Wrapping::None)
                     .style(theme::muted_text),
-            ]
-            .spacing(4)
-            .into(),
-        );
-    }
-    if let Some(combine) = &state.combine {
-        return Some(
-            row![
-                text(combine.editing.unwrap_or("New combine"))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .font(theme::SEMIBOLD),
-                text(format!(
-                    "· {}{}",
-                    combine_info(combine),
-                    status_suffix(state)
-                ))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text),
-            ]
-            .spacing(4)
-            .into(),
-        );
-    }
-    if let Some(motion) = &state.motion {
-        return Some(
-            row![
-                text(motion.title())
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .font(theme::SEMIBOLD),
-                text(format!(
-                    "· {}{}",
-                    crate::motion::status_info(motion),
-                    status_suffix(state)
-                ))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text),
-            ]
-            .spacing(4)
-            .into(),
-        );
+                ]
+                .spacing(4)
+                .into(),
+            );
+        }
+        Some(OperationState::Measure(_)) | None => {}
     }
     let notes = status_notes(state);
     (!notes.is_empty()).then(|| {
@@ -2092,13 +2160,7 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     if let Some(sketch) = &state.sketch {
         return sketch_selection(sketch);
     }
-    if state.picking_plane.is_some()
-        || state.extrude.is_some()
-        || state.revolve.is_some()
-        || state.combine.is_some()
-        || state.motion.is_some()
-        || state.measure.is_some()
-    {
+    if state.picking_plane.is_some() || state.operation.is_some() {
         return None;
     }
     let document = state.editor.document();
