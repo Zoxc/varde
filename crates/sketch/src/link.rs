@@ -271,9 +271,12 @@ impl Sketch {
             .map(|index| &mut self.links[index])
     }
 
-    /// The link that made the point or curve `item`, if one did.
+    /// The link that made the point or curve `item`, if one did: each
+    /// link's points and curves are increasing, so searched by halves.
     pub fn link_of(&self, item: Id) -> Option<&Link> {
-        (self.links.iter()).find(|link| link.points.contains(&item) || link.curves.contains(&item))
+        (self.links.iter()).find(|link| {
+            link.points.binary_search(&item).is_ok() || link.curves.binary_search(&item).is_ok()
+        })
     }
 
     /// Whether a link made the point or curve `item`.
