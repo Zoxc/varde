@@ -362,12 +362,12 @@ pub enum MotionField {
 
 impl MotionField {
     /// How many there are: the length of an array of them all.
-    pub const COUNT: usize = 20;
+    pub const COUNT: usize = Self::ALL.len();
 
     /// The twenty, a move's in the panel's order, then a pattern's, an
     /// align's distance, a scale's, a chamfer's, a shell's, a fillet's,
     /// then a sweep's.
-    pub const ALL: [MotionField; Self::COUNT] = [
+    pub const ALL: [MotionField; 20] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
@@ -390,8 +390,9 @@ impl MotionField {
         MotionField::Twist,
     ];
 
-    /// Where it's kept in an array of them all: its place in [`Self::ALL`].
-    pub fn index(self) -> usize {
+    /// Where it's kept in an array of them all: its place in [`Self::ALL`]
+    /// (which a compile-time check below holds it to).
+    pub const fn index(self) -> usize {
         match self {
             MotionField::Offset(Axis3::X) => 0,
             MotionField::Offset(Axis3::Y) => 1,
@@ -463,6 +464,15 @@ impl MotionField {
         }
     }
 }
+
+// Each field's `index` is its place in `ALL`.
+const _: () = {
+    let mut place = 0;
+    while place < MotionField::COUNT {
+        assert!(MotionField::ALL[place].index() == place);
+        place += 1;
+    }
+};
 
 /// A change to the move, mirror or pattern being set up, see
 /// [`Look::Motion`].
