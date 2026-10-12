@@ -509,26 +509,8 @@ fn feature_menu<'a>(
 pub(crate) const CHANGE_PLANE: &str = "Change plane";
 
 /// What editing `feature` is called in its context menu.
-fn edit_label(feature: &Feature) -> &'static str {
-    match feature.kind {
-        FeatureKind::Sketch { .. } => "Edit sketch",
-        FeatureKind::Extrude(_) => "Edit extrude",
-        FeatureKind::Revolve(_) => "Edit revolve",
-        FeatureKind::Combine(_) => "Edit combine",
-        FeatureKind::Move(_) => "Edit move",
-        FeatureKind::Mirror(_) => "Edit mirror",
-        FeatureKind::Pattern(_) => "Edit pattern",
-        FeatureKind::Align(_) => "Edit align",
-        FeatureKind::Scale(_) => "Edit scale",
-        FeatureKind::Split(_) => "Edit split",
-        FeatureKind::Chamfer(_) => "Edit chamfer",
-        FeatureKind::Shell(_) => "Edit shell",
-        FeatureKind::Fillet(_) => "Edit fillet",
-        FeatureKind::OffsetFace(_) => "Edit offset face",
-        FeatureKind::FaceDraft(_) => "Edit draft",
-        FeatureKind::Sweep(_) => "Edit sweep",
-        FeatureKind::Loft(_) => "Edit loft",
-    }
+fn edit_label(feature: &Feature) -> String {
+    format!("Edit {}", feature.kind.noun().to_lowercase())
 }
 
 /// A row's context menu holding `items`.
@@ -991,7 +973,7 @@ struct ObjectMenu {
     on: RowMenu,
     open: bool,
     /// What editing the object is called and sends, if it can be edited.
-    edit: Option<(&'static str, Message)>,
+    edit: Option<(String, Message)>,
     /// What renaming it sends.
     rename: Message,
     /// The body it is and how opaque it's shown, if it has an opacity.
