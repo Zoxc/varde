@@ -599,6 +599,7 @@ impl Renderer {
         // below don't see.
         let mut changed = false;
         let mut written = Vec::with_capacity(slot.written.len());
+        let colors = frame.colors.sanitized();
         slot.viewport = frame.viewport;
         let fade = if frame.fade.is_nan() {
             0.0
@@ -614,18 +615,61 @@ impl Renderer {
         // In a sketch, the grid's axis lines and the marker are the
         // sketch's.
         slot.origin = if faded {
-            OriginShown {
-                marker: true,
-                axes: [true, true, false],
-                ..OriginShown::NONE
-            }
+            OriginShown::SKETCH
         } else {
             frame.origin.with_hovered()
         };
 
+        let result = self.upload_sources(slot, device, queue, frame, &mut written, &mut changed);
+        let opacity = opacity(slot, frame, &colors, fade);
+        self.write_tints(slot, device, queue, frame, &mut written);
+        let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
+        slot.draws = PartDraws::new(
+            parts,
+            &opacity,
+            &slot.part_tints,
+            &self.alphas,
+            frame.camera,
+        );
+        self.face_draws(slot, frame, &opacity);
+        slot.sketching = frame.sketch.is_some();
+        slot.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
+
+        let uniforms = uniforms(slot, frame, &colors, fade);
+        self.write_grids(slot, queue, frame, &uniforms, fade, &mut written);
+        self.ensure_targets(
+            slot,
+            device,
+            queue,
+            frame,
+            &colors,
+            &mut written,
+            &mut changed,
+        );
+        if changed || written != slot.written || before != slot.state() {
+            *slot.drawn.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        slot.written = written;
+        result
+    }
+
+    /// Uploads what of `frame`'s geometry `slot` doesn't hold yet: its
+    /// sketches, mesh and the mesh's triangle edges, highlights, errors and
+    /// the sketch being edited, noting in `changed` that it did, and the
+    /// live sketch layer's bytes in `written`. Returns the first failure,
+    /// as [`Renderer::prepare`] describes.
+    fn upload_sources(
+        &self,
+        slot: &mut Slot,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Frame<'_>,
+        written: &mut Vec<u8>,
+        changed: &mut bool,
+    ) -> Result<(), PrepareError> {
         let mut result = Ok(());
         if !std::ptr::eq(slot.lines_source.as_ptr(), Arc::as_ptr(frame.sketches)) {
-            changed = true;
+            *changed = true;
             slot.lines_source = Arc::downgrade(frame.sketches);
             slot.lines = upload_lines(device, frame.sketches).unwrap_or_else(|error| {
                 result = Err(error);
@@ -638,49 +682,19 @@ impl Renderer {
         // which the same mesh would hit again.
         let new_mesh = !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh));
         if new_mesh {
-            changed = true;
+            *changed = true;
             slot.source = Arc::downgrade(frame.mesh);
             slot.mesh = upload_mesh(device, frame.mesh).unwrap_or_else(|error| {
                 result = Err(error);
                 None
             });
         }
-        // Faded, every part is drawn alike.
-        let fading: Vec<f32>;
-        let opacity = if slot.faded {
-            &[]
-        } else if faded {
-            // Towards the alpha whose two layers, glass's back and front
-            // faces, cover as much as the faded model's one: the nearest
-            // only.
-            let faded_alpha = if (0.0..=1.0).contains(&frame.colors.faded_alpha) {
-                frame.colors.faded_alpha
-            } else {
-                1.0
-            };
-            let to = 1.0 - (1.0 - faded_alpha).sqrt();
-            let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
-            fading = (0..parts)
-                .map(|i| {
-                    let own = frame
-                        .opacity
-                        .get(i)
-                        .copied()
-                        .filter(|a| (0.0..=1.0).contains(a));
-                    let own = own.unwrap_or(1.0);
-                    own + (to - own) * fade
-                })
-                .collect();
-            &fading
-        } else {
-            frame.opacity
-        };
         if let Some(mesh) = &mut slot.mesh {
             mesh.wireframe = frame.wireframe;
             mesh.tessellation = frame.tessellation;
             if frame.tessellation && matches!(mesh.triangles, Triangles::Unbuilt) {
                 // Like the mesh's, a failure isn't tried again.
-                changed = true;
+                *changed = true;
                 mesh.triangles = match triangle_edges(device, frame.mesh, &mesh.parts) {
                     Ok(triangles) => triangles,
                     Err(error) => {
@@ -690,9 +704,6 @@ impl Renderer {
                 };
             }
         }
-        self.write_tints(slot, device, queue, frame, &mut written);
-        let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
-        slot.draws = PartDraws::new(parts, opacity, &slot.part_tints, &self.alphas, frame.camera);
 
         // What's hovered and selected names the mesh's faces, edges and
         // vertices, so it's written again with the mesh too.
@@ -702,7 +713,7 @@ impl Renderer {
                 Arc::as_ptr(frame.highlights),
             )
         {
-            changed = true;
+            *changed = true;
             slot.highlights_source = Arc::downgrade(frame.highlights);
             let written = slot
                 .highlights
@@ -715,41 +726,16 @@ impl Renderer {
                 .zip(frame.errors)
                 .all(|(kept, error)| Weak::ptr_eq(kept, &error.source));
         if !same_errors {
-            changed = true;
+            *changed = true;
             slot.error_sources = frame.errors.iter().map(|e| e.source.clone()).collect();
             let written = slot.errors.write(device, queue, frame.errors);
             result = result.and(written);
         }
 
-        slot.faces.clear();
-        if let Some(gpu) = &slot.mesh {
-            let tinted = [
-                (frame.hovered_faces, Tint::Hovered),
-                (frame.selected_faces, Tint::Selected),
-                (frame.second_faces, Tint::Second),
-            ];
-            let faces = (tinted.into_iter())
-                .flat_map(|(faces, tint)| faces.iter().map(move |&face| (face, tint)));
-            for (face, tint) in faces {
-                if let Some((indices, part)) = gpu.face(frame.mesh, face) {
-                    slot.faces.push(FaceDraw {
-                        indices,
-                        step: self.alphas.step(opacity.get(part).copied()),
-                        tint,
-                        part,
-                        hovered: frame.hovered_faces.contains(&face)
-                            && frame.selected_faces.contains(&face),
-                    });
-                }
-            }
-        }
-
-        slot.sketching = frame.sketch.is_some();
-        slot.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
         if let Some(sketch) = &frame.sketch {
             let mut sketch_result = Ok(());
             if !std::ptr::eq(slot.sketch_source.as_ptr(), Arc::as_ptr(sketch.base)) {
-                changed = true;
+                *changed = true;
                 slot.sketch_source = Arc::downgrade(sketch.base);
                 if let Err(error) = slot.sketch_base.write(device, queue, sketch.base) {
                     sketch_result = Err(error);
@@ -764,150 +750,68 @@ impl Renderer {
             }
             result = result.and(sketch_result);
         }
+        result
+    }
 
-        // A depth tested sketch is hidden by what's in front of it, and
-        // so needs the depth range to cover it.
-        let sketch_bounds = frame
-            .sketch
-            .filter(|sketch| sketch.depth_tested)
-            .map(|sketch| {
-                [
-                    sketch.base.bounds(&sketch.plane),
-                    sketch.live.bounds(&sketch.plane),
-                ]
-            });
-        let bounds = [
-            slot.mesh.as_ref().and_then(|m| m.bounds),
-            slot.lines.as_ref().and_then(|l| l.bounds),
-            slot.errors.bounds,
-            planes_bounds(frame.camera, slot.origin),
-        ]
-        .into_iter()
-        .chain(sketch_bounds.into_iter().flatten());
-        let (camera, colors, grid) = (frame.camera, frame.colors, &frame.grid);
-        let sketch_plane = frame.sketch.map_or(*grid, |sketch| sketch.plane);
-        let aspect = frame.viewport.aspect();
-        let half = camera.half_extents(aspect);
-        // Out of range, the model is drawn opaque rather than not at all.
-        let alpha = if slot.faded && (0.0..=1.0).contains(&colors.faded_alpha) {
-            colors.faded_alpha
-        } else {
-            1.0
+    /// Lists the draws of `frame`'s hovered, selected and second faces in
+    /// `slot`, each at its part's `opacity`.
+    fn face_draws(&self, slot: &mut Slot, frame: &Frame<'_>, opacity: &[f32]) {
+        slot.faces.clear();
+        let Some(gpu) = &slot.mesh else {
+            return;
         };
-        let with_alpha = |color, alpha| {
-            let [r, g, b, _] = linear(color);
-            [r, g, b, alpha]
-        };
-        let faded = |color| with_alpha(color, alpha);
-        // Out of range, as faint as can be rather than solid.
-        let selected_tint = if (0.0..=1.0).contains(&colors.selected_tint) {
-            colors.selected_tint
-        } else {
-            0.6
-        };
-        let selected_edge_shade = if (-1.0..=1.0).contains(&colors.selected_edge_shade) {
-            colors.selected_edge_shade
-        } else {
-            0.0
-        };
-        let contrast = if (0.0..=4.0).contains(&colors.contrast) {
-            colors.contrast
-        } else {
-            1.0
-        };
-        let hidden_alpha = if (0.0..=1.0).contains(&colors.hidden_edge_alpha) {
-            colors.hidden_edge_alpha * (1.0 - fade)
-        } else {
-            0.0
-        };
-        let second = linear(colors.second);
-        let unit = |v: f32| if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
-        let pattern = PatternStyle {
-            edge_width: if colors.pattern.edge_width.is_nan() {
-                0.0
-            } else {
-                colors.pattern.edge_width.clamp(0.0, 16.0)
-            },
-            wash: unit(colors.pattern.wash),
-            stripes: unit(colors.pattern.stripes),
-        };
-        let uniforms = Uniforms {
-            view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
-                .to_cols_array_2d(),
-            eye: camera.eye_homogeneous().to_array(),
-            right: camera.right().extend(half.x).to_array(),
-            up: camera.up().extend(half.y).to_array(),
-            focus: camera.target().extend(camera.near()).to_array(),
-            backward: camera.backward().extend(pattern.wash).to_array(),
-            viewport: [
-                frame.viewport.width,
-                frame.viewport.height,
-                frame.scale_factor,
-                pattern.stripes,
-            ],
-            viewport_origin: [
-                frame.viewport.x,
-                frame.viewport.y,
-                frame.shading.code(),
-                contrast,
-            ],
-            background_top: linear(colors.background_top),
-            background_bottom: linear(colors.background_bottom),
-            model: faded(colors.model),
-            edge: with_alpha(colors.edge, hidden_alpha),
-            grid: linear(colors.grid),
-            axes: colors.axes.map(linear),
-            origin_outline: linear(colors.origin_outline),
-            sketch: linear(colors.sketch),
-            pivot: frame
-                .pivot
-                .filter(|pivot| pivot.at.is_finite() && (0.0..=1.0).contains(&pivot.opacity))
-                .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
-            pivot_color: linear(colors.pivot),
-            grid_origin: (grid.origin())
-                .extend(slot.origin.mask(grid) as f32)
-                .to_array(),
-            grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
-            grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
-            sketch_origin: sketch_plane.origin().extend(second[0]).to_array(),
-            sketch_x: sketch_plane.x().extend(second[1]).to_array(),
-            sketch_y: sketch_plane.y().extend(second[2]).to_array(),
-            hover_face: with_alpha(colors.hover_face, selected_tint),
-            hover_outline: with_alpha(colors.hover_outline, pattern.edge_width),
-            selected: with_alpha(colors.selected, selected_edge_shade),
-        };
-        let mut uniform_bytes = Vec::new();
-        uniform_bytes.extend_from_slice(bytemuck::bytes_of(&uniforms));
+        let tinted = [
+            (frame.hovered_faces, Tint::Hovered),
+            (frame.selected_faces, Tint::Selected),
+            (frame.second_faces, Tint::Second),
+        ];
+        let faces = (tinted.into_iter())
+            .flat_map(|(faces, tint)| faces.iter().map(move |&face| (face, tint)));
+        for (face, tint) in faces {
+            if let Some((indices, part)) = gpu.face(frame.mesh, face) {
+                slot.faces.push(FaceDraw {
+                    indices,
+                    step: self.alphas.step(opacity.get(part).copied()),
+                    tint,
+                    part,
+                    hovered: frame.hovered_faces.contains(&face)
+                        && frame.selected_faces.contains(&face),
+                });
+            }
+        }
+    }
 
+    /// Writes `uniforms` to `slot`'s, and when `frame` crossfades between
+    /// two grids, each grid's share of them to its own, setting the steps
+    /// they're drawn at.
+    fn write_grids(
+        &self,
+        slot: &mut Slot,
+        queue: &wgpu::Queue,
+        frame: &Frame<'_>,
+        uniforms: &Uniforms,
+        fade: f32,
+        written: &mut Vec<u8>,
+    ) {
+        let grid = &frame.grid;
         // Crossfading between the world's XY plane and a sketch's, each
         // drawn at its share, the one that isn't `grid` from the other
         // uniforms.
-        slot.grid_steps = match frame.fading_grid {
+        let (steps, main, other) = match frame.fading_grid {
             // On the XY plane the grid stays; the axis lines it has outside
             // the sketch, not in it, the Z axis's, fade over it.
             Some(plane) if plane == GridPlane::XY => {
-                let sketch = OriginShown {
-                    marker: true,
-                    axes: [true, true, false],
-                    ..OriginShown::NONE
-                };
                 let z_only = WORLD_Z | WORLD_Z << HOVERED_SHIFT;
                 let outside = frame.origin.with_hovered().mask(&plane) & z_only | AXES_ONLY;
                 let with_mask = |mask: u32| Uniforms {
                     grid_origin: plane.origin().extend(mask as f32).to_array(),
-                    ..uniforms
+                    ..*uniforms
                 };
-                uniform_bytes.clear();
-                uniform_bytes
-                    .extend_from_slice(bytemuck::bytes_of(&with_mask(sketch.mask(&plane))));
-                let other = with_mask(outside);
-                write(
-                    queue,
-                    &slot.other_grid,
-                    bytemuck::bytes_of(&other),
-                    &mut written,
-                );
-                (self.alphas.opaque, Some(self.alphas.step(Some(1.0 - fade))))
+                (
+                    (self.alphas.opaque, Some(self.alphas.step(Some(1.0 - fade)))),
+                    with_mask(OriginShown::SKETCH.mask(&plane)),
+                    Some(with_mask(outside)),
+                )
             }
             Some(plane) => {
                 let share = |on: &GridPlane| if *on == plane { fade } else { 1.0 - fade };
@@ -916,11 +820,7 @@ impl Renderer {
                 // the Z axis's, fading with it either way.
                 let on = |at: &GridPlane| {
                     let shown = if *at == plane {
-                        OriginShown {
-                            marker: true,
-                            axes: [true, true, false],
-                            ..OriginShown::NONE
-                        }
+                        OriginShown::SKETCH
                     } else {
                         frame.origin.with_hovered()
                     };
@@ -928,30 +828,52 @@ impl Renderer {
                         grid_origin: at.origin().extend(shown.mask(at) as f32).to_array(),
                         grid_x: at.x().extend(axis_index(at.x())).to_array(),
                         grid_y: at.y().extend(axis_index(at.y())).to_array(),
-                        ..uniforms
+                        ..*uniforms
                     }
                 };
-                let other_uniforms = on(&other);
-                uniform_bytes.clear();
-                uniform_bytes.extend_from_slice(bytemuck::bytes_of(&on(grid)));
-                let bytes = bytemuck::bytes_of(&other_uniforms);
-                write(queue, &slot.other_grid, bytes, &mut written);
                 (
-                    self.alphas.step(Some(share(grid))),
-                    Some(self.alphas.step(Some(share(&other)))),
+                    (
+                        self.alphas.step(Some(share(grid))),
+                        Some(self.alphas.step(Some(share(&other)))),
+                    ),
+                    on(grid),
+                    Some(on(&other)),
                 )
             }
-            None => (self.alphas.opaque, None),
+            None => ((self.alphas.opaque, None), *uniforms, None),
         };
-        write(queue, &slot.uniforms, &uniform_bytes, &mut written);
+        slot.grid_steps = steps;
+        if let Some(other) = other {
+            write(queue, &slot.other_grid, bytemuck::bytes_of(&other), written);
+        }
+        write(queue, &slot.uniforms, bytemuck::bytes_of(&main), written);
+    }
 
+    /// Makes `slot`'s depth target, and the selected faces' pattern's and
+    /// the errors' when they're drawn, at `frame`'s target size if they
+    /// aren't yet, noting in `changed` that it did; and writes the errors'
+    /// colours.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a step of prepare, given its state"
+    )]
+    fn ensure_targets(
+        &self,
+        slot: &mut Slot,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Frame<'_>,
+        colors: &Colors,
+        written: &mut Vec<u8>,
+        changed: &mut bool,
+    ) {
         let size = frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
-            changed = true;
+            *changed = true;
             slot.depth = Some(self.create_targets(device, size));
         }
         if patterned(slot) && slot.pattern_target.as_ref().map(|t| t.size) != Some(size) {
-            changed = true;
+            *changed = true;
             slot.pattern_target = Some(CoverageTarget::new(
                 device,
                 &self.errors.layout,
@@ -961,38 +883,142 @@ impl Renderer {
                 self.samples,
             ));
         }
-        if slot.errors.any() {
-            if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
-                changed = true;
-                slot.error_target = Some(CoverageTarget::new(
-                    device,
-                    &self.errors.layout,
-                    &slot.uniforms,
-                    ("varde error halo", HALO_FORMAT),
-                    size,
-                    self.samples,
-                ));
-            }
-            if let Some(target) = &slot.error_target {
-                let [r, g, b, a] = colors.error_halo.linear();
-                // Out of range, as faint as the theme's.
-                let a = if (0.0..=1.0).contains(&a) { a } else { 0.3 };
-                let uniforms = ErrorUniforms {
-                    core: linear(colors.error),
-                    halo: [r, g, b, a],
-                };
-                write(
-                    queue,
-                    &target.uniforms,
-                    bytemuck::bytes_of(&uniforms),
-                    &mut written,
-                );
-            }
+        if !slot.errors.any() {
+            return;
         }
-        if changed || written != slot.written || before != slot.state() {
-            *slot.drawn.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
+            *changed = true;
+            slot.error_target = Some(CoverageTarget::new(
+                device,
+                &self.errors.layout,
+                &slot.uniforms,
+                ("varde error halo", HALO_FORMAT),
+                size,
+                self.samples,
+            ));
         }
-        slot.written = written;
-        result
+        if let Some(target) = &slot.error_target {
+            let uniforms = ErrorUniforms {
+                core: linear(colors.error),
+                halo: colors.error_halo.linear(),
+            };
+            write(
+                queue,
+                &target.uniforms,
+                bytemuck::bytes_of(&uniforms),
+                written,
+            );
+        }
+    }
+}
+
+/// How opaque each of `slot`'s parts is drawn in `frame`, `fade` of the
+/// way to the faded model: none when wholly faded, every part drawn alike.
+fn opacity<'a>(
+    slot: &Slot,
+    frame: &Frame<'a>,
+    colors: &Colors,
+    fade: f32,
+) -> std::borrow::Cow<'a, [f32]> {
+    if slot.faded {
+        return Default::default();
+    }
+    if fade == 0.0 {
+        return frame.opacity.into();
+    }
+    // Towards the alpha whose two layers, glass's back and front faces,
+    // cover as much as the faded model's one: the nearest only.
+    let to = 1.0 - (1.0 - colors.faded_alpha).sqrt();
+    let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
+    (0..parts)
+        .map(|i| {
+            let own = frame
+                .opacity
+                .get(i)
+                .copied()
+                .filter(|a| (0.0..=1.0).contains(a));
+            let own = own.unwrap_or(1.0);
+            own + (to - own) * fade
+        })
+        .collect()
+}
+
+/// The scene shader's uniforms for `frame` drawn into `slot`, in
+/// `colors`, sanitized, `fade` of the way to the faded model.
+fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Uniforms {
+    // A depth tested sketch is hidden by what's in front of it, and
+    // so needs the depth range to cover it.
+    let sketch_bounds = frame
+        .sketch
+        .filter(|sketch| sketch.depth_tested)
+        .map(|sketch| {
+            [
+                sketch.base.bounds(&sketch.plane),
+                sketch.live.bounds(&sketch.plane),
+            ]
+        });
+    let bounds = [
+        slot.mesh.as_ref().and_then(|m| m.bounds),
+        slot.lines.as_ref().and_then(|l| l.bounds),
+        slot.errors.bounds,
+        planes_bounds(frame.camera, slot.origin),
+    ]
+    .into_iter()
+    .chain(sketch_bounds.into_iter().flatten());
+    let (camera, grid) = (frame.camera, &frame.grid);
+    let sketch_plane = frame.sketch.map_or(*grid, |sketch| sketch.plane);
+    let aspect = frame.viewport.aspect();
+    let half = camera.half_extents(aspect);
+    let alpha = if slot.faded { colors.faded_alpha } else { 1.0 };
+    let with_alpha = |color, alpha| {
+        let [r, g, b, _] = linear(color);
+        [r, g, b, alpha]
+    };
+    let second = linear(colors.second);
+    let pattern = colors.pattern;
+    Uniforms {
+        view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
+            .to_cols_array_2d(),
+        eye: camera.eye_homogeneous().to_array(),
+        right: camera.right().extend(half.x).to_array(),
+        up: camera.up().extend(half.y).to_array(),
+        focus: camera.target().extend(camera.near()).to_array(),
+        backward: camera.backward().extend(pattern.wash).to_array(),
+        viewport: [
+            frame.viewport.width,
+            frame.viewport.height,
+            frame.scale_factor,
+            pattern.stripes,
+        ],
+        viewport_origin: [
+            frame.viewport.x,
+            frame.viewport.y,
+            frame.shading.code(),
+            colors.contrast,
+        ],
+        background_top: linear(colors.background_top),
+        background_bottom: linear(colors.background_bottom),
+        model: with_alpha(colors.model, alpha),
+        edge: with_alpha(colors.edge, colors.hidden_edge_alpha * (1.0 - fade)),
+        grid: linear(colors.grid),
+        axes: colors.axes.map(linear),
+        origin_outline: linear(colors.origin_outline),
+        sketch: linear(colors.sketch),
+        pivot: frame
+            .pivot
+            .filter(|pivot| pivot.at.is_finite() && (0.0..=1.0).contains(&pivot.opacity))
+            .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
+        pivot_color: linear(colors.pivot),
+        grid_origin: (grid.origin())
+            .extend(slot.origin.mask(grid) as f32)
+            .to_array(),
+        grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
+        grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
+        sketch_origin: sketch_plane.origin().extend(second[0]).to_array(),
+        sketch_x: sketch_plane.x().extend(second[1]).to_array(),
+        sketch_y: sketch_plane.y().extend(second[2]).to_array(),
+        hover_face: with_alpha(colors.hover_face, colors.selected_tint),
+        hover_outline: with_alpha(colors.hover_outline, pattern.edge_width),
+        selected: with_alpha(colors.selected, colors.selected_edge_shade),
     }
 }

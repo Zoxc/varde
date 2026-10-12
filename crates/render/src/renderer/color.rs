@@ -147,6 +147,50 @@ pub struct Colors {
     pub error_halo: Srgba,
 }
 
+impl Colors {
+    /// These colours with every out of range knob at the fallback its
+    /// docs give, so the shader only sees values it can use.
+    pub(super) fn sanitized(&self) -> Colors {
+        let [r, g, b, a] = self.error_halo.0;
+        Colors {
+            contrast: within(self.contrast, 0.0..=4.0, 1.0),
+            // Out of range, the model is drawn opaque rather than not at
+            // all.
+            faded_alpha: within(self.faded_alpha, 0.0..=1.0, 1.0),
+            hidden_edge_alpha: within(self.hidden_edge_alpha, 0.0..=1.0, 0.0),
+            // Out of range, as faint as can be rather than solid.
+            selected_tint: within(self.selected_tint, 0.0..=1.0, 0.6),
+            selected_edge_shade: within(self.selected_edge_shade, -1.0..=1.0, 0.0),
+            pattern: PatternStyle {
+                edge_width: clamped(self.pattern.edge_width, 16.0),
+                wash: clamped(self.pattern.wash, 1.0),
+                stripes: clamped(self.pattern.stripes, 1.0),
+            },
+            // Out of range, as faint as the theme's.
+            error_halo: Srgba([r, g, b, within(a, 0.0..=1.0, 0.3)]),
+            ..*self
+        }
+    }
+}
+
+/// `value` if it's in `range`, else (or NaN) `fallback`.
+fn within(value: f32, range: std::ops::RangeInclusive<f32>, fallback: f32) -> f32 {
+    if range.contains(&value) {
+        value
+    } else {
+        fallback
+    }
+}
+
+/// `value` clamped to 0 through `most`, NaN 0.
+fn clamped(value: f32, most: f32) -> f32 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, most)
+    }
+}
+
 /// Converts a colour to linear, which the shader works in.
 pub(super) fn linear(Srgb(rgb): Srgb) -> [f32; 4] {
     let [r, g, b] = rgb.map(srgb_to_linear);

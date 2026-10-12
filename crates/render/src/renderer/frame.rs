@@ -71,6 +71,9 @@ impl OriginShown {
         selected: [false; OriginPart::COUNT],
         planes_on_top: false,
     };
+    /// What a sketch shows of the origin, whatever the frame's: the
+    /// marker and its plane's X and Y axes, never hovered.
+    pub(super) const SKETCH: OriginShown = OriginShown::DEFAULT;
     /// None of them.
     pub const NONE: OriginShown = OriginShown {
         marker: false,
