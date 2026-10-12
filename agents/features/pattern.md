@@ -242,7 +242,7 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   none: the rail's "Circular pattern"; not on the toolbar, which the
   mock's model bar leaves it off too and which is nearly full at
   1280 px), again backing out, the bindings as Move's
-  (`pattern_binding`, `circular_pattern_binding`); or editing one
+  (`motion_binding`); or editing one
   (`Look::EditFeature`: double-click, `Enter`, "Edit pattern"). Bodies
   as a move's (the selection, else the only body; picked in the
   viewport or Objects; merges followed; gone bodies said "A picked body

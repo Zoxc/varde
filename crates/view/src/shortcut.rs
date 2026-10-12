@@ -799,147 +799,34 @@ pub fn combine_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
-/// Starting a new move, or backing out of the one being set up: outside
-/// a sketch, while the document has a body, in a document that can be
-/// changed. Another operation being set up is dropped for it.
-pub fn move_binding(keys: DocumentKeys) -> Binding {
+/// Starting a new operation of `kind`, or backing out of the one being
+/// set up: outside a sketch, in a document that can be changed, and but
+/// for a sweep or loft (which make a solid, as a revolve does) while the
+/// document has a body. Another operation being set up is dropped for
+/// it. Move (`M`), the linear pattern (`P`), Chamfer (`C`) and Fillet
+/// (`F`) have the UI mock's keys; the rest none, as the mocks have them.
+pub fn motion_binding(kind: MotionKind, keys: DocumentKeys) -> Binding {
+    let (shortcut, look) = match kind {
+        MotionKind::Move => (Shortcut::MOVE, Look::StartMove),
+        MotionKind::Mirror => (Shortcut::NONE, Look::StartMirror),
+        MotionKind::LinearPattern => (Shortcut::PATTERN, Look::StartPattern),
+        MotionKind::CircularPattern => (Shortcut::NONE, Look::StartCircularPattern),
+        MotionKind::Align => (Shortcut::NONE, Look::StartAlign),
+        MotionKind::Scale => (Shortcut::NONE, Look::StartScale),
+        MotionKind::Split => (Shortcut::NONE, Look::StartSplit),
+        MotionKind::Chamfer => (Shortcut::CHAMFER, Look::StartChamfer),
+        MotionKind::Fillet => (Shortcut::FILLET, Look::StartFillet),
+        MotionKind::Shell => (Shortcut::NONE, Look::StartShell),
+        MotionKind::OffsetFace => (Shortcut::NONE, Look::StartOffsetFace),
+        MotionKind::Draft => (Shortcut::NONE, Look::StartDraft),
+        MotionKind::Sweep => (Shortcut::NONE, Look::StartSweep),
+        MotionKind::Loft => (Shortcut::NONE, Look::StartLoft),
+    };
+    let needs_body = !matches!(kind, MotionKind::Sweep | MotionKind::Loft);
     Binding::new(
-        Shortcut::MOVE,
-        Message::Look(Look::StartMove),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new mirror, or backing out of the one being set up, as
-/// [`move_binding`] does a move: with no key, as the UI mock has it.
-pub fn mirror_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartMirror),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new linear pattern, or backing out of the one being set
-/// up, as [`move_binding`] does a move: `P`, the UI mock's key.
-pub fn pattern_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::PATTERN,
-        Message::Look(Look::StartPattern),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new circular pattern, or backing out of the one being set
-/// up, as [`move_binding`] does a move: with no key, as the UI mock has
-/// it.
-pub fn circular_pattern_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartCircularPattern),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new align, or backing out of the one being set up, as
-/// [`move_binding`] does a move: with no key, as the UI mock has it.
-pub fn align_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartAlign),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new scale, or backing out of the one being set up, as
-/// [`move_binding`] does a move: with no key, as the UI mock has it.
-pub fn scale_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartScale),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new split, or backing out of the one being set up, as
-/// [`move_binding`] does a move: with no key, as the icon mock has it.
-pub fn split_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartSplit),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new chamfer, or backing out of the one being set up, as
-/// [`move_binding`] does a move: `C`, the UI mock's key.
-pub fn chamfer_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::CHAMFER,
-        Message::Look(Look::StartChamfer),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new fillet, or backing out of the one being set up, as
-/// [`move_binding`] does a move: `F`, the UI mock's key.
-pub fn fillet_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::FILLET,
-        Message::Look(Look::StartFillet),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new shell, or backing out of the one being set up, as
-/// [`move_binding`] does a move: with no key, as the UI mock has it.
-pub fn shell_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartShell),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new offset face, or backing out of the one being set up,
-/// as [`move_binding`] does a move: with no key, as the UI mock has it.
-pub fn offset_face_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartOffsetFace),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new draft, or backing out of the one being set up, as
-/// [`move_binding`] does a move: with no key, as the icon mock has it.
-pub fn draft_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartDraft),
-        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
-    )
-}
-
-/// Starting a new sweep, or backing out of the one being set up, as
-/// [`revolve_binding`] does a revolve: with no key, as the UI mock has
-/// it (its Create group lists Sweep without one).
-pub fn sweep_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartSweep),
-        keys.editable && !keys.sketching,
-    )
-}
-
-/// Starting a new loft, or backing out of the one being set up, as
-/// [`sweep_binding`] does a sweep: with no key, as the UI mock has it
-/// (its Create group lists Loft without one).
-pub fn loft_binding(keys: DocumentKeys) -> Binding {
-    Binding::new(
-        Shortcut::NONE,
-        Message::Look(Look::StartLoft),
-        keys.editable && !keys.sketching,
+        shortcut,
+        Message::Look(look),
+        keys.editable && !keys.sketching && (!needs_body || keys.bodies || keys.motion.is_some()),
     )
 }
 
@@ -1216,10 +1103,10 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             extrude_binding(keys),
             revolve_binding(keys),
             combine_binding(keys),
-            move_binding(keys),
-            pattern_binding(keys),
-            fillet_binding(keys),
-            chamfer_binding(keys),
+            motion_binding(MotionKind::Move, keys),
+            motion_binding(MotionKind::LinearPattern, keys),
+            motion_binding(MotionKind::Fillet, keys),
+            motion_binding(MotionKind::Chamfer, keys),
             measure_binding(keys),
         ]
     });

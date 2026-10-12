@@ -133,7 +133,7 @@ and the Bodies list.
 
 - **Starting**: `Look::StartLoft` from the rail's Create set (after
   Sweep, as the mock's group orders it; its list's letter `L`), through
-  `loft_binding`, with no key, as the mock has it; again, or another
+  `motion_binding`, with no key, as the mock has it; again, or another
   tool, backs out. **Not on the toolbar**: the mock's model bar has no
   Loft. Editing one (`Look::EditFeature`: double-click, `Enter`, "Edit
   loft") opens it with its sections, rails and options, picking

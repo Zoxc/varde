@@ -19,16 +19,14 @@ use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size, Ve
 use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, DocumentKeys, Shortcut, align_binding, chamfer_binding, circular_pattern_binding,
-    combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
-    fillet_binding, loft_binding, measure_binding, mirror_binding, move_binding,
-    offset_face_binding, params_binding, pattern_binding, revolve_binding, scale_binding,
-    shell_binding, sketch_binding, split_binding, sweep_binding, tool_binding,
+    Binding, DocumentKeys, Shortcut, combine_binding, constrain_binding, constraint_binding,
+    extrude_binding, measure_binding, motion_binding, params_binding, revolve_binding,
+    sketch_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
 use crate::toolbar::tool_icon;
-use crate::{ConstraintKind, DocumentState, Look, Message, Tool};
+use crate::{ConstraintKind, DocumentState, Look, Message, MotionKind, Tool};
 
 /// The gap between the cards, and between the rail and the viewport's
 /// edges, and the list, in pixels.
@@ -108,28 +106,16 @@ pub struct RailOpen {
 /// The scrollable holding the rows of the open list.
 pub const RAIL_LIST: iced::widget::Id = iced::widget::Id::new("rail-list");
 
-/// A tool of a set.
+/// A tool of a set, and an operation the toolbar offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Entry {
     /// Picking the plane for a new sketch.
     Sketch,
     Extrude,
     Revolve,
-    Sweep,
-    Loft,
     Combine,
-    Move,
-    Mirror,
-    LinearPattern,
-    CircularPattern,
-    Align,
-    Scale,
-    Split,
-    Fillet,
-    Chamfer,
-    Shell,
-    OffsetFace,
-    Draft,
+    /// Setting up a move, mirror, pattern, blend, sweep, loft, ...
+    Motion(MotionKind),
     Measure,
     /// Opening the parameters' popup, or closing it.
     Params,
@@ -147,21 +133,8 @@ impl Entry {
             Entry::Sketch => Icon::Sketch,
             Entry::Extrude => Icon::Extrude,
             Entry::Revolve => Icon::Revolve,
-            Entry::Sweep => Icon::Sweep,
-            Entry::Loft => Icon::Loft,
             Entry::Combine => Icon::Combine,
-            Entry::Move => Icon::Move,
-            Entry::Mirror => Icon::BMirror,
-            Entry::LinearPattern => Icon::LPattern,
-            Entry::CircularPattern => Icon::CPattern,
-            Entry::Align => Icon::Align,
-            Entry::Scale => Icon::Scale,
-            Entry::Split => Icon::Split,
-            Entry::Fillet => Icon::BFillet,
-            Entry::Chamfer => Icon::BChamfer,
-            Entry::Shell => Icon::Shell,
-            Entry::OffsetFace => Icon::OffsetFace,
-            Entry::Draft => Icon::Draft,
+            Entry::Motion(kind) => kind.icon(),
             Entry::Measure => Icon::Measure,
             Entry::Params => Icon::Params,
             Entry::Tool(tool) => tool_icon(tool),
@@ -170,26 +143,17 @@ impl Entry {
         }
     }
 
+    /// Its name on the rail.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Entry::Sketch => "Sketch",
             Entry::Extrude => "Extrude",
             Entry::Revolve => "Revolve",
-            Entry::Sweep => "Sweep",
-            Entry::Loft => "Loft",
             Entry::Combine => "Combine",
-            Entry::Move => "Move",
-            Entry::Mirror => "Mirror",
-            Entry::LinearPattern => "Linear pattern",
-            Entry::CircularPattern => "Circular pattern",
-            Entry::Align => "Align",
-            Entry::Scale => "Scale",
-            Entry::Split => "Split body",
-            Entry::Fillet => "Fillet",
-            Entry::Chamfer => "Chamfer",
-            Entry::Shell => "Shell",
-            Entry::OffsetFace => "Offset face",
-            Entry::Draft => "Draft",
+            Entry::Motion(MotionKind::LinearPattern) => "Linear pattern",
+            Entry::Motion(MotionKind::CircularPattern) => "Circular pattern",
+            Entry::Motion(MotionKind::Split) => "Split body",
+            Entry::Motion(kind) => kind.noun(),
             Entry::Measure => "Measure",
             Entry::Params => "Parameters",
             Entry::Tool(tool) => tool.label(),
@@ -207,28 +171,28 @@ impl Entry {
         }
     }
 
-    /// What it does and its own key: the toolbar's binding for it, so the
-    /// rail does what the toolbar does, and is disabled where it is.
+    /// Its shorter name on the toolbar, as `keys` show it: "Pattern" for
+    /// the linear one, "Split" and "Offset", where the rail's list has
+    /// room for the longer.
+    pub(crate) fn bar_label(self, keys: DocumentKeys) -> &'static str {
+        match self {
+            Entry::Motion(MotionKind::LinearPattern) => "Pattern",
+            Entry::Motion(MotionKind::Split) => "Split",
+            Entry::Motion(MotionKind::OffsetFace) => "Offset",
+            _ => self.shown_label(keys),
+        }
+    }
+
+    /// What it does and its own key, on the rail and the toolbar alike,
+    /// so the rail does what the toolbar does, and is disabled where it
+    /// is.
     pub(crate) fn binding(self, keys: DocumentKeys) -> Binding {
         match self {
             Entry::Sketch => sketch_binding(keys),
             Entry::Extrude => extrude_binding(keys),
             Entry::Revolve => revolve_binding(keys),
-            Entry::Sweep => sweep_binding(keys),
-            Entry::Loft => loft_binding(keys),
             Entry::Combine => combine_binding(keys),
-            Entry::Move => move_binding(keys),
-            Entry::Mirror => mirror_binding(keys),
-            Entry::LinearPattern => pattern_binding(keys),
-            Entry::CircularPattern => circular_pattern_binding(keys),
-            Entry::Align => align_binding(keys),
-            Entry::Scale => scale_binding(keys),
-            Entry::Split => split_binding(keys),
-            Entry::Fillet => fillet_binding(keys),
-            Entry::Chamfer => chamfer_binding(keys),
-            Entry::Shell => shell_binding(keys),
-            Entry::OffsetFace => offset_face_binding(keys),
-            Entry::Draft => draft_binding(keys),
+            Entry::Motion(kind) => motion_binding(kind, keys),
             Entry::Measure => measure_binding(keys),
             Entry::Params => params_binding(),
             Entry::Tool(tool) => tool_binding(tool, keys),
@@ -239,27 +203,14 @@ impl Entry {
         }
     }
 
-    /// Whether it's in use: highlighted, as on the toolbar.
-    fn on(self, using: Using) -> bool {
+    /// Whether it's in use: highlighted, on the rail and the toolbar.
+    pub(crate) fn on(self, using: Using) -> bool {
         match self {
             Entry::Sketch => using.picking_plane,
             Entry::Extrude => using.extruding,
             Entry::Revolve => using.revolving,
-            Entry::Sweep => using.motion == Some(crate::MotionKind::Sweep),
-            Entry::Loft => using.motion == Some(crate::MotionKind::Loft),
             Entry::Combine => using.combining,
-            Entry::Move => using.motion == Some(crate::MotionKind::Move),
-            Entry::Mirror => using.motion == Some(crate::MotionKind::Mirror),
-            Entry::LinearPattern => using.motion == Some(crate::MotionKind::LinearPattern),
-            Entry::CircularPattern => using.motion == Some(crate::MotionKind::CircularPattern),
-            Entry::Align => using.motion == Some(crate::MotionKind::Align),
-            Entry::Scale => using.motion == Some(crate::MotionKind::Scale),
-            Entry::Split => using.motion == Some(crate::MotionKind::Split),
-            Entry::Fillet => using.motion == Some(crate::MotionKind::Fillet),
-            Entry::Chamfer => using.motion == Some(crate::MotionKind::Chamfer),
-            Entry::Shell => using.motion == Some(crate::MotionKind::Shell),
-            Entry::OffsetFace => using.motion == Some(crate::MotionKind::OffsetFace),
-            Entry::Draft => using.motion == Some(crate::MotionKind::Draft),
+            Entry::Motion(kind) => using.motion == Some(kind),
             Entry::Measure => using.measuring,
             Entry::Params => using.params,
             Entry::Tool(tool) => using.tool == Some(tool),
@@ -271,14 +222,14 @@ impl Entry {
 
 /// What's in use, which the rail highlights.
 #[derive(Debug, Clone, Copy)]
-struct Using {
+pub(crate) struct Using {
     /// Whether the plane for a new sketch is being picked.
     picking_plane: bool,
     extruding: bool,
     revolving: bool,
     combining: bool,
     /// The move, mirror or pattern being set up, if one is.
-    motion: Option<crate::MotionKind>,
+    motion: Option<MotionKind>,
     measuring: bool,
     /// Whether the parameters' popup is open.
     params: bool,
@@ -288,7 +239,7 @@ struct Using {
 }
 
 impl Using {
-    fn of(state: &DocumentState<'_>) -> Self {
+    pub(crate) fn of(state: &DocumentState<'_>) -> Self {
         let sketch = state.sketch.as_ref();
         Self {
             picking_plane: state
@@ -327,8 +278,8 @@ const MODEL: [ToolSet; 4] = [
             Entry::Sketch,
             Entry::Extrude,
             Entry::Revolve,
-            Entry::Sweep,
-            Entry::Loft,
+            Entry::Motion(MotionKind::Sweep),
+            Entry::Motion(MotionKind::Loft),
         ],
     },
     ToolSet {
@@ -338,14 +289,14 @@ const MODEL: [ToolSet; 4] = [
         // Offset face after it and Split body, as the icon mock's Modify
         // group orders them, and Parameters last, as the model mock's.
         entries: &[
-            Entry::Fillet,
-            Entry::Chamfer,
-            Entry::Shell,
-            Entry::Draft,
-            Entry::Scale,
+            Entry::Motion(MotionKind::Fillet),
+            Entry::Motion(MotionKind::Chamfer),
+            Entry::Motion(MotionKind::Shell),
+            Entry::Motion(MotionKind::Draft),
+            Entry::Motion(MotionKind::Scale),
             Entry::Combine,
-            Entry::OffsetFace,
-            Entry::Split,
+            Entry::Motion(MotionKind::OffsetFace),
+            Entry::Motion(MotionKind::Split),
             Entry::Params,
         ],
     },
@@ -353,11 +304,11 @@ const MODEL: [ToolSet; 4] = [
         name: "Transform",
         icon: Icon::CatTransform,
         entries: &[
-            Entry::Move,
-            Entry::Mirror,
-            Entry::LinearPattern,
-            Entry::CircularPattern,
-            Entry::Align,
+            Entry::Motion(MotionKind::Move),
+            Entry::Motion(MotionKind::Mirror),
+            Entry::Motion(MotionKind::LinearPattern),
+            Entry::Motion(MotionKind::CircularPattern),
+            Entry::Motion(MotionKind::Align),
         ],
     },
     ToolSet {

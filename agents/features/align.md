@@ -130,7 +130,7 @@ a cross, an icon toggle and typed fields.
 
 - **Starting**: `Look::StartAlign` from the rail's Transform set
   ("Align", after Circular pattern; no key, as the mock has none:
-  `shortcut::align_binding`, `Shortcut::NONE`, the rail's list letter
+  `shortcut::motion_binding`, `Shortcut::NONE`, the rail's list letter
   `A`), again backing out; not on the toolbar (nearly full at 1280 px,
   as Circular pattern isn't); or editing one (`Look::EditFeature`:
   double-click, `Enter`, "Edit align"), which opens with its references,

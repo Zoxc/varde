@@ -199,7 +199,7 @@ Operation as tiles and the Bodies list.
 
 - **Starting**: `Look::StartSweep` from the rail's Create set (after
   Revolve, as the mock's group orders it; its list's letter `P`, the
-  label's first free one, as the mock's) through `sweep_binding`, with
+  label's first free one, as the mock's) through `motion_binding`, with
   no key, as the mock has it; again, or another tool, backs out.
   **Not on the toolbar**: the mock's model bar has no Sweep. Editing one
   (`Look::EditFeature`: double-click, `Enter`, "Edit sweep") opens it

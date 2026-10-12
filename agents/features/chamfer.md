@@ -156,7 +156,7 @@ fillet's, each with its own size); the chamfer's own parts are in
 panel.
 
 - **Starting**: `Look::StartChamfer` from `C` (`Shortcut::CHAMFER`,
-  `chamfer_binding`, the mock's key; in sketches `C` is the Circle
+  `motion_binding`, the mock's key; in sketches `C` is the Circle
   tool's), the toolbar's Chamfer after Revolve (where the mock has it,
   after Hole and Fillet, before Shell and Combine: Hole isn't built,
   Fillet and Shell don't fit at 1280 px) and the rail's Modify set
