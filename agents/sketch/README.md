@@ -14,6 +14,6 @@ The detail is split by part; a section named in quotes is a heading in one of th
 - `proposals.md`: Edits and proposals (`varde-sketch`, `edit.rs`, `propose.rs`).
 - `solver-lane.md`: The solver lane (`varde-solve`).
 - `editing.md`: Editing.
-- `viewport.md`: In the viewport (`crates/view/src/viewport/sketch.rs`).
+- `viewport.md`: In the viewport (`crates/view/src/viewport/sketch.rs` and its modules).
 - `snapping.md`: Snapping (`crates/view/src/snap.rs`).
 - `hit-testing.md`: Hit testing (`crates/view/src/hit.rs`).

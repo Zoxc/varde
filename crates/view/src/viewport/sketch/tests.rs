@@ -1,18 +1,37 @@
-use std::sync::Arc;
-use varde_sketch::Selectable;
-
 use iced::widget::shader::Program as _;
 use iced::{Point, Size};
 use varde_document::OriginPlane;
-use varde_sketch::{Curve, Measure, Side};
 
+use super::draw::{arrows, axis, combs, dot, draw_lines, ring, snap_disc};
 use super::*;
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use glam::DVec2;
+use iced::keyboard::{self, Modifiers, key::Named};
+use iced::mouse;
+use iced::time::Instant;
+use iced::{Color, Event, Rectangle};
+use varde_render::{Camera, SketchLayer, Space};
+use varde_sketch::{Curve, Id, Measure, Selectable, Side, Sketch, SplineKind};
+
 use crate::Target;
+use crate::document::tied_items;
+use crate::overlaps::{self, OverlapItems};
+use crate::projection::Projector;
 use crate::projection::top_camera;
+use crate::snap::Snap;
 use crate::testing;
 use crate::theme::Mode;
+use crate::theme::SketchColors;
+use crate::typed::{self, Field};
+use crate::viewport::sketch_pick::HOVERED_WIDTH;
 use crate::viewport::style::line as line_style;
+use crate::viewport::style::{fill_region, srgba};
 use crate::viewport::{Interaction, Program, program};
+use crate::{
+    ActiveTool, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField, ValueTarget,
+};
 
 /// The viewport's width and height: through [`top_camera`], 20 sketch
 /// units across, the origin in its middle, a unit 10 pixels.

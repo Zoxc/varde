@@ -1,4 +1,4 @@
-# In the viewport (`crates/view/src/viewport/sketch.rs`)
+# In the viewport (`crates/view/src/viewport/sketch.rs`, with `sketch/input.rs`, `sketch/draw.rs` and `sketch/chips.rs`)
 
 The sketch being edited is drawn by the renderer, over everything else,
 and its input is the viewport's `shader::Program`'s (`agents/viewport.md`
