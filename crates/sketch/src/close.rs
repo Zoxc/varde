@@ -112,14 +112,7 @@ impl Sketch {
             }
             spline.handles.retain(|handle| handle.at != last);
         }
-        spline.closed = true;
-        if spline.kind == SplineKind::Control {
-            let places = self
-                .places(&spline.points)
-                .ok_or(EditError::Target(curve))?;
-            spline.knots = control_knots(&places, true);
-        }
-        self.curve_mut(curve).ok_or(EditError::Target(curve))?.curve = Curve::Spline(spline);
+        self.store_spline(curve, spline, true)?;
         self.delete(&unused);
         if merge {
             self.merge_into(last, first)?;
@@ -154,15 +147,27 @@ impl Sketch {
             .ok_or(EditError::Target(at))?;
         spline.points.rotate_left(index);
         spline.points.push(self.add_point(place)?);
-        spline.closed = false;
+        self.store_spline(curve, spline, false)?;
+        self.drop_unfit();
+        Ok(())
+    }
+
+    /// Makes `spline`, `closed` or open, the spline `curve`, a control
+    /// spline's knots found anew for its points ([`control_knots`]).
+    fn store_spline(
+        &mut self,
+        curve: Id,
+        mut spline: Spline,
+        closed: bool,
+    ) -> Result<(), EditError> {
+        spline.closed = closed;
         if spline.kind == SplineKind::Control {
             let places = self
                 .places(&spline.points)
                 .ok_or(EditError::Target(curve))?;
-            spline.knots = control_knots(&places, false);
+            spline.knots = control_knots(&places, closed);
         }
         self.curve_mut(curve).ok_or(EditError::Target(curve))?.curve = Curve::Spline(spline);
-        self.drop_unfit();
         Ok(())
     }
 }
