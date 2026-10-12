@@ -542,16 +542,10 @@ fn too_many_crossings_or_too_much_work_is_too_complex() {
     let found = profiles(&sketch);
     assert_eq!(found.regions.len(), 19 * 19);
     // 80 ends and 400 crossings, each cutting two lines.
-    let limits = |splits, work| Limits { splits, work };
-    assert!(sketch.profiles_within(&limits(880, MAX_WORK)).is_ok());
-    assert_eq!(
-        sketch.profiles_within(&limits(879, MAX_WORK)),
-        Err(TooComplex)
-    );
-    assert_eq!(
-        sketch.profiles_within(&limits(MAX_SPLITS, 1000)),
-        Err(TooComplex)
-    );
+    let within = |sketch: &Sketch, splits, work| sketch.profiles_counting(splits, &mut Work(work));
+    assert!(within(&sketch, 880, MAX_WORK).is_ok());
+    assert_eq!(within(&sketch, 879, MAX_WORK), Err(TooComplex));
+    assert_eq!(within(&sketch, MAX_SPLITS, 1000), Err(TooComplex));
     // Circles in a column, whose boxes all overlap along x, and never
     // meet: work, not crossings.
     let mut sketch = Sketch::default();
@@ -559,10 +553,7 @@ fn too_many_crossings_or_too_much_work_is_too_complex() {
         round(&mut sketch, 0.0, i as f64 * 3.0, 1.0);
     }
     assert_eq!(profiles(&sketch).regions.len(), 100);
-    assert_eq!(
-        sketch.profiles_within(&limits(MAX_SPLITS, 99 * 50)),
-        Err(TooComplex)
-    );
+    assert_eq!(within(&sketch, MAX_SPLITS, 99 * 50), Err(TooComplex));
 }
 
 /// `count` points round `(0, 0)` at `radius`, wobbling seven times
@@ -716,15 +707,13 @@ fn normal_sketches_take_a_fraction_of_the_work() {
     }
     let count = profiles(&sketch).regions.len();
     sketches.push(("circles and lines", sketch, count));
-    let limits = Limits {
-        splits: MAX_SPLITS,
-        work: MAX_WORK / 3,
-    };
     for (name, sketch, count) in sketches {
         // Not refused within a third of the work, and right: the limits
         // only bound the work, so this is what `profiles()` finds, which
         // the full run checks too (it doubles the time).
-        let found = sketch.profiles_within(&limits).expect(name);
+        let found = sketch
+            .profiles_counting(MAX_SPLITS, &mut Work(MAX_WORK / 3))
+            .expect(name);
         let geoms = Geoms::default();
         for region in &found.regions {
             closed_in(&sketch, &geoms, region);

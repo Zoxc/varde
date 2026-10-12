@@ -253,7 +253,7 @@ impl Sketch {
     /// open ends, see the module's docs. Regions are in no particular
     /// order, but always the same one for the same sketch.
     pub fn profiles(&self) -> Result<Profiles, TooComplex> {
-        self.profiles_within(&LIMITS)
+        self.profiles_counting(MAX_SPLITS, &mut Work(MAX_WORK))
     }
 
     /// [`Sketch::profiles`] within what's `left` of a budget shared with
@@ -261,29 +261,26 @@ impl Sketch {
     /// (all it was allowed, if too complex): for a caller finding the
     /// profiles of many sketches at once.
     pub fn profiles_spending(&self, left: &mut usize) -> Result<Profiles, TooComplex> {
-        let limits = Limits {
-            splits: MAX_SPLITS,
-            work: MAX_WORK.min(*left),
-        };
-        let mut work = Work(limits.work);
-        let found = self.profiles_counting(&limits, &mut work);
+        let allowed = MAX_WORK.min(*left);
+        let mut work = Work(allowed);
+        let found = self.profiles_counting(MAX_SPLITS, &mut work);
         // Too complex, it took all it may have.
         let spent = if found.is_ok() {
-            limits.work - work.0
+            allowed - work.0
         } else {
-            limits.work
+            allowed
         };
         *left = left.saturating_sub(spent);
         found
     }
 
-    /// [`Sketch::profiles`] within `limits`.
-    fn profiles_within(&self, limits: &Limits) -> Result<Profiles, TooComplex> {
-        self.profiles_counting(limits, &mut Work(limits.work))
-    }
-
-    /// [`Sketch::profiles`] within `limits`, the work spent from `work`.
-    fn profiles_counting(&self, limits: &Limits, work: &mut Work) -> Result<Profiles, TooComplex> {
+    /// [`Sketch::profiles`] within `most_splits` cuts ([`MAX_SPLITS`] but in
+    /// tests), the work spent from `work`.
+    fn profiles_counting(
+        &self,
+        most_splits: usize,
+        work: &mut Work,
+    ) -> Result<Profiles, TooComplex> {
         let mut curves: Vec<(Id, Geom)> = self
             .curves
             .iter()
@@ -319,7 +316,7 @@ impl Sketch {
             .iter()
             .map(|(id, geom)| cut_back.get(id).copied().unwrap_or([0.0, geom.last()]))
             .collect();
-        let splits = splits(&curves, &kept, tolerance, limits.splits, work)?;
+        let splits = splits(&curves, &kept, tolerance, most_splits, work)?;
         work.spend(splits.len().saturating_mul(CUT_COST))?;
         let (vertex_of, vertices) = merge(&splits, tolerance, work)?;
         let edges = edges(&curves, &kept, &splits, &vertex_of, tolerance, work)?;
@@ -334,18 +331,6 @@ impl Sketch {
         })
     }
 }
-
-/// How much finding profiles may do: [`MAX_SPLITS`] and [`MAX_WORK`],
-/// less in tests.
-struct Limits {
-    splits: usize,
-    work: usize,
-}
-
-const LIMITS: Limits = Limits {
-    splits: MAX_SPLITS,
-    work: MAX_WORK,
-};
 
 /// Steps of work left, see [`MAX_WORK`].
 struct Work(usize);
