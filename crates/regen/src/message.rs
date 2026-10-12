@@ -148,7 +148,7 @@ pub(crate) fn out_of_range(moving: Moving, body: &str) -> String {
 pub(crate) fn moving(moving: Moving, body: &str, error: KernelError) -> String {
     let doing = moving.doing();
     match error {
-        KernelError::TooComplex => format!("{doing} {body} is too complex to work out"),
+        KernelError::TooComplex => too_complex(&format!("{doing} {body}")),
         // A scale down can take detail under the resolution, a scale up
         // or down round coordinates as a move does.
         KernelError::Invalid(_) if moving == Moving::Scale => format!(
@@ -407,14 +407,7 @@ impl Blend {
 /// `count` isn't found on its body as the features before it leave it
 /// (the faces renamed, gone or no longer meeting).
 pub(crate) fn blend_edge_not_found(index: usize, count: usize) -> String {
-    if count == 1 {
-        "its edge wasn't found".to_owned()
-    } else {
-        format!(
-            "its edge {} of {count} wasn't found",
-            index.saturating_add(1)
-        )
-    }
+    not_found("edge", index, count)
 }
 
 /// That a chamfer's or fillet's face `index` (from 0) of `count` wasn't
@@ -463,24 +456,17 @@ pub(crate) fn blend_refused(
     [edges, faces]: [usize; 2],
     body: &str,
 ) -> String {
-    let named = |index: usize, count: usize, what: &str| {
-        if count == 1 {
-            format!("its {what}")
-        } else {
-            format!("its {what} {}", index.saturating_add(1))
-        }
-    };
     let edge = match which {
-        Some((BlendSource::Edge(index), false)) => named(index, edges, "edge"),
+        Some((BlendSource::Edge(index), false)) => its("edge", index, edges),
         Some((BlendSource::Edge(index), true)) => {
-            format!("an edge in {}'s tangent chain", named(index, edges, "edge"))
+            format!("an edge in {}'s tangent chain", its("edge", index, edges))
         }
         Some((BlendSource::Face(index), false)) => {
-            format!("an edge of {}", named(index, faces, "face"))
+            format!("an edge of {}", its("face", index, faces))
         }
         Some((BlendSource::Face(index), true)) => format!(
             "an edge in the tangent chain of an edge of {}",
-            named(index, faces, "face")
+            its("face", index, faces)
         ),
         None => "an edge".to_owned(),
     };
@@ -511,11 +497,7 @@ pub(crate) fn blend_refused(
 /// Why the kernel couldn't chamfer or fillet, `blend`, the body named
 /// `body`.
 pub(crate) fn blending(blend: Blend, body: &str, error: KernelError) -> String {
-    let doing = blend.doing();
-    match error {
-        KernelError::TooComplex => format!("{doing} {body} is too complex to work out"),
-        error => failed(&format!("{doing} {body}"), error),
-    }
+    kernel_gave_up(&format!("{} {body}", blend.doing()), error)
 }
 
 /// Why a chamfer or fillet, `blend`, fails though the kernel did it to
@@ -528,14 +510,7 @@ pub(crate) fn blend_leaves_nothing(blend: Blend, body: &str) -> String {
 /// isn't found on its body as the features before it leave it (renamed
 /// or gone).
 pub(crate) fn shell_face_not_found(index: usize, count: usize) -> String {
-    if count == 1 {
-        "its open face wasn't found".to_owned()
-    } else {
-        format!(
-            "its open face {} of {count} wasn't found",
-            index.saturating_add(1)
-        )
-    }
+    not_found("open face", index, count)
 }
 
 /// What the kernel refuses to shell.
@@ -566,10 +541,7 @@ pub(crate) fn shell_refused(why: ShellRefusal, body: &str) -> String {
 
 /// Why the kernel couldn't shell the body named `body`.
 pub(crate) fn shelling(body: &str, error: KernelError) -> String {
-    match error {
-        KernelError::TooComplex => format!("shelling {body} is too complex to work out"),
-        error => failed(&format!("shelling {body}"), error),
-    }
+    kernel_gave_up(&format!("shelling {body}"), error)
 }
 
 /// Why a shell fails though the kernel shelled the body named `body`:
@@ -582,14 +554,7 @@ pub(crate) fn shell_leaves_nothing(body: &str) -> String {
 /// isn't found on its body as the features before it leave it (renamed
 /// or gone).
 pub(crate) fn offset_face_not_found(index: usize, count: usize) -> String {
-    if count == 1 {
-        "its face wasn't found".to_owned()
-    } else {
-        format!(
-            "its face {} of {count} wasn't found",
-            index.saturating_add(1)
-        )
-    }
+    not_found("face", index, count)
 }
 
 /// What the kernel refuses to offset.
@@ -638,12 +603,7 @@ pub(crate) fn offset_refused(why: OffsetRefusal, body: &str) -> String {
 
 /// Why the kernel couldn't offset faces of the body named `body`.
 pub(crate) fn offsetting(body: &str, error: KernelError) -> String {
-    match error {
-        KernelError::TooComplex => {
-            format!("offsetting faces of {body} is too complex to work out")
-        }
-        error => failed(&format!("offsetting faces of {body}"), error),
-    }
+    kernel_gave_up(&format!("offsetting faces of {body}"), error)
 }
 
 /// Why an offset face fails though the kernel moved faces of the body
@@ -746,10 +706,7 @@ pub(crate) const TAPER_TOO_COMPLEX: &str = "tapering its walls is too complex to
 
 /// Why the kernel couldn't draft faces of the body named `body`.
 pub(crate) fn drafting(body: &str, error: KernelError) -> String {
-    match error {
-        KernelError::TooComplex => format!("drafting faces of {body} is too complex to work out"),
-        error => failed(&format!("drafting faces of {body}"), error),
-    }
+    kernel_gave_up(&format!("drafting faces of {body}"), error)
 }
 
 /// Why a draft fails though the kernel drafted faces of the body named
@@ -758,10 +715,44 @@ pub(crate) fn draft_leaves_nothing(body: &str) -> String {
     format!("drafting faces of {body} leaves nothing of it")
 }
 
-/// The number of the section or rail `index` (from 0), as the messages
-/// count them, from 1.
+/// The number of the section, rail, edge or face `index` (from 0), as
+/// the messages count them, from 1.
 fn nth(index: usize) -> usize {
     index.saturating_add(1)
+}
+
+/// A feature's `what` `index` (from 0) of `count`: "its edge 2", or
+/// "its edge" with one.
+fn its(what: &str, index: usize, count: usize) -> String {
+    if count == 1 {
+        format!("its {what}")
+    } else {
+        format!("its {what} {}", nth(index))
+    }
+}
+
+/// That a feature's `what` `index` (from 0) of `count` wasn't found:
+/// "its edge 2 of 3 wasn't found", or "its edge wasn't found" with one.
+fn not_found(what: &str, index: usize, count: usize) -> String {
+    if count == 1 {
+        format!("its {what} wasn't found")
+    } else {
+        format!("its {what} {} of {count} wasn't found", nth(index))
+    }
+}
+
+/// That `doing` (such as "shelling Body 1") is too complex to work out.
+fn too_complex(doing: &str) -> String {
+    format!("{doing} is too complex to work out")
+}
+
+/// Why the kernel couldn't go on `doing` (such as "shelling Body 1"):
+/// too complex, or as [`failed`] says.
+fn kernel_gave_up(doing: &str, error: KernelError) -> String {
+    match error {
+        KernelError::TooComplex => too_complex(doing),
+        error => failed(doing, error),
+    }
 }
 
 /// Why a loft fails: its section `index` (from 0) isn't found in its
@@ -1200,14 +1191,7 @@ pub(crate) const PATH_EDGE_BODY_GONE: &str = "its path edge's body is gone";
 /// Why a sweep fails: the edge at `index` of an edge part of `count`
 /// edges wasn't found on its body.
 pub(crate) fn path_edge_not_found(index: usize, count: usize) -> String {
-    if count == 1 {
-        "its path edge wasn't found".to_owned()
-    } else {
-        format!(
-            "its path edge {} of {count} wasn't found",
-            index.saturating_add(1)
-        )
-    }
+    not_found("path edge", index, count)
 }
 
 /// Why a sweep fails: an edge part's chains don't make one chain.
