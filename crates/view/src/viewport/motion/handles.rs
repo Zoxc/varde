@@ -5,7 +5,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
+use iced::{Rectangle, mouse};
 use varde_document::{Axis3, MAX_COORD};
 use varde_expr::Unit;
 use varde_kernel_compat::Motion;
@@ -21,6 +21,7 @@ use crate::theme::SketchColors;
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::knobs;
 use crate::viewport::sketch::line;
+use crate::viewport::{local, local_cursor};
 use crate::{Look, Message};
 
 use crate::viewport::handle::{angle_step, wrapped};
@@ -618,13 +619,12 @@ impl<'a> Moving<'a> {
             input.drag = None;
             return None;
         };
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
             mouse::Event::CursorMoved { position } => {
                 if let Some(drag) = &mut input.drag {
                     // The raw position, so a drag goes on over the rest
                     // of the window.
-                    let message = self.drag(drag, &handles, local(position));
+                    let message = self.drag(drag, &handles, local(bounds, position));
                     return Some(
                         match message {
                             Some(look) => Action::publish(Message::Look(Look::Motion(look))),
@@ -633,7 +633,7 @@ impl<'a> Moving<'a> {
                         .and_capture(),
                     );
                 }
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 let grip = over.and_then(|at| handles.grip_at(at));
                 let changed = std::mem::replace(&mut input.hover, grip) != grip;
                 match grip {
@@ -650,7 +650,7 @@ impl<'a> Moving<'a> {
             }
             mouse::Event::CursorLeft => input.hover.take().map(|_| Action::request_redraw()),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 let grip = handles.grip_at(at)?;
                 input.drag = Some(self.grab(grip, &handles, at)?);
                 input.hover = Some(grip);
@@ -681,14 +681,8 @@ impl<'a> Moving<'a> {
             let knobs = &self.state.knobs;
             return knobs::redraw(knobs, &mut input.knobs, bounds, cursor, camera, hovered);
         }
-        let at = cursor.position_over(bounds);
-        let grip = (self.handles(input, camera, bounds)).and_then(|handles| {
-            let at = at?;
-            handles.grip_at(DVec2::new(
-                (at.x - bounds.x).into(),
-                (at.y - bounds.y).into(),
-            ))
-        });
+        let at = local_cursor(bounds, cursor);
+        let grip = (self.handles(input, camera, bounds)).and_then(|handles| handles.grip_at(at?));
         input.hover = grip;
         (grip.is_some() && hovered).then(|| Action::publish(Message::Look(Look::Hover(None))))
     }

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use iced::widget::shader::Program as _;
-use iced::{Event, Size};
+use iced::{Event, Point, Size};
 use varde_document::{OriginPlane, Plane};
 use varde_sketch::{Id, Profiles};
 

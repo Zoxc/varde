@@ -16,7 +16,7 @@
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
+use iced::{Rectangle, mouse};
 use varde_expr::LengthUnit;
 use varde_render::{Camera, SketchLayer};
 use varde_sketch::angle;
@@ -27,6 +27,7 @@ use crate::extrude::snap_step;
 use crate::motion::{KnobPath, KnobRadius, KnobSnap, MotionLook, OpKnob};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
+use crate::viewport::{local, local_cursor};
 use crate::{Look, Message};
 
 /// How many segments a whole turn of an arc's shaft and rail is drawn
@@ -231,14 +232,13 @@ pub(crate) fn mouse(
         input.clear();
         return None;
     }
-    let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
     let projector = projector(camera, bounds)?;
     match event {
         mouse::Event::CursorMoved { position } => {
             if let Some(drag) = &mut input.drag {
                 // The raw position, so a drag goes on over the rest of
                 // the window.
-                let look = dragged(drag, &projector, local(position), units);
+                let look = dragged(drag, &projector, local(bounds, position), units);
                 return Some(
                     match look {
                         Some(look) => Action::publish(Message::Look(Look::Motion(look))),
@@ -248,7 +248,7 @@ pub(crate) fn mouse(
                 );
             }
             let over = (cursor.position_over(bounds))
-                .and_then(|at| knob_under(knobs, &projector, local(at)));
+                .and_then(|at| knob_under(knobs, &projector, local(bounds, at)));
             let changed = std::mem::replace(&mut input.hover, over) != over;
             match (over, changed) {
                 (Some(_), _) if hovered => {
@@ -262,7 +262,7 @@ pub(crate) fn mouse(
         }
         mouse::Event::CursorLeft => input.hover.take().map(|_| Action::request_redraw()),
         mouse::Event::ButtonPressed(mouse::Button::Left) => {
-            let at = local(cursor.position_over(bounds)?);
+            let at = local_cursor(bounds, cursor)?;
             let index = knob_under(knobs, &projector, at)?;
             let knob = *knobs.get(index)?;
             let seen = shown(index, &knob, &projector)?;
@@ -304,10 +304,7 @@ pub(crate) fn redraw(
         return None;
     }
     let projector = projector(camera, bounds)?;
-    let over = cursor.position_over(bounds).and_then(|at| {
-        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
-        knob_under(knobs, &projector, at)
-    });
+    let over = local_cursor(bounds, cursor).and_then(|at| knob_under(knobs, &projector, at));
     input.hover = over;
     (over.is_some() && hovered).then(|| Action::publish(Message::Look(Look::Hover(None))))
 }

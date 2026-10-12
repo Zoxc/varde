@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
+use iced::{Rectangle, mouse};
 use varde_document::FeatureId;
 use varde_render::{Camera, SketchLayer, Space as LayerSpace};
 use varde_sketch::Id;
@@ -13,6 +13,7 @@ use super::{CURVE_WIDTH, Input, Moving};
 use crate::motion::{MotionLook, MotionPick, SketchLines, SweepView};
 use crate::operation_panel::PanelHover;
 use crate::theme::SketchColors;
+use crate::viewport::local_cursor;
 use crate::viewport::regions::{Regions, grid_plane};
 use crate::viewport::sketch::line;
 use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH, SketchHit, curve_under};
@@ -113,12 +114,11 @@ impl<'a> Moving<'a> {
         camera: &Camera,
     ) -> Option<Action<Message>> {
         let sweep = self.state.sweep.as_ref()?;
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         let regions = sweep_regions(sweep, None);
         let (redraw, input) = (&mut input.redraw, &mut input.sweep);
         match event {
             mouse::Event::CursorMoved { .. } => {
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 let (region, curve) = match picking {
                     MotionPick::Regions => (
                         over.and_then(|at| regions.region_under(at, camera, bounds)),
@@ -152,7 +152,7 @@ impl<'a> Moving<'a> {
             }
             mouse::Event::CursorLeft => input.leave().then(Action::request_redraw),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 let look = match picking {
                     MotionPick::Regions => {
                         let (sketch, region) = regions.region_under(at, camera, bounds)?;

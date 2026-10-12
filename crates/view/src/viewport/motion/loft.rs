@@ -4,7 +4,7 @@
 use glam::DVec2;
 use iced::widget::shader::Action;
 use iced::widget::{container, text};
-use iced::{Element, Point, Rectangle, mouse};
+use iced::{Element, Rectangle, mouse};
 use varde_document::{FeatureId, OriginPlane, Placement};
 use varde_render::{Camera, Colors, PointStyle, SketchLayer, Space as LayerSpace};
 use varde_sketch::Id;
@@ -21,6 +21,7 @@ use crate::viewport::sketch::{fill_region_in, line, srgba};
 use crate::viewport::sketch_pick::{
     Points, SELECTED_WIDTH, SketchHit, curve_under, loose, point_under,
 };
+use crate::viewport::{local, local_cursor};
 use crate::{Look, Message};
 
 use super::sweep::sweep_lines;
@@ -253,17 +254,17 @@ impl<'a> Moving<'a> {
             *input = SeamInput::default();
             return None;
         };
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
             mouse::Event::CursorMoved { position } => {
                 if let Some((section, sent)) = &mut input.drag {
                     let section = *section;
-                    let look = nearest_corner(loft, section, local(position), camera, bounds)
-                        .filter(|&point| *sent != Some(point))
-                        .map(|point| {
-                            *sent = Some(point);
-                            MotionLook::LoftStart { section, point }
-                        });
+                    let look =
+                        nearest_corner(loft, section, local(bounds, position), camera, bounds)
+                            .filter(|&point| *sent != Some(point))
+                            .map(|point| {
+                                *sent = Some(point);
+                                MotionLook::LoftStart { section, point }
+                            });
                     return Some(
                         match look {
                             Some(look) => Action::publish(Message::Look(Look::Motion(look))),
@@ -273,7 +274,7 @@ impl<'a> Moving<'a> {
                     );
                 }
                 let over = (cursor.position_over(bounds))
-                    .and_then(|at| self.seam_under(loft, local(at), camera, bounds));
+                    .and_then(|at| self.seam_under(loft, local(bounds, at), camera, bounds));
                 let was = std::mem::replace(&mut input.hover, over);
                 match (over, was != over) {
                     (Some(_), true) => Some(Action::request_redraw().and_capture()),
@@ -286,7 +287,7 @@ impl<'a> Moving<'a> {
                 input.hover.take().map(|_| Action::request_redraw())
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 let section = self.seam_under(loft, at, camera, bounds)?;
                 *input = SeamInput {
                     hover: Some(section),
@@ -362,10 +363,9 @@ impl<'a> Moving<'a> {
         camera: &Camera,
     ) -> Option<Action<Message>> {
         let loft = self.state.loft.as_ref()?;
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
             mouse::Event::CursorMoved { .. } => {
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 let under = over.map_or_else(LoftInput::default, |at| {
                     self.loft_under(loft, picking, at, camera, bounds)
                 });
@@ -376,7 +376,7 @@ impl<'a> Moving<'a> {
                 had.then(Action::request_redraw)
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 let under = self.loft_under(loft, picking, at, camera, bounds);
                 let look = if let Some((section, point)) = under.corner {
                     MotionLook::LoftStart { section, point }

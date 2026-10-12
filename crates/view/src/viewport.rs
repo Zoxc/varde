@@ -586,6 +586,16 @@ impl DragKind {
 }
 
 /// What a drag of `action` does, as a status bar hint says it: "Orbit".
+/// `p`, a point in the window, as a pixel from the viewport's top left.
+pub(super) fn local(bounds: Rectangle, p: Point) -> DVec2 {
+    DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into())
+}
+
+/// The cursor as a pixel from the viewport's top left, if it's over it.
+pub(super) fn local_cursor(bounds: Rectangle, cursor: mouse::Cursor) -> Option<DVec2> {
+    cursor.position_over(bounds).map(|p| local(bounds, p))
+}
+
 fn drag_said(action: DragAction) -> &'static str {
     match action {
         DragAction::Orbit => "Orbit",
@@ -899,7 +909,7 @@ impl Program<'_> {
         if picking.sketches.is_empty() {
             return None;
         }
-        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let at = local(bounds, at);
         let camera = &self.scene.camera;
         let hidden_by = self.sketching.is_none().then_some(picking.index);
         let hit = sketch_pick::item_under(&picking.sketches, at, camera, bounds, hidden_by)?;
@@ -937,7 +947,7 @@ impl Program<'_> {
         let Some(projector) = Projector::world(camera, bounds.width, bounds.height) else {
             return Vec::new();
         };
-        let pixel = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let pixel = local(bounds, at);
         let Some((from, direction)) = projector.ray(pixel) else {
             return Vec::new();
         };
@@ -968,7 +978,7 @@ impl Program<'_> {
     }
 
     fn pick_point(&self, picking: &ModelPicking<'_>, bounds: Rectangle, at: Point) -> Option<Pick> {
-        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let at = local(bounds, at);
         let size = [bounds.width, bounds.height];
         let camera = &self.scene.camera;
         let index = picking.index;
@@ -1043,7 +1053,7 @@ impl Program<'_> {
         state.held = None;
         let picking = self.picking.as_ref()?;
         let at = state.click?;
-        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let at = local(bounds, at);
         let size = [bounds.width, bounds.height];
         let mut picks = picking.index.overlaps(
             &self.scene.camera,
@@ -1101,7 +1111,7 @@ impl Program<'_> {
     /// The point on the model or grid at `at` in the viewport's `bounds`,
     /// if there's one there, to orbit about.
     fn pivot_at(&self, bounds: Rectangle, at: Point) -> Option<glam::Vec3> {
-        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let at = local(bounds, at);
         pivot::pick(
             &self.scene.mesh,
             &self.scene.camera,
@@ -1209,7 +1219,7 @@ impl Program<'_> {
                             None => Action::capture(),
                         });
                     }
-                    let local = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                    let local = local(bounds, at);
                     let double = sketch::double_click(&mut state.last_click, local);
                     let add = Held::TOGGLE.is_held(state.modifiers);
                     let message = match self.sketch_point(picking, bounds, at, pick) {
@@ -1227,7 +1237,7 @@ impl Program<'_> {
                 };
                 // The click that sets the point orbited about, as the
                 // settings have it.
-                let local = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                let local = local(bounds, at);
                 let sets = match self.mouse.pivot_click {
                     PivotClick::Middle => true,
                     PivotClick::MiddleDouble => sketch::double_click(&mut state.last_middle, local),

@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
+use iced::{Rectangle, mouse};
 use varde_document::{AxisLine, FeatureId};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::{Curve, Sketch};
@@ -43,6 +43,7 @@ use crate::revolve::{
     axis_reach,
 };
 use crate::theme::SketchColors;
+use crate::viewport::{local, local_cursor};
 use crate::{Look, Message};
 
 /// How wide the sketches' lines and axes are drawn while the axis is
@@ -118,17 +119,16 @@ impl<'a> Revolving<'a> {
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
             mouse::Event::CursorMoved { position } => {
                 if let Some(angle) = self.state.grabbed {
                     // The raw position, so a drag goes on over the rest of
                     // the window.
-                    let to = self.drag_to(angle, local(position), camera, bounds)?;
+                    let to = self.drag_to(angle, local(bounds, position), camera, bounds)?;
                     let look = RevolveLook::DragHandle { angle, to };
                     return Some(Action::publish(Message::Look(Look::Revolve(look))).and_capture());
                 }
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 let knob = over.and_then(|at| self.knob_at(at, camera, bounds));
                 if knob.is_some() {
                     let moved = std::mem::replace(&mut input.knob, knob) != knob;
@@ -170,7 +170,7 @@ impl<'a> Revolving<'a> {
                 Some(Action::publish(Message::Look(look)).and_capture())
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 if let Some(angle) = self.knob_at(at, camera, bounds) {
                     let look = RevolveLook::GrabHandle(angle);
                     return Some(Action::publish(Message::Look(Look::Revolve(look))).and_capture());

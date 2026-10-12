@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
+use iced::{Rectangle, mouse};
 use varde_document::MAX_COORD;
 use varde_render::{Camera, GridPlane, SketchLayer};
 
@@ -21,6 +21,7 @@ use crate::motion::KnobTone;
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
+use crate::viewport::{local, local_cursor};
 use crate::{Look, Message};
 
 /// The extrude being set up, as the viewport shows it.
@@ -105,17 +106,16 @@ impl<'a> Extruding<'a> {
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
             mouse::Event::CursorMoved { position } => {
                 if let Some(distance) = self.state.grabbed {
                     // The raw position, so a drag goes on over the rest of
                     // the window.
-                    let to = self.drag_to(local(position), camera, bounds)?;
+                    let to = self.drag_to(local(bounds, position), camera, bounds)?;
                     let look = ExtrudeLook::DragHandle { distance, to };
                     return Some(Action::publish(Message::Look(Look::Extrude(look))).and_capture());
                 }
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 let knob = over.and_then(|at| self.knob_at(at, camera, bounds));
                 let hover = over
                     .filter(|_| knob.is_none())
@@ -135,7 +135,7 @@ impl<'a> Extruding<'a> {
                 had.then(Action::request_redraw)
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 if let Some(distance) = self.knob_at(at, camera, bounds) {
                     let look = ExtrudeLook::GrabHandle(distance);
                     return Some(Action::publish(Message::Look(Look::Extrude(look))).and_capture());

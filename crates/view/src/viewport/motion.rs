@@ -70,6 +70,7 @@ use crate::anchors::Anchors;
 use crate::motion::{MotionField, MotionKind, MotionState, SplitMode};
 use crate::operation_panel::PanelHover;
 use crate::theme::{self, SketchColors};
+use crate::viewport::local_cursor;
 use handles::{Drag, Grip, draw_handles};
 use loft::{LoftInput, SeamInput, loft_labels};
 use marks::scale_marks;
@@ -389,9 +390,7 @@ impl<'a> Moving<'a> {
     ) -> Option<Action<Message>> {
         input.settle(self.state.kind, !self.state.knobs.is_empty());
         self.leave_unpicked(input);
-        let at = cursor
-            .position_over(bounds)
-            .map(|p| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into()));
+        let at = local_cursor(bounds, cursor);
         if let Some(mode) = self.split_picking() {
             return (self.split_hover(mode, &mut input.split, at, camera, bounds))
                 .then(Action::request_redraw);

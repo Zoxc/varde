@@ -2,7 +2,7 @@
 
 use glam::DVec2;
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
+use iced::{Rectangle, mouse};
 use varde_document::FeatureId;
 use varde_render::{Camera, SketchLayer, Space as LayerSpace};
 use varde_sketch::Id;
@@ -10,6 +10,7 @@ use varde_sketch::Id;
 use super::{CURVE_WIDTH, Moving};
 use crate::motion::{MotionLook, MotionPick, SplitMode, SplitView};
 use crate::theme::SketchColors;
+use crate::viewport::local_cursor;
 use crate::viewport::regions::{self, Regions, grid_plane};
 use crate::viewport::sketch::line;
 use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH, SketchHit, curve_under};
@@ -165,17 +166,16 @@ impl<'a> Moving<'a> {
         camera: &Camera,
     ) -> Option<Action<Message>> {
         let split = self.state.split.as_ref()?;
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         let regions = split_regions(split);
         match event {
             mouse::Event::CursorMoved { .. } => {
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 self.split_hover(mode, input, over, camera, bounds)
                     .then(Action::request_redraw)
             }
             mouse::Event::CursorLeft => input.leave().then(Action::request_redraw),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local(cursor.position_over(bounds)?);
+                let at = local_cursor(bounds, cursor)?;
                 let look = match mode {
                     SplitMode::Regions => {
                         let (sketch, region) = regions.region_under(at, camera, bounds)?;

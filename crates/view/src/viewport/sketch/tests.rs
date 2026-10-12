@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use varde_sketch::Selectable;
 
-use iced::Size;
+use iced::{Point, Size};
 use iced::widget::shader::Program as _;
 use varde_document::OriginPlane;
 use varde_sketch::{Curve, Measure, Side};

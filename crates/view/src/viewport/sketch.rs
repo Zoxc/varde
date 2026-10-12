@@ -17,7 +17,7 @@ use iced::mouse;
 use iced::time::{Duration, Instant};
 use iced::widget::shader::Action;
 use iced::widget::{MouseArea, column, container, mouse_area, row, text};
-use iced::{Alignment, Color, Element, Event, Padding, Point, Rectangle, Vector};
+use iced::{Alignment, Color, Element, Event, Padding, Rectangle, Vector};
 use varde_document::{MAX_COORD, Placement};
 use varde_expr::LengthUnit;
 use varde_kernel_compat::RenderLines;
@@ -35,6 +35,7 @@ use crate::shortcut::Held;
 use crate::snap::{self, Snap};
 use crate::theme::{self, SketchColors};
 use crate::typed::{self, Field};
+use crate::viewport::{local, local_cursor};
 use crate::{
     ActiveTool, ConstraintKind, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField,
     ValueTarget, dimension, icons, panels,
@@ -551,19 +552,24 @@ impl<'a> Sketching<'a> {
         projector: &Projector,
         modifiers: Modifiers,
     ) -> Option<Action<Message>> {
-        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
             mouse::Event::CursorMoved { position } => {
-                let over = cursor.position_over(bounds).map(local);
+                let over = local_cursor(bounds, cursor);
                 input.cursor = over;
-                let previous = input.pointer.replace(local(position));
+                let previous = input.pointer.replace(local(bounds, position));
                 if let Some((id, _)) = self.label_drag {
-                    return self.drag_label(input, id, previous, local(position), projector);
+                    return self.drag_label(
+                        input,
+                        id,
+                        previous,
+                        local(bounds, position),
+                        projector,
+                    );
                 }
                 if let Some(press) = &mut input.press {
                     // The raw position, so a drag goes on over the rest of
                     // the window.
-                    return self.drag(press, local(position), projector, modifiers);
+                    return self.drag(press, local(bounds, position), projector, modifiers);
                 }
                 let under = over.and_then(|at| projector.cursor(at));
                 let hover = under.and_then(|cursor| self.hit(cursor));
@@ -586,7 +592,7 @@ impl<'a> Sketching<'a> {
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let position = cursor.position_over(bounds)?;
-                let from = local(position);
+                let from = local(bounds, position);
                 let under = projector.cursor(from);
                 if self.releases() {
                     input.releasing = true;
@@ -637,7 +643,7 @@ impl<'a> Sketching<'a> {
                 if std::mem::take(&mut input.releasing) {
                     let under = cursor
                         .position_over(bounds)
-                        .and_then(|at| projector.cursor(local(at)));
+                        .and_then(|at| projector.cursor(local(bounds, at)));
                     let message = under.map(|cursor| {
                         Message::Edit(Edit::ToolClick(self.click(cursor, modifiers)))
                     });
@@ -946,7 +952,7 @@ impl<'a> Sketching<'a> {
         self.tool?;
         let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height)?;
         let at = cursor.position_over(bounds)?;
-        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let at = local(bounds, at);
         Some(
             self.point_to(input, projector.cursor(at), modifiers)
                 .unwrap_or_else(Action::request_redraw),
