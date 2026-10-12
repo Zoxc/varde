@@ -225,11 +225,41 @@ async fn take_sidecar_to_write<D: Dir>(
 /// What a save failing with `error` says: browser storage running out of
 /// room is told plainly, as it's the user's to make room.
 pub(crate) fn save_error(error: FileError) -> SaveError {
+    write_error(error).into()
+}
+
+/// Why [`write()`] failed, with browser storage running out of room told
+/// by its kind until it's worded, see [`save_error`].
+#[derive(Debug)]
+enum WriteError {
+    /// A file of the name is there already, see [`SaveError::Taken`].
+    Taken,
+    /// Browser storage is out of room.
+    Full,
+    Other(SaveError),
+}
+
+/// What writing failing with `error` is.
+fn write_error(error: FileError) -> WriteError {
     match error {
-        FileError::Io(e) if e.kind() == io::ErrorKind::StorageFull => {
-            SaveError::Failed(FULL.to_owned())
+        FileError::Io(e) if e.kind() == io::ErrorKind::StorageFull => WriteError::Full,
+        error => WriteError::Other(error.into()),
+    }
+}
+
+impl From<SaveError> for WriteError {
+    fn from(error: SaveError) -> WriteError {
+        WriteError::Other(error)
+    }
+}
+
+impl From<WriteError> for SaveError {
+    fn from(error: WriteError) -> SaveError {
+        match error {
+            WriteError::Taken => SaveError::Taken,
+            WriteError::Full => SaveError::Failed(FULL.to_owned()),
+            WriteError::Other(error) => error,
         }
-        error => error.into(),
     }
 }
 
@@ -289,6 +319,7 @@ pub(crate) async fn save_as<D: Dir>(
             write_new(file, document, previews)
         })
         .await
+        .map_err(SaveError::from)
     };
     match written {
         Ok(known) => {
@@ -334,19 +365,19 @@ pub(crate) async fn save_over<D: Dir>(
 /// `overwrite`: written whole under a temporary name, made durable, then
 /// put in place, so that the design there is never half written, nor
 /// replaced by one that is. A file `name` there already, unless it's
-/// replaced, is [`SaveError::Taken`]. The caller holds the design's
+/// replaced, is [`WriteError::Taken`]. The caller holds the design's
 /// sidecar throughout, see the module docs. Returns what `fill` does.
 async fn write<D: Dir, T>(
     dir: &D,
     name: &str,
     overwrite: bool,
     fill: impl FnOnce(&mut D::File) -> Result<T, FileError>,
-) -> Result<T, SaveError> {
+) -> Result<T, WriteError> {
     let temp = temp_name(name, random()?);
     let mut file = dir
         .take(&temp, Make::New)
         .await
-        .map_err(|e| save_error(e.into()))?;
+        .map_err(|e| write_error(e.into()))?;
     let written = fill(&mut file).and_then(|filled| {
         file.sync()?;
         Ok(filled)
@@ -356,7 +387,7 @@ async fn write<D: Dir, T>(
         Ok(filled) => filled,
         Err(error) => {
             let _ = dir.remove(&temp).await;
-            return Err(save_error(error));
+            return Err(write_error(error));
         }
     };
     if overwrite {
@@ -365,7 +396,7 @@ async fn write<D: Dir, T>(
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => {
                 let _ = dir.remove(&temp).await;
-                return Err(SaveError::Failed(read_error(name, &e)));
+                return Err(SaveError::Failed(read_error(name, &e)).into());
             }
         }
     }
@@ -373,13 +404,13 @@ async fn write<D: Dir, T>(
         Ok(()) => Ok(filled),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             let _ = dir.remove(&temp).await;
-            Err(SaveError::Taken)
+            Err(WriteError::Taken)
         }
         // The design replaced is gone: listing puts this in its place.
-        Err(e) if overwrite => Err(save_error(e.into())),
+        Err(e) if overwrite => Err(write_error(e.into())),
         Err(e) => {
             let _ = dir.remove(&temp).await;
-            Err(save_error(e.into()))
+            Err(write_error(e.into()))
         }
     }
 }
@@ -528,7 +559,7 @@ pub(crate) async fn copy_in<D: Dir>(
         Ok(names) => names,
         Err(e) => {
             return Err(Box::new((
-                copy_error(&SaveError::from(FileError::Io(e))),
+                copy_error(WriteError::Other(FileError::Io(e).into())),
                 read,
             )));
         }
@@ -558,7 +589,7 @@ pub(crate) async fn copy_in<D: Dir>(
             }
             Err(e) => {
                 return Err(Box::new((
-                    copy_error(&SaveError::from(FileError::Io(e))),
+                    copy_error(WriteError::Other(FileError::Io(e).into())),
                     read,
                 )));
             }
@@ -569,13 +600,13 @@ pub(crate) async fn copy_in<D: Dir>(
         .await;
         match written {
             Ok(()) => return Ok(opened(&name, bytes, read, Ok(sidecar))),
-            Err(SaveError::Taken) => {
+            Err(WriteError::Taken) => {
                 let _ = end(dir, &name, sidecar, Ending::Release).await;
                 tried.push(name);
             }
             Err(error) => {
                 let _ = end(dir, &name, sidecar, Ending::Release).await;
-                return Err(Box::new((copy_error(&error), read)));
+                return Err(Box::new((copy_error(error), read)));
             }
         }
     }
@@ -590,11 +621,13 @@ pub(crate) async fn copy_in<D: Dir>(
 pub(crate) type NotCopied = Box<(String, WithFound)>;
 
 /// What copying a file into browser storage failing with `error` says.
-fn copy_error(error: &SaveError) -> String {
+fn copy_error(error: WriteError) -> String {
     match error {
-        SaveError::Failed(full) if full == FULL => FULL.to_owned(),
-        SaveError::Failed(error) => format!("couldn't copy it into browser storage: {error}"),
-        error => format!("couldn't copy it into browser storage: {error}"),
+        WriteError::Full => FULL.to_owned(),
+        error => format!(
+            "couldn't copy it into browser storage: {}",
+            SaveError::from(error)
+        ),
     }
 }
 
