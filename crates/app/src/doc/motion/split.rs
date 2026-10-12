@@ -421,8 +421,7 @@ impl Doc {
     /// Takes `pick` as the tool of the split being set up, handing the
     /// clicks on to nothing (the preview shows), or says why it can't be.
     pub(super) fn split_tool(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        (self.on_shown_session(|doc, session, index| doc.pick_split_tool(session, index, pick)))?
-            .unwrap_or(Ok(()))
+        self.on_shown_pick(|doc, session, index| doc.pick_split_tool(session, index, pick))
     }
 
     /// Takes `pick` of `index`'s model as the tool of the split

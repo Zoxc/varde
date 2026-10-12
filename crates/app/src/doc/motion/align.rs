@@ -663,8 +663,7 @@ impl Doc {
         slot: AlignSlot,
         pick: Pick,
     ) -> Result<(), Cow<'static, str>> {
-        (self.on_shown_session(|doc, session, index| doc.pick_align(session, index, slot, pick)))?
-            .unwrap_or(Ok(()))
+        self.on_shown_pick(|doc, session, index| doc.pick_align(session, index, slot, pick))
     }
 
     /// Takes `pick` of `index`'s model as `slot` of `session`, as

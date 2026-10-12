@@ -295,8 +295,7 @@ impl Doc {
     /// Takes `pick` as the point of the scale being set up, handing the
     /// clicks back to the bodies, or says why it can't be.
     pub(super) fn scale_point(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        (self.on_shown_session(|doc, session, index| doc.pick_scale_point(session, index, pick)))?
-            .unwrap_or(Ok(()))
+        self.on_shown_pick(|doc, session, index| doc.pick_scale_point(session, index, pick))
     }
 
     /// Takes `pick` of `index`'s model as the point of `session`, as
@@ -324,8 +323,7 @@ impl Doc {
     /// the one scaled if none is yet), handing the clicks back to the
     /// bodies, or says why it can't be.
     pub(super) fn scale_edge(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        (self.on_shown_session(|doc, session, index| doc.pick_scale_edge(session, index, pick)))?
-            .unwrap_or(Ok(()))
+        self.on_shown_pick(|doc, session, index| doc.pick_scale_edge(session, index, pick))
     }
 
     /// Takes `pick` of `index`'s model as the edge of `session`, as

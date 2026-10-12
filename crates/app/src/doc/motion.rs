@@ -2102,7 +2102,7 @@ impl Doc {
     /// Runs `f` on the session being set up ([`Doc::on_session`]) with
     /// the model shown's pick index, for a click on it; refused while
     /// that model is out of date ([`Doc::shows_requested`]).
-    pub(super) fn on_shown_session<T>(
+    fn on_shown_session<T>(
         &mut self,
         f: impl FnOnce(&Doc, &mut MotionSession, &PickIndex) -> T,
     ) -> Result<Option<T>, Cow<'static, str>> {
@@ -2110,6 +2110,16 @@ impl Doc {
             return Err(OUT_OF_DATE.into());
         }
         Ok(self.on_session(|doc, session| f(doc, session, doc.feed.pick_index())))
+    }
+
+    /// Takes a click on the model shown into the session being set up by
+    /// `take` ([`Doc::on_shown_session`]); a click with nothing set up
+    /// does nothing.
+    pub(super) fn on_shown_pick(
+        &mut self,
+        take: impl FnOnce(&Doc, &mut MotionSession, &PickIndex) -> Result<(), Cow<'static, str>>,
+    ) -> Result<(), Cow<'static, str>> {
+        self.on_shown_session(take)?.unwrap_or(Ok(()))
     }
 
     /// Runs `f` on the session being set up, taken out of the document
