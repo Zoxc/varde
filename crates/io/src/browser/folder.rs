@@ -55,6 +55,16 @@ fn temp_of(name: &str) -> Option<&str> {
     (hex && is_design_name(design)).then_some(design)
 }
 
+/// Refuses `name` unless it's a design's file name in browser storage:
+/// what each entry point checks first.
+fn check_design_name(name: &str) -> Result<(), String> {
+    if is_design_name(name) {
+        Ok(())
+    } else {
+        Err(format!("{name} isn't a design's name in browser storage"))
+    }
+}
+
 /// How many names [`copy_name`] tries: `name`, then `name (2)` up to this.
 const COPIES: u32 = 999;
 
@@ -148,9 +158,7 @@ fn based_past(bytes: &[u8], opened: Tail, base: Tail) -> bool {
 /// read-only if another tab holds it. Another tab saving in between is
 /// caught by the next save's check, as natively.
 pub(crate) async fn open<D: Dir>(dir: &D, name: &str) -> Result<Opened<D::File>, String> {
-    if !is_design_name(name) {
-        return Err(format!("{name} isn't a design in browser storage"));
-    }
+    check_design_name(name)?;
     let bytes = dir
         .read(name, MAX_MESSAGE_BYTES)
         .await
@@ -304,11 +312,7 @@ pub(crate) async fn save_as<D: Dir>(
     document: &Document,
     previews: &[Preview],
 ) -> Result<Design<D::File>, SaveError> {
-    if !is_design_name(name) {
-        return Err(SaveError::Failed(format!(
-            "{name} isn't a design's name in browser storage"
-        )));
-    }
+    check_design_name(name).map_err(SaveError::Failed)?;
     let sidecar = take_sidecar_to_write(dir, name, || format!("{name} is open elsewhere"))
         .await
         .map_err(SaveError::Failed)?;
@@ -433,9 +437,7 @@ pub(crate) async fn rename<D: Dir>(
     design: &mut Design<D::File>,
     to: &str,
 ) -> Result<(), String> {
-    if !is_design_name(to) {
-        return Err(format!("{to} isn't a design's name in browser storage"));
-    }
+    check_design_name(to)?;
     if to == design.name {
         return Ok(());
     }
@@ -519,9 +521,7 @@ pub(crate) fn ending_for_saved_as<F: Storage>(design: &Design<F>) -> Ending {
 /// Deletes the design `name` and its sidecar, refused while it's open,
 /// in this tab (as `held` says) or another.
 pub(crate) async fn delete<D: Dir>(dir: &D, name: &str, held: bool) -> Result<(), String> {
-    if !is_design_name(name) {
-        return Err(format!("{name} isn't a design in browser storage"));
-    }
+    check_design_name(name)?;
     let open_elsewhere = || format!("{name} is open, so it can't be deleted");
     if held {
         return Err(open_elsewhere());
@@ -842,9 +842,7 @@ async fn listed<D: Dir>(dir: &D, name: &str, downloads: &Downloads, held: bool) 
 /// The whole file of the design `name`, as it's saved, to download, and
 /// the sum of its newest save, which the download is recorded by.
 pub(crate) async fn read_whole<D: Dir>(dir: &D, name: &str) -> Result<(Vec<u8>, u128), String> {
-    if !is_design_name(name) {
-        return Err(format!("{name} isn't a design in browser storage"));
-    }
+    check_design_name(name)?;
     let bytes = dir
         .read(name, MAX_MESSAGE_BYTES)
         .await
