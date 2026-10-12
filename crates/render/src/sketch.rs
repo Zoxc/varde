@@ -79,9 +79,7 @@ impl Space {
         let (xy, z) = match self {
             Space::Sketch | Space::Screen => (at, 0.0),
             Space::On(plane) => {
-                let world = plane.origin().as_dvec3()
-                    + plane.x().as_dvec3() * at.x
-                    + plane.y().as_dvec3() * at.y;
+                let world = plane.point_at(at);
                 (world.truncate(), world.z)
             }
         };
@@ -235,38 +233,35 @@ impl SketchLayer {
 
     /// [`Self::polyline`] with `flags` too.
     fn polyline_flagged(&mut self, space: Space, flags: u32, points: &[DVec2], style: LineStyle) {
-        if !(visible(style.width) && points.iter().all(|p| p.is_finite())) {
-            return;
-        }
-        let mut points = points.to_vec();
-        points.dedup();
-        if points.len() < 2 {
-            return;
-        }
-        let Some(placed) = points
-            .iter()
-            .map(|&p| space.place(p))
-            .collect::<Option<Vec<_>>>()
-        else {
-            return;
-        };
-        let closed = points.len() > 3 && points.first() == points.last();
-        let lengths = points.windows(2).map(|pair| pair[0].distance(pair[1]));
-        self.push_lines(
-            space.flags() | flags,
-            &placed,
-            lengths,
-            closed,
-            style,
-            |_| 1.0,
-        );
+        let place = |p: DVec2| p.is_finite().then(|| space.place(p)).flatten();
+        let length = |a: DVec2, b: DVec2| a.distance(b);
+        self.push_polyline(space.flags() | flags, points, place, length, style);
     }
 
     /// Adds the polyline through the world `points`, as [`Self::polyline`]
     /// adds one in [`Space::On`]: for what's drawn on the model in
     /// the world, such as a measured distance.
     pub fn world_polyline(&mut self, points: &[Vec3], style: LineStyle) {
-        if !(visible(style.width) && points.iter().all(|p| p.is_finite())) {
+        let place = |p: Vec3| p.is_finite().then(|| (p.truncate().as_dvec2(), p.z));
+        let length = |a: Vec3, b: Vec3| f64::from(a.distance(b));
+        self.push_polyline(WORLD, points, place, length, style);
+    }
+
+    /// Adds the polyline through `points`, flagged `flags`, each placed
+    /// for the GPU by `place` and each segment as long as `length` says:
+    /// nothing if the line isn't visible or a point can't be placed
+    /// (`place` gives `None`), a point repeating the one before it
+    /// dropped, closed if it has more than three points and ends where it
+    /// starts.
+    fn push_polyline<P: Copy + PartialEq>(
+        &mut self,
+        flags: u32,
+        points: &[P],
+        place: impl Fn(P) -> Option<(DVec2, f32)>,
+        length: impl Fn(P, P) -> f64,
+        style: LineStyle,
+    ) {
+        if !visible(style.width) {
             return;
         }
         let mut points = points.to_vec();
@@ -274,12 +269,12 @@ impl SketchLayer {
         if points.len() < 2 {
             return;
         }
-        let placed: Vec<_> = (points.iter())
-            .map(|p| (p.truncate().as_dvec2(), p.z))
-            .collect();
+        let Some(placed) = points.iter().map(|&p| place(p)).collect::<Option<Vec<_>>>() else {
+            return;
+        };
         let closed = points.len() > 3 && points.first() == points.last();
-        let lengths = (points.windows(2)).map(|pair| f64::from(pair[0].distance(pair[1])));
-        self.push_lines(WORLD, &placed, lengths, closed, style, |_| 1.0);
+        let lengths = points.windows(2).map(|pair| length(pair[0], pair[1]));
+        self.push_lines(flags, &placed, lengths, closed, style, |_| 1.0);
     }
 
     /// Adds the polyline through `points` in `space`, as
@@ -382,35 +377,35 @@ impl SketchLayer {
     /// Adds a point at the sketch point `at`, unless `at` isn't finite.
     /// A rim wider than the radius fills it.
     pub fn point(&mut self, at: DVec2, style: PointStyle) {
-        if !(visible(style.radius) && at.is_finite()) {
-            return;
+        if at.is_finite() {
+            self.push_point(at.as_vec2().to_array(), 0.0, 0, style);
         }
-        let fill = if style.fixed { style.rim } else { style.fill };
-        self.points.push(PointInstance {
-            at: at.as_vec2().to_array(),
-            size: [style.radius, style.rim_width],
-            rim: style.rim.linear(),
-            fill: fill.linear(),
-            z: 0.0,
-            flags: 0,
-        });
     }
 
     /// Adds a point at the world point `at`, as [`Self::point`] adds one
     /// at a sketch point: for points on the model, such as the measure
     /// tool's. Nothing is added where `at` isn't finite in `f32`.
     pub fn world_point(&mut self, at: Vec3, style: PointStyle) {
-        if !(visible(style.radius) && at.is_finite()) {
+        if at.is_finite() {
+            self.push_point(at.truncate().to_array(), at.z, WORLD, style);
+        }
+    }
+
+    /// Adds a point at `at` and `z` as the GPU takes them, flagged
+    /// `flags`, unless it isn't visible: a fixed one filled in its rim's
+    /// colour.
+    fn push_point(&mut self, at: [f32; 2], z: f32, flags: u32, style: PointStyle) {
+        if !visible(style.radius) {
             return;
         }
         let fill = if style.fixed { style.rim } else { style.fill };
         self.points.push(PointInstance {
-            at: at.truncate().to_array(),
+            at,
             size: [style.radius, style.rim_width],
             rim: style.rim.linear(),
             fill: fill.linear(),
-            z: at.z,
-            flags: WORLD,
+            z,
+            flags,
         });
     }
 
@@ -472,10 +467,9 @@ impl SketchLayer {
     /// when it's depth tested.
     pub(crate) fn bounds(&self, plane: &GridPlane) -> Option<Aabb> {
         let on_plane = |x: f32, y: f32| {
-            let at = plane.origin().as_dvec3()
-                + plane.x().as_dvec3() * f64::from(x)
-                + plane.y().as_dvec3() * f64::from(y);
-            at.as_vec3()
+            plane
+                .point_at(DVec2::new(f64::from(x), f64::from(y)))
+                .as_vec3()
         };
         let world = |x: f32, y: f32, z: f32, flags: u32| {
             if flags & SCREEN != 0 {

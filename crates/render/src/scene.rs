@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use glam::{Mat4, Vec3};
+use glam::{DVec2, DVec3, Mat4, Vec3};
 
 use varde_kernel_compat::Aabb;
 
@@ -63,6 +63,11 @@ impl GridPlane {
     /// `x × y`, the side the plane is seen from.
     pub fn normal(&self) -> Vec3 {
         self.x.cross(self.y)
+    }
+
+    /// The world point at `at` in the plane's coordinates, in `f64`.
+    pub(crate) fn point_at(&self, at: DVec2) -> DVec3 {
+        self.origin.as_dvec3() + self.x.as_dvec3() * at.x + self.y.as_dvec3() * at.y
     }
 
     /// The point of the plane nearest `point`.
