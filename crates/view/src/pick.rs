@@ -25,6 +25,7 @@ use varde_kernel_compat::mesh::FaceKey;
 use varde_regen::{Bvh, BvhNode, PickTables, Picking, Summary, vertex_runs};
 use varde_render::{Camera, Highlights, Vertex};
 
+use crate::hit::{segment_distance_3d, segment_nearest};
 use crate::projection::Projector;
 
 /// How near the cursor an edge must show to be picked, in pixels.
@@ -1194,18 +1195,6 @@ fn segment(mesh: &RenderMesh, start: u32) -> Option<[Vec3; 2]> {
     Some([position(mesh, ends[0]), position(mesh, ends[1])])
 }
 
-/// How far `p` is from the segment from `a` to `b`.
-fn segment_distance_3d(p: DVec3, a: DVec3, b: DVec3) -> f64 {
-    let ab = b - a;
-    let length = ab.length_squared();
-    let s = if length > 0.0 {
-        ((p - a).dot(ab) / length).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    p.distance(a + ab * s)
-}
-
 /// How far `p` is from the triangle `[a, b, c]`: from the plane it's
 /// in, where `p` is over it, otherwise from its nearest side.
 fn triangle_distance(p: DVec3, [a, b, c]: [DVec3; 3]) -> f64 {
@@ -1238,7 +1227,7 @@ fn shown_near(
 ) -> Option<(f64, DVec3)> {
     let (a, b) = projector.in_front(a, b)?;
     let (pa, pb) = (projector.show(a), projector.show(b));
-    let (distance, s) = segment_distance(at, pa, pb);
+    let (distance, s) = segment_nearest(at, pa, pb);
     if distance.is_nan() || distance > reach {
         return None;
     }
@@ -1256,19 +1245,6 @@ fn shown_near(
         s
     };
     Some((distance, a + (b - a) * u.clamp(0.0, 1.0)))
-}
-
-/// How far `p` is from the segment from `a` to `b`, and where along it
-/// the nearest point is, as a fraction of the way from `a`.
-fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> (f64, f64) {
-    let ab = b - a;
-    let length = ab.length_squared();
-    let s = if length > 0.0 {
-        ((p - a).dot(ab) / length).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    (p.distance(a + ab * s), s)
 }
 
 /// How far along the ray from `origin` along `direction` it meets the

@@ -2,7 +2,7 @@
 //! a box dragged on the screen selects. Pure functions, so they're tested
 //! without a window.
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use varde_sketch::{Curve, Id, Selectable, Sketch};
 
 use crate::projection::Projector;
@@ -199,14 +199,30 @@ fn handle_ends(sketch: &Sketch, at: DVec2) -> Vec<(Selectable, f64)> {
 
 /// How far `p` is from the segment from `a` to `b`.
 pub(crate) fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+    segment_nearest(p, a, b).0
+}
+
+/// How far `p` is from the segment from `a` to `b`, and where along it
+/// the nearest point is, as a fraction of the way from `a`.
+pub(crate) fn segment_nearest(p: DVec2, a: DVec2, b: DVec2) -> (f64, f64) {
+    segment_nearest_3d(p.extend(0.0), a.extend(0.0), b.extend(0.0))
+}
+
+/// [`segment_distance`] in space.
+pub(crate) fn segment_distance_3d(p: DVec3, a: DVec3, b: DVec3) -> f64 {
+    segment_nearest_3d(p, a, b).0
+}
+
+/// [`segment_nearest`] in space.
+fn segment_nearest_3d(p: DVec3, a: DVec3, b: DVec3) -> (f64, f64) {
     let ab = b - a;
     let length = ab.length_squared();
-    let t = if length > 0.0 {
+    let s = if length > 0.0 {
         ((p - a).dot(ab) / length).clamp(0.0, 1.0)
     } else {
         0.0
     };
-    p.distance(a + ab * t)
+    (p.distance(a + ab * s), s)
 }
 
 /// What a box dragged on the screen selects.
