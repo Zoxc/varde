@@ -7,9 +7,10 @@ use std::collections::{HashMap, HashSet};
 use serde::de::IgnoredAny;
 use xxhash_rust::xxh3::xxh3_128;
 
+use super::check::{Found, block_at};
 use super::{
     BACK_LEN, BLOCK_OVERHEAD, Block, DamagedRecord, Error, FILE_HEADER_LEN, FileType, FoundRecord,
-    Opened, Outcome, Payload, Report, Result, TAG_LEN_AT, back_is, check_file_header,
+    Opened, Outcome, Payload, ReadAt, Report, Result, TAG_LEN_AT, back_is, check_file_header,
     decode_record, decompress, header_id, intact, len_fits, stored_at, stored_before, tag_len_of,
     u64_at, unchecked_record,
 };
@@ -110,18 +111,20 @@ impl Chain {
                     break;
                 }
                 None => {
-                    let bridge = header_at(bytes, at, prev).and_then(|header| {
-                        // Within `bytes`, so exact.
-                        let next = intact_at(bytes, header.end as usize, chain.id)?;
-                        (next.prev == header.sum).then_some((header, next))
-                    });
-                    let Some((header, next)) = bridge else {
+                    // `usize` is at most 64 bits wide, so exact.
+                    let (start, len) = (at as u64, bytes.len() as u64);
+                    let Some(Bridge {
+                        header,
+                        next,
+                        record,
+                    }) = bridge(bytes, start, len, chain.id, prev, ty)?
+                    else {
                         chain.damaged(bytes, ty, at, sums, stepped);
                         break;
                     };
                     let (_, unreadable) = stepped.get_or_insert((header.start, 0));
                     *unreadable += header.end - header.start;
-                    if framed_record(bytes, &header, ty) {
+                    if record {
                         newest_damaged = Some(header.into());
                         chain.stepped_over(stepped.take());
                     }
@@ -291,11 +294,11 @@ fn intact_at(bytes: &[u8], at: usize, id: u128) -> Option<Block> {
 /// A block by its intact header, whatever its kind and whether or not
 /// the rest of it is intact: where it is and the `sum` its header holds.
 #[derive(Debug, Clone, Copy)]
-struct Header {
-    start: u64,
+pub(super) struct Header {
+    pub(super) start: u64,
     /// The offset just past it, by its header's `len`, within the file.
-    end: u64,
-    sum: u128,
+    pub(super) end: u64,
+    pub(super) sum: u128,
 }
 
 impl From<Header> for DamagedRecord {
@@ -321,6 +324,56 @@ fn header_at(bytes: &[u8], at: usize, prev: u128) -> Option<Header> {
         end,
         sum: stored.sum,
     })
+}
+
+/// A damaged block stepped over by its header to the intact block after
+/// it, see [`bridge`].
+pub(super) struct Bridge {
+    pub(super) header: Header,
+    /// The intact block its header leads to.
+    pub(super) next: Block,
+    /// Whether it's framed like a record, see [`framed_record`].
+    pub(super) record: bool,
+}
+
+/// The damaged block at `at` in `file`, a file of type `ty` with `id`
+/// that's `len` bytes long, if it's stepped over by its header: that's
+/// intact, see [`header_at`], and the block its `len` leads to is intact
+/// with the stored `sum` as its `prev`. Reading and the check before a
+/// save both step over damage by this one rule.
+pub(super) fn bridge(
+    file: &(impl ReadAt + ?Sized),
+    at: u64,
+    len: u64,
+    id: u128,
+    prev: u128,
+    ty: FileType,
+) -> Result<Option<Bridge>> {
+    let Some(stored) = stored_at(file, at, len)? else {
+        return Ok(None);
+    };
+    let Some(end) = stored.end.filter(|&end| end <= len && stored.prev == prev) else {
+        return Ok(None);
+    };
+    let header = Header {
+        start: at,
+        end,
+        sum: stored.sum,
+    };
+    let next = match block_at(file, end, len, id)? {
+        Found::Intact(next) if next.prev == header.sum => next,
+        _ => return Ok(None),
+    };
+    let mut back = [0; BACK_LEN];
+    // The block is within the file, and longer than this.
+    file.read_at(&mut back, end - BACK_LEN as u64)?;
+    // Its `len` is within bounds, so exact.
+    let record = back_is(&back, end - at - BLOCK_OVERHEAD, &ty.record());
+    Ok(Some(Bridge {
+        header,
+        next,
+        record,
+    }))
 }
 
 /// Whether `block`, a block by its header in `bytes`, is framed like a

@@ -5,11 +5,11 @@ use std::io;
 
 use xxhash_rust::xxh3::xxh3_128;
 
-use super::chain::framed_from;
+use super::chain::{bridge, framed_from};
 use super::{
-    After, BACK_LEN, BLOCK_OVERHEAD, Block, Error, FILE_HEADER_LEN, FileType, Known, MAX_BLOCK,
-    RECORD, ReadAt, Result, Stored, back_is, buffer_len, design_header, header_id, intact,
-    read_pieces, stored_at, stored_before, zeroed,
+    After, BLOCK_OVERHEAD, Block, Error, FILE_HEADER_LEN, FileType, Known, MAX_BLOCK, RECORD,
+    ReadAt, Result, buffer_len, design_header, header_id, intact, read_pieces, stored_at,
+    stored_before, zeroed,
 };
 
 /// Where a save appends, once [`check_unchanged`] passes.
@@ -156,12 +156,14 @@ pub(crate) fn check_unchanged(file: &(impl ReadAt + ?Sized), known: &Known) -> R
             // it's framed like a record; else a torn tail unless something
             // after is framed like a record, which reading would find
             // damaged.
+            // One framed like a record is the newest save, damaged, which
+            // only the one reading found is saved after.
             Found::Torn | Found::Corrupt => {
-                if let Some(stored) = stored
-                    && let Some(end) = stepped_over(file, at, len, id, prev, &stored)?
+                if let Some(bridge) = bridge(file, at, len, id, prev, FileType::Design)?
+                    && !bridge.record
                 {
-                    prev = stored.sum;
-                    at = end;
+                    prev = bridge.header.sum;
+                    at = bridge.header.end;
                     continue;
                 }
                 if framed_after(file, at, len)? {
@@ -189,37 +191,6 @@ fn linked_at(
     };
     Ok(stored_at(file, before, len)?
         .is_some_and(|stored| stored.end == Some(end) && stored.sum == prev))
-}
-
-/// Where the damaged block at `at` in `file`, a file with `id` that's
-/// `len` bytes long, ends, if reading steps over it by its header,
-/// `stored`, to a block after it that it doesn't take for a record: its
-/// `prev` is `prev`, the `sum` of the block before, it isn't framed like a
-/// record, and the block its `len` leads to is intact with its stored
-/// `sum` as its `prev`. One framed like a record is the newest save,
-/// damaged, which only the one reading found is saved after.
-fn stepped_over(
-    file: &(impl ReadAt + ?Sized),
-    at: u64,
-    len: u64,
-    id: u128,
-    prev: u128,
-    stored: &Stored,
-) -> Result<Option<u64>> {
-    let Some(end) = stored.end.filter(|&end| end < len && stored.prev == prev) else {
-        return Ok(None);
-    };
-    let mut back = [0; BACK_LEN];
-    // The block is within the file, and longer than this.
-    file.read_at(&mut back, end - BACK_LEN as u64)?;
-    // Its `len` is within bounds, so exact.
-    if back_is(&back, end - at - BLOCK_OVERHEAD, &RECORD) {
-        return Ok(None);
-    }
-    Ok(match block_at(file, end, len, id)? {
-        Found::Intact(next) if next.prev == stored.sum => Some(end),
-        _ => None,
-    })
 }
 
 /// Whether anything in `file`, which is `len` bytes long, from `at` on is
