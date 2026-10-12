@@ -273,10 +273,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Decoded, Error> {
 /// The parameters `sources` name, resolved in `units`, once their counts
 /// and lengths are checked.
 fn resolve(sources: &Sources, units: LengthUnit) -> Result<Params, Error> {
-    check_count(sources.len(), MAX_PARAMS)?;
+    check_count("parameters", sources.len(), MAX_PARAMS)?;
     for (name, text) in sources {
-        check_count(name.len(), MAX_NAME_LEN)?;
-        check_count(text.len(), MAX_LEN)?;
+        check_count("bytes of a parameter's name", name.len(), MAX_NAME_LEN)?;
+        check_count("bytes of a parameter's expression", text.len(), MAX_LEN)?;
     }
     Ok(Params::evaluate(
         sources
@@ -290,16 +290,22 @@ fn check_sketch(sketch: &Sketch, design: &Design) -> Result<(), Error> {
     sketch.check(design).map_err(Error::Sketch)
 }
 
+/// The most items a delete may name: every point, curve and constraint
+/// (a const, so a sum that overflowed wouldn't build).
+const MAX_DELETE: usize = MAX_POINTS + MAX_CURVES + MAX_CONSTRAINTS;
+/// The most items a mirror may name: every point and curve.
+const MAX_MIRROR: usize = MAX_POINTS + MAX_CURVES;
+
 /// Checks the counts and the numbers of `edit`. Whether what it names is
 /// there is applying it's to say.
 fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
     match edit {
         SketchEdit::Add(add) => {
-            check_count(add.points.len(), MAX_POINTS)?;
-            check_count(add.curves.len(), MAX_CURVES)?;
-            check_count(add.constraints.len(), MAX_CONSTRAINTS)?;
-            check_count(add.auto.len(), MAX_CONSTRAINTS)?;
-            check_count(add.dimensions.len(), MAX_DIMENSIONS)?;
+            check_count("points", add.points.len(), MAX_POINTS)?;
+            check_count("curves", add.curves.len(), MAX_CURVES)?;
+            check_count("constraints", add.constraints.len(), MAX_CONSTRAINTS)?;
+            check_count("inferred constraints", add.auto.len(), MAX_CONSTRAINTS)?;
+            check_count("dimensions", add.dimensions.len(), MAX_DIMENSIONS)?;
             add.points.iter().try_for_each(|&(_, at)| check_place(at))?;
             add.curves.iter().try_for_each(|new| match &new.curve {
                 &Curve::Circle { radius, .. } => check_value(radius),
@@ -313,31 +319,19 @@ fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
                 check_dimension_value(&dimension.value)
             })
         }
-        SketchEdit::Delete(ids) => {
-            // Checked, though the limits are far from overflowing.
-            let items = MAX_POINTS
-                .checked_add(MAX_CURVES)
-                .and_then(|n| n.checked_add(MAX_CONSTRAINTS))
-                .expect("the limits add up");
-            check_count(ids.len(), items)
-        }
+        SketchEdit::Delete(ids) => check_count("items", ids.len(), MAX_DELETE),
         SketchEdit::Move { points, radii } => check_targets(points, radii),
-        SketchEdit::SetConstruction { ids, .. } => check_count(ids.len(), MAX_CURVES),
+        SketchEdit::SetConstruction { ids, .. } => check_count("curves", ids.len(), MAX_CURVES),
         SketchEdit::SetDimension { value, .. } => check_dimension_value(value),
         SketchEdit::SetDriving { .. } => Ok(()),
         SketchEdit::MoveLabel { label, .. } => check_place(*label),
         SketchEdit::Trim { near, .. } => check_place(*near),
         SketchEdit::Extend { .. } => Ok(()),
-        SketchEdit::Mirror { ids, .. } => {
-            let items = MAX_POINTS
-                .checked_add(MAX_CURVES)
-                .expect("the limits add up");
-            check_count(ids.len(), items)
-        }
+        SketchEdit::Mirror { ids, .. } => check_count("items", ids.len(), MAX_MIRROR),
         SketchEdit::Offset {
             chain, distance, ..
         } => {
-            check_count(chain.len(), MAX_CURVES)?;
+            check_count("curves", chain.len(), MAX_CURVES)?;
             check_dimension_value(distance)
         }
         SketchEdit::Fillet { radius, .. } => check_dimension_value(radius),
@@ -349,7 +343,7 @@ fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
             }
         },
         SketchEdit::Convert { .. } => Ok(()),
-        SketchEdit::AddHandles(points) => check_count(points.len(), MAX_POINTS),
+        SketchEdit::AddHandles(points) => check_count("points", points.len(), MAX_POINTS),
         SketchEdit::InsertPoint { near, .. } => check_place(*near),
         SketchEdit::AddLink { .. }
         | SketchEdit::SetLinkProfiles { .. }
@@ -358,7 +352,7 @@ fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
         | SketchEdit::CloseSpline(_)
         | SketchEdit::OpenSpline { .. } => Ok(()),
         SketchEdit::Relink(found) => {
-            check_count(found.len(), varde_sketch::MAX_LINKS)?;
+            check_count("links", found.len(), varde_sketch::MAX_LINKS)?;
             match (found.iter()).find(|(_, shape)| !shape.fits(MAX)) {
                 Some(&(link, _)) => Err(Error::Sketch(SketchError::Link(link))),
                 None => Ok(()),
@@ -371,14 +365,13 @@ fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
 /// and its value a number. Whether they agree is the sketch's check's to
 /// say, once the edit is applied.
 fn check_dimension_value(value: &Value) -> Result<(), Error> {
-    if value.text.len() > varde_expr::MAX_LEN {
-        return Err(Error::TooMany {
-            count: value.text.len(),
-            limit: varde_expr::MAX_LEN,
-        });
-    }
+    check_count(
+        "bytes of a dimension's expression",
+        value.text.len(),
+        varde_expr::MAX_LEN,
+    )?;
     if !value.value.is_finite() {
-        return Err(Error::Value(value.value));
+        return Err(Error::NotFinite(value.value));
     }
     Ok(())
 }
@@ -386,17 +379,18 @@ fn check_dimension_value(value: &Value) -> Result<(), Error> {
 /// Checks a drag's (or a move's) targets: no more than the points and
 /// circles a sketch may have, every number finite and within the limit.
 fn check_targets(points: &[(Id, DVec2)], radii: &[(Id, f64)]) -> Result<(), Error> {
-    check_count(points.len(), MAX_POINTS)?;
-    check_count(radii.len(), MAX_CURVES)?;
+    check_count("points", points.len(), MAX_POINTS)?;
+    check_count("radii", radii.len(), MAX_CURVES)?;
     points.iter().try_for_each(|&(_, at)| check_place(at))?;
     radii
         .iter()
         .try_for_each(|&(_, radius)| check_value(radius))
 }
 
-fn check_count(count: usize, limit: usize) -> Result<(), Error> {
+/// `count` of `what` (a plural, such as "points"), at most `limit`.
+fn check_count(what: &'static str, count: usize, limit: usize) -> Result<(), Error> {
     if count > limit {
-        return Err(Error::TooMany { count, limit });
+        return Err(Error::TooMany { what, count, limit });
     }
     Ok(())
 }
@@ -738,10 +732,17 @@ pub enum Error {
     Revision(Revision),
     /// A sketch fails its check.
     Sketch(SketchError),
-    /// More of something than a sketch may have.
-    TooMany { count: usize, limit: usize },
+    /// More of something than a request may hold: `what` names it, as a
+    /// plural ("points", "bytes of a parameter's name").
+    TooMany {
+        what: &'static str,
+        count: usize,
+        limit: usize,
+    },
     /// A place or radius past [`MAX_COORD`], or not a number.
     Value(f64),
+    /// A dimension's value (or an offset's, a fillet's, ...) not a number.
+    NotFinite(f64),
     /// A reply names items the sketch doesn't have, or not as many as it
     /// has.
     Items,
@@ -757,9 +758,10 @@ impl fmt::Display for Error {
                 write!(f, "an answer of another revision: {revision:?}")
             }
             Error::Sketch(e) => e.fmt(f),
-            Error::TooMany { count, limit } => {
-                write!(f, "{count} sketch items, over the limit of {limit}")
+            Error::TooMany { what, count, limit } => {
+                write!(f, "{count} {what}, over the limit of {limit}")
             }
+            Error::NotFinite(value) => write!(f, "a dimension value of {value}, not a number"),
             Error::Value(value) => write!(
                 f,
                 "a sketch value of {value}, outside the limit of {MAX_COORD}"
@@ -778,6 +780,7 @@ impl std::error::Error for Error {
             | Error::Revision(_)
             | Error::TooMany { .. }
             | Error::Value(_)
+            | Error::NotFinite(_)
             | Error::Items => None,
         }
     }

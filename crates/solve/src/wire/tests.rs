@@ -497,6 +497,7 @@ fn a_request_out_of_bounds_is_an_error() {
     assert_eq!(
         decode_request(&encode_request(&many, false)).unwrap_err(),
         Error::TooMany {
+            what: "points",
             count: MAX_POINTS + 1,
             limit: MAX_POINTS
         }
@@ -591,8 +592,13 @@ fn malformed_bytes_are_refused_never_a_panic() {
 fn errors_display() {
     for error in [
         Error::Answers(Tag::Drag(1)),
-        Error::TooMany { count: 2, limit: 1 },
+        Error::TooMany {
+            what: "points",
+            count: 2,
+            limit: 1,
+        },
         Error::Value(f64::NAN),
+        Error::NotFinite(f64::NAN),
         Error::Items,
         Error::Request(DecodeError::new("no")),
         Error::Reply(DecodeError::new("no")),
@@ -696,7 +702,7 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
                 value,
             },
         };
-        assert!(matches!(refused(edit), Err(Error::Value(_))));
+        assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
         let edit = SketchEdit::MoveLabel {
             id,
             label: DVec2::new(value, 0.0),
@@ -710,7 +716,7 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
             },
             side: Side::Positive,
         };
-        assert!(matches!(refused(edit), Err(Error::Value(_))));
+        assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
         let bad = Value {
             text: "1".to_owned(),
             value,
@@ -725,7 +731,7 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
             lines,
             radius: bad.clone(),
         };
-        assert!(matches!(refused(edit), Err(Error::Value(_))));
+        assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
         for setback in [
             Setback::Equal(bad.clone()),
             Setback::Two(good.clone(), bad.clone()),
@@ -736,7 +742,7 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
                 lines,
                 setback,
             };
-            assert!(matches!(refused(edit), Err(Error::Value(_))));
+            assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
         }
     }
     let many = SketchEdit::Offset {
