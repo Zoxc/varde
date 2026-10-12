@@ -28,7 +28,7 @@ use varde_view::{Picked, PlanePick, SketchItem, Tool};
 
 use super::args::{committed_marks, failed, origin_plane, said, sketch_named};
 use super::edit::{Made, Refused};
-use super::waiting::{From, Wait, Waiter};
+use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::{
     Doc, Settled, Step, face_placement_in, outside_model_in, outside_sketch_item_at,
     outside_target_in, sketch_of,
@@ -263,7 +263,13 @@ impl Doc {
     /// its steps): first among what's queued, the call waiting as
     /// [`Wait::Solving`] until the solver answers
     /// ([`Doc::client_proposed`]).
-    pub(super) fn client_propose(&mut self, tag: u64, from: From, call: Call, proposed: Proposed) {
+    pub(super) fn client_propose(
+        &mut self,
+        tag: u64,
+        from: Caller,
+        call: Call,
+        proposed: Proposed,
+    ) {
         let Proposed { feature, what } = proposed;
         let made = match &what {
             Proposing::Steps { made, .. } => Some(made.clone()),

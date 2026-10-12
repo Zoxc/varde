@@ -21,7 +21,7 @@ use varde_document::Revision;
 use varde_mcp::tools::Call;
 
 use super::edit::Refused;
-use super::waiting::{Before, ClientStep, From, Undid, Wait, Waiter};
+use super::waiting::{Before, Caller, ClientStep, Undid, Wait, Waiter};
 use crate::doc::Doc;
 
 /// Why an undo is refused when the design isn't as the session's last
@@ -49,7 +49,7 @@ pub(super) struct Undoing {
 /// came in takes back, or why it can't: each of the newest `steps`
 /// steps of the history must be an edit of this session it hasn't
 /// undone, the newest of them its newest.
-pub(super) fn plan(doc: &Doc, steps: usize, from: &From) -> Result<Undoing, Refused> {
+pub(super) fn plan(doc: &Doc, steps: usize, from: &Caller) -> Result<Undoing, Refused> {
     let mcp = &doc.mcp;
     let mine = |step: &ClientStep| step.of(from.start, &from.session) && !step.undone;
     let newest = (mcp.history.steps.iter())
@@ -113,7 +113,7 @@ impl Doc {
     /// `from`, asks for, checked again on the design as it is now (what
     /// the user had open was closed first): all of them, then waiting
     /// for regeneration as an applied edit does, or none, refused.
-    pub(super) fn client_undo(&mut self, tag: u64, from: From, call: Call) {
+    pub(super) fn client_undo(&mut self, tag: u64, from: Caller, call: Call) {
         let Call::Undo { steps } = call else {
             let refused = Refused::failed("internal error: not an undo");
             return self.edit_not_applied(tag, from, call, refused);

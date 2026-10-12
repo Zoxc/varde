@@ -138,13 +138,6 @@ impl Ended {
     }
 }
 
-impl From {
-    /// Whether the call has waited [`BOUND`] by `now`.
-    pub(crate) fn late(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.came) >= BOUND
-    }
-}
-
 /// How many edits of a session may wait behind the one it has in flight
 /// (`notes/AgentSupport.md`, "Edits one at a time"). Enough for a client to
 /// send the next few steps of a plan (a sketch's extrude, its fillet,
@@ -239,7 +232,7 @@ impl ClientHistory {
     /// any: kept as the client's step.
     pub(crate) fn applied(
         &mut self,
-        from: &From,
+        from: &Caller,
         call: &Call,
         after: Revision,
         feature: Option<u64>,
@@ -323,7 +316,7 @@ pub(crate) struct Undid {
 pub(crate) struct Waiter {
     /// The app's own key for it: what a lane's answer comes tagged with.
     pub(crate) tag: u64,
-    pub(crate) from: From,
+    pub(crate) from: Caller,
     pub(crate) call: Call,
     /// What it waits for.
     pub(crate) waits: Wait,
@@ -476,7 +469,7 @@ impl PartialEq for Drawn {
 
 /// Where a call came from and when.
 #[derive(Debug)]
-pub(crate) struct From {
+pub(crate) struct Caller {
     /// Its row in the MCP log, if it's still there.
     pub(crate) serial: u64,
     /// The server it came from ([`super::Serve::start`]).
@@ -489,9 +482,14 @@ pub(crate) struct From {
     pub(crate) came: Instant,
 }
 
-impl From {
+impl Caller {
+    /// Whether the call has waited [`BOUND`] by `now`.
+    pub(crate) fn late(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.came) >= BOUND
+    }
+
     /// Whether `other` came in the same session as this.
-    fn same_session(&self, other: &From) -> bool {
+    fn same_session(&self, other: &Caller) -> bool {
         (self.start, &self.session) == (other.start, &other.session)
     }
 }
@@ -554,7 +552,7 @@ pub(crate) fn label(call: &Call) -> String {
 /// A call done, its reply still to send.
 #[derive(Debug)]
 pub(crate) struct Done {
-    pub(crate) from: From,
+    pub(crate) from: Caller,
     pub(crate) call: Call,
     pub(crate) reply: ToolReply,
     /// What its row is to say.
@@ -598,7 +596,7 @@ impl Waiting {
     /// answered, or failed for an error.
     /// A query's says so when an edit of its session waits on the
     /// popup ([`Waiting::pending_edit`]).
-    pub(crate) fn answer(&mut self, from: From, call: Call, mut reply: ToolReply) {
+    pub(crate) fn answer(&mut self, from: Caller, call: Call, mut reply: ToolReply) {
         if !call.edits()
             && let Some(pending) = self.pending_edit(&from)
         {
@@ -615,7 +613,7 @@ impl Waiting {
     /// saying `state`.
     pub(crate) fn answer_as(
         &mut self,
-        from: From,
+        from: Caller,
         call: Call,
         reply: ToolReply,
         state: McpCallState,
@@ -637,7 +635,7 @@ impl Waiting {
     /// number of the feature it made or changed, `feature`.
     pub(crate) fn answer_applied(
         &mut self,
-        from: From,
+        from: Caller,
         call: Call,
         reply: ToolReply,
         (before, after): (EditorState, Revision),
@@ -663,7 +661,7 @@ impl Waiting {
 
     /// What the first edit of `from`'s session waiting on the popup is,
     /// if one does: its tool and arguments, and whom it waits on.
-    fn pending_edit(&self, from: &From) -> Option<String> {
+    fn pending_edit(&self, from: &Caller) -> Option<String> {
         let (waiter, editing) = (self.calls.iter())
             .filter(|waiter| waiter.from.same_session(from))
             .find_map(|waiter| match &waiter.waits {
@@ -701,7 +699,7 @@ impl Waiting {
     /// Whether `from`'s session has [`QUEUED_EDITS`] edits waiting behind
     /// the one in flight: edits still to be applied
     /// ([`Waiter::unapplied`]) past the first.
-    pub(crate) fn edits_full(&self, from: &From) -> bool {
+    pub(crate) fn edits_full(&self, from: &Caller) -> bool {
         let unapplied = (self.calls.iter())
             .filter(|waiter| waiter.from.same_session(from) && waiter.unapplied())
             .count();
@@ -720,7 +718,7 @@ impl Waiting {
     /// ([`Waiter::unapplied`]): they were written assuming it. Those go
     /// not applied with its reason. The caller takes them out of the
     /// proposals' queue (`Doc::drop_ended_edits`).
-    pub(crate) fn not_applied(&mut self, tag: u64, from: From, call: Call, refused: Refused) {
+    pub(crate) fn not_applied(&mut self, tag: u64, from: Caller, call: Call, refused: Refused) {
         let why = format!(
             "an earlier edit of this session wasn't: {}",
             refused.reason()
@@ -756,7 +754,7 @@ impl Waiting {
     /// revision an edit made is still done.
     pub(crate) fn end(
         &mut self,
-        which: impl Fn(&From) -> bool,
+        which: impl Fn(&Caller) -> bool,
         why: Ended,
         done: impl Fn(Revision) -> bool,
     ) {
@@ -898,7 +896,7 @@ impl Waiting {
     /// The client's edit under `tag`, from `from`, was applied, making
     /// `generation`: the calls of its session that came after it and
     /// wait for the model are to see it.
-    fn raise_after(&mut self, tag: u64, from: &From, generation: Generation) {
+    fn raise_after(&mut self, tag: u64, from: &Caller, generation: Generation) {
         for waiter in &mut self.calls {
             if let Wait::Model { at } = &mut waiter.waits
                 && waiter.tag > tag
@@ -994,7 +992,7 @@ impl Doc {
 
     /// Takes the MCP `call`, from `from`: answered now, or put waiting
     /// for what it needs.
-    pub(crate) fn mcp_call(&mut self, call: Call, from: From) {
+    pub(crate) fn mcp_call(&mut self, call: Call, from: Caller) {
         if call.edits() {
             return self.mcp_edit(call, from);
         }
@@ -1014,7 +1012,7 @@ impl Doc {
     /// Takes up the client's query or edit `call` under `tag`: queued
     /// behind the user's sketch edits waiting on the solver if any do
     /// (`Wait::Queued`), else as [`Doc::client_turn`].
-    pub(super) fn client_take_up(&mut self, tag: u64, from: From, call: Call) {
+    pub(super) fn client_take_up(&mut self, tag: u64, from: Caller, call: Call) {
         if self.proposing() {
             self.proposals.wait_client(tag);
             return self.mcp.add(Waiter {
@@ -1080,7 +1078,7 @@ impl Doc {
     /// earlier client edits it waits behind ([`Waiter::behind`]), unless
     /// both hold; then a query is answered, an edit made and applied
     /// ([`Doc::client_edit_now`]).
-    pub(super) fn client_turn(&mut self, tag: u64, from: From, call: Call) {
+    pub(super) fn client_turn(&mut self, tag: u64, from: Caller, call: Call) {
         let at = self.editor.generation();
         let waiter = Waiter {
             tag,
@@ -1146,7 +1144,13 @@ impl Doc {
     /// applied with its reason ([`Waiting::not_applied`]), and takes
     /// those out of the proposals' queue. How an edit not in the table
     /// ends unapplied; one in it ends so through [`Waiting::end_one`].
-    pub(super) fn edit_not_applied(&mut self, tag: u64, from: From, call: Call, refused: Refused) {
+    pub(super) fn edit_not_applied(
+        &mut self,
+        tag: u64,
+        from: Caller,
+        call: Call,
+        refused: Refused,
+    ) {
         self.mcp.not_applied(tag, from, call, refused);
         let _ = self.drop_ended_edits();
     }
@@ -1160,14 +1164,14 @@ impl Doc {
 
     /// The client's edit under `tag`, from `from`, was applied: the
     /// calls of its session after it waiting for the model are to see it.
-    pub(super) fn client_applied(&mut self, tag: u64, from: &From) {
+    pub(super) fn client_applied(&mut self, tag: u64, from: &Caller) {
         (self.mcp).raise_after(tag, from, self.editor.generation());
     }
 
     /// Answers the query `call`, from `from`, from the design as it is:
     /// `body_topology` goes on to wait for its edge facts, `measure` for
     /// regen's measure, `sketch` for its analysis.
-    fn mcp_query(&mut self, from: From, call: Call) {
+    fn mcp_query(&mut self, from: Caller, call: Call) {
         match &call {
             Call::BodyTopology(args) => match query::body_topology(self, args) {
                 Ok(asked) => self.ask_topology(from, call, asked, false),
@@ -1199,7 +1203,7 @@ impl Doc {
     /// Then takes up the calls waiting for the model that are ready
     /// ([`Doc::mcp_ready`]): run after every message (`Mcp::sync`), it's
     /// what answers them once regen or the solver has.
-    pub(crate) fn mcp_end(&mut self, which: impl Fn(&From) -> bool, why: Ended) {
+    pub(crate) fn mcp_end(&mut self, which: impl Fn(&Caller) -> bool, why: Ended) {
         // An edit holding the proposals' queue waits for its model
         // (`Doc::client_holds_queue`): ended, it says so.
         let at = self.editor.generation();
@@ -1300,7 +1304,7 @@ impl Doc {
 
     /// Asks regen for the edge facts `call` waits on, `asked`, and puts
     /// it waiting; `again` if it's the second time.
-    fn ask_topology(&mut self, from: From, call: Call, asked: Asked, again: bool) {
+    fn ask_topology(&mut self, from: Caller, call: Call, asked: Asked, again: bool) {
         let query = varde_regen::Query::Topology(asked.body);
         self.ask_regen(from, call, query, |sent| {
             (sent == (asked.generation, asked.until)).then_some(Wait::Topology { asked, again })
@@ -1312,7 +1316,7 @@ impl Doc {
     /// (`Wait::Measure`).
     fn ask_measure(
         &mut self,
-        from: From,
+        from: Caller,
         call: Call,
         inspect: varde_regen::Inspect,
         held: query::Held,
@@ -1329,7 +1333,7 @@ impl Doc {
 
     /// Asks the viewport to draw `shot` for the `render` call `call` from
     /// `from` on its next frame, and puts it waiting (`Wait::Render`).
-    fn ask_render(&mut self, from: From, call: Call, shot: query::Shot) {
+    fn ask_render(&mut self, from: Caller, call: Call, shot: query::Shot) {
         let tag = self.mcp.next_tag();
         let (send, answer) = oneshot::channel();
         let request = PreviewRequest::render(
@@ -1427,7 +1431,7 @@ impl Doc {
     /// [`Request::Query`]: varde_regen::Request::Query
     fn ask_regen(
         &mut self,
-        from: From,
+        from: Caller,
         call: Call,
         query: varde_regen::Query,
         waits: impl FnOnce((Generation, Option<FeatureId>)) -> Option<Wait>,
@@ -1451,7 +1455,7 @@ impl Doc {
     /// (`Wait::Analysis`): queued apart from the user's analysis, it
     /// neither replaces it nor is replaced by it. Without a lane yet (it
     /// starts with the design), the call fails saying so.
-    fn ask_analysis(&mut self, from: From, call: Call, read: query::Read) {
+    fn ask_analysis(&mut self, from: Caller, call: Call, read: query::Read) {
         let Some(solver) = &mut self.solver else {
             let reply = ToolReply::error(NO_SOLVER);
             return self.mcp.answer(from, call, reply);

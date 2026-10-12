@@ -445,7 +445,7 @@ impl Mcp {
     fn tell(
         &self,
         doc: &Doc,
-        from: &waiting::From,
+        from: &waiting::Caller,
         reply: ToolReply,
     ) -> (ToolReply, Option<changes::Changes>) {
         if self.open_session() != Some(&from.session) {
@@ -461,7 +461,7 @@ impl Mcp {
 
     /// Takes the design now as what `from`'s session saw last: its
     /// reply carrying the user's changes ([`Mcp::tell`]) was taken.
-    fn told(&mut self, doc: &mut Doc, from: &waiting::From) {
+    fn told(&mut self, doc: &mut Doc, from: &waiting::Caller) {
         for step in &mut doc.mcp.history.steps {
             if step.of(from.start, &from.session) {
                 step.told_done = doc.editor.is_done(step.after);
@@ -558,7 +558,7 @@ impl Mcp {
                     reply.send(answer);
                     return;
                 };
-                let from = waiting::From {
+                let from = waiting::Caller {
                     serial,
                     start,
                     session,
@@ -589,7 +589,7 @@ impl Mcp {
             // Its client ignores the reply: the user's changes aren't
             // told in it, but left for the next.
             Event::Session(session::Event::Cancelled { session, request }) => {
-                let which = |from: &waiting::From| from.session == session && from.id == request;
+                let which = |from: &waiting::Caller| from.session == session && from.id == request;
                 if let Some(doc) = doc {
                     doc.mcp_end(which, waiting::Ended::Cancelled);
                     self.sync_untold(Some(doc), which);
@@ -658,7 +658,7 @@ impl Mcp {
     fn end(
         &mut self,
         doc: Option<&mut Doc>,
-        which: impl Fn(&waiting::From) -> bool,
+        which: impl Fn(&waiting::Caller) -> bool,
         why: waiting::Ended,
     ) {
         if let Some(doc) = doc {
@@ -677,7 +677,7 @@ impl Mcp {
     /// [`Mcp::sync`], telling the calls `untold` picks nothing of the
     /// user's changes: those cancelled, whose replies their clients
     /// ignore.
-    fn sync_untold(&mut self, doc: Option<&mut Doc>, untold: impl Fn(&waiting::From) -> bool) {
+    fn sync_untold(&mut self, doc: Option<&mut Doc>, untold: impl Fn(&waiting::Caller) -> bool) {
         let Some(doc) = doc else {
             return;
         };

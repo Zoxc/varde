@@ -25,7 +25,7 @@ use varde_mcp::tools::Call;
 use varde_view::McpTool;
 
 use super::edit::Refused;
-use super::waiting::{From, Wait, Waiter};
+use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::Doc;
 
 /// The popup asking the user to finish what they have open before an
@@ -139,9 +139,9 @@ impl Doc {
     pub(super) fn clear_for_client(
         &mut self,
         tag: u64,
-        from: From,
+        from: Caller,
         call: Call,
-    ) -> Option<(From, Call)> {
+    ) -> Option<(Caller, Call)> {
         if let Some(ask) = &self.mcp.ask {
             let editing = ask.editing.clone();
             self.mcp.add(Waiter {

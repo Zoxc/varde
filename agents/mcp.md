@@ -610,7 +610,7 @@ which answers it at once or puts it in its table, `Doc::mcp`
 (`waiting::Waiting`), so it's the design's and goes with it. A
 `Waiter` is keyed by an app-side tag (`Waiting::next_tag`, what a
 lane's answer comes back with), holds where it came from
-(`waiting::From`: its log serial, the server's `start`, session, id,
+(`waiting::Caller`: its log serial, the server's `start`, session, id,
 `Reply`, and its arrival time, `Reply::came`: at the server, so time
 queued for the app counts) and what it waits for (`Wait`: a query or
 an edit not taken up yet `Queued` behind the user's sketch edits or

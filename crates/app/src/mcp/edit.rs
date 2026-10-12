@@ -32,7 +32,7 @@ use varde_sketch::Id;
 use varde_view::{McpCallState, ParamField};
 
 use super::query;
-use super::waiting::{From, Wait, Waiter};
+use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::{Doc, params};
 
 /// The answer to an edit that would change nothing.
@@ -314,7 +314,7 @@ impl Plan {
 /// made, as [`commands`]. `queued`: whether it's checked as it comes,
 /// to queue behind the sketch edits waiting on the solver, a sketch
 /// edit then checked on its sketch with theirs applied.
-fn plan(doc: &Doc, call: &Call, from: &From, queued: bool) -> Result<Plan, Refused> {
+fn plan(doc: &Doc, call: &Call, from: &Caller, queued: bool) -> Result<Plan, Refused> {
     match call {
         Call::Undo { steps } => super::undo::plan(doc, *steps, from).map(|_| Plan::Undo),
         Call::AddLink(args) => super::sketches::add_link(doc, args).map(Plan::Propose),
@@ -643,7 +643,7 @@ impl Doc {
     /// Takes the MCP edit `call`, from `from`: refused, answered that it
     /// changes nothing, queued behind the user's sketch edits waiting on
     /// the solver, or applied, then waiting for regeneration.
-    pub(crate) fn mcp_edit(&mut self, call: Call, from: From) {
+    pub(crate) fn mcp_edit(&mut self, call: Call, from: Caller) {
         // An edit applies only while its call is live, and the bound runs
         // from its arrival at the server.
         // None of its session's come after it yet: those it fails are none.
@@ -691,7 +691,7 @@ impl Doc {
     /// Makes `call`'s commands on the design as it is now and applies
     /// them, waiting for regeneration under `tag`: refused, or changing
     /// nothing, it's answered so.
-    pub(super) fn client_edit_now(&mut self, tag: u64, from: From, call: Call) {
+    pub(super) fn client_edit_now(&mut self, tag: u64, from: Caller, call: Call) {
         if let Some(refused) = self.read_only_refusal() {
             return self.edit_not_applied(tag, from, call, refused);
         }
@@ -739,7 +739,7 @@ impl Doc {
 
     /// Has `call`, from `from`, wait under `tag` behind the popup asking
     /// about the edit `editing`.
-    fn wait_on_ask(&mut self, tag: u64, from: From, call: Call, editing: String) {
+    fn wait_on_ask(&mut self, tag: u64, from: Caller, call: Call, editing: String) {
         self.mcp.add(Waiter {
             tag,
             from,
@@ -749,7 +749,7 @@ impl Doc {
     }
 
     /// Answers `call`, from `from`, that it changes nothing.
-    fn answer_unchanged(&mut self, from: From, call: Call) {
+    fn answer_unchanged(&mut self, from: Caller, call: Call) {
         self.mcp
             .answer(from, call, ToolReply::text(NOTHING_TO_CHANGE));
     }
@@ -769,7 +769,7 @@ impl Doc {
     pub(super) fn client_apply(
         &mut self,
         tag: u64,
-        from: From,
+        from: Caller,
         call: Call,
         made: Made,
         commands: Vec<Command>,
