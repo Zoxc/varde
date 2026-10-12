@@ -304,98 +304,24 @@ impl FeatureKind {
     }
 }
 
-impl From<Extrude> for FeatureKind {
-    fn from(extrude: Extrude) -> Self {
-        FeatureKind::Extrude(extrude)
-    }
+/// `From` each kind's own type, for the variants that hold it as is.
+macro_rules! from_kind {
+    ($($kind:ident),* $(,)?) => {$(
+        impl From<$kind> for FeatureKind {
+            fn from(kind: $kind) -> Self {
+                FeatureKind::$kind(kind)
+            }
+        }
+    )*};
 }
 
-impl From<Revolve> for FeatureKind {
-    fn from(revolve: Revolve) -> Self {
-        FeatureKind::Revolve(revolve)
-    }
-}
-
-impl From<Move> for FeatureKind {
-    fn from(moved: Move) -> Self {
-        FeatureKind::Move(moved)
-    }
-}
-
-impl From<Mirror> for FeatureKind {
-    fn from(mirror: Mirror) -> Self {
-        FeatureKind::Mirror(mirror)
-    }
-}
-
-impl From<Pattern> for FeatureKind {
-    fn from(pattern: Pattern) -> Self {
-        FeatureKind::Pattern(pattern)
-    }
-}
-
-impl From<Combine> for FeatureKind {
-    fn from(combine: Combine) -> Self {
-        FeatureKind::Combine(combine)
-    }
-}
+from_kind!(
+    Extrude, Revolve, Move, Mirror, Pattern, Combine, Scale, Split, Chamfer, Shell, Fillet,
+    OffsetFace, FaceDraft, Sweep, Loft,
+);
 
 impl From<Align> for FeatureKind {
     fn from(align: Align) -> Self {
         FeatureKind::Align(Box::new(align))
-    }
-}
-
-impl From<Scale> for FeatureKind {
-    fn from(scale: Scale) -> Self {
-        FeatureKind::Scale(scale)
-    }
-}
-
-impl From<Split> for FeatureKind {
-    fn from(split: Split) -> Self {
-        FeatureKind::Split(split)
-    }
-}
-
-impl From<Chamfer> for FeatureKind {
-    fn from(chamfer: Chamfer) -> Self {
-        FeatureKind::Chamfer(chamfer)
-    }
-}
-
-impl From<Shell> for FeatureKind {
-    fn from(shell: Shell) -> Self {
-        FeatureKind::Shell(shell)
-    }
-}
-
-impl From<Fillet> for FeatureKind {
-    fn from(fillet: Fillet) -> Self {
-        FeatureKind::Fillet(fillet)
-    }
-}
-
-impl From<OffsetFace> for FeatureKind {
-    fn from(offset: OffsetFace) -> Self {
-        FeatureKind::OffsetFace(offset)
-    }
-}
-
-impl From<FaceDraft> for FeatureKind {
-    fn from(draft: FaceDraft) -> Self {
-        FeatureKind::FaceDraft(draft)
-    }
-}
-
-impl From<Sweep> for FeatureKind {
-    fn from(sweep: Sweep) -> Self {
-        FeatureKind::Sweep(sweep)
-    }
-}
-
-impl From<Loft> for FeatureKind {
-    fn from(loft: Loft) -> Self {
-        FeatureKind::Loft(loft)
     }
 }
