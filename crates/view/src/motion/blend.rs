@@ -53,6 +53,26 @@ pub struct BlendEdges {
     pub chains: bool,
 }
 
+impl BlendEdge {
+    /// The edge's row in a picks field, `at` its place in the list:
+    /// shared by the blends' Edges field and the sweep's Path.
+    pub(super) fn row(&self, at: usize) -> PickedRow {
+        PickedRow {
+            icon: if self.round {
+                Icon::SeRim
+            } else {
+                Icon::SeEdge
+            },
+            name: self.name.clone(),
+            meta: self.meta.clone(),
+            drop: MotionLook::DropEdge(self.edge),
+            hover: PanelHover::Edge(at),
+            failed: false,
+            excluded: self.excluded,
+        }
+    }
+}
+
 /// The panel's Edges field: a row per face, then per edge, and while
 /// picking, or with none, where to click (`place`).
 pub(super) fn edges_field<'a>(
@@ -69,19 +89,7 @@ pub(super) fn edges_field<'a>(
         failed: false,
         excluded: false,
     });
-    let rows = (edges.edges.iter().enumerate()).map(|(at, edge)| PickedRow {
-        icon: if edge.round {
-            Icon::SeRim
-        } else {
-            Icon::SeEdge
-        },
-        name: edge.name.clone(),
-        meta: edge.meta.clone(),
-        drop: MotionLook::DropEdge(edge.edge),
-        hover: PanelHover::Edge(at),
-        failed: false,
-        excluded: edge.excluded,
-    });
+    let rows = (edges.edges.iter().enumerate()).map(|(at, edge)| edge.row(at));
     picks_field(state, MotionPick::Edges, "Edges", place, faces.chain(rows))
 }
 

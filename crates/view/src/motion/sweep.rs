@@ -172,19 +172,7 @@ pub(super) fn body<'a>(
                 failed: false,
                 excluded: false,
             });
-            let edges = (sweep.edges.edges.iter().enumerate()).map(|(at, edge)| PickedRow {
-                icon: if edge.round {
-                    Icon::SeRim
-                } else {
-                    Icon::SeEdge
-                },
-                name: edge.name.clone(),
-                meta: edge.meta.clone(),
-                drop: MotionLook::DropEdge(edge.edge),
-                hover: PanelHover::Edge(at),
-                failed: false,
-                excluded: false,
-            });
+            let edges = (sweep.edges.edges.iter().enumerate()).map(|(at, edge)| edge.row(at));
             let rows = parts.chain(edges);
             let field = picks_field(
                 state,
