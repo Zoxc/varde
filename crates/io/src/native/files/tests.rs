@@ -5,7 +5,7 @@ use varde_document::Document;
 use super::*;
 use crate::native::sidecar::sidecar_path;
 use crate::tests::{TempDir, auto_saved_at, with_sketch_named};
-use crate::{Access, Offer, Picked, PickedFrom};
+use crate::{Access, Offer, Picked, PickedFrom, RecentFile, Settings};
 
 fn open(files: &mut Files, path: &Path) -> Result<Opened, String> {
     match files.handle(Request::Open {

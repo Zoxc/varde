@@ -15,8 +15,8 @@ use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
 use crate::thumbnail::{self, Thumbnail, previews};
 use crate::vrdp::{self, Preview};
 use crate::{
-    Chosen, Closing, Damage, FileId, OpenId, Opened, ReadOnly, RecentFile, Request, Response,
-    SaveError, SaveTo, SavedAs, Settings, Stores,
+    Chosen, Closing, Damage, FileId, OpenId, Opened, ReadOnly, Request, Response, SaveError,
+    SaveTo, SavedAs, Stores,
 };
 
 mod document_file;
@@ -219,13 +219,17 @@ impl Files {
                     .collect(),
             },
             Request::WriteRecent { entries } => Response::RecentWritten {
-                result: self.write_recent(&entries),
+                result: to_store(self.stores.recent.as_deref(), |s| {
+                    recent::write(s, &entries)
+                }),
             },
             Request::LoadSettings => Response::SettingsLoaded {
                 settings: self.stores.read_settings_now(),
             },
             Request::WriteSettings { settings } => Response::SettingsWritten {
-                result: self.write_settings(&settings),
+                result: to_store(self.stores.settings.as_deref(), |s| {
+                    settings::write(s, &settings)
+                }),
             },
             Request::ListRecovered => Response::RecoveredListed {
                 designs: self
@@ -290,10 +294,9 @@ impl Files {
                 panic: self.stores.panic.as_deref().and_then(panicked::load),
             },
             Request::DiscardPanic { panic } => Response::PanicDiscarded {
-                result: match self.stores.panic.as_deref() {
-                    Some(store) => panicked::discard(store, &panic).map_err(|e| e.to_string()),
-                    None => Ok(()),
-                },
+                result: to_store(self.stores.panic.as_deref(), |s| {
+                    panicked::discard(s, &panic)
+                }),
             },
             Request::LoadMcpToken => Response::McpToken {
                 regenerated: false,
@@ -615,20 +618,6 @@ impl Files {
         }
     }
 
-    fn write_recent(&self, entries: &[RecentFile]) -> Result<(), String> {
-        match &self.stores.recent {
-            Some(store) => recent::write(store, entries).map_err(|e| e.to_string()),
-            None => Ok(()),
-        }
-    }
-
-    fn write_settings(&self, written: &Settings) -> Result<(), String> {
-        match &self.stores.settings {
-            Some(store) => settings::write(store, written).map_err(|e| e.to_string()),
-            None => Ok(()),
-        }
-    }
-
     /// Lets go of every file still open, as the lane stops. The UI closes
     /// the files it's done with before, so any still open are left as a
     /// crash would leave them: auto-saves are kept, to be recovered.
@@ -709,6 +698,14 @@ pub(super) fn resolved(path: &Path) -> PathBuf {
             Some(parent.join(path.file_name()?))
         })
         .unwrap_or_else(|| path.to_owned())
+}
+
+/// Writes to `store` if there is one: without, there's nothing to keep.
+fn to_store(
+    store: Option<&Path>,
+    write: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), String> {
+    store.map_or(Ok(()), |s| write(s).map_err(|e| e.to_string()))
 }
 
 /// The lane stopping lets go of every file still open.
