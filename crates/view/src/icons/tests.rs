@@ -3,7 +3,6 @@ use iced::{Color, Size};
 use super::{Icon, Layer, Layers, icon, tinted};
 use crate::testing::Laid;
 use crate::theme::{IconCategory, IconTone};
-use crate::toolbar::tool_icon;
 use crate::{ConstraintKind, Message, Mode, Tool};
 
 /// The icons drawn from the icon mock, with accents.
@@ -81,7 +80,7 @@ fn every_icon_sorts_into_layers() {
 
 #[test]
 fn every_toolbar_tool_has_an_icon() {
-    let icons = Tool::ALL.map(tool_icon);
+    let icons = Tool::ALL.map(Tool::icon);
     for (tool, icon) in Tool::ALL.iter().zip(icons) {
         assert!(FROM_MOCK.contains(&icon), "{tool:?}: {icon:?}");
         let category = icon.category().unwrap();

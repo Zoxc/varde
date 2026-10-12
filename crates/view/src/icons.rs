@@ -11,6 +11,7 @@ use std::sync::LazyLock;
 
 use iced::widget::{Svg, stack, svg};
 use iced::{Color, Element, Theme};
+use varde_document::OriginPlane;
 
 use crate::theme::{self, IconCategory, IconTone, Palette};
 
@@ -598,6 +599,15 @@ pub const INLINE: f32 = 16.0;
 
 /// The margin in icon units (24 per icon).
 const BUTTON_MARGIN: f32 = (BUTTON_SIZE - INLINE) / 2.0 * 24.0 / INLINE;
+
+/// The icon of `plane`, on its buttons and its row in Objects.
+pub(crate) fn plane_icon(plane: OriginPlane) -> Icon {
+    match plane {
+        OriginPlane::XY => Icon::PlaneXy,
+        OriginPlane::XZ => Icon::PlaneXz,
+        OriginPlane::YZ => Icon::PlaneYz,
+    }
+}
 
 /// An icon `size` pixels square in its own colours: a tool's geometry,
 /// accents and reference geometry each in its [`Icon::tone`].

@@ -453,28 +453,6 @@ fn remove_op(why: Option<String>, binding: Binding) -> Element<'static, Message>
     crate::chrome::tip(button, text(format!("Remove point: {why}")))
 }
 
-/// The icon of the drawing tool `tool`.
-pub(crate) fn tool_icon(tool: Tool) -> Icon {
-    match tool {
-        Tool::Line => Icon::Line,
-        Tool::Circle => Icon::Circle,
-        Tool::Arc => Icon::Arc,
-        Tool::Point => Icon::Point,
-        Tool::Rectangle => Icon::Rectangle,
-        Tool::Polygon => Icon::Polygon,
-        Tool::Spline => Icon::Spline,
-        Tool::Dimension => Icon::Dimension,
-        Tool::Trim => Icon::Trim,
-        Tool::Extend => Icon::Extend,
-        Tool::Mirror => Icon::Mirror,
-        Tool::Offset => Icon::Offset,
-        Tool::Fillet => Icon::Fillet,
-        Tool::Chamfer => Icon::Chamfer,
-        Tool::Project => Icon::Project,
-        Tool::Intersect => Icon::Intersect,
-    }
-}
-
 /// The operations for what's going on: modelling, picking the plane for a
 /// new sketch, or editing a sketch. While an `operation` is set up, only
 /// Cancel and what it picks, its OK being in the pill.
@@ -555,7 +533,7 @@ fn ops<'a>(
         let active = sketch.tool.map(|tool| tool.tool);
         let tools = Tool::BAR.map(|tool| {
             tipped_op(
-                tool_icon(tool),
+                tool.icon(),
                 tool.label(),
                 tool_binding(tool, keys),
                 active == Some(tool),
@@ -576,7 +554,7 @@ fn ops<'a>(
         // origin planes are offered here.
         let planes = OriginPlane::ALL.map(|plane| {
             bound_op(
-                plane_icon(plane),
+                icons::plane_icon(plane),
                 plane_label(plane),
                 plane_binding(plane, keys),
                 false,
@@ -623,7 +601,7 @@ fn ops<'a>(
                     (OriginPlane::ALL.iter())
                         .map(|&plane| {
                             op(
-                                plane_icon(plane),
+                                icons::plane_icon(plane),
                                 plane_label(plane),
                                 send(MotionLook::OriginPlane(plane)),
                             )
@@ -894,8 +872,9 @@ pub fn motion_picks_origin_planes(kind: MotionKind, picking: MotionPick, split_f
     }
 }
 
-/// The label of the button turning a move, or patterning, about `axis`.
-fn axis_label(axis: Axis3) -> &'static str {
+/// The label of a button or row picking `axis`: turning a move, or
+/// patterning, about it.
+pub(crate) fn axis_label(axis: Axis3) -> &'static str {
     match axis {
         Axis3::X => "X axis",
         Axis3::Y => "Y axis",
@@ -903,17 +882,8 @@ fn axis_label(axis: Axis3) -> &'static str {
     }
 }
 
-/// The icon of `plane`, on its buttons and its row in Objects.
-pub(crate) fn plane_icon(plane: OriginPlane) -> Icon {
-    match plane {
-        OriginPlane::XY => Icon::PlaneXy,
-        OriginPlane::XZ => Icon::PlaneXz,
-        OriginPlane::YZ => Icon::PlaneYz,
-    }
-}
-
-/// The label of the button making a sketch on `plane`.
-fn plane_label(plane: OriginPlane) -> &'static str {
+/// The label of a button or row picking `plane`.
+pub(crate) fn plane_label(plane: OriginPlane) -> &'static str {
     match plane {
         OriginPlane::XY => "XY plane",
         OriginPlane::XZ => "XZ plane",

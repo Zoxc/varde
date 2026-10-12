@@ -25,7 +25,6 @@ use crate::shortcut::{
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
-use crate::toolbar::tool_icon;
 use crate::{ConstraintKind, DocumentState, Look, Message, MotionKind, Tool};
 
 /// The gap between the cards, and between the rail and the viewport's
@@ -137,7 +136,7 @@ impl Entry {
             Entry::Motion(kind) => kind.icon(),
             Entry::Measure => Icon::Measure,
             Entry::Params => Icon::Params,
-            Entry::Tool(tool) => tool_icon(tool),
+            Entry::Tool(tool) => tool.icon(),
             Entry::Constrain => Icon::Constrain,
             Entry::Constraint(kind) => kind.icon(),
         }

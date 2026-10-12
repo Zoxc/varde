@@ -1087,6 +1087,28 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// Its icon.
+    pub(crate) fn icon(self) -> icons::Icon {
+        match self {
+            Tool::Line => icons::Icon::Line,
+            Tool::Circle => icons::Icon::Circle,
+            Tool::Arc => icons::Icon::Arc,
+            Tool::Point => icons::Icon::Point,
+            Tool::Rectangle => icons::Icon::Rectangle,
+            Tool::Polygon => icons::Icon::Polygon,
+            Tool::Spline => icons::Icon::Spline,
+            Tool::Dimension => icons::Icon::Dimension,
+            Tool::Trim => icons::Icon::Trim,
+            Tool::Extend => icons::Icon::Extend,
+            Tool::Mirror => icons::Icon::Mirror,
+            Tool::Offset => icons::Icon::Offset,
+            Tool::Fillet => icons::Icon::Fillet,
+            Tool::Chamfer => icons::Icon::Chamfer,
+            Tool::Project => icons::Icon::Project,
+            Tool::Intersect => icons::Icon::Intersect,
+        }
+    }
+
     /// Every tool, drawing ones first.
     pub const ALL: [Tool; 16] = [
         Tool::Line,
