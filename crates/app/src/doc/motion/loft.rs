@@ -26,7 +26,7 @@ use varde_view::{
     SketchLines, SweepPart, loft_info,
 };
 
-use super::sweep::{chain_at, chain_through, chains_gone, count};
+use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
 use super::{Doc, MotionSession};
 use crate::doc::regions::{BodyTargets, RegionPick};
 use crate::doc::revolve::sketch_of;
@@ -559,13 +559,7 @@ impl Doc {
     /// Takes the body `body` out of what the loft being set up joins,
     /// cuts or intersects, or puts it back.
     fn loft_target(&mut self, body: BodyId) {
-        let revision = self.feed.revision();
-        let document = self.editor.document();
-        let Some(session) = self.operation.motion_mut() else {
-            return;
-        };
-        let feature = session.feature;
-        (session.loft.targets).toggle(body, feature, document, revision);
+        self.toggle_target(|session| &mut session.loft.targets, body);
     }
 
     /// Why the loft as set up can't be committed, if what it names is
@@ -594,16 +588,8 @@ impl Doc {
     pub(super) fn loft_view<'s>(&'s self, session: &'s MotionSession) -> LoftView<'s> {
         let document = self.editor.document();
         let setup = &session.loft;
-        let candidates = (setup
-            .regions
-            .candidates(|id| self.placement(id))
-            .into_iter())
-        .filter(|candidate| session.takes_sketch(document, candidate.feature))
-        .collect();
+        let candidates = self.region_candidates(session, &setup.regions);
         let resolution = document.tolerance().resolution();
-        let name = |sketch: FeatureId| {
-            (document.feature(sketch)).map_or_else(|| "A sketch".to_owned(), |f| f.name.clone())
-        };
         let sections = (setup.sections.iter())
             .map(|section| {
                 let sketch = section.sketch();
@@ -641,7 +627,7 @@ impl Doc {
                     }
                 };
                 LoftSection {
-                    name: name(sketch),
+                    name: sketch_name(document, sketch),
                     gone: session.section_gone(document, section),
                     sketch,
                     placement: self.placement(sketch),
@@ -655,7 +641,7 @@ impl Doc {
             sections,
             rails: (setup.rails.iter())
                 .map(|rail| SweepPart {
-                    name: name(rail.sketch),
+                    name: sketch_name(document, rail.sketch),
                     meta: Some(count(rail.curves.len(), "curve", "curves")),
                 })
                 .collect(),

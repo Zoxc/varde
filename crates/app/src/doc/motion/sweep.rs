@@ -12,7 +12,6 @@
 //! twist for a path, and the operation and bodies as an extrude's. What
 //! the document no longer takes is kept and said to be gone.
 
-use crate::doc::OperationSlot;
 use std::borrow::Cow;
 
 use varde_document::{
@@ -21,12 +20,13 @@ use varde_document::{
 };
 use varde_expr::{AngleUnit, Unit, Value};
 use varde_render::Camera;
-use varde_sketch::{Id, RegionRef, Sketch};
+use varde_sketch::{Id, RegionRef};
 use varde_view::{
     MotionField, MotionKind, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath,
     SweepView, sweep_info,
 };
 
+use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
 use super::{Doc, MotionSession, length_field};
 use crate::doc::camera::fitting_length;
 use crate::doc::regions::{BodyTargets, RegionPick, TypedText};
@@ -407,47 +407,6 @@ impl MotionSession {
     }
 }
 
-/// Where in `chains` the one of `sketch`'s holding `curve` is, if one
-/// does: a click on it takes it out.
-pub(super) fn chain_at(chains: &[CurveChain], sketch: FeatureId, curve: Id) -> Option<usize> {
-    (chains.iter())
-        .position(|chain| chain.sketch == sketch && chain.curves.binary_search(&curve).is_ok())
-}
-
-/// The chain of curves `curve` is in, of `drawn`, the sketch `sketch`'s
-/// ([`varde_sketch::Sketch::chain_of`]), sorted: a sweep's path's part or
-/// a loft's rail.
-pub(super) fn chain_through(drawn: &Sketch, sketch: FeatureId, curve: Id) -> CurveChain {
-    let mut curves = drawn.chain_of(curve);
-    curves.sort_unstable();
-    curves.dedup();
-    CurveChain { sketch, curves }
-}
-
-/// Whether a chain of `chains` names what `document` no longer takes at
-/// feature `index`: a sketch not before it, or a curve its sketch hasn't.
-pub(super) fn chains_gone(document: &Document, index: usize, chains: &[CurveChain]) -> bool {
-    let features = document.features();
-    let before = |sketch: FeatureId| {
-        (features[..index.min(features.len())].iter()).any(|feature| feature.id == sketch)
-    };
-    (chains.iter()).any(|chain| {
-        !before(chain.sketch)
-            || sketch_of(document, chain.sketch).is_none_or(|sketch| {
-                (chain.curves.iter()).any(|&curve| sketch.curve(curve).is_none())
-            })
-    })
-}
-
-/// "1 curve", "3 curves": `n` of `one`, or of `many` if not one.
-pub(super) fn count(n: usize, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
-    }
-}
-
 /// Whether `a` and `b` hold the same parts, each as many times, in
 /// whatever order.
 fn same_parts(a: &[PathPart], b: &[PathPart]) -> bool {
@@ -490,17 +449,9 @@ impl Doc {
     pub(super) fn sweep_view<'s>(&'s self, session: &'s MotionSession) -> SweepView<'s> {
         let document = self.editor.document();
         let setup = &session.sweep;
-        let candidates = (setup
-            .regions
-            .candidates(|id| self.placement(id))
-            .into_iter())
-        .filter(|candidate| session.takes_sketch(document, candidate.feature))
-        .collect();
-        let name = |sketch: FeatureId| {
-            (document.feature(sketch)).map_or_else(|| "A sketch".to_owned(), |f| f.name.clone())
-        };
+        let candidates = self.region_candidates(session, &setup.regions);
         let chains = (setup.chains.iter()).map(|chain| SweepPart {
-            name: name(chain.sketch),
+            name: sketch_name(document, chain.sketch),
             meta: Some(count(chain.curves.len(), "curve", "curves")),
         });
         let stored = (setup.stored_edges.iter()).map(|part| {
@@ -544,12 +495,6 @@ impl Doc {
     /// Takes the body `body` out of what the sweep being set up joins,
     /// cuts or intersects, or puts it back.
     pub(super) fn sweep_target(&mut self, body: BodyId) {
-        let revision = self.feed.revision();
-        let document = self.editor.document();
-        let Some(session) = self.operation.motion_mut() else {
-            return;
-        };
-        let feature = session.feature;
-        (session.sweep.targets).toggle(body, feature, document, revision);
+        self.toggle_target(|session| &mut session.sweep.targets, body);
     }
 }

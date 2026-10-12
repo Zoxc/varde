@@ -1640,7 +1640,7 @@ impl Doc {
                 for &curve in curves {
                     // A chain picked already through another of them
                     // isn't taken out again.
-                    if sweep::chain_at(&session.sweep.chains, sketch, curve).is_none()
+                    if sketches::chain_at(&session.sweep.chains, sketch, curve).is_none()
                         && let Err(why) = session.sweep_curve(sketch, curve, document)
                     {
                         self.notice = Some(why.into_owned());
@@ -2908,6 +2908,7 @@ mod offset_face;
 mod refs;
 mod scale;
 mod shell;
+mod sketches;
 mod split;
 mod sweep;
 

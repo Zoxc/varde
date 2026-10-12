@@ -26,10 +26,12 @@ use varde_view::{
     Unnamed, plane_name, split_info,
 };
 
+use super::sketches::{count, sketch_name};
 use super::{Doc, Marks, MotionSession, OUT_OF_DATE, merged_in, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
 use crate::doc::regions::RegionPick;
+use crate::doc::revolve::sketch_of;
 
 /// A split's tool as picked for each of its "Split with" tiles, and
 /// which pieces it keeps.
@@ -141,12 +143,9 @@ impl SplitSetup {
             };
             let curves = match &tool {
                 SplitTool::Chain { sketch, curves } => {
-                    match document.feature(*sketch).map(|feature| &feature.kind) {
-                        Some(FeatureKind::Sketch { sketch, .. }) => {
-                            curves.iter().all(|&curve| sketch.curve(curve).is_some())
-                        }
-                        _ => false,
-                    }
+                    sketch_of(document, *sketch).is_some_and(|sketch| {
+                        curves.iter().all(|&curve| sketch.curve(curve).is_some())
+                    })
                 }
                 _ => true,
             };
@@ -223,14 +222,6 @@ impl MotionSession {
         })
     }
 
-    /// The feature's place in `document`: the edited one's, or where a
-    /// new one goes.
-    pub(super) fn index_in(&self, document: &Document) -> usize {
-        (self.feature)
-            .and_then(|id| document.feature_index(id))
-            .unwrap_or(document.insert_at())
-    }
-
     /// Notes whether `document` no longer takes its tool at feature
     /// `index` ([`SplitSetup::gone`]), finding its sketch's regions
     /// again where they changed. Regions whose sketch is gone are put by
@@ -242,12 +233,7 @@ impl MotionSession {
             return;
         }
         let setup = &mut self.split;
-        let is_sketch = |id: FeatureId| {
-            matches!(
-                document.feature(id).map(|feature| &feature.kind),
-                Some(FeatureKind::Sketch { .. })
-            )
-        };
+        let is_sketch = |id: FeatureId| sketch_of(document, id).is_some();
         if let Some(source) = setup.regions.source
             && !is_sketch(source)
         {
@@ -328,16 +314,6 @@ impl MotionSession {
         self.picking = MotionPick::Nothing;
     }
 
-    /// Whether `sketch` is a sketch of `document` the feature at its
-    /// place (a split's, a sweep's, a loft's) can take: before the
-    /// feature edited.
-    pub(super) fn takes_sketch(&self, document: &Document, sketch: FeatureId) -> bool {
-        let index = self.index_in(document);
-        (document.features()[..index].iter()).any(|feature| {
-            feature.id == sketch && matches!(feature.kind, FeatureKind::Sketch { .. })
-        })
-    }
-
     /// Picks the region `region` of `sketch` for its tool, or takes it
     /// out, while its regions are picked.
     pub(super) fn split_region(&mut self, sketch: FeatureId, region: usize, document: &Document) {
@@ -357,10 +333,7 @@ impl MotionSession {
     /// Picks the curve `curve` of `sketch` for its line, or takes it out,
     /// while its line is picked.
     pub(crate) fn split_curve(&mut self, sketch: FeatureId, curve: Id, document: &Document) {
-        let has = matches!(
-            document.feature(sketch).map(|feature| &feature.kind),
-            Some(FeatureKind::Sketch { sketch, .. }) if sketch.curve(curve).is_some()
-        );
+        let has = sketch_of(document, sketch).is_some_and(|drawn| drawn.curve(curve).is_some());
         if self.picking != MotionPick::Tool
             || self.split.mode != SplitMode::Line
             || !has
@@ -374,11 +347,7 @@ impl MotionSession {
             self.split.chain = (self.split.chain.take())
                 .filter(|(of, _)| self.takes_sketch(document, *of))
                 .and_then(|(of, mut curves)| {
-                    let Some(FeatureKind::Sketch { sketch, .. }) =
-                        document.feature(of).map(|feature| &feature.kind)
-                    else {
-                        return None;
-                    };
+                    let sketch = sketch_of(document, of)?;
                     curves.retain(|&curve| sketch.curve(curve).is_some());
                     (!curves.is_empty()).then_some((of, curves))
                 });
@@ -631,16 +600,6 @@ impl Doc {
     /// what's beside the name.
     fn split_tool_name(&self, session: &MotionSession) -> Option<(String, Option<String>)> {
         let document = self.editor.document();
-        let sketch_name = |sketch: FeatureId| {
-            (document.feature(sketch)).map_or_else(|| "A sketch".to_owned(), |f| f.name.clone())
-        };
-        let count = |n: usize, one: &str, many: &str| {
-            if n == 1 {
-                format!("1 {one}")
-            } else {
-                format!("{n} {many}")
-            }
-        };
         Some(match session.split.tool()? {
             SplitTool::Plane(plane) => (plane_name(document, &plane), None),
             SplitTool::Face(face) => (plane_name(document, &PlaneRef::Face(face)), None),
@@ -649,11 +608,11 @@ impl Doc {
                 None,
             ),
             SplitTool::Regions { sketch, regions } => (
-                sketch_name(sketch),
+                sketch_name(document, sketch),
                 Some(count(regions.len(), "region", "regions")),
             ),
             SplitTool::Chain { sketch, curves } => (
-                sketch_name(sketch),
+                sketch_name(document, sketch),
                 Some(count(curves.len(), "curve", "curves")),
             ),
         })
@@ -676,12 +635,7 @@ impl Doc {
             .collect();
         let regions = setup.mode == SplitMode::Regions;
         let candidates = if regions {
-            (setup
-                .regions
-                .candidates(|id| self.placement(id))
-                .into_iter())
-            .filter(|candidate| session.takes_sketch(document, candidate.feature))
-            .collect()
+            self.region_candidates(session, &setup.regions)
         } else {
             Vec::new()
         };
