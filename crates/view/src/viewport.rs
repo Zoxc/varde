@@ -1029,11 +1029,12 @@ impl Program<'_> {
         // the edge, often over nothing.
         if let Some(held) = picking.hovered
             && let Some((snapped, point)) = snap(held)
+            && let Some(body) = index.body(held)
         {
             return Some(Pick {
                 model: index.model(),
                 target: held,
-                body: index.body(held)?,
+                body,
                 at: point,
                 snap: Some(snapped),
             });
