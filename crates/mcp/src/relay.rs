@@ -165,37 +165,50 @@ fn read_line(reader: &mut impl BufRead, limit: u64) -> io::Result<Option<Line>> 
 }
 
 /// What a line from stdin is, as far as the relay cares.
-#[derive(Debug, Default)]
-struct Kind {
+#[derive(Debug)]
+enum Kind {
     /// An object with a `method` and an `id`: its failures are answered.
-    request: bool,
-    /// The request's id, if the server would take it: an id it refuses
-    /// (past `i64`, a fraction, an object, ...) is answered to `null`, as
-    /// the server answers it, rather than echoed rounded or as sent.
-    id: Option<Id>,
+    Request {
+        /// The id, if the server would take it: an id it refuses (past
+        /// `i64`, a fraction, an object, ...) is answered to `null`, as
+        /// the server answers it, rather than echoed rounded or as sent.
+        id: Option<Id>,
+        initialize: bool,
+    },
     /// An object with a `method` and no `id`: never answered.
-    notification: bool,
-    initialize: bool,
-    initialized: bool,
+    Notification { initialized: bool },
+    /// Anything else: passed on, its failures dropped.
+    Other,
 }
 
 impl Kind {
     fn of(line: &[u8]) -> Self {
         // Bounded by the line's cap; serde_json bounds nesting itself.
         let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(line) else {
-            return Kind::default();
+            return Kind::Other;
         };
         let Some(Value::String(method)) = object.get("method") else {
-            return Kind::default();
+            return Kind::Other;
         };
-        let id = object.get("id");
-        Kind {
-            request: id.is_some(),
-            id: id.and_then(Id::from_value),
-            notification: id.is_none(),
-            initialize: method == "initialize" && id.is_some(),
-            initialized: method == "notifications/initialized" && id.is_none(),
+        match object.get("id") {
+            Some(id) => Kind::Request {
+                id: Id::from_value(id),
+                initialize: method == "initialize",
+            },
+            None => Kind::Notification {
+                initialized: method == "notifications/initialized",
+            },
         }
+    }
+
+    fn initialize(&self) -> bool {
+        matches!(
+            self,
+            Kind::Request {
+                initialize: true,
+                ..
+            }
+        )
     }
 }
 
@@ -325,10 +338,10 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
             return Ok(());
         }
         let kind = Kind::of(&line);
-        let result = self.send(&line, kind.initialize, true);
-        if kind.notification {
+        let result = self.send(&line, kind.initialize(), true);
+        if let Kind::Notification { initialized } = kind {
             // Never answered, whatever came back.
-            if kind.initialized && result.is_ok_and(|a| a.status == 202) {
+            if initialized && result.is_ok_and(|a| a.status == 202) {
                 self.initialized = Some(line);
             }
             return Ok(());
@@ -338,7 +351,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
                 if answer.body.is_empty() || !answer.json {
                     return self.fail(&kind, &Failure::Malformed, out);
                 }
-                if kind.initialize && is_result(&answer.body) {
+                if kind.initialize() {
                     self.started(&answer, line);
                 }
                 write_line(out, answer.body)
@@ -354,20 +367,26 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
 
     /// A request's failure answered; anything else's dropped.
     fn fail(&self, kind: &Kind, failure: &Failure, out: &mut impl Write) -> io::Result<()> {
-        if !kind.request {
+        let Kind::Request { id, .. } = kind else {
             return Ok(());
-        }
-        write_error(out, kind.id.as_ref(), &failure.message())
+        };
+        write_error(out, id.as_ref(), &failure.message())
     }
 
-    /// Takes the session and version from `initialize`'s answer and
-    /// keeps the line for a new session.
+    /// Takes the session and version from `initialize`'s answer, if a
+    /// success, and keeps the line for a new session.
     fn started(&mut self, answer: &Answer, line: Vec<u8>) {
+        let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(&answer.body) else {
+            return;
+        };
+        let Some(result) = object.get("result") else {
+            return;
+        };
         self.session = answer.session.clone();
-        self.version = serde_json::from_slice::<Value>(&answer.body)
-            .ok()
-            .and_then(|v| v["result"]["protocolVersion"].as_str().map(str::to_owned))
-            .filter(|v| header_value(v));
+        self.version = result["protocolVersion"]
+            .as_str()
+            .filter(|v| header_value(v))
+            .map(str::to_owned);
         self.initialize = Some(line);
     }
 
@@ -614,14 +633,6 @@ fn read_answer(reader: &mut impl BufRead) -> Result<(Answer, bool), Attempt> {
         },
         close,
     ))
-}
-
-/// A JSON-RPC success reply.
-fn is_result(body: &[u8]) -> bool {
-    matches!(
-        serde_json::from_slice::<Value>(body),
-        Ok(Value::Object(object)) if object.contains_key("result")
-    )
 }
 
 /// A JSON-RPC error reply.
