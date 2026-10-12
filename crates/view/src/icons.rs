@@ -7,7 +7,7 @@
 //! reference geometry it works from, each tinted through [`svg::Style`] in
 //! its [`IconCategory`]'s [`IconTone`]; the others are drawn in one colour.
 
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use iced::widget::{Svg, stack, svg};
 use iced::{Color, Element, Theme};
@@ -334,37 +334,51 @@ impl Icon {
         self.tone(palette).line
     }
 
-    fn handle(self, frame: Frame, layer: Layer) -> svg::Handle {
-        static HANDLES: LazyLock<Vec<svg::Handle>> = LazyLock::new(|| {
-            let mut handles = Vec::new();
-            for margin in [0.0, BUTTON_MARGIN] {
-                for layer in Layer::ALL {
-                    for icon in Icon::ALL {
-                        handles.push(svg::Handle::from_memory(
-                            Layers::of(icon.paths()).svg(layer, margin).into_bytes(),
-                        ));
-                    }
-                }
+    /// The icon's SVG documents, made from its paths the first time
+    /// it's drawn.
+    fn svgs(self) -> &'static Svgs {
+        static SVGS: [OnceLock<Svgs>; Icon::ALL.len()] =
+            [const { OnceLock::new() }; Icon::ALL.len()];
+        SVGS[self as usize].get_or_init(|| {
+            let layers = Layers::of(self.paths());
+            let handle =
+                |layer, margin| svg::Handle::from_memory(layers.svg(layer, margin).into_bytes());
+            // Only an icon with accents or reference geometry is drawn
+            // layer by layer, and then only the layers it draws in.
+            let layered = layers.draws(Layer::Accent) || layers.draws(Layer::Reference);
+            let layer = |layer| (layered && layers.draws(layer)).then(|| handle(layer, 0.0));
+            Svgs {
+                all: handle(Layer::All, 0.0),
+                button: handle(Layer::All, BUTTON_MARGIN),
+                layers: [Layer::Line, Layer::Accent, Layer::Reference].map(layer),
             }
-            handles
-        });
-        let frame = match frame {
-            Frame::None => 0,
-            Frame::Button => 1,
-        };
-        HANDLES[(frame * Layer::ALL.len() + layer as usize) * Icon::ALL.len() + self as usize]
-            .clone()
+        })
+    }
+}
+
+/// An icon's SVG documents, see [`Icon::svgs`].
+struct Svgs {
+    /// All of it in one colour, unframed.
+    all: svg::Handle,
+    /// All of it in one colour, framed as a button's.
+    button: svg::Handle,
+    /// Its line, accent and reference layers, unframed, each if the icon
+    /// draws in it; none for an icon drawn in one colour.
+    layers: [Option<svg::Handle>; 3],
+}
+
+impl Svgs {
+    /// The icon in one colour in `frame`.
+    fn framed(&self, frame: Frame) -> &svg::Handle {
+        match frame {
+            Frame::None => &self.all,
+            Frame::Button => &self.button,
+        }
     }
 
-    /// Whether the icon draws anything in `layer`.
-    fn draws(self, layer: Layer) -> bool {
-        static DRAWS: LazyLock<Vec<[bool; Layer::ALL.len()]>> = LazyLock::new(|| {
-            Icon::ALL
-                .iter()
-                .map(|icon| Layer::ALL.map(|layer| Layers::of(icon.paths()).draws(layer)))
-                .collect()
-        });
-        DRAWS[self as usize][layer as usize]
+    /// Whether the icon is drawn layer by layer.
+    fn layered(&self) -> bool {
+        self.layers.iter().any(Option::is_some)
     }
 }
 
@@ -380,10 +394,6 @@ enum Layer {
     Accent,
     /// The geometry it works from: the mock's `r`.
     Reference,
-}
-
-impl Layer {
-    const ALL: [Layer; 4] = [Layer::All, Layer::Line, Layer::Accent, Layer::Reference];
 }
 
 /// An icon's SVG elements sorted into [`Layer`]s.
@@ -511,12 +521,13 @@ pub(crate) fn plane_icon(plane: OriginPlane) -> Icon {
 /// An icon `size` pixels square in its own colours: a tool's geometry,
 /// accents and reference geometry each in its [`Icon::tone`].
 pub fn icon<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
-    if !icon.draws(Layer::Accent) && !icon.draws(Layer::Reference) {
+    let svgs = icon.svgs();
+    if !svgs.layered() {
         return tinted(icon, size, move |palette| icon.tint(palette)).into();
     }
-    let layer = |layer: Layer, color: fn(IconTone) -> Color| {
-        icon.draws(layer).then(|| {
-            Svg::new(icon.handle(Frame::None, layer))
+    let layer = |handle: &Option<svg::Handle>, color: fn(IconTone) -> Color| {
+        handle.clone().map(|handle| {
+            Svg::new(handle)
                 .width(size)
                 .height(size)
                 .style(move |theme: &Theme, _| svg::Style {
@@ -526,9 +537,9 @@ pub fn icon<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
     };
     // The accents over the rest, as the mock draws them last.
     stack![
-        layer(Layer::Reference, |tone| tone.reference),
-        layer(Layer::Line, |tone| tone.line),
-        layer(Layer::Accent, |tone| tone.accent),
+        layer(&svgs.layers[2], |tone| tone.reference),
+        layer(&svgs.layers[0], |tone| tone.line),
+        layer(&svgs.layers[1], |tone| tone.accent),
     ]
     .into()
 }
@@ -572,7 +583,7 @@ fn framed(
     size: f32,
     color: impl Fn(&Palette, bool) -> Color + 'static,
 ) -> Svg<'static> {
-    Svg::new(icon.handle(frame, Layer::All))
+    Svg::new(icon.svgs().framed(frame).clone())
         .width(size)
         .height(size)
         .style(move |theme: &Theme, status| svg::Style {

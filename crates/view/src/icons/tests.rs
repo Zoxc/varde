@@ -70,7 +70,10 @@ fn every_icon_sorts_into_layers() {
     }
     for icon in FROM_MOCK {
         assert!(icon.category().is_some(), "{icon:?}");
-        assert!(icon.draws(Layer::Accent), "{icon:?} has no accent");
+        assert!(
+            Layers::of(icon.paths()).draws(Layer::Accent),
+            "{icon:?} has no accent"
+        );
     }
     // A dot hides what's under it, drawn outside the mask itself.
     let point = Layers::of(Icon::Coincident.paths()).svg(Layer::All, 0.0);
@@ -157,7 +160,7 @@ fn icons_draw_in_their_colours() {
             ] {
                 assert_eq!(
                     shows(&pixels, color),
-                    each.draws(layer),
+                    Layers::of(each.paths()).draws(layer),
                     "{each:?} {layer:?} in {mode:?}"
                 );
             }
