@@ -18,7 +18,7 @@ use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, Side, Sides,
     TypedField, field, footer_message, message_text, operation_panel, operation_section,
-    pick_field, region_rows, tile, tiles, toggle, value_field,
+    pick_field, region_rows, tile, tiles, value_field,
 };
 use crate::panels::{angle_note, length_note};
 use crate::theme;
@@ -244,11 +244,7 @@ impl ExtrudeState<'_> {
             .filter_map(|&index| source.profiles.regions.get(index));
         let centre = centroid(regions)?;
         let placement = source.placement;
-        let sign = if self.flip && self.extent.flips() {
-            -1.0
-        } else {
-            1.0
-        };
+        let sign = self.extent.sides().sign(self.flip);
         let knobs = (self.extent.sides()).knobs(self.fields.map(|field| field.value), sign);
         let handle = Handle {
             origin: placement.to_world(centre),
@@ -377,15 +373,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         Message::Edit(Edit::CommitExtrude),
         Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
     );
-    let flip = state.extent.flips().then(|| {
-        toggle(
-            Icon::TkFlip,
-            "Flip",
-            state.flip,
-            send(ExtrudeLook::Flip),
-            None,
-        )
-    });
+    let flip = (state.extent.sides()).flip_toggle(state.flip, send(ExtrudeLook::Flip));
     let taper = value_field(
         "Taper",
         TAPER_FIELD,

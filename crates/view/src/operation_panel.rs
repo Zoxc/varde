@@ -185,6 +185,22 @@ impl Sides {
         matches!(self, Sides::One | Sides::Two)
     }
 
+    /// The handle's sign: -1 where `flip` is on and Flip changes it.
+    pub(crate) fn sign(self, flip: bool) -> f64 {
+        if flip && self.flips() { -1.0 } else { 1.0 }
+    }
+
+    /// The panel's Flip toggle, lit while `flip`, sending `message`, for
+    /// what Flip changes.
+    pub(crate) fn flip_toggle<'a>(
+        self,
+        flip: bool,
+        message: Option<Message>,
+    ) -> Option<Element<'a, Message>> {
+        self.flips()
+            .then(|| toggle(Icon::TkFlip, "Flip", flip, message, None))
+    }
+
     /// Where the handle's knobs go, each [`Side`] given in `values`: how
     /// far along, `sign` -1 where flipped. One side's at its value,
     /// symmetric's at half of it, two sides' each its own way.

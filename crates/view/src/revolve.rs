@@ -20,7 +20,7 @@ use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, ListRow, OperationKind, PanelHover, Parts, Side, Sides,
     TypedField, field, footer_message, message_text, operation_panel, operation_section,
-    pick_field, pick_rows, region_rows, tile, tiles, toggle,
+    pick_field, pick_rows, region_rows, tile, tiles,
 };
 use crate::panels::angle_note;
 use crate::pick::{PickIndex, Snapped};
@@ -334,7 +334,7 @@ impl RevolveState<'_> {
         if !(radial.length() > 1e-9 * scale && radial.is_finite()) {
             return None;
         }
-        let sign = if self.reversed() { -1.0 } else { 1.0 };
+        let sign = self.extent.sides().sign(self.flip);
         let knobs = (self.extent.sides()).knobs(self.fields.map(|field| field.value), sign);
         Some(RevolveHandle {
             origin,
@@ -536,15 +536,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         Message::Edit(Edit::CommitRevolve),
         Message::Look(Look::Revolve(RevolveLook::Cancel)),
     );
-    let flip = state.extent.flips().then(|| {
-        toggle(
-            Icon::TkFlip,
-            "Flip",
-            state.flip,
-            send(RevolveLook::Flip),
-            None,
-        )
-    });
+    let flip = (state.extent.sides()).flip_toggle(state.flip, send(RevolveLook::Flip));
     let operation = operation_section(
         state.operation,
         &state.targets,
