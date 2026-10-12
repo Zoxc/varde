@@ -554,7 +554,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
         false,
         Mode::Light,
         varde_view::ViewOptions::default(),
-        crate::Offers::default(),
+        crate::files::Offers::default(),
     );
     assert!(state.failed.iter().any(|f| f.feature == id));
     drop(state);

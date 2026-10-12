@@ -19,8 +19,9 @@ use varde_io::{
 use varde_view::{NOT_SAVED, SavePlace, Unsaved};
 
 use super::{Doc, FileDamage, Recovery, design_name, read_only, shown_damage};
+use crate::Next;
+use crate::files::Files;
 use crate::io::Io;
-use crate::{Files, Next};
 
 /// Where a document is written, and how saving and leaving it go: the
 /// part of [`Doc`] the save and leave steps keep to themselves.

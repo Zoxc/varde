@@ -11,7 +11,8 @@ use varde_regen::ExportedBody;
 use varde_view::MeshStatus;
 
 use super::Doc;
-use crate::{Files, Next};
+use crate::Next;
+use crate::files::Files;
 
 /// Where an export of the document stands, see [`Doc::request_export`].
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -482,7 +482,7 @@ fn the_copy_button_copies_the_value_with_its_unit_at_full_precision() {
             false,
             Mode::Light,
             varde_view::ViewOptions::default(),
-            crate::Offers::default(),
+            crate::files::Offers::default(),
         ),
         size,
         &mut renderer,

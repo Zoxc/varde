@@ -1754,7 +1754,7 @@ fn shots_27_thumbnail() {
     use varde_io::recent::Listed;
     use varde_io::{RecentFile, UnixSeconds};
 
-    use crate::{Files, welcome::Welcome};
+    use crate::{files::Files, welcome::Welcome};
 
     shooting(|camera| {
         let (mut doc, _) = example();

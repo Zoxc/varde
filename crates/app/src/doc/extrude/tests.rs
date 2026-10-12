@@ -1384,7 +1384,7 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
     assert!(doc.proposing());
     assert!(!doc.extrude_state().unwrap().ready);
 
-    let _ = doc.restore_recovered(&mut crate::Files::new(None));
+    let _ = doc.restore_recovered(&mut crate::files::Files::new(None));
     assert!(!doc.proposing());
     // The recovered plate has its hole: the session found its region
     // again, and OK is free.
@@ -1888,7 +1888,7 @@ fn restoring_drops_the_session_and_the_changes_waiting() {
     assert!(doc.delete_prompt().is_none());
     assert_eq!(doc.editor.document().units(), units);
 
-    let _ = doc.restore_recovered(&mut crate::Files::new(None));
+    let _ = doc.restore_recovered(&mut crate::files::Files::new(None));
     assert_eq!(*doc.editor.document(), recovered);
     assert!(doc.operation.extrude().is_none());
     assert!(last_draft(&requests).is_none());
@@ -2302,7 +2302,7 @@ fn nothing_waiting_moves_while_a_delete_from_the_queue_asks() {
 #[test]
 fn closing_waits_for_a_delete_waiting_to_be_asked_and_answered() {
     let (mut doc, mut lane, hole, example) = two_deletes_waiting();
-    let mut files = crate::Files::new(None);
+    let mut files = crate::files::Files::new(None);
     assert!(matches!(
         doc.leave(&mut files, crate::doc::Leave::Close),
         crate::Next::Stay

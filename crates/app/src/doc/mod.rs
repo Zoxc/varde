@@ -84,7 +84,8 @@ pub(crate) use sketch::{
 };
 pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
-use crate::{Files, ForDoc, Next, Offers, when};
+use crate::files::{Files, Offers};
+use crate::{ForDoc, Next, when};
 
 /// An open document and the state of its view.
 pub(crate) struct Doc {

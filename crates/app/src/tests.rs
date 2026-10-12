@@ -26,6 +26,8 @@ use crate::doc::{
     AUTO_SAVE_WAIT, AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN,
     Picking, Recovery, Refusal, Target,
 };
+use crate::files::Offers;
+use varde_io::Recovered;
 
 #[test]
 fn camera_animation_eases_out_and_ends() {
@@ -474,7 +476,7 @@ pub(crate) fn status_bar_texts(doc: &Doc, mouse_hints: bool) -> Vec<String> {
         mouse_hints,
         ..Default::default()
     };
-    let view = doc.view(false, Mode::Light, options, crate::Offers::default());
+    let view = doc.view(false, Mode::Light, options, crate::files::Offers::default());
     // It floats over the viewport, right of the side panel.
     let mut bar: Vec<_> = with_renderer(|renderer| {
         let mut ui = shown(view, size, renderer);

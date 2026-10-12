@@ -14,8 +14,9 @@ use varde_io::{
 use varde_view::{Message as Ui, Mode, Welcome as WelcomeUi};
 
 use crate::doc::{Dialog, Doc, FileDamage, Leave, Origin, Recovery, Target, design_name};
+use crate::files::Files;
 use crate::samples::SAMPLES;
-use crate::{Files, Next, when};
+use crate::{Next, when};
 
 /// State of the welcome screen.
 #[derive(Default)]
@@ -766,26 +767,6 @@ fn offered(
 }
 
 impl Files {
-    /// Asks the lane for the recent files' thumbnails, shown on the
-    /// welcome screen once they arrive: as the list loads, and as the
-    /// welcome screen shows again, a design maybe saved since.
-    pub(crate) fn load_thumbnails(&mut self) {
-        let paths: Vec<_> = (self.recent.entries().iter())
-            .map(|listed| listed.entry.path.clone())
-            .collect();
-        if RECENT_FILES && !paths.is_empty() {
-            self.io.send(IoRequest::LoadThumbnails { paths });
-        }
-    }
-
-    /// The thumbnail of the recent file at `path`, if it has one, in
-    /// `mode`'s colours.
-    pub(crate) fn thumbnail(&self, path: &Path, mode: Mode) -> Option<iced::widget::image::Handle> {
-        (self.thumbnails.iter())
-            .find(|(at, _)| at == path)
-            .map(|(_, handles)| handles.of(mode))
-    }
-
     /// The name the recovered design at `path` is known by, see
     /// [`recovered_name`], or Untitled if it isn't listed.
     fn recovered_title(&self, path: &Path) -> String {
@@ -898,7 +879,7 @@ fn delete(files: &mut Files, name: String) {
 /// Whether there's a list of recently opened files. Browsers only hand
 /// over files the user picks, and the handles to them would have to be
 /// kept in IndexedDB to be opened again later, which isn't done yet.
-const RECENT_FILES: bool = cfg!(not(target_arch = "wasm32"));
+pub(crate) const RECENT_FILES: bool = cfg!(not(target_arch = "wasm32"));
 
 #[cfg(test)]
 mod tests;

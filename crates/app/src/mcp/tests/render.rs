@@ -91,7 +91,7 @@ fn a_render_is_drawn_encoded_and_answered_as_an_image() {
         false,
         varde_view::Mode::Light,
         varde_view::ViewOptions::default(),
-        crate::Offers::default(),
+        crate::files::Offers::default(),
     );
     assert!(
         state

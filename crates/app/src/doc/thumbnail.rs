@@ -25,7 +25,8 @@ use varde_render::Camera;
 use varde_view::{PreviewRequest, ThumbnailImages};
 
 use super::Doc;
-use crate::{Files, Next};
+use crate::Next;
+use crate::files::Files;
 
 /// How long a save waits for its thumbnail before it goes without: a
 /// frame is all it takes, unless the window isn't drawn.

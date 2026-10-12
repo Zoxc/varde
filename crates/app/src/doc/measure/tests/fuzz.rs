@@ -347,7 +347,7 @@ fn shows_its_values(doc: &Doc, rng: &mut Rng) {
         false,
         mode,
         varde_view::ViewOptions::default(),
-        crate::Offers::default(),
+        crate::files::Offers::default(),
     );
     let found: Vec<String> = crate::tests::with_renderer(|renderer| {
         let mut ui = crate::tests::shown(view, size, renderer);
