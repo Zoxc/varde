@@ -817,6 +817,14 @@ pub struct NamePrompt<'a> {
     pub taken: Option<&'a str>,
 }
 
+impl NamePrompt<'_> {
+    /// Whether the design is kept in browser storage: saved there, or
+    /// renamed, which is only done there.
+    fn in_browser(&self) -> bool {
+        self.place == SavePlace::Browser || self.rename
+    }
+}
+
 /// The document screen: toolbar on top, side panel on the left and the 3D
 /// viewport filling the rest.
 pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
@@ -1670,16 +1678,12 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
     )
 }
 
-/// The app's own Save As dialog, see [`NamePrompt`], as a dialog over the
-/// whole screen like [`unsaved_prompt`]: the name, with `.vrdp` after it,
-/// where to save it if there's a choice, and what's in the way if the
-/// name's taken. `Enter` in the field saves, as the primary button does.
 /// What confirming the name prompt does, its button's label and the
 /// `Enter` key's, and whether it's blocked (it then does nothing):
 /// renaming to a name taken, or keeping in browser storage, which keeps a
 /// design by its name, with none typed.
 fn name_action(prompt: &NamePrompt<'_>) -> (&'static str, bool) {
-    let browser = prompt.place == SavePlace::Browser || prompt.rename;
+    let browser = prompt.in_browser();
     let action = match (prompt.rename, browser, prompt.taken.is_some()) {
         (true, _, _) => "Rename",
         (false, false, _) => "Choose file…",
@@ -1691,8 +1695,12 @@ fn name_action(prompt: &NamePrompt<'_>) -> (&'static str, bool) {
     (action, blocked)
 }
 
+/// The app's own Save As dialog, see [`NamePrompt`], as a dialog over the
+/// whole screen like [`unsaved_prompt`]: the name, with `.vrdp` after it,
+/// where to save it if there's a choice, and what's in the way if the
+/// name's taken. `Enter` in the field saves, as the primary button does.
 fn name_prompt(prompt: NamePrompt<'_>) -> Element<'_, Message> {
-    let browser = prompt.place == SavePlace::Browser || prompt.rename;
+    let browser = prompt.in_browser();
     let confirm = Message::File(File::ConfirmName);
     let field = text_input("Name", prompt.name)
         .id(crate::NAME_FIELD)
