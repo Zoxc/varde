@@ -243,6 +243,23 @@ impl std::fmt::Display for ProjectError {
 /// share of its size.
 const CIRCLE_SAMPLES: usize = 256;
 
+/// [`CIRCLE_SAMPLES`] places along the arc about `center` of `radius`
+/// from the angle `from` through `sweep` counter-clockwise, evenly apart,
+/// and the end too unless it's `closed`, a whole circle.
+fn arc_places(center: DVec2, radius: f64, from: f64, sweep: f64, closed: bool) -> Vec<DVec2> {
+    let count = if closed {
+        CIRCLE_SAMPLES - 1
+    } else {
+        CIRCLE_SAMPLES
+    };
+    (0..=count)
+        .map(|i| {
+            let turn = from + sweep * i as f64 / CIRCLE_SAMPLES as f64;
+            center + angle::from_angle(turn) * radius
+        })
+        .collect()
+}
+
 impl Sketch {
     /// The link `id`.
     pub fn link(&self, id: Id) -> Option<&Link> {
@@ -541,12 +558,7 @@ impl Sketch {
                     own.curve(Curve::Circle { center, radius });
                     return Ok(own.mapped_rigid(map, reflects));
                 }
-                let places = (0..CIRCLE_SAMPLES)
-                    .map(|i| {
-                        let turn = std::f64::consts::TAU * i as f64 / CIRCLE_SAMPLES as f64;
-                        c + angle::from_angle(turn) * radius
-                    })
-                    .collect();
+                let places = arc_places(c, radius, 0.0, std::f64::consts::TAU, true);
                 sampled(places, true)
             }
             &Curve::Arc { center, start, end } => {
@@ -561,14 +573,7 @@ impl Sketch {
                 let radius = s.distance(c);
                 let from = angle::to_angle(s - c);
                 let sweep = crate::arc_sweep(s - c, e - c);
-                let count = CIRCLE_SAMPLES;
-                let places = (0..=count)
-                    .map(|i| {
-                        let turn = from + sweep * i as f64 / count as f64;
-                        c + angle::from_angle(turn) * radius
-                    })
-                    .collect();
-                sampled(places, false)
+                sampled(arc_places(c, radius, from, sweep, false), false)
             }
             Curve::Spline(spline) => {
                 let shape = self.spline_shape(spline).ok_or(ProjectError::Missing)?;
