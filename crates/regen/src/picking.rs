@@ -86,6 +86,19 @@ pub enum Summary {
 }
 
 impl Summary {
+    /// Whether this is a surface of revolution with an axis: a cylinder,
+    /// cone, torus or turned conic (not a sphere, whose every diameter is
+    /// one).
+    pub fn has_axis(&self) -> bool {
+        matches!(
+            self,
+            Summary::Cylinder { .. }
+                | Summary::Cone { .. }
+                | Summary::Torus { .. }
+                | Summary::Revolved { .. }
+        )
+    }
+
     /// The summary of a face of form `form`: [`Summary::Other`] for a form
     /// it has no variant for, or whose numbers wouldn't pass
     /// [`Summary::valid`].

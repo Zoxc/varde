@@ -2160,15 +2160,7 @@ impl Doc {
                 Ok(Reference::Axis(AxisRef::Edge(edge)))
             }
             (true, Picked::Face(face)) => {
-                let round = matches!(
-                    summary(face),
-                    Some(
-                        Summary::Cylinder { .. }
-                            | Summary::Cone { .. }
-                            | Summary::Torus { .. }
-                            | Summary::Revolved { .. }
-                    )
-                );
+                let round = summary(face).is_some_and(|s| s.has_axis());
                 if !round {
                     return Err(not_an_axis.into());
                 }

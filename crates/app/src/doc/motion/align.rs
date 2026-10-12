@@ -916,15 +916,7 @@ fn direction_of(
         Picked::Face(face) => {
             let summary = (index.picking().faces().get(face as usize)).map(|face| face.summary);
             let flat = matches!(summary, Some(Summary::Plane { .. }));
-            let round = matches!(
-                summary,
-                Some(
-                    Summary::Cylinder { .. }
-                        | Summary::Cone { .. }
-                        | Summary::Torus { .. }
-                        | Summary::Revolved { .. }
-                )
-            );
+            let round = summary.is_some_and(|s| s.has_axis());
             if !(flat || round) {
                 return Err(NOT_A_DIRECTION.into());
             }
