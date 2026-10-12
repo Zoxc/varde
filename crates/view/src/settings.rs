@@ -20,10 +20,7 @@ use crate::mouse::{DragAction, PivotClick, RotationPoint};
 use crate::mouse_only::MouseOnly;
 use crate::shortcut::{KeyName, Shortcut};
 use crate::theme::{self, Emphasis, TabLook, Tone};
-use crate::view_choices::{
-    EDGES, PROJECTIONS, SHADINGS, edges_icon, edges_said, projection_icon, projection_said,
-    shading_icon, shading_said,
-};
+use crate::view_choices::{Choice, Pictured};
 use crate::{
     AUTO_SAVE_MINUTES, Edges, INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, INTERFACE_SCALE_STEP,
     MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, Message, RECENT_DESIGNS, ThemeChoice,
@@ -372,10 +369,10 @@ macro_rules! settings {
 }
 
 settings! {
-    Theme(ThemeChoice) = theme, Appearance, "Theme", theme_said;
-    Projection(Projection) = projection, View, "Projection", projection_said;
-    Shading(Shading) = shading, View, "Shading", shading_said;
-    Edges(Edges) = edges, View, "Edges", edges_said;
+    Theme(ThemeChoice) = theme, Appearance, "Theme", Choice::said;
+    Projection(Projection) = projection, View, "Projection", Choice::said;
+    Shading(Shading) = shading, View, "Shading", Choice::said;
+    Edges(Edges) = edges, View, "Edges", Choice::said;
     /// Set rather than toggled, for a row's reset: a toggle sent with the
     /// setting changed under it, as by the stored settings arriving or a
     /// second click before the page redraws, would flip it the wrong way.
@@ -385,18 +382,18 @@ settings! {
     /// In percent, see [`crate::interface_scale_offered`].
     InterfaceScale(u16) = interface_scale, Appearance, "Interface scale", scale_said;
     /// The units new designs start in.
-    LengthUnit(LengthUnit) = length_unit, Units, "Length unit", LengthUnit::symbol;
-    AngleUnit(AngleUnit) = angle_unit, Units, "Angle unit", angle_said;
+    LengthUnit(LengthUnit) = length_unit, Units, "Length unit", Choice::said;
+    AngleUnit(AngleUnit) = angle_unit, Units, "Angle unit", Choice::said;
     /// `None` for each unit's own, else at most [`Shown::MAX_DECIMALS`].
     Decimals(Option<u8>) = decimals, Units, "Decimal places", decimals_said;
-    LeftDrag(DragAction) = mouse.left, Mouse, "Left drag", drag_said;
-    MiddleDrag(DragAction) = mouse.middle, Mouse, "Middle drag", drag_said;
-    RightDrag(DragAction) = mouse.right, Mouse, "Right drag", drag_said;
-    Rotation(Rotation) = mouse.rotation, Mouse, "Rotation", rotation_said;
+    LeftDrag(DragAction) = mouse.left, Mouse, "Left drag", Choice::said;
+    MiddleDrag(DragAction) = mouse.middle, Mouse, "Middle drag", Choice::said;
+    RightDrag(DragAction) = mouse.right, Mouse, "Right drag", Choice::said;
+    Rotation(Rotation) = mouse.rotation, Mouse, "Rotation", Choice::said;
     RotationPoint(RotationPoint) = mouse.rotation_point, Mouse, "Rotation point",
-        rotation_point_said;
+        Choice::said;
     PivotClick(PivotClick) = mouse.pivot_click, Mouse, "Set rotation point with",
-        pivot_click_said;
+        Choice::said;
     /// Whether turning the wheel down zooms in.
     WheelDownZoomsIn(bool) = mouse.wheel_down_zooms_in, Mouse, "Zoom direction", zoom_said;
     ZoomToPointer(bool) = mouse.zoom_to_pointer, Mouse, "Zoom to pointer", on_off;
@@ -458,14 +455,6 @@ fn on_off(on: bool) -> &'static str {
     if on { "On" } else { "Off" }
 }
 
-fn theme_said(theme: ThemeChoice) -> &'static str {
-    match theme {
-        ThemeChoice::Auto => "System",
-        ThemeChoice::Light => "Light",
-        ThemeChoice::Dark => "Dark",
-    }
-}
-
 fn scale_said(percent: u16) -> Cow<'static, str> {
     if crate::interface_scale_offered(percent) {
         format!("{percent}%").into()
@@ -474,50 +463,10 @@ fn scale_said(percent: u16) -> Cow<'static, str> {
     }
 }
 
-fn angle_said(unit: AngleUnit) -> &'static str {
-    match unit {
-        AngleUnit::Deg => "Degrees",
-        AngleUnit::Rad => "Radians",
-    }
-}
-
 fn decimals_said(decimals: Option<u8>) -> Cow<'static, str> {
     match decimals {
         None => "Auto".into(),
         Some(count) => count.min(Shown::MAX_DECIMALS).to_string().into(),
-    }
-}
-
-fn drag_said(action: DragAction) -> &'static str {
-    match action {
-        DragAction::Orbit => "Orbit",
-        DragAction::Pan => "Pan",
-        DragAction::Zoom => "Zoom",
-        DragAction::Nothing => "Nothing",
-    }
-}
-
-fn rotation_said(rotation: Rotation) -> &'static str {
-    match rotation {
-        Rotation::Turntable => "Turntable",
-        Rotation::OverTheTop => "Turntable, over the top",
-        Rotation::Trackball => "Trackball",
-    }
-}
-
-fn rotation_point_said(point: RotationPoint) -> &'static str {
-    match point {
-        RotationPoint::Clicked => "Clicked",
-        RotationPoint::Pointer => "Under the pointer",
-        RotationPoint::Centre => "View centre",
-    }
-}
-
-fn pivot_click_said(click: PivotClick) -> &'static str {
-    match click {
-        PivotClick::Middle => "Middle click",
-        PivotClick::MiddleDouble => "Middle double-click",
-        PivotClick::ShiftMiddle => "Shift + middle click",
     }
 }
 
@@ -542,14 +491,6 @@ fn recent_said(count: u16) -> Cow<'static, str> {
         count.to_string().into()
     } else {
         "Other".into()
-    }
-}
-
-fn theme_icon(theme: ThemeChoice) -> Icon {
-    match theme {
-        ThemeChoice::Auto => Icon::Contrast,
-        ThemeChoice::Light => Icon::Sun,
-        ThemeChoice::Dark => Icon::Moon,
     }
 }
 
@@ -714,14 +655,11 @@ fn section<'a>(
             "Appearance",
             None,
             vec![
-                choice(
+                pictured(
                     "Theme",
                     "Light or dark, or as the system is set",
-                    ThemeChoice::ALL,
                     (options.theme, d.theme),
                     Setting::Theme,
-                    theme_said,
-                    Some(theme_icon),
                 ),
                 setting(
                     "Interface scale",
@@ -740,32 +678,23 @@ fn section<'a>(
                     .to_owned(),
             ),
             vec![
-                choice(
+                pictured(
                     "Projection",
                     "Perspective shrinks what is farther away",
-                    PROJECTIONS,
                     (options.projection, d.projection),
                     Setting::Projection,
-                    projection_said,
-                    Some(projection_icon),
                 ),
-                choice(
+                pictured(
                     "Shading",
                     "How the faces are lit",
-                    SHADINGS,
                     (options.shading, d.shading),
                     Setting::Shading,
-                    shading_said,
-                    Some(shading_icon),
                 ),
-                choice(
+                pictured(
                     "Edges",
                     "Which edges show besides the feature edges",
-                    EDGES,
                     (options.edges, d.edges),
                     Setting::Edges,
-                    edges_said,
-                    Some(edges_icon),
                 ),
                 on_off_row(
                     "Hidden edges",
@@ -791,23 +720,17 @@ fn section<'a>(
             "Units",
             Some(units_note(options)),
             vec![
-                choice(
+                chosen(
                     "Length",
                     "For new designs: sizes typed without a unit, and shown",
-                    LengthUnit::ALL,
                     (options.length_unit, d.length_unit),
                     Setting::LengthUnit,
-                    LengthUnit::symbol,
-                    None,
                 ),
-                choice(
+                chosen(
                     "Angle",
                     "How angles are shown; typed without a unit, they're degrees",
-                    [AngleUnit::Deg, AngleUnit::Rad],
                     (options.angle_unit, d.angle_unit),
                     Setting::AngleUnit,
-                    angle_said,
-                    None,
                 ),
                 setting(
                     "Decimal places",
@@ -831,7 +754,7 @@ fn section<'a>(
                     (options.auto_save, d.auto_save),
                     Setting::AutoSave,
                     auto_save_said,
-                    None,
+                    |_| None,
                 ),
                 choice(
                     "Recent designs",
@@ -840,7 +763,7 @@ fn section<'a>(
                     (options.recent_designs, d.recent_designs),
                     Setting::RecentDesigns,
                     recent_said,
-                    None,
+                    |_| None,
                 ),
             ],
         ),
@@ -1054,42 +977,29 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
     let mouse = options.mouse;
     let d = crate::MouseOptions::default();
     let mut rows = vec![
-        choice(
+        chosen(
             "Left drag",
             "Outside a sketch; a click always selects",
-            DragAction::ALL,
             (mouse.left, d.left),
             Setting::LeftDrag,
-            drag_said,
-            None,
         ),
-        choice(
+        chosen(
             "Middle drag",
             "Turning, panning or zooming the view",
-            DragAction::ALL,
             (mouse.middle, d.middle),
             Setting::MiddleDrag,
-            drag_said,
-            None,
         ),
-        choice(
+        chosen(
             "Right drag",
             "With Shift held, it orbits",
-            DragAction::ALL,
             (mouse.right, d.right),
             Setting::RightDrag,
-            drag_said,
-            None,
         ),
         // The segments' labels are short: the row's name says the rest.
         choice(
             "Rotation",
             "How a drag turns the view",
-            [
-                Rotation::Turntable,
-                Rotation::OverTheTop,
-                Rotation::Trackball,
-            ],
+            Rotation::ALL.iter().copied(),
             (mouse.rotation, d.rotation),
             Setting::Rotation,
             |rotation| match rotation {
@@ -1097,27 +1007,21 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
                 Rotation::OverTheTop => "Over the top",
                 Rotation::Trackball => "Trackball",
             },
-            None,
+            |_| None,
         ),
-        choice(
+        chosen(
             "Rotation point",
             "What the view orbits about",
-            RotationPoint::ALL,
             (mouse.rotation_point, d.rotation_point),
             Setting::RotationPoint,
-            rotation_point_said,
-            None,
         ),
     ];
     if mouse.rotation_point == RotationPoint::Clicked {
-        rows.push(choice(
+        rows.push(chosen(
             "Set rotation point with",
             "On the model or grid; elsewhere, the centre again",
-            PivotClick::ALL,
             (mouse.pivot_click, d.pivot_click),
             Setting::PivotClick,
-            pivot_click_said,
-            None,
         ));
     }
     rows.extend([
@@ -1128,7 +1032,7 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
             (mouse.wheel_down_zooms_in, d.wheel_down_zooms_in),
             Setting::WheelDownZoomsIn,
             zoom_said,
-            None,
+            |_| None,
         ),
         on_off_row(
             "Zoom to pointer",
@@ -1234,30 +1138,56 @@ fn setting<'a>(
 /// `all`, each its `icon`, if it has them, and its `label`, the one chosen
 /// the first of `(value, default)`. Each is chosen, and reset, as `to`
 /// it, the default said as [`Setting::said`] says it.
-fn choice<'a, T: Copy + PartialEq, L: Into<Cow<'static, str>>, const N: usize>(
+fn choice<'a, T: Copy + PartialEq, L: Into<Cow<'static, str>>>(
     name: &'static str,
     does: &'static str,
-    all: [T; N],
+    all: impl IntoIterator<Item = T>,
     (value, default): (T, T),
     to: fn(T) -> Setting,
     label: fn(T) -> L,
-    icon: Option<fn(T) -> Icon>,
+    icon: fn(T) -> Option<Icon>,
 ) -> SettingRow<'a> {
     let set = |each| Message::Settings(SettingsPage::Set(to(each)));
-    let control = segmented(all.map(|each| {
-        (
-            icon.map(|icon| icon(each)),
-            label(each).into(),
-            each == value,
-            set(each),
-        )
-    }));
+    let control = segmented(
+        all.into_iter()
+            .map(|each| (icon(each), label(each).into(), each == value, set(each))),
+    );
     setting(
         name,
         does,
         control,
         reset(value, default, |each| to(each).said(), set),
     )
+}
+
+/// The row of setting `name`, saying what it `does`, as [`choice`], of
+/// the values a [`Choice`] offers, named and drawn as it has them.
+fn chosen<'a, T: Choice>(
+    name: &'static str,
+    does: &'static str,
+    value: (T, T),
+    to: fn(T) -> Setting,
+) -> SettingRow<'a> {
+    choice(
+        name,
+        does,
+        T::ALL.iter().copied(),
+        value,
+        to,
+        T::said,
+        |_| None,
+    )
+}
+
+/// As [`chosen`], each value drawn beside its name.
+fn pictured<'a, T: Pictured>(
+    name: &'static str,
+    does: &'static str,
+    value: (T, T),
+    to: fn(T) -> Setting,
+) -> SettingRow<'a> {
+    let icon = |each: T| Some(each.icon());
+    choice(name, does, T::ALL.iter().copied(), value, to, T::said, icon)
 }
 
 /// The row of setting `name`, saying what it `does`: a switch, on as the
@@ -1353,8 +1283,8 @@ const CHANGED_BAR: f32 = 3.0;
 
 /// A choice among a few, as one bar of buttons, each its icon, if it has
 /// one, its label, whether it's the one chosen and what it sends.
-fn segmented<'a, const N: usize>(
-    choices: [(Option<Icon>, Cow<'static, str>, bool, Message); N],
+fn segmented<'a>(
+    choices: impl IntoIterator<Item = (Option<Icon>, Cow<'static, str>, bool, Message)>,
 ) -> Element<'a, Message> {
     let buttons = choices.into_iter().map(|(icon, label, on, message)| {
         let label = text(label)

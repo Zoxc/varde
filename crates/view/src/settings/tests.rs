@@ -352,7 +352,7 @@ fn only_a_changed_settings_row_has_a_reset() {
                 ..defaults
             },
             "Projection",
-            projection_said(defaults.projection),
+            defaults.projection.said(),
             set(Setting::Projection(defaults.projection)),
         ),
         (

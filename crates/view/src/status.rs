@@ -14,9 +14,7 @@ use crate::icons::Icon;
 use crate::menu::{MENU_ITEM_HEIGHT, choice_item, menu_item, menu_separator, submenu_item, ticked};
 use crate::shortcut::Shortcut;
 use crate::theme::{self, Tone};
-use crate::view_choices::{
-    EDGES, SHADINGS, edges_icon, edges_said, projection_said, shading_icon, shading_said,
-};
+use crate::view_choices::{Choice, Pictured};
 use crate::{Edges, Look, Message, ViewOptions, ViewSubmenu};
 
 /// How tall the status bar is, its border included, in pixels.
@@ -169,7 +167,7 @@ pub fn view_menu<'a>(
     let projection_item = |choice| {
         closing(menu_item(
             ticked(projection == choice),
-            projection_said(choice).into(),
+            choice.said().into(),
             None,
             Some(Message::SetProjection(choice)),
         ))
@@ -179,12 +177,8 @@ pub fn view_menu<'a>(
     };
     let menu = container(
         iced::widget::column![
-            opening(
-                ViewSubmenu::Shading,
-                shading_icon(options.shading),
-                "Shading"
-            ),
-            opening(ViewSubmenu::Edges, edges_icon(options.edges), "Edges"),
+            opening(ViewSubmenu::Shading, options.shading.icon(), "Shading"),
+            opening(ViewSubmenu::Edges, options.edges.icon(), "Edges"),
             menu_separator(),
             projection_item(Projection::Orthographic),
             projection_item(Projection::Perspective),
@@ -237,22 +231,22 @@ pub fn view_menu<'a>(
 
 /// The shadings, in the Shading submenu, `chosen` ticked.
 fn shading_choices<'a>(chosen: Shading) -> Vec<Element<'a, Message>> {
-    (SHADINGS.into_iter())
+    (Shading::ALL.iter().copied())
         .map(|shading| {
             let message = Message::SetShading(shading);
-            let label = shading_said(shading);
-            choice_item(shading_icon(shading), label, shading == chosen, message).into()
+            let label = shading.said();
+            choice_item(shading.icon(), label, shading == chosen, message).into()
         })
         .collect()
 }
 
 /// The edges drawn, in the Edges submenu, `chosen` ticked.
 fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
-    (EDGES.into_iter())
+    (Edges::ALL.iter().copied())
         .map(|edges| {
             let message = Message::SetEdges(edges);
-            let label = edges_said(edges);
-            choice_item(edges_icon(edges), label, edges == chosen, message).into()
+            let label = edges.said();
+            choice_item(edges.icon(), label, edges == chosen, message).into()
         })
         .collect()
 }
