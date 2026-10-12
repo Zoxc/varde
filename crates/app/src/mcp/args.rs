@@ -218,10 +218,11 @@ pub(super) fn added(document: &Document, kind: FeatureKind) -> (Vec<Command>, Ma
 /// numbered on a clash as `rename`'s ([`Document::new_name`],
 /// [`Document::rename`]). Body names it makes no body for are refused,
 /// as are more than it makes bodies; those it makes beyond the names
-/// keep their defaults.
+/// keep their defaults; `no_body` says why when it makes no body.
 pub(super) fn named(
     doc: &Doc,
     tool: &str,
+    no_body: &str,
     naming: &Naming,
     planned: (Vec<Command>, Made),
 ) -> Result<(Vec<Command>, Made), Refused> {
@@ -240,6 +241,7 @@ pub(super) fn named(
         commands.extend(body_names(
             doc,
             tool,
+            no_body,
             &commands[0],
             &naming.bodies,
             &mut notes,
@@ -271,10 +273,11 @@ pub(super) fn given_name(
 /// document's), with a note for each name taken. Worked out on a copy
 /// of the editor with `add` applied, as the client's apply will apply
 /// it: the ids it gives are the same. One the editor refuses is left to
-/// that apply to refuse.
+/// that apply to refuse. `no_body` is the refusal if it makes none.
 fn body_names(
     doc: &Doc,
     tool: &str,
+    no_body: &str,
     add: &Command,
     wanted: &[String],
     notes: &mut Vec<String>,
@@ -289,14 +292,7 @@ fn body_names(
         .map(|body| body.id)
         .collect();
     if made.is_empty() {
-        let why = match tool {
-            "split" => "body_name: this split makes no new body: only keep both makes one",
-            "pattern" => {
-                "body_names: this pattern makes no new body: only join false makes its copies bodies"
-            }
-            _ => "body_name: this makes no new body: only operation new_body makes one",
-        };
-        return Err(failed(tool, why));
+        return Err(failed(tool, no_body));
     }
     if wanted.len() > made.len() {
         let why = format!(

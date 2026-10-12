@@ -330,7 +330,19 @@ fn plan(doc: &Doc, call: &Call, from: &From, queued: bool) -> Result<Plan, Refus
 fn commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused> {
     let planned = made_commands(doc, call)?;
     match call.naming() {
-        Some(naming) => super::args::named(doc, call.tool(), naming, planned),
+        Some(naming) => {
+            // Why a body name is refused when the call makes no new body.
+            let no_body = match call {
+                Call::Split(_) => {
+                    "body_name: this split makes no new body: only keep both makes one"
+                }
+                Call::Pattern(_) => {
+                    "body_names: this pattern makes no new body: only join false makes its copies bodies"
+                }
+                _ => "body_name: this makes no new body: only operation new_body makes one",
+            };
+            super::args::named(doc, call.tool(), no_body, naming, planned)
+        }
         None => Ok(planned),
     }
 }
