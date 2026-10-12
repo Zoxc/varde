@@ -101,11 +101,6 @@ impl Doc {
         std::mem::take(&mut self.rename_focus)
     }
 
-    /// What the document has to say as a toast, if anything: asked once.
-    pub(crate) fn take_toast(&mut self) -> Option<String> {
-        self.toast.take()
-    }
-
     /// Closes the rename field if what it's open on is gone, as with an
     /// undo, or the document was `replaced`, whose ids may name others.
     pub(crate) fn prune_renaming(&mut self, replaced: bool) {

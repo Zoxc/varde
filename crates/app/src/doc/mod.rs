@@ -471,7 +471,6 @@ const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's r
 /// shown: about as far as a screen from the eye.
 const HOME_DISTANCE: f32 = 1000.0;
 
-/// The camera Home turns to, framed on the origin.
 /// The sketch of the sketch feature `id` of `document`, if it's one.
 pub(crate) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
     match &document.feature(id)?.kind {
@@ -480,6 +479,7 @@ pub(crate) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_doc
     }
 }
 
+/// The camera Home turns to, framed on the origin.
 fn home_camera(projection: Projection) -> Camera {
     let mut camera = Camera::default();
     camera.set_projection(projection);
@@ -771,9 +771,15 @@ impl Doc {
         self.read_only.is_none()
     }
 
+    /// What the document has to say as a toast, if anything: asked once.
+    pub(crate) fn take_toast(&mut self) -> Option<String> {
+        self.toast.take()
+    }
+
     /// Changes the document through `edit`, unless it's read-only, keeping
-    /// why the edit failed, if it did. Every change to the document goes
-    /// through here or [`Doc::edit_surely`].
+    /// why the edit failed, if it did. Every change the user makes goes
+    /// through here or [`Doc::edit_surely`]; an MCP client's document
+    /// replacing it and a relink's amend check editability themselves.
     fn edit(&mut self, edit: impl FnOnce(&mut Editor) -> Result<(), EditError>) {
         if !self.editable() {
             return;
@@ -934,10 +940,10 @@ impl Doc {
             Edit::CommitRename => self.commit_rename(),
             Edit::SetUnits(units) => self.change(Change::SetUnits(units)),
             Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
-            // What waits on the solver, and what waits behind it, is newer
-            // than anything committed: undo takes back the newest of it.
             Edit::RemoveLink(link) => self.remove_link(link),
             Edit::SetLinkProfiles(link, profiles) => self.set_link_profiles(link, profiles),
+            // What waits on the solver, and what waits behind it, is newer
+            // than anything committed: undo takes back the newest of it.
             // An MCP client's edit waiting isn't shown, so isn't the
             // user's to drop: with none of theirs waiting, Undo undoes the
             // history, and the client's edit applies in its turn.
