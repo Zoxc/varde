@@ -5,7 +5,7 @@
 //! Flip (the session's flip) and Tangent faces.
 
 use glam::DVec3;
-use varde_document::{Design, FaceDraft, FeatureKind, OriginPlane, PlaneRef};
+use varde_document::{Design, FaceDraft, OriginPlane, PlaneRef};
 use varde_view::{DraftView, MotionField, MotionKind};
 
 use super::refs::Refs;
@@ -83,9 +83,4 @@ pub(super) fn neutral_line(
     };
     let pull = if flip { -normal } else { normal };
     at.is_finite().then_some([at, pull])
-}
-
-/// The feature a draft session makes.
-pub(super) fn face_draft_kind(session: &MotionSession) -> Option<FeatureKind> {
-    session.face_draft().map(FeatureKind::FaceDraft)
 }

@@ -174,8 +174,3 @@ impl Doc {
         }
     }
 }
-
-/// The feature an offset face session makes.
-pub(super) fn offset_face_kind(session: &MotionSession) -> Option<FeatureKind> {
-    session.offset_face().map(FeatureKind::OffsetFace)
-}

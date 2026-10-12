@@ -861,11 +861,11 @@ impl MotionSession {
             MotionKind::Align => self.align().map(FeatureKind::from),
             MotionKind::Scale => self.scale().map(FeatureKind::Scale),
             MotionKind::Split => self.split().map(FeatureKind::Split),
-            MotionKind::Chamfer => chamfer::chamfer_kind(self),
-            MotionKind::Shell => shell::shell_kind(self),
-            MotionKind::Fillet => fillet::fillet_kind(self),
-            MotionKind::OffsetFace => offset_face::offset_face_kind(self),
-            MotionKind::Draft => face_draft::face_draft_kind(self),
+            MotionKind::Chamfer => self.chamfer().map(FeatureKind::Chamfer),
+            MotionKind::Shell => self.shell().map(FeatureKind::Shell),
+            MotionKind::Fillet => self.fillet().map(FeatureKind::Fillet),
+            MotionKind::OffsetFace => self.offset_face().map(FeatureKind::OffsetFace),
+            MotionKind::Draft => self.face_draft().map(FeatureKind::FaceDraft),
             MotionKind::Sweep | MotionKind::Loft => None,
         }
     }

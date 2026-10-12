@@ -3,7 +3,7 @@
 //! which way the walls grow (the model mock's Direction tiles: Inward,
 //! Outward).
 
-use varde_document::{Design, FeatureKind, Shell};
+use varde_document::{Design, Shell};
 use varde_render::Camera;
 use varde_view::{MotionField, MotionKind, ShellDirection, ShellView};
 
@@ -69,9 +69,4 @@ impl Doc {
                 .map(|shell| varde_view::shell_info(&shell, units)),
         }
     }
-}
-
-/// The feature a shell session makes.
-pub(super) fn shell_kind(session: &MotionSession) -> Option<FeatureKind> {
-    session.shell().map(FeatureKind::Shell)
 }

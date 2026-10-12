@@ -2,7 +2,7 @@
 //! picked as a blend's (see `blend`), its radius and the Tangent chain
 //! tick, the model mock's fillet panel.
 
-use varde_document::{Design, FeatureKind, Fillet};
+use varde_document::{Design, Fillet};
 use varde_render::Camera;
 use varde_view::{FilletView, MotionField, MotionKind};
 
@@ -62,9 +62,4 @@ impl Doc {
                 }),
         }
     }
-}
-
-/// The feature a fillet session makes.
-pub(super) fn fillet_kind(session: &MotionSession) -> Option<FeatureKind> {
-    session.fillet().map(FeatureKind::Fillet)
 }

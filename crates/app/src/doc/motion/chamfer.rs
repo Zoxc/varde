@@ -3,7 +3,7 @@
 //! Type tiles: Equal, Two distances, Distance and angle), its fields,
 //! Flip sides and Tangent chain.
 
-use varde_document::{Chamfer, ChamferSize, Design, FeatureKind};
+use varde_document::{Chamfer, ChamferSize, Design};
 use varde_expr::Value;
 use varde_render::Camera;
 use varde_view::{ChamferType, ChamferView, MotionField, MotionKind};
@@ -119,9 +119,4 @@ impl Doc {
                 }),
         }
     }
-}
-
-/// The feature a chamfer session makes.
-pub(super) fn chamfer_kind(session: &MotionSession) -> Option<FeatureKind> {
-    session.chamfer().map(FeatureKind::Chamfer)
 }
