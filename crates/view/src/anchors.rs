@@ -84,6 +84,27 @@ impl<'a, Message, Theme, Renderer> Anchors<'a, Message, Theme, Renderer> {
             .filter(|&(_, &shown)| shown)
             .map(|(((child, tree), layout), _)| (child, tree, layout))
     }
+
+    /// [`Anchors::placed`], the children and their trees to change.
+    fn placed_mut<'b, T>(
+        &'b mut self,
+        trees: &'b mut [T],
+        layout: Layout<'b>,
+    ) -> impl Iterator<
+        Item = (
+            &'b mut Element<'a, Message, Theme, Renderer>,
+            &'b mut T,
+            Layout<'b>,
+        ),
+    > {
+        self.children
+            .iter_mut()
+            .zip(trees)
+            .zip(layout.children())
+            .zip(&self.shown)
+            .filter(|&(_, &shown)| shown)
+            .map(|(((child, tree), layout), _)| (child, tree, layout))
+    }
 }
 
 /// Where an [`Anchors`] layer puts each widget from where its anchor
@@ -226,18 +247,10 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        let children = self
-            .children
-            .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
-            .zip(&self.shown);
-        for (((child, tree), layout), &shown) in children {
-            if shown {
-                child
-                    .as_widget_mut()
-                    .operate(tree, layout, renderer, operation);
-            }
+        for (child, tree, layout) in self.placed_mut(&mut tree.children, layout) {
+            child
+                .as_widget_mut()
+                .operate(tree, layout, renderer, operation);
         }
     }
 
@@ -252,16 +265,7 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let children = self
-            .children
-            .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
-            .zip(&self.shown);
-        for (((child, tree), layout), &shown) in children {
-            if !shown {
-                continue;
-            }
+        for (child, tree, layout) in self.placed_mut(&mut tree.children, layout) {
             child.as_widget_mut().update(
                 tree, event, layout, cursor, renderer, clipboard, shell, viewport,
             );
