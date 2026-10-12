@@ -49,6 +49,12 @@ impl SplineKind {
             (_, true) => 3,
         }
     }
+
+    /// Whether a spline of the kind, open or `closed`, may have `count`
+    /// points: from [`SplineKind::least`] to [`MAX_SPLINE_POINTS`].
+    pub fn admits(self, count: usize, closed: bool) -> bool {
+        (self.least(closed)..=MAX_SPLINE_POINTS).contains(&count)
+    }
 }
 
 /// A handle at a fit point: an ordinary point, its tip, whose direction
@@ -146,7 +152,7 @@ impl Spline {
     /// else is looked at, so a spline from outside can be asked.
     pub fn fits(&self) -> bool {
         let count = self.points.len();
-        if count < self.kind.least(self.closed) || count > MAX_SPLINE_POINTS {
+        if !self.kind.admits(count, self.closed) {
             return false;
         }
         match self.kind {
@@ -372,7 +378,7 @@ impl Sketch {
                 (places, Vec::new())
             }
         };
-        if places.len() < to.least(spline.closed) || places.len() > MAX_SPLINE_POINTS {
+        if !to.admits(places.len(), spline.closed) {
             return Err(target);
         }
         // Through fit points, the handles, each its fit point's index and
@@ -753,7 +759,7 @@ impl Sketch {
 /// handles (as [`Sketch::handle_tip`] gives them): what the Spline tool
 /// puts at each fit point. `None` for points that make no spline.
 pub fn handle_tips(points: &[DVec2], closed: bool) -> Option<Vec<DVec2>> {
-    if points.len() < SplineKind::Through.least(closed) || points.len() > MAX_SPLINE_POINTS {
+    if !SplineKind::Through.admits(points.len(), closed) {
         return None;
     }
     let shape = BSpline::through(points, closed)?;
@@ -773,7 +779,7 @@ pub fn handle_tips(points: &[DVec2], closed: bool) -> Option<Vec<DVec2>> {
 /// shows while it's drawn. `None` for too few points, or points that make
 /// no spline (by control points, its knots are [`control_knots`]).
 pub fn flatten_spline(points: &[DVec2], kind: SplineKind, closed: bool) -> Option<Vec<DVec2>> {
-    if points.len() < kind.least(closed) || points.len() > MAX_SPLINE_POINTS {
+    if !kind.admits(points.len(), closed) {
         return None;
     }
     let shape = match kind {
