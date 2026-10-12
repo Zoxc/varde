@@ -698,24 +698,34 @@ impl<'a> Shape<'a> {
         ))
     }
 
-    /// A face's key alone, as a face tool lists them.
-    fn face_key(&self, face: &FaceRef) -> Value {
-        match self.key(Ref::Face(*face), ItemKind::Face) {
+    /// `item`'s key alone, or why it has none.
+    fn bare_key(&self, item: Ref, kind: ItemKind) -> Value {
+        match self.key(item, kind) {
             Ok(key) => json!(key),
             Err(why) => unresolved(why),
         }
     }
 
+    /// `item` as a reference, its key wrapped in its kind's word
+    /// (`{"face": key}`), or why it has none.
+    fn wrapped_key(&self, item: Ref, kind: ItemKind) -> Value {
+        match self.key(item, kind) {
+            Ok(key) => json!({ kind.word(): key }),
+            Err(why) => unresolved(why),
+        }
+    }
+
+    /// The faces' keys alone, as a face tool lists them.
     fn face_keys(&self, faces: &[FaceRef]) -> Value {
-        Value::Array(faces.iter().map(|face| self.face_key(face)).collect())
+        let keys = faces
+            .iter()
+            .map(|face| self.bare_key(Ref::Face(*face), ItemKind::Face));
+        Value::Array(keys.collect())
     }
 
     /// An edge's key alone.
     fn edge_key(&self, edge: &EdgeRef) -> Value {
-        match self.key(Ref::Edge(*edge), ItemKind::Edge) {
-            Ok(key) => json!(key),
-            Err(why) => unresolved(why),
-        }
+        self.bare_key(Ref::Edge(*edge), ItemKind::Edge)
     }
 
     fn edge_keys(&self, edges: &[EdgeRef]) -> Value {
@@ -724,18 +734,12 @@ impl<'a> Shape<'a> {
 
     /// A face as a reference: `{"face": key}`.
     pub(crate) fn face(&self, face: &FaceRef) -> Value {
-        match self.key(Ref::Face(*face), ItemKind::Face) {
-            Ok(key) => json!({ "face": key }),
-            Err(why) => unresolved(why),
-        }
+        self.wrapped_key(Ref::Face(*face), ItemKind::Face)
     }
 
     /// An edge as a reference: `{"edge": key}`.
     fn edge(&self, edge: &EdgeRef) -> Value {
-        match self.key(Ref::Edge(*edge), ItemKind::Edge) {
-            Ok(key) => json!({ "edge": key }),
-            Err(why) => unresolved(why),
-        }
+        self.wrapped_key(Ref::Edge(*edge), ItemKind::Edge)
     }
 
     fn axis(&self, axis: &AxisRef) -> Value {
@@ -762,10 +766,7 @@ impl<'a> Shape<'a> {
                     faces: *faces,
                     point: near.to_array(),
                 };
-                match self.key(corner, ItemKind::Corner) {
-                    Ok(key) => json!({ "corner": key }),
-                    Err(why) => unresolved(why),
-                }
+                self.wrapped_key(corner, ItemKind::Corner)
             }
             PointRef::Middle(edge) | PointRef::Centre(edge) => self.edge(edge),
         }
