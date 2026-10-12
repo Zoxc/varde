@@ -199,12 +199,14 @@ largest component so squaring can't overflow or underflow.
   an optional `name` (a name as `Arguments::name` reads one: not empty
   once trimmed, at most `NAME_BYTES`), `AddSketch`'s `name` and the
   feature tools' `naming: Box<Naming>` (`Call::naming`). The tools that
-  can make bodies take their names too (`making(tool)`, `NewBodies`):
+  can make bodies take their names too (`NewBodies`):
   `body_name` for extrude, revolve, split, sweep and loft (one body),
   `body_names` for pattern (its separate copies, in the order the result
-  lists them, at most `MAX_ITEMS`); the parser's `only_making` takes
-  them beside the `*_FIELDS`, which stay the fields `feature` shows and
-  `set_feature` patches. The schemas get `name`, `body_name` and
+  lists them, at most `MAX_ITEMS`). `FEATURE_TOOLS` is the one table of
+  feature tools, each with its `*_FIELDS` (the fields `feature` shows
+  and `set_feature` patches) and its `NewBodies`; `fields` and `making`
+  look it up, and `parse_arguments` checks a feature tool's arguments
+  against both (`only_making`) once, before its arm. The schemas get `name`, `body_name` and
   `body_names` added at the end of `list` (a test checks they're the
   properties beyond `fields`). `set_feature` refuses a patch with
   `body_name`/`body_names` (`renaming`, also checked by `parse_patch`
@@ -234,7 +236,7 @@ largest component so squaring can't overflow or underflow.
   patch })`, the patch the other arguments as sent (at least one; bounded
   by `rpc::Limits` only), for the app to read as the feature's tool's
   arguments: `fields(tool)` gives each feature tool's argument names
-  (the `*_FIELDS` lists its parser's `only` checks against), and
+  (the `*_FIELDS` lists its parser's `only_making` checks against), and
   `parse_arguments(tool, map)`, which `parse_call` now delegates to,
   reads them as that tool's; `parse_patch(tool, map)` reads a patch,
   the arguments the tool requires and it doesn't give filled with

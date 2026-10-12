@@ -2020,3 +2020,21 @@ fn edit_sketch_schema_matches_its_parser() {
         .contains("no argument named \"construction\"")
     );
 }
+
+#[test]
+fn feature_tools_are_listed_once_and_named_apart() {
+    let listed = list();
+    let listed: Vec<&str> = (listed["tools"].as_array().unwrap().iter())
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    for (at, feature) in FEATURE_TOOLS.iter().enumerate() {
+        assert!(listed.contains(&feature.name), "{}", feature.name);
+        assert!(
+            FEATURE_TOOLS[..at]
+                .iter()
+                .all(|seen| seen.name != feature.name),
+            "{}",
+            feature.name
+        );
+    }
+}

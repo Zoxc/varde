@@ -1275,8 +1275,13 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
         tool: name,
         map: arguments,
     };
-    // The names of new bodies a feature tool takes.
-    let new_bodies = making(name).unwrap_or(NewBodies::None);
+    // The names of new bodies a feature tool takes, and its arguments
+    // checked here once for every feature tool.
+    let feature = feature_tool(name);
+    let new_bodies = feature.map_or(NewBodies::None, |tool| tool.new_bodies);
+    if let Some(tool) = feature {
+        args.only_making(tool.fields, new_bodies)?;
+    }
     let call = match name {
         "design_summary" => {
             args.only(&["offset", "limit"])?;
@@ -1475,38 +1480,31 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
             }
             Call::SetFeature(SetFeature { name, patch })
         }
-        "extrude" => {
-            args.only_making(EXTRUDE_FIELDS, new_bodies)?;
-            Call::Extrude(Extrude {
-                naming: Box::new(args.naming(new_bodies)?),
-                sketch: args.name("sketch")?,
-                profiles: args.profiles()?,
-                extent: args.choice("extent", EXTRUDE_EXTENTS)?,
-                distance: args.optional_text("distance")?,
-                second_distance: args.optional_text("second_distance")?,
-                flip: args.flag("flip", false)?,
-                taper: args.optional_text("taper")?,
-                operation: args.choice("operation", OPERATIONS)?,
-                exclude: args.names("exclude")?,
-            })
-        }
-        "revolve" => {
-            args.only_making(REVOLVE_FIELDS, new_bodies)?;
-            Call::Revolve(Revolve {
-                naming: Box::new(args.naming(new_bodies)?),
-                sketch: args.name("sketch")?,
-                profiles: args.profiles()?,
-                axis: args.axis()?,
-                extent: args.choice("extent", REVOLVE_EXTENTS)?,
-                angle: args.optional_text("angle")?,
-                second_angle: args.optional_text("second_angle")?,
-                flip: args.flag("flip", false)?,
-                operation: args.choice("operation", OPERATIONS)?,
-                exclude: args.names("exclude")?,
-            })
-        }
+        "extrude" => Call::Extrude(Extrude {
+            naming: Box::new(args.naming(new_bodies)?),
+            sketch: args.name("sketch")?,
+            profiles: args.profiles()?,
+            extent: args.choice("extent", EXTRUDE_EXTENTS)?,
+            distance: args.optional_text("distance")?,
+            second_distance: args.optional_text("second_distance")?,
+            flip: args.flag("flip", false)?,
+            taper: args.optional_text("taper")?,
+            operation: args.choice("operation", OPERATIONS)?,
+            exclude: args.names("exclude")?,
+        }),
+        "revolve" => Call::Revolve(Revolve {
+            naming: Box::new(args.naming(new_bodies)?),
+            sketch: args.name("sketch")?,
+            profiles: args.profiles()?,
+            axis: args.axis()?,
+            extent: args.choice("extent", REVOLVE_EXTENTS)?,
+            angle: args.optional_text("angle")?,
+            second_angle: args.optional_text("second_angle")?,
+            flip: args.flag("flip", false)?,
+            operation: args.choice("operation", OPERATIONS)?,
+            exclude: args.names("exclude")?,
+        }),
         "combine" => {
-            args.only_making(COMBINE_FIELDS, new_bodies)?;
             let operation = args.choice("operation", BODY_OPS)?;
             let tools = args.names("tools")?;
             if tools.is_empty() {
@@ -1520,22 +1518,18 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
                 keep_tools: args.flag("keep_tools", false)?,
             })
         }
-        "move_body" => {
-            args.only_making(MOVE_BODY_FIELDS, new_bodies)?;
-            Call::MoveBody(MoveBody {
-                naming: Box::new(args.naming(new_bodies)?),
-                bodies: args.bodies()?,
-                offset: [
-                    args.optional_text("x")?,
-                    args.optional_text("y")?,
-                    args.optional_text("z")?,
-                ],
-                angle: args.optional_text("angle")?,
-                axis: args.reference("axis", WORLD_AXES, AXIS_ITEMS)?,
-            })
-        }
+        "move_body" => Call::MoveBody(MoveBody {
+            naming: Box::new(args.naming(new_bodies)?),
+            bodies: args.bodies()?,
+            offset: [
+                args.optional_text("x")?,
+                args.optional_text("y")?,
+                args.optional_text("z")?,
+            ],
+            angle: args.optional_text("angle")?,
+            axis: args.reference("axis", WORLD_AXES, AXIS_ITEMS)?,
+        }),
         "mirror" => {
-            args.only_making(MIRROR_FIELDS, new_bodies)?;
             let bodies = args.bodies()?;
             let plane = args.reference("plane", WORLD_PLANES, &[ItemKind::Face])?;
             Call::Mirror(Mirror {
@@ -1545,93 +1539,71 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
                 keep_original: args.flag("keep_original", true)?,
             })
         }
-        "pattern" => {
-            args.only_making(PATTERN_FIELDS, new_bodies)?;
-            Call::Pattern(Pattern {
-                naming: Box::new(args.naming(new_bodies)?),
-                kind: args.choice("kind", PATTERN_KINDS)?,
-                bodies: args.bodies()?,
-                axis: args.reference("axis", WORLD_AXES, AXIS_ITEMS)?,
-                count: args.count_text("count")?,
-                mode: args.optional_choice("mode", PATTERN_MODES)?,
-                spread: args.optional_text("spread")?,
-                flip: args.flag("flip", false)?,
-                join: args.flag("join", true)?,
-            })
-        }
-        "align" => {
-            args.only_making(ALIGN_FIELDS, new_bodies)?;
-            Call::Align(Box::new(Align {
-                naming: Box::new(args.naming(new_bodies)?),
-                body: args.optional_name("body")?,
-                from: args.align_side("from")?,
-                to: args.align_side("to")?,
-                flip: args.flag("flip", false)?,
-                distance: args.optional_text("distance")?,
-                angle: args.optional_text("angle")?,
-            }))
-        }
-        "scale" => {
-            args.only_making(SCALE_FIELDS, new_bodies)?;
-            Call::Scale(Box::new(Scale {
-                naming: Box::new(args.naming(new_bodies)?),
-                bodies: args.bodies()?,
-                point: args.reference("point", ORIGIN, POINT_ITEMS)?,
-                mode: args.choice("mode", SCALE_MODES)?,
-                factor: args.optional_text("factor")?,
-                factors: [
-                    args.optional_text("x")?,
-                    args.optional_text("y")?,
-                    args.optional_text("z")?,
-                ],
-                edge: args.optional_name("edge")?,
-                length: args.optional_text("length")?,
-                axis_only: args.flag("axis_only", false)?,
-            }))
-        }
-        "split" => {
-            args.only_making(SPLIT_FIELDS, new_bodies)?;
-            Call::Split(Split {
-                naming: Box::new(args.naming(new_bodies)?),
-                body: args.name("body")?,
-                tool: args.split_tool()?,
-                original: args.optional_choice("original", SPLIT_SIDES)?,
-                keep: args.choice("keep", SPLIT_KEEPS)?,
-            })
-        }
-        "shell" => {
-            args.only_making(SHELL_FIELDS, new_bodies)?;
-            Call::Shell(Shell {
-                naming: Box::new(args.naming(new_bodies)?),
-                body: args.optional_name("body")?,
-                faces: args.names("faces")?,
-                thickness: args.optional_text("thickness")?,
-                direction: args.choice("direction", SHELL_DIRECTIONS)?,
-            })
-        }
-        "offset_face" => {
-            args.only_making(OFFSET_FACE_FIELDS, new_bodies)?;
-            Call::OffsetFace(OffsetFace {
-                naming: Box::new(args.naming(new_bodies)?),
-                faces: args.faces()?,
-                distance: args.optional_text("distance")?,
-                inward: args.flag("inward", false)?,
-                tangent: args.flag("tangent", true)?,
-            })
-        }
-        "draft" => {
-            args.only_making(DRAFT_FIELDS, new_bodies)?;
-            Call::Draft(Draft {
-                naming: Box::new(args.naming(new_bodies)?),
-                faces: args.faces()?,
-                neutral: args.reference("neutral", WORLD_PLANES, &[ItemKind::Face])?,
-                angle: args.optional_text("angle")?,
-                flip: args.flag("flip", false)?,
-                tangent: args.flag("tangent", true)?,
-            })
-        }
+        "pattern" => Call::Pattern(Pattern {
+            naming: Box::new(args.naming(new_bodies)?),
+            kind: args.choice("kind", PATTERN_KINDS)?,
+            bodies: args.bodies()?,
+            axis: args.reference("axis", WORLD_AXES, AXIS_ITEMS)?,
+            count: args.count_text("count")?,
+            mode: args.optional_choice("mode", PATTERN_MODES)?,
+            spread: args.optional_text("spread")?,
+            flip: args.flag("flip", false)?,
+            join: args.flag("join", true)?,
+        }),
+        "align" => Call::Align(Box::new(Align {
+            naming: Box::new(args.naming(new_bodies)?),
+            body: args.optional_name("body")?,
+            from: args.align_side("from")?,
+            to: args.align_side("to")?,
+            flip: args.flag("flip", false)?,
+            distance: args.optional_text("distance")?,
+            angle: args.optional_text("angle")?,
+        })),
+        "scale" => Call::Scale(Box::new(Scale {
+            naming: Box::new(args.naming(new_bodies)?),
+            bodies: args.bodies()?,
+            point: args.reference("point", ORIGIN, POINT_ITEMS)?,
+            mode: args.choice("mode", SCALE_MODES)?,
+            factor: args.optional_text("factor")?,
+            factors: [
+                args.optional_text("x")?,
+                args.optional_text("y")?,
+                args.optional_text("z")?,
+            ],
+            edge: args.optional_name("edge")?,
+            length: args.optional_text("length")?,
+            axis_only: args.flag("axis_only", false)?,
+        })),
+        "split" => Call::Split(Split {
+            naming: Box::new(args.naming(new_bodies)?),
+            body: args.name("body")?,
+            tool: args.split_tool()?,
+            original: args.optional_choice("original", SPLIT_SIDES)?,
+            keep: args.choice("keep", SPLIT_KEEPS)?,
+        }),
+        "shell" => Call::Shell(Shell {
+            naming: Box::new(args.naming(new_bodies)?),
+            body: args.optional_name("body")?,
+            faces: args.names("faces")?,
+            thickness: args.optional_text("thickness")?,
+            direction: args.choice("direction", SHELL_DIRECTIONS)?,
+        }),
+        "offset_face" => Call::OffsetFace(OffsetFace {
+            naming: Box::new(args.naming(new_bodies)?),
+            faces: args.faces()?,
+            distance: args.optional_text("distance")?,
+            inward: args.flag("inward", false)?,
+            tangent: args.flag("tangent", true)?,
+        }),
+        "draft" => Call::Draft(Draft {
+            naming: Box::new(args.naming(new_bodies)?),
+            faces: args.faces()?,
+            neutral: args.reference("neutral", WORLD_PLANES, &[ItemKind::Face])?,
+            angle: args.optional_text("angle")?,
+            flip: args.flag("flip", false)?,
+            tangent: args.flag("tangent", true)?,
+        }),
         "chamfer" => {
-            args.only_making(CHAMFER_FIELDS, new_bodies)?;
             let (edges, faces) = args.edges_and_faces()?;
             Call::Chamfer(Chamfer {
                 naming: Box::new(args.naming(new_bodies)?),
@@ -1646,7 +1618,6 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
             })
         }
         "fillet" => {
-            args.only_making(FILLET_FIELDS, new_bodies)?;
             let (edges, faces) = args.edges_and_faces()?;
             Call::Fillet(Fillet {
                 naming: Box::new(args.naming(new_bodies)?),
@@ -1656,31 +1627,25 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
                 tangent: args.flag("tangent", true)?,
             })
         }
-        "sweep" => {
-            args.only_making(SWEEP_FIELDS, new_bodies)?;
-            Call::Sweep(Box::new(Sweep {
-                naming: Box::new(args.naming(new_bodies)?),
-                sketch: args.name("sketch")?,
-                profiles: args.profiles()?,
-                along: args.sweep_along()?,
-                keep_orientation: args.flag("keep_orientation", false)?,
-                twist: args.optional_text("twist")?,
-                operation: args.choice("operation", OPERATIONS)?,
-                exclude: args.names("exclude")?,
-            }))
-        }
-        "loft" => {
-            args.only_making(LOFT_FIELDS, new_bodies)?;
-            Call::Loft(Loft {
-                naming: Box::new(args.naming(new_bodies)?),
-                sections: args.sections()?,
-                mode: args.choice("mode", LOFT_MODES)?,
-                closed: args.flag("closed", false)?,
-                rails: args.curves_in("rails")?,
-                operation: args.choice("operation", OPERATIONS)?,
-                exclude: args.names("exclude")?,
-            })
-        }
+        "sweep" => Call::Sweep(Box::new(Sweep {
+            naming: Box::new(args.naming(new_bodies)?),
+            sketch: args.name("sketch")?,
+            profiles: args.profiles()?,
+            along: args.sweep_along()?,
+            keep_orientation: args.flag("keep_orientation", false)?,
+            twist: args.optional_text("twist")?,
+            operation: args.choice("operation", OPERATIONS)?,
+            exclude: args.names("exclude")?,
+        })),
+        "loft" => Call::Loft(Loft {
+            naming: Box::new(args.naming(new_bodies)?),
+            sections: args.sections()?,
+            mode: args.choice("mode", LOFT_MODES)?,
+            closed: args.flag("closed", false)?,
+            rails: args.curves_in("rails")?,
+            operation: args.choice("operation", OPERATIONS)?,
+            exclude: args.names("exclude")?,
+        }),
         _ => {
             return Err(CallError::Params(format!(
                 "No tool named {:?}",
@@ -1772,29 +1737,110 @@ const LOFT_FIELDS: &[&str] = &[
     "exclude",
 ];
 
+/// A feature tool: its name, its arguments (the fields `feature` shows
+/// a feature of its kind by and `set_feature` patches) and the names of
+/// new bodies it takes.
+#[derive(Clone, Copy)]
+struct FeatureTool {
+    name: &'static str,
+    fields: &'static [&'static str],
+    new_bodies: NewBodies,
+}
+
+/// The feature tools, the one place a tool is marked as one.
+const FEATURE_TOOLS: &[FeatureTool] = &[
+    FeatureTool {
+        name: "extrude",
+        fields: EXTRUDE_FIELDS,
+        new_bodies: NewBodies::One,
+    },
+    FeatureTool {
+        name: "revolve",
+        fields: REVOLVE_FIELDS,
+        new_bodies: NewBodies::One,
+    },
+    FeatureTool {
+        name: "combine",
+        fields: COMBINE_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "move_body",
+        fields: MOVE_BODY_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "mirror",
+        fields: MIRROR_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "pattern",
+        fields: PATTERN_FIELDS,
+        new_bodies: NewBodies::Many,
+    },
+    FeatureTool {
+        name: "align",
+        fields: ALIGN_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "scale",
+        fields: SCALE_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "split",
+        fields: SPLIT_FIELDS,
+        new_bodies: NewBodies::One,
+    },
+    FeatureTool {
+        name: "shell",
+        fields: SHELL_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "offset_face",
+        fields: OFFSET_FACE_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "draft",
+        fields: DRAFT_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "chamfer",
+        fields: CHAMFER_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "fillet",
+        fields: FILLET_FIELDS,
+        new_bodies: NewBodies::None,
+    },
+    FeatureTool {
+        name: "sweep",
+        fields: SWEEP_FIELDS,
+        new_bodies: NewBodies::One,
+    },
+    FeatureTool {
+        name: "loft",
+        fields: LOFT_FIELDS,
+        new_bodies: NewBodies::One,
+    },
+];
+
+/// The feature tool named `tool`, if it is one.
+fn feature_tool(tool: &str) -> Option<&'static FeatureTool> {
+    FEATURE_TOOLS.iter().find(|feature| feature.name == tool)
+}
+
 /// The arguments the feature tool `tool` takes, the fields `feature`
 /// shows a feature of its kind by and `set_feature` patches: `None` for
 /// any other tool.
 pub fn fields(tool: &str) -> Option<&'static [&'static str]> {
-    Some(match tool {
-        "extrude" => EXTRUDE_FIELDS,
-        "revolve" => REVOLVE_FIELDS,
-        "combine" => COMBINE_FIELDS,
-        "move_body" => MOVE_BODY_FIELDS,
-        "mirror" => MIRROR_FIELDS,
-        "pattern" => PATTERN_FIELDS,
-        "align" => ALIGN_FIELDS,
-        "scale" => SCALE_FIELDS,
-        "split" => SPLIT_FIELDS,
-        "shell" => SHELL_FIELDS,
-        "offset_face" => OFFSET_FACE_FIELDS,
-        "draft" => DRAFT_FIELDS,
-        "chamfer" => CHAMFER_FIELDS,
-        "fillet" => FILLET_FIELDS,
-        "sweep" => SWEEP_FIELDS,
-        "loft" => LOFT_FIELDS,
-        _ => return None,
-    })
+    Some(feature_tool(tool)?.fields)
 }
 
 /// Why `patch`, a `set_feature` patch, is refused if it names what a
@@ -3284,14 +3330,7 @@ pub fn list() -> Value {
 /// The names of new bodies the feature tool `tool` takes, `None` for
 /// any other tool.
 fn making(tool: &str) -> Option<NewBodies> {
-    Some(match tool {
-        "extrude" | "revolve" | "split" | "sweep" | "loft" => NewBodies::One,
-        "pattern" => NewBodies::Many,
-        _ => {
-            fields(tool)?;
-            NewBodies::None
-        }
-    })
+    Some(feature_tool(tool)?.new_bodies)
 }
 
 /// A sketch's plane's schema.
