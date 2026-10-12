@@ -14,9 +14,9 @@ use glam::DVec2;
 use iced::Element;
 use iced::widget::{container, text};
 use varde_document::Placement;
-use varde_render::{Camera, Colors, LineStyle, PointStyle, SketchLayer, Srgb, Srgba};
+use varde_render::{Camera, Colors, LineStyle, SketchLayer};
 
-use super::sketch::srgba;
+use super::sketch::{mark_dot, opaque, srgba};
 use crate::Message;
 use crate::anchors::Anchors;
 use crate::measure::{MeasureSlot, MeasureState};
@@ -58,33 +58,34 @@ impl<'a> Measuring<'a> {
 
     fn live(&self, colors: &Colors, sketch: SketchColors) -> SketchLayer {
         let mut layer = SketchLayer::default();
-        let opaque = |Srgb([r, g, b])| Srgba([r, g, b, 1.0]);
         let colour = |slot: MeasureSlot| match slot {
             MeasureSlot::A => opaque(colors.selected),
             MeasureSlot::B => opaque(colors.second),
-        };
-        let dot = |radius: f32, rim: Srgba, fixed: bool| PointStyle {
-            radius,
-            rim_width: 1.5,
-            rim,
-            fill: srgba(sketch.point_fill),
-            fixed,
         };
         // Picks that touch have no segment to draw.
         if let Some(gap) = self.state.gap().filter(|gap| gap.distance > 0.0) {
             let [a, b] = gap.points.map(|p| glam::DVec3::from(p).as_vec3());
             let style = LineStyle {
-                color: colour(MeasureSlot::A),
+                color: srgba(colour(MeasureSlot::A)),
                 width: SEGMENT_WIDTH,
                 dash: Some(SEGMENT_DASH),
             };
             layer.world_polyline(&[a, b], style);
-            layer.world_point(a, dot(END_RADIUS, colour(MeasureSlot::A), true));
-            layer.world_point(b, dot(END_RADIUS, colour(MeasureSlot::B), true));
+            layer.world_point(
+                a,
+                mark_dot(END_RADIUS, colour(MeasureSlot::A), sketch, true),
+            );
+            layer.world_point(
+                b,
+                mark_dot(END_RADIUS, colour(MeasureSlot::B), sketch, true),
+            );
         }
         for slot in [MeasureSlot::A, MeasureSlot::B] {
             if let Some(point) = self.state.points[slot.index()] {
-                layer.world_point(point.as_vec3(), dot(POINT_RADIUS, colour(slot), true));
+                layer.world_point(
+                    point.as_vec3(),
+                    mark_dot(POINT_RADIUS, colour(slot), sketch, true),
+                );
             }
         }
         if let Some(hover) = self.state.hover {
@@ -142,13 +143,7 @@ pub(super) fn snap_dots(
         } else {
             (SNAP_RADIUS, false)
         };
-        let style = PointStyle {
-            radius,
-            rim_width: 1.5,
-            rim: srgba(sketch.hovered),
-            fill: srgba(sketch.point_fill),
-            fixed,
-        };
+        let style = mark_dot(radius, sketch.hovered, sketch, fixed);
         layer.world_point(point.as_vec3(), style);
     }
 }

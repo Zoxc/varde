@@ -973,7 +973,7 @@ impl Program<'_> {
         near: Option<DVec3>,
     ) -> Vec<OriginPlane> {
         let camera = &self.scene.camera;
-        let Some(projector) = Projector::world(camera, bounds.width, bounds.height) else {
+        let Some(projector) = Projector::world_in(camera, bounds) else {
             return Vec::new();
         };
         let pixel = local(bounds, at);

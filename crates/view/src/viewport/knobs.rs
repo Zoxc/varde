@@ -87,12 +87,6 @@ struct Shown {
     radius: f64,
 }
 
-/// The projector for what's in the world, seen by `camera` over
-/// `bounds`.
-fn projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
-    Projector::world(camera, bounds.width, bounds.height)
-}
-
 /// The point of `knob`'s path `along` it (millimetres along a line,
 /// radians round an arc of `radius` millimetres).
 fn on_path(knob: &OpKnob, along: f64, radius: f64) -> DVec3 {
@@ -153,7 +147,7 @@ pub(crate) fn draw(
     camera: &Camera,
     bounds: Rectangle,
 ) {
-    let Some(projector) = projector(camera, bounds) else {
+    let Some(projector) = Projector::world_in(camera, bounds) else {
         return;
     };
     let active = input.drag.map(|drag| drag.index).or(input.hover);
@@ -232,7 +226,7 @@ pub(crate) fn mouse(
         input.clear();
         return None;
     }
-    let projector = projector(camera, bounds)?;
+    let projector = Projector::world_in(camera, bounds)?;
     match event {
         mouse::Event::CursorMoved { position } => {
             if let Some(drag) = &mut input.drag {
@@ -289,7 +283,7 @@ pub(crate) fn redraw(
     if input.drag.is_some() {
         return None;
     }
-    let projector = projector(camera, bounds)?;
+    let projector = Projector::world_in(camera, bounds)?;
     let over = local_cursor(bounds, cursor).and_then(|at| knob_under(knobs, &projector, at));
     input.hover = over;
     (over.is_some() && hovered).then(|| Action::publish(Message::Look(Look::Hover(None))))

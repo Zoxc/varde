@@ -16,6 +16,10 @@ use crate::motion::KnobTone;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
 
+/// The arrowhead a tool's mark ends in on the screen: how long, and how
+/// wide either side, in pixels.
+const MARK_ARROW_LENGTH: f64 = 11.0;
+const MARK_ARROW_HALF_WIDTH: f64 = 4.5;
 /// How wide a handle's shaft is, in pixels.
 pub(crate) const SHAFT_WIDTH: f32 = 2.0;
 /// How far apart a ring's snapping steps are at least, in pixels along
@@ -287,4 +291,20 @@ pub(crate) fn wrapped(turn: f64) -> f64 {
     } else {
         turn
     }
+}
+
+/// An arrowhead into `live` at `to`, on the screen, pointing from
+/// `from`: none where the two meet or `to` isn't finite.
+pub(crate) fn screen_arrowhead(live: &mut SketchLayer, from: DVec2, to: DVec2, color: Color) {
+    let along = (to - from).normalize_or_zero();
+    if along == DVec2::ZERO || !to.is_finite() {
+        return;
+    }
+    let base = to - along * MARK_ARROW_LENGTH;
+    let across = along.perp() * MARK_ARROW_HALF_WIDTH;
+    live.triangle(
+        LayerSpace::Screen,
+        [to, base + across, base - across],
+        srgba(color),
+    );
 }

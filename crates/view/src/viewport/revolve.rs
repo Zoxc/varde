@@ -31,7 +31,7 @@ use varde_sketch::{Curve, Sketch};
 use super::handle::{self, Puck};
 use super::handle::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
-use super::sketch::{line, srgba};
+use super::sketch::line;
 use super::sketch_pick::HIT_PIXELS;
 use crate::hit;
 use crate::motion::KnobTone;
@@ -51,10 +51,6 @@ use crate::{Look, Message};
 const LINE_WIDTH: f32 = 1.5;
 const HOVERED_WIDTH: f32 = 3.0;
 const AXIS_WIDTH: f32 = 2.5;
-/// The arrow at the axis's end: how long, and how wide either side, in
-/// pixels.
-const ARROW_LENGTH: f64 = 11.0;
-const ARROW_HALF_WIDTH: f64 = 4.5;
 /// How many degrees each step of the shaft's arc turns at most.
 const SHAFT_STEP: f64 = 3.0;
 
@@ -217,18 +213,12 @@ impl<'a> Revolving<'a> {
         (over && self.state.editable).then_some(mouse::Interaction::Pointer)
     }
 
-    /// A projector for what's in the world, seen by `camera` over
-    /// `bounds`.
-    fn projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
-        Projector::world(camera, bounds.width, bounds.height)
-    }
-
     /// The pucks of the handle's knobs, seen by `camera` over `bounds`,
     /// those behind the eye left out: each at the regions' centre turned
     /// to its angle, its arrow the way it turns, on round past the end
     /// it's on.
     fn pucks(&self, camera: &Camera, bounds: Rectangle) -> Vec<Puck<Angle>> {
-        let (Some(handle), Some(projector)) = (&self.handle, Self::projector(camera, bounds))
+        let (Some(handle), Some(projector)) = (&self.handle, Projector::world_in(camera, bounds))
         else {
             return Vec::new();
         };
@@ -261,7 +251,7 @@ impl<'a> Revolving<'a> {
     fn drag_to(&self, angle: Angle, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<f64> {
         let handle = self.handle.as_ref()?;
         let &(_, from) = handle.knobs.iter().find(|(knob, _)| *knob == angle)?;
-        let projector = Self::projector(camera, bounds)?;
+        let projector = Projector::world_in(camera, bounds)?;
         let x = handle.radial.normalize_or_zero();
         let turn = projector.angle_on_plane(handle.origin, handle.axis, x, at)?;
         let to = from + wrapped(turn - from);
@@ -444,7 +434,7 @@ impl<'a> Revolving<'a> {
             live.polyline(space, &[from, to], line(color, AXIS_WIDTH, false));
             let projector = Projector::new(camera, source.placement, bounds.width, bounds.height);
             if let Some((a, b)) = projector.and_then(|projector| projector.segment(from, to)) {
-                arrow(&mut live, a, b, colors);
+                handle::screen_arrowhead(&mut live, a, b, colors.selected);
             }
         }
         self.draw_handle(&mut live, input, colors, camera, bounds);
@@ -463,7 +453,7 @@ impl<'a> Revolving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) {
-        let (Some(handle), Some(projector)) = (&self.handle, Self::projector(camera, bounds))
+        let (Some(handle), Some(projector)) = (&self.handle, Projector::world_in(camera, bounds))
         else {
             return;
         };
@@ -531,21 +521,6 @@ fn drawn(sketch: &Sketch, axis: AxisLine) -> Option<[DVec2; 2]> {
             [-along * reach, along * reach]
         }
     })
-}
-
-/// An arrowhead into `live` at `to`, on the screen, pointing from `from`.
-fn arrow(live: &mut SketchLayer, from: DVec2, to: DVec2, colors: SketchColors) {
-    let along = (to - from).normalize_or_zero();
-    if along == DVec2::ZERO {
-        return;
-    }
-    let base = to - along * ARROW_LENGTH;
-    let across = along.perp() * ARROW_HALF_WIDTH;
-    live.triangle(
-        LayerSpace::Screen,
-        [to, base + across, base - across],
-        srgba(colors.selected),
-    );
 }
 
 #[cfg(test)]

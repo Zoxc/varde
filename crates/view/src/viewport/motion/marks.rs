@@ -3,20 +3,17 @@
 
 use glam::{DVec2, DVec3};
 use iced::Rectangle;
-use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as LayerSpace, Srgb};
+use varde_render::{Camera, Colors, GridPlane, SketchLayer, Space as LayerSpace};
 
 use super::Moving;
 use crate::motion::{AlignView, ScaleView};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
-use crate::viewport::sketch::{line, srgba};
+use crate::viewport::handle;
+use crate::viewport::sketch::{line, mark_dot, opaque, srgba};
 
 /// How wide the axis and the plane's outline are drawn, in pixels.
 const LINE_WIDTH: f32 = 2.5;
-/// The arrow at the axis's end: how long, and how wide either side, in
-/// pixels.
-const ARROW_LENGTH: f64 = 11.0;
-const ARROW_HALF_WIDTH: f64 = 4.5;
 /// How far the axis and the plane reach at least either side of the
 /// bodies' centre, in millimetres, and how much past the bodies' box
 /// they reach.
@@ -37,14 +34,7 @@ pub(super) fn scale_marks(
     colors: SketchColors,
 ) {
     if let Some(point) = scale.at.filter(|point| point.is_finite()) {
-        let Srgb([r, g, b]) = scene.selected;
-        let style = PointStyle {
-            radius: ALIGN_POINT_RADIUS,
-            rim_width: 1.5,
-            rim: srgba(iced::Color::from_rgb(r, g, b)),
-            fill: srgba(colors.point_fill),
-            fixed: true,
-        };
+        let style = mark_dot(ALIGN_POINT_RADIUS, opaque(scene.selected), colors, true);
         live.world_point(point.as_vec3(), style);
     }
     if let Some((index, hover)) = scale.snaps {
@@ -81,14 +71,6 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) {
-        let opaque = |Srgb([r, g, b])| iced::Color::from_rgb(r, g, b);
-        let dot = |radius: f32, rim: iced::Color, fixed: bool| PointStyle {
-            radius,
-            rim_width: 1.5,
-            rim: srgba(rim),
-            fill: srgba(colors.point_fill),
-            fixed,
-        };
         for (mark, color) in align.marks.iter().zip([scene.selected, scene.second]) {
             let color = opaque(color);
             let Some(point) = mark.point.filter(|point| point.is_finite()) else {
@@ -112,7 +94,10 @@ impl<'a> Moving<'a> {
                 );
                 self.arrowhead(live, point, tip, color, camera, bounds);
             }
-            live.world_point(point.as_vec3(), dot(ALIGN_POINT_RADIUS, color, true));
+            live.world_point(
+                point.as_vec3(),
+                mark_dot(ALIGN_POINT_RADIUS, color, colors, true),
+            );
         }
         if let Some((index, hover)) = align.snaps {
             crate::viewport::measure::snap_dots(live, index, hover, colors);
@@ -130,21 +115,10 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) {
-        let Some(projector) = Projector::world(camera, bounds.width, bounds.height) else {
+        let Some(projector) = Projector::world_in(camera, bounds) else {
             return;
         };
-        let (a, b) = (projector.show(from), projector.show(to));
-        let towards = (b - a).normalize_or_zero();
-        if towards == DVec2::ZERO || !b.is_finite() {
-            return;
-        }
-        let base = b - towards * ARROW_LENGTH;
-        let across = towards.perp() * ARROW_HALF_WIDTH;
-        live.triangle(
-            LayerSpace::Screen,
-            [b, base + across, base - across],
-            srgba(color),
-        );
+        handle::screen_arrowhead(live, projector.show(from), projector.show(to), color);
     }
 
     /// The axis through `point` along the unit `along`, across the bodies,

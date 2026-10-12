@@ -17,7 +17,7 @@ use crate::projection::Projector;
 use crate::theme::{self, SketchColors};
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::regions::{Regions, grid_plane};
-use crate::viewport::sketch::{fill_region_in, line, srgba};
+use crate::viewport::sketch::{fill_region_in, line, mark_dot, opaque, srgba};
 use crate::viewport::sketch_pick::{
     Points, SELECTED_WIDTH, SketchHit, curve_under, loose, point_under,
 };
@@ -169,13 +169,9 @@ fn loose_points(
     for candidate in lines {
         for (id, point) in loose(candidate.sketch) {
             let lit = hovered == Some((candidate.feature, id));
-            let style = PointStyle {
-                radius: if lit { START_RADIUS } else { CORNER_RADIUS },
-                rim_width: 1.5,
-                rim: srgba(if lit { colors.hovered } else { colors.curve }),
-                fill: srgba(colors.point_fill),
-                fixed: false,
-            };
+            let radius = if lit { START_RADIUS } else { CORNER_RADIUS };
+            let rim = if lit { colors.hovered } else { colors.curve };
+            let style = mark_dot(radius, rim, colors, false);
             let at = candidate.placement.to_world(point);
             live.world_point(at.as_vec3(), style);
         }
@@ -232,7 +228,7 @@ impl<'a> Moving<'a> {
         if !self.state.editable {
             return None;
         }
-        let projector = Projector::world(camera, bounds.width, bounds.height)?;
+        let projector = Projector::world_in(camera, bounds)?;
         handle::knob_at(&seam_pucks(loft, &projector), at)
     }
 
@@ -414,15 +410,8 @@ impl<'a> Moving<'a> {
             Some(PanelHover::Section(at)) => Some(at),
             _ => None,
         };
-        let [r, g, b] = scene.selected.0;
-        let accent = iced::Color::from_rgb(r, g, b);
-        let dot = |radius: f32, color: iced::Color| PointStyle {
-            radius,
-            rim_width: 1.5,
-            rim: srgba(color),
-            fill: srgba(colors.point_fill),
-            fixed: true,
-        };
+        let accent = opaque(scene.selected);
+        let dot = |radius: f32, rim: iced::Color| mark_dot(radius, rim, colors, true);
         for (at, section) in loft.sections.iter().enumerate() {
             let Some(placement) = section.placement else {
                 continue;
@@ -469,7 +458,7 @@ impl<'a> Moving<'a> {
                 live.world_point(placement.to_world(start).as_vec3(), style);
             }
         }
-        if let Some(projector) = Projector::world(camera, bounds.width, bounds.height) {
+        if let Some(projector) = Projector::world_in(camera, bounds) {
             for puck in seam_pucks(loft, &projector) {
                 let hot = held == Some(puck.knob);
                 let tone = handle::tone(colors, KnobTone::Count, hot);

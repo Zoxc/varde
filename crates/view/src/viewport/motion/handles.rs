@@ -596,7 +596,7 @@ impl<'a> Moving<'a> {
         if !centre.is_finite() {
             return None;
         }
-        let projector = Projector::world(camera, bounds.width, bounds.height)?;
+        let projector = Projector::world_in(camera, bounds)?;
         let pixel = projector.pixel_at_point(centre)?;
         let angle = self.field(MotionField::Angle).unwrap_or(0.0);
         let rings = Axis3::ALL.map(|axis| angle == 0.0 || state.origin_axis == Some(axis));

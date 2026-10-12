@@ -20,11 +20,11 @@
 use glam::{DVec2, DVec3};
 use iced::Rectangle;
 use varde_document::FeatureId;
-use varde_render::{Camera, PointStyle, SketchLayer, Space};
+use varde_render::{Camera, SketchLayer, Space};
 use varde_sketch::{Id, Sketch};
 
 use super::regions::grid_plane;
-use super::sketch::{line, srgba};
+use super::sketch::{line, mark_dot};
 use crate::hit;
 use crate::pick::{Pick, PickIndex, Picked};
 use crate::projection::Projector;
@@ -336,13 +336,8 @@ pub(crate) fn draw_items(
                 continue;
             };
             let color = if hot { colors.hovered } else { colors.selected };
-            let style = PointStyle {
-                radius: if hot { HOVERED_RADIUS } else { SELECTED_RADIUS },
-                rim_width: 1.5,
-                rim: srgba(color),
-                fill: srgba(colors.point_fill),
-                fixed: false,
-            };
+            let radius = if hot { HOVERED_RADIUS } else { SELECTED_RADIUS };
+            let style = mark_dot(radius, color, colors, false);
             let at = candidate.placement.to_world(point.at);
             live.world_point(at.as_vec3(), style);
         }
