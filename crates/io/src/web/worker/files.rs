@@ -1026,9 +1026,6 @@ impl Files {
     }
 }
 
-/// A name for a new entry in the store, `named` counting the names made:
-/// never one made before in this tab, and unlikely to be one another tab
-/// made.
 /// The directories the worker keeps designs in, each found and made on
 /// first use and kept from then on.
 #[derive(Debug)]
@@ -1086,6 +1083,9 @@ impl Dirs {
     }
 }
 
+/// A name for a new entry in the store, `named` counting the names made:
+/// never one made before in this tab, and unlikely to be one another tab
+/// made.
 fn entry_name(named: &mut u64) -> String {
     let name = new_name(js_sys::Date::now(), js_sys::Math::random(), *named);
     // Counted up once per name made: never overflows.
