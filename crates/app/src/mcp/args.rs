@@ -329,6 +329,26 @@ fn made_after(name: &str, feature: &str, edited: Option<FeatureId>) -> String {
     }
 }
 
+/// How a sketch coordinate the client types is read: a length in the
+/// design's units, within the coordinate limit either side.
+pub(super) fn coordinate_ask<'a>(design: &varde_sketch::Design<'a>) -> Ask<'a> {
+    Ask::length(design.units, f64::from(MAX_COORD)).with_params(design.params)
+}
+
+/// The sketch point `[x, y]` typed ([`coordinate_ask`]), or why not.
+pub(super) fn typed_point(
+    design: &varde_sketch::Design,
+    [x, y]: &[String; 2],
+) -> Result<DVec2, String> {
+    let ask = coordinate_ask(design);
+    let read = |text: &str, said: &str| {
+        ExprValue::new(text.trim(), &ask)
+            .map(|value| value.value)
+            .map_err(|why| format!("the point's {said}: {why}"))
+    };
+    Ok(DVec2::new(read(x, "x")?, read(y, "y")?))
+}
+
 /// The sketch feature named `name`, refused if it isn't one.
 pub(super) fn sketch_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
     let id = feature_named(document, name)?;
@@ -435,7 +455,6 @@ pub(super) fn pick(
         Profiles::All => (0..count).collect(),
         Profiles::Picked(items) => {
             let design = document.design();
-            let ask = Ask::length(design.units, f64::from(MAX_COORD)).with_params(design.params);
             let mut picked = BTreeSet::new();
             for item in items {
                 let index = match item {
@@ -446,13 +465,9 @@ pub(super) fn pick(
                             if count == 1 { "" } else { "s" }
                         ));
                     }
-                    Profile::Point([x, y]) => {
-                        let read = |text: &str, said: &str| {
-                            ExprValue::new(text.trim(), &ask)
-                                .map(|value| value.value)
-                                .map_err(|why| format!("the point's {said}: {why}"))
-                        };
-                        let at = DVec2::new(read(x, "x")?, read(y, "y")?);
+                    Profile::Point(point) => {
+                        let [x, y] = point;
+                        let at = typed_point(&design, point)?;
                         all.region_at(at).ok_or_else(|| {
                             format!("no region of the sketch has the point ({x}, {y}) inside")
                         })?

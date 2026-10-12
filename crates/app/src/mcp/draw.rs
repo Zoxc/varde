@@ -29,8 +29,8 @@ use std::collections::BTreeSet;
 
 use glam::DVec2;
 use serde_json::{Map, Value, json};
-use varde_document::{FeatureId, MAX_COORD};
-use varde_expr::{Ask, Value as ExprValue};
+use varde_document::FeatureId;
+use varde_expr::Value as ExprValue;
 use varde_mcp::tools::{
     At, ConstraintWord, EditSketch, ItemRef, MeasureWord, Op, PolygonSize, RectangleFrom, SketchOp,
 };
@@ -676,22 +676,14 @@ impl Planner<'_> {
 
     /// The point `[x, y]` typed, lengths in the design's units, within
     /// the coordinate limit.
-    fn coordinates(&self, index: usize, [x, y]: &[String; 2]) -> Result<DVec2, Refused> {
-        let ask =
-            Ask::length(self.design.units, f64::from(MAX_COORD)).with_params(self.design.params);
-        let read = |text: &str, said: &str| {
-            ExprValue::new(text.trim(), &ask)
-                .map(|value| value.value)
-                .map_err(|why| failed(index, format_args!("the point's {said}: {why}")))
-        };
-        Ok(DVec2::new(read(x, "x")?, read(y, "y")?))
+    fn coordinates(&self, index: usize, point: &[String; 2]) -> Result<DVec2, Refused> {
+        super::args::typed_point(&self.design, point).map_err(|why| failed(index, why))
     }
 
     /// A length typed, `said` in an error: above zero if `positive`,
     /// within the coordinate limit either side.
     fn length(&self, index: usize, text: &str, said: &str, positive: bool) -> Result<f64, Refused> {
-        let mut ask =
-            Ask::length(self.design.units, f64::from(MAX_COORD)).with_params(self.design.params);
+        let mut ask = super::args::coordinate_ask(&self.design);
         if positive {
             ask = ask.positive();
         }
