@@ -457,32 +457,6 @@ fn copy_bodies_of(old: &FeatureKind) -> Vec<BodyId> {
 }
 
 impl Document {
-    /// One past the highest `N` of the feature and body names that are
-    /// "`kind` N", or 1: both sorts, as a name is either's, so a default
-    /// never takes one the other sort has ("Body 2" a feature's). A file
-    /// could hold the highest number there is, which is then reused: a
-    /// repeated name is harmless.
-    fn next_number(&self, kind: &str) -> u64 {
-        let features = self.features.iter().map(|feature| feature.name.as_str());
-        let bodies = self.bodies.iter().map(|body| body.name.as_str());
-        next_number(features.chain(bodies), kind)
-    }
-}
-
-/// One past the highest `N` of the `names` that are "`kind` N", or 1.
-fn next_number<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> u64 {
-    names
-        .filter_map(|name| {
-            name.strip_prefix(kind)?
-                .strip_prefix(' ')?
-                .parse::<u64>()
-                .ok()
-        })
-        .max()
-        .map_or(1, |highest| highest.saturating_add(1))
-}
-
-impl Document {
     /// Has `feature` make `body` as its new body.
     fn set_new_body(&mut self, feature: FeatureId, body: BodyId) {
         if let Some(index) = self.feature_index(feature)

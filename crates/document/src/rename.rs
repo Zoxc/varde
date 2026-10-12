@@ -56,16 +56,28 @@ impl Document {
         }
     }
 
+    /// Every feature's name, then every body's: one space of names, as
+    /// a name is either's.
+    fn names(&self) -> impl Iterator<Item = (Named, &str)> {
+        let features = (self.features.iter())
+            .map(|feature| (Named::Feature(feature.id), feature.name.as_str()));
+        let bodies = (self.bodies.iter()).map(|body| (Named::Body(body.id), body.name.as_str()));
+        features.chain(bodies)
+    }
+
     /// Whether a feature or body other than `target` (any, with `None`)
     /// is named `name`.
     fn name_taken(&self, target: Option<Named>, name: &str) -> bool {
-        let features = (self.features.iter())
-            .filter(|feature| target != Some(Named::Feature(feature.id)))
-            .map(|feature| feature.name.as_str());
-        let bodies = (self.bodies.iter())
-            .filter(|body| target != Some(Named::Body(body.id)))
-            .map(|body| body.name.as_str());
-        features.chain(bodies).any(|other| other == name)
+        (self.names()).any(|(named, other)| Some(named) != target && other == name)
+    }
+
+    /// One past the highest `N` of the feature and body names that are
+    /// "`kind` N", or 1: both sorts, as a name is either's, so a default
+    /// never takes one the other sort has ("Body 2" a feature's). A file
+    /// could hold the highest number there is, which is then reused: a
+    /// repeated name is harmless.
+    pub(crate) fn next_number(&self, kind: &str) -> u64 {
+        next_number(self.names().map(|(_, name)| name), kind)
     }
 
     /// The command naming `target` `wanted`, trimmed and cut to
@@ -153,6 +165,19 @@ fn cut(name: &str, len: usize) -> &str {
         .find(|&i| name.is_char_boundary(i))
         .unwrap_or(0);
     &name[..end]
+}
+
+/// One past the highest `N` of the `names` that are "`kind` N", or 1.
+fn next_number<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> u64 {
+    names
+        .filter_map(|name| {
+            name.strip_prefix(kind)?
+                .strip_prefix(' ')?
+                .parse::<u64>()
+                .ok()
+        })
+        .max()
+        .map_or(1, |highest| highest.saturating_add(1))
 }
 
 #[cfg(test)]
