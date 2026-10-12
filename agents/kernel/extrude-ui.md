@@ -356,7 +356,7 @@ and the like shows them gone, and a region pick whose sketch is gone
 (`RegionPick::editing`) has no source, so another sketch's regions may
 be picked, which drops the old references listed as missing.
 
-**Tolerance** (`view/src/toolbar.rs`): the file menu has a "Tolerance"
+**Tolerance** (`view/src/file_menu.rs`): the file menu has a "Tolerance"
 heading under Units with 0.1 µm, 1 µm and 10 µm, each sending
 `Edit::SetTolerance` (`Command::SetTolerance`, one undo step, which
 regenerates everything as the cache keys hold the tolerance). A value

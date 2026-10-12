@@ -843,7 +843,7 @@ but no bin or menu. Which are shown is the app's
 (`DocumentState::origin`, a `varde_render::OriginShown`), not the
 document's: not saved, not undone, and toggled read-only too. The origin
 and the X and Y axes start shown, the Z axis and the planes hidden; while a tool offers the
-origin planes on the toolbar (`toolbar::picks_origin_planes`: a sketch's
+origin planes on the toolbar (`DocumentState::picks_origin_planes`: a sketch's
 plane, a split's tool by face, a reference that may be a plane) all
 three are drawn whatever Objects says (`DocumentState::origin_drawn`).
 The renderer takes them as `Frame::origin`, ignored in a sketch, whose

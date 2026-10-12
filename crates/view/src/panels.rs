@@ -810,10 +810,10 @@ fn objects<'a>(view: ObjectsView<'a>) -> Element<'a, Message> {
 fn origin_label(object: OriginObject) -> (Icon, &'static str) {
     match object {
         OriginObject::Point => (Icon::Point, "Origin"),
-        OriginObject::Axis(axis) => (Icon::SeAxis, crate::toolbar::axis_label(axis)),
+        OriginObject::Axis(axis) => (Icon::SeAxis, crate::motion::axis_label(axis)),
         OriginObject::Plane(plane) => (
             crate::icons::plane_icon(plane),
-            crate::toolbar::plane_label(plane),
+            crate::motion::plane_label(plane),
         ),
     }
 }

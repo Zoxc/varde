@@ -223,7 +223,7 @@ pub struct ModelPicking<'a> {
     pub hovered_origin: Option<OriginPlane>,
     /// Whether the origin planes drawn are picked, nearer than the model:
     /// picking a sketch's plane (`planes`), or an operation's plane
-    /// ([`crate::motion_picks_origin_planes`]), a click on one then
+    /// ([`MotionKind::picks_origin_planes`](crate::MotionKind::picks_origin_planes)), a click on one then
     /// [`MotionLook::OriginPlane`] as its toolbar button.
     pub origin_planes: bool,
     /// The finished sketches whose curves and points are picked with

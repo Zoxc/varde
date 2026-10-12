@@ -590,8 +590,7 @@ impl Doc {
     /// operation's plane its toolbar offers.
     pub(crate) fn picks_origin_planes(&self) -> bool {
         match self.mode.motion() {
-            Some(session) => varde_view::motion_picks_origin_planes(
-                session.kind,
+            Some(session) => (session.kind).picks_origin_planes(
                 session.picking,
                 session.split.mode == varde_view::SplitMode::Face,
             ),

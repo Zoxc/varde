@@ -55,6 +55,28 @@ pub enum MotionKind {
 }
 
 impl MotionKind {
+    /// Whether an operation of this kind picking `picking` takes an origin
+    /// plane, offered on the toolbar and clicked in the viewport: a split's
+    /// tool by face (`split_face`), or a reference that may be a plane.
+    pub fn picks_origin_planes(self, picking: MotionPick, split_face: bool) -> bool {
+        match picking {
+            MotionPick::Tool => split_face,
+            MotionPick::Reference => matches!(
+                self,
+                MotionKind::Mirror
+                    | MotionKind::Align
+                    | MotionKind::Scale
+                    | MotionKind::Split
+                    | MotionKind::Chamfer
+                    | MotionKind::Shell
+                    | MotionKind::Fillet
+                    | MotionKind::OffsetFace
+                    | MotionKind::Draft
+            ),
+            _ => false,
+        }
+    }
+
     /// Its name as a feature's noun: "Move", "Pattern".
     pub fn noun(self) -> &'static str {
         match self {
@@ -841,6 +863,25 @@ impl<'a> MotionState<'a> {
     /// The panel's title: the feature edited's name, or "New move".
     pub fn title(&self) -> &'a str {
         self.verdict.title(self.kind.new_title())
+    }
+}
+
+/// The label of a button or row picking `axis`: turning a move, or
+/// patterning, about it.
+pub(crate) fn axis_label(axis: Axis3) -> &'static str {
+    match axis {
+        Axis3::X => "X axis",
+        Axis3::Y => "Y axis",
+        Axis3::Z => "Z axis",
+    }
+}
+
+/// The label of a button or row picking `plane`.
+pub(crate) fn plane_label(plane: OriginPlane) -> &'static str {
+    match plane {
+        OriginPlane::XY => "XY plane",
+        OriginPlane::XZ => "XZ plane",
+        OriginPlane::YZ => "YZ plane",
     }
 }
 

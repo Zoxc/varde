@@ -20,6 +20,7 @@ use varde_sketch::{
 };
 
 use crate::chrome::small_button;
+use crate::file_menu;
 use crate::shortcut::{DocumentKeys, OperationKeys};
 use crate::status::{self};
 use crate::theme::Emphasis;
@@ -315,12 +316,25 @@ impl<'a> DocumentState<'a> {
         self.read_only.is_none()
     }
 
+    /// Whether the toolbar offers the origin planes now: picking a sketch's
+    /// plane, a split's tool by face, or a reference that may be a plane. The
+    /// viewport shows them then, whether Objects has them shown or not.
+    pub(crate) fn picks_origin_planes(&self) -> bool {
+        let Some(motion) = self.motion() else {
+            return self.picking_plane.is_some();
+        };
+        let split_face = motion
+            .split()
+            .is_some_and(|split| split.mode == crate::SplitMode::Face);
+        (motion.kind).picks_origin_planes(motion.picking, split_face)
+    }
+
     /// What the viewport draws of the world's origin, axes and planes:
     /// what Objects has shown, and the planes while a tool offers them
-    /// (`toolbar::picks_origin_planes`), drawn over the model then.
+    /// (`DocumentState::picks_origin_planes`), drawn over the model then.
     pub fn origin_drawn(&self) -> varde_render::OriginShown {
         let mut origin = self.origin;
-        if toolbar::picks_origin_planes(self) {
+        if self.picks_origin_planes() {
             origin.planes = [true; 3];
             origin.planes_on_top = true;
         }
@@ -963,7 +977,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         (_, Some(deleting)) => Element::from(stack![content, delete_prompt(deleting)]),
         (Some(Overlay::FileMenu), None) => {
             let document = state.editor.document();
-            let menu = toolbar::file_menu(toolbar::FileMenu {
+            let menu = file_menu::file_menu(file_menu::FileMenu {
                 editable,
                 edited: state.file.edited,
                 exportable: state.file.exportable,
