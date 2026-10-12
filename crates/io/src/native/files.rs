@@ -390,29 +390,31 @@ impl Files {
     /// named by its tail `found`, instead of the one opened, see
     /// [`Request::OpenFound`].
     fn open_found(&mut self, open_id: OpenId, file: FileId, found: vrdp::Tail) -> Response {
-        let mut path = None;
-        let result = self
-            .open
-            .get_mut(file)
-            .map_err(String::from)
-            .and_then(|open| match open {
-                Kind::Design(design) => Ok(design),
-                Kind::New(_) => Err(NOT_FOUND.to_owned()),
-            })
-            .and_then(|design| {
-                path = Some(design.file.path().to_owned());
-                let chosen = design
-                    .found
-                    .take_if(|chosen| chosen.tail == found)
-                    .ok_or_else(|| NOT_FOUND.to_owned())?;
+        let design = match self.open.get_mut(file) {
+            Ok(Kind::Design(design)) => design,
+            not_design => {
+                let error = not_design.map_or_else(String::from, |_| NOT_FOUND.to_owned());
+                return Response::Opened {
+                    id: open_id,
+                    path: None,
+                    result: Err(error),
+                };
+            }
+        };
+        let path = Some(design.file.path().to_owned());
+        let result = design
+            .found
+            .take_if(|chosen| chosen.tail == found)
+            .ok_or_else(|| NOT_FOUND.to_owned())
+            .map(|chosen| {
                 let damage = Damage::of(&chosen.report, None);
                 let document = design.file.open_found(chosen);
                 let recovered = offer(&mut design.lock, &design.file, &document);
-                Ok(Opened {
+                Opened {
                     access: design.lock.access(),
                     recovered,
                     ..Opened::editable(file, document, damage)
-                })
+                }
             });
         Response::Opened {
             id: open_id,
