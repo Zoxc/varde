@@ -7,11 +7,13 @@
 //! it can be. The label under the cursor glows, and what it names is
 //! highlighted faintly.
 
+use std::sync::Arc;
+
 use glam::{DVec2, DVec3};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::Shaping;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
-use varde_document::{BodyId, Document, FeatureId};
+use varde_document::{BodyId, Document, FeatureId, Generation};
 use varde_kernel_compat::mesh::{FaceKey, PartKey};
 use varde_render::Camera;
 
@@ -32,6 +34,7 @@ pub(crate) fn overlay<'a>(
     selection: &crate::Selection,
     camera: Camera,
     document: &'a Document,
+    generation: Generation,
 ) -> Element<'a, Message> {
     Canvas::new(Names {
         index: picking.index,
@@ -46,6 +49,7 @@ pub(crate) fn overlay<'a>(
         whole: picking.whole.iter().map(|lines| lines.feature).collect(),
         camera,
         document,
+        generation,
     })
     .width(Length::Fill)
     .height(Length::Fill)
@@ -68,6 +72,8 @@ struct Names<'a> {
     whole: Vec<FeatureId>,
     camera: Camera,
     document: &'a Document,
+    /// The document's generation, which the labels' words are of.
+    generation: Generation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -153,19 +159,47 @@ const MARK_ROOM: f32 = 14.0;
 /// The space kept between labels, and between a label and the model.
 const GAP: f32 = 3.0;
 
-/// What the overlay keeps between draws: where the labels went, and the
-/// one under the cursor, so a move redraws only when that changes.
+/// What the overlay keeps between draws: the labels as last laid out,
+/// and the one under the cursor, so a move redraws only when that
+/// changes, and a redraw for it lays nothing out again.
 #[derive(Default)]
 struct Hovering {
-    rects: std::cell::RefCell<Vec<Option<Rectangle>>>,
+    layout: std::cell::RefCell<Option<Layout>>,
     hovered: Option<usize>,
+}
+
+/// The labels laid out: what they name and where they went, for what
+/// [`LayoutKey`] has.
+struct Layout {
+    key: LayoutKey,
+    wanted: Vec<Wanted>,
+    placed: Vec<Option<Rectangle>>,
+}
+
+/// What a layout depends on: the view, the model shown, the document and
+/// what's named.
+#[derive(PartialEq)]
+struct LayoutKey {
+    camera: Camera,
+    size: Size,
+    /// The model shown: its count, and where its mesh is, as each
+    /// document counts its own.
+    model: (u64, *const varde_kernel_compat::RenderMesh),
+    generation: Generation,
+    bodies: Vec<BodyId>,
+    targets: Vec<Picked>,
+    around: Vec<BodyId>,
+    sketches: Vec<(FeatureId, varde_document::Placement)>,
+    items: Vec<SketchItem>,
+    whole: Vec<FeatureId>,
 }
 
 impl Hovering {
     /// The label at `at`, of those placed last.
     fn at(&self, at: Option<Point>) -> Option<usize> {
         let at = at?;
-        let rects = self.rects.borrow();
+        let layout = self.layout.borrow();
+        let rects = &layout.as_ref()?.placed;
         // The last drawn is on top.
         (0..rects.len())
             .rev()
@@ -207,24 +241,17 @@ impl canvas::Program<Message> for Names<'_> {
         let Some(projector) = Projector::world(&self.camera, size[0], size[1]) else {
             return Vec::new();
         };
-        let wanted = self.wanted(&projector, size);
-        // Outside the bodies and the sketches' curves and points named.
-        let mut outline = self.silhouette(&projector);
-        for want in &wanted {
-            match &want.target {
-                Target::Line(points) => outline.extend(points.iter().map(|p| projector.show(*p))),
-                Target::Point(p) => outline.push(projector.show(*p)),
-                Target::Model(_) => {}
-            }
+        let key = self.layout_key(bounds.size());
+        let stale = (state.layout.borrow().as_ref()).is_none_or(|layout| layout.key != key);
+        if stale {
+            *state.layout.borrow_mut() = Some(self.layout(&projector, key));
         }
-        let hull = hull(&outline);
-        let widths: Vec<f32> = (wanted.iter())
-            .map(|want| want.words.iter().map(Piece::width).sum())
-            .collect();
-        let placed = place(&wanted, &widths, &hull, bounds.size());
-        let p = theme::palette(theme);
-        *state.rects.borrow_mut() = placed.clone();
         let hovered = state.at(cursor.position_in(bounds));
+        let layout = state.layout.borrow();
+        let Some(Layout { wanted, placed, .. }) = layout.as_ref() else {
+            return Vec::new();
+        };
+        let p = theme::palette(theme);
         if let Some(i) = hovered {
             let colour = wanted[i].kind.colour();
             match &wanted[i].target {
@@ -251,7 +278,7 @@ impl canvas::Program<Message> for Names<'_> {
                 }
             }
         }
-        for (i, (want, rect)) in wanted.iter().zip(&placed).enumerate() {
+        for (i, (want, rect)) in wanted.iter().zip(placed).enumerate() {
             if let Some(rect) = rect
                 && hovered != Some(i)
             {
@@ -269,6 +296,48 @@ impl canvas::Program<Message> for Names<'_> {
 }
 
 impl Names<'_> {
+    /// What laying the labels out in a viewport of `size` depends on.
+    fn layout_key(&self, size: Size) -> LayoutKey {
+        LayoutKey {
+            camera: self.camera,
+            size,
+            model: (self.index.model(), Arc::as_ptr(self.index.mesh())),
+            generation: self.generation,
+            bodies: self.bodies.clone(),
+            targets: self.targets.clone(),
+            around: self.around.clone(),
+            sketches: (self.sketches.iter())
+                .map(|lines| (lines.feature, lines.placement))
+                .collect(),
+            items: self.items.clone(),
+            whole: self.whole.clone(),
+        }
+    }
+
+    /// The labels wanted and where they go, outside the bodies and the
+    /// sketches' curves and points named.
+    fn layout(&self, projector: &Projector, key: LayoutKey) -> Layout {
+        let wanted = self.wanted(projector, [key.size.width, key.size.height]);
+        let mut outline = self.silhouette(projector);
+        for want in &wanted {
+            match &want.target {
+                Target::Line(points) => outline.extend(points.iter().map(|p| projector.show(*p))),
+                Target::Point(p) => outline.push(projector.show(*p)),
+                Target::Model(_) => {}
+            }
+        }
+        let hull = hull(&outline);
+        let widths: Vec<f32> = (wanted.iter())
+            .map(|want| want.words.iter().map(Piece::width).sum())
+            .collect();
+        let placed = place(&wanted, &widths, &hull, key.size);
+        Layout {
+            key,
+            wanted,
+            placed,
+        }
+    }
+
     /// The labels wanted: of what's selected itself, in view; of the
     /// bodies selected whole, what's in view and nothing hides, on a
     /// side turned towards the eye.

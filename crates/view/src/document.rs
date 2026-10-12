@@ -1044,6 +1044,7 @@ fn viewport_stack<'a>(
                 state.model_selection,
                 *state.camera,
                 state.editor.document(),
+                state.editor.generation(),
             )),
         status::status_bar(status(state)),
         state.regenerating.map(crate::regenerating::regenerating),

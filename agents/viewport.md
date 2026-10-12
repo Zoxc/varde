@@ -314,7 +314,9 @@ outermost first), clear of the status bar, and outside the screen hull
 of the bodies selected or holding what is unless there's no room
 there; text widths are measured. The label under the cursor glows and
 is drawn over the rest, and what it names is highlighted faintly; the
-canvas redraws on a move only when which label that is changes. Being
+canvas redraws on a move only when which label that is changes, and
+keeps the layout until the camera, the viewport's size, the model
+shown, the document's generation or what's named changes. Being
 a canvas, it leaves stale shapes on GL (see `notes/upstream/wgpu.md`).
 
 A press on what's empty of the side panel (the tab strip right of the
