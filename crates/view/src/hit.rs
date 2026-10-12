@@ -22,28 +22,15 @@ pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Selectab
     if !at.is_finite() {
         return None;
     }
-    let points = sketch
-        .points
-        .iter()
-        .map(|point| (point.id.into(), point.at.distance(at)))
-        .chain([(Id::ORIGIN.into(), at.length())]);
-    let curves = sketch.curves.iter().filter_map(|entry| {
-        let distance = curve_distance(sketch, &entry.curve, at)?;
-        Some((entry.id.into(), distance))
-    });
-    let axes = [
-        (Id::X_AXIS.into(), at.y.abs()),
-        (Id::Y_AXIS.into(), at.x.abs()),
-    ];
-    nearest(points, tolerance)
+    nearest(points(sketch, at), tolerance)
         .or_else(|| nearest(handle_ends(sketch, at).into_iter(), tolerance))
         .or_else(|| {
             // Over an arm, an end reaches farther.
             let arm = nearest(handles(sketch, at).into_iter(), tolerance)?;
             nearest(handle_ends(sketch, at).into_iter(), END_REACH * tolerance).or(Some(arm))
         })
-        .or_else(|| nearest(curves, tolerance))
-        .or_else(|| nearest(axes.into_iter(), tolerance))
+        .or_else(|| nearest(curves(sketch, at, |_| true).map(selectable), tolerance))
+        .or_else(|| nearest(axes(at).into_iter().map(selectable), tolerance))
 }
 
 /// Everything under the cursor at `at` within `tolerance` sketch units,
@@ -54,25 +41,19 @@ pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Select
     if !at.is_finite() {
         return Vec::new();
     }
-    let points: Vec<_> = (sketch.points.iter())
-        .map(|point| (point.id.into(), point.at.distance(at)))
-        .chain([(Id::ORIGIN.into(), at.length())])
-        .collect();
-    let curves: Vec<_> = (sketch.curves.iter())
-        .filter_map(|entry| Some((entry.id.into(), curve_distance(sketch, &entry.curve, at)?)))
-        .collect();
-    let axes = vec![
-        (Id::X_AXIS.into(), at.y.abs()),
-        (Id::Y_AXIS.into(), at.x.abs()),
-    ];
-    [points, handles(sketch, at), curves, axes]
-        .into_iter()
-        .flat_map(|mut kind| {
-            kind.retain(|&(_, distance)| distance <= tolerance);
-            kind.sort_by(|a, b| a.1.total_cmp(&b.1));
-            kind.into_iter().map(|(id, _)| id)
-        })
-        .collect()
+    [
+        points(sketch, at).collect(),
+        handles(sketch, at),
+        curves(sketch, at, |_| true).map(selectable).collect(),
+        axes(at).into_iter().map(selectable).collect(),
+    ]
+    .into_iter()
+    .flat_map(|mut kind| {
+        kind.retain(|&(_, distance)| distance <= tolerance);
+        kind.sort_by(|a, b| a.1.total_cmp(&b.1));
+        kind.into_iter().map(|(id, _)| id)
+    })
+    .collect()
 }
 
 /// The curve under the cursor at `at`, as [`hit`] finds one, points and
@@ -81,11 +62,7 @@ pub(crate) fn hit_curve(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id
     if !at.is_finite() {
         return None;
     }
-    let curves = sketch.curves.iter().filter_map(|entry| {
-        let distance = curve_distance(sketch, &entry.curve, at)?;
-        Some((entry.id, distance))
-    });
-    nearest(curves, tolerance)
+    nearest(curves(sketch, at, |_| true), tolerance)
 }
 
 /// The line or axis under the cursor at `at`, as [`hit`] finds one,
@@ -94,12 +71,8 @@ pub(crate) fn hit_line(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id>
     if !at.is_finite() {
         return None;
     }
-    let lines = sketch.curves.iter().filter_map(|entry| match entry.curve {
-        Curve::Line { .. } => Some((entry.id, curve_distance(sketch, &entry.curve, at)?)),
-        _ => None,
-    });
-    let axes = [(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())];
-    nearest(lines, tolerance).or_else(|| nearest(axes.into_iter(), tolerance))
+    let lines = curves(sketch, at, |curve| matches!(curve, Curve::Line { .. }));
+    nearest(lines, tolerance).or_else(|| nearest(axes(at).into_iter(), tolerance))
 }
 
 /// The line or axis under the cursor at `at`, the nearest within
@@ -149,6 +122,36 @@ pub(crate) fn nearest<T: Copy>(items: impl Iterator<Item = (T, f64)>, tolerance:
             _ => Some(item),
         })
         .map(|(id, _)| id)
+}
+
+/// The sketch's points and the origin, the origin last, and how far `at`
+/// is from each.
+fn points(sketch: &Sketch, at: DVec2) -> impl Iterator<Item = (Selectable, f64)> + '_ {
+    (sketch.points.iter())
+        .map(move |point| (point.id.into(), point.at.distance(at)))
+        .chain([(Id::ORIGIN.into(), at.length())])
+}
+
+/// The sketch's curves that `keep` keeps, and how far `at` is from each
+/// as drawn ([`curve_distance`]).
+fn curves(
+    sketch: &Sketch,
+    at: DVec2,
+    keep: fn(&Curve) -> bool,
+) -> impl Iterator<Item = (Id, f64)> + '_ {
+    (sketch.curves.iter())
+        .filter(move |entry| keep(&entry.curve))
+        .filter_map(move |entry| Some((entry.id, curve_distance(sketch, &entry.curve, at)?)))
+}
+
+/// The X and Y axes, endless, and how far `at` is from each.
+fn axes(at: DVec2) -> [(Id, f64); 2] {
+    [(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())]
+}
+
+/// An id candidate as a [`Selectable`] one.
+fn selectable((id, distance): (Id, f64)) -> (Selectable, f64) {
+    (id.into(), distance)
 }
 
 /// How far `at` is from `curve` of `sketch`, as it's drawn: exactly for a
