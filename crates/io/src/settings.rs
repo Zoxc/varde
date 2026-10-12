@@ -90,10 +90,8 @@ pub struct Settings {
     /// Whether the MCP feature is on (*MCP*: its panel and toggle; the
     /// server is started from the panel, never saved), off unless turned
     /// on: natively only.
-    #[serde(default)]
     pub mcp: bool,
     /// The port the MCP server listens on.
-    #[serde(default)]
     pub mcp_port: McpPort,
 }
 
@@ -546,82 +544,50 @@ impl Settings {
         let Ok(table) = toml.parse::<toml::Table>() else {
             return Self::default();
         };
-        let key = |name: &str| table.get(name).cloned();
         let defaults = Self::default();
-        Self {
-            theme: key("theme")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.theme),
-            mouse_hints: key("mouse_hints")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(defaults.mouse_hints),
-            hidden_edges: key("hidden_edges")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(defaults.hidden_edges),
-            names: key("names")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(defaults.names),
-            projection: key("projection")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.projection),
-            shading: key("shading")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.shading),
-            edges: key("edges")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.edges),
-            length_unit: key("length_unit")
-                .and_then(|value| value.as_str().and_then(length_unit_of))
-                .unwrap_or(defaults.length_unit),
-            interface_scale: key("interface_scale")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.interface_scale),
-            angle_unit: key("angle_unit")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.angle_unit),
-            decimals: key("decimals")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.decimals),
-            left_drag: key("left_drag")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.left_drag),
-            middle_drag: key("middle_drag")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.middle_drag),
-            right_drag: key("right_drag")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.right_drag),
-            rotation: key("rotation")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.rotation),
-            rotation_point: key("rotation_point")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.rotation_point),
-            set_rotation_point: key("set_rotation_point")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.set_rotation_point),
-            zoom_direction: key("zoom_direction")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.zoom_direction),
-            zoom_to_pointer: key("zoom_to_pointer")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(defaults.zoom_to_pointer),
-            sketch_snap: key("sketch_snap")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(defaults.sketch_snap),
-            auto_save: key("auto_save")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.auto_save),
-            recent_designs: key("recent_designs")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.recent_designs),
-            mcp: key("mcp")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(defaults.mcp),
-            mcp_port: key("mcp_port")
-                .and_then(|value| value.try_into().ok())
-                .unwrap_or(defaults.mcp_port),
+        // Each key read on its own: one missing or gone bad gets its
+        // default. The key is the field's name, as `serialize` writes it.
+        macro_rules! read {
+            ($($field:ident),* $(,)?) => {
+                Self {
+                    $($field: table
+                        .get(stringify!($field))
+                        .cloned()
+                        .and_then(|value| value.try_into().ok())
+                        .unwrap_or(defaults.$field),)*
+                    length_unit: table
+                        .get("length_unit")
+                        .and_then(|value| value.as_str())
+                        .and_then(length_unit_of)
+                        .unwrap_or(defaults.length_unit),
+                }
+            };
         }
+        read!(
+            theme,
+            mouse_hints,
+            hidden_edges,
+            names,
+            projection,
+            shading,
+            edges,
+            interface_scale,
+            angle_unit,
+            decimals,
+            left_drag,
+            middle_drag,
+            right_drag,
+            rotation,
+            rotation_point,
+            set_rotation_point,
+            zoom_direction,
+            zoom_to_pointer,
+            sketch_snap,
+            auto_save,
+            recent_designs,
+            mcp,
+            mcp_port,
+        )
     }
 
     pub(crate) fn serialize(&self) -> String {
