@@ -168,10 +168,8 @@ impl Doc {
         self.mode.take_picking_plane();
         let mut session = MeasureSession::new();
         // What's selected, one or two, is A and B to start with.
-        let picks: Option<Vec<InspectPick>> =
-            self.pick.selection.items().map(selected_pick).collect();
-        if let Some(picks) = picks.filter(|picks| picks.len() <= 2) {
-            for picked in picks {
+        if let Some((first, second)) = self.selected_for_measure() {
+            for picked in std::iter::once(first).chain(second) {
                 session.put(picked, true);
             }
         }
@@ -244,7 +242,13 @@ impl Doc {
         {
             return None;
         }
-        // Nothing's measured with a sketch's curve or point selected.
+        self.selected_for_measure()
+    }
+
+    /// What's selected as the measure tool's A and B, if it's one or two
+    /// things it measures: nothing with a sketch's curve or point
+    /// selected.
+    fn selected_for_measure(&self) -> Option<(InspectPick, Option<InspectPick>)> {
         let picks: Option<Vec<InspectPick>> =
             self.pick.selection.items().map(selected_pick).collect();
         match picks?[..] {

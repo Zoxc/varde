@@ -53,10 +53,7 @@ impl CombineSession {
     /// given: a union using the tools up. Clicks pick the tools once
     /// there's a target.
     pub(crate) fn new(target: Option<BodyId>, mut tools: Vec<BodyId>) -> Self {
-        tools.retain(|&tool| Some(tool) != target);
-        tools.sort_unstable();
-        tools.dedup();
-        tools.truncate(varde_document::MAX_FEATURE_BODIES);
+        normalise(&mut tools, target);
         Self {
             feature: None,
             picking: if target.is_some() {
@@ -151,14 +148,22 @@ impl CombineSession {
         let held = |body: BodyId| merges.holder(body).unwrap_or(body);
         let target = self.target.map(held);
         let mut tools: Vec<BodyId> = self.tools.iter().map(|&tool| held(tool)).collect();
-        tools.retain(|&tool| Some(tool) != target);
-        tools.sort_unstable();
-        tools.dedup();
+        normalise(&mut tools, target);
         let moved = target != self.target || tools != self.tools;
         self.target = target;
         self.tools = tools;
         moved
     }
+}
+
+/// Makes `tools` what [`CombineSession::tools`] holds: sorted without
+/// repeats, `target` not among them, and at most
+/// [`varde_document::MAX_FEATURE_BODIES`].
+fn normalise(tools: &mut Vec<BodyId>, target: Option<BodyId>) {
+    tools.retain(|&tool| Some(tool) != target);
+    tools.sort_unstable();
+    tools.dedup();
+    tools.truncate(varde_document::MAX_FEATURE_BODIES);
 }
 
 /// Whether a combine of `document` edited from `edited` (a new one, where
