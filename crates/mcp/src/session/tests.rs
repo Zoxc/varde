@@ -104,7 +104,6 @@ fn initialize_starts_a_session() {
     assert_eq!(result["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(result["instructions"], INSTRUCTIONS);
     assert_eq!(state.session().unwrap().as_str(), id);
-    assert_eq!(state.client(), Some("test client"));
     assert_eq!(
         outcome.events,
         [Event::Started {
@@ -125,7 +124,6 @@ fn negotiates_the_version() {
         let mut state = State::new();
         let (outcome, _) = initialize(&mut state, version, T0);
         assert_eq!(body(&outcome)["result"]["protocolVersion"], version);
-        assert_eq!(state.version(), Some(version));
     }
     let mut state = State::new();
     let (outcome, _) = initialize(&mut state, "2024-11-05", T0);

@@ -174,8 +174,6 @@ impl Outcome {
 
 struct Session {
     id: SessionId,
-    version: &'static str,
-    client: Option<String>,
     initialized: bool,
     used: RecentIds,
     /// The ids of the calls handed to the app and not yet finished.
@@ -306,16 +304,6 @@ impl State {
     /// The open session's id, if any.
     pub fn session(&self) -> Option<&SessionId> {
         self.session.as_ref().map(|s| &s.id)
-    }
-
-    /// The protocol version the open session negotiated.
-    pub fn version(&self) -> Option<&'static str> {
-        self.session.as_ref().map(|s| s.version)
-    }
-
-    /// The open session's client name, from `clientInfo`.
-    pub fn client(&self) -> Option<&str> {
-        self.session.as_ref().and_then(|s| s.client.as_deref())
     }
 
     /// Ends the session, as Disconnect does.
@@ -468,8 +456,6 @@ impl State {
         }
         let mut session = Session {
             id: id.clone(),
-            version,
-            client: client.clone(),
             initialized: false,
             used: RecentIds::default(),
             in_flight: HashSet::new(),
