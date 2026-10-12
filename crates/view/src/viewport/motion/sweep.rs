@@ -33,7 +33,8 @@ pub(super) fn sweep_regions<'s, 'a>(
     }
 }
 
-/// Draws a sweep's path (or a loft's rails) on `live`: while it's picked
+/// Draws a sweep's path (or a loft's rails, or a split's line) on `live`:
+/// while it's picked
 /// (`picking`), the curves of the sketches of `lines` (construction ones
 /// dashed, the chain of the one `hovered` stronger), and each part's
 /// curves of `chains` in the selected colour, those of the part whose

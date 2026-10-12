@@ -74,8 +74,8 @@ use crate::viewport::local_cursor;
 use handles::{Drag, Grip, draw_handles};
 use loft::{LoftInput, SeamInput, loft_labels};
 use marks::scale_marks;
-use split::{SplitInput, split_lines, split_regions};
-use sweep::sweep_regions;
+use split::{SplitInput, split_regions};
+use sweep::{sweep_lines, sweep_regions};
 
 /// How wide a split's sketches' curves are drawn, in pixels: a
 /// revolve's lines'. The one hovered and those picked are drawn as the
@@ -259,8 +259,21 @@ impl<'a> Moving<'a> {
                 }
             }
             if split.mode == SplitMode::Line {
+                // The curve hovered alone is lit, as a part of a sweep is.
                 let hovered = input.split.curve.filter(|_| picking.is_some());
-                split_lines(&mut live, split, hovered, picking.is_some(), colors);
+                let lit = hovered
+                    .as_ref()
+                    .map(|(sketch, curve)| (*sketch, std::slice::from_ref(curve)));
+                let chains = split.chain.as_slice();
+                sweep_lines(
+                    &mut live,
+                    &split.lines,
+                    chains,
+                    None,
+                    lit,
+                    picking.is_some(),
+                    colors,
+                );
             }
         }
         (super::NO_LAYER.clone(), live)

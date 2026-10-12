@@ -4,16 +4,14 @@ use glam::DVec2;
 use iced::widget::shader::Action;
 use iced::{Rectangle, mouse};
 use varde_document::FeatureId;
-use varde_render::{Camera, SketchLayer, Space as LayerSpace};
+use varde_render::Camera;
 use varde_sketch::Id;
 
-use super::{CURVE_WIDTH, Moving};
+use super::Moving;
 use crate::motion::{MotionLook, MotionPick, SplitMode, SplitView};
-use crate::theme::SketchColors;
 use crate::viewport::local_cursor;
-use crate::viewport::regions::{self, Regions, grid_plane};
-use crate::viewport::sketch::line;
-use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH, SketchHit, curve_under};
+use crate::viewport::regions::{self, Regions};
+use crate::viewport::sketch_pick::{SketchHit, curve_under};
 use crate::{Look, Message};
 
 /// What the viewport keeps of a split's tool picked in its sketches: the
@@ -54,51 +52,6 @@ pub(super) fn split_regions<'s, 'a>(split: &'s SplitView<'a>) -> Regions<'s, 'a>
         source: split.source,
         picked: split.picked,
         panel: None,
-    }
-}
-
-/// Draws a split's line on `live`: while it's picked (`picking`), the
-/// curves of the sketches it may be of (construction ones dashed, the
-/// one `hovered` stronger), and the curves picked in the selected colour.
-pub(super) fn split_lines(
-    live: &mut SketchLayer,
-    split: &SplitView<'_>,
-    hovered: Option<(FeatureId, Id)>,
-    picking: bool,
-    colors: SketchColors,
-) {
-    let picked = |feature: FeatureId, id: Id| {
-        split
-            .chain
-            .is_some_and(|(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
-    };
-    for candidate in &split.lines {
-        let Some(plane) = grid_plane(candidate.placement) else {
-            continue;
-        };
-        let space = LayerSpace::On(plane);
-        let sketch = candidate.sketch;
-        for entry in &sketch.curves {
-            let is_picked = picked(candidate.feature, entry.id);
-            let is_hovered = hovered == Some((candidate.feature, entry.id));
-            if !(picking || is_picked) {
-                continue;
-            }
-            let Some(points) = sketch.flatten(&entry.curve) else {
-                continue;
-            };
-            let (color, width) = if is_hovered {
-                (colors.hovered, HOVERED_WIDTH)
-            } else if is_picked {
-                (colors.selected, SELECTED_WIDTH)
-            } else if entry.construction {
-                (colors.construction, CURVE_WIDTH)
-            } else {
-                (colors.curve, CURVE_WIDTH)
-            };
-            let dashed = entry.construction && !is_picked && !is_hovered;
-            live.polyline(space, &points, line(color, width, dashed));
-        }
     }
 }
 
