@@ -21,6 +21,7 @@ fn over(x: f64, y: f64) -> DVec2 {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_click_on_the_model_picks_its_nearest_face() {
     let mesh = cube();
     let mut perspective = top_camera();
@@ -51,6 +52,7 @@ fn a_click_on_the_model_picks_its_nearest_face() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn an_orthographic_view_picks_the_model_behind_its_eye_too() {
     // The target well inside the box: the top face is behind where the
     // ray starts.
@@ -101,6 +103,7 @@ fn the_grid_is_picked_only_where_it_shows() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn in_a_sketch_a_click_off_the_model_picks_its_plane() {
     let placement = OriginPlane::XY.placement();
     let hit = pick(

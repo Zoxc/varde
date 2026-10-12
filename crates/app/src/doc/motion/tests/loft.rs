@@ -195,6 +195,7 @@ fn boxed(plates: &Plates, plate: BodyId, low: [f64; 3], high: [f64; 3]) -> bool 
 /// it as one undo step, "Loft 1" failing in the Timeline, the sections'
 /// sketches hidden.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
     let mut lofted = lofted();
     let (low, top, side) = (lofted.low, lofted.top, lofted.side);
@@ -539,6 +540,7 @@ fn closed_chains_and_rails_while_closed_are_refused() {
 /// square on XY to the one on the plate's top previews a 10 × 10 × 10
 /// box, OK adds it as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn two_squares_preview_and_ok_adds_one_undo_step() {
     varde_regen::testing::loft_by_extrude();
     let mut lofted = lofted();

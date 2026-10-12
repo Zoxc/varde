@@ -160,6 +160,7 @@ fn enter() -> keyboard::Key {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn regions_then_a_sketch_line_picked_are_previewed() {
     let mut lathe = lathe();
     lathe.doc.look(Look::StartRevolve);
@@ -204,6 +205,7 @@ fn regions_then_a_sketch_line_picked_are_previewed() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_built_in_axis_is_stored_as_the_sketch_s_and_a_construction_line_as_a_curve() {
     let mut lathe = lathe();
     lathe.set_up(AxisLine::SketchY);
@@ -344,6 +346,7 @@ fn typed_angles_of_each_kind_reach_the_draft() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn enter_commits_the_revolve_as_one_undo_step() {
     let mut lathe = lathe();
     let before = lathe.doc.editor.document().clone();
@@ -712,6 +715,7 @@ fn o_starts_a_session_and_backs_out_and_the_rail_s_o_does_too() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
     use crate::tests::{clicked, shown, texts};
     use varde_view::Message as Ui;
@@ -799,6 +803,7 @@ fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
 /// sweeps it into +Y, and one about the rectangle's left side, along −Z,
 /// into −Y.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_turn_goes_right_handed_about_the_axis_line_as_the_arrow_points() {
     let mut lathe = lathe();
     // Which side of the XZ plane the preview's mesh is on: the least

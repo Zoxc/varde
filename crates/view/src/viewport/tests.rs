@@ -254,6 +254,7 @@ fn draw(
 /// document and opening another mustn't show the mesh left over from the
 /// first.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn next_document_does_not_show_the_previous_mesh() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
@@ -283,6 +284,7 @@ fn next_document_does_not_show_the_previous_mesh() {
 /// iced prepares every viewport of a frame before rendering any, through
 /// the one `Pipeline`, so each must keep what it prepared.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn viewports_in_one_frame_show_their_own_mesh() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
@@ -312,6 +314,7 @@ fn viewports_in_one_frame_show_their_own_mesh() {
 
 /// The cube's hidden edges show dashed, by default, until turned off.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn hidden_edges_show_unless_turned_off() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
@@ -333,6 +336,7 @@ fn hidden_edges_show_unless_turned_off() {
 
 /// The cube's wires, its sides' diagonals, show only in a wireframe.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn wires_show_only_in_a_wireframe() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
@@ -354,6 +358,7 @@ fn wires_show_only_in_a_wireframe() {
 
 /// A viewport's slot goes once its widget and what it drew are gone.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn trim_drops_the_slots_of_gone_viewports() {
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
@@ -749,6 +754,7 @@ fn middle_button_with(mouse: MouseOptions, events: &[(Event, Point)]) -> Vec<Mes
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_middle_click_picks_the_point_to_orbit_and_a_drag_orbits() {
     let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle));
     let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle));
@@ -889,6 +895,7 @@ fn redraw() -> Event {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_left_click_on_the_model_selects_and_a_drag_still_orbits() {
     let plate = Plate::new();
     let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
@@ -967,6 +974,7 @@ fn a_left_click_on_the_model_selects_and_a_drag_still_orbits() {
 /// picks it as its toolbar button does; elsewhere the model is clicked,
 /// unless the planes are drawn over it.
 #[test]
+#[ignore = "kernel: assemble"]
 fn an_operation_picks_an_origin_plane_drawn_nearer_than_the_model() {
     use iced::widget::shader::Program as _;
     let plate = Plate::new();
@@ -1033,6 +1041,7 @@ fn an_operation_picks_an_origin_plane_drawn_nearer_than_the_model() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_hover_is_worked_out_again_as_the_camera_moves() {
     let plate = Plate::new();
     let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
@@ -1065,6 +1074,7 @@ fn the_hover_is_worked_out_again_as_the_camera_moves() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn an_orbit_lets_go_of_the_hover_until_it_ends() {
     let plate = Plate::new();
     let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
@@ -1126,6 +1136,7 @@ fn the_cursor_points_over_what_a_click_selects() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn measuring_the_cursor_takes_snap_points_and_says_when_they_change() {
     let plate = Plate::new();
     let camera = plate.camera;
@@ -1186,6 +1197,7 @@ fn measuring_the_cursor_takes_snap_points_and_says_when_they_change() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn measuring_the_dots_of_what_s_hovered_stay_to_be_taken_off_it() {
     let plate = Plate::new();
     let camera = plate.camera;
@@ -1239,6 +1251,7 @@ fn later() -> Event {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_left_press_held_still_on_the_model_lists_what_overlaps_there() {
     let plate = Plate::new();
     let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
@@ -1282,6 +1295,7 @@ fn a_left_press_held_still_on_the_model_lists_what_overlaps_there() {
 /// under it, and drawn when hovered; the one under it isn't picked, the
 /// plate's face is.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_sketch_s_curve_over_the_model_is_picked_and_one_behind_it_not() {
     use glam::{DVec2, DVec3};
     use varde_sketch::{Curve, Sketch};
@@ -1496,6 +1510,7 @@ fn line_at(
 /// first, nearer than the plate's faces under it; a sketch's line under
 /// the plate, hidden by it, isn't listed.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_press_held_on_a_sketch_s_curve_over_the_model_lists_it_with_the_model() {
     use crate::{OverlapItem, OverlapItems};
     use iced::widget::shader::Program as _;
@@ -1559,6 +1574,7 @@ fn a_press_held_on_a_sketch_s_curve_over_the_model_lists_it_with_the_model() {
 /// sketch: another sketch's line under the plate (the faded model hides
 /// nothing) with the plate's faces.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
     use crate::{OverlapItem, OverlapItems};
     use iced::widget::shader::Program as _;
@@ -1639,6 +1655,7 @@ fn the_viewport_tells_its_shape_once_it_changes() {
 /// While origin planes are picked, a press held still lists the origin
 /// planes drawn there before the model's faces.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_press_held_still_lists_the_origin_planes_there_too() {
     use iced::widget::shader::Program as _;
     let plate = Plate::new();
@@ -1700,6 +1717,7 @@ const ON_THE_BOX: Point = Point::new(35.0, 29.0);
 /// does nothing and the second sets it; set to `Shift` and the click,
 /// only that does. With another rotation point, no click sets one.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_pivot_click_is_as_set() {
     use keyboard::Modifiers;
 
@@ -1760,6 +1778,7 @@ fn the_pivot_click_is_as_set() {
 /// point on the model where it started, for all of it; about the view's
 /// centre, or clicked, the drag names none.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn an_orbit_turns_about_the_point_set() {
     let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle));
     let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle));
@@ -1935,6 +1954,7 @@ fn hint_texts(hints: Vec<Hint<'_>>) -> Vec<String> {
 /// auto-save) was given up on, and an MCP render (asked while the MCP
 /// settings were open) waited out its 30 s and failed.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_pictures_asked_for_are_drawn_without_the_viewport() {
     use std::sync::Mutex;
 

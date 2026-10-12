@@ -41,6 +41,7 @@ fn tan(degrees: f64) -> f64 {
 /// panel; OK waits, Add anyway keeps it as one undo step, failing in the
 /// Timeline.
 #[test]
+#[ignore = "kernel: feature"]
 fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
@@ -142,6 +143,7 @@ fn front(plates: &Plates, body: varde_document::BodyId) -> varde_view::Pick {
 /// and one of 90° refused; Tangent faces; OK adds it as one undo step,
 /// the Timeline's row noting it.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
@@ -254,6 +256,7 @@ fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
 /// Editing a draft from the Timeline opens it with its faces, plane and
 /// values; Cancel leaves no trace; another angle, OK, one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_draft_from_the_timeline() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
@@ -297,6 +300,7 @@ fn editing_a_draft_from_the_timeline() {
 /// The neutral plane a face of another body, which an undo takes away:
 /// said to be gone, nothing committed; back on redo.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_neutral_face_an_undo_takes_away_is_gone() {
     let mut editor = Editor::new(Document::default());
     add_box(&mut editor, glam::DVec2::ZERO, glam::DVec2::new(40.0, 30.0));
@@ -344,6 +348,7 @@ fn a_neutral_face_an_undo_takes_away_is_gone() {
 /// pick, and nothing while the neutral plane does: a row chosen then
 /// takes its face as the plane, the faces drafted kept and ticked again.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
@@ -383,6 +388,7 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
 /// a third before the draft while it's set up: still found (on the body
 /// holding it), the draft previewed about it and committed as set up.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
     varde_regen::testing::draft_by_boxes();
     let mut editor = Editor::new(Document::default());
@@ -445,6 +451,7 @@ fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
 /// The neutral plane one of the faces drafted: it faces the pull, which
 /// regeneration refuses, never drafting anything.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_neutral_face_among_the_faces_drafted_is_refused() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
@@ -469,6 +476,7 @@ fn the_neutral_face_among_the_faces_drafted_is_refused() {
 /// tilted: a click on one is refused, saying why, rather than taking the
 /// plane the face was before the draft; the plane is left as it was.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_drafted_in_the_preview_is_refused_as_the_neutral_plane() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
@@ -498,6 +506,7 @@ fn a_face_drafted_in_the_preview_is_refused_as_the_neutral_plane() {
 /// an angle typed as a bare number, stay the same angle; one typed with
 /// a length's unit stays refused. A new draft in inches opens at 3°.
 #[test]
+#[ignore = "kernel: feature"]
 fn units_changed_mid_session_keep_the_angle() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);

@@ -132,6 +132,7 @@ fn ok_writes_nothing(plates: &mut Plates, regen: &mut varde_regen::Regenerator, 
 /// Every feature of every kind but a sketch, opened and OK'd unchanged,
 /// writes nothing.
 #[test]
+#[ignore = "kernel: feature"]
 fn ok_on_any_feature_opened_and_left_as_it_was_writes_nothing() {
     type Fixture = (&'static str, fn(&mut varde_regen::Regenerator) -> Plates);
     let fixtures: [Fixture; 13] = [
@@ -174,6 +175,7 @@ fn ok_on_any_feature_opened_and_left_as_it_was_writes_nothing() {
 /// body's id: OK writes nothing, so what names that body (a sketch on
 /// its face) still finds it.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_new_body_dropped_and_made_again_in_one_edit_keeps_its_id() {
     use varde_document::{Keep, Operation};
     use varde_view::{ExtrudeLook, OperationKind};

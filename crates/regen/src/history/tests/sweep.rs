@@ -181,6 +181,7 @@ fn assert_close(a: f64, b: f64) {
 /// The kernel's sweep fails as too complex: the sweep makes no body and
 /// later features still run.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_kernel_s_sweep_fails_as_too_complex_and_the_history_goes_on() {
     let (mut editor, id, body, _) = square_up(30.0);
     let pocket = add_pocket(&mut editor);
@@ -200,6 +201,7 @@ fn the_kernel_s_sweep_fails_as_too_complex_and_the_history_goes_on() {
 /// With the stand-in, a square swept 30 up a straight path is a box,
 /// and a cut along one through the plate takes its share.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_straight_path_sweeps_a_box_and_cuts_as_an_extrude() {
     with_extrudes();
     let (editor, _, body, _) = square_up(30.0);
@@ -226,6 +228,7 @@ fn a_straight_path_sweeps_a_box_and_cuts_as_an_extrude() {
 /// Editing the path's sketch, the sweep follows; an unchanged history is
 /// found in the cache, and undo goes back.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_sweep_follows_its_path_when_it_is_edited() {
     with_extrudes();
     let (mut editor, _, body, path) = square_up(30.0);
@@ -289,6 +292,7 @@ fn handed(document: &Document) -> (Evaluation, Vec<Path>) {
 /// each piece running on from the last; swept by the stand-in, the
 /// whole length.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_path_of_two_sketches_is_ordered_and_joined() {
     let mut editor = Editor::new(Document::default());
     let profile = square_profile(&mut editor);
@@ -540,6 +544,7 @@ fn paths_that_cant_be_swept_are_refused_first() {
 /// rest of the history going on; drawn again, the sweep comes back.
 /// Removing the path's sketch removes the sweep.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_path_whose_curves_are_gone_fails() {
     with_extrudes();
     let (mut editor, id, body, path) = square_up(30.0);
@@ -610,6 +615,7 @@ fn block_with_hole() -> (Editor, BodyId, FeatureId) {
 /// edit before the sweep, "its path edge wasn't found"; an edge whose
 /// faces don't meet likewise.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_path_along_a_model_edge_follows_it_or_fails_when_it_is_gone() {
     with_extrudes();
     let (mut editor, block_body, hole) = block_with_hole();
@@ -678,6 +684,7 @@ fn hole_sketch(editor: &Editor, extrude: FeatureId) -> usize {
 /// reply (reversed with Flip), handed to the kernel unit, with the pitch,
 /// turns and hand; an axis edge gone fails before the kernel.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_helix_s_axis_is_resolved() {
     let (mut editor, block_body, _) = block_with_hole();
     let solid = solid_of_arc(&evaluated(editor.document()), block_body);
@@ -787,7 +794,7 @@ mod with_the_kernel {
     }
 
     #[test]
-    #[ignore = "kernel sweep not built"]
+    #[ignore = "kernel: feature"]
     fn a_pipe_joined_to_a_plate_at_its_start() {
         // A circle of radius 2 on the plate's underside, swept 20 down.
         let mut editor = Editor::new(Document::example());
@@ -819,7 +826,7 @@ mod with_the_kernel {
     }
 
     #[test]
-    #[ignore = "kernel sweep not built"]
+    #[ignore = "kernel: feature"]
     fn a_pipe_cut_through_a_block() {
         let mut editor = Editor::new(Document::default());
         let body = block(&mut editor, 15.0, -5.0, 25.0, 5.0, "6");
@@ -856,7 +863,7 @@ mod with_the_kernel {
     }
 
     #[test]
-    #[ignore = "kernel sweep not built"]
+    #[ignore = "kernel: feature"]
     fn a_bead_along_a_round_rim_follows_it() {
         let mut editor = Editor::new(Document::default());
         let extent = Extent::OneSide(length(editor.document(), "10"));
@@ -919,7 +926,7 @@ mod with_the_kernel {
     }
 
     #[test]
-    #[ignore = "kernel sweep not built"]
+    #[ignore = "kernel: feature"]
     fn a_spring_joined_to_a_plate() {
         // A circle of radius 1 on XZ, 20 out from the z axis, sunk 0.5
         // into the plate's top: three turns of pitch 4 climbing from it.

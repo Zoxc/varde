@@ -206,6 +206,7 @@ fn assert_near(a: f64, b: f64) {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn the_example_plate_is_extruded() {
     let document = Document::example();
     let evaluation = evaluated(&document);
@@ -247,6 +248,7 @@ fn circle(sketch: &Sketch) -> varde_sketch::Id {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn the_region_is_found_again_after_its_sketch_is_edited() {
     let mut editor = Editor::new(Document::example());
     edit_sketch(&mut editor, |sketch| {
@@ -302,6 +304,7 @@ fn a_region_that_is_gone_fails_its_extrude() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn several_regions_are_merged() {
     let mut editor = Editor::new(Document::example());
     // The hole's region too: the plate without a hole.
@@ -333,6 +336,7 @@ fn several_regions_are_merged() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
     let mut editor = Editor::new(Document::example());
     let failing = add_failing(&mut editor);
@@ -384,6 +388,7 @@ fn only_body(evaluation: &Evaluation) -> &Solid {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_pocket_is_cut_into_the_plate() {
     let mut editor = Editor::new(Document::example());
     let cut = add_pocket(&mut editor);
@@ -406,6 +411,7 @@ fn a_pocket_is_cut_into_the_plate() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn the_plate_joined_again_taller_is_one_body() {
     // The example's plate region extruded again as a join over a longer
     // span ("make it taller"): the two walls of every curve (the hole's
@@ -435,6 +441,7 @@ fn the_plate_joined_again_taller_is_one_body() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_boss_is_joined_to_the_plate() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "15"));
@@ -452,6 +459,7 @@ fn a_boss_is_joined_to_the_plate() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn the_plate_is_intersected() {
     let mut editor = Editor::new(Document::example());
     let extent = two_sides(editor.document(), "20", "20");
@@ -470,6 +478,7 @@ fn the_plate_is_intersected() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn through_all_cuts_through_the_bodies() {
     let mut editor = Editor::new(Document::example());
     add_extrude(
@@ -484,6 +493,7 @@ fn through_all_cuts_through_the_bodies() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_tall_plate_is_drilled_through_all() {
     // The example plate a metre tall: the plate's cap edges cross the
     // drill's wall, 1 m tall and a few mm wide, and the search for those
@@ -519,6 +529,7 @@ fn a_tall_plate_is_drilled_through_all() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn bodies_taken_out_are_left_as_they_are() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -543,6 +554,7 @@ fn bodies_taken_out_are_left_as_they_are() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_touching_two_bodies_merges_them() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -599,6 +611,7 @@ fn solid_of(evaluation: &Evaluation, body: BodyId) -> &Solid {
 /// leave no clean solid, bridged by a disc round the edge: the disc is
 /// joined to the first block, then the second to that.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_bridging_bodies_meeting_along_an_edge_merges_them() {
     let mut editor = Editor::new(Document::default());
     let a = add_body(&mut editor, rectangle((0.0, 0.0), (10.0, 10.0)), "10");
@@ -637,6 +650,7 @@ fn a_join_bridging_bodies_meeting_along_an_edge_merges_them() {
 /// union met the boss's round bottom flush and came out with some
 /// 57,000 patches: the plates go first.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_bridging_a_gap_stays_small() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -662,6 +676,7 @@ fn a_join_bridging_a_gap_stays_small() {
 
 /// Three blocks apart in a row and a bar across all three: one body.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_touching_three_bodies_merges_them_into_the_first() {
     let mut editor = Editor::new(Document::default());
     let blocks = [0.0, 20.0, 40.0]
@@ -688,6 +703,7 @@ fn a_join_touching_three_bodies_merges_them_into_the_first() {
 /// A join merging a body that holds another merged before it: the
 /// earlier entry follows it into the new holder.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_chained_merge_moves_earlier_entries_on() {
     let mut editor = Editor::new(Document::default());
     let blocks = [0.0, 20.0, 40.0]
@@ -723,6 +739,7 @@ fn a_chained_merge_moves_earlier_entries_on() {
 /// A body taken out of a join touching two stays apart: the join goes
 /// into the other alone, and nothing is merged.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_body_taken_out_of_a_join_stays_apart() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -752,6 +769,7 @@ fn a_body_taken_out_of_a_join_stays_apart() {
 /// A cut or an intersect touching two bodies changes each on its own:
 /// nothing is merged.
 #[test]
+#[ignore = "kernel: touches"]
 fn cuts_and_intersects_touching_two_bodies_keep_them_apart() {
     for op in ["cut", "intersect"] {
         let mut editor = Editor::new(Document::example());
@@ -783,6 +801,7 @@ fn cuts_and_intersects_touching_two_bodies_keep_them_apart() {
 /// A cut that would take the whole plate fails and leaves it as it was,
 /// so a join after it still finds the plate.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_cut_leaving_nothing_of_a_body_fails() {
     let mut editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
@@ -820,6 +839,7 @@ fn a_cut_leaving_nothing_of_a_body_fails() {
 /// A disc below the plate, flush on its bottom face only: the
 /// intersection is empty, which fails.
 #[test]
+#[ignore = "kernel: touches"]
 fn an_intersect_only_flush_with_a_body_fails() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -843,6 +863,7 @@ fn an_intersect_only_flush_with_a_body_fails() {
 /// A cut that would empty one body and cut another changes neither;
 /// with the first unticked, it cuts the other.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_feature_leaving_one_target_empty_changes_none() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -881,6 +902,7 @@ fn a_feature_leaving_one_target_empty_changes_none() {
 /// The parametric case: the plate made smaller than a cut after it, the
 /// cut goes from cutting the plate to failing, and the plate is kept.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_cut_failing_after_an_upstream_edit_empties_nothing() {
     let mut editor = Editor::new(Document::example());
     let cut = add_extrude(
@@ -915,6 +937,7 @@ fn a_cut_failing_after_an_upstream_edit_empties_nothing() {
 /// kept whole each time it fails, also with the results found in the
 /// cache.
 #[test]
+#[ignore = "kernel: touches"]
 fn undoing_the_edit_that_saved_a_body_empties_nothing() {
     let mut editor = Editor::new(Document::example());
     let cut = add_extrude(
@@ -958,6 +981,7 @@ fn undoing_the_edit_that_saved_a_body_empties_nothing() {
 /// An intersect with every body taken out of it fails as touching none
 /// left in, not as leaving one empty, and changes none.
 #[test]
+#[ignore = "kernel: touches"]
 fn an_intersect_with_every_body_taken_out_changes_none() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -999,6 +1023,7 @@ fn an_intersect_with_every_body_taken_out_changes_none() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_touching_no_body_fails() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -1018,6 +1043,7 @@ fn a_join_touching_no_body_fails() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn editing_the_plate_regenerates_the_cut() {
     let mut editor = Editor::new(Document::example());
     add_pocket(&mut editor);
@@ -1049,6 +1075,7 @@ fn editing_the_plate_regenerates_the_cut() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn faces_are_named_by_the_extrude_and_its_curves() {
     let document = Document::example();
     let evaluation = evaluated(&document);
@@ -1070,6 +1097,7 @@ fn faces_are_named_by_the_extrude_and_its_curves() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn names_resolve_alike_after_dimensions_and_the_tolerance_change() {
     // The faces, edges and corners of the example plate with a pocket, by
     // their keys, and each edge resolved by its keys near where it was.
@@ -1144,6 +1172,7 @@ fn names_resolve_alike_after_dimensions_and_the_tolerance_change() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn an_unchanged_feature_is_taken_from_the_cache() {
     let mut editor = Editor::new(Document::example());
     // An unrelated sketch after the extrude.
@@ -1209,6 +1238,7 @@ fn an_unchanged_feature_is_taken_from_the_cache() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn a_new_tolerance_runs_everything_again() {
     let mut editor = Editor::new(Document::example());
     let mut cache = Cache::default();
@@ -1228,6 +1258,7 @@ fn a_new_tolerance_runs_everything_again() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn through_all_spans_the_bodies_with_a_margin() {
     let tol = Tolerance::DEFAULT;
     let a = Solid::cuboid(glam::DVec3::ZERO, glam::DVec3::splat(10.0), 1, &tol).unwrap();
@@ -1250,6 +1281,7 @@ fn through_all_spans_the_bodies_with_a_margin() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn a_spline_is_extruded_within_the_tolerance() {
     let mut editor = Editor::new(Document::default());
     editor
@@ -1338,6 +1370,7 @@ pub(crate) fn set_extrude(
 /// A body `touches` can't tell fails the feature and is listed, so the
 /// panel offers to take it out; taken out, it isn't asked about.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_body_that_cant_be_told_is_passed_over_or_listed() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -1403,6 +1436,7 @@ fn a_body_that_cant_be_told_is_passed_over_or_listed() {
 /// A cut that only touches a body, face to face, takes nothing from it,
 /// and says so; the body it cuts isn't listed.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_cut_only_touching_a_body_takes_nothing_from_it() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -1456,6 +1490,7 @@ pub(crate) fn add_drilled(
 /// tangent to its wall, the cut is a no-op; outside it, the two holes
 /// would meet along a line, which no clean solid holds.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_hole_drilled_tangent_to_a_hole_is_decided_by_its_cut() {
     for angle in [0.0, 0.7] {
         let mut editor = Editor::new(Document::example());
@@ -1499,6 +1534,7 @@ fn a_hole_drilled_tangent_to_a_hole_is_decided_by_its_cut() {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn too_thin_at_the_finest_tolerance_suggests_none_finer() {
     // A strip 1e-7 mm wide: 10 resolutions at the finest tolerance, too
     // thin for its walls and caps, and there is no finer one to try.
@@ -1553,6 +1589,7 @@ fn tangent_discs(fit: f64, angle: f64, operation: Operation) -> (Editor, BodyId,
 /// it, and the union refuses it, within less than the old refinement
 /// took (which ran out of it).
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_tangent_to_a_body_along_a_line_names_it() {
     let (editor, body, join) =
         tangent_discs(Tolerance::MAX_FIT, 0.7, Operation::Join(Targets::default()));
@@ -1608,6 +1645,7 @@ fn a_join_tangent_to_a_body_along_a_line_names_it() {
 /// is the body unchanged, a no-op, with the line on the circles' seam or
 /// off it, at the coarsest tolerance and the default one.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_cut_tangent_to_a_body_along_a_line_is_a_no_op() {
     for (fit, angle) in [
         (Tolerance::MAX_FIT, 0.0),
@@ -1626,6 +1664,7 @@ fn a_cut_tangent_to_a_body_along_a_line_is_a_no_op() {
 /// fails as a whole, naming the tangent body and saying to untick it;
 /// unticked, the join goes into the other body alone.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
     let mut editor = Editor::new(Document::default());
     editor

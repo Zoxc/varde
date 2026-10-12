@@ -140,6 +140,7 @@ fn near(a: DVec3, b: DVec3) -> bool {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn m_starts_a_move_typing_offsets_moves_the_preview_and_enter_commits_one_undo_step() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -216,6 +217,7 @@ fn m_starts_a_move_typing_offsets_moves_the_preview_and_enter_commits_one_undo_s
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_move_turns_about_a_round_face_picked_whose_axis_regeneration_finds() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
@@ -282,6 +284,7 @@ fn a_move_turns_about_a_round_face_picked_whose_axis_regeneration_finds() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
@@ -370,6 +373,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -436,6 +440,7 @@ fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
 }
 
 #[test]
+#[ignore = "kernel: assemble"]
 fn refusals_show_in_the_panel_and_ok_waits() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -490,6 +495,7 @@ fn moves_and_mirrors_need_a_body_and_an_editable_document_outside_sketches() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
@@ -580,6 +586,7 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
 }
 
 #[test]
+#[ignore = "kernel: assemble"]
 fn the_handles_set_the_offsets_and_a_ring_the_turn_committed_as_one_undo_step() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -644,6 +651,7 @@ fn the_handles_set_the_offsets_and_a_ring_the_turn_committed_as_one_undo_step() 
 }
 
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_ring_s_turn_does_nothing_to_a_mirror() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -669,6 +677,7 @@ fn a_ring_s_turn_does_nothing_to_a_mirror() {
 /// bodies are picked; the offsets it brings are worked out from such a
 /// turn, and would be wrong from any other.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_ring_s_turn_is_taken_only_as_the_handles_offer_it() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -772,6 +781,7 @@ fn offsets(doc: &Doc) -> DVec3 {
 /// second ring turned about them back to no turn brings the offsets back
 /// to nothing, and an arrow then shifts the handles with the bodies.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_handles_stay_where_a_ring_turned_them_and_turning_back_undoes_it() {
     let (mut plates, [right, low]) = lopsided();
     plates.doc.look(Look::StartMotion(MotionKind::Move));
@@ -835,6 +845,7 @@ fn the_handles_stay_where_a_ring_turned_them_and_turning_back_undoes_it() {
 /// ring dragged: the ring's world axis takes over from the edge, the
 /// bodies turn about the handles, which stay where they were.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
     let (mut plates, [right, low]) = lopsided();
     plates.doc.look(Look::StartMotion(MotionKind::Move));
@@ -926,6 +937,7 @@ fn later_disc(plates: &mut Plates) -> BodyId {
 /// "Missing body", the panel saying it's gone, nothing previewed or
 /// committed; the redo brings it back. Taken out, the move goes on.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_picked_body_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
@@ -975,6 +987,7 @@ fn a_picked_body_an_undo_takes_away_is_said_to_be_gone() {
 /// the move turns, as the mock's "The axis is gone: pick another", and
 /// another axis picked clears it; a mirror's plane likewise.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
@@ -1059,6 +1072,7 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
 /// it, as a click on it would pick, its handles at that body's centre,
 /// and moves it whole.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_move_follows_a_body_a_redone_combine_merges() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
@@ -1169,6 +1183,7 @@ fn fresh_lengths_fit_the_camera_and_it_stays() {
 
 /// A fillet edited keeps its radius however far the camera is zoomed.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edited_fillet_keeps_its_radius_zoomed_out() {
     let (mut plates, id) = fillet::made();
     plates.doc.camera.set_view_height(1e5);

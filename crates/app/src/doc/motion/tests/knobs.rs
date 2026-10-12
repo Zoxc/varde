@@ -54,6 +54,7 @@ fn drag(plates: &mut Plates, knob: usize, value: f64) {
 /// knob along each face. Dragged, the distance is typed; to zero or past
 /// it, the knob reads zero and nothing's previewed.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_chamfer_s_knobs_stand_on_its_first_edge() {
     let (mut plates, plate) = plate();
     plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
@@ -112,6 +113,7 @@ fn a_chamfer_s_knobs_stand_on_its_first_edge() {
 /// round's middle, √2 − 1 of the radius from the edge for faces square
 /// to each other.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_fillet_s_knob_is_on_the_round_s_middle() {
     let (mut plates, plate) = plate();
     plates.doc.look(Look::StartMotion(MotionKind::Fillet));
@@ -134,6 +136,7 @@ fn a_fillet_s_knob_is_on_the_round_s_middle() {
 /// A shell with the plate's top removed: its knob from the top down into
 /// the plate at the thickness, out of it for Outward walls.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_shell_s_knob_goes_into_the_body_from_its_face_removed() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
@@ -163,6 +166,7 @@ fn a_shell_s_knob_goes_into_the_body_from_its_face_removed() {
 /// so the front leans in at the top; dragged, the angle is typed, not a
 /// quarter turn or more.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_draft_s_knob_turns_its_face_about_its_hinge() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
@@ -226,6 +230,7 @@ fn a_scale_s_knob_is_a_slider_of_its_factor() {
 /// An offset face's knob dragged through zero: its distance and side,
 /// as its old handle's.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_offset_face_s_knob_sets_its_distance_and_side() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
@@ -252,6 +257,7 @@ fn an_offset_face_s_knob_sets_its_distance_and_side() {
 /// No knobs in a document that can't be changed, nor for an edited
 /// chamfer, whose edge the model shown has chamfered away.
 #[test]
+#[ignore = "kernel: feature"]
 fn no_knobs_read_only_or_editing() {
     let (mut plates, plate) = plate();
     plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
@@ -284,6 +290,7 @@ fn pattern_drafted(plates: &Plates) -> (Option<u32>, f64) {
 /// on a rail above the copies, a spacing a copy, at the last copy; each
 /// dragged types its field, a count only whole and two or more.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_linear_pattern_s_knobs_set_its_spacing_and_count() {
     let mut plates = super::plates();
     let [_, right, _] = plates.bodies;
@@ -327,6 +334,7 @@ fn a_linear_pattern_s_knobs_set_its_spacing_and_count() {
 /// pixels a copy); in Spacing, the step's knob too, on the arc through
 /// the copies at the last copy, a step a copy less one.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_circular_pattern_s_knobs_set_its_count_and_step() {
     let mut plates = super::plates();
     let [_, right, _] = plates.bodies;

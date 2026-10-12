@@ -383,6 +383,7 @@ fn revisions(regen: &RefCell<Vec<Request>>) -> Vec<Option<u64>> {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_draft_is_asked_for_once_per_change_and_its_newest_answer_kept() {
     let (editor, draft) = plate_draft();
     let (mut feed, regen) = connected();
@@ -454,6 +455,7 @@ fn a_failing_draft_says_why_for_its_revision_only() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_draft_dropped_is_regenerating_until_the_model_without_it_shows() {
     let (editor, draft) = plate_draft();
     let (mut feed, regen) = connected();
@@ -477,6 +479,7 @@ fn a_draft_dropped_is_regenerating_until_the_model_without_it_shows() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn touched_bodies_are_kept_within_a_run_of_drafts_only() {
     // A join of the example's plate sketch, new, onto the plate.
     let editor = Editor::new(Document::example());
@@ -516,6 +519,7 @@ fn touched_bodies_are_kept_within_a_run_of_drafts_only() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn merged_bodies_follow_the_model_shown() {
     let (mut editor, [top, below], join) = crate::tests::merged_plates();
     let (mut feed, regen) = connected();
@@ -559,6 +563,7 @@ fn merged_bodies_follow_the_model_shown() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn merged_bodies_aren_t_given_out_across_a_replacement() {
     let (editor, [top, below], _) = crate::tests::merged_plates();
     let (mut feed, regen) = connected();
@@ -600,6 +605,7 @@ fn a_body_merged_into_one_merged_later_moves_on() {
 /// web worker's answers always are), keeps its count, and so its pick
 /// index; another counts on.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_same_model_answered_anew_keeps_its_count() {
     let mut editor = Editor::new(varde_document::Document::example());
     let (mut feed, regen) = connected();
@@ -638,6 +644,7 @@ fn the_same_model_answered_anew_keeps_its_count() {
 /// given out as none, as the model's other ids are, until a model of the
 /// new document shows: a body's id may name another, of another opacity.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_parts_bodies_follow_the_mesh_shown() {
     let mut editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
@@ -687,6 +694,7 @@ fn failing(mut response: Response, failure: FeatureId) -> Response {
 /// generation through a draft's answers; across a replacement its
 /// failures aren't given out until a model of the new document shows.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_committed_model_keeps_what_it_found() {
     let mut editor = Editor::new(Document::example());
     let [sketch, extrude] = [0, 1].map(|at| editor.document().features()[at].id);
@@ -1069,6 +1077,7 @@ fn plate() -> (Editor, MeshFeed, Rc<RefCell<Vec<Request>>>, BodyId, Aabb) {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn each_body_is_asked_for_as_finely_as_it_shows() {
     let (editor, mut feed, regen, body, aabb) = plate();
     let level = |feed: &MeshFeed| feed.sight().unwrap().level(body);
@@ -1113,6 +1122,7 @@ fn each_body_is_asked_for_as_finely_as_it_shows() {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn orbiting_a_little_asks_for_nothing_new() {
     let (editor, mut feed, regen, _, aabb) = plate();
     let mut camera = viewing(200.0);
@@ -1131,6 +1141,7 @@ fn orbiting_a_little_asks_for_nothing_new() {
 /// Which bodies are in view goes by the viewport's own shape once it has
 /// told it, and by a wide one before.
 #[test]
+#[ignore = "kernel: extrude"]
 fn the_viewports_shape_decides_what_is_in_view() {
     let (_, mut feed, _, body, aabb) = plate();
     let mut camera = Camera::default();

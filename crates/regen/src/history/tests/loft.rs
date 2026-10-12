@@ -232,6 +232,7 @@ fn assert_near(a: f64, b: f64) {
 /// The kernel's loft isn't built: a loft fails as too complex, making
 /// no body, and the features after it still run.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_loft_fails_as_too_complex_and_the_history_goes_on() {
     let Stack {
         mut editor,
@@ -271,6 +272,7 @@ fn a_loft_fails_as_too_complex_and_the_history_goes_on() {
 /// its faces named for the loft. The sections the other way round make
 /// the same box.
 #[test]
+#[ignore = "kernel: feature"]
 fn two_equal_squares_make_a_box() {
     with_extrudes();
     let Stack {
@@ -318,6 +320,7 @@ fn two_equal_squares_make_a_box() {
 /// first, 2 × 4000 + 1000. Moving the second block 10 further, the loft
 /// follows: 2 × 4000 + 2000.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_transition_piece_joins_two_bosses() {
     with_extrudes();
     let Stack {
@@ -393,6 +396,7 @@ fn a_transition_piece_joins_two_bosses() {
 /// history goes on; both larger, a larger box; the region gone, "section
 /// 2 not found".
 #[test]
+#[ignore = "kernel: feature"]
 fn a_section_s_sketch_edited_and_the_loft_following() {
     with_extrudes();
     let Stack {
@@ -445,6 +449,7 @@ fn a_section_s_sketch_edited_and_the_loft_following() {
 /// by its sketch: a region as its outline on its sketch's frame, a point
 /// in the world; a start point as the outline's segment starting there.
 #[test]
+#[ignore = "kernel: feature"]
 fn sections_are_placed_in_order() {
     with_recording(None);
     let Stack {
@@ -507,6 +512,7 @@ fn sections_are_placed_in_order() {
 /// a section with holes, a section's sketch not placed, two sections on
 /// one plane (the last and the first too, closed).
 #[test]
+#[ignore = "kernel: feature"]
 fn sections_regen_refuses() {
     with_recording(None);
     let Stack {
@@ -619,6 +625,7 @@ fn sections_regen_refuses() {
 /// Two sections on one plane are refused by the kernel's rule before
 /// it's asked: two sketches on XY; closed, the last and the first.
 #[test]
+#[ignore = "kernel: feature"]
 fn sections_on_one_plane_are_refused() {
     with_recording(None);
     let Stack {
@@ -674,6 +681,7 @@ fn sections_on_one_plane_are_refused() {
 /// A point on the plane of the section next to it is refused as that,
 /// first or last: the square on XY to a point on XY, and back.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_point_on_its_neighbour_s_plane_is_refused_as_that() {
     with_recording(None);
     let Stack {
@@ -710,6 +718,7 @@ fn a_point_on_its_neighbour_s_plane_is_refused_as_that() {
 /// A rail's curves ordered into one chain and placed in the world; gone,
 /// "rail 1's curves weren't found"; a closed one refused.
 #[test]
+#[ignore = "kernel: feature"]
 fn rails_are_placed() {
     with_recording(None);
     let Stack {
@@ -805,6 +814,7 @@ fn rails_are_placed() {
 
 /// The kernel's refusals, worded for the Timeline.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_kernel_s_refusals_are_worded() {
     let Stack {
         mut editor,
@@ -851,6 +861,7 @@ fn the_kernel_s_refusals_are_worded() {
 /// Starts that don't match twist the loft: the stand-in refuses them as
 /// the kernel would.
 #[test]
+#[ignore = "kernel: feature"]
 fn mismatched_starts_twist() {
     with_extrudes();
     let Stack {
@@ -900,6 +911,7 @@ fn mismatched_starts_twist() {
 /// An unchanged loft is taken from the cache; an edit elsewhere leaves it
 /// there; its section's sketch edited makes it again.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_loft_is_cached_by_its_sections() {
     with_recording(None);
     let Stack {

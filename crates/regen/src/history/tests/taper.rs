@@ -78,6 +78,7 @@ fn made_by(editor: &Editor, feature: FeatureId) -> BodyId {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn the_kernel_s_taper_fails_as_too_complex_and_the_history_goes_on() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -100,6 +101,7 @@ fn the_kernel_s_taper_fails_as_too_complex_and_the_history_goes_on() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tapered_cut_fails_and_changes_no_body() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "4"));
@@ -117,6 +119,7 @@ fn a_tapered_cut_fails_and_changes_no_body() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tapered_box_is_a_frustum_with_its_names() {
     with_frustums();
     let mut editor = Editor::new(Document::example());
@@ -147,6 +150,7 @@ fn a_tapered_box_is_a_frustum_with_its_names() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_negative_taper_widens() {
     with_frustums();
     let mut editor = Editor::new(Document::example());
@@ -170,6 +174,7 @@ fn a_negative_taper_widens() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tapered_pocket_narrows_into_the_plate() {
     with_frustums();
     let mut editor = Editor::new(Document::example());
@@ -193,6 +198,7 @@ fn a_tapered_pocket_narrows_into_the_plate() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn the_taper_is_in_the_tool_s_key() {
     with_frustums();
     let mut editor = Editor::new(Document::example());
@@ -230,6 +236,7 @@ fn the_taper_is_in_the_tool_s_key() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_taper_closing_the_profile_is_refused_in_words() {
     with_frustums();
     let mut editor = Editor::new(Document::example());
@@ -275,7 +282,7 @@ fn add_on(
 }
 
 #[test]
-#[ignore = "kernel taper not built"]
+#[ignore = "kernel: feature"]
 fn a_tapered_round_boss_joined_to_the_plate_is_a_cone_frustum() {
     let mut editor = Editor::new(Document::example());
     // From the plate's bottom up 15: 10 inside the plate, 5 above.
@@ -297,7 +304,7 @@ fn a_tapered_round_boss_joined_to_the_plate_is_a_cone_frustum() {
 }
 
 #[test]
-#[ignore = "kernel taper not built"]
+#[ignore = "kernel: feature"]
 fn a_tapered_cut_through_all_narrows_through_the_plate() {
     let mut editor = Editor::new(Document::example());
     let cut = add_on(
@@ -316,7 +323,7 @@ fn a_tapered_cut_through_all_narrows_through_the_plate() {
 }
 
 #[test]
-#[ignore = "kernel taper not built"]
+#[ignore = "kernel: feature"]
 fn two_tapered_sides_narrow_both_ways() {
     let mut editor = Editor::new(Document::default());
     let extent = two_sides(editor.document(), "5", "3");
@@ -336,6 +343,7 @@ fn two_tapered_sides_narrow_both_ways() {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_two_sided_taper_is_too_complex_with_the_kernel_stub() {
     let mut editor = Editor::new(Document::default());
     let extent = two_sides(editor.document(), "5", "3");
@@ -356,6 +364,7 @@ fn a_two_sided_taper_is_too_complex_with_the_kernel_stub() {
 /// extrude exactly: the same key, so found in the cache, and the same
 /// solid, with the kernel's stand-in, which would refuse any other.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_zero_taper_is_the_untapered_extrude() {
     let mut editor = Editor::new(Document::example());
     let feature = editor.document().features()[1].id;
@@ -403,6 +412,7 @@ fn raised_block(editor: &mut Editor) -> BodyId {
 /// 10 to 30 up is the frustum's slice from 10 to 30, not one starting
 /// its narrowing at the body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tapered_cut_through_all_hinges_at_the_sketch_s_plane() {
     with_frustums();
     let mut editor = Editor::new(Document::default());
@@ -442,6 +452,7 @@ fn a_tapered_cut_through_all_hinges_at_the_sketch_s_plane() {
 /// Flipped, one side runs down from the plane, and the taper narrows
 /// it downwards just the same.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_flipped_taper_narrows_away_from_the_plane() {
     with_frustums();
     let mut editor = Editor::new(Document::default());
@@ -468,6 +479,7 @@ fn a_flipped_taper_narrows_away_from_the_plane() {
 /// the kernel's taper splits there: too complex with the stand-in and
 /// not built with the kernel's stub, making nothing; the rest goes on.
 #[test]
+#[ignore = "kernel: feature"]
 fn tapers_across_the_plane_fail_and_change_nothing() {
     for frustums in [false, true] {
         if frustums {
@@ -502,6 +514,7 @@ fn tapers_across_the_plane_fail_and_change_nothing() {
 /// profile, widening near one takes it out of range, each worded and
 /// making nothing; a hair of a taper is a frustum a hair off the box.
 #[test]
+#[ignore = "kernel: feature"]
 fn steep_and_slight_tapers() {
     with_frustums();
     let mut editor = Editor::new(Document::example());

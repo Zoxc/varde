@@ -115,7 +115,7 @@ before it in `Run::sketches`), in history order:
   the first extruded to the second, faces named as an extrude's; a
   second start other than the first's moved is `LoftError::Twists`;
   anything else too complex. The planned analytic tests of the
-  kernel's loft are written and `#[ignore = "kernel loft not built"]`
+  kernel's loft are written and `#[ignore = "kernel: feature"]`
   (`kernel/src/loft/tests.rs`).
 - The draft's reply carries nothing new; the wire carries the loft as
   any kind (postcard, validated by `Document::check`).

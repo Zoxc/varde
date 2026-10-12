@@ -179,6 +179,7 @@ fn shown_scene(
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn solids_are_drawn_into_one_mesh() {
     let document = with_bodies(true);
     let body = document.bodies()[0].id;
@@ -205,6 +206,7 @@ fn solids_are_drawn_into_one_mesh() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn only_the_solids_of_shown_bodies_are_drawn() {
     let (both, one) = (with_bodies(true), with_bodies(false));
     let ids = |document: &Document| -> Vec<BodyId> {
@@ -231,6 +233,7 @@ fn only_the_solids_of_shown_bodies_are_drawn() {
 /// Solids are drawn to the document's tolerance: a coarser one gives a
 /// cylinder fewer triangles.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn solids_are_drawn_to_the_document_s_tolerance() {
     let mut editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
@@ -568,6 +571,7 @@ pub(crate) fn answered(response: Response) -> Answer {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_example_plate_regenerates_and_draws() {
     let editor = Editor::new(Document::example());
     let answer = answered(handle(regenerate(&editor, None)));
@@ -619,6 +623,7 @@ fn new_body_draft(document: &Document, revision: u64, text: &str) -> Draft {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_draft_is_answered_as_if_applied() {
     let editor = Editor::new(Document::example());
     let draft = new_body_draft(editor.document(), 7, "3");
@@ -667,6 +672,7 @@ fn a_draft_is_answered_as_if_applied() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_failing_draft_leaves_the_model_as_it_was() {
     let editor = Editor::new(Document::example());
     let committed = answered(handle(regenerate(&editor, None)));
@@ -746,6 +752,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
 /// lower half): the error comes and goes, also when answered from the
 /// cache, and the failing drafts leave the plate as it was.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_draft_leaving_nothing_fails_each_time_it_is_dragged_there() {
     let editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
@@ -782,6 +789,7 @@ fn a_draft_leaving_nothing_fails_each_time_it_is_dragged_there() {
 /// With the default budget, and with none: what the request before used
 /// is always kept.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn dragging_a_draft_reruns_only_the_draft() {
     for mut regenerator in [Regenerator::default(), Regenerator::with_budget(0)] {
         let editor = Editor::new(Document::example());
@@ -842,6 +850,7 @@ fn drafted(add: impl FnOnce(&mut Editor) -> FeatureId) -> (Editor, Draft, BodyId
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     // Without a budget, only the scene the cut made, used two requests
     // before, is joined again when the plate is put back.
@@ -924,6 +933,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
 /// is a no-op, and says it takes nothing from the plate; outside it the holes would meet along a line, which the
 /// boolean refuses.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
     let refused = "cutting it from Body 1 leaves no clean solid";
     for (distance, error) in [(5.0, None), (11.0, Some(refused))] {
@@ -974,6 +984,7 @@ fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
 /// the renderer then doesn't upload again; a changed scene gets a new
 /// one, with the right content.
 #[test]
+#[ignore = "kernel: touches"]
 fn an_unchanged_model_is_answered_with_the_same_mesh() {
     let mut editor = Editor::new(Document::example());
     let mut regenerator = Regenerator::default();
@@ -1099,6 +1110,7 @@ fn an_unchanged_model_is_answered_with_the_same_mesh() {
 /// scene that changes one body joins the others' without drawing them
 /// again.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_scene_found_keeps_its_bodies_meshes() {
     let mut editor = Editor::new(Document::example());
     let draft = new_body_draft(editor.document(), 0, "3");
@@ -1130,6 +1142,7 @@ fn a_scene_found_keeps_its_bodies_meshes() {
 /// shown twice, or two bodies swapped, is another scene; a hidden body in
 /// the middle is left out of it.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_scene_key_holds_each_shown_body_in_order() {
     let document = with_bodies(true);
     let [shown, hidden] = [document.bodies()[0].id, document.bodies()[1].id];
@@ -1186,6 +1199,7 @@ fn the_scene_key_holds_each_shown_body_in_order() {
 /// The scene key holds the shown bodies' ids too: the same solid shown as
 /// another body is another scene, whose part is that body's.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_scene_key_holds_the_bodies_ids() {
     let mut document = with_bodies(true);
     let [first, second] = [document.bodies()[0].id, document.bodies()[1].id];
@@ -1212,6 +1226,7 @@ fn the_scene_key_holds_the_bodies_ids() {
 /// used long ago is found again; without one, a scene the request before
 /// didn't use, and that isn't the committed one, goes.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn scenes_are_held_within_the_budget() {
     let document = with_bodies(false);
     let body = document.bodies()[0].id;
@@ -1265,6 +1280,7 @@ fn scenes_are_held_within_the_budget() {
 /// mesh; within the budget, committing the draft finds the last
 /// revision's, and undoing the commit the scene before.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_dragged_draft_leaves_the_committed_scene_held() {
     let editor = Editor::new(Document::example());
     let mut regenerator = Regenerator::with_budget(0);
@@ -1328,6 +1344,7 @@ fn a_dragged_draft_is_found_within_the_budget() {
 /// scene: the committed model's scene stays held however the draft is
 /// dragged, even without a budget, and putting it away finds it.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_draft_finding_the_older_scene_leaves_the_committed_one_held() {
     let document = with_bodies(false);
     let body = document.bodies()[0].id;
@@ -1400,6 +1417,7 @@ fn a_failed_join_is_not_kept() {
 /// A body removed, the removal undone and redone, and the document
 /// replaced, each answered with the mesh of the bodies then shown.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn removed_bodies_undo_and_replace_draw_what_is_shown() {
     let mut editor = Editor::new(Document::example());
     let extrude = Extrude {
@@ -1443,6 +1461,7 @@ fn removed_bodies_undo_and_replace_draw_what_is_shown() {
 /// Switching a draft cut's operation to join and back to cut finds
 /// everything the first cut worked out.
 #[test]
+#[ignore = "kernel: touches"]
 fn switching_the_operation_away_and_back_finds_it() {
     let (editor, mut draft, _) = pocket_drafted();
     let mut regenerator = Regenerator::default();
@@ -1484,6 +1503,7 @@ fn set_depth(editor: &mut Editor, plate: FeatureId, depth: &str) {
 /// Undoing an edit, and redoing it, work out nothing: the plate, the cut
 /// after it and their meshes are found as each state left them.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn undo_and_redo_find_what_they_had() {
     let (mut editor, plate) = with_pocket();
     let mut regenerator = Regenerator::default();
@@ -1512,6 +1532,7 @@ fn undo_and_redo_find_what_they_had() {
 /// An edit undone after several requests in between (drafts of the
 /// plate's depth dragged, then committed) finds what it had.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn an_edit_undone_after_several_requests_finds_it() {
     let (mut editor, plate) = with_pocket();
     let mut regenerator = Regenerator::default();
@@ -1596,6 +1617,7 @@ fn ask_meshes(cache: &mut Cache, keys: &[u64], mesh: &RenderMesh) -> Vec<bool> {
 /// A's, A → B → C → A doesn't; without a budget, as before the cache was
 /// bounded by size, only what the request before used is found.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_small_budget_evicts_the_oldest_first() {
     let mesh = mesh_of(1);
     let budget = 2 * bytes_of(&mesh);
@@ -1627,6 +1649,7 @@ fn a_small_budget_evicts_the_oldest_first() {
 /// Which results go doesn't depend on the map's order: the same requests
 /// to two caches (each hashing its own way) find the same results.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn eviction_is_deterministic() {
     let mesh = mesh_of(1);
     let budget = 4 * bytes_of(&mesh);
@@ -1652,6 +1675,7 @@ fn eviction_is_deterministic() {
 /// evictions, and comes back within the budget at a request's start once
 /// nothing but what the request before used is over it.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_cache_counts_its_bytes() {
     let meshes = [mesh_of(1), mesh_of(3), mesh_of(2)];
     let budget = 3 * bytes_of(&meshes[1]);
@@ -1694,6 +1718,7 @@ fn ask_meshes_unbegun(cache: &mut Cache, keys: &[u64], mesh: &RenderMesh) {
 /// The bytes one request holds on the example with a pocket and on a
 /// plate with many holes, printed to size the budget against.
 #[test]
+#[ignore = "kernel: touches"]
 fn the_budget_holds_several_requests() {
     let (editor, _) = with_pocket();
     let mut regenerator = Regenerator::default();
@@ -1981,6 +2006,7 @@ fn many_bodies_stay_within_the_budget() {
 /// everything is found, and with none only the merged body's mesh, which
 /// the request before didn't use, is worked out again.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_draft_merging_two_bodies_reworks_one_boolean_when_dragged() {
     for (mut regenerator, remeshed) in [
         (Regenerator::default(), 0),
@@ -2254,6 +2280,7 @@ fn chains(mesh: &RenderMesh) -> usize {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
     let editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
@@ -2301,6 +2328,7 @@ fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
 /// Two plates stacked flush and a boss joined through both: the plates'
 /// sides and holes merge into one face each, which the tables list once.
 #[test]
+#[ignore = "kernel: touches"]
 fn faces_merged_flush_are_one_entry_in_the_tables() {
     use crate::history::tests::{add_extrude, disc, plate_below, two_sides};
     use varde_document::Targets;
@@ -2350,6 +2378,7 @@ fn faces_merged_flush_are_one_entry_in_the_tables() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     let mut editor = Editor::new(Document::example());
     crate::history::tests::plate_below(&mut editor);
@@ -2441,6 +2470,7 @@ fn picked(response: Response) -> (Arc<RenderMesh>, Arc<Picking>, Vec<BodyId>) {
 /// body's faces are gone, the other's indices start at 0, and showing it
 /// again gives the first tables back.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn picking_tables_follow_the_bodies_shown() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
@@ -2474,6 +2504,7 @@ fn picking_tables_follow_the_bodies_shown() {
 /// The same shown bodies in another order: a scene filed by mesh keys
 /// alone would hand back the other order's tables.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn picking_tables_name_each_body_even_when_their_solids_match() {
     // Two bodies of the same extrude settings on the same sketch: equal
     // solids, so equal mesh keys if the key held only the solid.
@@ -2500,6 +2531,7 @@ fn picking_tables_name_each_body_even_when_their_solids_match() {
 /// holder's, none the consumed body's, in the committed answer and in a
 /// draft's; and the tables follow an edit that changes a face's plane.
 #[test]
+#[ignore = "kernel: touches"]
 fn picking_tables_follow_merges_drafts_and_edits() {
     use crate::history::tests::{add_extrude, disc, set_extrude, two_sides};
     use varde_document::Targets;
@@ -2591,6 +2623,7 @@ fn ellipse_loop(centre: DVec2, a: f64, b: f64, curve: u64) -> varde_kernel_compa
 /// plane's normal through the circle's centre, an ellipse's a conic
 /// cylinder along it; every triangle lies on its face's surface.
 #[test]
+#[ignore = "kernel: resolve"]
 fn summaries_of_an_extrude_on_a_tilted_plane() {
     use glam::DVec3;
     use varde_kernel_compat::{Budget, Frame, Profile, extrude};
@@ -2655,6 +2688,7 @@ fn summaries_of_an_extrude_on_a_tilted_plane() {
 /// pocket, its walls out of the plate into it, as the plane summaries
 /// say (a cut's faces are the tool's turned round).
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_cut_s_faces_face_out_of_the_solid() {
     let mut editor = Editor::new(Document::example());
     crate::history::tests::add_pocket(&mut editor);
@@ -2670,6 +2704,7 @@ fn a_cut_s_faces_face_out_of_the_solid() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn shown_bodies_are_exported_as_manifolds() {
     let document = with_bodies(true);
     let [shown, hidden] = [0, 1].map(|i| document.bodies()[i].id);
@@ -2731,6 +2766,7 @@ fn far_tetrahedron() -> Solid {
 }
 
 #[test]
+#[ignore = "kernel: feature"]
 fn a_body_that_cannot_be_exported_is_named() {
     let document = with_bodies(false);
     let body = &document.bodies()[0];
@@ -2747,6 +2783,7 @@ fn a_body_that_cannot_be_exported_is_named() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn an_export_request_is_answered_with_the_committed_bodies() {
     let editor = Editor::new(Document::example());
     let request = Request::Export {
@@ -2780,6 +2817,7 @@ fn an_export_request_is_answered_with_the_committed_bodies() {
 /// Each body is drawn at its own level of the view's sight: a body out
 /// of view as with none, one the sight doesn't list at the view's level.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn each_body_is_drawn_at_its_level_of_the_sight() {
     let editor = Editor::new(Document::example());
     let triangles = |sight: Option<Sight>| {

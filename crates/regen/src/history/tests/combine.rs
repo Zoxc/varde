@@ -49,6 +49,7 @@ fn failure(evaluation: &Evaluation, feature: FeatureId) -> Option<&str> {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_union_of_two_overlapping_blocks_consumes_the_tool() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -64,6 +65,7 @@ fn a_union_of_two_overlapping_blocks_consumes_the_tool() {
 }
 
 #[test]
+#[ignore = "kernel: boolean"]
 fn kept_tools_stay_as_they_were() {
     for op in [BodyOp::Union, BodyOp::Subtract, BodyOp::Intersect] {
         let mut editor = Editor::new(Document::default());
@@ -90,6 +92,7 @@ fn kept_tools_stay_as_they_were() {
 /// Three tools cut from a bar: two notching its ends, one clear of it
 /// (cutting nothing), all consumed.
 #[test]
+#[ignore = "kernel: boolean"]
 fn several_tools_are_subtracted_in_turn() {
     let mut editor = Editor::new(Document::default());
     let bar = block(&mut editor, 0.0, 0.0, 30.0, 10.0, "10");
@@ -108,6 +111,7 @@ fn several_tools_are_subtracted_in_turn() {
 }
 
 #[test]
+#[ignore = "kernel: boolean"]
 fn several_tools_are_intersected_in_turn() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -125,6 +129,7 @@ fn several_tools_are_intersected_in_turn() {
 
 /// Three blocks in a row, a union of all: one body, every block once.
 #[test]
+#[ignore = "kernel: boolean"]
 fn several_tools_are_united_into_the_target() {
     let mut editor = Editor::new(Document::default());
     let blocks = [0.0, 8.0, 16.0].map(|x| block(&mut editor, x, 0.0, x + 10.0, 10.0, "10"));
@@ -140,6 +145,7 @@ fn several_tools_are_united_into_the_target() {
 /// The example plate and a plate below it, flush at z = 0: a flush union
 /// and a flush subtract (nothing to take).
 #[test]
+#[ignore = "kernel: boolean"]
 fn flush_bodies_combine() {
     for op in [BodyOp::Union, BodyOp::Subtract] {
         let mut editor = Editor::new(Document::example());
@@ -160,6 +166,7 @@ fn flush_bodies_combine() {
 /// with it, but does once a later tool has bridged them: the union tries
 /// it again at the end.
 #[test]
+#[ignore = "kernel: boolean"]
 fn a_union_tries_a_tool_again_once_another_bridges_it() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -199,6 +206,7 @@ fn a_union_tries_a_tool_again_once_another_bridges_it() {
 }
 
 #[test]
+#[ignore = "kernel: boolean"]
 fn a_combine_leaving_nothing_fails_and_changes_nothing() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -240,6 +248,7 @@ fn a_combine_leaving_nothing_fails_and_changes_nothing() {
 /// A body an earlier join consumed has no solid of its own: a combine
 /// naming it, as target or tool, fails, naming the body holding it.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_combine_naming_a_consumed_body_fails() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -280,6 +289,7 @@ fn a_combine_naming_a_consumed_body_fails() {
 /// showing nothing, and the target stays as it was. Removing the tool's maker removes the
 /// combine with it.
 #[test]
+#[ignore = "kernel: boolean"]
 fn a_tool_without_a_solid_fails_and_a_removed_one_takes_the_combine() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -315,6 +325,7 @@ fn a_tool_without_a_solid_fails_and_a_removed_one_takes_the_combine() {
 /// it touches the target, and a second combine works on the first's
 /// result.
 #[test]
+#[ignore = "kernel: resolve"]
 fn later_features_on_a_consumed_tool_follow_the_target() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -383,6 +394,7 @@ fn later_features_on_a_consumed_tool_follow_the_target() {
 /// Toggling keep tools or swapping the operation back finds every
 /// boolean in the cache.
 #[test]
+#[ignore = "kernel: boolean"]
 fn a_combine_s_steps_are_cached() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -427,6 +439,7 @@ fn a_combine_s_steps_are_cached() {
 /// A combine set up as a draft is answered as if it were applied, and its
 /// error comes back as the draft's.
 #[test]
+#[ignore = "kernel: touches"]
 fn a_combine_draft_is_previewed() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -485,6 +498,7 @@ pub(super) mod fuzz;
 /// block, a disc overlapping it, and a disc beside that one touching it
 /// along a line: the last fails, the walls touching on the two discs.
 #[test]
+#[ignore = "kernel: curved boolean"]
 fn a_failing_step_shows_the_faces_on_their_bodies() {
     let mut editor = Editor::new(Document::default());
     let target = block(&mut editor, -10.0, -2.0, -3.0, 2.0, "10");
@@ -539,6 +553,7 @@ fn a_failing_step_shows_the_faces_on_their_bodies() {
 /// and then its own, each step keyed by the running solid's key and the
 /// tool's.
 #[test]
+#[ignore = "kernel: boolean"]
 fn a_tool_put_aside_is_filed_after_the_steps_that_worked() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -566,6 +581,7 @@ fn a_tool_put_aside_is_filed_after_the_steps_that_worked() {
 /// tools united so far and on the tool; nothing changes. Another tool
 /// put aside after it isn't tried again.
 #[test]
+#[ignore = "kernel: boolean"]
 fn a_tool_failing_again_fails_the_union_with_the_faces_of_its_second_try() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");

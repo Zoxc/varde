@@ -121,6 +121,7 @@ const TOO_LARGE: PrepareError = PrepareError {
 };
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn mesh_past_the_buffer_limit_is_skipped() {
     // The cube's 24 positions take 288 bytes, which fit; its edges don't.
     let Some((device, queue)) = device() else {

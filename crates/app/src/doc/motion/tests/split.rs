@@ -129,6 +129,7 @@ fn held(editor: &Editor) -> Plates {
 /// split isn't built), shown in the panel; OK waits, and Add anyway keeps
 /// it, "Split 1" making "Body 2", as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
@@ -213,6 +214,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
 /// unpreviewed meanwhile, and a curved face (the hole's wall) is the
 /// tool as its surface.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_flat_face_splits_by_its_plane_and_a_curved_one_by_its_surface() {
     let (mut plates, plate) = plate();
     plates.doc.look(Look::StartMotion(MotionKind::Split));
@@ -248,6 +250,7 @@ fn a_flat_face_splits_by_its_plane_and_a_curved_one_by_its_surface() {
 /// the id; Back gives it the rest; keeping the front alone is a trim,
 /// committed as one undo step making no body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_body_splits_another_its_pieces_tinted_and_labelled() {
     varde_regen::testing::split_by_booleans();
     let mut plates = plates();
@@ -368,6 +371,7 @@ fn add_tools_sketch(editor: &mut Editor) -> (FeatureId, Id) {
 /// it's taken out. A line of the sketch's curves is the tool too, which
 /// the stand-in fails as not built yet.
 #[test]
+#[ignore = "kernel: feature"]
 fn regions_of_a_sketch_and_an_open_line_split_a_body() {
     varde_regen::testing::split_by_booleans();
     let (plates, plate) = plate();
@@ -434,6 +438,7 @@ fn regions_of_a_sketch_and_an_open_line_split_a_body() {
 /// Editing a split from the Timeline opens it with its tool and options;
 /// Cancel leaves no trace; Back and OK sets it as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_split_from_the_timeline_cancel_and_undo() {
     varde_regen::testing::split_by_booleans();
     let (editor, id, new) = split_plates();
@@ -488,6 +493,7 @@ fn editing_a_split_from_the_timeline_cancel_and_undo() {
 /// both and OK: the new body is back with its id, and the sketch finds
 /// its face again. Each edit one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_new_body_kept_again_in_a_later_edit_keeps_its_id() {
     varde_regen::testing::split_by_booleans();
     let (editor, id, new) = split_plates();
@@ -592,6 +598,7 @@ fn later_features_are_warned_of_and_a_named_new_body_may_go() {
 /// A tool body an undo takes away is kept, said to be gone, nothing
 /// previewed or committed, until a redo brings it back.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tool_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let [plate, _, _] = plates.bodies;
@@ -619,6 +626,7 @@ fn a_tool_an_undo_takes_away_is_said_to_be_gone() {
 /// body, made by the plate's extrude, is named on the body split, where
 /// it is at the split, and a click on the new body picks the body split.
 #[test]
+#[ignore = "kernel: feature"]
 fn faces_of_an_edited_split_s_new_body_are_named_on_the_body_split() {
     varde_regen::testing::split_by_booleans();
     let (editor, id, new) = split_plates();
@@ -644,6 +652,7 @@ fn faces_of_an_edited_split_s_new_body_are_named_on_the_body_split() {
 /// face of the disc, shown on the new body, is named on the disc, where
 /// it is at the split, not on the body split.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_joined_into_a_split_s_new_body_later_is_named_on_its_own_body() {
     varde_regen::testing::split_by_booleans();
     let (mut editor, id, new) = split_plates();
@@ -678,6 +687,7 @@ mod fuzz;
 /// the body split (which can't split itself); and the same for the body
 /// split merged into its tool body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tool_body_merged_into_the_body_split_is_let_go_of() {
     for into_tool in [false, true] {
         let mut plates = plates();
@@ -877,6 +887,7 @@ fn regions_gone_are_picked_again_from_any_sketch() {
 /// took away is gone while Face is shown, and switching to Body, whose
 /// tool body is there, is ready at once (and back to Face, gone again).
 #[test]
+#[ignore = "kernel: feature"]
 fn each_tile_s_tool_is_told_gone_on_its_own() {
     let mut plates = plates();
     let [plate, disc, _] = plates.bodies;

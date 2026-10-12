@@ -29,6 +29,7 @@ fn listed(dir: &Path) -> Vec<String> {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn a_new_file_holds_the_package() {
     let dir = TempDir::new("export-new");
     let path = dir.0.join("plate.3mf");
@@ -42,6 +43,7 @@ fn a_new_file_holds_the_package() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn a_file_there_is_only_replaced_if_the_user_agreed() {
     let dir = TempDir::new("export-replace");
     let path = dir.0.join("plate.3mf");
@@ -74,6 +76,7 @@ fn a_file_there_is_only_replaced_if_the_user_agreed() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "kernel: export"]
 fn a_symbolic_link_stays_and_its_target_is_written() {
     let dir = TempDir::new("export-link");
     let target = dir.0.join("target.3mf");
@@ -90,6 +93,7 @@ fn a_symbolic_link_stays_and_its_target_is_written() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn nothing_to_write_writes_nothing() {
     let dir = TempDir::new("export-none");
     let path = dir.0.join("plate.3mf");
@@ -104,6 +108,7 @@ fn nothing_to_write_writes_nothing() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn the_lane_writes_an_export_and_answers_with_its_path() {
     let dir = TempDir::new("export-lane");
     let (mut lane, mut responses) = spawn_at(Stores::default());

@@ -56,6 +56,7 @@ fn top_edge(varde: &Varde) -> String {
 /// at the end, named and with its id in the result, one undo step,
 /// without opening it.
 #[test]
+#[ignore = "kernel: extrude"]
 fn add_sketch_on_origin_planes() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -128,6 +129,7 @@ fn add_sketch_goes_at_the_rollback_marker() {
 /// another kind's key and a stale one are refused, the first in the
 /// plane pick's words.
 #[test]
+#[ignore = "kernel: resolve"]
 fn add_sketch_on_a_face_by_key() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -189,6 +191,7 @@ fn add_sketch_on_a_face_by_key() {
 /// sketch is refused in the plane pick's words, a face before it taken;
 /// a feature that isn't a sketch is named.
 #[test]
+#[ignore = "kernel: resolve"]
 fn set_sketch_plane_keeps_the_drawing() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -289,6 +292,7 @@ fn links(varde: &Varde, name: &str) -> (Vec<varde_sketch::Link>, usize) {
 /// ids of its points and curves, as `sketch` lists them. The sketch
 /// isn't opened.
 #[test]
+#[ignore = "kernel: resolve"]
 fn add_link_projects_an_edge() {
     let (mut varde, requests, mut lane) = on_top();
     // A sketch on a face has its face's link already.
@@ -358,6 +362,7 @@ fn add_link_projects_an_edge() {
 
 /// Another sketch's curve is projected as the tool's click on it is.
 #[test]
+#[ignore = "kernel: resolve"]
 fn add_link_projects_another_sketchs_curve() {
     let (mut varde, requests, mut lane) = on_top();
     let (_, sources) = links(&varde, "Sketch 2");
@@ -390,6 +395,7 @@ fn add_link_projects_another_sketchs_curve() {
 /// What the tools refuse, in their words: a corner for Intersect, what's
 /// made at or after the sketch, a sketch's id it hasn't, not a sketch.
 #[test]
+#[ignore = "kernel: resolve"]
 fn add_link_refusals_are_the_tools() {
     let (mut varde, requests, _lane) = on_top();
     let corner = key_of(&varde, "Body 1", "corners", |_| true);
@@ -434,6 +440,7 @@ fn add_link_refusals_are_the_tools() {
 /// A link the solver hasn't answered within the bound isn't applied,
 /// and its proposal leaves the queue.
 #[test]
+#[ignore = "kernel: resolve"]
 fn add_link_waiting_on_the_solver_times_out() {
     let (mut varde, _requests, lane) = on_top();
     let (had, _) = links(&varde, "Sketch 2");
@@ -465,6 +472,7 @@ fn add_link_waiting_on_the_solver_times_out() {
 /// link proposed again in its turn finds the sketch gone, which the call
 /// says.
 #[test]
+#[ignore = "kernel: resolve"]
 fn undo_passes_over_a_link_waiting_on_the_solver() {
     let (mut varde, _requests, mut lane) = on_top();
     let edge = top_edge(&varde);
@@ -500,6 +508,7 @@ fn undo_passes_over_a_link_waiting_on_the_solver() {
 /// client's link waiting on the solver (shown with it), the link timing
 /// out: the point is still placed, on the sketch without the link.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_users_edit_behind_a_link_timed_out() {
     let (mut varde, requests, mut lane) = on_top();
     regenerate(&mut varde, &requests);

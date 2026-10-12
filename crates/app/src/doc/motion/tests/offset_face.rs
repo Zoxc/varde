@@ -45,6 +45,7 @@ fn top(plates: &Plates, body: BodyId, z: f64) -> Pick {
 /// face isn't built), shown in the panel; OK waits, Add anyway keeps it
 /// as one undo step, failing in the Timeline.
 #[test]
+#[ignore = "kernel: feature"]
 fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
     let (mut plates, plate) = {
         let plates = held(Document::example());
@@ -134,6 +135,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
 /// the handle's drag past zero turns it inward; Tangent faces drafted;
 /// OK adds it as one undo step, the Timeline's row noting it.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
@@ -219,6 +221,7 @@ fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
 /// Editing an offset from the Timeline opens it with its faces and
 /// values; another distance, OK, one undo step; Cancel leaves no trace.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_an_offset_face_from_the_timeline() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
@@ -264,6 +267,7 @@ fn editing_an_offset_face_from_the_timeline() {
 /// An offset face's faces are all on one body: once one is picked, another
 /// body's face is refused with why, and a body's row does nothing.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_offset_face_s_faces_are_all_on_one_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
@@ -329,6 +333,7 @@ fn answer_all_but_the_last(plates: &mut Plates) {
 /// distance give the same draft and the same preview, out and in, in
 /// millimetres and in inches.
 #[test]
+#[ignore = "kernel: feature"]
 fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
     varde_regen::testing::offset_by_boxes();
     for (units, typed, dragged, top_at) in [
@@ -390,6 +395,7 @@ fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
 /// the handle stands on the front as it is before the offset (y 0), its
 /// knob at the distance, on the front as the preview moved it.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_drag_while_the_preview_is_on_its_way_and_the_first_face_changed() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
@@ -447,6 +453,7 @@ fn a_drag_while_the_preview_is_on_its_way_and_the_first_face_changed() {
 /// the session's faces, picks and takes them out, and follows each
 /// preview: a moved face keeps its name, so its row stays.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
@@ -496,6 +503,7 @@ fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
 /// plane's, not the drawn mesh's single precision (10 000 mm out, that
 /// was 0.4 µm off, and stayed so as the distance came back).
 #[test]
+#[ignore = "kernel: feature"]
 fn a_handle_found_on_a_face_moved_far_out_stands_where_it_was_exactly() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);

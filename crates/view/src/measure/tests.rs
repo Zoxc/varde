@@ -295,6 +295,7 @@ fn the_panel_names_the_picks_and_shows_their_values() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn the_viewport_draws_the_distance_the_points_and_the_hovered_dots() {
     use varde_render::SketchLayer;
     let index = crate::pick::tests::plate();

@@ -161,7 +161,7 @@ pub enum SplitTool {
   for two booleans (`a ∩ t`, `a − t`; `testing::Overrides::split`, per thread, the stand-in in `testing/stand_ins/split.rs`
   for tests, other crates' through the `testing` feature) to test what's done with the pieces; the planned
   analytic tests of the kernel's split are written out and
-  `#[ignore = "kernel split not built"]`.
+  `#[ignore = "kernel: feature"]`.
 - The draft's reply carries nothing new: a split draft applied by
   `AddFeature` makes its new body as the command does, drawn as its own
   part (the app can tell its id by applying the same command to its

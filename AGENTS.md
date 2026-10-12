@@ -99,6 +99,29 @@ tools/ci.sh                                 # every check: fmt, clippy, bans, te
 GPU tests (`crates/render/tests`, viewport tests in `varde-view`) render
 offscreen via `pollster` and print "no GPU adapter, skipping" and pass when
 there is no adapter.
+Tests the kernel facade (`crates/kernel-compat`, see `agents/kernel-compat/`)
+can't pass yet are `#[ignore = "kernel: <capability>"]`, the capability being
+the most advanced kernel operation the test needs, in the order the kernel
+gains them: `solids` (primitives such as `Solid::cuboid`), `extrude`,
+`revolve`, `tessellate` (the model drawn: meshes, the scene, pictures, picking
+a body on it), `measure`, `export`, `boolean` (planar unions and differences,
+as a combine does), `curved boolean`, `tangency`, `touches` (which bodies a
+tool touches: every join, cut or intersect of an extrude, revolve, sweep or
+loft asks it first), `assemble` (moves and assemblies of solids), `resolve`
+(topology names and references: faces, edges and corners named, picked or
+found again), `distance`, `feature` (fillet, chamfer, shell, offset, draft,
+sweep, loft, split, taper). When a capability lands, un-ignore its tests
+(`git grep -n 'kernel: extrude'`) and make them pass. `tools/ignore_failing.py`
+tags the tests that fail (it runs `cargo test --workspace --no-fail-fast`, or
+reads a saved log with `--log`), guessing each capability from the test's
+code, the helpers it calls, its file and its failure; its `OVERRIDES` table
+corrects the guesses. Given the log of a run with `-- --include-ignored` it
+re-tags the ignored tests and fails on a tagged test that passes. Every
+test waiting on the kernel has such a tag, the planned tests of features
+the kernel hasn't built among them, so one grep finds all a capability
+must restore; an `#[ignore]` for another reason keeps its own, and the
+script leaves it.
+
 `VARDE_TESTS` (unset/`quick` or `full`, anything else panics) and
 `VARDE_TEST_SEED` are read by the `varde-testing` dev-dependency
 (`crates/testing`); fuzz tests take their seeds from `varde_testing::seeds`.

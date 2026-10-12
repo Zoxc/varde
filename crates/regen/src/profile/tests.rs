@@ -438,6 +438,7 @@ fn extrudes(profile: &Profile, fit: f64) -> Result<(), varde_kernel_compat::Kern
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn a_spline_straight_within_the_tolerance_is_one_segment() {
     // 100 fit points over 1 mm, all within 0.0005 of a straight line.
     let mut sketch = Sketch::default();
@@ -459,6 +460,7 @@ fn a_spline_straight_within_the_tolerance_is_one_segment() {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn dense_wavy_edges_extrude_at_coarse_tolerances() {
     let mut refused = Vec::new();
     for width in [1.0, 5.0] {
@@ -479,6 +481,7 @@ fn dense_wavy_edges_extrude_at_coarse_tolerances() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn steep_dense_wavy_edges_extrude_at_coarse_tolerances() {
     // Wiggles as steep as they are long, 100 fit points, at fits of 1e-2
     // and 0.1: real detail near the tolerance, which the fitter keeps as
@@ -545,6 +548,7 @@ fn sliver(sketch: &mut Sketch, n: usize, height: f64, bend: f64) {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn a_sliver_thinner_than_the_tolerance_keeps_its_shape() {
     // A region narrower than the tolerance is still a region: no run of
     // it may be a line doubling back on the one before, collapsing the

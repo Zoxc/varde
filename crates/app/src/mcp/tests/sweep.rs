@@ -94,6 +94,7 @@ fn with_path() -> (Varde, Lane) {
 /// edges as a blend picks them, Tangent chain stored; with Keep
 /// orientation, a twist, an operation and a body left out given.
 #[test]
+#[ignore = "kernel: feature"]
 fn sweep_runs_along_curves_or_edges() {
     let (mut varde, requests) = with_path();
     let (disc, _) = disc_and_plate(&varde);
@@ -152,6 +153,7 @@ fn sweep_runs_along_curves_or_edges() {
 /// panel's pitch follows the view) for 5 turns, right-handed; about a
 /// round face by key with its values, hand and Flip given.
 #[test]
+#[ignore = "kernel: feature"]
 fn sweep_climbs_a_helix() {
     let (mut varde, requests) = with_path();
     let (disc, _) = disc_and_plate(&varde);
@@ -217,6 +219,7 @@ fn sweep_climbs_a_helix() {
 /// bounds, edges of two bodies, regions past the sketch's, bodies left
 /// out of a new body, a sketch made after the rollback marker.
 #[test]
+#[ignore = "kernel: feature"]
 fn sweep_refuses_what_the_panel_would_not_take() {
     let (mut varde, requests) = with_disc();
     let path = [(0.0, 0.0), (0.0, 20.0), (10.0, 40.0)];

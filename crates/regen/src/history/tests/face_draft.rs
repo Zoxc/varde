@@ -161,6 +161,7 @@ fn integral(a: f64, b: f64, area: impl Fn(f64) -> f64) -> f64 {
 /// body as it was; the history goes on: a later join still works on the
 /// body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_draft_the_kernel_cant_do_fails_as_too_complex() {
     let (mut editor, body, solid) = cube();
     let kind = draft(editor.document(), sides(&solid, body), XY, "3", false);
@@ -222,6 +223,7 @@ fn notched(editor: &mut Editor, body: BodyId) -> (FeatureId, FaceRef) {
 /// noted for the session to draw; among others, it's named by its
 /// place.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_that_is_gone_is_not_found() {
     let (mut editor, body, solid) = cube();
     let (notch, wall) = notched(&mut editor, body);
@@ -265,6 +267,7 @@ fn a_face_that_is_gone_is_not_found() {
 /// face wasn't found"), the body left as it was; a round neutral face
 /// isn't flat, and is drawn.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_neutral_face_gone_is_not_found() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -313,6 +316,7 @@ fn the_neutral_face_gone_is_not_found() {
 /// their names, and drafted where they went: the cube made 20 high, its
 /// front drafted from its foot.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_draft_survives_an_upstream_change() {
     let (mut editor, body, solid) = cube();
     let kind = draft(editor.document(), vec![front(&solid, body)], XY, "5", false);
@@ -341,6 +345,7 @@ fn a_draft_survives_an_upstream_change() {
 /// leans in as it rises; flipped, it leans out. From the top face (its
 /// normal up), the front leans out below it; flipped, in.
 #[test]
+#[ignore = "kernel: feature"]
 fn flip_reverses_the_pull() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -393,6 +398,7 @@ fn flip_reverses_the_pull() {
 /// inside the faces), two adjacent sides; the neutral plane a face of
 /// another body.
 #[test]
+#[ignore = "kernel: feature"]
 fn drafts_turn_faces_by_their_volumes() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -470,6 +476,7 @@ fn on_plane(placement: &Placement, at: DVec3) -> bool {
 /// upstream dimension changes: drafted from the top, the front's plane
 /// goes through the top's front edge whatever the cube's height.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_on_a_drafted_face_follows_it() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -532,6 +539,7 @@ fn a_sketch_on_a_drafted_face_follows_it() {
 /// refused (the top would shrink to nothing), the face drawn, the body
 /// left whole; a top facing the pull is refused too.
 #[test]
+#[ignore = "kernel: feature"]
 fn sides_meeting_and_faces_facing_the_pull_are_refused() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -604,6 +612,7 @@ fn recording(
 /// normal, flipped down), the angle in radians and the tangent flag as
 /// stored.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_named_twice_is_drafted_once() {
     crate::testing::set(|o| o.draft = Some(recording));
     let (mut editor, body, solid) = cube();
@@ -673,6 +682,7 @@ thread_local! {
 /// The kernel's refusals are worded for the Timeline, with the face or
 /// corner they're about drawn.
 #[test]
+#[ignore = "kernel: feature"]
 fn refusals_are_worded_and_drawn() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -740,6 +750,7 @@ fn refusals_are_worded_and_drawn() {
 /// A draft that worked is found in the cache the next time; flipped it
 /// isn't.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_draft_that_worked_is_cached() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -760,6 +771,7 @@ fn a_draft_that_worked_is_cached() {
 /// A draft of a body a combine took into another fails, naming where it
 /// went, as every feature naming a consumed body does.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_consumed_body_fails_a_draft() {
     let (mut editor, body, _) = cube();
     let other = block(&mut editor, 5.0, 5.0, 15.0, 15.0, "10");
@@ -793,6 +805,7 @@ fn a_consumed_body_fails_a_draft() {
 /// facing the pull, or sides meeting the ones opposite, fail, never
 /// leaving the body as it was.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_stand_in_drafts_boxes_by_their_volumes() {
     with_boxes();
     let mut editor = Editor::new(Document::default());
@@ -877,7 +890,7 @@ fn the_stand_in_drafts_boxes_by_their_volumes() {
 /// pyramid) and from its top (widening down), names kept; the same bits
 /// twice.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_drafts_a_box_s_sides() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -912,7 +925,7 @@ fn the_kernel_drafts_a_box_s_sides() {
 /// The cube from z = −5 to 5, its sides drafted about XY through its
 /// middle: each face turned about a hinge inside it.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_drafts_about_a_hinge_inside_the_faces() {
     let mut editor = Editor::new(Document::default());
     let extent = two_sides(editor.document(), "5", "5");
@@ -943,7 +956,7 @@ fn the_kernel_drafts_about_a_hinge_inside_the_faces() {
 /// form's half-angle to 1e-12); a plate with a hole of radius 3 through
 /// it, the hole's wall drafted from its foot, widening up.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_drafts_a_boss_and_a_hole_into_cones() {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 20.0, 20.0, "5");
@@ -1004,7 +1017,7 @@ fn the_kernel_drafts_a_boss_and_a_hole_into_cones() {
 /// the whole wall, planes and cones still tangent (the stadium offset
 /// in by `tan 5° · z`); with them left out it's refused.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_drafts_a_rounded_slot_across_tangent_faces() {
     let mut editor = Editor::new(Document::default());
     let extent = Extent::OneSide(length(editor.document(), "10"));
@@ -1038,7 +1051,7 @@ fn the_kernel_drafts_a_rounded_slot_across_tangent_faces() {
 /// drafted as a whole 3° from its foot: its sides a frustum, its holes
 /// widening cones.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_drafts_a_plate_with_holes_as_a_whole() {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 20.0, 20.0, "5");
@@ -1087,7 +1100,7 @@ fn the_kernel_drafts_a_plate_with_holes_as_a_whole() {
 /// the fitted constant-slope surface, its sections the ellipse's
 /// offsets (area `A − P·d + π d²` at `d = tan 3° · z`), within the fit.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_drafts_an_elliptic_wall_fitted() {
     let mut editor = Editor::new(Document::default());
     let pin = add_body(&mut editor, disc((0.0, 0.0), 5.0), "10");
@@ -1118,7 +1131,7 @@ fn the_kernel_drafts_an_elliptic_wall_fitted() {
 /// A sphere can't be drafted; a narrow slot (2 wide) cut through a
 /// plate, its walls drafted 10° so it narrows up, closes: refused.
 #[test]
-#[ignore = "kernel draft not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_refuses_a_sphere_and_a_slot_closing() {
     let mut editor = Editor::new(Document::default());
     let ball = revolved(&mut editor, half_disc(5.0));

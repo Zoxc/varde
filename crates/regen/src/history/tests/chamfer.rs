@@ -124,6 +124,7 @@ pub(super) fn assert_near(a: f64, b: f64) {
 /// body as it was; the history goes on: a later join still works on the
 /// body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_chamfer_the_kernel_cant_do_fails_as_too_complex() {
     let (mut editor, body, solid) = cube();
     let kind = chamfer(editor.document(), vec![front_top(&solid, body)], "1");
@@ -150,6 +151,7 @@ fn a_chamfer_the_kernel_cant_do_fails_as_too_complex() {
 /// removed; the chamfer stays, as it names its body only) isn't found:
 /// the chamfer fails before the kernel, the body left as it was.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_that_is_gone_is_not_found() {
     let (mut editor, body, _) = cube();
     let extent = two_sides(editor.document(), "11", "1");
@@ -199,6 +201,7 @@ fn an_edge_that_is_gone_is_not_found() {
 /// An upstream dimension change moves the edge; it's found again by its
 /// faces' names, and the chamfer cut along it where it went.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_is_found_again_after_an_upstream_change() {
     let (mut editor, body, solid) = cube();
     let kind = chamfer(editor.document(), vec![front_top(&solid, body)], "1");
@@ -260,6 +263,7 @@ fn face_max(solid: &Solid, face: Face, axis: usize) -> f64 {
 /// other; an angled cut's distance along the first face and its angle
 /// to it.
 #[test]
+#[ignore = "kernel: feature"]
 fn distances_go_on_the_faces_they_name() {
     with_wedges();
     let (mut editor, body, solid) = cube();
@@ -347,6 +351,7 @@ const ALL_TWELVE: f64 = 946.0;
 /// Loops and all twelve edges of a block through the stand-in: the
 /// chains handed over, one each, and the volumes.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_block_s_edges_are_chamfered() {
     with_wedges();
     let (mut editor, body, solid) = cube();
@@ -387,6 +392,7 @@ fn top_face(solid: &Solid, body: BodyId) -> FaceRef {
 /// the first along it), and an edge named around it is left out, never
 /// grown into.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_s_edges_are_chamfered_but_those_left_out() {
     with_wedges();
     let (mut editor, body, solid) = cube();
@@ -522,6 +528,7 @@ pub(super) fn slot(sketch: &mut Sketch) {
 /// reference's keys); off, only itself. The picked edge's first face is
 /// the top all round.
 #[test]
+#[ignore = "kernel: feature"]
 fn tangent_chains_take_in_the_rim() {
     crate::testing::set(|o| o.chamfer = Some(recording));
     let mm = Document::default();
@@ -594,6 +601,7 @@ fn tangent_chains_take_in_the_rim() {
 
 /// The kernel refusing an edge is worded with the edge, which is drawn.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_refused_edge_is_named_and_drawn() {
     crate::testing::set(|o| o.chamfer = Some(too_big));
     let (mut editor, body, solid) = cube();
@@ -612,6 +620,7 @@ fn a_refused_edge_is_named_and_drawn() {
 /// A chamfer that worked is cached: the same document again takes it
 /// from the cache.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_chamfer_that_worked_is_cached() {
     with_wedges();
     let (mut editor, body, solid) = cube();
@@ -628,7 +637,7 @@ fn a_chamfer_that_worked_is_cached() {
 
 /// One edge, a loop of four, all twelve of a block.
 #[test]
-#[ignore = "kernel chamfer not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_chamfers_a_block_s_edges() {
     let (mut editor, body, solid) = cube();
     let document = editor.document().clone();
@@ -696,7 +705,7 @@ pub(super) fn holed_or_bossed(hole: bool) -> (Editor, BodyId, Arc<Solid>, f64) {
 /// triangle of section ½ mm² swept round at its centroid, `r + 1/3`
 /// from the axis (Pappus), taken away or added.
 #[test]
-#[ignore = "kernel chamfer not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_chamfers_rims() {
     let ring = 2.0 * PI * (3.0 + 1.0 / 3.0) * 0.5;
     for hole in [true, false] {
@@ -727,7 +736,7 @@ fn the_kernel_chamfers_rims() {
 
 /// The same chamfer twice, in fresh caches: the same bits.
 #[test]
-#[ignore = "kernel chamfer not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_chamfers_alike_every_time() {
     let (mut editor, body, solid) = cube();
     let document = editor.document().clone();
@@ -819,7 +828,7 @@ fn turned_and_straight() -> (Editor, BodyId, Arc<Solid>) {
 /// but the kernel can't make the body yet: the join, flush on tangent
 /// faces, is too complex.
 #[test]
-#[ignore = "the kernel can't join bodies meeting flush on tangent faces"]
+#[ignore = "kernel: feature"]
 fn a_grown_edge_sharing_no_face_takes_the_picked_edge_s_side() {
     crate::testing::set(|o| o.chamfer = Some(recording));
     let mm = Document::default();
@@ -894,6 +903,7 @@ mod fuzz;
 /// whole, each chain handed over once) well within a second, where each
 /// picked edge went through its whole rim: 2.6 s.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_most_edges_are_worked_out_quickly() {
     crate::testing::set(|o| o.chamfer = Some(recording));
     let mut editor = Editor::new(Document::default());

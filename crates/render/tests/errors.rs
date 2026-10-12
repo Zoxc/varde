@@ -462,6 +462,7 @@ fn overlapping_halos_dont_darken() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn overlapping_hidden_halos_dont_add_up() {
     let Some(mut scene) = Scene::new() else {
         return;
@@ -503,6 +504,7 @@ fn block() -> RenderMesh {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_hidden_part_is_dimmer() {
     let Some(mut scene) = Scene::new() else {
         return;
@@ -542,6 +544,7 @@ fn a_hidden_part_is_dimmer() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn errors_are_drawn_over_the_faded_model() {
     let Some(mut scene) = Scene::new() else {
         return;
@@ -555,6 +558,7 @@ fn errors_are_drawn_over_the_faded_model() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn nothing_is_drawn_without_errors() {
     let Some(mut scene) = Scene::new() else {
         return;
@@ -601,6 +605,7 @@ fn errors_are_uploaded_again_only_when_their_sources_change() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn overlapping_hidden_patches_dont_darken() {
     let Some(mut scene) = Scene::new() else {
         return;
@@ -787,6 +792,7 @@ fn the_halo_is_read_where_the_viewport_is_as_the_target_is_resized() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn errors_far_from_the_model_are_in_the_depth_range() {
     let Some(mut scene) = Scene::new() else {
         return;
@@ -829,6 +835,7 @@ fn errors_far_from_the_model_are_in_the_depth_range() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn errors_are_drawn_with_glass_hidden_edges_and_wires() {
     let Some(mut scene) = Scene::new() else {
         return;

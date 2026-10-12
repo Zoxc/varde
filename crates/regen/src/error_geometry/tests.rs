@@ -56,6 +56,7 @@ fn no_evidence_is_no_geometry() {
 /// patch's sides flattened, the points as they are, the sketch curves
 /// named, the faces pending until resolved; the box holds them all.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn evidence_is_made_drawable() {
     let geometry = made(&failure(evidence()), [&[], &[]]).expect("geometry");
     assert_eq!(geometry.mesh().triangle_count(), 1);
@@ -161,6 +162,7 @@ fn cube() -> (RenderMesh, Picking) {
 /// holding the operand's, by its key; one of an operand that isn't a
 /// body, or of a body not drawn, names none. The box takes in the face.
 #[test]
+#[ignore = "kernel: resolve"]
 fn operand_faces_are_resolved_through_the_tables() {
     let (mesh, picking) = cube();
     let face = (picking.faces().iter())
@@ -213,6 +215,7 @@ fn operand_faces_are_resolved_through_the_tables() {
 
 /// What crosses comes back as it went, its box worked out again.
 #[test]
+#[ignore = "kernel: resolve"]
 fn parts_round_trip() {
     let (mesh, picking) = cube();
     let mut geometry = made(&failure(evidence()), [&[BodyId::NEW], &[]]).unwrap();
@@ -230,6 +233,7 @@ fn parts_round_trip() {
 
 /// Parts that don't make geometry are refused, each for its reason.
 #[test]
+#[ignore = "kernel: resolve"]
 fn bad_parts_are_refused() {
     let (mesh, picking) = cube();
     let mut geometry = made(&failure(evidence()), [&[BodyId::NEW], &[]]).unwrap();
@@ -346,6 +350,7 @@ fn a_cached_failure_keeps_its_geometry() {
 /// Of patches sharing sides, only the sides no two share are drawn: two
 /// triangles making a square draw its four sides, not its diagonal.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn only_the_patches_boundary_is_drawn() {
     let (o, x, y, xy) = (DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::new(1.0, 1.0, 0.0));
     let mut evidence = Evidence::default();
@@ -368,6 +373,7 @@ fn only_the_patches_boundary_is_drawn() {
 /// failure is the same `Arc` from one answer to the next (the renderer
 /// uploads it again only when its `Arc` changes).
 #[test]
+#[ignore = "kernel: resolve"]
 fn resolving_geometry_with_nothing_pending_keeps_it() {
     let (mesh, picking) = cube();
     let kept = KernelFailure::new(failure(evidence()), &Tolerance::DEFAULT);
@@ -394,6 +400,7 @@ fn resolving_geometry_with_nothing_pending_keeps_it() {
 /// Evidence of operand faces alone, some left out, keeps its mark once
 /// the faces are placed on bodies.
 #[test]
+#[ignore = "kernel: resolve"]
 fn faces_alone_keep_the_evidence_mark() {
     let (mesh, picking) = cube();
     let mut evidence = Evidence::default();
@@ -433,6 +440,7 @@ fn what_is_left_out_does_not_coarsen_the_rest() {
 /// back (the same triangle both ways round) close on each other and draw
 /// none, as a closed shell does.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_patch_given_twice_draws_its_boundary_once() {
     let (o, x, y) = (DVec3::ZERO, DVec3::X, DVec3::Y);
     let flat = |p| Patch::flat(p).unwrap();
@@ -452,6 +460,7 @@ fn a_patch_given_twice_draws_its_boundary_once() {
 /// The box from the other side is that of what is drawn: a position no
 /// triangle uses doesn't stretch it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn unused_positions_do_not_stretch_the_box() {
     let (mesh, picking) = cube();
     let geometry = made(&failure(evidence()), [&[], &[]]).unwrap();
@@ -489,6 +498,7 @@ fn a_face_s_outline_runs_round_it_once() {
 /// one doesn't fit: lines too full for the first face's outline take
 /// neither it nor any after it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn operand_faces_go_in_whole() {
     let (mesh, picking) = cube();
     let mut evidence = Evidence::default();

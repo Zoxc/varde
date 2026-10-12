@@ -80,7 +80,7 @@ pub struct OffsetFace {
   the kernel's will; a face moved onto or past the one opposite it is
   `PastNeighbour`, a box past the coordinate limit `OutOfRange`, the
   rest too complex. The planned analytic tests of the kernel's offset
-  face are written and `#[ignore = "kernel offset face not built"]`.
+  face are written and `#[ignore = "kernel: feature"]`.
 - The draft's reply carries nothing new.
 
 ## UI

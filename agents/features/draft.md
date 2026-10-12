@@ -104,7 +104,7 @@ pub struct FaceDraft {
   `FacingPull`, sides meeting the ones opposite at the box's top or
   bottom `PastNeighbour`, past the coordinate limit `OutOfRange`, the
   rest too complex. The planned analytic tests of the kernel's draft
-  are written and `#[ignore = "kernel draft not built"]`.
+  are written and `#[ignore = "kernel: feature"]`.
 - The draft's reply carries nothing new.
 
 Tests: `document/src/face_draft/tests.rs` (added and undone, edited,

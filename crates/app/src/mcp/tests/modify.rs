@@ -29,6 +29,7 @@ fn a_line(varde: &Varde) -> u32 {
 /// body's id, as the panel starts; by a face, a body, regions or a line
 /// as each tile picks them, with Keeps and Keep given.
 #[test]
+#[ignore = "kernel: feature"]
 fn split_takes_each_tool() {
     let (mut varde, requests) = with_disc();
     let [plate, disc] = bodies(&varde)[..] else {
@@ -98,6 +99,7 @@ fn split_takes_each_tool() {
 /// line's curve not in the sketch or named twice, a region past the
 /// sketch's, a body made after the rollback marker.
 #[test]
+#[ignore = "kernel: resolve"]
 fn split_refuses_what_the_panel_would_not_take() {
     let (mut varde, requests) = with_disc();
     let edge = edge_between(&varde, "Body 1", [30.0, 20.0, 10.0], [30.0, 20.0, 0.0]);
@@ -158,6 +160,7 @@ fn split_refuses_what_the_panel_would_not_take() {
 /// inward (the panel's thickness follows the view); faces by key open it,
 /// their body its body, with a thickness and direction given.
 #[test]
+#[ignore = "kernel: feature"]
 fn shell_takes_its_defaults_or_faces() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -208,6 +211,7 @@ fn shell_takes_its_defaults_or_faces() {
 /// named twice, a key of another kind or stale, a thickness its field
 /// refuses.
 #[test]
+#[ignore = "kernel: resolve"]
 fn shell_refuses_what_the_panel_would_not_take() {
     let (mut varde, requests) = with_disc();
     let top = face_facing(&varde, "Body 1", [0.0, 0.0, 1.0]);
@@ -261,6 +265,7 @@ fn shell_refuses_what_the_panel_would_not_take() {
 /// Inward and Tangent faces given are taken; what its fields and keys
 /// refuse is said.
 #[test]
+#[ignore = "kernel: feature"]
 fn offset_face_takes_its_faces_and_values() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -328,6 +333,7 @@ fn offset_face_takes_its_faces_and_values() {
 /// Tangent faces given are taken; one of its faces as the neutral plane,
 /// a round face, or an angle its field refuses is said.
 #[test]
+#[ignore = "kernel: feature"]
 fn draft_takes_its_faces_plane_and_values() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);

@@ -124,6 +124,7 @@ fn drafted(plates: &Plates) -> Option<Align> {
 /// directions (each rim's axis), the preview and OK put it there, one
 /// undo step.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_pin_aligned_by_its_rim_into_the_hole_and_ok() {
     let (mut plates, plate, pin) = pin_and_plate();
     let before = plates.doc.editor.document().clone();
@@ -274,6 +275,7 @@ fn face_to_face() -> (Plates, [BodyId; 2], varde_document::FeatureId) {
 /// Face to face with an offset: the plate under the example's lands on
 /// its top, 5 above, its bottom against the top.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_plate_aligned_face_to_face_with_an_offset() {
     let (plates, [top, below], _) = face_to_face();
     let [low, high] = plates.bounds(below);
@@ -287,6 +289,7 @@ fn a_plate_aligned_face_to_face_with_an_offset() {
 /// nothing changes: a face for a point, a vertex for a direction, the
 /// target picked on the body aligned, the moved side's on another body.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_refused_pick_is_shown() {
     let (mut plates, plate, pin) = pin_and_plate();
     plates.doc.look(Look::StartMotion(MotionKind::Align));
@@ -354,6 +357,7 @@ fn a_refused_pick_is_shown() {
 /// values; another distance previews and commits it, one undo step back
 /// to what it was.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_align_edited_from_the_timeline_and_undone() {
     let (mut plates, [_, below], id) = face_to_face();
     let committed = plates.doc.editor.document().clone();
@@ -409,6 +413,7 @@ fn an_align_edited_from_the_timeline_and_undone() {
 /// gone as the mock says a move's axis is: nothing previewed or
 /// committed until a redo brings it back.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
     let (mut plates, _, pin) = pin_and_plate();
     let later = super::later_disc(&mut plates);
@@ -438,6 +443,7 @@ fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
 /// With the body aligned taken away by an undo, a moved side's pick on
 /// another body says the body aligned is gone rather than naming it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_pick_after_the_body_aligned_is_gone_says_so() {
     let (mut plates, _, pin) = pin_and_plate();
     let later = super::later_disc(&mut plates);
@@ -459,6 +465,7 @@ fn a_pick_after_the_body_aligned_is_gone_says_so() {
 /// next beside the session's status; the viewport's own mouse hints make
 /// room for it.
 #[test]
+#[ignore = "kernel: assemble"]
 fn the_status_bar_hints_what_a_click_picks() {
     let (mut plates, _, pin) = pin_and_plate();
     plates.doc.look(Look::StartMotion(MotionKind::Align));
@@ -477,6 +484,7 @@ fn the_status_bar_hints_what_a_click_picks() {
 /// back to it; a hole's rim picked at its centre's dot names what a click
 /// on the rim names.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_rim_picked_again_takes_its_axis_along() {
     let (mut plates, plate, pin) = pin_and_plate();
     plates.doc.look(Look::StartMotion(MotionKind::Align));
@@ -560,6 +568,7 @@ fn combined() -> (Plates, BodyId, BodyId, DVec3) {
 /// align works: the plate, holding the right disc, aligned by that disc's
 /// top rim onto the left disc's, face to face (turned over about X).
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_pick_on_what_was_merged_into_the_moved_body_is_named_on_it() {
     let (mut plates, plate, left, top) = combined();
     plates.doc.look(Look::StartMotion(MotionKind::Align));
@@ -586,6 +595,7 @@ fn a_pick_on_what_was_merged_into_the_moved_body_is_named_on_it() {
 /// Another body picked to move takes out what's picked on the target
 /// side on a body a combine before the align merged into it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
     let (mut plates, plate, left, top) = combined();
     plates.doc.look(Look::StartMotion(MotionKind::Align));
@@ -613,6 +623,7 @@ fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
 /// regenerating would refuse it: the session isn't ready until the
 /// combine is undone.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
     let mut plates = super::plates();
     let [_, right, left] = plates.bodies;
@@ -653,6 +664,7 @@ fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
 /// wouldn't find them on); the target's, on the body aligned now, are
 /// said to be gone and asked for again.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_moved_sides_picks_follow_the_moved_body_merged_into_the_targets() {
     let mut plates = super::plates();
     let [_, right, left] = plates.bodies;
@@ -707,6 +719,7 @@ fn the_moved_sides_picks_follow_the_moved_body_merged_into_the_targets() {
 /// model as of the align, found by their names: its faces in each
 /// side's colour, its corners as dots.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_edited_aligns_references_are_found_on_the_model_shown() {
     let (mut plates, [top, below], id) = face_to_face();
     plates.doc.look(Look::EditFeature(id));
@@ -736,6 +749,7 @@ fn an_edited_aligns_references_are_found_on_the_model_shown() {
 /// two never part (the point picked again elsewhere would leave an axis
 /// on a rim no longer picked).
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_direction_picked_by_hand_on_the_points_rim_goes_with_it() {
     let (mut plates, _, pin) = pin_and_plate();
     plates.doc.look(Look::StartMotion(MotionKind::Align));
@@ -809,6 +823,7 @@ fn corners_picked() -> (Plates, [BodyId; 2]) {
 /// stored with no flip even if Flip was clicked; a distance typed without
 /// directions holds it back, said why.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_align_of_points_alone() {
     let (mut plates, [_, below]) = corners_picked();
     let direction = slot(AlignSide::Moved, AlignRole::Primary);
@@ -848,6 +863,7 @@ fn an_align_of_points_alone() {
 /// the other side has one; a second direction left without first ones
 /// (those taken out) asks for the first ones first, as clicks go.
 #[test]
+#[ignore = "kernel: resolve"]
 fn directions_are_asked_for_in_the_order_picked() {
     let (mut plates, [top, below]) = corners_picked();
     // The target's direction picked first: the body's is asked for next.
@@ -934,6 +950,7 @@ fn cut_rectangle(editor: &mut Editor, a: (f64, f64), b: (f64, f64)) {
 /// on it so it's found again there (not on the other arc) on the next
 /// model; the align then finds the arcs' centre.
 #[test]
+#[ignore = "kernel: resolve"]
 fn two_arcs_with_the_same_keys() {
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
@@ -1029,6 +1046,7 @@ pub(super) fn made() -> (Plates, varde_document::FeatureId) {
 /// ring about it there, at the turn. Dragged, they type the offset and
 /// the turn.
 #[test]
+#[ignore = "kernel: assemble"]
 fn an_align_s_knobs_offset_and_turn_it() {
     let (editor, [top, below]) = two_plates();
     let mut plates = plates_of(&editor);

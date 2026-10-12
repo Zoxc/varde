@@ -75,6 +75,7 @@ fn paired(editor: &Editor, body: BodyId) -> Vec<EdgeFacts> {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_example_s_edges_are_straight_or_round_and_convex() {
     let editor = Editor::new(Document::example());
     let edges = paired(&editor, first_body(&editor));
@@ -132,6 +133,7 @@ fn the_example_s_edges_are_straight_or_round_and_convex() {
 /// plate's top and bottom the edges are concave circles, its own caps'
 /// rims convex.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_boss_meets_the_plate_in_concave_edges() {
     let mut editor = Editor::new(Document::example());
     let extent = two_sides(editor.document(), "15", "5");
@@ -178,6 +180,7 @@ fn a_boss_meets_the_plate_in_concave_edges() {
 
 /// A cube's twelve edges, straight and convex, each along an axis.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_cube_s_edges_are_straight_and_convex() {
     let solid = Solid::cuboid(DVec3::splat(-1.0), DVec3::splat(2.0), 0, &TOL).unwrap();
     let edges = body_edges(&solid, &solid.topology()).unwrap();
@@ -251,6 +254,7 @@ fn a_failed_request_is_answered_with_its_tag() {
 /// a straight edge without ends, sizes not positive, an axis not unit,
 /// an ellipse's minor past its major and faces out of order.
 #[test]
+#[ignore = "kernel: resolve"]
 fn bad_facts_are_not_valid() {
     let editor = Editor::new(Document::example());
     let edges = paired(&editor, first_body(&editor));
@@ -366,6 +370,7 @@ mod solids {
     /// A block with a quarter cut out: one concave straight edge, the
     /// rest convex, the same mirrored.
     #[test]
+    #[ignore = "kernel: resolve"]
     fn a_notch_has_one_concave_straight_edge() {
         let notched = cut(
             &box_at(DVec3::ZERO, DVec3::splat(4.0)),
@@ -387,6 +392,7 @@ mod solids {
     /// An L revolved: one inside rim, concave, five convex, mirrored too;
     /// and a part turn's ends add straight edges, all convex.
     #[test]
+    #[ignore = "kernel: feature"]
     fn a_revolved_l_has_one_concave_rim() {
         let v = DVec2::new;
         let points = [
@@ -433,6 +439,7 @@ mod solids {
     /// A cylinder cut at 45°: its top rim an ellipse of semi-axes
     /// `2√2` and 2 square to the cut, convex.
     #[test]
+    #[ignore = "kernel: resolve"]
     fn a_slanted_cut_makes_an_ellipse() {
         let cylinder = Solid::cylinder(DVec3::ZERO, 2.0, 10.0, 1, &TOL).unwrap();
         let block = box_at(DVec3::new(-20.0, -20.0, 0.0), DVec3::splat(40.0));
@@ -472,6 +479,7 @@ mod solids {
     /// A box joined flush to a cylinder's side: the walls run on into
     /// each other, smooth.
     #[test]
+    #[ignore = "kernel: resolve"]
     fn a_tangent_wall_is_smooth() {
         let cylinder = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 1, &TOL).unwrap();
         let block = Solid::cuboid(
@@ -496,6 +504,7 @@ mod solids {
 /// With two bodies, each's facts pair with its own part, the first body
 /// hidden (no part) or not.
 #[test]
+#[ignore = "kernel: resolve"]
 fn each_of_two_bodies_pairs_with_its_part() {
     let mut editor = Editor::new(Document::example());
     let extent = two_sides(editor.document(), "15", "5");

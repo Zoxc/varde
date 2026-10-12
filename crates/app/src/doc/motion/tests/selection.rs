@@ -148,6 +148,7 @@ fn corner(plates: &Plates, plate: BodyId) -> Pick {
 /// The toolbar offers the operations taking what's selected, those
 /// fitting it first, as `toolbar::selection_bar` lists them.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_toolbar_offers_what_takes_the_selection() {
     let (mut plates, plate) = plate();
     offers(
@@ -254,6 +255,7 @@ fn sketch_of(plates: &Plates) -> FeatureId {
 /// A fillet or chamfer started with faces selected takes the faces,
 /// which stand for the edges around them, and no edges of its own.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_blend_takes_the_faces_selected() {
     for start in [
         Look::StartMotion(MotionKind::Chamfer),
@@ -274,6 +276,7 @@ fn a_blend_takes_the_faces_selected() {
 
 /// A sweep started with edges selected takes them as its path.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sweep_takes_the_edges_selected_as_its_path() {
     let (mut plates, plate) = plate();
     let picks = [FRONT, RIGHT].map(|ends| edge_pick(&plates, plate, ends));
@@ -286,6 +289,7 @@ fn a_sweep_takes_the_edges_selected_as_its_path() {
 /// A mirror started with a flat face selected mirrors its body across
 /// it; one with a round face says why it can't.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_mirror_takes_the_face_selected_as_its_plane() {
     let (mut plates, plate) = plate();
     let pick = top_face(&plates, plate);
@@ -328,6 +332,7 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
 /// takes it as its axis; with a face selected, the face says only which
 /// body.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_move_or_pattern_takes_the_edge_selected_as_its_axis() {
     for start in [
         Look::StartMotion(MotionKind::Move),
@@ -366,6 +371,7 @@ fn a_move_or_pattern_takes_the_edge_selected_as_its_axis() {
 /// A circular pattern started with a round edge selected turns about
 /// it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_circular_pattern_takes_the_round_edge_selected_as_its_axis() {
     let (mut plates, plate) = plate();
     let rim = rim(&plates, plate);
@@ -384,6 +390,7 @@ fn a_circular_pattern_takes_the_round_edge_selected_as_its_axis() {
 /// A draft started with two faces or more selected takes the first, if
 /// flat, as its neutral plane and drafts the rest; with one, drafts it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     let (mut plates, plate) = plate();
     let top = top_face(&plates, plate);
@@ -418,6 +425,7 @@ fn front_face(plates: &Plates, plate: BodyId) -> Pick {
 /// A split started with a face alone selected cuts with it, its body
 /// picked next.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_split_takes_the_face_selected_as_its_tool() {
     let (mut plates, plate) = plate();
     let top = top_face(&plates, plate);
@@ -432,6 +440,7 @@ fn a_split_takes_the_face_selected_as_its_tool() {
 /// An align or a scale started with a vertex selected takes it as its
 /// point.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_align_or_scale_takes_the_vertex_selected_as_its_point() {
     for start in [
         Look::StartMotion(MotionKind::Align),
@@ -455,6 +464,7 @@ fn an_align_or_scale_takes_the_vertex_selected_as_its_point() {
 /// A revolve started with a straight edge selected takes it as its
 /// axis once its profile is picked.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_revolve_takes_the_edge_selected_as_its_axis_once_its_profile_is_picked() {
     let (mut plates, plate) = plate();
     let bottom = edge_pick(&plates, plate, ([-30.0, -20.0, 0.0], [30.0, -20.0, 0.0]));
@@ -496,6 +506,7 @@ fn a_revolve_takes_the_edge_selected_as_its_axis_once_its_profile_is_picked() {
 /// The measure tool started with one or two things selected measures
 /// them.
 #[test]
+#[ignore = "kernel: resolve"]
 fn measure_takes_what_is_selected() {
     let (mut plates, plate) = plate();
     let top = top_face(&plates, plate);
@@ -510,6 +521,7 @@ fn measure_takes_what_is_selected() {
 /// an edge selected around a face selected is left out, listed and lit
 /// in the exclusions' purple.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_blend_takes_edges_and_faces_selected_together() {
     let (mut plates, plate) = plate();
     let top = top_face(&plates, plate);

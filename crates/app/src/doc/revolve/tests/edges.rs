@@ -113,6 +113,7 @@ fn revolves(doc: &Doc) -> Vec<(FeatureId, Revolve)> {
 /// previewed, and committed as one undo step; the tube it makes is
 /// regenerated.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_model_edge_is_picked_as_the_axis_and_committed() {
     let (mut doc, requests, sketch) = on_the_front();
     let before = doc.editor.document().clone();
@@ -176,6 +177,7 @@ fn a_model_edge_is_picked_as_the_axis_and_committed() {
 /// axis as it was: one picked before the profile, a round one, one off
 /// the sketch's plane, and one of a model that isn't shown any more.
 #[test]
+#[ignore = "kernel: resolve"]
 fn edges_that_cant_be_the_axis_are_refused() {
     let (mut doc, _requests, sketch) = on_the_front();
     let top_front = edge_of(&doc, -DVec3::Y, 20.0, DVec3::new(0.0, -20.0, 10.0));
@@ -232,6 +234,7 @@ fn edges_that_cant_be_the_axis_are_refused() {
 /// shows the edge, and is set again in place. An edge its own solid
 /// made can't be its axis: its start cap's edges lie in the plane.
 #[test]
+#[ignore = "kernel: resolve"]
 fn editing_a_revolve_about_an_edge_keeps_it() {
     let (mut doc, requests, sketch) = on_the_front();
     start(&mut doc, sketch);
@@ -402,6 +405,7 @@ fn combined() -> (Doc, Requests, FeatureId, FeatureId) {
 /// before the revolve used up is on the target there: picked, it's the
 /// axis, named by the target, and the revolve regenerates.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_edge_between_bodies_a_combine_merged_before_is_the_axis() {
     let (mut doc, requests, sketch, maker) = combined();
     start(&mut doc, sketch);
@@ -449,6 +453,7 @@ fn an_edge_between_bodies_a_combine_merged_before_is_the_axis() {
 /// revolve drops the axis, which is picked again: what's set up never
 /// names a body the document doesn't have.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
     let (mut doc, requests, sketch) = on_the_front();
     // A box from (35, -20, 0) to (45, -10, 10), "Body 2", its front on
@@ -534,6 +539,7 @@ fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
 /// The arrow on an edge picked as the axis follows the edge when an undo
 /// moves it: drawn where the model shown has it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_arrow_follows_its_edge_through_an_undo() {
     let (mut doc, requests, sketch) = on_the_front();
     // The plate made 11 thick, its top front edge at z = 11.

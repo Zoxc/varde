@@ -135,7 +135,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   triangular prism past its ends, one boolean each (right for a block's
   edges, too complex otherwise); and for recording and refusing
   stand-ins. The planned analytic tests of the kernel's chamfer are
-  written out and `#[ignore = "kernel chamfer not built"]`.
+  written out and `#[ignore = "kernel: feature"]`.
 - The draft's reply carries nothing new.
 
 ## UI

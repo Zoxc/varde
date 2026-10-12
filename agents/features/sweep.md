@@ -170,7 +170,7 @@ body", the uncut note).
   of the feature with the kernel's sweep (a pipe joined to a plate at
   its start, cut through a block, a bead along a round rim following
   it, a spring joined to a plate) are written out in
-  `history/tests/sweep.rs` and `#[ignore = "kernel sweep not built"]`.
+  `history/tests/sweep.rs` and `#[ignore = "kernel: feature"]`.
 - The draft's reply carries a helix's axis as `Drafted::reference`, as
   a move's (checked on the wire as theirs).
 - **Where its handles stand** (`SweepFound`, noted in

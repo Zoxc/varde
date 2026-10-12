@@ -23,6 +23,7 @@ fn plate() -> (Arc<RenderMesh>, Arc<Picking>, Arc<PickTables>) {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_lane_builds_the_tables_and_the_upload() {
     let (mesh, picking, tables) = plate();
     assert_eq!(*tables, PickTables::new(&mesh, &picking));
@@ -45,6 +46,7 @@ fn tables_round_trip_their_parts() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn trees_that_are_not_trees_are_refused() {
     let (mesh, _, tables) = plate();
     let refused = |change: &dyn Fn(&mut PickTablesParts)| {

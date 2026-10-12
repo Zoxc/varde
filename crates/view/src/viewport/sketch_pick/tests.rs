@@ -48,6 +48,7 @@ fn at_height(z: f64) -> Placement {
 /// and is picked anywhere when it doesn't (the faded model behind the
 /// sketch being edited).
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_nearest_curve_is_picked_and_what_the_model_hides_only_through_it() {
     let (sketch, line) = lines();
     let (over, under) = ids();

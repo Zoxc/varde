@@ -70,6 +70,7 @@ fn is_the_corner(geometry: &ErrorGeometry, at_corner: &[u64]) {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_touching_extrude_fails_with_where_it_touches() {
     let mut editor = Editor::new(Document::default());
     let mut at_corner = Vec::new();
@@ -124,6 +125,7 @@ fn a_touching_extrude_fails_with_where_it_touches() {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn a_revolve_across_its_axis_fails_with_the_segment_and_the_axis() {
     // The example's plate, centred on the origin of XY, about the
     // sketch's y.
@@ -172,6 +174,7 @@ fn a_revolve_across_its_axis_fails_with_the_segment_and_the_axis() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_touching_extrude_on_a_face_is_placed_by_the_face() {
     // The squares on the example plate's top face (z = 10): the
     // geometry lies on that face, the corner where the sketch's

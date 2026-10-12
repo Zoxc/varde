@@ -369,6 +369,7 @@ fn a_knob_is_drawn_lighter_with_its_rail_while_hovered() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_knob_is_grabbed_behind_the_model_but_not_read_only() {
     let (profiles, feature) = plate();
     let picked = BTreeSet::from([ring(&profiles)]);

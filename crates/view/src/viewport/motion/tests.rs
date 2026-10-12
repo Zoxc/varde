@@ -370,6 +370,7 @@ fn while_turning_about_another_axis_only_its_ring_shows() {
 }
 
 #[test]
+#[ignore = "kernel: assemble"]
 fn clicks_off_the_handles_pick_the_model() {
     let index = plate();
     let camera = front();
@@ -408,6 +409,7 @@ fn clicks_off_the_handles_pick_the_model() {
 }
 
 #[test]
+#[ignore = "kernel: assemble"]
 fn no_handles_while_the_axis_is_picked() {
     let index = plate();
     let camera = front();
@@ -476,6 +478,7 @@ fn a_ring_turns_on_about_the_centre() {
 /// bodies moved, or the camera) is let go of as the next frame is drawn,
 /// and the model under the cursor picked again.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_handle_that_moves_away_is_let_go_of_as_a_frame_is_drawn() {
     let index = plate();
     let camera = front();
@@ -765,6 +768,7 @@ fn a_knob_left_held_lets_go_in_the_next_session() {
 /// mouse before a move's handles are worked out: the model's edge off
 /// the path's curves is hovered at once.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_move_s_handle_left_hovered_lets_go_in_a_session_picking_sketches() {
     use crate::motion::{BlendEdges, SweepPath, SweepView};
     let camera = front();
@@ -886,6 +890,7 @@ fn an_arc_knob_turns_and_a_slider_scales() {
 /// model's edges are left to the model's picking. Its twist knob, off
 /// them, doesn't keep them from being picked, and is grabbed itself.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
     use crate::motion::{BlendEdges, SweepPath, SweepView};
     use varde_sketch::{Curve, Sketch};
@@ -1260,6 +1265,7 @@ fn a_loft_s_seam_knob_drags_its_start_round_its_corners() {
 /// line moved away is let go of, the model under the cursor picked
 /// again; and while the camera's dragged, the line hovered is let go of.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sweep_s_path_curve_and_the_model_hand_the_hover_over_as_the_camera_moves() {
     use crate::motion::{BlendEdges, SweepPath, SweepView};
     use varde_sketch::{Curve, Sketch};

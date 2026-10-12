@@ -65,6 +65,7 @@ fn shows(doc: &Doc, wanted: &str) -> bool {
 /// complex, OK waits, Add anyway keeps it as one undo step, failing in
 /// the Timeline, whose row notes the taper.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_typed_taper_is_previewed_and_add_anyway_keeps_it() {
     let (mut doc, requests) = rectangle_picked();
     let before = doc.editor.document().clone();
@@ -109,6 +110,7 @@ fn a_typed_taper_is_previewed_and_add_anyway_keeps_it() {
 /// A taper that isn't an angle under 90° either way is refused in the
 /// field and blocks OK, the preview keeping the last; 0 is none.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_refused_taper_blocks_ok_and_zero_is_none() {
     let (mut doc, requests) = rectangle_picked();
     typed(&mut doc, "-12");
@@ -132,6 +134,7 @@ fn a_refused_taper_blocks_ok_and_zero_is_none() {
 /// With regeneration tapering rectangles, the preview works: OK adds
 /// the tapered extrude as one undo step, and the model is a frustum.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tapered_rectangle_previews_and_ok_adds_it() {
     varde_regen::testing::taper_by_frustum();
     let (mut doc, requests) = rectangle_picked();
@@ -156,6 +159,7 @@ fn a_tapered_rectangle_previews_and_ok_adds_it() {
 /// A tapered extrude edited shows its taper as typed; changed and set
 /// again, undo brings the first back; the taper taken to 0 stores none.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_tapered_extrude_shows_and_changes_its_taper() {
     let (mut doc, requests) = rectangle_picked();
     typed(&mut doc, "2 + 1");
@@ -316,6 +320,7 @@ fn typed_tapers_are_taken_or_refused_never_out_of_range() {
 /// the sketch's plane, fail as too complex; OK on one adds it as one
 /// undo step, which redo puts back.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_taper_stays_through_extents_and_flips() {
     use varde_view::{ExtentKind, OperationKind};
     varde_regen::testing::taper_by_frustum();

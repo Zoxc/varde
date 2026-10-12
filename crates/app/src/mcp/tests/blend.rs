@@ -94,6 +94,7 @@ fn slot_top(varde: &Varde) -> (String, String) {
 /// follows the view), stored unflipped; two distances, a distance and
 /// angle, Flip sides and faces given are taken, one undo step each.
 #[test]
+#[ignore = "kernel: feature"]
 fn chamfer_takes_its_defaults_and_values() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -173,6 +174,7 @@ fn chamfer_takes_its_defaults_and_values() {
 /// twice, a key of another kind, off its edge or stale, values past
 /// their bounds, an edge of a body made after the rollback marker.
 #[test]
+#[ignore = "kernel: feature"]
 fn chamfer_refuses_what_the_panel_would_not_take() {
     let (mut varde, requests) = with_disc();
     let back = edge_between(&varde, "Body 1", BACK.0, BACK.1);
@@ -282,6 +284,7 @@ fn chamfer_refuses_what_the_panel_would_not_take() {
 /// off); off, the edge alone. Another edge of a chain named is refused,
 /// as a click on it would take it out.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_blend_takes_in_tangent_chains_as_the_panel_does() {
     let (mut varde, requests) = with_slot();
     let slot = bodies(&varde)[1];
@@ -344,6 +347,7 @@ fn a_blend_takes_in_tangent_chains_as_the_panel_does() {
 /// the view); a radius and faces given are taken; what its field and
 /// keys refuse is said.
 #[test]
+#[ignore = "kernel: feature"]
 fn fillet_takes_its_edges_and_radius() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);

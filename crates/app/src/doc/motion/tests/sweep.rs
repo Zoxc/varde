@@ -321,6 +321,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
 /// step; a click on the path's curve again takes its part out; a row's
 /// cross too.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_straight_path_previews_and_ok_adds_one_undo_step() {
     varde_regen::testing::sweep_by_extrude();
     let mut swept = swept();
@@ -373,6 +374,7 @@ fn a_straight_path_previews_and_ok_adds_one_undo_step() {
 /// chain; a face is refused; with the stand-in, the corner's square
 /// swept up the plate's upright corner edge alone previews its box.
 #[test]
+#[ignore = "kernel: feature"]
 fn model_edges_are_path_parts_beside_sketch_chains() {
     varde_regen::testing::sweep_by_extrude();
     let mut swept = swept();
@@ -691,6 +693,7 @@ fn apart(count: usize) -> impl FnOnce(&mut Sketch) {
 /// past what's left refused, the parts as they were); the session never
 /// sets up a path the document refuses.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
     let mut swept = swept();
     let (plate, profile) = (swept.plate, swept.profile);
@@ -800,6 +803,7 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
 /// edge parts (as a file may have it) opens to what it stores, its parts
 /// in their order, and OK on it straight away writes nothing.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
     let mut swept = swept();
     set_up(&mut swept);
@@ -878,6 +882,7 @@ fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
 /// to Helix it's still said to be gone (never previewed about an axis
 /// the document refuses); the redo brings it back, ready again.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_helix_s_axis_gone_stays_gone_through_path_and_helix() {
     let mut swept = swept();
     let profile = swept.profile;

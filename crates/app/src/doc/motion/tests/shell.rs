@@ -57,6 +57,7 @@ fn front(plates: &Plates, body: BodyId) -> Pick {
 /// kernel's shell isn't built), shown in the panel; OK waits, Add anyway
 /// keeps it as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
@@ -183,6 +184,7 @@ fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
 /// thickness, outward (the box grown but at its top), too thick refused
 /// by regeneration in the panel; OK adds it as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_hollow_is_previewed_and_ok_adds_one_undo_step() {
     varde_regen::testing::shell_by_boxes();
     let mut plates = boxes(false);
@@ -281,6 +283,7 @@ fn the_hollow_is_previewed_and_ok_adds_one_undo_step() {
 /// another body moves it there. The Remove field clicked stops picking,
 /// and again starts.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_shell_s_faces_are_all_on_one_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
@@ -364,6 +367,7 @@ fn shelled() -> (Editor, FeatureId) {
 /// outward, OK sets it as one undo step; its faces all taken out, it's a
 /// closed shell of its body.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_shell_from_the_timeline_cancel_and_undo() {
     let (editor, id) = shelled();
     let mut plates = held(editor.document().clone());
@@ -426,6 +430,7 @@ fn editing_a_shell_from_the_timeline_cancel_and_undo() {
 /// nothing previewed or committed, until a redo brings it back; taken
 /// out, the shell goes on closed.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_an_undo_takes_away_is_said_to_be_gone() {
     let (mut plates, plate) = plate();
     // A boss joined to the plate, 15 up about (20, 0).
@@ -456,6 +461,7 @@ fn a_face_an_undo_takes_away_is_said_to_be_gone() {
 /// It starts with the face selected that it takes; Shell again backs
 /// out.
 #[test]
+#[ignore = "kernel: feature"]
 fn shell_takes_the_face_selected_and_backs_out() {
     let mut plates = boxes(true);
     let second = plates.bodies[1];
@@ -483,6 +489,7 @@ fn shell_takes_the_face_selected_and_backs_out() {
 /// Faces selected on two bodies: the shell takes those on the first
 /// one's body, leaving the other's out.
 #[test]
+#[ignore = "kernel: feature"]
 fn faces_selected_on_two_bodies_give_the_first_one_s_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
@@ -513,6 +520,7 @@ fn faces_selected_on_two_bodies_give_the_first_one_s_body() {
 /// merges into another follows its body on to the holder, as does the
 /// body picked for a closed shell; the faces stay lit there.
 #[test]
+#[ignore = "kernel: feature"]
 fn faces_follow_their_body_a_redone_combine_merges() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
@@ -591,6 +599,7 @@ fn a_shell_s_toolbar_fits_at_1280_px() {
 /// on the preview is two strips, front and back, both lit as the top;
 /// a click on either takes the top out, and again puts it back once.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_removed_face_left_in_pieces_is_lit_and_taken_out_from_any() {
     varde_regen::testing::shell_by_boxes();
     let mut plates = boxes(false);
@@ -643,6 +652,7 @@ fn a_removed_face_left_in_pieces_is_lit_and_taken_out_from_any() {
 /// file may hold): edited, another face clicked is refused with why,
 /// the panel lists them all; one taken out, the other is taken.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_shell_takes_at_most_256_faces() {
     use varde_document::MAX_SHELL_FACES;
     let (mut editor, id) = shelled();

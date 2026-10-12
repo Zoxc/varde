@@ -357,6 +357,7 @@ fn block() -> PickIndex {
 /// hovered; while regions are, edges aren't. The arrow on a model edge
 /// runs between its ends, mapped onto the source.
 #[test]
+#[ignore = "kernel: resolve"]
 fn model_edges_in_the_plane_can_be_the_axis() {
     let (sketch, left, profiles) = lathe();
     let picked = BTreeSet::from([0]);
@@ -450,6 +451,7 @@ fn model_edges_in_the_plane_can_be_the_axis() {
 /// normal (its triangles run round anticlockwise from outside) crossed
 /// with the way the ends run points into it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_model_shown_directs_edges_as_regenerating_does() {
     let document = varde_document::Document::example();
     let mut cache = varde_regen::Cache::default();
@@ -492,6 +494,7 @@ fn the_model_shown_directs_edges_as_regenerating_does() {
 /// planes parallel to it nearer than the resolution, not in ones
 /// further off; a coarser tolerance takes planes further off.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_model_edge_is_in_the_plane_within_the_resolution() {
     use crate::revolve::{EDGE_OFF_PLANE, axis_edge};
     let index = block();

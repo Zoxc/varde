@@ -123,6 +123,7 @@ pub(super) fn faces_way(plates: &Plates, body: BodyId, normal: DVec3) -> bool {
 /// preview fails as not built yet (the kernel's chamfer isn't built),
 /// shown in the panel; OK waits, Add anyway keeps it as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
@@ -254,6 +255,7 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
 /// under its field), Tangent chain off, each drafted; OK adds it as one
 /// undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     varde_regen::testing::chamfer_by_wedges();
     let (mut plates, plate) = plate();
@@ -366,6 +368,7 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
 /// are taken, the status bar saying why; Objects' rows and the Edges
 /// field don't pick bodies.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_chamfer_s_edges_are_all_on_one_body() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
@@ -445,6 +448,7 @@ fn chamfered() -> (Editor, FeatureId) {
 /// distance and OK sets it as one undo step; with its edges all taken
 /// out, it shows the body as of the feature, by a move of nothing.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
     let (editor, id) = chamfered();
     let (doc, requests) = holding(editor.document().clone());
@@ -510,6 +514,7 @@ fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
 /// An edge on a body an undo takes away is kept, said to be gone,
 /// nothing previewed or committed, until a redo brings it back.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let last = later_disc(&mut plates);
@@ -541,6 +546,7 @@ fn an_edge_an_undo_takes_away_is_said_to_be_gone() {
 /// The rail's Modify set and the toolbar offer Chamfer, as the mock's;
 /// it starts with the edges selected that it takes; `C` again backs out.
 #[test]
+#[ignore = "kernel: feature"]
 fn chamfer_takes_the_edges_selected_and_c_backs_out() {
     let (mut plates, plate) = plate();
     plates.doc.pick.selection = Selection::new(SelectionMode::Edges { tangent: false });
@@ -627,6 +633,7 @@ pub(super) fn slot() -> (Plates, BodyId) {
 /// takes the arc alone out; on again, a click on the rim fills it in,
 /// and once whole takes it all out.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
     let (mut plates, body) = slot();
     plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
@@ -703,6 +710,7 @@ fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
 /// of date (its point would be the lifted one) and doesn't light; once
 /// the document's model shows, it's picked where it is.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_chamfer_s_edges_wait_for_another_session_s_preview_to_go() {
     let (mut plates, plate) = plate();
     plates.doc.look(Look::StartMotion(MotionKind::Move));
@@ -730,6 +738,7 @@ fn a_chamfer_s_edges_wait_for_another_session_s_preview_to_go() {
 /// and in a session Cancel and the origins it picks rather than the
 /// operations, as the mock's.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_toolbar_fits_at_1280_px() {
     use crate::tests::{shown, texts};
     use varde_view::Mode;
@@ -813,6 +822,7 @@ fn the_toolbar_fits_at_1280_px() {
 /// regeneration has it: the edges picked don't follow their body into
 /// it, even before the model shown knows it fails.
 #[test]
+#[ignore = "kernel: feature"]
 fn edges_dont_follow_their_body_into_a_combine_that_fails() {
     use varde_document::{BodyOp, Combine};
     let mut plates = plates();

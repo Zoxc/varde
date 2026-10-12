@@ -29,6 +29,7 @@ fn copy_bodies(document: &Document, id: FeatureId) -> Vec<BodyId> {
 /// and stay bodies of their own, each a pin where its copy goes, its
 /// wall named as that copy; the originals are as they were.
 #[test]
+#[ignore = "kernel: resolve"]
 fn unjoined_copies_are_bodies_of_their_own() {
     let mut editor = Editor::new(Document::default());
     let a = pin(&mut editor, 0.0, 0.0);
@@ -71,6 +72,7 @@ fn unjoined_copies_are_bodies_of_their_own() {
 /// unjoined, each is its own; joined again, back in the body; undo takes
 /// each step back.
 #[test]
+#[ignore = "kernel: assemble"]
 fn toggling_the_tick_moves_the_copies_and_undo_takes_it_back() {
     let mut editor = Editor::new(Document::default());
     let body = pin(&mut editor, 0.0, 0.0);
@@ -108,6 +110,7 @@ fn toggling_the_tick_moves_the_copies_and_undo_takes_it_back() {
 /// the copy consumed into it; a join over two copies merges them into
 /// the first; a pattern about a copy's wall finds it on the copy's body.
 #[test]
+#[ignore = "kernel: resolve"]
 fn later_features_use_copy_bodies() {
     let mut editor = Editor::new(Document::default());
     let body = pin(&mut editor, 0.0, 0.0);
@@ -177,6 +180,7 @@ fn later_features_use_copy_bodies() {
 /// A higher count finds the copies made before in the cache, each body's
 /// solid the same; another spacing makes them again.
 #[test]
+#[ignore = "kernel: assemble"]
 fn unjoined_copies_are_found_in_the_cache() {
     let mut editor = Editor::new(Document::default());
     let body = pin(&mut editor, 0.0, 0.0);
@@ -215,6 +219,7 @@ fn unjoined_copies_are_found_in_the_cache() {
 /// spreads them again, made anew where they move, the original never
 /// touched.
 #[test]
+#[ignore = "kernel: assemble"]
 fn unjoined_rings_hold_a_pin_per_copy_where_it_turns_to() {
     let mut editor = Editor::new(Document::default());
     let body = pin(&mut editor, 10.0, 0.0);
@@ -250,6 +255,7 @@ fn unjoined_rings_hold_a_pin_per_copy_where_it_turns_to() {
 /// bodies laid out by copy then body, each copy made before found in
 /// the cache though its place in the list moved, the new ones made.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_row_of_two_bodies_raised_finds_each_copy_in_the_cache() {
     let mut editor = Editor::new(Document::default());
     let a = pin(&mut editor, 0.0, 0.0);

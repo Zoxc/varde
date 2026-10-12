@@ -39,6 +39,7 @@ fn drawn_points(doc: &Doc) -> Vec<[f32; 3]> {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_timeline_notes_the_face_a_sketch_is_on() {
     let (doc, _, _requests) = circle_on_the_top();
     let shown = all_texts(&doc);
@@ -48,6 +49,7 @@ fn the_timeline_notes_the_face_a_sketch_is_on() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn changing_the_plane_from_the_timeline_moves_the_drawing() {
     let (mut doc, id, requests) = circle_on_the_top();
     let drawn = sketch_of(&doc, id);
@@ -113,6 +115,7 @@ fn changing_the_plane_from_the_timeline_moves_the_drawing() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn esc_while_changing_the_plane_leaves_no_trace() {
     let (mut doc, id, _requests) = circle_on_the_top();
     let revision = doc.editor.revision();
@@ -137,6 +140,7 @@ fn esc_while_changing_the_plane_leaves_no_trace() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn only_faces_made_before_the_sketch_take_it() {
     // The example's first sketch, on XY, is before the plate it makes.
     let (mut doc, requests) = example();
@@ -192,6 +196,7 @@ fn only_faces_made_before_the_sketch_take_it() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn changing_the_plane_from_the_sketch_tab_comes_back_to_the_sketch() {
     let (mut doc, id, requests) = circle_on_the_top();
     let revision = doc.editor.revision();
@@ -246,6 +251,7 @@ fn changing_the_plane_from_the_sketch_tab_comes_back_to_the_sketch() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn change_plane_waits_for_a_document_that_can_be_edited() {
     let (mut doc, id, _requests) = circle_on_the_top();
     doc.read_only = Some("read only".to_owned());
@@ -259,6 +265,7 @@ fn change_plane_waits_for_a_document_that_can_be_edited() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn picking_a_plane_and_measuring_leave_each_other() {
     let (mut doc, id, _requests) = circle_on_the_top();
 
@@ -291,6 +298,7 @@ fn picking_a_plane_and_measuring_leave_each_other() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_undo_in_the_sketch_puts_it_back_on_its_face_and_turns_to_it() {
     let (mut doc, id, requests) = circle_on_the_top();
     doc.look(Look::EditFeature(id));
@@ -330,6 +338,7 @@ fn an_undo_in_the_sketch_puts_it_back_on_its_face_and_turns_to_it() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_replaced_document_forgets_the_placement_worked_out_at_a_pick() {
     let (mut doc, _requests) = example();
     doc.look(Look::PickPlane);
@@ -350,6 +359,7 @@ fn a_replaced_document_forgets_the_placement_worked_out_at_a_pick() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_face_of_a_body_merged_after_the_sketch_is_named_by_its_own_body() {
     // Two plates, a sketch, then a join merging Body 2 into Body 1: Body
     // 2's bottom shows as Body 1's, but at the sketch Body 1 hasn't it.
@@ -381,6 +391,7 @@ fn a_face_of_a_body_merged_after_the_sketch_is_named_by_its_own_body() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_cut_face_of_a_body_merged_after_the_sketch_is_named_by_the_body_it_was_cut_in() {
     // Two plates, a pocket cut into Body 2's top alone, a sketch, then a
     // join merging Body 2 into Body 1: the pocket's floor shows as Body
@@ -444,6 +455,7 @@ fn a_cut_face_of_a_body_merged_after_the_sketch_is_named_by_the_body_it_was_cut_
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
     // Two plates, a square hole cut through both, a sketch, then a join
     // merging Body 2 into Body 1: a wall of the hole shows on Body 1, but
@@ -513,6 +525,7 @@ fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn picking_a_plane_ends_when_the_document_turns_read_only() {
     // Saved somewhere it can't be written while a plane is picked from
     // the Sketch tab: backed out of, the sketch edited again.

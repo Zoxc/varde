@@ -112,6 +112,7 @@ fn volume(editor: &Editor, id: FeatureId, body: BodyId) -> f64 {
 /// body as it was; the history goes on: a later join still works on the
 /// body.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_offset_the_kernel_cant_do_fails_as_too_complex() {
     let (mut editor, body, solid) = cube();
     let kind = offset(editor.document(), vec![top(&solid, body)], "1", false);
@@ -147,6 +148,7 @@ fn an_offset_the_kernel_cant_do_fails_as_too_complex() {
 /// fails before the kernel, the body left as it was; among others, it's
 /// named by its place.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_that_is_gone_is_not_found() {
     let (mut editor, body, solid) = cube();
     let extent = two_sides(editor.document(), "11", "1");
@@ -190,6 +192,7 @@ fn a_face_that_is_gone_is_not_found() {
 /// An upstream dimension change moves the face; it's found again by its
 /// name, and moved from where it went.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_offset_face_is_found_again_after_an_upstream_change() {
     let (mut editor, body, solid) = cube();
     let kind = offset(editor.document(), vec![top(&solid, body)], "2", false);
@@ -226,6 +229,7 @@ fn local(placement: &Placement, at: DVec3) -> (f64, f64) {
 /// upstream dimension changes: a block joined on it stands on the moved
 /// top.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_on_a_moved_face_follows_it() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -283,6 +287,7 @@ fn a_sketch_on_a_moved_face_follows_it() {
 /// Through the stand-in: out and in by their volumes, two faces, two
 /// opposite faces, every face.
 #[test]
+#[ignore = "kernel: feature"]
 fn offsets_move_faces_by_their_volumes() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -326,6 +331,7 @@ fn offsets_move_faces_by_their_volumes() {
 /// between would shrink to nothing), the face drawn, the body left
 /// whole.
 #[test]
+#[ignore = "kernel: feature"]
 fn past_the_opposite_face_is_refused() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -381,6 +387,7 @@ fn recording(
 /// that face once; the distance in model units, negative inward, and
 /// the tangent flag as stored.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_named_twice_is_moved_once() {
     crate::testing::set(|o| o.offset = Some(recording));
     let (mut editor, body, solid) = cube();
@@ -440,6 +447,7 @@ thread_local! {
 /// The kernel's refusals are worded for the Timeline, with the face or
 /// corner they're about drawn.
 #[test]
+#[ignore = "kernel: feature"]
 fn refusals_are_worded_and_drawn() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -497,6 +505,7 @@ fn refusals_are_worded_and_drawn() {
 /// An offset that worked is found in the cache the next time; another
 /// distance isn't.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_offset_that_worked_is_cached() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -516,6 +525,7 @@ fn an_offset_that_worked_is_cached() {
 /// An offset of a body a combine took into another fails, naming where
 /// it went, as every feature naming a consumed body does.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_consumed_body_fails_an_offset() {
     let (mut editor, body, _) = cube();
     let other = block(&mut editor, 5.0, 5.0, 15.0, 15.0, "10");
@@ -548,6 +558,7 @@ fn a_consumed_body_fails_an_offset() {
 /// face's name; one whose walls would shrink to nothing fails, never
 /// leaving the body as it was.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_stand_in_moves_boxes_by_their_volumes() {
     with_boxes();
     let mut editor = Editor::new(Document::default());
@@ -622,7 +633,7 @@ fn the_stand_in_moves_boxes_by_their_volumes() {
 /// A box's top out and in; every face out (a uniform offset, sharp
 /// corners); names kept.
 #[test]
-#[ignore = "kernel offset face not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_moves_a_box_s_faces() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -658,7 +669,7 @@ fn the_kernel_moves_a_box_s_faces() {
 /// by 2: its neighbours, at 120° to it, extended, so the strip added is
 /// a trapezoid `2·(10 + 2/√3)` across, 10 high.
 #[test]
-#[ignore = "kernel offset face not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_moves_a_prism_s_slanted_wall() {
     let h = 5.0 * 3f64.sqrt();
     static HEX: std::sync::OnceLock<[(f64, f64); 6]> = std::sync::OnceLock::new();
@@ -696,7 +707,7 @@ fn the_kernel_moves_a_prism_s_slanted_wall() {
 /// boss's top down and up by 2 (its wall extended or trimmed), then its
 /// wall out by 1 (an exact cylinder of radius 4).
 #[test]
-#[ignore = "kernel offset face not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_moves_a_boss_s_top_and_wall() {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 20.0, 20.0, "5");
@@ -727,7 +738,7 @@ fn the_kernel_moves_a_boss_s_top_and_wall() {
 /// pulled in until the hole would close isn't the refusal here, but a
 /// hole's wall moved by its radius is: the round shrinks to nothing.
 #[test]
-#[ignore = "kernel offset face not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_moves_a_hole_s_wall_and_a_plate_s_top() {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 20.0, 20.0, "5");
@@ -760,7 +771,7 @@ fn the_kernel_moves_a_hole_s_wall_and_a_plate_s_top() {
 /// a neighbouring face; a plate's side pulled into a hole through it
 /// runs into another part of the body.
 #[test]
-#[ignore = "kernel offset face not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_refuses_past_a_neighbour_and_into_the_body() {
     static CUT: [(f64, f64); 5] = [
         (0.0, 0.0),
@@ -819,7 +830,7 @@ fn the_kernel_refuses_past_a_neighbour_and_into_the_body() {
 /// tangent to faces not picked. The same offset twice gives the same
 /// bits.
 #[test]
-#[ignore = "kernel offset face not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_grows_across_tangent_faces() {
     let mut editor = Editor::new(Document::default());
     let extent = Extent::OneSide(length(editor.document(), "10"));

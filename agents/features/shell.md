@@ -92,7 +92,7 @@ are `history/in_place.rs`'s `InPlace`; the stand-ins' `box_sides` is in
   face as thick as the body is across: never the body left whole as
   if shelled), too complex otherwise; and for recording and refusing
   stand-ins. The planned analytic tests of the kernel's shell are
-  written out and `#[ignore = "kernel shell not built"]`.
+  written out and `#[ignore = "kernel: feature"]`.
 - The draft's reply carries nothing new.
 
 ## UI

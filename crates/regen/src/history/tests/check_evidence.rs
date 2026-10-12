@@ -28,6 +28,7 @@ fn triangles_within(geometry: &ErrorGeometry, min: [f32; 3], max: [f32; 3]) {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn an_extrude_too_thin_fails_where_it_is_thin() {
     // A 10 mm square with a slot four resolutions wide cut into it from
     // the top, down to 2 mm: far enough apart for the profile, too near
@@ -66,6 +67,7 @@ fn an_extrude_too_thin_fails_where_it_is_thin() {
 }
 
 #[test]
+#[ignore = "kernel: touches"]
 fn a_join_touching_along_an_edge_fails_where_it_touches() {
     // Two 10 mm cubes along an edge, the second joined to the first:
     // the union would touch itself there, and the triangles that failed

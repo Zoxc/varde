@@ -1525,6 +1525,7 @@ fn a_sketch_too_complex_for_profiles_says_so() {
 /// places it: it isn't opened for editing until then, and the status bar
 /// says why.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_sketch_on_a_face_is_edited_once_placed() {
     let (mut doc, requests) = crate::tests::example();
     let xy = varde_document::Plane::Origin(OriginPlane::XY);

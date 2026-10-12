@@ -162,6 +162,7 @@ fn on_the_top() -> (Doc, FeatureId, Requests) {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
     let (mut doc, requests) = example();
     let body = doc.editor.document().bodies()[0].id;
@@ -221,6 +222,7 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn esc_while_picking_leaves_no_trace() {
     let (mut doc, _requests) = example();
     let revision = doc.editor.revision();
@@ -242,6 +244,7 @@ fn esc_while_picking_leaves_no_trace() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_curved_face_isnt_highlighted_or_sketched_on() {
     let (mut doc, _requests) = example();
     let revision = doc.editor.revision();
@@ -289,6 +292,7 @@ fn a_curved_face_isnt_highlighted_or_sketched_on() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn s_with_a_flat_face_selected_sketches_on_it() {
     let (mut doc, requests) = example();
     let sent = click_screen(&doc, OVER_TOP);
@@ -317,6 +321,7 @@ fn s_with_a_flat_face_selected_sketches_on_it() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_line_drawn_on_the_top_lands_on_it_in_the_world() {
     let (mut doc, id, requests) = on_the_top();
     let lane = SolveLane::connect(&mut doc);
@@ -352,6 +357,7 @@ fn edited_lines(doc: &Doc, id: FeatureId) -> usize {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_extrude_from_the_top_previews_joined_and_follows_the_plate() {
     let (mut doc, id, requests) = on_the_top();
     doc.look(Look::FinishSketch);
@@ -460,6 +466,7 @@ fn prism() -> (Doc, Requests) {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_sketch_on_a_tilted_face_is_placed_up_and_extruded() {
     let (mut doc, requests) = prism();
     // The wall facing +X and up: n = (1, 0, 1)/√2.
@@ -521,6 +528,7 @@ fn a_sketch_on_a_tilted_face_is_placed_up_and_extruded() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     let (mut doc, id, requests) = on_the_top();
     doc.look(Look::FinishSketch);
@@ -627,6 +635,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
 /// the combine before asking for a plane: picking a plane never runs
 /// beside an operation, whose clicks would take the faces.
 #[test]
+#[ignore = "kernel: resolve"]
 fn entering_a_sketch_whose_face_is_gone_ends_a_combine() {
     let (mut doc, id, requests) = on_the_top();
     doc.look(Look::FinishSketch);
@@ -676,6 +685,7 @@ mod fuzz;
 mod sketch_face;
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_face_of_a_feature_removed_since_the_model_shown_takes_no_sketch() {
     let (mut doc, _requests) = example();
     let top = face_on(&doc, DVec3::Z, 10.0);

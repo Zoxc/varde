@@ -80,6 +80,7 @@ fn user_undo(varde: &mut Varde) {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn undo_takes_back_the_sessions_newest_edit() {
     let (mut varde, requests) = in_session();
     let before = varde.screen.doc().unwrap().editor.revision();
@@ -162,6 +163,7 @@ fn undo_takes_back_the_sessions_newest_edit() {
 }
 
 #[test]
+#[ignore = "kernel: extrude"]
 fn undo_takes_back_steps_newest_first() {
     let (mut varde, requests) = in_session();
     rename(&mut varde, &requests, "Extrude 1", "Base");

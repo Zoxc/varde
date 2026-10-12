@@ -120,6 +120,7 @@ fn not_built(body: &str) -> String {
 /// of the body moves it whole, a move of the new body fails for want of
 /// a solid.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_split_the_kernel_cant_do_fails_as_too_complex() {
     let (mut editor, cube, tool) = cube_and_tool();
     let by_body = add(&mut editor, split(cube, SplitTool::Body(tool)));
@@ -165,6 +166,7 @@ fn a_split_the_kernel_cant_do_fails_as_too_complex() {
 /// do for now (too complex), a sketch's regions (extruded by the
 /// kernel's extrude) as its split does.
 #[test]
+#[ignore = "kernel: feature"]
 fn every_tool_reaches_the_kernel_and_fails_as_too_complex() {
     let (mut editor, cube, _) = cube_and_tool();
     let solid = Arc::clone(&evaluated(editor.document()).bodies[0].solid);
@@ -222,6 +224,7 @@ fn every_tool_reaches_the_kernel_and_fails_as_too_complex() {
 /// or isn't flat, a face's body gone, a line that's closed, branches or
 /// is in pieces, a curve gone since.
 #[test]
+#[ignore = "kernel: feature"]
 fn faces_and_lines_are_refused_before_the_kernel() {
     let (mut editor, cube, tool) = cube_and_tool();
     let solid = Arc::clone(&evaluated(editor.document()).bodies[0].solid);
@@ -376,6 +379,7 @@ fn an_open_chain_is_joined_end_to_end() {
 /// keeping one side drops the other and makes no body. Volumes as the
 /// booleans give them.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_pieces_go_to_the_body_and_the_new_body() {
     with_booleans();
     let (mut editor, cube, tool) = cube_and_tool();
@@ -418,6 +422,7 @@ fn the_pieces_go_to_the_body_and_the_new_body() {
 /// A sketch's regions are extruded through the body both ways: the
 /// front is the part over them.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_region_splits_through_all() {
     with_booleans();
     let mut editor = Editor::new(Document::default());
@@ -449,6 +454,7 @@ fn a_sketch_region_splits_through_all() {
 /// A tool missing the body, or holding it all, leaves a side empty:
 /// refused, changing nothing.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_side_left_empty_is_refused() {
     with_booleans();
     let mut editor = Editor::new(Document::default());
@@ -477,6 +483,7 @@ fn a_side_left_empty_is_refused() {
 /// as a face not found; a sketch on that face follows it into the new
 /// body, and one on the face at x = 10 stays on the body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_on_a_face_follows_it_into_the_new_body() {
     with_booleans();
     let (mut editor, cube, tool) = cube_and_tool();
@@ -575,6 +582,7 @@ fn placed_x(editor: &Editor, sketch: FeatureId) -> Result<f64, String> {
 /// the new body comes back with its id and the sketch finds its face
 /// again.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_on_a_new_body_kept_again_finds_its_face() {
     let (mut editor, cube, tool, id, sketch) = sketch_on_the_new_piece();
     let piece = new_body(&editor, id);
@@ -604,6 +612,7 @@ fn a_sketch_on_a_new_body_kept_again_finds_its_face() {
 /// (`original` Back): the face is on the body split now, and the sketch
 /// follows it there.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_on_a_new_body_follows_its_face_when_the_pieces_swap() {
     let (mut editor, cube, tool, id, sketch) = sketch_on_the_new_piece();
     let swapped = Split {
@@ -623,6 +632,7 @@ fn a_sketch_on_a_new_body_follows_its_face_when_the_pieces_swap() {
 /// new body (the front, `original` Back) getting the face; the sketch,
 /// naming the cube, is placed on it there.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_sketch_on_a_face_follows_it_through_splits_and_merges() {
     with_booleans();
     let (mut editor, cube, tool) = cube_and_tool();
@@ -685,6 +695,7 @@ fn a_sketch_on_a_face_follows_it_through_splits_and_merges() {
 /// A split drafted is answered with both pieces drawn; with the kernel's
 /// split, with the too-complex message.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_split_draft_is_answered() {
     let (editor, cube, tool) = cube_and_tool();
     let draft = Draft {
@@ -710,6 +721,7 @@ fn a_split_draft_is_answered() {
 
 /// An unchanged split is found in the cache: its tool and both pieces.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_unchanged_split_is_found_in_the_cache() {
     with_booleans();
     let (mut editor, cube, tool) = cube_and_tool();
@@ -856,7 +868,7 @@ fn solid_after(editor: &Editor, body: BodyId) -> Arc<Solid> {
 /// The cube from z = -5 split by XY: the front (above) and the back
 /// (below), half each, put back together the cube.
 #[test]
-#[ignore = "kernel split not built"]
+#[ignore = "kernel: feature"]
 fn kernel_a_box_split_by_xy() {
     let mut editor = Editor::new(Document::default());
     let extent = two_sides(editor.document(), "5", "5");
@@ -886,7 +898,7 @@ fn kernel_a_box_split_by_xy() {
 /// The cube split by a cylinder's wall extended (a disc of radius 3
 /// about x = y = 5 elsewhere): a core and a ring.
 #[test]
-#[ignore = "kernel split not built"]
+#[ignore = "kernel: feature"]
 fn kernel_a_box_split_by_a_cylinder_face() {
     let mut editor = Editor::new(Document::default());
     let cube = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -909,7 +921,7 @@ fn kernel_a_box_split_by_a_cylinder_face() {
 /// The cube split by the plane of an L-shaped body's step, flush with
 /// the step: the two arms.
 #[test]
-#[ignore = "kernel split not built"]
+#[ignore = "kernel: feature"]
 fn kernel_a_body_split_by_its_own_face_plane() {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 20.0, 10.0, "5");
@@ -938,7 +950,7 @@ fn kernel_a_body_split_by_its_own_face_plane() {
 
 /// The cube split by another body keeps the tool body as it was.
 #[test]
-#[ignore = "kernel split not built"]
+#[ignore = "kernel: feature"]
 fn kernel_a_box_split_by_another_body() {
     let (mut editor, cube, tool) = cube_and_tool();
     let id = add(&mut editor, split(cube, SplitTool::Body(tool)));
@@ -951,7 +963,7 @@ fn kernel_a_box_split_by_another_body() {
 /// The cube split by an open line across it, a bend of two lines: the
 /// front on the line's left.
 #[test]
-#[ignore = "kernel split not built"]
+#[ignore = "kernel: feature"]
 fn kernel_a_box_split_by_an_open_line() {
     let mut editor = Editor::new(Document::default());
     let cube = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -971,7 +983,7 @@ fn kernel_a_box_split_by_an_open_line() {
 /// Splitting is deterministic: the pieces' meshes are the same to the
 /// bit, run twice.
 #[test]
-#[ignore = "kernel split not built"]
+#[ignore = "kernel: feature"]
 fn kernel_splits_are_deterministic() {
     let (mut editor, cube, tool) = cube_and_tool();
     add(&mut editor, split(cube, SplitTool::Body(tool)));

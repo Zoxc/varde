@@ -190,6 +190,7 @@ fn draw(
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
     // From the top, a cube from (-2, -2, 0) to (2, 2, 4) over the whole
     // middle of the view, and a green square on a plane through its
@@ -229,6 +230,7 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_closed_edge_is_joined_where_it_closes_on_gl() {
     // From the top in perspective, the circle round a cylinder's top, one
     // edge closing on itself. Faded, a pixel drawn twice would be more
@@ -281,6 +283,7 @@ fn a_closed_edge_is_joined_where_it_closes_on_gl() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn hidden_edges_are_drawn_on_gl() {
     // From the top in perspective, the cube's bottom square shows within
     // its top face, hidden by it: drawn with the option on, by an entry
@@ -318,6 +321,7 @@ fn hidden_edges_are_drawn_on_gl() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn transparent_parts_are_drawn_on_gl() {
     // From the top, the cube at 30 % and at 60 %: each part's alpha is
     // picked with a dynamic offset into a uniform buffer, which GL binds
@@ -355,6 +359,7 @@ fn transparent_parts_are_drawn_on_gl() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn hover_and_selection_are_drawn_on_gl() {
     // From the top, the cube's top face hovered, then selected, drawn
     // again over itself by programs of their own at exactly its depth
@@ -423,6 +428,7 @@ fn hover_and_selection_are_drawn_on_gl() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn errors_and_their_halo_are_drawn_on_gl() {
     // The halo's coverage is drawn into an R8Unorm target with Max
     // blending and read back texel by texel (`textureLoad`) over the

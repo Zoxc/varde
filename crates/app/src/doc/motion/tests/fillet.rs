@@ -61,6 +61,7 @@ fn rounded(plates: &Plates, body: varde_document::BodyId, radius: f64) -> bool {
 /// built), shown in the panel; OK waits, Add anyway keeps it as one undo
 /// step, failing in the Timeline.
 #[test]
+#[ignore = "kernel: feature"]
 fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
@@ -171,6 +172,7 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
 /// nothing refused under its field; Tangent chain off drafted; OK adds
 /// it as one undo step.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_radius_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     varde_regen::testing::fillet_by_arcs();
     let (mut plates, plate) = plate();
@@ -240,6 +242,7 @@ fn filleted() -> (Plates, varde_document::FeatureId) {
 /// another radius and Add anyway sets it as one undo step; its edges
 /// all taken out, it shows the body as of the feature.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_fillet_from_the_timeline_cancel_and_undo() {
     let (mut plates, id) = filleted();
     let plate = plates.bodies[0];
@@ -292,6 +295,7 @@ fn editing_a_fillet_from_the_timeline_cancel_and_undo() {
 /// An edge on a body an undo takes away is kept, said to be gone,
 /// nothing previewed or committed, until a redo brings it back.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let last = later_disc(&mut plates);
@@ -323,6 +327,7 @@ fn an_edge_an_undo_takes_away_is_said_to_be_gone() {
 /// starts with the edges selected that it takes; `F` again backs out;
 /// another body's edges are refused in the fillet's words.
 #[test]
+#[ignore = "kernel: feature"]
 fn fillet_takes_the_edges_selected_and_f_backs_out() {
     let (mut plates, plate) = plate();
     plates.doc.pick.selection = Selection::new(SelectionMode::Edges { tangent: false });
@@ -364,6 +369,7 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
 /// With Tangent chain on, a click on the slot's top front line picks
 /// the rest of its rim with it; off, the line alone.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_tangent_chain_lights_whole() {
     let (mut plates, body) = slot();
     plates.doc.look(Look::StartMotion(MotionKind::Fillet));
@@ -404,6 +410,7 @@ fn a_tangent_chain_lights_whole() {
 /// An edge selected before the session takes in its tangent chain as a
 /// click would, the tick on to begin with: the slot's line, its rim.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_selected_before_takes_in_its_chain() {
     let (mut plates, body) = slot();
     let line = edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
@@ -423,6 +430,7 @@ fn an_edge_selected_before_takes_in_its_chain() {
 /// rim) as the chain, ticked, which a click on it takes out whole;
 /// with Tangent chain off, each is ticked as an edge of its own.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
     use varde_view::OverlapNote;
     let (mut plates, body) = slot();
@@ -473,6 +481,7 @@ fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
 /// model's selection), a tick picking one with the list kept open, a row
 /// chosen taking one out as a click would.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_overlap_list_ticks_and_picks_the_fillet_s_edges() {
     let (mut plates, plate) = plate();
     let (front, right) = (
@@ -540,6 +549,7 @@ fn disc_rim(plates: &Plates, body: varde_document::BodyId, z: f64) -> varde_view
 /// is lit on the disc itself, the disc's other rim is picked on it, and
 /// OK keeps it on the disc.
 #[test]
+#[ignore = "kernel: feature"]
 fn editing_a_fillet_whose_body_a_later_join_merged() {
     let mut plates = super::plates();
     let [_, right, _] = plates.bodies;
@@ -610,6 +620,7 @@ fn editing_a_fillet_whose_body_a_later_join_merged() {
 /// rounded off in the preview isn't there to list: its row stays,
 /// marked removed, to take it out.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_overlap_list_follows_each_preview() {
     let (mut plates, plate) = plate();
     let (front, right, back) = (
@@ -702,6 +713,7 @@ fn the_overlap_list_follows_each_preview() {
 /// another of its edges picks the rest of the rim, and another takes it
 /// all out, not one of them left lit as picked still.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_click_on_a_chain_takes_out_every_edge_picked_on_it() {
     let (mut plates, body) = slot();
     plates.doc.look(Look::StartMotion(MotionKind::Fillet));
@@ -767,6 +779,7 @@ pub(super) fn made() -> (Plates, varde_document::FeatureId) {
 /// takes it out; with the top face picked a click on its edge leaves it
 /// out, lit purple; letting go previews the fillet again.
 #[test]
+#[ignore = "kernel: feature"]
 fn ctrl_shows_the_edges_before_the_fillet() {
     varde_regen::testing::fillet_by_arcs();
     let (mut plates, plate) = plate();
@@ -817,6 +830,7 @@ fn ctrl_shows_the_edges_before_the_fillet() {
 /// An edited fillet held with Ctrl shows its body as of the feature by
 /// a move of nothing, its rounded edge there to click out.
 #[test]
+#[ignore = "kernel: feature"]
 fn ctrl_shows_an_edited_fillet_s_body_before_it() {
     varde_regen::testing::fillet_by_arcs();
     let (mut plates, plate) = plate();

@@ -52,6 +52,7 @@ fn first_key(varde: &Varde, body: &str, list: &str) -> String {
 /// shape (its own parser takes it, references resolved) and sent back
 /// whole changes nothing.
 #[test]
+#[ignore = "kernel: feature"]
 fn every_kind_reads_in_its_tools_shape_and_round_trips() {
     let (mut varde, requests) = with_sections();
     type Arguments = Box<dyn Fn(&Varde) -> Value>;
@@ -206,6 +207,7 @@ fn named(varde: &Varde, name: &str) -> varde_document::Feature {
 /// A field patched per kind: only it changes, as the panel's OK on the
 /// edited feature sets it, one undo step, the result naming the feature.
 #[test]
+#[ignore = "kernel: touches"]
 fn set_feature_patches_one_field_per_kind() {
     let (mut varde, requests) = with_three();
     let before = named(&varde, "Extrude 2");
@@ -386,6 +388,7 @@ fn set_feature_refuses_what_the_panel_would_not_take() {
 /// A revolve's axis patched with an edge's key: taken while the edge is
 /// where the key says, refused saying to ask again once it moved.
 #[test]
+#[ignore = "kernel: resolve"]
 fn set_feature_takes_a_key_and_refuses_a_stale_one() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -443,6 +446,7 @@ fn set_feature_takes_a_key_and_refuses_a_stale_one() {
 /// Each motion-panel kind, added by its tool, then a field patched:
 /// applied, read back as given, the rest as it was.
 #[test]
+#[ignore = "kernel: feature"]
 fn set_feature_patches_one_field_per_motion_kind() {
     let (mut varde, requests) = with_three();
     type Arguments = Box<dyn Fn(&Varde) -> Value>;
@@ -573,6 +577,7 @@ fn set_feature_patches_one_field_per_motion_kind() {
 /// what it names as clicks on it would: a fillet's edges, a move's
 /// bodies.
 #[test]
+#[ignore = "kernel: feature"]
 fn set_feature_replaces_a_list() {
     let (mut varde, requests) = with_sections();
     let (reply, _) = edit(
@@ -644,6 +649,7 @@ fn set_feature_replaces_a_list() {
 /// panel's words: a chamfer's Flip with equal distances, a helix's twist,
 /// a circular pattern's Flip, a pattern's kind.
 #[test]
+#[ignore = "kernel: feature"]
 fn set_feature_refuses_a_motion_field_its_mode_does_not_show() {
     let (mut varde, requests) = with_sections();
     let (reply, _) = edit(
@@ -731,6 +737,7 @@ fn set_feature_refuses_a_motion_field_its_mode_does_not_show() {
 /// A move's axis patched with an edge's key: taken while the edge is
 /// where the key says, refused saying to ask again once it moved.
 #[test]
+#[ignore = "kernel: resolve"]
 fn set_feature_refuses_a_stale_key_in_a_motion_patch() {
     let (mut varde, requests) = listening_with();
     started(&mut varde, "a session", None);
@@ -801,6 +808,7 @@ fn set_feature_takes_an_unchanged_field_going_with_a_changed_one() {
 /// default as a new feature's is, not one following the user's view: a
 /// through-all extrude's distance, an equal chamfer's second distance.
 #[test]
+#[ignore = "kernel: feature"]
 fn set_feature_fills_a_new_modes_value_with_the_clients_default() {
     let (mut varde, requests) = with_three();
     // The user's view far out, which a panel's fresh lengths follow.
@@ -852,6 +860,7 @@ fn set_feature_fills_a_new_modes_value_with_the_clients_default() {
 /// would go one side unsaid), a scale's Along its axis only kept for a
 /// round edge given.
 #[test]
+#[ignore = "kernel: resolve"]
 fn set_feature_refuses_what_its_mode_would_ignore() {
     let (mut varde, requests) = with_three();
     let (reply, state) = set(

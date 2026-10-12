@@ -60,6 +60,8 @@ fn derived_names_follow_their_parts() {
     assert_ne!(span(0).key(), span(1).key());
 }
 
+/// The empty solid has no faces, edges or corners, whatever the kernel:
+/// no name resolves on it and no index has a region, form or run.
 #[test]
 fn the_empty_solid_s_topology_resolves_nothing() {
     let solid = Solid::empty();

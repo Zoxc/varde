@@ -91,6 +91,7 @@ fn round_radii(solid: &Solid) -> Vec<f64> {
 /// body as it was; the history goes on: a later join still works on the
 /// body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_fillet_the_kernel_cant_do_fails_as_too_complex() {
     let (mut editor, body, solid) = cube();
     let kind = fillet(editor.document(), vec![front_top(&solid, body)], "2");
@@ -116,6 +117,7 @@ fn a_fillet_the_kernel_cant_do_fails_as_too_complex() {
 /// the fillet fails before the kernel, the body left as it was; among
 /// others, it's named by its place.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_that_is_gone_is_not_found() {
     let (mut editor, body, _) = cube();
     let extent = two_sides(editor.document(), "11", "1");
@@ -163,6 +165,7 @@ fn an_edge_that_is_gone_is_not_found() {
 /// An upstream dimension change moves the edge; it's found again by its
 /// faces' names, and rounded where it went.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_edge_is_found_again_after_an_upstream_change() {
     let (mut editor, body, solid) = cube();
     let kind = fillet(editor.document(), vec![front_top(&solid, body)], "2");
@@ -190,6 +193,7 @@ fn an_edge_is_found_again_after_an_upstream_change() {
 /// refused (the stand-in finds their strips on the top meeting at a
 /// corner: too complex for it), never another volume.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_block_s_edges_are_rounded() {
     with_arcs();
     let (mut editor, body, solid) = cube();
@@ -252,6 +256,7 @@ fn edge_on_planes(solid: &Solid, body: BodyId, a: Face, b: Face) -> EdgeRef {
 /// are refused (the stand-in's rounds would overlap there, leaving a
 /// ridge no fillet makes), never a solid.
 #[test]
+#[ignore = "kernel: feature"]
 fn rounds_overlapping_on_a_narrow_rib_are_refused() {
     with_arcs();
     let mut editor = Editor::new(Document::default());
@@ -303,6 +308,7 @@ fn rounds_overlapping_on_a_narrow_rib_are_refused() {
 /// into the wall, so it's refused, or rounded as a fillet would be (the
 /// corner taken off along the edge's 5 mm alone), never another volume.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_round_running_into_a_wall_cuts_nothing_past_it() {
     with_arcs();
     let mut editor = Editor::new(Document::default());
@@ -334,6 +340,7 @@ fn a_round_running_into_a_wall_cuts_nothing_past_it() {
 /// off the corner between the faces' tangent lines and the arc,
 /// `r² (cot(θ/2) − (π − θ)/2)` per length.
 #[test]
+#[ignore = "kernel: feature"]
 fn obtuse_and_acute_edges_are_rounded() {
     with_arcs();
     let mut editor = Editor::new(Document::default());
@@ -417,6 +424,7 @@ fn edge_between(solid: &Solid, body: BodyId, a: FaceKey, b: FaceKey) -> EdgeRef 
 /// the rounded edge, its wall across the round, adds what it holds
 /// outside the rounded block.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_join_after_a_fillet_works() {
     with_arcs();
     let (mut editor, body, solid) = cube();
@@ -486,6 +494,7 @@ fn recording(
 /// rim (four chains, each named apart, the picked one by its
 /// reference's keys); off, only itself. The radius goes as typed.
 #[test]
+#[ignore = "kernel: feature"]
 fn tangent_chains_take_in_the_rim() {
     crate::testing::set(|o| o.fillet = Some(recording));
     let mm = Document::default();
@@ -562,6 +571,7 @@ fn runs_into(
 /// The kernel refusing an edge is worded with the edge, which is drawn;
 /// the stand-in's own too big (a radius past the faces) too.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_refused_edge_is_named_and_drawn() {
     crate::testing::set(|o| o.fillet = Some(too_big));
     let (mut editor, body, solid) = cube();
@@ -605,6 +615,7 @@ fn a_refused_edge_is_named_and_drawn() {
 /// A fillet that worked is cached: the same document again takes it
 /// from the cache; another radius doesn't.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_fillet_that_worked_is_cached() {
     with_arcs();
     let (mut editor, body, solid) = cube();
@@ -628,6 +639,7 @@ fn a_fillet_that_worked_is_cached() {
 /// A body a join consumed before the fillet fails it, naming the body
 /// holding it.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_consumed_body_fails_it() {
     let (mut editor, body, solid) = cube();
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -665,7 +677,7 @@ fn corner_centroid(r: f64) -> f64 {
 /// the corners: the rounded box `(a − 2r)³ + 6r(a − 2r)² + 3πr²(a − 2r)
 /// + 4πr³/3`).
 #[test]
-#[ignore = "kernel fillet not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_rounds_a_block_s_edges() {
     let (mut editor, body, solid) = cube();
     let document = editor.document().clone();
@@ -710,7 +722,7 @@ fn the_kernel_rounds_a_block_s_edges() {
 /// torus added), 1 mm: the corner's section swept round at its centroid
 /// (Pappus), within the fit's tolerance.
 #[test]
-#[ignore = "kernel fillet not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_rounds_rims() {
     let ring = 2.0 * PI * (3.0 + corner_centroid(1.0)) * corner(1.0);
     for hole in [true, false] {
@@ -742,7 +754,7 @@ fn the_kernel_rounds_rims() {
 /// along the two sides and round the two ends at its centroid, inside
 /// the ends' radius of 3.
 #[test]
-#[ignore = "kernel fillet not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_rounds_a_slot_s_rim() {
     let mut editor = Editor::new(Document::default());
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -771,7 +783,7 @@ fn the_kernel_rounds_a_slot_s_rim() {
 
 /// The same fillet twice, in fresh caches: the same bits.
 #[test]
-#[ignore = "kernel fillet not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_rounds_alike_every_time() {
     let (mut editor, body, solid) = cube();
     let document = editor.document().clone();

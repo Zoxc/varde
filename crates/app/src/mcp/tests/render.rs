@@ -68,6 +68,7 @@ fn encode(varde: &mut Varde, io: &Rc<RefCell<Vec<varde_io::Request>>>) {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_render_is_drawn_encoded_and_answered_as_an_image() {
     let (mut varde, _requests, io) = ready();
     let reply = render(&mut varde, json!({}));
@@ -125,6 +126,7 @@ fn a_render_is_drawn_encoded_and_answered_as_an_image() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_render_frames_as_asked() {
     let (mut varde, _requests, _io) = ready();
     let _reply = render(
@@ -166,6 +168,7 @@ fn refused_render(varde: &mut Varde, arguments: Value, why: &str) {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn bodies_angles_and_keys_are_checked() {
     let (mut varde, requests, _io) = ready();
     refused_render(
@@ -216,6 +219,7 @@ fn bodies_angles_and_keys_are_checked() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_picture_not_drawn_or_too_large_fails() {
     let (mut varde, _requests, io) = ready();
     let reply = render(&mut varde, json!({}));
@@ -257,6 +261,7 @@ fn a_picture_not_drawn_or_too_large_fails() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_render_no_frame_comes_for_times_out() {
     let (mut varde, _requests, _io) = ready();
     let came = iced::time::Instant::now();

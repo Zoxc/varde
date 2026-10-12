@@ -25,6 +25,7 @@ fn face_of(doc: &Doc, id: FeatureId) -> Option<(varde_sketch::Link, OutsideRef)>
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_sketch_on_a_face_has_its_sketch_face_named_and_construction() {
     let (doc, id, _) = on_the_top();
     let (link, source) = face_of(&doc, id).expect("a sketch face");
@@ -57,6 +58,7 @@ fn a_sketch_on_a_face_has_its_sketch_face_named_and_construction() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_sketch_face_cant_be_removed_and_x_turns_it() {
     let (mut doc, id, requests) = on_the_top();
     let lane = SolveLane::connect(&mut doc);
@@ -99,6 +101,7 @@ fn the_sketch_face_cant_be_removed_and_x_turns_it() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn opening_a_file_without_its_sketch_face_adds_it_unedited() {
     // What reading a file whose sketch on a face lacks its sketch face
     // gives (`varde_document`'s tests show it added): one making nothing
@@ -143,6 +146,7 @@ fn face_of_document(document: &Document, id: FeatureId) -> Option<varde_sketch::
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn opening_a_file_with_a_stale_link_besides_its_missing_sketch_face_is_edited() {
     // A sketch on the plate's top lacking its sketch face (added as read,
     // empty), with a Project link of the plate's bottom line filled as

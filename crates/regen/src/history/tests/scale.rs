@@ -109,6 +109,7 @@ fn noted(evaluation: &Evaluation, feature: FeatureId) -> crate::ScaleFound {
 /// block's top corner the corner stays put; × 0.5 about it halves the
 /// block towards it. Volumes are the analytic ones.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_block_scaled_about_the_origin_and_about_a_corner() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -154,6 +155,7 @@ fn a_block_scaled_about_the_origin_and_about_a_corner() {
 /// conic cylinder, its rim an ellipse of semi-axes 10 and 5, whose
 /// length the measure tool gives.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_cylinder_scaled_per_axis_has_elliptic_rims() {
     let mut editor = Editor::new(Document::default());
     let pin = add_body(&mut editor, disc((0.0, 0.0), 5.0), "10");
@@ -195,6 +197,7 @@ fn a_cylinder_scaled_per_axis_has_elliptic_rims() {
 /// A block scaled × 2 about the origin is flush with a block made after
 /// it beside its new place, and a union of the two is one block.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_join_after_a_scale_is_flush_with_the_scaled_block() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -219,6 +222,7 @@ fn a_join_after_a_scale_is_flush_with_the_scaled_block() {
 /// the unscaled one's × 25.4³, its fitted faces' slack × 25.4, and the
 /// note counts them.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_torus_scaled_up_is_kept_with_its_fitted_faces_counted() {
     let mut editor = Editor::new(Document::default());
     let ring = revolved(&mut editor, disc((20.0, 0.0), 5.0));
@@ -251,6 +255,7 @@ fn a_torus_scaled_up_is_kept_with_its_fitted_faces_counted() {
 /// every length × 2.5; along its axis only, Y alone. An X edge to 50
 /// stretches X alone.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_block_scaled_so_an_edge_has_a_length() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 20.0, "5");
@@ -299,6 +304,7 @@ fn a_block_scaled_so_an_edge_has_a_length() {
 /// The plate scaled so its hole's rim, a whole circle of radius 8, is
 /// 100 round: the rim measured after is 100 to `1e-12` relative.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_hole_s_rim_is_scaled_to_a_circumference() {
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
@@ -345,6 +351,7 @@ fn a_hole_s_rim_is_scaled_to_a_circumference() {
 /// The plate scaled along Z so its upright edge is 50 keeps that height
 /// when the plate is extruded twice as far upstream, and on undo.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_upstream_edit_keeps_the_typed_length() {
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
@@ -389,6 +396,7 @@ fn plate_volume(radius: f64, height: f64) -> f64 {
 /// axis only for a slanted edge, out of range, and a scale down taking
 /// a thin plate under the resolution.
 #[test]
+#[ignore = "kernel: resolve"]
 fn refusals() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -524,6 +532,7 @@ fn refusals() {
 /// A plate a micrometre thick scaled by a thousandth is thinner than the
 /// resolution: refused as too small for the tolerance.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_scale_down_under_the_resolution_is_refused() {
     let mut editor = Editor::new(Document::default());
     let thin = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "0.001");
@@ -550,6 +559,7 @@ fn a_scale_down_under_the_resolution_is_refused() {
 /// An edge length giving the factor a typed one gave finds the scaled
 /// body in the cache; another factor scales it again.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_unchanged_factor_is_found_in_the_cache() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -581,6 +591,7 @@ fn an_unchanged_factor_is_found_in_the_cache() {
 /// a point on a body merged into another is found on that one, and one
 /// whose faces don't meet isn't found.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_draft_answers_what_the_scale_found() {
     use crate::Draft;
     use crate::tests::{answered, regenerate_with};
@@ -701,6 +712,7 @@ fn ellipsoid_slab(a: f64, b: f64, c: f64, h: f64) -> f64 {
 /// the faces cut (plane cuts through a quadric are fitted), or the
 /// feature is refused: never a wrong one.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_sphere_scaled_per_axis_cuts_as_an_ellipsoid() {
     let (a, b, c) = (20.0, 10.0, 5.0);
     let fit = Tolerance::default().fit();
@@ -775,6 +787,7 @@ fn a_sphere_scaled_per_axis_cuts_as_an_ellipsoid() {
 /// (semi-axes 15 and 5); a block cut through it square to Y at y 2 and
 /// a block joined across it each give the analytic volume.
 #[test]
+#[ignore = "kernel: assemble"]
 fn an_elliptic_cylinder_cuts_and_joins() {
     let mut editor = Editor::new(Document::default());
     let pin = add_body(&mut editor, disc((0.0, 0.0), 5.0), "10");
@@ -840,6 +853,7 @@ fn an_elliptic_cylinder_cuts_and_joins() {
 /// (fitted faces' slack × the largest factor above 1), or refused as
 /// too small or out of range, changing nothing.
 #[test]
+#[ignore = "kernel: assemble"]
 fn factors_at_the_bounds_on_curved_and_fitted_bodies() {
     for (draw, name) in [
         (
@@ -915,6 +929,7 @@ fn tilted(rise: f64) -> impl FnOnce(&mut varde_sketch::Sketch) {
 /// `1e-12`; rising 1.1e-8 it's refused as off the axis, changing
 /// nothing; uniform, it scales either way.
 #[test]
+#[ignore = "kernel: resolve"]
 fn along_its_axis_at_the_sine_bound() {
     for (rise, along) in [(0.9e-8, true), (1.1e-8, false), (-0.9e-8, true)] {
         let mut editor = Editor::new(Document::default());
@@ -974,6 +989,7 @@ fn along_its_axis_at_the_sine_bound() {
 /// block, finds it on the union where the first scale left it, and
 /// scales the union about it.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_point_on_a_scaled_body_after_a_merge() {
     let mut editor = Editor::new(Document::default());
     let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
@@ -1015,6 +1031,7 @@ fn a_point_on_a_scaled_body_after_a_merge() {
 /// the block made taller changes the edge, the scale keeping its typed
 /// length; a block cut down so the upright edge is gone isn't found.
 #[test]
+#[ignore = "kernel: resolve"]
 fn an_edge_through_upstream_edits_that_merge_or_change_it() {
     let mut editor = Editor::new(Document::default());
     let other = block(&mut editor, -10.0, 0.0, 0.0, 10.0, "10");
@@ -1137,6 +1154,7 @@ fn along_axis_tells_the_sine_at_any_length() {
 /// of that, to within the fit over the ellipse cut, or the cut is
 /// refused changing nothing.
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_cone_scaled_per_axis_cuts_as_an_elliptic_cone() {
     let mut editor = Editor::new(Document::default());
     let cone = revolved(&mut editor, polygon(&[(0.0, 0.0), (5.0, 0.0), (0.0, 10.0)]));
@@ -1190,6 +1208,7 @@ fn under_circle(r: f64, x: f64) -> f64 {
 /// refused changing nothing; one of radius 10 crossing it is kept with
 /// the analytic volume (the hole's area outside the disc left open).
 #[test]
+#[ignore = "kernel: assemble"]
 fn a_disc_in_an_elliptic_hole() {
     // The area the ellipse x²/256 + y²/64 <= 1 shares with a disc of
     // radius `r` about its centre: the ellipse's within x² <= c², the

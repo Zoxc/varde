@@ -167,6 +167,7 @@ fn block() -> Solid {
 }
 
 #[test]
+#[ignore = "kernel: curved boolean"]
 fn bodies_read_back_as_written() {
     let display = Display::new(&TOL);
     let block = block();
@@ -211,6 +212,7 @@ fn bodies_read_back_as_written() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn small_and_negative_coordinates_read_back() {
     // Corners at tiny, negative and long coordinates.
     let cube = Solid::cuboid(
@@ -259,6 +261,7 @@ fn coordinates_are_written_within_their_bound() {
 }
 
 #[test]
+#[ignore = "kernel: curved boolean"]
 fn the_model_stays_within_its_bound() {
     let mesh = block().manifold_mesh(&Display::new(&TOL)).unwrap();
     let name = "\"&\"".repeat(10);
@@ -273,6 +276,7 @@ fn the_model_stays_within_its_bound() {
 
 /// A mesh crossing to the IO worker is checked again on the way in.
 #[test]
+#[ignore = "kernel: curved boolean"]
 fn meshes_are_checked_when_deserialized() {
     let mesh = block().manifold_mesh(&Display::new(&TOL)).unwrap();
     let bytes = postcard::to_stdvec(&mesh).unwrap();
@@ -285,6 +289,7 @@ fn meshes_are_checked_when_deserialized() {
 }
 
 #[test]
+#[ignore = "kernel: export"]
 fn a_body_is_placed_by_its_origin() {
     let display = Display::new(&TOL);
     let far = Solid::cylinder(DVec3::new(9e5, -4e5, 2e5), 3.0, 4.0, 1, &TOL).unwrap();

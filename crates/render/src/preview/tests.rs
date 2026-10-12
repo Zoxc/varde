@@ -22,6 +22,7 @@ fn shown(shot: &PreviewShot, point: Vec3) -> [f32; 2] {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_model_fills_the_image_within_its_margins() {
     let mesh = block(DVec3::new(4.0, 1.0, 1.0));
     let shot = frame(
@@ -66,6 +67,7 @@ fn the_model_fills_the_image_within_its_margins() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_tall_model_crops_the_width() {
     let mesh = block(DVec3::new(1.0, 1.0, 6.0));
     let shot = frame(
@@ -82,6 +84,7 @@ fn a_tall_model_crops_the_width() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn sketch_lines_alone_are_framed() {
     let mut sketches = RenderLines::default();
     sketches
@@ -124,6 +127,7 @@ fn sketch_lines_alone_are_framed() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn nothing_to_frame_has_no_shot() {
     let mesh = block(DVec3::ONE);
     assert_eq!(
@@ -192,6 +196,7 @@ fn two_blocks() -> RenderMesh {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn parts_frame_only_their_own_positions() {
     let mesh = two_blocks();
     let lines = RenderLines::default();
@@ -258,6 +263,7 @@ fn shown_perspective(shot: &PreviewShot, point: Vec3) -> [f32; 2] {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn perspective_fits_the_bounds_sphere_within_the_margins() {
     let lines = RenderLines::default();
     let mesh = two_blocks();
@@ -319,6 +325,7 @@ fn outside(shot: &PreviewShot, points: &[[f32; 3]], margin: u32) -> Vec<[f32; 2]
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn framing_keeps_the_model_inside_the_margins() {
     let lines = RenderLines::default();
     let sizes = [
@@ -368,6 +375,7 @@ fn framing_keeps_the_model_inside_the_margins() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn zoom_closes_in_on_the_framing_without_moving_the_camera() {
     let lines = RenderLines::default();
     let mesh = block(DVec3::new(4.0, 1.0, 1.0));

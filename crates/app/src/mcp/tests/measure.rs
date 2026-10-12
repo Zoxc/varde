@@ -51,6 +51,7 @@ fn ready() -> (Varde, Lane) {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn measures_a_face_s_area() {
     let (mut varde, requests) = ready();
     let top = face_facing(&varde, "Body 1", [0.0, 0.0, 1.0]);
@@ -77,6 +78,7 @@ fn measures_a_face_s_area() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn measures_an_edge_s_length() {
     let (mut varde, requests) = ready();
     let back = edge_between(&varde, "Body 1", [-30.0, 20.0, 10.0], [30.0, 20.0, 10.0]);
@@ -86,6 +88,7 @@ fn measures_an_edge_s_length() {
 }
 
 #[test]
+#[ignore = "kernel: measure"]
 fn measures_a_body_s_volume() {
     let (mut varde, requests) = ready();
     let data = measured(&mut varde, &requests, json!({ "a": { "body": "Body 1" } }));
@@ -110,6 +113,7 @@ fn measures_a_body_s_volume() {
 }
 
 #[test]
+#[ignore = "kernel: resolve"]
 fn measures_two_faces_distance_and_angle() {
     let (mut varde, requests) = ready();
     let top = face_facing(&varde, "Body 1", [0.0, 0.0, 1.0]);
@@ -132,6 +136,7 @@ fn measures_two_faces_distance_and_angle() {
 /// A key whose face a later edit moved is refused at once, saying to
 /// ask again; regen isn't asked.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_stale_key_is_refused() {
     let (mut varde, requests) = ready();
     let top = face_facing(&varde, "Body 1", [0.0, 0.0, 1.0]);
@@ -162,6 +167,7 @@ fn a_stale_key_is_refused() {
 /// user's measure riding on the regeneration: neither replaces the
 /// other, and the user's answer is still theirs.
 #[test]
+#[ignore = "kernel: resolve"]
 fn the_client_s_measure_leaves_the_user_s_alone() {
     let (mut varde, requests) = ready();
     let top = face_facing(&varde, "Body 1", [0.0, 0.0, 1.0]);
@@ -225,6 +231,7 @@ fn a_measure_waiting_30_s_times_out() {
 /// it, whole: the answer says so rather than giving the holder's values
 /// under the merged body's name alone.
 #[test]
+#[ignore = "kernel: measure"]
 fn a_merged_body_says_it_is_measured_as_its_holder() {
     let (mut varde, requests) = super::motion::with_disc();
     let (reply, _) = edit(

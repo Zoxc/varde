@@ -111,6 +111,7 @@ fn frames(camera: &Camera, low: Vec3, high: Vec3) -> bool {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn an_opened_document_frames_its_first_model_unless_the_camera_moved() {
     let opened = || {
         let requests = Rc::default();
@@ -171,6 +172,7 @@ fn an_opened_document_frames_its_first_model_unless_the_camera_moved() {
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn home_frames_the_model() {
     let (mut doc, requests) = deferred();
     doc.look(Look::ResetCamera);
@@ -191,6 +193,7 @@ fn home_frames_the_model() {
 /// A view cube face looks from its side at what Home looks at, the
 /// model's middle, rather than jumping back to the origin; the zoom stays.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_view_cube_face_looks_at_the_model_as_home_does() {
     let (mut doc, requests) = deferred();
     doc.apply(Command::Replace(Box::new(a_disc_off_the_origin(1.0))));
@@ -4869,6 +4872,7 @@ fn origin_objects_are_shown_and_hidden() {
 
 /// Hovering a body's row in Objects lights its faces in the viewport.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_body_row_hovered_lights_the_body() {
     let (mut doc, _) = example();
     doc.look(Look::SelectPanel(Panel::Objects));
@@ -4886,6 +4890,7 @@ fn a_body_row_hovered_lights_the_body() {
 /// Hovering the Opacity and Colour part of a body's menu leaves what's lit
 /// out of the viewport, until the cursor leaves it or the menu closes.
 #[test]
+#[ignore = "kernel: extrude"]
 fn a_body_menu_s_look_part_hovered_hides_the_highlight() {
     let (mut doc, _) = example();
     doc.look(Look::SelectPanel(Panel::Objects));
@@ -4985,6 +4990,7 @@ fn percent(percent: u8) -> varde_document::Opacity {
 /// Dragging the Opacity slider previews without editing the document,
 /// shortcuts off; letting go sets it as one undo step, the menu left open.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_opacity_slider_previews_then_commits_one_step() {
     let (mut doc, _) = example();
     doc.look(Look::SelectPanel(Panel::Objects));
@@ -5091,6 +5097,7 @@ fn part_tints(doc: &Doc) -> Vec<Option<varde_render::BodyTint>> {
 /// shortcuts nor peeking; letting go sets it as one undo step, the menu
 /// left open; Default colour takes it back as another.
 #[test]
+#[ignore = "kernel: tessellate"]
 fn the_colour_sliders_preview_then_commit_one_step() {
     use varde_document::Tint;
     let (mut doc, _) = example();

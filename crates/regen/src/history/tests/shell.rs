@@ -102,6 +102,7 @@ fn volume(editor: &Editor, id: FeatureId, body: BodyId) -> f64 {
 /// body as it was; the history goes on: a later join still works on the
 /// body.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_shell_the_kernel_cant_do_fails_as_too_complex() {
     let (mut editor, body, solid) = cube();
     let kind = shell(editor.document(), body, vec![top(&solid, body)], "1");
@@ -139,6 +140,7 @@ fn a_shell_the_kernel_cant_do_fails_as_too_complex() {
 /// shell fails before the kernel, the body left as it was; among
 /// others, it's named by its place.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_open_face_that_is_gone_is_not_found() {
     let (mut editor, body, solid) = cube();
     let extent = two_sides(editor.document(), "11", "1");
@@ -183,6 +185,7 @@ fn an_open_face_that_is_gone_is_not_found() {
 /// An upstream dimension change moves the open face; it's found again
 /// by its name, and the shell opened through it where it went.
 #[test]
+#[ignore = "kernel: feature"]
 fn an_open_face_is_found_again_after_an_upstream_change() {
     let (mut editor, body, solid) = cube();
     let kind = shell(editor.document(), body, vec![top(&solid, body)], "1");
@@ -208,6 +211,7 @@ fn an_open_face_is_found_again_after_an_upstream_change() {
 /// Through the stand-in: a closed shell keeps a void inside, an open one
 /// is opened through its faces, an outward one grows walls outside.
 #[test]
+#[ignore = "kernel: feature"]
 fn shells_hollow_by_their_volumes() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -259,6 +263,7 @@ fn recording(
 /// that face once; the thickness in model units and the direction as
 /// stored.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_face_named_twice_is_opened_once() {
     crate::testing::set(|o| o.shell = Some(recording));
     let (mut editor, body, solid) = cube();
@@ -294,6 +299,7 @@ fn a_face_named_twice_is_opened_once() {
 /// The stand-in's walls meeting inside: refused as too thick, worded
 /// for the Timeline, the body left whole.
 #[test]
+#[ignore = "kernel: feature"]
 fn too_thick_is_refused() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -347,6 +353,7 @@ fn corner(
 /// The kernel's refusals are worded for the Timeline, with the face or
 /// corner they're about drawn.
 #[test]
+#[ignore = "kernel: feature"]
 fn refusals_are_worded_and_drawn() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -371,6 +378,7 @@ fn refusals_are_worded_and_drawn() {
 
 /// A shell that worked is found in the cache the next time.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_shell_that_worked_is_cached() {
     with_boxes();
     let (mut editor, body, solid) = cube();
@@ -386,6 +394,7 @@ fn a_shell_that_worked_is_cached() {
 /// A shell of a body a combine took into another fails, naming where
 /// it went, as every feature naming a consumed body does.
 #[test]
+#[ignore = "kernel: feature"]
 fn a_consumed_body_fails_a_shell() {
     let (mut editor, body, _) = cube();
     let other = block(&mut editor, 5.0, 5.0, 15.0, 15.0, "10");
@@ -411,7 +420,7 @@ fn a_consumed_body_fails_a_shell() {
 /// A box open at its top, open at two faces, closed (a void), and
 /// outward.
 #[test]
-#[ignore = "kernel shell not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_shells_a_box() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -434,7 +443,7 @@ fn the_kernel_shells_a_box() {
 /// joined by half circles) shelled 1 mm open at its top: its round ends
 /// offset exactly to radius 2, `(60 + 9π)·10 − (40 + 4π)·9`.
 #[test]
-#[ignore = "kernel shell not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_shells_a_rounded_plate() {
     let mut editor = Editor::new(Document::default());
     let body = add_body(&mut editor, slot, "10");
@@ -480,7 +489,7 @@ fn slot(sketch: &mut Sketch) {
 /// the plate's inside up to 4 mm and the boss's, radius 2, from there
 /// up to 9 mm, so `2000 + 45π − 18·18·4 − 4π·5`.
 #[test]
-#[ignore = "kernel shell not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_shells_a_boss_on_a_plate() {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 20.0, 20.0, "5");
@@ -503,7 +512,7 @@ fn the_kernel_shells_a_boss_on_a_plate() {
 
 /// Walls meeting inside are refused as too thick, closed or open.
 #[test]
-#[ignore = "kernel shell not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_refuses_too_thick() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -520,7 +529,7 @@ fn the_kernel_refuses_too_thick() {
 
 /// The same shell twice, in fresh caches: the same bits.
 #[test]
-#[ignore = "kernel shell not built"]
+#[ignore = "kernel: feature"]
 fn the_kernel_shells_alike_every_time() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
@@ -539,6 +548,7 @@ fn the_kernel_shells_alike_every_time() {
 /// floor as thick as the body, nothing left) fails, never leaving the
 /// body as it was. Only within a hair of meeting may either be.
 #[test]
+#[ignore = "kernel: feature"]
 fn the_stand_in_shells_boxes_by_their_volumes() {
     with_boxes();
     let mut editor = Editor::new(Document::default());

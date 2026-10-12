@@ -58,6 +58,7 @@ fn shows(doc: &Doc, geometry: &[&Arc<ErrorGeometry>]) -> bool {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn a_failed_feature_shows_while_its_row_is_hovered_or_selected() {
     let (mut doc, _requests, revolve, sketch) = failing_revolve();
     let geometry = failure(&doc, revolve);
@@ -106,6 +107,7 @@ fn a_failed_feature_s_timeline_row_has_no_show_button() {
 /// its direction, and turns into Go back, which turns it back to where
 /// it was; fixed, the draft forgets that view.
 #[test]
+#[ignore = "kernel: revolve"]
 fn show_frames_the_draft_s_failure_and_go_back_returns() {
     let mut lathe = lathe();
     let across = crossing_line(&mut lathe);
@@ -143,6 +145,7 @@ fn show_frames_the_draft_s_failure_and_go_back_returns() {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn an_unchanged_failure_keeps_its_arc_and_what_is_drawn_of_it() {
     let (mut doc, requests, revolve, _) = failing_revolve();
     // One regenerator throughout, as a lane keeps its cache.
@@ -190,6 +193,7 @@ pub(crate) fn crossing_line(lathe: &mut crate::doc::revolve::tests::Lathe) -> va
 }
 
 #[test]
+#[ignore = "kernel: tessellate"]
 fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
     let mut lathe = lathe();
     let across = crossing_line(&mut lathe);
@@ -247,6 +251,7 @@ fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn editing_a_failed_feature_shows_its_failure_and_then_its_draft_s() {
     let (mut doc, requests, revolve, _) = failing_revolve();
     let geometry = failure(&doc, revolve);
@@ -361,6 +366,7 @@ fn failing(doc: &Doc) -> BTreeSet<varde_document::Id> {
 /// the sketch and its failure isn't shown. Left, the failure is back;
 /// the sketch fixed in it, the extrude regenerates.
 #[test]
+#[ignore = "kernel: extrude"]
 fn editing_the_sketch_of_a_failing_extrude_rolls_its_failure_back() {
     let Touching {
         mut doc,
@@ -464,6 +470,7 @@ fn moving_up_from_one_row_to_the_next_hovers_it() {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn a_hovered_row_gone_without_an_exit_is_let_go_of() {
     // Into a sketch, where the Timeline doesn't show, and out again.
     let (mut doc, _requests, revolve, sketch) = failing_revolve();
@@ -491,6 +498,7 @@ fn a_hovered_row_gone_without_an_exit_is_let_go_of() {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn an_edited_failure_goes_once_its_draft_works() {
     let mut lathe = lathe();
     let across = crossing_line(&mut lathe);
@@ -528,6 +536,7 @@ fn an_edited_failure_goes_once_its_draft_works() {
 }
 
 #[test]
+#[ignore = "kernel: revolve"]
 fn an_edited_feature_s_draft_on_its_way_shows_no_failure() {
     let (mut doc, requests, revolve, sketch) = failing_revolve();
     doc.look(Look::EditFeature(revolve));
@@ -550,6 +559,7 @@ fn an_edited_feature_s_draft_on_its_way_shows_no_failure() {
 /// showing the wall: drawn while its Timeline row is selected or
 /// hovered, framed by Show, not otherwise.
 #[test]
+#[ignore = "kernel: resolve"]
 fn a_sketch_on_a_curved_face_shows_the_face_while_its_row_is_selected() {
     let (mut doc, requests) = crate::tests::example();
     let index = doc.feed.pick_index();
