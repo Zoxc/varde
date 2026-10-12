@@ -73,6 +73,14 @@ impl Pivot {
     }
 }
 
+/// How far an animation begun at `start` is at `now`, from 0 to 1 eased
+/// out over [`CAMERA_ANIMATION`], or `None` once it's over: the camera's
+/// and the sketch fade's, which run together.
+fn eased(start: Instant, now: Instant) -> Option<f32> {
+    let t = now.saturating_duration_since(start).as_secs_f32() / CAMERA_ANIMATION.as_secs_f32();
+    (t < 1.0).then(|| 1.0 - (1.0 - t).powi(3))
+}
+
 /// The camera moving to a new view, eased out.
 pub(crate) struct CameraAnimation {
     pub(crate) from: Camera,
@@ -83,12 +91,7 @@ pub(crate) struct CameraAnimation {
 impl CameraAnimation {
     /// The camera at `now`, or `None` once the animation is over.
     pub(crate) fn at(&self, now: Instant) -> Option<Camera> {
-        let t = now.saturating_duration_since(self.start).as_secs_f32()
-            / CAMERA_ANIMATION.as_secs_f32();
-        (t < 1.0).then(|| {
-            let eased = 1.0 - (1.0 - t).powi(3);
-            self.from.lerp(&self.to, eased)
-        })
+        eased(self.start, now).map(|eased| self.from.lerp(&self.to, eased))
     }
 }
 
@@ -117,13 +120,12 @@ impl Fade {
 
     fn frame(&mut self, now: Instant) {
         if let Some((from, to, start)) = self.to {
-            let t =
-                now.saturating_duration_since(start).as_secs_f32() / CAMERA_ANIMATION.as_secs_f32();
-            if t < 1.0 {
-                self.value = from + (to - from) * (1.0 - (1.0 - t).powi(3));
-            } else {
-                self.value = to;
-                self.to = None;
+            match eased(start, now) {
+                Some(eased) => self.value = from + (to - from) * eased,
+                None => {
+                    self.value = to;
+                    self.to = None;
+                }
             }
         }
     }
@@ -169,11 +171,17 @@ impl Doc {
         }
     }
 
+    /// Moves the camera to `to`, eased, from now.
     pub(crate) fn animate_camera(&mut self, to: Camera) {
+        self.animate_camera_from(to, Instant::now());
+    }
+
+    /// Moves the camera to `to`, eased, from `now`.
+    fn animate_camera_from(&mut self, to: Camera, now: Instant) {
         self.animation = Some(CameraAnimation {
             from: self.camera,
             to,
-            start: Instant::now(),
+            start: now,
         });
     }
 
@@ -199,11 +207,7 @@ impl Doc {
                 .as_ref()
                 .map_or(self.camera, |animation| animation.to);
             to.center_on(at);
-            self.animation = Some(CameraAnimation {
-                from: self.camera,
-                to,
-                start: now,
-            });
+            self.animate_camera_from(to, now);
         }
         self.pivot = at.map(|at| Pivot {
             at,
