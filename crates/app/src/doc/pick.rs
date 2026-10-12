@@ -245,7 +245,7 @@ impl Doc {
     /// Whether `item` is a curve or point the cursor picks with the model
     /// now.
     fn selectable_sketch_item(&self, item: SketchItem) -> bool {
-        let edited = self.mode.sketch().map(|session| session.feature);
+        let edited = self.edited_id();
         (self.picks_sketch_items() || self.picks_outside())
             && Some(item.sketch) != edited
             && shown_sketch_item(self.editor.document(), item)

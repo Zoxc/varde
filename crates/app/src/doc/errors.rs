@@ -104,7 +104,7 @@ impl Doc {
     /// Whether `feature` takes its regions from the sketch being edited
     /// (a loft's from any of its sections' sketches).
     fn uses_edited_sketch(&self, feature: FeatureId) -> bool {
-        let Some(edited) = self.mode.sketch().map(|session| session.feature) else {
+        let Some(edited) = self.edited_id() else {
             return false;
         };
         (self.editor.document().feature(feature))

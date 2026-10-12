@@ -91,7 +91,7 @@ impl Doc {
     /// outside picks, where they're placed: the visible ones but the
     /// sketch being edited, later ones too, which a click is refused on.
     pub(crate) fn outside_sketches(&self) -> Vec<SketchLines<'_>> {
-        let Some(edited) = self.mode.sketch().map(|session| session.feature) else {
+        let Some(edited) = self.edited_id() else {
             return Vec::new();
         };
         self.placed_sketches(|feature| feature.visible && feature.id != edited)
@@ -152,7 +152,7 @@ impl Doc {
     /// document's features (their count if it isn't there).
     fn sketch_place(&self) -> (&str, usize) {
         let document = self.editor.document();
-        let edited = self.mode.sketch().map(|session| session.feature);
+        let edited = self.edited_id();
         let at = edited.and_then(|id| document.feature_index(id));
         let name = at.map_or("", |at| document.features()[at].name.as_str());
         (name, at.unwrap_or(document.insert_at()))
@@ -172,7 +172,7 @@ impl Doc {
             return Err(OUT_OF_DATE.into());
         }
         let (name, _) = self.sketch_place();
-        let naming = self.naming_at(self.mode.sketch().map(|session| session.feature));
+        let naming = self.naming_at(self.edited_id());
         outside_model_in(tool, self.feed.pick_index(), &naming, pick, name)
     }
 

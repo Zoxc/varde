@@ -22,7 +22,7 @@ impl Doc {
     /// lights what the link whose row is hovered comes from on the model
     /// shown. Its hover goes with a link that's gone.
     pub(crate) fn refresh_links(&mut self) {
-        let Some(feature) = self.mode.sketch().map(|session| session.feature) else {
+        let Some(feature) = self.edited_id() else {
             return;
         };
         let document = self.editor.document();
@@ -100,15 +100,8 @@ impl Doc {
     /// The sketch face of the sketch being edited, as committed: the
     /// Project link of the face it's on, if it's on one.
     pub(crate) fn sketch_face(&self) -> Option<Id> {
-        let session = self.mode.sketch()?;
-        match &self.editor.document().feature(session.feature)?.kind {
-            FeatureKind::Sketch {
-                plane,
-                sketch,
-                sources,
-            } => sketch_face(plane, sketch, sources),
-            _ => None,
-        }
+        let edited = self.edited_feature()?;
+        sketch_face(&edited.plane, edited.sketch, edited.sources)
     }
 
     /// Has the link `link`'s curves count for profiles, or not.

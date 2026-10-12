@@ -279,6 +279,29 @@ pub(crate) enum Refusal {
     Failed(String),
 }
 
+impl Refusal {
+    /// As the view takes it: what the edit ran into, or the solver's
+    /// error.
+    pub(crate) fn parts(&self) -> (Option<&Rejected>, Option<&str>) {
+        match self {
+            Refusal::Rejected(why) => (Some(why), None),
+            Refusal::Failed(error) => (None, Some(error)),
+        }
+    }
+}
+
+/// The sketch feature being edited, as the document holds it.
+pub(crate) struct Edited<'a> {
+    /// The feature itself.
+    pub(crate) feature: &'a Feature,
+    /// The plane its sketch is on.
+    pub(crate) plane: Plane,
+    /// Its sketch.
+    pub(crate) sketch: &'a Sketch,
+    /// What its links come from, one for each in their order.
+    pub(crate) sources: &'a [LinkSource],
+}
+
 /// A tool in use, and the shape it's drawing.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Drawing {
@@ -794,7 +817,7 @@ impl Doc {
     pub(crate) fn follow_placement(&mut self) {
         let shown = self.feed.generation();
         (self.placed).take_if(|placed| shown.is_some_and(|shown| shown >= placed.generation));
-        let Some(feature) = self.mode.sketch().map(|session| session.feature) else {
+        let Some(feature) = self.edited_id() else {
             return;
         };
         let Some(placement) = self.placement(feature) else {
@@ -1135,7 +1158,7 @@ impl Doc {
         let editable = self.editable();
         let document = self.editor.document();
         if replaced {
-            let edited = self.mode.sketch().map(|session| session.feature);
+            let edited = self.edited_id();
             let edited = edited.filter(|&id| is_sketch(document, id));
             self.selected_feature = self.selected_feature.filter(|&id| Some(id) == edited);
         }
@@ -1205,20 +1228,19 @@ impl Doc {
     pub(crate) fn sketch_state(&self) -> Option<SketchState<'_>> {
         static NONE: BTreeSet<Id> = BTreeSet::new();
         let session = self.mode.sketch()?;
-        let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
-            return None;
-        };
+        let Edited {
+            feature,
+            plane,
+            sketch,
+            ..
+        } = self.edited_feature()?;
         let waiting = session.waiting.as_ref();
-        let (refusal, solver_error) = match &session.refusal {
-            Some(Refusal::Rejected(why)) => (Some(why), None),
-            Some(Refusal::Failed(error)) => (None, Some(error.as_str())),
-            None => (None, None),
-        };
+        let (refusal, solver_error) =
+            (session.refusal.as_ref()).map_or((None, None), Refusal::parts);
         Some(SketchState {
             name: &feature.name,
             modified: *sketch != session.entered,
-            plane: *plane,
+            plane,
             placement: session.placement,
             sketch: self.shown_sketch()?,
             // Faded only once they've waited `feed::SLOW`, as the status
@@ -1341,29 +1363,43 @@ impl Doc {
         }
     }
 
+    /// The id of the sketch feature being edited, if one is.
+    pub(crate) fn edited_id(&self) -> Option<FeatureId> {
+        self.mode.sketch().map(|session| session.feature)
+    }
+
+    /// The sketch feature being edited, as the document holds it, if one
+    /// is.
+    pub(crate) fn edited_feature(&self) -> Option<Edited<'_>> {
+        let feature = self.editor.document().feature(self.edited_id()?)?;
+        let FeatureKind::Sketch {
+            plane,
+            sketch,
+            sources,
+        } = &feature.kind
+        else {
+            return None;
+        };
+        Some(Edited {
+            feature,
+            plane: *plane,
+            sketch,
+            sources,
+        })
+    }
+
     /// The sketch being edited as the document holds it, if one is, and
     /// the plane it's on.
     pub(crate) fn edited_sketch(&self) -> Option<(Plane, &Sketch)> {
-        let session = self.mode.sketch()?;
-        let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
-            return None;
-        };
-        Some((*plane, sketch))
+        self.edited_feature()
+            .map(|edited| (edited.plane, edited.sketch))
     }
 
     /// The sketch being edited as the document holds it, if one is, and
     /// what its links come from, one for each in their order.
     pub(crate) fn edited_links(&self) -> Option<(&Sketch, &[LinkSource])> {
-        let session = self.mode.sketch()?;
-        let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch {
-            sketch, sources, ..
-        } = &feature.kind
-        else {
-            return None;
-        };
-        Some((sketch, sources))
+        self.edited_feature()
+            .map(|edited| (edited.sketch, edited.sources))
     }
 
     /// The camera looking straight at the sketch being edited, if one is,

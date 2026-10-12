@@ -760,7 +760,7 @@ impl Doc {
     /// measured on it. Neither is measured with a draft, so no request
     /// carries both: a draft dragged never measures again at each step.
     fn request_model(&mut self) {
-        let exclude = self.mode.sketch().map(|session| session.feature);
+        let exclude = self.edited_id();
         // Held, the command modifier shows the model before the
         // operation, what its preview covers there to see.
         let before = self.operation_before();
@@ -783,7 +783,7 @@ impl Doc {
     /// The feature being edited, if one is: the sketch entered, or the
     /// operation set up from a feature rather than a new one.
     pub(crate) fn opened_feature(&self) -> Option<FeatureId> {
-        (self.mode.sketch().map(|session| session.feature))
+        self.edited_id()
             .or_else(|| self.mode.operation()?.feature())
     }
 
