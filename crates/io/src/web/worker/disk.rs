@@ -11,6 +11,7 @@ use web_sys::{File, FileSystemFileHandle, FileSystemWritableFileStream};
 use crate::js::{self, file_len};
 use crate::vrdp::{self, WholeRead};
 use crate::web::js::{call, js_error};
+use crate::{Picked, PickedFrom};
 
 /// What the page posted along with a request using a file the user
 /// picked, see [`object`](crate::web::page::pick::object).
@@ -28,6 +29,31 @@ impl Handed {
         match value.dyn_into::<FileSystemFileHandle>() {
             Ok(handle) => Some(Self::Handle(handle)),
             Err(value) => value.dyn_into::<File>().ok().map(Self::File),
+        }
+    }
+
+    /// The handle to write the file the user `picked` through, or why
+    /// there's none.
+    pub(crate) fn writable(
+        object: Option<Self>,
+        picked: &Picked,
+    ) -> Result<FileSystemFileHandle, String> {
+        match object {
+            Some(Self::Handle(handle)) => Ok(handle),
+            _ => Err(format!("{} can't be written to", picked.name)),
+        }
+    }
+
+    /// This, checked against the kind `picked.from` promised: the handle
+    /// for [`PickedFrom::Handle`], `None` for an input's file.
+    pub(crate) fn matching(self, picked: &Picked) -> Result<Option<FileSystemFileHandle>, String> {
+        match (picked.from, self) {
+            (PickedFrom::Handle, Self::Handle(handle)) => Ok(Some(handle)),
+            (PickedFrom::Input, Self::File(_)) => Ok(None),
+            _ => Err(format!(
+                "the browser handed over something else for {}",
+                picked.name
+            )),
         }
     }
 }

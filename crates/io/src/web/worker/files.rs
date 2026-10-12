@@ -34,8 +34,8 @@ use crate::vrdp::{
     whole_file,
 };
 use crate::{
-    Access, Chosen, Closing, Damage, FileId, OpenId, Opened, Picked, PickedFrom, ReadOnly,
-    Recovered, Request, Response, SaveError, SaveTo, SavedAs, Stores, UnixSeconds,
+    Access, Chosen, Closing, Damage, FileId, OpenId, Opened, Picked, ReadOnly, Recovered, Request,
+    Response, SaveError, SaveTo, SavedAs, Stores, UnixSeconds,
 };
 
 /// What the web build answers requests for files at a path with: it only
@@ -607,16 +607,7 @@ impl Files {
         let bytes = disk::read(&object).await.map_err(|e| e.to_string())?;
         // One found damaged past what was opened refuses saves.
         let read = from_bytes_with_found(&bytes).map_err(|e| e.to_string())?;
-        let handle = match (picked.from, object) {
-            (PickedFrom::Handle, Handed::Handle(handle)) => Some(handle),
-            (PickedFrom::Input, Handed::File(_)) => None,
-            _ => {
-                return Err(format!(
-                    "the browser handed over something else for {}",
-                    picked.name
-                ));
-            }
-        };
+        let handle = object.matching(picked)?;
         let (read, not_copied) = match handle {
             Some(_) => (read, None),
             // Copied as it is, with its history, and opened from there.
@@ -816,12 +807,7 @@ impl Files {
         document: &Document,
         previews: &[Preview],
     ) -> Result<SavedAs, SaveError> {
-        let Some(Handed::Handle(handle)) = object else {
-            return Err(SaveError::Failed(format!(
-                "{} can't be written to",
-                picked.name
-            )));
-        };
+        let handle = Handed::writable(object, picked).map_err(SaveError::Failed)?;
         // Refused before writing anything.
         if let Some(file) = file {
             self.open.get_mut(file)?;
@@ -1116,9 +1102,7 @@ async fn export(
     title: &str,
     bodies: &[three_mf::Body],
 ) -> Result<(), String> {
-    let Some(Handed::Handle(handle)) = object else {
-        return Err(format!("{} can't be written to", picked.name));
-    };
+    let handle = Handed::writable(object, picked)?;
     let bytes = three_mf::package(title, bodies).map_err(|e| e.to_string())?;
     disk::write(&handle, &bytes)
         .await
