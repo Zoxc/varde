@@ -22,8 +22,8 @@ use varde_document::{
 use varde_regen::{chain_closes, loft_corner, loft_corners};
 use varde_sketch::{Id, Profiles, Sketch};
 use varde_view::{
-    LoftSection, LoftShape, LoftView, MotionKind, MotionLook, MotionPick, OperationKind,
-    SketchLines, SweepPart, loft_info,
+    LoftSection, LoftShape, LoftView, MotionLook, MotionPick, OperationKind, SketchLines,
+    SweepPart, loft_info,
 };
 
 use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
@@ -167,9 +167,6 @@ impl MotionSession {
     /// region, start, point or curves at feature `index` (an undo or an
     /// edit took them away).
     pub(super) fn prune_loft(&mut self, document: &Document, index: usize) {
-        if self.kind != MotionKind::Loft {
-            return;
-        }
         let setup = &mut self.loft;
         setup.regions.also = (setup.sections.iter().map(Section::sketch)).collect();
         setup.regions.also.sort_unstable();

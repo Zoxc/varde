@@ -22,8 +22,8 @@ use varde_expr::{AngleUnit, Unit};
 use varde_render::Camera;
 use varde_sketch::Id;
 use varde_view::{
-    MotionField, MotionKind, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath,
-    SweepView, sweep_info,
+    MotionField, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath, SweepView,
+    sweep_info,
 };
 
 use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
@@ -272,9 +272,6 @@ impl MotionSession {
     /// edges, its parts' sketches and curves at feature `index` (an undo
     /// took them away).
     pub(super) fn prune_sweep(&mut self, document: &Document, index: usize) {
-        if self.kind != MotionKind::Sweep {
-            return;
-        }
         let setup = &mut self.sweep;
         setup.stale_regions.follow(&mut setup.regions, document);
         setup.regions.refresh(document);

@@ -229,9 +229,6 @@ impl MotionSession {
     /// offered meanwhile, and picked again if their sketch comes back
     /// before others are picked.
     pub(super) fn prune_split(&mut self, document: &Document, index: usize) {
-        if self.kind != MotionKind::Split {
-            return;
-        }
         let setup = &mut self.split;
         setup.stale_regions.follow(&mut setup.regions, document);
         if setup.mode == SplitMode::Regions {

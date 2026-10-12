@@ -99,13 +99,8 @@ impl MotionSession {
             self.faces.gone = false;
             return;
         };
-        let taken = match self.kind {
-            MotionKind::Shell | MotionKind::OffsetFace | MotionKind::Draft => {
-                document.check_face_set(index, body, faces).is_ok()
-            }
-            _ => true,
-        };
-        self.faces.gone = document.body(body).is_none() || !taken;
+        self.faces.gone =
+            document.body(body).is_none() || document.check_face_set(index, body, faces).is_err();
     }
 
     /// Moves the faces, and so the body, on to the bodies holding theirs

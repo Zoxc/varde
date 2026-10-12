@@ -1261,17 +1261,21 @@ impl MotionSession {
         }) else {
             return;
         };
-        self.prune_align(document, index);
-        self.prune_scale(document, index);
-        self.prune_split(document, index);
-        if self.kind.blends() {
-            self.prune_blend(document, index);
+        match self.kind {
+            MotionKind::Align => self.prune_align(document, index),
+            MotionKind::Scale => self.prune_scale(document, index),
+            MotionKind::Split => self.prune_split(document, index),
+            MotionKind::Chamfer | MotionKind::Fillet => self.prune_blend(document, index),
+            MotionKind::Shell | MotionKind::OffsetFace | MotionKind::Draft => {
+                self.prune_faces(document, index)
+            }
+            MotionKind::Sweep => self.prune_sweep(document, index),
+            MotionKind::Loft => self.prune_loft(document, index),
+            MotionKind::Move
+            | MotionKind::Mirror
+            | MotionKind::LinearPattern
+            | MotionKind::CircularPattern => {}
         }
-        if self.kind.picks_faces() {
-            self.prune_faces(document, index);
-        }
-        self.prune_sweep(document, index);
-        self.prune_loft(document, index);
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
