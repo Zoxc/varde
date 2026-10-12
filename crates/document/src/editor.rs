@@ -356,34 +356,29 @@ impl Document {
     /// [`Document::add_body`] names a new one. The id is one the
     /// document's check held for it: below the next id and no body's.
     fn restore_body(&mut self, feature: FeatureId, id: BodyId) {
-        let name = format!("Body {}", self.next_number("Body"));
+        let body = new_body(id, self.next_number("Body"), feature);
         let at = self.bodies.partition_point(|body| body.id < id);
-        self.bodies.insert(
-            at,
-            Body {
-                id,
-                name,
-                visible: true,
-                opacity: Opacity::default(),
-                color: None,
-                created_by: feature,
-            },
-        );
+        self.bodies.insert(at, body);
     }
 
     /// Adds a body as [`Document::add_body`] does, named "Body `number`".
     fn add_numbered_body(&mut self, feature: FeatureId, number: u64) -> Result<BodyId, EditError> {
-        let name = format!("Body {number}");
         let id = BodyId(self.new_id()?);
-        self.bodies.push(Body {
-            id,
-            name,
-            visible: true,
-            opacity: Opacity::default(),
-            color: None,
-            created_by: feature,
-        });
+        self.bodies.push(new_body(id, number, feature));
         Ok(id)
+    }
+}
+
+/// A new body: visible, opaque, uncoloured, "Body `number`", made by
+/// `created_by`.
+fn new_body(id: BodyId, number: u64, created_by: FeatureId) -> Body {
+    Body {
+        id,
+        name: format!("Body {number}"),
+        visible: true,
+        opacity: Opacity::default(),
+        color: None,
+        created_by,
     }
 }
 
