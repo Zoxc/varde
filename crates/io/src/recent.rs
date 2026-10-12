@@ -37,15 +37,3 @@ pub struct Listed {
     /// e.g. on a drive that wasn't mounted. Kept, and shown as unavailable.
     pub available: bool,
 }
-
-/// Where the list is stored, if there is a config directory to put it in.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn store() -> Option<PathBuf> {
-    crate::native::project_dirs().map(|dirs| dirs.config_dir().join("recent.toml"))
-}
-
-/// The web has no recent files list.
-#[cfg(target_arch = "wasm32")]
-pub fn store() -> Option<PathBuf> {
-    None
-}

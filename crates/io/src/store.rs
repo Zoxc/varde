@@ -67,18 +67,6 @@ pub(crate) fn entry_in<'a>(dir: &Path, path: &'a Path) -> Option<&'a str> {
     is_entry_name(name).then_some(name)
 }
 
-/// Where new designs are kept, if there is a data directory to put them in.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn designs() -> Option<PathBuf> {
-    crate::native::project_dirs().map(|dirs| dirs.data_dir().join("designs"))
-}
-
-/// On the web, the directory `designs` in the Origin Private File System.
-#[cfg(target_arch = "wasm32")]
-pub fn designs() -> Option<PathBuf> {
-    Some(PathBuf::from("designs"))
-}
-
 /// A new design left behind by a session that crashed, or on the web by a
 /// tab closed with it open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

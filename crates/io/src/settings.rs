@@ -590,11 +590,10 @@ impl Settings {
     }
 }
 
-/// Where the settings are stored, if there is a config directory to put
-/// them in.
-#[cfg(not(target_arch = "wasm32"))]
+/// Where the settings are stored, if there is somewhere to put them: see
+/// [`Stores::user`](crate::Stores::user).
 pub fn store() -> Option<PathBuf> {
-    crate::native::project_dirs().map(|dirs| dirs.config_dir().join("settings.toml"))
+    crate::Stores::user().settings
 }
 
 /// Reads the settings from [`store`] on the calling thread, defaulted
@@ -610,13 +609,6 @@ pub fn read_now() -> Settings {
         ..crate::Stores::default()
     }
     .read_settings_now()
-}
-
-/// On the web, `settings.toml` at the root of the Origin Private File
-/// System.
-#[cfg(target_arch = "wasm32")]
-pub fn store() -> Option<PathBuf> {
-    Some(PathBuf::from("settings.toml"))
 }
 
 #[cfg(test)]

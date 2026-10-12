@@ -162,16 +162,18 @@ impl Stores {
     /// are kept in `settings.toml` and `designs` in the Origin Private File
     /// System.
     pub fn user() -> Self {
-        Self {
-            recent: recent::store(),
-            settings: settings::store(),
-            designs: store::designs(),
-            panic: panicked::store(),
-            #[cfg(not(target_arch = "wasm32"))]
-            mcp_token: native::mcp_token::store(),
-            #[cfg(target_arch = "wasm32")]
+        #[cfg(not(target_arch = "wasm32"))]
+        let stores = native::user_stores();
+        // The panic is in `localStorage`, see `src/panicked.rs`.
+        #[cfg(target_arch = "wasm32")]
+        let stores = Self {
+            settings: Some(PathBuf::from("settings.toml")),
+            designs: Some(PathBuf::from("designs")),
+            recent: None,
+            panic: None,
             mcp_token: None,
-        }
+        };
+        stores
     }
 }
 

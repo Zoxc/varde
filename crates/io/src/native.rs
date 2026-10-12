@@ -19,10 +19,28 @@ mod store;
 pub(crate) mod thread;
 mod unique;
 
+use crate::Stores;
+
 /// The platform's directories for the app, named `varde-cad` after it on
 /// every OS, e.g. `~/.config/varde-cad` and `~/.local/share/varde-cad` on
 /// Linux.
 pub(crate) fn project_dirs() -> Option<directories::ProjectDirs> {
     let name = varde_document::APP_NAME.to_lowercase().replace(' ', "-");
     directories::ProjectDirs::from("", "", &name)
+}
+
+/// The user's stores, see [`Stores::user`]: the recent files list, the
+/// settings and the MCP token in the config directory, new designs and
+/// the panic recorded in the data directory.
+pub(crate) fn user_stores() -> Stores {
+    let dirs = project_dirs();
+    let config = |name: &str| dirs.as_ref().map(|d| d.config_dir().join(name));
+    let data = |name: &str| dirs.as_ref().map(|d| d.data_dir().join(name));
+    Stores {
+        recent: config("recent.toml"),
+        settings: config("settings.toml"),
+        mcp_token: config("mcp-token.toml"),
+        designs: data("designs"),
+        panic: data("panic.toml"),
+    }
 }

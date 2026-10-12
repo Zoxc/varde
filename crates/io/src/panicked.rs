@@ -34,8 +34,6 @@
 //! It's user data, edited by hand perhaps: each key is read on its own,
 //! and one gone bad is left out. One without a message isn't a panic.
 
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 use crate::UnixSeconds;
@@ -180,19 +178,6 @@ fn backtrace() -> Option<String> {
             .ok()?
             .as_string()
     }
-}
-
-/// Where the panic is recorded natively, if there is a data directory to
-/// put it in.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn store() -> Option<PathBuf> {
-    crate::native::project_dirs().map(|dirs| dirs.data_dir().join("panic.toml"))
-}
-
-/// On the web the panic is in `localStorage`, see the module docs.
-#[cfg(target_arch = "wasm32")]
-pub fn store() -> Option<PathBuf> {
-    None
 }
 
 /// Whether the process has panicked, and so recorded the panic.

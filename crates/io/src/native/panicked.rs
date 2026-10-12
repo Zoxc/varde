@@ -5,12 +5,13 @@ use std::io;
 use std::path::Path;
 
 use super::config;
-use crate::panicked::{MAX_BYTES, Panic, store};
+use crate::Stores;
+use crate::panicked::{MAX_BYTES, Panic};
 
-/// Records `panic` where [`store`] says, from the panic hook: failing is
+/// Records `panic` in [`Stores::panic`], from the panic hook: failing is
 /// only logged, to stderr, as the logger may be what panicked.
 pub(crate) fn record(panic: &Panic) {
-    let Some(store) = store() else {
+    let Some(store) = Stores::user().panic else {
         return;
     };
     if let Err(error) = config::replace(&store, &panic.serialize()) {

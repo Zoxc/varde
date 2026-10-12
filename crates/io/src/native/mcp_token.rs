@@ -17,7 +17,7 @@
 
 use std::fs::File;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use varde_mcp::guard::Token;
 
@@ -25,11 +25,6 @@ use super::config;
 
 /// The most bytes of the file read: a larger one is taken as gone bad.
 const MAX_BYTES: u64 = 1024;
-
-/// Where the token is stored, if there's a config directory to put it in.
-pub(crate) fn store() -> Option<PathBuf> {
-    super::project_dirs().map(|dirs| dirs.config_dir().join("mcp-token.toml"))
-}
 
 /// The token stored in `store`, if there's one to trust.
 pub(crate) fn load(store: &Path) -> Option<Token> {
