@@ -322,26 +322,8 @@ impl Planner<'_> {
             .ok_or_else(|| refused(index, too_small(&operation.op)))?;
         self.add(index, add.clone())?;
         if let Some(label) = &operation.label {
-            let (what, main, mut parts) = labelled(&operation.op, &add);
-            // An arc runs counter-clockwise, from whichever end that
-            // takes: its label's start is where the operation's is.
-            if let (Op::Arc { .. }, Some(&(start, _))) = (&operation.op, clicks.placed.first()) {
-                let at = |name: &str| {
-                    let id = parts.iter().find(|(part, _)| part == name)?.1;
-                    Some(self.sketch.point(id)?.at.distance(start))
-                };
-                if let (Some(from_start), Some(from_end)) = (at("start"), at("end"))
-                    && from_end < from_start
-                {
-                    for (part, _) in &mut parts {
-                        *part = match part.as_str() {
-                            "start" => "end".to_owned(),
-                            "end" => "start".to_owned(),
-                            _ => continue,
-                        };
-                    }
-                }
-            }
+            let first = clicks.placed.first().map(|&(at, _)| at);
+            let (what, main, parts) = labelled(&operation.op, &add, &self.sketch, first);
             self.labels.push(Labelled {
                 label: label.clone(),
                 what,
@@ -734,8 +716,14 @@ fn too_small(op: &Op) -> String {
 }
 
 /// What a shape `op` made, `add`, is for a label: what it is, the item
-/// the label names alone, and its parts by name.
-fn labelled(op: &Op, add: &Add) -> (&'static str, Option<Id>, Vec<(String, Id)>) {
+/// the label names alone, and its parts by name. `sketch` is the sketch
+/// with `add` applied, and `first` the operation's first click.
+fn labelled(
+    op: &Op,
+    add: &Add,
+    sketch: &Sketch,
+    first: Option<DVec2>,
+) -> (&'static str, Option<Id>, Vec<(String, Id)>) {
     let part = |name: &str, id: Id| (name.to_owned(), id);
     let curve = add.curves.last();
     match (op, curve.map(|new| (new.id, &new.curve))) {
@@ -748,15 +736,24 @@ fn labelled(op: &Op, add: &Add) -> (&'static str, Option<Id>, Vec<(String, Id)>)
             Some(id),
             vec![part("start", start), part("end", end)],
         ),
-        (Op::Arc { .. }, Some((id, &Curve::Arc { center, start, end }))) => (
-            "an arc",
-            Some(id),
-            vec![
-                part("center", center),
-                part("start", start),
-                part("end", end),
-            ],
-        ),
+        (Op::Arc { .. }, Some((id, &Curve::Arc { center, start, end }))) => {
+            // An arc runs counter-clockwise, from whichever end that
+            // takes: its label's start is where the operation's is.
+            let from_first = |point: Id| Some(sketch.point(point)?.at.distance(first?));
+            let (start, end) = match (from_first(start), from_first(end)) {
+                (Some(from_start), Some(from_end)) if from_end < from_start => (end, start),
+                _ => (start, end),
+            };
+            (
+                "an arc",
+                Some(id),
+                vec![
+                    part("center", center),
+                    part("start", start),
+                    part("end", end),
+                ],
+            )
+        }
         (Op::Circle { .. }, Some((id, &Curve::Circle { center, .. }))) => {
             ("a circle", Some(id), vec![part("center", center)])
         }
