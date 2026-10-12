@@ -913,12 +913,7 @@ fn shots_13_status_bar() {
         doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
         for request in requests.take() {
             doc.computed(varde_regen::Response::Failed {
-                sight: None,
-                draft: None,
-                inspect: None,
-                generation: request.generation().unwrap(),
-                exclude: request.exclude(),
-                until: None,
+                asked: request.asked().unwrap(),
                 error: "the kernel ran out of room splitting the faces of a body with \
                         very many curved faces; try a coarser tolerance"
                     .to_owned(),

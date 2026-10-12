@@ -1261,8 +1261,9 @@ caps at it): coaxial revolved faces can take ~10M units, which then
 come back "too complex to measure". Measures, distances and topologies
 are kept in the cache (outside its feature counts), keyed by the bodies'
 solid keys, the resolved picks and the fit, so picks asked again, or
-after an edit elsewhere, cost nothing. `Response::Failed.inspect` and
-`Response::inspect()`/`Request::inspect()` give the revision. The
+after an edit elsewhere, cost nothing. The revision is in the
+`varde_regen::Asked` a regeneration's answer echoes (`Request::asked()`,
+`Response::asked()`). The
 inspect rides the regeneration slot, latest wins, rather than queueing
 as exports do: the newest request always carries the session's current
 picks, so a request it replaces had only an answer the panel would drop,
@@ -1314,7 +1315,9 @@ with no corner taken (past the table's bound) picks nothing. The session
 sends A and B with every request (`MeshFeed::request_with`'s `inspect`):
 the feed gives picks differing from the last the next revision (counted
 over the document's life, as drafts are), asks again when they change,
-and counts the revision into `Asked`, so an answer of the same
+and counts the revision into `Asked` (the regeneration's tags, which
+`Regenerated` and `Failed` carry and the web wire checks against the
+draft's and measure's own), so an answer of the same
 generation is taken only for the picks asked last and an older one is
 dropped; `MeshFeed::inspected` gives the measure of the model shown only
 while it's for the picks asked last (after an edit, the old model's

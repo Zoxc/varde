@@ -463,7 +463,7 @@ failing before its tool exists, one the document refuses) and `Some` of
 an empty list where it touched nothing; there even when it fails after
 finding them, with the body `touches` couldn't tell last, so the panel
 can list a body to take out that makes it fail. `Response::Failed` carries
-the draft's revision too.
+the draft's revision too, in its `Asked`.
 
 **The answer.** `Response::Regenerated` adds `failed`, `merged` (the
 evaluation's, (consumed, holder) pairs) and `bodies:

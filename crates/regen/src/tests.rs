@@ -63,8 +63,11 @@ pub(crate) fn sketched() -> (Editor, FeatureId) {
 fn regenerate_tessellates_the_snapshot() {
     let (editor, _) = sketched();
     let Response::Regenerated {
-        generation,
-        exclude,
+        asked: Asked {
+            generation,
+            exclude,
+            ..
+        },
         draft,
         mesh,
         picking,
@@ -305,7 +308,9 @@ fn regenerate_flattens_the_sketches() {
 
     // The sketch being edited is left out, and the answer says so.
     let Response::Regenerated {
-        exclude, sketches, ..
+        asked: Asked { exclude, .. },
+        sketches,
+        ..
     } = handle(regenerate(&editor, Some(feature)))
     else {
         panic!("regeneration failed");
@@ -2758,7 +2763,7 @@ fn an_export_request_is_answered_with_the_committed_bodies() {
         export: 5,
         document: editor.snapshot(),
     });
-    assert_eq!(response.generation(), None);
+    assert_eq!(response.asked(), None);
 }
 
 /// Each body is drawn at its own level of the view's sight: a body out
@@ -2772,7 +2777,12 @@ fn each_body_is_drawn_at_its_level_of_the_sight() {
             unreachable!()
         };
         *asked = sight.map(Box::new);
-        let Response::Regenerated { mesh, sight, .. } = handle(request) else {
+        let Response::Regenerated {
+            asked: Asked { sight, .. },
+            mesh,
+            ..
+        } = handle(request)
+        else {
             panic!("the plate regenerates");
         };
         (mesh.triangle_count(), sight)

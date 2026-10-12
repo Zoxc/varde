@@ -108,9 +108,10 @@ use varde_kernel::{
 use varde_lane::bytes::Buffer;
 
 use crate::{
-    Answer, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FaceEdgeTables, FeatureFailure,
-    GeometryError, GeometryParts, Inspected, PickCorner, PickFace, PickTables, PickTablesError,
-    PickTablesParts, Picking, PickingError, PickingParts, Progress, Request, Response,
+    Answer, Asked, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FaceEdgeTables,
+    FeatureFailure, GeometryError, GeometryParts, Inspected, PickCorner, PickFace, PickTables,
+    PickTablesError, PickTablesParts, Picking, PickingError, PickingParts, Progress, Request,
+    Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
@@ -323,10 +324,9 @@ pub enum Head {
     /// A [`Response::Regenerated`], followed by its model's
     /// [`MODEL_PARTS`] parts.
     Regenerated {
-        generation: Generation,
-        exclude: Option<FeatureId>,
-        until: Option<FeatureId>,
-        sight: Option<u32>,
+        /// Its draft and inspect revisions checked to be `draft`'s and
+        /// `inspected`'s ([`Error::Revisions`]).
+        asked: Asked,
         /// Without its geometry, which follows.
         draft: Option<Drafted>,
         /// The draft's [`Drafted::geometry`], checked as the failures'
@@ -394,15 +394,7 @@ pub enum Head {
         broken: Vec<(FeatureId, Id, String)>,
     },
     /// A [`Response::Failed`].
-    Failed {
-        generation: Generation,
-        exclude: Option<FeatureId>,
-        until: Option<FeatureId>,
-        draft: Option<u64>,
-        inspect: Option<u64>,
-        sight: Option<u32>,
-        error: String,
-    },
+    Failed { asked: Asked, error: String },
     /// A [`Response::Exported`]: if `Ok`, followed by one part, the
     /// bodies' postcard.
     Exported {
@@ -508,10 +500,7 @@ fn relinked_weight(relinked: &[(FeatureId, Arc<Sketch>)]) -> usize {
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
         Response::Regenerated {
-            generation,
-            exclude,
-            until,
-            sight,
+            asked,
             draft,
             mesh,
             picking,
@@ -531,10 +520,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 geometry.as_deref().map(ErrorGeometry::to_parts)
             };
             let mut head = Head::Regenerated {
-                generation: *generation,
-                exclude: *exclude,
-                until: *until,
-                sight: *sight,
+                asked: *asked,
                 draft: draft.as_deref().cloned(),
                 draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
                 unsolved: unsolved.clone(),
@@ -600,12 +586,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 || aliases > Picking::MAX_ALIASES
             {
                 let failed = Head::Failed {
-                    generation: *generation,
-                    exclude: *exclude,
-                    until: *until,
-                    draft: draft.as_ref().map(|draft| draft.revision),
-                    inspect: inspected.as_ref().map(|inspected| inspected.revision),
-                    sight: *sight,
+                    asked: *asked,
                     error: "the model has more faces than can be sent".to_owned(),
                 };
                 return (failed.encode(), Vec::new());
@@ -634,22 +615,9 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 .collect(),
             )
         }
-        Response::Failed {
-            generation,
-            exclude,
-            until,
-            draft,
-            inspect,
-            sight,
-            error,
-        } => (
+        Response::Failed { asked, error } => (
             Head::Failed {
-                generation: *generation,
-                exclude: *exclude,
-                until: *until,
-                draft: *draft,
-                inspect: *inspect,
-                sight: *sight,
+                asked: *asked,
                 error: error.clone(),
             }
             .encode(),
@@ -718,10 +686,7 @@ pub fn decode_reply(
     let head = copy::<u8>(Part::Head, head, MAX_HEAD_BYTES)?;
     Ok(match Head::decode(&head)? {
         Head::Regenerated {
-            generation,
-            exclude,
-            until,
-            sight,
+            asked,
             mut draft,
             draft_geometry,
             unsolved,
@@ -740,57 +705,65 @@ pub fn decode_reply(
             relinked,
             broken,
         } => {
-            let inspect = inspected.as_ref().map(|inspected| inspected.revision);
-            let model = check_merged(&merged)
-                .and_then(|()| check_reference(draft.as_ref()))
-                .and_then(|()| check_datums(draft.as_ref()))
-                .and_then(|()| check_scale(draft.as_ref()))
-                .and_then(|()| check_sweep(draft.as_ref()))
-                .and_then(|()| decode_placements(&placements))
-                .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
-                .and_then(|(placements, bodies)| {
-                    let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
-                    listed.sort_unstable();
-                    if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
-                        return Err(Error::UnlistedBody);
-                    }
-                    let (mesh, sketches, tables) = decode_model(parts)?;
-                    let parts = PickingParts {
-                        bodies: part_bodies,
-                        tables: FaceEdgeTables {
-                            faces,
-                            closed,
-                            tangents,
-                            snaps,
-                            corners,
-                        },
-                    };
-                    let picking = Picking::from_parts(parts, &mesh).map_err(Error::Picking)?;
-                    let geometry = |parts: Option<GeometryParts>| {
-                        (parts.map(|parts| ErrorGeometry::from_parts(parts, &mesh, &picking)))
-                            .transpose()
-                            .map(|geometry| geometry.map(Arc::new))
-                            .map_err(Error::Geometry)
-                    };
-                    let failed = (failed.into_iter())
-                        .map(|(feature, message, parts)| {
-                            Ok(FeatureFailure {
-                                feature,
-                                message,
-                                geometry: geometry(parts)?,
-                            })
+            let revisions = (
+                draft.as_ref().map(|draft| draft.revision),
+                inspected.as_ref().map(|inspected| inspected.revision),
+            );
+            let model = (if revisions == (asked.draft, asked.inspect) {
+                Ok(())
+            } else {
+                Err(Error::Revisions)
+            })
+            .and_then(|()| check_merged(&merged))
+            .and_then(|()| check_reference(draft.as_ref()))
+            .and_then(|()| check_datums(draft.as_ref()))
+            .and_then(|()| check_scale(draft.as_ref()))
+            .and_then(|()| check_sweep(draft.as_ref()))
+            .and_then(|()| decode_placements(&placements))
+            .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
+            .and_then(|(placements, bodies)| {
+                let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
+                listed.sort_unstable();
+                if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
+                    return Err(Error::UnlistedBody);
+                }
+                let (mesh, sketches, tables) = decode_model(parts)?;
+                let parts = PickingParts {
+                    bodies: part_bodies,
+                    tables: FaceEdgeTables {
+                        faces,
+                        closed,
+                        tangents,
+                        snaps,
+                        corners,
+                    },
+                };
+                let picking = Picking::from_parts(parts, &mesh).map_err(Error::Picking)?;
+                let geometry = |parts: Option<GeometryParts>| {
+                    (parts.map(|parts| ErrorGeometry::from_parts(parts, &mesh, &picking)))
+                        .transpose()
+                        .map(|geometry| geometry.map(Arc::new))
+                        .map_err(Error::Geometry)
+                };
+                let failed = (failed.into_iter())
+                    .map(|(feature, message, parts)| {
+                        Ok(FeatureFailure {
+                            feature,
+                            message,
+                            geometry: geometry(parts)?,
                         })
-                        .collect::<Result<Vec<_>, Error>>()?;
-                    let draft_geometry = geometry(draft_geometry)?;
-                    Ok((
-                        placements,
-                        bodies,
-                        (mesh, sketches, tables),
-                        picking,
-                        failed,
-                        draft_geometry,
-                    ))
-                });
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let draft_geometry = geometry(draft_geometry)?;
+                Ok((
+                    placements,
+                    bodies,
+                    (mesh, sketches, tables),
+                    picking,
+                    failed,
+                    draft_geometry,
+                ))
+            });
             match model {
                 Ok((
                     placements,
@@ -804,10 +777,7 @@ pub fn decode_reply(
                         draft.geometry = draft_geometry;
                     }
                     Response::Regenerated {
-                        generation,
-                        exclude,
-                        until,
-                        sight,
+                        asked,
                         draft: draft.map(Box::new),
                         inspected: inspected
                             .map(|inspected| Box::new(inspected.checked(Some((&mesh, &picking))))),
@@ -828,33 +798,12 @@ pub fn decode_reply(
                     }
                 }
                 Err(error) => Response::Failed {
-                    generation,
-                    exclude,
-                    until,
-                    draft: draft.map(|draft| draft.revision),
-                    inspect,
-                    sight,
+                    asked,
                     error: error.to_string(),
                 },
             }
         }
-        Head::Failed {
-            generation,
-            exclude,
-            until,
-            draft,
-            inspect,
-            sight,
-            error,
-        } => Response::Failed {
-            generation,
-            exclude,
-            until,
-            draft,
-            inspect,
-            sight,
-            error,
-        },
+        Head::Failed { asked, error } => Response::Failed { asked, error },
         Head::Exported { export, result } => Response::Exported {
             export,
             result: result.and_then(|()| decode_export(parts).map_err(|e| e.to_string())),
@@ -1267,6 +1216,8 @@ pub enum Error {
     Picking(PickingError),
     /// A part's body isn't one the head lists.
     UnlistedBody,
+    /// The draft's or the measure's revision isn't the one asked.
+    Revisions,
     /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
     Geometry(GeometryError),
     /// A draft's axis or plane, an align draft's points and directions,
@@ -1301,6 +1252,7 @@ impl fmt::Display for Error {
             Error::Placement => f.write_str("a sketch's placement isn't one"),
             Error::Picking(e) => e.fmt(f),
             Error::UnlistedBody => f.write_str("a part's body isn't one the answer lists"),
+            Error::Revisions => f.write_str("the answer's revisions aren't the ones asked"),
             Error::Geometry(e) => e.fmt(f),
             Error::Reference => f.write_str("a draft's axis or plane isn't one"),
             Error::EdgeFacts => f.write_str("a body's edge facts aren't valid"),
@@ -1326,6 +1278,7 @@ impl std::error::Error for Error {
             | Error::Placement
             | Error::Picking(_)
             | Error::UnlistedBody
+            | Error::Revisions
             | Error::Geometry(_)
             | Error::Reference
             | Error::EdgeFacts

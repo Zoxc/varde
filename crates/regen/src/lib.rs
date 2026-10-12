@@ -576,108 +576,60 @@ fn saturating_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+/// What a [`Request::Regenerate`] asks for, which its answer echoes
+/// back and so is of: a generation of the document, the sketch left out
+/// of the lines, the feature rolled back to before, the revisions of the
+/// draft applied and the measure taken, if any, and of the [`Sight`] it's
+/// drawn by, if any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asked {
+    pub generation: Generation,
+    /// The sketch left out of the lines: a request can ask again for the
+    /// same generation with another one.
+    pub exclude: Option<FeatureId>,
+    /// The feature the model is rolled back to before.
+    pub until: Option<FeatureId>,
+    /// The revision of the draft, if there is one.
+    pub draft: Option<u64>,
+    /// The revision of the measure, if there is one.
+    pub inspect: Option<u64>,
+    /// The revision of the [`Sight`], if there is one.
+    pub sight: Option<u32>,
+}
+
 impl Response {
-    /// The editor generation the model answered is of: `None` for an
-    /// export's, a [`Response::Answered`] (whose generation is its own,
-    /// not a model's) or a [`Response::Progress`].
-    pub fn generation(&self) -> Option<Generation> {
+    /// What the model answered was asked for: `None` for an export's, a
+    /// [`Response::Answered`] (whose generation is its own, not a
+    /// model's) or a [`Response::Progress`].
+    pub fn asked(&self) -> Option<Asked> {
         match self {
-            Response::Regenerated { generation, .. } | Response::Failed { generation, .. } => {
-                Some(*generation)
-            }
-            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
-        }
-    }
-
-    /// The sketch the request answered asked to leave out.
-    pub fn exclude(&self) -> Option<FeatureId> {
-        match self {
-            Response::Regenerated { exclude, .. } | Response::Failed { exclude, .. } => *exclude,
-            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
-        }
-    }
-
-    /// The feature the request answered rolled back to before, if any.
-    pub fn until(&self) -> Option<FeatureId> {
-        match self {
-            Response::Regenerated { until, .. } | Response::Failed { until, .. } => *until,
-            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
-        }
-    }
-
-    /// The revision of the draft the request answered had, if any.
-    pub fn draft(&self) -> Option<u64> {
-        match self {
-            Response::Regenerated { draft, .. } => draft.as_ref().map(|draft| draft.revision),
-            Response::Failed { draft, .. } => *draft,
-            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
-        }
-    }
-
-    /// The revision of the [`Sight`] the request answered had, if any.
-    pub fn sight(&self) -> Option<u32> {
-        match self {
-            Response::Regenerated { sight, .. } | Response::Failed { sight, .. } => *sight,
-            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
-        }
-    }
-
-    /// The revision of the measure the request answered had, if any.
-    pub fn inspect(&self) -> Option<u64> {
-        match self {
-            Response::Regenerated { inspected, .. } => inspected.as_ref().map(|i| i.revision),
-            Response::Failed { inspect, .. } => *inspect,
+            Response::Regenerated { asked, .. } | Response::Failed { asked, .. } => Some(*asked),
             Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 }
 
 impl Request {
-    /// The editor generation a [`Request::Regenerate`] is of: `None` for
-    /// an export or a [`Request::Query`], which are queued in order.
-    pub fn generation(&self) -> Option<Generation> {
+    /// What a [`Request::Regenerate`] asks for: `None` for an export or a
+    /// [`Request::Query`], which are queued in order.
+    pub fn asked(&self) -> Option<Asked> {
         match self {
-            Request::Regenerate { generation, .. } => Some(*generation),
-            Request::Export { .. } | Request::Query { .. } => None,
-        }
-    }
-
-    /// The sketch the request asks to leave out.
-    pub fn exclude(&self) -> Option<FeatureId> {
-        match self {
-            Request::Regenerate { exclude, .. } => *exclude,
-            Request::Export { .. } | Request::Query { .. } => None,
-        }
-    }
-
-    /// The feature the request rolls back to before, if any.
-    pub fn until(&self) -> Option<FeatureId> {
-        match self {
-            Request::Regenerate { until, .. } => *until,
-            Request::Export { .. } | Request::Query { .. } => None,
-        }
-    }
-
-    /// The revision of the request's draft, if it has one.
-    pub fn draft(&self) -> Option<u64> {
-        match self {
-            Request::Regenerate { draft, .. } => draft.as_ref().map(|draft| draft.revision),
-            Request::Export { .. } | Request::Query { .. } => None,
-        }
-    }
-
-    /// The revision of the request's measure, if it has one.
-    pub fn inspect(&self) -> Option<u64> {
-        match self {
-            Request::Regenerate { inspect, .. } => inspect.as_ref().map(|i| i.revision),
-            Request::Export { .. } | Request::Query { .. } => None,
-        }
-    }
-
-    /// The revision of the [`Sight`] the request has, if any.
-    pub fn sight(&self) -> Option<u32> {
-        match self {
-            Request::Regenerate { sight, .. } => sight.as_ref().map(|sight| sight.revision),
+            Request::Regenerate {
+                generation,
+                exclude,
+                until,
+                draft,
+                inspect,
+                sight,
+                ..
+            } => Some(Asked {
+                generation: *generation,
+                exclude: *exclude,
+                until: *until,
+                draft: draft.as_ref().map(|draft| draft.revision),
+                inspect: inspect.as_ref().map(|inspect| inspect.revision),
+                sight: sight.as_ref().map(|sight| sight.revision),
+            }),
             Request::Export { .. } | Request::Query { .. } => None,
         }
     }
@@ -688,21 +640,8 @@ impl Request {
     pub fn failure(&self) -> impl FnOnce(String) -> Response + Send + use<> {
         // The answer with an empty error, filled in once there is one.
         let mut failed = match self {
-            Request::Regenerate {
-                generation,
-                exclude,
-                until,
-                draft,
-                inspect,
-                sight,
-                ..
-            } => Response::Failed {
-                generation: *generation,
-                exclude: *exclude,
-                until: *until,
-                draft: draft.as_ref().map(|d| d.revision),
-                inspect: inspect.as_ref().map(|i| i.revision),
-                sight: sight.as_ref().map(|s| s.revision),
+            Request::Regenerate { .. } => Response::Failed {
+                asked: self.asked().expect("a regeneration asks"),
                 error: String::new(),
             },
             Request::Export { export, .. } => Response::Exported {
@@ -744,18 +683,17 @@ fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Documen
 
 /// The answer to a [`Request`].
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a model is the usual answer, sent once and taken apart at once"
+)]
 pub enum Response {
     Regenerated {
-        generation: Generation,
-        /// The sketch left out of `sketches`, as the request asked: a
-        /// request can ask again for the same generation with another one.
-        exclude: Option<FeatureId>,
-        /// The feature the model was rolled back to before, as asked.
-        until: Option<FeatureId>,
-        /// The revision of the [`Sight`] the request asked for the model
-        /// to be drawn by: the mesh may be drawn otherwise, if too large
-        /// by it.
-        sight: Option<u32>,
+        /// What the request asked for: `sketches` leaves out its
+        /// `exclude`, and the mesh may be drawn otherwise than by its
+        /// [`Sight`], if too large by it. Its draft and inspect revisions
+        /// are `draft`'s and `inspected`'s.
+        asked: Asked,
         /// How the request's draft went, if it had one. Boxed, as the
         /// variant is large enough.
         draft: Option<Box<Drafted>>,
@@ -805,21 +743,10 @@ pub enum Response {
         /// the document's order (see [`Evaluation::broken`]).
         broken: Vec<(FeatureId, Id, String)>,
     },
-    /// The work for `generation` failed, e.g. the kernel panicked. The
-    /// request leaving out `exclude` did: one of the same generation
-    /// leaving out another sketch may not.
-    Failed {
-        generation: Generation,
-        exclude: Option<FeatureId>,
-        until: Option<FeatureId>,
-        /// The revision of the request's draft, if it had one.
-        draft: Option<u64>,
-        /// The revision of the request's measure, if it had one.
-        inspect: Option<u64>,
-        /// The revision of the request's [`Sight`], if it had one.
-        sight: Option<u32>,
-        error: String,
-    },
+    /// The work `asked` failed, e.g. the kernel panicked. The request
+    /// leaving out its `exclude` did: one of the same generation leaving
+    /// out another sketch may not.
+    Failed { asked: Asked, error: String },
     /// Answers [`Request::Export`] tagged `export`: the visible bodies
     /// welded, in the order the history made them, or why they can't be
     /// (see [`ExportError`]), in words to follow a colon.
@@ -871,24 +798,20 @@ impl Regenerator {
     ) -> Response {
         match request {
             Request::Regenerate {
-                generation,
-                document,
-                exclude,
-                until,
-                draft,
-                inspect,
-                sight,
+                ref document,
+                ref draft,
+                ref inspect,
+                ref sight,
+                ..
             } => {
+                let asked = request.asked().expect("a regeneration asks");
                 self.cache.begin();
-                let document = rolled_back(&document, until);
-                let asked = (draft.as_deref(), inspect.as_deref());
-                let revision = sight.as_ref().map(|sight| sight.revision);
-                match self.regenerate(&document, exclude, asked, sight.as_deref(), report) {
+                let document = rolled_back(document, asked.until);
+                let payloads = (draft.as_deref(), inspect.as_deref());
+                match self.regenerate(&document, asked.exclude, payloads, sight.as_deref(), report)
+                {
                     Ok(model) => Response::Regenerated {
-                        generation,
-                        exclude,
-                        until,
-                        sight: revision,
+                        asked,
                         draft: model.draft.map(Box::new),
                         mesh: model.scene.mesh,
                         picking: model.scene.picking,
@@ -904,15 +827,7 @@ impl Regenerator {
                         relinked: model.relinked,
                         broken: model.broken,
                     },
-                    Err(error) => Response::Failed {
-                        generation,
-                        exclude,
-                        until,
-                        draft: draft.map(|draft| draft.revision),
-                        inspect: inspect.map(|inspect| inspect.revision),
-                        sight: revision,
-                        error,
-                    },
+                    Err(error) => Response::Failed { asked, error },
                 }
             }
             // Not a request of its own to the cache: `Cache::begin` would

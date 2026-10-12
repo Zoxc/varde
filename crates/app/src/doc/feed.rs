@@ -15,7 +15,7 @@ use varde_document::{
 };
 use varde_kernel::{Aabb, RenderLines, RenderMesh};
 use varde_regen::{
-    Detail, Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected,
+    Asked, Detail, Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected,
     PickTables, Picking, Progress, Request, Response, Sight, Transport,
 };
 use varde_render::{Camera, Projection};
@@ -298,34 +298,6 @@ pub(crate) struct Shown<'a> {
 /// that old gives out no placements.
 const MAX_ASKED: usize = 64;
 
-/// What a request asks for, and so what its answer is of: a generation
-/// of the document, the sketch left out of the lines, the feature rolled
-/// back to before, the revision of the draft applied, if any, the revision of the measure taken on it, if
-/// any, and how finely it's drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Asked {
-    generation: Generation,
-    exclude: Option<FeatureId>,
-    until: Option<FeatureId>,
-    draft: Option<u64>,
-    inspect: Option<u64>,
-    sight: Option<u32>,
-}
-
-impl Asked {
-    /// What `response` answers, if it's a model's: `None` for an export's.
-    fn of(response: &Response) -> Option<Self> {
-        Some(Self {
-            generation: response.generation()?,
-            exclude: response.exclude(),
-            until: response.until(),
-            draft: response.draft(),
-            inspect: response.inspect(),
-            sight: response.sight(),
-        })
-    }
-}
-
 impl MeshFeed {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -548,7 +520,7 @@ impl MeshFeed {
     /// of order or superseded are dropped, and so are exports' answers,
     /// which are the document's to take (see `Doc::computed`).
     pub(crate) fn apply(&mut self, response: Response) {
-        let Some(asked) = Asked::of(&response) else {
+        let Some(asked) = response.asked() else {
             if let Response::Progress(progress) = response {
                 self.progress = Some(progress);
             }

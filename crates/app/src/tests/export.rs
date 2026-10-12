@@ -76,12 +76,7 @@ fn export_goes_while_a_body_is_shown_and_regenerating_works() {
     ));
     let request = regen.take().pop().unwrap();
     doc.computed(Response::Failed {
-        sight: None,
-        generation: request.generation().unwrap(),
-        exclude: None,
-        until: None,
-        draft: None,
-        inspect: None,
+        asked: request.asked().unwrap(),
         error: "the kernel gave up".to_owned(),
     });
     assert!(matches!(

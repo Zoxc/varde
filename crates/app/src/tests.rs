@@ -2962,8 +2962,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
         for request in requests {
             let response = match handle(request) {
                 Response::Regenerated {
-                    generation,
-                    exclude,
+                    asked,
                     draft,
                     mesh,
                     picking,
@@ -2972,10 +2971,12 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     bodies,
                     ..
                 } => Response::Regenerated {
-                    sight: None,
-                    generation,
-                    exclude,
-                    until: None,
+                    asked: varde_regen::Asked {
+                        until: None,
+                        inspect: None,
+                        sight: None,
+                        ..asked
+                    },
                     draft,
                     mesh,
                     picking,
@@ -4485,7 +4486,9 @@ pub(crate) fn with_sketch() -> (Doc, FeatureId, Rc<RefCell<Vec<Request>>>) {
 
 /// What the requests waiting asked to leave out, answering them.
 fn left_out(doc: &mut Doc, requests: &RefCell<Vec<Request>>) -> Vec<Option<FeatureId>> {
-    let asked = requests.borrow().iter().map(Request::exclude).collect();
+    let asked = (requests.borrow().iter())
+        .map(|request| request.asked().and_then(|asked| asked.exclude))
+        .collect();
     answer(doc, requests);
     asked
 }
@@ -5990,12 +5993,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     ));
     for request in requests.take() {
         doc.computed(Response::Failed {
-            sight: None,
-            draft: None,
-            inspect: None,
-            generation: request.generation().unwrap(),
-            exclude: request.exclude(),
-            until: None,
+            asked: request.asked().unwrap(),
             error: "the kernel ran out of room splitting the faces of a body with very \
                     many curved faces; try a coarser tolerance"
                 .to_owned(),
@@ -6092,8 +6090,12 @@ fn the_rollback_marker_rolls_the_model_back() {
     let ids: Vec<FeatureId> = (doc.editor.document().features().iter())
         .map(|feature| feature.id)
         .collect();
-    let until =
-        |requests: &RefCell<Vec<Request>>| requests.borrow().last().and_then(Request::until);
+    let until = |requests: &RefCell<Vec<Request>>| {
+        requests
+            .borrow()
+            .last()
+            .and_then(|request| request.asked()?.until)
+    };
 
     doc.look(Look::DragRollback(Some(ids[1])));
     assert_eq!(until(&requests), Some(ids[1]));

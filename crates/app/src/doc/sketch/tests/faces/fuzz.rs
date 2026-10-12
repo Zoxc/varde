@@ -222,7 +222,7 @@ fn check(doc: &mut Doc, requests: &Requests, last_sent: &Option<Request>, at: &s
     // regenerating the document places it, and the one edited too.
     if requests.borrow().is_empty()
         && let Some(sent) = last_sent
-        && sent.generation() == Some(doc.editor.generation())
+        && sent.asked().map(|asked| asked.generation) == Some(doc.editor.generation())
         && doc.feed.generation() == Some(doc.editor.generation())
     {
         let placements = regen_placements(sent.clone()).expect("regenerated");

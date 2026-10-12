@@ -2,7 +2,7 @@ use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, OriginPl
 use varde_lane::thread::testing::join_in_time;
 
 use super::*;
-use crate::{Transport, handle};
+use crate::{Asked, Transport, handle};
 
 /// The next response that isn't a [`Response::Progress`].
 fn next(responses: &mut Responses) -> Response {
@@ -64,7 +64,7 @@ fn round_trip() {
     let (mut lane, mut responses) = spawn();
     lane.send(regenerate(&editor));
     let Response::Regenerated {
-        generation,
+        asked: Asked { generation, .. },
         sketches,
         ..
     } = next(&mut responses)
@@ -91,7 +91,7 @@ fn burst_ends_with_the_newest() {
     let mut last = 0;
     while last < u64::from(editor.generation()) {
         let Response::Regenerated {
-            generation,
+            asked: Asked { generation, .. },
             sketches,
             ..
         } = next(&mut responses)
@@ -125,7 +125,7 @@ fn thread_ends_when_idle_and_dropped() {
 /// Tessellates, except that generation 1 panics.
 fn panics_on_generation_1(request: Request) -> Response {
     assert_ne!(
-        request.generation().map(u64::from),
+        request.asked().map(|asked| asked.generation).map(u64::from),
         Some(1),
         "the kernel failed"
     );
@@ -140,13 +140,13 @@ fn lane_keeps_going_after_a_job_panics() {
     lane.send(regenerate(&editor));
     assert!(matches!(
         next(&mut responses),
-        Response::Failed { generation, .. } if u64::from(generation) == 1
+        Response::Failed { asked: Asked { generation, .. }, .. } if u64::from(generation) == 1
     ));
 
     add_line(&mut editor, feature);
     lane.send(regenerate(&editor));
     let Response::Regenerated {
-        generation,
+        asked: Asked { generation, .. },
         sketches,
         ..
     } = next(&mut responses)
@@ -239,7 +239,10 @@ fn an_export_edge_facts_and_a_measure_are_answered_though_regenerations_follow_t
                 assert!(!measured, "answered twice");
                 measured = true;
             }
-            Response::Regenerated { generation, .. } if generation == editor.generation() => {
+            Response::Regenerated {
+                asked: Asked { generation, .. },
+                ..
+            } if generation == editor.generation() => {
                 break;
             }
             Response::Regenerated { .. } => {}

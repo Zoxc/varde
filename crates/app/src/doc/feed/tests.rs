@@ -65,7 +65,7 @@ fn requests_only_newer_generations() {
     let generations: Vec<_> = regen
         .borrow()
         .iter()
-        .map(|request| u64::from(request.generation().unwrap()))
+        .map(|request| u64::from(request.asked().unwrap().generation))
         .collect();
     assert_eq!(generations, [0, 1]);
 }
@@ -143,12 +143,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        sight: None,
-        draft: None,
-        inspect: None,
-        generation: request.generation().unwrap(),
-        exclude: request.exclude(),
-        until: None,
+        asked: request.asked().unwrap(),
         error: "the kernel failed".to_owned(),
     });
     assert_eq!(
@@ -188,7 +183,7 @@ fn requests_nothing_until_connected() {
     let generations: Vec<_> = requests
         .borrow()
         .iter()
-        .map(|request| u64::from(request.generation().unwrap()))
+        .map(|request| u64::from(request.asked().unwrap().generation))
         .collect();
     assert_eq!(generations, [1]);
 }
@@ -224,7 +219,7 @@ fn sketches_are_shown_with_their_mesh() {
     add_sketch(&mut editor);
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
-    assert_eq!(request.exclude(), None);
+    assert_eq!(request.asked().and_then(|asked| asked.exclude), None);
     feed.apply(handle(request));
     assert_eq!(feed.sketches().points(), [[0.0; 3], [1.0, 2.0, 0.0]]);
 
@@ -233,12 +228,7 @@ fn sketches_are_shown_with_their_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        sight: None,
-        draft: None,
-        inspect: None,
-        generation: request.generation().unwrap(),
-        exclude: request.exclude(),
-        until: None,
+        asked: request.asked().unwrap(),
         error: "no".to_owned(),
     });
     assert_eq!(feed.sketches().segment_count(), 1);
@@ -251,7 +241,11 @@ fn sketches_are_shown_with_their_mesh() {
 
 /// What `requests` asked to leave out, in order.
 fn left_out(requests: &RefCell<Vec<Request>>) -> Vec<Option<FeatureId>> {
-    requests.borrow().iter().map(Request::exclude).collect()
+    requests
+        .borrow()
+        .iter()
+        .map(|request| request.asked().and_then(|asked| asked.exclude))
+        .collect()
 }
 
 #[test]
@@ -268,7 +262,7 @@ fn leaving_out_another_sketch_asks_again() {
     let generations: Vec<_> = regen
         .borrow()
         .iter()
-        .map(|request| u64::from(request.generation().unwrap()))
+        .map(|request| u64::from(request.asked().unwrap().generation))
         .collect();
     assert_eq!(generations, [2, 2, 2]);
 }
@@ -306,12 +300,14 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
 
     // A failure of the same generation doesn't replace it.
     feed.apply(Response::Failed {
-        sight: None,
-        draft: None,
-        inspect: None,
-        generation: editor.generation(),
-        exclude: Some(feature),
-        until: None,
+        asked: Asked {
+            sight: None,
+            draft: None,
+            inspect: None,
+            generation: editor.generation(),
+            exclude: Some(feature),
+            until: None,
+        },
         error: "no".to_owned(),
     });
     assert_eq!(feed.status(&editor), MeshStatus::Current);
@@ -329,12 +325,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        sight: None,
-        draft: None,
-        inspect: None,
-        generation: request.generation().unwrap(),
-        exclude: None,
-        until: None,
+        asked: request.asked().unwrap(),
         error: "the worker stopped".to_owned(),
     });
     assert_eq!(
@@ -354,12 +345,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        sight: None,
-        draft: None,
-        inspect: None,
-        generation: request.generation().unwrap(),
-        exclude: None,
-        until: None,
+        asked: request.asked().unwrap(),
         error: "again".to_owned(),
     });
     assert_eq!(feed.status(&editor), MeshStatus::Failed("again"));
@@ -389,7 +375,11 @@ fn drafted(
 
 /// The draft revision each request waiting carries.
 fn revisions(regen: &RefCell<Vec<Request>>) -> Vec<Option<u64>> {
-    regen.borrow().iter().map(Request::draft).collect()
+    regen
+        .borrow()
+        .iter()
+        .map(|request| request.asked().and_then(|asked| asked.draft))
+        .collect()
 }
 
 #[test]
@@ -543,12 +533,14 @@ fn merged_bodies_follow_the_model_shown() {
     feed.request(&editor, None);
     regen.take();
     feed.apply(Response::Failed {
-        sight: None,
-        generation: editor.generation(),
-        exclude: None,
-        until: None,
-        draft: None,
-        inspect: None,
+        asked: Asked {
+            sight: None,
+            generation: editor.generation(),
+            exclude: None,
+            until: None,
+            draft: None,
+            inspect: None,
+        },
         error: "failed".to_owned(),
     });
     assert_eq!(feed.merged_bodies(), [(below, top)]);
@@ -660,12 +652,7 @@ fn the_parts_bodies_follow_the_mesh_shown() {
     feed.request(&editor, None);
     let request = regen.take().pop().unwrap();
     feed.apply(Response::Failed {
-        sight: None,
-        generation: request.generation().unwrap(),
-        exclude: None,
-        until: None,
-        draft: None,
-        inspect: None,
+        asked: request.asked().unwrap(),
         error: "no".to_owned(),
     });
     assert_eq!(feed.parts(), [body]);
@@ -1041,7 +1028,10 @@ fn the_view_asks_for_the_model_in_levels_without_regenerating() {
     assert_eq!((sight.view, sight.bodies.len()), (Detail(-4), 0));
     feed.request(&editor, None);
     let asked = regen.borrow_mut().remove(0);
-    assert_eq!(asked.sight(), Some(sight.revision));
+    assert_eq!(
+        asked.asked().and_then(|asked| asked.sight),
+        Some(sight.revision)
+    );
     // The model shown stays, current, while the finer one comes.
     assert_eq!(feed.status(&editor), MeshStatus::Current);
     assert_eq!(feed.generation(), Some(Generation::from(0)));

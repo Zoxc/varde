@@ -57,7 +57,10 @@ fn ask(regenerator: &mut Regenerator, editor: &Editor, inspect: Inspect) -> (Tab
         draft: None,
         inspect: Some(Box::new(inspect)),
     });
-    assert_eq!(response.inspect(), Some(inspect_revision(&response)));
+    assert_eq!(
+        response.asked().and_then(|asked| asked.inspect),
+        Some(inspect_revision(&response))
+    );
     let Response::Regenerated {
         mesh,
         picking,
@@ -727,9 +730,9 @@ fn a_failed_regeneration_says_which_measure_it_had() {
         draft: None,
         inspect: Some(Box::new(one(9, body_pick(BodyId::NEW)))),
     };
-    assert_eq!(request.inspect(), Some(9));
+    assert_eq!(request.asked().and_then(|asked| asked.inspect), Some(9));
     let failed = request.failure()("panicked".to_owned());
-    assert_eq!(failed.inspect(), Some(9));
+    assert_eq!(failed.asked().and_then(|asked| asked.inspect), Some(9));
 }
 
 /// An answer that is right as it stands, of the example's tables.

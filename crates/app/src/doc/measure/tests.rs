@@ -327,13 +327,16 @@ fn new_picks_ask_again_and_only_the_newest_answer_is_taken() {
     click(&mut doc, top, false);
     let first = requests.take();
     assert_eq!(first.len(), 1);
-    let revision = first[0].inspect().unwrap();
+    let revision = first[0].asked().and_then(|asked| asked.inspect).unwrap();
     // The same picks, asked again by any look, ask nothing more.
     doc.look(Look::Hover(None));
     assert!(requests.borrow().is_empty());
     click(&mut doc, bottom, false);
     let second = requests.take();
-    assert_eq!(second[0].inspect(), Some(revision + 1));
+    assert_eq!(
+        second[0].asked().and_then(|asked| asked.inspect),
+        Some(revision + 1)
+    );
 
     // The newer answer first, then the older: the older is dropped.
     let handle = varde_regen::handle;
@@ -357,7 +360,7 @@ fn new_picks_ask_again_and_only_the_newest_answer_is_taken() {
     doc.computed(handle(fourth[0].clone()));
     assert_eq!(
         doc.feed.inspected().unwrap().revision,
-        fourth[0].inspect().unwrap()
+        fourth[0].asked().and_then(|asked| asked.inspect).unwrap()
     );
 }
 

@@ -25,10 +25,14 @@ fn regenerate(editor: &Editor) -> Request {
 /// one part, of the one body it lists, one face and one crease.
 fn regenerated(generation: u64) -> Head {
     Head::Regenerated {
-        sight: None,
-        generation: generation.into(),
-        exclude: None,
-        until: None,
+        asked: Asked {
+            sight: None,
+            generation: generation.into(),
+            exclude: None,
+            until: None,
+            draft: None,
+            inspect: None,
+        },
         draft: None,
         draft_geometry: None,
         unsolved: Vec::new(),
@@ -333,7 +337,7 @@ fn request_with_a_draft_round_trips() {
         inspect: None,
     };
     let decoded = decode_request(&encode_request(&request)).unwrap();
-    assert_eq!(decoded.draft(), Some(7));
+    assert_eq!(decoded.asked().and_then(|asked| asked.draft), Some(7));
     let Request::Regenerate { draft: back, .. } = decoded else {
         panic!("not a regeneration");
     };
@@ -406,7 +410,9 @@ fn request_leaving_out_a_sketch_round_trips() {
     // The answer says which sketch it left out.
     let response = handle(request);
     let Response::Regenerated {
-        exclude, sketches, ..
+        asked: Asked { exclude, .. },
+        sketches,
+        ..
     } = round_trip(&response)
     else {
         panic!("regeneration failed");
@@ -419,7 +425,8 @@ fn request_leaving_out_a_sketch_round_trips() {
 fn untested_and_touching_nothing_stay_apart() {
     for touched in [None, Some(Vec::new()), Some(vec![BodyId::NEW])] {
         let mut head = regenerated(1);
-        if let Head::Regenerated { draft, .. } = &mut head {
+        if let Head::Regenerated { asked, draft, .. } = &mut head {
+            asked.draft = Some(3);
             *draft = Some(Drafted {
                 revision: 3,
                 geometry: None,
@@ -462,8 +469,11 @@ fn regenerated_round_trips() {
         panic!("regeneration failed");
     };
     let Response::Regenerated {
-        generation,
-        exclude,
+        asked: Asked {
+            generation,
+            exclude,
+            ..
+        },
         draft,
         mesh,
         picking,
@@ -518,7 +528,8 @@ fn draft_references_must_be_lines_within_bounds() {
         [[0.0; 3], [0.0, f64::INFINITY, 0.0]],
     ] {
         let mut head = regenerated(5);
-        if let Head::Regenerated { draft, .. } = &mut head {
+        if let Head::Regenerated { asked, draft, .. } = &mut head {
+            asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
                 geometry: None,
@@ -541,7 +552,8 @@ fn draft_references_must_be_lines_within_bounds() {
     // A good one goes as it was.
     let good = [[1.0, 2.0, 3.0], [0.0, -2.0, 0.5]];
     let mut head = regenerated(5);
-    if let Head::Regenerated { draft, .. } = &mut head {
+    if let Head::Regenerated { asked, draft, .. } = &mut head {
+        asked.draft = Some(1);
         *draft = Some(Drafted {
             revision: 1,
             geometry: None,
@@ -589,7 +601,8 @@ fn draft_datums_must_be_within_bounds() {
     };
     let head_with = |datums: AlignDatums| {
         let mut head = regenerated(5);
-        if let Head::Regenerated { draft, .. } = &mut head {
+        if let Head::Regenerated { asked, draft, .. } = &mut head {
+            asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
                 geometry: None,
@@ -642,7 +655,8 @@ fn a_scale_draft_s_findings_must_be_within_bounds() {
     };
     let head_with = |found: ScaleFound| {
         let mut head = regenerated(5);
-        if let Head::Regenerated { draft, .. } = &mut head {
+        if let Head::Regenerated { asked, draft, .. } = &mut head {
+            asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
                 geometry: None,
@@ -718,7 +732,8 @@ fn a_sweep_draft_s_handles_must_be_within_bounds() {
     use crate::SweepFound;
     let head_with = |found: SweepFound| {
         let mut head = regenerated(5);
-        if let Head::Regenerated { draft, .. } = &mut head {
+        if let Head::Regenerated { asked, draft, .. } = &mut head {
+            asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
                 geometry: None,
@@ -776,7 +791,9 @@ fn bodies_boxes_must_be_boxes() {
             bodies.extend([(body, [[0.0; 3], [1.0; 3]]), (body, bad)]);
         }
         let Response::Failed {
-            generation, error, ..
+            asked: Asked { generation, .. },
+            error,
+            ..
         } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
         else {
             panic!("a bad box was taken");
@@ -1060,7 +1077,9 @@ fn merged_bodies_are_each_consumed_once_and_hold_none() {
             *merged = bad;
         }
         let Response::Failed {
-            generation, error, ..
+            asked: Asked { generation, .. },
+            error,
+            ..
         } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
         else {
             panic!("bad merged bodies were taken");
@@ -1105,22 +1124,27 @@ fn empty_model_round_trips() {
 fn failed_round_trips() {
     let (_, feature) = sketched();
     let response = Response::Failed {
-        sight: Some(3),
-        generation: Generation::from(u64::MAX),
-        exclude: Some(feature),
-        until: None,
-        draft: Some(2),
-        inspect: Some(5),
+        asked: Asked {
+            sight: Some(3),
+            generation: Generation::from(u64::MAX),
+            exclude: Some(feature),
+            until: None,
+            draft: Some(2),
+            inspect: Some(5),
+        },
         error: "the kernel gave up".to_owned(),
     };
     assert!(encode_reply(&response).1.is_empty());
     let Response::Failed {
-        generation,
-        exclude,
-        until: _,
-        draft,
-        inspect,
-        sight,
+        asked:
+            Asked {
+                generation,
+                exclude,
+                until: _,
+                draft,
+                inspect,
+                sight,
+            },
         error,
     } = round_trip(&response)
     else {
@@ -1140,7 +1164,9 @@ fn malformed_model_fails_its_generation() {
     parts.pop();
     let head = regenerated(5).encode();
     let Response::Failed {
-        generation, error, ..
+        asked: Asked { generation, .. },
+        error,
+        ..
     } = decode_reply(&head[..], &slices(&parts)).unwrap()
     else {
         panic!("decoded a model without line ends");
@@ -1156,7 +1182,9 @@ fn unbounded_line_points_fail_their_generation() {
         parts[12][8..12].copy_from_slice(&bad.to_ne_bytes());
         let head = regenerated(5).encode();
         let Response::Failed {
-            generation, error, ..
+            asked: Asked { generation, .. },
+            error,
+            ..
         } = decode_reply(&head[..], &slices(&parts)).unwrap()
         else {
             panic!("decoded a line point of {bad}");
@@ -1173,7 +1201,9 @@ fn unbounded_positions_fail_their_generation() {
         parts[0][4..8].copy_from_slice(&bad.to_ne_bytes());
         let head = regenerated(5).encode();
         let Response::Failed {
-            generation, error, ..
+            asked: Asked { generation, .. },
+            error,
+            ..
         } = decode_reply(&head[..], &slices(&parts)).unwrap()
         else {
             panic!("decoded a position of {bad}");
@@ -1302,10 +1332,14 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     let picking = Picking::from_parts(parts, &mesh).unwrap();
     let tables = PickTables::new(&mesh, &picking);
     Response::Regenerated {
-        sight: None,
-        generation: Generation::from(0),
-        exclude: None,
-        until: None,
+        asked: Asked {
+            sight: None,
+            generation: Generation::from(0),
+            exclude: None,
+            until: None,
+            draft: None,
+            inspect: None,
+        },
         draft: None,
         mesh: Arc::new(mesh),
         picking: Arc::new(picking),
@@ -1707,12 +1741,14 @@ fn damaged_encodings_never_panic() {
     let (head, _) = encode_reply(&handle(decode_request(&request).unwrap()));
     let parts = triangle();
     let failed = Head::Failed {
-        sight: None,
-        generation: Generation::from(3),
-        exclude: None,
-        until: None,
-        draft: Some(1),
-        inspect: Some(2),
+        asked: Asked {
+            sight: None,
+            generation: Generation::from(3),
+            exclude: None,
+            until: None,
+            draft: Some(1),
+            inspect: Some(2),
+        },
         error: "no".to_owned(),
     }
     .encode();
@@ -1743,12 +1779,14 @@ fn huge_lengths_are_refused_without_allocating_them() {
 
     // An error message that long.
     let mut head = Head::Failed {
-        sight: None,
-        generation: Generation::from(3),
-        exclude: None,
-        until: None,
-        draft: None,
-        inspect: None,
+        asked: Asked {
+            sight: None,
+            generation: Generation::from(3),
+            exclude: None,
+            until: None,
+            draft: None,
+            inspect: None,
+        },
         error: String::new(),
     }
     .encode();
@@ -2173,10 +2211,14 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
         let picking = Picking::from_parts(parts, &mesh).unwrap();
         let tables = PickTables::new(&mesh, &picking);
         Response::Regenerated {
-            sight: None,
-            generation: 4.into(),
-            exclude: None,
-            until: None,
+            asked: Asked {
+                sight: None,
+                generation: 4.into(),
+                exclude: None,
+                until: None,
+                draft: None,
+                inspect: None,
+            },
             draft: None,
             mesh: Arc::new(mesh),
             picking: Arc::new(picking),
@@ -2204,7 +2246,10 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
         Response::Regenerated { .. }
     ));
     match round_trip(&response(MAX_FACES + 1)) {
-        Response::Failed { generation, .. } => assert_eq!(generation, 4.into()),
+        Response::Failed {
+            asked: Asked { generation, .. },
+            ..
+        } => assert_eq!(generation, 4.into()),
         Response::Regenerated { .. }
         | Response::Exported { .. }
         | Response::Answered { .. }
@@ -2468,7 +2513,9 @@ fn hostile_placements_are_refused() {
             *placements = bad.clone();
         }
         let Response::Failed {
-            generation, error, ..
+            asked: Asked { generation, .. },
+            error,
+            ..
         } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
         else {
             panic!("bad placements were taken: {bad:?}");
@@ -2592,11 +2639,15 @@ fn a_broken_measure_is_answered_as_an_error() {
         ),
     ] {
         let mut head = regenerated(1);
-        if let Head::Regenerated { inspected, .. } = &mut head {
+        if let Head::Regenerated {
+            asked, inspected, ..
+        } = &mut head
+        {
+            asked.inspect = Some(2);
             *inspected = Some(Box::new(sent.clone()));
         }
         let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
-        assert_eq!(reply.inspect(), Some(2));
+        assert_eq!(reply.asked().and_then(|asked| asked.inspect), Some(2));
         let Response::Regenerated {
             inspected: Some(inspected),
             ..
@@ -2626,7 +2677,11 @@ fn face_measure(area: f64) -> crate::Measure {
 #[test]
 fn a_refused_model_keeps_its_measure_s_revision() {
     let mut head = regenerated(1);
-    if let Head::Regenerated { inspected, .. } = &mut head {
+    if let Head::Regenerated {
+        asked, inspected, ..
+    } = &mut head
+    {
+        asked.inspect = Some(8);
         *inspected = Some(Box::new(crate::Inspected {
             revision: 8,
             first: Err("face not found".to_owned()),
@@ -2636,7 +2691,7 @@ fn a_refused_model_keeps_its_measure_s_revision() {
     }
     let reply = decode_reply(&head.encode()[..], &slices(&triangle()[..7])).unwrap();
     assert!(matches!(reply, Response::Failed { .. }));
-    assert_eq!(reply.inspect(), Some(8));
+    assert_eq!(reply.asked().and_then(|asked| asked.inspect), Some(8));
 }
 
 /// Three triangles round a vertex, a face each, in one part or (if
@@ -3069,7 +3124,13 @@ fn failure_geometry() -> Arc<ErrorGeometry> {
 /// draft, each with [`failure_geometry`].
 fn answer_with_failures() -> Response {
     let mut response = answer(triangle_mesh(), vec![BodyId::NEW]);
-    if let Response::Regenerated { draft, failed, .. } = &mut response {
+    if let Response::Regenerated {
+        asked,
+        draft,
+        failed,
+        ..
+    } = &mut response
+    {
         let feature: FeatureId = postcard::from_bytes(&[5]).unwrap();
         failed.push(FeatureFailure {
             feature,
@@ -3081,6 +3142,7 @@ fn answer_with_failures() -> Response {
             message: "no geometry".to_owned(),
             geometry: None,
         });
+        asked.draft = Some(2);
         *draft = Some(Box::new(Drafted {
             revision: 2,
             error: Some("it failed too".to_owned()),
@@ -3893,7 +3955,12 @@ fn a_sight_round_trips() {
         panic!("not a regeneration");
     };
     assert_eq!(back.as_deref(), Some(&sight));
-    assert_eq!(round_trip(&handle(request)).sight(), Some(7));
+    assert_eq!(
+        round_trip(&handle(request))
+            .asked()
+            .and_then(|asked| asked.sight),
+        Some(7)
+    );
 }
 
 /// The request for the example's first body's edge facts.
@@ -4207,4 +4274,26 @@ fn client_measure_round_trip_and_refusals() {
     .encode();
     trailing.push(0);
     assert!(decode_reply(&trailing[..], NO_PARTS).is_err());
+}
+
+/// A model whose measure's revision isn't the one its head says was
+/// asked fails its generation, as the page would match it to the wrong
+/// request.
+#[test]
+fn a_model_with_other_revisions_than_asked_fails() {
+    let mut head = regenerated(1);
+    if let Head::Regenerated { inspected, .. } = &mut head {
+        *inspected = Some(Box::new(crate::Inspected {
+            revision: 8,
+            first: Err("face not found".to_owned()),
+            second: None,
+            between: None,
+        }));
+    }
+    let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
+    let Response::Failed { asked, error } = reply else {
+        panic!("the model was taken");
+    };
+    assert_eq!(asked.inspect, None);
+    assert_eq!(error, Error::Revisions.to_string());
 }

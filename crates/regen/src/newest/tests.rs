@@ -17,9 +17,13 @@ fn regenerate(generation: u64) -> Request {
 }
 
 fn generation(request: Option<Request>) -> Option<u64> {
-    request
-        .as_ref()
-        .map(|request| request.generation().expect("a regeneration").into())
+    request.as_ref().map(|request| {
+        request
+            .asked()
+            .map(|asked| asked.generation)
+            .expect("a regeneration")
+            .into()
+    })
 }
 
 fn export(export: u64) -> Request {
@@ -113,20 +117,30 @@ fn a_newer_measure_replaces_the_one_waiting() {
     let mut newest = Newest::default();
     assert!(newest.push(measuring(3, 1)).is_none());
     let replaced = newest.push(measuring(3, 2)).unwrap();
-    assert_eq!(replaced.inspect(), Some(1));
+    assert_eq!(replaced.asked().and_then(|asked| asked.inspect), Some(1));
     // An older generation's, picked on a model the app no longer shows.
     let refused = newest.push(measuring(2, 3)).unwrap();
-    assert_eq!(refused.inspect(), Some(3));
+    assert_eq!(refused.asked().and_then(|asked| asked.inspect), Some(3));
     let next = newest.pop().unwrap();
     assert_eq!(
-        (generation(Some(next.clone())), next.inspect()),
+        (
+            generation(Some(next.clone())),
+            next.asked().and_then(|asked| asked.inspect)
+        ),
         (Some(3), Some(2))
     );
     // An export waiting doesn't drop the measure behind it.
     newest.push(measuring(4, 4));
     newest.push(export(1));
     assert_eq!(exported(newest.pop()), Some(1));
-    assert_eq!(newest.pop().unwrap().inspect(), Some(4));
+    assert_eq!(
+        newest
+            .pop()
+            .unwrap()
+            .asked()
+            .and_then(|asked| asked.inspect),
+        Some(4)
+    );
 }
 
 fn topology(tag: u64) -> Request {
@@ -186,7 +200,14 @@ fn client_measures_queue_in_order_beside_the_user_s() {
     assert!(newest.push(client_measure(3)).is_none());
     assert!(newest.push(topology(4)).is_none());
     // The user's newer picks replace only the user's.
-    assert_eq!(newest.push(measuring(3, 2)).unwrap().inspect(), Some(1));
+    assert_eq!(
+        newest
+            .push(measuring(3, 2))
+            .unwrap()
+            .asked()
+            .and_then(|asked| asked.inspect),
+        Some(1)
+    );
     let tag = |request: Option<Request>| match request {
         Some(Request::Query { tag, .. }) => tag,
         other => panic!("{other:?} isn't a measure"),
@@ -195,6 +216,13 @@ fn client_measures_queue_in_order_beside_the_user_s() {
     assert_eq!(exported(newest.pop()), Some(2));
     assert_eq!(tag(newest.pop()), 3);
     assert_eq!(tag(newest.pop()), 4);
-    assert_eq!(newest.pop().unwrap().inspect(), Some(2));
+    assert_eq!(
+        newest
+            .pop()
+            .unwrap()
+            .asked()
+            .and_then(|asked| asked.inspect),
+        Some(2)
+    );
     assert!(newest.is_empty());
 }

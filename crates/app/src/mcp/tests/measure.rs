@@ -177,7 +177,10 @@ fn the_client_s_measure_leaves_the_user_s_alone() {
         tool_call("measure", json!({ "a": { "face": top } })),
     );
     let sent = requests.borrow();
-    let user = sent.iter().filter(|r| r.inspect().is_some()).count();
+    let user = sent
+        .iter()
+        .filter(|r| r.asked().and_then(|asked| asked.inspect).is_some())
+        .count();
     let client = sent.iter().filter(|r| is_measure(r)).count();
     drop(sent);
     assert_eq!((user, client), (1, 1));

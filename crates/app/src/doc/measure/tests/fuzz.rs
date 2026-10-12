@@ -375,7 +375,9 @@ fn shows_its_values(doc: &Doc, rng: &mut Rng) {
 
 /// The newest measure revision asked so far, from what was sent.
 fn newest_revision(sent: &[Request]) -> Option<u64> {
-    sent.iter().filter_map(Request::inspect).max()
+    sent.iter()
+        .filter_map(|request| request.asked()?.inspect)
+        .max()
 }
 
 /// The steps of the quick run, see [`crate::tests::fuzz_steps`].
@@ -510,7 +512,7 @@ fn run(seed: u64, steps: usize) -> usize {
             let items = doc.pick.selection.items().count();
             let measuring = doc.measure.is_some();
             let waiting: Vec<_> = (requests.borrow().iter())
-                .map(|r| (r.generation(), r.inspect()))
+                .map(|r| r.asked().map(|asked| (asked.generation, asked.inspect)))
                 .collect();
             let picks = doc
                 .measure
@@ -542,7 +544,7 @@ fn run(seed: u64, steps: usize) -> usize {
         if escaped && doc.selection_inspect().is_none() {
             let last = sent.last();
             assert!(
-                last.is_none_or(|last| last.inspect().is_none()),
+                last.is_none_or(|last| last.asked().and_then(|asked| asked.inspect).is_none()),
                 "seed {seed} step {step}"
             );
         }
