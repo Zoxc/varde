@@ -4,37 +4,26 @@
 use std::io;
 use std::path::Path;
 
-use wasm_bindgen::JsCast;
-use web_sys::File;
-
-use super::opfs::{Handle, file_at};
-use crate::js::size;
+use super::opfs::{self, OpfsDir, not_a_place};
+use crate::dir::{Dir, Make};
 use crate::settings::{MAX_BYTES, Settings};
 use crate::vrdp::Storage;
-use crate::web::js::call;
 
 /// Reads the settings from `store`. A missing or unreadable store gives
 /// the defaults.
 pub(crate) async fn load(store: &Path) -> Settings {
     match read(store).await {
-        Ok(Some(toml)) => Settings::parse(&toml),
-        _ => Settings::default(),
+        Ok(bytes) => Settings::parse(&String::from_utf8_lossy(&bytes)),
+        Err(_) => Settings::default(),
     }
 }
 
-/// The text of `store`, if it's there and no larger than settings are.
+/// The bytes of `store`, if it's there and no larger than settings are.
 /// Read without taking its handle, which a write in another tab may hold.
-async fn read(store: &Path) -> io::Result<Option<String>> {
-    let handle = match file_at(store, false).await {
-        Ok(handle) => handle,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    let file: File = call(handle.get_file()).await?.unchecked_into();
-    if size(file.size())? > MAX_BYTES {
-        return Ok(None);
-    }
-    Ok(call(file.text()).await?.as_string())
+async fn read(store: &Path) -> io::Result<Vec<u8>> {
+    let (dir, name) = place(store).await?;
+    let max = usize::try_from(MAX_BYTES).unwrap_or(usize::MAX);
+    dir.read(name, max).await
 }
 
 /// Writes `settings` to `store`. Through its sync access handle, which
@@ -43,6 +32,19 @@ async fn read(store: &Path) -> io::Result<Option<String>> {
 /// costs the settings.
 pub(crate) async fn write(store: &Path, settings: &Settings) -> io::Result<()> {
     let bytes = settings.serialize().into_bytes();
-    let mut handle = Handle::take(&file_at(store, true).await?).await?;
-    handle.replace_all(&bytes)
+    let (dir, name) = place(store).await?;
+    dir.take(name, Make::IfMissing).await?.replace_all(&bytes)
+}
+
+/// The directory `store` is in, made if needed, and its name there.
+async fn place(store: &Path) -> io::Result<(OpfsDir, &str)> {
+    let name = store
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| not_a_place(store))?;
+    let dir = match store.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => opfs::dir(parent).await?,
+        _ => opfs::root().await?,
+    };
+    Ok((OpfsDir(dir), name))
 }

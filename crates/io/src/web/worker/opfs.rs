@@ -52,21 +52,7 @@ pub(crate) async fn dir(designs: &Path) -> io::Result<FileSystemDirectoryHandle>
     Ok(dir)
 }
 
-/// The file at `path`, from the root of the Origin Private File System,
-/// made if `create`, along with the directories it's in.
-pub(crate) async fn file_at(path: &Path, create: bool) -> io::Result<FileSystemFileHandle> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| not_a_place(path))?;
-    let dir = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => dir(parent).await?,
-        _ => root().await?,
-    };
-    file(&dir, name, create).await
-}
-
-fn not_a_place(path: &Path) -> io::Error {
+pub(crate) fn not_a_place(path: &Path) -> io::Error {
     io::Error::other(format!(
         "{} isn't a place in the Origin Private File System",
         path.display()
