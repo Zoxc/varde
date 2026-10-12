@@ -139,7 +139,7 @@ pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
         "id": feature.id.get(),
         "units": units.symbol(),
         "plane": Shape::new(doc).sketch_plane(plane),
-        "revision": serde_json::to_value(doc.editor.revision()).unwrap_or(Value::Null),
+        "revision": super::revision(doc),
     });
     let mut lists = vec![
         ("points", points),

@@ -11,7 +11,7 @@ mod sketch;
 mod topology;
 
 use serde_json::{Value, json};
-use varde_document::{Document, Feature, FeatureId, Generation};
+use varde_document::{Body, Document, Feature, FeatureId, Generation};
 use varde_expr::{LengthUnit, Power, Unit};
 use varde_mcp::tools::{Page, ToolReply};
 use varde_regen::FeatureFailure;
@@ -63,7 +63,7 @@ pub(crate) fn design_summary(doc: &Doc, page: Page) -> ToolReply {
     let answer = json!({
         "units": document.units().symbol(),
         "tolerance": varde_view::tolerance_label(document.tolerance().fit()),
-        "revision": serde_json::to_value(doc.editor.revision()).unwrap_or(Value::Null),
+        "revision": revision(doc),
         "rollback": rollback,
         "model": model,
     });
@@ -199,6 +199,12 @@ pub(super) fn named<'a>(doc: &'a Doc, name: &str) -> Result<&'a Feature, ToolRep
     super::edit::feature_by_name(doc.editor.document(), name).map_err(ToolReply::error)
 }
 
+/// The body of `doc`'s design named `name`, or the answer saying
+/// there's none.
+pub(super) fn body_named<'a>(doc: &'a Doc, name: &str) -> Result<&'a Body, ToolReply> {
+    super::edit::body_by_name(doc.editor.document(), name).map_err(ToolReply::error)
+}
+
 /// The name of the feature `document` is rolled back to, if it is.
 pub(super) fn rollback_name(document: &Document) -> Option<String> {
     (document.rollback())
@@ -312,6 +318,11 @@ fn failure<'a>(failures: &'a [FeatureFailure], feature: &Feature) -> Option<&'a 
     failures
         .iter()
         .find(|failure| failure.feature == feature.id)
+}
+
+/// `doc`'s design's revision, as JSON.
+pub(super) fn revision(doc: &Doc) -> Value {
+    serde_json::to_value(doc.editor.revision()).unwrap_or(Value::Null)
 }
 
 /// A generation as a JSON number.
