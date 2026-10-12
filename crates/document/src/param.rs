@@ -86,6 +86,20 @@ pub(crate) fn resolve(params: &[Param], units: varde_expr::LengthUnit) -> Arc<Pa
 }
 
 impl FeatureKind {
+    /// The texts of its values and, a sketch, its dimensions' values:
+    /// every expression that can use a parameter.
+    pub(crate) fn expression_texts(&self) -> impl Iterator<Item = &str> {
+        let dimensions = match self {
+            FeatureKind::Sketch { sketch, .. } => sketch.dimensions.as_slice(),
+            _ => &[],
+        };
+        (self.values().into_iter().map(|value| value.text.as_str())).chain(
+            dimensions
+                .iter()
+                .map(|entry| entry.dimension.value.text.as_str()),
+        )
+    }
+
     /// Its typed values, other than a sketch's dimensions: what a
     /// parameter can be used in.
     pub fn values(&self) -> Vec<&Value> {
@@ -193,17 +207,7 @@ impl Document {
             named
         };
         for feature in &self.features {
-            let dimensions = match &feature.kind {
-                FeatureKind::Sketch { sketch, .. } => sketch.dimensions.as_slice(),
-                _ => &[],
-            };
-            let values = feature.kind.values();
-            let texts = (values.iter().map(|value| value.text.as_str())).chain(
-                dimensions
-                    .iter()
-                    .map(|entry| entry.dimension.value.text.as_str()),
-            );
-            let mut named: Vec<usize> = texts.flat_map(&named).collect();
+            let mut named: Vec<usize> = feature.kind.expression_texts().flat_map(&named).collect();
             named.sort_unstable();
             named.dedup();
             for index in named {
@@ -246,13 +250,7 @@ impl Document {
     pub fn param_uses(&self, name: &str) -> Vec<FeatureId> {
         (self.features.iter())
             .filter(|feature| {
-                let dimensions = match &feature.kind {
-                    FeatureKind::Sketch { sketch, .. } => sketch.dimensions.as_slice(),
-                    _ => &[],
-                };
-                (feature.kind.values().iter()).any(|value| varde_expr::uses(&value.text, name))
-                    || (dimensions.iter())
-                        .any(|entry| varde_expr::uses(&entry.dimension.value.text, name))
+                (feature.kind.expression_texts()).any(|text| varde_expr::uses(text, name))
             })
             .map(|feature| feature.id)
             .collect()
