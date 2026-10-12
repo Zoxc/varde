@@ -13,7 +13,7 @@ use varde_document::Command;
 use varde_mcp::tools::{self, FeatureTool, Worded};
 use varde_view::{ChamferType, MotionField, MotionKind};
 
-use super::args::{Given, Wrong, edges, faces, goes_with, made_of, typed_given};
+use super::args::{Given, Wrong, edges, faces, gated, goes_with, made_of, typed_given};
 use super::edit::{Made, Refused};
 use crate::doc::{Doc, MotionSession};
 
@@ -41,21 +41,15 @@ pub(super) fn set_chamfer(
         (
             "second_distance",
             args.second_distance.is_some(),
-            ChamferType::Two,
             tools::ChamferType::TwoDistances,
         ),
         (
             "angle",
             args.angle.is_some(),
-            ChamferType::Angle,
             tools::ChamferType::DistanceAngle,
         ),
     ];
-    if let Some(&(name, _, _, word)) =
-        (sent.iter()).find(|&&(name, present, reads, _)| given.sent(name, present) && reads != kind)
-    {
-        return Err(goes_with(name, &format!("type {}", word.word())));
-    }
+    gated(given, kind, "type", &sent, chamfer_type)?;
     if given.sent("flip", args.flip) && kind == ChamferType::Equal {
         let why = format!(
             "type {} or {}: {} is the same either way round",

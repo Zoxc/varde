@@ -16,7 +16,8 @@ use varde_document::{
 };
 use varde_expr::{Ask, Value as ExprValue};
 use varde_mcp::tools::{
-    FeatureTool, Item, ItemKind, Naming, Operation, Profile, Profiles, WorldAxis, WorldPlane,
+    FeatureTool, Item, ItemKind, Naming, Operation, Profile, Profiles, Worded, WorldAxis,
+    WorldPlane,
 };
 use varde_view::{MotionField, MotionKind, OperationKind, Pick, PickIndex};
 
@@ -654,6 +655,25 @@ pub(super) fn keyed(
 /// `why`, of the argument `said`.
 pub(super) fn said(said: &str, why: impl Into<String>) -> String {
     format!("{said}: {}", why.into())
+}
+
+/// Refuses the first argument of `sent` (its name, whether the call has
+/// it, and the choice `said` it needs) that's `given` while `chosen` is
+/// another choice: as the panel's `panel` choice for it shows, it has no
+/// field then.
+pub(super) fn gated<W: Worded, P: PartialEq>(
+    given: Given,
+    chosen: P,
+    said: &str,
+    sent: &[(&str, bool, W)],
+    panel: impl Fn(W) -> P,
+) -> Result<(), Wrong> {
+    match (sent.iter())
+        .find(|&&(name, present, needs)| given.sent(name, present) && panel(needs) != chosen)
+    {
+        Some(&(name, _, needs)) => Err(goes_with(name, &format!("{said} {}", needs.word()))),
+        None => Ok(()),
+    }
 }
 
 /// The refusal of the argument `name` given without what it `goes`

@@ -18,14 +18,14 @@
 //! panel has no field for it.
 
 use varde_document::{Axis3, Command};
-use varde_mcp::tools::{self, FeatureTool, Item, ItemKind, Reference, Worded, WorldAxis};
+use varde_mcp::tools::{self, FeatureTool, Item, ItemKind, Reference, WorldAxis};
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode, ScaleMode,
 };
 
 use super::args::{
-    Given, SET_FEATURE, Wrong, by_key, goes_with, keyed, made, origin_plane, picked_bodies, said,
-    typed_given, world_axis,
+    Given, SET_FEATURE, Wrong, by_key, gated, goes_with, keyed, made, origin_plane, picked_bodies,
+    said, typed_given, world_axis,
 };
 use super::edit::{Made, Refused};
 use crate::doc::{Doc, MotionSession};
@@ -332,25 +332,19 @@ pub(super) fn set_scale(
     let mode = given.or("mode", scale_mode(args.mode), session.scale.mode);
     let [x, y, z] = &args.factors;
     let sent = [
-        ("factor", args.factor.is_some(), ScaleMode::Uniform),
-        ("x", x.is_some(), ScaleMode::PerAxis),
-        ("y", y.is_some(), ScaleMode::PerAxis),
-        ("z", z.is_some(), ScaleMode::PerAxis),
-        ("edge", args.edge.is_some(), ScaleMode::EdgeLength),
-        ("length", args.length.is_some(), ScaleMode::EdgeLength),
-        ("axis_only", args.axis_only, ScaleMode::EdgeLength),
+        ("factor", args.factor.is_some(), tools::ScaleMode::Uniform),
+        ("x", x.is_some(), tools::ScaleMode::PerAxis),
+        ("y", y.is_some(), tools::ScaleMode::PerAxis),
+        ("z", z.is_some(), tools::ScaleMode::PerAxis),
+        ("edge", args.edge.is_some(), tools::ScaleMode::EdgeLength),
+        (
+            "length",
+            args.length.is_some(),
+            tools::ScaleMode::EdgeLength,
+        ),
+        ("axis_only", args.axis_only, tools::ScaleMode::EdgeLength),
     ];
-    if let Some(&(name, _, wants)) =
-        (sent.iter()).find(|&&(name, present, wants)| given.sent(name, present) && wants != mode)
-    {
-        let word = match wants {
-            ScaleMode::Uniform => tools::ScaleMode::Uniform,
-            ScaleMode::PerAxis => tools::ScaleMode::PerAxis,
-            ScaleMode::EdgeLength => tools::ScaleMode::EdgeLength,
-        }
-        .word();
-        return Err(goes_with(name, &format!("mode {word}")));
-    }
+    gated(given, mode, "mode", &sent, scale_mode)?;
     if given.has("mode") {
         session.scale_mode(mode);
     }
