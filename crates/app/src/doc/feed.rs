@@ -298,6 +298,15 @@ pub(crate) struct Shown<'a> {
 /// that old gives out no placements.
 const MAX_ASKED: usize = 64;
 
+/// Pushes `item` onto `queue`, dropping its oldest first if it holds
+/// [`MAX_ASKED`] already.
+fn push_capped<T>(queue: &mut VecDeque<T>, item: T) {
+    if queue.len() == MAX_ASKED {
+        queue.pop_front();
+    }
+    queue.push_back(item);
+}
+
 impl MeshFeed {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -392,17 +401,11 @@ impl MeshFeed {
         }) {
             self.requested = Some(asked);
             if hidden && self.hidden.back() != Some(&asked) {
-                if self.hidden.len() == MAX_ASKED {
-                    self.hidden.pop_front();
-                }
-                self.hidden.push_back(asked);
+                push_capped(&mut self.hidden, asked);
             }
             let document = editor.snapshot();
             if (self.asked.back()).is_none_or(|&(newest, _)| newest < asked.generation) {
-                if self.asked.len() == MAX_ASKED {
-                    self.asked.pop_front();
-                }
-                self.asked.push_back((asked.generation, document.clone()));
+                push_capped(&mut self.asked, (asked.generation, document.clone()));
             }
             regen.send(Request::Regenerate {
                 generation: asked.generation,
