@@ -21,7 +21,8 @@ use varde_kernel::mesh::FaceKey;
 use varde_kernel::topology::Chain;
 use varde_kernel::{RenderMesh, Solid, Topology};
 
-use crate::inspect::{EdgeForm, point};
+use crate::bounds::point;
+use crate::inspect::EdgeForm;
 
 /// How an edge's two faces meet along it, seen from outside the solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -44,6 +44,7 @@ use varde_kernel::measure::{self, Direction, EdgeShape, MeasureError, Measured, 
 use varde_kernel::mesh::FaceKey;
 use varde_kernel::{Budget, RenderMesh, Solid, Topology};
 
+use crate::bounds::{non_negative, point, positive, unit};
 use crate::cache::{Cache, Keyer};
 use crate::{BodySolid, Evaluation, PickCorner, Picking, Summary};
 
@@ -243,24 +244,6 @@ impl Inspected {
     }
 }
 
-/// Whether `x` is a coordinate the answer may hold.
-fn value(x: f64) -> bool {
-    x.abs() <= Picking::MAX_VALUE
-}
-
-/// Whether `p`'s coordinates are ones the answer may hold.
-pub(crate) fn point(p: [f64; 3]) -> bool {
-    p.into_iter().all(value)
-}
-
-fn size(x: f64) -> bool {
-    x >= 0.0 && value(x)
-}
-
-fn unit(v: [f64; 3]) -> bool {
-    (DVec3::from(v).length() - 1.0).abs() <= Picking::UNIT
-}
-
 impl Probed {
     fn valid(&self, scene: Option<(&RenderMesh, &Picking)>) -> bool {
         let at = match (self.at, scene) {
@@ -295,8 +278,8 @@ impl Measure {
                 centre,
                 bounds,
             } => {
-                size(volume)
-                    && size(area)
+                non_negative(volume)
+                    && non_negative(area)
                     && centre.is_none_or(point)
                     && bounds.is_none_or(|[min, max]| {
                         point(min) && point(max) && (0..3).all(|i| min[i] <= max[i])
@@ -308,12 +291,12 @@ impl Measure {
                 half_angle,
                 rectangle,
             } => {
-                size(area)
+                non_negative(area)
                     && summary.valid()
                     && half_angle.is_none_or(|a| (0.0..=std::f64::consts::FRAC_PI_2).contains(&a))
                     && rectangle.is_none_or(|sides| sides.into_iter().all(point))
             }
-            Measure::Edge { length, shape, .. } => size(length) && shape.valid(),
+            Measure::Edge { length, shape, .. } => non_negative(length) && shape.valid(),
             Measure::Point(p) => point(p),
         }
     }
@@ -330,13 +313,13 @@ impl EdgeForm {
                 centre,
                 axis,
                 radius,
-            } => point(centre) && unit(axis) && size(radius) && radius > 0.0,
+            } => point(centre) && unit(axis) && positive(radius),
             EdgeForm::Ellipse {
                 centre,
                 axis,
                 major,
                 minor,
-            } => point(centre) && unit(axis) && size(major) && minor > 0.0 && minor <= major,
+            } => point(centre) && unit(axis) && positive(major) && minor > 0.0 && minor <= major,
             EdgeForm::Other => true,
         }
     }
@@ -379,7 +362,7 @@ impl Gap {
     /// rounding: the kernel's is `|q − p|` as computed).
     fn valid(&self) -> bool {
         let [p, q] = self.points.map(DVec3::from);
-        size(self.distance)
+        non_negative(self.distance)
             && self.points.into_iter().all(point)
             && (p.distance(q) - self.distance).abs() <= Picking::UNIT * (1.0 + self.distance)
     }

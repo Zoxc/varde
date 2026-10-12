@@ -19,6 +19,7 @@
 //!
 //! [`Editor::generation`]: varde_document::Editor::generation
 
+mod bounds;
 mod cache;
 mod edge_facts;
 mod error_geometry;

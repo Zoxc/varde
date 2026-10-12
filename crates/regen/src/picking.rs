@@ -22,7 +22,7 @@ use std::mem::size_of_val;
 use std::sync::Arc;
 
 use crate::PickTables;
-use crate::inspect::point;
+use crate::bounds::{point, point_dvec, positive, ratio, unit, value};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
@@ -146,31 +146,26 @@ impl Summary {
     /// its directions unit vectors (within [`Picking::UNIT`]), its sizes
     /// positive and a cone's cosine and sine within `(0, 1]`.
     pub fn valid(&self) -> bool {
-        let value = |x: f64| x.abs() <= Picking::MAX_VALUE;
-        let point = |p: [f64; 3]| p.into_iter().all(value);
-        let unit = |v: [f64; 3]| (DVec3::from(v).length() - 1.0).abs() <= Picking::UNIT;
-        let size = |x: f64| x > 0.0 && value(x);
-        let ratio = |x: f64| x > 0.0 && x <= 1.0;
         match *self {
             Summary::Plane { n, d } => unit(n) && value(d),
             Summary::Cylinder {
                 point: p,
                 axis,
                 radius,
-            } => point(p) && unit(axis) && size(radius),
+            } => point(p) && unit(axis) && positive(radius),
             Summary::Cone {
                 apex,
                 axis,
                 cos,
                 sin,
             } => point(apex) && unit(axis) && ratio(cos) && ratio(sin),
-            Summary::Sphere { centre, radius } => point(centre) && size(radius),
+            Summary::Sphere { centre, radius } => point(centre) && positive(radius),
             Summary::Torus {
                 centre,
                 axis,
                 major,
                 minor,
-            } => point(centre) && unit(axis) && size(major) && size(minor),
+            } => point(centre) && unit(axis) && positive(major) && positive(minor),
             Summary::ConicCylinder { along } => unit(along),
             Summary::Revolved { origin, axis } => point(origin) && unit(axis),
             Summary::Other => true,
@@ -209,11 +204,6 @@ pub struct PickCorner {
     /// Where it is, exactly the solid's vertex, within
     /// [`Picking::MAX_VALUE`].
     pub point: [f64; 3],
-}
-
-/// Whether `p` is within [`Picking::MAX_VALUE`].
-fn within(p: DVec3) -> bool {
-    point(p.to_array())
 }
 
 /// The picking tables of a model's mesh: the body of each of its parts,
@@ -623,7 +613,7 @@ impl Drawn {
         let snaps = (0..mesh.edge_count())
             .map(|e| {
                 let snap = shapes.get(e)?.point();
-                snap.filter(|&p| within(p)).map(|p| p.to_array())
+                snap.filter(|&p| point_dvec(p)).map(|p| p.to_array())
             })
             .collect();
         let verts = solid.mesh().verts();
@@ -633,7 +623,7 @@ impl Drawn {
                 let &[a, b, c, ..] = &corner.regions[..] else {
                     return None;
                 };
-                within(point).then(|| PickCorner {
+                point_dvec(point).then(|| PickCorner {
                     faces: [a, b, c],
                     point: point.to_array(),
                 })
