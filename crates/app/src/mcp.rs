@@ -826,7 +826,7 @@ impl Mcp {
             .mcp
             .scroll
             .take()
-            .map(|share| crate::snap_list(varde_view::TIMELINE_LIST, share));
+            .map(|share| crate::tasks::snap_list(varde_view::TIMELINE_LIST, share));
         let renders = doc.mcp.take_renders().into_iter().map(|(tag, answer)| {
             Task::perform(answer, move |image| {
                 let image = image.ok().flatten().and_then(|image| {

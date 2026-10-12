@@ -176,7 +176,7 @@ viewport's stack and its state), and the wheel over it scrolls it rather
 than the camera. Giving the first field the focus (a session started, or
 another extrude edited while a panel is open) also scrolls the body back
 to its top if the field shows from there, else down to the field and its
-label (`RevealField` in `app/src/lib.rs`). The panel starts 150 px down
+label (`RevealField` in `app/src/tasks.rs`). The panel starts 150 px down
 (`PANEL_TOP`, clear of the camera controls) unless the viewport leaves
 it less than 200 px (`PANEL_ROOM`) below that; then it rises, at most to
 12 px from the top, over the controls (`operation_panel::placed`). Where

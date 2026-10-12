@@ -13,6 +13,7 @@ mod platform;
 mod recent;
 mod samples;
 mod settings;
+mod tasks;
 mod toast;
 mod welcome;
 mod when;
@@ -25,13 +26,19 @@ use iced::{Element, Subscription, Task, window};
 use varde_document::APP_NAME;
 use varde_document::Revision;
 use varde_io::{Chosen, Picked, Request as IoRequest, Response as IoResponse, SaveError};
-use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved, ViewOptions};
+use varde_view::{File, Look, Message as Ui, Mode, ViewOptions};
 
-use crate::doc::{Dialog, Doc, DocId, Downloader, Focus, Leave};
+use crate::doc::{Doc, DocId, Downloader, Leave};
 use crate::files::{Files, ThumbnailHandles};
-use crate::keys::{document_key, welcome_key};
+use crate::keys::{
+    PageEscape, command_key, document_key, escape_key, peek_key, reset_key, unfocused, welcome_key,
+};
 use crate::message::{ForDoc, Message};
 use crate::settings::Settings;
+use crate::tasks::{
+    ask_writable, focus_field, focus_name, focus_param, focus_rename, pick_export, pick_open,
+    pick_save_as, snap_list, storage_state, thumbnail,
+};
 use crate::toast::Toast;
 use crate::welcome::Welcome;
 use varde_view::Setting;
@@ -50,7 +57,7 @@ pub(crate) struct Varde {
     /// Where the settings are kept, as the page's foot says it: `None`
     /// natively without a config directory.
     settings_shown: Option<String>,
-    /// Whether the peek key is held, see [`Held::PEEK`].
+    /// Whether the peek key is held, see [`Held::PEEK`](varde_view::Held::PEEK).
     peeking: bool,
     /// Whether the command modifier (`Ctrl`, or `Cmd` on macOS) is held,
     /// with which clicking a list's row adds to the selection.
@@ -1129,28 +1136,6 @@ fn while_quitting(message: &Message) -> bool {
     )
 }
 
-/// Waits for the thumbnail tagged `tag` of document `id` to come back on
-/// `answer`, see `doc/thumbnail.rs`: `None` if it couldn't be rendered,
-/// its sender dropped uncalled.
-fn thumbnail(
-    id: DocId,
-    tag: u64,
-    answer: iced::futures::channel::oneshot::Receiver<Option<varde_view::ThumbnailImages>>,
-) -> Task<Message> {
-    use varde_io::thumbnail::{Image, Thumbnail};
-    Task::perform(answer, move |images| {
-        let image =
-            |image: varde_render::PreviewImage| Image::new(image.width, image.height, image.rgba);
-        let thumbnail = images.ok().flatten().and_then(|images| {
-            Some(Thumbnail {
-                light: image(images.light)?,
-                dark: image(images.dark)?,
-            })
-        });
-        Message::Doc(id, ForDoc::Thumbnail(tag, thumbnail))
-    })
-}
-
 /// Reports `result` if it failed to do `what`, for the IO lane's answers
 /// that are only reported, not shown.
 fn report_failure(what: &str, result: Result<(), String>) {
@@ -1171,86 +1156,6 @@ fn only_if(
     }
 }
 
-/// Holding the peek key peeks at the other side panel tab.
-fn peek_key(event: keyboard::Event) -> Option<Message> {
-    match event {
-        keyboard::Event::ModifiersChanged(modifiers) => {
-            Some(Message::PeekPanel(Held::PEEK.is_held(modifiers)))
-        }
-        _ => None,
-    }
-}
-
-/// Tells whether the command modifier is held, see [`Varde::command`].
-fn command_key(event: keyboard::Event) -> Option<Message> {
-    match event {
-        keyboard::Event::ModifiersChanged(modifiers) => {
-            Some(Message::CommandHeld(modifiers.command()))
-        }
-        _ => None,
-    }
-}
-
-/// Escape, or Tab where no shortcut takes it (`tab_taken`), given the
-/// prompt the user is being asked, if any: cancels it (staying, or
-/// deleting nothing), and otherwise backs out of what's open, see
-/// [`Look::Escape`].
-fn escape_key(
-    ((dialog, tab_taken, page), event): (
-        (Option<Dialog>, bool, Option<PageEscape>),
-        keyboard::Event,
-    ),
-) -> Option<Message> {
-    // Escape with any modifiers, unlike a shortcut.
-    let keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
-        return None;
-    };
-    let tab = key == keyboard::Key::Named(key::Named::Tab);
-    if !varde_view::escapes(&key, modifiers) || (tab && tab_taken) {
-        return None;
-    }
-    // The settings page, over what's open in the document, takes it
-    // before that does, but not before a prompt over it: Escape cancels
-    // Reset's or closes the page, and Tab does nothing there.
-    if let (None, Some(page)) = (dialog, page) {
-        let message = match page {
-            PageEscape::CancelReset => Ui::Settings(varde_view::SettingsPage::CancelReset),
-            PageEscape::Close => Ui::ToggleSettings,
-        };
-        return (!tab).then_some(Message::Ui(message));
-    }
-    Some(Message::Ui(match dialog {
-        Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
-        Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),
-        Some(Dialog::McpAsk) => Ui::McpPanel(varde_view::McpPanel::KeepEditing),
-        Some(Dialog::McpRevert) => Ui::McpPanel(varde_view::McpPanel::CancelRevert),
-        Some(Dialog::Damaged) => Ui::Welcome(varde_view::Welcome::CancelDamaged),
-        Some(Dialog::Panic) => Ui::Welcome(varde_view::Welcome::ClosePanic),
-        Some(Dialog::Naming) => Ui::File(File::CancelName),
-        Some(Dialog::DeleteFromBrowser) => Ui::Welcome(varde_view::Welcome::CancelDelete),
-        None => Ui::Look(Look::Escape),
-    }))
-}
-
-/// What `Esc` does on the settings page, see `Varde::page_escape`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum PageEscape {
-    CancelReset,
-    Close,
-}
-
-/// `Enter`, as Reset to defaults asks: resets.
-fn reset_key(event: keyboard::Event) -> Option<Message> {
-    match event {
-        keyboard::Event::KeyPressed {
-            key: keyboard::Key::Named(key::Named::Enter),
-            repeat: false,
-            ..
-        } => Some(Message::Ui(Ui::Settings(varde_view::SettingsPage::Reset))),
-        _ => None,
-    }
-}
-
 /// Where the settings are kept, as the settings page's foot says it:
 /// with the home directory as `~` once the recent `files` say where it
 /// is. `None` without a config directory.
@@ -1260,188 +1165,6 @@ fn settings_shown(files: Option<&Files>) -> Option<String> {
         Some(files) => files.shown_path(&store),
         None => store.display().to_string(),
     })
-}
-
-/// Stops peeking once the window loses focus.
-fn unfocused((_, event): (window::Id, window::Event)) -> Option<Message> {
-    matches!(event, window::Event::Unfocused).then_some(Message::PeekPanel(false))
-}
-
-/// Has the value field take the focus, and select its text as `focus`
-/// says: all of it to overtype, or the part a refusal is about. An
-/// operation panel's body, where the field may be, scrolls back to its
-/// top if the field shows from there, else down to the field
-/// ([`RevealField`]): an extrude edited while another's panel was
-/// scrolled keeps that panel, and so its scroll.
-fn focus_field(focus: Focus) -> Task<Message> {
-    use iced::widget::operation;
-
-    let select = match focus {
-        Focus::All => operation::select_all(varde_view::VALUE_FIELD),
-        Focus::Range(start, end) => operation::select_range(varde_view::VALUE_FIELD, start, end),
-    };
-    operation::focus(varde_view::VALUE_FIELD)
-        .chain(select)
-        .chain(iced::advanced::widget::operate(RevealField::default()))
-}
-
-/// Scrolls an operation panel's body so the value field in it shows with
-/// its label over it: to the body's top where the field shows from
-/// there, else with the label at the top. A field outside the body (a
-/// dimension's, in a sketch) leaves it be.
-#[derive(Default)]
-struct RevealField {
-    /// The body's bounds and its content's.
-    body: Option<(iced::Rectangle, iced::Rectangle)>,
-    field: Option<iced::Rectangle>,
-}
-
-impl RevealField {
-    /// How far above the field its label starts, with a little room.
-    const LABEL: f32 = 24.0;
-}
-
-impl<T: Send + 'static> iced::advanced::widget::Operation<T> for RevealField {
-    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>)) {
-        operate(self);
-    }
-
-    fn scrollable(
-        &mut self,
-        id: Option<&iced::widget::Id>,
-        bounds: iced::Rectangle,
-        content_bounds: iced::Rectangle,
-        _translation: iced::Vector,
-        _state: &mut dyn iced::advanced::widget::operation::Scrollable,
-    ) {
-        if id == Some(&varde_view::PANEL_BODY) {
-            self.body = Some((bounds, content_bounds));
-        }
-    }
-
-    fn focusable(
-        &mut self,
-        id: Option<&iced::widget::Id>,
-        bounds: iced::Rectangle,
-        _state: &mut dyn iced::advanced::widget::operation::Focusable,
-    ) {
-        if id == Some(&varde_view::VALUE_FIELD) {
-            self.field = Some(bounds);
-        }
-    }
-
-    fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
-        use iced::advanced::widget::operation::{Outcome, scrollable};
-
-        let (Some((body, content)), Some(field)) = (self.body, self.field) else {
-            return Outcome::None;
-        };
-        // Where the field is in the content, which isn't moved by the
-        // scroll in layout.
-        let (top, bottom) = (field.y - content.y, field.y + field.height - content.y);
-        if top < 0.0 || bottom > content.height {
-            return Outcome::None;
-        }
-        let y = if bottom <= body.height {
-            0.0
-        } else {
-            (top - Self::LABEL).max(0.0)
-        };
-        let offset = scrollable::AbsoluteOffset {
-            x: None,
-            y: Some(y),
-        };
-        Outcome::Chain(Box::new(scrollable::scroll_to(
-            varde_view::PANEL_BODY,
-            offset,
-        )))
-    }
-}
-
-/// Has the rename field take the focus, its text selected to overtype.
-fn focus_rename() -> Task<Message> {
-    use iced::widget::operation;
-
-    operation::focus(varde_view::RENAME_FIELD)
-        .chain(operation::select_all(varde_view::RENAME_FIELD))
-}
-
-/// Has the name field of the parameter at `index` take the focus, its
-/// text selected to overtype.
-fn focus_param(index: usize) -> Task<Message> {
-    use iced::widget::operation;
-
-    let id = varde_view::param_name_id(index);
-    operation::focus(id.clone()).chain(operation::select_all(id))
-}
-
-/// Has the Save As dialog's name field take the focus, its text selected
-/// to overtype.
-fn focus_name() -> Task<Message> {
-    use iced::widget::operation;
-
-    operation::focus(varde_view::NAME_FIELD).chain(operation::select_all(varde_view::NAME_FIELD))
-}
-
-/// Asks the browser what it says of its storage, answering with
-/// [`Message::StorageState`]; natively it says nothing.
-fn storage_state() -> Task<Message> {
-    Task::perform(
-        async {
-            let persisted = varde_io::storage::persisted().await;
-            let space = varde_io::storage::estimate().await;
-            (persisted, space)
-        },
-        |(persisted, space)| Message::StorageState { persisted, space },
-    )
-}
-
-/// Scrolls the scrolled list `id` (the rail's open list, the Timeline)
-/// to `share` of the way to its end.
-pub(crate) fn snap_list(id: iced::widget::Id, share: f32) -> Task<Message> {
-    use iced::widget::operation::{self, RelativeOffset};
-
-    let offset = RelativeOffset {
-        x: None,
-        y: Some(share),
-    };
-    operation::snap_to(id, offset)
-}
-
-/// Asks the user for a design to open, answering with
-/// [`Message::Picked`]: see `varde_io::pick`.
-fn pick_open() -> Task<Message> {
-    Task::perform(varde_io::pick::pick_open(), Message::Picked)
-}
-
-/// Asks the user where to save the document `id`, suggesting `name`,
-/// answering with [`ForDoc::SaveAsPicked`].
-fn pick_save_as(id: DocId, name: &str) -> Task<Message> {
-    let name = name.to_owned();
-    Task::perform(
-        async move { varde_io::pick::pick_save(&name).await },
-        move |chosen| Message::Doc(id, ForDoc::SaveAsPicked(chosen)),
-    )
-}
-
-/// Asks the user where to export the document `id`'s bodies, suggesting
-/// `name`, answering with [`ForDoc::ExportPicked`].
-fn pick_export(id: DocId, name: &str) -> Task<Message> {
-    let name = name.to_owned();
-    Task::perform(
-        async move { varde_io::pick::pick_export(&name).await },
-        move |chosen| Message::Doc(id, ForDoc::ExportPicked(chosen)),
-    )
-}
-
-/// Asks the browser whether the document `id` may be saved to the file
-/// the user `picked`, answering with [`ForDoc::Writable`]: see
-/// `varde_io::pick`.
-fn ask_writable(id: DocId, picked: Picked) -> Task<Message> {
-    Task::perform(
-        async move { varde_io::pick::writable(&picked).await },
-        move |result| Message::Doc(id, ForDoc::Writable(result)),
-    )
 }
 
 /// What [`run`] ends with, so the executables need not name iced. The

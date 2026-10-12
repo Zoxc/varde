@@ -1,10 +1,11 @@
-use crate::doc::OperationSlot;
+use crate::doc::{Dialog, OperationSlot};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use varde_sketch::Selectable;
+use varde_view::Unsaved;
 
 use glam::Vec3;
 use iced::futures::StreamExt;
