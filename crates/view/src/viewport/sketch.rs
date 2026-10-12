@@ -445,6 +445,11 @@ impl<'a> Sketching<'a> {
         self.placement
     }
 
+    /// The projector onto the sketch's plane for `camera` in `bounds`.
+    fn projector(&self, camera: &Camera, bounds: Rectangle) -> Option<Projector> {
+        Projector::new(camera, self.placement, bounds.width, bounds.height)
+    }
+
     /// The same, its tools snapping without [`Held::FREE`] held if
     /// `snaps`, else only with it.
     pub(crate) fn snapping(self, snaps: bool) -> Self {
@@ -499,8 +504,7 @@ impl<'a> Sketching<'a> {
                 })
             }
             Event::Mouse(event) => {
-                let projector =
-                    Projector::new(camera, self.placement(), bounds.width, bounds.height)?;
+                let projector = self.projector(camera, bounds)?;
                 self.mouse(input, *event, bounds, cursor, &projector, modifiers)
             }
             Event::Window(iced::window::Event::RedrawRequested(now)) => {
@@ -528,7 +532,7 @@ impl<'a> Sketching<'a> {
             return Some(Action::request_redraw_at(due));
         }
         press.held = true;
-        let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height)?;
+        let projector = self.projector(camera, bounds)?;
         let cursor = projector.cursor(press.from)?;
         let tolerance = overlaps::OVERLAP_REACH * cursor.pixel;
         let mut ids = hit::overlaps(self.sketch, cursor.at, tolerance);
@@ -950,9 +954,8 @@ impl<'a> Sketching<'a> {
         modifiers: Modifiers,
     ) -> Option<Action<Message>> {
         self.tool?;
-        let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height)?;
-        let at = cursor.position_over(bounds)?;
-        let at = local(bounds, at);
+        let projector = self.projector(camera, bounds)?;
+        let at = local_cursor(bounds, cursor)?;
         Some(
             self.point_to(input, projector.cursor(at), modifiers)
                 .unwrap_or_else(Action::request_redraw),
@@ -994,7 +997,7 @@ impl<'a> Sketching<'a> {
         colors: SketchColors,
         modifiers: Modifiers,
     ) -> (Arc<SketchLayer>, SketchLayer) {
-        let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height);
+        let projector = self.projector(camera, bounds);
         let closing = self.drag_closing(input, projector.as_ref(), modifiers);
         let mut base = input.base.borrow_mut();
         let current =
