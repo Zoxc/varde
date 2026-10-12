@@ -27,11 +27,11 @@ pub fn spawn() -> (Lane, Responses) {
 /// that fails. A job that panics is answered with [`Response::Failed`], so
 /// the UI hears back either way, and the lane goes on.
 fn spawn_on(handle: impl FnMut(Request) -> Option<Response> + Send + 'static) -> (Lane, Responses) {
-    thread::spawn_answering(
+    thread::spawn(
         "solve",
         Order::default(),
         OnClose::Stop,
-        handle,
+        thread::all(handle),
         |request: &Request| {
             let tag = request.tag();
             move |error| Response::Failed { tag, error }

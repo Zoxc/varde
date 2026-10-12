@@ -29,7 +29,7 @@ pub fn spawn() -> (Lane, Responses) {
 /// off the user's.
 pub fn spawn_at(stores: Stores) -> (Lane, Responses) {
     let mut files = Files::new(stores);
-    spawn_answering(move |request| files.answer(request))
+    spawn_on_lane(thread::all(move |request| files.answer(request)))
 }
 
 /// Starts the lane, answering each request with `handle`, which tests use
@@ -37,19 +37,18 @@ pub fn spawn_at(stores: Stores) -> (Lane, Responses) {
 /// thread ends.
 #[cfg(test)]
 pub(crate) fn spawn_on(
-    mut handle: impl FnMut(Request) -> Response + Send + 'static,
+    handle: impl FnMut(Request) -> Response + Send + 'static,
 ) -> (Lane, Responses) {
-    spawn_answering(move |request| [handle(request)])
+    spawn_on_lane(thread::one(handle))
 }
 
-/// Starts the lane, answering each request with the responses `handle`
-/// gives, in order.
-fn spawn_answering<A: IntoIterator<Item = Response>>(
-    handle: impl FnMut(Request) -> A + Send + 'static,
+/// Starts the lane, `handle` sending each request's responses, in order.
+fn spawn_on_lane(
+    handle: impl FnMut(Request, &mut dyn FnMut(Response)) + Send + 'static,
 ) -> (Lane, Responses) {
     // A request that panics leaves the files as they are: no worse than it
     // found them, short of the one it was about.
-    thread::spawn_answering(
+    thread::spawn(
         "io",
         Queue::default(),
         OnClose::Drain,

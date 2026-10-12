@@ -26,14 +26,15 @@ use crate::{Regenerator, Request, Response};
 /// back either way, and the lane goes on.
 pub fn spawn() -> (Lane, Responses) {
     let mut regenerator = Regenerator::default();
-    thread::spawn_reporting(
+    thread::spawn(
         "regenerate",
         Newest::default(),
         OnClose::Stop,
         move |request, send| {
-            regenerator.handle_reporting(request, &mut |progress| {
+            let answer = regenerator.handle_reporting(request, &mut |progress| {
                 send(Response::Progress(progress));
-            })
+            });
+            send(answer);
         },
         Request::failure,
     )
@@ -47,7 +48,7 @@ fn spawn_on(handle: impl FnMut(Request) -> Response + Send + 'static) -> (Lane, 
         "regenerate",
         Newest::default(),
         OnClose::Stop,
-        handle,
+        thread::one(handle),
         Request::failure,
     )
 }

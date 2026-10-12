@@ -33,8 +33,13 @@ fn no_panic<S>(_: &u32) -> fn(String) -> S {
 
 #[test]
 fn answers_in_the_order_taken() {
-    let (mut lane, mut responses) =
-        spawn("test", Fifo::default(), OnClose::Stop, |n| n * 2, no_panic);
+    let (mut lane, mut responses) = spawn(
+        "test",
+        Fifo::default(),
+        OnClose::Stop,
+        one(|n| n * 2),
+        no_panic,
+    );
     lane.send(0);
     lane.send(1);
     lane.send(2);
@@ -48,12 +53,12 @@ fn a_panic_is_answered_and_the_lane_goes_on() {
         "test",
         Fifo::default(),
         OnClose::Stop,
-        |n| {
+        one(|n| {
             if n == 1 {
                 panic!("on purpose");
             }
             Ok(n)
-        },
+        }),
         |&n| move |error| Err((n, error)),
     );
     lane.send(1);
@@ -76,13 +81,13 @@ fn close_while_busy(on_close: OnClose, sent: &[u32]) -> Vec<u32> {
         "test",
         Fifo::default(),
         on_close,
-        move |n| {
+        one(move |n| {
             if n == 1 {
                 let _ = started.send(());
                 let _ = wait.recv_timeout(TIMEOUT);
             }
             let _ = handled.send(n);
-        },
+        }),
         no_panic,
     );
     lane.send(1);
@@ -108,14 +113,20 @@ fn stopping_drops_what_is_pending_after_closing() {
 
 #[test]
 fn thread_ends_when_idle_and_dropped() {
-    let (lane, responses) = spawn("test", Fifo::default(), OnClose::Drain, |n| n, no_panic);
+    let (lane, responses) = spawn(
+        "test",
+        Fifo::default(),
+        OnClose::Drain,
+        one(|n| n),
+        no_panic,
+    );
     drop(lane);
     join_in_time(close(responses));
 }
 
 #[test]
 fn a_lane_outliving_its_responses_does_not_keep_the_thread() {
-    let (mut lane, responses) = spawn("test", Fifo::default(), OnClose::Stop, |n| n, no_panic);
+    let (mut lane, responses) = spawn("test", Fifo::default(), OnClose::Stop, one(|n| n), no_panic);
     let join = close(responses);
     lane.send(1);
     join_in_time(join);

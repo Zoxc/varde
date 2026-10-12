@@ -27,93 +27,17 @@ pub enum OnClose {
     Stop,
 }
 
-/// Starts a lane on a new thread called `name`, answering each request
-/// with `handle`. A request `handle` panics on is answered by what
-/// `failed` makes of it, taken before the request is handed over, called
-/// with the panic's message (see [`crate::panic`]), and the lane goes on.
-/// Send requests through the [`Lane`], read responses from [`Responses`];
-/// dropping the latter ends the thread as `on_close` says, which drops
-/// `handle` and whatever it owns.
+/// Starts a lane on a new thread called `name`, `handle` taking each
+/// request and sending its responses as it makes them, such as how far
+/// it has got ahead of its answer ([`one`] and [`all`] make a `handle` of
+/// a function answering). A request `handle` panics on is answered by
+/// what `failed` makes of it, taken before the request is handed over,
+/// called with the panic's message (see [`crate::panic`]), after the
+/// responses sent before the panic; the lane goes on. Send requests
+/// through the [`Lane`], read responses from [`Responses`]; dropping the
+/// latter ends the thread as `on_close` says, which drops `handle` and
+/// whatever it owns.
 pub fn spawn<R, S, F>(
-    name: &str,
-    pending: impl Pending<R> + Send + 'static,
-    on_close: OnClose,
-    mut handle: impl FnMut(R) -> S + Send + 'static,
-    failed: impl Fn(&R) -> F + Send + 'static,
-) -> (Lane<R>, Responses<R, S>)
-where
-    R: Send + 'static,
-    S: Send + 'static,
-    F: FnOnce(String) -> S,
-{
-    spawn_answering(
-        name,
-        pending,
-        on_close,
-        move |request| [handle(request)],
-        failed,
-    )
-}
-
-/// [`spawn`], with `handle` answering each request with any number of
-/// responses, in order, such as its answer followed by news it brought
-/// about. A request it panics on is answered by `failed` alone.
-pub fn spawn_answering<R, S, A, F>(
-    name: &str,
-    pending: impl Pending<R> + Send + 'static,
-    on_close: OnClose,
-    mut handle: impl FnMut(R) -> A + Send + 'static,
-    failed: impl Fn(&R) -> F + Send + 'static,
-) -> (Lane<R>, Responses<R, S>)
-where
-    R: Send + 'static,
-    S: Send + 'static,
-    A: IntoIterator<Item = S>,
-    F: FnOnce(String) -> S,
-{
-    spawn_sending(
-        name,
-        pending,
-        on_close,
-        move |request, send: &mut dyn FnMut(S)| {
-            // All made before any goes, so a panic sends none of them.
-            let responses: Vec<S> = handle(request).into_iter().collect();
-            responses.into_iter().for_each(send);
-        },
-        failed,
-    )
-}
-
-/// [`spawn`], with `handle` given a way to send responses while it works,
-/// ahead of its answer, such as how far it has got. Those it sent before
-/// panicking stay sent, and `failed`'s answer follows them.
-pub fn spawn_reporting<R, S, F>(
-    name: &str,
-    pending: impl Pending<R> + Send + 'static,
-    on_close: OnClose,
-    mut handle: impl FnMut(R, &mut dyn FnMut(S)) -> S + Send + 'static,
-    failed: impl Fn(&R) -> F + Send + 'static,
-) -> (Lane<R>, Responses<R, S>)
-where
-    R: Send + 'static,
-    S: Send + 'static,
-    F: FnOnce(String) -> S,
-{
-    spawn_sending(
-        name,
-        pending,
-        on_close,
-        move |request, send: &mut dyn FnMut(S)| {
-            let answer = handle(request, &mut *send);
-            send(answer);
-        },
-        failed,
-    )
-}
-
-/// Starts the lane's thread, `handle` sending each request's responses
-/// as it makes them, `failed`'s answer after them on a panic.
-fn spawn_sending<R, S, F>(
     name: &str,
     pending: impl Pending<R> + Send + 'static,
     on_close: OnClose,
@@ -166,6 +90,25 @@ where
         thread: Some(thread),
     };
     (lane, responses)
+}
+
+/// A [`spawn`] handle answering each request with `answer`'s one
+/// response.
+pub fn one<R, S>(mut answer: impl FnMut(R) -> S) -> impl FnMut(R, &mut dyn FnMut(S)) {
+    move |request, send| send(answer(request))
+}
+
+/// A [`spawn`] handle answering each request with any number of
+/// responses, in order, such as its answer followed by news it brought
+/// about. All are made before any goes, so a request `answer` panics on
+/// is answered by `failed` alone.
+pub fn all<R, S, A: IntoIterator<Item = S>>(
+    mut answer: impl FnMut(R) -> A,
+) -> impl FnMut(R, &mut dyn FnMut(S)) {
+    move |request, send| {
+        let responses: Vec<S> = answer(request).into_iter().collect();
+        responses.into_iter().for_each(send);
+    }
 }
 
 /// State shared between the lane's thread and its handles.

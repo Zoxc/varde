@@ -1053,7 +1053,7 @@ steps done. It goes as the model is current again; one quicker than
 0, of the history's features then drawing the model, and its `Stage`,
 the feature by name or `Drawing`) at the start of each step, ahead of
 the answer, never of an export; natively through
-`varde_lane::thread::spawn_reporting`, on the web posted by the worker
+`varde_lane::thread::spawn`'s `send`, on the web posted by the worker
 as a lone `Head::Progress`, which the page's mailbox passes on without
 taking it for the answer (`Wire::finishes`). The feed keeps the newest
 until the next answer, model or failure, wanted or not, and the
