@@ -32,6 +32,10 @@ rfd.workspace = true
 # The MCP server's bearer token, mcp-token.toml, src/native/mcp_token.rs.
 varde-mcp.workspace = true
 
+# O_NONBLOCK and O_NOFOLLOW for opening mcp-token.toml.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 # The IO Web Worker, the Origin Private File System and the page's file
 # pickers and downloads.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

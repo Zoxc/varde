@@ -4235,6 +4235,7 @@ dependencies = [
  "getrandom 0.4.3",
  "glam 0.30.10",
  "js-sys",
+ "libc",
  "log",
  "miniz_oxide 0.8.9",
  "png",

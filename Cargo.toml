@@ -66,6 +66,9 @@ spade = { version = "2.15", default-features = false, features = ["std"] }
 # natively and on wasm (where std's own is this code already), so angles
 # give the same bits everywhere. The platform's maths library would not.
 libm = "0.2.16"
+# O_NONBLOCK and O_NOFOLLOW for opening the MCP token (crates/io), Unix
+# only. The version the lock already holds.
+libc = "0.2"
 # The checksums of 3MF packages' zip entries (crates/io).
 crc32fast = "1"
 # The sums of .vrdp blocks (crates/io/src/vrdp.rs): XXH3-128. Pure Rust,
