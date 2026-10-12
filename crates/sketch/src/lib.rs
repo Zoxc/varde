@@ -437,9 +437,15 @@ impl Sketch {
     /// does.
     pub fn add_point(&mut self, at: DVec2) -> Result<Id, OutOfIds> {
         let id = self.new_id()?;
+        self.push_point(id, at);
+        Ok(id)
+    }
+
+    /// Adds a point `id` at `at`, numbered as [`add_point`](Sketch::add_point)
+    /// does; the id is the caller's to choose and keep sorted.
+    pub(crate) fn push_point(&mut self, id: Id, at: DVec2) {
         let number = self.next_number(Kind::Point.name());
         self.points.push(Point { id, number, at });
-        Ok(id)
     }
 
     /// Adds `curve`, numbered after the others of its kind, like
@@ -447,6 +453,12 @@ impl Sketch {
     /// to [`Sketch::check`].
     pub fn add_curve(&mut self, curve: Curve, construction: bool) -> Result<Id, OutOfIds> {
         let id = self.new_id()?;
+        self.push_curve(id, curve, construction);
+        Ok(id)
+    }
+
+    /// Adds `curve` as `id`, like [`push_point`](Sketch::push_point).
+    pub(crate) fn push_curve(&mut self, id: Id, curve: Curve, construction: bool) {
         let number = self.next_number(curve.kind().name());
         self.curves.push(CurveEntry {
             id,
@@ -455,7 +467,6 @@ impl Sketch {
             curve,
             corner: None,
         });
-        Ok(id)
     }
 
     /// Adds `constraint`, like [`add_curve`](Sketch::add_curve).

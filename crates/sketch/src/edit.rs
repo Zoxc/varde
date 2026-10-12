@@ -12,8 +12,8 @@ use varde_expr::{AngleUnit, LengthUnit, Unit, Value, format};
 
 use crate::origin::LAST_ID;
 use crate::{
-    Constraint, Curve, CurveEntry, Design, Dimension, Id, Kind, LinkKind, LinkShape, OutOfIds,
-    Point, Setback, Side, Sketch, SketchError, SplineKind,
+    Constraint, Curve, Design, Dimension, Id, LinkKind, LinkShape, OutOfIds, Setback, Side, Sketch,
+    SketchError, SplineKind,
 };
 
 /// A change to a sketch as the user asks for it, not its result: applied
@@ -464,23 +464,11 @@ impl Add {
         };
 
         for &(id, at) in &self.points {
-            let number = sketch.next_number(Kind::Point.name());
-            sketch.points.push(Point {
-                id: resolve(id)?,
-                number,
-                at,
-            });
+            sketch.push_point(resolve(id)?, at);
         }
         for new in &self.curves {
             let curve = new.curve.map_points(resolve)?;
-            let number = sketch.next_number(curve.kind().name());
-            sketch.curves.push(CurveEntry {
-                id: resolve(new.id)?,
-                number,
-                construction: new.construction,
-                curve,
-                corner: None,
-            });
+            sketch.push_curve(resolve(new.id)?, curve, new.construction);
         }
         if let Some(&last) = placed.values().max() {
             sketch.next_id = last.0.checked_add(1).ok_or(OutOfIds)?;
