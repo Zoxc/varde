@@ -435,80 +435,70 @@ impl Varde {
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
-        let task = self.handle(message);
+        let mut tasks = vec![self.handle(message)];
         // The MCP calls done send their replies, and those of a server
         // stopped are ended.
         self.mcp.sync(self.screen.doc_mut());
         // A new design starts in the units of the settings.
         self.files.new_units = self.options.length_unit;
-        // A value field opened, or a value refused, has the field take the
-        // focus once it shows.
-        let task = match self.screen.doc_mut().and_then(Doc::take_focus) {
-            Some(focus) => Task::batch([task, focus_field(focus)]),
-            None => task,
-        };
-        // The Timeline scrolled to the feature the MCP panel showed.
-        #[cfg(not(target_arch = "wasm32"))]
-        let task = match self.screen.doc_mut().and_then(|doc| doc.mcp.scroll.take()) {
-            Some(share) => Task::batch([task, snap_list(varde_view::TIMELINE_LIST, share)]),
-            None => task,
-        };
-        // The rail's list scrolled to show the row the keys moved to.
-        let task = match self.screen.doc_mut().and_then(|doc| doc.rail.take_scroll()) {
-            Some(share) => Task::batch([task, snap_list(varde_view::RAIL_LIST, share)]),
-            None => task,
-        };
-        // The rename field takes the focus as it opens, its text selected.
-        let task = match self.screen.doc_mut().is_some_and(Doc::take_rename_focus) {
-            true => Task::batch([task, focus_rename()]),
-            false => task,
-        };
-        // A parameter just added has its name take the focus, its text
-        // selected.
-        let task = match self.screen.doc_mut().and_then(Doc::take_param_focus) {
-            Some(index) => Task::batch([task, focus_param(index)]),
-            None => task,
-        };
-        // What the document has to say shows as a toast.
-        if let Some(message) = self.screen.doc_mut().and_then(Doc::take_toast) {
-            self.toast.show(message, iced::time::Instant::now());
-        }
-        // The Save As dialog's name field takes the focus as it shows.
-        let task = match self.screen.doc_mut().is_some_and(Doc::take_name_focus) {
-            true => Task::batch([task, focus_name()]),
-            false => task,
-        };
-        // Asked as the user first saves to browser storage.
-        let task = match self.files.take_ask_persist() {
-            true => Task::batch([
-                task,
-                Task::perform(varde_io::storage::persist(), Message::Persisted),
-            ]),
-            false => task,
-        };
-        platform::show_title(&self.title());
-        // The pictures MCP calls asked for, drawn by the viewport's next
-        // frame.
-        #[cfg(not(target_arch = "wasm32"))]
-        let task = match self.screen.doc_mut() {
-            Some(doc) => {
-                let id = doc.id;
-                let renders = doc.mcp.take_renders().into_iter();
-                Task::batch(
-                    std::iter::once(task)
-                        .chain(renders.map(|(tag, answer)| mcp_render(id, tag, answer))),
-                )
+        if let Some(doc) = self.screen.doc_mut() {
+            // A value field opened, or a value refused, has the field take
+            // the focus once it shows.
+            tasks.extend(doc.take_focus().map(focus_field));
+            // The Timeline scrolled to the feature the MCP panel showed.
+            #[cfg(not(target_arch = "wasm32"))]
+            tasks.extend(
+                doc.mcp
+                    .scroll
+                    .take()
+                    .map(|share| snap_list(varde_view::TIMELINE_LIST, share)),
+            );
+            // The rail's list scrolled to show the row the keys moved to.
+            tasks.extend(
+                doc.rail
+                    .take_scroll()
+                    .map(|share| snap_list(varde_view::RAIL_LIST, share)),
+            );
+            // The rename field takes the focus as it opens, its text selected.
+            if doc.take_rename_focus() {
+                tasks.push(focus_rename());
             }
-            None => task,
-        };
-        // A thumbnail asked for, rendered by the viewport's next frame.
-        match self.screen.doc_mut() {
-            Some(doc) => match doc.take_thumbnail() {
-                Some((tag, answer)) => Task::batch([task, thumbnail(doc.id, tag, answer)]),
-                None => task,
-            },
-            None => task,
+            // A parameter just added has its name take the focus, its text
+            // selected.
+            tasks.extend(doc.take_param_focus().map(focus_param));
+            // What the document has to say shows as a toast.
+            if let Some(message) = doc.take_toast() {
+                self.toast.show(message, iced::time::Instant::now());
+            }
+            // The Save As dialog's name field takes the focus as it shows.
+            if doc.take_name_focus() {
+                tasks.push(focus_name());
+            }
+            let id = doc.id;
+            // The pictures MCP calls asked for, drawn by the viewport's next
+            // frame.
+            #[cfg(not(target_arch = "wasm32"))]
+            tasks.extend(
+                doc.mcp
+                    .take_renders()
+                    .into_iter()
+                    .map(|(tag, answer)| mcp_render(id, tag, answer)),
+            );
+            // A thumbnail asked for, rendered by the viewport's next frame.
+            tasks.extend(
+                doc.take_thumbnail()
+                    .map(|(tag, answer)| thumbnail(id, tag, answer)),
+            );
         }
+        // Asked as the user first saves to browser storage.
+        if self.files.take_ask_persist() {
+            tasks.push(Task::perform(
+                varde_io::storage::persist(),
+                Message::Persisted,
+            ));
+        }
+        platform::show_title(&self.title());
+        Task::batch(tasks)
     }
 
     /// Takes `message`, see [`Varde::update`].
