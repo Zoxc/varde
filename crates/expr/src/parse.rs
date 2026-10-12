@@ -233,19 +233,9 @@ fn number_end(bytes: &[u8], start: usize) -> usize {
 
 /// The unit a word names, in any case.
 pub(crate) fn unit(word: &str) -> Option<Unit> {
-    let units: [(&str, Unit); 7] = [
-        ("mm", LengthUnit::Mm.into()),
-        ("cm", LengthUnit::Cm.into()),
-        ("m", LengthUnit::M.into()),
-        ("in", LengthUnit::In.into()),
-        ("ft", LengthUnit::Ft.into()),
-        ("deg", AngleUnit::Deg.into()),
-        ("rad", AngleUnit::Rad.into()),
-    ];
-    units
-        .into_iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(word))
-        .map(|(_, unit)| unit)
+    (LengthUnit::ALL.into_iter().map(Unit::from))
+        .chain(AngleUnit::ALL.map(Unit::from))
+        .find(|unit| unit.symbol().eq_ignore_ascii_case(word))
 }
 
 struct Parser<'a> {

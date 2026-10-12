@@ -102,6 +102,8 @@ pub enum AngleUnit {
 }
 
 impl AngleUnit {
+    pub const ALL: [AngleUnit; 2] = [AngleUnit::Deg, AngleUnit::Rad];
+
     /// Radians in one of it.
     pub fn rad(self) -> f64 {
         match self {
