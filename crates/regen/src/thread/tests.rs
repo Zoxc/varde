@@ -1,5 +1,5 @@
 use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, OriginPlane, Plane};
-use varde_lane::thread::testing::join_in_time;
+use varde_lane::thread::testing::{close, join_in_time};
 
 use super::*;
 use crate::{Asked, Transport, handle};
@@ -109,7 +109,7 @@ fn burst_ends_with_the_newest() {
 fn thread_ends_when_responses_are_dropped() {
     let editor = Editor::new(Document::example());
     let (mut lane, responses) = spawn();
-    let join = responses.close();
+    let join = close(responses);
     // The lane handle outliving the stream doesn't keep the thread alive.
     lane.send(regenerate(&editor));
     join_in_time(join);
@@ -119,7 +119,7 @@ fn thread_ends_when_responses_are_dropped() {
 fn thread_ends_when_idle_and_dropped() {
     let (lane, responses) = spawn();
     drop(lane);
-    join_in_time(responses.close());
+    join_in_time(close(responses));
 }
 
 /// Tessellates, except that generation 1 panics.

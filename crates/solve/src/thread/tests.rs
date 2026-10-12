@@ -1,5 +1,5 @@
 use glam::DVec2;
-use varde_lane::thread::testing::{join_in_time, next};
+use varde_lane::thread::testing::{close, join_in_time, next};
 use varde_sketch::{Constraint, SketchEdit};
 
 use super::*;
@@ -65,7 +65,7 @@ fn proposals_are_answered_in_order_among_drags() {
 fn thread_ends_when_responses_are_dropped() {
     let drawn = drawn();
     let (mut lane, responses) = spawn();
-    let join = responses.close();
+    let join = close(responses);
     // The lane handle outliving the stream doesn't keep the thread alive.
     lane.send(analyse_at(1, &drawn.sketch));
     join_in_time(join);

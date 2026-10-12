@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use varde_lane::thread::testing::{TIMEOUT, next};
+use varde_lane::thread::testing::{TIMEOUT, close, next};
 
 use super::*;
 use crate::tests::{TempDir, with_sketches};
@@ -52,7 +52,7 @@ fn answers_in_order_and_closes_files_when_dropped() {
     assert_eq!(opened.access, Access::Edit);
     assert!(dir.sidecar().exists());
 
-    responses.close().join().unwrap();
+    close(responses).join().unwrap();
     assert!(!dir.sidecar().exists());
 }
 
@@ -366,7 +366,7 @@ fn auto_saves_waiting_behind_a_running_one_collapse() {
     }
     assert_eq!(answered, [1, 3]);
     // The lane ending lets go of it as a crash would, keeping the newest.
-    responses.close().join().unwrap();
+    close(responses).join().unwrap();
     let saved = crate::tests::auto_saved_at(&dir.sidecar()).unwrap();
     assert_eq!(saved.document, snapshot(0));
 }

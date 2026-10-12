@@ -15,6 +15,12 @@ use super::Responses;
 /// How long a test waits for the lane before failing.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Closes the lane as dropping `responses` does, and returns its
+/// thread, to wait for it to end. Dropping never waits.
+pub fn close<R, S>(mut responses: Responses<R, S>) -> JoinHandle<()> {
+    responses.thread.take().expect("taken only here")
+}
+
 /// The next response, polled without an executor.
 pub fn next<R, S>(responses: &mut Responses<R, S>) -> S {
     let start = Instant::now();

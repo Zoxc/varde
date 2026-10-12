@@ -238,16 +238,10 @@ impl<R> Transport<R> for Lane<R> {
 pub struct Responses<R, S> {
     receiver: UnboundedReceiver<S>,
     shared: Arc<Shared<R>>,
-    /// The lane's thread, until [`close`](Self::close) hands it out.
+    /// The lane's thread, until `testing::close` hands it out; dropped
+    /// unjoined otherwise.
+    #[cfg_attr(not(any(test, feature = "testing")), expect(dead_code))]
     thread: Option<JoinHandle<()>>,
-}
-
-impl<R, S> Responses<R, S> {
-    /// Closes the lane as dropping the responses does, and returns its
-    /// thread, for tests to wait for it to end. Dropping never waits.
-    pub fn close(mut self) -> JoinHandle<()> {
-        self.thread.take().expect("taken only here")
-    }
 }
 
 impl<R, S> fmt::Debug for Responses<R, S> {

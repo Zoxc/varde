@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::mpsc;
 
-use super::testing::{TIMEOUT, join_in_time, next};
+use super::testing::{TIMEOUT, close, join_in_time, next};
 use super::*;
 
 /// Requests in the order sent, except that `0` is refused.
@@ -90,7 +90,7 @@ fn close_while_busy(on_close: OnClose, sent: &[u32]) -> Vec<u32> {
     for &n in sent {
         lane.send(n);
     }
-    let join = responses.close();
+    let join = close(responses);
     go.send(()).unwrap();
     join_in_time(join);
     done.try_iter().collect()
@@ -110,13 +110,13 @@ fn stopping_drops_what_is_pending_after_closing() {
 fn thread_ends_when_idle_and_dropped() {
     let (lane, responses) = spawn("test", Fifo::default(), OnClose::Drain, |n| n, no_panic);
     drop(lane);
-    join_in_time(responses.close());
+    join_in_time(close(responses));
 }
 
 #[test]
 fn a_lane_outliving_its_responses_does_not_keep_the_thread() {
     let (mut lane, responses) = spawn("test", Fifo::default(), OnClose::Stop, |n| n, no_panic);
-    let join = responses.close();
+    let join = close(responses);
     lane.send(1);
     join_in_time(join);
 }
