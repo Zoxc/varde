@@ -29,6 +29,7 @@ mod loft;
 pub use loft::loft_info;
 mod mcp;
 mod measure;
+mod menu;
 mod motion;
 mod mouse;
 mod mouse_only;

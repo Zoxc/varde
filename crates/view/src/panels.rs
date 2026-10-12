@@ -20,6 +20,7 @@ use crate::context_menu::ContextMenu;
 use crate::document::{shown_color, shown_opacity};
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
+use crate::menu::{menu_item, menu_separator, ticked};
 use crate::mouse_only::MouseOnly;
 use crate::overflow_tip::OverflowTip;
 use crate::rollback::{GHOST_HEIGHT, MARKER_HEIGHT};
@@ -27,7 +28,6 @@ use crate::shortcut::{Held, Shortcut};
 use crate::theme::{
     self, Palette, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone,
 };
-use crate::toolbar::{menu_item, menu_separator, ticked};
 use crate::{
     ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
     ObjectRow, OriginObject, Panel, RENAME_FIELD, RowMenu, SketchState, VALUE_FIELD, ValueTarget,

@@ -28,7 +28,7 @@ pub(crate) const OVERLAP_REACH: f64 = 8.0;
 pub(crate) const MAX_OVERLAPS: usize = 16;
 /// How wide the list is, and how tall a row, in pixels.
 pub(crate) const WIDTH: f32 = 220.0;
-const ROW_HEIGHT: f32 = crate::toolbar::MENU_ITEM_HEIGHT;
+const ROW_HEIGHT: f32 = crate::menu::MENU_ITEM_HEIGHT;
 const PADDING: f32 = 4.0;
 /// How far from where the button was held the list's corner is, in
 /// pixels: clear of the cursor, so letting go of the button isn't on a

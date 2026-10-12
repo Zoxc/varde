@@ -1717,7 +1717,7 @@ fn name_prompt(prompt: NamePrompt<'_>) -> Element<'_, Message> {
     let places = (prompt.places && !prompt.rename).then(|| {
         let place = |label, place| {
             let chosen = prompt.place == place;
-            toolbar::choice_item(
+            crate::menu::choice_item(
                 match place {
                     SavePlace::Browser => Icon::Browser,
                     SavePlace::Computer => Icon::Computer,

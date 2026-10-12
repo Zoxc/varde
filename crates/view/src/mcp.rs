@@ -749,7 +749,7 @@ fn call_row<'a>(call: &McpCall<'a>) -> Element<'a, Message> {
 /// An edit's row with its context menu: Show in Timeline, Revert to
 /// here, Revert to before it.
 fn edit_menu<'a>(row: Element<'a, Message>, edit: McpEdit) -> Element<'a, Message> {
-    use crate::toolbar::{menu_item, menu_separator};
+    use crate::menu::{menu_item, menu_separator};
     let serial = edit.serial;
     let message = |offered: bool, message| offered.then_some(Message::McpPanel(message));
     let menu = edit.menu.then(|| {

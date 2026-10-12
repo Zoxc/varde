@@ -11,11 +11,9 @@ use varde_render::{Projection, Shading};
 
 use crate::chrome::{Hint, icon_button, key_hint};
 use crate::icons::Icon;
+use crate::menu::{MENU_ITEM_HEIGHT, choice_item, menu_item, menu_separator, submenu_item, ticked};
 use crate::shortcut::Shortcut;
 use crate::theme::{self, Tone};
-use crate::toolbar::{
-    MENU_ITEM_HEIGHT, choice_item, menu_item, menu_separator, submenu_item, ticked,
-};
 use crate::view_choices::{
     EDGES, SHADINGS, edges_icon, edges_said, projection_said, shading_icon, shading_said,
 };
