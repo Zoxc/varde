@@ -9,7 +9,7 @@ use varde_sketch::{Budget, LinkKind, Sketch, Unrevalued};
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind, Id, LinkSource,
     MAX_PATTERN_BODIES, Named, Opacity, Operation, OutsideRef, Param, Pattern, Plane, Removable,
-    Snapshot, Tint, ValueOf, param, sketch_face,
+    Removal, Snapshot, Tint, ValueOf, param, sketch_face,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -1064,288 +1064,10 @@ impl Editor {
         own_step: bool,
         budget: &Budget,
     ) -> Result<(), EditError> {
-        // Each edit works on a private copy, so a refused one leaves `self`
-        // as it was, and one that would change nothing returns before
-        // copying.
-        let document = &self.current.document;
+        // A refused edit leaves `self` as it was.
         let replacing = matches!(command, Command::Replace(_));
-        let next = match command {
-            Command::RemoveBody(id) => {
-                let removal = document.removal(Removable::Body(id));
-                if removal.is_empty() {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.remove(&removal);
-                next
-            }
-            Command::SetVisible(id, visible) => {
-                let Some(next) = document.with_body(id, |body| body.visible = visible) else {
-                    return Ok(());
-                };
-                next
-            }
-            Command::SetOpacity(id, opacity) => {
-                let Some(next) = document.with_body(id, |body| body.opacity = opacity) else {
-                    return Ok(());
-                };
-                next
-            }
-            Command::SetColor(id, color) => {
-                let Some(next) = document.with_body(id, |body| body.color = color) else {
-                    return Ok(());
-                };
-                next
-            }
-            Command::AddSketch { name, plane } => {
-                let mut next = Document::clone(document);
-                let sketch = Sketch::default();
-                next.push_feature(
-                    name,
-                    FeatureKind::Sketch {
-                        plane,
-                        sketch,
-                        sources: Vec::new(),
-                    },
-                )?;
-                next.follow_sketch_face(next.features.len() - 1, None)?;
-                next
-            }
-            Command::SetSketch { feature, sketch } => {
-                let Some(index) = document.feature_index(feature) else {
-                    return Ok(());
-                };
-                match &document.features[index].kind {
-                    FeatureKind::Sketch { sketch: old, .. } if *old != *sketch => {}
-                    _ => return Ok(()),
-                }
-                let mut next = Document::clone(document);
-                next.set_sketch(index, *sketch, None);
-                next.keeps_sketch_face(document, index)?;
-                next
-            }
-            Command::AddLink {
-                feature,
-                sketch,
-                source,
-            } => {
-                let Some(index) = document.feature_index(feature) else {
-                    return Ok(());
-                };
-                if !matches!(document.features[index].kind, FeatureKind::Sketch { .. }) {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.set_sketch(index, *sketch, Some(source));
-                next.keeps_sketch_face(document, index)?;
-                next
-            }
-            Command::SetSketchPlane { feature, plane } => {
-                let Some(index) = document.feature_index(feature) else {
-                    return Ok(());
-                };
-                match &document.features[index].kind {
-                    FeatureKind::Sketch { plane: old, .. } if *old != plane => {}
-                    _ => return Ok(()),
-                }
-                let mut next = Document::clone(document);
-                let was = next.sketch_face_of(index);
-                if let FeatureKind::Sketch { plane: old, .. } = &mut next.features[index].kind {
-                    *old = plane;
-                }
-                next.follow_sketch_face(index, was)?;
-                next
-            }
-            Command::AddFeature { name, kind } => {
-                if matches!(*kind, FeatureKind::Sketch { .. }) {
-                    return Err(EditError::SketchKind);
-                }
-                let mut kind = kind;
-                planned_new_body(None, &mut kind);
-                let mut next = Document::clone(document);
-                let sketches = kind.profile_sketches();
-                let makes_body = kind.new_body().is_some();
-                let copies = match &*kind {
-                    FeatureKind::Pattern(pattern) => planned_copies(None, pattern),
-                    _ => None,
-                };
-                let id = next.push_feature(name, *kind)?;
-                if makes_body {
-                    let body = next.add_body(id)?;
-                    next.set_new_body(id, body);
-                }
-                if let Some(planned) = copies {
-                    next.make_copies(id, planned)?;
-                }
-                for sketch in sketches {
-                    if let Some(index) = next.feature_index(sketch) {
-                        next.features[index].visible = false;
-                    }
-                }
-                let index = next.features.len() - 1;
-                next.check_new(index, &next.features[index].kind)?;
-                next
-            }
-            Command::SetFeature { feature, kind } => match document.with_kind(feature, kind)? {
-                Some(next) => next,
-                None => return Ok(()),
-            },
-            Command::RemoveFeature(id) => {
-                let removal = document.removal(Removable::Feature(id));
-                if removal.is_empty() {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.remove(&removal);
-                next
-            }
-            Command::RemoveFeatures(ids) => {
-                let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
-                let removal = document.removal_of(&targets);
-                if removal.is_empty() {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.remove(&removal);
-                next
-            }
-            Command::RemoveOnly(ids) => {
-                let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
-                let removal = document.breaking_removal(&targets);
-                if removal.is_empty() {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.remove(&removal);
-                next
-            }
-            Command::SetFeatureVisible(id, visible) => {
-                let Some(index) = document
-                    .feature_index(id)
-                    .filter(|&index| document.features[index].visible != visible)
-                else {
-                    return Ok(());
-                };
-                let mut next = Document::clone(document);
-                next.features[index].visible = visible;
-                next
-            }
-            Command::SetRollback(rollback) => {
-                if document.rollback == rollback
-                    || rollback.is_some_and(|id| document.feature(id).is_none())
-                {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.rollback = rollback;
-                next
-            }
-            Command::Rename { target, name } => {
-                if document.name_of(target).is_none_or(|old| old == name) {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                if let Some(slot) = next.name_mut(target) {
-                    *slot = name;
-                }
-                next
-            }
-            Command::SetUnits(units) => {
-                if units == document.units {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                let before = document.design();
-                for feature in &mut next.features {
-                    if let FeatureKind::Sketch { sketch, .. } = &mut feature.kind {
-                        sketch.pin_units(&before);
-                    }
-                    // Counts, factors and turns have no unit, but are
-                    // pinned all the same: a bare number added to a length
-                    // inside one took the units.
-                    for (value, ask) in feature.kind.values_mut(&before) {
-                        value.pin_units(&ask);
-                    }
-                }
-                for (param, result) in next.params.iter_mut().zip(document.resolved.iter()) {
-                    if let (_, Ok(resolved)) = result {
-                        param.text = (document.resolved)
-                            .pin_units(&param.text, document.units)
-                            .unwrap_or_else(|_| exact(resolved.value, resolved.quantity));
-                    }
-                }
-                next.units = units;
-                next.resolved = param::resolve(&next.params, units);
-                next
-            }
-            Command::AddParam { name, text } => {
-                let mut params = document.params.clone();
-                params.push(Param {
-                    name,
-                    text: text.trim().to_owned(),
-                });
-                match document.with_params(params, None, budget)? {
-                    Some(next) => next,
-                    None => return Ok(()),
-                }
-            }
-            Command::SetParam { index, text } => {
-                let mut params = document.params.clone();
-                let Some(param) = params.get_mut(index) else {
-                    return Ok(());
-                };
-                param.text = text.trim().to_owned();
-                match document.with_params(params, None, budget)? {
-                    Some(next) => next,
-                    None => return Ok(()),
-                }
-            }
-            Command::RenameParam { index, name } => {
-                let Some(old) = document.params.get(index).map(|param| param.name.as_str()) else {
-                    return Ok(());
-                };
-                if old == name {
-                    return Ok(());
-                }
-                let mut params = document.params.clone();
-                for (at, param) in params.iter_mut().enumerate() {
-                    param.text = varde_expr::rename(&param.text, old, &name)
-                        .map_err(|why| EditError::Value(ValueOf::Param(at), why))?;
-                }
-                params[index].name = name.clone();
-                match document.with_params(params, Some((old, &name)), budget)? {
-                    Some(next) => next,
-                    None => return Ok(()),
-                }
-            }
-            Command::RemoveParam(index) => {
-                let Some(param) = document.params.get(index) else {
-                    return Ok(());
-                };
-                if document.param_used(&param.name) {
-                    return Err(EditError::ParamUsed(param.name.clone()));
-                }
-                let mut params = document.params.clone();
-                params.remove(index);
-                match document.with_params(params, None, budget)? {
-                    Some(next) => next,
-                    None => return Ok(()),
-                }
-            }
-            Command::SetTolerance(tolerance) => {
-                if tolerance == document.tolerance() {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                next.tolerance = tolerance.fit();
-                next
-            }
-            Command::Replace(replacement) => {
-                if *replacement == **document {
-                    return Ok(());
-                }
-                *replacement
-            }
+        let Some(next) = self.current.document.after(command, budget)? else {
+            return Ok(());
         };
         next.check().map_err(EditError::Invalid)?;
         self.commit(next, replacing, own_step);
@@ -1408,6 +1130,255 @@ impl Editor {
         if self.undo.len() > MAX_UNDO {
             self.undo.pop_front();
         }
+    }
+}
+
+impl Document {
+    /// The document `command` makes of this one, or `None` if it changes
+    /// nothing; sketches solved within `budget`. Each edit works on a
+    /// copy, so one that would change nothing returns before copying.
+    fn after(&self, command: Command, budget: &Budget) -> Result<Option<Document>, EditError> {
+        let next = match command {
+            Command::RemoveBody(id) => {
+                return Ok(self.with_removal(self.removal(Removable::Body(id))));
+            }
+            Command::SetVisible(id, visible) => {
+                return Ok(self.with_body(id, |body| body.visible = visible));
+            }
+            Command::SetOpacity(id, opacity) => {
+                return Ok(self.with_body(id, |body| body.opacity = opacity));
+            }
+            Command::SetColor(id, color) => {
+                return Ok(self.with_body(id, |body| body.color = color));
+            }
+            Command::AddSketch { name, plane } => {
+                let mut next = self.clone();
+                let sketch = Sketch::default();
+                next.push_feature(
+                    name,
+                    FeatureKind::Sketch {
+                        plane,
+                        sketch,
+                        sources: Vec::new(),
+                    },
+                )?;
+                next.follow_sketch_face(next.features.len() - 1, None)?;
+                next
+            }
+            Command::SetSketch { feature, sketch } => {
+                let Some(index) = self.feature_index(feature) else {
+                    return Ok(None);
+                };
+                match &self.features[index].kind {
+                    FeatureKind::Sketch { sketch: old, .. } if *old != *sketch => {}
+                    _ => return Ok(None),
+                }
+                let mut next = self.clone();
+                next.set_sketch(index, *sketch, None);
+                next.keeps_sketch_face(self, index)?;
+                next
+            }
+            Command::AddLink {
+                feature,
+                sketch,
+                source,
+            } => {
+                let Some(index) = self.feature_index(feature) else {
+                    return Ok(None);
+                };
+                if !matches!(self.features[index].kind, FeatureKind::Sketch { .. }) {
+                    return Ok(None);
+                }
+                let mut next = self.clone();
+                next.set_sketch(index, *sketch, Some(source));
+                next.keeps_sketch_face(self, index)?;
+                next
+            }
+            Command::SetSketchPlane { feature, plane } => {
+                let Some(index) = self.feature_index(feature) else {
+                    return Ok(None);
+                };
+                match &self.features[index].kind {
+                    FeatureKind::Sketch { plane: old, .. } if *old != plane => {}
+                    _ => return Ok(None),
+                }
+                let mut next = self.clone();
+                let was = next.sketch_face_of(index);
+                if let FeatureKind::Sketch { plane: old, .. } = &mut next.features[index].kind {
+                    *old = plane;
+                }
+                next.follow_sketch_face(index, was)?;
+                next
+            }
+            Command::AddFeature { name, kind } => {
+                if matches!(*kind, FeatureKind::Sketch { .. }) {
+                    return Err(EditError::SketchKind);
+                }
+                let mut kind = kind;
+                planned_new_body(None, &mut kind);
+                let mut next = self.clone();
+                let sketches = kind.profile_sketches();
+                let makes_body = kind.new_body().is_some();
+                let copies = match &*kind {
+                    FeatureKind::Pattern(pattern) => planned_copies(None, pattern),
+                    _ => None,
+                };
+                let id = next.push_feature(name, *kind)?;
+                if makes_body {
+                    let body = next.add_body(id)?;
+                    next.set_new_body(id, body);
+                }
+                if let Some(planned) = copies {
+                    next.make_copies(id, planned)?;
+                }
+                for sketch in sketches {
+                    if let Some(index) = next.feature_index(sketch) {
+                        next.features[index].visible = false;
+                    }
+                }
+                let index = next.features.len() - 1;
+                next.check_new(index, &next.features[index].kind)?;
+                next
+            }
+            Command::SetFeature { feature, kind } => return self.with_kind(feature, kind),
+            Command::RemoveFeature(id) => {
+                return Ok(self.with_removal(self.removal(Removable::Feature(id))));
+            }
+            Command::RemoveFeatures(ids) => {
+                let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
+                return Ok(self.with_removal(self.removal_of(&targets)));
+            }
+            Command::RemoveOnly(ids) => {
+                let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
+                return Ok(self.with_removal(self.breaking_removal(&targets)));
+            }
+            Command::SetFeatureVisible(id, visible) => {
+                let Some(index) = self
+                    .feature_index(id)
+                    .filter(|&index| self.features[index].visible != visible)
+                else {
+                    return Ok(None);
+                };
+                let mut next = self.clone();
+                next.features[index].visible = visible;
+                next
+            }
+            Command::SetRollback(rollback) => {
+                if self.rollback == rollback
+                    || rollback.is_some_and(|id| self.feature(id).is_none())
+                {
+                    return Ok(None);
+                }
+                let mut next = self.clone();
+                next.rollback = rollback;
+                next
+            }
+            Command::Rename { target, name } => {
+                if self.name_of(target).is_none_or(|old| old == name) {
+                    return Ok(None);
+                }
+                let mut next = self.clone();
+                if let Some(slot) = next.name_mut(target) {
+                    *slot = name;
+                }
+                next
+            }
+            Command::SetUnits(units) => {
+                if units == self.units {
+                    return Ok(None);
+                }
+                let mut next = self.clone();
+                let before = self.design();
+                for feature in &mut next.features {
+                    if let FeatureKind::Sketch { sketch, .. } = &mut feature.kind {
+                        sketch.pin_units(&before);
+                    }
+                    // Counts, factors and turns have no unit, but are
+                    // pinned all the same: a bare number added to a length
+                    // inside one took the units.
+                    for (value, ask) in feature.kind.values_mut(&before) {
+                        value.pin_units(&ask);
+                    }
+                }
+                for (param, result) in next.params.iter_mut().zip(self.resolved.iter()) {
+                    if let (_, Ok(resolved)) = result {
+                        param.text = (self.resolved)
+                            .pin_units(&param.text, self.units)
+                            .unwrap_or_else(|_| exact(resolved.value, resolved.quantity));
+                    }
+                }
+                next.units = units;
+                next.resolved = param::resolve(&next.params, units);
+                next
+            }
+            Command::AddParam { name, text } => {
+                let mut params = self.params.clone();
+                params.push(Param {
+                    name,
+                    text: text.trim().to_owned(),
+                });
+                return self.with_params(params, None, budget);
+            }
+            Command::SetParam { index, text } => {
+                let mut params = self.params.clone();
+                let Some(param) = params.get_mut(index) else {
+                    return Ok(None);
+                };
+                param.text = text.trim().to_owned();
+                return self.with_params(params, None, budget);
+            }
+            Command::RenameParam { index, name } => {
+                let Some(old) = self.params.get(index).map(|param| param.name.as_str()) else {
+                    return Ok(None);
+                };
+                if old == name {
+                    return Ok(None);
+                }
+                let mut params = self.params.clone();
+                for (at, param) in params.iter_mut().enumerate() {
+                    param.text = varde_expr::rename(&param.text, old, &name)
+                        .map_err(|why| EditError::Value(ValueOf::Param(at), why))?;
+                }
+                params[index].name = name.clone();
+                return self.with_params(params, Some((old, &name)), budget);
+            }
+            Command::RemoveParam(index) => {
+                let Some(param) = self.params.get(index) else {
+                    return Ok(None);
+                };
+                if self.param_used(&param.name) {
+                    return Err(EditError::ParamUsed(param.name.clone()));
+                }
+                let mut params = self.params.clone();
+                params.remove(index);
+                return self.with_params(params, None, budget);
+            }
+            Command::SetTolerance(tolerance) => {
+                if tolerance == self.tolerance() {
+                    return Ok(None);
+                }
+                let mut next = self.clone();
+                next.tolerance = tolerance.fit();
+                next
+            }
+            Command::Replace(replacement) => {
+                if *replacement == *self {
+                    return Ok(None);
+                }
+                *replacement
+            }
+        };
+        Ok(Some(next))
+    }
+
+    /// A copy with `removal` removed, or `None` if it removes nothing.
+    fn with_removal(&self, removal: Removal) -> Option<Document> {
+        if removal.is_empty() {
+            return None;
+        }
+        let mut next = self.clone();
+        next.remove(&removal);
+        Some(next)
     }
 }
 
