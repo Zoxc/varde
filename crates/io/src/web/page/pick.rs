@@ -19,7 +19,7 @@ use web_sys::{
 
 use crate::pick::{Download, export_filter, filter};
 use crate::three_mf;
-use crate::web::js::{call, js_error};
+use crate::web::js::{call, call_method, js_error, method};
 use crate::{Chosen, Picked, PickedFrom};
 
 // What web-sys has only among its unstable APIs.
@@ -150,9 +150,8 @@ pub fn dropped(transfer: &web_sys::DataTransfer) -> Dropped {
         .flatten()
         .filter(|item| item.kind() == "file")
         .and_then(|item| {
-            let method = Reflect::get(&item, &"getAsFileSystemHandle".into()).ok()?;
-            let method: js_sys::Function = method.dyn_into().ok()?;
-            method.call0(&item).ok()?.dyn_into::<Promise>().ok()
+            let get = method(&item, "getAsFileSystemHandle")?;
+            call_method(&item, &get, &Array::new()).ok()
         });
     Box::pin(async move {
         if let Some(handle) = handle

@@ -5,7 +5,7 @@
 use std::io;
 use std::path::Path;
 
-use js_sys::{ArrayBuffer, AsyncIterator, Function, IteratorNext, Promise, Reflect};
+use js_sys::{Array, ArrayBuffer, AsyncIterator, Function, IteratorNext, Promise};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     File, FileReaderSync, FileSystemDirectoryHandle, FileSystemFileHandle,
@@ -18,7 +18,7 @@ use crate::dir::{Dir, Make};
 use crate::js::{self, number, offset, seconds, size};
 use crate::opfs::{dir_names, done};
 use crate::vrdp::{ReadAt, Storage};
-use crate::web::js::{call, copy_exact, js_error};
+use crate::web::js::{call, call_method, copy_exact, js_error, method};
 use crate::wire::MAX_MESSAGE_BYTES;
 
 /// The root of the Origin Private File System. A browser without it, or
@@ -27,19 +27,13 @@ use crate::wire::MAX_MESSAGE_BYTES;
 pub(crate) async fn root() -> io::Result<FileSystemDirectoryHandle> {
     let scope: WorkerGlobalScope = js_sys::global().unchecked_into();
     let storage = scope.navigator().storage();
-    let get_directory = Reflect::get(&storage, &JsValue::from_str("getDirectory"))
-        .ok()
-        .and_then(|method| method.dyn_into::<Function>().ok())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Unsupported,
-                "this browser keeps no files for the site",
-            )
-        })?;
-    let promise: Promise = get_directory
-        .call0(&storage)
-        .map_err(js_error)?
-        .unchecked_into();
+    let get_directory = method(&storage, "getDirectory").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this browser keeps no files for the site",
+        )
+    })?;
+    let promise = call_method(&storage, &get_directory, &Array::new())?;
     Ok(call(promise).await?.unchecked_into())
 }
 
@@ -325,14 +319,8 @@ impl Dir for OpfsDir {
         }
         let handle = self.get(from).await?;
         // `move()`, where the browser has it; otherwise a copy.
-        let moving = Reflect::get(&handle, &JsValue::from_str("move"))
-            .ok()
-            .and_then(|method| method.dyn_into::<Function>().ok());
-        if let Some(moving) = moving {
-            let promise: Promise = moving
-                .call1(&handle, &JsValue::from_str(to))
-                .map_err(js_error)?
-                .unchecked_into();
+        if let Some(moving) = method(&handle, "move") {
+            let promise = call_method(&handle, &moving, &Array::of1(&JsValue::from_str(to)))?;
             return call(promise).await.map(|_| ());
         }
         // Taken while it's copied, so nobody writes it meanwhile, and

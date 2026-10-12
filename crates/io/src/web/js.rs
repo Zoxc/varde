@@ -3,7 +3,7 @@
 
 use std::io;
 
-use js_sys::{ArrayBuffer, Promise, Uint8Array};
+use js_sys::{Array, ArrayBuffer, Function, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::DomException;
@@ -13,6 +13,29 @@ use crate::js::error_kind;
 /// Waits for `promise`.
 pub(crate) async fn call(promise: Promise) -> io::Result<JsValue> {
     JsFuture::from(promise).await.map_err(js_error)
+}
+
+/// `object.name`, if the browser has it as a method: for what not every
+/// browser has, looked for rather than called blindly.
+pub(crate) fn method(object: &JsValue, name: &str) -> Option<Function> {
+    Reflect::get(object, &JsValue::from_str(name))
+        .ok()?
+        .dyn_into()
+        .ok()
+}
+
+/// Calls `method` on `object` with `args`, for the promise it returns:
+/// checked to be one, as the browser says what it returns.
+pub(crate) fn call_method(
+    object: &JsValue,
+    method: &Function,
+    args: &Array,
+) -> io::Result<Promise> {
+    method
+        .apply(object, args)
+        .map_err(js_error)?
+        .dyn_into()
+        .map_err(|_| io::Error::other("the browser answered with something other than a promise"))
 }
 
 /// A JS exception as an IO error.
