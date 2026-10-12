@@ -292,7 +292,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
     assert!(shows(plates, "Sweep fails"));
     assert!(shows(plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     let features = plates.doc.editor.document().features().len();
     key_in(&mut plates.doc, super::enter());
     assert_eq!(plates.doc.editor.document().features().len(), features);

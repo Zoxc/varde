@@ -629,7 +629,7 @@ impl DocumentKeys {
     pub fn with_extrude(self, extrude: Option<&ExtrudeState<'_>>) -> Self {
         Self {
             extruding: extrude.is_some(),
-            extrude_ready: extrude.is_some_and(|extrude| extrude.ready),
+            extrude_ready: extrude.is_some_and(|extrude| extrude.verdict.ready),
             ..self
         }
     }
@@ -638,7 +638,7 @@ impl DocumentKeys {
     pub fn with_revolve(self, revolve: Option<&RevolveState<'_>>) -> Self {
         Self {
             revolving: revolve.is_some(),
-            revolve_ready: revolve.is_some_and(|revolve| revolve.ready),
+            revolve_ready: revolve.is_some_and(|revolve| revolve.verdict.ready),
             ..self
         }
     }
@@ -649,7 +649,7 @@ impl DocumentKeys {
         Self {
             combinable,
             combining: combine.is_some(),
-            combine_ready: combine.is_some_and(|combine| combine.ready),
+            combine_ready: combine.is_some_and(|combine| combine.verdict.ready),
             ..self
         }
     }
@@ -660,7 +660,7 @@ impl DocumentKeys {
         Self {
             bodies,
             motion: motion.map(|motion| motion.kind),
-            motion_ready: motion.is_some_and(|motion| motion.ready),
+            motion_ready: motion.is_some_and(|motion| motion.verdict.ready),
             ..self
         }
     }

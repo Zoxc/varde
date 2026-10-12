@@ -171,17 +171,17 @@ fn operation<'a>(state: &DocumentState<'a>, keys: DocumentKeys) -> Option<Operat
         ),
         OperationState::Extrude(extrude) => (
             Icon::Extrude,
-            extrude.editing.unwrap_or("New extrude"),
+            extrude.verdict.editing.unwrap_or("New extrude"),
             Message::Look(Look::Extrude(crate::ExtrudeLook::Cancel)),
         ),
         OperationState::Revolve(revolve) => (
             Icon::Revolve,
-            revolve.editing.unwrap_or("New revolve"),
+            revolve.verdict.editing.unwrap_or("New revolve"),
             Message::Look(Look::Revolve(crate::RevolveLook::Cancel)),
         ),
         OperationState::Combine(combine) => (
             Icon::Combine,
-            combine.editing.unwrap_or("New combine"),
+            combine.verdict.editing.unwrap_or("New combine"),
             Message::Look(Look::Combine(crate::CombineLook::Cancel)),
         ),
         OperationState::Measure(_) => return None,

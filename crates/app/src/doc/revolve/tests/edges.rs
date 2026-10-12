@@ -135,7 +135,7 @@ fn a_model_edge_is_picked_as_the_axis_and_committed() {
     assert_eq!(session.picking, RevolvePick::Regions);
     let state = doc.revolve_state().unwrap();
     assert_eq!(state.axis_name().as_deref(), Some("Edge of Body 1"));
-    assert!(state.ready);
+    assert!(state.verdict.ready);
     // Its ends along x, at the plate's top front.
     let [a, b] = state.edge_ends.unwrap();
     assert_eq!((a.y, a.z, b.y, b.z), (-20.0, 10.0, -20.0, 10.0));
@@ -262,7 +262,7 @@ fn editing_a_revolve_about_an_edge_keeps_it() {
     assert!(!session.axis_missing);
     assert!(session.edge_ends.is_some());
     let state = doc.revolve_state().unwrap();
-    assert!(state.ready);
+    assert!(state.verdict.ready);
     assert_eq!(state.axis_name().as_deref(), Some("Edge of Body 1"));
 
     // The quarter tube's own start cap, on the front, has straight edges

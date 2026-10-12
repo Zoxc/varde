@@ -151,11 +151,11 @@ fn check(plates: &Plates, step: usize, what: &str) {
     // OK waits while the preview fails, and Accept error takes only that.
     let failed = doc.feed.draft_error().is_some();
     assert!(
-        !(state.ready && failed) && !(state.accept && !failed),
+        !(state.verdict.ready && failed) && !(state.verdict.accept && !failed),
         "{}",
         at()
     );
-    if state.ready || state.accept {
+    if state.verdict.ready || state.verdict.accept {
         assert!(session.target.is_some() && !session.tools.is_empty());
         assert!(doc.editable(), "{}", at());
     }

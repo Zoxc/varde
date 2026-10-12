@@ -4,18 +4,13 @@ use crate::testing::Laid;
 
 fn state_of<'a>(target: Option<CombineBody<'a>>, tools: Vec<CombineBody<'a>>) -> CombineState<'a> {
     CombineState {
-        editing: None,
+        verdict: Verdict::default(),
         target,
         tools,
         picking: CombinePick::Tools,
         op: BodyOp::Union,
         keep_tools: false,
         enough: true,
-        error: None,
-        show_error: None,
-        checking: false,
-        ready: false,
-        accept: false,
         editable: true,
         hover: None,
     }
@@ -97,7 +92,7 @@ fn the_footer_says_why_it_can_t_be_done() {
     );
     state.enough = true;
     state.tools = vec![body("Body 2")];
-    state.error = Some("cutting Body 2 from Body 1 would leave nothing of Body 1");
+    state.verdict.error = Some("cutting Body 2 from Body 1 would leave nothing of Body 1");
     let shown = texts_of(&state);
     found(&shown, "Combine fails");
     found(
@@ -106,6 +101,6 @@ fn the_footer_says_why_it_can_t_be_done() {
     );
     // Add anyway only while it can be pressed.
     assert!(!has(&shown, "Add anyway"));
-    state.accept = true;
+    state.verdict.accept = true;
     found(&texts_of(&state), "Add anyway");
 }

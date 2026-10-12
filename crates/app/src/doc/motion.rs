@@ -2683,10 +2683,6 @@ impl Doc {
             body,
             name: (document.body(body)).map_or("Missing body", |body| body.name.as_str()),
         };
-        let editing = session
-            .feature
-            .and_then(|feature| document.feature(feature))
-            .map(|feature| feature.name.as_str());
         let (reference, line) = self.reference_line(session);
         // The bodies where the model shown has them: a merged one in its
         // holder.
@@ -2709,9 +2705,27 @@ impl Doc {
                 session.centre(pivot.at, line)
             });
         let fields = MotionField::ALL.map(|field| session.field(field).field(self.params_in()));
+        let warning = (self.motion_warning(session))
+            .or_else(|| self.scale_note(session))
+            .or_else(|| session.shell_warning())
+            .or_else(|| {
+                // A sweep's or loft's cut that takes nothing from a
+                // body.
+                let cut = match session.kind {
+                    MotionKind::Sweep => session.sweep.operation,
+                    MotionKind::Loft => session.loft.operation,
+                    _ => OperationKind::NewBody,
+                };
+                (cut == OperationKind::Cut)
+                    .then(|| self.uncut_note())
+                    .flatten()
+            });
+        let refused = (session.gone().map(str::to_owned))
+            .or_else(|| session.refused(&design))
+            .or_else(|| self.motion_held());
         Some(MotionState {
             kind: session.kind,
-            editing,
+            verdict: self.verdict(session.feature, self.motion_ready(), refused, warning),
             bodies: session.bodies.iter().map(|&body| named(body)).collect(),
             picking: session.picking,
             fields,
@@ -2727,21 +2741,6 @@ impl Doc {
             keep_original: session.keep_original,
             flip: session.flip,
             join: session.join,
-            warning: (self.motion_warning(session))
-                .or_else(|| self.scale_note(session))
-                .or_else(|| session.shell_warning())
-                .or_else(|| {
-                    // A sweep's or loft's cut that takes nothing from a
-                    // body.
-                    let cut = match session.kind {
-                        MotionKind::Sweep => session.sweep.operation,
-                        MotionKind::Loft => session.loft.operation,
-                        _ => OperationKind::NewBody,
-                    };
-                    (cut == OperationKind::Cut)
-                        .then(|| self.uncut_note())
-                        .flatten()
-                }),
             mode: session.mode,
             spread_error: session.spread_error(),
             copies: match session.kind() {
@@ -2749,14 +2748,6 @@ impl Doc {
                 _ => None,
             },
             need: session.need(),
-            refused: (session.gone().map(str::to_owned))
-                .or_else(|| session.refused(&design))
-                .or_else(|| self.motion_held()),
-            error: self.feed.shown_draft_error(),
-            show_error: self.draft_framed(),
-            checking: self.proposals.slow(),
-            ready: self.commit_by(self.motion_ready(), false),
-            accept: self.offers_accept(self.motion_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
             parts: match session.kind {

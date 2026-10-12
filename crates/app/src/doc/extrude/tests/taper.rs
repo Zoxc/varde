@@ -83,7 +83,7 @@ fn a_typed_taper_is_previewed_and_add_anyway_keeps_it() {
     assert_eq!(error, "a tapered extrude isn't supported yet");
     assert!(shows(&doc, "Add anyway"));
     let state = doc.extrude_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     let features = doc.editor.document().features().len();
     key_in(&mut doc, enter());
     assert_eq!(doc.editor.document().features().len(), features);
@@ -119,13 +119,13 @@ fn a_refused_taper_blocks_ok_and_zero_is_none() {
         typed(&mut doc, text);
         let state = doc.extrude_state().unwrap();
         assert!(state.taper.error.is_some(), "{text}");
-        assert!(!state.ready && !state.accept, "{text}");
+        assert!(!state.verdict.ready && !state.verdict.accept, "{text}");
         assert_eq!(last_draft(&requests).unwrap().revision, revision);
     }
     typed(&mut doc, "3 - 3");
     assert_eq!(drafted_taper(&requests), None);
     answer(&mut doc, &requests);
-    assert!(doc.extrude_state().unwrap().ready);
+    assert!(doc.extrude_state().unwrap().verdict.ready);
     doc.update(Edit::CommitExtrude);
     assert_eq!(extrudes(&doc)[0].taper, None);
 }
@@ -296,7 +296,7 @@ fn typed_tapers_are_taken_or_refused_never_out_of_range() {
                     "{text}"
                 );
                 let state = doc.extrude_state().unwrap();
-                assert!(!state.ready && !state.accept, "{text}");
+                assert!(!state.verdict.ready && !state.verdict.accept, "{text}");
             }
             None => {
                 let value = session.taper.value.as_ref().unwrap().value;

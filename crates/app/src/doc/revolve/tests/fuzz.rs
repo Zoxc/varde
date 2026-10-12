@@ -108,15 +108,15 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
         // OK waits while the preview fails, and Accept error takes only that.
         let failed = doc.feed.draft_error().is_some();
         assert!(
-            !(state.ready && failed) && !(state.accept && !failed),
+            !(state.verdict.ready && failed) && !(state.verdict.accept && !failed),
             "{}",
             at()
         );
-        if state.ready || state.accept {
+        if state.verdict.ready || state.verdict.accept {
             for angle in state.extent.angles() {
                 assert!(state.fields[angle.index()].error.is_none(), "{}", at());
             }
-            assert!(state.refused.is_none(), "{}", at());
+            assert!(state.verdict.refused.is_none(), "{}", at());
             assert!(state.axis.is_some() && !state.picked.is_empty(), "{}", at());
             assert!(state.axis_name().is_some(), "{}", at());
         }
@@ -159,18 +159,18 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
     if let Some(state) = doc.extrude_state() {
         let failed = doc.feed.draft_error().is_some();
         assert!(
-            !(state.ready && failed) && !(state.accept && !failed),
+            !(state.verdict.ready && failed) && !(state.verdict.accept && !failed),
             "{}",
             at()
         );
     }
     if let Some(state) = doc.extrude_state()
-        && (state.ready || state.accept)
+        && (state.verdict.ready || state.verdict.accept)
     {
         for distance in state.extent.distances() {
             assert!(state.fields[distance.index()].error.is_none(), "{}", at());
         }
-        assert!(state.refused.is_none(), "{}", at());
+        assert!(state.verdict.refused.is_none(), "{}", at());
     }
 }
 

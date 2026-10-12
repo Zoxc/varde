@@ -120,7 +120,7 @@ pub use naming::NamingPicks;
 pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, NO_REGIONS, OperationKind, PANEL_BODY, PanelHover, Side, Sides,
-    TypedField,
+    TypedField, Verdict,
 };
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use panels::TIMELINE_LIST;

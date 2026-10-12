@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use varde_document::{OriginPlane, Plane};
+use varde_document::{OriginPlane, Plane, RevolveError};
 use varde_sketch::Profiles;
 
 use super::*;
@@ -40,7 +40,7 @@ fn state_of<'a>(
         editor.document().features()[0].id
     };
     RevolveState {
-        editing: None,
+        verdict: Verdict::default(),
         candidates: vec![Candidate {
             feature,
             placement: OriginPlane::XY.placement(),
@@ -62,13 +62,6 @@ fn state_of<'a>(
         flip: false,
         operation: OperationKind::NewBody,
         targets: Vec::new(),
-        error: None,
-        show_error: None,
-        refused: None,
-        uncut: None,
-        checking: false,
-        ready: false,
-        accept: false,
         editable: true,
         hover: None,
         grabbed: None,
@@ -160,7 +153,7 @@ fn the_panel_s_errors_read_as_sentences() {
         span: varde_expr::Span::new(0, 0),
     };
     state.fields[0].error = Some(&error);
-    state.error = Some("its outline crosses the axis");
+    state.verdict.error = Some("its outline crosses the axis");
     let shown = texts_of(&state);
     let label = found(&shown, "Angle");
     let refused = found(&shown, "Enter a value");
@@ -171,7 +164,7 @@ fn the_panel_s_errors_read_as_sentences() {
     found(&shown, "Its outline crosses the axis");
     // The revolve's own check refusing it shows in place of the
     // preview's error.
-    state.refused = Some(RevolveError::Turn);
+    state.verdict.refused = Some(RevolveError::Turn.to_string());
     let shown = texts_of(&state);
     found(&shown, "Its two sides come to over a turn");
     assert!(!has(&shown, "Its outline crosses the axis"));

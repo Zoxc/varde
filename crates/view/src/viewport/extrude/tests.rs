@@ -8,7 +8,7 @@ use varde_sketch::Profiles;
 
 use super::*;
 use crate::extrude::ExtentKind;
-use crate::operation_panel::{OperationKind, TypedField};
+use crate::operation_panel::{OperationKind, TypedField, Verdict};
 use crate::projection::top_camera;
 use crate::testing;
 use crate::theme::Mode;
@@ -60,7 +60,10 @@ fn state<'a>(
         value: Some(10.0),
     };
     ExtrudeState {
-        editing: None,
+        verdict: Verdict {
+            ready: !picked.is_empty(),
+            ..Verdict::default()
+        },
         candidates: vec![crate::Candidate {
             feature,
             placement: plane.placement(),
@@ -82,13 +85,6 @@ fn state<'a>(
         operation: OperationKind::NewBody,
         targets: Vec::new(),
         grabbed,
-        error: None,
-        show_error: None,
-        refused: None,
-        uncut: None,
-        checking: false,
-        ready: !picked.is_empty(),
-        accept: false,
         editable: true,
         units: LengthUnit::Mm,
         hover: None,
@@ -295,7 +291,7 @@ fn an_extrude_its_own_check_refuses_draws_no_shaft() {
         frame.sketch.clone().expect("drawn").live
     };
     let whole = live(state.clone());
-    state.refused = Some(ExtrudeError::Length);
+    state.verdict.refused = Some(ExtrudeError::Length.to_string());
     let refused = live(state);
     assert!(!refused.is_empty());
     assert_ne!(whole, refused);

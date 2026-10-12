@@ -40,7 +40,7 @@ use crate::icons::{self, Icon};
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, BOLD, SEMIBOLD};
 use crate::viewport::CONTROLS_TOP;
-use crate::{Look, Message};
+use crate::{Edit, Look, Message};
 
 /// How wide the panel is, in pixels.
 pub(crate) const PANEL_WIDTH: f32 = 288.0;
@@ -1370,41 +1370,79 @@ pub(crate) fn joined_into<'a>(
     included.next().map(|_| first.name)
 }
 
-/// The foot's message: why OK can't be pressed (`refused`, by the
-/// operation's own check), else the draft failing (`error`), as "Extrude
-/// fails" (`noun`) with `show`'s button, framing the camera on where
-/// or going back, if its geometry has a box, and Add anyway sending
-/// `accept` if it can be pressed (Edit anyway while `editing` a feature
-/// already there), else, if `checking`, that OK waits on the solver.
-pub(crate) fn footer_message<'a>(
-    noun: &'a str,
-    refused: Option<String>,
-    error: Option<&'a str>,
-    show: Option<Framing>,
-    accept: Option<Message>,
-    editing: bool,
-    checking: bool,
-) -> Option<Footer<'a>> {
-    match (refused, error) {
-        // As the kernel's, but with nothing to add: the document would
-        // refuse it.
-        (Some(refused), _) => Some(Footer::Fails {
-            noun,
-            error: sentence(&refused).into_owned().into(),
-            show: None,
-            accept: None,
-            editing,
-        }),
-        (None, Some(error)) => Some(Footer::Fails {
-            noun,
-            error: sentence(error),
-            show,
-            accept,
-            editing,
-        }),
-        (None, None) => {
-            checking.then(|| Footer::Text(message_text("Checking the sketch…", theme::muted_text)))
+/// How an operation being set up stands, as its panel's title, OK and
+/// foot show it: the fields every operation's state shares.
+#[derive(Debug, Clone, Default)]
+pub struct Verdict<'a> {
+    /// The name of the feature edited, or none for a new one.
+    pub editing: Option<&'a str>,
+    /// Why the operation as set up can't be committed, if its own check
+    /// refuses it (an extrude's two sides over the limit together, say):
+    /// shown in place of [`Verdict::error`].
+    pub refused: Option<String>,
+    /// Why the preview failed, if it did.
+    pub error: Option<&'a str>,
+    /// The button framing the camera on the geometry of why the preview
+    /// failed, or going back from it, if that geometry has a box: beside
+    /// [`Verdict::error`]'s Add anyway.
+    pub show_error: Option<Framing>,
+    /// What the panel warns of where nothing else is said, if anything:
+    /// a cut whose preview works but takes nothing from a body ("Body 2:
+    /// nothing to cut"), a pattern's copies overlapping.
+    pub warning: Option<String>,
+    /// Whether sketch edits have waited on the solver long enough to say
+    /// so: OK waits for them, and the panel says why.
+    pub checking: bool,
+    /// Whether OK (and `Enter`) can be pressed: not while the preview
+    /// failed.
+    pub ready: bool,
+    /// Whether Add anyway can be pressed: the preview failed
+    /// ([`Verdict::error`]), and the operation could be committed otherwise.
+    pub accept: bool,
+}
+
+impl<'a> Verdict<'a> {
+    /// The foot's message: why OK can't be pressed ([`Verdict::refused`]),
+    /// else the draft failing, as "Extrude fails" (`noun`) with the
+    /// framing button and Add anyway (Edit anyway while editing a feature
+    /// already there), else, if checking, that OK waits on the solver,
+    /// else the warning.
+    pub(crate) fn footer(&self, noun: &'a str) -> Option<Footer<'a>> {
+        let editing = self.editing.is_some();
+        match (&self.refused, self.error) {
+            // As the kernel's, but with nothing to add: the document would
+            // refuse it.
+            (Some(refused), _) => Some(Footer::Fails {
+                noun,
+                error: sentence(refused).into_owned().into(),
+                show: None,
+                accept: None,
+                editing,
+            }),
+            (None, Some(error)) => Some(Footer::Fails {
+                noun,
+                error: sentence(error),
+                show: self.show_error,
+                accept: self.accept.then_some(Message::Edit(Edit::AcceptError)),
+                editing,
+            }),
+            (None, None) if self.checking => Some(Footer::Text(message_text(
+                "Checking the sketch…",
+                theme::muted_text,
+            ))),
+            (None, None) => (self.warning.clone())
+                .map(|warning| Footer::Text(message_text(warning, theme::warning_text))),
         }
+    }
+
+    /// The panel's title: the feature edited's name, else `new`.
+    pub(crate) fn title(&self, new: &'a str) -> &'a str {
+        self.editing.unwrap_or(new)
+    }
+
+    /// OK's message, `commit`, if it can be pressed.
+    pub(crate) fn ok(&self, commit: Message) -> Option<Message> {
+        self.ready.then_some(commit)
     }
 }
 

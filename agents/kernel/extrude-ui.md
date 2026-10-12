@@ -147,7 +147,7 @@ drop out, and aren't taken out again when redone: undo gives the ids
 back, so a new edit may give theirs to other bodies), and under it, for a
 join ticked for two or more (not counting one merged away before),
 "Joined into Body 1", the first ticked (`extrude::joined_into`), which holds them all once it's committed; its foot the
-refusal, the draft's error or "Checking the sketch…" (`footer_message`).
+refusal, the draft's error or "Checking the sketch…" (`Verdict::footer`), else the uncut note as its warning.
 While the draft's error shows, OK and `Enter` wait, and the error shows
 in a box (`Footer::Fails`): "Extrude fails" with a red alert on a red
 wash, the error under it in muted words, and an "Add anyway" button in

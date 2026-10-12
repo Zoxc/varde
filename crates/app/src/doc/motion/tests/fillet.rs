@@ -143,7 +143,7 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     assert!(shows(&plates, "Fillet fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     assert!(straight(&plates, plate, FRONT.0, FRONT.1).is_some());
     let features = plates.doc.editor.document().features().len();
     key_in(&mut plates.doc, enter());

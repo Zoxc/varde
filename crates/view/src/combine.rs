@@ -11,8 +11,8 @@ use varde_document::{BodyId, BodyOp};
 
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, ListRow, PanelHover, Parts, field, footer_message, message_text,
-    operation_panel, pick_field, tile, tiles, toggle,
+    Footer, ListRow, PanelHover, Parts, Verdict, field, message_text, operation_panel, pick_field,
+    tile, tiles, toggle,
 };
 use crate::theme;
 use crate::{Edit, Look, Message};
@@ -51,8 +51,8 @@ pub struct CombineBody<'a> {
 /// The combine being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct CombineState<'a> {
-    /// The name of the combine edited, or none for a new one.
-    pub editing: Option<&'a str>,
+    /// Its title, OK and foot.
+    pub verdict: Verdict<'a>,
     pub target: Option<CombineBody<'a>>,
     /// The tools, sorted by id as the document keeps them.
     pub tools: Vec<CombineBody<'a>>,
@@ -63,21 +63,6 @@ pub struct CombineState<'a> {
     /// Whether the document has two bodies or more: with one there's
     /// nothing to combine it with, which the panel says.
     pub enough: bool,
-    /// Why the preview failed, if it did.
-    pub error: Option<&'a str>,
-    /// The button framing the camera on the geometry of why the preview
-    /// failed, or going back from it, if that geometry has a box: beside
-    /// [`CombineState::error`]'s Add anyway.
-    pub show_error: Option<Framing>,
-    /// Whether sketch edits have waited on the solver long enough to say
-    /// so: OK waits for them, and the panel says why.
-    pub checking: bool,
-    /// Whether OK (and `Enter`) can be pressed: not while the preview
-    /// failed.
-    pub ready: bool,
-    /// Whether Accept error can be pressed: the preview failed
-    /// ([`CombineState::error`]), and the operation could be committed otherwise.
-    pub accept: bool,
     /// Whether the document can be changed.
     pub editable: bool,
     /// The row of the panel the cursor is over, if any: the viewport
@@ -140,15 +125,7 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
         Some("Otherwise the tools are used up"),
     );
     let message = if state.enough {
-        footer_message(
-            "Combine",
-            None,
-            state.error,
-            state.show_error,
-            state.accept.then_some(Message::Edit(Edit::AcceptError)),
-            state.editing.is_some(),
-            state.checking,
-        )
+        state.verdict.footer("Combine")
     } else {
         Some(Footer::Text(message_text(
             "There’s only one body: make another to combine with",
@@ -158,10 +135,10 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
     let body = column![target, tools, field("Operation", tiles(ops)), keep].spacing(10);
     operation_panel(Parts {
         icon: Icon::Combine,
-        title: state.editing.unwrap_or("New combine"),
+        title: state.verdict.title("New combine"),
         body: body.into(),
         message,
-        ok: state.ready.then_some(Message::Edit(Edit::CommitCombine)),
+        ok: state.verdict.ok(Message::Edit(Edit::CommitCombine)),
         cancel: Message::Look(Look::Combine(CombineLook::Cancel)),
         close: false,
     })

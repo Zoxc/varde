@@ -431,12 +431,18 @@ impl Doc {
         let session = self.mode.extrude()?;
         let document = self.editor.document();
         let candidates = session.regions.candidates(|id| self.placement(id));
-        let editing = session
-            .feature
-            .and_then(|feature| document.feature(feature))
-            .map(|feature| feature.name.as_str());
+        let uncut = (session.operation == OperationKind::Cut)
+            .then(|| self.uncut_note())
+            .flatten();
         Some(ExtrudeState {
-            editing,
+            verdict: self.verdict(
+                session.feature,
+                self.extrude_ready(),
+                session
+                    .refused(&document.design())
+                    .map(|refused| refused.to_string()),
+                uncut,
+            ),
             candidates,
             source: session.regions.source,
             picked: &session.regions.picked,
@@ -449,15 +455,6 @@ impl Doc {
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             grabbed: session.grabbed,
             hover: self.panel_hover(),
-            error: self.feed.shown_draft_error(),
-            show_error: self.draft_framed(),
-            refused: session.refused(&document.design()),
-            uncut: (session.operation == OperationKind::Cut)
-                .then(|| self.uncut_note())
-                .flatten(),
-            checking: self.proposals.slow(),
-            ready: self.commit_by(self.extrude_ready(), false),
-            accept: self.offers_accept(self.extrude_ready()),
             editable: self.editable(),
             units: document.units(),
         })

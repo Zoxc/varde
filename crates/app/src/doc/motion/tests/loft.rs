@@ -258,7 +258,7 @@ fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
     assert!(shows(plates, "Loft fails"));
     assert!(shows(plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     let features = plates.doc.editor.document().features().len();
     key_in(&mut plates.doc, super::enter());
     assert_eq!(plates.doc.editor.document().features().len(), features);

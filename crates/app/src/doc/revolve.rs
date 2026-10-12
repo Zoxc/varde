@@ -625,12 +625,16 @@ impl Doc {
     pub(crate) fn revolve_state(&self) -> Option<RevolveState<'_>> {
         let session = self.mode.revolve()?;
         let document = self.editor.document();
-        let editing = session
-            .feature
-            .and_then(|feature| document.feature(feature))
-            .map(|feature| feature.name.as_str());
+        let uncut = (session.operation == OperationKind::Cut)
+            .then(|| self.uncut_note())
+            .flatten();
         Some(RevolveState {
-            editing,
+            verdict: self.verdict(
+                session.feature,
+                self.revolve_ready(),
+                session.refused(document).map(|refused| refused.to_string()),
+                uncut,
+            ),
             candidates: session.regions.candidates(|id| self.placement(id)),
             source: session.regions.source,
             picked: &session.regions.picked,
@@ -652,15 +656,6 @@ impl Doc {
             flip: session.sides.flip,
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
-            error: self.feed.shown_draft_error(),
-            show_error: self.draft_framed(),
-            refused: session.refused(document),
-            uncut: (session.operation == OperationKind::Cut)
-                .then(|| self.uncut_note())
-                .flatten(),
-            checking: self.proposals.slow(),
-            ready: self.commit_by(self.revolve_ready(), false),
-            accept: self.offers_accept(self.revolve_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
             grabbed: session.grabbed,

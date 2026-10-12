@@ -178,7 +178,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     assert!(shows(&plates, "Split fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     // No pieces to label: the body is shown whole.
     assert!(state.split().unwrap().pieces.is_empty());
     let features = plates.doc.editor.document().features().len();

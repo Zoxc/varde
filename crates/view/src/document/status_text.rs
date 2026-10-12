@@ -101,25 +101,25 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         match operation {
             OperationState::Extrude(extrude) => {
                 let pick = extrude.editable.then_some("Pick regions");
-                operation_hints(pick, extrude.ready)
+                operation_hints(pick, extrude.verdict.ready)
             }
             OperationState::Revolve(revolve) => {
                 let pick = revolve.editable.then_some(match revolve.picking {
                     RevolvePick::Regions => "Pick regions",
                     RevolvePick::Axis => "Pick the axis",
                 });
-                operation_hints(pick, revolve.ready)
+                operation_hints(pick, revolve.verdict.ready)
             }
             OperationState::Combine(combine) => {
                 let pick = combine.editable.then_some(match combine.picking {
                     crate::CombinePick::Target => "Pick the target",
                     crate::CombinePick::Tools => "Pick tools",
                 });
-                operation_hints(pick, combine.ready)
+                operation_hints(pick, combine.verdict.ready)
             }
             OperationState::Motion(motion) => {
                 let pick = motion.editable.then(|| motion.pick_hint()).flatten();
-                operation_hints(pick, motion.ready)
+                operation_hints(pick, motion.verdict.ready)
             }
             OperationState::Measure(measure) => measure_hints(measure),
         }
@@ -482,7 +482,7 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                 0 => "pick the regions to extrude".to_owned(),
                 n => format!("{} picked", counted(n, "region", "regions")),
             };
-            let title = extrude.editing.unwrap_or("New extrude");
+            let title = extrude.verdict.editing.unwrap_or("New extrude");
             return operation_status(title, &regions, state);
         }
         Some(OperationState::Revolve(revolve)) => {
@@ -494,11 +494,11 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                 Some(name) => format!("about {name}"),
                 None => "pick the axis".to_owned(),
             };
-            let title = revolve.editing.unwrap_or("New revolve");
+            let title = revolve.verdict.editing.unwrap_or("New revolve");
             return operation_status(title, &format!("{regions} · {axis}"), state);
         }
         Some(OperationState::Combine(combine)) => {
-            let title = combine.editing.unwrap_or("New combine");
+            let title = combine.verdict.editing.unwrap_or("New combine");
             return operation_status(title, &combine_info(combine), state);
         }
         Some(OperationState::Motion(motion)) => {

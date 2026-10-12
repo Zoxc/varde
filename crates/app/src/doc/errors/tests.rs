@@ -121,7 +121,7 @@ fn show_frames_the_draft_s_failure_and_go_back_returns() {
     let diagonal = (bounds.max - bounds.min).length();
     assert!((to.view_height() - diagonal * FRAME_MARGIN).abs() < 1e-3 * diagonal);
     assert_eq!(to.backward(), before.backward());
-    let framed = |doc: &Doc| doc.revolve_state().unwrap().show_error;
+    let framed = |doc: &Doc| doc.revolve_state().unwrap().verdict.show_error;
     assert_eq!(framed(&lathe.doc), Some(Framing::GoBack));
 
     // Shown again, it still goes back to the view before the first.
@@ -201,7 +201,7 @@ fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
     let geometry = lathe.doc.feed.draft_geometry().expect("geometry").clone();
     assert!(shows(&lathe.doc, &[&geometry]));
     assert_eq!(
-        lathe.doc.revolve_state().unwrap().show_error,
+        lathe.doc.revolve_state().unwrap().verdict.show_error,
         Some(Framing::Show)
     );
 
@@ -233,7 +233,7 @@ fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
     lathe.answer();
     assert_eq!(lathe.doc.feed.draft_error(), None);
     assert!(lathe.doc.shown_errors().is_empty());
-    assert_eq!(lathe.doc.revolve_state().unwrap().show_error, None);
+    assert_eq!(lathe.doc.revolve_state().unwrap().verdict.show_error, None);
 
     // Failing again, then cancelled: nothing shows.
     lathe.revolve(RevolveLook::PickAxis {

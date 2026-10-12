@@ -153,7 +153,7 @@ fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
     assert!(shows(&plates, "Shell fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     assert_eq!(plates.doc.faces_lit().len(), 2);
     let features = plates.doc.editor.document().features().len();
     key_in(&mut plates.doc, enter());

@@ -216,7 +216,7 @@ impl<'a> Extruding<'a> {
             Projector::new(camera, handle.placement(), bounds.width, bounds.height)
         });
         if let Some(handle) = &self.handle
-            && self.state.refused.is_none()
+            && self.state.verdict.refused.is_none()
             && let Some(projector) = &projector
         {
             for &(_, at) in &handle.knobs {

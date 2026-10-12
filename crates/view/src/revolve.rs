@@ -10,17 +10,15 @@ use glam::{DVec2, DVec3};
 use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
-use varde_document::{
-    AxisLine, BodyId, Document, EdgeRef, FeatureId, FeatureKind, Placement, RevolveError,
-};
+use varde_document::{AxisLine, BodyId, Document, EdgeRef, FeatureId, FeatureKind, Placement};
 use varde_sketch::{Curve, Id, Sketch, angle};
 
 use crate::extrude::centroid;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, Footer, Framing, ListRow, OperationKind, PanelHover, Parts, Side, Sides,
-    TypedField, field, footer_message, message_text, operation_panel, operation_section,
-    pick_field, pick_rows, region_rows, tile, tiles,
+    BodyTarget, Candidate, ListRow, OperationKind, PanelHover, Parts, Side, Sides, TypedField,
+    Verdict, field, operation_panel, operation_section, pick_field, pick_rows, region_rows, tile,
+    tiles,
 };
 use crate::panels::angle_note;
 use crate::pick::{PickIndex, Snapped};
@@ -169,8 +167,8 @@ pub enum RevolveLook {
 /// The revolve being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct RevolveState<'a> {
-    /// The name of the revolve edited, or none for a new one.
-    pub editing: Option<&'a str>,
+    /// Its title, OK and foot.
+    pub verdict: Verdict<'a>,
     /// The sketches whose regions show and can be picked: the revolve's
     /// sketch once there is one, else every visible sketch with regions.
     pub candidates: Vec<Candidate<'a>>,
@@ -208,28 +206,6 @@ pub struct RevolveState<'a> {
     /// For a join, cut or intersect, the bodies its preview touches and
     /// those taken out of it, in the order they were made.
     pub targets: Vec<BodyTarget<'a>>,
-    /// Why the preview failed, if it did.
-    pub error: Option<&'a str>,
-    /// The button framing the camera on the geometry of why the preview
-    /// failed, or going back from it, if that geometry has a box: beside
-    /// [`RevolveState::error`]'s Add anyway.
-    pub show_error: Option<Framing>,
-    /// Why the revolve as set up can't be committed, if its own check
-    /// refuses it (two sides over a turn together, say): shown in place
-    /// of [`RevolveState::error`].
-    pub refused: Option<RevolveError>,
-    /// For a cut whose preview works, which bodies it takes nothing from
-    /// (it only touches them), as a note: "Body 2: nothing to cut".
-    pub uncut: Option<String>,
-    /// Whether sketch edits have waited on the solver long enough to say
-    /// so: OK waits for them, and the panel says why.
-    pub checking: bool,
-    /// Whether OK (and `Enter`) can be pressed: not while the preview
-    /// failed.
-    pub ready: bool,
-    /// Whether Accept error can be pressed: the preview failed
-    /// ([`RevolveState::error`]), and the operation could be committed otherwise.
-    pub accept: bool,
     /// Whether the document can be changed.
     pub editable: bool,
     /// The row of the panel the cursor is over, if any: the viewport
@@ -544,20 +520,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         |body| send(RevolveLook::Target(body)),
         state.hover,
     );
-    let refused = state.refused.map(|refused| refused.to_string());
-    let message = footer_message(
-        "Revolve",
-        refused,
-        state.error,
-        state.show_error,
-        state.accept.then_some(Message::Edit(Edit::AcceptError)),
-        state.editing.is_some(),
-        state.checking,
-    )
-    // A cut that works but takes nothing from a body says so.
-    .or_else(|| {
-        (state.uncut.clone()).map(|note| Footer::Text(message_text(note, theme::warning_text)))
-    });
+    let message = state.verdict.footer("Revolve");
 
     let body = column![
         profile,
@@ -571,10 +534,10 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
     .spacing(10);
     operation_panel(Parts {
         icon: Icon::Revolve,
-        title: state.editing.unwrap_or("New revolve"),
+        title: state.verdict.title("New revolve"),
         body: body.into(),
         message,
-        ok: state.ready.then_some(Message::Edit(Edit::CommitRevolve)),
+        ok: state.verdict.ok(Message::Edit(Edit::CommitRevolve)),
         cancel: Message::Look(Look::Revolve(RevolveLook::Cancel)),
         close: false,
     })

@@ -456,7 +456,7 @@ impl<'a> Revolving<'a> {
         else {
             return;
         };
-        if self.state.refused.is_none() {
+        if self.state.verdict.refused.is_none() {
             for &(_, turn) in &handle.knobs {
                 let steps = (turn.abs().to_degrees() / SHAFT_STEP).ceil().max(1.0) as usize;
                 let arc: Vec<DVec3> = (0..=steps)

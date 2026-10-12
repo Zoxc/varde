@@ -6,7 +6,7 @@ use varde_document::{OriginPlane, Plane};
 use varde_sketch::{Id, Profiles};
 
 use super::*;
-use crate::operation_panel::{OperationKind, TypedField};
+use crate::operation_panel::{OperationKind, TypedField, Verdict};
 use crate::pick::PickIndex;
 use crate::projection::top_camera;
 use crate::revolve::TurnKind;
@@ -59,7 +59,10 @@ fn state<'a>(
         value: Some(std::f64::consts::FRAC_PI_2),
     };
     RevolveState {
-        editing: None,
+        verdict: Verdict {
+            ready: axis.is_some() && !picked.is_empty(),
+            ..Verdict::default()
+        },
         candidates: vec![Candidate {
             feature,
             placement: OriginPlane::XY.placement(),
@@ -81,13 +84,6 @@ fn state<'a>(
         flip: false,
         operation: OperationKind::NewBody,
         targets: Vec::new(),
-        error: None,
-        show_error: None,
-        refused: None,
-        uncut: None,
-        checking: false,
-        ready: axis.is_some() && !picked.is_empty(),
-        accept: false,
         editable: true,
         hover: None,
         grabbed: None,

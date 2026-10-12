@@ -9,19 +9,17 @@ use std::collections::BTreeSet;
 use glam::{DVec2, DVec3};
 use iced::Element;
 use iced::widget::{column, text};
-use varde_document::{BodyId, Extent, ExtrudeError, FeatureId, Placement};
+use varde_document::{BodyId, Extent, FeatureId, Placement};
 use varde_expr::LengthUnit;
 use varde_sketch::{Region, angle};
 
 use crate::chrome::tip;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, Side, Sides,
-    TypedField, field, footer_message, message_text, operation_panel, operation_section,
-    pick_field, region_rows, tile, tiles, value_field,
+    BodyTarget, Candidate, OperationKind, PanelHover, Parts, Side, Sides, TypedField, Verdict,
+    field, operation_panel, operation_section, pick_field, region_rows, tile, tiles, value_field,
 };
 use crate::panels::{angle_note, length_note};
-use crate::theme;
 use crate::{Edit, Look, Message};
 
 /// The field of an extrude's second distance, for two sides. The first
@@ -146,8 +144,8 @@ pub enum ExtrudeLook {
 /// The extrude being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct ExtrudeState<'a> {
-    /// The name of the extrude edited, or none for a new one.
-    pub editing: Option<&'a str>,
+    /// Its title, OK and foot.
+    pub verdict: Verdict<'a>,
     /// The sketches whose regions show and can be picked: the extrude's
     /// sketch once there is one, else every visible sketch with regions.
     pub candidates: Vec<Candidate<'a>>,
@@ -171,28 +169,6 @@ pub struct ExtrudeState<'a> {
     pub targets: Vec<BodyTarget<'a>>,
     /// The knob grabbed, if one is.
     pub grabbed: Option<Distance>,
-    /// Why the preview failed, if it did.
-    pub error: Option<&'a str>,
-    /// The button framing the camera on the geometry of why the preview
-    /// failed, or going back from it, if that geometry has a box: beside
-    /// [`ExtrudeState::error`]'s Add anyway.
-    pub show_error: Option<Framing>,
-    /// Why the extrude as set up can't be committed, if its own check
-    /// refuses it (two sides over the limit together, say): shown in
-    /// place of [`ExtrudeState::error`].
-    pub refused: Option<ExtrudeError>,
-    /// For a cut whose preview works, which bodies it takes nothing from
-    /// (it only touches them), as a note: "Body 2: nothing to cut".
-    pub uncut: Option<String>,
-    /// Whether sketch edits have waited on the solver long enough to say
-    /// so: OK waits for them, and the panel says why.
-    pub checking: bool,
-    /// Whether OK (and `Enter`) can be pressed: not while the preview
-    /// failed.
-    pub ready: bool,
-    /// Whether Accept error can be pressed: the preview failed
-    /// ([`ExtrudeState::error`]), and the operation could be committed otherwise.
-    pub accept: bool,
     /// Whether the document can be changed.
     pub editable: bool,
     /// The design's units, which snapped distances are typed in.
@@ -391,20 +367,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     );
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
-    let refused = state.refused.map(|refused| refused.to_string());
-    let message = footer_message(
-        "Extrude",
-        refused,
-        state.error,
-        state.show_error,
-        state.accept.then_some(Message::Edit(Edit::AcceptError)),
-        state.editing.is_some(),
-        state.checking,
-    )
-    // A cut that works but takes nothing from a body says so.
-    .or_else(|| {
-        (state.uncut.clone()).map(|note| Footer::Text(message_text(note, theme::warning_text)))
-    });
+    let message = state.verdict.footer("Extrude");
 
     let body = column![
         profile,
@@ -417,10 +380,10 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     .spacing(10);
     operation_panel(Parts {
         icon: Icon::Extrude,
-        title: state.editing.unwrap_or("New extrude"),
+        title: state.verdict.title("New extrude"),
         body: body.into(),
         message,
-        ok: state.ready.then_some(Message::Edit(Edit::CommitExtrude)),
+        ok: state.verdict.ok(Message::Edit(Edit::CommitExtrude)),
         cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
         close: false,
     })

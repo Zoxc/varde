@@ -13,7 +13,9 @@ use varde_document::{
 };
 use varde_expr::{Ask, Unit, Value};
 use varde_sketch::{MAX_WORK, Profiles};
-use varde_view::{BodyTarget, Candidate, OperationKind, ParamsIn, Side, Sides, TypedField};
+use varde_view::{
+    BodyTarget, Candidate, OperationKind, ParamsIn, Side, Sides, TypedField, Verdict,
+};
 
 use super::Doc;
 use super::extrude::is_sketch;
@@ -867,6 +869,30 @@ impl Doc {
     /// Pressed before the answer, it does nothing.
     pub(crate) fn offers_accept(&self, ready: bool) -> bool {
         ready && self.feed.shown_draft_error().is_some()
+    }
+
+    /// How the operation set up editing `feature` (none for a new one)
+    /// stands, for its panel: ready to be committed by its own measure
+    /// (`ready`), refused by its own check (`refused`), and warning of
+    /// `warning` where nothing else is said.
+    pub(crate) fn verdict(
+        &self,
+        feature: Option<FeatureId>,
+        ready: bool,
+        refused: Option<String>,
+        warning: Option<String>,
+    ) -> Verdict<'_> {
+        Verdict {
+            editing: (feature.and_then(|feature| self.editor.document().feature(feature)))
+                .map(|feature| feature.name.as_str()),
+            refused,
+            error: self.feed.shown_draft_error(),
+            show_error: self.draft_framed(),
+            warning,
+            checking: self.proposals.slow(),
+            ready: self.commit_by(ready, false),
+            accept: self.offers_accept(ready),
+        }
     }
 
     /// The note saying which bodies the cut set up takes nothing from

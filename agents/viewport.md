@@ -1146,7 +1146,7 @@ revision, its error and the bodies a join, cut or intersect touches,
 which the panel lists: `MeshFeed::draft_touched` gives the newest
 answer's that ran the touch test, of the current run of drafts, while a
 draft is asked for; and for a cut that works, the bodies it touches but
-takes nothing from, `uncut`: their volumes barely change and the tool's
+takes nothing from, the warning (`Verdict::warning`): their volumes barely change and the tool's
 intersection with them, cached as an intersect's, is empty. The panel
 notes them under its body list, as the UI mock's combine notes a
 subtract taking nothing, in the warning colour: "Body 2: nothing to
@@ -1948,8 +1948,8 @@ Add anyway (Edit anyway while editing a feature already there,
 `fail_button`s (`theme::fail_button`: a thin border on the panel's
 colour, Show's icon, `Icon::Locate` or `Icon::Back`, and words in the
 text's colour, Add anyway's in the strong danger colour), only where
-the geometry has a box (`footer_message`'s `show`, the states'
-`show_error`). A failed feature's Timeline row has none.
+the geometry has a box (`Verdict::footer`'s `show`, the states'
+`Verdict::show_error`). A failed feature's Timeline row has none.
 
 - The halo is coverage, not colour: halos overlap everywhere (a
   polyline's joints, two segments that touch, a point on a curve), and

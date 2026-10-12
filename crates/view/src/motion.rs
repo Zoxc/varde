@@ -25,9 +25,8 @@ const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, ListRow, OperationKind, PanelHover, Parts, RowTone, TypedField, field,
-    footer_message, label, message_text, operation_panel, pick_rows, tile, tiles, toggle,
-    value_field,
+    ListRow, OperationKind, PanelHover, Parts, RowTone, TypedField, Verdict, field, label,
+    operation_panel, pick_rows, tile, tiles, toggle, value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
@@ -616,9 +615,9 @@ pub enum MotionLook {
 /// The move, mirror or pattern being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct MotionState<'a> {
+    /// Its title, OK and foot.
+    pub verdict: Verdict<'a>,
     pub kind: MotionKind,
-    /// The name of the feature edited, or none for a new one.
-    pub editing: Option<&'a str>,
     /// The bodies picked, sorted by id as the document keeps them.
     pub bodies: Vec<CombineBody<'a>>,
     /// What a click picks.
@@ -657,11 +656,6 @@ pub struct MotionState<'a> {
     pub flip: bool,
     /// A pattern's Join to original.
     pub join: bool,
-    /// What the panel warns of, if anything, the mock's words: a linear
-    /// pattern's copies, each a body of its own, overlapping ("The copies
-    /// overlap (12 mm long this way): tick Join to original to merge
-    /// them"). Shown where nothing else is.
-    pub warning: Option<String>,
     /// How a pattern's copies are spread.
     pub mode: PatternMode,
     /// Why a pattern's spread is refused where its own text isn't, the
@@ -674,23 +668,6 @@ pub struct MotionState<'a> {
     /// What's still to be done before it can be committed, if anything:
     /// "pick the bodies to move", for the status bar.
     pub need: Option<&'static str>,
-    /// Why it can't be committed as set up, if its own check refuses it:
-    /// shown in place of [`MotionState::error`].
-    pub refused: Option<String>,
-    /// Why the preview failed, if it did.
-    pub error: Option<&'a str>,
-    /// The button framing the camera on the geometry of why the preview
-    /// failed, or going back from it, if that geometry has a box.
-    pub show_error: Option<Framing>,
-    /// Whether sketch edits have waited on the solver long enough to say
-    /// so: OK waits for them, and the panel says why.
-    pub checking: bool,
-    /// Whether OK (and `Enter`) can be pressed: not while the preview
-    /// failed.
-    pub ready: bool,
-    /// Whether Add anyway can be pressed: the preview failed, and it
-    /// could be committed otherwise.
-    pub accept: bool,
     /// Whether the document can be changed.
     pub editable: bool,
     /// The row of the panel the cursor is over, if any: the viewport
@@ -863,7 +840,7 @@ impl<'a> MotionState<'a> {
 
     /// The panel's title: the feature edited's name, or "New move".
     pub fn title(&self) -> &'a str {
-        self.editing.unwrap_or(self.kind.new_title())
+        self.verdict.title(self.kind.new_title())
     }
 }
 
@@ -1265,27 +1242,13 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             .into()
         }
     };
-    let message = footer_message(
-        state.kind.noun(),
-        state.refused.clone(),
-        state.error,
-        state.show_error,
-        state.accept.then_some(Message::Edit(Edit::AcceptError)),
-        state.editing.is_some(),
-        state.checking,
-    )
-    .or_else(|| {
-        // The mock's warning, under the failure where there's one: here
-        // only where there's no other message.
-        (state.warning.clone())
-            .map(|warning| Footer::Text(message_text(warning, theme::warning_text)))
-    });
+    let message = state.verdict.footer(state.kind.noun());
     operation_panel(Parts {
         icon: state.kind.icon(),
         title: state.title(),
         body,
         message,
-        ok: state.ready.then_some(Message::Edit(Edit::CommitMotion)),
+        ok: state.verdict.ok(Message::Edit(Edit::CommitMotion)),
         cancel: Message::Look(Look::Motion(MotionLook::Cancel)),
         close: false,
     })

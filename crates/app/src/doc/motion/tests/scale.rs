@@ -176,7 +176,7 @@ fn a_plate_scaled_by_two_about_the_origin_and_ok() {
     assert_eq!(state.scale().unwrap().at, Some(DVec3::ZERO));
     assert!(shows(&plates, "Body 1 ×2"));
     // No fitted faces: no note.
-    assert!(state.warning.is_none());
+    assert!(state.verdict.warning.is_none());
 
     key_in(&mut plates.doc, enter());
     assert!(plates.doc.mode.motion().is_none());
@@ -436,14 +436,14 @@ fn fitted_faces_scaled_up_are_noted() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     let state = plates.doc.motion_state().unwrap();
-    let note = state.warning.clone().expect("the note");
+    let note = state.verdict.warning.clone().expect("the note");
     // A ring turned whole is one fitted face.
     assert_eq!(note, "1 fitted face: its error grows × 25.4");
     assert!(shows(&plates, &note));
     // Scaled down, nothing grows.
     plates.input(MotionField::Factor, "0.5");
     plates.answer();
-    assert!(plates.doc.motion_state().unwrap().warning.is_none());
+    assert!(plates.doc.motion_state().unwrap().verdict.warning.is_none());
 }
 
 /// A scale edited from the Timeline opens with its values, previews a

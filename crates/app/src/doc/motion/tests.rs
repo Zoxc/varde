@@ -458,7 +458,7 @@ fn refusals_show_in_the_panel_and_ok_waits() {
     assert!(shown.contains(&"Move fails".to_owned()), "{shown:?}");
     assert!(shown.contains(&"Add anyway".to_owned()), "{shown:?}");
     let state = plates.doc.motion_state().unwrap();
-    assert!(!state.ready && state.accept);
+    assert!(!state.verdict.ready && state.verdict.accept);
     let features = plates.doc.editor.document().features().len();
     key_in(&mut plates.doc, enter());
     assert_eq!(plates.doc.editor.document().features().len(), features);

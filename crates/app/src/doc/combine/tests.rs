@@ -565,7 +565,7 @@ fn the_extrude_making_a_combined_body_may_stop_making_it() {
         .look(Look::Extrude(varde_view::ExtrudeLook::Operation(
             OperationKind::Join,
         )));
-    assert!(plates.doc.extrude_state().unwrap().ready);
+    assert!(plates.doc.extrude_state().unwrap().verdict.ready);
     // The combine stays, naming a body that isn't there.
     plates.doc.update(Edit::CommitExtrude);
     let document = plates.doc.editor.document();

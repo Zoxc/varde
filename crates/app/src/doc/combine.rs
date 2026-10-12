@@ -452,12 +452,8 @@ impl Doc {
                 name: document.body(body)?.name.as_str(),
             })
         };
-        let editing = session
-            .feature
-            .and_then(|feature| document.feature(feature))
-            .map(|feature| feature.name.as_str());
         Some(CombineState {
-            editing,
+            verdict: self.verdict(session.feature, self.combine_ready(), None, None),
             target: session.target.and_then(named),
             tools: session
                 .tools
@@ -468,11 +464,6 @@ impl Doc {
             op: session.op,
             keep_tools: session.keep_tools,
             enough: self.combinable(),
-            error: self.feed.shown_draft_error(),
-            show_error: self.draft_framed(),
-            checking: self.proposals.slow(),
-            ready: self.commit_by(self.combine_ready(), false),
-            accept: self.offers_accept(self.combine_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
         })

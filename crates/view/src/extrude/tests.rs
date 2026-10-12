@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use varde_document::{OriginPlane, Plane};
+use varde_document::{ExtrudeError, OriginPlane, Plane};
 use varde_sketch::Profiles;
 use varde_sketch::{Curve, Sketch};
 
@@ -38,7 +38,10 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         editor.document().features()[0].id
     };
     ExtrudeState {
-        editing: None,
+        verdict: Verdict {
+            ready: true,
+            ..Verdict::default()
+        },
         candidates: vec![Candidate {
             feature,
             placement: OriginPlane::XZ.placement(),
@@ -55,13 +58,6 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         operation: OperationKind::NewBody,
         targets: Vec::new(),
         grabbed: None,
-        error: None,
-        show_error: None,
-        refused: None,
-        uncut: None,
-        checking: false,
-        ready: true,
-        accept: false,
         editable: true,
         units: LengthUnit::Mm,
         hover: None,
@@ -140,12 +136,12 @@ fn the_panel_builds_with_why_ok_waits() {
     let profiles = plate();
     let picked = BTreeSet::from([0]);
     let mut state = state_of(&profiles, &picked);
-    state.ready = false;
-    state.checking = true;
+    state.verdict.ready = false;
+    state.verdict.checking = true;
     let _ = panel(&state);
-    state.error = Some("the preview failed");
+    state.verdict.error = Some("the preview failed");
     let _ = panel(&state);
-    state.refused = Some(ExtrudeError::Length);
+    state.verdict.refused = Some(ExtrudeError::Length.to_string());
     let _ = panel(&state);
 }
 
@@ -208,9 +204,9 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
         max,
     )
     .pixels(size);
-    state.editing = Some(&long);
+    state.verdict.editing = Some(&long);
     state.targets = vec![target(&long), target("Body 2")];
-    state.error = Some(&error);
+    state.verdict.error = Some(&error);
     let mut laid = Laid::new(panel(&state), max);
     assert_eq!(laid.node.size().width, PANEL_WIDTH);
     let shown = laid.texts();
@@ -302,14 +298,14 @@ fn the_panel_s_errors_read_as_sentences() {
         span: varde_expr::Span::new(3, 10),
     };
     state.fields[0].error = Some(&error);
-    state.error = Some("joining it to Body 1 leaves no clean solid");
+    state.verdict.error = Some("joining it to Body 1 leaves no clean solid");
     let shown = texts_of(&state);
     found(&shown, "Unknown unit 'parsecs'");
     found(&shown, "Joining it to Body 1 leaves no clean solid");
 
     // The extrude's own check refusing it shows in place of the preview's
     // error, as a sentence too.
-    state.refused = Some(ExtrudeError::ThroughAll);
+    state.verdict.refused = Some(ExtrudeError::ThroughAll.to_string());
     let shown = texts_of(&state);
     found(&shown, "Only a cut can go through all");
 }

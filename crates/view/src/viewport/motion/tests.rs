@@ -13,7 +13,7 @@ use super::*;
 use crate::Look;
 use crate::motion::PatternMode;
 use crate::motion::{MotionLook, MotionParts, MotionPick, SplitView};
-use crate::operation_panel::TypedField;
+use crate::operation_panel::{TypedField, Verdict};
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
 use crate::theme::Mode;
@@ -35,7 +35,7 @@ fn field(value: f64) -> TypedField<'static> {
 fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> MotionState<'static> {
     MotionState {
         kind,
-        editing: None,
+        verdict: Verdict::default(),
         bodies: Vec::new(),
         picking,
         fields: [field(0.0); crate::MotionField::COUNT],
@@ -48,17 +48,10 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         keep_original: true,
         flip: false,
         join: true,
-        warning: None,
         mode: PatternMode::Spacing,
         spread_error: None,
         copies: None,
         need: None,
-        refused: None,
-        error: None,
-        show_error: None,
-        checking: false,
-        ready: false,
-        accept: false,
         editable: true,
         hover: None,
         parts: MotionParts::None,

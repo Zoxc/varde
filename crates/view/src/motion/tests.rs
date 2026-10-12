@@ -17,7 +17,7 @@ fn field(text: &str) -> TypedField<'_> {
 fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'a> {
     MotionState {
         kind,
-        editing: None,
+        verdict: Verdict::default(),
         bodies,
         picking: MotionPick::Bodies,
         fields: [
@@ -51,17 +51,10 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         keep_original: true,
         flip: false,
         join: true,
-        warning: None,
         mode: PatternMode::Spacing,
         spread_error: None,
         copies: None,
         need: None,
-        refused: None,
-        error: None,
-        show_error: None,
-        checking: false,
-        ready: false,
-        accept: false,
         editable: true,
         hover: None,
         parts: MotionParts::None,
@@ -135,7 +128,7 @@ fn a_move_s_panel_is_the_mock_s_bodies_translate_and_rotate() {
 fn a_mirror_s_panel_has_its_plane_and_create_copy() {
     let mut state = state_of(MotionKind::Mirror, vec![body("Body 1")]);
     state.reference = None;
-    state.editing = Some("Mirror 2");
+    state.verdict.editing = Some("Mirror 2");
     let shown = texts_of(&state);
     for text in [
         "Mirror 2",
@@ -149,7 +142,7 @@ fn a_mirror_s_panel_has_its_plane_and_create_copy() {
     }
     assert!(!has(&shown, "Translate"));
     // A refusal shows as the operation's failure, without Add anyway.
-    state.refused = Some("it names 0 bodies".to_owned());
+    state.verdict.refused = Some("it names 0 bodies".to_owned());
     let shown = texts_of(&state);
     found(&shown, "Mirror fails");
     assert!(!has(&shown, "Add anyway"));
@@ -241,12 +234,12 @@ fn a_linear_pattern_s_panel_is_the_mock_s() {
     // Unticked, the overlap warning where there's nothing else.
     state.join = false;
     let warning = "The copies overlap (12 mm long this way): tick Join to original to merge them";
-    state.warning = Some(warning.to_owned());
+    state.verdict.warning = Some(warning.to_owned());
     found(&texts_of(&state), warning);
-    state.refused = Some("it names 0 bodies".to_owned());
+    state.verdict.refused = Some("it names 0 bodies".to_owned());
     assert!(!has(&texts_of(&state), warning));
-    state.refused = None;
-    state.warning = None;
+    state.verdict.refused = None;
+    state.verdict.warning = None;
     // The field is the mode's, its whole error under it.
     state.mode = PatternMode::Total;
     state.spread_error = Some("The pattern runs past 1000000 mm".to_owned());
@@ -859,7 +852,7 @@ fn a_shell_s_panel_is_the_mock_s() {
     // None: where to click, and the mock's warning in the foot.
     state.parts = MotionParts::Shell(Box::new(shell_view(&[], ShellDirection::Outward)));
     let warning = "No faces removed: the body becomes closed and hollow";
-    state.warning = Some(warning.to_owned());
+    state.verdict.warning = Some(warning.to_owned());
     let shown = texts_of(&state);
     found(&shown, "Click faces");
     assert!(found(&shown, warning).bounds.y > found(&shown, "Outward").bounds.y);

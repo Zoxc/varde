@@ -169,7 +169,7 @@ fn regions_then_a_sketch_line_picked_are_previewed() {
     assert_eq!(session.picking, RevolvePick::Regions);
     let state = lathe.doc.revolve_state().unwrap();
     assert_eq!(state.candidates.len(), 1);
-    assert!(!state.ready);
+    assert!(!state.verdict.ready);
     assert!(lathe.last_draft().is_none());
 
     // A region picked sets the sketch, and the axis is picked next.
@@ -180,7 +180,7 @@ fn regions_then_a_sketch_line_picked_are_previewed() {
     assert_eq!(session.regions.picked, BTreeSet::from([region]));
     assert_eq!(session.picking, RevolvePick::Axis);
     // Without an axis there's nothing to preview.
-    assert!(!lathe.doc.revolve_state().unwrap().ready);
+    assert!(!lathe.doc.revolve_state().unwrap().verdict.ready);
     assert!(lathe.last_draft().is_none());
 
     let axis = AxisLine::Curve(lathe.left);
@@ -189,7 +189,7 @@ fn regions_then_a_sketch_line_picked_are_previewed() {
     assert_eq!(state.axis, Some(axis));
     assert_eq!(state.axis_name().as_deref(), Some("Line 4"));
     assert_eq!(state.picking, RevolvePick::Regions);
-    assert!(state.ready);
+    assert!(state.verdict.ready);
 
     // The preview is the draft applied: a full turn making a new body.
     let (feature, draft) = lathe.last_draft().expect("a draft");
@@ -261,7 +261,7 @@ fn a_line_of_no_length_is_no_axis() {
         panic!("a line");
     };
     lathe.set_up(AxisLine::Curve(lathe.construction));
-    assert!(lathe.doc.revolve_state().unwrap().ready);
+    assert!(lathe.doc.revolve_state().unwrap().verdict.ready);
     edit_sketch(&mut lathe, |sketch| {
         let at = sketch.point(start).unwrap().at;
         sketch.point_mut(end).unwrap().at = at;
@@ -269,21 +269,21 @@ fn a_line_of_no_length_is_no_axis() {
     // Picked, it waits as a deleted line does: no preview, no OK.
     let state = lathe.doc.revolve_state().unwrap();
     assert_eq!(state.axis, None);
-    assert!(!state.ready);
+    assert!(!state.verdict.ready);
     assert!(lathe.last_draft().is_none());
     // Nor can it be picked again.
     let sketch = lathe.sketch;
     lathe.revolve(RevolveLook::Picking(RevolvePick::Axis));
     let axis = AxisLine::Curve(lathe.construction);
     lathe.revolve(RevolveLook::PickAxis { sketch, axis });
-    assert!(!lathe.doc.revolve_state().unwrap().ready);
+    assert!(!lathe.doc.revolve_state().unwrap().verdict.ready);
     // Its length back, it's the axis again.
     edit_sketch(&mut lathe, |sketch| {
         sketch.point_mut(end).unwrap().at = DVec2::new(0.0, 30.0);
     });
     let state = lathe.doc.revolve_state().unwrap();
     assert_eq!(state.axis, Some(axis));
-    assert!(state.ready);
+    assert!(state.verdict.ready);
 }
 
 #[test]
@@ -320,13 +320,13 @@ fn typed_angles_of_each_kind_reach_the_draft() {
     near(span(&lathe), (-2.0 * PI / 3.0, PI / 4.0));
     lathe.revolve(RevolveLook::Flip);
     near(span(&lathe), (-PI / 4.0, 2.0 * PI / 3.0));
-    assert!(lathe.doc.revolve_state().unwrap().ready);
+    assert!(lathe.doc.revolve_state().unwrap().verdict.ready);
 
     // Together over a turn, the revolve's own check refuses it: no OK.
     lathe.input(Angle::Second, "300");
     let state = lathe.doc.revolve_state().unwrap();
-    assert_eq!(state.refused, Some(RevolveError::Turn));
-    assert!(!state.ready);
+    assert_eq!(state.verdict.refused, Some(RevolveError::Turn.to_string()));
+    assert!(!state.verdict.ready);
     assert!(press_in(&lathe.doc, enter()).is_none());
 
     // A refused text says why and blocks OK; the draft keeps the last.
@@ -335,13 +335,13 @@ fn typed_angles_of_each_kind_reach_the_draft() {
     lathe.input(Angle::First, "120 +");
     let state = lathe.doc.revolve_state().unwrap();
     assert!(state.fields[0].error.is_some());
-    assert!(!state.ready);
+    assert!(!state.verdict.ready);
     assert_eq!(lathe.doc.feed.revision(), revision);
 
     // A full turn has no angles, and no refused field blocks it.
     lathe.revolve(RevolveLook::Extent(TurnKind::Full));
     assert_eq!(span(&lathe), None);
-    assert!(lathe.doc.revolve_state().unwrap().ready);
+    assert!(lathe.doc.revolve_state().unwrap().verdict.ready);
 }
 
 #[test]
@@ -467,8 +467,8 @@ fn editing_a_revolve_reopens_it_with_its_values_and_sets_it_again() {
     assert!(session.sides.flip);
     assert_eq!(session.operation, OperationKind::NewBody);
     let state = lathe.doc.revolve_state().unwrap();
-    assert_eq!(state.editing, Some("Revolve 1"));
-    assert!(state.ready);
+    assert_eq!(state.verdict.editing, Some("Revolve 1"));
+    assert!(state.verdict.ready);
     // The preview edits it.
     let (edited, mut draft) = lathe.last_draft().unwrap();
     assert_eq!(edited, Some(feature));
@@ -542,7 +542,7 @@ fn a_revolve_whose_axis_line_is_gone_reopens_without_it() {
     let state = lathe.doc.revolve_state().unwrap();
     assert_eq!(state.axis, None);
     assert!(state.axis_missing);
-    assert!(!state.ready);
+    assert!(!state.verdict.ready);
     assert!(lathe.last_draft().is_none());
 
     let sketch = lathe.sketch;
@@ -552,7 +552,7 @@ fn a_revolve_whose_axis_line_is_gone_reopens_without_it() {
     });
     let state = lathe.doc.revolve_state().unwrap();
     assert!(!state.axis_missing);
-    assert!(state.ready);
+    assert!(state.verdict.ready);
 }
 
 #[test]
@@ -567,7 +567,7 @@ fn the_axis_keeps_its_sketch_and_waits_for_its_line_through_undo() {
     assert_eq!(session.regions.source, Some(sketch));
     assert_eq!(lathe.doc.revolve_state().unwrap().candidates.len(), 1);
     lathe.revolve(RevolveLook::PickRegion { sketch, region });
-    assert!(lathe.doc.revolve_state().unwrap().ready);
+    assert!(lathe.doc.revolve_state().unwrap().verdict.ready);
 
     // The line deleted (in an edit made elsewhere), the revolve isn't
     // whole: no preview, no OK. Undone, the axis is back.
@@ -585,12 +585,12 @@ fn the_axis_keeps_its_sketch_and_waits_for_its_line_through_undo() {
     lathe.doc.sync();
     let state = lathe.doc.revolve_state().expect("the session stays");
     assert_eq!(state.axis, None);
-    assert!(!state.ready);
+    assert!(!state.verdict.ready);
     assert!(lathe.last_draft().is_none());
     lathe.doc.update(Edit::Undo);
     let state = lathe.doc.revolve_state().unwrap();
     assert_eq!(state.axis, Some(AxisLine::Curve(lathe.construction)));
-    assert!(state.ready);
+    assert!(state.verdict.ready);
     assert!(lathe.last_draft().is_some());
 }
 
@@ -859,7 +859,7 @@ fn the_session_ends_when_its_revolve_or_its_document_goes() {
     // Replaced whole (restoring recovered changes, say) by one still
     // holding its sketch, a new one's ends too: its ids may name others.
     lathe.set_up(AxisLine::SketchY);
-    assert!(lathe.doc.revolve_state().unwrap().ready);
+    assert!(lathe.doc.revolve_state().unwrap().verdict.ready);
     let mut replaced = Editor::new(lathe.doc.editor.document().clone());
     let coarse = varde_document::Tolerance::new(1e-2).unwrap();
     replaced.apply(Command::SetTolerance(coarse)).unwrap();
