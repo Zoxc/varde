@@ -470,10 +470,7 @@ impl<'a> Revolving<'a> {
         for puck in self.pucks(camera, bounds) {
             let hot = active == Some(puck.knob) && self.state.editable;
             if hot && let Some(&(_, turn)) = handle.knobs.iter().find(|(k, _)| *k == puck.knob) {
-                // An angle a pixel along the arc turns, at most half a turn
-                // over the rail's reach.
-                let per_pixel =
-                    (puck.pixel / radius).min(std::f64::consts::PI / handle::RAIL_REACH);
+                let per_pixel = handle::arc_per_pixel(puck.pixel, radius);
                 let path = |px: f64| handle.at(turn + px * per_pixel);
                 handle::draw_rail(live, &projector, colors.rail, path);
             }

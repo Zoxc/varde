@@ -536,7 +536,7 @@ pub(super) fn draw_handles(
         handle::draw_shaft(live, projector, &knob.arc, color);
         if active == Some(grip) {
             let (u, v) = plane_axes(knob.axis);
-            let per_pixel = (knob.puck.pixel / knob.radius).min(PI / handle::RAIL_REACH);
+            let per_pixel = handle::arc_per_pixel(knob.puck.pixel, knob.radius);
             let path = |px: f64| {
                 let turn = knob.at + px * per_pixel;
                 handles.centre + (u * angle::cos(turn) + v * angle::sin(turn)) * knob.radius

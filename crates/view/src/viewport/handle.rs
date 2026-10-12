@@ -53,6 +53,13 @@ const MIN_HEAD: f64 = 1.5;
 pub(crate) const RAIL_REACH: f64 = 170.0;
 const RAIL_WIDTH: f32 = 1.5;
 const RAIL_STEPS: usize = 16;
+
+/// The angle a pixel along a knob's arc of `radius` turns on its rail,
+/// `pixel` the world length of a pixel at its puck: at most half a turn
+/// either way over the rail's reach.
+pub(crate) fn arc_per_pixel(pixel: f64, radius: f64) -> f64 {
+    (pixel / radius).min(std::f64::consts::PI / RAIL_REACH)
+}
 /// How near the cursor a knob is grabbed, in pixels: within its ring or
 /// a little past it, or near its arrow (a sketch's hit tolerance).
 const RING_HIT: f64 = RING_RADIUS + 2.0;

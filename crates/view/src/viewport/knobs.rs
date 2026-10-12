@@ -173,10 +173,7 @@ pub(crate) fn draw(
         if hot {
             let per_pixel = match knob.path {
                 KnobPath::Line { .. } => seen.puck.pixel,
-                // At most half a turn either way.
-                KnobPath::Arc { .. } => {
-                    (seen.puck.pixel / seen.radius).min(std::f64::consts::PI / handle::RAIL_REACH)
-                }
+                KnobPath::Arc { .. } => handle::arc_per_pixel(seen.puck.pixel, seen.radius),
             };
             let path = |px: f64| on_path(&knob, along + px * per_pixel, seen.radius);
             handle::draw_rail(live, &projector, colors.rail, path);
