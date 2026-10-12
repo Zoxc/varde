@@ -198,10 +198,7 @@ fn theme(preview: &Preview) -> Option<Theme> {
 /// decodes (see `decode`): what a sample design built into the app
 /// shows.
 pub fn of_file(bytes: &[u8]) -> Option<Thumbnail> {
-    match crate::vrdp::end(bytes).ok()? {
-        crate::vrdp::FileEnd::Design { previews, .. } => decode(&previews),
-        crate::vrdp::FileEnd::NotADesign => None,
-    }
+    decode(&crate::vrdp::previews(bytes).ok()?)
 }
 
 /// The thumbnail `previews` hold, or `None` if they hold no image of one

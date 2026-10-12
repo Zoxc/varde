@@ -123,8 +123,7 @@ pub(crate) enum FileEnd {
 }
 
 /// The previews of the design file `file`'s newest record, see [`end`].
-#[cfg(any(test, not(target_arch = "wasm32")))]
-pub(super) fn previews(file: &(impl ReadAt + ?Sized)) -> io::Result<Vec<Preview>> {
+pub(crate) fn previews(file: &(impl ReadAt + ?Sized)) -> io::Result<Vec<Preview>> {
     Ok(match end(file)? {
         FileEnd::NotADesign => Vec::new(),
         FileEnd::Design { previews, .. } => previews,

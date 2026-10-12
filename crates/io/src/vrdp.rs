@@ -143,8 +143,10 @@ use crate::UnixSeconds;
 
 use chain::Chain;
 pub(crate) use check::check_unchanged;
+pub(crate) use preview::previews;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) use preview::read_previews;
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use preview::{FileEnd, end};
 pub use preview::{MAX_MEDIA_TYPE, MAX_PREVIEW, MAX_PREVIEWS, Preview};
 
