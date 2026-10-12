@@ -376,35 +376,8 @@ impl Mcp {
             }
             let user_reverted = doc.is_some_and(|doc| Mcp::taken_back(doc, logged.told_at));
             rows.extend(user_rows(&logged.told_rows, user_reverted));
-            let edit = (logged.edit.as_ref()).map(|edit| {
-                let offered = |state: &Option<varde_document::EditorState>| {
-                    state.as_ref().is_some_and(|state| {
-                        doc.is_some_and(|doc| state.lineage() == doc.editor.lineage())
-                    })
-                };
-                varde_view::McpEdit {
-                    serial: logged.serial,
-                    // An undo is taken back when the user redoes what it
-                    // undid.
-                    reverted: doc.is_some_and(|doc| match edit.undid.is_empty() {
-                        true => Mcp::taken_back(doc, Some(edit.after_revision)),
-                        false => (edit.undid.iter()).any(|after| doc.in_effect(*after)),
-                    }),
-                    undo: !edit.undid.is_empty(),
-                    not_told: edit.not_told,
-                    menu: self.menu == Some(logged.serial),
-                    timeline: edit.feature.is_some(),
-                    here: offered(&edit.after)
-                        && doc.is_some_and(|doc| {
-                            doc.mcp.history.amended_to(edit.after_revision) != doc.editor.revision()
-                                && !edit
-                                    .after
-                                    .as_ref()
-                                    .is_some_and(|after| doc.shows_state(after))
-                        }),
-                    before: offered(&edit.before),
-                }
-            });
+            let menu = self.menu == Some(logged.serial);
+            let edit = (logged.edit.as_ref()).map(|edit| edit.shown(logged.serial, menu, doc));
             rows.push(varde_view::McpRow::Call(varde_view::McpCall {
                 tool: logged.tool,
                 args: logged.args.as_str().into(),

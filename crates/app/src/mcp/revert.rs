@@ -49,6 +49,42 @@ pub(crate) struct Edited {
     pub(crate) undid: Vec<Revision>,
 }
 
+impl Edited {
+    /// Its row's menu state in the panel, logged as `serial`, its menu
+    /// open if `menu`, against `doc`, the design it was made on if it's
+    /// open: what's offered and whether it's been taken back.
+    pub(super) fn shown(&self, serial: u64, menu: bool, doc: Option<&Doc>) -> varde_view::McpEdit {
+        let row = varde_view::McpEdit {
+            serial,
+            reverted: false,
+            undo: !self.undid.is_empty(),
+            not_told: self.not_told,
+            menu,
+            timeline: self.feature.is_some(),
+            here: false,
+            before: false,
+        };
+        let Some(doc) = doc else {
+            return row;
+        };
+        let offered = |state: &Option<EditorState>| {
+            (state.as_ref()).is_some_and(|state| state.lineage() == doc.editor.lineage())
+        };
+        varde_view::McpEdit {
+            // An undo is taken back when the user redoes what it undid.
+            reverted: match self.undid.is_empty() {
+                true => Mcp::taken_back(doc, Some(self.after_revision)),
+                false => (self.undid.iter()).any(|after| doc.in_effect(*after)),
+            },
+            here: offered(&self.after)
+                && doc.mcp.history.amended_to(self.after_revision) != doc.editor.revision()
+                && !(self.after.as_ref()).is_some_and(|after| doc.shows_state(after)),
+            before: offered(&self.before),
+            ..row
+        }
+    }
+}
+
 impl PartialEq for Edited {
     fn eq(&self, other: &Edited) -> bool {
         let revision = |state: &Option<EditorState>| state.as_ref().map(EditorState::revision);
