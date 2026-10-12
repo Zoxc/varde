@@ -394,11 +394,7 @@ pub fn format(value: f64, unit: Option<Unit>) -> String {
     let Some(unit) = unit else {
         return number(value, None);
     };
-    let text = number(value / unit.factor(), Some(unit));
-    match unit {
-        Unit::Angle(AngleUnit::Deg) => format!("{text}°"),
-        unit => format!("{text} {}", unit.symbol()),
-    }
+    with_symbol(number(value / unit.factor(), Some(unit)), unit)
 }
 
 /// What power of a length a value is: a length, an area or a volume,
@@ -449,11 +445,7 @@ pub fn full(value: f64, unit: Option<Unit>) -> String {
     let Some(unit) = unit else {
         return shortest(value);
     };
-    let text = shortest(value / unit.factor());
-    match unit {
-        Unit::Angle(AngleUnit::Deg) => format!("{text}°"),
-        unit => format!("{text} {}", unit.symbol()),
-    }
+    with_symbol(shortest(value / unit.factor()), unit)
 }
 
 /// [`full`] for a length, an area or a volume, as [`format_power`] shows
@@ -467,10 +459,7 @@ pub fn full_power(value: f64, unit: LengthUnit, power: Power) -> String {
 /// as [`format()`] shows it: for the parts of a point or a vector, shown
 /// with the symbol once after them all.
 pub fn format_number(value: f64, unit: Option<Unit>) -> String {
-    match unit {
-        Some(unit) => number(value / unit.factor(), Some(unit)),
-        None => number(value, None),
-    }
+    number(unit.map_or(value, |unit| value / unit.factor()), unit)
 }
 
 /// `value`, in model units, as a number of `unit` without its symbol, as
