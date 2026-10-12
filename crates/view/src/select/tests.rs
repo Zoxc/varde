@@ -5,7 +5,9 @@ use varde_document::{
 use varde_expr::Value;
 use varde_kernel::mesh::PartKey;
 use varde_kernel::{MeshParts, RenderMesh};
-use varde_regen::{Cache, PickFace, Picking, PickingParts, Summary, evaluate, tessellate_picking};
+use varde_regen::{
+    Cache, FaceEdgeTables, PickFace, Picking, PickingParts, Summary, evaluate, tessellate_picking,
+};
 use varde_render::{Projection, View};
 use varde_sketch::{Curve, Sketch};
 
@@ -435,11 +437,13 @@ fn aliased() -> PickIndex {
     let b2 = face(PartKey::EndCap, Vec::new());
     let parts = PickingParts {
         bodies: vec![BodyId::NEW],
-        faces: vec![a, b, b2],
-        closed: vec![false; 3],
-        tangents: vec![0, 1, 2],
-        snaps: vec![None; 3],
-        corners: Vec::new(),
+        tables: FaceEdgeTables {
+            faces: vec![a, b, b2],
+            closed: vec![false; 3],
+            tangents: vec![0, 1, 2],
+            snaps: vec![None; 3],
+            corners: Vec::new(),
+        },
     };
     let picking = Picking::from_parts(parts, &mesh).unwrap();
     PickIndex::new(std::sync::Arc::new(mesh), std::sync::Arc::new(picking), 1)

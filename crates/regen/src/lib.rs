@@ -99,7 +99,9 @@ pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
 };
 pub use pick_tables::{Bvh, BvhNode, PickTables, PickTablesError, PickTablesParts, vertex_runs};
-pub use picking::{PickCorner, PickFace, Picking, PickingError, PickingParts, Summary};
+pub use picking::{
+    FaceEdgeTables, PickCorner, PickFace, Picking, PickingError, PickingParts, Summary,
+};
 pub use profile::{ProfileError, chain_closes, loft_corner, loft_corners, profile};
 
 use cache::Keyer;

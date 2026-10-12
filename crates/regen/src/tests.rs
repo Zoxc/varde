@@ -1544,11 +1544,7 @@ fn mesh_of(n: usize) -> RenderMesh {
 fn drawn(mesh: &RenderMesh) -> Drawn {
     Drawn {
         mesh: mesh.clone(),
-        faces: Vec::new(),
-        closed: Vec::new(),
-        tangents: Vec::new(),
-        snaps: Vec::new(),
-        corners: Vec::new(),
+        tables: FaceEdgeTables::default(),
     }
 }
 

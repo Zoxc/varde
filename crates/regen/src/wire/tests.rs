@@ -1291,11 +1291,13 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     let snaps = vec![None; mesh.edge_count()];
     let parts = PickingParts {
         bodies: parts,
-        faces,
-        closed,
-        tangents,
-        snaps,
-        corners: Vec::new(),
+        tables: FaceEdgeTables {
+            faces,
+            closed,
+            tangents,
+            snaps,
+            corners: Vec::new(),
+        },
     };
     let picking = Picking::from_parts(parts, &mesh).unwrap();
     let tables = PickTables::new(&mesh, &picking);
@@ -2163,8 +2165,10 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
         .unwrap();
         let parts = PickingParts {
             bodies: vec![BodyId::NEW],
-            faces: vec![face(); faces],
-            ..PickingParts::default()
+            tables: FaceEdgeTables {
+                faces: vec![face(); faces],
+                ..FaceEdgeTables::default()
+            },
         };
         let picking = Picking::from_parts(parts, &mesh).unwrap();
         let tables = PickTables::new(&mesh, &picking);
@@ -2345,11 +2349,13 @@ fn tangent_chains_must_hang_together() {
         let bodies = [a, b][..parts].to_vec();
         let parts = PickingParts {
             bodies,
-            faces,
-            closed: vec![false; 2],
-            tangents: tangents.to_vec(),
-            snaps: vec![None; 2],
-            corners: Vec::new(),
+            tables: FaceEdgeTables {
+                faces,
+                closed: vec![false; 2],
+                tangents: tangents.to_vec(),
+                snaps: vec![None; 2],
+                corners: Vec::new(),
+            },
         };
         Picking::from_parts(parts, &mesh)
     };

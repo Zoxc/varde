@@ -108,9 +108,9 @@ use varde_kernel::{
 use varde_lane::bytes::Buffer;
 
 use crate::{
-    Answer, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError,
-    GeometryParts, Inspected, PickCorner, PickFace, PickTables, PickTablesError, PickTablesParts,
-    Picking, PickingError, PickingParts, Progress, Request, Response,
+    Answer, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FaceEdgeTables, FeatureFailure,
+    GeometryError, GeometryParts, Inspected, PickCorner, PickFace, PickTables, PickTablesError,
+    PickTablesParts, Picking, PickingError, PickingParts, Progress, Request, Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
@@ -757,11 +757,13 @@ pub fn decode_reply(
                     let (mesh, sketches, tables) = decode_model(parts)?;
                     let parts = PickingParts {
                         bodies: part_bodies,
-                        faces,
-                        closed,
-                        tangents,
-                        snaps,
-                        corners,
+                        tables: FaceEdgeTables {
+                            faces,
+                            closed,
+                            tangents,
+                            snaps,
+                            corners,
+                        },
                     };
                     let picking = Picking::from_parts(parts, &mesh).map_err(Error::Picking)?;
                     let geometry = |parts: Option<GeometryParts>| {

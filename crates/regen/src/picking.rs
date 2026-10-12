@@ -231,11 +231,7 @@ pub struct PickCorner {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Picking {
     bodies: Vec<BodyId>,
-    faces: Vec<PickFace>,
-    closed: Vec<bool>,
-    tangents: Vec<u32>,
-    snaps: Vec<Option<[f64; 3]>>,
-    corners: Vec<PickCorner>,
+    tables: FaceEdgeTables,
 }
 
 /// The parts of [`Picking`], as [`Picking::from_parts`] takes them and
@@ -243,11 +239,65 @@ pub struct Picking {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PickingParts {
     pub bodies: Vec<BodyId>,
+    pub tables: FaceEdgeTables,
+}
+
+/// The tables by the mesh's face and edge ids, and its corners: a
+/// [`Picking`]'s besides its bodies, and one body's drawing's
+/// ([`Drawn`]). See their accessors on [`Picking`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FaceEdgeTables {
+    /// Per face (region): its key, aliases and summary.
     pub faces: Vec<PickFace>,
+    /// Per edge: whether it's a closed chain.
     pub closed: Vec<bool>,
+    /// Per edge: its tangent chain's first edge, a crease itself.
     pub tangents: Vec<u32>,
+    /// Per edge: its snap point, a crease none.
     pub snaps: Vec<Option<[f64; 3]>>,
+    /// Per corner: three of its faces.
     pub corners: Vec<PickCorner>,
+}
+
+impl FaceEdgeTables {
+    /// About how many bytes they hold, the faces' aliases too.
+    fn bytes(&self) -> usize {
+        let aliases = (self.faces.iter()).fold(0usize, |sum, face| {
+            sum.saturating_add(size_of_val(&face.aliases[..]))
+        });
+        size_of_val(&self.faces[..])
+            .saturating_add(aliases)
+            .saturating_add(size_of_val(&self.closed[..]))
+            .saturating_add(size_of_val(&self.tangents[..]))
+            .saturating_add(size_of_val(&self.snaps[..]))
+            .saturating_add(size_of_val(&self.corners[..]))
+    }
+
+    /// Appends `other`'s, its edge and face ids moved past these. Fails
+    /// with [`MeshError::TooLarge`] where an id wouldn't fit.
+    fn append(&mut self, other: &FaceEdgeTables) -> Result<(), MeshError> {
+        let base = u32::try_from(self.tangents.len()).map_err(|_| MeshError::TooLarge)?;
+        let mut tangents = Vec::with_capacity(other.tangents.len());
+        for &first in &other.tangents {
+            tangents.push(first.checked_add(base).ok_or(MeshError::TooLarge)?);
+        }
+        let faces = u32::try_from(self.faces.len()).map_err(|_| MeshError::TooLarge)?;
+        let moved = |f: u32| f.checked_add(faces).ok_or(MeshError::TooLarge);
+        let mut corners = Vec::with_capacity(other.corners.len());
+        for corner in &other.corners {
+            let [a, b, c] = corner.faces;
+            corners.push(PickCorner {
+                faces: [moved(a)?, moved(b)?, moved(c)?],
+                point: corner.point,
+            });
+        }
+        self.faces.extend_from_slice(&other.faces);
+        self.closed.extend_from_slice(&other.closed);
+        self.tangents.extend(tangents);
+        self.snaps.extend_from_slice(&other.snaps);
+        self.corners.extend(corners);
+        Ok(())
+    }
 }
 
 impl Picking {
@@ -266,14 +316,14 @@ impl Picking {
     /// The tables of `mesh` of these parts, if they make them; see
     /// [`Picking`] for what is checked.
     pub fn from_parts(parts: PickingParts, mesh: &RenderMesh) -> Result<Picking, PickingError> {
-        let PickingParts {
-            bodies,
+        let PickingParts { bodies, tables } = parts;
+        let FaceEdgeTables {
             faces,
             closed,
             tangents,
             snaps,
             corners,
-        } = parts;
+        } = &tables;
         if bodies.len() != mesh.part_ends().len()
             || faces.len() != mesh.face_count()
             || closed.len() != mesh.edge_count()
@@ -346,25 +396,14 @@ impl Picking {
         if !corners.iter().all(corner_ok) {
             return Err(PickingError::Corner);
         }
-        Ok(Picking {
-            bodies,
-            faces,
-            closed,
-            tangents,
-            snaps,
-            corners,
-        })
+        Ok(Picking { bodies, tables })
     }
 
     /// Its parts, copied, as [`Picking::from_parts`] takes them.
     pub fn to_parts(&self) -> PickingParts {
         PickingParts {
             bodies: self.bodies.clone(),
-            faces: self.faces.clone(),
-            closed: self.closed.clone(),
-            tangents: self.tangents.clone(),
-            snaps: self.snaps.clone(),
-            corners: self.corners.clone(),
+            tables: self.tables.clone(),
         }
     }
 
@@ -376,14 +415,14 @@ impl Picking {
 
     /// The mesh's faces' keys and summaries, by face id.
     pub fn faces(&self) -> &[PickFace] {
-        &self.faces
+        &self.tables.faces
     }
 
     /// Whether each of the mesh's edges, by edge id, is a chain that
     /// closes on itself (a hole's rim) rather than running from one corner
     /// to another. A crease's is `false`.
     pub fn closed(&self) -> &[bool] {
-        &self.closed
+        &self.tables.closed
     }
 
     /// Each of the mesh's edges' tangent chain, by edge id, as the
@@ -392,7 +431,7 @@ impl Picking {
     /// [`Topology::tangent_chains`](varde_kernel::Topology::tangent_chains)).
     /// Itself if none, and a crease's itself.
     pub fn tangents(&self) -> &[u32] {
-        &self.tangents
+        &self.tables.tangents
     }
 
     /// Each of the mesh's edges' point, by edge id, where it has one: a
@@ -401,12 +440,12 @@ impl Picking {
     /// [`Picking::MAX_VALUE`]. A snap point for picking points. A
     /// crease's is `None`.
     pub fn snaps(&self) -> &[Option<[f64; 3]>] {
-        &self.snaps
+        &self.tables.snaps
     }
 
     /// The model's corners.
     pub fn corners(&self) -> &[PickCorner] {
-        &self.corners
+        &self.tables.corners
     }
 
     /// The body face `face` of `mesh`, the mesh these tables came with,
@@ -422,7 +461,7 @@ impl Picking {
     /// no such edge.
     pub fn edge_keys(&self, mesh: &RenderMesh, edge: u32) -> Option<[FaceKey; 2]> {
         let [a, b] = *mesh.edge_faces().get(usize::try_from(edge).ok()?)?;
-        let key = |f: u32| Some(self.faces.get(usize::try_from(f).ok()?)?.key);
+        let key = |f: u32| Some(self.tables.faces.get(usize::try_from(f).ok()?)?.key);
         let (a, b) = (key(a)?, key(b)?);
         (a != b).then(|| [a.min(b), a.max(b)])
     }
@@ -431,20 +470,16 @@ impl Picking {
     /// as a corner reference stores them; `None` if there's no such
     /// corner.
     pub fn corner_keys(&self, corner: u32) -> Option<[FaceKey; 3]> {
-        let corner = self.corners.get(usize::try_from(corner).ok()?)?;
-        let mut keys = corner.faces.map(|f| self.faces[f as usize].key);
+        let corner = self.tables.corners.get(usize::try_from(corner).ok()?)?;
+        let mut keys = corner.faces.map(|f| self.tables.faces[f as usize].key);
         keys.sort_unstable();
         Some(keys)
     }
 
     /// About how many bytes it holds, for the cache.
     pub(crate) fn bytes(&self) -> usize {
-        faces_bytes(&self.faces)
+        (self.tables.bytes())
             .saturating_add(size_of_val(&self.bodies[..]))
-            .saturating_add(size_of_val(&self.closed[..]))
-            .saturating_add(size_of_val(&self.tangents[..]))
-            .saturating_add(size_of_val(&self.snaps[..]))
-            .saturating_add(size_of_val(&self.corners[..]))
             .saturating_add(size_of_val(self))
     }
 
@@ -453,38 +488,11 @@ impl Picking {
     /// Fails with [`MeshError::TooLarge`] where an edge id wouldn't fit,
     /// which a mesh within its limits never reaches.
     pub(crate) fn append(&mut self, body: BodyId, drawn: &Drawn) -> Result<(), MeshError> {
-        let base = u32::try_from(self.tangents.len()).map_err(|_| MeshError::TooLarge)?;
-        let mut tangents = Vec::with_capacity(drawn.tangents.len());
-        for &first in &drawn.tangents {
-            tangents.push(first.checked_add(base).ok_or(MeshError::TooLarge)?);
-        }
-        let faces = u32::try_from(self.faces.len()).map_err(|_| MeshError::TooLarge)?;
-        let moved = |f: u32| f.checked_add(faces).ok_or(MeshError::TooLarge);
-        let mut corners = Vec::with_capacity(drawn.corners.len());
-        for corner in &drawn.corners {
-            let [a, b, c] = corner.faces;
-            corners.push(PickCorner {
-                faces: [moved(a)?, moved(b)?, moved(c)?],
-                point: corner.point,
-            });
-        }
+        self.tables.append(&drawn.tables)?;
         let parts = drawn.mesh.part_ends().len();
         self.bodies.extend(std::iter::repeat_n(body, parts));
-        self.faces.extend_from_slice(&drawn.faces);
-        self.closed.extend_from_slice(&drawn.closed);
-        self.tangents.extend(tangents);
-        self.snaps.extend_from_slice(&drawn.snaps);
-        self.corners.extend(corners);
         Ok(())
     }
-}
-
-/// About how many bytes `faces` hold, their aliases too.
-fn faces_bytes(faces: &[PickFace]) -> usize {
-    let aliases = (faces.iter()).fold(0usize, |sum, face| {
-        sum.saturating_add(size_of_val(&face.aliases[..]))
-    });
-    size_of_val(faces).saturating_add(aliases)
 }
 
 /// Decoding sequences no longer than a bound, refused as soon as they
@@ -571,16 +579,9 @@ pub(crate) fn region_form<'a>(solid: &'a Solid, region: &Region) -> &'a Form {
 pub(crate) struct Drawn {
     /// Its faces are the solid's regions and its first edges its chains.
     pub(crate) mesh: RenderMesh,
-    /// Per face (region): its key, aliases and summary.
-    pub(crate) faces: Vec<PickFace>,
-    /// Per edge: whether it's a closed chain.
-    pub(crate) closed: Vec<bool>,
-    /// Per edge: its tangent chain's first edge, a crease itself.
-    pub(crate) tangents: Vec<u32>,
-    /// Per edge: its snap point, a crease none.
-    pub(crate) snaps: Vec<Option<[f64; 3]>>,
-    /// Per corner: three of its regions, as faces of this body.
-    pub(crate) corners: Vec<PickCorner>,
+    /// Its tables, by its own face and edge ids: a corner's faces are
+    /// its regions, as faces of this body.
+    pub(crate) tables: FaceEdgeTables,
 }
 
 impl Drawn {
@@ -629,24 +630,20 @@ impl Drawn {
                 })
             })
             .collect();
-        Ok(Drawn {
-            mesh,
+        let tables = FaceEdgeTables {
             faces,
             closed,
             tangents,
             snaps,
             corners,
-        })
+        };
+        Ok(Drawn { mesh, tables })
     }
 
     /// About how many bytes its tables hold, for the cache, besides its
     /// mesh's.
     pub(crate) fn bytes(&self) -> usize {
-        faces_bytes(&self.faces)
-            .saturating_add(size_of_val(&self.closed[..]))
-            .saturating_add(size_of_val(&self.tangents[..]))
-            .saturating_add(size_of_val(&self.snaps[..]))
-            .saturating_add(size_of_val(&self.corners[..]))
+        self.tables.bytes()
     }
 }
 

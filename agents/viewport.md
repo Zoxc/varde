@@ -1215,7 +1215,7 @@ body's tables are made with its mesh (`Solid::topology`, kept in the
 cache for the measure tool too, then `Solid::tessellate_with`) and
 cached with it, counted in its bytes; the scene's are theirs joined as
 the mesh is, the tangent chains and corners' faces moved on (checked).
-The fields are private and `Picking::from_parts` checks parts (`PickingParts`) from
+The fields are private and `Picking::from_parts` checks parts (`PickingParts`: the bodies and the `FaceEdgeTables` a body's `Drawn` holds too) from
 elsewhere against the mesh (a body per part, a face per face, a flag, a
 tangent chain and a snap point or none per edge, a closed edge between
 two faces and on one corner, a crease without a snap point, each corner
