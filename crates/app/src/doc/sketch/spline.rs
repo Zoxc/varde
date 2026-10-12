@@ -206,9 +206,7 @@ impl Doc {
         let editable = self.editable_sketch().is_some();
         if let Some(session) = &mut self.sketch {
             let inserting = !session.inserting && editable;
-            session.drag = None;
-            session.tool = None;
-            session.constraining = false;
+            session.put_down();
             session.inserting = inserting;
         }
     }

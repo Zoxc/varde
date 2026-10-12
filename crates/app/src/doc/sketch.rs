@@ -121,6 +121,15 @@ pub(crate) struct SketchSession {
 }
 
 impl SketchSession {
+    /// Puts down the tool in use, the Constrain tool and adding points to
+    /// splines too, and the drag with them.
+    fn put_down(&mut self) {
+        self.drag = None;
+        self.tool = None;
+        self.constraining = false;
+        self.inserting = false;
+    }
+
     fn new(feature: FeatureId, placement: Placement, entered: Sketch) -> Self {
         Self {
             feature,
@@ -910,10 +919,9 @@ impl Doc {
     pub(crate) fn toggle_constrain(&mut self) {
         let editable = self.editable();
         if let Some(session) = &mut self.sketch {
-            session.drag = None;
-            session.tool = None;
-            session.constraining = !session.constraining && editable;
-            session.inserting = false;
+            let constraining = !session.constraining && editable;
+            session.put_down();
+            session.constraining = constraining;
         }
     }
 
@@ -921,10 +929,7 @@ impl Doc {
     /// with it.
     pub(crate) fn put_down_tool(&mut self) {
         if let Some(session) = &mut self.sketch {
-            session.drag = None;
-            session.tool = None;
-            session.constraining = false;
-            session.inserting = false;
+            session.put_down();
         }
     }
 
@@ -1064,10 +1069,7 @@ impl Doc {
             return;
         };
         if !editable {
-            session.tool = None;
-            session.drag = None;
-            session.constraining = false;
-            session.inserting = false;
+            session.put_down();
             session.value = None;
             session.label = None;
         }
