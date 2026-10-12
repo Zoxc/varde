@@ -44,8 +44,5 @@ async fn read(store: &Path) -> io::Result<Option<String>> {
 pub(crate) async fn write(store: &Path, settings: &Settings) -> io::Result<()> {
     let bytes = settings.serialize().into_bytes();
     let mut handle = Handle::take(&file_at(store, true).await?).await?;
-    handle.write_at(&bytes, 0)?;
-    // A `usize` fits a `u64` on every target.
-    handle.truncate(bytes.len() as u64)?;
-    handle.sync()
+    handle.replace_all(&bytes)
 }

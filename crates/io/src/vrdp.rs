@@ -916,6 +916,18 @@ pub(crate) trait ReadAt {
     /// Fills `buf` with the bytes starting at `at`, failing with
     /// [`io::ErrorKind::UnexpectedEof`] if the file ends before.
     fn read_at(&self, buf: &mut [u8], at: u64) -> io::Result<()>;
+
+    /// The whole file, if it's at most `max` bytes long: `None` if longer.
+    /// For the web's small files.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn read_all(&self, max: usize) -> io::Result<Option<Vec<u8>>> {
+        let Some(len) = usize::try_from(self.len()?).ok().filter(|&len| len <= max) else {
+            return Ok(None);
+        };
+        let mut bytes = vec![0; len];
+        self.read_at(&mut bytes, 0)?;
+        Ok(Some(bytes))
+    }
 }
 
 /// What the `.vrdp` code needs of a file: reading and writing at an
@@ -931,6 +943,16 @@ pub(crate) trait Storage: ReadAt {
 
     /// Makes what was written durable.
     fn sync(&mut self) -> io::Result<()>;
+
+    /// Replaces the whole file with `bytes`, made durable. For the web's
+    /// small files.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn replace_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.write_at(bytes, 0)?;
+        // `usize` is at most 64 bits wide, so exact.
+        self.truncate(bytes.len() as u64)?;
+        self.sync()
+    }
 }
 
 impl ReadAt for [u8] {

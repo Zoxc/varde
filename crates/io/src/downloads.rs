@@ -240,21 +240,13 @@ pub(crate) async fn update<T>(
     change: impl FnOnce(&mut Downloads) -> T,
 ) -> io::Result<T> {
     let mut file = take_waiting(dir, FILE, Make::IfMissing).await?;
-    let len = file.len()?;
-    let mut downloads = match usize::try_from(len) {
-        Ok(len) if len <= MAX_BYTES => {
-            let mut bytes = vec![0; len];
-            file.read_at(&mut bytes, 0)?;
-            Downloads::parse(&String::from_utf8_lossy(&bytes))
-        }
-        _ => Downloads::default(),
+    let mut downloads = match file.read_all(MAX_BYTES)? {
+        Some(bytes) => Downloads::parse(&String::from_utf8_lossy(&bytes)),
+        None => Downloads::default(),
     };
     let answer = change(&mut downloads);
     let bytes = downloads.serialize().into_bytes();
-    file.write_at(&bytes, 0)?;
-    // A `usize` fits a `u64` on every target.
-    file.truncate(bytes.len() as u64)?;
-    file.sync()?;
+    file.replace_all(&bytes)?;
     Ok(answer)
 }
 
