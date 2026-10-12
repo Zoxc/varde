@@ -16,8 +16,9 @@ pub(super) const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {
 /// as hidden. Above the glass's references.
 pub(super) const PICK_MARKS: [u32; 2] = [0x40, 0x80];
 
-/// The errors' halo's blending: each pixel keeps the most coverage drawn
-/// there, so overlapping halos don't add up.
+/// Each pixel keeps the most drawn there: the errors' halo's coverage, so
+/// overlapping halos don't add up, and where a face shows in the pattern's
+/// mask, so it never covers the pattern.
 pub(super) const MAX_BLENDING: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -56,21 +57,6 @@ pub(super) struct Pass<'a> {
     /// which read their colours and the halo's coverage (group 0).
     pub(super) layout: Option<&'a wgpu::PipelineLayout>,
 }
-
-/// Where a face shows, into the pattern's mask: the greater of it and
-/// what's there, so it never covers the pattern.
-pub(super) const SHOWN_BLEND: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Max,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Max,
-    },
-};
 
 impl<'a> Pass<'a> {
     /// Triangles drawn over the scene without writing depth, blended and
@@ -253,23 +239,6 @@ impl Renderer {
         let samples = sample_count(device, &[format, depth_format, HALO_FORMAT]);
         let (composite, composite_layout) = composite_pipeline(device, format);
 
-        // A uniform buffer of at least `size` bytes, at a dynamic offset
-        // if `dynamic`, seen by both stages.
-        let uniform_layout = |label, size: usize, dynamic| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: dynamic,
-                        min_binding_size: wgpu::BufferSize::new(size as u64),
-                    },
-                    count: None,
-                }],
-            })
-        };
         // The uniforms, and at binding 3 (the errors' group 0 has 1 and 2)
         // the colour of the part drawn, at a dynamic offset into the
         // slot's tints: see `Slot::tints`. Group 0 rather than a group of
@@ -277,26 +246,13 @@ impl Renderer {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde uniforms"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<Uniforms>() as u64),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(TINT_SIZE),
-                    },
-                    count: None,
-                },
+                uniform_entry(
+                    0,
+                    wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    false,
+                    size_of::<Uniforms>() as u64,
+                ),
+                uniform_entry(3, wgpu::ShaderStages::FRAGMENT, true, TINT_SIZE),
             ],
         });
         let tint_stride =
@@ -304,7 +260,15 @@ impl Renderer {
         // How opaque the part drawn is, at a dynamic offset into the
         // alphas' buffer: see `Alphas`. Every pipeline has it, so
         // it's bound once for all of them.
-        let part_layout = uniform_layout("varde part", size_of::<PartUniforms>(), true);
+        let part_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("varde part"),
+            entries: &[uniform_entry(
+                0,
+                wgpu::ShaderStages::VERTEX_FRAGMENT,
+                true,
+                size_of::<PartUniforms>() as u64,
+            )],
+        });
         let alphas = Alphas::new(device, &part_layout);
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -320,26 +284,18 @@ impl Renderer {
         let errors_group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde errors"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<Uniforms>() as u64),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<ErrorUniforms>() as u64),
-                    },
-                    count: None,
-                },
+                uniform_entry(
+                    0,
+                    wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    false,
+                    size_of::<Uniforms>() as u64,
+                ),
+                uniform_entry(
+                    1,
+                    wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    false,
+                    size_of::<ErrorUniforms>() as u64,
+                ),
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -544,25 +500,10 @@ impl Renderer {
             layout: None,
         };
         // Tested against the stencil reference by `compare`, and on a pass
-        // of both tests, `pass` done to it.
-        let tagged = |compare, pass| {
-            let face = wgpu::StencilFaceState {
-                compare,
-                fail_op: wgpu::StencilOperation::Keep,
-                depth_fail_op: wgpu::StencilOperation::Keep,
-                pass_op: pass,
-            };
-            wgpu::StencilState {
-                front: face,
-                back: face,
-                read_mask: 0xff,
-                write_mask: 0xff,
-            }
-        };
-        // Tested and written as `tagged`, but only in the stencil bit
-        // `bit`, the reference.
+        // of both tests, `pass` done to it, in the stencil bits `bits`
+        // only.
         use wgpu::StencilOperation::{Keep, Replace};
-        let marked = |bit: u32, compare, pass| {
+        let marked = |bits: u32, compare, pass| {
             let face = wgpu::StencilFaceState {
                 compare,
                 fail_op: Keep,
@@ -572,16 +513,13 @@ impl Renderer {
             wgpu::StencilState {
                 front: face,
                 back: face,
-                read_mask: bit,
-                write_mask: bit,
+                read_mask: bits,
+                write_mask: bits,
             }
         };
         // Where glass is the nearest of the model: its parts' references
         // are never 0, which is drawn with as the reference.
-        let over_glass = tagged(
-            wgpu::CompareFunction::NotEqual,
-            wgpu::StencilOperation::Keep,
-        );
+        let over_glass = marked(0xff, wgpu::CompareFunction::NotEqual, Keep);
         // Lines drawn from the `EdgePoint` stream, over the scene.
         // Pulled in by their distance from the edge, as the highlights'
         // lines below are.
@@ -589,9 +527,6 @@ impl Renderer {
             buffers: &edge_points,
             ..Pass::overlay(label, vs, "fs_highlight_line")
         };
-        // The hover and the selection's lines (`highlight_slope` in the
-        // shader).
-        let highlight_pass = |label, vs| edge_pass(label, vs);
         // Over the faces' own pixels and no others: the same vertex
         // shader, its position invariant, at exactly their depth.
         let redrawn = |label, fs| {
@@ -603,6 +538,39 @@ impl Renderer {
                 depth_compare: wgpu::CompareFunction::Equal,
                 ..mesh.clone()
             })
+        };
+
+        // Where something hides the faces, either side, but not where the
+        // faces so tinted are the nearest, as marked in `mark`'s bit.
+        let face_pattern = |label, fs, mark| Pass {
+            label,
+            fs,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            cull_mode: None,
+            stencil: marked(mark, wgpu::CompareFunction::NotEqual, Keep),
+            ..mesh.clone()
+        };
+        let face_hidden = |label, fs, mark| Pass {
+            blend: wgpu::BlendState::ALPHA_BLENDING,
+            ..face_pattern(label, fs, mark)
+        };
+        // Where the faces are the nearest, marking `mark`'s bit there.
+        let face_mark = |label, mark| Pass {
+            label,
+            write_mask: wgpu::ColorWrites::empty(),
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Equal,
+            cull_mode: None,
+            stencil: marked(mark, wgpu::CompareFunction::Always, Replace),
+            ..mesh.clone()
+        };
+        // The same, and into the pattern's mask.
+        let face_shown = |label, mark| Pass {
+            fs: "fs_face_shown",
+            blend: MAX_BLENDING,
+            write_mask: wgpu::ColorWrites::ALL,
+            ..face_mark(label, mark)
         };
 
         // The errors' geometry where it shows and where the model hides
@@ -628,10 +596,7 @@ impl Renderer {
             glass_depth: pipeline(Pass {
                 label: "varde glass depth",
                 write_mask: wgpu::ColorWrites::empty(),
-                stencil: tagged(
-                    wgpu::CompareFunction::Always,
-                    wgpu::StencilOperation::Replace,
-                ),
+                stencil: marked(0xff, wgpu::CompareFunction::Always, Replace),
                 ..mesh.clone()
             }),
             // Drawn over its own depth, so only the nearest faces pass.
@@ -669,54 +634,32 @@ impl Renderer {
             }),
             // Where something hides it, either side, but not where the
             // faces so tinted are the nearest, as marked.
-            selected_face_hidden: pipeline(Pass {
-                label: "varde selected face hidden",
-                fs: "fs_selected_face_hidden",
-                blend: wgpu::BlendState::ALPHA_BLENDING,
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
-                ..mesh.clone()
-            }),
-            hovered_selected_face_hidden: pipeline(Pass {
-                label: "varde hovered selected face hidden",
-                fs: "fs_hovered_selected_face_hidden",
-                blend: wgpu::BlendState::ALPHA_BLENDING,
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
-                ..mesh.clone()
-            }),
+            selected_face_hidden: pipeline(face_hidden(
+                "varde selected face hidden",
+                "fs_selected_face_hidden",
+                PICK_MARKS[1],
+            )),
+            hovered_selected_face_hidden: pipeline(face_hidden(
+                "varde hovered selected face hidden",
+                "fs_hovered_selected_face_hidden",
+                PICK_MARKS[1],
+            )),
             // The pattern's mask: where it's drawn, opaque.
-            selected_face_pattern: pipeline(Pass {
-                label: "varde selected face pattern",
-                fs: "fs_selected_face_pattern",
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
-                ..mesh.clone()
-            }),
-            hovered_selected_face_pattern: pipeline(Pass {
-                label: "varde hovered selected face pattern",
-                fs: "fs_hovered_selected_face_pattern",
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
-                ..mesh.clone()
-            }),
-            hovered_face_pattern: pipeline(Pass {
-                label: "varde hovered face pattern",
-                fs: "fs_hovered_face_pattern",
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::NotEqual, Keep),
-                ..mesh.clone()
-            }),
+            selected_face_pattern: pipeline(face_pattern(
+                "varde selected face pattern",
+                "fs_selected_face_pattern",
+                PICK_MARKS[1],
+            )),
+            hovered_selected_face_pattern: pipeline(face_pattern(
+                "varde hovered selected face pattern",
+                "fs_hovered_selected_face_pattern",
+                PICK_MARKS[1],
+            )),
+            hovered_face_pattern: pipeline(face_pattern(
+                "varde hovered face pattern",
+                "fs_hovered_face_pattern",
+                PICK_MARKS[0],
+            )),
             pattern_edge: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Always,
                 layout: Some(&errors_layout),
@@ -726,98 +669,56 @@ impl Renderer {
                     "fs_pattern_edge",
                 )
             }),
-            hovered_face_hidden: pipeline(Pass {
-                label: "varde hovered face hidden",
-                fs: "fs_hovered_face_hidden",
-                blend: wgpu::BlendState::ALPHA_BLENDING,
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::NotEqual, Keep),
-                ..mesh.clone()
-            }),
-            hovered_face_mark: pipeline(Pass {
-                label: "varde hovered face mark",
-                write_mask: wgpu::ColorWrites::empty(),
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Equal,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::Always, Replace),
-                ..mesh.clone()
-            }),
-            selected_face_mark: pipeline(Pass {
-                label: "varde selected face mark",
-                write_mask: wgpu::ColorWrites::empty(),
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Equal,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::Always, Replace),
-                ..mesh.clone()
-            }),
-            hovered_face_shown: pipeline(Pass {
-                label: "varde hovered face shown",
-                fs: "fs_face_shown",
-                blend: SHOWN_BLEND,
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Equal,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::Always, Replace),
-                ..mesh.clone()
-            }),
-            selected_face_shown: pipeline(Pass {
-                label: "varde selected face shown",
-                fs: "fs_face_shown",
-                blend: SHOWN_BLEND,
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Equal,
-                cull_mode: None,
-                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::Always, Replace),
-                ..mesh.clone()
-            }),
+            hovered_face_hidden: pipeline(face_hidden(
+                "varde hovered face hidden",
+                "fs_hovered_face_hidden",
+                PICK_MARKS[0],
+            )),
+            hovered_face_mark: pipeline(face_mark("varde hovered face mark", PICK_MARKS[0])),
+            selected_face_mark: pipeline(face_mark("varde selected face mark", PICK_MARKS[1])),
+            hovered_face_shown: pipeline(face_shown("varde hovered face shown", PICK_MARKS[0])),
+            selected_face_shown: pipeline(face_shown("varde selected face shown", PICK_MARKS[1])),
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
-            outline: pipeline(highlight_pass("varde hover outline", "vs_outline")),
-            hovered_edges: pipeline(highlight_pass("varde hovered edges", "vs_hovered_edge")),
-            selected_outline: pipeline(highlight_pass(
-                "varde selected outline",
-                "vs_selected_outline",
-            )),
-            selected_edges: pipeline(highlight_pass("varde selected edges", "vs_selected_edge")),
+            outline: pipeline(edge_pass("varde hover outline", "vs_outline")),
+            hovered_edges: pipeline(edge_pass("varde hovered edges", "vs_hovered_edge")),
+            selected_outline: pipeline(edge_pass("varde selected outline", "vs_selected_outline")),
+            selected_edges: pipeline(edge_pass("varde selected edges", "vs_selected_edge")),
             // Exactly the pixels the selected edges didn't draw, as the
             // hidden edges are the visible ones'.
             selected_edges_hidden: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..highlight_pass("varde selected edges hidden", "vs_selected_edge_hidden")
+                ..edge_pass("varde selected edges hidden", "vs_selected_edge_hidden")
             }),
             outline_hidden: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..highlight_pass("varde hover outline hidden", "vs_outline_hidden")
+                ..edge_pass("varde hover outline hidden", "vs_outline_hidden")
             }),
             selected_outline_hidden: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..highlight_pass(
+                ..edge_pass(
                     "varde selected outline hidden",
                     "vs_selected_outline_hidden",
                 )
             }),
             hovered_edges_hidden: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..highlight_pass("varde hovered edges hidden", "vs_hovered_edge_hidden")
+                ..edge_pass("varde hovered edges hidden", "vs_hovered_edge_hidden")
             }),
-            second_outline: pipeline(highlight_pass("varde second outline", "vs_second_outline")),
-            second_edges: pipeline(highlight_pass("varde second edges", "vs_second_edge")),
+            second_outline: pipeline(edge_pass("varde second outline", "vs_second_outline")),
+            second_edges: pipeline(edge_pass("varde second edges", "vs_second_edge")),
             vertices: pipeline(Pass {
                 buffers: std::slice::from_ref(&vertices),
                 ..Pass::overlay("varde vertices", "vs_vertex", "fs_highlight_point")
             }),
             outline_through: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Always,
-                ..highlight_pass("varde hover outline through", "vs_outline_through")
+                ..edge_pass("varde hover outline through", "vs_outline_through")
             }),
             hovered_edges_through: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Always,
-                ..highlight_pass("varde hovered edges through", "vs_hovered_edge_through")
+                ..edge_pass("varde hovered edges through", "vs_hovered_edge_through")
             }),
             vertices_through: pipeline(Pass {
                 buffers: std::slice::from_ref(&vertices),
@@ -840,7 +741,7 @@ impl Renderer {
             // part less than opaque nearest there.
             hidden_by_glass: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Greater,
-                stencil: tagged(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep),
+                stencil: marked(0xff, wgpu::CompareFunction::Equal, Keep),
                 ..edge_pass("varde edges hidden by glass", "vs_hidden_edge")
             }),
             lines: pipeline(Pass {
@@ -994,7 +895,8 @@ impl Renderer {
                     // darken: only the first drawn at a pixel is, marked
                     // in the stencil, cleared to 0, the reference.
                     let stencil = if depth_compare == hidden {
-                        tagged(
+                        marked(
+                            0xff,
                             wgpu::CompareFunction::Equal,
                             wgpu::StencilOperation::IncrementClamp,
                         )
@@ -1036,5 +938,25 @@ impl Renderer {
             depth_format,
             format,
         }
+    }
+}
+
+/// A uniform buffer at `binding` of at least `size` bytes, at a dynamic
+/// offset if `dynamic`, seen by `visibility`.
+fn uniform_entry(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+    dynamic: bool,
+    size: u64,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: dynamic,
+            min_binding_size: wgpu::BufferSize::new(size),
+        },
+        count: None,
     }
 }
