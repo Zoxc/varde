@@ -1132,6 +1132,43 @@ fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
     }
 }
 
+/// An operation's hints: its pick step, if any, then the keys every
+/// operation shares (held, the key shows the model before it).
+fn operation_hints<'a>(pick: Option<&'a str>, ready: bool) -> Vec<Hint<'a>> {
+    [
+        pick.map(|what| step_hint(MouseButton::Left, what)),
+        Some(key_hint(Held::BEFORE, "Hide preview")),
+        ready.then(|| key_hint(Shortcut::ENTER, "OK")),
+        Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// An operation's status: its bold title, then the muted detail and the
+/// state's suffix.
+fn operation_status<'a>(
+    title: &'a str,
+    detail: &str,
+    state: &DocumentState<'a>,
+) -> Option<Element<'a, Message>> {
+    Some(
+        row![
+            text(title)
+                .size(12)
+                .wrapping(Wrapping::None)
+                .font(theme::SEMIBOLD),
+            text(format!("· {detail}{}", status_suffix(state)))
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::muted_text),
+        ]
+        .spacing(4)
+        .into(),
+    )
+}
+
 /// The status bar's hints: what the keys do for what's going on and the
 /// viewport's mouse bindings; under the unsaved changes or delete prompt
 /// only that `Esc` cancels it, under the name prompt what `Enter` does, if
@@ -1159,60 +1196,22 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     } else if let Some(operation) = &state.operation {
         match operation {
             OperationState::Extrude(extrude) => {
-                let pick = extrude
-                    .editable
-                    .then(|| step_hint(MouseButton::Left, "Pick regions"));
-                let before = key_hint(Held::BEFORE, "Hide preview");
-                let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-                [
-                    pick,
-                    Some(before),
-                    ok,
-                    Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-                ]
-                .into_iter()
-                .flatten()
-                .collect()
+                let pick = extrude.editable.then_some("Pick regions");
+                operation_hints(pick, extrude.ready)
             }
             OperationState::Revolve(revolve) => {
-                let pick = revolve.editable.then(|| {
-                    let what = match revolve.picking {
-                        RevolvePick::Regions => "Pick regions",
-                        RevolvePick::Axis => "Pick the axis",
-                    };
-                    step_hint(MouseButton::Left, what)
+                let pick = revolve.editable.then_some(match revolve.picking {
+                    RevolvePick::Regions => "Pick regions",
+                    RevolvePick::Axis => "Pick the axis",
                 });
-                let before = key_hint(Held::BEFORE, "Hide preview");
-                let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-                [
-                    pick,
-                    Some(before),
-                    ok,
-                    Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-                ]
-                .into_iter()
-                .flatten()
-                .collect()
+                operation_hints(pick, revolve.ready)
             }
             OperationState::Combine(combine) => {
-                let pick = combine.editable.then(|| {
-                    let what = match combine.picking {
-                        crate::CombinePick::Target => "Pick the target",
-                        crate::CombinePick::Tools => "Pick tools",
-                    };
-                    step_hint(MouseButton::Left, what)
+                let pick = combine.editable.then_some(match combine.picking {
+                    crate::CombinePick::Target => "Pick the target",
+                    crate::CombinePick::Tools => "Pick tools",
                 });
-                let before = key_hint(Held::BEFORE, "Hide preview");
-                let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-                [
-                    pick,
-                    Some(before),
-                    ok,
-                    Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-                ]
-                .into_iter()
-                .flatten()
-                .collect()
+                operation_hints(pick, combine.ready)
             }
             OperationState::Motion(motion) => {
                 let pick = motion.editable.then(|| {
@@ -1264,16 +1263,9 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                         }
                         (crate::MotionPick::Reference, _) => "Pick the axis",
                     };
-                    Some(step_hint(MouseButton::Left, what))
+                    Some(what)
                 });
-                let pick = pick.flatten();
-                // Held, the key shows the model before the operation.
-                let before = Some(key_hint(Held::BEFORE, "Hide preview"));
-                let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-                [pick, before, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
-                    .into_iter()
-                    .flatten()
-                    .collect()
+                operation_hints(pick.flatten(), motion.ready)
             }
             OperationState::Measure(measure) => measure_hints(measure),
         }
@@ -2051,20 +2043,8 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                 0 => "pick the regions to extrude".to_owned(),
                 n => format!("{} picked", counted(n, "region", "regions")),
             };
-            return Some(
-                row![
-                    text(extrude.editing.unwrap_or("New extrude"))
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .font(theme::SEMIBOLD),
-                    text(format!("· {regions}{}", status_suffix(state)))
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .style(theme::muted_text),
-                ]
-                .spacing(4)
-                .into(),
-            );
+            let title = extrude.editing.unwrap_or("New extrude");
+            return operation_status(title, &regions, state);
         }
         Some(OperationState::Revolve(revolve)) => {
             let regions = match revolve.picked.len() {
@@ -2075,60 +2055,16 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                 Some(name) => format!("about {name}"),
                 None => "pick the axis".to_owned(),
             };
-            return Some(
-                row![
-                    text(revolve.editing.unwrap_or("New revolve"))
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .font(theme::SEMIBOLD),
-                    text(format!("· {regions} · {axis}{}", status_suffix(state)))
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .style(theme::muted_text),
-                ]
-                .spacing(4)
-                .into(),
-            );
+            let title = revolve.editing.unwrap_or("New revolve");
+            return operation_status(title, &format!("{regions} · {axis}"), state);
         }
         Some(OperationState::Combine(combine)) => {
-            return Some(
-                row![
-                    text(combine.editing.unwrap_or("New combine"))
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .font(theme::SEMIBOLD),
-                    text(format!(
-                        "· {}{}",
-                        combine_info(combine),
-                        status_suffix(state)
-                    ))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .style(theme::muted_text),
-                ]
-                .spacing(4)
-                .into(),
-            );
+            let title = combine.editing.unwrap_or("New combine");
+            return operation_status(title, &combine_info(combine), state);
         }
         Some(OperationState::Motion(motion)) => {
-            return Some(
-                row![
-                    text(motion.title())
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .font(theme::SEMIBOLD),
-                    text(format!(
-                        "· {}{}",
-                        crate::motion::status_info(motion),
-                        status_suffix(state)
-                    ))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .style(theme::muted_text),
-                ]
-                .spacing(4)
-                .into(),
-            );
+            let detail = crate::motion::status_info(motion);
+            return operation_status(motion.title(), &detail, state);
         }
         Some(OperationState::Measure(_)) | None => {}
     }
