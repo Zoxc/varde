@@ -776,8 +776,7 @@ impl PickIndex {
             return found.first().copied();
         }
         let size = self
-            .mesh
-            .bounds()
+            .bounds
             .map_or(0.0, |bounds| f64::from((bounds.max - bounds.min).length()));
         let slack = 1e-9 * size;
         let mut best: Option<(f64, u32)> = None;
