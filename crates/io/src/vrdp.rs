@@ -152,16 +152,20 @@ mod chain;
 mod check;
 mod preview;
 
+/// Length of `MAGIC`.
+const MAGIC_LEN: usize = 25;
+/// The `MAGIC` a file starts with, telling its type.
+type Magic = [u8; MAGIC_LEN];
 /// The start of a design file.
-const DESIGN_MAGIC: &[u8; 25] =
+const DESIGN_MAGIC: &Magic =
     b"varde-cad\x7c\x2f\x88\x90\x95\xb8\x39\xf6\xf9\x1d\xa3\x73\x4d\xb9\x90\x04";
 /// The start of a held file: an auto-save sidecar or a store entry.
-const HELD_MAGIC: &[u8; 25] =
+const HELD_MAGIC: &Magic =
     b"varde-cad\x81\x59\xb5\x69\xd9\x5c\xe0\x02\x3f\x4f\xb0\x41\x48\xa4\x7b\xa6";
 const VERSION: u32 = 1;
 /// Length of `MAGIC` plus `version`: the part of the file header that's
 /// the same in every file of a type.
-const PREFIX_LEN: usize = 25 + 4;
+const PREFIX_LEN: usize = MAGIC_LEN + size_of::<u32>();
 /// Length of the file header, `MAGIC`, `version` and `id`: the offset of
 /// the first block.
 pub(crate) const FILE_HEADER_LEN: usize = PREFIX_LEN + 16;
@@ -216,7 +220,7 @@ enum FileType {
 }
 
 impl FileType {
-    fn magic(self) -> &'static [u8; 25] {
+    fn magic(self) -> &'static Magic {
         match self {
             FileType::Design => DESIGN_MAGIC,
             FileType::Held => HELD_MAGIC,
@@ -249,7 +253,7 @@ impl FileType {
     /// `MAGIC` and `version`, which every file of the type starts with.
     fn prefix(self) -> [u8; PREFIX_LEN] {
         let mut prefix = [0; PREFIX_LEN];
-        let (magic, version) = prefix.split_at_mut(25);
+        let (magic, version) = prefix.split_at_mut(MAGIC_LEN);
         magic.copy_from_slice(self.magic());
         version.copy_from_slice(&VERSION.to_le_bytes());
         prefix
@@ -1506,7 +1510,7 @@ fn check_file_header(head: &[u8], ty: FileType) -> Result<()> {
     if head.starts_with(ty.other().magic()) {
         return Err(ty.other().read_as_other());
     }
-    match head.get(25..PREFIX_LEN) {
+    match head.get(MAGIC_LEN..PREFIX_LEN) {
         Some(version) if head.starts_with(ty.magic()) => Err(Error::UnsupportedVersion(
             u32::from_le_bytes(version.try_into().unwrap()),
         )),
