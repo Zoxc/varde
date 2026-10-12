@@ -5,7 +5,7 @@
 mod doc;
 mod io;
 mod keys;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg_attr(target_arch = "wasm32", path = "mcp_web.rs")]
 mod mcp;
 mod message;
 mod platform;
@@ -71,8 +71,8 @@ pub(crate) struct Varde {
     /// the viewport's pipelines neither holds up its first frame nor waits
     /// for the first design.
     warm_up: bool,
-    /// The MCP server's state, see `mcp.rs`.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// The MCP server's state, see `mcp.rs` (a no-op stand-in on the web,
+    /// `mcp_web.rs`).
     mcp: mcp::Mcp,
 }
 
@@ -408,7 +408,6 @@ impl Varde {
             quitting: None,
             toast: Toast::default(),
             warm_up: false,
-            #[cfg(not(target_arch = "wasm32"))]
             mcp: mcp::Mcp::default(),
         }
     }
@@ -439,7 +438,6 @@ impl Varde {
         let task = self.handle(message);
         // The MCP calls done send their replies, and those of a server
         // stopped are ended.
-        #[cfg(not(target_arch = "wasm32"))]
         self.mcp.sync(self.screen.doc_mut());
         // A new design starts in the units of the settings.
         self.files.new_units = self.options.length_unit;
@@ -543,7 +541,6 @@ impl Varde {
             }
             Message::Ui(Ui::File(message)) => return self.file(message),
             Message::Tick(now) => {
-                #[cfg(not(target_arch = "wasm32"))]
                 self.mcp.tick(now, self.screen.doc_mut());
                 let wait = auto_save_wait(&self.options);
                 return self.step(|doc, cx| {
@@ -709,7 +706,6 @@ impl Varde {
         if let Some(write) = self.files.recent.keep(usize::from(options.recent_designs)) {
             self.files.io.send(write);
         }
-        #[cfg(not(target_arch = "wasm32"))]
         self.mcp.configure(options.mcp, options.mcp_port);
     }
 
@@ -751,10 +747,7 @@ impl Varde {
                     (typed != self.options.mcp_port.to_string()).then_some(typed);
             }
             SettingsPage::ShowMcpToken(shown) => self.page.token_shown = shown,
-            #[cfg(not(target_arch = "wasm32"))]
             SettingsPage::DisconnectMcp => self.mcp.disconnect(),
-            #[cfg(target_arch = "wasm32")]
-            SettingsPage::DisconnectMcp => {}
             // With nothing to reset, the button is off.
             SettingsPage::AskReset => {
                 self.page.resetting = !varde_view::changed_settings(self.options).is_empty();
@@ -899,12 +892,10 @@ impl Varde {
     /// close never gets here and leaves it as it is.
     fn show(&mut self, screen: Screen) {
         // The MCP calls waiting on the design before fail.
-        #[cfg(not(target_arch = "wasm32"))]
         self.mcp.closing(self.screen.doc_mut());
         self.screen = screen;
         self.page.close();
         // The MCP panel's rows were of the design before.
-        #[cfg(not(target_arch = "wasm32"))]
         self.mcp.design_closed();
     }
 
@@ -916,7 +907,6 @@ impl Varde {
         self.quitting = Some(window);
         // The MCP calls waiting are answered now: neither their answers
         // nor the ticks that bound them act from here on.
-        #[cfg(not(target_arch = "wasm32"))]
         self.mcp.quitting(self.screen.doc_mut());
         self.files.io.send(IoRequest::Flush);
         Task::none()
@@ -1300,38 +1290,27 @@ impl Varde {
 
     /// What the document screen shows of the MCP server: natively only.
     pub(crate) fn mcp_panel_shown(&self) -> Option<varde_view::McpShown<'_>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        let shown = Some(self.mcp.panel(
+        self.mcp.panel(
             self.options.mcp,
             self.options.mcp_port,
             when::now(),
             self.screen.doc(),
-        ));
-        #[cfg(target_arch = "wasm32")]
-        let shown = None;
-        shown
+        )
     }
 
     /// What the settings' MCP tab shows: natively only.
     pub(crate) fn mcp_shown(&self) -> varde_view::McpState<'_> {
-        #[cfg(not(target_arch = "wasm32"))]
-        let shown = varde_view::McpState {
+        varde_view::McpState {
             token_shown: self.page.token_shown,
             port_typed: self.page.port_typed.as_deref(),
             ..self.mcp.shown(when::now())
-        };
-        #[cfg(target_arch = "wasm32")]
-        let shown = varde_view::McpState::default();
-        shown
+        }
     }
 
     /// Runs the MCP server while it's on and the app isn't quitting: see
     /// `mcp.rs`. Natively only.
     fn mcp_server(&self) -> Subscription<Message> {
-        #[cfg(not(target_arch = "wasm32"))]
-        return self.mcp.subscription(self.quitting.is_none());
-        #[cfg(target_arch = "wasm32")]
-        Subscription::none()
+        self.mcp.subscription(self.quitting.is_none())
     }
 
     /// Runs the open document's regeneration lane: yields [`ForDoc::RegenReady`]

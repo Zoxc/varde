@@ -301,19 +301,19 @@ impl Mcp {
 
     /// The panel, its toggle, the status bar's chip and the popup `doc`,
     /// the open design, has up, the feature `on` or not, serving on
-    /// `port`, at `now`.
+    /// `port`, at `now`. Always some here; none on the web.
     pub(crate) fn panel<'a>(
         &'a self,
         on: bool,
         port: u16,
         now: varde_io::UnixSeconds,
         doc: Option<&'a Doc>,
-    ) -> varde_view::McpShown<'a> {
+    ) -> Option<varde_view::McpShown<'a>> {
         let client = (self.session.as_ref())
             .map(|(_, name, _)| name.as_deref())
             .or(self.gone.as_ref().map(Option::as_deref))
             .flatten();
-        varde_view::McpShown {
+        Some(varde_view::McpShown {
             ask: (doc.and_then(|doc| doc.mcp.ask.as_ref())).map(|ask| ask.shown(client)),
             on,
             open: self.open,
@@ -329,7 +329,7 @@ impl Mcp {
                     differences: &ask.differences,
                 }
             }),
-        }
+        })
     }
 
     /// The panel's rows at `now`, greyed as `doc`'s design took them
