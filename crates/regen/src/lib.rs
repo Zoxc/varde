@@ -696,9 +696,13 @@ fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Documen
 
 /// The answer to a [`Request`].
 #[derive(Debug, Clone)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a model is the usual answer, sent once and taken apart at once"
+// On wasm32 the variants' pointers are smaller and the lint doesn't fire.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        clippy::large_enum_variant,
+        reason = "a model is the usual answer, sent once and taken apart at once"
+    )
 )]
 pub enum Response {
     Regenerated {
