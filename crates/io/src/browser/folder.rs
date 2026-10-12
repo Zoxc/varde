@@ -209,6 +209,19 @@ async fn take_sidecar<D: Dir>(dir: &D, name: &str) -> Result<Held<D::File>, Read
     }
 }
 
+/// Takes the sidecar of the design `name` to write the design, see
+/// [`take_sidecar`]: refused with `in_use` while another tab holds it.
+async fn take_sidecar_to_write<D: Dir>(
+    dir: &D,
+    name: &str,
+    in_use: impl FnOnce() -> String,
+) -> Result<Held<D::File>, String> {
+    take_sidecar(dir, name).await.map_err(|why| match why {
+        ReadOnly::InUse => in_use(),
+        ReadOnly::NoLock(why) => why,
+    })
+}
+
 /// What a save failing with `error` says: browser storage running out of
 /// room is told plainly, as it's the user's to make room.
 pub(crate) fn save_error(error: FileError) -> SaveError {
@@ -266,13 +279,9 @@ pub(crate) async fn save_as<D: Dir>(
             "{name} isn't a design's name in browser storage"
         )));
     }
-    let sidecar = match take_sidecar(dir, name).await {
-        Ok(sidecar) => sidecar,
-        Err(ReadOnly::InUse) => {
-            return Err(SaveError::Failed(format!("{name} is open elsewhere")));
-        }
-        Err(ReadOnly::NoLock(why)) => return Err(SaveError::Failed(why)),
-    };
+    let sidecar = take_sidecar_to_write(dir, name, || format!("{name} is open elsewhere"))
+        .await
+        .map_err(SaveError::Failed)?;
     let written = if !overwrite && !sidecar.is_empty().unwrap_or(true) {
         Err(SaveError::Taken)
     } else {
@@ -405,11 +414,7 @@ pub(crate) async fn rename<D: Dir>(
     if design.lock.kept() {
         return Err(crate::open::KEPT.to_owned());
     }
-    let mut sidecar = match take_sidecar(dir, to).await {
-        Ok(sidecar) => sidecar,
-        Err(ReadOnly::InUse) => return Err(format!("{to} is open elsewhere")),
-        Err(ReadOnly::NoLock(why)) => return Err(why),
-    };
+    let mut sidecar = take_sidecar_to_write(dir, to, || format!("{to} is open elsewhere")).await?;
     let taken = || format!("{to} is in browser storage already");
     // Changes a closed tab left of no design, offered back by listing.
     if !sidecar.is_empty().unwrap_or(true) {
@@ -490,11 +495,7 @@ pub(crate) async fn delete<D: Dir>(dir: &D, name: &str, held: bool) -> Result<()
     if held {
         return Err(open_elsewhere());
     }
-    let sidecar = match take_sidecar(dir, name).await {
-        Ok(sidecar) => sidecar,
-        Err(ReadOnly::InUse) => return Err(open_elsewhere()),
-        Err(ReadOnly::NoLock(why)) => return Err(why),
-    };
+    let sidecar = take_sidecar_to_write(dir, name, open_elsewhere).await?;
     let removed = match dir.remove(name).await {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(read_error(name, &e)),
         _ => Ok(()),
