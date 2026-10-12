@@ -110,11 +110,11 @@ pub struct Renderer {
     hovered_face_pattern: wgpu::RenderPipeline,
     pattern_edge: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
-    /// The edges of the mesh's triangles: [`Frame::tessellation`].
     /// The finished sketches' lines again where glass is the nearest of
     /// the model (the stencil isn't 0), so what's in front of it isn't
     /// dimmed by it.
     lines_over_glass: wgpu::RenderPipeline,
+    /// The edges of the mesh's triangles: [`Frame::tessellation`].
     triangle_edges: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
     /// The origin planes shown: [`Frame::origin`].

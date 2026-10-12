@@ -95,8 +95,6 @@ pub(super) fn patterned(slot: &Slot) -> bool {
     slot.mesh.is_some() && (slot.state.faces.iter()).any(|f| drawn(f) && !f.indices.is_empty())
 }
 
-/// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
-/// none, for its axis line's colour: of [`Colors::axes`], or the grid's.
 /// The box the origin planes [`OriginShown`] has drawn take, seen with
 /// `camera`, if it has any: see [`PLANE_REACH`].
 pub(super) fn planes_bounds(camera: &Camera, origin: OriginShown) -> Option<Aabb> {
@@ -107,6 +105,8 @@ pub(super) fn planes_bounds(camera: &Camera, origin: OriginShown) -> Option<Aabb
     })
 }
 
+/// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
+/// none, for its axis line's colour: of [`Colors::axes`], or the grid's.
 pub(super) fn axis_index(axis: Vec3) -> f32 {
     let along = axis.abs();
     (0..3)
