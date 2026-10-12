@@ -23,6 +23,16 @@ pub(crate) enum Slot {
     Const(f64),
 }
 
+impl Slot {
+    /// The slot's value among the variables' values `x`.
+    pub fn read(self, x: &[f64]) -> f64 {
+        match self {
+            Slot::Var(index) => x[index],
+            Slot::Const(value) => value,
+        }
+    }
+}
+
 /// A point's coordinates.
 pub(crate) type PointSlots = [Slot; 2];
 
@@ -133,7 +143,7 @@ impl SplineSlots {
         };
         let places: Vec<DVec2> = self.inputs[..refit.fit]
             .iter()
-            .map(|&[x_slot, y_slot]| DVec2::new(read(x, x_slot), read(x, y_slot)))
+            .map(|&[x_slot, y_slot]| DVec2::new(x_slot.read(x), y_slot.read(x)))
             .collect();
         if let Some(interpolation) = Interpolation::at_chords(&places, refit.closed, &refit.handles)
         {
@@ -147,7 +157,7 @@ impl SplineSlots {
     /// steps, which a place a little off the curve by `t` needs, kept
     /// within its ends if it's open.
     pub fn project(&self, x: &[f64], point: PointSlots, t: f64) -> f64 {
-        let value = |slot| read(x, slot);
+        let value = |slot: Slot| slot.read(x);
         let point = Vector {
             x: value(point[0]),
             y: value(point[1]),
@@ -406,14 +416,6 @@ pub(crate) struct Equation {
     /// of the analysis where it depends on the rest. The solver takes it
     /// as any other, as it holds wherever the rest do.
     pub implied: bool,
-}
-
-/// A slot's value among the variables' values `x`.
-fn read(x: &[f64], slot: Slot) -> f64 {
-    match slot {
-        Slot::Var(index) => x[index],
-        Slot::Const(value) => value,
-    }
 }
 
 /// The residual of [`Residual::Angle`]: the angle from `u`, times
@@ -683,7 +685,7 @@ impl Residual {
 
     /// The residual at the variables' values `x`.
     pub fn value(&self, x: &[f64]) -> f64 {
-        let value = |slot| read(x, slot);
+        let value = |slot: Slot| slot.read(x);
         self.eval(value, |at, order| {
             at.spline.eval(&value, &at.basis(&value), order)
         })
@@ -701,7 +703,7 @@ impl Residual {
     /// the spline's points, and its derivative a step higher to the
     /// parameter, where that's a variable.
     pub fn gradient(&self, x: &[f64], mut f: impl FnMut(usize, f64)) -> f64 {
-        let value = |slot| read(x, slot);
+        let value = |slot: Slot| slot.read(x);
         // Each input, a variable or a spline's derivative read (two), is
         // given the dual numbers' next places as `eval` first reads it.
         let next = Cell::new(0);

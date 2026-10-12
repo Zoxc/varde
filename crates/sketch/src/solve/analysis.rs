@@ -87,13 +87,8 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
     for (number, component) in components.iter().enumerate() {
         // Where a derivative isn't a number, it's taken as zero rather
         // than analysing nothing.
-        let jacobian = Jacobian::new(&system, component, None).dense(component.vars.len());
-        let implied: Vec<bool> = component
-            .equations
-            .iter()
-            .map(|&index| system.equations[index].implied)
-            .collect();
-        let dependencies = counted_dependencies(&jacobian, &implied);
+        let dependencies =
+            component.dependencies(&system, &Jacobian::new(&system, component, None));
         freedom -= dependencies.rank;
         for (column, (&var, &is_fixed)) in
             component.vars.iter().zip(&dependencies.fixed).enumerate()
@@ -135,10 +130,7 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
         }
         part.sqrt() <= FIXED_TOLERANCE * length.sqrt().max(1.0)
     };
-    let value = |slot: Slot| match slot {
-        Slot::Var(var) => system.values[var],
-        Slot::Const(value) => value,
-    };
+    let value = |slot: Slot| system.value(slot);
     // A distance's gradient: along the unit from `b` to `a` on `a`,
     // against it on `b`; none where they meet.
     let distance = |a: PointSlots, b: PointSlots| {

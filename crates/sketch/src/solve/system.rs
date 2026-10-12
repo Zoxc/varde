@@ -1125,10 +1125,7 @@ impl System {
     }
 
     pub fn value(&self, slot: Slot) -> f64 {
-        match slot {
-            Slot::Var(index) => self.values[index],
-            Slot::Const(value) => value,
-        }
+        slot.read(&self.values)
     }
 
     /// Splits the variables into the sets the equations tie together,

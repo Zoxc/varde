@@ -309,7 +309,20 @@ impl Jacobian {
 impl Component {
     /// The position of `var`, one of the component's variables.
     fn column(&self, var: usize) -> usize {
-        self.vars.binary_search(&var).unwrap_or(0)
+        self.vars
+            .binary_search(&var)
+            .expect("a variable of the component")
+    }
+
+    /// The [`analysis::counted_dependencies`] of the component's
+    /// equations, from their `jacobian` at the system's values.
+    fn dependencies(&self, system: &System, jacobian: &Jacobian) -> analysis::Dependencies {
+        let implied: Vec<bool> = self
+            .equations
+            .iter()
+            .map(|&index| system.equations[index].implied)
+            .collect();
+        analysis::counted_dependencies(&jacobian.dense(self.vars.len()), &implied)
     }
 }
 
@@ -562,16 +575,9 @@ impl Solver<'_, '_> {
         let tolerance = TOLERANCE * self.scale;
         let mut involved = BTreeSet::new();
         let jacobian = Jacobian::new(self.system, self.component, None);
-        let implied: Vec<bool> = self
-            .component
-            .equations
-            .iter()
-            .map(|&index| self.system.equations[index].implied)
-            .collect();
-        let dependent = jacobian.is_finite().then(|| {
-            let dense = jacobian.dense(self.component.vars.len());
-            analysis::counted_dependencies(&dense, &implied)
-        });
+        let dependent = jacobian
+            .is_finite()
+            .then(|| self.component.dependencies(self.system, &jacobian));
         for (position, &index) in self.component.equations.iter().enumerate() {
             let in_dependency = dependent
                 .as_ref()
