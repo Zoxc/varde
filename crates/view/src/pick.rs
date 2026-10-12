@@ -15,6 +15,7 @@
 //! The index also builds the [`ModelHighlight`] of what's hovered and
 //! selected, by the mesh's faces, edges and corners.
 
+use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -341,27 +342,22 @@ impl PickIndex {
         };
         // Each item once, where it's nearest the cursor (to
         // [`SAME_PLACE`]), then the eye; by that, then the item.
-        let order = |a: &(f64, f64, Picked, DVec3), b: &(f64, f64, Picked, DVec3)| {
-            (a.0.total_cmp(&b.0)).then(a.1.total_cmp(&b.1))
-        };
-        let nearest = |mut found: Vec<(f64, f64, Picked, DVec3)>| {
-            found.sort_by(|a, b| a.2.cmp(&b.2).then(order(a, b)));
-            found.dedup_by(|later, first| later.2 == first.2);
-            found.sort_by(|a, b| order(a, b).then(a.2.cmp(&b.2)));
+        let nearest = |mut found: Vec<Near<Picked>>| {
+            found.sort_by(|a, b| a.item.cmp(&b.item).then(a.order(b)));
+            found.dedup_by(|later, first| later.item == first.item);
+            found.sort_by(Near::order);
             found
         };
         let mut vertices = Vec::new();
         if picks == Picks::All {
             vertices = (self.vertices_near(&projector, &ray, at, pixels).into_iter())
-                .map(|(_, depth, corner, point)| (0.0, depth, Picked::Vertex(corner), point))
+                .map(|near| near.by_depth(Picked::Vertex(near.item)))
                 .collect();
         }
         let mut edges = Vec::new();
         if picks != Picks::Faces {
             edges = (self.segments_near(&projector, &ray, at, pixels).into_iter())
-                .map(|(_, depth, start, point)| {
-                    (0.0, depth, Picked::Edge(self.segment_edge(start)), point)
-                })
+                .map(|near| near.by_depth(Picked::Edge(self.segment_edge(near.item))))
                 .collect();
         }
         let mut faces = Vec::new();
@@ -382,14 +378,19 @@ impl PickIndex {
                 })?;
                 let face = Picked::Face(self.triangle_face(triangle)?);
                 let depth = projector.world_depth(point);
-                faces.push((same_place(distance), depth, face, point));
+                faces.push(Near {
+                    distance,
+                    depth,
+                    item: face,
+                    point,
+                });
                 Some(())
             });
         }
         [vertices, edges, faces]
             .into_iter()
             .flat_map(nearest)
-            .filter_map(|(_, _, target, at)| self.pick_of(target, at))
+            .filter_map(|near| self.pick_of(near.item, near.point))
             .take(most)
             .collect()
     }
@@ -974,7 +975,7 @@ impl PickIndex {
         ray: &Ray,
         at: DVec2,
         pixels: f64,
-    ) -> Vec<(f64, f64, u32, DVec3)> {
+    ) -> Vec<Near<u32>> {
         let mut near = Vec::new();
         (self.tables.vertices()).near(ray, reach(projector, pixels), |corner| {
             let point = self.corner_point(corner)?;
@@ -983,7 +984,12 @@ impl PickIndex {
             if distance.is_nan() || distance > pixels {
                 return None;
             }
-            near.push((distance, projector.world_depth(point), corner, point));
+            near.push(Near {
+                distance,
+                depth: projector.world_depth(point),
+                item: corner,
+                point,
+            });
             Some(())
         });
         near
@@ -1013,11 +1019,16 @@ impl PickIndex {
         ray: &Ray,
         at: DVec2,
         pixels: f64,
-    ) -> Vec<(f64, f64, u32, DVec3)> {
+    ) -> Vec<Near<u32>> {
         let mut near = Vec::new();
         (self.tables.segments()).near(ray, reach(projector, pixels), |start| {
             let (distance, point) = self.segment_near(projector, start, at, pixels)?;
-            near.push((distance, projector.world_depth(point), start, point));
+            near.push(Near {
+                distance,
+                depth: projector.world_depth(point),
+                item: start,
+                point,
+            });
             Some(())
         });
         near
@@ -1050,17 +1061,13 @@ impl PickIndex {
         &self,
         camera: &Camera,
         projector: &Projector,
-        mut near: Vec<(f64, f64, u32, DVec3)>,
+        mut near: Vec<Near<u32>>,
     ) -> Option<(u32, DVec3)> {
-        near.sort_by(|a, b| {
-            (same_place(a.0).total_cmp(&same_place(b.0)))
-                .then(a.1.total_cmp(&b.1))
-                .then(a.2.cmp(&b.2))
-        });
+        near.sort_by(Near::order);
         let view_height = f64::from(camera.view_height());
         let mut occluders = Vec::new();
         let mut searches = 0;
-        for (_, _, item, point) in near {
+        for Near { item, point, .. } in near {
             match self.hidden(projector, point, view_height, &mut occluders) {
                 Hidden::No => return Some((item, point)),
                 Hidden::Known => {}
@@ -1161,6 +1168,36 @@ struct Ray {
 impl Ray {
     fn at(&self, t: f64) -> DVec3 {
         self.origin + self.direction * t
+    }
+}
+
+/// An item showing near the cursor: how far from it it shows, in pixels,
+/// how deep, which and where.
+#[derive(Debug, Clone, Copy)]
+struct Near<T> {
+    distance: f64,
+    depth: f64,
+    item: T,
+    point: DVec3,
+}
+
+impl<T: Ord> Near<T> {
+    /// Nearest the cursor (to [`SAME_PLACE`]) first, then the eye, then
+    /// by item.
+    fn order(&self, other: &Self) -> Ordering {
+        (same_place(self.distance).total_cmp(&same_place(other.distance)))
+            .then(self.depth.total_cmp(&other.depth))
+            .then(self.item.cmp(&other.item))
+    }
+
+    /// As `item`, its distance dropped: ordered by depth alone.
+    fn by_depth<U>(self, item: U) -> Near<U> {
+        Near {
+            distance: 0.0,
+            depth: self.depth,
+            item,
+            point: self.point,
+        }
     }
 }
 
