@@ -279,7 +279,7 @@ impl Evaluation {
         missing: impl Fn(&T) -> bool,
     ) -> Option<T> {
         let holder = self.holder(body)?;
-        let made = self.bodies.iter().find(|made| made.body == holder)?;
+        let made = self.solid(holder)?;
         let first = find(made);
         if !missing(&first) {
             return Some(first);
@@ -303,7 +303,7 @@ impl Evaluation {
                     continue;
                 }
                 on.push(next);
-                let Some(made) = self.bodies.iter().find(|made| made.body == next) else {
+                let Some(made) = self.solid(next) else {
                     continue;
                 };
                 let followed = find(made);
@@ -313,6 +313,23 @@ impl Evaluation {
             }
         }
         Some(first)
+    }
+
+    /// `body`'s own solid, if it has one (not the one holding it).
+    pub(crate) fn solid(&self, body: BodyId) -> Option<&BodySolid> {
+        self.bodies.iter().find(|made| made.body == body)
+    }
+
+    /// The solid holding `body`'s ([`Evaluation::holder`]), if any.
+    pub(crate) fn holding(&self, body: BodyId) -> Option<&BodySolid> {
+        self.solid(self.holder(body)?)
+    }
+
+    /// Puts `change` in place of its body's solid, if that has one.
+    pub(crate) fn replace(&mut self, change: BodySolid) {
+        if let Some(made) = self.bodies.iter_mut().find(|made| made.body == change.body) {
+            *made = change;
+        }
     }
 }
 
@@ -349,8 +366,7 @@ pub(crate) fn own_solids(
             .body(body)
             .map_or("a body", |body| body.name.as_str())
     };
-    let Some(body) = bodies.find(|&body| !evaluation.bodies.iter().any(|made| made.body == body))
-    else {
+    let Some(body) = bodies.find(|&body| evaluation.solid(body).is_none()) else {
         return Ok(());
     };
     if document.body(body).is_none() {
@@ -362,6 +378,16 @@ pub(crate) fn own_solids(
         None => message::no_solid(name(body)),
     }
     .into())
+}
+
+/// [`own_solids`] for one body, giving its solid.
+pub(crate) fn own_solid<'e>(
+    document: &Document,
+    body: BodyId,
+    evaluation: &'e Evaluation,
+) -> Result<&'e BodySolid, Failed> {
+    own_solids(document, std::iter::once(body), evaluation)?;
+    Ok(evaluation.solid(body).expect("own_solids found it"))
 }
 
 /// Why a feature fails, as the history carries it: in words, and what
@@ -882,9 +908,7 @@ impl Run<'_> {
             evaluation.uncut.push((self.feature.id, uncut));
         }
         for change in changed {
-            if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == change.body) {
-                *made = change;
-            }
+            evaluation.replace(change);
         }
         Ok(())
     }
@@ -942,13 +966,11 @@ impl Run<'_> {
         }
         note_merge(&mut evaluation.merged, &merging);
         (evaluation.bodies).retain(|made| !consumed.contains(&made.body));
-        if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == into) {
-            *made = BodySolid {
-                body: into,
-                solid,
-                key,
-            };
-        }
+        evaluation.replace(BodySolid {
+            body: into,
+            solid,
+            key,
+        });
         Ok(())
     }
 
@@ -1456,7 +1478,9 @@ pub(crate) fn edge_axis(
     tolerance: Tolerance,
     cache: &mut Cache,
 ) -> Result<Axis, Failed> {
-    let made = motion::holding(edge.body, evaluation).ok_or(message::EDGE_BODY_GONE)?;
+    let made = evaluation
+        .holding(edge.body)
+        .ok_or(message::EDGE_BODY_GONE)?;
     let key = motion::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
     let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
     let local = |p: DVec3| {

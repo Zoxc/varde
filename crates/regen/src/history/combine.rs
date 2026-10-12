@@ -47,12 +47,7 @@ pub(super) fn evaluate(
             .map_or("a body", |body| body.name.as_str())
     };
     own_solids(document, combine.bodies(), evaluation)?;
-    let find = |body: BodyId| {
-        (evaluation.bodies.iter())
-            .find(|made| made.body == body)
-            .expect("every body named has a solid")
-    };
-    let target = find(combine.target);
+    let target = (evaluation.solid(combine.target)).expect("every body named has a solid");
     // In the order they were made, as the bodies are.
     let tools: Vec<&BodySolid> = (evaluation.bodies.iter())
         .filter(|made| combine.tools.binary_search(&made.body).is_ok())
@@ -127,13 +122,11 @@ pub(super) fn evaluate(
         note_merge(&mut evaluation.merged, &merging);
         (evaluation.bodies).retain(|made| combine.tools.binary_search(&made.body).is_err());
     }
-    if let Some(made) = evaluation.bodies.iter_mut().find(|made| made.body == into) {
-        *made = BodySolid {
-            body: into,
-            solid,
-            key,
-        };
-    }
+    evaluation.replace(BodySolid {
+        body: into,
+        solid,
+        key,
+    });
     Ok(())
 }
 

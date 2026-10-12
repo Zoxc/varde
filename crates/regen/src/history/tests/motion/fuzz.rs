@@ -581,7 +581,7 @@ fn random_scale(
 /// measure tool, and its ends if it's straight; `None` where it isn't
 /// found or isn't the only chain of its names.
 fn edge_length(evaluation: &Evaluation, edge: &EdgeRef) -> Option<(f64, Option<[DVec3; 2]>)> {
-    let made = super::super::super::motion::holding(edge.body, evaluation)?;
+    let made = evaluation.holding(edge.body)?;
     let topology = made.solid.topology();
     if chains_named(&topology, &edge.faces) != 1 {
         return None;
@@ -698,7 +698,7 @@ fn check_scale(
 /// the kernel's topology; `None` where it isn't found or isn't the only
 /// one of its names (`unique`), so a stale `near` can't choose another.
 fn point_on(evaluation: &Evaluation, point: &PointRef, unique: bool) -> Option<DVec3> {
-    let on = |body| super::super::super::motion::holding(body, evaluation);
+    let on = |body| evaluation.holding(body);
     match point {
         PointRef::Origin => Some(DVec3::ZERO),
         PointRef::Corner { body, faces, near } => {
@@ -745,7 +745,7 @@ fn chains_named(topology: &Topology, faces: &[FaceKey; 2]) -> usize {
 
 /// The direction `direction` names, as [`point_on`] finds a point.
 fn direction_on(evaluation: &Evaluation, direction: &DirRef, unique: bool) -> Option<DVec3> {
-    let on = |body| super::super::super::motion::holding(body, evaluation);
+    let on = |body| evaluation.holding(body);
     match direction {
         DirRef::Origin(axis) | DirRef::Axis(AxisRef::Origin(axis)) => Some(axis.direction()),
         DirRef::Normal(face) | DirRef::Axis(AxisRef::Face(face)) => {
@@ -865,7 +865,7 @@ fn conic_centre(points: &[DVec3; 5], axis: DVec3) -> DVec3 {
 /// through three of its points, and its axis square to their plane;
 /// a straight edge's middle halfway along it and its direction along it.
 fn check_found(align: &Align, before: &Evaluation, sides: (Found, Found), what: &str) {
-    let on = |body| super::super::super::motion::holding(body, before).unwrap();
+    let on = |body| before.holding(body).unwrap();
     // A chain's shape, the solid's size, its curves' ends (two of them
     // far apart if it's open) and a point inside its first curve.
     let chain_of = |edge: &EdgeRef| -> (EdgeShape, f64, Vec<DVec3>, DVec3) {
@@ -1048,7 +1048,7 @@ fn check_align(
         let outward = |direction: &DirRef| match direction {
             DirRef::Normal(_) => true,
             DirRef::Axis(AxisRef::Edge(edge)) => {
-                let made = super::super::super::motion::holding(edge.body, before).unwrap();
+                let made = before.holding(edge.body).unwrap();
                 let topology = made.solid.topology();
                 let chain = topology.edge(&made.solid, edge.faces, edge.near).unwrap();
                 is_round(&edge_shape(&made.solid, &topology.chains()[chain as usize]))
@@ -1180,7 +1180,7 @@ fn axis_found(axis: &AxisRef, [point, along]: [DVec3; 2], before: &Evaluation) -
     match axis {
         AxisRef::Origin(axis) => point == DVec3::ZERO && along == axis.direction(),
         AxisRef::Edge(edge) => {
-            let Some(made) = super::super::super::motion::holding(edge.body, before) else {
+            let Some(made) = before.holding(edge.body) else {
                 return false;
             };
             let topology = made.solid.topology();
@@ -1198,7 +1198,7 @@ fn axis_found(axis: &AxisRef, [point, along]: [DVec3; 2], before: &Evaluation) -
             }
         }
         AxisRef::Face(face) => {
-            let Some(made) = super::super::super::motion::holding(face.body, before) else {
+            let Some(made) = before.holding(face.body) else {
                 return false;
             };
             let topology = made.solid.topology();

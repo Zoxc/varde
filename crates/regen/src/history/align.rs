@@ -32,8 +32,8 @@ use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::topology::Unresolved;
 use varde_kernel::{AlignError, AlignOptions, Evidence, Motion, Solid, Tolerance, Topology};
 
-use super::motion::{How, holding, place, reference_key};
-use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_solids};
+use super::motion::{How, place, reference_key};
+use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_solid};
 use crate::cache::{Cache, Datum};
 use crate::error_geometry::ErrorGeometry;
 use crate::message::{self, AlignRef, Moving, Side, Whose};
@@ -43,7 +43,7 @@ use crate::{AlignDatums, AlignFound};
 /// `feature`, moves, or says why it fails, changing nothing.
 ///
 /// The body must have a solid of its own, as a move's bodies must
-/// ([`own_solids`]). Both sides are found (see the module's docs), the
+/// ([`own_solid`]). Both sides are found (see the module's docs), the
 /// moved side's first, and noted; the primaries meet opposed by default
 /// where each is a flat face's normal or a round edge's axis, the flip
 /// turning that round; the turn is stored in radians and turned in
@@ -59,7 +59,7 @@ pub(super) fn evaluate_align(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    own_solids(document, std::iter::once(align.body), evaluation)?;
+    own_solid(document, align.body, evaluation)?;
     let found = Found {
         moved: Some(align.body),
         evaluation,
@@ -175,7 +175,9 @@ impl Found<'_> {
     /// with no solid is gone; on an align's target side, the moved body
     /// can't hold it.
     fn holding(&self, body: BodyId, whose: Whose) -> Result<&BodySolid, Failed> {
-        let made = holding(body, self.evaluation)
+        let made = self
+            .evaluation
+            .holding(body)
             .ok_or_else(|| message::reference(whose, message::ALIGN_BODY_GONE))?;
         if matches!(whose, Whose::Align(_, Side::Target)) && Some(made.body) == self.moved {
             return Err(message::reference(whose, message::ALIGN_ON_MOVED).into());
@@ -338,7 +340,7 @@ impl Found<'_> {
                 Shown::Face(face) => face.body,
                 Shown::Edge(edge) => edge.body,
             };
-            let Some(made) = holding(body, self.evaluation) else {
+            let Some(made) = self.evaluation.holding(body) else {
                 continue;
             };
             let solid = &made.solid;

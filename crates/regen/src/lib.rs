@@ -851,7 +851,7 @@ impl Regenerator {
                 let answer = match query {
                     Query::Topology(body) => Answer::Topology {
                         body,
-                        result: match evaluation.bodies.iter().find(|made| made.body == body) {
+                        result: match evaluation.solid(body) {
                             Some(made) => {
                                 let topology = inspect::topology(made, &mut self.cache);
                                 edge_facts::body_edges(&made.solid, &topology)

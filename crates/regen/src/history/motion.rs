@@ -169,9 +169,7 @@ pub(super) fn place(
         });
     }
     for change in changed {
-        if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == change.body) {
-            *made = change;
-        }
+        evaluation.replace(change);
     }
     Ok(())
 }
@@ -261,12 +259,16 @@ pub(super) fn resolve_axis(
     match axis {
         AxisRef::Origin(axis) => Ok([DVec3::ZERO, axis.direction()]),
         AxisRef::Edge(edge) => {
-            let made = holding(edge.body, evaluation).ok_or(message::EDGE_BODY_GONE)?;
+            let made = evaluation
+                .holding(edge.body)
+                .ok_or(message::EDGE_BODY_GONE)?;
             let key = reference_key("axis edge", made.key, &edge.faces, edge.near, tolerance);
             cache.reference(key, || edge_line(&made.solid, edge, tolerance))
         }
         AxisRef::Face(face) => {
-            let made = holding(face.body, evaluation).ok_or(message::AXIS_FACE_BODY_GONE)?;
+            let made = evaluation
+                .holding(face.body)
+                .ok_or(message::AXIS_FACE_BODY_GONE)?;
             let key = reference_key("axis face", made.key, &face.key, face.near, tolerance);
             cache.reference(key, || face_axis(&made.solid, face, tolerance))
         }
@@ -313,17 +315,11 @@ pub(super) fn resolve_plane(
     match plane {
         PlaneRef::Origin(origin) => Ok([DVec3::ZERO, origin.placement().normal]),
         PlaneRef::Face(face) => {
-            let made = holding(face.body, evaluation).ok_or(words.body_gone)?;
+            let made = evaluation.holding(face.body).ok_or(words.body_gone)?;
             let key = reference_key(words.kind, made.key, &face.key, face.near, tolerance);
             cache.reference(key, || face_plane(&made.solid, face, words, tolerance))
         }
     }
-}
-
-/// The body in `evaluation` holding `body`'s solid, if it has one.
-pub(super) fn holding(body: BodyId, evaluation: &Evaluation) -> Option<&BodySolid> {
-    let holder = evaluation.holder(body)?;
-    evaluation.bodies.iter().find(|made| made.body == holder)
 }
 
 /// The key of a reference of `kind` to the faces named `names` near

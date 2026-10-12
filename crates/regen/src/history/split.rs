@@ -35,7 +35,7 @@ use varde_kernel::mesh::Form;
 use varde_kernel::patch::Bounds3;
 use varde_kernel::{Budget, Failure, Solid, Tolerance, ToolError};
 
-use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solids, through_all};
+use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solid, through_all};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
 use crate::message::{self, Making};
@@ -65,7 +65,7 @@ const RIM: u64 = 1 << 32;
 /// it fails, changing nothing.
 ///
 /// Its body must have a solid of its own, and so must a tool body
-/// ([`own_solids`]: one a join or a combine consumed fails it, naming the
+/// ([`own_solid`]: one a join or a combine consumed fails it, naming the
 /// body holding it). Then the tool, the split and the pieces, as the
 /// module's docs say.
 pub(super) fn evaluate_split(
@@ -77,18 +77,15 @@ pub(super) fn evaluate_split(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    own_solids(document, std::iter::once(split.body), evaluation)?;
+    let made = own_solid(document, split.body, evaluation)?;
     if let SplitTool::Body(tool) = split.tool {
-        own_solids(document, std::iter::once(tool), evaluation)?;
+        own_solid(document, tool, evaluation)?;
     }
     let name = |body: BodyId| {
         document
             .body(body)
             .map_or("a body", |body| body.name.as_str())
     };
-    let made = (evaluation.bodies.iter())
-        .find(|made| made.body == split.body)
-        .expect("the body has a solid of its own");
     let body_name = name(split.body);
     // A body is never empty, so it has a box.
     let bounds = made
@@ -142,13 +139,11 @@ pub(super) fn evaluate_split(
         solid: piece(kept.other()),
         key: piece_key(kept.other()),
     });
-    if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == split.body) {
-        *made = BodySolid {
-            body: split.body,
-            solid: piece(kept),
-            key: piece_key(kept),
-        };
-    }
+    evaluation.replace(BodySolid {
+        body: split.body,
+        solid: piece(kept),
+        key: piece_key(kept),
+    });
     if let Some(new) = new {
         evaluation.splits.push((split.body, new.body));
         evaluation.bodies.push(new);
@@ -184,7 +179,8 @@ impl Building<'_> {
                 Ok((solid, key))
             }
             SplitTool::Plane(PlaneRef::Face(face)) => {
-                let made = super::motion::holding(face.body, evaluation)
+                let made = evaluation
+                    .holding(face.body)
                     .ok_or(message::SPLIT_PLANE_BODY_GONE)?;
                 let key = self.face_key("split plane face", made.key, face);
                 let solid = cache.solid(key, || {
@@ -194,16 +190,15 @@ impl Building<'_> {
                 Ok((solid, key))
             }
             SplitTool::Face(face) => {
-                let made = super::motion::holding(face.body, evaluation)
+                let made = evaluation
+                    .holding(face.body)
                     .ok_or(message::SPLIT_FACE_BODY_GONE)?;
                 let key = self.face_key("split face", made.key, face);
                 let solid = cache.solid(key, || self.surface(&made.solid, face))?;
                 Ok((solid, key))
             }
             SplitTool::Body(body) => {
-                let made = (evaluation.bodies.iter())
-                    .find(|made| made.body == *body)
-                    .expect("the tool body has a solid of its own");
+                let made = (evaluation.solid(*body)).expect("the tool body has a solid of its own");
                 Ok((Arc::clone(&made.solid), made.key))
             }
             SplitTool::Regions { sketch, regions } => {

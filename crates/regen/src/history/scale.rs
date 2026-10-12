@@ -115,9 +115,7 @@ fn measured(
     tolerance: &Tolerance,
     cache: &mut Cache,
 ) -> Result<EdgeLength, Failed> {
-    let made = (evaluation.bodies.iter())
-        .find(|made| made.body == edge.body)
-        .ok_or(message::SCALE_EDGE_NOT_FOUND)?;
+    let made = (evaluation.solid(edge.body)).ok_or(message::SCALE_EDGE_NOT_FOUND)?;
     let key = reference_key("scale edge", made.key, &edge.faces, edge.near, tolerance);
     let topology = (!cache.holds(key)).then(|| inspect::topology(made, cache));
     cache.length(key, || {
@@ -156,7 +154,7 @@ fn edge_geometry(
     tolerance: &Tolerance,
     cache: &mut Cache,
 ) -> Option<Arc<ErrorGeometry>> {
-    let made = (evaluation.bodies.iter()).find(|made| made.body == edge.body)?;
+    let made = evaluation.solid(edge.body)?;
     let solid = &made.solid;
     let topology = inspect::topology(made, cache);
     let chain = topology.edge(solid, edge.faces, edge.near).ok()?;

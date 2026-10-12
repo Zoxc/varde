@@ -451,7 +451,9 @@ fn edge_part(
     let Some(first) = edges.first() else {
         return Err(message::path_edge_not_found(0, 1).into());
     };
-    let made = motion::holding(first.body, evaluation).ok_or(message::PATH_EDGE_BODY_GONE)?;
+    let made = evaluation
+        .holding(first.body)
+        .ok_or(message::PATH_EDGE_BODY_GONE)?;
     let solid = Arc::clone(&made.solid);
     let topology = inspect::topology(made, cache);
     let count = edges.len();

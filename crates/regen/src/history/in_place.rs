@@ -10,7 +10,7 @@ use std::sync::Arc;
 use varde_document::{BodyId, Document, FaceRef, FeatureId};
 use varde_kernel::{Budget, Evidence, Failure, Solid, Tolerance, Topology};
 
-use super::{Evaluation, Failed, own_solids};
+use super::{Evaluation, Failed, own_solid};
 use crate::ErrorGeometry;
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
@@ -18,7 +18,7 @@ use crate::inspect;
 
 /// The body a feature changes in place, as the features before it leave
 /// it: its own solid (one a join or a combine consumed fails the
-/// feature, see [`own_solids`]), what that's filed under, its topology
+/// feature, see [`own_solid`]), what that's filed under, its topology
 /// (the one drawing it keeps, [`inspect::topology`]) and its name.
 pub(super) struct InPlace<'a> {
     pub(super) body: BodyId,
@@ -36,13 +36,10 @@ impl<'a> InPlace<'a> {
         evaluation: &Evaluation,
         cache: &mut Cache,
     ) -> Result<InPlace<'a>, Failed> {
-        own_solids(document, std::iter::once(body), evaluation)?;
+        let made = own_solid(document, body, evaluation)?;
         let name = document
             .body(body)
             .map_or("a body", |body| body.name.as_str());
-        let made = (evaluation.bodies.iter())
-            .find(|made| made.body == body)
-            .expect("the body has a solid of its own");
         Ok(InPlace {
             body,
             name,

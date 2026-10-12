@@ -90,9 +90,7 @@ pub(super) fn evaluate_pattern(
         });
     }
     for change in changed {
-        if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == change.body) {
-            *made = change;
-        }
+        evaluation.replace(change);
     }
     separate.sort_by_key(|made| made.body);
     evaluation.bodies.extend(separate);
