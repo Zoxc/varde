@@ -191,16 +191,30 @@ fn clamped(value: f32, most: f32) -> f32 {
     }
 }
 
-/// Converts a colour to linear, which the shader works in.
-pub(super) fn linear(Srgb(rgb): Srgb) -> [f32; 4] {
-    let [r, g, b] = rgb.map(srgb_to_linear);
-    [r, g, b, 1.0]
+impl Srgb {
+    /// This colour in linear, which the shader works in, opaque.
+    pub(super) fn linear(self) -> [f32; 4] {
+        let [r, g, b] = self.0.map(srgb_to_linear);
+        [r, g, b, 1.0]
+    }
 }
 
+/// An sRGB encoded value, from 0 to 1, made linear.
 pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
         ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// A linear value, from 0 to 1, sRGB encoded: [`srgb_to_linear`]'s
+/// inverse, clamped.
+pub(crate) fn linear_to_srgb(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
     }
 }

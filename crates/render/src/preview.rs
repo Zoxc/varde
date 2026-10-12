@@ -8,6 +8,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use varde_kernel_compat::{RenderLines, RenderMesh};
 
+use crate::renderer::{linear_to_srgb, srgb_to_linear};
 use crate::{
     BodyTint, Camera, ClipRect, Colors, Frame, GridPlane, Highlights, PrepareError, Projection,
     Renderer, Shading, Viewport,
@@ -455,32 +456,13 @@ impl Layout {
         let unblend = |c: u8| {
             let c = f32::from(c) / 255.0;
             let c = if self.srgb {
-                encode(decode(c) / alpha)
+                linear_to_srgb(srgb_to_linear(c) / alpha)
             } else {
                 c / alpha
             };
             (c.clamp(0.0, 1.0) * 255.0).round() as u8
         };
         [unblend(r), unblend(g), unblend(b), a]
-    }
-}
-
-/// An sRGB encoded value, from 0 to 1, made linear.
-fn decode(c: f32) -> f32 {
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// A linear value, from 0 to 1, sRGB encoded.
-fn encode(c: f32) -> f32 {
-    let c = c.clamp(0.0, 1.0);
-    if c <= 0.003_130_8 {
-        c * 12.92
-    } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
     }
 }
 

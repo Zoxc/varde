@@ -173,7 +173,7 @@ fn pixels_read_back_lose_their_premultiplied_alpha() {
     // Half covered, blended in the space stored.
     assert_eq!(rgba.straight([50, 64, 128, 128]), [100, 128, 255, 128]);
     // White half covered, blended in linear light.
-    let half = (encode(0.5) * 255.0).round() as u8;
+    let half = (linear_to_srgb(0.5) * 255.0).round() as u8;
     let white = srgb.straight([half, half, half, 128]);
     assert!(white[..3].iter().all(|&c| c >= 254), "{white:?}");
     assert_eq!(

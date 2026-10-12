@@ -495,7 +495,7 @@ impl Renderer {
     ) {
         let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
         let model = frame.colors.model;
-        let mut colors = vec![linear(model)];
+        let mut colors = vec![model.linear()];
         slot.part_tints.clear();
         let most = (device.limits().max_buffer_size / u64::from(self.tint_stride)).max(1);
         for i in 0..parts {
@@ -503,7 +503,7 @@ impl Renderer {
                 slot.part_tints.push(0);
                 continue;
             };
-            let color = linear(model.tinted(tint));
+            let color = model.tinted(tint).linear();
             let entry = match colors.iter().position(|&c| c == color) {
                 Some(at) => at,
                 None if (colors.len() as u64) < most => {
@@ -906,7 +906,7 @@ impl Renderer {
         }
         if let Some(target) = &slot.error_target {
             let uniforms = ErrorUniforms {
-                core: linear(colors.error),
+                core: colors.error.linear(),
                 halo: colors.error_halo.linear(),
             };
             write(
@@ -981,11 +981,11 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
     } else {
         1.0
     };
-    let with_alpha = |color, alpha| {
-        let [r, g, b, _] = linear(color);
+    let with_alpha = |color: Srgb, alpha| {
+        let [r, g, b, _] = color.linear();
         [r, g, b, alpha]
     };
-    let second = linear(colors.second);
+    let second = colors.second.linear();
     let pattern = colors.pattern;
     Uniforms {
         view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
@@ -1007,19 +1007,19 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
             frame.shading.code(),
             colors.contrast,
         ],
-        background_top: linear(colors.background_top),
-        background_bottom: linear(colors.background_bottom),
+        background_top: colors.background_top.linear(),
+        background_bottom: colors.background_bottom.linear(),
         model: with_alpha(colors.model, alpha),
         edge: with_alpha(colors.edge, colors.hidden_edge_alpha * (1.0 - fade)),
-        grid: linear(colors.grid),
-        axes: colors.axes.map(linear),
-        origin_outline: linear(colors.origin_outline),
-        sketch: linear(colors.sketch),
+        grid: colors.grid.linear(),
+        axes: colors.axes.map(Srgb::linear),
+        origin_outline: colors.origin_outline.linear(),
+        sketch: colors.sketch.linear(),
         pivot: frame
             .pivot
             .filter(|pivot| pivot.at.is_finite() && (0.0..=1.0).contains(&pivot.opacity))
             .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
-        pivot_color: linear(colors.pivot),
+        pivot_color: colors.pivot.linear(),
         grid_origin: (grid.origin())
             .extend(slot.state.origin.mask(grid) as f32)
             .to_array(),
