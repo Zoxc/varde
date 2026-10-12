@@ -391,3 +391,11 @@ fn mcp_keys_round_trip_and_bound_the_port() {
     assert_eq!(McpPort::new(1023), None);
     assert!(postcard::from_bytes::<McpPort>(&postcard::to_allocvec(&80u16).unwrap()).is_err());
 }
+
+#[test]
+fn auto_save_waits_are_whole_minutes() {
+    for wait in AutoSave::ALL {
+        assert_eq!(wait.seconds() % 60, 0, "{wait:?}");
+        assert_eq!(wait.minutes() * 60, wait.seconds(), "{wait:?}");
+    }
+}

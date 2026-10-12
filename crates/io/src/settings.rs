@@ -378,15 +378,10 @@ impl AutoSave {
 
     /// The wait in minutes, 0 for off.
     pub fn minutes(self) -> u16 {
-        match self {
-            AutoSave::Off => 0,
-            AutoSave::Minute => 1,
-            AutoSave::Minutes5 => 5,
-            AutoSave::Minutes10 => 10,
-        }
+        self.seconds() / 60
     }
 
-    /// The wait in seconds, as stored, 0 for off.
+    /// The wait in seconds, as stored, 0 for off: whole minutes.
     pub fn seconds(self) -> u16 {
         match self {
             AutoSave::Off => 0,
