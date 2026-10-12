@@ -601,8 +601,7 @@ impl Doc {
         // from its arrival at the server.
         // None of its session's come after it yet: those it fails are none.
         let tag = self.mcp.next_tag();
-        if iced::time::Instant::now().saturating_duration_since(from.came) >= super::waiting::BOUND
-        {
+        if from.late(iced::time::Instant::now()) {
             let refused = Refused::not_applied(super::waiting::NOT_APPLIED_LATE);
             return self.edit_not_applied(tag, from, call, refused);
         }

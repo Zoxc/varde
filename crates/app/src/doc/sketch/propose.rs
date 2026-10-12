@@ -836,7 +836,7 @@ impl Doc {
         self.refresh_waiting();
         // The client's edits dropped with them: their calls say so.
         #[cfg(not(target_arch = "wasm32"))]
-        self.mcp_end_queued("The edits waiting on the design were dropped");
+        self.mcp_end_queued();
     }
 
     /// Takes `response`, the solver's answer for the document: commits an

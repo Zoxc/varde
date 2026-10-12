@@ -96,6 +96,54 @@ pub(crate) const SERVER_STOPPED: &str = "The server stopped";
 /// The answer to the calls waiting as the design closes.
 pub(crate) const DESIGN_CLOSED: &str = "The design was closed";
 
+/// The answer to the calls of a session that ended.
+pub(crate) const SESSION_ENDED: &str = "The session ended";
+
+/// Why waiting calls end other than answered: the cause picks how each
+/// wait is answered ([`Wait::ended`]), [`Ended::text`] the words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Ended {
+    /// It waited [`BOUND`].
+    Bound,
+    /// Its client cancelled it.
+    Cancelled,
+    /// Its session ended.
+    Session,
+    /// The server it came by stopped.
+    ServerStopped,
+    /// The design closed.
+    DesignClosed,
+    /// Varde is quitting.
+    Quitting,
+    /// The solve lane its analysis went to was replaced.
+    SolverRestarted,
+    /// The user's sketch edits it was queued behind were dropped.
+    QueueDropped,
+}
+
+impl Ended {
+    /// The answer's words for a call ended so.
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            Ended::Bound => TOOK_TOO_LONG,
+            Ended::Cancelled => "The call was cancelled",
+            Ended::Session => SESSION_ENDED,
+            Ended::ServerStopped => SERVER_STOPPED,
+            Ended::DesignClosed => DESIGN_CLOSED,
+            Ended::Quitting => varde_mcp::server::CLOSING,
+            Ended::SolverRestarted => SOLVER_RESTARTED,
+            Ended::QueueDropped => "The edits waiting on the design were dropped",
+        }
+    }
+}
+
+impl From {
+    /// Whether the call has waited [`BOUND`] by `now`.
+    pub(crate) fn late(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.came) >= BOUND
+    }
+}
+
 /// How many edits of a session may wait behind the one it has in flight
 /// (`notes/AgentSupport.md`, "Edits one at a time"). Enough for a client to
 /// send the next few steps of a plan (a sketch's extrude, its fillet,
@@ -298,35 +346,40 @@ impl Wait {
     fn ended(
         self,
         edits: bool,
-        why: &str,
+        why: Ended,
         done: &impl Fn(Revision) -> bool,
     ) -> Result<ToolReply, Refused> {
+        let text = why.text();
         match self {
-            Wait::Render { .. } if why == TOOK_TOO_LONG => Err(Refused::failed(NOT_DRAWN)),
+            Wait::Render { .. } if why == Ended::Bound => Err(Refused::failed(NOT_DRAWN)),
             Wait::Topology { .. }
             | Wait::Measure { .. }
             | Wait::Analysis { .. }
             | Wait::Render { .. }
-            | Wait::Encoding { .. } => Err(Refused::failed(why)),
+            | Wait::Encoding { .. } => Err(Refused::failed(text)),
             Wait::Queued | Wait::Model { .. } | Wait::Solving(_) if !edits => {
-                Err(Refused::failed(why))
+                Err(Refused::failed(text))
             }
             Wait::Solving(_) => Err(Refused::not_applied(match why {
-                TOOK_TOO_LONG => NOT_APPLIED_SOLVER,
-                why => why,
+                Ended::Bound => NOT_APPLIED_SOLVER,
+                _ => text,
             })),
             Wait::Queued | Wait::Model { .. } => Err(Refused::not_applied(match (why, self) {
-                (TOOK_TOO_LONG, Wait::Queued) => NOT_APPLIED_BUSY,
-                (TOOK_TOO_LONG, _) => NOT_APPLIED_MODEL,
-                (why, _) => why,
+                (Ended::Bound, Wait::Queued) => NOT_APPLIED_BUSY,
+                (Ended::Bound, _) => NOT_APPLIED_MODEL,
+                _ => text,
             })),
             Wait::Asking { editing } => Err(match why {
-                DESIGN_CLOSED | SERVER_STOPPED | varde_mcp::server::CLOSING => {
-                    Refused::not_applied(why)
+                Ended::DesignClosed | Ended::ServerStopped | Ended::Quitting => {
+                    Refused::not_applied(text)
                 }
                 // The bound, a cancel or the session's end: the user
                 // was editing.
-                _ => super::ask::user_editing(&editing),
+                Ended::Bound
+                | Ended::Cancelled
+                | Ended::Session
+                | Ended::SolverRestarted
+                | Ended::QueueDropped => super::ask::user_editing(&editing),
             }),
             Wait::Regen {
                 mut made,
@@ -658,7 +711,7 @@ impl Waiting {
     pub(crate) fn end(
         &mut self,
         which: impl Fn(&From) -> bool,
-        why: &str,
+        why: Ended,
         done: impl Fn(Revision) -> bool,
     ) {
         self.end_where(|waiter| which(&waiter.from), why, done);
@@ -668,7 +721,7 @@ impl Waiting {
     fn end_where(
         &mut self,
         which: impl Fn(&Waiter) -> bool,
-        why: &str,
+        why: Ended,
         done: impl Fn(Revision) -> bool,
     ) {
         // At the bound, each ends on its own: those of its session
@@ -679,7 +732,7 @@ impl Waiting {
         // They end in arrival order (tags go up in it), not the table's:
         // one taken out and put back (the popup, the proposals' queue)
         // sits at its end.
-        if why == TOOK_TOO_LONG {
+        if why == Ended::Bound {
             while let Some((at, _)) = (self.calls.iter().enumerate())
                 .filter(|(_, waiter)| which(waiter))
                 .min_by_key(|(_, waiter)| waiter.tag)
@@ -703,7 +756,7 @@ impl Waiting {
     /// Answers `waiter`, taken out of the table, as its wait has it
     /// answered given `why` ([`Wait::ended`]): an edit not applied fails
     /// the edits of its session after it ([`Waiting::not_applied`]).
-    fn end_one(&mut self, waiter: Waiter, why: &str, done: &impl Fn(Revision) -> bool) {
+    fn end_one(&mut self, waiter: Waiter, why: Ended, done: &impl Fn(Revision) -> bool) {
         let Waiter {
             tag,
             from,
@@ -1010,7 +1063,7 @@ impl Doc {
         waiter.call.edits()
             && !self.model_ready(self.editor.generation())
             && !self.mcp.blocked(waiter)
-            && iced::time::Instant::now().saturating_duration_since(waiter.from.came) < BOUND
+            && !waiter.from.late(Instant::now())
     }
 
     /// The client's query or edit `call` under `tag`, at its turn after
@@ -1070,12 +1123,12 @@ impl Doc {
     /// `waiter`, taken out of the table, unless it has waited [`BOUND`]
     /// (its tick not come yet): then it's ended as the tick would end it.
     pub(super) fn unless_late(&mut self, waiter: Waiter) -> Option<Waiter> {
-        if iced::time::Instant::now().saturating_duration_since(waiter.from.came) < BOUND {
+        if !waiter.from.late(Instant::now()) {
             return Some(waiter);
         }
         let in_effect = self.in_effect_of(std::iter::once(&waiter));
         let done = |after| in_effect.get(&after).copied().unwrap_or(true);
-        (self.mcp).end_one(waiter, TOOK_TOO_LONG, &done);
+        (self.mcp).end_one(waiter, Ended::Bound, &done);
         let _ = self.drop_ended_edits();
         None
     }
@@ -1138,7 +1191,7 @@ impl Doc {
     /// Then takes up the calls waiting for the model that are ready
     /// ([`Doc::mcp_ready`]): run after every message (`Mcp::sync`), it's
     /// what answers them once regen or the solver has.
-    pub(crate) fn mcp_end(&mut self, which: impl Fn(&From) -> bool, why: &str) {
+    pub(crate) fn mcp_end(&mut self, which: impl Fn(&From) -> bool, why: Ended) {
         // An edit holding the proposals' queue waits for its model
         // (`Doc::client_holds_queue`): ended, it says so.
         let at = self.editor.generation();
@@ -1214,12 +1267,12 @@ impl Doc {
     /// Ends the MCP edits queued behind the user's sketch edits, `why`:
     /// what they waited behind was dropped. The queries queued there
     /// are about the design as it is now.
-    pub(crate) fn mcp_end_queued(&mut self, why: &str) {
+    pub(crate) fn mcp_end_queued(&mut self) {
         // None applied: no revision to ask after.
         let queued = |waiter: &Waiter| {
             waiter.call.edits() && matches!(waiter.waits, Wait::Queued | Wait::Solving(_))
         };
-        (self.mcp).end_where(queued, why, |_| true);
+        (self.mcp).end_where(queued, Ended::QueueDropped, |_| true);
         let at = self.editor.generation();
         for waiter in &mut self.mcp.calls {
             if waiter.waits == Wait::Queued {
@@ -1418,7 +1471,7 @@ impl Doc {
     /// lane was replaced, and their requests with it.
     pub(crate) fn mcp_end_analyses(&mut self) {
         let analysing = |waiter: &Waiter| matches!(waiter.waits, Wait::Analysis { .. });
-        (self.mcp).end_where(analysing, SOLVER_RESTARTED, |_| true);
+        (self.mcp).end_where(analysing, Ended::SolverRestarted, |_| true);
     }
 
     /// Takes the solve lane's answer to the client's analysis `id`, or

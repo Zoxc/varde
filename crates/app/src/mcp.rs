@@ -107,9 +107,6 @@ pub(crate) struct Mcp {
 /// before and after are bounded apart ([`revert::SNAPSHOTS`]).
 pub(crate) const LOG_CAP: usize = 200;
 
-/// The answer to the calls waiting as their session ends.
-const SESSION_ENDED: &str = "The session ended";
-
 /// The longest result summary kept for a row's tooltip, in bytes.
 const RESULT_BYTES: usize = 300;
 
@@ -593,7 +590,7 @@ impl Mcp {
             Event::Session(session::Event::Cancelled { session, request }) => {
                 let which = |from: &waiting::From| from.session == session && from.id == request;
                 if let Some(doc) = doc {
-                    doc.mcp_end(which, "The call was cancelled");
+                    doc.mcp_end(which, waiting::Ended::Cancelled);
                     self.sync_untold(Some(doc), which);
                 }
             }
@@ -611,7 +608,11 @@ impl Mcp {
         {
             self.gone = Some(name);
         }
-        self.end(doc, |from| from.session == *session, SESSION_ENDED);
+        self.end(
+            doc,
+            |from| from.session == *session,
+            waiting::Ended::Session,
+        );
     }
 
     /// Forgets the server before, stopped or replaced by one on another
@@ -628,28 +629,29 @@ impl Mcp {
     /// Ends the calls waiting in `doc`, the open design, that have waited
     /// [`waiting::BOUND`] by `now`: the tick while one waits.
     pub(crate) fn tick(&mut self, now: iced::time::Instant, doc: Option<&mut Doc>) {
-        self.end(
-            doc,
-            |from| now.saturating_duration_since(from.came) >= waiting::BOUND,
-            waiting::TOOK_TOO_LONG,
-        );
+        self.end(doc, |from| from.late(now), waiting::Ended::Bound);
     }
 
     /// Fails the calls waiting in `doc` as it closes.
     pub(crate) fn closing(&mut self, doc: Option<&mut Doc>) {
-        self.end(doc, |_| true, waiting::DESIGN_CLOSED);
+        self.end(doc, |_| true, waiting::Ended::DesignClosed);
     }
 
     /// Fails the calls waiting in `doc` as Varde quits: what comes for
     /// them after isn't taken ([`crate::while_quitting`]).
     pub(crate) fn quitting(&mut self, doc: Option<&mut Doc>) {
-        self.end(doc, |_| true, varde_mcp::server::CLOSING);
+        self.end(doc, |_| true, waiting::Ended::Quitting);
     }
 
     /// Ends the calls waiting in `doc`, the open design, that `which`
     /// picks, answered with `why`, an error, and sends their replies at
     /// once.
-    fn end(&mut self, doc: Option<&mut Doc>, which: impl Fn(&waiting::From) -> bool, why: &str) {
+    fn end(
+        &mut self,
+        doc: Option<&mut Doc>,
+        which: impl Fn(&waiting::From) -> bool,
+        why: waiting::Ended,
+    ) {
         if let Some(doc) = doc {
             doc.mcp_end(which, why);
             self.sync(Some(doc));
@@ -671,7 +673,10 @@ impl Mcp {
             return;
         };
         let start = self.serve.as_ref().map(|serve| serve.start);
-        doc.mcp_end(|from| Some(from.start) != start, waiting::SERVER_STOPPED);
+        doc.mcp_end(
+            |from| Some(from.start) != start,
+            waiting::Ended::ServerStopped,
+        );
         for done in doc.mcp.finished() {
             self.log_answer(done.from.serial, &done.call, &done.reply, done.state);
             let feature =
