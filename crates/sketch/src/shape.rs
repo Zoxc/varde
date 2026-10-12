@@ -712,17 +712,7 @@ impl Sketch {
             self.reshaped(curve);
         }
         self.drop_broken_corners();
-        let orphans: Vec<Id> = gone
-            .iter()
-            .copied()
-            .filter(|&point| {
-                !self
-                    .curves
-                    .iter()
-                    .any(|entry| entry.curve.points().any(|id| id == point))
-            })
-            .collect();
-        self.delete(&orphans);
+        self.delete_unused(gone);
         let own: BTreeSet<Id> = self
             .constraints
             .iter()

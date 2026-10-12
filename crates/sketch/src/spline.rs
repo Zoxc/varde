@@ -398,17 +398,16 @@ impl Sketch {
         for (i, tip) in tips {
             handles.push(self.new_handle(points[i], places[i], tip)?);
         }
-        let old: Vec<Id> = spline.all_points().collect();
-        let entry = self.curve_mut(curve).ok_or(target)?;
-        entry.curve = Curve::Spline(Spline {
-            kind: to,
-            points,
-            closed: spline.closed,
-            handles,
-            knots,
-        });
-        self.delete_unused(&old);
-        Ok(())
+        self.replace_spline(
+            curve,
+            Spline {
+                kind: to,
+                points,
+                closed: spline.closed,
+                handles,
+                knots,
+            },
+        )
     }
 }
 
@@ -558,15 +557,14 @@ impl Sketch {
                 (points, inserted.knots().to_vec())
             }
         };
-        let old: Vec<Id> = spline.points.clone();
-        let entry = self.curve_mut(curve).ok_or(target)?;
-        entry.curve = Curve::Spline(Spline {
-            points,
-            knots,
-            ..spline
-        });
-        self.delete_unused(&old);
-        Ok(())
+        self.replace_spline(
+            curve,
+            Spline {
+                points,
+                knots,
+                ..spline
+            },
+        )
     }
 
     /// The piece of the spline `curve` from its parameter `from` to `to`
@@ -678,6 +676,21 @@ impl Sketch {
             points.push(id);
         }
         Ok(points)
+    }
+
+    /// Makes the spline `curve` `spline`, deleting the points of the one
+    /// it was that no curve is made from any more. `Target` if `curve` is
+    /// no spline.
+    fn replace_spline(&mut self, curve: Id, spline: Spline) -> Result<(), EditError> {
+        let old: Vec<Id> = self
+            .spline(curve)
+            .ok_or(EditError::Target(curve))?
+            .all_points()
+            .collect();
+        let entry = self.curve_mut(curve).ok_or(EditError::Target(curve))?;
+        entry.curve = Curve::Spline(spline);
+        self.delete_unused(&old);
+        Ok(())
     }
 
     /// Deletes those of `points` no curve is made from any more, with
