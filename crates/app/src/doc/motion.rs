@@ -2758,23 +2758,27 @@ impl Doc {
     }
 }
 
-/// The motion of `moved`: its turn, about an origin axis or the line
-/// `line` regenerating found for another axis, then its shift, as
+/// The turn of `moved`, if it turns: the line it turns about (an
+/// origin axis, or the line `line` regenerating found for another axis)
+/// and its degrees, as regenerating works them out; `Err` where the line
+/// isn't known.
+fn turn_of(moved: &Move, line: Option<[DVec3; 2]>) -> Result<Option<([DVec3; 2], f64)>, ()> {
+    let Some((axis, angle)) = &moved.turn else {
+        return Ok(None);
+    };
+    let line = match axis {
+        AxisRef::Origin(axis) => [DVec3::ZERO, axis.direction()],
+        _ => line.ok_or(())?,
+    };
+    Ok(Some((line, angle.value / (PI / 180.0))))
+}
+
+/// The motion of `moved`: its turn ([`turn_of`]), then its shift, as
 /// regenerating works it out; `None` where the line isn't known.
 fn motion_of(moved: &Move, line: Option<[DVec3; 2]>) -> Option<Motion> {
-    let turn = match &moved.turn {
-        Some((axis, angle)) => {
-            let [point, along] = match axis {
-                AxisRef::Origin(axis) => [DVec3::ZERO, axis.direction()],
-                _ => line?,
-            };
-            Some((point, along, angle.value / (PI / 180.0)))
-        }
-        None => None,
-    };
     let shift = Motion::translation(moved.offset_vector())?;
-    match turn {
-        Some((point, along, degrees)) => Some(Motion::turn(point, along, degrees)?.then(&shift)),
+    match turn_of(moved, line).ok()? {
+        Some(([point, along], degrees)) => Some(Motion::turn(point, along, degrees)?.then(&shift)),
         None => Some(shift),
     }
 }
@@ -2782,14 +2786,8 @@ fn motion_of(moved: &Move, line: Option<[DVec3; 2]>) -> Option<Motion> {
 /// The point `moved` takes to `p`, see [`motion_of`].
 fn undo_motion(moved: &Move, line: Option<[DVec3; 2]>, p: DVec3) -> Option<DVec3> {
     let back = Motion::translation(-moved.offset_vector())?;
-    let back = match &moved.turn {
-        Some((axis, angle)) => {
-            let [point, along] = match axis {
-                AxisRef::Origin(axis) => [DVec3::ZERO, axis.direction()],
-                _ => line?,
-            };
-            back.then(&Motion::turn(point, along, -(angle.value / (PI / 180.0)))?)
-        }
+    let back = match turn_of(moved, line).ok()? {
+        Some(([point, along], degrees)) => back.then(&Motion::turn(point, along, -degrees)?),
         None => back,
     };
     let at = back.point(p);
