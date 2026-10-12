@@ -393,7 +393,8 @@ most 35 s (`REPLY`, past the app's own 30 s bound, see "Waiting
 calls"); a `Reply` dropped
 unanswered answers "Varde is closing" (`CLOSING`), a timeout "The call
 timed out in Varde" (`TIMED_OUT`), and either way the call is finished
-in the state, restarting the idle clock. `Reply` is cloneable, as the
+in the state, restarting the idle clock: `server`'s `InFlight` does so
+when dropped, so on every path, a panic's too. `Reply` is cloneable, as the
 app's messages are; the first `send` is taken, and `send` says whether
 it was. Timed out, a reply sent as the wait ran out is still the answer
 (`try_recv`), and the receiver is dropped at once, so a later `send`

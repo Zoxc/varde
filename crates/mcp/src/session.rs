@@ -141,7 +141,8 @@ pub enum Answer {
     /// Write this now.
     Respond(Response),
     /// Hand the call to the app, write its reply when it comes, then
-    /// call [`State::finish`] with its session and id.
+    /// call [`State::finish`] with its session and id (the server does
+    /// so when it drops its record of the call, however the wait ends).
     Dispatch(Dispatch),
 }
 

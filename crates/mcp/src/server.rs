@@ -496,7 +496,7 @@ fn serve(stream: TcpStream, shared: &Shared) {
         };
         let response = match answer {
             Err(response) => response,
-            Ok((session, id, receiver)) => wait(shared, &session, &id, receiver),
+            Ok((call, receiver)) => wait(call, receiver),
         };
         let close = request.close || shared.stopped();
         writer.start(shared.timeouts.write);
@@ -506,14 +506,30 @@ fn serve(stream: TcpStream, shared: &Shared) {
     }
 }
 
+/// A call handed to the app, the request `id` of `session`: dropping it
+/// finishes the call in the state ([`State::finish`]), on every path, so
+/// the session isn't kept from idling out by a call no one waits for.
+struct InFlight<'a> {
+    shared: &'a Shared,
+    session: SessionId,
+    id: Id,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        let now = self.shared.now();
+        self.shared.state().finish(&self.session, &self.id, now);
+    }
+}
+
 /// Hands `dispatch`, of a request come at `came`, to the app, under the
-/// state's lock; the reply comes on the receiver, for the request `id` of
-/// `session`, which are kept to answer it.
-fn dispatch_call(
-    shared: &Shared,
+/// state's lock; the reply comes on the receiver, for the call returned
+/// with it.
+fn dispatch_call<'a>(
+    shared: &'a Shared,
     dispatch: Dispatch,
     came: Instant,
-) -> (SessionId, Id, Receiver<ToolReply>) {
+) -> (InFlight<'a>, Receiver<ToolReply>) {
     let Dispatch { session, id, call } = dispatch;
     let (sender, receiver) = mpsc::sync_channel(1);
     shared.send(Event::Call {
@@ -522,11 +538,21 @@ fn dispatch_call(
         call,
         reply: Reply { sender, came },
     });
-    (session, id, receiver)
+    // Made last, as nothing after it here can fail: dropped under the
+    // state's lock, it would wait on that lock for good.
+    (
+        InFlight {
+            shared,
+            session,
+            id,
+        },
+        receiver,
+    )
 }
 
-/// Waits for the app's reply to the request `id` of `session`.
-fn wait(shared: &Shared, session: &SessionId, id: &Id, receiver: Receiver<ToolReply>) -> Response {
+/// Waits for the app's reply to `call`.
+fn wait(call: InFlight<'_>, receiver: Receiver<ToolReply>) -> Response {
+    let shared = call.shared;
     // With the stream gone, the event (and the reply in it) is dropped
     // at once: the wait ends as disconnected.
     let reply = match receiver.recv_timeout(shared.timeouts.reply) {
@@ -541,8 +567,9 @@ fn wait(shared: &Shared, session: &SessionId, id: &Id, receiver: Receiver<ToolRe
         },
     };
     drop(receiver);
-    shared.state().finish(session, id, shared.now());
-    session::respond(id, &reply)
+    let response = session::respond(&call.id, &reply);
+    drop(call);
+    response
 }
 
 #[cfg(test)]
