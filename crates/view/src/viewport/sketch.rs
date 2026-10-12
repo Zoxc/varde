@@ -353,6 +353,55 @@ struct Drawn {
     closing: Option<Sketch>,
 }
 
+impl Drawn {
+    /// What `sketching` draws in `colors`, `closing` a curve or not.
+    fn of(sketching: &Sketching, colors: SketchColors, closing: Option<Sketch>) -> Self {
+        Drawn {
+            sketch: sketching.sketch.clone(),
+            selection: sketching.selection.clone(),
+            states: sketching.states.clone(),
+            colors,
+            label_drag: sketching.label_drag,
+            placement: sketching.placement,
+            profiles: sketching.profiles.cloned(),
+            comb: sketching.comb,
+            closing,
+        }
+    }
+
+    /// Whether it's what `sketching` draws in `colors`, `closing` a curve
+    /// or not: whether the layer built from it is still current.
+    fn matches(
+        &self,
+        sketching: &Sketching,
+        colors: SketchColors,
+        closing: &Option<Sketch>,
+    ) -> bool {
+        // Destructured, so a field added fails to compile until it's
+        // compared.
+        let Drawn {
+            sketch,
+            selection,
+            states,
+            colors: drawn_colors,
+            label_drag,
+            placement,
+            profiles,
+            comb,
+            closing: drawn_closing,
+        } = self;
+        sketch == sketching.sketch
+            && selection == sketching.selection
+            && *states == sketching.states
+            && *drawn_colors == colors
+            && *label_drag == sketching.label_drag
+            && *placement == sketching.placement
+            && profiles.as_ref().map(Arc::as_ptr) == sketching.profiles.map(Arc::as_ptr)
+            && *comb == sketching.comb
+            && drawn_closing == closing
+    }
+}
+
 impl<'a> Sketching<'a> {
     /// `sketch` as the viewport shows it. Its tool and dragging work only
     /// if it's `editable`.
@@ -942,18 +991,8 @@ impl<'a> Sketching<'a> {
         let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height);
         let closing = self.drag_closing(input, projector.as_ref(), modifiers);
         let mut base = input.base.borrow_mut();
-        let current = base.as_ref().is_some_and(|base| {
-            let drawn = &base.drawn;
-            drawn.sketch == *self.sketch
-                && drawn.selection == *self.selection
-                && drawn.states == self.states
-                && drawn.colors == colors
-                && drawn.label_drag == self.label_drag
-                && drawn.placement == self.placement
-                && drawn.profiles.as_ref().map(Arc::as_ptr) == self.profiles.map(Arc::as_ptr)
-                && drawn.comb == self.comb
-                && drawn.closing == closing
-        });
+        let current =
+            (base.as_ref()).is_some_and(|base| base.drawn.matches(self, colors, &closing));
         let base = match &mut *base {
             Some(base) if current => base,
             base => {
@@ -972,17 +1011,7 @@ impl<'a> Sketching<'a> {
                     .base_layer(colors),
                     _ => self.base_layer(colors),
                 };
-                let drawn = Drawn {
-                    sketch: self.sketch.clone(),
-                    selection: self.selection.clone(),
-                    states: self.states.clone(),
-                    colors,
-                    label_drag: self.label_drag,
-                    placement: self.placement,
-                    profiles: self.profiles.cloned(),
-                    comb: self.comb,
-                    closing,
-                };
+                let drawn = Drawn::of(self, colors, closing);
                 base.insert(Base {
                     drawn,
                     layer: Arc::new(layer),
