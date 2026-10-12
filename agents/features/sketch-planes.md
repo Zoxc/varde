@@ -118,7 +118,7 @@ preview shows the sketches on its faces following.
 
 The answer carries `placements: Vec<(FeatureId, Placement)>` (as
 `Evaluation::placements`, with a draft that goes as the document with it
-applied placed them); on the wire (`Head::Regenerated::placements`, the
+applied placed them); on the wire (`RegeneratedHead::placements`, the
 four vectors as `[[f64; 3]; 4]`) each is checked `Placement::valid` and
 each sketch listed once (`wire::Error::Placement`, the generation
 answered as failed). `flatten_sketches(document, placements, exclude)`

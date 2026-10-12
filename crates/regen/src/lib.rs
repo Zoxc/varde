@@ -376,6 +376,19 @@ pub struct Drafted {
     pub sweep: Option<Box<SweepFound>>,
 }
 
+impl Drafted {
+    /// Whether what the draft found is fit to draw, as the wire checks
+    /// it: its axis or plane ([`reference_fits`]), an align's datums
+    /// ([`AlignDatums::fits`]), a scale's ([`ScaleFound::fits`]) and a
+    /// sweep's ([`SweepFound::fits`]), each where it has one.
+    pub fn fits(&self) -> bool {
+        self.reference.as_deref().is_none_or(reference_fits)
+            && self.datums.as_deref().is_none_or(AlignDatums::fits)
+            && self.scale.as_deref().is_none_or(ScaleFound::fits)
+            && self.sweep.as_deref().is_none_or(SweepFound::fits)
+    }
+}
+
 /// Where a sweep's handles stand, found from its path as built, before
 /// the kernel is asked: for its twist, the end of an open chain; for a
 /// helix's pitch and turns, its axis and the profile's middle.

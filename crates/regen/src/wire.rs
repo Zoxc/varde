@@ -313,6 +313,80 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, Error> {
     codec::from_postcard_exact(bytes).map_err(Error::Request)
 }
 
+/// A [`Head::Regenerated`]: a [`Response::Regenerated`] without its
+/// model's parts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegeneratedHead {
+    /// Its draft and inspect revisions checked to be `draft`'s and
+    /// `inspected`'s ([`Error::Revisions`]).
+    pub asked: Asked,
+    /// Without its geometry, which follows.
+    pub draft: Option<Drafted>,
+    /// The draft's [`Drafted::geometry`], checked as the failures'
+    /// are.
+    pub draft_geometry: Option<GeometryParts>,
+    /// The sketches that don't solve. Only marks, so an id naming no
+    /// sketch of the document marks nothing, and isn't checked.
+    pub unsolved: Vec<FeatureId>,
+    /// The features that failed, likewise only marks, and their
+    /// geometry, decoded within its bounds and checked against the
+    /// model by [`ErrorGeometry::from_parts`] ([`Error::Geometry`]).
+    pub failed: Vec<(FeatureId, String, Option<GeometryParts>)>,
+    /// The bodies each join, cut or intersect touches, likewise only
+    /// marks.
+    pub touched: Vec<(FeatureId, Vec<BodyId>)>,
+    /// Each consumed body and its holder, checked to name each
+    /// consumed body once and none as a holder ([`Error::Merged`]);
+    /// otherwise only marks.
+    pub merged: Vec<(BodyId, BodyId)>,
+    /// Each placed sketch on a face and its placement's origin, `x`,
+    /// `y` and normal, checked to be [`Placement::valid`] and to list
+    /// each sketch once ([`Error::Placement`]); otherwise only marks.
+    pub placements: Vec<(FeatureId, [[f64; 3]; 4])>,
+    /// Each body's box, its least and greatest corner, checked to be
+    /// finite and in order ([`Error::Bounds`]).
+    pub bodies: Vec<(BodyId, [[f32; 3]; 2])>,
+    /// The picking tables' body of each of the mesh's parts, each in
+    /// `bodies` ([`Error::Picking`]), at most
+    /// [`RenderMesh::MAX_PARTS`], refused as they're decoded.
+    #[serde(deserialize_with = "bounded::parts")]
+    pub parts: Vec<BodyId>,
+    /// The picking tables' faces, at most [`MAX_FACES`] with at most
+    /// [`Picking::MAX_ALIASES`] aliases together, refused as they're
+    /// decoded.
+    #[serde(deserialize_with = "bounded::faces")]
+    pub faces: Vec<PickFace>,
+    /// The picking tables' closed flags, one per edge, at most
+    /// [`RenderMesh::MAX_EDGE_POLYLINES`].
+    #[serde(deserialize_with = "bounded::edges")]
+    pub closed: Vec<bool>,
+    /// The picking tables' tangent chains, one per edge, at most
+    /// [`RenderMesh::MAX_EDGE_POLYLINES`].
+    #[serde(deserialize_with = "bounded::edges")]
+    pub tangents: Vec<u32>,
+    /// The picking tables' snap points, one per edge or none, at most
+    /// [`RenderMesh::MAX_EDGE_POLYLINES`].
+    #[serde(deserialize_with = "bounded::edges")]
+    pub snaps: Vec<Option<[f64; 3]>>,
+    /// The picking tables' corners, at most [`MAX_CORNERS`].
+    #[serde(deserialize_with = "bounded::corners")]
+    pub corners: Vec<PickCorner>,
+    /// The answer to the request's measure, checked against the
+    /// tables ([`Inspected::checked`]): one that fails is answered as
+    /// an error, the model with it as usual.
+    pub inspected: Option<Box<Inspected>>,
+    /// The sketches relinked, within [`MAX_RELINKED_ITEMS`] and
+    /// each list within a sketch's limits, refused as they're
+    /// decoded. Checked by the document's check when the app folds
+    /// one in, which refuses one that fails it, so not here.
+    #[serde(deserialize_with = "bounded::relinked")]
+    pub relinked: Vec<(FeatureId, Sketch)>,
+    /// The broken links, at most [`MAX_BROKEN`]: only marks and
+    /// words.
+    #[serde(deserialize_with = "bounded::broken")]
+    pub broken: Vec<(FeatureId, Id, String)>,
+}
+
 /// What a reply is, in front of its mesh parts. That the worker is ready,
 /// or panicked, isn't a reply: [`varde_lane`] says so.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,76 +397,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, Error> {
 pub enum Head {
     /// A [`Response::Regenerated`], followed by its model's
     /// [`MODEL_PARTS`] parts.
-    Regenerated {
-        /// Its draft and inspect revisions checked to be `draft`'s and
-        /// `inspected`'s ([`Error::Revisions`]).
-        asked: Asked,
-        /// Without its geometry, which follows.
-        draft: Option<Drafted>,
-        /// The draft's [`Drafted::geometry`], checked as the failures'
-        /// are.
-        draft_geometry: Option<GeometryParts>,
-        /// The sketches that don't solve. Only marks, so an id naming no
-        /// sketch of the document marks nothing, and isn't checked.
-        unsolved: Vec<FeatureId>,
-        /// The features that failed, likewise only marks, and their
-        /// geometry, decoded within its bounds and checked against the
-        /// model by [`ErrorGeometry::from_parts`] ([`Error::Geometry`]).
-        failed: Vec<(FeatureId, String, Option<GeometryParts>)>,
-        /// The bodies each join, cut or intersect touches, likewise only
-        /// marks.
-        touched: Vec<(FeatureId, Vec<BodyId>)>,
-        /// Each consumed body and its holder, checked to name each
-        /// consumed body once and none as a holder ([`Error::Merged`]);
-        /// otherwise only marks.
-        merged: Vec<(BodyId, BodyId)>,
-        /// Each placed sketch on a face and its placement's origin, `x`,
-        /// `y` and normal, checked to be [`Placement::valid`] and to list
-        /// each sketch once ([`Error::Placement`]); otherwise only marks.
-        placements: Vec<(FeatureId, [[f64; 3]; 4])>,
-        /// Each body's box, its least and greatest corner, checked to be
-        /// finite and in order ([`Error::Bounds`]).
-        bodies: Vec<(BodyId, [[f32; 3]; 2])>,
-        /// The picking tables' body of each of the mesh's parts, each in
-        /// `bodies` ([`Error::Picking`]), at most
-        /// [`RenderMesh::MAX_PARTS`], refused as they're decoded.
-        #[serde(deserialize_with = "bounded::parts")]
-        parts: Vec<BodyId>,
-        /// The picking tables' faces, at most [`MAX_FACES`] with at most
-        /// [`Picking::MAX_ALIASES`] aliases together, refused as they're
-        /// decoded.
-        #[serde(deserialize_with = "bounded::faces")]
-        faces: Vec<PickFace>,
-        /// The picking tables' closed flags, one per edge, at most
-        /// [`RenderMesh::MAX_EDGE_POLYLINES`].
-        #[serde(deserialize_with = "bounded::edges")]
-        closed: Vec<bool>,
-        /// The picking tables' tangent chains, one per edge, at most
-        /// [`RenderMesh::MAX_EDGE_POLYLINES`].
-        #[serde(deserialize_with = "bounded::edges")]
-        tangents: Vec<u32>,
-        /// The picking tables' snap points, one per edge or none, at most
-        /// [`RenderMesh::MAX_EDGE_POLYLINES`].
-        #[serde(deserialize_with = "bounded::edges")]
-        snaps: Vec<Option<[f64; 3]>>,
-        /// The picking tables' corners, at most [`MAX_CORNERS`].
-        #[serde(deserialize_with = "bounded::corners")]
-        corners: Vec<PickCorner>,
-        /// The answer to the request's measure, checked against the
-        /// tables ([`Inspected::checked`]): one that fails is answered as
-        /// an error, the model with it as usual.
-        inspected: Option<Box<Inspected>>,
-        /// The sketches relinked, within [`MAX_RELINKED_ITEMS`] and
-        /// each list within a sketch's limits, refused as they're
-        /// decoded. Checked by the document's check when the app folds
-        /// one in, which refuses one that fails it, so not here.
-        #[serde(deserialize_with = "bounded::relinked")]
-        relinked: Vec<(FeatureId, Sketch)>,
-        /// The broken links, at most [`MAX_BROKEN`]: only marks and
-        /// words.
-        #[serde(deserialize_with = "bounded::broken")]
-        broken: Vec<(FeatureId, Id, String)>,
-    },
+    Regenerated(RegeneratedHead),
     /// A [`Response::Failed`].
     Failed { asked: Asked, error: String },
     /// A [`Response::Exported`]: if `Ok`, followed by one part, the
@@ -519,7 +524,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             let geometry = |geometry: &Option<Arc<ErrorGeometry>>| {
                 geometry.as_deref().map(ErrorGeometry::to_parts)
             };
-            let mut head = Head::Regenerated {
+            let mut head = Head::Regenerated(RegeneratedHead {
                 asked: *asked,
                 draft: draft.as_deref().cloned(),
                 draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
@@ -557,17 +562,17 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                     Vec::new()
                 },
                 broken: broken.iter().take(MAX_BROKEN).cloned().collect(),
-            };
+            });
             let mut encoded = head.encode();
             // Too large with the failures' geometry: the model without
             // it, rather than none.
             if encoded.len() > MAX_HEAD_BYTES
-                && let Head::Regenerated {
+                && let Head::Regenerated(RegeneratedHead {
                     draft_geometry,
                     failed,
                     relinked,
                     ..
-                } = &mut head
+                }) = &mut head
             {
                 // Relinking waits for a model small enough to send.
                 relinked.clear();
@@ -685,123 +690,12 @@ pub fn decode_reply(
 ) -> Result<Response, Error> {
     let head = copy::<u8>(Part::Head, head, MAX_HEAD_BYTES)?;
     Ok(match Head::decode(&head)? {
-        Head::Regenerated {
-            asked,
-            mut draft,
-            draft_geometry,
-            unsolved,
-            failed,
-            touched,
-            merged,
-            placements,
-            bodies,
-            parts: part_bodies,
-            faces,
-            closed,
-            tangents,
-            snaps,
-            corners,
-            inspected,
-            relinked,
-            broken,
-        } => {
-            let revisions = (
-                draft.as_ref().map(|draft| draft.revision),
-                inspected.as_ref().map(|inspected| inspected.revision),
-            );
-            let model = (if revisions == (asked.draft, asked.inspect) {
-                Ok(())
-            } else {
-                Err(Error::Revisions)
+        Head::Regenerated(head) => {
+            let asked = head.asked;
+            decode_regenerated(head, parts).unwrap_or_else(|error| Response::Failed {
+                asked,
+                error: error.to_string(),
             })
-            .and_then(|()| check_merged(&merged))
-            .and_then(|()| check_reference(draft.as_ref()))
-            .and_then(|()| check_datums(draft.as_ref()))
-            .and_then(|()| check_scale(draft.as_ref()))
-            .and_then(|()| check_sweep(draft.as_ref()))
-            .and_then(|()| decode_placements(&placements))
-            .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
-            .and_then(|(placements, bodies)| {
-                let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
-                listed.sort_unstable();
-                if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
-                    return Err(Error::UnlistedBody);
-                }
-                let (mesh, sketches, tables) = decode_model(parts)?;
-                let parts = PickingParts {
-                    bodies: part_bodies,
-                    tables: FaceEdgeTables {
-                        faces,
-                        closed,
-                        tangents,
-                        snaps,
-                        corners,
-                    },
-                };
-                let picking = Picking::from_parts(parts, &mesh).map_err(Error::Picking)?;
-                let geometry = |parts: Option<GeometryParts>| {
-                    (parts.map(|parts| ErrorGeometry::from_parts(parts, &mesh, &picking)))
-                        .transpose()
-                        .map(|geometry| geometry.map(Arc::new))
-                        .map_err(Error::Geometry)
-                };
-                let failed = (failed.into_iter())
-                    .map(|(feature, message, parts)| {
-                        Ok(FeatureFailure {
-                            feature,
-                            message,
-                            geometry: geometry(parts)?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                let draft_geometry = geometry(draft_geometry)?;
-                Ok((
-                    placements,
-                    bodies,
-                    (mesh, sketches, tables),
-                    picking,
-                    failed,
-                    draft_geometry,
-                ))
-            });
-            match model {
-                Ok((
-                    placements,
-                    bodies,
-                    (mesh, sketches, tables),
-                    picking,
-                    failed,
-                    draft_geometry,
-                )) => {
-                    if let Some(draft) = &mut draft {
-                        draft.geometry = draft_geometry;
-                    }
-                    Response::Regenerated {
-                        asked,
-                        draft: draft.map(Box::new),
-                        inspected: inspected
-                            .map(|inspected| Box::new(inspected.checked(Some((&mesh, &picking))))),
-                        mesh: Arc::new(mesh),
-                        picking: Arc::new(picking),
-                        tables: Arc::new(tables),
-                        sketches: Arc::new(sketches),
-                        unsolved,
-                        failed,
-                        touched,
-                        merged,
-                        placements,
-                        bodies,
-                        relinked: (relinked.into_iter())
-                            .map(|(feature, sketch)| (feature, Arc::new(sketch)))
-                            .collect(),
-                        broken,
-                    }
-                }
-                Err(error) => Response::Failed {
-                    asked,
-                    error: error.to_string(),
-                },
-            }
         }
         Head::Failed { asked, error } => Response::Failed { asked, error },
         Head::Exported { export, result } => Response::Exported {
@@ -844,6 +738,99 @@ pub fn decode_export(parts: &[impl Buffer]) -> Result<Vec<ExportedBody>, Error> 
     codec::from_postcard_exact(&bytes).map_err(Error::Export)
 }
 
+/// The model of a [`Head::Regenerated`] and the `parts` following it,
+/// or the first check it fails.
+fn decode_regenerated(head: RegeneratedHead, parts: &[impl Buffer]) -> Result<Response, Error> {
+    let RegeneratedHead {
+        asked,
+        mut draft,
+        draft_geometry,
+        unsolved,
+        failed,
+        touched,
+        merged,
+        placements,
+        bodies,
+        parts: part_bodies,
+        faces,
+        closed,
+        tangents,
+        snaps,
+        corners,
+        inspected,
+        relinked,
+        broken,
+    } = head;
+    let revisions = (
+        draft.as_ref().map(|draft| draft.revision),
+        inspected.as_ref().map(|inspected| inspected.revision),
+    );
+    if revisions != (asked.draft, asked.inspect) {
+        return Err(Error::Revisions);
+    }
+    check_merged(&merged)?;
+    if !draft.as_ref().is_none_or(Drafted::fits) {
+        return Err(Error::Reference);
+    }
+    let placements = decode_placements(&placements)?;
+    let bodies = decode_bodies(&bodies)?;
+    let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
+    listed.sort_unstable();
+    if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
+        return Err(Error::UnlistedBody);
+    }
+    let (mesh, sketches, tables) = decode_model(parts)?;
+    let parts = PickingParts {
+        bodies: part_bodies,
+        tables: FaceEdgeTables {
+            faces,
+            closed,
+            tangents,
+            snaps,
+            corners,
+        },
+    };
+    let picking = Picking::from_parts(parts, &mesh).map_err(Error::Picking)?;
+    let geometry = |parts: Option<GeometryParts>| {
+        (parts.map(|parts| ErrorGeometry::from_parts(parts, &mesh, &picking)))
+            .transpose()
+            .map(|geometry| geometry.map(Arc::new))
+            .map_err(Error::Geometry)
+    };
+    let failed = (failed.into_iter())
+        .map(|(feature, message, parts)| {
+            Ok(FeatureFailure {
+                feature,
+                message,
+                geometry: geometry(parts)?,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let draft_geometry = geometry(draft_geometry)?;
+    if let Some(draft) = &mut draft {
+        draft.geometry = draft_geometry;
+    }
+    Ok(Response::Regenerated {
+        asked,
+        draft: draft.map(Box::new),
+        inspected: inspected.map(|inspected| Box::new(inspected.checked(Some((&mesh, &picking))))),
+        mesh: Arc::new(mesh),
+        picking: Arc::new(picking),
+        tables: Arc::new(tables),
+        sketches: Arc::new(sketches),
+        unsolved,
+        failed,
+        touched,
+        merged,
+        placements,
+        bodies,
+        relinked: (relinked.into_iter())
+            .map(|(feature, sketch)| (feature, Arc::new(sketch)))
+            .collect(),
+        broken,
+    })
+}
+
 /// Checks the merged bodies of a [`Head::Regenerated`]: each consumed
 /// body is listed once, and none holds another (a holder has a solid, a
 /// consumed body none).
@@ -856,46 +843,6 @@ fn check_merged(merged: &[(BodyId, BodyId)]) -> Result<(), Error> {
         Err(Error::Merged)
     } else {
         Ok(())
-    }
-}
-
-/// Checks the axis or plane of a draft, if it has one: finite, every
-/// coordinate within [`MAX_REFERENCE`](crate::MAX_REFERENCE) of zero, its direction not zero.
-fn check_reference(draft: Option<&Drafted>) -> Result<(), Error> {
-    let Some(reference) = draft.and_then(|draft| draft.reference.as_deref()) else {
-        return Ok(());
-    };
-    if crate::reference_fits(reference) {
-        Ok(())
-    } else {
-        Err(Error::Reference)
-    }
-}
-
-/// Checks the points and directions of an align's draft, if it has
-/// them, as [`AlignDatums::fits`](crate::AlignDatums::fits) says.
-fn check_datums(draft: Option<&Drafted>) -> Result<(), Error> {
-    match draft.and_then(|draft| draft.datums.as_deref()) {
-        Some(datums) if !datums.fits() => Err(Error::Reference),
-        _ => Ok(()),
-    }
-}
-
-/// Checks what a scale's draft found, if it has it, as
-/// [`ScaleFound::fits`](crate::ScaleFound::fits) says.
-fn check_scale(draft: Option<&Drafted>) -> Result<(), Error> {
-    match draft.and_then(|draft| draft.scale.as_deref()) {
-        Some(found) if !found.fits() => Err(Error::Reference),
-        _ => Ok(()),
-    }
-}
-
-/// Checks where a sweep's draft found its handles, if it has that, as
-/// [`SweepFound::fits`](crate::SweepFound::fits) says.
-fn check_sweep(draft: Option<&Drafted>) -> Result<(), Error> {
-    match draft.and_then(|draft| draft.sweep.as_deref()) {
-        Some(found) if !found.fits() => Err(Error::Reference),
-        _ => Ok(()),
     }
 }
 

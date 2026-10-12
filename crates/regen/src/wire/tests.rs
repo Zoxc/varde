@@ -24,7 +24,7 @@ fn regenerate(editor: &Editor) -> Request {
 /// The head of a regenerated `generation` whose model is [`triangle`]:
 /// one part, of the one body it lists, one face and one crease.
 fn regenerated(generation: u64) -> Head {
-    Head::Regenerated {
+    Head::Regenerated(RegeneratedHead {
         asked: Asked {
             sight: None,
             generation: generation.into(),
@@ -50,7 +50,7 @@ fn regenerated(generation: u64) -> Head {
         inspected: None,
         broken: Vec::new(),
         relinked: Vec::new(),
-    }
+    })
 }
 
 /// The face of [`triangle`]'s one triangle: a plane's.
@@ -425,7 +425,7 @@ fn request_leaving_out_a_sketch_round_trips() {
 fn untested_and_touching_nothing_stay_apart() {
     for touched in [None, Some(Vec::new()), Some(vec![BodyId::NEW])] {
         let mut head = regenerated(1);
-        if let Head::Regenerated { asked, draft, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { asked, draft, .. }) = &mut head {
             asked.draft = Some(3);
             *draft = Some(Drafted {
                 revision: 3,
@@ -439,7 +439,9 @@ fn untested_and_touching_nothing_stay_apart() {
                 sweep: None,
             });
         }
-        let Head::Regenerated { draft, .. } = Head::decode(&head.encode()).unwrap() else {
+        let Head::Regenerated(RegeneratedHead { draft, .. }) =
+            Head::decode(&head.encode()).unwrap()
+        else {
             panic!("a regenerated head");
         };
         assert_eq!(draft.unwrap().touched, touched);
@@ -528,7 +530,7 @@ fn draft_references_must_be_lines_within_bounds() {
         [[0.0; 3], [0.0, f64::INFINITY, 0.0]],
     ] {
         let mut head = regenerated(5);
-        if let Head::Regenerated { asked, draft, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { asked, draft, .. }) = &mut head {
             asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
@@ -552,7 +554,7 @@ fn draft_references_must_be_lines_within_bounds() {
     // A good one goes as it was.
     let good = [[1.0, 2.0, 3.0], [0.0, -2.0, 0.5]];
     let mut head = regenerated(5);
-    if let Head::Regenerated { asked, draft, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { asked, draft, .. }) = &mut head {
         asked.draft = Some(1);
         *draft = Some(Drafted {
             revision: 1,
@@ -601,7 +603,7 @@ fn draft_datums_must_be_within_bounds() {
     };
     let head_with = |datums: AlignDatums| {
         let mut head = regenerated(5);
-        if let Head::Regenerated { asked, draft, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { asked, draft, .. }) = &mut head {
             asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
@@ -655,7 +657,7 @@ fn a_scale_draft_s_findings_must_be_within_bounds() {
     };
     let head_with = |found: ScaleFound| {
         let mut head = regenerated(5);
-        if let Head::Regenerated { asked, draft, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { asked, draft, .. }) = &mut head {
             asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
@@ -732,7 +734,7 @@ fn a_sweep_draft_s_handles_must_be_within_bounds() {
     use crate::SweepFound;
     let head_with = |found: SweepFound| {
         let mut head = regenerated(5);
-        if let Head::Regenerated { asked, draft, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { asked, draft, .. }) = &mut head {
             asked.draft = Some(1);
             *draft = Some(Drafted {
                 revision: 1,
@@ -787,7 +789,7 @@ fn bodies_boxes_must_be_boxes() {
         [[0.0; 3], [f32::INFINITY, 1.0, 1.0]],
     ] {
         let mut head = regenerated(4);
-        if let Head::Regenerated { bodies, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { bodies, .. }) = &mut head {
             bodies.extend([(body, [[0.0; 3], [1.0; 3]]), (body, bad)]);
         }
         let Response::Failed {
@@ -1073,7 +1075,7 @@ fn merged_bodies_are_each_consumed_once_and_hold_none() {
     let [a, b, c] = ids();
     for bad in [vec![(a, b), (a, c)], vec![(a, b), (b, c)], vec![(a, a)]] {
         let mut head = regenerated(5);
-        if let Head::Regenerated { merged, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { merged, .. }) = &mut head {
             *merged = bad;
         }
         let Response::Failed {
@@ -1089,7 +1091,7 @@ fn merged_bodies_are_each_consumed_once_and_hold_none() {
     }
     // Two consumed into one holder is fine.
     let mut head = regenerated(6);
-    if let Head::Regenerated { merged, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { merged, .. }) = &mut head {
         *merged = vec![(b, a), (c, a)];
     }
     let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
@@ -1811,7 +1813,7 @@ fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
 /// `regenerated(1)` with its faces and closed flags changed by `change`.
 fn tables(change: impl FnOnce(&mut Vec<PickFace>, &mut Vec<bool>)) -> Head {
     let mut head = regenerated(1);
-    if let Head::Regenerated { faces, closed, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { faces, closed, .. }) = &mut head {
         change(faces, closed);
     }
     head
@@ -1834,9 +1836,9 @@ fn picking_must_have_one_entry_per_part_face_and_edge() {
         |_, tangents| tangents.clear(),
     ] {
         let mut head = regenerated(1);
-        if let Head::Regenerated {
+        if let Head::Regenerated(RegeneratedHead {
             parts, tangents, ..
-        } = &mut head
+        }) = &mut head
         {
             change(parts, tangents);
         }
@@ -2011,7 +2013,7 @@ fn picked_faces_must_hold_sound_summaries_and_aliases() {
 #[test]
 fn parts_must_be_of_listed_bodies() {
     let mut head = regenerated(1);
-    if let Head::Regenerated { bodies, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { bodies, .. }) = &mut head {
         bodies.clear();
     }
     assert_eq!(refused(&head, &triangle()), Error::UnlistedBody.to_string());
@@ -2126,7 +2128,8 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
         });
     })
     .encode();
-    let Head::Regenerated { faces, parts, .. } = Head::decode(&head).unwrap() else {
+    let Head::Regenerated(RegeneratedHead { faces, parts, .. }) = Head::decode(&head).unwrap()
+    else {
         unreachable!()
     };
     let body = postcard::to_stdvec(&parts[0]).unwrap();
@@ -2509,7 +2512,7 @@ fn hostile_placements_are_refused() {
         vec![(a, good), (b, good), (a, good)],
     ] {
         let mut head = regenerated(7);
-        if let Head::Regenerated { placements, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { placements, .. }) = &mut head {
             *placements = bad.clone();
         }
         let Response::Failed {
@@ -2527,7 +2530,7 @@ fn hostile_placements_are_refused() {
     let mut head = regenerated(8);
     let mut far = good;
     far[0] = [max, -max, max];
-    if let Head::Regenerated { placements, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { placements, .. }) = &mut head {
         *placements = vec![(a, far), (b, good)];
     }
     let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
@@ -2639,9 +2642,9 @@ fn a_broken_measure_is_answered_as_an_error() {
         ),
     ] {
         let mut head = regenerated(1);
-        if let Head::Regenerated {
+        if let Head::Regenerated(RegeneratedHead {
             asked, inspected, ..
-        } = &mut head
+        }) = &mut head
         {
             asked.inspect = Some(2);
             *inspected = Some(Box::new(sent.clone()));
@@ -2677,9 +2680,9 @@ fn face_measure(area: f64) -> crate::Measure {
 #[test]
 fn a_refused_model_keeps_its_measure_s_revision() {
     let mut head = regenerated(1);
-    if let Head::Regenerated {
+    if let Head::Regenerated(RegeneratedHead {
         asked, inspected, ..
-    } = &mut head
+    }) = &mut head
     {
         asked.inspect = Some(8);
         *inspected = Some(Box::new(crate::Inspected {
@@ -2724,7 +2727,7 @@ fn fan(split: bool) -> (Head, Vec<Vec<u8>>) {
     };
     let parts = model_parts(&answer(mesh, bodies.clone()));
     let mut head = regenerated(1);
-    if let Head::Regenerated {
+    if let Head::Regenerated(RegeneratedHead {
         faces,
         corners,
         closed,
@@ -2733,7 +2736,7 @@ fn fan(split: bool) -> (Head, Vec<Vec<u8>>) {
         parts,
         bodies: boxes,
         ..
-    } = &mut head
+    }) = &mut head
     {
         for part in [PartKey::EndCap, PartKey::Side { curve: 0 }] {
             let mut next = face();
@@ -2776,7 +2779,7 @@ fn picked_corners_are_three_faces_of_one_part() {
     ];
     for change in changes {
         let mut head = head.clone();
-        if let Head::Regenerated { corners, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { corners, .. }) = &mut head {
             change(corners);
         }
         assert_eq!(refused(&head, &parts), corner);
@@ -2786,7 +2789,7 @@ fn picked_corners_are_three_faces_of_one_part() {
     assert_eq!(refused(&split, &split_parts), corner);
     // More corners than vertices.
     let mut more = head.clone();
-    if let Head::Regenerated { corners, .. } = &mut more {
+    if let Head::Regenerated(RegeneratedHead { corners, .. }) = &mut more {
         let first = corners[0];
         corners.extend([first; 4]);
     }
@@ -2797,7 +2800,7 @@ fn picked_corners_are_three_faces_of_one_part() {
 fn snap_points_are_within_bounds_and_only_on_chains() {
     let snap = |at: [f64; 3]| {
         let mut head = two_faces(false);
-        if let Head::Regenerated { snaps, .. } = &mut head {
+        if let Head::Regenerated(RegeneratedHead { snaps, .. }) = &mut head {
             snaps[0] = Some(at);
         }
         head
@@ -2819,7 +2822,7 @@ fn snap_points_are_within_bounds_and_only_on_chains() {
     assert_eq!(refused(&snap([0.0, 2e8, 0.0]), &two_triangles(false)), bad);
     // A crease has none.
     let mut crease = regenerated(1);
-    if let Head::Regenerated { snaps, .. } = &mut crease {
+    if let Head::Regenerated(RegeneratedHead { snaps, .. }) = &mut crease {
         snaps[0] = Some([0.0; 3]);
     }
     assert_eq!(refused(&crease, &triangle()), bad);
@@ -3188,11 +3191,11 @@ fn bad_failure_geometry_fails_its_generation() {
     let parts = model_parts(&response);
     let changed = |change: &dyn Fn(&mut GeometryParts)| {
         let mut head = Head::decode(&head).unwrap();
-        if let Head::Regenerated {
+        if let Head::Regenerated(RegeneratedHead {
             failed,
             draft_geometry,
             ..
-        } = &mut head
+        }) = &mut head
         {
             change(failed[0].2.as_mut().unwrap());
             change(draft_geometry.as_mut().unwrap());
@@ -3210,7 +3213,7 @@ fn bad_failure_geometry_fails_its_generation() {
     assert!(changed(&|g| g.indices[0] = 99).contains("geometry"));
     // The draft's alone is checked too.
     let mut head = Head::decode(&head).unwrap();
-    if let Head::Regenerated { draft_geometry, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { draft_geometry, .. }) = &mut head {
         draft_geometry.as_mut().unwrap().line_ends = vec![1];
     }
     assert!(refused(&head, &parts).contains("geometry"));
@@ -3829,11 +3832,11 @@ fn relinking(sketches: Vec<Sketch>, broken: usize) -> Head {
         .add_link(varde_sketch::LinkKind::Project)
         .unwrap();
     let mut head = regenerated(1);
-    if let Head::Regenerated {
+    if let Head::Regenerated(RegeneratedHead {
         relinked,
         broken: marks,
         ..
-    } = &mut head
+    }) = &mut head
     {
         *relinked = (sketches.into_iter())
             .map(|sketch| (feature, sketch))
@@ -4282,7 +4285,7 @@ fn client_measure_round_trip_and_refusals() {
 #[test]
 fn a_model_with_other_revisions_than_asked_fails() {
     let mut head = regenerated(1);
-    if let Head::Regenerated { inspected, .. } = &mut head {
+    if let Head::Regenerated(RegeneratedHead { inspected, .. }) = &mut head {
         *inspected = Some(Box::new(crate::Inspected {
             revision: 8,
             first: Err("face not found".to_owned()),
