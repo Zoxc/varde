@@ -170,6 +170,8 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
     };
     let mut system = System::toward(sketch, Fixing::Constants, &starts);
     let mut weights = vec![1.0; system.values.len()];
+    // The variables the drag sets, which pick the components solved.
+    let mut dragged = vec![false; system.values.len()];
     let dragging = matches!(goal, Goal::Drag { .. });
     let mut scale = scale(sketch);
     if let Goal::Drag { points, radii } = goal {
@@ -198,6 +200,7 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
             if let Slot::Var(var) = slot {
                 system.values[var] = target;
                 weights[var] = DRAG_WEIGHT;
+                dragged[var] = true;
                 scale = scale.max(target.abs());
             }
         }
@@ -219,7 +222,7 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
     }
     let mut spent = 0;
     for component in &components {
-        if dragging && component.vars.iter().all(|&var| weights[var] == 1.0) {
+        if dragging && !component.vars.iter().any(|&var| dragged[var]) {
             continue;
         }
         let mut solver = Solver {
