@@ -287,14 +287,19 @@ impl PickIndex {
             Some((Picked::Face(self.triangle_face(triangle)?), ray.at(t)))
         };
         let (target, at) = vertex().or_else(edge).or_else(face)?;
-        let pick = Pick {
+        self.pick_of(target, at)
+    }
+
+    /// `target` picked at `at`, unsnapped, if it's of a body.
+    fn pick_of(&self, target: Picked, at: DVec3) -> Option<Pick> {
+        let body = self.body(target)?;
+        Some(Pick {
             model: self.model,
             target,
-            body: self.body(target)?,
+            body,
             at,
             snap: None,
-        };
-        Some(pick)
+        })
     }
 
     /// Whether the model hides the world point `point` from `camera` in
@@ -345,31 +350,19 @@ impl PickIndex {
             found.sort_by(|a, b| order(a, b).then(a.2.cmp(&b.2)));
             found
         };
-        let place = |distance: f64| (distance / SAME_PLACE).round();
         let mut vertices = Vec::new();
         if picks == Picks::All {
-            let grown = reach(&projector, pixels);
-            self.tables.vertices().near(&ray, grown, |corner| {
-                let point = self.corner_point(corner)?;
-                let (point, _) = projector.in_front(point, point)?;
-                let distance = projector.show(point).distance(at);
-                if distance.is_nan() || distance > pixels {
-                    return None;
-                }
-                let depth = projector.world_depth(point);
-                vertices.push((0.0, depth, Picked::Vertex(corner), point));
-                Some(())
-            });
+            vertices = (self.vertices_near(&projector, &ray, at, pixels).into_iter())
+                .map(|(_, depth, corner, point)| (0.0, depth, Picked::Vertex(corner), point))
+                .collect();
         }
         let mut edges = Vec::new();
         if picks != Picks::Faces {
-            let grown = reach(&projector, pixels);
-            self.tables.segments().near(&ray, grown, |start| {
-                let (_, point) = self.segment_near(&projector, start, at, pixels)?;
-                let edge = Picked::Edge(self.segment_edge(start));
-                edges.push((0.0, projector.world_depth(point), edge, point));
-                Some(())
-            });
+            edges = (self.segments_near(&projector, &ray, at, pixels).into_iter())
+                .map(|(_, depth, start, point)| {
+                    (0.0, depth, Picked::Edge(self.segment_edge(start)), point)
+                })
+                .collect();
         }
         let mut faces = Vec::new();
         if picks != Picks::Edges {
@@ -389,22 +382,14 @@ impl PickIndex {
                 })?;
                 let face = Picked::Face(self.triangle_face(triangle)?);
                 let depth = projector.world_depth(point);
-                faces.push((place(distance), depth, face, point));
+                faces.push((same_place(distance), depth, face, point));
                 Some(())
             });
         }
         [vertices, edges, faces]
             .into_iter()
             .flat_map(nearest)
-            .filter_map(|(_, _, target, at)| {
-                Some(Pick {
-                    model: self.model,
-                    target,
-                    body: self.body(target)?,
-                    at,
-                    snap: None,
-                })
-            })
+            .filter_map(|(_, _, target, at)| self.pick_of(target, at))
             .take(most)
             .collect()
     }
@@ -549,18 +534,12 @@ impl PickIndex {
     /// where triangles share them.
     fn body_points<'a>(&'a self, bodies: &'a [BodyId]) -> impl Iterator<Item = Vec3> + 'a {
         let indices = self.mesh.indices();
-        let ends = self.mesh.face_ends();
         (bodies.iter())
             .flat_map(move |&body| self.body_faces(body))
             .flat_map(move |face| {
-                let face = face as usize;
-                let start = if face == 0 {
-                    0
-                } else {
-                    ends[face - 1] as usize
-                };
-                let end = ends.get(face).map_or(start, |&end| end as usize);
-                indices.get(start..end).unwrap_or_default()
+                (self.mesh.face_indices(face as usize))
+                    .and_then(|range| indices.get(range))
+                    .unwrap_or_default()
             })
             .map(|&vertex| position(&self.mesh, vertex))
     }
@@ -984,18 +963,31 @@ impl PickIndex {
         ray: &Ray,
         at: DVec2,
     ) -> Option<(u32, DVec3)> {
+        let near = self.vertices_near(projector, ray, at, VERTEX_REACH);
+        self.nearest_shown(camera, projector, near)
+    }
+
+    /// The vertices showing within `pixels` of `at`, hidden or not, as
+    /// how far from it they show, how deep, their corner and where.
+    fn vertices_near(
+        &self,
+        projector: &Projector,
+        ray: &Ray,
+        at: DVec2,
+        pixels: f64,
+    ) -> Vec<(f64, f64, u32, DVec3)> {
         let mut near = Vec::new();
-        (self.tables.vertices()).near(ray, reach(projector, VERTEX_REACH), |corner| {
+        (self.tables.vertices()).near(ray, reach(projector, pixels), |corner| {
             let point = self.corner_point(corner)?;
             let (point, _) = projector.in_front(point, point)?;
             let distance = projector.show(point).distance(at);
-            if distance.is_nan() || distance > VERTEX_REACH {
+            if distance.is_nan() || distance > pixels {
                 return None;
             }
             near.push((distance, projector.world_depth(point), corner, point));
             Some(())
         });
-        self.nearest_shown(camera, projector, near)
+        near
     }
 
     /// The edge showing nearest `at` within [`EDGE_REACH`] that nothing
@@ -1008,14 +1000,28 @@ impl PickIndex {
         ray: &Ray,
         at: DVec2,
     ) -> Option<(u32, DVec3)> {
+        let near = self.segments_near(projector, ray, at, EDGE_REACH);
+        let (start, point) = self.nearest_shown(camera, projector, near)?;
+        Some((self.segment_edge(start), point))
+    }
+
+    /// The edge segments showing within `pixels` of `at`, hidden or not,
+    /// as how far from it they show, how deep their point showing nearest
+    /// it is, where they start and that point.
+    fn segments_near(
+        &self,
+        projector: &Projector,
+        ray: &Ray,
+        at: DVec2,
+        pixels: f64,
+    ) -> Vec<(f64, f64, u32, DVec3)> {
         let mut near = Vec::new();
-        (self.tables.segments()).near(ray, reach(projector, EDGE_REACH), |start| {
-            let (distance, point) = self.segment_near(projector, start, at, EDGE_REACH)?;
+        (self.tables.segments()).near(ray, reach(projector, pixels), |start| {
+            let (distance, point) = self.segment_near(projector, start, at, pixels)?;
             near.push((distance, projector.world_depth(point), start, point));
             Some(())
         });
-        let (start, point) = self.nearest_shown(camera, projector, near)?;
-        Some((self.segment_edge(start), point))
+        near
     }
 
     /// How far from `at` the edge segment starting at `start` shows, and
@@ -1047,9 +1053,8 @@ impl PickIndex {
         projector: &Projector,
         mut near: Vec<(f64, f64, u32, DVec3)>,
     ) -> Option<(u32, DVec3)> {
-        let place = |distance: f64| (distance / SAME_PLACE).round();
         near.sort_by(|a, b| {
-            (place(a.0).total_cmp(&place(b.0)))
+            (same_place(a.0).total_cmp(&same_place(b.0)))
                 .then(a.1.total_cmp(&b.1))
                 .then(a.2.cmp(&b.2))
         });
@@ -1158,6 +1163,12 @@ impl Ray {
     fn at(&self, t: f64) -> DVec3 {
         self.origin + self.direction * t
     }
+}
+
+/// `distance` in pixels, rounded to [`SAME_PLACE`]: items as far from the
+/// cursor by it are in the same place.
+fn same_place(distance: f64) -> f64 {
+    (distance / SAME_PLACE).round()
 }
 
 /// The mesh's vertex `index`, or the origin if it has none.
