@@ -7,7 +7,7 @@
 //! ([`Seen`], an `Arc` of the document; `Arc::ptr_eq` short-cuts no
 //! change) with the design now, by id within a lineage, in the tools'
 //! terms. Walked along the editor's history where it can be: the
-//! client's own steps on it ([`Waiting::steps`], by after-revision) split
+//! client's own steps on it ([`ClientHistory::steps`], by after-revision) split
 //! it into runs of the user's, each diffed alone, so the client's edits
 //! aren't reported back. The user's Undo and Redo of the session's edits
 //! are said by name. A design of another lineage (or another design
@@ -18,7 +18,7 @@
 //! not changed. The panel's rows leave the reverts made from it out:
 //! each is a step of its own there, as the client's are.
 //!
-//! [`Waiting::steps`]: super::waiting::Waiting::steps
+//! [`ClientHistory::steps`]: super::waiting::ClientHistory::steps
 
 use std::collections::BTreeMap;
 
@@ -97,7 +97,7 @@ pub(crate) struct Changes {
 /// `session` of the server `start` (whose own edits are told apart).
 pub(crate) fn since(doc: &Doc, seen: &Seen, start: u64, session: &SessionId) -> Changes {
     let mut changes = said(doc, seen, start, session, false).done();
-    let reverts = (doc.mcp.reverted.iter())
+    let reverts = (doc.mcp.history.reverted.iter())
         .any(|made| doc.editor.is_done(made.after) && !seen.ancestors.contains(&made.after));
     changes.panel = match (&changes.value, reverts) {
         (None, _) => Vec::new(),
@@ -119,14 +119,14 @@ fn said(doc: &Doc, seen: &Seen, start: u64, session: &SessionId, panel: bool) ->
         return said;
     }
     // The session's edits the user undid or redid.
-    for step in (doc.mcp.steps.iter()).filter(|step| step.of(start, session)) {
+    for step in (doc.mcp.history.steps.iter()).filter(|step| step.of(start, session)) {
         let done = editor.is_done(step.after);
         if done != step.told_done {
             said.step(step, done);
         }
     }
     // The reverts made from the panel since, named as such.
-    for made in &doc.mcp.reverted {
+    for made in &doc.mcp.history.reverted {
         if !panel && editor.is_done(made.after) && !seen.ancestors.contains(&made.after) {
             said.reverted.push(made.to.clone());
             said.lines.push(format!("reverted to {}", made.to));
@@ -141,8 +141,18 @@ fn said(doc: &Doc, seen: &Seen, start: u64, session: &SessionId, panel: bool) ->
     let revision = followed(doc, seen.revision);
     let history: Vec<_> = editor.history().collect();
     let client = |revision: Revision| {
-        doc.mcp.steps.iter().any(|step| step.after == revision)
-            || (panel && doc.mcp.reverted.iter().any(|made| made.after == revision))
+        doc.mcp
+            .history
+            .steps
+            .iter()
+            .any(|step| step.after == revision)
+            || (panel
+                && doc
+                    .mcp
+                    .history
+                    .reverted
+                    .iter()
+                    .any(|made| made.after == revision))
     };
     // Amended or undone by the client since, from the state it came to.
     let followed_to = editor.state_of(revision);
@@ -179,16 +189,16 @@ fn said(doc: &Doc, seen: &Seen, start: u64, session: &SessionId, panel: bool) ->
 }
 
 /// The state `revision` came to through the links' amends since and the
-/// client's own undos (`Waiting::undos`, while it's still undone): what
+/// client's own undos (`ClientHistory::undos`, while it's still undone): what
 /// a session that last saw it is told the user's changes from.
 fn followed(doc: &Doc, mut revision: Revision) -> Revision {
     // Each step goes to another state; bounded all the same.
     for _ in 0..2 * super::waiting::STEPS + 1 {
-        revision = doc.mcp.amended_to(revision);
+        revision = doc.mcp.history.amended_to(revision);
         if doc.editor.is_done(revision) {
             break;
         }
-        match (doc.mcp.undos.iter()).find(|(from, _)| *from == revision) {
+        match (doc.mcp.history.undos.iter()).find(|(from, _)| *from == revision) {
             Some(&(_, to)) => revision = to,
             None => break,
         }

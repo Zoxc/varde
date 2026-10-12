@@ -170,19 +170,9 @@ pub(crate) struct Waiting {
     /// The popup asking the user to finish what they have open before an
     /// edit, while it's up (`ask.rs`).
     pub(crate) ask: Option<super::ask::Ask>,
-    /// The client edits applied to the design, oldest first, at most
-    /// [`STEPS`]: what tells the client's steps on the history from the
-    /// user's (`changes.rs`).
-    pub(crate) steps: std::collections::VecDeque<ClientStep>,
-    /// The states the links' amend replaced, each with the one it
-    /// replaced it with, oldest first, at most [`STEPS`]: what follows a
-    /// state a session last saw that's since been amended to where it is
-    /// on the history (`changes.rs`).
-    pub(crate) amends: std::collections::VecDeque<(Revision, Revision)>,
-    /// The states a client's `undo` took back, each with the state it
-    /// went back to, oldest first, at most [`STEPS`]: what follows a
-    /// state a session last saw past its own undo (`changes.rs`).
-    pub(crate) undos: std::collections::VecDeque<(Revision, Revision)>,
+    /// The client's edits on the design's history, and the links' amends,
+    /// the client's undos and the panel's reverts since.
+    pub(crate) history: ClientHistory,
     /// The pictures `render` calls wait for the viewport to draw, as the
     /// table had them after the last message ([`Waiting::refresh_renders`]).
     renders: Vec<Arc<PreviewRequest>>,
@@ -192,13 +182,80 @@ pub(crate) struct Waiting {
     /// The dialog asking before a revert from the panel that undoes
     /// later changes, while it's up (`revert.rs`).
     pub(crate) revert_ask: Option<super::revert::RevertAsk>,
-    /// The reverts made from the panel, oldest first, at most [`STEPS`]:
-    /// for the client's next result to name them (`changes.rs`), and for
-    /// what's taken back (`Doc::in_effect`).
-    pub(crate) reverted: std::collections::VecDeque<super::revert::Made>,
     /// Where the Timeline is to scroll to, a share of the way down, for
     /// the panel's Show in Timeline: taken by the app after the message.
     pub(crate) scroll: Option<f32>,
+}
+
+/// The client's edits on the design's history and what moved them since:
+/// what tells the client's steps from the user's (`changes.rs`), each list
+/// oldest first and at most [`STEPS`] long.
+#[derive(Debug, Default)]
+pub(crate) struct ClientHistory {
+    /// The client edits applied to the design.
+    pub(crate) steps: std::collections::VecDeque<ClientStep>,
+    /// The states the links' amend replaced, each with the one it
+    /// replaced it with: what follows a state a session last saw that's
+    /// since been amended to where it is on the history.
+    pub(crate) amends: std::collections::VecDeque<(Revision, Revision)>,
+    /// The states a client's `undo` took back, each with the state it
+    /// went back to: what follows a state a session last saw past its
+    /// own undo.
+    pub(crate) undos: std::collections::VecDeque<(Revision, Revision)>,
+    /// The reverts made from the panel: for the client's next result to
+    /// name them, and for what's taken back (`Doc::in_effect`).
+    pub(crate) reverted: std::collections::VecDeque<super::revert::Made>,
+}
+
+impl ClientHistory {
+    /// A client's `undo` took the state `from` back to `to`: a session
+    /// that last saw `from` is to see the client's undo as its own, not
+    /// the user's (`changes.rs`).
+    pub(crate) fn undone_to(&mut self, from: Revision, to: Revision) {
+        push_bounded(&mut self.undos, STEPS, (from, to));
+    }
+
+    /// The state `revision` became through the links' amends since.
+    pub(crate) fn amended_to(&self, mut revision: Revision) -> Revision {
+        while let Some(&(_, next)) = (self.amends.iter()).find(|(before, _)| *before == revision) {
+            revision = next;
+        }
+        revision
+    }
+
+    /// The links' amend replaced the state `before` with another, `now`:
+    /// a step that had made `before` has made `now`.
+    fn amended(&mut self, before: Revision, now: Revision) {
+        push_bounded(&mut self.amends, STEPS, (before, now));
+        for step in &mut self.steps {
+            if step.after == before {
+                step.after = now;
+            }
+        }
+    }
+
+    /// The client's edit `call`, from `from`, was applied, making
+    /// `after`, its result naming the feature numbered `feature`, if
+    /// any: kept as the client's step.
+    pub(crate) fn applied(
+        &mut self,
+        from: &From,
+        call: &Call,
+        after: Revision,
+        feature: Option<u64>,
+    ) {
+        let step = ClientStep {
+            start: from.start,
+            session: from.session.clone(),
+            after,
+            label: label(call),
+            shown: super::text::tool(call).with(&super::text::plain(&super::text::args(call))),
+            told_done: true,
+            undone: false,
+            feature,
+        };
+        push_bounded(&mut self.steps, STEPS, step);
+    }
 }
 
 /// The design before a client's edit, kept with it while it waits on
@@ -212,7 +269,7 @@ impl PartialEq for Before {
     }
 }
 
-/// The most client edits [`Waiting::steps`] keeps: as many as the undo
+/// The most client edits [`ClientHistory::steps`] keeps: as many as the undo
 /// history holds, so a step on it is known for the client's while it's
 /// there.
 pub(crate) const STEPS: usize = 200;
@@ -604,13 +661,6 @@ impl Waiting {
         (self.calls.iter()).any(|waiter| matches!(waiter.call, Call::Undo { .. }))
     }
 
-    /// A client's `undo` took the state `from` back to `to`: a session
-    /// that last saw `from` is to see the client's undo as its own, not
-    /// the user's (`changes.rs`).
-    pub(crate) fn undone_to(&mut self, from: Revision, to: Revision) {
-        push_bounded(&mut self.undos, STEPS, (from, to));
-    }
-
     /// What the first edit of `from`'s session waiting on the popup is,
     /// if one does: its tool and arguments, and whom it waits on.
     fn pending_edit(&self, from: &From) -> Option<String> {
@@ -772,7 +822,7 @@ impl Waiting {
                 // What an undo took back, through the links' amends since
                 // (a Redo brings back the state they amended).
                 for undone in undid.iter_mut().flat_map(|undid| &mut undid.afters) {
-                    *undone = self.amended_to(*undone);
+                    *undone = self.history.amended_to(*undone);
                 }
                 Some(((before.0.clone(), *after), undid.clone(), *feature))
             }
@@ -872,26 +922,13 @@ impl Waiting {
         done
     }
 
-    /// The state `revision` became through the links' amends since.
-    pub(crate) fn amended_to(&self, mut revision: Revision) -> Revision {
-        while let Some(&(_, next)) = (self.amends.iter()).find(|(before, _)| *before == revision) {
-            revision = next;
-        }
-        revision
-    }
-
     /// The links' amend replaced the state `before` with `now`: an edit
     /// waiting that had made `before` has made `now`.
     pub(crate) fn amended(&mut self, before: Revision, now: Revision) {
         if before == now {
             return;
         }
-        push_bounded(&mut self.amends, STEPS, (before, now));
-        for step in &mut self.steps {
-            if step.after == before {
-                step.after = now;
-            }
-        }
+        self.history.amended(before, now);
         for waiter in &mut self.calls {
             if let Wait::Regen { after, .. } = &mut waiter.waits
                 && *after == before
@@ -899,29 +936,6 @@ impl Waiting {
                 *after = now;
             }
         }
-    }
-
-    /// The client's edit `call`, from `from`, was applied, making
-    /// `after`, its result naming the feature numbered `feature`, if
-    /// any: kept as the client's step.
-    pub(crate) fn applied(
-        &mut self,
-        from: &From,
-        call: &Call,
-        after: Revision,
-        feature: Option<u64>,
-    ) {
-        let step = ClientStep {
-            start: from.start,
-            session: from.session.clone(),
-            after,
-            label: label(call),
-            shown: super::text::tool(call).with(&super::text::plain(&super::text::args(call))),
-            told_done: true,
-            undone: false,
-            feature,
-        };
-        push_bounded(&mut self.steps, STEPS, step);
     }
 
     /// Takes the pictures waited for into [`Waiting::renders`]: what the
@@ -1106,7 +1120,7 @@ impl Doc {
             if let Wait::Regen { after, undid, .. } = &waiter.waits {
                 known.insert(*after, self.in_effect(*after));
                 for undone in undid.iter().flat_map(|undid| &undid.afters) {
-                    let undone = self.mcp.amended_to(*undone);
+                    let undone = self.mcp.history.amended_to(*undone);
                     known.insert(undone, self.in_effect(undone));
                 }
             }

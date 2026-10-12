@@ -394,7 +394,7 @@ impl Mcp {
                     timeline: edit.feature.is_some(),
                     here: offered(&edit.after)
                         && doc.is_some_and(|doc| {
-                            doc.mcp.amended_to(edit.after_revision) != doc.editor.revision()
+                            doc.mcp.history.amended_to(edit.after_revision) != doc.editor.revision()
                                 && !edit
                                     .after
                                     .as_ref()
@@ -487,7 +487,7 @@ impl Mcp {
     /// Takes the design now as what `from`'s session saw last: its
     /// reply carrying the user's changes ([`Mcp::tell`]) was taken.
     fn told(&mut self, doc: &mut Doc, from: &waiting::From) {
-        for step in &mut doc.mcp.steps {
+        for step in &mut doc.mcp.history.steps {
             if step.of(from.start, &from.session) {
                 step.told_done = doc.editor.is_done(step.after);
             }

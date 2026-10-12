@@ -39,7 +39,7 @@ pub(crate) const NOTHING_OF_YOURS: &str = "this session has made no edit of its 
 /// regeneration answered.
 pub(crate) const REDONE: &str = "undone, then redone by the user";
 
-/// What an undo takes back: indices into `Waiting::steps`, newest first.
+/// What an undo takes back: indices into `ClientHistory::steps`, newest first.
 #[derive(Debug)]
 pub(super) struct Undoing {
     steps: Vec<usize>,
@@ -52,12 +52,12 @@ pub(super) struct Undoing {
 pub(super) fn plan(doc: &Doc, steps: usize, from: &From) -> Result<Undoing, Refused> {
     let mcp = &doc.mcp;
     let mine = |step: &ClientStep| step.of(from.start, &from.session) && !step.undone;
-    let newest = (mcp.steps.iter())
+    let newest = (mcp.history.steps.iter())
         .rposition(mine)
         .ok_or_else(|| Refused::not_applied(NOTHING_OF_YOURS))?;
     // The current state, then the undo history's, newest first.
     let history: Vec<Revision> = doc.editor.history().rev().map(|(at, _)| at).collect();
-    if history.first() != Some(&mcp.amended_to(mcp.steps[newest].after)) {
+    if history.first() != Some(&mcp.history.amended_to(mcp.history.steps[newest].after)) {
         return Err(Refused::not_applied(CHANGED_SINCE));
     }
     let mut taken = Vec::with_capacity(steps.min(history.len()));
@@ -70,8 +70,8 @@ pub(super) fn plan(doc: &Doc, steps: usize, from: &From) -> Result<Undoing, Refu
                 crate::words::counted(history.len().saturating_sub(1), "step", "steps")
             )));
         };
-        let step = (mcp.steps.iter())
-            .rposition(|step| mine(step) && mcp.amended_to(step.after) == revision);
+        let step = (mcp.history.steps.iter())
+            .rposition(|step| mine(step) && mcp.history.amended_to(step.after) == revision);
         match step {
             Some(step) => taken.push(step),
             None => {
@@ -130,8 +130,8 @@ impl Doc {
         };
         let mut labels = Vec::with_capacity(undoing.steps.len());
         for &at in &undoing.steps {
-            let step = &self.mcp.steps[at];
-            undid.afters.push(self.mcp.amended_to(step.after));
+            let step = &self.mcp.history.steps[at];
+            undid.afters.push(self.mcp.history.amended_to(step.after));
             undid.shown.push(step.shown.clone());
             undid.feature = undid.feature.or(step.feature);
             labels.push(step.label.clone());
@@ -141,12 +141,12 @@ impl Doc {
         }
         let now = self.editor.revision();
         for (&at, &after) in undoing.steps.iter().zip(&undid.afters) {
-            let step = &mut self.mcp.steps[at];
+            let step = &mut self.mcp.history.steps[at];
             // Not the user's undo: told as neither undone nor, once the
             // user redoes it, anything but redone.
             step.undone = true;
             step.told_done = false;
-            self.mcp.undone_to(after, now);
+            self.mcp.history.undone_to(after, now);
         }
         self.client_applied(tag, &from);
         self.mcp.add(Waiter {

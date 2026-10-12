@@ -780,7 +780,7 @@ impl Doc {
                 let again = matches!(made, Made::Link { .. }).then(|| made.clone());
                 let feature = made.feature(self).map(FeatureId::get);
                 let made = made.result(self);
-                (self.mcp).applied(&from, &call, self.editor.revision(), feature);
+                (self.mcp.history).applied(&from, &call, self.editor.revision(), feature);
                 self.mcp.add(Waiter {
                     tag,
                     from,
@@ -828,7 +828,8 @@ impl Doc {
             let mut reply = self.edit_result(made, generation, after, undid.is_some());
             // An undo the user redid meanwhile, wholly or in part.
             let redone = undid.as_ref().is_some_and(|undid| {
-                (undid.afters.iter()).any(|after| self.editor.is_done(self.mcp.amended_to(*after)))
+                (undid.afters.iter())
+                    .any(|after| self.editor.is_done(self.mcp.history.amended_to(*after)))
             });
             if redone && let Some(data) = &mut reply.structured {
                 data["result"] = json!(super::undo::REDONE);

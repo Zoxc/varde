@@ -409,16 +409,19 @@ fn a_feature_changed_in_two_runs_is_listed_once() {
     // queued together): taken as one, it splits the runs.
     user(&mut varde, &requests, Command::SetUnits(LengthUnit::In));
     let doc = varde.screen.doc_mut().unwrap();
-    doc.mcp.steps.push_back(super::super::waiting::ClientStep {
-        start: 0,
-        session: SessionId::for_tests("a session"),
-        after: doc.editor.revision(),
-        label: "set_units in".to_owned(),
-        shown: "Set the units to in".to_owned(),
-        told_done: true,
-        undone: false,
-        feature: None,
-    });
+    doc.mcp
+        .history
+        .steps
+        .push_back(super::super::waiting::ClientStep {
+            start: 0,
+            session: SessionId::for_tests("a session"),
+            after: doc.editor.revision(),
+            label: "set_units in".to_owned(),
+            shown: "Set the units to in".to_owned(),
+            told_done: true,
+            undone: false,
+            feature: None,
+        });
     user(&mut varde, &requests, rename("Top"));
     user(&mut varde, &requests, Command::SetVisible(body, true));
     let changes = summary(&mut varde)["user_changes"].clone();
@@ -436,16 +439,19 @@ fn a_feature_changed_in_two_runs_is_listed_once() {
 /// queued with others, its reply not yet sent.
 fn client_step(varde: &mut Varde) {
     let doc = varde.screen.doc_mut().unwrap();
-    doc.mcp.steps.push_back(super::super::waiting::ClientStep {
-        start: 0,
-        session: SessionId::for_tests("a session"),
-        after: doc.editor.revision(),
-        label: "an edit".to_owned(),
-        shown: "An edit".to_owned(),
-        told_done: true,
-        undone: false,
-        feature: None,
-    });
+    doc.mcp
+        .history
+        .steps
+        .push_back(super::super::waiting::ClientStep {
+            start: 0,
+            session: SessionId::for_tests("a session"),
+            after: doc.editor.revision(),
+            label: "an edit".to_owned(),
+            shown: "An edit".to_owned(),
+            told_done: true,
+            undone: false,
+            feature: None,
+        });
 }
 
 /// Moved between two runs of the user's by a client's step, a value the

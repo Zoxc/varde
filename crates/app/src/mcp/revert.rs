@@ -93,7 +93,7 @@ fn tip(to: &str, made: &[String]) -> String {
     tip
 }
 
-/// A revert made in a design, kept with it (`Waiting::reverted`).
+/// A revert made in a design, kept with it (`ClientHistory::reverted`).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Made {
     /// The revision it made.
@@ -222,7 +222,7 @@ impl Mcp {
         };
         let to = to(&logged.tool.with(&logged.args), to_before);
         // Before it, with nothing since, undoes it alone.
-        let after = doc.mcp.amended_to(edit.after_revision);
+        let after = doc.mcp.history.amended_to(edit.after_revision);
         let later = !to_before || doc.editor.revision() != after;
         if let Some(why) = doc.revert_refusal(&state) {
             doc.toast = Some(why);
@@ -272,7 +272,11 @@ impl Mcp {
             target: state.revision(),
             to: to.clone(),
         };
-        push_bounded(&mut doc.mcp.reverted, super::waiting::STEPS, made_revert);
+        push_bounded(
+            &mut doc.mcp.history.reverted,
+            super::waiting::STEPS,
+            made_revert,
+        );
         let serial = self.next_serial();
         let tip = tip(&to, &made);
         let reverted = Reverted {
@@ -314,12 +318,12 @@ impl Doc {
     /// [`Editor::made_before`]: varde_document::Editor::made_before
     pub(crate) fn in_effect(&self, revision: Revision) -> bool {
         let editor = &self.editor;
-        let revision = self.mcp.amended_to(revision);
+        let revision = self.mcp.history.amended_to(revision);
         // The state looked from: the design now, then the states the
         // reverts brought back.
         let mut from: Option<Revision> = None;
         loop {
-            let revert = (self.mcp.reverted.iter())
+            let revert = (self.mcp.history.reverted.iter())
                 .filter(|made| editor.made_before(revision, made.after))
                 .filter(|made| match from {
                     None => editor.is_done(made.after),
@@ -355,9 +359,9 @@ impl Doc {
     /// since made.
     pub(crate) fn shows_state(&self, state: &EditorState) -> bool {
         let now = self.editor.revision();
-        self.mcp.amended_to(state.revision()) == now
+        self.mcp.history.amended_to(state.revision()) == now
             || Arc::ptr_eq(state.document(), &self.editor.snapshot())
-            || (self.mcp.reverted.iter())
+            || (self.mcp.history.reverted.iter())
                 .any(|made| made.after == now && made.target == state.revision())
     }
 

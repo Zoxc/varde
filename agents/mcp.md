@@ -1313,7 +1313,7 @@ by `edit::plan` (`Plan::Undo`, through `undo::plan`) and again in
 `Doc::client_undo` once `clear_for_client` closed what the user had
 open. `undo::plan`: the session's newest `ClientStep` (its `start` and
 `session` the call's) it hasn't undone must be the state now (through
-`Waiting::amended_to`), else *the design changed since your last edit*
+`ClientHistory::amended_to`), else *the design changed since your last edit*
 (`CHANGED_SINCE`: an edit, Undo, Redo or revert of the user's, a redo
 of a step the session undid included, another session's edit); none,
 `NOTHING_OF_YOURS` (a step it undid stays not its own once the user
@@ -1324,8 +1324,8 @@ state before it, else *the undo history reaches back only n steps*.
 All refusals are *not applied*, nothing undone. Applied, every step
 goes in the one turn: each `ClientStep` taken back is marked
 `undone` (never the session's to undo again) with `told_done` false,
-and `Waiting::undone_to` records the state it made with the one now
-(`Waiting::undos`, at most `STEPS`), both for `changes::since` (below);
+and `ClientHistory::undone_to` records the state it made with the one now
+(`ClientHistory::undos`, at most `STEPS`), both for `changes::since` (below);
 no `ClientStep` is added for the undo itself. It waits as
 `Wait::Regen` with `undid` (`waiting::Undid`: the afters undone, their
 rows' words, the feature the newest named, from `ClientStep::feature`,
@@ -1615,7 +1615,7 @@ sessions by the lineage, as after an undo or a Replace) and logs a
 it changed, `changes::differences` of the design to the state worked
 out just before, a line each, at most `revert::TIP_CHANGES` (10), then
 *and N more*, at most `LOG_CAP`, and its revision, the
-state's and its words (`revert::Made`) in `Waiting::reverted` for
+state's and its words (`revert::Made`) in `ClientHistory::reverted` for
 `changes::since` and greying, which names it in
 `user_changes.reverted` (and a *reverted to ...* line) besides the diff.
 Refused with a toast (`Doc::revert_refusal`): read-only; a client edit
@@ -1627,7 +1627,7 @@ confirm.
 
 Greyed, *Reverted*, worked out on each view, not stored, when the
 state the row stands for isn't in effect (`Doc::in_effect`): an edit's
-after-revision (through the amends, `Waiting::amended_to`), the user's
+after-revision (through the amends, `ClientHistory::amended_to`), the user's
 rows' `told_at`, a revert's own revision. By revision, which the editor
 gives out in order (`Editor::made_before`): the newest revert in effect
 made after the state decides (it brought back that state: in effect;
@@ -1676,8 +1676,8 @@ edit's row counts as not told.
 - the session's own edits the user undid or redid since it was told
   (`undid_your_edits`, `redid_your_edits`, by tool name and arguments,
   `waiting::label`; the panel's line says the edit as its row does,
-  `McpTool::with`: "undid its edit: renamed feature Extrude 1 to Base"): `Waiting::steps`, a `ClientStep` per client edit
-  applied (`Waiting::applied` from `client_apply`, its `after` moved by
+  `McpTool::with`: "undid its edit: renamed feature Extrude 1 to Base"): `ClientHistory::steps`, a `ClientStep` per client edit
+  applied (`ClientHistory::applied` from `client_apply`, its `after` moved by
   the links' amend in `Waiting::amended`, at most 200), each with
   `told_done`, which `Mcp::told` sets for the session's as it tells.
   A step the session took back with `undo` has `told_done` cleared
@@ -1685,10 +1685,10 @@ edit's row counts as not told.
   `redid_your_edits`.
 - `Arc::ptr_eq` with the design now: nothing more.
 - the seen revision, followed through the links' amends since and the
-  session's own undos (`changes::followed`: `Waiting::undos`, while the
+  session's own undos (`changes::followed`: `ClientHistory::undos`, while the
   state seen is still undone; the diff then starts from the state the
   undo came to, `Editor::state_of`)
-  (`Waiting::amends`, recorded by `Waiting::amended`: a reply sent before
+  (`ClientHistory::amends`, recorded by `Waiting::amended`: a reply sent before
   the regeneration that relinked the state it saw; then walked from the
   amended state, the relinking not the user's), on the editor's history
   (`Editor::history`, the
