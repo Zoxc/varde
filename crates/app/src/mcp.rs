@@ -37,15 +37,17 @@ pub(crate) mod waiting;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 
-use iced::Subscription;
+use iced::{Subscription, Task};
+use varde_io::Request as IoRequest;
 use varde_mcp::guard::Token;
 use varde_mcp::server::Event;
 use varde_mcp::session::{self, SessionId};
 use varde_mcp::tools::{Call, ToolReply};
-use varde_view::{McpCallState, McpTool};
+use varde_view::{McpCallState, McpPanel, McpTool};
 
 use crate::doc::Doc;
-use crate::message::Message;
+use crate::io::Io;
+use crate::message::{ForDoc, Message};
 use text::{args, plain, summary, told_line, tool, undid_row, user_rows};
 
 /// The MCP server's state, the app's.
@@ -765,6 +767,75 @@ impl Mcp {
             }
         }
         self.refresh_live(doc);
+    }
+
+    /// Asks the IO lane for the token at launch: the server waits for it,
+    /// even while switched off, so switching it on starts it at once.
+    pub(crate) fn boot(&self, io: &mut Io) {
+        io.send(IoRequest::LoadMcpToken);
+    }
+
+    /// Asks the IO lane for a new token, which restarts the server and so
+    /// ends the session.
+    pub(crate) fn regenerate_token(&self, io: &mut Io) {
+        io.send(IoRequest::RegenerateMcpToken);
+    }
+
+    /// The MCP panel's toggle and its head's Start and Stop, given the
+    /// settings' switch `on` and `port`. Start starts the server, or,
+    /// running and the port not bound, tries it again; neither touches
+    /// the settings.
+    pub(crate) fn panel_update(
+        &mut self,
+        message: McpPanel,
+        on: bool,
+        port: u16,
+        doc: Option<&mut Doc>,
+    ) {
+        match message {
+            McpPanel::Toggle => self.open = on && !self.open,
+            McpPanel::Start => self.start(on, port),
+            McpPanel::Stop => self.stop(on, port),
+            McpPanel::ApplyYours => {
+                if let Some(doc) = doc {
+                    doc.mcp_apply_yours();
+                }
+            }
+            McpPanel::KeepEditing => {
+                if let Some(doc) = doc {
+                    doc.mcp_keep_editing();
+                }
+            }
+            McpPanel::OpenMenu(_)
+            | McpPanel::CloseMenu
+            | McpPanel::ShowInTimeline(_)
+            | McpPanel::RevertToHere(_)
+            | McpPanel::RevertBefore(_)
+            | McpPanel::ConfirmRevert
+            | McpPanel::CancelRevert => self.panel_message(message, doc),
+        }
+    }
+
+    /// The tasks `doc` asks for after a message: the Timeline scrolled to
+    /// the feature the panel showed, and the pictures `render` calls
+    /// asked for, drawn by the viewport's next frame (see
+    /// `mcp/query/render.rs`).
+    pub(crate) fn doc_tasks(&self, doc: &mut Doc) -> Vec<Task<Message>> {
+        let id = doc.id;
+        let scroll = doc
+            .mcp
+            .scroll
+            .take()
+            .map(|share| crate::snap_list(varde_view::TIMELINE_LIST, share));
+        let renders = doc.mcp.take_renders().into_iter().map(|(tag, answer)| {
+            Task::perform(answer, move |image| {
+                let image = image.ok().flatten().and_then(|image| {
+                    varde_io::thumbnail::Image::new(image.width, image.height, image.rgba)
+                });
+                Message::Doc(id, ForDoc::McpRendered(tag, image))
+            })
+        });
+        scroll.into_iter().chain(renders).collect()
     }
 }
 

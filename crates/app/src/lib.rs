@@ -166,10 +166,8 @@ impl Varde {
         // The theme is the system's until the stored one arrives.
         files.io.send(IoRequest::LoadSettings);
         files.io.send(IoRequest::LoadPanic);
-        // The MCP server waits for its token, even while switched off, so
-        // switching it on starts it at once.
-        #[cfg(not(target_arch = "wasm32"))]
-        files.io.send(IoRequest::LoadMcpToken);
+        let mcp = mcp::Mcp::default();
+        mcp.boot(&mut files.io);
         Self {
             screen: Screen::Welcome(Welcome::default()),
             system: None,
@@ -183,7 +181,7 @@ impl Varde {
             quitting: None,
             toast: Toast::default(),
             warm_up: false,
-            mcp: mcp::Mcp::default(),
+            mcp,
         }
     }
 
@@ -220,14 +218,9 @@ impl Varde {
             // A value field opened, or a value refused, has the field take
             // the focus once it shows.
             tasks.extend(doc.take_focus().map(focus_field));
-            // The Timeline scrolled to the feature the MCP panel showed.
-            #[cfg(not(target_arch = "wasm32"))]
-            tasks.extend(
-                doc.mcp
-                    .scroll
-                    .take()
-                    .map(|share| snap_list(varde_view::TIMELINE_LIST, share)),
-            );
+            // The Timeline scrolled to the feature the MCP panel showed,
+            // and the pictures MCP calls asked for.
+            tasks.extend(self.mcp.doc_tasks(doc));
             // The rail's list scrolled to show the row the keys moved to.
             tasks.extend(
                 doc.rail
@@ -250,15 +243,6 @@ impl Varde {
                 tasks.push(focus_name());
             }
             let id = doc.id;
-            // The pictures MCP calls asked for, drawn by the viewport's next
-            // frame.
-            #[cfg(not(target_arch = "wasm32"))]
-            tasks.extend(
-                doc.mcp
-                    .take_renders()
-                    .into_iter()
-                    .map(|(tag, answer)| mcp_render(id, tag, answer)),
-            );
             // A thumbnail asked for, rendered by the viewport's next frame.
             tasks.extend(
                 doc.take_thumbnail()
@@ -489,12 +473,7 @@ impl Varde {
                 self.page.resetting = !varde_view::changed_settings(self.options).is_empty();
             }
             SettingsPage::CancelReset => self.page.resetting = false,
-            // Answered with the new token, which restarts the server
-            // and so ends the session.
-            #[cfg(not(target_arch = "wasm32"))]
-            SettingsPage::RegenerateMcpToken => self.files.io.send(IoRequest::RegenerateMcpToken),
-            #[cfg(target_arch = "wasm32")]
-            SettingsPage::RegenerateMcpToken => {}
+            SettingsPage::RegenerateMcpToken => self.mcp.regenerate_token(&mut self.files.io),
             SettingsPage::Reset => {
                 // Only as asked: a stray Enter resets nothing.
                 if std::mem::take(&mut self.page.resetting) {
@@ -997,31 +976,11 @@ impl Varde {
         Subscription::run(start)
     }
 
-    /// The MCP panel's toggle and its head's Start and Stop: natively
-    /// only. Start starts the server, or, running and the port not bound,
-    /// tries it again; neither touches the settings.
+    /// The MCP panel's messages: see [`mcp::Mcp::panel_update`].
     fn mcp_panel(&mut self, message: varde_view::McpPanel) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use varde_view::McpPanel;
-            let (on, port) = (self.options.mcp, self.options.mcp_port);
-            match message {
-                McpPanel::Toggle => self.mcp.open = on && !self.mcp.open,
-                McpPanel::Start => self.mcp.start(on, port),
-                McpPanel::Stop => self.mcp.stop(on, port),
-                McpPanel::ApplyYours => self.with_doc(|doc, _| doc.mcp_apply_yours()),
-                McpPanel::KeepEditing => self.with_doc(|doc, _| doc.mcp_keep_editing()),
-                McpPanel::OpenMenu(_)
-                | McpPanel::CloseMenu
-                | McpPanel::ShowInTimeline(_)
-                | McpPanel::RevertToHere(_)
-                | McpPanel::RevertBefore(_)
-                | McpPanel::ConfirmRevert
-                | McpPanel::CancelRevert => self.mcp.panel_message(message, self.screen.doc_mut()),
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        let _ = message;
+        let (on, port) = (self.options.mcp, self.options.mcp_port);
+        self.mcp
+            .panel_update(message, on, port, self.screen.doc_mut());
     }
 
     /// What the document screen shows of the MCP server: natively only.
@@ -1189,23 +1148,6 @@ fn thumbnail(
             })
         });
         Message::Doc(id, ForDoc::Thumbnail(tag, thumbnail))
-    })
-}
-
-/// Waits for the picture of the MCP `render` call tagged `tag` of
-/// document `id` to come back on `answer`, see `mcp/query/render.rs`:
-/// `None` if it couldn't be drawn, its sender dropped uncalled.
-#[cfg(not(target_arch = "wasm32"))]
-fn mcp_render(
-    id: DocId,
-    tag: u64,
-    answer: iced::futures::channel::oneshot::Receiver<Option<varde_render::PreviewImage>>,
-) -> Task<Message> {
-    Task::perform(answer, move |image| {
-        let image = image.ok().flatten().and_then(|image| {
-            varde_io::thumbnail::Image::new(image.width, image.height, image.rgba)
-        });
-        Message::Doc(id, ForDoc::McpRendered(tag, image))
     })
 }
 
@@ -1456,7 +1398,7 @@ fn storage_state() -> Task<Message> {
 
 /// Scrolls the scrolled list `id` (the rail's open list, the Timeline)
 /// to `share` of the way to its end.
-fn snap_list(id: iced::widget::Id, share: f32) -> Task<Message> {
+pub(crate) fn snap_list(id: iced::widget::Id, share: f32) -> Task<Message> {
     use iced::widget::operation::{self, RelativeOffset};
 
     let offset = RelativeOffset {

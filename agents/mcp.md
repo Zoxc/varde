@@ -1471,7 +1471,7 @@ parts get opacity 0, the drawn ones their bodies' opacity and tint. The
 call waits as `Wait::Render { drawn, data }` (`Doc::ask_render`), its
 `PreviewRequest` for the viewport (see `viewport.md`, "Thumbnails"); the
 request's callback sends the pixels on a oneshot the app awaits as a task
-(`Waiting::take_renders`, `mcp_render` in `lib.rs`), coming back as
+(`Waiting::take_renders`, `Mcp::doc_tasks`), coming back as
 `ForDoc::McpRendered(tag, image)` to `Doc::mcp_rendered`, which asks the
 IO lane to encode it (`Request::EncodePng` with the `DocId`'s number and
 the tag, `files.md`) and waits as `Wait::Encoding { data }`;

@@ -2,9 +2,10 @@
 //! this [`Mcp`] has its hooks as no-ops, and `lib.rs` calls them on
 //! either target without a `cfg` at each.
 
-use iced::Subscription;
+use iced::{Subscription, Task};
 
 use crate::doc::Doc;
+use crate::io::Io;
 use crate::message::Message;
 
 /// No server, no session, no panel.
@@ -45,4 +46,22 @@ impl Mcp {
     pub(crate) fn quitting(&mut self, _doc: Option<&mut Doc>) {}
 
     pub(crate) fn sync(&mut self, _doc: Option<&mut Doc>) {}
+
+    pub(crate) fn boot(&self, _io: &mut Io) {}
+
+    pub(crate) fn regenerate_token(&self, _io: &mut Io) {}
+
+    /// No panel to act on.
+    pub(crate) fn panel_update(
+        &mut self,
+        _message: varde_view::McpPanel,
+        _on: bool,
+        _port: u16,
+        _doc: Option<&mut Doc>,
+    ) {
+    }
+
+    pub(crate) fn doc_tasks(&self, _doc: &mut Doc) -> Vec<Task<Message>> {
+        Vec::new()
+    }
 }
