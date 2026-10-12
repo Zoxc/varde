@@ -440,7 +440,7 @@ fn close_op(close: bool, binding: Binding) -> Element<'static, Message> {
 
 /// Remove point, taking the spline points selected out of their splines,
 /// or disabled saying `why` it can't.
-fn remove_op(why: Option<&'static str>, binding: Binding) -> Element<'static, Message> {
+fn remove_op(why: Option<String>, binding: Binding) -> Element<'static, Message> {
     let Some(why) = why else {
         return tipped_op(Icon::RemovePoint, "Remove point", binding, false);
     };

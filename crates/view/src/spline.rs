@@ -236,7 +236,7 @@ pub fn closings(
 pub fn removals(
     sketch: &Sketch,
     selection: &BTreeSet<Selectable>,
-) -> Option<Result<SketchEdit, &'static str>> {
+) -> Option<Result<SketchEdit, String>> {
     let on_spline = |point: Id| {
         sketch.curves.iter().any(|entry| match &entry.curve {
             Curve::Spline(spline) => spline.points.contains(&point),
@@ -260,7 +260,9 @@ pub fn removals(
             continue;
         }
         let Curve::Spline(spline) = &entry.curve else {
-            return Some(Err("A point selected is on a curve that isn't a spline"));
+            return Some(Err(
+                "A point selected is on a curve that isn't a spline".into()
+            ));
         };
         let own = spline
             .points
@@ -268,14 +270,16 @@ pub fn removals(
             .filter(|id| points.contains(id))
             .count();
         if own != lost {
-            return Some(Err("A point selected is a spline's handle"));
+            return Some(Err("A point selected is a spline's handle".into()));
         }
         let least = spline.kind.least(spline.closed);
         if spline.points.len().saturating_sub(lost) < least {
             return Some(Err(match (spline.kind, spline.closed) {
-                (_, true) => "A closed spline needs 3 points",
-                (SplineKind::Through, false) => "A spline through fit points needs 2",
-                (SplineKind::Control, false) => "A spline by control points needs 4",
+                (_, true) => format!("A closed spline needs {least} points"),
+                (SplineKind::Through, false) => {
+                    format!("A spline through fit points needs {least}")
+                }
+                (SplineKind::Control, false) => format!("A spline by control points needs {least}"),
             }));
         }
     }

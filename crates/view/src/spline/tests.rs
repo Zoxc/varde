@@ -164,17 +164,19 @@ fn spline_points_come_out_while_their_splines_keep_enough() {
     // Two of three would leave one; any control point would leave three.
     assert_eq!(
         removals(&sketch, &crate::testing::items([fit[0], fit[1]])),
-        Some(Err("A spline through fit points needs 2"))
+        Some(Err("A spline through fit points needs 2".into()))
     );
     assert_eq!(
         removals(&sketch, &crate::testing::items([control[1]])),
-        Some(Err("A spline by control points needs 4"))
+        Some(Err("A spline by control points needs 4".into()))
     );
     // A fit point a line ends at stays, as deleting it would take the line.
     let far = point(&mut sketch, 20.0, 0.0);
     line(&mut sketch, fit[2], far);
     assert_eq!(
         removals(&sketch, &crate::testing::items([fit[2]])),
-        Some(Err("A point selected is on a curve that isn't a spline"))
+        Some(Err(
+            "A point selected is on a curve that isn't a spline".into()
+        ))
     );
 }
