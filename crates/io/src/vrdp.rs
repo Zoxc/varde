@@ -530,7 +530,7 @@ pub fn to_bytes(document: &Document, previews: &[Preview]) -> Result<(Vec<u8>, T
 
 /// [`to_bytes`], with what's known of the file written, to save to it.
 pub(crate) fn whole_file(document: &Document, previews: &[Preview]) -> Result<(Vec<u8>, Known)> {
-    let (bytes, tail, id) = whole(FileType::Design, document, previews)?;
+    let Written { bytes, tail, id } = whole(FileType::Design, document, previews)?;
     Ok((bytes, Known::written(id, tail)))
 }
 
@@ -818,19 +818,16 @@ impl<S: Storage, P: Payload> HeldFile<S, P> {
                 Err(_) => self.held = Held::Empty,
             }
         }
-        let (start, bytes, id, tail) = match self.held {
+        let (start, Written { bytes, tail, id }) = match self.held {
             Held::Damaged { offset } => return Err(Error::Corrupt { offset }),
             Held::At { id, tail, damaged } => {
                 let (at, prev) =
                     damaged.map_or((tail.end, tail.sum), |damaged| (damaged.end, damaged.sum));
-                let (bytes, new) = record_at(id, prev, at, FileType::Held, payload)?;
-                (at, bytes, id, new)
+                let (bytes, tail) = record_at(id, prev, at, FileType::Held, payload)?;
+                (at, Written { bytes, tail, id })
             }
-            Held::Empty | Held::Unknown => {
-                // Held files never get previews.
-                let (bytes, tail, id) = whole(FileType::Held, payload, &[])?;
-                (0, bytes, id, tail)
-            }
+            // Held files never get previews.
+            Held::Empty | Held::Unknown => (0, whole(FileType::Held, payload, &[])?),
         };
         // Should writing fail, the file is cut back, and read again before
         // the next one, in case that failed too.
@@ -1296,14 +1293,16 @@ fn write_or_cut_back(
     written
 }
 
+/// Bytes to write to a file, with the file's tail and `id` once they are.
+struct Written {
+    bytes: Vec<u8>,
+    tail: Tail,
+    id: u128,
+}
+
 /// A whole file of type `ty` with a new `id` holding `payload` as its one
-/// record, followed by the first [`MAX_PREVIEWS`] of `previews`, its tail
-/// and its `id`.
-fn whole(
-    ty: FileType,
-    payload: &impl Payload,
-    previews: &[Preview],
-) -> Result<(Vec<u8>, Tail, u128)> {
+/// record, followed by the first [`MAX_PREVIEWS`] of `previews`.
+fn whole(ty: FileType, payload: &impl Payload, previews: &[Preview]) -> Result<Written> {
     let id = new_id()?;
     let header = ty.header(id);
     // `FILE_HEADER_LEN` is small, so exact.
@@ -1315,7 +1314,7 @@ fn whole(
     bytes.extend_from_slice(&header);
     bytes.extend_from_slice(&record);
     preview::append_previews(&mut bytes, id, tail, previews)?;
-    Ok((bytes, tail, id))
+    Ok(Written { bytes, tail, id })
 }
 
 /// A new random file `id`.

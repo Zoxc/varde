@@ -122,7 +122,10 @@ impl Chain {
                         chain.damaged(bytes, ty, at, sums, stepped);
                         break;
                     };
-                    let (_, unreadable) = stepped.get_or_insert((header.start, 0));
+                    let Stepped { unreadable, .. } = stepped.get_or_insert(Stepped {
+                        first: header.start,
+                        unreadable: 0,
+                    });
                     *unreadable += header.end - header.start;
                     if record {
                         newest_damaged = Some(header.into());
@@ -153,12 +156,12 @@ impl Chain {
         Ok(chain)
     }
 
-    /// Counts `stepped`, the first and the bytes of damaged blocks stepped
-    /// over by their headers, if any: the chain was bridged.
-    fn stepped_over(&mut self, stepped: Option<(u64, u64)>) {
-        if let Some((start, unreadable)) = stepped {
+    /// Counts `stepped`, the damaged blocks stepped over by their headers,
+    /// if any: the chain was bridged.
+    fn stepped_over(&mut self, stepped: Option<Stepped>) {
+        if let Some(Stepped { first, unreadable }) = stepped {
             self.bridged = true;
-            self.damage.get_or_insert(start);
+            self.damage.get_or_insert(first);
             self.unreadable += unreadable;
         }
     }
@@ -177,7 +180,7 @@ impl Chain {
         ty: FileType,
         at: usize,
         mut sums: Vec<u128>,
-        stepped: Option<(u64, u64)>,
+        stepped: Option<Stepped>,
     ) {
         if !framed_from(bytes, at, ty) {
             self.end = End::Torn;
@@ -324,6 +327,16 @@ fn header_at(bytes: &[u8], at: usize, prev: u128) -> Option<Header> {
         end,
         sum: stored.sum,
     })
+}
+
+/// Damaged blocks stepped over by their headers, as [`Chain::scan`]
+/// gathers them since the last record.
+#[derive(Debug, Clone, Copy)]
+struct Stepped {
+    /// Where the first of them starts.
+    first: u64,
+    /// Their bytes.
+    unreadable: u64,
 }
 
 /// A damaged block stepped over by its header to the intact block after
