@@ -179,7 +179,7 @@ pub(crate) fn check_bodies(bodies: &[BodyId]) -> Result<(), BodiesError> {
     Ok(())
 }
 
-/// What's wrong with a feature's body list, see [`check_bodies`].
+/// What's wrong with a feature's body list, see `check_bodies`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BodiesError {
     /// It names this many bodies: none, or over [`MAX_FEATURE_BODIES`].
@@ -202,7 +202,7 @@ impl fmt::Display for BodiesError {
 impl std::error::Error for BodiesError {}
 
 /// What's wrong with an axis's or plane's edge or face on its own, see
-/// [`Referred::check_own`].
+/// `Referred::check_own`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RefError {
     /// Its edge fails its own check ([`EdgeRef::check_own`]).
@@ -307,7 +307,7 @@ impl Mirror {
 /// [`CheckError::Pattern`](crate::CheckError::Pattern).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MotionError {
-    /// Its body list is wrong ([`check_bodies`]).
+    /// Its body list is wrong (`check_bodies`).
     Bodies(BodiesError),
     /// It names this body, which isn't there or which no feature before
     /// it makes.
