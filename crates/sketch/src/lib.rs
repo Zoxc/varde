@@ -51,7 +51,7 @@ pub use check::{
 pub use constraint::{Constraint, ConstraintEntry, Role, Shape, Side, tangent_between};
 pub use corner::{Corner, Setback, cut_line};
 pub use dimension::{Dimension, DimensionEntry, MIN_LENGTH, Measure};
-pub use edit::{Add, EditError, NewCurve, SketchEdit};
+pub use edit::{Add, BoundsError, EditError, NewCurve, SketchEdit, check_targets};
 pub use flatten::{CIRCLE_SEGMENTS, flatten_arc, flatten_circle};
 pub use geometry::{ArcPoints, arc_sweep, arc_through, crossing, foot, signed_distance};
 pub use joint::Joint;

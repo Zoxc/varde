@@ -16,6 +16,10 @@ use crate::{
     SketchError, SplineKind,
 };
 
+mod bounds;
+
+pub use bounds::{BoundsError, check_targets};
+
 /// A change to a sketch as the user asks for it, not its result: applied
 /// to whichever sketch it's proposed on, which may have moved on since it
 /// was made (an earlier edit accepted meanwhile).

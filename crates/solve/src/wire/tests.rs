@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use varde_sketch::{Add, Constraint, Dimension, Measure, Side};
+use varde_expr::Value;
+use varde_sketch::{
+    Add, Constraint, Dimension, MAX_CURVES, MAX_DIMENSIONS, MAX_POINTS, Measure, Setback, Side,
+};
 
 use super::*;
 use crate::Solver;
@@ -454,7 +457,7 @@ fn a_request_out_of_bounds_is_an_error() {
         let request = drag(1, &drawn.sketch, drawn.end, DVec2::new(0.0, value));
         assert!(matches!(
             decode_request(&encode_request(&request, false)),
-            Err(Error::Value(_))
+            Err(Error::Bounds(BoundsError::Value { .. }))
         ));
         let radius = Request::Drag {
             session: 1,
@@ -466,7 +469,7 @@ fn a_request_out_of_bounds_is_an_error() {
         };
         assert!(matches!(
             decode_request(&encode_request(&radius, false)),
-            Err(Error::Value(_))
+            Err(Error::Bounds(BoundsError::Value { .. }))
         ));
         let moved = SketchEdit::Move {
             points: vec![(drawn.end, DVec2::new(value, 0.0))],
@@ -474,7 +477,7 @@ fn a_request_out_of_bounds_is_an_error() {
         };
         assert!(matches!(
             decode_request(&encode_request(&propose_on(1, &drawn.sketch, moved), true)),
-            Err(Error::Value(_))
+            Err(Error::Bounds(BoundsError::Value { .. }))
         ));
         let mut add = Add::new(&drawn.sketch);
         add.point(DVec2::new(value, 0.0)).unwrap();
@@ -483,7 +486,7 @@ fn a_request_out_of_bounds_is_an_error() {
                 &propose_on(1, &drawn.sketch, SketchEdit::Add(add)),
                 true
             )),
-            Err(Error::Value(_))
+            Err(Error::Bounds(BoundsError::Value { .. }))
         ));
     }
 
@@ -497,11 +500,11 @@ fn a_request_out_of_bounds_is_an_error() {
     };
     assert_eq!(
         decode_request(&encode_request(&many, false)).unwrap_err(),
-        Error::TooMany {
+        Error::Bounds(BoundsError::TooMany {
             what: "points",
             count: MAX_POINTS + 1,
             limit: MAX_POINTS
-        }
+        })
     );
     let construction = SketchEdit::SetConstruction {
         ids: vec![drawn.line; MAX_CURVES + 1],
@@ -512,7 +515,7 @@ fn a_request_out_of_bounds_is_an_error() {
             &propose_on(1, &drawn.sketch, construction),
             true
         )),
-        Err(Error::TooMany { .. })
+        Err(Error::Bounds(BoundsError::TooMany { .. }))
     ));
 }
 
@@ -598,8 +601,11 @@ fn errors_display() {
             count: 2,
             limit: 1,
         },
-        Error::Value(f64::NAN),
-        Error::NotFinite(f64::NAN),
+        Error::Bounds(BoundsError::Value {
+            value: f64::NAN,
+            max: MAX,
+        }),
+        Error::Bounds(BoundsError::NotFinite(f64::NAN)),
         Error::Items,
         Error::Request(DecodeError::new("no")),
         Error::Reply(DecodeError::new("no")),
@@ -703,12 +709,18 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
                 value,
             },
         };
-        assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
+        assert!(matches!(
+            refused(edit),
+            Err(Error::Bounds(BoundsError::NotFinite(_)))
+        ));
         let edit = SketchEdit::MoveLabel {
             id,
             label: DVec2::new(value, 0.0),
         };
-        assert!(matches!(refused(edit), Err(Error::Value(_))));
+        assert!(matches!(
+            refused(edit),
+            Err(Error::Bounds(BoundsError::Value { .. }))
+        ));
         let edit = SketchEdit::Offset {
             chain: vec![sketch.curves[0].id],
             distance: Value {
@@ -717,7 +729,10 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
             },
             side: Side::Positive,
         };
-        assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
+        assert!(matches!(
+            refused(edit),
+            Err(Error::Bounds(BoundsError::NotFinite(_)))
+        ));
         let bad = Value {
             text: "1".to_owned(),
             value,
@@ -732,7 +747,10 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
             lines,
             radius: bad.clone(),
         };
-        assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
+        assert!(matches!(
+            refused(edit),
+            Err(Error::Bounds(BoundsError::NotFinite(_)))
+        ));
         for setback in [
             Setback::Equal(bad.clone()),
             Setback::Two(good.clone(), bad.clone()),
@@ -743,7 +761,10 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
                 lines,
                 setback,
             };
-            assert!(matches!(refused(edit), Err(Error::NotFinite(_))));
+            assert!(matches!(
+                refused(edit),
+                Err(Error::Bounds(BoundsError::NotFinite(_)))
+            ));
         }
     }
     let many = SketchEdit::Offset {
@@ -754,7 +775,10 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
         },
         side: Side::Positive,
     };
-    assert!(matches!(refused(many), Err(Error::TooMany { .. })));
+    assert!(matches!(
+        refused(many),
+        Err(Error::Bounds(BoundsError::TooMany { .. }))
+    ));
     let long = SketchEdit::SetDimension {
         id,
         value: Value {
@@ -762,14 +786,17 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
             value: 1.0,
         },
     };
-    assert!(matches!(refused(long), Err(Error::TooMany { .. })));
+    assert!(matches!(
+        refused(long),
+        Err(Error::Bounds(BoundsError::TooMany { .. }))
+    ));
 
     let dimension = sketch.dimension(id).unwrap().dimension.clone();
     let mut add = Add::new(&sketch);
     add.dimensions = vec![dimension.clone(); MAX_DIMENSIONS + 1];
     assert!(matches!(
         refused(SketchEdit::Add(add)),
-        Err(Error::TooMany { .. })
+        Err(Error::Bounds(BoundsError::TooMany { .. }))
     ));
     let mut add = Add::new(&sketch);
     add.dimensions.push(Dimension {
@@ -778,7 +805,7 @@ fn a_dimension_edit_out_of_bounds_is_an_error() {
     });
     assert!(matches!(
         refused(SketchEdit::Add(add)),
-        Err(Error::Value(_))
+        Err(Error::Bounds(BoundsError::Value { .. }))
     ));
 }
 
