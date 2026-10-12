@@ -462,26 +462,28 @@ impl Sketch {
     /// fit point. One whose fit point or tip is missing is left for
     /// [`Sketch::check`] to refuse.
     pub fn add_handle_ends(&mut self) -> Result<(), OutOfIds> {
-        for index in 0..self.curves.len() {
-            let Curve::Spline(spline) = &self.curves[index].curve else {
+        let at = |id| self.point(id).map(|point| point.at);
+        // Each handle without an end, by its curve's index and its own,
+        // and where its end goes.
+        let mut missing = Vec::new();
+        for (index, entry) in self.curves.iter().enumerate() {
+            let Curve::Spline(spline) = &entry.curve else {
                 continue;
             };
-            for i in 0..spline.handles.len() {
-                let Curve::Spline(spline) = &self.curves[index].curve else {
-                    break;
-                };
-                let handle = spline.handles[i];
-                let at = |id| self.point(id).map(|point| point.at);
+            for (i, handle) in spline.handles.iter().enumerate() {
                 if handle.end != Id::MISSING {
                     continue;
                 }
-                let (Some(from), Some(tip)) = (at(handle.at), at(handle.tip)) else {
-                    continue;
-                };
-                let end = self.add_point(2.0 * from - tip)?;
-                if let Curve::Spline(spline) = &mut self.curves[index].curve {
-                    spline.handles[i].end = end;
+                if let (Some(from), Some(tip)) = (at(handle.at), at(handle.tip)) {
+                    missing.push((index, i, 2.0 * from - tip));
                 }
+            }
+        }
+        // Adding points leaves the curves where they are.
+        for (index, i, place) in missing {
+            let end = self.add_point(place)?;
+            if let Curve::Spline(spline) = &mut self.curves[index].curve {
+                spline.handles[i].end = end;
             }
         }
         Ok(())
