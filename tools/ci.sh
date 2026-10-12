@@ -3,8 +3,14 @@
 #
 #   tools/ci.sh                 all steps
 #   tools/ci.sh clippy test     just these steps
+#   tools/ci.sh kernel-ignores extrude "curved boolean"
+#                               that step alone, these capabilities landed too
 #
-# Steps: fmt, clippy, bans, test, wasm, deny, reuse, attribution.
+# Steps: fmt, kernel-ignores, clippy, bans, test, wasm, deny, reuse,
+# attribution.
+# `kernel-ignores` counts the tests tagged #[ignore = "kernel: <capability>"]
+# per capability and crate, and fails if one waits on a capability in
+# KERNEL_LANDED (below) or given after it.
 # `test` runs the workspace's tests, then the kernel crates' again on
 # one rayon thread (their results must not depend on the thread count).
 # `bans` checks clippy refuses each banned call in
@@ -18,6 +24,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 KERNEL_CRATES=(-p varde-decide -p varde-kernel -p varde-testkit)
+# The kernel capabilities that have landed (AGENTS.md): no test may still
+# be ignored waiting on one. Add a capability when it lands, e.g.
+# KERNEL_LANDED=(solids extrude "curved boolean").
+KERNEL_LANDED=()
 CARGO_DENY=${CARGO_DENY:-cargo-deny}
 REUSE=${REUSE:-reuse}
 
@@ -62,6 +72,12 @@ step_bans() {
         return 1
     fi
     echo "bans: clippy refuses all $(echo "$want" | wc -l) banned calls"
+}
+
+step_kernel-ignores() {
+    python3 -B tools/test_kernel_ignores.py
+    # (The `+` form: bash before 4.4 calls an empty array unbound.)
+    python3 -B tools/kernel_ignores.py ${KERNEL_LANDED[@]+"${KERNEL_LANDED[@]}"} "$@"
 }
 
 step_test() {
@@ -117,11 +133,32 @@ step_attribution() {
     python3 tools/check_attribution.py
 }
 
-ALL=(fmt clippy bans test wasm deny reuse attribution)
+ALL=(fmt kernel-ignores clippy bans test wasm deny reuse attribution)
+is_step() {
+    local s
+    for s in "${ALL[@]}"; do
+        [[ $1 == "$s" ]] && return
+    done
+    return 1
+}
+# `kernel-ignores` followed by anything but steps: capabilities.
+capabilities=0
+if [[ ${1-} == kernel-ignores ]]; then
+    for a in "${@:2}"; do
+        is_step "$a" || capabilities=1
+    done
+fi
+if ((capabilities)); then
+    shift
+    echo "== kernel-ignores"
+    step_kernel-ignores "$@"
+    echo "== all passed: kernel-ignores $*"
+    exit
+fi
 steps=("$@")
 [[ ${#steps[@]} -gt 0 ]] || steps=("${ALL[@]}")
 for s in "${steps[@]}"; do
-    [[ " ${ALL[*]} " == *" $s "* ]] || {
+    is_step "$s" || {
         echo "unknown step $s; steps: ${ALL[*]}" >&2
         exit 2
     }

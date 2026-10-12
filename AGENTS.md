@@ -93,7 +93,7 @@ cargo fmt --all                             # format, by rustfmt.toml: run befor
 cargo check --workspace --target wasm32-unknown-unknown   # web-only code paths
 cargo doc --workspace --no-deps --document-private-items  # link checks, on both targets
 cd crates/web && trunk serve                # browser build
-tools/ci.sh                                 # every check: fmt, clippy, bans, tests (kernel crates also on 1 thread), wasm, cargo-deny, reuse, attribution
+tools/ci.sh                                 # every check: fmt, kernel-ignores, clippy, bans, tests (kernel crates also on 1 thread), wasm, cargo-deny, reuse, attribution
 ```
 
 GPU tests (`crates/render/tests`, viewport tests in `varde-view`) render
@@ -121,6 +121,16 @@ test waiting on the kernel has such a tag, the planned tests of features
 the kernel hasn't built among them, so one grep finds all a capability
 must restore; an `#[ignore]` for another reason keeps its own, and the
 script leaves it.
+`tools/ci.sh kernel-ignores` (`tools/kernel_ignores.py`) counts the tags per
+capability and crate, in the attributes only (not comments or strings) of
+the Rust files git tracks or doesn't ignore. It fails on an ignore naming
+the kernel that isn't exactly `#[ignore = "kernel: <capability>"]` with a
+known capability (a `cfg_attr`, a raw string, `kernel:extrude`), and on a
+tag that isn't on a `#[test]` function. When a capability lands, add it to
+`KERNEL_LANDED` in `tools/ci.sh`: the step then fails, listing each test
+still tagged with it, until all are un-ignored.
+`tools/ci.sh kernel-ignores extrude "curved boolean"` checks capabilities
+without declaring them.
 
 `VARDE_TESTS` (unset/`quick` or `full`, anything else panics) and
 `VARDE_TEST_SEED` are read by the `varde-testing` dev-dependency
