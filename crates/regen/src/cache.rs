@@ -44,6 +44,7 @@
 //! scene stays, and putting the draft away finds it.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem::{size_of, size_of_val};
 use std::sync::Arc;
@@ -182,16 +183,28 @@ pub(crate) struct EdgeLength {
     pub(crate) line: Option<[DVec3; 2]>,
 }
 
-/// `$cache.$get(key, ..)`'s result, an [`Entry`] of kind `variant`
-/// made of `value` when it isn't filed: a key names one kind of result,
-/// so what's filed under it is always that kind.
+/// The [`Entry`] `$entry`'s value, of kind `variant`: a key names one
+/// kind of result, so what's filed under it is always that kind.
 macro_rules! take {
-    ($cache:ident.$get:ident($key:expr), $variant:ident($value:expr)) => {
-        match $cache.$get($key, || Entry::$variant($value)) {
+    ($entry:expr, $variant:ident) => {
+        match $entry {
             Entry::$variant(kept) => kept,
             _ => unreachable!("keys of different kinds differ"),
         }
     };
+    ($cache:ident.$get:ident($key:expr), $variant:ident($value:expr)) => {
+        take!($cache.$get($key, || Entry::$variant($value)), $variant)
+    };
+}
+
+/// Which counter a lookup bumps.
+enum Tally {
+    /// A feature's result: [`Cache::counts`]' hits and misses.
+    Feature,
+    /// Not counted: a topology, a measure.
+    Uncounted,
+    /// A scene joined: [`Cache::joins`], misses only.
+    Join,
 }
 
 /// A result kept.
@@ -510,13 +523,6 @@ impl Cache {
         Some(slot)
     }
 
-    /// The result filed under `key`, if there is one, marked used.
-    fn find(&mut self, key: Key) -> Option<Entry> {
-        let entry = self.touch(key)?.entry.clone();
-        self.hits += 1;
-        Some(entry)
-    }
-
     /// Marks the result filed under `key`, if there is one, used, without
     /// using it: what an edit leaves unused but likely to be asked for
     /// again, such as the boolean of a body taken out of a cut, which
@@ -525,14 +531,36 @@ impl Cache {
         self.touch(key);
     }
 
+    /// The result filed under `key`, or `make`'s, filed unless it's an
+    /// error, counted by `tally`.
+    fn try_get<E>(
+        &mut self,
+        key: Key,
+        tally: Tally,
+        make: impl FnOnce(&mut Cache) -> Result<Entry, E>,
+    ) -> Result<Entry, E> {
+        if let Some(slot) = self.touch(key) {
+            let entry = slot.entry.clone();
+            if let Tally::Feature = tally {
+                self.hits += 1;
+            }
+            return Ok(entry);
+        }
+        if let Tally::Feature = tally {
+            self.misses += 1;
+        }
+        let entry = make(self)?;
+        if let Tally::Join = tally {
+            self.joins += 1;
+        }
+        self.insert(key, entry.clone());
+        Ok(entry)
+    }
+
     /// The result filed under `key`, or `make`'s, filed.
     fn entry(&mut self, key: Key, make: impl FnOnce() -> Entry) -> Entry {
-        self.find(key).unwrap_or_else(|| {
-            self.misses += 1;
-            let entry = make();
-            self.insert(key, entry.clone());
-            entry
-        })
+        let Ok(entry) = self.try_get(key, Tally::Feature, |_| Ok::<_, Infallible>(make()));
+        entry
     }
 
     /// Whether a result is filed under `key`, without using it.
@@ -544,11 +572,7 @@ impl Cache {
     /// counting it in [`Cache::counts`]: what isn't a feature's result
     /// (a topology, a measure).
     fn uncounted(&mut self, key: Key, make: impl FnOnce() -> Entry) -> Entry {
-        if let Some(slot) = self.touch(key) {
-            return slot.entry.clone();
-        }
-        let entry = make();
-        self.insert(key, entry.clone());
+        let Ok(entry) = self.try_get(key, Tally::Uncounted, |_| Ok::<_, Infallible>(make()));
         entry
     }
 
@@ -668,16 +692,8 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Drawn, E>,
     ) -> Result<Arc<Drawn>, E> {
-        match self.find(key) {
-            Some(Entry::Drawn(drawn)) => Ok(drawn),
-            Some(_) => unreachable!("keys of different kinds differ"),
-            None => {
-                self.misses += 1;
-                let drawn = Arc::new(make()?);
-                self.insert(key, Entry::Drawn(Arc::clone(&drawn)));
-                Ok(drawn)
-            }
-        }
+        let drawn = self.try_get(key, Tally::Feature, |_| Ok(Entry::Drawn(Arc::new(make()?))))?;
+        Ok(take!(drawn, Drawn))
     }
 
     /// A solid's topology, filed under `key`.
@@ -709,16 +725,8 @@ impl Cache {
         drafted: bool,
         join: impl FnOnce(&mut Cache) -> Result<Scene, E>,
     ) -> Result<Scene, E> {
-        let scene = match self.touch(key).map(|slot| &slot.entry) {
-            Some(Entry::Scene(scene)) => scene.clone(),
-            Some(_) => unreachable!("keys of different kinds differ"),
-            None => {
-                let scene = join(self)?;
-                self.joins += 1;
-                self.insert(key, Entry::Scene(scene.clone()));
-                scene
-            }
-        };
+        let scene = self.try_get(key, Tally::Join, |cache| Ok(Entry::Scene(join(cache)?)))?;
+        let scene = take!(scene, Scene);
         if !drafted {
             self.committed = Some(key);
         }
