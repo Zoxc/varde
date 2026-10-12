@@ -66,7 +66,6 @@ mod test_rng;
 mod tolerance;
 pub mod topology;
 pub mod transform;
-pub mod trig;
 
 pub use aabb::Aabb;
 pub use blend::{BlendError, ChamferChain, ChamferCut, FilletChain, chamfer, fillet};
@@ -91,6 +90,7 @@ pub use tessellate::{Display, PatchSamples};
 pub use tolerance::Tolerance;
 pub use topology::Topology;
 pub use transform::{AlignError, AlignOptions, Datum, Instance, Motion, assemble};
+pub use varde_decide::num::trig;
 
 /// The largest coordinate or size, in model units, a design may have: its
 /// sketches' coordinates and lengths, and so the solids built from them. A

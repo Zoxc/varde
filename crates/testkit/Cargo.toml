@@ -1,0 +1,11 @@
+[package]
+name = "varde-testkit"
+description = "Varde kernel test support (dev-dependency only): oracles, corpus generators, mutators"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+glam.workspace = true
+libm.workspace = true

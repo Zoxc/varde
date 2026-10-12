@@ -4207,6 +4207,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "varde-decide"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.10",
+ "libm",
+]
+
+[[package]]
 name = "varde-document"
 version = "0.1.0"
 dependencies = [
@@ -4265,6 +4273,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "varde-kernel"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.10",
+ "rayon",
+ "spade",
+ "varde-decide",
+]
+
+[[package]]
 name = "varde-kernel-compat"
 version = "0.1.0"
 dependencies = [
@@ -4274,6 +4292,7 @@ dependencies = [
  "rayon",
  "serde",
  "spade",
+ "varde-decide",
  "varde-testing",
 ]
 
@@ -4372,6 +4391,14 @@ dependencies = [
 [[package]]
 name = "varde-testing"
 version = "0.1.0"
+
+[[package]]
+name = "varde-testkit"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.10",
+ "libm",
+]
 
 [[package]]
 name = "varde-view"

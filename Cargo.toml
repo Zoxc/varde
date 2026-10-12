@@ -10,6 +10,11 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 varde-kernel-compat = { path = "crates/kernel-compat" }
+# The Varde kernel (crates/decide, crates/kernel) and its test support,
+# which only dev-dependencies may name.
+varde-decide = { path = "crates/decide" }
+varde-kernel = { path = "crates/kernel" }
+varde-testkit = { path = "crates/testkit" }
 varde-expr = { path = "crates/expr" }
 varde-sketch = { path = "crates/sketch" }
 varde-render = { path = "crates/render" }
@@ -67,7 +72,9 @@ spade = { version = "2.15", default-features = false, features = ["std"] }
 # Trigonometry for the kernel and the sketch: pure Rust, the same code
 # natively and on wasm (where std's own is this code already), so angles
 # give the same bits everywhere. The platform's maths library would not.
-libm = "0.2.16"
+# Pinned exactly: a new version may change the last bits of a result
+# (deny.toml holds it there too).
+libm = "=0.2.16"
 # O_NONBLOCK and O_NOFOLLOW for opening the MCP token (crates/io), Unix
 # only. The version the lock already holds.
 libc = "0.2"

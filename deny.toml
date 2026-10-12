@@ -1,0 +1,69 @@
+# cargo-deny (tools/ci.sh): licenses, bans and sources of every dependency
+# of the workspace, as impl/03-license-check.md §4 of the kernel design
+# repository sets them. The whole is AGPL-3.0-or-later; a dependency's
+# license must allow that.
+
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "AGPL-3.0-or-later",
+    # Public-domain dedication; hexf-parse, through naga (wgpu). Not in the
+    # design's list (impl/03-license-check.md §4), which covered the
+    # kernel's dependencies only.
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+exceptions = [
+    # Big floats for the kernel's L2+ precision (A-06): LGPL-3 code may be
+    # combined with the AGPL-3 whole. Cargo says LGPL-3.0-only, the file
+    # headers "or any later version".
+    { name = "malachite", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
+    { name = "malachite-base", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
+    { name = "malachite-nz", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
+    { name = "malachite-q", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
+    { name = "malachite-float", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
+    # Test-only oracles, never in a release build.
+    { name = "rug", allow = ["LGPL-3.0-or-later"] },
+    { name = "gmp-mpfr-sys", allow = ["LGPL-3.0-or-later"] },
+    { name = "geogram_predicates", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
+]
+
+[licenses.private]
+# The workspace's own crates (publish = false or AGPL) are checked like
+# any other.
+ignore = false
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+deny = [
+    # The bits of every angle depend on it: only the pinned version, which
+    # Cargo.toml asks for (`libm = "=0.2.16"`), may come in, also through
+    # another crate.
+    { name = "libm", version = "<0.2.16", reason = "pinned at 0.2.16" },
+    { name = "libm", version = ">0.2.16", reason = "pinned at 0.2.16" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[advisories]
+# Advisories change by the day; tools/ci.sh reports them but only gates
+# on bans, licenses and sources.
+unmaintained = "workspace"

@@ -1,0 +1,23 @@
+[package]
+name = "varde-kernel"
+description = "Varde geometry kernel: tiled surfaces, B-reps, booleans and tessellation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+varde-decide.workspace = true
+glam.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon.workspace = true
+
+[dev-dependencies]
+# For tests/ban_probe.rs only, until the kernel depends on them itself.
+rayon.workspace = true
+spade.workspace = true
+
+[lints.rust]
+# tools/ci.sh builds tests/ban_probe.rs with `--cfg ban_probe`.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ban_probe)"] }

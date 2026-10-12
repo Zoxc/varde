@@ -1,0 +1,11 @@
+[package]
+name = "varde-decide"
+description = "Varde kernel decision layer: certified numerics, Bernstein forms, records and counting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+glam.workspace = true
+libm.workspace = true
