@@ -9,7 +9,7 @@ use varde_expr::{Ask, Value};
 
 use crate::BodiesError;
 use crate::bodies::check_bodies;
-use crate::{AlignError, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, PointRef};
+use crate::{BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, PointRef, PointRefError};
 
 /// The largest factor a scale takes, and the inverse of the smallest:
 /// `1e-3 ..= 1e3`, whether typed or worked out from an edge's length.
@@ -147,7 +147,7 @@ pub enum ScaleError {
     /// isn't a length [`Scale::length_ask`] takes.
     Length,
     /// Its point fails its own check ([`PointRef::check_own`]).
-    About(AlignError),
+    About(PointRefError),
     /// Its edge fails its own check ([`EdgeRef::check_own`]).
     Edge(EdgeError),
     /// Its edge is on this body, which isn't one it scales.

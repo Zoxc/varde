@@ -109,18 +109,18 @@ impl PointRef {
     /// Checks what needs only the reference: a corner's keys sorted and
     /// different, an edge's as [`EdgeRef::check_own`], its point finite
     /// and within [`MAX_COORD`](crate::MAX_COORD).
-    pub fn check_own(&self) -> Result<(), AlignError> {
+    pub fn check_own(&self) -> Result<(), PointRefError> {
         match self {
             PointRef::Origin => Ok(()),
             PointRef::Corner { faces, near, .. } => {
                 let [a, b, c] = faces;
                 if !(a < b && b < c) {
-                    return Err(AlignError::Corner);
+                    return Err(PointRefError::Corner);
                 }
                 check_near(*near)
             }
             PointRef::Middle(edge) | PointRef::Centre(edge) => {
-                edge.check_own().map_err(AlignError::Edge)
+                edge.check_own().map_err(PointRefError::Edge)
             }
         }
     }
@@ -151,23 +151,23 @@ impl DirRef {
     }
 
     /// Checks what needs only the reference, as [`PointRef::check_own`].
-    pub fn check_own(&self) -> Result<(), AlignError> {
+    pub fn check_own(&self) -> Result<(), PointRefError> {
         let Some(referred) = self.refers() else {
             return Ok(());
         };
         referred.check_own().map_err(|why| match why {
-            RefError::Edge(why) => AlignError::Edge(why),
-            RefError::Near(near) => AlignError::Near(near),
+            RefError::Edge(why) => PointRefError::Edge(why),
+            RefError::Near(near) => PointRefError::Near(near),
         })
     }
 }
 
 /// Checks a reference's point: finite and within [`MAX_COORD`](crate::MAX_COORD).
-fn check_near(near: DVec3) -> Result<(), AlignError> {
+fn check_near(near: DVec3) -> Result<(), PointRefError> {
     if crate::in_bounds(near) {
         Ok(())
     } else {
-        Err(AlignError::Near(near))
+        Err(PointRefError::Near(near))
     }
 }
 
@@ -280,13 +280,9 @@ pub enum AlignError {
     /// Its turn's expression doesn't give its value, or the value isn't
     /// an angle [`Move::angle_ask`] takes.
     Angle,
-    /// A corner's keys aren't sorted, or two are the same.
-    Corner,
-    /// An edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
-    /// A corner's or face's point isn't finite, or is further from zero
-    /// than [`MAX_COORD`](crate::MAX_COORD).
-    Near(DVec3),
+    /// A reference fails its own check ([`PointRef::check_own`],
+    /// [`DirRef::check_own`]).
+    Ref(PointRefError),
     /// A reference on the moved side is the origin's.
     FromOrigin,
     /// A reference on the moved side is on this body, not the one moved.
@@ -317,9 +313,7 @@ impl fmt::Display for AlignError {
             }
             AlignError::Offset => f.write_str("its offset's expression doesn't give its value"),
             AlignError::Angle => f.write_str("its turn's expression doesn't give its value"),
-            AlignError::Corner => f.write_str("a corner's faces are out of order or repeated"),
-            AlignError::Edge(why) => why.fmt(f),
-            AlignError::Near(at) => write!(f, "a reference's point {at} is out of bounds"),
+            AlignError::Ref(why) => why.fmt(f),
             AlignError::FromOrigin => f.write_str("the moved side names the origin"),
             AlignError::FromBody(body) => write!(
                 f,
@@ -344,7 +338,45 @@ impl fmt::Display for AlignError {
 impl std::error::Error for AlignError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            AlignError::Edge(why) => Some(why),
+            AlignError::Ref(why) => Some(why),
+            _ => None,
+        }
+    }
+}
+
+impl From<PointRefError> for AlignError {
+    fn from(why: PointRefError) -> Self {
+        AlignError::Ref(why)
+    }
+}
+
+/// What's wrong with a point's or a direction's reference on its own,
+/// see [`PointRef::check_own`] and [`DirRef::check_own`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PointRefError {
+    /// A corner's keys aren't sorted, or two are the same.
+    Corner,
+    /// An edge fails its own check ([`EdgeRef::check_own`]).
+    Edge(EdgeError),
+    /// A corner's or face's point isn't finite, or is further from zero
+    /// than [`MAX_COORD`](crate::MAX_COORD).
+    Near(DVec3),
+}
+
+impl fmt::Display for PointRefError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PointRefError::Corner => f.write_str("a corner's faces are out of order or repeated"),
+            PointRefError::Edge(why) => why.fmt(f),
+            PointRefError::Near(at) => write!(f, "a reference's point {at} is out of bounds"),
+        }
+    }
+}
+
+impl std::error::Error for PointRefError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PointRefError::Edge(why) => Some(why),
             _ => None,
         }
     }

@@ -51,9 +51,10 @@ pub enum DirRef { Origin(Axis3), Normal(FaceRef), Axis(AxisRef) }
   likewise (`Unpaired`); flip, offset and turn only with primaries
   (`Options`); the offset a length `Move::offset_ask` takes (within
   `MAX_COORD` of zero: `Offset`), the turn an angle `Move::angle_ask`
-  takes (within a turn either way: `Angle`); a corner's keys sorted and
-  different (`Corner`), an edge's own check (`Edge`), a corner's or
-  face's point finite and within `MAX_COORD` (`Near`); no origin
+  takes (within a turn either way: `Angle`); each reference's own check
+  (`Ref(PointRefError)`, shared with scale's point): a corner's keys
+  sorted and different (`Corner`), an edge's own check (`Edge`), a
+  corner's or face's point finite and within `MAX_COORD` (`Near`); no origin
   reference on the moved side (`FromOrigin`: a reference there is on
   the body, as the plan has it). `Document::check` then wants the body
   there and made before it (`Body`), every moved-side reference on it

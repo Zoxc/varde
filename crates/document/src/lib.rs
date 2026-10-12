@@ -40,7 +40,7 @@ mod sweep;
 mod testing;
 mod tint;
 
-pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
+pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef, PointRefError};
 pub use blend::{
     BlendEdgesError, MAX_BLEND_EDGES, blend_body, blend_excludes, check_blend_edges_own,
 };

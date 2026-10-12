@@ -228,12 +228,12 @@ fn references_are_checked() {
     if let PointRef::Corner { faces, .. } = &mut align.from.point {
         faces.swap(0, 2);
     }
-    refused(&mut editor, align, AlignError::Corner);
+    refused(&mut editor, align, AlignError::Ref(PointRefError::Corner));
     let mut align = good.clone();
     if let PointRef::Corner { faces, .. } = &mut align.to.point {
         faces[1] = faces[0];
     }
-    refused(&mut editor, align, AlignError::Corner);
+    refused(&mut editor, align, AlignError::Ref(PointRefError::Corner));
     // Points finite and within bounds.
     let mut align = good.clone();
     if let PointRef::Corner { near, .. } = &mut align.to.point {
@@ -243,19 +243,29 @@ fn references_are_checked() {
     far.near.x = 2e6;
     let mut other = good.clone();
     other.to.primary = Some(DirRef::Normal(far));
-    refused(&mut editor, other, AlignError::Near(far.near));
+    refused(
+        &mut editor,
+        other,
+        AlignError::Ref(PointRefError::Near(far.near)),
+    );
     let at = match align.to.point {
         PointRef::Corner { near, .. } => near,
         _ => unreachable!(),
     };
     let check = align.check_own(&editor.document().design());
-    assert!(matches!(check, Err(AlignError::Near(p)) if p.z.is_nan() && p.x == at.x));
+    assert!(
+        matches!(check, Err(AlignError::Ref(PointRefError::Near(p))) if p.z.is_nan() && p.x == at.x)
+    );
     // An edge's keys sorted.
     let mut edge = rim(a, first);
     edge.faces.swap(0, 1);
     let mut align = good.clone();
     align.to.secondary = Some(DirRef::Axis(AxisRef::Edge(edge)));
-    refused(&mut editor, align, AlignError::Edge(EdgeError::Faces));
+    refused(
+        &mut editor,
+        align,
+        AlignError::Ref(PointRefError::Edge(EdgeError::Faces)),
+    );
     // No origin on the moved side.
     let mut align = good.clone();
     align.from.point = PointRef::Origin;
@@ -446,7 +456,7 @@ fn errors_say_what_is_wrong() {
         "a reference is on body 4, which isn't made before it"
     );
     assert_eq!(
-        AlignError::Edge(EdgeError::Faces).to_string(),
+        AlignError::Ref(PointRefError::Edge(EdgeError::Faces)).to_string(),
         "its edge's faces are out of order or the same"
     );
     assert_eq!(

@@ -207,7 +207,7 @@ fn bodies_and_references_are_checked() {
             about: PointRef::Middle(edge),
             ..good.clone()
         },
-        ScaleError::About(AlignError::Edge(EdgeError::Faces)),
+        ScaleError::About(PointRefError::Edge(EdgeError::Faces)),
     );
     let later = FeatureId(document.next_id + 1);
     refused(
@@ -395,7 +395,7 @@ fn errors_say_what_is_wrong() {
         "feature 3: its edge length's expression doesn't give its value"
     );
     assert_eq!(
-        ScaleError::About(AlignError::Corner).to_string(),
+        ScaleError::About(PointRefError::Corner).to_string(),
         "its point: a corner's faces are out of order or repeated"
     );
 }

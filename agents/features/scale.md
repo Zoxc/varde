@@ -35,7 +35,7 @@ pub enum ScaleFactor {
   (design)` (cheap, for a panel): the body count and order (`Bodies(BodiesError)`,
   as a move's), every factor as `factor_ask` takes it (`Factor`), the
   edge length as `length_ask` (`Length`), the point's own check
-  (`About(AlignError)`: a corner's keys sorted and different, points
+  (`About(PointRefError)`: a corner's keys sorted and different, points
   finite within `MAX_COORD`), the edge's own check (`Edge`) and its
   body among the scaled ones (`EdgeBody`). `Document::check` then wants
   the bodies made before it (`Body`), and the point's and the edge's
