@@ -36,16 +36,16 @@ pub(crate) fn evaluate_param(
 }
 
 /// [`pin_units`] for a parameter's `text`, as [`Params::pin_units`]
-/// gives it.
+/// gives it, with the value the pins came from.
 pub(crate) fn pin_param_units(
     text: &str,
     units: LengthUnit,
     params: &Params,
-) -> Result<String, Error> {
+) -> Result<(String, Resolved), Error> {
     let expr = parse(text)?;
     let mut evaluator = Evaluator::new(units, params);
-    evaluator.free(&expr)?;
-    evaluator.pinned(text)
+    let before = evaluator.free(&expr)?;
+    Ok((evaluator.pinned(text)?, before))
 }
 
 /// `text` with the design's length unit written in after each bare number

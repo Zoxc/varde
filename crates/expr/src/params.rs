@@ -228,8 +228,7 @@ impl Params {
     /// it wouldn't come to the same; the caller can write the value
     /// instead ([`exact`](crate::exact)).
     pub fn pin_units(&self, text: &str, units: LengthUnit) -> Result<String, Error> {
-        let pinned = pin_param_units(text, units, self)?;
-        let before = evaluate_param(text, units, self, true)?;
+        let (pinned, before) = pin_param_units(text, units, self)?;
         match evaluate_param(&pinned, units, self, true)? {
             after if after == before => Ok(pinned),
             after => Err(Error {
