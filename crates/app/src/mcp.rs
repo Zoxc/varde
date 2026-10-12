@@ -106,6 +106,18 @@ pub(crate) struct Mcp {
 /// before and after are bounded apart ([`revert::SNAPSHOTS`]).
 pub(crate) const LOG_CAP: usize = 200;
 
+/// Pushes `item` onto `queue`, first letting the oldest go if `queue`
+/// holds `cap` already: the one it let go, if any.
+pub(crate) fn push_bounded<T>(queue: &mut VecDeque<T>, cap: usize, item: T) -> Option<T> {
+    let evicted = if queue.len() >= cap {
+        queue.pop_front()
+    } else {
+        None
+    };
+    queue.push_back(item);
+    evicted
+}
+
 /// The longest result summary kept for a row's tooltip, in bytes.
 const RESULT_BYTES: usize = 300;
 
@@ -403,13 +415,8 @@ impl Mcp {
     /// Logs `call` as waiting, letting the oldest go past [`LOG_CAP`]:
     /// its serial.
     fn log_call(&mut self, call: &Call) -> u64 {
-        let serial = self.serials;
-        self.serials = self.serials.wrapping_add(1);
-        while self.log.len() >= LOG_CAP {
-            self.log.pop_front();
-            self.dropped = self.dropped.saturating_add(1);
-        }
-        self.log.push_back(Logged {
+        let serial = self.next_serial();
+        let logged = Logged {
             serial,
             tool: tool(call),
             args: plain(&args(call)),
@@ -420,7 +427,18 @@ impl Mcp {
             told_rows: Vec::new(),
             told_at: None,
             edit: None,
-        });
+        };
+        if push_bounded(&mut self.log, LOG_CAP, logged).is_some() {
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        serial
+    }
+
+    /// The next serial: the one order the client's calls and the panel's
+    /// reverts share, which [`Mcp::rows`] interleaves them by.
+    fn next_serial(&mut self) -> u64 {
+        let serial = self.serials;
+        self.serials = self.serials.wrapping_add(1);
         serial
     }
 

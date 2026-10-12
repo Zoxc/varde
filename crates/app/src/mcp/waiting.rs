@@ -34,6 +34,7 @@ use varde_regen::{Answer, Response};
 use varde_sketch::Analysis;
 
 use super::edit::{Made, Refused};
+use super::push_bounded;
 use super::query::{self, Asked};
 use crate::doc::Doc;
 
@@ -609,10 +610,7 @@ impl Waiting {
     /// that last saw `from` is to see the client's undo as its own, not
     /// the user's (`changes.rs`).
     pub(crate) fn undone_to(&mut self, from: Revision, to: Revision) {
-        if self.undos.len() >= STEPS {
-            self.undos.pop_front();
-        }
-        self.undos.push_back((from, to));
+        push_bounded(&mut self.undos, STEPS, (from, to));
     }
 
     /// What the first edit of `from`'s session waiting on the popup is,
@@ -887,10 +885,7 @@ impl Waiting {
         if before == now {
             return;
         }
-        if self.amends.len() >= STEPS {
-            self.amends.pop_front();
-        }
-        self.amends.push_back((before, now));
+        push_bounded(&mut self.amends, STEPS, (before, now));
         for step in &mut self.steps {
             if step.after == before {
                 step.after = now;
@@ -915,10 +910,7 @@ impl Waiting {
         after: Revision,
         feature: Option<u64>,
     ) {
-        if self.steps.len() >= STEPS {
-            self.steps.pop_front();
-        }
-        self.steps.push_back(ClientStep {
+        let step = ClientStep {
             start: from.start,
             session: from.session.clone(),
             after,
@@ -927,7 +919,8 @@ impl Waiting {
             told_done: true,
             undone: false,
             feature,
-        });
+        };
+        push_bounded(&mut self.steps, STEPS, step);
     }
 
     /// Takes the pictures waited for into [`Waiting::renders`]: what the

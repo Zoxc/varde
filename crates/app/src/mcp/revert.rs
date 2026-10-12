@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use varde_document::{Document, EditorState, RestoreError, Revision};
 
-use super::{Mcp, changes};
+use super::{Mcp, changes, push_bounded};
 use crate::doc::Doc;
 
 /// The most distinct documents the log's rows keep for Revert, the
@@ -267,26 +267,21 @@ impl Mcp {
         doc.edit_error = None;
         doc.sync();
         let after = doc.editor.revision();
-        if doc.mcp.reverted.len() >= super::waiting::STEPS {
-            doc.mcp.reverted.pop_front();
-        }
-        doc.mcp.reverted.push_back(Made {
+        let made_revert = Made {
             after,
             target: state.revision(),
             to: to.clone(),
-        });
-        let serial = self.serials;
-        self.serials = self.serials.wrapping_add(1);
-        if self.reverts.len() >= super::LOG_CAP {
-            self.reverts.pop_front();
-        }
+        };
+        push_bounded(&mut doc.mcp.reverted, super::waiting::STEPS, made_revert);
+        let serial = self.next_serial();
         let tip = tip(&to, &made);
-        self.reverts.push_back(Reverted {
+        let reverted = Reverted {
             serial,
             after,
             to,
             tip,
-        });
+        };
+        push_bounded(&mut self.reverts, super::LOG_CAP, reverted);
     }
 }
 
