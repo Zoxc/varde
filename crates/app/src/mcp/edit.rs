@@ -181,11 +181,8 @@ impl Made {
                 Some(body) => json!({
                     "body": body.name,
                     "visible": body.visible,
-                    "color": body.color.map(|tint| json!({
-                        "hue": tint.hue(),
-                        "saturation": f64::from(tint.saturation()) / 100.0,
-                    })),
-                    "opacity": f64::from(body.opacity.percent()) / 100.0,
+                    "color": color(body),
+                    "opacity": opacity(body),
                 }),
                 None => json!({}),
             },
@@ -891,4 +888,21 @@ impl Doc {
         }
         ToolReply::data(made)
     }
+}
+
+/// A body's colour as `set_color` takes it, or null for the theme's: the
+/// inverse of [`made_commands`]' reading.
+pub(super) fn color(body: &Body) -> Value {
+    match body.color {
+        Some(tint) => json!({
+            "hue": tint.hue(),
+            "saturation": f64::from(tint.saturation()) / 100.0,
+        }),
+        None => Value::Null,
+    }
+}
+
+/// A body's opacity as `set_opacity` takes it, likewise.
+pub(super) fn opacity(body: &Body) -> Value {
+    json!(f64::from(body.opacity.percent()) / 100.0)
 }

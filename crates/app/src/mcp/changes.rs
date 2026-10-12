@@ -27,6 +27,7 @@ use serde_json::{Map, Value, json};
 use varde_document::{Body, BodyId, Document, Feature, FeatureId, FeatureKind, Revision, Snapshot};
 use varde_mcp::session::SessionId;
 
+use super::edit::{color, opacity};
 use super::query::{self, Shape};
 use super::waiting::ClientStep;
 use crate::doc::{Doc, DocId};
@@ -890,22 +891,6 @@ fn settings_diff(
         fields.insert("geometry".to_owned(), Setting::Geometry("changed"));
     }
     fields
-}
-
-/// A body's colour as `set_color` takes it, or null for the theme's.
-fn color(body: &Body) -> Value {
-    match body.color {
-        Some(tint) => json!({
-            "hue": tint.hue(),
-            "saturation": f64::from(tint.saturation()) / 100.0,
-        }),
-        None => Value::Null,
-    }
-}
-
-/// A body's opacity as `set_opacity` takes it.
-fn opacity(body: &Body) -> Value {
-    json!(f64::from(body.opacity.percent()) / 100.0)
 }
 
 /// `reply` carrying `changes`, if any, and the design's `revision`: in
