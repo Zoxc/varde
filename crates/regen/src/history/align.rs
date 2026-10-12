@@ -36,7 +36,7 @@ use super::motion::{How, place, reference_key};
 use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_solid};
 use crate::cache::{Cache, Datum};
 use crate::error_geometry::ErrorGeometry;
-use crate::message::{self, AlignRef, Moving, Side, Whose};
+use crate::why::{self, AlignRef, Moving, Side, Whose};
 use crate::{AlignDatums, AlignFound};
 
 /// Changes the body of `evaluation` that the align `align`, the feature
@@ -178,9 +178,9 @@ impl Found<'_> {
         let made = self
             .evaluation
             .holding(body)
-            .ok_or_else(|| message::reference(whose, message::ALIGN_BODY_GONE))?;
+            .ok_or_else(|| why::reference(whose, why::ALIGN_BODY_GONE))?;
         if matches!(whose, Whose::Align(_, Side::Target)) && Some(made.body) == self.moved {
-            return Err(message::reference(whose, message::ALIGN_ON_MOVED).into());
+            return Err(why::reference(whose, why::ALIGN_ON_MOVED).into());
         }
         Ok(made)
     }
@@ -311,7 +311,7 @@ impl Found<'_> {
                 let shown = refs.directions().filter_map(dir_shown);
                 Failed {
                     missing: false,
-                    message: message::align_parallel(side),
+                    message: why::align_parallel(side),
                     geometry: self.shown(shown),
                 }
             }
@@ -322,12 +322,12 @@ impl Found<'_> {
                 let (side, refs) = named[at];
                 Failed {
                     missing: false,
-                    message: message::align_too_far(side),
+                    message: why::align_too_far(side),
                     geometry: self.shown(point_shown(&refs.point)),
                 }
             }
             AlignError::Direction | AlignError::Unpaired | AlignError::Options => {
-                message::ALIGN_MALFORMED.into()
+                why::ALIGN_MALFORMED.into()
             }
         }
     }
@@ -426,7 +426,7 @@ fn unresolved(
     };
     Failed {
         missing: false,
-        message: message::reference(whose, why),
+        message: why::reference(whose, why),
         geometry,
     }
 }

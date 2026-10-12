@@ -23,7 +23,7 @@
 //! feature and the fit tolerance, and replaces the body's solid (the
 //! body keeps its id and every face its name, so a sketch on a drafted
 //! face follows it). The kernel's refusals are worded for the Timeline
-//! (`message::draft_refused`), with the face or corner they're about
+//! (`why::draft_refused`), with the face or corner they're about
 //! drawn; its other failures as a boolean's ("drafting faces of Body 1
 //! ...").
 //!
@@ -39,7 +39,7 @@ use super::in_place::{Drawn, InPlace};
 use super::motion::{NEUTRAL_PLANE, resolve_plane};
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
-use crate::message::{self, DraftRefusal};
+use crate::why::{self, DraftRefusal};
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -78,9 +78,9 @@ pub(super) fn evaluate_face_draft(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let body = draft.body().ok_or(message::NOTHING_PICKED)?;
+    let body = draft.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
-    let faces = place.regions(&draft.faces, message::draft_face_not_found);
+    let faces = place.regions(&draft.faces, why::draft_face_not_found);
     let plane = resolve_plane(&draft.neutral, &NEUTRAL_PLANE, evaluation, tolerance, cache);
     // The plane, as a mirror's is, for the session to draw: also while a
     // face isn't found, whose failure comes first.
@@ -105,7 +105,7 @@ pub(super) fn evaluate_face_draft(
         key,
         evaluation,
         cache,
-        message::draft_leaves_nothing,
+        why::draft_leaves_nothing,
         |budget| {
             draft_by(
                 &place.solid,
@@ -145,9 +145,9 @@ fn refused(error: DraftError, place: &InPlace<'_>, tolerance: &Tolerance) -> Fai
         DraftError::Corner { vertex } => (DraftRefusal::Corner, Drawn::Corner(vertex)),
         DraftError::OutOfRange => (DraftRefusal::OutOfRange, Drawn::Nothing),
         DraftError::Failed(failure) => {
-            let words = message::drafting(place.name, failure.error);
+            let words = why::drafting(place.name, failure.error);
             return place.kernel_failed(words, failure, tolerance);
         }
     };
-    place.refused(message::draft_refused(why, place.name), drawn, tolerance)
+    place.refused(why::draft_refused(why, place.name), drawn, tolerance)
 }

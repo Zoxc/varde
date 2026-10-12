@@ -45,7 +45,7 @@ use varde_kernel_compat::{BlendError, Solid, Tolerance, Topology};
 use super::Failed;
 use super::in_place::InPlace;
 use crate::ErrorGeometry;
-use crate::message::{self, Blend, BlendRefusal, BlendSource};
+use crate::why::{self, Blend, BlendRefusal, BlendSource};
 
 /// The chains of `own`'s topology `edges` are found as, in their order:
 /// one not found fails ("its edge 2 of 3 wasn't found").
@@ -54,7 +54,7 @@ pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, F
     (edges.iter().enumerate())
         .map(|(i, edge)| {
             (own.topology.edge(&own.solid, edge.faces, edge.near))
-                .map_err(|_| message::blend_edge_not_found(i, count).into())
+                .map_err(|_| why::blend_edge_not_found(i, count).into())
         })
         .collect()
 }
@@ -62,7 +62,7 @@ pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, F
 /// The regions of `own`'s topology `faces` are found as, in their order:
 /// one not found fails ("its face 2 of 3 wasn't found").
 pub(super) fn find_faces(own: &InPlace, faces: &[FaceRef]) -> Result<Vec<u32>, Failed> {
-    own.find_regions(faces, message::blend_face_not_found)
+    own.find_regions(faces, why::blend_face_not_found)
 }
 
 /// One chain to blend as it's worked out: which, its faces' name and
@@ -247,7 +247,7 @@ pub(super) fn refused(
         let which = about(chain).map(|p| (p.source, p.grown));
         Failed {
             missing: false,
-            message: message::blend_refused(blend, why, which, counts, own.name),
+            message: why::blend_refused(blend, why, which, counts, own.name),
             geometry: chain_geometry(&own.solid, &own.topology, chain, tolerance),
         }
     };
@@ -258,10 +258,10 @@ pub(super) fn refused(
         BlendError::TooBig { chain } => edge_failed(chain, BlendRefusal::TooBig),
         BlendError::End { chain } => edge_failed(chain, BlendRefusal::End),
         BlendError::Corner { .. } => {
-            message::blend_refused(blend, BlendRefusal::Corner, None, counts, own.name).into()
+            why::blend_refused(blend, BlendRefusal::Corner, None, counts, own.name).into()
         }
         BlendError::Failed(failure) => {
-            let words = message::blending(blend, own.name, failure.error);
+            let words = why::blending(blend, own.name, failure.error);
             own.kernel_failed(words, failure, tolerance)
         }
     }

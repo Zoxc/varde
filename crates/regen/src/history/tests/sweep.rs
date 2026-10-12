@@ -501,33 +501,30 @@ fn paths_that_cant_be_swept_are_refused_first() {
         failure(&evaluation, sweep).unwrap().clone()
     };
     let up = |from: f64, to: f64| -> Drawing { Box::new(polyline(vec![(20.0, from), (20.0, to)])) };
-    assert_eq!(
-        refused(vec![up(5.0, 30.0)]).message,
-        message::PATH_OFF_START
-    );
+    assert_eq!(refused(vec![up(5.0, 30.0)]).message, why::PATH_OFF_START);
     assert_eq!(
         refused(vec![Box::new(polyline(vec![(20.0, 0.0), (25.0, 30.0)]))]).message,
-        message::PATH_NOT_SQUARE
+        why::PATH_NOT_SQUARE
     );
     let corner = refused(vec![Box::new(polyline(vec![
         (20.0, 0.0),
         (20.0, 10.0),
         (30.0, 10.0),
     ]))]);
-    assert_eq!(corner.message, message::PATH_CORNER);
+    assert_eq!(corner.message, why::PATH_CORNER);
     let geometry = corner.geometry.expect("the corner drawn");
     assert_eq!(geometry.points(), [[20.0, 0.0, 10.0]]);
     assert_eq!(
         refused(vec![up(0.0, 10.0), up(11.0, 20.0)]).message,
-        message::PATH_PARTS_APART
+        why::PATH_PARTS_APART
     );
     assert_eq!(
         refused(vec![up(0.0, 10.0), up(10.0, 20.0), up(10.0, 30.0)]).message,
-        message::PATH_PARTS_APART
+        why::PATH_PARTS_APART
     );
     assert_eq!(
         refused(vec![up(0.0, 10.0), Box::new(disc((20.0, 20.0), 3.0))]).message,
-        message::PATH_CLOSED_NOT_ALONE
+        why::PATH_CLOSED_NOT_ALONE
     );
     assert_eq!(
         refused(vec![Box::new(|sketch: &mut Sketch| {
@@ -535,7 +532,7 @@ fn paths_that_cant_be_swept_are_refused_first() {
             polyline(vec![(20.0, 10.0), (30.0, 10.0)])(sketch);
         })])
         .message,
-        message::PATH_CURVES_BRANCH
+        why::PATH_CURVES_BRANCH
     );
 }
 
@@ -555,7 +552,7 @@ fn a_path_whose_curves_are_gone_fails() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        message::PATH_NOT_FOUND
+        why::PATH_NOT_FOUND
     );
     assert!(failure(&evaluation, pocket).is_none());
     assert!(evaluation.bodies.iter().all(|made| made.body != body));
@@ -772,7 +769,7 @@ fn a_helix_s_axis_is_resolved() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, about_edge).unwrap().message,
-        message::EDGE_NOT_FOUND
+        why::EDGE_NOT_FOUND
     );
 }
 
@@ -1004,7 +1001,7 @@ fn a_piece_closed_on_itself_has_no_corner() {
         closed: true,
     };
     let failed = join(vec![two], start, || DVec3::ZERO, &tolerance).unwrap_err();
-    assert_eq!(failed.message, message::PATH_CORNER);
+    assert_eq!(failed.message, why::PATH_CORNER);
 }
 
 mod fuzz;

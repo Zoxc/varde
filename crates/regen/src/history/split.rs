@@ -38,9 +38,9 @@ use super::motion::{SPLIT_PLANE, face_plane};
 use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solid, through_all};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
-use crate::message::{self, Making};
 use crate::picking::region_form;
 use crate::profile::chain;
+use crate::why::{self, Making};
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -87,7 +87,7 @@ pub(super) fn evaluate_split(
     let bounds = made
         .solid
         .bounds3()
-        .ok_or_else(|| message::split_one_side(body_name))?;
+        .ok_or_else(|| why::split_one_side(body_name))?;
     let building = Building {
         feature,
         body: &made.solid,
@@ -112,11 +112,11 @@ pub(super) fn evaluate_split(
                 SplitTool::Body(tool) => std::slice::from_ref(tool),
                 _ => &[],
             };
-            let words = message::splitting(body_name, failure.error);
+            let words = why::splitting(body_name, failure.error);
             Failed::kernel(words, &failure, [&[split.body], tools])
         })?;
     if front.is_empty() || back.is_empty() {
-        return Err(message::split_one_side(body_name).into());
+        return Err(why::split_one_side(body_name).into());
     }
     let piece_key = |side: Side| {
         let side = match side {
@@ -186,7 +186,7 @@ impl Building<'_> {
             SplitTool::Face(face) => {
                 let made = evaluation
                     .holding(face.body)
-                    .ok_or(message::SPLIT_FACE_BODY_GONE)?;
+                    .ok_or(why::SPLIT_FACE_BODY_GONE)?;
                 let key = self.face_key("split face", made.key, face);
                 let solid = cache.solid(key, || self.surface(&made.solid, face))?;
                 Ok((solid, key))
@@ -199,10 +199,10 @@ impl Building<'_> {
                 let sketch = find_sketch(sketches, *sketch)?;
                 let placement = sketch
                     .placement
-                    .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())?;
+                    .ok_or_else(|| why::SKETCH_NOT_PLACED.to_owned())?;
                 let frame = super::frame(&placement);
                 let (from, to) = through_all(&frame, [self.body])
-                    .ok_or_else(|| message::split_one_side(self.body_name))?;
+                    .ok_or_else(|| why::split_one_side(self.body_name))?;
                 let key = self
                     .keyer("split regions")
                     .value(regions)
@@ -224,7 +224,7 @@ impl Building<'_> {
                     )
                     .map_err(|failure| {
                         let finest = self.tolerance.fit() <= Tolerance::MIN_FIT;
-                        let words = message::tool(Making::Extrude, failure.error, finest);
+                        let words = why::tool(Making::Extrude, failure.error, finest);
                         let failure = KernelFailure::new(failure, &self.tolerance);
                         Failed::kernel(words, &failure, [&[], &[]])
                     })
@@ -235,7 +235,7 @@ impl Building<'_> {
                 let sketch = find_sketch(sketches, *sketch)?;
                 let placement = sketch
                     .placement
-                    .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())?;
+                    .ok_or_else(|| why::SKETCH_NOT_PLACED.to_owned())?;
                 let frame = super::frame(&placement);
                 let key = self
                     .keyer("split chain")
@@ -250,7 +250,7 @@ impl Building<'_> {
                         self.tolerance.resolution(),
                         self.tolerance.fit(),
                     )
-                    .map_err(message::split_line)?;
+                    .map_err(why::split_line)?;
                     varde_kernel_compat::chain_tool(
                         &segments,
                         &frame,
@@ -298,8 +298,8 @@ impl Building<'_> {
     /// found on `solid`.
     fn surface(&self, solid: &Solid, face: &FaceRef) -> Result<Solid, Failed> {
         let topology = solid.topology();
-        let region = (topology.face(solid, &face.key, face.near))
-            .map_err(|_| message::SPLIT_FACE_NOT_FOUND)?;
+        let region =
+            (topology.face(solid, &face.key, face.near)).map_err(|_| why::SPLIT_FACE_NOT_FOUND)?;
         let region = &topology.regions()[region as usize];
         let form = region_form(solid, region);
         // A point inside the face, which picks a cone's nappe: the middle
@@ -314,7 +314,7 @@ impl Building<'_> {
             .map_err(|error| match error {
                 ToolError::CantExtend => Failed {
                     missing: false,
-                    message: message::SPLIT_CANT_EXTEND.to_owned(),
+                    message: why::SPLIT_CANT_EXTEND.to_owned(),
                     geometry: face_geometry(solid, region, &self.tolerance),
                 },
                 ToolError::Failed(failure) => self.tool_failed(failure),
@@ -324,7 +324,7 @@ impl Building<'_> {
     /// Why the kernel couldn't build the tool, in words, with its
     /// evidence (by value: the tool is no body).
     fn tool_failed(&self, failure: Failure) -> Failed {
-        let words = message::split_tool(self.body_name, failure.error);
+        let words = why::split_tool(self.body_name, failure.error);
         let failure = KernelFailure::new(failure, &self.tolerance);
         Failed::kernel(words, &failure, [&[], &[]])
     }
@@ -337,5 +337,5 @@ fn find_sketch<'s, 'a>(
 ) -> Result<&'s SketchOutput<'a>, Failed> {
     (sketches.iter())
         .find(|sketch| sketch.id == id)
-        .ok_or_else(|| message::SPLIT_SKETCH_GONE.into())
+        .ok_or_else(|| why::SPLIT_SKETCH_GONE.into())
 }

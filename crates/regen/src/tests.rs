@@ -1,12 +1,17 @@
+use std::sync::Arc;
+
 use glam::{DVec2, Vec3};
 use varde_document::{
-    Command, Document, Editor, Extent, Extrude, Operation, OriginPlane, Plane, Sketch,
+    BodyId, Command, Document, Editor, Extent, Extrude, FeatureId, FeatureKind, Operation,
+    OriginPlane, Plane, Sketch,
 };
-use varde_kernel_compat::{Solid, Tolerance};
+use varde_kernel_compat::{Display, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
 use super::*;
+use crate::cache::Keyer;
 use crate::history::tests::{example_extrude, plate_below};
+use crate::picking::{Drawn, Scene};
 
 fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
     Request::Regenerate {
@@ -751,7 +756,7 @@ fn a_draft_leaving_nothing_fails_each_time_it_is_dragged_there() {
         draft.extrude_mut().flip = flip;
         draft
     };
-    let emptied = crate::message::emptied(crate::message::Doing::Intersecting, "Body 1");
+    let emptied = crate::why::emptied(crate::why::Doing::Intersecting, "Body 1");
     for (revision, flip) in [(1, true), (2, false), (3, true), (4, false)] {
         let answer =
             answered(regenerator.handle(regenerate_with(&editor, Some(intersect(revision, flip)))));

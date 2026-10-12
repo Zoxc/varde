@@ -9,7 +9,7 @@ use super::motion::{note_reference, resolve_axis, within};
 use super::{BodySolid, Evaluation, Failed, own_solids};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
-use crate::message::{self, Moving};
+use crate::why::{self, Moving};
 
 /// Changes the bodies of `evaluation` (those the features before it
 /// made) as the pattern `pattern`, the feature `feature`, says, or says
@@ -43,11 +43,10 @@ pub(super) fn evaluate_pattern(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     own_solids(document, pattern.bodies.iter().copied(), evaluation)?;
-    let count = pattern.count().ok_or(message::PATTERN_COUNT)?;
+    let count = pattern.count().ok_or(why::PATTERN_COUNT)?;
     let [point, direction] = resolve_axis(pattern.kind.axis(), evaluation, tolerance, cache)?;
     note_reference(evaluation, feature, [point, direction]);
-    let motions =
-        placements(pattern, count, [point, direction]).ok_or(message::AXIS_NO_DIRECTION)?;
+    let motions = placements(pattern, count, [point, direction]).ok_or(why::AXIS_NO_DIRECTION)?;
     let mut changed = Vec::with_capacity(pattern.bodies.len());
     let mut separate = Vec::new();
     for made in (evaluation.bodies.iter()).filter(|m| pattern.bodies.binary_search(&m.body).is_ok())
@@ -55,17 +54,17 @@ pub(super) fn evaluate_pattern(
         let name = super::body_name(document, made.body);
         let patches = made.solid.mesh().tris().len();
         if !copies_fit(count, patches) {
-            return Err(message::too_many_copies(name, count, patches).into());
+            return Err(why::too_many_copies(name, count, patches).into());
         }
         if !motions.iter().all(|motion| within(&made.solid, motion)) {
-            return Err(message::out_of_range(Moving::Pattern, name).into());
+            return Err(why::out_of_range(Moving::Pattern, name).into());
         }
         if !pattern.joins() {
             // Found: the filter above takes only the pattern's bodies.
             let source = pattern.bodies.binary_search(&made.body).unwrap_or(0);
             for (k, motion) in (1..).zip(&motions) {
                 // A checked pattern lists a body per copy.
-                let body = pattern.copy_body(source, k).ok_or(message::COPY_BODIES)?;
+                let body = pattern.copy_body(source, k).ok_or(why::COPY_BODIES)?;
                 let copy = Instance {
                     feature: feature.get(),
                     index: u64::from(k),
@@ -108,7 +107,7 @@ fn copy_of(
     solid
         .transformed(motion, Some(copy), tolerance, &Budget::DEFAULT)
         .map_err(|failure| {
-            let words = message::moving(Moving::Pattern, name, failure.error);
+            let words = why::moving(Moving::Pattern, name, failure.error);
             let failure = KernelFailure::new(failure, tolerance);
             Failed::kernel(words, &failure, [&[], &[]])
         })
@@ -202,13 +201,10 @@ fn copied(
         let part = solid
             .transformed(motion, Some(copy), tolerance, &Budget::DEFAULT)
             .map_err(|failure| {
-                kernel(
-                    message::moving(Moving::Pattern, name, failure.error),
-                    failure,
-                )
+                kernel(why::moving(Moving::Pattern, name, failure.error), failure)
             })?;
         parts.push(part);
     }
     assemble(&parts, tolerance, &Budget::DEFAULT)
-        .map_err(|failure| kernel(message::with_copies(name, failure.error), failure))
+        .map_err(|failure| kernel(why::with_copies(name, failure.error), failure))
 }

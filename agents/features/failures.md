@@ -6,7 +6,7 @@ Option<Arc<ErrorGeometry>> }` in `Evaluation::failed` and
 `Response::Regenerated::failed`, in the document's order; a failing
 draft's `Drafted` carries the same `geometry` beside its `error`. The
 message is worded from the kernel's `failure.error` as before
-(`src/message.rs`).
+(`src/why.rs`).
 
 - **Carried**: the cache keeps a kernel failure as a `KernelFailure`
   (`Entry::Touches`, `Entry::Boolean`): its `error`, its evidence made

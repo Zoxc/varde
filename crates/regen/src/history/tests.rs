@@ -792,7 +792,7 @@ fn a_cut_leaving_nothing_of_a_body_fails() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         evaluation.failed,
-        [(cut, message::emptied(Doing::Cutting, "Body 1"))]
+        [(cut, why::emptied(Doing::Cutting, "Body 1"))]
     );
     assert!(
         evaluation.failed[0]
@@ -825,7 +825,7 @@ fn an_intersect_only_flush_with_a_body_fails() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         evaluation.failed,
-        [(intersect, message::emptied(Doing::Intersecting, "Body 1"))]
+        [(intersect, why::emptied(Doing::Intersecting, "Body 1"))]
     );
     assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
 }
@@ -847,7 +847,7 @@ fn a_feature_leaving_one_target_empty_changes_none() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         evaluation.failed,
-        [(cut, message::emptied(Doing::Cutting, "Body 1"))]
+        [(cut, why::emptied(Doing::Cutting, "Body 1"))]
     );
     assert_eq!(evaluation.touched, [(cut, vec![top, below])]);
     assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
@@ -895,7 +895,7 @@ fn a_cut_failing_after_an_upstream_edit_empties_nothing() {
     let after = evaluate(editor.document(), &mut cache);
     assert_eq!(
         after.failed,
-        [(cut, message::emptied(Doing::Cutting, "Body 1"))]
+        [(cut, why::emptied(Doing::Cutting, "Body 1"))]
     );
     assert_near(after.bodies[0].solid.volume(), (400.0 - PI * 64.0) * 10.0);
 }
@@ -913,7 +913,7 @@ fn undoing_the_edit_that_saved_a_body_empties_nothing() {
         Extent::ThroughAll,
         Operation::Cut(Targets::default()),
     );
-    let failing = [(cut, message::emptied(Doing::Cutting, "Body 1"))];
+    let failing = [(cut, why::emptied(Doing::Cutting, "Body 1"))];
     let mut cache = Cache::default();
     let check = |cache: &mut Cache, editor: &Editor, fails: bool| {
         cache.begin();

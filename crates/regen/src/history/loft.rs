@@ -36,10 +36,10 @@
 //! The tool is cached by every section's and rail's sketch key and
 //! placement and what the feature names of them, the mode, whether it's
 //! closed, the feature and the fit tolerance. The kernel's refusals are
-//! worded for the Timeline (`message::loft_refused`: "rail 1 doesn't
+//! worded for the Timeline (`why::loft_refused`: "rail 1 doesn't
 //! pass through section 2", "the loft twists: pick matching start
 //! points", "the loft runs into itself"); its other failures as
-//! `message::lofting`'s.
+//! `why::lofting`'s.
 //!
 //! The kernel's loft isn't built yet: it fails as too complex, which
 //! reaches the user as "lofting its sections is too complex to work
@@ -60,8 +60,8 @@ use varde_kernel_compat::{Budget, Solid, Tolerance};
 use super::{Failed, Run, SketchOutput};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
-use crate::message::{self, LoftRefusal};
 use crate::profile::{chain, loft_corner, profile_marked};
+use crate::why::{self, LoftRefusal};
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -101,10 +101,10 @@ impl Run<'_> {
         for (index, section) in loft.sections.iter().enumerate() {
             let output = self
                 .sketch_output(section.sketch())
-                .ok_or_else(|| message::section_sketch_gone(index))?;
+                .ok_or_else(|| why::section_sketch_gone(index))?;
             let placement = output
                 .placement
-                .ok_or_else(|| message::section_not_placed(index))?;
+                .ok_or_else(|| why::section_not_placed(index))?;
             keyer.key(output.key).placement(&placement).value(section);
             placed.push((output, placement));
         }
@@ -113,10 +113,10 @@ impl Run<'_> {
         for (index, rail) in loft.rails.iter().enumerate() {
             let output = self
                 .sketch_output(rail.sketch)
-                .ok_or_else(|| message::rail_sketch_gone(index))?;
+                .ok_or_else(|| why::rail_sketch_gone(index))?;
             let placement = output
                 .placement
-                .ok_or_else(|| message::rail_not_placed(index))?;
+                .ok_or_else(|| why::rail_not_placed(index))?;
             keyer.key(output.key).placement(&placement).value(rail);
             rails_placed.push((output, placement));
         }
@@ -141,9 +141,9 @@ impl Run<'_> {
                 if kernel_loft::on_one_plane(&sections[i], &sections[j], resolution) {
                     let point = |at: usize| matches!(sections[at], kernel_loft::Section::Point(_));
                     return Err(match (point(i), point(j)) {
-                        (true, _) => message::point_on_section_plane(i, j),
-                        (_, true) => message::point_on_section_plane(j, i),
-                        _ => message::sections_on_one_plane(i, j),
+                        (true, _) => why::point_on_section_plane(i, j),
+                        (_, true) => why::point_on_section_plane(j, i),
+                        _ => why::sections_on_one_plane(i, j),
                     }
                     .into());
                 }
@@ -158,7 +158,7 @@ impl Run<'_> {
                     resolution,
                     self.tolerance.fit(),
                 )
-                .map_err(|error| message::rail_chain(index, error))?;
+                .map_err(|error| why::rail_chain(index, error))?;
                 let world = |p| placement.to_world(p);
                 let conics = (segments.iter())
                     .map(|segment| Conic3 {
@@ -207,39 +207,39 @@ impl Run<'_> {
             Section::Point { point, .. } => {
                 let at = sketch
                     .point(*point)
-                    .ok_or_else(|| message::section_not_found(index))?
+                    .ok_or_else(|| why::section_not_found(index))?
                     .at;
                 Ok(kernel_loft::Section::Point(placement.to_world(at)))
             }
             Section::Region { region, start, .. } => {
                 let profiles = match &*output.profiles {
                     Ok(profiles) => profiles,
-                    Err(e) => return Err(message::section_unusable(index, e).into()),
+                    Err(e) => return Err(why::section_unusable(index, e).into()),
                 };
                 let found = profiles
                     .resolve(std::slice::from_ref(region))
                     .into_iter()
                     .collect::<Option<Vec<usize>>>()
-                    .ok_or_else(|| message::section_not_found(index))?;
+                    .ok_or_else(|| why::section_not_found(index))?;
                 let loops = profiles
                     .merge(&found)
-                    .map_err(|e| message::section_unusable(index, e))?;
+                    .map_err(|e| why::section_unusable(index, e))?;
                 let (made, firsts) = profile_marked(sketch, profiles, &loops, self.tolerance.fit())
-                    .map_err(|e| message::section_unusable(index, e))?;
+                    .map_err(|e| why::section_unusable(index, e))?;
                 let [outline] =
-                    <[_; 1]>::try_from(made.loops).map_err(|_| message::section_holes(index))?;
+                    <[_; 1]>::try_from(made.loops).map_err(|_| why::section_holes(index))?;
                 let start = match start {
                     None => None,
                     Some(id) => {
                         if sketch.point(*id).is_none() {
-                            return Err(message::start_not_found(index).into());
+                            return Err(why::start_not_found(index).into());
                         }
                         // The piece starting at the point, by the rule
                         // the session picks starts by, and its first
                         // segment.
                         let resolution = self.tolerance.resolution();
                         let piece = loft_corner(sketch, profiles, &loops[0], *id, resolution)
-                            .ok_or_else(|| message::start_not_corner(index))?;
+                            .ok_or_else(|| why::start_not_corner(index))?;
                         Some(firsts[0][piece])
                     }
                 };
@@ -267,12 +267,11 @@ impl Run<'_> {
             LoftError::Twists => LoftRefusal::Twists,
             LoftError::IntoItself => LoftRefusal::IntoItself,
             LoftError::Failed(failure) => {
-                let words =
-                    message::lofting(failure.error, self.tolerance.fit() <= Tolerance::MIN_FIT);
+                let words = why::lofting(failure.error, self.tolerance.fit() <= Tolerance::MIN_FIT);
                 let failure = KernelFailure::new(failure, &self.tolerance);
                 return Failed::kernel(words, &failure, [&[], &[]]);
             }
         };
-        message::loft_refused(why).into()
+        why::loft_refused(why).into()
     }
 }

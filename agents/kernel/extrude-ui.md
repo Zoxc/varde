@@ -166,7 +166,7 @@ box. The viewport doesn't hold the failure's geometry.
 Errors that stand alone, the field errors, the refusal and the draft's
 error here and a failed feature's tooltip, are shown as sentences,
 capitalised by the view (`chrome::sentence`): the messages themselves
-(`varde_expr`'s, `ExtrudeError`'s, `regen::message`'s) start in lower
+(`varde_expr`'s, `ExtrudeError`'s, `regen::why`'s) start in lower
 case to follow a colon, as in the status bar's "Couldn't regenerate: …".
 The Bodies list has no scrollable of its own: the body scrolls as a
 whole, keeping its offset while rows come and go (clamped to what's left,

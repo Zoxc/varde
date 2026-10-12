@@ -87,7 +87,7 @@
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
 //! A feature that fails records why, in words for the Timeline
-//! (`src/message.rs`), and, where the kernel failed, what its failure's
+//! (`src/why.rs`), and, where the kernel failed, what its failure's
 //! evidence shows of where ([`FeatureFailure::geometry`], see
 //! `src/error_geometry.rs`; the operand faces are resolved once the model
 //! is drawn, each operand on the bodies it holds: a merge's or a
@@ -125,9 +125,9 @@ use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::{ErrorGeometry, FeatureFailure, KernelFailure};
-use crate::message::{self, Doing, Making};
 use crate::picking::region_form;
 use crate::profile::profile;
+use crate::why::{self, Doing, Making};
 
 /// The kernel operation `$name` gives: `$kernel`, or the stand-in a
 /// test set in the [`crate::testing`] overrides' `$field`.
@@ -373,12 +373,12 @@ pub(crate) fn own_solids(
         return Ok(());
     };
     if document.body(body).is_none() {
-        return Err(message::BODY_GONE.into());
+        return Err(why::BODY_GONE.into());
     }
     let consumed = (evaluation.merged.iter()).find(|(consumed, _)| *consumed == body);
     Err(match consumed {
-        Some(&(_, holder)) => message::consumed(name(body), name(holder)),
-        None => message::no_solid(name(body)),
+        Some(&(_, holder)) => why::consumed(name(body), name(holder)),
+        None => why::no_solid(name(body)),
     }
     .into())
 }
@@ -887,19 +887,19 @@ impl Run<'_> {
             let name = self.body_name(made.body);
             let fails = |message: String| match targets.len() {
                 1 => message,
-                _ => message::leave_out(message, name),
+                _ => why::leave_out(message, name),
             };
             let key = boolean_key(doing, made.key, tool_key);
             let solid = cached_boolean(cache, key, (&made.solid, &tool), op, &self.tolerance)
                 .map_err(|failure| {
-                    let words = fails(message::boolean(doing, name, failure.error));
+                    let words = fails(why::boolean(doing, name, failure.error));
                     Failed::kernel(words, &failure, [&[made.body], &[]])
                 })?;
             // The cached empty result stays: its key is right, and the
             // check is cheap to make again. A cut's message says to
             // untick it already.
             if solid.is_empty() {
-                let emptied = message::emptied(doing, name);
+                let emptied = why::emptied(doing, name);
                 return Err(match doing {
                     Doing::Cutting => emptied,
                     _ => fails(emptied),
@@ -976,7 +976,7 @@ impl Run<'_> {
         // A union of solids that aren't empty isn't, but it's cheap to
         // make sure no body ever is.
         if solid.is_empty() {
-            return Err(message::emptied(Doing::Joining, self.body_name(into)).into());
+            return Err(why::emptied(Doing::Joining, self.body_name(into)).into());
         }
         note_merge(&mut evaluation.merged, &merging);
         (evaluation.bodies).retain(|made| !consumed.contains(&made.body));
@@ -1042,8 +1042,7 @@ impl Run<'_> {
         )
         .map_err(|failure| {
             let name = self.body_name(first.body);
-            let words =
-                message::leave_out(message::boolean(Doing::Joining, name, failure.error), name);
+            let words = why::leave_out(why::boolean(Doing::Joining, name, failure.error), name);
             Failed::kernel(words, &failure, [&[first.body], &[]])
         })?;
         // The bodies in the order merged: the running solid holds those
@@ -1058,7 +1057,7 @@ impl Run<'_> {
             )
             .map_err(|failure| {
                 let (into, other) = (self.body_name(first.body), self.body_name(made.body));
-                let words = message::merging(into, other, failure.error);
+                let words = why::merging(into, other, failure.error);
                 Failed::kernel(words, &failure, [held, &[made.body]])
             })?;
         }
@@ -1089,7 +1088,7 @@ impl Run<'_> {
                 Ok(false) => {}
                 Err(failure) => {
                     let name = self.body_name(made.body);
-                    let words = message::boolean(Doing::Touching, name, failure.error);
+                    let words = why::boolean(Doing::Touching, name, failure.error);
                     // Listed, so the panel offers to take it out.
                     touched.push(made.body);
                     return Err((
@@ -1265,7 +1264,7 @@ impl Run<'_> {
     fn placement(&self) -> Result<Placement, String> {
         self.sketch
             .placement
-            .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())
+            .ok_or_else(|| why::SKETCH_NOT_PLACED.to_owned())
     }
 
     /// The kernel profile of the regions, merged, in the sketch's
@@ -1278,7 +1277,7 @@ impl Run<'_> {
     /// Why the kernel couldn't make the tool, in words, and its
     /// failure.
     fn kernel_error(&self, failure: Failure) -> Failed {
-        let words = message::tool(
+        let words = why::tool(
             self.shape.making(),
             failure.error,
             self.tolerance.fit() <= Tolerance::MIN_FIT,
@@ -1320,7 +1319,7 @@ pub(crate) fn place_on_face(
             |made| place_on(made, face, tolerance, cache),
             not_found,
         )
-        .unwrap_or(Err(message::FACE_BODY_GONE.into()))
+        .unwrap_or(Err(why::FACE_BODY_GONE.into()))
 }
 
 /// Whether [`place_on`] found no face of the name on its body, which a
@@ -1347,11 +1346,11 @@ fn place_on(
         let solid = &made.solid;
         let topology = solid.topology();
         let region = (topology.face(solid, &face.key, face.near))
-            .map_err(|_| Failed::missing(message::FACE_NOT_FOUND))?;
+            .map_err(|_| Failed::missing(why::FACE_NOT_FOUND))?;
         let region = &topology.regions()[region as usize];
         let not_flat = || Failed {
             missing: false,
-            message: message::FACE_NOT_FLAT.to_owned(),
+            message: why::FACE_NOT_FLAT.to_owned(),
             geometry: face_geometry(solid, region, tolerance),
         };
         let Form::Plane { n, d } = *region_form(solid, region) else {
@@ -1361,7 +1360,7 @@ fn place_on(
         if placement.valid() {
             Ok(placement)
         } else {
-            Err(message::FACE_TOO_FAR.into())
+            Err(why::FACE_TOO_FAR.into())
         }
     })
 }
@@ -1421,11 +1420,11 @@ pub(crate) fn add_chain(
 }
 
 /// The name of `body` in `document`, as the Timeline's messages give it
-/// ([`message::SOME_BODY`] for one that isn't there).
+/// ([`why::SOME_BODY`] for one that isn't there).
 pub(crate) fn body_name(document: &Document, body: BodyId) -> &str {
     document
         .body(body)
-        .map_or(message::SOME_BODY, |body| body.name.as_str())
+        .map_or(why::SOME_BODY, |body| body.name.as_str())
 }
 
 /// A revolve's axis in its sketch's coordinates.
@@ -1458,9 +1457,9 @@ impl AxisError {
     /// Why the revolve fails, in words.
     pub(crate) fn message(self) -> &'static str {
         match self {
-            AxisError::NotFound => message::AXIS_NOT_FOUND,
-            AxisError::NoLength { .. } => message::AXIS_NO_LENGTH,
-            AxisError::TooFar => message::AXIS_TOO_FAR,
+            AxisError::NotFound => why::AXIS_NOT_FOUND,
+            AxisError::NoLength { .. } => why::AXIS_NO_LENGTH,
+            AxisError::TooFar => why::AXIS_TOO_FAR,
         }
     }
 }
@@ -1518,9 +1517,7 @@ pub(crate) fn edge_axis(
     tolerance: Tolerance,
     cache: &mut Cache,
 ) -> Result<Axis, Failed> {
-    let made = evaluation
-        .holding(edge.body)
-        .ok_or(message::EDGE_BODY_GONE)?;
+    let made = evaluation.holding(edge.body).ok_or(why::EDGE_BODY_GONE)?;
     let key = motion::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
     let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
     let local = |p: DVec3| {
@@ -1536,7 +1533,7 @@ pub(crate) fn edge_axis(
         evidence.add_points([from, to]);
         return Err(Failed {
             missing: false,
-            message: message::EDGE_OFF_PLANE.to_owned(),
+            message: why::EDGE_OFF_PLANE.to_owned(),
             geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
         });
     }
@@ -1548,7 +1545,7 @@ pub(crate) fn edge_axis(
         evidence.add_points([from]);
         return Err(Failed {
             missing: false,
-            message: message::AXIS_NO_LENGTH.to_owned(),
+            message: why::AXIS_NO_LENGTH.to_owned(),
             geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
         });
     }
@@ -1580,13 +1577,12 @@ pub(crate) fn edge_ends(
     tolerance: &Tolerance,
 ) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
-    let chain =
-        (topology.edge(solid, edge.faces, edge.near)).map_err(|_| message::EDGE_NOT_FOUND)?;
+    let chain = (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::EDGE_NOT_FOUND)?;
     let chain = &topology.chains()[chain as usize];
     let EdgeShape::Line { from, to } = edge_shape(solid, chain) else {
         return Err(Failed {
             missing: false,
-            message: message::EDGE_NOT_STRAIGHT.to_owned(),
+            message: why::EDGE_NOT_STRAIGHT.to_owned(),
             geometry: chain_curves(solid, chain, tolerance),
         });
     };
@@ -1598,7 +1594,7 @@ pub(crate) fn edge_ends(
             evidence.add_curves(Conic3::line(from, to).ok());
             Err(Failed {
                 missing: false,
-                message: message::EDGE_UNDIRECTED.to_owned(),
+                message: why::EDGE_UNDIRECTED.to_owned(),
                 geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
             })
         }

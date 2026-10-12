@@ -15,7 +15,7 @@
 //! tolerance, and replaces the body's solid (the body keeps its id and
 //! every face its name, so a sketch on a moved face follows it). The
 //! kernel's refusals are worded for the Timeline
-//! (`message::offset_refused`), with the face or corner they're about
+//! (`why::offset_refused`), with the face or corner they're about
 //! drawn; its other failures as a boolean's ("offsetting faces of Body
 //! 1 ...").
 //!
@@ -29,7 +29,7 @@ use varde_kernel_compat::{Budget, OffsetError, Solid, Tolerance, Topology};
 use super::in_place::{Drawn, InPlace};
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
-use crate::message;
+use crate::why;
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -66,9 +66,9 @@ pub(super) fn evaluate_offset_face(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let body = offset.body().ok_or(message::NOTHING_PICKED)?;
+    let body = offset.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
-    let faces = place.regions(&offset.faces, message::offset_face_not_found)?;
+    let faces = place.regions(&offset.faces, why::offset_face_not_found)?;
     let distance = offset.signed_distance();
     let mut keyer = place.keyer("offset face", feature, tolerance);
     keyer
@@ -81,7 +81,7 @@ pub(super) fn evaluate_offset_face(
         key,
         evaluation,
         cache,
-        message::offset_leaves_nothing,
+        why::offset_leaves_nothing,
         |budget| {
             offset_by(
                 &place.solid,
@@ -104,25 +104,22 @@ pub(super) fn evaluate_offset_face(
 fn refused(error: OffsetError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
     let (why, drawn) = match error {
         OffsetError::PastNeighbour { region } => {
-            (message::OffsetRefusal::PastNeighbour, Drawn::Region(region))
+            (why::OffsetRefusal::PastNeighbour, Drawn::Region(region))
         }
-        OffsetError::IntoBody => (message::OffsetRefusal::IntoBody, Drawn::Nothing),
+        OffsetError::IntoBody => (why::OffsetRefusal::IntoBody, Drawn::Nothing),
         OffsetError::RoundTooSmall { region } => {
-            (message::OffsetRefusal::RoundTooSmall, Drawn::Region(region))
+            (why::OffsetRefusal::RoundTooSmall, Drawn::Region(region))
         }
-        OffsetError::NoSurface { region } => {
-            (message::OffsetRefusal::NoSurface, Drawn::Region(region))
+        OffsetError::NoSurface { region } => (why::OffsetRefusal::NoSurface, Drawn::Region(region)),
+        OffsetError::TangentNeighbour { region } => {
+            (why::OffsetRefusal::TangentNeighbour, Drawn::Region(region))
         }
-        OffsetError::TangentNeighbour { region } => (
-            message::OffsetRefusal::TangentNeighbour,
-            Drawn::Region(region),
-        ),
-        OffsetError::Corner { vertex } => (message::OffsetRefusal::Corner, Drawn::Corner(vertex)),
-        OffsetError::OutOfRange => (message::OffsetRefusal::OutOfRange, Drawn::Nothing),
+        OffsetError::Corner { vertex } => (why::OffsetRefusal::Corner, Drawn::Corner(vertex)),
+        OffsetError::OutOfRange => (why::OffsetRefusal::OutOfRange, Drawn::Nothing),
         OffsetError::Failed(failure) => {
-            let words = message::offsetting(place.name, failure.error);
+            let words = why::offsetting(place.name, failure.error);
             return place.kernel_failed(words, failure, tolerance);
         }
     };
-    place.refused(message::offset_refused(why, place.name), drawn, tolerance)
+    place.refused(why::offset_refused(why, place.name), drawn, tolerance)
 }

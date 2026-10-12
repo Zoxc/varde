@@ -8,7 +8,7 @@ use varde_kernel_compat::{KernelError, Op, Solid, Tolerance};
 
 use super::{BodySolid, Evaluation, Failed, boolean_key, cached_boolean, note_merge, own_solids};
 use crate::cache::{Cache, Key};
-use crate::message::{self, Doing};
+use crate::why::{self, Doing};
 
 /// Changes the bodies of `evaluation` (those the features before the
 /// combine made) as `combine` says, or says why it fails, changing
@@ -70,11 +70,11 @@ pub(super) fn evaluate(
                 KernelError::TooComplex => shells(&tool.solid),
                 _ => 1,
             };
-            let message = message::combining(words, target_name, tool_name, pieces, failure.error);
+            let message = why::combining(words, target_name, tool_name, pieces, failure.error);
             Failed::kernel(message, &failure, [&running.held, &[tool.body]])
         })?;
         if solid.is_empty() {
-            return Err(message::combine_emptied(words, target_name, tool_name).into());
+            return Err(why::combine_emptied(words, target_name, tool_name).into());
         }
         running.solid = solid;
         running.key = next;

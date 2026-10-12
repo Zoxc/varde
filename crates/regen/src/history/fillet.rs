@@ -9,7 +9,7 @@
 //! The result is cached by the body's key, the chains, the radius's
 //! bits, the feature and the fit tolerance, and replaces the body's
 //! solid (the body keeps its id). The kernel's refusals are worded for
-//! the Timeline (`message::blend_refused`), with the edge they're about
+//! the Timeline (`why::blend_refused`), with the edge they're about
 //! drawn; its other failures as a boolean's ("filleting Body 1 ...").
 //!
 //! The kernel's fillet isn't built yet: it fails as too complex, which
@@ -23,7 +23,7 @@ use super::blend::{find_edges, find_faces, plan, refused};
 use super::in_place::InPlace;
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
-use crate::message::{self, Blend};
+use crate::why::{self, Blend};
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -60,7 +60,7 @@ pub(super) fn evaluate_fillet(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     // A checked document's fillet has edges or faces, all on one body.
-    let body = fillet.body().ok_or(message::NOTHING_PICKED)?;
+    let body = fillet.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let (solid, topology) = (&*place.solid, &*place.topology);
     let found = find_edges(&place, &fillet.edges)?;
@@ -76,7 +76,7 @@ pub(super) fn evaluate_fillet(
     );
     // Every edge it names left out: nothing to fillet.
     if planned.is_empty() {
-        return Err(message::BLEND_ALL_LEFT_OUT.to_owned().into());
+        return Err(why::BLEND_ALL_LEFT_OUT.to_owned().into());
     }
     let chains: Vec<FilletChain> = (planned.iter())
         .map(|planned| FilletChain {
@@ -97,7 +97,7 @@ pub(super) fn evaluate_fillet(
         key,
         evaluation,
         cache,
-        |name| message::blend_leaves_nothing(Blend::Fillet, name),
+        |name| why::blend_leaves_nothing(Blend::Fillet, name),
         |budget| {
             fillet_by(
                 solid,

@@ -32,7 +32,7 @@ use super::align::Found;
 use super::motion::{How, place, reference_key};
 use super::{Evaluation, Failed, own_solids};
 use crate::cache::{Cache, EdgeLength};
-use crate::message::{self, Moving, Whose};
+use crate::why::{self, Moving, Whose};
 use crate::{ErrorGeometry, ScaleFound, inspect};
 
 /// How near a world axis an edge must run for a scale along its axis
@@ -88,7 +88,7 @@ pub(super) fn evaluate_scale(
         },
         _ => failed,
     })?;
-    let motion = Motion::scale(centre, factors).ok_or(message::SCALE_FACTOR)?;
+    let motion = Motion::scale(centre, factors).ok_or(why::SCALE_FACTOR)?;
     let how = How {
         moving: Moving::Scale,
         copy: None,
@@ -116,14 +116,14 @@ fn measured(
     tolerance: &Tolerance,
     cache: &mut Cache,
 ) -> Result<EdgeLength, Failed> {
-    let made = (evaluation.solid(edge.body)).ok_or(message::SCALE_EDGE_NOT_FOUND)?;
+    let made = (evaluation.solid(edge.body)).ok_or(why::SCALE_EDGE_NOT_FOUND)?;
     let key = reference_key("scale edge", made.key, &edge.faces, edge.near, tolerance);
     let topology = (!cache.holds(key)).then(|| inspect::topology(made, cache));
     cache.length(key, || {
         let solid = &made.solid;
         let topology = topology.unwrap_or_else(|| Arc::new(solid.topology()));
-        let chain = (topology.edge(solid, edge.faces, edge.near))
-            .map_err(|_| message::SCALE_EDGE_NOT_FOUND)?;
+        let chain =
+            (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::SCALE_EDGE_NOT_FOUND)?;
         let target = Target {
             solid,
             topology: &topology,
@@ -137,8 +137,8 @@ fn measured(
                     _ => None,
                 },
             }),
-            Ok(_) => Err(message::SCALE_EDGE_NOT_FOUND.into()),
-            Err(error) => Err(message::scale_measure(error).into()),
+            Ok(_) => Err(why::SCALE_EDGE_NOT_FOUND.into()),
+            Err(error) => Err(why::scale_measure(error).into()),
         }
     })
 }
@@ -180,19 +180,19 @@ fn factors(
             let edge = match edge {
                 Some(Ok(edge)) => *edge,
                 Some(Err(failed)) => return Err(failed.clone()),
-                None => return Err(message::SCALE_EDGE_NOT_FOUND.into()),
+                None => return Err(why::SCALE_EDGE_NOT_FOUND.into()),
             };
             // Checked before dividing: the factor is then finite.
             if edge.length.partial_cmp(&tolerance.resolution()) != Some(Ordering::Greater) {
-                return Err(message::SCALE_EDGE_SHORT.into());
+                return Err(why::SCALE_EDGE_SHORT.into());
             }
             let f = length.value / edge.length;
             if !in_range(f) {
-                return Err(message::SCALE_TOO_FAR.into());
+                return Err(why::SCALE_TOO_FAR.into());
             }
             if *axis_only {
-                let [from, to] = edge.line.ok_or(message::SCALE_EDGE_NOT_STRAIGHT)?;
-                let axis = along_axis(to - from).ok_or(message::SCALE_EDGE_SLANTED)?;
+                let [from, to] = edge.line.ok_or(why::SCALE_EDGE_NOT_STRAIGHT)?;
+                let axis = along_axis(to - from).ok_or(why::SCALE_EDGE_SLANTED)?;
                 let mut factors = DVec3::ONE;
                 factors[axis] = f;
                 factors
@@ -202,7 +202,7 @@ fn factors(
         }
     };
     if !factors.to_array().into_iter().all(in_range) {
-        return Err(message::SCALE_FACTOR.into());
+        return Err(why::SCALE_FACTOR.into());
     }
     Ok(factors)
 }

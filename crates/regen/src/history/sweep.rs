@@ -51,7 +51,7 @@
 //! the regions), the path as built (every number's bits: an edit that
 //! leaves it where it was finds the tool again), the options and the
 //! fit tolerance. The kernel's refusals are worded for the Timeline
-//! (`message::sweep_refused`), a corner with its point drawn; its other
+//! (`why::sweep_refused`), a corner with its point drawn; its other
 //! failures as a tool's.
 //!
 //! The kernel's sweep isn't built yet: it fails as too complex, which
@@ -80,8 +80,8 @@ use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::{ErrorGeometry, KernelFailure};
 use crate::inspect;
-use crate::message::{self, SweepRefusal};
 use crate::profile::{ChainError, path_chain};
+use crate::why::{self, SweepRefusal};
 
 /// How far apart two tangents at a joint may be, or the path's start
 /// from square to the profile's plane, as a sine: the kernel's own rule,
@@ -227,8 +227,8 @@ impl Run<'_> {
     fn sketch_part(&self, chain: &CurveChain) -> Result<Part, Failed> {
         let output = (self.sketches.iter())
             .find(|output| output.id == chain.sketch)
-            .ok_or(message::PATH_SKETCH_GONE)?;
-        let placement = output.placement.ok_or(message::PATH_SKETCH_NOT_PLACED)?;
+            .ok_or(why::PATH_SKETCH_GONE)?;
+        let placement = output.placement.ok_or(why::PATH_SKETCH_NOT_PLACED)?;
         let sketch = output.sketch;
         let (segments, closed) = path_chain(
             sketch,
@@ -237,10 +237,10 @@ impl Run<'_> {
             self.tolerance.fit(),
         )
         .map_err(|error| match error {
-            ChainError::Missing => message::PATH_NOT_FOUND.to_owned(),
-            ChainError::Closed => message::PATH_CLOSED_NOT_ALONE.to_owned(),
-            ChainError::Branches => message::PATH_CURVES_BRANCH.to_owned(),
-            ChainError::Profile(error) => message::path_curves(error),
+            ChainError::Missing => why::PATH_NOT_FOUND.to_owned(),
+            ChainError::Closed => why::PATH_CLOSED_NOT_ALONE.to_owned(),
+            ChainError::Branches => why::PATH_CURVES_BRANCH.to_owned(),
+            ChainError::Profile(error) => why::path_curves(error),
         })?;
         let world = |p| placement.to_world(p);
         let conic = |segment: &varde_kernel_compat::Segment| Conic3 {
@@ -255,8 +255,8 @@ impl Run<'_> {
             let id = (chain.curves.iter())
                 .find(|id| u64::from(id.get()) == run[0].curve)
                 .copied()
-                .ok_or(message::PATH_NOT_FOUND)?;
-            let entry = sketch.curve(id).ok_or(message::PATH_NOT_FOUND)?;
+                .ok_or(why::PATH_NOT_FOUND)?;
+            let entry = sketch.curve(id).ok_or(why::PATH_NOT_FOUND)?;
             let conics: Vec<Conic3> = run.iter().map(conic).collect();
             pieces.push(match &entry.curve {
                 Curve::Line { .. } => Piece::Line {
@@ -266,7 +266,7 @@ impl Run<'_> {
                 Curve::Arc { center, .. } | Curve::Circle { center, .. } => {
                     let centre = (sketch.point(*center))
                         .map(|point| point.at)
-                        .ok_or(message::PATH_NOT_FOUND)?;
+                        .ok_or(why::PATH_NOT_FOUND)?;
                     // Which way it turns: the first conic's start and
                     // control point, about the centre.
                     let first = &run[0].conic;
@@ -303,14 +303,12 @@ impl Run<'_> {
             motion::resolve_axis(&helix.axis, evaluation, &self.tolerance, cache)?;
         let direction = if helix.flip { -direction } else { direction };
         motion::note_reference(evaluation, self.feature.id, [point, direction]);
-        let axis = direction
-            .try_normalize()
-            .ok_or(message::HELIX_NO_DIRECTION)?;
+        let axis = direction.try_normalize().ok_or(why::HELIX_NO_DIRECTION)?;
         let (pitch, turns) = (helix.pitch.value, helix.turns.value);
         // Both checked, at most `MAX_COORD` and `MAX_HELIX_TURNS`: the
         // product is finite.
         if pitch * turns > f64::from(MAX_COORD) {
-            return Err(message::helix_too_long().into());
+            return Err(why::helix_too_long().into());
         }
         Ok(Path::Helix(path_sweep::Helix {
             point,
@@ -335,8 +333,8 @@ impl Run<'_> {
             SweepError::Pitch => SweepRefusal::Pitch,
             SweepError::IntoItself => SweepRefusal::IntoItself,
             SweepError::Failed(failure) => {
-                let words = message::tool(
-                    message::Making::Sweep,
+                let words = why::tool(
+                    why::Making::Sweep,
                     failure.error,
                     self.tolerance.fit() <= Tolerance::MIN_FIT,
                 );
@@ -344,7 +342,7 @@ impl Run<'_> {
                 return Failed::kernel(words, &failure, [&[], &[]]);
             }
         };
-        message::sweep_refused(why).into()
+        why::sweep_refused(why).into()
     }
 }
 
@@ -435,7 +433,7 @@ fn corner(at: DVec3, tolerance: &Tolerance) -> Failed {
     evidence.add_points([at]);
     Failed {
         missing: false,
-        message: message::sweep_refused(SweepRefusal::Corner),
+        message: why::sweep_refused(SweepRefusal::Corner),
         geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
     }
 }
@@ -450,18 +448,18 @@ fn edge_part(
     cache: &mut Cache,
 ) -> Result<Part, Failed> {
     let Some(first) = edges.first() else {
-        return Err(message::path_edge_not_found(0, 1).into());
+        return Err(why::path_edge_not_found(0, 1).into());
     };
     let made = evaluation
         .holding(first.body)
-        .ok_or(message::PATH_EDGE_BODY_GONE)?;
+        .ok_or(why::PATH_EDGE_BODY_GONE)?;
     let solid = Arc::clone(&made.solid);
     let topology = inspect::topology(made, cache);
     let count = edges.len();
     let mut chains = Vec::with_capacity(count);
     for (i, edge) in edges.iter().enumerate() {
         let chain = (topology.edge(&solid, edge.faces, edge.near))
-            .map_err(|_| message::path_edge_not_found(i, count))?;
+            .map_err(|_| why::path_edge_not_found(i, count))?;
         chains.push(chain);
     }
     if tangent {
@@ -501,7 +499,7 @@ fn order_chains(
     if let Some(closed) = chains.iter().position(|&c| all[c as usize].closed) {
         return match chains.len() {
             1 => Ok((vec![(chains[closed], false)], true)),
-            _ => Err(message::PATH_CLOSED_NOT_ALONE.into()),
+            _ => Err(why::PATH_CLOSED_NOT_ALONE.into()),
         };
     }
     // The chain ends at each vertex, found by binary search: a long
@@ -516,7 +514,7 @@ fn order_chains(
         let to = by_vertex.partition_point(|&(v, ..)| v <= vertex);
         &by_vertex[from..to]
     };
-    let branch = || Failed::from(message::PATH_EDGES_BRANCH);
+    let branch = || Failed::from(why::PATH_EDGES_BRANCH);
     let mut start = None;
     for (i, pair) in ends.iter().enumerate() {
         for (e, &vertex) in pair.iter().enumerate() {
@@ -593,7 +591,7 @@ pub(super) fn join(
     let resolution = tolerance.resolution();
     if parts.iter().any(|part| part.closed) {
         if parts.len() > 1 {
-            return Err(message::PATH_CLOSED_NOT_ALONE.into());
+            return Err(why::PATH_CLOSED_NOT_ALONE.into());
         }
         let pieces = parts.remove(0).pieces;
         check_joints(&pieces, true, tolerance)?;
@@ -610,7 +608,7 @@ pub(super) fn join(
     let mut on_plane: Vec<(usize, usize, DVec3)> = Vec::new();
     for (i, part) in parts.iter().enumerate() {
         let Some(points) = ends(part) else {
-            return Err(message::PATH_NOT_FOUND.into());
+            return Err(why::PATH_NOT_FOUND.into());
         };
         for (e, point) in points.into_iter().enumerate() {
             if (point - origin).dot(normal).abs() <= resolution {
@@ -619,7 +617,7 @@ pub(super) fn join(
         }
     }
     let (i, e) = match on_plane.as_slice() {
-        [] => return Err(message::PATH_OFF_START.into()),
+        [] => return Err(why::PATH_OFF_START.into()),
         &[(i, e, _)] => (i, e),
         several => {
             let middle = middle();
@@ -643,20 +641,20 @@ pub(super) fn join(
     while !parts.is_empty() {
         let at = (chain.last())
             .and_then(Piece::end)
-            .ok_or(message::PATH_NOT_FOUND)?;
+            .ok_or(why::PATH_NOT_FOUND)?;
         let mut found = None;
         for (i, part) in parts.iter().enumerate() {
-            let points = ends(part).ok_or(message::PATH_NOT_FOUND)?;
+            let points = ends(part).ok_or(why::PATH_NOT_FOUND)?;
             for (e, point) in points.into_iter().enumerate() {
                 if point.distance(at) <= resolution {
                     if found.is_some() {
-                        return Err(message::PATH_PARTS_APART.into());
+                        return Err(why::PATH_PARTS_APART.into());
                     }
                     found = Some((i, e));
                 }
             }
         }
-        let (i, e) = found.ok_or(message::PATH_PARTS_APART)?;
+        let (i, e) = found.ok_or(why::PATH_PARTS_APART)?;
         let mut part = parts.remove(i);
         if e == 1 {
             reverse(&mut part.pieces);
@@ -668,7 +666,7 @@ pub(super) fn join(
         .first()
         .and_then(|piece| tangents(piece).map(|t| t[0]));
     if start.is_none_or(|t| t.cross(normal).length() > TANGENT_SINE) {
-        return Err(message::PATH_NOT_SQUARE.into());
+        return Err(why::PATH_NOT_SQUARE.into());
     }
     Ok(Path::Chain {
         pieces: chain,

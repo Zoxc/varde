@@ -273,7 +273,7 @@ failing feature changes no body, and the later ones still run.
   two non-empty solids isn't (a merged join checks anyway), and the rest
   fail (a `debug_assert` at the end of `evaluate` holds it).
 
-**Error texts** (`src/message.rs`). What the Timeline's tooltip and the
+**Error texts** (`src/why.rs`). What the Timeline's tooltip and the
 panel show is worded for the user, not the kernel: an extrude's own
 `KernelError` becomes "its regions are too complex to extrude: try
 fewer or simpler curves" for `TooComplex`, "its regions have parts too

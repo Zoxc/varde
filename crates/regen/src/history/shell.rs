@@ -12,7 +12,7 @@
 //! The result is cached by the body's key, the regions, the thickness's
 //! bits, the direction, the feature and the fit tolerance, and replaces
 //! the body's solid (the body keeps its id). The kernel's refusals are
-//! worded for the Timeline (`message::shell_refused`), with the face or
+//! worded for the Timeline (`why::shell_refused`), with the face or
 //! corner they're about drawn; its other failures as a boolean's
 //! ("shelling Body 1 ...").
 //!
@@ -26,7 +26,7 @@ use varde_kernel_compat::{Budget, ShellError, Solid, Tolerance, Topology};
 use super::in_place::{Drawn, InPlace};
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
-use crate::message;
+use crate::why;
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -55,7 +55,7 @@ pub(super) fn evaluate_shell(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     let place = InPlace::of(document, shell.body, evaluation, cache)?;
-    let open = place.regions(&shell.open, message::shell_face_not_found)?;
+    let open = place.regions(&shell.open, why::shell_face_not_found)?;
     let thickness = shell.thickness.value;
     let mut keyer = place.keyer("shell", feature, tolerance);
     keyer
@@ -68,7 +68,7 @@ pub(super) fn evaluate_shell(
         key,
         evaluation,
         cache,
-        message::shell_leaves_nothing,
+        why::shell_leaves_nothing,
         |budget| {
             shell_by(
                 &place.solid,
@@ -91,14 +91,14 @@ pub(super) fn evaluate_shell(
 fn refused(error: ShellError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
     let (why, drawn) = match error {
         ShellError::RoundTooSmall { region } => {
-            (message::ShellRefusal::RoundTooSmall, Drawn::Region(region))
+            (why::ShellRefusal::RoundTooSmall, Drawn::Region(region))
         }
-        ShellError::TooThick => (message::ShellRefusal::TooThick, Drawn::Nothing),
-        ShellError::Corner { vertex } => (message::ShellRefusal::Corner, Drawn::Corner(vertex)),
+        ShellError::TooThick => (why::ShellRefusal::TooThick, Drawn::Nothing),
+        ShellError::Corner { vertex } => (why::ShellRefusal::Corner, Drawn::Corner(vertex)),
         ShellError::Failed(failure) => {
-            let words = message::shelling(place.name, failure.error);
+            let words = why::shelling(place.name, failure.error);
             return place.kernel_failed(words, failure, tolerance);
         }
     };
-    place.refused(message::shell_refused(why, place.name), drawn, tolerance)
+    place.refused(why::shell_refused(why, place.name), drawn, tolerance)
 }

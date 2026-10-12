@@ -8,7 +8,7 @@
 //! The result is cached by the body's key, the chains and how each is
 //! cut, the feature and the fit tolerance, and replaces the body's solid
 //! (the body keeps its id). The kernel's refusals are worded for the
-//! Timeline (`message::blend_refused`), with the edge they're about
+//! Timeline (`why::blend_refused`), with the edge they're about
 //! drawn; its other failures as a boolean's ("chamfering Body 1 ...").
 //!
 //! The kernel's chamfer isn't built yet: it fails as too complex, which
@@ -24,7 +24,7 @@ use super::blend::{find_edges, find_faces, plan, refused};
 use super::in_place::InPlace;
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
-use crate::message::{self, Blend};
+use crate::why::{self, Blend};
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -55,7 +55,7 @@ pub(super) fn evaluate_chamfer(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     // A checked document's chamfer has edges or faces, all on one body.
-    let body = chamfer.body().ok_or(message::NOTHING_PICKED)?;
+    let body = chamfer.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let (solid, topology) = (&*place.solid, &*place.topology);
     let found = find_edges(&place, &chamfer.edges)?;
@@ -71,7 +71,7 @@ pub(super) fn evaluate_chamfer(
     );
     // Every edge it names left out: nothing to chamfer.
     if planned.is_empty() {
-        return Err(message::BLEND_ALL_LEFT_OUT.to_owned().into());
+        return Err(why::BLEND_ALL_LEFT_OUT.to_owned().into());
     }
     let chains: Vec<ChamferChain> = (planned.iter())
         .map(|planned| ChamferChain {
@@ -109,7 +109,7 @@ pub(super) fn evaluate_chamfer(
         key,
         evaluation,
         cache,
-        |name| message::blend_leaves_nothing(Blend::Chamfer, name),
+        |name| why::blend_leaves_nothing(Blend::Chamfer, name),
         |budget| {
             chamfer_by(solid, topology, &chains, feature.get(), tolerance, budget).map_err(
                 |error| refused(Blend::Chamfer, error, &place, &planned, tolerance, counts),

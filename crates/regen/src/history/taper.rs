@@ -5,7 +5,7 @@
 //!
 //! The tool is cached as the untapered extrude's, with the taper's bits
 //! (an extrude with no taper keeps the key it always had). The kernel's
-//! refusals are worded for the Timeline (`message::taper_refused`); its
+//! refusals are worded for the Timeline (`why::taper_refused`); its
 //! running out of budget as "tapering its walls is too complex to work
 //! out"; its other failures as an untapered tool's.
 //!
@@ -16,7 +16,7 @@
 use varde_kernel_compat::{Budget, Frame, KernelError, Profile, Solid, TaperError, Tolerance};
 
 use super::{Failed, Run};
-use crate::message::{self, TaperRefusal};
+use crate::why::{self, TaperRefusal};
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -41,10 +41,10 @@ impl Run<'_> {
             TaperError::TooSteep => TaperRefusal::TooSteep,
             TaperError::OutOfRange => TaperRefusal::OutOfRange,
             TaperError::Failed(failure) if failure.error == KernelError::TooComplex => {
-                return message::TAPER_TOO_COMPLEX.into();
+                return why::TAPER_TOO_COMPLEX.into();
             }
             TaperError::Failed(failure) => return self.kernel_error(failure),
         };
-        message::taper_refused(why).into()
+        why::taper_refused(why).into()
     }
 }

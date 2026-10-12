@@ -17,8 +17,8 @@ use super::{
 };
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
-use crate::message::{self, Moving};
 use crate::picking::region_form;
+use crate::why::{self, Moving};
 
 /// Changes the bodies of `evaluation` (those the features before it
 /// made) as the move `moved` says, or says why it
@@ -46,12 +46,12 @@ pub(super) fn evaluate_move(
             let [point, direction] = resolve_axis(axis, evaluation, tolerance, cache)?;
             note_reference(evaluation, feature, [point, direction]);
             let degrees = angle.value / (PI / 180.0);
-            Motion::turn(point, direction, degrees).ok_or(message::AXIS_NO_DIRECTION)?
+            Motion::turn(point, direction, degrees).ok_or(why::AXIS_NO_DIRECTION)?
         }
         None => Motion::IDENTITY,
     };
     // Each offset is checked finite and within the coordinate limit.
-    let shift = Motion::translation(moved.offset_vector()).ok_or(message::OFFSET_NOT_FINITE)?;
+    let shift = Motion::translation(moved.offset_vector()).ok_or(why::OFFSET_NOT_FINITE)?;
     let motion = turn.then(&shift);
     let how = How {
         moving: Moving::Move,
@@ -91,7 +91,7 @@ pub(super) fn evaluate_mirror(
     let [point, normal] =
         resolve_plane(&mirror.plane, &MIRROR_PLANE, evaluation, tolerance, cache)?;
     note_reference(evaluation, feature, [point, normal]);
-    let motion = Motion::mirror(point, normal).ok_or(message::MIRROR_FACE_NOT_FLAT)?;
+    let motion = Motion::mirror(point, normal).ok_or(why::MIRROR_FACE_NOT_FLAT)?;
     let how = How {
         moving: Moving::Mirror,
         copy: mirror.keep_original.then_some(Instance {
@@ -156,7 +156,7 @@ pub(super) fn place(
     for made in (evaluation.bodies.iter()).filter(|made| bodies.binary_search(&made.body).is_ok()) {
         let name = super::body_name(document, made.body);
         if !within(&made.solid, motion) {
-            return Err(message::out_of_range(how.moving, name).into());
+            return Err(why::out_of_range(how.moving, name).into());
         }
         let key = moved_key(made.key, motion, how.copy, tolerance);
         let solid = cache.solid(key, || moved(&made.solid, motion, how, tolerance, name))?;
@@ -217,13 +217,13 @@ fn moved(
     };
     let image = solid
         .transformed(motion, how.copy, tolerance, &Budget::DEFAULT)
-        .map_err(|failure| kernel(message::moving(how.moving, name, failure.error), failure))?;
+        .map_err(|failure| kernel(why::moving(how.moving, name, failure.error), failure))?;
     if how.copy.is_none() {
         return Ok(image);
     }
     let both = [solid.clone(), image];
     assemble(&both, tolerance, &Budget::DEFAULT)
-        .map_err(|failure| kernel(message::with_image(name, failure.error), failure))
+        .map_err(|failure| kernel(why::with_image(name, failure.error), failure))
 }
 
 /// The line `axis` names, as a point on it and its direction (not unit,
@@ -248,16 +248,14 @@ pub(super) fn resolve_axis(
     match axis {
         AxisRef::Origin(axis) => Ok([DVec3::ZERO, axis.direction()]),
         AxisRef::Edge(edge) => {
-            let made = evaluation
-                .holding(edge.body)
-                .ok_or(message::EDGE_BODY_GONE)?;
+            let made = evaluation.holding(edge.body).ok_or(why::EDGE_BODY_GONE)?;
             let key = reference_key("axis edge", made.key, &edge.faces, edge.near, tolerance);
             cache.reference(key, || edge_line(&made.solid, edge, tolerance))
         }
         AxisRef::Face(face) => {
             let made = evaluation
                 .holding(face.body)
-                .ok_or(message::AXIS_FACE_BODY_GONE)?;
+                .ok_or(why::AXIS_FACE_BODY_GONE)?;
             let key = reference_key("axis face", made.key, &face.key, face.near, tolerance);
             cache.reference(key, || face_axis(&made.solid, face, tolerance))
         }
@@ -277,25 +275,25 @@ pub(super) struct PlaneWords {
 /// A split's plane: "its plane face wasn't found".
 pub(super) const SPLIT_PLANE: PlaneWords = PlaneWords {
     kind: "split plane face",
-    body_gone: message::SPLIT_PLANE_BODY_GONE,
-    not_found: message::SPLIT_PLANE_NOT_FOUND,
-    not_flat: message::SPLIT_PLANE_NOT_FLAT,
+    body_gone: why::SPLIT_PLANE_BODY_GONE,
+    not_found: why::SPLIT_PLANE_NOT_FOUND,
+    not_flat: why::SPLIT_PLANE_NOT_FLAT,
 };
 
 /// A mirror's plane: "its mirror face wasn't found".
 pub(super) const MIRROR_PLANE: PlaneWords = PlaneWords {
     kind: "mirror face",
-    body_gone: message::MIRROR_FACE_BODY_GONE,
-    not_found: message::MIRROR_FACE_NOT_FOUND,
-    not_flat: message::MIRROR_FACE_NOT_FLAT,
+    body_gone: why::MIRROR_FACE_BODY_GONE,
+    not_found: why::MIRROR_FACE_NOT_FOUND,
+    not_flat: why::MIRROR_FACE_NOT_FLAT,
 };
 
 /// A draft's neutral plane: "its neutral face wasn't found".
 pub(super) const NEUTRAL_PLANE: PlaneWords = PlaneWords {
     kind: "neutral face",
-    body_gone: message::NEUTRAL_FACE_BODY_GONE,
-    not_found: message::NEUTRAL_FACE_NOT_FOUND,
-    not_flat: message::NEUTRAL_FACE_NOT_FLAT,
+    body_gone: why::NEUTRAL_FACE_BODY_GONE,
+    not_found: why::NEUTRAL_FACE_NOT_FOUND,
+    not_flat: why::NEUTRAL_FACE_NOT_FLAT,
 };
 
 /// The plane `plane` names, as a point on it and its normal (not unit,
@@ -339,8 +337,7 @@ pub(super) fn reference_key(
 /// axis, see [`resolve_axis`].
 fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
-    let chain =
-        (topology.edge(solid, edge.faces, edge.near)).map_err(|_| message::EDGE_NOT_FOUND)?;
+    let chain = (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::EDGE_NOT_FOUND)?;
     let chain = &topology.chains()[chain as usize];
     let shape = edge_shape(solid, chain);
     let line = match shape {
@@ -349,7 +346,7 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
         EdgeShape::Ellipse { .. } | EdgeShape::Other => {
             return Err(Failed {
                 missing: false,
-                message: message::EDGE_NOT_AN_AXIS.to_owned(),
+                message: why::EDGE_NOT_AN_AXIS.to_owned(),
                 geometry: chain_curves(solid, chain, tolerance),
             });
         }
@@ -359,7 +356,7 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
         Some(false) => Ok([line[0], -line[1]]),
         None => Err(Failed {
             missing: false,
-            message: message::EDGE_UNDIRECTED.to_owned(),
+            message: why::EDGE_UNDIRECTED.to_owned(),
             geometry: chain_curves(solid, chain, tolerance),
         }),
     }
@@ -382,10 +379,10 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
         .map_err(|why| match why {
             Unresolved::NotRound { region } => Failed {
                 missing: false,
-                message: message::AXIS_FACE_NOT_ROUND.to_owned(),
+                message: why::AXIS_FACE_NOT_ROUND.to_owned(),
                 geometry: face_geometry(solid, &topology.regions()[region as usize], tolerance),
             },
-            _ => message::AXIS_FACE_NOT_FOUND.into(),
+            _ => why::AXIS_FACE_NOT_FOUND.into(),
         })
 }
 
