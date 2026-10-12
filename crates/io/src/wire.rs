@@ -60,9 +60,15 @@ pub struct Reply {
 }
 
 /// Encodes `message` to post to the other side, refusing one larger than
-/// `max` bytes, which is [`MAX_MESSAGE_BYTES`] but in tests. Also fails
-/// for a path that isn't Unicode, which the web's paths always are.
-pub fn encode<T: Serialize>(message: &T, max: usize) -> Result<Vec<u8>, Error> {
+/// [`MAX_MESSAGE_BYTES`]. Also fails for a path that isn't Unicode, which
+/// the web's paths always are.
+pub fn encode<T: Serialize>(message: &T) -> Result<Vec<u8>, Error> {
+    encode_within(message, MAX_MESSAGE_BYTES)
+}
+
+/// [`encode`], refusing a message larger than `max` bytes: tests bound it
+/// tighter.
+fn encode_within<T: Serialize>(message: &T, max: usize) -> Result<Vec<u8>, Error> {
     let bytes = postcard::to_stdvec(message).map_err(Error::Encode)?;
     if bytes.len() > max {
         return Err(Error::TooLarge(bytes.len()));
@@ -72,17 +78,26 @@ pub fn encode<T: Serialize>(message: &T, max: usize) -> Result<Vec<u8>, Error> {
 
 /// Encodes the [`Reply`] answering the request numbered `seq`, as
 /// [`encode`]. A response that can't be encoded, such as one larger than
-/// `max`, is answered with `failed` of why instead: only that request is
-/// lost, as when the page can't encode one.
+/// [`MAX_MESSAGE_BYTES`], is answered with `failed` of why instead: only
+/// that request is lost, as when the page can't encode one.
 pub fn encode_response(
+    seq: u64,
+    response: Response,
+    failed: impl FnOnce(String) -> Response,
+) -> Result<Vec<u8>, Error> {
+    encode_response_within(seq, response, failed, MAX_MESSAGE_BYTES)
+}
+
+/// [`encode_response`], refusing a message larger than `max` bytes.
+fn encode_response_within(
     seq: u64,
     response: Response,
     failed: impl FnOnce(String) -> Response,
     max: usize,
 ) -> Result<Vec<u8>, Error> {
-    encode(&Reply { seq, response }, max).or_else(|error| {
+    encode_within(&Reply { seq, response }, max).or_else(|error| {
         let response = failed(error.to_string());
-        encode(&Reply { seq, response }, max)
+        encode_within(&Reply { seq, response }, max)
     })
 }
 

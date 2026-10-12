@@ -187,8 +187,7 @@ impl Shared {
         message: &ToWorker<&Request>,
         object: Option<JsValue>,
     ) -> Result<(), Error> {
-        let bytes = wire::encode(message, wire::MAX_MESSAGE_BYTES)
-            .map_err(|e| Error::Encode(e.to_string()))?;
+        let bytes = wire::encode(message).map_err(|e| Error::Encode(e.to_string()))?;
         self.host
             .post(&[&bytes], object.as_slice())
             .map_err(Error::Post)

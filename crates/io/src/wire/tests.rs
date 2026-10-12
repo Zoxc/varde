@@ -17,7 +17,7 @@ fn tail() -> crate::vrdp::Tail {
 }
 
 fn round_trip<T: Serialize + for<'a> Deserialize<'a>>(message: &T) -> T {
-    decode(&encode(message, MAX_MESSAGE_BYTES).unwrap()).unwrap()
+    decode(&encode(message).unwrap()).unwrap()
 }
 
 /// A design with a hidden sketch.
@@ -473,14 +473,14 @@ fn encoded() -> Vec<(Vec<u8>, bool)> {
             seq: seq as u64,
             request,
         })
-        .map(|message| (encode(&message, MAX_MESSAGE_BYTES).unwrap(), true));
+        .map(|message| (encode(&message).unwrap(), true));
     let replies = responses()
         .into_iter()
         .map(|response| Reply {
             seq: u64::MAX,
             response,
         })
-        .map(|message| (encode(&message, MAX_MESSAGE_BYTES).unwrap(), false));
+        .map(|message| (encode(&message).unwrap(), false));
     to_worker.chain(replies).collect()
 }
 
@@ -502,12 +502,12 @@ fn every_request_round_trips() {
             seq: seq as u64,
             request: &request,
         };
-        let bytes = encode(&borrowed, MAX_MESSAGE_BYTES).unwrap();
+        let bytes = encode(&borrowed).unwrap();
         let message = ToWorker {
             seq: seq as u64,
             request,
         };
-        assert_eq!(bytes, encode(&message, MAX_MESSAGE_BYTES).unwrap());
+        assert_eq!(bytes, encode(&message).unwrap());
         assert_eq!(
             format!("{:?}", decode::<ToWorker>(&bytes).unwrap()),
             format!("{message:?}")
@@ -590,47 +590,41 @@ fn a_document_that_fails_its_checks_is_refused() {
     assert_eq!(tail[11], 0, "no parameters");
     let twins = [&[0, 2], feature, feature, tail].concat();
     assert!(Document::from_postcard(&twins).is_err());
-    let bytes = encode(
-        &ToWorker {
-            seq: 0,
-            request: Request::AutoSave {
-                file: FileId(0),
-                revision: 1.into(),
-                document: Arc::new(hidden()),
-            },
+    let bytes = encode(&ToWorker {
+        seq: 0,
+        request: Request::AutoSave {
+            file: FileId(0),
+            revision: 1.into(),
+            document: Arc::new(hidden()),
         },
-        MAX_MESSAGE_BYTES,
-    )
+    })
     .unwrap();
     assert!(decode::<ToWorker>(&bytes).is_ok());
     let bytes = swap_document(&bytes, &hidden(), &twins);
     assert!(matches!(decode::<ToWorker>(&bytes), Err(Error::Decode(_))));
 
-    let bytes = encode(
-        &Reply {
-            seq: 0,
-            response: Response::Opened {
-                id: OpenId(0),
-                path: None,
-                result: Ok(Opened {
-                    file: FileId(0),
-                    document: Document::example(),
-                    access: Access::Edit,
-                    recovered: Ok(Some(Offer {
-                        document: hidden(),
-                        design_changed: false,
-                        damage: None,
-                        newer_base: false,
-                    })),
-                    browser: None,
-                    not_copied: None,
-                    download: None,
+    let bytes = encode(&Reply {
+        seq: 0,
+        response: Response::Opened {
+            id: OpenId(0),
+            path: None,
+            result: Ok(Opened {
+                file: FileId(0),
+                document: Document::example(),
+                access: Access::Edit,
+                recovered: Ok(Some(Offer {
+                    document: hidden(),
+                    design_changed: false,
                     damage: None,
-                }),
-            },
+                    newer_base: false,
+                })),
+                browser: None,
+                not_copied: None,
+                download: None,
+                damage: None,
+            }),
         },
-        MAX_MESSAGE_BYTES,
-    )
+    })
     .unwrap();
     assert!(decode::<Reply>(&bytes).is_ok());
     let bytes = swap_document(&bytes, &hidden(), &twins);
@@ -700,15 +694,12 @@ fn damaged_messages_never_panic() {
 fn a_huge_claimed_length_is_refused() {
     // `WriteRecent` with u64::MAX entries: the variant's index, then the
     // count as a varint.
-    let index = encode(
-        &ToWorker {
-            seq: 0,
-            request: Request::WriteRecent {
-                entries: Vec::new(),
-            },
+    let index = encode(&ToWorker {
+        seq: 0,
+        request: Request::WriteRecent {
+            entries: Vec::new(),
         },
-        MAX_MESSAGE_BYTES,
-    )
+    })
     .unwrap();
     let mut bytes = index[..index.len() - 1].to_vec();
     bytes.extend([0xff; 9]);
@@ -722,9 +713,9 @@ fn a_message_too_large_is_refused() {
         seq: 0,
         response: Response::Flushed,
     };
-    let len = encode(&message, MAX_MESSAGE_BYTES).unwrap().len();
-    assert!(encode(&message, len).is_ok());
-    assert_eq!(encode(&message, len - 1), Err(Error::TooLarge(len)));
+    let len = encode(&message).unwrap().len();
+    assert!(encode_within(&message, len).is_ok());
+    assert_eq!(encode_within(&message, len - 1), Err(Error::TooLarge(len)));
 }
 
 /// A path that isn't Unicode can't cross, which the web's never are: it's
@@ -742,10 +733,7 @@ fn a_path_that_is_not_unicode_is_an_error() {
             from: Chosen::Path(PathBuf::from(OsStr::from_bytes(b"\xff.vrdp"))),
         },
     };
-    assert!(matches!(
-        encode(&message, MAX_MESSAGE_BYTES),
-        Err(Error::Encode(_))
-    ));
+    assert!(matches!(encode(&message), Err(Error::Encode(_))));
 }
 
 /// A response too large to post fails its request alone, rather than
@@ -757,17 +745,14 @@ fn a_response_too_large_fails_its_request() {
         from: Chosen::Path(PathBuf::from("designs/a.vrdp")),
     };
     let response = responses().swap_remove(0);
-    let len = encode(
-        &Reply {
-            seq: 7,
-            response: response.clone(),
-        },
-        MAX_MESSAGE_BYTES,
-    )
+    let len = encode(&Reply {
+        seq: 7,
+        response: response.clone(),
+    })
     .unwrap()
     .len();
 
-    let bytes = encode_response(7, response.clone(), request.failure(), len).unwrap();
+    let bytes = encode_response(7, response.clone(), request.failure()).unwrap();
     let Reply {
         seq: 7,
         response: sent,
@@ -777,7 +762,7 @@ fn a_response_too_large_fails_its_request() {
     };
     assert_eq!(format!("{sent:?}"), format!("{response:?}"));
 
-    let bytes = encode_response(7, response, request.failure(), len - 1).unwrap();
+    let bytes = encode_response_within(7, response, request.failure(), len - 1).unwrap();
     let Reply {
         seq: 7,
         response: Response::Opened { id, path, result },
@@ -803,13 +788,10 @@ fn an_export_whose_mesh_is_not_a_manifold_is_refused() {
             mesh,
         }],
     };
-    let whole = encode(
-        &ToWorker {
-            seq: 0,
-            request: request(tetrahedron()),
-        },
-        MAX_MESSAGE_BYTES,
-    )
+    let whole = encode(&ToWorker {
+        seq: 0,
+        request: request(tetrahedron()),
+    })
     .unwrap();
     assert!(decode::<ToWorker>(&whole).is_ok());
     // The last triangle turned over: as many bytes, no longer a manifold.

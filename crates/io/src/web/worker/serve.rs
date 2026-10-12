@@ -90,7 +90,7 @@ async fn answer(seq: u64, files: &mut Files, request: Request, object: Option<Ha
         let failed = first
             .take()
             .unwrap_or_else(|| Request::ListRecovered.failure());
-        let bytes = wire::encode_response(seq, response, failed, wire::MAX_MESSAGE_BYTES)
+        let bytes = wire::encode_response(seq, response, failed)
             .unwrap_or_else(|e| wasm_bindgen::throw_str(&e.to_string()));
         worker::post(&[&bytes]);
     }
