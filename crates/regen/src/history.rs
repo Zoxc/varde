@@ -877,17 +877,7 @@ impl Run<'_> {
                 _ => message::leave_out(message, name),
             };
             let key = boolean_key(doing, made.key, tool_key);
-            let solid = cache
-                .boolean(key, || {
-                    varde_kernel_compat::boolean(
-                        &made.solid,
-                        &tool,
-                        op,
-                        &self.tolerance,
-                        &Budget::DEFAULT,
-                    )
-                    .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
-                })
+            let solid = cached_boolean(cache, key, (&made.solid, &tool), op, &self.tolerance)
                 .map_err(|failure| {
                     let words = fails(message::boolean(doing, name, failure.error));
                     Failed::kernel(words, &failure, [&[made.body], &[]])
@@ -942,11 +932,13 @@ impl Run<'_> {
             return false;
         }
         let key = boolean_key(Doing::Intersecting, made.key, tool_key);
-        let common = cache.boolean(key, || {
-            let op = Op::Intersection;
-            varde_kernel_compat::boolean(&made.solid, tool, op, &self.tolerance, &Budget::DEFAULT)
-                .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
-        });
+        let common = cached_boolean(
+            cache,
+            key,
+            (&made.solid, tool),
+            Op::Intersection,
+            &self.tolerance,
+        );
         common.is_ok_and(|common| common.is_empty())
     }
 
@@ -1009,10 +1001,7 @@ impl Run<'_> {
     ) -> Result<(Arc<Solid>, Key), Failed> {
         let (first, rest) = bodies.split_first().expect("two or more bodies are merged");
         let mut unite = |key: Key, a: &Solid, b: &Solid| {
-            let solid = cache.boolean(key, || {
-                varde_kernel_compat::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
-                    .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
-            });
+            let solid = cached_boolean(cache, key, (a, b), Op::Union, &self.tolerance);
             solid.map(|solid| (solid, key))
         };
         // The bodies first, then the tool.
@@ -1766,6 +1755,20 @@ fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
         .key(body)
         .key(tool)
         .finish()
+}
+
+/// `op` on `a` and `b` at `tolerance`, filed in `cache` under `key`.
+fn cached_boolean(
+    cache: &mut Cache,
+    key: Key,
+    (a, b): (&Solid, &Solid),
+    op: Op,
+    tolerance: &Tolerance,
+) -> Result<Arc<Solid>, Arc<KernelFailure>> {
+    cache.boolean(key, || {
+        varde_kernel_compat::boolean(a, b, op, tolerance, &Budget::DEFAULT)
+            .map_err(|failure| KernelFailure::new(failure, tolerance))
+    })
 }
 
 /// The keys of the steps [`Run::merge`] works out for `bodies`, in the

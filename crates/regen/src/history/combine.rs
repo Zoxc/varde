@@ -4,11 +4,10 @@
 use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document};
-use varde_kernel_compat::{Budget, KernelError, Op, Solid, Tolerance};
+use varde_kernel_compat::{KernelError, Op, Solid, Tolerance};
 
-use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge, own_solids};
+use super::{BodySolid, Evaluation, Failed, boolean_key, cached_boolean, note_merge, own_solids};
 use crate::cache::{Cache, Key};
-use crate::error_geometry::KernelFailure;
 use crate::message::{self, Doing};
 
 /// Changes the bodies of `evaluation` (those the features before the
@@ -59,16 +58,7 @@ pub(super) fn evaluate(
     // solid on every body it holds.
     let mut step = |running: &mut Running, tool: &BodySolid| {
         let next = boolean_key(doing, running.key, tool.key);
-        let result = cache.boolean(next, || {
-            varde_kernel_compat::boolean(
-                &running.solid,
-                &tool.solid,
-                op,
-                tolerance,
-                &Budget::DEFAULT,
-            )
-            .map_err(|failure| KernelFailure::new(failure, tolerance))
-        });
+        let result = cached_boolean(cache, next, (&running.solid, &tool.solid), op, tolerance);
         let words = match doing {
             // The messages say "joining" for a union.
             Doing::Merging => Doing::Joining,
