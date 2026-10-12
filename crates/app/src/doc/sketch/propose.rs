@@ -161,6 +161,23 @@ struct Proposal {
 }
 
 impl Proposal {
+    /// `edit` of the sketch `feature`, made in `units`, on the sketch
+    /// committed, with nothing else to it.
+    fn new(feature: FeatureId, edit: SketchEdit, units: LengthUnit) -> Self {
+        Proposal {
+            feature,
+            edit,
+            from: None,
+            units,
+            source: None,
+            probe: None,
+            forced: false,
+            client: None,
+            steps: None,
+            made_on: None,
+        }
+    }
+
     /// The sketch it's proposed on in place of `committed`, the document
     /// at `revision`, if any: [`Proposal::from`], while the document is
     /// at its revision or the steps it's one of go on from it.
@@ -377,21 +394,11 @@ impl Proposals {
         source: Option<OutsideRef>,
         units: LengthUnit,
     ) {
-        if !self.any() {
-            self.since = Some(Instant::now());
-            self.slow = false;
-        }
+        self.start_timing();
         self.queued.push_front(Pending::Proposal(Proposal {
-            feature,
-            edit,
-            from: None,
-            units,
             source,
-            probe: None,
-            forced: false,
             client: Some(tag),
-            steps: None,
-            made_on: None,
+            ..Proposal::new(feature, edit, units)
         }));
     }
 
@@ -425,6 +432,15 @@ impl Proposals {
                 on: None,
                 later: false,
             }));
+        }
+    }
+
+    /// Starts timing the wait, unless something is waiting already: for
+    /// a proposal about to be queued.
+    fn start_timing(&mut self) {
+        if !self.any() {
+            self.since = Some(Instant::now());
+            self.slow = false;
         }
     }
 
@@ -648,21 +664,13 @@ impl Doc {
         let feature = session.feature;
         let units = self.editor.document().units();
         let proposals = &mut self.proposals;
-        if !proposals.any() {
-            proposals.since = Some(Instant::now());
-            proposals.slow = false;
-        }
+        proposals.start_timing();
         proposals.queued.push_back(Pending::Proposal(Proposal {
-            feature,
-            edit,
             from,
-            units,
             source,
             probe,
-            forced: false,
-            client: None,
-            steps: None,
             made_on: Some((made_on, proposals.client_edits)),
+            ..Proposal::new(feature, edit, units)
         }));
         self.send_proposal();
         self.refresh_waiting();
