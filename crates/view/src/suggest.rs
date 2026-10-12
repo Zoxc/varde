@@ -8,7 +8,7 @@
 //! ([`Suggesting`]). Putting one in sends the field's input of the text
 //! with it, as typing does, and moves the caret to the end.
 
-use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::keyboard::{self, key::Named};
 use iced::widget::text::Wrapping;
@@ -172,30 +172,19 @@ type InputState = text_input::State<<iced::Renderer as iced::advanced::text::Ren
 /// Whether the field whose state is in `tree` has the focus, its caret at
 /// the end of `text`.
 fn ready(tree: &Tree, text: &str) -> bool {
-    let Some(state) = tree.state.downcast_ref_checked() else {
+    let tree::State::Some(state) = &tree.state else {
         return false;
     };
-    let state: &InputState = state;
+    let Some(state) = state.downcast_ref::<InputState>() else {
+        return false;
+    };
     let value = Value::new(text);
     state.is_focused() && state.cursor().state(&value) == cursor::State::Index(value.len())
 }
 
-trait DowncastChecked {
-    fn downcast_ref_checked<T: 'static>(&self) -> Option<&T>;
-}
-
-impl DowncastChecked for iced::advanced::widget::tree::State {
-    fn downcast_ref_checked<T: 'static>(&self) -> Option<&T> {
-        match self {
-            iced::advanced::widget::tree::State::Some(state) => state.downcast_ref::<T>(),
-            iced::advanced::widget::tree::State::None => None,
-        }
-    }
-}
-
 /// Moves the caret of the field whose state is in `tree` to the end.
 fn caret_to_end(tree: &mut Tree) {
-    if let iced::advanced::widget::tree::State::Some(state) = &mut tree.state
+    if let tree::State::Some(state) = &mut tree.state
         && let Some(state) = state.downcast_mut::<InputState>()
     {
         state.move_cursor_to_end();
