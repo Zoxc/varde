@@ -232,7 +232,7 @@ pub enum Op {
 /// besides `op`, those of them required, and whether it takes a `label`
 /// and `construction`. The parser and the schema both read it.
 struct OpSpec {
-    word: &'static str,
+    kind: OpKind,
     keys: &'static [&'static str],
     required: &'static [&'static str],
     labelled: bool,
@@ -241,14 +241,14 @@ struct OpSpec {
 
 impl OpSpec {
     const fn new(
-        word: &'static str,
+        kind: OpKind,
         keys: &'static [&'static str],
         required: &'static [&'static str],
         labelled: bool,
         construction: bool,
     ) -> OpSpec {
         OpSpec {
-            word,
+            kind,
             keys,
             required,
             labelled,
@@ -261,42 +261,82 @@ impl OpSpec {
 /// curve, so it takes no `construction`.
 #[rustfmt::skip]
 const OPS: &[OpSpec] = &[
-    OpSpec::new("point", &["at"], &["at"], true, false),
-    OpSpec::new("line", &["start", "end"], &["start", "end"], true, true),
-    OpSpec::new("arc", &["start", "end", "through"], &["start", "end", "through"], true, true),
-    OpSpec::new("circle", &["center", "diameter"], &["center", "diameter"], true, true),
-    OpSpec::new("spline", &["points", "closed", "kind"], &["points"], true, true),
-    OpSpec::new("rectangle", &["corner", "center", "size"], &["size"], true, true),
-    OpSpec::new("polygon", &["center", "sides", "corner", "diameter"], &["center", "sides"], true, true),
-    OpSpec::new("constraint", &["kind", "items"], &["kind", "items"], false, false),
-    OpSpec::new("dimension", &["kind", "items", "value", "driving"], &["kind", "items"], false, false),
-    OpSpec::new("delete", &["items"], &["items"], false, false),
-    OpSpec::new("move", &["point", "to"], &["point", "to"], false, false),
+    OpSpec::new(OpKind::Point, &["at"], &["at"], true, false),
+    OpSpec::new(OpKind::Line, &["start", "end"], &["start", "end"], true, true),
+    OpSpec::new(OpKind::Arc, &["start", "end", "through"], &["start", "end", "through"], true, true),
+    OpSpec::new(OpKind::Circle, &["center", "diameter"], &["center", "diameter"], true, true),
+    OpSpec::new(OpKind::Spline, &["points", "closed", "kind"], &["points"], true, true),
+    OpSpec::new(OpKind::Rectangle, &["corner", "center", "size"], &["size"], true, true),
+    OpSpec::new(OpKind::Polygon, &["center", "sides", "corner", "diameter"], &["center", "sides"], true, true),
+    OpSpec::new(OpKind::Constraint, &["kind", "items"], &["kind", "items"], false, false),
+    OpSpec::new(OpKind::Dimension, &["kind", "items", "value", "driving"], &["kind", "items"], false, false),
+    OpSpec::new(OpKind::Delete, &["items"], &["items"], false, false),
+    OpSpec::new(OpKind::Move, &["point", "to"], &["point", "to"], false, false),
 ];
 
 /// The operations' words, for errors: "point, line, ... or move".
 fn op_words() -> String {
     let (last, rest) = OPS.split_last().expect("there are operations");
-    let rest: Vec<&str> = rest.iter().map(|spec| spec.word).collect();
-    format!("{} or {}", rest.join(", "), last.word)
+    let rest: Vec<&str> = rest.iter().map(|spec| spec.kind.word()).collect();
+    format!("{} or {}", rest.join(", "), last.kind.word())
+}
+
+/// An [`Op`]'s kind, which [`OPS`] lists with what it takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OpKind {
+    Point,
+    Line,
+    Arc,
+    Circle,
+    Spline,
+    Rectangle,
+    Polygon,
+    Constraint,
+    Dimension,
+    Delete,
+    Move,
+}
+
+impl OpKind {
+    /// Its name, as `op` gives it.
+    fn word(self) -> &'static str {
+        match self {
+            OpKind::Point => "point",
+            OpKind::Line => "line",
+            OpKind::Arc => "arc",
+            OpKind::Circle => "circle",
+            OpKind::Spline => "spline",
+            OpKind::Rectangle => "rectangle",
+            OpKind::Polygon => "polygon",
+            OpKind::Constraint => "constraint",
+            OpKind::Dimension => "dimension",
+            OpKind::Delete => "delete",
+            OpKind::Move => "move",
+        }
+    }
 }
 
 impl Op {
+    /// The operation's kind.
+    fn kind(&self) -> OpKind {
+        match self {
+            Op::Point { .. } => OpKind::Point,
+            Op::Line { .. } => OpKind::Line,
+            Op::Arc { .. } => OpKind::Arc,
+            Op::Circle { .. } => OpKind::Circle,
+            Op::Spline { .. } => OpKind::Spline,
+            Op::Rectangle { .. } => OpKind::Rectangle,
+            Op::Polygon { .. } => OpKind::Polygon,
+            Op::Constraint { .. } => OpKind::Constraint,
+            Op::Dimension { .. } => OpKind::Dimension,
+            Op::Delete { .. } => OpKind::Delete,
+            Op::Move { .. } => OpKind::Move,
+        }
+    }
+
     /// The operation's name, as `op` gives it.
     pub fn word(&self) -> &'static str {
-        match self {
-            Op::Point { .. } => "point",
-            Op::Line { .. } => "line",
-            Op::Arc { .. } => "arc",
-            Op::Circle { .. } => "circle",
-            Op::Spline { .. } => "spline",
-            Op::Rectangle { .. } => "rectangle",
-            Op::Polygon { .. } => "polygon",
-            Op::Constraint { .. } => "constraint",
-            Op::Dimension { .. } => "dimension",
-            Op::Delete { .. } => "delete",
-            Op::Move { .. } => "move",
-        }
+        self.kind().word()
     }
 }
 
@@ -348,7 +388,7 @@ impl Arguments<'_> {
             Some(Value::String(word)) => word.as_str(),
             _ => return Err(self.error(format_args!("op is required: {}", op_words()))),
         };
-        let Some(spec) = OPS.iter().find(|spec| spec.word == word) else {
+        let Some(spec) = OPS.iter().find(|spec| spec.kind.word() == word) else {
             return Err(self.error(format_args!(
                 "no op named {:?}: {}",
                 crate::shown(word),
@@ -367,24 +407,24 @@ impl Arguments<'_> {
             Some(_) => return Err(self.error("label is a string")),
         };
         let construction = self.flag("construction", false)?;
-        let op = match word {
-            "point" => Op::Point {
+        let op = match spec.kind {
+            OpKind::Point => Op::Point {
                 at: self.coordinates("at")?,
             },
-            "line" => Op::Line {
+            OpKind::Line => Op::Line {
                 start: self.at("start")?,
                 end: self.at("end")?,
             },
-            "arc" => Op::Arc {
+            OpKind::Arc => Op::Arc {
                 start: self.at("start")?,
                 end: self.at("end")?,
                 through: self.coordinates("through")?,
             },
-            "circle" => Op::Circle {
+            OpKind::Circle => Op::Circle {
                 center: self.at("center")?,
                 diameter: self.sized("diameter")?,
             },
-            "spline" => {
+            OpKind::Spline => {
                 const WHAT: &str = "points: [x, y], an id or a label";
                 let said = || self.error(format_args!("points is a list of {WHAT}"));
                 let points = (self.required_list("points", 2, SPLINE_POINTS, WHAT)?)
@@ -397,7 +437,7 @@ impl Arguments<'_> {
                     control: self.choice("kind", SPLINE_KINDS)?,
                 }
             }
-            "rectangle" => {
+            OpKind::Rectangle => {
                 let from = match (
                     self.map.contains_key("corner"),
                     self.map.contains_key("center"),
@@ -411,7 +451,7 @@ impl Arguments<'_> {
                     size: self.coordinates("size")?,
                 }
             }
-            "polygon" => {
+            OpKind::Polygon => {
                 let size = match (
                     self.map.contains_key("corner"),
                     self.map.contains_key("diameter"),
@@ -434,11 +474,11 @@ impl Arguments<'_> {
                     size,
                 }
             }
-            "constraint" => Op::Constraint {
+            OpKind::Constraint => Op::Constraint {
                 kind: self.required_choice("kind", CONSTRAINT_WORDS)?,
                 items: self.items("items", 1, MAX_ITEMS)?,
             },
-            "dimension" => {
+            OpKind::Dimension => {
                 let driving = self.flag("driving", true)?;
                 let value = self.optional_text("value")?;
                 if !driving && value.is_some() {
@@ -452,10 +492,10 @@ impl Arguments<'_> {
                     driving,
                 }
             }
-            "delete" => Op::Delete {
+            OpKind::Delete => Op::Delete {
                 items: self.items("items", 1, MAX_ITEMS)?,
             },
-            "move" => {
+            OpKind::Move => {
                 let point = (self.map.get("point"))
                     .and_then(item_ref)
                     .ok_or_else(|| self.error("point is required: an id or a label"))?;
@@ -464,9 +504,8 @@ impl Arguments<'_> {
                     to: self.coordinates("to")?,
                 }
             }
-            _ => unreachable!("every word in OPS is built here"),
         };
-        debug_assert_eq!(op.word(), spec.word);
+        debug_assert_eq!(op.kind(), spec.kind);
         Ok(SketchOp {
             label,
             construction,
@@ -670,9 +709,9 @@ fn operation_schemas() -> Vec<Value> {
     // label and construction where it takes them.
     let one = |spec: &OpSpec| {
         let mut properties: Map<String, Value> = Map::new();
-        properties.insert("op".into(), json!({ "const": spec.word }));
+        properties.insert("op".into(), json!({ "const": spec.kind.word() }));
         for key in spec.keys {
-            properties.insert((*key).into(), property(spec.word, key));
+            properties.insert((*key).into(), property(spec.kind.word(), key));
         }
         if spec.labelled {
             properties.insert("label".into(), label.clone());
