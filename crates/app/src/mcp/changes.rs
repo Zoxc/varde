@@ -572,6 +572,24 @@ impl Said {
         }
     }
 
+    /// Says `renamed`, if it is, of a thing called "`noun`name".
+    fn said_renamed(&mut self, noun: &str, renamed: &Option<OldNew<String>>) {
+        if let Some(OldNew { old, new }) = renamed {
+            self.lines.push(format!("renamed {noun}{old} to {new}"));
+        }
+    }
+
+    /// Says `name` was shown or hidden if `visible` differs from `was`,
+    /// and gives what the change records: `visible` if it differs.
+    fn said_visible(&mut self, was: bool, name: &str, visible: bool) -> Option<bool> {
+        if was == visible {
+            return None;
+        }
+        let verb = if visible { "showed" } else { "hid" };
+        self.lines.push(format!("{verb} {name}"));
+        Some(visible)
+    }
+
     fn feature_changed(&mut self, was: &Shape, is: &Shape, old: &Feature, new: &Feature) {
         let mut change = FeatureChange {
             name: new.name.clone(),
@@ -580,18 +598,8 @@ impl Said {
             visible: None,
             settings: None,
         };
-        if change.renamed.is_some() {
-            self.lines
-                .push(format!("renamed {} to {}", old.name, new.name));
-        }
-        if old.visible != new.visible {
-            change.visible = Some(new.visible);
-            self.lines.push(format!(
-                "{} {}",
-                if new.visible { "showed" } else { "hid" },
-                new.name
-            ));
-        }
+        self.said_renamed("", &change.renamed);
+        change.visible = self.said_visible(old.visible, &new.name, new.visible);
         if old.kind != new.kind {
             let fields = settings_diff(was, is, old, new);
             let said: Vec<&str> = fields.keys().map(String::as_str).collect();
@@ -616,18 +624,8 @@ impl Said {
             color: None,
             opacity: None,
         };
-        if change.renamed.is_some() {
-            self.lines
-                .push(format!("renamed body {} to {}", old.name, new.name));
-        }
-        if old.visible != new.visible {
-            change.visible = Some(new.visible);
-            self.lines.push(format!(
-                "{} {}",
-                if new.visible { "showed" } else { "hid" },
-                new.name
-            ));
-        }
+        self.said_renamed("body ", &change.renamed);
+        change.visible = self.said_visible(old.visible, &new.name, new.visible);
         if old.color != new.color {
             change.color = OldNew::new(color(old), color(new));
             self.lines
@@ -675,10 +673,7 @@ impl Said {
                 renamed: OldNew::new(param.name.clone(), new.name.clone()),
                 expression: OldNew::new(param.text.clone(), new.text.clone()),
             };
-            if change.renamed.is_some() {
-                self.lines
-                    .push(format!("renamed parameter {} to {}", param.name, new.name));
-            }
+            self.said_renamed("parameter ", &change.renamed);
             if change.expression.is_some() {
                 self.lines.push(format!("set {} to {}", new.name, new.text));
             }
