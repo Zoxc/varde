@@ -72,7 +72,7 @@ details and the timings.
   curve and the parameters it runs from and to (a line's 0 to 1, a
   circle's or an arc's angle from its start), backwards when `to` is
   below `from`.
-- **Faces** are traced round the planar graph of the pieces with the face
+- **Faces** (`profile/graph.rs`) are traced round the planar graph of the pieces with the face
   on the left, the pieces leaving a vertex in order of direction and,
   leaving within 10⁻⁶ radians of each other, of where each is sideways
   halfway along the shortest of them, by its direction, curvature and

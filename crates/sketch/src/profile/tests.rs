@@ -4,7 +4,7 @@
 )]
 
 use std::collections::BTreeSet;
-use std::f64::consts::PI;
+use std::f64::consts::{PI, TAU};
 
 use super::*;
 use crate::Curve;
