@@ -92,11 +92,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
-        let Some(mut drawing) = self
-            .sketch
-            .as_ref()
-            .and_then(|session| session.tool.clone())
-        else {
+        let Some(mut drawing) = self.drawing() else {
             return;
         };
         let placing = drawing.tool.places() && !drawing.picked.is_empty();

@@ -34,11 +34,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
-        let Some(mut drawing) = self
-            .sketch
-            .as_ref()
-            .and_then(|session| session.tool.clone())
-        else {
+        let Some(mut drawing) = self.drawing() else {
             return;
         };
         let hit = click.hit.filter(|&id| dimension::pickable(sketch, id));
@@ -310,11 +306,10 @@ impl Doc {
     /// references unless they all are, then all driving. Each is an edit
     /// of its own, made driving holding what it measures now.
     pub(crate) fn toggle_reference(&mut self) {
-        let (Some(sketch), Some(session)) = (self.editable_sketch(), &self.sketch) else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let selected: Vec<_> = session
-            .selection
+        let selected: Vec<_> = selection
             .iter()
             .filter_map(|&target| sketch.dimension(target.item()?))
             .collect();

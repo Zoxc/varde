@@ -49,10 +49,7 @@ impl Doc {
     /// `Enter`. Whether the Spline tool is in use, whatever it made of
     /// it.
     pub(super) fn end_spline_here(&mut self) -> bool {
-        let drawing = self
-            .sketch
-            .as_ref()
-            .and_then(|session| session.tool.clone());
+        let drawing = self.drawing();
         match drawing {
             Some(drawing) if drawing.tool == Tool::Spline => {
                 if drawing.active().spline_ends() {
@@ -102,13 +99,10 @@ impl Doc {
     /// control points, each keeping its shape as closely as it can: a
     /// proposal each.
     pub(crate) fn convert_splines(&mut self) {
-        let Some(sketch) = self.editable_sketch() else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let Some(session) = &self.sketch else {
-            return;
-        };
-        for edit in varde_view::spline::conversions(sketch, &session.selection) {
+        for edit in varde_view::spline::conversions(sketch, selection) {
             self.propose(edit);
         }
     }
@@ -117,13 +111,10 @@ impl Doc {
     /// selected, or takes them away where they all have them (see
     /// [`varde_view::spline::handles`]).
     pub(crate) fn toggle_handles(&mut self) {
-        let Some(sketch) = self.editable_sketch() else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let Some(session) = &self.sketch else {
-            return;
-        };
-        if let Some(edit) = varde_view::spline::handles(sketch, &session.selection) {
+        if let Some(edit) = varde_view::spline::handles(sketch, selection) {
             self.propose(edit);
         }
     }
@@ -133,10 +124,7 @@ impl Doc {
     /// point), or with no drawing tool closes or opens the curves
     /// selected (see [`varde_view::spline::closings`]), a proposal each.
     pub(crate) fn toggle_closed(&mut self) {
-        let drawing = self
-            .sketch
-            .as_ref()
-            .and_then(|session| session.tool.clone());
+        let drawing = self.drawing();
         if let Some(drawing) = drawing.filter(|drawing| drawing.tool.draws()) {
             if drawing.active().can_close() {
                 match drawing.tool {
@@ -147,13 +135,10 @@ impl Doc {
             }
             return;
         }
-        let Some(sketch) = self.editable_sketch() else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let Some(session) = &self.sketch else {
-            return;
-        };
-        if let Some((_, edits)) = varde_view::spline::closings(sketch, &session.selection) {
+        if let Some((_, edits)) = varde_view::spline::closings(sketch, selection) {
             for edit in edits {
                 self.propose(edit);
             }
@@ -163,14 +148,11 @@ impl Doc {
     /// Closes or opens the curve of a Geometry row, `item`, from its
     /// context menu, or the selection if it's among it, as the key does.
     pub(crate) fn toggle_closed_item(&mut self, item: Selectable) {
-        let Some(sketch) = self.editable_sketch() else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let Some(session) = &self.sketch else {
-            return;
-        };
-        let items = if session.selection.contains(&item) {
-            session.selection.clone()
+        let items = if selection.contains(&item) {
+            selection.clone()
         } else {
             BTreeSet::from([item])
         };
@@ -192,10 +174,10 @@ impl Doc {
     /// Takes the spline points selected out of their splines, if they
     /// all can be (see [`varde_view::spline::removals`]).
     pub(crate) fn remove_spline_points(&mut self) {
-        let Some((sketch, session)) = self.editable_sketch().zip(self.sketch.as_ref()) else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        if let Some(Ok(edit)) = varde_view::spline::removals(sketch, &session.selection) {
+        if let Some(Ok(edit)) = varde_view::spline::removals(sketch, selection) {
             self.propose(edit);
         }
     }

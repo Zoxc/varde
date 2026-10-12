@@ -29,6 +29,21 @@ impl Doc {
         self.working_sketch().filter(|_| self.editable())
     }
 
+    /// The working sketch, as [`Doc::editable_sketch`], and the selection
+    /// in it.
+    pub(super) fn editable_selection(
+        &self,
+    ) -> Option<(&Sketch, &std::collections::BTreeSet<Selectable>)> {
+        let sketch = self.editable_sketch()?;
+        Some((sketch, &self.sketch.as_ref()?.selection))
+    }
+
+    /// A copy of the tool in use, to change and put back with
+    /// [`Doc::set_drawing`].
+    pub(super) fn drawing(&self) -> Option<Drawing> {
+        self.sketch.as_ref()?.tool.clone()
+    }
+
     /// Shows why an edit of the sketch being edited can't be made.
     pub(super) fn refuse(&mut self, why: varde_sketch::EditError) {
         if let Some(session) = &self.sketch {
@@ -61,11 +76,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
-        let Some(mut drawing) = self
-            .sketch
-            .as_ref()
-            .and_then(|session| session.tool.clone())
-        else {
+        let Some(mut drawing) = self.drawing() else {
             return;
         };
         if !(click.at.is_finite() && click.pixel.is_finite() && click.pixel > 0.0) {
@@ -421,13 +432,10 @@ impl Doc {
     /// which the solver would refuse. The keys and the toolbar's and
     /// rail's buttons.
     pub(crate) fn toggle_constraint(&mut self, kind: ConstraintKind) {
-        let Some(sketch) = self.editable_sketch() else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let Some(session) = &self.sketch else {
-            return;
-        };
-        let Some(constraints) = kind.make(sketch, &session.selection) else {
+        let Some(constraints) = kind.make(sketch, selection) else {
             return;
         };
         let held: Option<Vec<Id>> = (constraints.iter())
@@ -449,13 +457,10 @@ impl Doc {
     /// [`ConstraintKind::make`]. With the Constrain tool the selection is
     /// cleared for the next.
     pub(crate) fn constrain(&mut self, kind: ConstraintKind) {
-        let Some(sketch) = self.editable_sketch() else {
+        let Some((sketch, selection)) = self.editable_selection() else {
             return;
         };
-        let Some(session) = &self.sketch else {
-            return;
-        };
-        let Some(constraints) = kind.make(sketch, &session.selection) else {
+        let Some(constraints) = kind.make(sketch, selection) else {
             return;
         };
         let edit = SketchEdit::constrain(sketch, constraints);
