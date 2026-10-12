@@ -59,7 +59,7 @@ pub(crate) fn design_summary(doc: &Doc, page: Page) -> ToolReply {
     let rollback = rollback_name(document);
     let model = committed
         .as_ref()
-        .map(|model| model_state(doc, (model.generation, model.until)));
+        .map(|model| model_state(doc, (model.generation, model.until), &FAILURES_NOTES));
     let answer = json!({
         "units": document.units().symbol(),
         "tolerance": varde_view::tolerance_label(document.tolerance().fit()),
@@ -259,10 +259,33 @@ pub(super) fn committed(doc: &Doc) -> Result<Shown<'_>, &'static str> {
     }
 }
 
+/// What a query says of a model that's out of date or rolled back, in
+/// [`model_state`].
+pub(super) struct ModelNotes {
+    /// Its `note` while the model is of an earlier state of the design.
+    stale: &'static str,
+    /// Its `rolled_back` while the model is built only up to a feature,
+    /// if it says so.
+    rolled_back: Option<&'static str>,
+}
+
+/// What a model's failures being out of date means: `design_summary`'s
+/// and `render`'s.
+pub(super) const FAILURES_NOTES: ModelNotes = ModelNotes {
+    stale: "The model is of an earlier state of the design: regeneration is still running, \
+            so failures may be out of date.",
+    rolled_back: None,
+};
+
 /// How far the committed model of `generation`, built up to before
-/// `until`, got and whether it's of the design as it is:
-/// `design_summary`'s, `body_topology`'s and `measure`'s `model`.
-fn model_state(doc: &Doc, (at, until): (Generation, Option<FeatureId>)) -> Value {
+/// `until`, got and whether it's of the design as it is, with `notes`
+/// on it: `design_summary`'s, `body_topology`'s, `measure`'s and
+/// `render`'s `model`.
+fn model_state(
+    doc: &Doc,
+    (at, until): (Generation, Option<FeatureId>),
+    notes: &ModelNotes,
+) -> Value {
     let document = doc.editor.document();
     let mut shown = json!({
         "generation": generation(at),
@@ -276,10 +299,10 @@ fn model_state(doc: &Doc, (at, until): (Generation, Option<FeatureId>)) -> Value
         None => json!("the end of the Timeline"),
     };
     if at != doc.editor.generation() {
-        shown["note"] = json!(
-            "The model is of an earlier state of the design: regeneration is still \
-             running, so failures may be out of date."
-        );
+        shown["note"] = json!(notes.stale);
+    }
+    if let Some(rolled_back) = notes.rolled_back.filter(|_| until.is_some()) {
+        shown["rolled_back"] = json!(rolled_back);
     }
     shown
 }

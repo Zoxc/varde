@@ -1792,7 +1792,9 @@ holds is in `viewport.md`). `model_state`
 reports its generation, whether it's of the design as it is
 (`current`, with a note if not: regeneration still running), and how
 far it was built (`built_up_to`: before the rollback feature, or the
-end of the Timeline).
+end of the Timeline). Each query hands it its `ModelNotes`: the stale
+note's wording, and a `rolled_back` note if it says one (measure's and
+body_topology's).
 
 - `design_summary`: units, tolerance, revision, the bodies (name,
   visible), the Timeline (kind, name, id, a failure from the committed

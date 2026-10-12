@@ -11,9 +11,19 @@ use varde_kernel_compat::RenderPart;
 use varde_mcp::tools::{Direction, EdgeFilter, Page, ToolReply, Topology};
 use varde_regen::{Convexity, EdgeFacts, EdgeForm, Summary};
 
-use super::{BUDGET, Numbers, model_state, paged_into};
+use super::{BUDGET, FAILURES_NOTES, ModelNotes, Numbers, model_state, paged_into};
 use crate::doc::{Doc, Shown};
 use crate::mcp::key::{Key, Ref};
+
+/// What a listing says of its model: failures out of date as a
+/// summary's, and what a rollback leaves out.
+const TOPOLOGY_NOTES: ModelNotes = ModelNotes {
+    rolled_back: Some(
+        "The model is rolled back: the features from that point on aren't built, so their \
+         faces and edges aren't listed.",
+    ),
+    ..FAILURES_NOTES
+};
 
 /// How far from the filter's direction a flat face's normal, or a
 /// straight edge, may turn and still pass it: half a degree, its cosine.
@@ -164,21 +174,15 @@ pub(crate) fn listed(
     let corner_items: Vec<Value> = (0..model.picking.corners().len())
         .filter_map(|corner| topology.corner(corner))
         .collect();
-    let mut answer = json!({
+    let answer = json!({
         "body": found.name,
         "units": units.symbol(),
-        "model": model_state(doc, (model.generation, model.until)),
+        "model": model_state(doc, (model.generation, model.until), &TOPOLOGY_NOTES),
         "note": "Areas, lengths, bounding boxes and the points keys carry are measured on the \
                  tessellated model, so they're approximate; edges' forms and ends and corners' \
                  points are exact. Points and boxes are in the design's units. Each listing is \
                  paged alone by offset and limit after its filter.",
     });
-    if model.until.is_some() {
-        answer["model"]["rolled_back"] = json!(
-            "The model is rolled back: the features from that point on aren't built, \
-             so their faces and edges aren't listed."
-        );
-    }
     let lists = vec![
         ("faces", face_items),
         ("edges", edge_items),

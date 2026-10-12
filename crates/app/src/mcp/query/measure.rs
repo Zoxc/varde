@@ -13,6 +13,18 @@ use varde_view::MeasureValue;
 use crate::doc::Doc;
 use crate::mcp::key::{self, Ref};
 
+/// What a measure says of its model: the design moved on while it was
+/// measured, so what's out of date is the values, not (as a summary's
+/// note has it) failures; and what a rollback leaves out.
+const MEASURE_NOTES: super::ModelNotes = super::ModelNotes {
+    stale: "The model is of an earlier state of the design: the design changed while it was \
+            measured, so the values may be out of date.",
+    rolled_back: Some(
+        "The model is rolled back: the features from that point on aren't built, so what \
+         they make isn't measured.",
+    ),
+};
+
 /// The picks `args` names, resolved on `doc`'s committed model, for
 /// regen to measure, or the answer now if one isn't there: a key is
 /// taken as [`key::found`] takes it (of this design, of the kind it
@@ -116,22 +128,7 @@ pub(crate) fn measured(
         }
         answer["between"] = Value::Object(said);
     }
-    let mut model = super::model_state(doc, (generation, until));
-    // The design moved on while it was measured: what's out of date is
-    // the values, not (as a summary's note has it) failures.
-    if model.get("note").is_some() {
-        model["note"] = json!(
-            "The model is of an earlier state of the design: the design changed while it \
-             was measured, so the values may be out of date."
-        );
-    }
-    if until.is_some() {
-        model["rolled_back"] = json!(
-            "The model is rolled back: the features from that point on aren't built, \
-             so what they make isn't measured."
-        );
-    }
-    answer["model"] = model;
+    answer["model"] = super::model_state(doc, (generation, until), &MEASURE_NOTES);
     answer["note"] = json!(
         "Measured exactly on the solid. Lengths, areas and volumes are typed text in the \
          design's units, angles in degrees."

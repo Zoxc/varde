@@ -145,7 +145,11 @@ pub(crate) fn render(doc: &Doc, args: &Args) -> Result<Shot, ToolReply> {
         "projection": if args.perspective { "perspective" } else { "orthographic" },
         "size": shot.size,
         "highlighted": picked.len(),
-        "model": super::model_state(doc, (model.generation, model.until)),
+        "model": super::model_state(
+            doc,
+            (model.generation, model.until),
+            &super::FAILURES_NOTES,
+        ),
     });
     Ok(Shot {
         mesh: model.mesh.clone(),
