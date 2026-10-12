@@ -67,6 +67,108 @@ pub(crate) enum Operating<'a> {
     Motion(Moving<'a>),
 }
 
+impl<'a> Operating<'a> {
+    /// The labels anchored over the scene: a split's pieces' and the
+    /// measured distance's.
+    fn labels(&self, camera: &Camera) -> Option<Element<'a, Message>> {
+        match self {
+            Operating::Extrude(_) | Operating::Revolve(_) => None,
+            // A split's pieces' labels.
+            Operating::Motion(moving) => moving.labels(camera),
+            // The distance's label, in the knobs' place.
+            Operating::Measure(measuring) => measuring.label(camera),
+        }
+    }
+
+    /// What it draws, with `state` as it is, seen by `camera` over
+    /// `bounds` in the `scene`'s and the sketches' `colors`.
+    fn frame(
+        &self,
+        state: &Interaction,
+        scene: &Colors,
+        colors: SketchColors,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) -> SketchFrame {
+        let (plane, (base, live)) = match self {
+            Operating::Extrude(extruding) => (
+                extruding.plane(),
+                extruding.layers(&state.extrude, colors, camera, bounds),
+            ),
+            Operating::Revolve(revolving) => (
+                revolving.plane(),
+                revolving.layers(&state.revolve, colors, camera, bounds),
+            ),
+            Operating::Measure(measuring) => (GridPlane::XY, measuring.layers(scene, colors)),
+            Operating::Motion(moving) => (
+                moving.plane_of_layers(),
+                moving.layers(&state.motion, scene, colors, camera, bounds),
+            ),
+        };
+        // What the measure tool draws is on top: a distance through
+        // the model, or a point behind it, still shows; and a move's
+        // axis or a mirror's plane through the bodies.
+        let depth_tested = !matches!(self, Operating::Measure(_) | Operating::Motion(_));
+        SketchFrame {
+            plane,
+            depth_tested,
+            base,
+            live,
+            failing: None,
+        }
+    }
+
+    /// The cursor over its handles or what it picks, or dragging them.
+    fn mouse_interaction(
+        &self,
+        state: &Interaction,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<mouse::Interaction> {
+        match self {
+            Operating::Extrude(extruding) => {
+                extruding.mouse_interaction(&state.extrude, bounds, cursor)
+            }
+            Operating::Revolve(revolving) => {
+                revolving.mouse_interaction(&state.revolve, bounds, cursor)
+            }
+            Operating::Motion(moving) => moving.mouse_interaction(&state.motion),
+            Operating::Measure(_) => None,
+        }
+    }
+
+    /// Takes the mouse `event` for its picking and handle: `None` for
+    /// what's left to picking the model and the camera. `hovered`: whether
+    /// the model holds something hovered, which a move's handles let go
+    /// of.
+    fn mouse(
+        &self,
+        state: &mut Interaction,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+        hovered: bool,
+    ) -> Option<Action<Message>> {
+        match self {
+            // Its knobs, ahead of its regions.
+            Operating::Extrude(extruding) => {
+                extruding.mouse(&mut state.extrude, event, bounds, cursor, camera)
+            }
+            // Its knobs, ahead of its lines, edges and regions.
+            Operating::Revolve(revolving) => {
+                revolving.mouse(&mut state.revolve, event, bounds, cursor, camera)
+            }
+            // A move's handles, ahead of picking the model.
+            Operating::Motion(moving) => {
+                moving.mouse(&mut state.motion, event, bounds, cursor, camera, hovered)
+            }
+            // The cursor picks the model as outside the sessions.
+            Operating::Measure(_) => None,
+        }
+    }
+}
+
 /// How far below the viewport's top the camera controls are, in pixels.
 pub(crate) const CONTROLS_TOP: f32 = 10.0;
 
@@ -237,14 +339,7 @@ pub(crate) fn viewport<'a>(
     // widgets' state (the field's focus, the body's scroll), as an
     // operation's labels come and go.
     let knobs = operating.as_ref().map(|operating| {
-        let knobs = match operating {
-            Operating::Extrude(_) | Operating::Revolve(_) => None,
-            // A split's pieces' labels.
-            Operating::Motion(moving) => moving.labels(camera),
-            // The distance's label, in the knobs' place.
-            Operating::Measure(measuring) => measuring.label(camera),
-        };
-        knobs.unwrap_or_else(|| iced::widget::Space::new().into())
+        (operating.labels(camera)).unwrap_or_else(|| iced::widget::Space::new().into())
     });
     let sketching = sketching.map(|sketching| sketching.snapping(scene.options.mouse.sketch_snap));
     let program = Program::new(scene, picking, palette, sketching, operating, aspect);
@@ -629,40 +724,13 @@ impl shader::Program<Message> for Program<'_> {
         // behind it of its regions, handle and axis.
         let operation = self.operating.as_ref().map(|operating| {
             let colors = self.sketch_colors;
-            let (plane, (base, live)) = match operating {
-                Operating::Extrude(extruding) => (
-                    extruding.plane(),
-                    extruding.layers(&state.extrude, colors, &self.scene.camera, bounds),
-                ),
-                Operating::Revolve(revolving) => (
-                    revolving.plane(),
-                    revolving.layers(&state.revolve, colors, &self.scene.camera, bounds),
-                ),
-                Operating::Measure(measuring) => {
-                    (GridPlane::XY, measuring.layers(&self.scene.colors, colors))
-                }
-                Operating::Motion(moving) => (
-                    moving.plane_of_layers(),
-                    moving.layers(
-                        &state.motion,
-                        &self.scene.colors,
-                        colors,
-                        &self.scene.camera,
-                        bounds,
-                    ),
-                ),
-            };
-            // What the measure tool draws is on top: a distance through
-            // the model, or a point behind it, still shows; and a move's
-            // axis or a mirror's plane through the bodies.
-            let depth_tested = !matches!(operating, Operating::Measure(_) | Operating::Motion(_));
-            SketchFrame {
-                plane,
-                depth_tested,
-                base,
-                live,
-                failing: None,
-            }
+            operating.frame(
+                state,
+                &self.scene.colors,
+                colors,
+                &self.scene.camera,
+                bounds,
+            )
         });
         let sketch = self.sketching.as_ref().map(|sketching| {
             let camera = &self.scene.camera;
@@ -730,16 +798,7 @@ impl shader::Program<Message> for Program<'_> {
                 .sketching
                 .as_ref()
                 .and_then(|sketching| sketching.mouse_interaction(&state.sketch, bounds, cursor))
-                .or_else(|| match self.operating.as_ref()? {
-                    Operating::Extrude(extruding) => {
-                        extruding.mouse_interaction(&state.extrude, bounds, cursor)
-                    }
-                    Operating::Revolve(revolving) => {
-                        revolving.mouse_interaction(&state.revolve, bounds, cursor)
-                    }
-                    Operating::Motion(moving) => moving.mouse_interaction(&state.motion),
-                    Operating::Measure(_) => None,
-                })
+                .or_else(|| (self.operating.as_ref()?).mouse_interaction(state, bounds, cursor))
                 .or_else(|| {
                     // Over what a click would select.
                     let picking = self.picking.as_ref()?;
@@ -1280,6 +1339,8 @@ impl Program<'_> {
         {
             return Some(action);
         }
+        let model_hovered =
+            (self.picking.as_ref()).is_some_and(|picking| picking.hovered.is_some());
         // A move's handles under a cursor that stayed put as the frame
         // changed.
         if let Some(Operating::Motion(moving)) = &self.operating
@@ -1290,7 +1351,7 @@ impl Program<'_> {
                 bounds,
                 cursor,
                 &self.scene.camera,
-                (self.picking.as_ref()).is_some_and(|picking| picking.hovered.is_some()),
+                model_hovered,
             )
         {
             // The model let go of under it is picked again once it's off.
@@ -1304,26 +1365,7 @@ impl Program<'_> {
             && let Event::Mouse(event) = event
         {
             let camera = &self.scene.camera;
-            let action = match operating {
-                // Its knobs, ahead of its regions.
-                Operating::Extrude(extruding) => {
-                    extruding.mouse(&mut state.extrude, *event, bounds, cursor, camera)
-                }
-                // Its knobs, ahead of its lines, edges and regions.
-                Operating::Revolve(revolving) => {
-                    revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
-                }
-                // A move's handles, ahead of picking the model.
-                Operating::Motion(moving) => {
-                    let hovered = self
-                        .picking
-                        .as_ref()
-                        .is_some_and(|picking| picking.hovered.is_some());
-                    moving.mouse(&mut state.motion, *event, bounds, cursor, camera, hovered)
-                }
-                // The cursor picks the model as outside the sessions.
-                Operating::Measure(_) => None,
-            };
+            let action = operating.mouse(state, *event, bounds, cursor, camera, model_hovered);
             if action.is_some() {
                 return action;
             }
