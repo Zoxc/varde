@@ -11,9 +11,8 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{
-    Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, edit_once, id, sketch, words,
-};
+use super::schema::{edit_once, sketch};
+use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, id, words};
 
 /// The most operations one `edit_sketch` takes: a sketch of a few
 /// shapes, their constraints and dimensions in one call, each

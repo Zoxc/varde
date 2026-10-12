@@ -127,7 +127,9 @@ anything else is dropped. `State::end` is the app's own end
 
 ## The tools
 
-`tools.rs` has the static `tools/list` (each with an `inputSchema`, an
+`tools.rs` and its modules (`call.rs` the checked call types, `args.rs`
+the argument readers, `schema.rs` the list, `reply.rs` the reply,
+`draw.rs` `edit_sketch`'s all three) have the static `tools/list` (each with an `inputSchema`, an
 `outputSchema` for `design_summary`, `body_topology` and `sketch`, read-only
 annotations for the queries and `readOnlyHint: false` for the edits:
 `destructiveHint` on the removals (`remove_feature`, `remove_body`,
