@@ -1029,47 +1029,20 @@ impl MotionSession {
     /// What's still to be done before it can be committed, the UI mock's
     /// words, if anything.
     fn need(&self) -> Option<&'static str> {
-        if self.kind == MotionKind::Align {
-            return self.align_need();
-        }
-        if self.kind == MotionKind::Scale {
-            return self.scale_need();
-        }
-        if self.kind == MotionKind::Split {
-            return self.split_need();
-        }
-        if self.kind.blends() {
-            return self.blend_need();
-        }
-        if self.kind.picks_faces() {
-            return self.faces_need();
-        }
-        if self.kind == MotionKind::Sweep {
-            return self.sweep_need();
-        }
-        if self.kind == MotionKind::Loft {
-            return self.loft_need();
-        }
-        if self.bodies.is_empty() {
-            return Some(match self.kind {
-                MotionKind::Move => "pick the bodies to move",
-                MotionKind::Mirror => "pick the bodies to mirror",
-                MotionKind::LinearPattern | MotionKind::CircularPattern => {
-                    "pick the bodies to pattern"
-                }
-                MotionKind::Align => "pick the body to align",
-                MotionKind::Scale => "pick the bodies to scale",
-                MotionKind::Split => "pick the body to split",
-                MotionKind::Chamfer => "pick the edges to chamfer",
-                MotionKind::Shell => "pick faces to remove, or the body to hollow",
-                MotionKind::Fillet => "pick the edges to fillet",
-                MotionKind::OffsetFace => "pick the faces to move",
-                MotionKind::Draft => "pick the faces to draft",
-                MotionKind::Sweep => "pick the regions to sweep",
-                MotionKind::Loft => "pick the sections to loft",
-            });
-        }
+        let picked = !self.bodies.is_empty();
         match self.kind {
+            MotionKind::Align => self.align_need(),
+            MotionKind::Scale => self.scale_need(),
+            MotionKind::Split => self.split_need(),
+            MotionKind::Chamfer | MotionKind::Fillet => self.blend_need(),
+            MotionKind::Shell | MotionKind::OffsetFace | MotionKind::Draft => self.faces_need(),
+            MotionKind::Sweep => self.sweep_need(),
+            MotionKind::Loft => self.loft_need(),
+            MotionKind::Move if !picked => Some("pick the bodies to move"),
+            MotionKind::Mirror if !picked => Some("pick the bodies to mirror"),
+            MotionKind::LinearPattern | MotionKind::CircularPattern if !picked => {
+                Some("pick the bodies to pattern")
+            }
             MotionKind::LinearPattern if self.axis.is_none() => {
                 Some("pick a direction: an origin axis or a straight edge")
             }
@@ -1080,17 +1053,7 @@ impl MotionSession {
             MotionKind::Mirror if self.plane.is_none() => {
                 Some("pick a plane: an origin plane or a planar face")
             }
-            MotionKind::Mirror
-            | MotionKind::Align
-            | MotionKind::Scale
-            | MotionKind::Split
-            | MotionKind::Chamfer
-            | MotionKind::Shell
-            | MotionKind::Fillet
-            | MotionKind::OffsetFace
-            | MotionKind::Draft
-            | MotionKind::Sweep
-            | MotionKind::Loft => None,
+            MotionKind::Mirror => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
