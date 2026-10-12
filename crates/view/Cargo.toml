@@ -18,7 +18,8 @@ glam.workspace = true
 log.workspace = true
 
 [features]
-# `probe`: what other crates' tests find on a screen laid out headless.
+# `probe`: what other crates' tests find on a screen laid out headless, and
+# answering preview requests in place of the GPU.
 probe = []
 
 [dev-dependencies]

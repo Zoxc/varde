@@ -147,6 +147,7 @@ impl PreviewRequest {
 
     /// Hands `images` to what takes its pixels, as the viewport would:
     /// for tests, which have no GPU to draw with. Once, as drawing it is.
+    #[cfg(any(test, feature = "probe"))]
     pub fn answer_for_tests(&self, images: Option<Vec<PreviewImage>>) {
         if let Some(done) = self.take() {
             done(images);
