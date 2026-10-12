@@ -108,14 +108,7 @@ pub(super) fn set_split(
             }
         }
     }
-    let keep = match given.has("keep") {
-        true => match args.keep {
-            tools::SplitKeep::Both => Keep::Both,
-            tools::SplitKeep::Front => Keep::Front,
-            tools::SplitKeep::Back => Keep::Back,
-        },
-        false => session.split.keep,
-    };
+    let keep = given.or("keep", split_keep(args.keep), session.split.keep);
     if let Some(original) = args.original.filter(|_| given.has("original")) {
         if keep != Keep::Both {
             return Err(goes_with(
@@ -172,10 +165,11 @@ pub(super) fn set_shell(
 ) -> Result<(), Wrong> {
     let edited = session.feature;
     if edited.is_some() {
-        let faceless = match given.has("faces") {
-            true => args.faces.is_empty(),
-            false => session.faces.refs.is_empty(),
-        };
+        let faceless = given.or(
+            "faces",
+            args.faces.is_empty(),
+            session.faces.refs.is_empty(),
+        );
         if given.has("body") && !faceless {
             return Err(Wrong::Said(NO_BODY.to_owned()));
         }
@@ -242,12 +236,8 @@ pub(super) fn set_offset_face(
         &args.distance,
         "distance",
     )?;
-    if given.has("inward") {
-        session.flip = args.inward;
-    }
-    if given.has("tangent") {
-        session.tangent = args.tangent;
-    }
+    given.set("inward", &mut session.flip, args.inward);
+    given.set("tangent", &mut session.tangent, args.tangent);
     Ok(())
 }
 
@@ -283,11 +273,16 @@ pub(super) fn set_draft(
         &args.angle,
         "angle",
     )?;
-    if given.has("flip") {
-        session.flip = args.flip;
-    }
-    if given.has("tangent") {
-        session.tangent = args.tangent;
-    }
+    given.set("flip", &mut session.flip, args.flip);
+    given.set("tangent", &mut session.tangent, args.tangent);
     Ok(())
+}
+
+/// The panel's side to keep for the tools' `keep`.
+fn split_keep(keep: tools::SplitKeep) -> Keep {
+    match keep {
+        tools::SplitKeep::Both => Keep::Both,
+        tools::SplitKeep::Front => Keep::Front,
+        tools::SplitKeep::Back => Keep::Back,
+    }
 }

@@ -95,9 +95,11 @@ pub(super) fn set_mirror(
             Reference::Key(item) => keyed(doc, session, item, "plane")?,
         }
     }
-    if given.has("keep_original") {
-        session.keep_original = args.keep_original;
-    }
+    given.set(
+        "keep_original",
+        &mut session.keep_original,
+        args.keep_original,
+    );
     Ok(())
 }
 
@@ -153,12 +155,8 @@ pub(super) fn set_pattern(
     if given.sent("flip", args.flip) && kind == MotionKind::CircularPattern {
         return Err(goes_with("flip", "kind linear only"));
     }
-    if given.has("flip") {
-        session.flip = args.flip;
-    }
-    if given.has("join") {
-        session.join = args.join;
-    }
+    given.set("flip", &mut session.flip, args.flip);
+    given.set("join", &mut session.join, args.join);
     typed_given(
         doc,
         session,
@@ -276,9 +274,7 @@ pub(super) fn set_align(
     if given.has("flip") && args.flip && !directed {
         return Err(goes_with("flip", "a direction on each side"));
     }
-    if given.has("flip") {
-        session.flip = args.flip;
-    }
+    given.set("flip", &mut session.flip, args.flip);
     typed_given(
         doc,
         session,
@@ -333,14 +329,7 @@ pub(super) fn set_scale(
             _ => {}
         }
     }
-    let mode = match given.has("mode") {
-        true => match args.mode {
-            tools::ScaleMode::Uniform => ScaleMode::Uniform,
-            tools::ScaleMode::PerAxis => ScaleMode::PerAxis,
-            tools::ScaleMode::EdgeLength => ScaleMode::EdgeLength,
-        },
-        false => session.scale.mode,
-    };
+    let mode = given.or("mode", scale_mode(args.mode), session.scale.mode);
     let [x, y, z] = &args.factors;
     let sent = [
         ("factor", args.factor.is_some(), ScaleMode::Uniform),
@@ -397,17 +386,12 @@ pub(super) fn set_scale(
             _ => false,
         };
         // Along its axis only kept from the feature goes as given.
-        let axis_only = match given.has("axis_only") {
-            true => args.axis_only,
-            false => session.scale.axis_only,
-        };
+        let axis_only = given.or("axis_only", args.axis_only, session.scale.axis_only);
         if axis_only && !along {
             return Err(goes_with("axis_only", "a straight edge along a world axis"));
         }
     }
-    if given.has("axis_only") {
-        session.scale.axis_only = args.axis_only;
-    }
+    given.set("axis_only", &mut session.scale.axis_only, args.axis_only);
     typed_given(
         doc,
         session,
@@ -483,4 +467,13 @@ fn align_origin(
         said,
         "the origin and its axes can only be what it's aligned to, in to",
     ))
+}
+
+/// The panel's scale mode for the tools' `mode`.
+fn scale_mode(mode: tools::ScaleMode) -> ScaleMode {
+    match mode {
+        tools::ScaleMode::Uniform => ScaleMode::Uniform,
+        tools::ScaleMode::PerAxis => ScaleMode::PerAxis,
+        tools::ScaleMode::EdgeLength => ScaleMode::EdgeLength,
+    }
 }

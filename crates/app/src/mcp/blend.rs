@@ -36,14 +36,7 @@ pub(super) fn set_chamfer(
     args: &tools::Chamfer,
     given: Given,
 ) -> Result<(), Wrong> {
-    let kind = match given.has("type") {
-        true => match args.kind {
-            tools::ChamferType::Equal => ChamferType::Equal,
-            tools::ChamferType::TwoDistances => ChamferType::Two,
-            tools::ChamferType::DistanceAngle => ChamferType::Angle,
-        },
-        false => session.chamfer_type,
-    };
+    let kind = given.or("type", chamfer_type(args.kind), session.chamfer_type);
     let sent = [
         (
             "second_distance",
@@ -85,9 +78,7 @@ pub(super) fn set_chamfer(
     ] {
         typed_given(doc, session, given, field, text, said)?;
     }
-    if given.has("flip") {
-        session.flip = args.flip;
-    }
+    given.set("flip", &mut session.flip, args.flip);
     Ok(())
 }
 
@@ -147,4 +138,13 @@ fn lists(
         faces(doc, session, face_keys)?;
     }
     Ok(())
+}
+
+/// The panel's chamfer type for the tools' `kind`.
+fn chamfer_type(kind: tools::ChamferType) -> ChamferType {
+    match kind {
+        tools::ChamferType::Equal => ChamferType::Equal,
+        tools::ChamferType::TwoDistances => ChamferType::Two,
+        tools::ChamferType::DistanceAngle => ChamferType::Angle,
+    }
 }

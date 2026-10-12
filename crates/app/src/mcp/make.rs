@@ -119,9 +119,7 @@ pub(super) fn set_extrude(
         session.input_taper(text.trim().to_owned(), document);
         read(session.taper.error.as_ref(), "taper").map_err(wrong)?;
     }
-    if given.has("flip") {
-        session.sides.flip = args.flip;
-    }
+    given.set("flip", &mut session.sides.flip, args.flip);
     if given.has("exclude") {
         let new_body = session.operation == OperationKind::NewBody;
         session.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
@@ -207,12 +205,12 @@ pub(super) fn set_revolve(
             read(session.sides.fields[angle.index()].error.as_ref(), said).map_err(wrong)?;
         }
     }
-    if given.has("flip") {
-        session.sides.flip = args.flip;
-    }
-    if given.has("operation") {
-        session.operation = operation(args.operation);
-    }
+    given.set("flip", &mut session.sides.flip, args.flip);
+    given.set(
+        "operation",
+        &mut session.operation,
+        operation(args.operation),
+    );
     if given.has("exclude") {
         let new_body = session.operation == OperationKind::NewBody;
         session.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
@@ -263,18 +261,8 @@ pub(super) fn set_combine(
     }
     let mut set = CombineSession::new(Some(target), tools);
     set.feature = edited;
-    set.op = match given.has("operation") {
-        true => match args.operation {
-            tools::BodyOp::Union => varde_document::BodyOp::Union,
-            tools::BodyOp::Subtract => varde_document::BodyOp::Subtract,
-            tools::BodyOp::Intersect => varde_document::BodyOp::Intersect,
-        },
-        false => session.op,
-    };
-    set.keep_tools = match given.has("keep_tools") {
-        true => args.keep_tools,
-        false => session.keep_tools,
-    };
+    set.op = given.or("operation", body_op(args.operation), session.op);
+    set.keep_tools = given.or("keep_tools", args.keep_tools, session.keep_tools);
     *session = set;
     Ok(())
 }
@@ -317,4 +305,13 @@ fn axis(
         return Err("that line has no length".to_owned());
     }
     Ok(())
+}
+
+/// The document's body operation for the tools' `op`.
+fn body_op(op: tools::BodyOp) -> varde_document::BodyOp {
+    match op {
+        tools::BodyOp::Union => varde_document::BodyOp::Union,
+        tools::BodyOp::Subtract => varde_document::BodyOp::Subtract,
+        tools::BodyOp::Intersect => varde_document::BodyOp::Intersect,
+    }
 }

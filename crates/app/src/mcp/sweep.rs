@@ -135,9 +135,11 @@ pub(super) fn set_sweep(
             }
         }
     }
-    if given.has("keep_orientation") {
-        session.sweep.keep_orientation = args.keep_orientation;
-    }
+    given.set(
+        "keep_orientation",
+        &mut session.sweep.keep_orientation,
+        args.keep_orientation,
+    );
     typed_given(
         doc,
         session,
@@ -146,9 +148,11 @@ pub(super) fn set_sweep(
         &args.twist,
         "twist",
     )?;
-    if given.has("operation") {
-        session.sweep.operation = operation(args.operation);
-    }
+    given.set(
+        "operation",
+        &mut session.sweep.operation,
+        operation(args.operation),
+    );
     if given.has("exclude") {
         let new_body = session.sweep.operation == OperationKind::NewBody;
         session.sweep.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
@@ -277,9 +281,11 @@ pub(super) fn set_loft(
             }
         }
     }
-    if given.has("operation") {
-        session.loft.operation = operation(args.operation);
-    }
+    given.set(
+        "operation",
+        &mut session.loft.operation,
+        operation(args.operation),
+    );
     if given.has("exclude") {
         let new_body = session.loft.operation == OperationKind::NewBody;
         session.loft.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;

@@ -45,6 +45,21 @@ impl Given<'_> {
         }
     }
 
+    /// `given` if the argument `key` is taken, else `kept`.
+    pub(super) fn or<T>(self, key: &str, given: T, kept: T) -> T {
+        match self.has(key) {
+            true => given,
+            false => kept,
+        }
+    }
+
+    /// Sets `slot` to `value` if the argument `key` is taken.
+    pub(super) fn set<T>(self, key: &str, slot: &mut T, value: T) {
+        if self.has(key) {
+            *slot = value;
+        }
+    }
+
     /// Whether the argument `key` is sent: for a new feature, if it's
     /// `present` (given, or a flag on); for a patch, if it gives it.
     pub(super) fn sent(self, key: &str, present: bool) -> bool {
