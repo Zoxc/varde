@@ -126,7 +126,17 @@ impl Unsaved {
 impl Open {
     /// Whether it has a store entry, which may be left holding it.
     fn has_entry(&self) -> bool {
-        matches!(&self.place, Place::Entry(unsaved) if unsaved.entry.is_ok())
+        self.entry_name().is_some()
+    }
+
+    /// Its store entry's file name, if it has one.
+    fn entry_name(&self) -> Option<&str> {
+        match &self.place {
+            Place::Entry(Unsaved {
+                entry: Ok(entry), ..
+            }) => Some(&entry.name),
+            _ => None,
+        }
     }
 
     /// Its name in browser storage, if it's kept there.
@@ -504,12 +514,7 @@ impl Files {
         let mut found = Vec::new();
         for name in names {
             // Held by this tab: not left behind.
-            let held = |open: &Open| match &open.place {
-                Place::Entry(Unsaved {
-                    entry: Ok(entry), ..
-                }) => entry.name == name,
-                _ => false,
-            };
+            let held = |open: &Open| open.entry_name() == Some(&name);
             if !is_entry_name(&name) || self.open.values().any(held) {
                 continue;
             }
