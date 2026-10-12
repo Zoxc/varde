@@ -593,86 +593,58 @@ fn ops<'a>(
     // origin ones here, as picking a sketch's plane does: the viewport
     // picks the model's edges and faces.
     let origins: Vec<Element<'a, Message>> = match state.motion() {
-        // An align's target may be the origin, or an origin axis.
-        Some(motion) if matches!(motion.picking, MotionPick::Align(slot) if slot.side == AlignSide::Target) =>
-        {
+        Some(motion) => {
             let send = |look: MotionLook| {
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
             };
+            let origin = || vec![op(Icon::Point, "Origin", send(MotionLook::OriginPoint))];
+            let axes = || {
+                (Axis3::ALL.iter())
+                    .map(|&axis| {
+                        op(
+                            Icon::SeAxis,
+                            axis_label(axis),
+                            send(MotionLook::OriginAxis(axis)),
+                        )
+                    })
+                    .collect()
+            };
+            let split_face =
+                (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face);
             let buttons: Vec<Element<'a, Message>> = match motion.picking {
-                MotionPick::Align(slot) if slot.role == AlignRole::Point => {
-                    vec![op(Icon::Point, "Origin", send(MotionLook::OriginPoint))]
+                // A scale's point may be the origin.
+                MotionPick::Point => origin(),
+                // An align's target may be the origin, or an origin axis.
+                MotionPick::Align(slot) if slot.side == AlignSide::Target => {
+                    if slot.role == AlignRole::Point {
+                        origin()
+                    } else {
+                        axes()
+                    }
                 }
-                _ => (Axis3::ALL.iter())
-                    .map(|&axis| {
-                        op(
-                            Icon::SeAxis,
-                            axis_label(axis),
-                            send(MotionLook::OriginAxis(axis)),
-                        )
-                    })
-                    .collect(),
-            };
-            std::iter::once(separator()).chain(buttons).collect()
-        }
-        // A scale's point may be the origin.
-        Some(motion) if motion.picking == MotionPick::Point => {
-            let send = (editable && motion.editable)
-                .then_some(Message::Look(Look::Motion(MotionLook::OriginPoint)));
-            vec![separator(), op(Icon::Point, "Origin", send)]
-        }
-        // A split's tool may be an origin plane.
-        Some(motion)
-            if motion.picking == MotionPick::Tool
-                && (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face) =>
-        {
-            let buttons = (OriginPlane::ALL.iter()).map(|&plane| {
-                let send = (editable && motion.editable)
-                    .then_some(Message::Look(Look::Motion(MotionLook::OriginPlane(plane))));
-                op(plane_icon(plane), plane_label(plane), send)
-            });
-            std::iter::once(separator()).chain(buttons).collect()
-        }
-        Some(motion) if motion.picking == MotionPick::Reference => {
-            let send = |look: MotionLook| {
-                (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
-            };
-            let buttons: Vec<Element<'a, Message>> = match motion.kind {
+                // A split's tool by face, or a reference that may be a plane.
+                picking if motion_picks_origin_planes(motion.kind, picking, split_face) => {
+                    (OriginPlane::ALL.iter())
+                        .map(|&plane| {
+                            op(
+                                plane_icon(plane),
+                                plane_label(plane),
+                                send(MotionLook::OriginPlane(plane)),
+                            )
+                        })
+                        .collect()
+                }
                 // A loft picks no reference.
-                MotionKind::Loft => Vec::new(),
-                MotionKind::Move
-                | MotionKind::LinearPattern
-                | MotionKind::CircularPattern
-                | MotionKind::Sweep => (Axis3::ALL.iter())
-                    .map(|&axis| {
-                        op(
-                            Icon::SeAxis,
-                            axis_label(axis),
-                            send(MotionLook::OriginAxis(axis)),
-                        )
-                    })
-                    .collect(),
-                MotionKind::Mirror
-                | MotionKind::Align
-                | MotionKind::Scale
-                | MotionKind::Split
-                | MotionKind::Chamfer
-                | MotionKind::Shell
-                | MotionKind::Fillet
-                | MotionKind::OffsetFace
-                | MotionKind::Draft => (OriginPlane::ALL.iter())
-                    .map(|&plane| {
-                        op(
-                            plane_icon(plane),
-                            plane_label(plane),
-                            send(MotionLook::OriginPlane(plane)),
-                        )
-                    })
-                    .collect(),
+                MotionPick::Reference if motion.kind.takes_axis() => axes(),
+                _ => Vec::new(),
             };
-            std::iter::once(separator()).chain(buttons).collect()
+            if buttons.is_empty() {
+                buttons
+            } else {
+                std::iter::once(separator()).chain(buttons).collect()
+            }
         }
-        _ => Vec::new(),
+        None => Vec::new(),
     };
     // Measure after a separator, as the mock has it.
     let measure = bar_op(state, Entry::Measure);
