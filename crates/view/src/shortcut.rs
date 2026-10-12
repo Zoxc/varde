@@ -9,7 +9,7 @@ use varde_document::{FeatureId, OriginPlane};
 
 use crate::{
     CombineState, ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message,
-    MotionKind, MotionState, RevolveState, SketchState, Tool, Welcome,
+    MotionKind, MotionState, RevolveState, SketchState, Tool, Verdict, Welcome,
 };
 
 /// A key pressed on its own, or with the platform's command modifier
@@ -477,26 +477,12 @@ pub struct DocumentKeys {
     pub objects_deletable: bool,
     /// Whether the plane for a sketch is being picked.
     pub picking_plane: bool,
-    /// Whether an extrude is being set up.
-    pub extruding: bool,
-    /// Whether the extrude being set up can be committed.
-    pub extrude_ready: bool,
-    /// Whether a revolve is being set up.
-    pub revolving: bool,
-    /// Whether the revolve being set up can be committed.
-    pub revolve_ready: bool,
+    /// The operation being set up, if one is.
+    pub operation: Option<OperationKeys>,
     /// Whether the document has two bodies or more, to combine.
     pub combinable: bool,
-    /// Whether a combine is being set up.
-    pub combining: bool,
-    /// Whether the combine being set up can be committed.
-    pub combine_ready: bool,
     /// Whether the document has a body, to move or mirror.
     pub bodies: bool,
-    /// The move, mirror or pattern being set up, if one is.
-    pub motion: Option<MotionKind>,
-    /// Whether the move or mirror being set up can be committed.
-    pub motion_ready: bool,
     /// Whether the measure tool is in use.
     pub measuring: bool,
     /// Whether the document has changes not saved.
@@ -512,6 +498,53 @@ pub struct DocumentKeys {
     /// keys are on: its letters, the arrows and `Enter` pick its tools,
     /// before any other key.
     pub rail: Option<crate::RailOpen>,
+}
+
+/// An operation being set up, as the shortcuts see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OperationKeys {
+    pub kind: Operating,
+    /// Whether it can be committed.
+    pub ready: bool,
+}
+
+/// The kind of operation being set up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Operating {
+    Extrude,
+    Revolve,
+    Combine,
+    /// A move, mirror, pattern or the like.
+    Motion(MotionKind),
+}
+
+impl OperationKeys {
+    /// The operation of those given that's being set up, if one is.
+    pub fn of(
+        extrude: Option<&ExtrudeState<'_>>,
+        revolve: Option<&RevolveState<'_>>,
+        combine: Option<&CombineState<'_>>,
+        motion: Option<&MotionState<'_>>,
+    ) -> Option<Self> {
+        let keys = |kind, verdict: &Verdict<'_>| Self {
+            kind,
+            ready: verdict.ready,
+        };
+        (extrude.map(|extrude| keys(Operating::Extrude, &extrude.verdict)))
+            .or_else(|| revolve.map(|revolve| keys(Operating::Revolve, &revolve.verdict)))
+            .or_else(|| combine.map(|combine| keys(Operating::Combine, &combine.verdict)))
+            .or_else(|| motion.map(|motion| keys(Operating::Motion(motion.kind), &motion.verdict)))
+    }
+
+    /// The edit committing it.
+    fn commit(self) -> Edit {
+        match self.kind {
+            Operating::Extrude => Edit::CommitExtrude,
+            Operating::Revolve => Edit::CommitRevolve,
+            Operating::Combine => Edit::CommitCombine,
+            Operating::Motion(_) => Edit::CommitMotion,
+        }
+    }
 }
 
 impl DocumentKeys {
@@ -625,43 +658,26 @@ impl DocumentKeys {
         Self { undo, redo, ..self }
     }
 
-    /// The same keys with `extrude` being set up, if one is.
-    pub fn with_extrude(self, extrude: Option<&ExtrudeState<'_>>) -> Self {
-        Self {
-            extruding: extrude.is_some(),
-            extrude_ready: extrude.is_some_and(|extrude| extrude.verdict.ready),
-            ..self
-        }
+    /// The same keys with `operation` being set up, if one is.
+    pub fn with_operation(self, operation: Option<OperationKeys>) -> Self {
+        Self { operation, ..self }
     }
 
-    /// The same keys with `revolve` being set up, if one is.
-    pub fn with_revolve(self, revolve: Option<&RevolveState<'_>>) -> Self {
-        Self {
-            revolving: revolve.is_some(),
-            revolve_ready: revolve.is_some_and(|revolve| revolve.verdict.ready),
-            ..self
-        }
-    }
-
-    /// The same keys where there are bodies to combine if `combinable`,
-    /// with `combine` being set up, if one is.
-    pub fn with_combine(self, combinable: bool, combine: Option<&CombineState<'_>>) -> Self {
-        Self {
-            combinable,
-            combining: combine.is_some(),
-            combine_ready: combine.is_some_and(|combine| combine.verdict.ready),
-            ..self
-        }
-    }
-
-    /// The same keys where the document has a body if `bodies`, with
-    /// `motion`, a move, mirror or pattern, being set up, if one is.
-    pub fn with_motion(self, bodies: bool, motion: Option<&MotionState<'_>>) -> Self {
+    /// The same keys where the document has a body if `bodies`, and two
+    /// or more, to combine, if `combinable`.
+    pub fn with_bodies(self, bodies: bool, combinable: bool) -> Self {
         Self {
             bodies,
-            motion: motion.map(|motion| motion.kind),
-            motion_ready: motion.is_some_and(|motion| motion.verdict.ready),
+            combinable,
             ..self
+        }
+    }
+
+    /// The move, mirror or pattern being set up, if one is.
+    pub fn motion(&self) -> Option<MotionKind> {
+        match self.operation?.kind {
+            Operating::Motion(kind) => Some(kind),
+            _ => None,
         }
     }
 
@@ -681,7 +697,7 @@ impl DocumentKeys {
     /// Whether an operation is being set up: an extrude, a revolve, a
     /// combine, a move or a mirror.
     pub fn operating(&self) -> bool {
-        self.extruding || self.revolving || self.combining || self.motion.is_some()
+        self.operation.is_some()
     }
 }
 
@@ -765,10 +781,10 @@ pub fn combine_binding(keys: DocumentKeys) -> Binding {
         Message::Look(Look::StartCombine),
         keys.editable
             && !keys.sketching
-            && !keys.extruding
-            && !keys.revolving
-            && keys.motion.is_none()
-            && (keys.combinable || keys.combining),
+            && match keys.operation {
+                None => keys.combinable,
+                Some(operation) => operation.kind == Operating::Combine,
+            },
     )
 }
 
@@ -799,7 +815,7 @@ pub fn motion_binding(kind: MotionKind, keys: DocumentKeys) -> Binding {
     Binding::new(
         shortcut,
         Message::Look(Look::StartMotion(kind)),
-        keys.editable && !keys.sketching && (!needs_body || keys.bodies || keys.motion.is_some()),
+        keys.editable && !keys.sketching && (!needs_body || keys.bodies || keys.motion().is_some()),
     )
 }
 
@@ -983,21 +999,11 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// `Enter` commits the operation being set up, if there's one to
 /// commit, as its pill's OK does: an extrude, revolve, combine or motion.
 pub(crate) fn commit_binding(keys: DocumentKeys) -> Option<Binding> {
-    let (edit, ready) = if keys.extruding {
-        (Edit::CommitExtrude, keys.extrude_ready)
-    } else if keys.revolving {
-        (Edit::CommitRevolve, keys.revolve_ready)
-    } else if keys.combining {
-        (Edit::CommitCombine, keys.combine_ready)
-    } else if keys.motion.is_some() {
-        (Edit::CommitMotion, keys.motion_ready)
-    } else {
-        return None;
-    };
+    let operation = keys.operation?;
     Some(Binding::new(
         Shortcut::ENTER,
-        Message::Edit(edit),
-        keys.editable && ready,
+        Message::Edit(operation.commit()),
+        keys.editable && operation.ready,
     ))
 }
 
@@ -1847,7 +1853,10 @@ mod tests {
             editor.document().features()[0].id
         };
         let extruding = DocumentKeys {
-            extruding: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Extrude,
+                ready: false,
+            }),
             selected: Some(id),
             ..extrudable
         };
@@ -1857,7 +1866,10 @@ mod tests {
             Some(Message::Look(Look::PickPlane))
         ));
         let ready = DocumentKeys {
-            extrude_ready: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Extrude,
+                ready: true,
+            }),
             ..extruding
         };
         assert!(matches!(
@@ -1900,7 +1912,10 @@ mod tests {
         // While an extrude is set up, O drops it for a revolve, and X a
         // revolve for an extrude.
         let extruding = DocumentKeys {
-            extruding: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Extrude,
+                ready: false,
+            }),
             ..revolvable
         };
         assert!(matches!(
@@ -1908,7 +1923,10 @@ mod tests {
             Some(Message::Look(Look::StartRevolve))
         ));
         let revolving = DocumentKeys {
-            revolving: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Revolve,
+                ready: false,
+            }),
             ..revolvable
         };
         assert!(matches!(
@@ -1923,7 +1941,10 @@ mod tests {
             Some(Message::Look(Look::PickPlane))
         ));
         let ready = DocumentKeys {
-            revolve_ready: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Revolve,
+                ready: true,
+            }),
             ..revolving
         };
         assert!(matches!(
@@ -1972,12 +1993,18 @@ mod tests {
         // Not while another operation is set up, nor the measure tool
         // while it is; Sketch, Extrude and Revolve drop it.
         let extruding = DocumentKeys {
-            extruding: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Extrude,
+                ready: false,
+            }),
             ..combinable
         };
         assert!(press(extruding, "b").is_none());
         let combining = DocumentKeys {
-            combining: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Combine,
+                ready: false,
+            }),
             ..combinable
         };
         assert!(press(combining, "i").is_none());
@@ -1986,7 +2013,10 @@ mod tests {
         }
         assert!(enter(combining).is_none());
         let ready = DocumentKeys {
-            combine_ready: true,
+            operation: Some(OperationKeys {
+                kind: Operating::Combine,
+                ready: true,
+            }),
             ..combining
         };
         assert!(matches!(

@@ -19,9 +19,9 @@ use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size, Ve
 use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, DocumentKeys, Shortcut, combine_binding, constrain_binding, constraint_binding,
-    extrude_binding, measure_binding, motion_binding, params_binding, revolve_binding,
-    sketch_binding, tool_binding,
+    Binding, DocumentKeys, Operating, OperationKeys, Shortcut, combine_binding, constrain_binding,
+    constraint_binding, extrude_binding, measure_binding, motion_binding, params_binding,
+    revolve_binding, sketch_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -206,10 +206,10 @@ impl Entry {
     pub(crate) fn on(self, using: Using) -> bool {
         match self {
             Entry::Sketch => using.picking_plane,
-            Entry::Extrude => using.extruding,
-            Entry::Revolve => using.revolving,
-            Entry::Combine => using.combining,
-            Entry::Motion(kind) => using.motion == Some(kind),
+            Entry::Extrude => using.operation == Some(Operating::Extrude),
+            Entry::Revolve => using.operation == Some(Operating::Revolve),
+            Entry::Combine => using.operation == Some(Operating::Combine),
+            Entry::Motion(kind) => using.operation == Some(Operating::Motion(kind)),
             Entry::Measure => using.measuring,
             Entry::Params => using.params,
             Entry::Tool(tool) => using.tool == Some(tool),
@@ -224,11 +224,8 @@ impl Entry {
 pub(crate) struct Using {
     /// Whether the plane for a new sketch is being picked.
     picking_plane: bool,
-    extruding: bool,
-    revolving: bool,
-    combining: bool,
-    /// The move, mirror or pattern being set up, if one is.
-    motion: Option<MotionKind>,
+    /// The operation being set up, if one is.
+    operation: Option<Operating>,
     measuring: bool,
     /// Whether the parameters' popup is open.
     params: bool,
@@ -244,10 +241,13 @@ impl Using {
             picking_plane: state
                 .picking_plane
                 .is_some_and(|pick| pick.sketch.is_none()),
-            extruding: state.extrude().is_some(),
-            revolving: state.revolve().is_some(),
-            combining: state.combine().is_some(),
-            motion: state.motion().map(|motion| motion.kind),
+            operation: OperationKeys::of(
+                state.extrude(),
+                state.revolve(),
+                state.combine(),
+                state.motion(),
+            )
+            .map(|operation| operation.kind),
             measuring: state.measure().is_some(),
             params: state.params.is_some(),
             tool: sketch.and_then(|s| s.tool).map(|t| t.tool),

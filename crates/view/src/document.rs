@@ -20,7 +20,7 @@ use varde_sketch::{
 };
 
 use crate::chrome::small_button;
-use crate::shortcut::DocumentKeys;
+use crate::shortcut::{DocumentKeys, OperationKeys};
 use crate::status::{self};
 use crate::theme::Emphasis;
 use crate::typed::Field;
@@ -355,10 +355,13 @@ impl<'a> DocumentState<'a> {
                 (self.objects_selected.iter())
                     .any(|row| matches!(row, crate::ObjectRow::Sketch(_))),
             )
-            .with_extrude(self.extrude())
-            .with_revolve(self.revolve())
-            .with_combine(self.combinable, self.combine())
-            .with_motion(!self.editor.document().bodies().is_empty(), self.motion())
+            .with_operation(OperationKeys::of(
+                self.extrude(),
+                self.revolve(),
+                self.combine(),
+                self.motion(),
+            ))
+            .with_bodies(!self.editor.document().bodies().is_empty(), self.combinable)
             .with_measure(self.measure().is_some())
             .with_picking_plane(self.picking_plane.is_some())
             .with_rail(self.rail)

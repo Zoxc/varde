@@ -39,8 +39,8 @@ use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeco
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
-    DocumentKeys, Edit, Look, Message as Ui, Mode, OperationState, Overlay, Panel, PanelHover,
-    RowMenu, Snap, ViewOptions,
+    DocumentKeys, Edit, Look, Message as Ui, Mode, OperationKeys, OperationState, Overlay, Panel,
+    PanelHover, RowMenu, Snap, ViewOptions,
 };
 
 #[cfg(test)]
@@ -1730,12 +1730,15 @@ impl Doc {
         (self.dialog().is_none() && !dragging).then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_face_selected(self.selected_face().is_some())
-                .with_extrude(self.extrude_state().as_ref())
-                .with_revolve(self.revolve_state().as_ref())
-                .with_combine(self.combinable(), self.combine_state().as_ref())
-                .with_motion(
-                    !self.editor.document().bodies().is_empty(),
+                .with_operation(OperationKeys::of(
+                    self.extrude_state().as_ref(),
+                    self.revolve_state().as_ref(),
+                    self.combine_state().as_ref(),
                     self.motion_state().as_ref(),
+                ))
+                .with_bodies(
+                    !self.editor.document().bodies().is_empty(),
+                    self.combinable(),
                 )
                 .with_measure(self.mode.measure().is_some())
                 .with_picking_plane(self.mode.picking_plane().is_some())

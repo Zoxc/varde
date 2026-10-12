@@ -141,8 +141,8 @@ pub use settings::{
 };
 pub use shell::shell_info;
 pub use shortcut::{
-    Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, settings_binding,
-    welcome_bindings,
+    Binding, DocumentKeys, Held, Operating, OperationKeys, claimed, document_bindings, escapes,
+    pressed, settings_binding, welcome_bindings,
 };
 pub use snap::{Inference, Level, Own, SNAP_TOLERANCE, Snap, Target, closing};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
