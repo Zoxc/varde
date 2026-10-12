@@ -123,14 +123,27 @@ impl Legs {
 }
 
 impl Sketch {
+    /// The start and end of the line `id`. `None` for another curve or
+    /// none.
+    pub(crate) fn line_ends(&self, id: Id) -> Option<[Id; 2]> {
+        match self.curve(id)?.curve {
+            Curve::Line { start, end } => Some([start, end]),
+            _ => None,
+        }
+    }
+
+    /// [`Sketch::line_ends`] of a line that isn't itself a chamfer.
+    fn plain_line_ends(&self, id: Id) -> Option<[Id; 2]> {
+        self.curve(id)
+            .filter(|entry| entry.corner.is_none())
+            .and(self.line_ends(id))
+    }
+
     /// The way along `line` from its end `at`, as a unit vector, and its
     /// length, if it's a line (not a chamfer) with a length that ends
     /// there.
     fn leg(&self, at: Id, line: Id) -> Option<(DVec2, f64)> {
-        let entry = self.curve(line).filter(|entry| entry.corner.is_none())?;
-        let Curve::Line { start, end } = entry.curve else {
-            return None;
-        };
+        let [start, end] = self.plain_line_ends(line)?;
         let other = match at {
             _ if start == at => end,
             _ if end == at => start,
@@ -185,10 +198,7 @@ impl Sketch {
     /// The point the lines `a` and `b` make a corner at, if they do: an end
     /// of both, as [`Sketch::corner_lines`] would pick them.
     pub fn corner_of(&self, a: Id, b: Id) -> Option<Id> {
-        let Curve::Line { start, end } = self.curve(a)?.curve else {
-            return None;
-        };
-        [start, end]
+        self.line_ends(a)?
             .into_iter()
             .find(|&at| self.legs(at, [a, b]).is_some())
     }
@@ -324,13 +334,11 @@ impl Sketch {
                 continue;
             };
             for (line, meets) in [(corner.a, ends[0]), (corner.b, ends[1])] {
-                let (Some(Curve::Line { start, end }), Some(meets)) = (
-                    self.curve(line).map(|entry| &entry.curve),
-                    self.point(meets),
-                ) else {
+                let (Some([start, end]), Some(meets)) = (self.line_ends(line), self.point(meets))
+                else {
                     continue;
                 };
-                let (Some(from), Some(to)) = (self.point(*start), self.point(*end)) else {
+                let (Some(from), Some(to)) = (self.point(start), self.point(end)) else {
                     continue;
                 };
                 let along = to.at - from.at;
@@ -340,9 +348,9 @@ impl Sketch {
                 }
                 let u = u.clamp(0.0, 1.0);
                 let kept = cut.entry(line).or_insert([0.0, 1.0]);
-                if *start == corner.at {
+                if start == corner.at {
                     kept[0] = kept[0].max(u);
-                } else if *end == corner.at {
+                } else if end == corner.at {
                     kept[1] = kept[1].min(u);
                 }
             }
@@ -526,9 +534,9 @@ impl Sketch {
             .iter()
             .filter(|entry| {
                 entry.corner.is_some_and(|corner| {
-                    let ends = |line| match self.curve(line).map(|entry| &entry.curve) {
-                        Some(&Curve::Line { start, end }) => start == corner.at || end == corner.at,
-                        _ => false,
+                    let ends = |line| {
+                        self.line_ends(line)
+                            .is_some_and(|ends| ends.contains(&corner.at))
                     };
                     !(ends(corner.a) && ends(corner.b))
                 })
@@ -550,15 +558,10 @@ impl Sketch {
             Curve::Line { .. } => true,
             Curve::Circle { .. } | Curve::Spline(_) => false,
         };
-        let line = |id| {
-            self.curve(id)
-                .filter(|line| line.corner.is_none())
-                .and_then(|line| match line.curve {
-                    Curve::Line { start, end } => Some([start, end]),
-                    _ => None,
-                })
-        };
-        let (Some(a), Some(b)) = (line(corner.a), line(corner.b)) else {
+        let (Some(a), Some(b)) = (
+            self.plain_line_ends(corner.a),
+            self.plain_line_ends(corner.b),
+        ) else {
             return false;
         };
         shape
