@@ -35,14 +35,13 @@ use crate::shortcut::Held;
 use crate::snap::{self, Snap};
 use crate::theme::{self, SketchColors};
 use crate::typed::{self, Field};
+use crate::viewport::sketch_pick::{HIT_PIXELS, HOVERED_WIDTH};
 use crate::viewport::{local, local_cursor};
 use crate::{
     ActiveTool, ConstraintKind, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField,
     ValueTarget, dimension, icons, panels,
 };
 
-/// How near the cursor an item has to be to be under it, in pixels.
-const HIT_TOLERANCE: f64 = 6.0;
 /// How near the cursor a corner has to be for Fillet and Chamfer to take
 /// it, in pixels: a point, but all they look for.
 const CORNER_TOLERANCE: f64 = 12.0;
@@ -50,8 +49,9 @@ const CORNER_TOLERANCE: f64 = 12.0;
 /// rather than a click, in pixels.
 const DRAG_DISTANCE: f64 = 4.0;
 const CURVE_WIDTH: f32 = 1.8;
+/// A touch wider than a finished sketch's
+/// ([`super::sketch_pick::SELECTED_WIDTH`]).
 const SELECTED_WIDTH: f32 = 2.6;
-const HOVERED_WIDTH: f32 = 3.0;
 const POINT_RADIUS: f32 = 3.6;
 const HOVERED_POINT_RADIUS: f32 = 5.1;
 const POINT_RIM: f32 = 1.2;
@@ -815,7 +815,7 @@ impl<'a> Sketching<'a> {
     /// cursor is, nor with Project or Intersect, which pick outside the
     /// sketch.
     fn hit(&self, cursor: Cursor) -> Option<Selectable> {
-        let tolerance = HIT_TOLERANCE * cursor.pixel;
+        let tolerance = HIT_PIXELS * cursor.pixel;
         let item = match self.tool {
             _ if self.releases() || self.picks_outside() => None,
             Some(tool) if tool.tool.corners() => {

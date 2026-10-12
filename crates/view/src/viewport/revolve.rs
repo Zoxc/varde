@@ -32,7 +32,7 @@ use super::handle::{self, Puck};
 use super::handle::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::line;
-use super::sketch_pick::HIT_PIXELS;
+use super::sketch_pick::{HIT_PIXELS, HOVERED_WIDTH};
 use crate::hit;
 use crate::motion::KnobTone;
 use crate::operation_panel::{Candidate, PanelHover};
@@ -49,7 +49,6 @@ use crate::{Look, Message};
 /// How wide the sketches' lines and axes are drawn while the axis is
 /// picked, the one hovered, and the axis picked, in pixels.
 const LINE_WIDTH: f32 = 1.5;
-const HOVERED_WIDTH: f32 = 3.0;
 const AXIS_WIDTH: f32 = 2.5;
 /// How many degrees each step of the shaft's arc turns at most.
 const SHAFT_STEP: f64 = 3.0;

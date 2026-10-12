@@ -32,7 +32,8 @@ use crate::theme::SketchColors;
 use crate::{OverlapItem, SketchItem, SketchLines};
 
 /// How near the cursor a curve or point must show to be under it, in
-/// pixels: a sketch's hit tolerance.
+/// pixels: a sketch's hit tolerance, the sketch being edited's and the
+/// tools' too (a move's shaft or ring, a loft's corner).
 pub(crate) const HIT_PIXELS: f64 = 6.0;
 
 /// A sketch's curve or point under the cursor.

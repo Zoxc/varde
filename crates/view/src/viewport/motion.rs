@@ -65,6 +65,7 @@ mod split;
 mod sweep;
 
 use super::knobs;
+use super::sketch_pick::HIT_PIXELS;
 use crate::Message;
 use crate::anchors::Anchors;
 use crate::motion::{MotionField, MotionKind, MotionState, SplitMode};
@@ -82,10 +83,6 @@ use sweep::{sweep_lines, sweep_regions};
 /// sketches' items picked with the model ([`HOVERED_WIDTH`](super::sketch_pick::HOVERED_WIDTH),
 /// [`SELECTED_WIDTH`](super::sketch_pick::SELECTED_WIDTH)).
 const CURVE_WIDTH: f32 = 1.5;
-/// How near the cursor a move's shaft or ring, or a loft's corner, is
-/// grabbed, in pixels: a sketch's hit tolerance; a knob, anywhere on it
-/// too.
-const HIT_PIXELS: f64 = 6.0;
 
 /// What the viewport keeps of a move between events and frames.
 #[derive(Debug, Default)]
