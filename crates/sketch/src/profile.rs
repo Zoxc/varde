@@ -908,23 +908,24 @@ impl<'c> Graph<'c> {
         {
             return Err(TooComplex);
         }
-        // Faces that aren't slivers, as polylines and the box they're in.
-        let solid: Vec<Option<(Vec<DVec2>, Bounds)>> = walks
+        // Faces (no slivers, which `faces` left without an outer loop),
+        // by their outer loop, as a polyline and the box it's in.
+        let solid: Vec<Option<(usize, Vec<DVec2>, Bounds)>> = walks
             .iter()
             .map(|walk| {
-                let outer = &walk.loops[walk.outer?];
-                let wide = walk.areas[walk.outer?] > self.tolerance * self.perimeter(outer);
+                let index = walk.outer?;
+                let outer = &walk.loops[index];
                 // The loop's box, not its polyline's, which an arc's
                 // segments cut inside, so that what's between them and
                 // the arc is inside it too.
-                wide.then(|| (self.flatten(outer), self.bounds(outer)))
+                Some((index, self.flatten(outer), self.bounds(outer)))
             })
             .collect();
         let grid = Grid::new(
             solid
                 .iter()
                 .enumerate()
-                .filter_map(|(f, solid)| Some((f, solid.as_ref()?.1))),
+                .filter_map(|(f, solid)| Some((f, solid.as_ref()?.2))),
             work,
         )?;
         // The boundaries seen from outside, by the face each is a hole in.
@@ -946,8 +947,7 @@ impl<'c> Graph<'c> {
             work.spend(cell.len())?;
             let near: Vec<Reverse<Smallest>> = (cell.iter())
                 .filter_map(|&f| {
-                    let (min, max) = solid[f].as_ref()?.1;
-                    let outer = walks[f].outer?;
+                    let &(outer, _, (min, max)) = solid[f].as_ref()?;
                     let inside = point.cmpge(min).all() && point.cmple(max).all();
                     inside.then_some(Reverse(Smallest(walks[f].areas[outer], f, outer)))
                 })
@@ -969,7 +969,7 @@ impl<'c> Graph<'c> {
         }
         let mut regions = Vec::new();
         for (w, (walk, solid)) in walks.iter().zip(solid).enumerate() {
-            let (Some((polyline, bounds)), Some(outer)) = (solid, walk.outer) else {
+            let Some((outer, polyline, bounds)) = solid else {
                 continue;
             };
             let area = walk.areas[outer];
