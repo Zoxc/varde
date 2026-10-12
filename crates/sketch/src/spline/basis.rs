@@ -181,6 +181,17 @@ impl Knots {
         after.saturating_sub(1).clamp(3, self.spans_end() - 1)
     }
 
+    /// The [`Basis`] at `t`, clamped to `[0, 1]` or taken round (see
+    /// [`Knots::domain`]).
+    fn basis_at(&self, t: f64) -> Basis {
+        let t = self.domain(t);
+        let span = self.span(t);
+        Basis {
+            span,
+            values: self.basis(span, t),
+        }
+    }
+
     /// The four cubic basis functions not zero in the span `span` at `t`,
     /// with their first and second derivatives: `[order][j]` is that of
     /// the one of control point `span - 3 + j`.
@@ -389,15 +400,22 @@ impl BSpline {
     /// `t`. An open spline's `t` is clamped to `[0, 1]`, a closed one's
     /// taken round.
     pub fn eval(&self, t: f64) -> [DVec2; 3] {
-        let t = self.knots.domain(t);
-        self.eval_in(self.knots.span(t), t)
+        self.combine(self.knots.basis_at(t))
     }
 
     /// [`BSpline::eval`] by the polynomial of the span `span`, at `t` in
     /// the knots' domain (see [`Knots::domain`]).
     fn eval_in(&self, span: usize, t: f64) -> [DVec2; 3] {
-        let basis = self.knots.basis(span, t);
-        basis.map(|weights| {
+        self.combine(Basis {
+            span,
+            values: self.knots.basis(span, t),
+        })
+    }
+
+    /// The place and derivatives `basis` weighs the control points to.
+    fn combine(&self, basis: Basis) -> [DVec2; 3] {
+        let span = basis.span;
+        basis.values.map(|weights| {
             (0..4)
                 .map(|j| self.control[span - 3 + j] * weights[j])
                 .sum()
@@ -675,11 +693,9 @@ impl Interpolation {
             if row >= m {
                 return None;
             }
-            let t = knots.domain(t);
-            let span = knots.span(t);
-            let basis = knots.basis(span, t);
+            let basis = knots.basis_at(t);
             for j in 0..4 {
-                a[row * m + knots.control(span - 3 + j)] += basis[order][j];
+                a[row * m + knots.control(basis.span - 3 + j)] += basis.values[order][j];
             }
             for &(column, value) in rhs {
                 b[row * inputs + column] += value;
@@ -787,12 +803,10 @@ impl Interpolation {
             let across = along.perp();
             let along = along * SLIDE;
             let off = want - base.point(t);
-            let t = self.knots.domain(t);
-            let span = self.knots.span(t);
-            let basis = self.knots.basis(span, t)[0];
+            let basis = self.knots.basis_at(t);
             pull.fill(0.0);
-            for (j, &weight) in basis.iter().enumerate() {
-                let control = self.knots.control(span - 3 + j);
+            for (j, &weight) in basis.values[0].iter().enumerate() {
+                let control = self.knots.control(basis.span - 3 + j);
                 let weights = &self.weights(control)[n..];
                 for (pull, &w) in pull.iter_mut().zip(weights) {
                     *pull += weight * w;
@@ -842,8 +856,8 @@ impl Interpolation {
 /// curve by less than a ten-thousandth of what the solver holds it to.
 const NEGLIGIBLE: f64 = 1e-15;
 
-/// A [`SplineMap`]'s cubic basis functions not zero at a parameter, with
-/// their first and second derivatives, and the span they're of.
+/// The cubic basis functions not zero at a parameter, with their first
+/// and second derivatives, and the span they're of.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Basis {
     span: usize,
@@ -911,12 +925,7 @@ impl SplineMap {
     /// Its basis at `t`, clamped to `[0, 1]` or taken round as
     /// [`BSpline::eval`] takes it, for [`SplineMap::weights`].
     pub fn basis(&self, t: f64) -> Basis {
-        let t = self.knots.domain(t);
-        let span = self.knots.span(t);
-        Basis {
-            span,
-            values: self.knots.basis(span, t),
-        }
+        self.knots.basis_at(t)
     }
 
     /// Calls `f` with each point's weight in the spline's derivative of
