@@ -429,64 +429,15 @@ impl Document {
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
     /// opacity is one [`Opacity::new`] takes, and its colour, if it has one,
     /// one [`Tint::new`] takes; the tolerance is one
-    /// [`Tolerance::new`] takes; every body is made by an extrude,
-    /// revolve, sweep, loft or split the document holds that names it as its new
-    /// body, and every such body is there, or by a pattern listing it as a copy
-    /// body ([`Copies::Separate`]), every such body there too, one per
-    /// copy; every id a feature holds for a body it made before
-    /// ([`FeatureKind::held_body`]) is below `next_id`, no body's, and
-    /// held by that feature alone; every sketch passes [`Sketch::check`]
-    /// against [`MAX_COORD`] and the document's units
-    /// ([`Document::design`]), so every dimension's expression gives its
-    /// value in them, and every sketch on a face names what comes before
-    /// it, as [`PlaneError`] lists; and every extrude and revolve uses a
-    /// sketch feature before it, has regions, distances or angles and an
-    /// operation as [`Extrude`] and [`Revolve`] describe, and excludes
-    /// only bodies features before it make; a revolve about a model edge
-    /// names a body and faces' makers before it, as a sketch on a face
-    /// does; every combine's target and tools are bodies features
-    /// before it make, its tools as [`Combine::check_own`] wants them;
-    /// and every move's, mirror's and pattern's bodies are bodies
-    /// features before it make, as [`Move::check_own`],
-    /// [`Mirror::check_own`] and [`Pattern::check_own`] want them with
-    /// its values, its axis edge or face, or plane face, named as a
-    /// revolve's edge is; and every align's body is one a feature before
-    /// it makes, its sides shaped and its values as [`Align::check_own`]
-    /// wants them, its moved side's references on that body, its target
-    /// side's on others, each named as a move's axis is; and every scale's
-    /// bodies are bodies features before it make, its factors or edge
-    /// length as [`Scale::check_own`] wants them, its edge on one of
-    /// them, its point and edge named as a move's axis is; and every
-    /// split's body, tool body and face tool's body are bodies features
-    /// before it make, its plane face and faces' makers named as a
-    /// mirror's plane is, its sketch a sketch before it, and its new body
-    /// there when it keeps both pieces, as [`Split::check_own`]
-    /// wants it; and every chamfer's edges are on one body a feature
-    /// before it makes, its faces' makers before it (or not there with
-    /// ids no later feature can take), its edges and values as
-    /// [`Chamfer::check_own`] wants them; and every shell's body is one a
-    /// feature before it makes, its open faces' makers before it (or not
-    /// there with ids no later feature can take), its faces and
-    /// thickness as [`Shell::check_own`] wants them; every fillet's
-    /// edges as a chamfer's, its radius as [`Fillet::check_own`] wants
-    /// it; every offset face's faces are on one body a feature before it
-    /// makes, their makers before it (or not there with ids no later
-    /// feature can take), its faces and distance as
-    /// [`OffsetFace::check_own`] wants them; every draft's faces
-    /// likewise, its neutral face on a body a feature before it makes and
-    /// made by a feature before it, its faces and angle as
-    /// [`FaceDraft::check_own`] wants them; every sweep is
-    /// as an extrude is, its path's sketches sketches before it other than
-    /// its profile's, its path's edges on bodies features before it make
-    /// (with their faces' makers before it, or not there with ids no
-    /// later feature can take), its helix's axis named likewise, its
-    /// parts and values as [`Sweep::check_own`] wants them; and every
-    /// loft's sections and rails are of sketch features before it, its
-    /// sections, mode, rails and operation as [`Loft::check_own`] wants
-    /// them and its operation as an extrude's. A revolve's axis line, a
-    /// sweep's path's curves and a loft's points and rail curves aren't
-    /// checked against their sketches here (see [`Revolve::check_axis`],
-    /// [`Sweep::check_curves`] and [`Loft::check_names`]).
+    /// [`Tolerance::new`] takes; every body is made by a feature the
+    /// document holds that names it as its new body
+    /// ([`FeatureKind::new_body`]), and every such body is there, or by a
+    /// pattern listing it as a copy body ([`Copies::Separate`]), every such
+    /// body there too, one per copy; every id a feature holds for a body it
+    /// made before ([`FeatureKind::held_body`]) is below `next_id`, no
+    /// body's, and held by that feature alone; the rollback, if set, names
+    /// a feature there; and every feature is as its kind wants it, see
+    /// `Document::check_feature`.
     pub fn check(&self) -> Result<(), CheckError> {
         param::check_params(&self.params)?;
         debug_assert!(
@@ -543,120 +494,7 @@ impl Document {
             if feature.name.len() > MAX_NAME_LEN {
                 return Err(CheckError::FeatureNameLength(id, feature.name.len()));
             }
-            match &feature.kind {
-                FeatureKind::Sketch {
-                    plane,
-                    sketch,
-                    sources,
-                } => {
-                    sketch
-                        .check(&design)
-                        .map_err(|why| CheckError::Sketch(id, why))?;
-                    self.check_plane(index, plane)
-                        .map_err(|why| CheckError::SketchPlane(id, why))?;
-                    self.check_sources(index, sketch, sources)
-                        .map_err(|why| CheckError::SketchLink(id, why))?;
-                }
-                FeatureKind::Extrude(extrude) => self
-                    .check_extrude(index, extrude)
-                    .map_err(|why| CheckError::Extrude(id, why))?,
-                FeatureKind::Revolve(revolve) => self
-                    .check_revolve(index, revolve)
-                    .map_err(|why| CheckError::Revolve(id, why))?,
-                FeatureKind::Combine(combine) => self
-                    .check_combine(index, combine)
-                    .map_err(|why| CheckError::Combine(id, why))?,
-                FeatureKind::Move(moved) => {
-                    moved
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Move(id, why))?;
-                    self.check_motion(index, &moved.bodies, moved.referred())
-                        .map_err(|why| CheckError::Move(id, why))?;
-                }
-                FeatureKind::Mirror(mirror) => {
-                    mirror
-                        .check_own()
-                        .map_err(|why| CheckError::Mirror(id, why))?;
-                    self.check_motion(index, &mirror.bodies, mirror.referred())
-                        .map_err(|why| CheckError::Mirror(id, why))?;
-                }
-                FeatureKind::Pattern(pattern) => {
-                    pattern
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Pattern(id, why))?;
-                    self.check_motion(index, &pattern.bodies, pattern.referred())
-                        .map_err(|why| CheckError::Pattern(id, why))?;
-                    let made = copies.get(&id).copied().unwrap_or(0);
-                    self.check_copies(id, pattern, made)
-                        .map_err(|why| CheckError::Pattern(id, why))?;
-                }
-                FeatureKind::Align(align) => {
-                    align
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Align(id, why))?;
-                    self.check_align(index, align)
-                        .map_err(|why| CheckError::Align(id, why))?;
-                }
-                FeatureKind::Scale(scale) => {
-                    scale
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Scale(id, why))?;
-                    self.check_scale(index, scale)
-                        .map_err(|why| CheckError::Scale(id, why))?;
-                }
-                FeatureKind::Split(split) => {
-                    split
-                        .check_own()
-                        .map_err(|why| CheckError::Split(id, why))?;
-                    self.check_split(index, split)
-                        .map_err(|why| CheckError::Split(id, why))?;
-                }
-                FeatureKind::Chamfer(chamfer) => {
-                    chamfer
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Chamfer(id, why))?;
-                    self.check_blend_edges(index, &chamfer.edges, &chamfer.faces)
-                        .map_err(|why| CheckError::Chamfer(id, ChamferError::Edges(why)))?;
-                }
-                FeatureKind::Shell(shell) => {
-                    shell
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Shell(id, why))?;
-                    self.check_face_set(index, shell.body, &shell.open)
-                        .map_err(|why| CheckError::Shell(id, ShellError::Set(why)))?;
-                }
-                FeatureKind::OffsetFace(offset) => {
-                    offset
-                        .check_own(&design)
-                        .map_err(|why| CheckError::OffsetFace(id, why))?;
-                    let body = offset.body().expect("checked: it has faces");
-                    self.check_face_set(index, body, &offset.faces)
-                        .map_err(|why| CheckError::OffsetFace(id, OffsetFaceError::Set(why)))?;
-                }
-                FeatureKind::Fillet(fillet) => {
-                    fillet
-                        .check_own(&design)
-                        .map_err(|why| CheckError::Fillet(id, why))?;
-                    self.check_blend_edges(index, &fillet.edges, &fillet.faces)
-                        .map_err(|why| CheckError::Fillet(id, FilletError::Edges(why)))?;
-                }
-                FeatureKind::FaceDraft(draft) => {
-                    draft
-                        .check_own(&design)
-                        .map_err(|why| CheckError::FaceDraft(id, why))?;
-                    let body = draft.body().expect("checked: it has faces");
-                    self.check_face_set(index, body, &draft.faces)
-                        .map_err(|why| CheckError::FaceDraft(id, FaceDraftError::Set(why)))?;
-                    self.check_neutral_plane(index, &draft.neutral)
-                        .map_err(|why| CheckError::FaceDraft(id, why))?;
-                }
-                FeatureKind::Sweep(sweep) => self
-                    .check_sweep(index, sweep)
-                    .map_err(|why| CheckError::Sweep(id, why))?,
-                FeatureKind::Loft(loft) => self
-                    .check_loft(index, loft)
-                    .map_err(|why| CheckError::Loft(id, why))?,
-            }
+            self.check_feature(index, &design, &copies)?;
         }
         if let Some(last) = self.bodies.last()
             && last.id.0 >= self.next_id
@@ -681,6 +519,141 @@ impl Document {
             Some((&last, _)) if last.0 >= self.next_id => Err(CheckError::FeatureNextId(last)),
             _ => Ok(()),
         }
+    }
+
+    /// Checks feature `index` as its kind wants it, `copies` the number of
+    /// bodies each pattern makes: a sketch passes [`Sketch::check`]
+    /// against [`MAX_COORD`] and the document's units
+    /// ([`Document::design`]) and names what comes before it, as
+    /// [`PlaneError`] lists; every other kind passes its own `check_own`
+    /// (such as [`Move::check_own`]) and, against the features before it,
+    /// its `Document::check_<kind>` (for the bodies, sketches, edges, faces
+    /// and references it names). A revolve's axis line, a sweep's path's
+    /// curves and a loft's points and rail curves aren't checked against
+    /// their sketches here (see [`Revolve::check_axis`],
+    /// [`Sweep::check_curves`] and [`Loft::check_names`]).
+    fn check_feature(
+        &self,
+        index: usize,
+        design: &Design<'_>,
+        copies: &BTreeMap<FeatureId, usize>,
+    ) -> Result<(), CheckError> {
+        let id = self.features[index].id;
+        match &self.features[index].kind {
+            FeatureKind::Sketch {
+                plane,
+                sketch,
+                sources,
+            } => {
+                sketch
+                    .check(design)
+                    .map_err(|why| CheckError::Sketch(id, why))?;
+                self.check_plane(index, plane)
+                    .map_err(|why| CheckError::SketchPlane(id, why))?;
+                self.check_sources(index, sketch, sources)
+                    .map_err(|why| CheckError::SketchLink(id, why))?;
+            }
+            FeatureKind::Extrude(extrude) => self
+                .check_extrude(index, extrude)
+                .map_err(|why| CheckError::Extrude(id, why))?,
+            FeatureKind::Revolve(revolve) => self
+                .check_revolve(index, revolve)
+                .map_err(|why| CheckError::Revolve(id, why))?,
+            FeatureKind::Combine(combine) => self
+                .check_combine(index, combine)
+                .map_err(|why| CheckError::Combine(id, why))?,
+            FeatureKind::Move(moved) => {
+                moved
+                    .check_own(design)
+                    .map_err(|why| CheckError::Move(id, why))?;
+                self.check_motion(index, &moved.bodies, moved.referred())
+                    .map_err(|why| CheckError::Move(id, why))?;
+            }
+            FeatureKind::Mirror(mirror) => {
+                mirror
+                    .check_own()
+                    .map_err(|why| CheckError::Mirror(id, why))?;
+                self.check_motion(index, &mirror.bodies, mirror.referred())
+                    .map_err(|why| CheckError::Mirror(id, why))?;
+            }
+            FeatureKind::Pattern(pattern) => {
+                pattern
+                    .check_own(design)
+                    .map_err(|why| CheckError::Pattern(id, why))?;
+                self.check_motion(index, &pattern.bodies, pattern.referred())
+                    .map_err(|why| CheckError::Pattern(id, why))?;
+                let made = copies.get(&id).copied().unwrap_or(0);
+                self.check_copies(id, pattern, made)
+                    .map_err(|why| CheckError::Pattern(id, why))?;
+            }
+            FeatureKind::Align(align) => {
+                align
+                    .check_own(design)
+                    .map_err(|why| CheckError::Align(id, why))?;
+                self.check_align(index, align)
+                    .map_err(|why| CheckError::Align(id, why))?;
+            }
+            FeatureKind::Scale(scale) => {
+                scale
+                    .check_own(design)
+                    .map_err(|why| CheckError::Scale(id, why))?;
+                self.check_scale(index, scale)
+                    .map_err(|why| CheckError::Scale(id, why))?;
+            }
+            FeatureKind::Split(split) => {
+                split
+                    .check_own()
+                    .map_err(|why| CheckError::Split(id, why))?;
+                self.check_split(index, split)
+                    .map_err(|why| CheckError::Split(id, why))?;
+            }
+            FeatureKind::Chamfer(chamfer) => {
+                chamfer
+                    .check_own(design)
+                    .map_err(|why| CheckError::Chamfer(id, why))?;
+                self.check_blend_edges(index, &chamfer.edges, &chamfer.faces)
+                    .map_err(|why| CheckError::Chamfer(id, ChamferError::Edges(why)))?;
+            }
+            FeatureKind::Shell(shell) => {
+                shell
+                    .check_own(design)
+                    .map_err(|why| CheckError::Shell(id, why))?;
+                self.check_face_set(index, shell.body, &shell.open)
+                    .map_err(|why| CheckError::Shell(id, ShellError::Set(why)))?;
+            }
+            FeatureKind::OffsetFace(offset) => {
+                offset
+                    .check_own(design)
+                    .map_err(|why| CheckError::OffsetFace(id, why))?;
+                let body = offset.body().expect("checked: it has faces");
+                self.check_face_set(index, body, &offset.faces)
+                    .map_err(|why| CheckError::OffsetFace(id, OffsetFaceError::Set(why)))?;
+            }
+            FeatureKind::Fillet(fillet) => {
+                fillet
+                    .check_own(design)
+                    .map_err(|why| CheckError::Fillet(id, why))?;
+                self.check_blend_edges(index, &fillet.edges, &fillet.faces)
+                    .map_err(|why| CheckError::Fillet(id, FilletError::Edges(why)))?;
+            }
+            FeatureKind::FaceDraft(draft) => {
+                draft
+                    .check_own(design)
+                    .map_err(|why| CheckError::FaceDraft(id, why))?;
+                let body = draft.body().expect("checked: it has faces");
+                self.check_face_set(index, body, &draft.faces)
+                    .map_err(|why| CheckError::FaceDraft(id, FaceDraftError::Set(why)))?;
+                self.check_neutral_plane(index, &draft.neutral)
+                    .map_err(|why| CheckError::FaceDraft(id, why))?;
+            }
+            FeatureKind::Sweep(sweep) => self
+                .check_sweep(index, sweep)
+                .map_err(|why| CheckError::Sweep(id, why))?,
+            FeatureKind::Loft(loft) => self
+                .check_loft(index, loft)
+                .map_err(|why| CheckError::Loft(id, why))?,
+        }
+        Ok(())
     }
 
     /// Checks `plane`, the plane of sketch feature `index`: a face's point

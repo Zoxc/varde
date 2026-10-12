@@ -696,34 +696,33 @@ impl Document {
     /// split's line's and a sweep's path's curves are curves of their
     /// sketches, and a loft's points and rail curves are of its sketches.
     fn check_new(&self, index: usize, kind: &FeatureKind) -> Result<(), EditError> {
-        if let FeatureKind::Sweep(sweep) = kind {
-            let id = self.features[index].id;
-            sweep
+        let id = self.features[index].id;
+        let checked = match kind {
+            FeatureKind::Sweep(sweep) => sweep
                 .check_curves(|sketch| self.sketch_before(index, sketch))
-                .map_err(|why| EditError::Invalid(CheckError::Sweep(id, why)))?;
-        }
-        if let FeatureKind::Loft(loft) = kind {
-            let id = self.features[index].id;
-            loft.check_names(|sketch| self.sketch_before(index, sketch))
-                .map_err(|why| EditError::Invalid(CheckError::Loft(id, why)))?;
-        }
-        if let FeatureKind::Split(split) = kind
-            && let Some(sketch) = (split.tool.sketch()).and_then(|id| self.sketch_before(index, id))
-        {
-            let id = self.features[index].id;
-            split
-                .check_curves(sketch)
-                .map_err(|why| EditError::Invalid(CheckError::Split(id, why)))?;
-        }
-        if let FeatureKind::Revolve(revolve) = kind
-            && let Some(sketch) = self.sketch_before(index, revolve.sketch)
-        {
-            let id = self.features[index].id;
-            revolve
-                .check_axis(sketch)
-                .map_err(|why| EditError::Invalid(CheckError::Revolve(id, why)))?;
-        }
-        Ok(())
+                .map_err(|why| CheckError::Sweep(id, why)),
+            FeatureKind::Loft(loft) => loft
+                .check_names(|sketch| self.sketch_before(index, sketch))
+                .map_err(|why| CheckError::Loft(id, why)),
+            FeatureKind::Split(split) => match split.tool.sketch() {
+                Some(sketch) => self.sketch_before(index, sketch).map_or(Ok(()), |sketch| {
+                    split
+                        .check_curves(sketch)
+                        .map_err(|why| CheckError::Split(id, why))
+                }),
+                None => Ok(()),
+            },
+            FeatureKind::Revolve(revolve) => {
+                self.sketch_before(index, revolve.sketch)
+                    .map_or(Ok(()), |sketch| {
+                        revolve
+                            .check_axis(sketch)
+                            .map_err(|why| CheckError::Revolve(id, why))
+                    })
+            }
+            _ => Ok(()),
+        };
+        checked.map_err(EditError::Invalid)
     }
 }
 
