@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use varde_document::Document;
 
-use crate::native::unique;
+use crate::native::atomic::{self, sync_parent};
 #[cfg(test)]
 use crate::vrdp::Report;
 use crate::vrdp::{self, Error, Known, Opened, Preview, Result, Tail, WithFound};
@@ -40,7 +40,7 @@ struct Hooks<'a> {
     /// there.
     created: Option<PathHook<'a>>,
     /// The temporary paths to write a replacing file to, instead of
-    /// [`temp_path`]'s.
+    /// [`atomic::temp_path`]'s.
     temps: Option<&'a mut dyn FnMut() -> io::Result<PathBuf>>,
     /// Makes the rename that replaces a file durable, instead of
     /// [`sync_parent`], to fail there.
@@ -187,38 +187,25 @@ impl DocumentFile {
     ) -> Result<Self> {
         let permissions = std::fs::metadata(&path).ok().map(|m| m.permissions());
         let mut temps = hooks.temps.take();
+        let mut sync_dir = hooks.sync_dir.take();
         // A name that's taken is someone else's: another instance saving
         // next to it, or one that crashed. Left alone.
         let taken =
             |e: &Error| matches!(e, Error::Io(e) if e.kind() == io::ErrorKind::AlreadyExists);
-        let (temp, mut file) = unique::retry(unique::ATTEMPTS, taken, |name| {
-            let temp = match &mut temps {
-                Some(temps) => temps()?,
-                None => temp_path(&path, name)?,
-            };
-            // A temporary file it fails to finish is removed.
-            Self::create_with(
-                temp.clone(),
-                document,
-                previews,
-                permissions.as_ref(),
-                &mut hooks,
-            )
-            .map(|file| (temp, file))
-        })?;
-        let result = std::fs::rename(&temp, &path);
-        if let Err(error) = result {
-            let _ = std::fs::remove_file(&temp);
-            return Err(error.into());
-        }
-        // Best effort: the file is replaced, its contents synced. Failing
-        // here only risks a crash bringing the old one back, and an error
-        // would have the caller go on as if the old one were still there,
-        // to find its own new file a conflict.
-        let _ = match &mut hooks.sync_dir {
-            Some(sync_dir) => sync_dir(&path),
-            None => sync_parent(&path),
+        let temp = |name: &str| match &mut temps {
+            Some(temps) => temps(),
+            None => atomic::temp_path(&path, name),
         };
+        // A temporary file it fails to finish is removed.
+        let make = |temp: &Path| {
+            let permissions = permissions.as_ref();
+            Self::create_with(temp.to_owned(), document, previews, permissions, &mut hooks)
+        };
+        let sync = |path: &Path| match &mut sync_dir {
+            Some(sync_dir) => sync_dir(path),
+            None => atomic::sync_parent(path),
+        };
+        let mut file = atomic::replace_through(&path, taken, temp, make, sync)?;
         file.path = path;
         Ok(file)
     }
@@ -311,35 +298,6 @@ fn lock(file: &File, lock: Lock) -> Result<()> {
             Err(TryLockError::Error(e)) => return Err(e.into()),
         }
     }
-}
-
-/// A path next to `path` that nothing is likely to be at, for writing a
-/// file that then replaces it: `.{file name}.{name}.tmp`, with a
-/// [`unique::name`].
-pub(crate) fn temp_path(path: &Path, name: &str) -> io::Result<PathBuf> {
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the path has no file name"))?;
-    let mut temp = std::ffi::OsString::from(".");
-    temp.push(file_name);
-    temp.push(format!(".{name}.tmp"));
-    Ok(path.with_file_name(temp))
-}
-
-/// Makes a newly created or renamed file's directory entry durable.
-pub(crate) fn sync_parent(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    if let Some(parent) = path.parent() {
-        let parent = if parent.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            parent
-        };
-        File::open(parent)?.sync_all()?;
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
 }
 
 #[cfg(test)]

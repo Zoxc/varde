@@ -22,7 +22,6 @@ use crate::{
 mod document_file;
 
 use document_file::DocumentFile;
-pub(crate) use document_file::{sync_parent, temp_path};
 
 /// What requests about browser storage are answered with natively.
 const NO_BROWSER_STORAGE: &str = "only the web build keeps designs in browser storage";

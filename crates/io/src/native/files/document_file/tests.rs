@@ -251,10 +251,10 @@ fn replace_writes_with_the_permissions_from_the_start() {
 #[test]
 fn temporary_paths_are_hidden_next_to_the_file() {
     assert_eq!(
-        temp_path(Path::new("dir/doc.vrdp"), "name").unwrap(),
+        atomic::temp_path(Path::new("dir/doc.vrdp"), "name").unwrap(),
         Path::new("dir/.doc.vrdp.name.tmp")
     );
-    assert!(temp_path(Path::new("/"), "name").is_err());
+    assert!(atomic::temp_path(Path::new("/"), "name").is_err());
 }
 
 /// The design at `path`, with the byte at `at` from the end flipped.
