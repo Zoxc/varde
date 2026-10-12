@@ -177,9 +177,7 @@ struct Session {
     version: &'static str,
     client: Option<String>,
     initialized: bool,
-    /// The ids used, oldest first, and the same as a set.
-    used: VecDeque<Id>,
-    used_set: HashSet<Id>,
+    used: RecentIds,
     /// The ids of the calls handed to the app and not yet finished.
     in_flight: HashSet<Id>,
     /// The calls in flight already cancelled, so a cancel is passed on
@@ -197,16 +195,97 @@ impl Session {
     /// Records `id`, `false` if it was used already or is a call still
     /// in flight (which may be older than the ids remembered).
     fn use_id(&mut self, id: &Id) -> bool {
-        if self.used_set.contains(id) || self.in_flight.contains(id) {
+        !self.in_flight.contains(id) && self.used.insert(id)
+    }
+
+    /// Handles the notification `n`: a cancel of a call in flight is an
+    /// event.
+    fn notification(&mut self, n: rpc::Notification) -> Outcome {
+        let mut outcome = Outcome::status(Status::Accepted);
+        match n.method.as_str() {
+            "notifications/initialized" => self.initialized = true,
+            "notifications/cancelled" => {
+                if let Some(request) = n
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("requestId"))
+                    .and_then(Id::from_value)
+                    && self.in_flight.contains(&request)
+                    && self.cancelled.insert(request.clone())
+                {
+                    outcome.events.push(Event::Cancelled {
+                        session: self.id.clone(),
+                        request,
+                    });
+                }
+            }
+            // Others are ignored.
+            _ => {}
+        }
+        outcome
+    }
+
+    /// Answers the request `r`, or hands a `tools/call` to the app.
+    fn request(&mut self, r: rpc::Request) -> Outcome {
+        let error = |code, message| {
+            Outcome::respond(Response::json(rpc::error(Some(&r.id), code, message)))
+        };
+        if !self.use_id(&r.id) {
+            return error(Code::InvalidRequest, "This id was used already");
+        }
+        if !self.initialized && r.method != "ping" {
+            return error(
+                Code::InvalidRequest,
+                "Not initialized: send notifications/initialized first",
+            );
+        }
+        let success = |result| Outcome::respond(Response::json(rpc::success(&r.id, result)));
+        match r.method.as_str() {
+            "ping" => success(json!({})),
+            "tools/list" => success(tools::list()),
+            "tools/call" => match tools::parse_call(r.params.as_ref()) {
+                Ok(call) => {
+                    self.in_flight.insert(r.id.clone());
+                    Outcome {
+                        answer: Answer::Dispatch(Dispatch {
+                            session: self.id.clone(),
+                            id: r.id,
+                            call,
+                        }),
+                        events: Vec::new(),
+                    }
+                }
+                Err(CallError::Params(message)) => error(Code::InvalidParams, &message),
+                Err(CallError::Arguments(message)) => {
+                    success(ToolReply::error(message).result(ToolReply::CAP))
+                }
+            },
+            _ => error(Code::MethodNotFound, "Method not found"),
+        }
+    }
+}
+
+/// The last [`USED_IDS`] request ids, oldest forgotten first.
+#[derive(Default)]
+struct RecentIds {
+    /// Oldest first.
+    order: VecDeque<Id>,
+    set: HashSet<Id>,
+}
+
+impl RecentIds {
+    /// Records `id`, `false` if it's remembered already.
+    fn insert(&mut self, id: &Id) -> bool {
+        if self.set.contains(id) {
             return false;
         }
-        if self.used.len() >= USED_IDS
-            && let Some(oldest) = self.used.pop_front()
+        if self.order.len() >= USED_IDS
+            && let Some(oldest) = self.order.pop_front()
         {
-            self.used_set.remove(&oldest);
+            self.set.remove(&oldest);
         }
-        self.used.push_back(id.clone());
-        self.used_set.insert(id.clone());
+        self.order.push_back(id.clone());
+        self.set.insert(id.clone());
         true
     }
 }
@@ -350,70 +429,8 @@ impl State {
         session.last_active = now;
         match message {
             Message::Response => Outcome::status(Status::Accepted),
-            Message::Notification(n) => {
-                let mut outcome = Outcome::status(Status::Accepted);
-                match n.method.as_str() {
-                    "notifications/initialized" => session.initialized = true,
-                    "notifications/cancelled" => {
-                        if let Some(request) = n
-                            .params
-                            .as_ref()
-                            .and_then(|p| p.get("requestId"))
-                            .and_then(Id::from_value)
-                            && session.in_flight.contains(&request)
-                            && session.cancelled.insert(request.clone())
-                        {
-                            outcome.events.push(Event::Cancelled {
-                                session: session.id.clone(),
-                                request,
-                            });
-                        }
-                    }
-                    // Others are ignored.
-                    _ => {}
-                }
-                outcome
-            }
-            Message::Request(r) => {
-                let error = |code, message| {
-                    Outcome::respond(Response::json(rpc::error(Some(&r.id), code, message)))
-                };
-                if !session.use_id(&r.id) {
-                    return error(Code::InvalidRequest, "This id was used already");
-                }
-                if !session.initialized && r.method != "ping" {
-                    return error(
-                        Code::InvalidRequest,
-                        "Not initialized: send notifications/initialized first",
-                    );
-                }
-                let success =
-                    |result| Outcome::respond(Response::json(rpc::success(&r.id, result)));
-                match r.method.as_str() {
-                    "ping" => success(json!({})),
-                    "tools/list" => success(tools::list()),
-                    "tools/call" => match tools::parse_call(r.params.as_ref()) {
-                        Ok(call) => {
-                            session.in_flight.insert(r.id.clone());
-                            Outcome {
-                                answer: Answer::Dispatch(Dispatch {
-                                    session: session.id.clone(),
-                                    id: r.id,
-                                    call,
-                                }),
-                                events: Vec::new(),
-                            }
-                        }
-                        Err(CallError::Params(message)) => Outcome::respond(Response::json(
-                            rpc::error(Some(&r.id), Code::InvalidParams, &message),
-                        )),
-                        Err(CallError::Arguments(message)) => {
-                            success(ToolReply::error(message).result(ToolReply::CAP))
-                        }
-                    },
-                    _ => error(Code::MethodNotFound, "Method not found"),
-                }
-            }
+            Message::Notification(n) => session.notification(n),
+            Message::Request(r) => session.request(r),
         }
     }
 
@@ -454,8 +471,7 @@ impl State {
             version,
             client: client.clone(),
             initialized: false,
-            used: VecDeque::new(),
-            used_set: HashSet::new(),
+            used: RecentIds::default(),
             in_flight: HashSet::new(),
             cancelled: HashSet::new(),
             last_active: now,
