@@ -68,9 +68,6 @@ pub(super) struct Persist {
     auto_save_error: Option<String>,
     /// What the document is waiting on the user or the browser for.
     picking: Option<Picking>,
-    /// The name asked for in the app's own Save As dialog, on the web,
-    /// while it shows (`picking` is [`Picking::Name`] then).
-    naming: Option<Naming>,
     /// Whether the name field of the Save As dialog is to take the focus,
     /// as it shows: see [`Doc::take_name_focus`].
     name_focus: bool,
@@ -110,7 +107,6 @@ impl Persist {
             save_error: None,
             auto_save_error: None,
             picking: None,
-            naming: None,
             name_focus: false,
             download: None,
             leaving: None,
@@ -143,7 +139,7 @@ pub(crate) struct Naming {
 
 /// What a document is waiting on the user or the browser for, see
 /// [`Persist::picking`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Picking {
     /// The Save As dialog is showing, answered with [`Doc::save_as_picked`].
     SaveAs,
@@ -151,8 +147,8 @@ pub(crate) enum Picking {
     /// to its file, answered with [`Doc::writable`].
     Writable,
     /// On the web, the app's own Save As dialog is showing, asking for a
-    /// name: see [`Naming`].
-    Name,
+    /// name.
+    Name(Naming),
 }
 
 /// Which kind of save an answer is for.
@@ -521,7 +517,7 @@ impl Doc {
     /// What the document is waiting on, see [`Persist::picking`].
     #[cfg(test)]
     pub(crate) fn picking(&self) -> Option<Picking> {
-        self.persist.picking
+        self.persist.picking.clone()
     }
 
     /// Leaving the document, see [`Persist::leaving`].
@@ -966,7 +962,7 @@ impl Doc {
     /// The browser's answer to whether the document may be saved to its
     /// file, see [`Doc::save_design`].
     pub(super) fn writable(&mut self, cx: &mut Files, result: Result<(), String>) -> Next {
-        if self.persist.picking != Some(Picking::Writable) {
+        if !matches!(self.persist.picking, Some(Picking::Writable)) {
             return Next::Stay;
         }
         self.persist.picking = None;
@@ -1013,14 +1009,26 @@ impl Doc {
 
     /// Shows the app's own Save As dialog, or as it renames the design.
     fn ask_name(&mut self, rename: bool) {
-        self.persist.picking = Some(Picking::Name);
-        self.persist.naming = Some(Naming {
+        self.show_naming(Naming {
             name: self.suggested_name(),
             place: SavePlace::Browser,
             rename,
             replacing: None,
         });
+    }
+
+    /// Shows the app's own Save As dialog as `naming`.
+    fn show_naming(&mut self, naming: Naming) {
+        self.persist.picking = Some(Picking::Name(naming));
         self.persist.name_focus = true;
+    }
+
+    /// The Save As dialog, to change, if it's showing.
+    fn naming_mut(&mut self) -> Option<&mut Naming> {
+        match &mut self.persist.picking {
+            Some(Picking::Name(naming)) => Some(naming),
+            _ => None,
+        }
     }
 
     /// Asks for a new name for the design in browser storage, in the Save
@@ -1043,7 +1051,10 @@ impl Doc {
 
     /// The Save As dialog, if it's showing.
     pub(crate) fn naming(&self) -> Option<&Naming> {
-        self.persist.naming.as_ref()
+        match &self.persist.picking {
+            Some(Picking::Name(naming)) => Some(naming),
+            _ => None,
+        }
     }
 
     /// Whether the Save As dialog's name field is to take the focus, as
@@ -1054,7 +1065,7 @@ impl Doc {
 
     /// The name typed in the Save As dialog changed.
     pub(crate) fn name_changed(&mut self, name: String) {
-        if let Some(naming) = &mut self.persist.naming {
+        if let Some(naming) = self.naming_mut() {
             naming.name = name;
             naming.replacing = None;
         }
@@ -1062,7 +1073,7 @@ impl Doc {
 
     /// Where to save the design was chosen in the Save As dialog.
     pub(crate) fn place_chosen(&mut self, place: SavePlace) {
-        if let Some(naming) = &mut self.persist.naming {
+        if let Some(naming) = self.naming_mut() {
             naming.place = place;
             naming.replacing = None;
         }
@@ -1076,11 +1087,10 @@ impl Doc {
     /// saved, appended to, its history kept; only one opened past damage,
     /// which isn't saved to, is replaced, after asking.
     pub(crate) fn name_confirmed(&mut self, cx: &mut Files) -> Next {
-        let Some(naming) = self.persist.naming.clone() else {
+        let Some(naming) = self.naming().cloned() else {
             return Next::Stay;
         };
         if naming.place == SavePlace::Computer && !naming.rename {
-            self.persist.naming = None;
             self.persist.picking = Some(Picking::SaveAs);
             return Next::PickSaveAs {
                 id: self.id,
@@ -1103,12 +1113,11 @@ impl Doc {
             asked || cx.browser.iter().any(|design| design.name == name)
         };
         if taken && (naming.rename || !asked) {
-            if let Some(naming) = &mut self.persist.naming {
+            if let Some(naming) = self.naming_mut() {
                 naming.replacing = Some(name);
             }
             return Next::Stay;
         }
-        self.persist.naming = None;
         self.persist.picking = None;
         if naming.rename {
             if let Target::Browser { file, .. } = self.persist.target
@@ -1141,24 +1150,21 @@ impl Doc {
         if self.persist.picking.is_some() {
             return false;
         }
-        self.persist.picking = Some(Picking::Name);
-        self.persist.naming = Some(Naming {
+        self.show_naming(Naming {
             name: design_name(Path::new(&name)),
             place: SavePlace::Browser,
             rename: false,
             replacing: Some(name),
         });
-        self.persist.name_focus = true;
         true
     }
 
     /// The Save As dialog was closed without saving: as backing out of the
     /// system's, see [`Doc::save_as_picked`].
     pub(crate) fn name_cancelled(&mut self, cx: &mut Files) -> Next {
-        if self.persist.picking != Some(Picking::Name) {
+        if self.naming().is_none() {
             return Next::Stay;
         }
-        self.persist.naming = None;
         self.save_as_picked_with(cx, None)
     }
 
@@ -1293,7 +1299,7 @@ impl Doc {
     /// The Save As dialog of the document closed, with the file the user
     /// `chosen`, if they did.
     pub(super) fn save_as_picked(&mut self, cx: &mut Files, chosen: Option<Chosen>) -> Next {
-        if self.persist.picking != Some(Picking::SaveAs) {
+        if !matches!(self.persist.picking, Some(Picking::SaveAs)) {
             return Next::Stay;
         }
         self.save_as_picked_with(cx, chosen)
