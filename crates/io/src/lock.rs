@@ -4,32 +4,26 @@
 //! `src/native/sidecar.rs`), and on the web for a design in browser
 //! storage, whose sidecar sits next to it there (see `src/browser.rs`).
 
-use std::io;
-
 use varde_document::{Document, Snapshot};
 
-use crate::autosave::{AutoSaved, Ending, Held};
+use crate::autosave::{Ending, Held};
 use crate::open::KEPT;
-use crate::vrdp::{Error as FileError, Opened, Storage, Tail};
+use crate::vrdp::{Error as FileError, Storage, Tail};
 use crate::{Access, Damage, Offer, ReadOnly, RecoveryError};
 
-/// What a [`Lock`] holds: the auto-saves of a design.
-pub(crate) trait AutoSaves {
-    /// The newest intact auto-save, if there is one, with how reading
-    /// found the file.
-    fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError>;
+/// What a [`Lock`] holds: the auto-saves of a design, natively with the
+/// path they're at.
+pub(crate) trait AsHeld {
+    type Storage: Storage;
 
-    /// Empties it.
-    fn clear(&mut self) -> io::Result<()>;
+    fn as_held(&mut self) -> &mut Held<Self::Storage>;
 }
 
-impl<S: Storage> AutoSaves for Held<S> {
-    fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError> {
-        Held::read_with_report(self)
-    }
+impl<S: Storage> AsHeld for Held<S> {
+    type Storage = S;
 
-    fn clear(&mut self) -> io::Result<()> {
-        Held::clear(self)
+    fn as_held(&mut self) -> &mut Held<S> {
+        self
     }
 }
 
@@ -57,7 +51,7 @@ pub(crate) enum Lock<H> {
     ReadOnly(ReadOnly),
 }
 
-impl<H: AutoSaves> Lock<H> {
+impl<H: AsHeld> Lock<H> {
     /// The lock `taken`, or why the design is read-only.
     pub(crate) fn new(taken: Result<H, ReadOnly>) -> Self {
         match taken {
@@ -95,7 +89,7 @@ impl<H: AutoSaves> Lock<H> {
             return Ok(None);
         };
         (*offered, *kept) = (false, false);
-        match sidecar.read_with_report() {
+        match sidecar.as_held().read_with_report() {
             Ok(Some(read)) if *read.payload.document != *document => {
                 *offered = true;
                 let recovered = read.payload;
@@ -191,7 +185,7 @@ impl<H: AutoSaves> Lock<H> {
     /// sidecar, if it's held, and answers the offer.
     pub(crate) fn discard_recovery(&mut self) -> Result<(), String> {
         if let Some(sidecar) = self.held() {
-            sidecar.clear().map_err(|e| e.to_string())?;
+            sidecar.as_held().clear().map_err(|e| e.to_string())?;
         }
         self.answered();
         Ok(())
@@ -219,7 +213,7 @@ impl<H: AutoSaves> Lock<H> {
             ..
         } = self
         {
-            let _ = sidecar.clear();
+            let _ = sidecar.as_held().clear();
         }
     }
 

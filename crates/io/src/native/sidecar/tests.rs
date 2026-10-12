@@ -75,7 +75,7 @@ fn release_keeps_a_sidecar_with_something_in_it() {
     let dir = TempDir::new("sidecar-kept");
     let mut sidecar = lock(&dir.0.join("doc.vrdp")).unwrap();
     sidecar
-        .append(None, &Arc::new(Document::example()))
+        .append(None, None, &Arc::new(Document::example()))
         .unwrap();
     sidecar.end(Ending::Release).unwrap();
     let mut again = lock(&dir.0.join("doc.vrdp")).unwrap();
@@ -92,7 +92,7 @@ fn close_deletes_a_sidecar_with_something_in_it() {
     let dir = TempDir::new("sidecar-closed");
     let mut sidecar = lock(&dir.0.join("doc.vrdp")).unwrap();
     sidecar
-        .append(None, &Arc::new(Document::example()))
+        .append(None, None, &Arc::new(Document::example()))
         .unwrap();
     sidecar.end(Ending::Close).unwrap();
     assert!(!dir.sidecar().exists());
@@ -107,7 +107,9 @@ fn auto_saves_go_through_the_lock() {
     let start = std::time::Instant::now();
     for sketches in [1, 0, 1] {
         let document = with_sketches(sketches);
-        sidecar.append(None, &Arc::new(document.clone())).unwrap();
+        sidecar
+            .append(None, None, &Arc::new(document.clone()))
+            .unwrap();
         assert_eq!(read(&mut sidecar), Some(document));
     }
     assert!(start.elapsed() < std::time::Duration::from_secs(1));
@@ -126,13 +128,13 @@ fn auto_saves_keep_the_version_they_were_based_on() {
     let (_, tail) = crate::vrdp::from_bytes(&std::fs::read(&design).unwrap()).unwrap();
     let mut sidecar = lock(&design).unwrap();
     sidecar
-        .append(Some(tail), &Arc::new(Document::default()))
+        .append(Some(tail), None, &Arc::new(Document::default()))
         .unwrap();
     assert!(sidecar.read().unwrap().unwrap().based_on(tail));
 
     // A new design's is based on no design's file.
     sidecar
-        .append(None, &Arc::new(Document::default()))
+        .append(None, None, &Arc::new(Document::default()))
         .unwrap();
     let saved = sidecar.read().unwrap().unwrap();
     assert_eq!(saved.base, None);
@@ -273,7 +275,7 @@ fn a_read_only_document_gets_a_writable_sidecar() {
     std::fs::set_permissions(&design, std::fs::Permissions::from_mode(0o444)).unwrap();
     let mut sidecar = lock(&design).unwrap();
     sidecar
-        .append(None, &Arc::new(Document::default()))
+        .append(None, None, &Arc::new(Document::default()))
         .unwrap();
     drop(sidecar);
     let mut sidecar = lock(&design).unwrap();

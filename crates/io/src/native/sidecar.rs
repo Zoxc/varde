@@ -12,7 +12,7 @@
 //!
 //! The sidecar is also where auto-saves go, as a `.vrdp` written through
 //! the lock's own handle (see [`HeldFile`](crate::vrdp::HeldFile)), holding
-//! [`AutoSaved`] records, see `src/autosave.rs` for what's kept of them. On
+//! [`AutoSaved`](crate::autosave::AutoSaved) records, see `src/autosave.rs` for what's kept of them. On
 //! Unix it's created with the document's permission bits (as far as the
 //! umask allows), plus the owner's read and write: it holds the same
 //! content.
@@ -33,12 +33,9 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use varde_document::Snapshot;
-
 use crate::ReadOnly;
-use crate::autosave::{AutoSaved, Ending, Held};
-use crate::lock::AutoSaves;
-use crate::vrdp::{Error as FileError, Opened, Tail};
+use crate::autosave::{Ending, Held};
+use crate::lock::AsHeld;
 
 /// How often [`lock`] starts over when the sidecar it locked was deleted.
 /// Each retry means another editor closed the document meanwhile, so
@@ -72,7 +69,8 @@ pub(crate) fn is_sidecar_name(path: &Path) -> bool {
 /// store entry, which differ in how they're let go of (see [`Ending`]).
 /// Deleted only while still at its path. Dropping it unlocks it without
 /// deleting it, as a crash would; [`LockFile::end`] lets go of it as an
-/// [`Ending`] says, e.g. the clean close.
+/// [`Ending`] says, e.g. the clean close. It derefs to its [`Held`]
+/// auto-saves for reading and writing them.
 #[derive(Debug)]
 pub(crate) struct LockFile {
     path: PathBuf,
@@ -211,33 +209,6 @@ impl LockFile {
         self.held.storage()
     }
 
-    /// The newest auto-save, if there is one.
-    #[cfg(test)]
-    pub(crate) fn read(&mut self) -> Result<Option<AutoSaved>, FileError> {
-        self.held.read()
-    }
-
-    /// The newest intact auto-save, if there is one, with how reading
-    /// found the file.
-    pub(crate) fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError> {
-        self.held.read_with_report()
-    }
-
-    /// Auto-saves `document`, based on the design's file at `base`, if
-    /// it has one. The sidecar sits next to the design, so it's not named.
-    pub(crate) fn append(
-        &mut self,
-        base: Option<Tail>,
-        document: &Snapshot,
-    ) -> Result<(), FileError> {
-        self.held.append(base, None, document)
-    }
-
-    /// Empties it, once what's in it is saved or not wanted.
-    pub(crate) fn clear(&mut self) -> io::Result<()> {
-        self.held.clear()
-    }
-
     /// Lets go of it as `ending` says: deletes it unless that keeps what's
     /// in it, then unlocks it.
     pub(crate) fn end(mut self, ending: Ending) -> io::Result<()> {
@@ -281,13 +252,25 @@ impl LockFile {
     }
 }
 
-impl AutoSaves for LockFile {
-    fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError> {
-        LockFile::read_with_report(self)
-    }
+impl std::ops::Deref for LockFile {
+    type Target = Held<File>;
 
-    fn clear(&mut self) -> io::Result<()> {
-        LockFile::clear(self)
+    fn deref(&self) -> &Held<File> {
+        &self.held
+    }
+}
+
+impl std::ops::DerefMut for LockFile {
+    fn deref_mut(&mut self) -> &mut Held<File> {
+        &mut self.held
+    }
+}
+
+impl AsHeld for LockFile {
+    type Storage = File;
+
+    fn as_held(&mut self) -> &mut Held<File> {
+        &mut self.held
     }
 }
 

@@ -484,7 +484,9 @@ impl Files {
     fn auto_save(&mut self, file: FileId, document: &Snapshot) -> Result<(), String> {
         match self.open.get_mut(file)? {
             // A new design is based on no save.
-            Kind::New(entry) => entry.append(None, document).map_err(|e| e.to_string()),
+            Kind::New(entry) => entry
+                .append(None, None, document)
+                .map_err(|e| e.to_string()),
             Kind::Design(design) => {
                 // Based on the design as this lane last read or wrote it:
                 // whatever changes it after, a save of ours included, makes
@@ -492,7 +494,7 @@ impl Files {
                 let base = Some(design.file.tail());
                 design
                     .lock
-                    .auto_save(|sidecar| sidecar.append(base, document))
+                    .auto_save(|sidecar| sidecar.append(base, None, document))
             }
         }
     }

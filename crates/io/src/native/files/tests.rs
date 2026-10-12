@@ -705,7 +705,7 @@ fn crashed_with(path: &Path, document: &Document) {
     let (file, _, _) = DocumentFile::open(path).unwrap();
     let mut sidecar = sidecar::lock(path).unwrap();
     sidecar
-        .append(Some(file.tail()), &Arc::new(document.clone()))
+        .append(Some(file.tail()), None, &Arc::new(document.clone()))
         .unwrap();
     drop(sidecar);
 }

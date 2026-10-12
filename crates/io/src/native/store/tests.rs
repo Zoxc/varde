@@ -76,7 +76,9 @@ fn an_entry_held_while_made_gets_a_new_name() {
 fn list_finds_entries_left_behind() {
     let dir = TempDir::new("store-list");
     let mut saved = create(&dir.0).unwrap();
-    saved.append(None, &Arc::new(Document::example())).unwrap();
+    saved
+        .append(None, None, &Arc::new(Document::example()))
+        .unwrap();
     let saved_path = saved.path().to_owned();
     drop(saved);
     let empty = create(&dir.0).unwrap();
@@ -113,7 +115,8 @@ fn discard_deletes_only_entries_nobody_holds() {
     let dir = TempDir::new("store-discard");
     let designs = dir.0.join("designs");
     let mut left = create(&designs).unwrap();
-    left.append(None, &Arc::new(Document::example())).unwrap();
+    left.append(None, None, &Arc::new(Document::example()))
+        .unwrap();
     let path = left.path().to_owned();
     // Held.
     assert!(discard(&designs, &path).is_err());
