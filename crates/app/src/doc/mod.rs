@@ -610,6 +610,11 @@ pub(crate) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_doc
     }
 }
 
+/// Whether `id` is a sketch feature of `document`.
+pub(super) fn is_sketch(document: &Document, id: FeatureId) -> bool {
+    sketch_of(document, id).is_some()
+}
+
 /// The camera Home turns to, framed on the origin.
 fn home_camera(projection: Projection) -> Camera {
     let mut camera = Camera::default();

@@ -22,7 +22,7 @@ use varde_view::{
     RevolveState, Selected, TurnKind, Unnamed, axis_edge,
 };
 
-use super::extrude::is_sketch;
+use super::is_sketch;
 use super::regions::{
     BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
 };

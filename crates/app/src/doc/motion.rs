@@ -1596,8 +1596,7 @@ impl Doc {
         // one is.
         if kind == MotionKind::Sweep {
             let document = self.editor.document();
-            let selected =
-                (self.selected_feature).filter(|&id| super::extrude::is_sketch(document, id));
+            let selected = (self.selected_feature).filter(|&id| super::is_sketch(document, id));
             if let Some(session) = self.mode.motion_mut() {
                 session.sweep.regions =
                     super::regions::RegionPick::new(selected, varde_document::MAX_SWEEP_REGIONS);

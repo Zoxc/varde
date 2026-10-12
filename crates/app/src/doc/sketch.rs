@@ -30,7 +30,7 @@ use varde_view::{
 };
 
 use super::camera::FRAME_MARGIN;
-use super::extrude::is_sketch;
+use super::is_sketch;
 use super::{Change, Doc, DocMode, HOME_TARGET, OUT_OF_DATE, home_camera, sketch_of};
 pub(crate) use dimension::Focus;
 #[cfg(not(target_arch = "wasm32"))]

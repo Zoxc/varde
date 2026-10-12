@@ -15,7 +15,7 @@ use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind,
 use super::regions::{
     BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
 };
-use super::{Doc, Focus};
+use super::{Doc, Focus, is_sketch};
 
 /// The extrude being set up, while one is: [`Doc::mode`].
 #[derive(Debug)]
@@ -459,14 +459,6 @@ impl Doc {
             units: document.units(),
         })
     }
-}
-
-/// Whether `id` is a sketch feature of `document`.
-pub(super) fn is_sketch(document: &Document, id: FeatureId) -> bool {
-    matches!(
-        document.feature(id).map(|feature| &feature.kind),
-        Some(FeatureKind::Sketch { .. })
-    )
 }
 
 #[cfg(test)]

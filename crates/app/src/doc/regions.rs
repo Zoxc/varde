@@ -17,8 +17,7 @@ use varde_view::{
     BodyTarget, Candidate, OperationKind, ParamsIn, Side, Sides, TypedField, Verdict,
 };
 
-use super::Doc;
-use super::extrude::is_sketch;
+use super::{Doc, is_sketch};
 
 /// The most work finding the profiles of the visible sketches may take
 /// in all, in the unit of [`MAX_WORK`], on the UI thread: a file can hold
