@@ -44,11 +44,28 @@ impl std::fmt::Display for KernelError {
 
 impl std::error::Error for KernelError {}
 
+/// The Varde kernel's errors as the old variants: running out of the
+/// budget or a limit, whatever the cause, is [`KernelError::TooComplex`],
+/// and decisions that contradict each other are
+/// [`BooleanError::Inconsistent`]. The facade calls no operation that
+/// raises the others yet, and the old variants that would fit carry the
+/// old kernel's types, so for now they come out as
+/// [`KernelError::NotImplemented`], naming the error the facade can't pass on.
 impl From<varde_kernel::KernelError> for KernelError {
     fn from(e: varde_kernel::KernelError) -> Self {
+        use varde_kernel::KernelError as K;
         match e {
-            varde_kernel::KernelError::TooComplex => KernelError::TooComplex,
-            varde_kernel::KernelError::NotImplemented(what) => KernelError::NotImplemented(what),
+            K::OutOfBudget { .. } => KernelError::TooComplex,
+            K::NotImplemented(what) => KernelError::NotImplemented(what),
+            K::Unrepresentable => {
+                KernelError::NotImplemented("reporting a result that can't be stored")
+            }
+            K::Invalid(_) => KernelError::NotImplemented("reporting an invalid operand"),
+            K::Unsupported(_) => KernelError::NotImplemented("reporting unsupported input"),
+            K::Internal(varde_kernel::Internal::Inconsistent) => {
+                KernelError::Boolean(BooleanError::Inconsistent)
+            }
+            K::Feature(kind) => match kind {},
         }
     }
 }

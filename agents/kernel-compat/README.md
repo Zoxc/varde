@@ -90,7 +90,12 @@ only `+ − × ÷ √` and `trig`.
 old variants callers match on: `TooComplex`, `Invalid(CheckError)`,
 `Patch(PatchError)`, `Profile(ProfileError)`, `Boolean(BooleanError)` and
 `NotImplemented(&'static str)` (naming what isn't built, "… isn't
-implemented yet"); `varde_kernel::KernelError` converts into it. The
+implemented yet"); `varde_kernel::KernelError` converts into it:
+`OutOfBudget` of any cause is `TooComplex`, `Internal(Inconsistent)` is
+`Boolean(BooleanError::Inconsistent)`, `NotImplemented` stays, and the
+variants no facade call raises yet (`Unrepresentable`, `Invalid`,
+`Unsupported`) are `NotImplemented` naming the error not passed on (the
+old variants that would fit carry the old kernel's types). The
 operations that make or combine solids return `Result<_, Failure>`:
 `Failure { error: KernelError, evidence: Box<Evidence> }`, with
 `From<KernelError>` (empty evidence) and `Display` the error's.

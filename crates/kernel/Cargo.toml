@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# Development builds: `Unsupported::Stage`, for the cases the kernel's
+# current stage of development leaves out. A release build has none.
+staging = []
+
 [dependencies]
 varde-decide.workspace = true
 glam.workspace = true

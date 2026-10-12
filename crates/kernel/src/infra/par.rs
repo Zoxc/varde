@@ -4,7 +4,9 @@
 //! Every parallel step in the kernel is a pure map over input sorted by
 //! stable keys, collected in input order. Floating-point reductions are
 //! done afterwards, sequentially in key order, and ids are handed out in
-//! one sequential pass over the collected results. So a result is the same
+//! one sequential pass over the collected results. Work is charged the
+//! same way: each item charges its own ledger, and the charges are summed
+//! in key order after collecting (`Work::pass` in the budget module). So a result is the same
 //! to the bit whatever the number of threads or how the work was split,
 //! natively (rayon) and on the web, where the worker runs the same maps
 //! sequentially. This is the only module that knows about rayon.
@@ -26,13 +28,36 @@ where
     R: Send,
     F: Fn(&T) -> R + Sync + Send,
 {
+    par_map_indexed(items, |_, item| f(item))
+}
+
+/// [`par_map`] with each item's position in `items` passed to `f`
+/// beside it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn par_map_indexed<T, R, F>(items: &[T], f: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(usize, &T) -> R + Sync + Send,
+{
     use rayon::prelude::*;
     #[cfg(test)]
     match MODE.get() {
         Mode::AsUsual => {}
-        Mode::AllOnPool => return items.par_iter().map(&f).collect(),
+        Mode::AllOnPool => {
+            return items
+                .par_iter()
+                .enumerate()
+                .map(|(i, item)| f(i, item))
+                .collect();
+        }
         Mode::Reversed => {
-            let mut out: Vec<R> = items.iter().rev().map(&f).collect();
+            let mut out: Vec<R> = items
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, item)| f(i, item))
+                .collect();
             out.reverse();
             return out;
         }
@@ -41,10 +66,15 @@ where
     let mut out = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
         if start.elapsed() > HAND_OFF {
-            out.par_extend(items[i..].par_iter().map(&f));
+            out.par_extend(
+                items[i..]
+                    .par_iter()
+                    .enumerate()
+                    .map(|(j, item)| f(i + j, item)),
+            );
             break;
         }
-        out.push(f(item));
+        out.push(f(i, item));
     }
     out
 }
@@ -65,6 +95,22 @@ where
     F: Fn(&T) -> R + Sync + Send,
 {
     items.iter().map(f).collect()
+}
+
+/// [`par_map`] with each item's position in `items` passed to `f`
+/// beside it.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn par_map_indexed<T, R, F>(items: &[T], f: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(usize, &T) -> R + Sync + Send,
+{
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| f(i, item))
+        .collect()
 }
 
 /// How [`par_map`] runs its items on this thread, for
@@ -149,15 +195,20 @@ mod tests {
     #[test]
     fn slow_items_are_handed_to_the_pool_in_order() {
         // Items of 20 µs each: the first few run on the calling thread,
-        // the rest on the pool's, collected in order all the same.
-        let items: Vec<u32> = (0..64).collect();
-        let ran = par_map(&items, |&x| {
+        // the rest on the pool's, collected in order all the same, each
+        // with its own position.
+        let items: Vec<usize> = (0..64).collect();
+        let ran = par_map_indexed(&items, |i, &x| {
             let start = std::time::Instant::now();
             while start.elapsed() < std::time::Duration::from_micros(20) {}
-            (x, rayon::current_thread_index().is_some())
+            (i, x, rayon::current_thread_index().is_some())
         });
-        assert!(ran.iter().enumerate().all(|(i, &(x, _))| x == i as u32));
-        assert!(!ran[0].1 && ran[63].1, "{ran:?}");
+        assert!(
+            ran.iter()
+                .enumerate()
+                .all(|(k, &(i, x, _))| i == k && x == k)
+        );
+        assert!(!ran[0].2 && ran[63].2, "{ran:?}");
     }
 
     #[test]
