@@ -44,8 +44,10 @@ and `analyse(&Sketch)`. `notes/SketchImpl.md` ("Built so far (step 2a)",
 - **Equations** (`equation.rs`): a `Residual` each, a length, written once
   over `Real` (`real.rs`) and evaluated with `f64` for the value and
   `Dual` for the gradient. Adding a kind of equation means a `Residual`
-  variant, its `slots`, its `eval`, and a line in the finite-difference
-  test.
+  variant, its `eval`, and a line in the finite-difference test: the
+  slots and spline reads it has (`slots`, `splines`, the gradient's dual
+  places) are found by running `eval` (`Residual::trace`), so `eval` must
+  read the same slots whatever the values.
 - **Splines** in the solver: each one an equation reads is a
   `SplineSlots`, its points' slots (fit points then tips, or control
   points) and a `SplineMap` (`spline/basis.rs`): its knots and each

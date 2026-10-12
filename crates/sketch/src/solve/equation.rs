@@ -5,7 +5,7 @@
 //! them: angles go through direction vectors (a cross or dot product over a
 //! length), never an angle computed with `atan2` that wraps around.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use glam::DVec2;
@@ -416,36 +416,6 @@ fn read(x: &[f64], slot: Slot) -> f64 {
     }
 }
 
-impl Heading {
-    /// Calls `f` with every slot it reads but a spline's.
-    fn slots(&self, f: &mut dyn FnMut(Slot)) {
-        match self {
-            Heading::Line(line) => line.start.into_iter().chain(line.end).for_each(f),
-            Heading::Round { round, at } => {
-                round_slots(*round, f);
-                at.iter().copied().for_each(f);
-            }
-            Heading::Spline(_) => {}
-        }
-    }
-
-    /// Its spline read at an end, if it's a spline's.
-    fn spline(&self) -> Option<&SplineAt> {
-        match self {
-            Heading::Spline(at) => Some(at),
-            _ => None,
-        }
-    }
-}
-
-/// Calls `f` with the slots of a circle or an arc.
-fn round_slots(round: RoundSlots, f: &mut dyn FnMut(Slot)) {
-    match round {
-        RoundSlots::Circle { center, radius } => center.into_iter().chain([radius]).for_each(f),
-        RoundSlots::Arc { center, start } => center.into_iter().chain(start).for_each(f),
-    }
-}
-
 /// The residual of [`Residual::Angle`]: the angle from `u`, times
 /// `sign`, to `w` less the angle whose cosine and sine are `cos` and
 /// `sin`, as `2 sin(δ / 2)` of the difference `δ` times the geometric
@@ -465,123 +435,47 @@ fn angle_off<R: Real>(u: Vector<R>, w: Vector<R>, sign: f64, cos: f64, sin: f64)
 
 impl Residual {
     /// Calls `f` with every slot the equation reads, some perhaps more
-    /// than once: at most [`MAX_INPUTS`] of them but for a spline's, whose
+    /// than once: at most [`MAX_INPUTS`] variables but for a spline's, whose
     /// points may be many (see [`Residual::gradient`]).
     pub fn slots(&self, mut f: impl FnMut(Slot)) {
-        let f: &mut dyn FnMut(Slot) = &mut f;
-        self.direct_slots(f);
-        for (at, _) in self.reads() {
+        let reads = self.trace(&mut f);
+        for (at, _) in reads {
             f(at.t);
-            at.spline.inputs.iter().flatten().copied().for_each(&mut *f);
+            at.spline.inputs.iter().flatten().copied().for_each(&mut f);
         }
     }
 
-    /// Calls `f` with every slot the equation reads but through a
-    /// spline: at most [`MAX_INPUTS`] of them, with two for each spline
-    /// read ([`Residual::reads`]).
-    fn direct_slots(&self, f: &mut dyn FnMut(Slot)) {
-        let point = |p: PointSlots, f: &mut dyn FnMut(Slot)| p.into_iter().for_each(f);
-        let line =
-            |l: LineSlots, f: &mut dyn FnMut(Slot)| l.start.into_iter().chain(l.end).for_each(f);
-        let round = |r: RoundSlots, f: &mut dyn FnMut(Slot)| round_slots(r, f);
-        let pair = |p: &PairRead, f: &mut dyn FnMut(Slot)| match *p {
-            PairRead::Slots(PairSlots::Lines { line: a, copy: b }) => {
-                line(a, f);
-                line(b, f);
-            }
-            PairRead::Slots(PairSlots::Rounds { round: a, copy: b }) => {
-                round(a, f);
-                round(b, f);
-            }
-            PairRead::Slots(PairSlots::Join { copy }) => round(copy, f),
-            // Its spline is read at `at`, see `reads`.
-            PairRead::Spline { point: p, .. } => point(p, f),
-        };
-        match *self {
-            Residual::Equal(a, b) => [a, b].into_iter().for_each(f),
-            Residual::Midpoint { point, a, b } => [point, a, b].into_iter().for_each(f),
-            Residual::OnLine { point: p, line: l } => {
-                point(p, f);
-                line(l, f);
-            }
-            Residual::OnRound { point: p, round: r } => {
-                point(p, f);
-                round(r, f);
-            }
-            Residual::Parallel(a, b)
-            | Residual::Perpendicular(a, b)
-            | Residual::EqualLength(a, b) => {
-                line(a, f);
-                line(b, f);
-            }
-            Residual::TangentLine {
-                line: l, round: r, ..
-            } => {
-                line(l, f);
-                round(r, f);
-            }
-            Residual::TangentRounds { a, b, .. } | Residual::EqualRadius(a, b) => {
-                round(a, f);
-                round(b, f);
-            }
-            Residual::MidpointOn { a, b, line: l } | Residual::Across { a, b, line: l } => {
-                point(a, f);
-                point(b, f);
-                line(l, f);
-            }
-            Residual::ArcRadius { center, start, end } => {
-                point(center, f);
-                point(start, f);
-                point(end, f);
-            }
-            Residual::Fix { slot, .. } => f(slot),
-            Residual::Mirrored { a, b, center } => [a, b, center].into_iter().for_each(f),
-            Residual::Distance { a, b, .. } => {
-                point(a, f);
-                point(b, f);
-            }
-            Residual::Offset { a, b, .. } => [a, b].into_iter().for_each(f),
-            Residual::LineDistance { a, b, line: l, .. } => {
-                point(a, f);
-                point(b, f);
-                line(l, f);
-            }
-            Residual::Radius { round: r, .. } => round(r, f),
-            Residual::EdgeGap { round: r, to, .. } => {
-                round(r, f);
-                match to {
-                    EdgeTo::Point(p) => point(p, f),
-                    EdgeTo::Line(l) => line(l, f),
-                    EdgeTo::Round(other) => round(other, f),
+    /// Runs [`Residual::eval`] to call `f` with every slot it reads but
+    /// through a spline, and to give the splines it reads, each with the
+    /// order of the derivative read (0, the place, to 2), each once. What
+    /// `eval` reads hangs on the residual's form alone, never on the
+    /// values, so a run on zeros reads what any does.
+    fn trace(&self, f: &mut dyn FnMut(Slot)) -> Vec<(&SplineAt, usize)> {
+        let (f, reads) = (RefCell::new(f), RefCell::new(Vec::new()));
+        self.eval(
+            |slot| {
+                (f.borrow_mut())(slot);
+                0.0
+            },
+            |at, order| {
+                let mut reads = reads.borrow_mut();
+                if !reads
+                    .iter()
+                    .any(|&(other, o): &(&SplineAt, usize)| o == order && other.same(at))
+                {
+                    reads.push((at, order));
                 }
-            }
-            Residual::PairOffset { pair: ref p, .. } => pair(p, f),
-            Residual::EqualOffset(ref a, ref b) => {
-                pair(a, f);
-                pair(b, f);
-            }
-            Residual::Nearest { point: p, .. } => point(p, f),
-            Residual::Angle { a, b, .. } => {
-                line(a, f);
-                line(b, f);
-            }
-            Residual::FixDirection {
-                point: p, center, ..
-            } => {
-                point(p, f);
-                point(center, f);
-            }
-            Residual::OnSpline { point: p, .. } => point(p, f),
-            Residual::Along { ref a, ref b, .. } | Residual::Curving { ref a, ref b, .. } => {
-                a.slots(f);
-                b.slots(f);
-            }
-        }
+                Vector { x: 0.0, y: 0.0 }
+            },
+        );
+        reads.into_inner()
     }
 
     /// The splines the equation reads, perhaps more than once.
     pub fn splines(&self) -> impl Iterator<Item = &Rc<SplineSlots>> {
-        self.reads().into_iter().map(|(at, _)| &at.spline)
+        self.trace(&mut |_| {})
+            .into_iter()
+            .map(|(at, _)| &at.spline)
     }
 
     /// If it holds a point on a spline at a variable parameter, or that
@@ -611,48 +505,12 @@ impl Residual {
         }
     }
 
-    /// The splines the equation reads, each with the order of the
-    /// derivative read (0, the place, to 2), each once. At most two
-    /// splines, four reads.
-    fn reads(&self) -> Vec<(&SplineAt, usize)> {
-        let mut reads = Vec::new();
-        fn pair(pair: &PairRead) -> Option<&SplineAt> {
-            match pair {
-                PairRead::Spline { at, .. } => Some(at),
-                PairRead::Slots(_) => None,
-            }
-        }
-        match self {
-            Residual::OnSpline { at, .. } => reads.push((at, 0)),
-            Residual::Nearest { at, .. } => reads.extend([(at, 0), (at, 1)]),
-            Residual::PairOffset { pair: a, .. } => {
-                reads.extend(pair(a).into_iter().flat_map(|at| [(at, 0), (at, 1)]));
-            }
-            Residual::EqualOffset(a, b) => {
-                let ats = pair(a).into_iter().chain(pair(b));
-                reads.extend(ats.flat_map(|at| [(at, 0), (at, 1)]));
-            }
-            Residual::Along { a, b, .. } => {
-                for at in [a, b].into_iter().filter_map(Heading::spline) {
-                    reads.push((at, 1));
-                }
-            }
-            Residual::Curving { a, b, .. } => {
-                for at in [a, b].into_iter().filter_map(Heading::spline) {
-                    reads.extend([(at, 1), (at, 2)]);
-                }
-            }
-            _ => {}
-        }
-        reads
-    }
-
     /// The residual, reading each slot through `value` and each spline's
     /// derivative of an order at where it's read through `spline`.
-    fn eval<R: Real>(
-        &self,
+    fn eval<'s, R: Real>(
+        &'s self,
         value: impl Fn(Slot) -> R,
-        spline: impl Fn(&SplineAt, usize) -> Vector<R>,
+        spline: impl Fn(&'s SplineAt, usize) -> Vector<R>,
     ) -> R {
         let point = |p: PointSlots| Vector {
             x: value(p[0]),
@@ -669,7 +527,7 @@ impl Residual {
             along.cross(p - point(l.start)) / along.length()
         };
         let mean_length = |a: Vector<R>, b: Vector<R>| (a.length() * b.length()).sqrt();
-        let offset = |p: &PairRead| match *p {
+        let offset = |p: &'s PairRead| match *p {
             PairRead::Slots(PairSlots::Lines { line, copy }) => {
                 distance(point(copy.start).midpoint(point(copy.end)), line)
             }
@@ -681,7 +539,7 @@ impl Residual {
             }
         };
         // A heading's way along, and how it curves.
-        let way = |h: &Heading| match h {
+        let way = |h: &'s Heading| match h {
             Heading::Line(line) => direction(*line),
             Heading::Round { round, at } => {
                 let from = point(*at) - point(round.center());
@@ -692,7 +550,7 @@ impl Residual {
             }
             Heading::Spline(at) => spline(at, 1),
         };
-        let curving = |h: &Heading| match h {
+        let curving = |h: &'s Heading| match h {
             Heading::Line(_) => R::constant(0.0),
             Heading::Round { round, .. } => R::constant(1.0) / radius(*round),
             Heading::Spline(at) => {
@@ -843,80 +701,72 @@ impl Residual {
     /// the spline's points, and its derivative a step higher to the
     /// parameter, where that's a variable.
     pub fn gradient(&self, x: &[f64], mut f: impl FnMut(usize, f64)) -> f64 {
-        let mut vars = [0; MAX_INPUTS];
-        let mut count = 0;
-        self.direct_slots(&mut |slot| {
-            if let Slot::Var(index) = slot
-                && !vars[..count].contains(&index)
-            {
-                // No equation reads more than `MAX_INPUTS`: see there.
-                vars[count] = index;
-                count += 1;
-            }
-        });
-        let (vars, first) = (&vars[..count], count);
         let value = |slot| read(x, slot);
-        // Each read with the spline's basis there, and what it reads.
-        let reads: Vec<(&SplineAt, usize, Basis, Vector<f64>)> = self
-            .reads()
-            .into_iter()
-            .map(|(at, order)| {
-                let basis = at.basis(&value);
-                (at, order, basis, at.spline.eval(&value, &basis, order))
-            })
-            .collect();
-        // What `eval` reads is what `direct_slots` and `reads` say, as
-        // the finite-difference tests show of every kind; were it not, a
-        // read would be taken as a constant, not added to another's
-        // derivative.
+        // Each input, a variable or a spline's derivative read (two), is
+        // given the dual numbers' next places as `eval` first reads it.
+        let next = Cell::new(0);
+        let place = |width: usize| {
+            let position = next.get();
+            // No equation reads more than `MAX_INPUTS`: see there.
+            debug_assert!(position + width <= MAX_INPUTS, "{self:?} reads too many");
+            next.set(position + width);
+            position
+        };
+        // Each variable read with its place.
+        let vars: RefCell<Vec<(usize, usize)>> = RefCell::new(Vec::new());
+        // Each spline read with its order, the spline's basis there and
+        // its place.
+        let reads: RefCell<Vec<(&SplineAt, usize, Basis, usize)>> = RefCell::new(Vec::new());
         let dual = self.eval(
             |slot| match slot {
-                Slot::Var(index) => match vars.iter().position(|&v| v == index) {
-                    Some(position) => Dual::variable(x[index], position),
-                    None => {
-                        debug_assert!(false, "{self:?} reads {index} unlisted");
-                        Dual::constant(x[index])
-                    }
-                },
+                Slot::Var(index) => {
+                    let mut vars = vars.borrow_mut();
+                    let position = match vars.iter().find(|&&(var, _)| var == index) {
+                        Some(&(_, position)) => position,
+                        None => {
+                            let position = place(1);
+                            vars.push((index, position));
+                            position
+                        }
+                    };
+                    Dual::variable(x[index], position)
+                }
                 Slot::Const(value) => Dual::constant(value),
             },
             |at, order| {
+                let mut reads = reads.borrow_mut();
                 let read = reads
                     .iter()
-                    .position(|&(other, o, ..)| o == order && other.same(at));
-                match read {
-                    Some(r) => {
-                        let (position, place) = (first + 2 * r, reads[r].3);
-                        Vector {
-                            x: Dual::variable(place.x, position),
-                            y: Dual::variable(place.y, position + 1),
-                        }
-                    }
+                    .find(|&&(other, o, ..)| o == order && other.same(at));
+                let (basis, position) = match read {
+                    Some(&(_, _, basis, position)) => (basis, position),
                     None => {
-                        debug_assert!(false, "{self:?} reads its spline unlisted");
-                        let place = at.spline.eval(&value, &at.basis(&value), order);
-                        Vector {
-                            x: Dual::constant(place.x),
-                            y: Dual::constant(place.y),
-                        }
+                        let (basis, position) = (at.basis(&value), place(2));
+                        reads.push((at, order, basis, position));
+                        (basis, position)
                     }
+                };
+                let place = at.spline.eval(&value, &basis, order);
+                Vector {
+                    x: Dual::variable(place.x, position),
+                    y: Dual::variable(place.y, position + 1),
                 }
             },
         );
+        let (vars, reads) = (vars.into_inner(), reads.into_inner());
         if reads.is_empty() {
-            for (&var, &derivative) in vars.iter().zip(&dual.gradient) {
-                f(var, derivative);
+            for &(var, position) in &vars {
+                f(var, dual.gradient[position]);
             }
             return dual.value;
         }
-        let mut gradient: Vec<(usize, f64)> = vars.iter().copied().zip(dual.gradient).collect();
+        let mut gradient: Vec<(usize, f64)> = vars
+            .iter()
+            .map(|&(var, position)| (var, dual.gradient[position]))
+            .collect();
         let mut weights = Vec::new();
-        for (r, (at, order, basis, _)) in reads.iter().enumerate() {
-            let (order, basis) = (*order, basis);
-            let [by_x, by_y] = [
-                dual.gradient[first + 2 * r],
-                dual.gradient[first + 2 * r + 1],
-            ];
+        for &(at, order, ref basis, position) in &reads {
+            let [by_x, by_y] = [dual.gradient[position], dual.gradient[position + 1]];
             // Each point's weight, summed over the control points.
             weights.clear();
             weights.resize(at.spline.inputs.len(), 0.0);

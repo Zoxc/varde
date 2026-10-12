@@ -285,11 +285,11 @@ fn every_equation_reads_few_enough_variables_once_each() {
                 vars.push(var);
             }
         });
+        vars.sort_unstable();
+        vars.dedup();
         assert!(vars.len() <= MAX_INPUTS, "{equation:?}");
         let mut seen = Vec::new();
         equation.gradient(&values(), |var, _| seen.push(var));
-        vars.sort_unstable();
-        vars.dedup();
         seen.sort_unstable();
         assert_eq!(seen, vars, "{equation:?}");
     }
@@ -485,12 +485,15 @@ fn every_spline_equation_s_gradient_matches_finite_differences() {
         assert_eq!(value, equation.value(&x), "{equation:?}");
         assert!(value.is_finite(), "{equation:?}");
         // What it's differentiated over as dual numbers fits in one.
-        let mut direct = 0;
-        equation.direct_slots(&mut |_| direct += 1);
-        assert!(
-            direct + 2 * equation.reads().len() <= MAX_INPUTS,
-            "{equation:?}"
-        );
+        let mut direct = Vec::new();
+        let reads = equation.trace(&mut |slot| {
+            if let Slot::Var(var) = slot
+                && !direct.contains(&var)
+            {
+                direct.push(var);
+            }
+        });
+        assert!(direct.len() + 2 * reads.len() <= MAX_INPUTS, "{equation:?}");
         // Each variable once.
         let count = seen.len();
         seen.sort_unstable();
