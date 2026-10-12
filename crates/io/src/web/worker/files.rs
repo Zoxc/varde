@@ -22,8 +22,7 @@ use crate::browser::folder::{self, Design};
 use crate::browser::{self, BrowserDesign, LastDownload};
 use crate::dir::{Dir, Make, remove_if_free};
 use crate::downloads;
-use crate::lock::READ_ONLY;
-use crate::open::{KEPT, NOT_FOUND, OpenFiles};
+use crate::open::{NOT_FOUND, OpenFiles};
 use crate::opfs::{lost_to_another_tab, new_name};
 use crate::store::{
     ATTEMPTS, Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
@@ -433,20 +432,10 @@ impl Files {
     fn auto_save(&mut self, file: FileId, document: &Snapshot) -> Result<(), String> {
         match &mut self.open.get_mut(file)?.place {
             Place::Browser(design) => {
-                // What a closed tab left that can't be read is kept as it
-                // is till the user discards it.
-                if design.lock().kept() {
-                    return Err(KEPT.to_owned());
-                }
                 let base = Some(design.tail());
-                let lock = design.lock();
-                let sidecar = lock.held().ok_or_else(|| READ_ONLY.to_owned())?;
-                sidecar
-                    .append(base, None, document)
-                    .map_err(|e| e.to_string())?;
-                // The UI only auto-saves once the offer is answered.
-                lock.answered();
-                Ok(())
+                design
+                    .lock()
+                    .auto_save(|sidecar| sidecar.append(base, None, document))
             }
             Place::Entry(unsaved) => {
                 // Based on the file as last read or written, like natively.
@@ -463,14 +452,7 @@ impl Files {
 
     fn discard_recovery(&mut self, file: FileId) -> Result<(), String> {
         match &mut self.open.get_mut(file)?.place {
-            Place::Browser(design) => {
-                let lock = design.lock();
-                if let Some(sidecar) = lock.held() {
-                    sidecar.clear().map_err(|e| e.to_string())?;
-                }
-                lock.answered();
-                Ok(())
-            }
+            Place::Browser(design) => design.lock().discard_recovery(),
             Place::Entry(Unsaved {
                 entry: Ok(entry), ..
             }) => entry.held.clear().map_err(|e| e.to_string()),

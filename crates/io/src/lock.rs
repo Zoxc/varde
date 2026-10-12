@@ -8,7 +8,8 @@ use std::io;
 
 use varde_document::{Document, Snapshot};
 
-use crate::autosave::{AutoSaved, Held};
+use crate::autosave::{AutoSaved, Ending, Held};
+use crate::open::KEPT;
 use crate::vrdp::{Error as FileError, Opened, Storage, Tail};
 use crate::{Access, Damage, Offer, ReadOnly, RecoveryError};
 
@@ -166,6 +167,44 @@ impl<H: AutoSaves> Lock<H> {
     pub(crate) fn answered(&mut self) {
         if let Lock::Sidecar { offered, kept, .. } = self {
             (*offered, *kept) = (false, false);
+        }
+    }
+
+    /// Auto-saves to the sidecar by `append`: refused while it keeps what
+    /// a crashed session left that can't be read, till the user discards
+    /// it, and when it isn't held. The UI only auto-saves once the offer
+    /// is answered, so one that's made answers it.
+    pub(crate) fn auto_save(
+        &mut self,
+        append: impl FnOnce(&mut H) -> Result<(), FileError>,
+    ) -> Result<(), String> {
+        if self.kept() {
+            return Err(KEPT.to_owned());
+        }
+        let sidecar = self.held().ok_or_else(|| READ_ONLY.to_owned())?;
+        append(sidecar).map_err(|e| e.to_string())?;
+        self.answered();
+        Ok(())
+    }
+
+    /// The user discarded what a crashed session left: empties the
+    /// sidecar, if it's held, and answers the offer.
+    pub(crate) fn discard_recovery(&mut self) -> Result<(), String> {
+        if let Some(sidecar) = self.held() {
+            sidecar.clear().map_err(|e| e.to_string())?;
+        }
+        self.answered();
+        Ok(())
+    }
+
+    /// How to let go of it as the design is saved as another file: what a
+    /// crashed session left that the user hasn't answered stays with the
+    /// design it's of, to be offered again.
+    pub(crate) fn ending_for_saved_as(&self) -> Ending {
+        if self.offered() {
+            Ending::Release
+        } else {
+            Ending::Close
         }
     }
 

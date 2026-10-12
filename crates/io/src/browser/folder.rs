@@ -477,11 +477,7 @@ pub(crate) async fn close<D: Dir>(
 /// what a closed tab left that the user hasn't answered stays with it, to
 /// be offered again.
 pub(crate) fn ending_for_saved_as<F: Storage>(design: &Design<F>) -> Ending {
-    if design.lock.offered() {
-        Ending::Release
-    } else {
-        Ending::Close
-    }
+    design.lock.ending_for_saved_as()
 }
 
 /// Deletes the design `name` and its sidecar, refused while it's open,

@@ -10,7 +10,7 @@ use super::sidecar::{self, LockFile};
 use super::{mcp_token, panicked, recent, settings, store};
 use crate::autosave::{Ending, to_open};
 use crate::lock::{self, READ_ONLY};
-use crate::open::{KEPT, NOT_FOUND, OpenFiles};
+use crate::open::{NOT_FOUND, OpenFiles};
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
 use crate::thumbnail::{self, Thumbnail, previews};
 use crate::vrdp::{self, Preview};
@@ -74,21 +74,6 @@ impl Kind {
         }
     }
 
-    /// The file auto-saves go to, if the document is editable.
-    fn held(&mut self) -> Option<&mut LockFile> {
-        match self {
-            Kind::New(entry) => Some(entry),
-            Kind::Design(design) => design.lock.held(),
-        }
-    }
-
-    /// The user answered the offer of what a crashed session left.
-    fn answered(&mut self) {
-        if let Kind::Design(design) = self {
-            design.lock.answered();
-        }
-    }
-
     /// Lets go of its lock as `ending` says, as the document closes.
     fn end(self, ending: Ending) -> std::io::Result<()> {
         match self {
@@ -102,12 +87,11 @@ impl Kind {
     /// a crashed session left and the user hasn't answered stays with the
     /// design it's of, to be offered again.
     fn saved_elsewhere(self) {
-        let offered = matches!(&self, Kind::Design(design) if design.lock.offered());
-        let _ = self.end(if offered {
-            Ending::Release
-        } else {
-            Ending::Close
-        });
+        let ending = match &self {
+            Kind::New(_) => Ending::Close,
+            Kind::Design(design) => design.lock.ending_for_saved_as(),
+        };
+        let _ = self.end(ending);
     }
 }
 
@@ -498,32 +482,26 @@ impl Files {
 
     /// Auto-saves `document` to `file`'s sidecar or store entry.
     fn auto_save(&mut self, file: FileId, document: &Snapshot) -> Result<(), String> {
-        let open = self.open.get_mut(file)?;
-        // Based on the design as this lane last read or wrote it: whatever
-        // changes it after, a save of ours included, makes it another.
-        let base = match open {
-            Kind::New(_) => None,
-            Kind::Design(design) => Some(design.file.tail()),
-        };
-        // What a crashed session left that can't be read is kept as it
-        // is till the user discards it.
-        if matches!(open, Kind::Design(design) if design.lock.kept()) {
-            return Err(KEPT.to_owned());
+        match self.open.get_mut(file)? {
+            // A new design is based on no save.
+            Kind::New(entry) => entry.append(None, document).map_err(|e| e.to_string()),
+            Kind::Design(design) => {
+                // Based on the design as this lane last read or wrote it:
+                // whatever changes it after, a save of ours included, makes
+                // it another.
+                let base = Some(design.file.tail());
+                design
+                    .lock
+                    .auto_save(|sidecar| sidecar.append(base, document))
+            }
         }
-        let sidecar = open.held().ok_or_else(|| READ_ONLY.to_owned())?;
-        sidecar.append(base, document).map_err(|e| e.to_string())?;
-        // The UI only auto-saves once the offer is answered.
-        open.answered();
-        Ok(())
     }
 
     fn discard_recovery(&mut self, file: FileId) -> Result<(), String> {
-        let open = self.open.get_mut(file)?;
-        if let Some(sidecar) = open.held() {
-            sidecar.clear().map_err(|e| e.to_string())?;
+        match self.open.get_mut(file)? {
+            Kind::New(entry) => entry.clear().map_err(|e| e.to_string()),
+            Kind::Design(design) => design.lock.discard_recovery(),
         }
-        open.answered();
-        Ok(())
     }
 
     fn save_as(
