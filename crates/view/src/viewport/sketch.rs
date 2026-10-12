@@ -467,7 +467,7 @@ impl<'a> Sketching<'a> {
     /// Every origin plane makes one; one that didn't would leave them on
     /// XY.
     pub(crate) fn grid(&self) -> GridPlane {
-        sketch_grid(&self.placement())
+        super::regions::sketch_grid(&self.placement())
     }
 
     /// Takes `event`, with the `cursor` over the viewport's `bounds` seen
@@ -2232,14 +2232,3 @@ fn capture(message: Option<Message>) -> Action<Message> {
 
 #[cfg(test)]
 mod tests;
-
-/// The plane the grid is drawn on in a sketch at `placement`: the world's
-/// XY plane if it isn't one the grid can take.
-pub fn sketch_grid(placement: &Placement) -> GridPlane {
-    GridPlane::new(
-        placement.origin.as_vec3(),
-        placement.x.as_vec3(),
-        placement.y.as_vec3(),
-    )
-    .unwrap_or(GridPlane::XY)
-}

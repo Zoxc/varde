@@ -237,3 +237,9 @@ pub(crate) fn grid_plane(placement: Placement) -> Option<GridPlane> {
         placement.y.as_vec3(),
     )
 }
+
+/// The plane the grid is drawn on in a sketch at `placement`: the world's
+/// XY plane if it isn't one the grid can take.
+pub fn sketch_grid(placement: &Placement) -> GridPlane {
+    grid_plane(*placement).unwrap_or(GridPlane::XY)
+}

@@ -48,9 +48,9 @@ use crate::{
 pub(crate) use extrude::Extruding;
 pub(crate) use measure::Measuring;
 pub(crate) use motion::Moving;
+pub use regions::sketch_grid;
 pub(crate) use revolve::Revolving;
 pub(crate) use sketch::Sketching;
-pub use sketch::sketch_grid;
 
 /// The operation being set up in the viewport, if one is: never with a
 /// sketch.
