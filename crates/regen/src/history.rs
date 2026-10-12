@@ -256,9 +256,7 @@ impl Evaluation {
     /// its faces is placed on the holder's solid, where the face lives
     /// on.
     pub fn holder(&self, body: BodyId) -> Option<BodyId> {
-        let body = (self.merged.iter())
-            .find(|(consumed, _)| *consumed == body)
-            .map_or(body, |&(_, into)| into);
+        let body = merged_into(&self.merged, body).unwrap_or(body);
         self.bodies
             .iter()
             .any(|made| made.body == body)
@@ -331,6 +329,15 @@ impl Evaluation {
             *made = change;
         }
     }
+}
+
+/// The body `body` was merged into by `merged`, a list as
+/// [`Evaluation::merged`] keeps it (each consumed body with its holder),
+/// if it was.
+pub fn merged_into(merged: &[(BodyId, BodyId)], body: BodyId) -> Option<BodyId> {
+    (merged.iter())
+        .find(|(consumed, _)| *consumed == body)
+        .map(|&(_, holder)| holder)
 }
 
 /// Notes in `merged`, a list like [`Evaluation::merged`], that a join

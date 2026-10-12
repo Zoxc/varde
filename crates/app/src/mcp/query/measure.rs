@@ -37,9 +37,7 @@ pub(crate) fn measure(doc: &Doc, args: &Args) -> Result<(Inspect, Held), ToolRep
         .map_or(&[][..], |marks| marks.merged);
     let held = |pick: Option<&InspectPick>| {
         let pick = pick.filter(|pick| pick.entity == Entity::Body)?;
-        (merged.iter())
-            .find(|(consumed, _)| *consumed == pick.body)
-            .map(|&(_, holder)| holder)
+        varde_regen::merged_into(merged, pick.body)
     };
     let held = [held(Some(&inspect.first)), held(inspect.second.as_ref())];
     Ok((inspect, held))

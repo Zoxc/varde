@@ -1141,9 +1141,7 @@ impl MeshFeed {
     /// join merged it into another ([`MeshFeed::merged_bodies`]), else
     /// itself.
     pub(crate) fn shown_body(&self, body: BodyId) -> BodyId {
-        (self.merged_bodies().iter())
-            .find(|(merged, _)| *merged == body)
-            .map_or(body, |&(_, holder)| holder)
+        varde_regen::merged_into(self.merged_bodies(), body).unwrap_or(body)
     }
 
     /// The bodies the joins and combines of `document` before `until`
@@ -1284,9 +1282,7 @@ impl Merges {
 
     /// The body `body` was merged into, if it was.
     pub(crate) fn holder(&self, body: BodyId) -> Option<BodyId> {
-        (self.0.iter())
-            .find(|(consumed, _)| *consumed == body)
-            .map(|&(_, holder)| holder)
+        varde_regen::merged_into(&self.0, body)
     }
 
     /// The bodies merged into `holder`.

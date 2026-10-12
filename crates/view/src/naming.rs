@@ -527,9 +527,7 @@ impl Naming {
 /// [`varde_regen::Evaluation::merged`]: the one it was merged into, or
 /// itself.
 fn holder(merged: &[(BodyId, BodyId)], body: BodyId) -> BodyId {
-    (merged.iter())
-        .find(|(consumed, _)| *consumed == body)
-        .map_or(body, |&(_, holder)| holder)
+    varde_regen::merged_into(merged, body).unwrap_or(body)
 }
 
 #[cfg(test)]

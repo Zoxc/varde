@@ -954,8 +954,8 @@ pub(crate) fn consumed_note(
     merged: &[(BodyId, BodyId)],
     body: BodyId,
 ) -> Option<String> {
-    let (_, holder) = merged.iter().find(|(consumed, _)| *consumed == body)?;
-    Some(format!("in {}", document.body(*holder)?.name))
+    let holder = varde_regen::merged_into(merged, body)?;
+    Some(format!("in {}", document.body(holder)?.name))
 }
 
 /// An object in the Objects list.

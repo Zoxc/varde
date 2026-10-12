@@ -94,7 +94,7 @@ pub use cache::Cache;
 pub use edge_facts::{Convexity, EdgeFacts};
 pub use error_geometry::{ErrorGeometry, FeatureFailure, GeometryError, GeometryParts};
 pub use history::scale::{AXIS_SINE, along_axis};
-pub use history::{BodySolid, Evaluation, evaluate, note_merge};
+pub use history::{BodySolid, Evaluation, evaluate, merged_into, note_merge};
 pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
 };
