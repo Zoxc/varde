@@ -128,11 +128,7 @@ impl Run<'_> {
         cache: &mut Cache,
     ) -> Result<(Arc<Solid>, Key), Failed> {
         let placement = self.placement()?;
-        let frame = Frame {
-            origin: placement.origin,
-            x: placement.x,
-            y: placement.y,
-        };
+        let frame = super::frame(&placement);
         let path = match &sweep.path {
             PathRef::Chain(parts) => self.chain_path(parts, &placement, evaluation, cache)?,
             PathRef::Helix(helix) => self.helix_path(helix, evaluation, cache)?,

@@ -382,6 +382,33 @@ struct SketchOutput<'a> {
     key: Key,
 }
 
+impl SketchOutput<'_> {
+    /// The kernel profile of `regions` of the sketch, merged, in its
+    /// coordinates, fitted to `fit`; or why there's none, in words.
+    fn profile(&self, regions: &[RegionRef], fit: f64) -> Result<Profile, String> {
+        let profiles = match &*self.profiles {
+            Ok(profiles) => profiles,
+            Err(e) => return Err(format!("its sketch is {e}")),
+        };
+        let found = profiles
+            .resolve(regions)
+            .into_iter()
+            .collect::<Option<Vec<usize>>>()
+            .ok_or("region not found")?;
+        let loops = profiles.merge(&found).map_err(|e| e.to_string())?;
+        profile(self.sketch, profiles, &loops, fit).map_err(|e| e.to_string())
+    }
+}
+
+/// The kernel's frame of a sketch's `placement`.
+fn frame(placement: &Placement) -> Frame {
+    Frame {
+        origin: placement.origin,
+        x: placement.x,
+        y: placement.y,
+    }
+}
+
 /// The margin a through-all span gets past the bodies' extent at each
 /// end: this share of the extent, and [`THROUGH_ALL_MARGIN_MM`].
 const THROUGH_ALL_MARGIN: f64 = 0.01;
@@ -1010,11 +1037,7 @@ impl Run<'_> {
         cache: &mut Cache,
     ) -> Result<(Arc<Solid>, Key), Failed> {
         let placement = self.placement()?;
-        let frame = Frame {
-            origin: placement.origin,
-            x: placement.x,
-            y: placement.y,
-        };
+        let frame = frame(&placement);
         let (from, to) = match extrude.span() {
             Some(span) => span,
             None => through_all(&frame, evaluation.bodies.iter().map(|made| &*made.solid))
@@ -1169,18 +1192,8 @@ impl Run<'_> {
     /// The kernel profile of the regions, merged, in the sketch's
     /// coordinates.
     fn profile(&self) -> Result<Profile, String> {
-        let profiles = match &*self.sketch.profiles {
-            Ok(profiles) => profiles,
-            Err(e) => return Err(format!("its sketch is {e}")),
-        };
-        let regions = profiles
-            .resolve(self.shape.regions())
-            .into_iter()
-            .collect::<Option<Vec<usize>>>()
-            .ok_or("region not found")?;
-        let loops = profiles.merge(&regions).map_err(|e| e.to_string())?;
-        profile(self.sketch.sketch, profiles, &loops, self.tolerance.fit())
-            .map_err(|e| e.to_string())
+        self.sketch
+            .profile(self.shape.regions(), self.tolerance.fit())
     }
 
     /// Why the kernel couldn't make the tool, in words, and its

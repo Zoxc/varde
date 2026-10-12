@@ -33,14 +33,14 @@ use std::sync::Arc;
 use varde_document::{BodyId, Document, FaceRef, FeatureId, PlaneRef, Side, Split, SplitTool};
 use varde_kernel::mesh::Form;
 use varde_kernel::patch::Bounds3;
-use varde_kernel::{Budget, Failure, Frame, Solid, Tolerance, ToolError};
+use varde_kernel::{Budget, Failure, Solid, Tolerance, ToolError};
 
 use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solids, through_all};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
 use crate::message::{self, Making};
 use crate::picking::region_form;
-use crate::profile::{chain, profile};
+use crate::profile::chain;
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod stand_in;
@@ -211,11 +211,7 @@ impl Building<'_> {
                 let placement = sketch
                     .placement
                     .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())?;
-                let frame = Frame {
-                    origin: placement.origin,
-                    x: placement.x,
-                    y: placement.y,
-                };
+                let frame = super::frame(&placement);
                 let (from, to) = through_all(&frame, [self.body])
                     .ok_or_else(|| message::split_one_side(self.body_name))?;
                 let key = self
@@ -227,19 +223,7 @@ impl Building<'_> {
                     .placement(&placement)
                     .finish();
                 let solid = cache.solid(key, || {
-                    let profiles = match &*sketch.profiles {
-                        Ok(profiles) => profiles,
-                        Err(e) => return Err(format!("its sketch is {e}").into()),
-                    };
-                    let found = profiles
-                        .resolve(regions)
-                        .into_iter()
-                        .collect::<Option<Vec<usize>>>()
-                        .ok_or("region not found")?;
-                    let loops = profiles.merge(&found).map_err(|e| e.to_string())?;
-                    let fit = self.tolerance.fit();
-                    let profile =
-                        profile(sketch.sketch, profiles, &loops, fit).map_err(|e| e.to_string())?;
+                    let profile = sketch.profile(regions, self.tolerance.fit())?;
                     varde_kernel::extrude(
                         &profile,
                         &frame,
@@ -263,11 +247,7 @@ impl Building<'_> {
                 let placement = sketch
                     .placement
                     .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())?;
-                let frame = Frame {
-                    origin: placement.origin,
-                    x: placement.x,
-                    y: placement.y,
-                };
+                let frame = super::frame(&placement);
                 let key = self
                     .keyer("split chain")
                     .value(curves)

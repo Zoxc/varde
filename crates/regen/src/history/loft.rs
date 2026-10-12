@@ -55,7 +55,7 @@ use std::sync::Arc;
 use varde_document::{Loft, LoftMode, Placement, Section};
 use varde_kernel::loft::{self as kernel_loft, LoftError, Rail};
 use varde_kernel::patch::Conic3;
-use varde_kernel::{Budget, Frame, Solid, Tolerance};
+use varde_kernel::{Budget, Solid, Tolerance};
 
 use super::{Failed, Run, SketchOutput};
 use crate::cache::{Cache, Key, Keyer};
@@ -245,11 +245,7 @@ impl Run<'_> {
                 };
                 Ok(kernel_loft::Section::Loop {
                     outline,
-                    frame: Frame {
-                        origin: placement.origin,
-                        x: placement.x,
-                        y: placement.y,
-                    },
+                    frame: super::frame(&placement),
                     start,
                 })
             }
