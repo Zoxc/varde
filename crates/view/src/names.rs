@@ -22,31 +22,28 @@ use crate::status::STATUS_BAR_ROOM;
 use crate::theme;
 use crate::{SketchItem, SketchLines};
 
-/// The overlay over a viewport showing `index`'s model from `camera`,
-/// naming everything of `bodies` and the faces, edges and corners
-/// `targets`, laid out outside `around`; and of the finished sketches
-/// `sketches` shown, the curves and points `items` and every one of the
-/// sketches `whole`.
-#[expect(clippy::too_many_arguments)]
+/// The overlay over a viewport showing `picking`'s model from `camera`,
+/// naming everything of the bodies `selection` has whole and the faces,
+/// edges and corners it has, laid out outside the bodies it has anything
+/// of; and of the finished sketches `picking` shows, the curves and
+/// points `selection` has and every one of the sketches picked whole.
 pub(crate) fn overlay<'a>(
-    index: &'a PickIndex,
-    bodies: Vec<BodyId>,
-    targets: Vec<Picked>,
-    around: Vec<BodyId>,
-    sketches: Vec<SketchLines<'a>>,
-    items: Vec<SketchItem>,
-    whole: Vec<FeatureId>,
+    picking: &crate::ModelPicking<'a>,
+    selection: &crate::Selection,
     camera: Camera,
     document: &'a Document,
 ) -> Element<'a, Message> {
     Canvas::new(Names {
-        index,
-        bodies,
-        targets,
-        around,
-        sketches,
-        items,
-        whole,
+        index: picking.index,
+        bodies: selection.bodies().collect(),
+        targets: selection.targets().collect(),
+        around: selection.items().filter_map(|item| item.body()).collect(),
+        sketches: (picking.sketches.iter())
+            .chain(&picking.whole)
+            .cloned()
+            .collect(),
+        items: selection.sketch_items().collect(),
+        whole: picking.whole.iter().map(|lines| lines.feature).collect(),
         camera,
         document,
     })

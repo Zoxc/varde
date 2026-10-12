@@ -1023,18 +1023,8 @@ fn viewport_stack<'a>(
             .then_some(state.picking.as_ref())
             .flatten()
             .map(|picking| crate::names::overlay(
-                picking.index,
-                state.model_selection.bodies().collect(),
-                state.model_selection.targets().collect(),
-                (state.model_selection.items())
-                    .filter_map(|item| item.body())
-                    .collect(),
-                (picking.sketches.iter())
-                    .chain(&picking.whole)
-                    .cloned()
-                    .collect(),
-                state.model_selection.sketch_items().collect(),
-                picking.whole.iter().map(|lines| lines.feature).collect(),
+                picking,
+                state.model_selection,
                 *state.camera,
                 state.editor.document(),
             )),
