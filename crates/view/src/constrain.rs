@@ -396,8 +396,11 @@ impl ConstraintSet {
         self.0 & Self::bit(kind) != 0
     }
 
+    /// The kind's bit, by its place in the enum, so every kind has one
+    /// (Offset too, though it's not among [`ConstraintKind::ALL`]).
     fn bit(kind: ConstraintKind) -> u16 {
-        1 << position(&ConstraintKind::ALL, kind)
+        const { assert!((ConstraintKind::Offset as u32) < u16::BITS) };
+        1 << kind as u16
     }
 }
 
