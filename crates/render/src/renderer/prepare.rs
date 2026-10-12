@@ -365,13 +365,13 @@ pub struct Slot {
     /// How the mesh's parts are drawn, by [`Frame::opacity`].
     pub(super) draws: PartDraws,
     /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
-    /// and not [`Frame::faded`].
+    /// and not [`Self::faded`].
     pub(super) hidden_edges: bool,
-    /// What's drawn of [`Frame::origin`]: while [`Frame::faded`], in a
+    /// What's drawn of [`Frame::origin`]: while [`Self::faded`], in a
     /// sketch, only the grid's axis lines and the marker, the sketch's.
     pub(super) origin: OriginShown,
     /// The faces hovered and selected, the hovered first: none while
-    /// [`Frame::faded`].
+    /// [`Self::faded`].
     pub(super) faces: Vec<FaceDraw>,
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
     pub(super) highlights: HighlightBuffers,

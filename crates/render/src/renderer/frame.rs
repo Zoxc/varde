@@ -299,7 +299,7 @@ pub struct Frame<'a> {
     /// part with no entry, out of range or NaN is opaque, and so is one
     /// within half an 8 bit step of 1; one of exactly 0 isn't drawn at all
     /// (a preview of some parts, see [`crate::frame`]). Ignored
-    /// while [`Self::faded`].
+    /// while faded ([`Self::fade`] at 1).
     /// Changing it re-uploads nothing.
     pub opacity: &'a [f32],
     /// The colour each of the mesh's parts is drawn in, in the same order:
@@ -337,13 +337,13 @@ pub struct Frame<'a> {
     pub shading: Shading,
     /// Whether the feature edges the model hides are drawn too, dashed
     /// ([`HIDDEN_DASH`]), [`HIDDEN_EDGE_WIDTH`] wide, at
-    /// [`Colors::hidden_edge_alpha`]. Never while [`Self::faded`].
+    /// [`Colors::hidden_edge_alpha`]. Never while faded ([`Self::fade`] at 1).
     pub hidden_edges: bool,
     /// The faces hovered, by their ids in the mesh (their runs of
     /// [`RenderMesh::face_ends`]): the one the cursor is over, or all of
     /// what it would select (a body's). Each is drawn again over itself
     /// towards [`Colors::hover_face`], as opaque as its part (opaque
-    /// over the faded model, [`Self::faded`]); and where the model hides
+    /// over the model at [`Self::fade`] 1); and where the model hides
     /// it, over everything, washed and striped, unless
     /// [`Self::hover_through`]. Not a face the mesh hasn't.
     pub hovered_faces: &'a [u32],
@@ -358,13 +358,13 @@ pub struct Frame<'a> {
     /// The edges and vertices hovered and selected, drawn over the model.
     /// Only re-uploaded when it's another `Arc` than the last one
     /// prepared, or the mesh is. Drawn over the faded model too
-    /// ([`Self::faded`]): what a sketch's tool picks of it.
+    /// (faded, [`Self::fade`] at 1): what a sketch's tool picks of it.
     pub highlights: &'a Arc<Highlights>,
     /// Whether the hovered faces, outlined edges and hovered vertices are
     /// drawn again over everything, what hides them included: a face at
     /// [`HOVER_THROUGH_ALPHA`] of its hover, the edges and vertices as
     /// they are. For an item hovered in a list of what overlaps, often
-    /// hidden. Not while [`Self::faded`].
+    /// hidden. Not while faded ([`Self::fade`] at 1).
     pub hover_through: bool,
     /// The sketch being edited, or the extrude being set up, if one is:
     /// drawn over everything else, or hidden by the model in front of it
@@ -385,7 +385,7 @@ pub struct Frame<'a> {
     /// Which of the world's origin, axes and planes are drawn. The X and
     /// Y axes are the grid's axis lines while it's the world's XY plane;
     /// on another plane the grid's are drawn whatever this says. Ignored
-    /// while [`Self::faded`], in a sketch, whose grid's axis lines and
+    /// while faded ([`Self::fade`] at 1), in a sketch, whose grid's axis lines and
     /// origin marker are drawn, and nothing else of it.
     pub origin: OriginShown,
     /// Where to draw on the target.

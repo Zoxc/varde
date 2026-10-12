@@ -21,7 +21,7 @@ impl Srgb {
     /// This colour with `tint`'s hue and saturation, keeping its HSL
     /// lightness: how a body's own colour is drawn on the theme's model
     /// colour, lit as it is. The saturation sets the chroma
-    /// ([`TINT_CHROMA`] at 1) rather than HSL's share of what the
+    /// (`TINT_CHROMA` at 1) rather than HSL's share of what the
     /// lightness allows, so a colour is as vivid on a pale model as on a
     /// dark one, up to what the lightness allows. A hue not finite is 0, a
     /// saturation out of range clamped to it (NaN is grey).
@@ -102,7 +102,7 @@ pub struct Colors {
     pub pivot: Srgb,
     /// Finished sketches' curves.
     pub sketch: Srgb,
-    /// How opaque the model's faces and edges are when [`Frame::faded`],
+    /// How opaque the model's faces and edges are when faded ([`Frame::fade`] at 1),
     /// from 0 to 1. Only its nearest faces are drawn, and they still hide
     /// what's behind them from the grid and the sketches.
     pub faded_alpha: f32,
