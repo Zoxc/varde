@@ -355,15 +355,12 @@ impl Arguments<'_> {
                 op_words()
             )));
         };
-        let mut all: Vec<&str> = vec!["op"];
-        all.extend_from_slice(spec.keys);
-        if spec.labelled {
-            all.push("label");
-        }
-        if spec.construction {
-            all.push("construction");
-        }
-        self.only(&all)?;
+        self.only_where(|key| {
+            key == "op"
+                || spec.keys.contains(&key)
+                || (spec.labelled && key == "label")
+                || (spec.construction && key == "construction")
+        })?;
         let label = match self.map.get("label") {
             None | Some(Value::Null) => None,
             Some(Value::String(label)) => Some(self.label(label)?),

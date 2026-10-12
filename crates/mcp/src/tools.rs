@@ -2097,7 +2097,12 @@ impl<'a> Arguments<'a> {
 
     /// Refuses keys not in `known`, so a misspelt filter isn't ignored.
     fn only(&self, known: &[&str]) -> Result<(), CallError> {
-        match self.map.keys().find(|k| !known.contains(&k.as_str())) {
+        self.only_where(|key| known.contains(&key))
+    }
+
+    /// Refuses keys that aren't `known`.
+    fn only_where(&self, known: impl Fn(&str) -> bool) -> Result<(), CallError> {
+        match self.map.keys().find(|k| !known(k)) {
             None => Ok(()),
             Some(key) => Err(self.error(format_args!("no argument named {:?}", shown(key)))),
         }
@@ -2106,11 +2111,7 @@ impl<'a> Arguments<'a> {
     /// Refuses keys not in `fields`, a creating tool's, nor its `name`
     /// and the names of its new `bodies`.
     fn only_making(&self, fields: &[&str], bodies: NewBodies) -> Result<(), CallError> {
-        let known = |key: &str| fields.contains(&key) || key == "name" || bodies.key() == Some(key);
-        match self.map.keys().find(|k| !known(k)) {
-            None => Ok(()),
-            Some(key) => Err(self.error(format_args!("no argument named {:?}", shown(key)))),
-        }
+        self.only_where(|key| fields.contains(&key) || key == "name" || bodies.key() == Some(key))
     }
 
     /// A creating tool's `name` and the names of its new `bodies`.
