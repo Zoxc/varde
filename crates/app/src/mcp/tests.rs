@@ -5139,3 +5139,22 @@ fn the_mirrored_fractions_match_their_sources() {
         f64::from(varde_document::Tint::MAX_SATURATION) / 100.0
     );
 }
+
+/// The answers that name [`waiting::BOUND`] or [`waiting::QUEUED_EDITS`]
+/// say the number they are.
+#[test]
+fn waiting_texts_name_their_bounds() {
+    let bound = format!("{} s", waiting::BOUND.as_secs());
+    for text in [
+        waiting::TOOK_TOO_LONG,
+        waiting::NOT_APPLIED_BUSY,
+        waiting::NOT_APPLIED_LATE,
+        waiting::NOT_APPLIED_MODEL,
+        waiting::NOT_APPLIED_SOLVER,
+        waiting::NOT_DRAWN,
+    ] {
+        assert!(text.contains(&bound), "{text:?} doesn't say {bound}");
+    }
+    let queued = format!("{} edits", waiting::QUEUED_EDITS);
+    assert!(waiting::TOO_MANY_QUEUED.starts_with(&queued));
+}

@@ -1440,11 +1440,9 @@ impl Doc {
                 call,
                 waits,
             }),
-            None => self.mcp.answer(
-                from,
-                call,
-                ToolReply::error("the model is being rebuilt: ask again shortly"),
-            ),
+            None => self
+                .mcp
+                .answer(from, call, ToolReply::error(query::REBUILDING)),
         }
     }
 
