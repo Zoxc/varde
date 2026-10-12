@@ -622,7 +622,7 @@ picked body's row does. The operation's own check refusing it shows in
 the failure box as the kernel's failure does ("Extrude fails"), with no
 Add anyway: the document would refuse it. A
 field picked into by clicks in the viewport (`pick_field`) holds what's
-picked as rows like the Timeline's (`picked_row`: a 16 px icon, the
+picked as rows like the Timeline's (`ListRow`: a 16 px icon, the
 name, a measure at the right, a heavy faint cross, `Icon::Remove`, with
 a grey tile on hover) over "+ Click …" under a rule (its plus in the
 rows' icon column, so its words start where their names do), the place

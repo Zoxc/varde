@@ -187,7 +187,7 @@ an extrude's.
 `RegionPick` (the source sketch, the candidates' profiles found within
 `refresh_work()`, the regions picked and their references, found again
 when the sketch changes, the edited feature's missing ones kept: listed
-after those picked as "Missing region" rows (`failed_row`, the name in
+after those picked as "Missing region" rows (`RowTone::Failed`, the name in
 the strong danger colour, as a failed feature's in the Timeline), each
 with a cross
 (`RegionPick::drop_missing`), and named by the feature until taken out,

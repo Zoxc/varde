@@ -11,8 +11,8 @@ use varde_document::{BodyId, BodyOp};
 
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, PanelHover, Parts, field, footer_message, message_text, operation_panel,
-    pick_field, picked_row, tile, tiles, toggle,
+    Footer, Framing, ListRow, PanelHover, Parts, field, footer_message, message_text,
+    operation_panel, pick_field, tile, tiles, toggle,
 };
 use crate::theme;
 use crate::{Edit, Look, Message};
@@ -102,15 +102,10 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
         let message = send(CombineLook::Picking(pick));
         let rows: Vec<_> = (picked.iter())
             .map(|body| {
-                picked_row(
-                    Icon::Body,
-                    body.name,
-                    None,
-                    drop(body.body),
-                    message.clone(),
-                    PanelHover::Body(body.body),
-                    state.hover,
-                )
+                ListRow::new(Icon::Body, body.name, PanelHover::Body(body.body))
+                    .remove(drop(body.body))
+                    .press(message.clone())
+                    .view(state.hover)
             })
             .collect();
         let place = (rows.is_empty() || (list && on)).then(|| place.to_owned());

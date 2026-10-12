@@ -15,7 +15,7 @@ use super::{MotionField, MotionLook, MotionPick, MotionState};
 use varde_document::Axis3;
 
 use crate::icons::Icon;
-use crate::operation_panel::{PanelHover, field, pick_field, picked_row, tile, tiles, toggle};
+use crate::operation_panel::{ListRow, PanelHover, field, pick_field, tile, tiles, toggle};
 use crate::pick::{Pick, PickIndex};
 use crate::{Look, Message};
 
@@ -101,15 +101,10 @@ pub(super) fn body<'a>(
         let press = send(MotionLook::Picking(pick));
         // No cross: picking another replaces it, as a move's axis.
         let row = name.map(|name| {
-            picked_row(
-                icon,
-                name,
-                meta,
-                None,
-                press.clone(),
-                PanelHover::Axis,
-                state.hover,
-            )
+            ListRow::new(icon, name, PanelHover::Axis)
+                .meta(meta)
+                .press(press.clone())
+                .view(state.hover)
         });
         let place = (row.is_none() || on).then(|| place.to_owned());
         pick_field(row.into_iter().collect(), place, on, press)

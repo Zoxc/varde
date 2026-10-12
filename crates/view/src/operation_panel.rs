@@ -253,15 +253,14 @@ pub(crate) fn region_rows<'a>(
         (source.into_iter()).flat_map(|sketch| picked.iter().map(move |&region| (sketch, region)));
     picked
         .map(|(sketch, region)| {
-            picked_row(
+            ListRow::new(
                 Icon::SeRegion,
                 region_name(region),
-                None,
-                pick(sketch, region),
-                press.clone(),
                 PanelHover::Region { sketch, region },
-                hovered,
             )
+            .remove(pick(sketch, region))
+            .press(press.clone())
+            .view(hovered)
         })
         .chain(missing_rows(missing, drop_missing, press.clone(), hovered))
         .collect()
@@ -954,7 +953,7 @@ pub(crate) fn toggle<'a>(
 }
 
 /// A field picked into by clicks in the viewport: what's picked as
-/// `rows` ([`picked_row`]), then where to click for more, `place`, if
+/// `rows` ([`ListRow`]), then where to click for more, `place`, if
 /// there is one, under a rule (or alone, the field's one row). Outlined
 /// in the accent while it's the one picking (`on`); a click on it makes
 /// it so, sending `message`.
@@ -1017,22 +1016,149 @@ pub(crate) fn pick_field<'a>(
     }
 }
 
-/// A row of what's picked in a [`pick_field`], as the Timeline's: `icon`,
-/// `name`, `meta` at the right, and a cross taking it out sending
-/// `remove`, if it can be. A click on the row sends `press`. It's
-/// `what` to the viewport, which lights it up while the row is hovered,
-/// and shows hovered while `hovered` is it.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn picked_row<'a>(
+/// A row of what's picked in a [`pick_field`], as the Timeline's: an
+/// icon, a name, a `meta` at the right, and a cross taking it out sending
+/// `remove`, if it can be. A click on the row sends `press`. It's `what`
+/// to the viewport, which lights it up while the row is hovered. Built
+/// by [`ListRow::new`] and its setters, shown by [`ListRow::view`].
+pub(crate) struct ListRow<'a> {
     icon: Icon,
-    name: impl text::IntoFragment<'a>,
+    name: text::Fragment<'a>,
     meta: Option<String>,
+    moves: Option<[Option<Message>; 2]>,
     remove: Option<Message>,
     press: Option<Message>,
     what: PanelHover,
-    hovered: Option<PanelHover>,
-) -> Element<'a, Message> {
-    ordered_row(icon, name, meta, None, remove, press, what, hovered)
+    tone: RowTone,
+}
+
+impl<'a> ListRow<'a> {
+    /// A plain row named `name`, `what` to the viewport, with nothing
+    /// beside it and sending nothing.
+    pub(crate) fn new(icon: Icon, name: impl text::IntoFragment<'a>, what: PanelHover) -> Self {
+        Self {
+            icon,
+            name: name.into_fragment(),
+            meta: None,
+            moves: None,
+            remove: None,
+            press: None,
+            what,
+            tone: RowTone::Plain,
+        }
+    }
+
+    /// With `meta` at the right, faint.
+    pub(crate) fn meta(self, meta: Option<String>) -> Self {
+        Self { meta, ..self }
+    }
+
+    /// With a cross sending `remove`, if there's one.
+    pub(crate) fn remove(self, remove: Option<Message>) -> Self {
+        Self { remove, ..self }
+    }
+
+    /// Sending `press` when clicked.
+    pub(crate) fn press(self, press: Option<Message>) -> Self {
+        Self { press, ..self }
+    }
+
+    /// For a list whose order counts, a loft's sections: an up and a
+    /// down chevron before its cross, each sending its message, or shown
+    /// faint without one (the first row's up, the last's down).
+    pub(crate) fn moves(self, moves: [Option<Message>; 2]) -> Self {
+        Self {
+            moves: Some(moves),
+            ..self
+        }
+    }
+
+    /// Its name in the colour `tone` says.
+    pub(crate) fn tone(self, tone: RowTone) -> Self {
+        Self { tone, ..self }
+    }
+
+    /// The row, shown hovered while `hovered` is its `what`.
+    pub(crate) fn view(self, hovered: Option<PanelHover>) -> Element<'a, Message> {
+        let Self {
+            icon,
+            name,
+            meta,
+            moves,
+            remove,
+            press,
+            what,
+            tone,
+        } = self;
+        let chevron = |glyph: Icon, message: Option<Message>| {
+            let enabled = message.is_some();
+            let tint = icons::tinted(
+                glyph,
+                14.0,
+                move |p| if enabled { p.muted } else { p.faint },
+            );
+            button(container(tint).center(22))
+                .padding(0)
+                .style(theme::remove_button)
+                .on_press_maybe(message)
+        };
+        let moves = moves.map(|[up, down]| {
+            row![chevron(Icon::ChevUp, up), chevron(Icon::Chev, down)].spacing(0)
+        });
+        let cross = remove.map(|remove| {
+            button(container(icons::tinted(Icon::Remove, 14.0, |p| p.faint)).center(22))
+                .padding(0)
+                .style(theme::remove_button)
+                .on_press(remove)
+        });
+        let meta = meta.map(|meta| {
+            text(meta)
+                .size(11.5)
+                .wrapping(Wrapping::None)
+                .style(theme::faint_text)
+        });
+        let row = button(
+            row![
+                icons::icon(icon, icons::INLINE),
+                container({
+                    let name = text(name).size(CONTROL_TEXT).wrapping(Wrapping::None);
+                    match tone {
+                        RowTone::Plain => name,
+                        RowTone::Failed => name.style(theme::failed_text),
+                        RowTone::Excluded => name.style(theme::excluded_text),
+                    }
+                })
+                .width(Length::Fill)
+                .clip(true),
+                meta,
+                moves,
+                cross,
+            ]
+            .spacing(8)
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(CONTROL_HEIGHT)
+        .padding(Padding::from([0.0, 3.0]).left(6.0))
+        .style(theme::picked_row(hovered == Some(what)))
+        .on_press_maybe(press);
+        let (enter, exit) = hovering(what);
+        mouse_area(row).on_enter(enter).on_exit(exit).into()
+    }
+}
+
+/// The colour of a [`ListRow`]'s name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RowTone {
+    #[default]
+    Plain,
+    /// The strong danger colour, as a failed feature's in the Timeline:
+    /// what an edited feature names that wasn't found.
+    Failed,
+    /// The exclusions' purple: what a blend names to leave out (an edge
+    /// around a face it names).
+    Excluded,
 }
 
 /// The rows of an edited feature's `missing` regions that weren't found,
@@ -1046,171 +1172,13 @@ pub(crate) fn missing_rows<'a>(
 ) -> Vec<Element<'a, Message>> {
     (0..missing)
         .map(|index| {
-            failed_row(
-                Icon::SeRegion,
-                "Missing region",
-                remove(index),
-                press.clone(),
-                PanelHover::Missing(index),
-                hovered,
-            )
+            ListRow::new(Icon::SeRegion, "Missing region", PanelHover::Missing(index))
+                .remove(remove(index))
+                .press(press.clone())
+                .tone(RowTone::Failed)
+                .view(hovered)
         })
         .collect()
-}
-
-/// A [`picked_row`] of a list whose order counts, a loft's sections:
-/// with `moves`, an up and a down chevron before its cross, each sending
-/// its message, or shown faint without one (the first row's up, the
-/// last's down).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn ordered_row<'a>(
-    icon: Icon,
-    name: impl text::IntoFragment<'a>,
-    meta: Option<String>,
-    moves: Option<[Option<Message>; 2]>,
-    remove: Option<Message>,
-    press: Option<Message>,
-    what: PanelHover,
-    hovered: Option<PanelHover>,
-) -> Element<'a, Message> {
-    row_of(
-        icon,
-        name,
-        meta,
-        moves,
-        remove,
-        press,
-        what,
-        hovered,
-        RowTone::Plain,
-    )
-}
-
-/// A [`picked_row`] of what an edited feature names that wasn't found,
-/// its name in the strong danger colour, as a failed feature's in the
-/// Timeline.
-pub(crate) fn failed_row<'a>(
-    icon: Icon,
-    name: impl text::IntoFragment<'a>,
-    remove: Option<Message>,
-    press: Option<Message>,
-    what: PanelHover,
-    hovered: Option<PanelHover>,
-) -> Element<'a, Message> {
-    row_of(
-        icon,
-        name,
-        None,
-        None,
-        remove,
-        press,
-        what,
-        hovered,
-        RowTone::Failed,
-    )
-}
-
-/// A [`picked_row`] of what a blend names to leave out (an edge around a
-/// face it names), its name in the exclusions' purple.
-pub(crate) fn excluded_row<'a>(
-    icon: Icon,
-    name: impl text::IntoFragment<'a>,
-    meta: Option<String>,
-    remove: Option<Message>,
-    press: Option<Message>,
-    what: PanelHover,
-    hovered: Option<PanelHover>,
-) -> Element<'a, Message> {
-    row_of(
-        icon,
-        name,
-        meta,
-        None,
-        remove,
-        press,
-        what,
-        hovered,
-        RowTone::Excluded,
-    )
-}
-
-/// The colour of a row's name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RowTone {
-    Plain,
-    /// The strong danger colour: not found.
-    Failed,
-    /// The exclusions' purple: left out.
-    Excluded,
-}
-
-/// An [`ordered_row`], its name in the colour `tone` says.
-#[allow(clippy::too_many_arguments)]
-fn row_of<'a>(
-    icon: Icon,
-    name: impl text::IntoFragment<'a>,
-    meta: Option<String>,
-    moves: Option<[Option<Message>; 2]>,
-    remove: Option<Message>,
-    press: Option<Message>,
-    what: PanelHover,
-    hovered: Option<PanelHover>,
-    tone: RowTone,
-) -> Element<'a, Message> {
-    let chevron = |glyph: Icon, message: Option<Message>| {
-        let enabled = message.is_some();
-        let tint = icons::tinted(
-            glyph,
-            14.0,
-            move |p| if enabled { p.muted } else { p.faint },
-        );
-        button(container(tint).center(22))
-            .padding(0)
-            .style(theme::remove_button)
-            .on_press_maybe(message)
-    };
-    let moves = moves
-        .map(|[up, down]| row![chevron(Icon::ChevUp, up), chevron(Icon::Chev, down)].spacing(0));
-    let cross = remove.map(|remove| {
-        button(container(icons::tinted(Icon::Remove, 14.0, |p| p.faint)).center(22))
-            .padding(0)
-            .style(theme::remove_button)
-            .on_press(remove)
-    });
-    let meta = meta.map(|meta| {
-        text(meta)
-            .size(11.5)
-            .wrapping(Wrapping::None)
-            .style(theme::faint_text)
-    });
-    let row = button(
-        row![
-            icons::icon(icon, icons::INLINE),
-            container({
-                let name = text(name).size(CONTROL_TEXT).wrapping(Wrapping::None);
-                match tone {
-                    RowTone::Plain => name,
-                    RowTone::Failed => name.style(theme::failed_text),
-                    RowTone::Excluded => name.style(theme::excluded_text),
-                }
-            })
-            .width(Length::Fill)
-            .clip(true),
-            meta,
-            moves,
-            cross,
-        ]
-        .spacing(8)
-        .height(Length::Fill)
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .height(CONTROL_HEIGHT)
-    .padding(Padding::from([0.0, 3.0]).left(6.0))
-    .style(theme::picked_row(hovered == Some(what)))
-    .on_press_maybe(press);
-    let (enter, exit) = hovering(what);
-    mouse_area(row).on_enter(enter).on_exit(exit).into()
 }
 
 /// A typed value's field, named `label`, with the id `id`, showing why its

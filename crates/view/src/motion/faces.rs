@@ -11,7 +11,7 @@ use varde_document::FaceRef;
 use super::{MotionLook, MotionPick, MotionState, PickedRow, picks_field};
 use crate::Message;
 use crate::icons::Icon;
-use crate::operation_panel::PanelHover;
+use crate::operation_panel::{PanelHover, RowTone};
 
 /// A face picked, as its row shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,8 +45,7 @@ pub(super) fn faces_field<'a>(
         meta: face.meta.clone(),
         drop: MotionLook::DropFace(face.face),
         hover: PanelHover::Face(at),
-        failed: false,
-        excluded: false,
+        tone: RowTone::Plain,
     });
     picks_field(state, MotionPick::Faces, label, place, rows)
 }

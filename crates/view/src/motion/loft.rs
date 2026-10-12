@@ -19,8 +19,8 @@ use super::sweep::SweepPart;
 use super::{MotionLook, MotionPick, MotionState, PickedRow, SketchLines, picks_field};
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, PanelHover, bodies, field, ordered_row, pick_field, tile,
-    tiles, toggle,
+    BodyTarget, Candidate, ListRow, OperationKind, PanelHover, RowTone, bodies, field, pick_field,
+    tile, tiles, toggle,
 };
 use crate::{Look, Message};
 
@@ -138,16 +138,12 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             let down = (at < last)
                 .then(|| send(MotionLook::SectionUp(at + 1)))
                 .flatten();
-            ordered_row(
-                icon,
-                format!("Section {}", at + 1),
-                Some(meta),
-                Some([up, down]),
-                send(MotionLook::DropSection(at)),
-                press.clone(),
-                PanelHover::Section(at),
-                state.hover,
-            )
+            ListRow::new(icon, format!("Section {}", at + 1), PanelHover::Section(at))
+                .meta(Some(meta))
+                .moves([up, down])
+                .remove(send(MotionLook::DropSection(at)))
+                .press(press.clone())
+                .view(state.hover)
         })
         .collect();
     let place = (rows.is_empty() || picking).then(|| "Click regions or sketch points".to_owned());
@@ -175,8 +171,7 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             meta: rail.meta.clone(),
             drop: MotionLook::DropRail(at),
             hover: PanelHover::Part(at),
-            failed: false,
-            excluded: false,
+            tone: RowTone::Plain,
         });
         picks_field(
             state,

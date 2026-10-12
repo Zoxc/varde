@@ -183,7 +183,7 @@ and the Bodies list.
   colour), its seam knob, a point section's point as a dot in the
   accent, and each section's number in a chip by it (`Moving::labels`).
 - **Rows**: "Section 1" with its sketch's name ("gone" once what it
-  names is), an up and a down chevron (`ordered_row`; the first's up
+  names is), an up and a down chevron (`ListRow::moves`; the first's up
   and the last's down faint) moving it past its neighbour
   (`MotionLook::SectionUp`), and a cross. Moving a point into the
   middle is allowed and refused as the foot ("Loft fails: its section

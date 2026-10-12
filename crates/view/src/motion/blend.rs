@@ -12,7 +12,7 @@ use varde_document::{EdgeRef, FaceRef};
 
 use super::{MotionLook, MotionPick, MotionState, PickedRow, picks_field};
 use crate::icons::Icon;
-use crate::operation_panel::{PanelHover, toggle};
+use crate::operation_panel::{PanelHover, RowTone, toggle};
 use crate::{Look, Message};
 
 /// An edge picked, as its row shows it.
@@ -67,8 +67,11 @@ impl BlendEdge {
             meta: self.meta.clone(),
             drop: MotionLook::DropEdge(self.edge),
             hover: PanelHover::Edge(at),
-            failed: false,
-            excluded: self.excluded,
+            tone: if self.excluded {
+                RowTone::Excluded
+            } else {
+                RowTone::Plain
+            },
         }
     }
 }
@@ -86,8 +89,7 @@ pub(super) fn edges_field<'a>(
         meta: None,
         drop: MotionLook::DropFace(face.face),
         hover: PanelHover::Face(at),
-        failed: false,
-        excluded: false,
+        tone: RowTone::Plain,
     });
     let rows = (edges.edges.iter().enumerate()).map(|(at, edge)| edge.row(at));
     picks_field(state, MotionPick::Edges, "Edges", place, faces.chain(rows))

@@ -21,7 +21,7 @@ use super::{MotionLook, MotionPick, MotionState};
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Candidate, PanelHover, missing_rows, pick_field, picked_row, tile, tiles,
+    Candidate, ListRow, PanelHover, missing_rows, pick_field, tile, tiles,
 };
 use crate::theme::{self, BOLD};
 use crate::{Look, Message};
@@ -209,15 +209,10 @@ pub(super) fn body<'a>(
     // No cross: picking another replaces it, as a mirror's plane; a
     // region or curve is taken out by clicking it again.
     let row = (split.tool.clone()).map(|(name, meta)| {
-        picked_row(
-            split.mode.icon(),
-            name,
-            meta,
-            None,
-            press.clone(),
-            PanelHover::Axis,
-            state.hover,
-        )
+        ListRow::new(split.mode.icon(), name, PanelHover::Axis)
+            .meta(meta)
+            .press(press.clone())
+            .view(state.hover)
     });
     let place = (row.is_none() || on).then(|| split.mode.place().to_owned());
     let missing = missing_rows(

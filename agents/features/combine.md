@@ -190,7 +190,7 @@ with.
 combine" or the combine's name; Target and Tools fields
 (`operation_panel::pick_field`, outlined in the accent while it's the
 one picking, a click on it making it so) holding the bodies as rows
-(`picked_row`: the Body icon, the name and a cross taking it out,
+(`ListRow`: the Body icon, the name and a cross taking it out,
 `CombineLook::Drop`; dropping the target hands the clicks to it), the
 tools one under another, and "Click a body" / "Click bodies" while
 empty, "Click bodies" after the tools while they're picked; Operation

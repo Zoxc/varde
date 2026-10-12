@@ -25,9 +25,9 @@ const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, OperationKind, PanelHover, Parts, TypedField, excluded_row, failed_row, field,
-    footer_message, label, message_text, operation_panel, pick_field, picked_row, tile, tiles,
-    toggle, value_field,
+    Footer, Framing, ListRow, OperationKind, PanelHover, Parts, RowTone, TypedField, field,
+    footer_message, label, message_text, operation_panel, pick_field, tile, tiles, toggle,
+    value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
@@ -994,15 +994,10 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let pick_bodies = send(MotionLook::Picking(MotionPick::Bodies));
     let rows: Vec<_> = (state.bodies.iter())
         .map(|body| {
-            picked_row(
-                Icon::Body,
-                body.name,
-                None,
-                send(MotionLook::Drop(body.body)),
-                pick_bodies.clone(),
-                PanelHover::Body(body.body),
-                state.hover,
-            )
+            ListRow::new(Icon::Body, body.name, PanelHover::Body(body.body))
+                .remove(send(MotionLook::Drop(body.body)))
+                .press(pick_bodies.clone())
+                .view(state.hover)
         })
         .collect();
     // An align moves one body; a split splits one.
@@ -1036,15 +1031,9 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         | MotionKind::Loft => ("Plane", Icon::SePlane, "Click a plane or face"),
     };
     let reference_row = state.reference.clone().map(|name| {
-        picked_row(
-            reference_icon,
-            name,
-            None,
-            None,
-            pick_reference.clone(),
-            PanelHover::Axis,
-            state.hover,
-        )
+        ListRow::new(reference_icon, name, PanelHover::Axis)
+            .press(pick_reference.clone())
+            .view(state.hover)
     });
     let reference_place =
         (reference_row.is_none() || picking_reference).then(|| reference_place.to_owned());
@@ -1203,11 +1192,9 @@ struct PickedRow {
     meta: Option<String>,
     drop: MotionLook,
     hover: PanelHover,
-    /// Whether it wasn't found: its name in the strong danger colour.
-    failed: bool,
-    /// Whether it's left out (a blend's edge around a face it names): its
-    /// name in the exclusions' purple.
-    excluded: bool,
+    /// Its name's colour: failed if it wasn't found, excluded if it's left
+    /// out (a blend's edge around a face it names).
+    tone: RowTone,
 }
 
 /// The panel's field `label` of references picked by `pick` (a blend's
@@ -1226,36 +1213,12 @@ fn picks_field<'a>(
     let press = send(MotionLook::Picking(pick));
     let rows: Vec<_> = rows
         .map(|row| {
-            if row.excluded {
-                excluded_row(
-                    row.icon,
-                    row.name,
-                    row.meta,
-                    send(row.drop),
-                    press.clone(),
-                    row.hover,
-                    state.hover,
-                )
-            } else if row.failed {
-                failed_row(
-                    row.icon,
-                    row.name,
-                    send(row.drop),
-                    press.clone(),
-                    row.hover,
-                    state.hover,
-                )
-            } else {
-                picked_row(
-                    row.icon,
-                    row.name,
-                    row.meta,
-                    send(row.drop),
-                    press.clone(),
-                    row.hover,
-                    state.hover,
-                )
-            }
+            ListRow::new(row.icon, row.name, row.hover)
+                .meta(row.meta)
+                .remove(send(row.drop))
+                .press(press.clone())
+                .tone(row.tone)
+                .view(state.hover)
         })
         .collect();
     let place = (rows.is_empty() || on).then(|| place.to_owned());

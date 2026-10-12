@@ -23,8 +23,8 @@ use super::{
 };
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, PanelHover, bodies, field, region_name, tile, tiles,
-    toggle,
+    BodyTarget, Candidate, OperationKind, PanelHover, RowTone, bodies, field, region_name, tile,
+    tiles, toggle,
 };
 use crate::{Look, Message};
 
@@ -132,8 +132,7 @@ pub(super) fn body<'a>(
             meta: None,
             drop: MotionLook::SweepRegion { sketch, region },
             hover: PanelHover::Region { sketch, region },
-            failed: false,
-            excluded: false,
+            tone: RowTone::Plain,
         })
     });
     let regions = regions.chain((0..sweep.missing).map(|index| PickedRow {
@@ -142,8 +141,7 @@ pub(super) fn body<'a>(
         meta: None,
         drop: MotionLook::DropMissingRegion(index),
         hover: PanelHover::Missing(index),
-        failed: true,
-        excluded: false,
+        tone: RowTone::Failed,
     }));
     let empty = Candidate::none_closed(&sweep.candidates);
     let place = if sweep.picked.is_empty() && empty {
@@ -169,8 +167,7 @@ pub(super) fn body<'a>(
                 meta: part.meta.clone(),
                 drop: MotionLook::DropPart(at),
                 hover: PanelHover::Part(at),
-                failed: false,
-                excluded: false,
+                tone: RowTone::Plain,
             });
             let edges = (sweep.edges.edges.iter().enumerate()).map(|(at, edge)| edge.row(at));
             let rows = parts.chain(edges);

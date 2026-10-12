@@ -16,9 +16,9 @@ use varde_sketch::{Curve, Id, Sketch, angle};
 use crate::extrude::centroid;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, Side, Sides,
+    BodyTarget, Candidate, Footer, Framing, ListRow, OperationKind, PanelHover, Parts, Side, Sides,
     TypedField, bodies, field, footer_message, message_text, operation_panel, pick_field,
-    picked_row, region_rows, tile, tiles, toggle,
+    region_rows, tile, tiles, toggle,
 };
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
@@ -483,15 +483,9 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
     let picking_axis = state.picking == RevolvePick::Axis;
     let pick_axis = send(RevolveLook::Picking(RevolvePick::Axis));
     let axis_row = state.axis_name().map(|name| {
-        picked_row(
-            Icon::SeAxis,
-            name,
-            None,
-            None,
-            pick_axis.clone(),
-            PanelHover::Axis,
-            state.hover,
-        )
+        ListRow::new(Icon::SeAxis, name, PanelHover::Axis)
+            .press(pick_axis.clone())
+            .view(state.hover)
     });
     let axis_place = axis_row
         .is_none()
