@@ -348,21 +348,16 @@ impl Found<'_> {
             match shown {
                 Shown::Face(face) => {
                     if let Ok(region) = topology.face(solid, &face.key, face.near) {
-                        let tris = &topology.regions()[region as usize].tris;
-                        let mesh = solid.mesh();
-                        evidence.add_patches(tris.iter().map(|&tri| mesh.patch(tri as usize)));
+                        super::add_region(
+                            &mut evidence,
+                            solid,
+                            &topology.regions()[region as usize],
+                        );
                     }
                 }
                 Shown::Edge(edge) => {
                     if let Ok(chain) = topology.edge(solid, edge.faces, edge.near) {
-                        let chain = &topology.chains()[chain as usize];
-                        let mesh = solid.mesh();
-                        let tris = mesh.tris().len();
-                        evidence.add_curves(
-                            (chain.halfedges.iter())
-                                .filter(|&&h| (h as usize) / 3 < tris)
-                                .map(|&h| mesh.curve(h)),
-                        );
+                        super::add_chain(&mut evidence, solid, &topology.chains()[chain as usize]);
                     }
                 }
             }

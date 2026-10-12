@@ -40,7 +40,7 @@ use std::sync::Arc;
 use varde_document::{EdgeRef, FaceRef};
 use varde_kernel_compat::mesh::FaceKey;
 use varde_kernel_compat::topology::blend_edge;
-use varde_kernel_compat::{BlendError, Evidence, Solid, Tolerance, Topology};
+use varde_kernel_compat::{BlendError, Solid, Tolerance, Topology};
 
 use super::Failed;
 use super::in_place::InPlace;
@@ -274,14 +274,5 @@ fn chain_geometry(
     chain: u32,
     tolerance: &Tolerance,
 ) -> Option<Arc<ErrorGeometry>> {
-    let chain = topology.chains().get(chain as usize)?;
-    let mesh = solid.mesh();
-    let tris = mesh.tris().len();
-    let mut evidence = Evidence::default();
-    evidence.add_curves(
-        (chain.halfedges.iter())
-            .filter(|&&h| (h as usize) / 3 < tris)
-            .map(|&h| mesh.curve(h)),
-    );
-    ErrorGeometry::of_evidence(&evidence, tolerance)
+    super::chain_curves(solid, topology.chains().get(chain as usize)?, tolerance)
 }

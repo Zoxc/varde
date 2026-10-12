@@ -26,7 +26,7 @@ use glam::DVec3;
 use varde_document::{BodyId, Document, EdgeRef, FeatureId, MAX_SCALE_FACTOR, Scale, ScaleFactor};
 use varde_kernel_compat::measure::{EdgeShape, Measured, Pick, Target, measure};
 use varde_kernel_compat::mesh::Surface;
-use varde_kernel_compat::{Budget, Evidence, Motion, Tolerance};
+use varde_kernel_compat::{Budget, Motion, Tolerance};
 
 use super::align::Found;
 use super::motion::{How, place, reference_key};
@@ -158,16 +158,7 @@ fn edge_geometry(
     let solid = &made.solid;
     let topology = inspect::topology(made, cache);
     let chain = topology.edge(solid, edge.faces, edge.near).ok()?;
-    let chain = topology.chains().get(chain as usize)?;
-    let mesh = solid.mesh();
-    let tris = mesh.tris().len();
-    let mut evidence = Evidence::default();
-    evidence.add_curves(
-        (chain.halfedges.iter())
-            .filter(|&&h| (h as usize) / 3 < tris)
-            .map(|&h| mesh.curve(h)),
-    );
-    ErrorGeometry::of_evidence(&evidence, tolerance)
+    super::chain_curves(solid, topology.chains().get(chain as usize)?, tolerance)
 }
 
 /// The factors along X, Y and Z that `factor` gives, its edge measured

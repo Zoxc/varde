@@ -1396,9 +1396,40 @@ pub(crate) fn face_geometry(
     tolerance: &Tolerance,
 ) -> Option<Arc<ErrorGeometry>> {
     let mut evidence = varde_kernel_compat::Evidence::default();
-    let mesh = solid.mesh();
-    evidence.add_patches((region.tris.iter()).map(|&tri| mesh.patch(tri as usize)));
+    add_region(&mut evidence, solid, region);
     ErrorGeometry::of_evidence(&evidence, tolerance)
+}
+
+/// Adds the patches of `region` (of `solid`) to `evidence`, those of
+/// triangles `solid`'s mesh has.
+pub(crate) fn add_region(
+    evidence: &mut varde_kernel_compat::Evidence,
+    solid: &Solid,
+    region: &varde_kernel_compat::topology::Region,
+) {
+    let mesh = solid.mesh();
+    let tris = mesh.tris().len();
+    evidence.add_patches(
+        (region.tris.iter())
+            .filter(|&&tri| (tri as usize) < tris)
+            .map(|&tri| mesh.patch(tri as usize)),
+    );
+}
+
+/// Adds the curves of `chain` (of `solid`) to `evidence`, those of
+/// halfedges `solid`'s mesh has.
+pub(crate) fn add_chain(
+    evidence: &mut varde_kernel_compat::Evidence,
+    solid: &Solid,
+    chain: &varde_kernel_compat::topology::Chain,
+) {
+    let mesh = solid.mesh();
+    let tris = mesh.tris().len();
+    evidence.add_curves(
+        (chain.halfedges.iter())
+            .filter(|&&h| (h as usize) / 3 < tris)
+            .map(|&h| mesh.curve(h)),
+    );
 }
 
 /// A revolve's axis in its sketch's coordinates.
@@ -1603,14 +1634,8 @@ pub(crate) fn chain_curves(
     chain: &varde_kernel_compat::topology::Chain,
     tolerance: &Tolerance,
 ) -> Option<Arc<ErrorGeometry>> {
-    let mesh = solid.mesh();
-    let tris = mesh.tris().len();
     let mut evidence = varde_kernel_compat::Evidence::default();
-    evidence.add_curves(
-        (chain.halfedges.iter())
-            .filter(|&&h| (h as usize) / 3 < tris)
-            .map(|&h| mesh.curve(h)),
-    );
+    add_chain(&mut evidence, solid, chain);
     ErrorGeometry::of_evidence(&evidence, tolerance)
 }
 

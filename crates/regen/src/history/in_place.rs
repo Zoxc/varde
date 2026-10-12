@@ -167,13 +167,8 @@ pub(super) fn draw_region(
     topology: &Topology,
     region: u32,
 ) {
-    let mesh = solid.mesh();
     if let Some(region) = topology.regions().get(region as usize) {
-        evidence.add_patches(
-            (region.tris.iter())
-                .filter(|&&t| (t as usize) < mesh.tris().len())
-                .map(|&t| mesh.patch(t as usize)),
-        );
+        super::add_region(evidence, solid, region);
     }
 }
 
