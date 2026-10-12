@@ -2,12 +2,14 @@
 //! revolves, combines, moves, mirrors, patterns, aligns, scales, splits,
 //! chamfers, shells, fillets, offset faces, drafts, sweeps and lofts.
 
+use std::error::Error;
+
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
 use crate::{
-    Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, LinkSource, Loft, Mirror, Move,
-    OffsetFace, Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
+    Align, BodyId, Chamfer, Combine, Design, Extrude, FaceDraft, Fillet, LinkSource, Loft, Mirror,
+    Move, OffsetFace, Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
 };
 
 /// A feature's handle in one document. It's opaque: ids come from the
@@ -91,6 +93,33 @@ impl FeatureKind {
             FeatureKind::Sweep(_) => "Sweep",
             FeatureKind::Loft(_) => "Loft",
         }
+    }
+
+    /// Its own check, the part that needs nothing of the document but
+    /// `design`: a sketch's [`Sketch::check`], every other kind's
+    /// `check_own`. [`Document::check`](crate::Document::check) runs
+    /// these too, each wrapped in its kind's own error.
+    pub fn check_own(&self, design: &Design) -> Result<(), Box<dyn Error + Send + Sync>> {
+        match self {
+            FeatureKind::Sketch { sketch, .. } => sketch.check(design)?,
+            FeatureKind::Extrude(extrude) => extrude.check_own(design)?,
+            FeatureKind::Revolve(revolve) => revolve.check_own(design)?,
+            FeatureKind::Combine(combine) => combine.check_own()?,
+            FeatureKind::Move(moved) => moved.check_own(design)?,
+            FeatureKind::Mirror(mirror) => mirror.check_own()?,
+            FeatureKind::Pattern(pattern) => pattern.check_own(design)?,
+            FeatureKind::Align(align) => align.check_own(design)?,
+            FeatureKind::Scale(scale) => scale.check_own(design)?,
+            FeatureKind::Split(split) => split.check_own()?,
+            FeatureKind::Chamfer(chamfer) => chamfer.check_own(design)?,
+            FeatureKind::Shell(shell) => shell.check_own(design)?,
+            FeatureKind::Fillet(fillet) => fillet.check_own(design)?,
+            FeatureKind::OffsetFace(offset) => offset.check_own(design)?,
+            FeatureKind::FaceDraft(draft) => draft.check_own(design)?,
+            FeatureKind::Sweep(sweep) => sweep.check_own(design)?,
+            FeatureKind::Loft(loft) => loft.check_own()?,
+        }
+        Ok(())
     }
 
     /// The features it builds on, which come before it: an extrude's or a

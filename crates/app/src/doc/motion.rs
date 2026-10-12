@@ -1178,33 +1178,8 @@ impl MotionSession {
     /// Why it can't be committed to a document of `design` as set up, if
     /// its own check refuses it. None while it isn't whole.
     fn refused(&self, design: &Design) -> Option<String> {
-        let refused = match self.kind()? {
-            FeatureKind::Move(moved) => moved.check_own(design).err().map(|why| why.to_string()),
-            FeatureKind::Mirror(mirror) => mirror.check_own().err().map(|why| why.to_string()),
-            FeatureKind::Pattern(pattern) => {
-                pattern.check_own(design).err().map(|why| why.to_string())
-            }
-            FeatureKind::Align(align) => align.check_own(design).err().map(|why| why.to_string()),
-            FeatureKind::Scale(scale) => scale.check_own(design).err().map(|why| why.to_string()),
-            FeatureKind::Split(split) => split.check_own().err().map(|why| why.to_string()),
-            FeatureKind::Chamfer(chamfer) => {
-                chamfer.check_own(design).err().map(|why| why.to_string())
-            }
-            FeatureKind::Shell(shell) => shell.check_own(design).err().map(|why| why.to_string()),
-            FeatureKind::Fillet(fillet) => {
-                fillet.check_own(design).err().map(|why| why.to_string())
-            }
-            FeatureKind::OffsetFace(offset) => {
-                offset.check_own(design).err().map(|why| why.to_string())
-            }
-            FeatureKind::FaceDraft(draft) => {
-                draft.check_own(design).err().map(|why| why.to_string())
-            }
-            FeatureKind::Sweep(sweep) => sweep.check_own(design).err().map(|why| why.to_string()),
-            FeatureKind::Loft(loft) => loft.check_own().err().map(|why| why.to_string()),
-            _ => None,
-        };
-        refused.map(|why| said(&why))
+        let why = self.kind()?.check_own(design).err()?;
+        Some(said(&why.to_string()))
     }
 
     /// The feature as set up, if it's whole with nothing still to do,
