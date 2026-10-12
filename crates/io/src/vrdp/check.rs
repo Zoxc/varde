@@ -8,8 +8,8 @@ use xxhash_rust::xxh3::xxh3_128;
 use super::chain::framed_from;
 use super::{
     After, BACK_LEN, BLOCK_OVERHEAD, Block, Error, FILE_HEADER_LEN, FileType, Known, MAX_BLOCK,
-    RECORD, ReadAt, Result, Stored, buffer_len, design_header, header_id, intact, read_pieces,
-    stored_at, stored_before, u64_at, zeroed,
+    RECORD, ReadAt, Result, Stored, back_is, buffer_len, design_header, header_id, intact,
+    read_pieces, stored_at, stored_before, zeroed,
 };
 
 /// Where a save appends, once [`check_unchanged`] passes.
@@ -213,7 +213,7 @@ fn stepped_over(
     // The block is within the file, and longer than this.
     file.read_at(&mut back, end - BACK_LEN as u64)?;
     // Its `len` is within bounds, so exact.
-    if u64_at(&back, 0) == end - at - BLOCK_OVERHEAD && back[8..] == RECORD {
+    if back_is(&back, end - at - BLOCK_OVERHEAD, &RECORD) {
         return Ok(None);
     }
     Ok(match block_at(file, end, len, id)? {

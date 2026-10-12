@@ -4,11 +4,10 @@
 
 use std::io;
 
-use xxhash_rust::xxh3::Xxh3Default;
-
 use super::{
-    BLOCK_OVERHEAD, Error, FILE_HEADER_LEN, Kind, PREVIEW, RECORD, ReadAt, Result, SUM_AT, Stored,
-    TAG_LEN_AT, Tail, design_header, frame, header_id, intact, read_pieces, stored_before, zeroed,
+    BLOCK_OVERHEAD, BlockHasher, Error, FILE_HEADER_LEN, Kind, PREVIEW, RECORD, ReadAt, Result,
+    Stored, TAG_LEN_AT, Tail, design_header, frame, header_id, intact, read_pieces, stored_before,
+    tag_len_of, zeroed,
 };
 
 /// The longest media type a preview may have, in bytes.
@@ -246,17 +245,15 @@ fn streamed_intact(
 ) -> io::Result<bool> {
     let mut front = [0; TAG_LEN_AT + 2];
     file.read_at(&mut front, start)?;
-    let tag_len = u16::from_le_bytes([front[TAG_LEN_AT], front[TAG_LEN_AT + 1]]);
-    if u64::from(tag_len) + 2 + BLOCK_OVERHEAD > size {
+    if u64::from(tag_len_of(&front)) + 2 + BLOCK_OVERHEAD > size {
         return Ok(false);
     }
-    let mut hasher = Xxh3Default::new();
-    hasher.update(&id.to_le_bytes());
-    hasher.update(&front[..SUM_AT]);
+    let mut hasher = BlockHasher::new(id);
+    hasher.update(&front);
     // A block is longer than its header, and within the file.
-    read_pieces(file, start + TAG_LEN_AT as u64, start + size, |piece| {
+    read_pieces(file, start + front.len() as u64, start + size, |piece| {
         hasher.update(piece);
         true
     })?;
-    Ok(hasher.digest128() == sum)
+    Ok(hasher.digest() == sum)
 }

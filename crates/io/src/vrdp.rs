@@ -1016,8 +1016,8 @@ impl Block {
 fn intact(block: &[u8], start: u64, id: u128) -> Option<Block> {
     let size = block.len();
     let len = u64_at(block, 0);
-    let tag_len = u16::from_le_bytes([block[TAG_LEN_AT], block[TAG_LEN_AT + 1]]);
-    if len > MAX_BLOCK || u64_at(block, size - BACK_LEN) != len || u64::from(tag_len) + 2 > len {
+    let tag_len = tag_len_of(block);
+    if !len_fits(len, tag_len) || !back_is(&block[size - BACK_LEN..], len, &block[size - 16..]) {
         return None;
     }
     let sum = u128_at(block, SUM_AT);
@@ -1039,11 +1039,61 @@ fn intact(block: &[u8], start: u64, id: u128) -> Option<Block> {
 /// The `sum` of `block` in a file with `id`: of `id` and every byte of the
 /// block but its `sum`.
 fn block_sum(id: u128, block: &[u8]) -> u128 {
-    let mut hasher = Xxh3Default::new();
-    hasher.update(&id.to_le_bytes());
-    hasher.update(&block[..SUM_AT]);
-    hasher.update(&block[SUM_AT + 16..]);
-    hasher.digest128()
+    let mut hasher = BlockHasher::new(id);
+    hasher.update(block);
+    hasher.digest()
+}
+
+/// The hasher of a block's `sum` in a file with `id`: fed the block in
+/// order, in pieces of any size, it skips the `sum`'s own bytes itself.
+struct BlockHasher {
+    hasher: Xxh3Default,
+    /// How much of the block it's been fed.
+    at: usize,
+}
+
+impl BlockHasher {
+    fn new(id: u128) -> Self {
+        let mut hasher = Xxh3Default::new();
+        hasher.update(&id.to_le_bytes());
+        Self { hasher, at: 0 }
+    }
+
+    /// Feeds it `piece`, the next bytes of the block.
+    fn update(&mut self, piece: &[u8]) {
+        let start = self.at;
+        let end = start + piece.len();
+        // Before the `sum`, then after it, each in `piece`'s terms.
+        let before = start..end.min(SUM_AT).max(start);
+        let after = start.max(SUM_AT + 16).min(end)..end;
+        for range in [before, after] {
+            self.hasher
+                .update(&piece[range.start - start..range.end - start]);
+        }
+        self.at = end;
+    }
+
+    fn digest(self) -> u128 {
+        self.hasher.digest128()
+    }
+}
+
+/// The `tag_len` of a block whose front, at least `TAG_LEN_AT + 2` bytes
+/// of it, is `front`.
+fn tag_len_of(front: &[u8]) -> u16 {
+    u16::from_le_bytes([front[TAG_LEN_AT], front[TAG_LEN_AT + 1]])
+}
+
+/// Whether `len`, a block's first `len`, is within bounds for its
+/// `tag_len`: long enough for the tag, and at most [`MAX_BLOCK`].
+fn len_fits(len: u64, tag_len: u16) -> bool {
+    (u64::from(tag_len) + 2..=MAX_BLOCK).contains(&len)
+}
+
+/// Whether `back`, a block's last [`BACK_LEN`] bytes, says `len` and
+/// `kind`.
+fn back_is(back: &[u8], len: u64, kind: &[u8]) -> bool {
+    u64_at(back, 0) == len && back[8..] == *kind
 }
 
 /// What a block's header holds, whether or not the block is intact.

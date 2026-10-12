@@ -9,9 +9,9 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use super::{
     BACK_LEN, BLOCK_OVERHEAD, Block, DamagedRecord, Error, FILE_HEADER_LEN, FileType, FoundRecord,
-    MAX_BLOCK, Opened, Outcome, Payload, Report, Result, TAG_LEN_AT, check_file_header,
-    decode_record, decompress, header_id, intact, stored_at, stored_before, u64_at,
-    unchecked_record,
+    Opened, Outcome, Payload, Report, Result, TAG_LEN_AT, back_is, check_file_header,
+    decode_record, decompress, header_id, intact, len_fits, stored_at, stored_before, tag_len_of,
+    u64_at, unchecked_record,
 };
 use crate::UnixSeconds;
 
@@ -280,12 +280,8 @@ impl Chain {
 /// The intact block at `at` in `bytes`, all of a file with `id`, by its
 /// first `len`, if there is one.
 fn intact_at(bytes: &[u8], at: usize, id: u128) -> Option<Block> {
-    let len = bytes
-        .get(at..at.checked_add(8)?)
-        .map(|len| u64_at(len, 0))?;
-    let size = usize::try_from(len.checked_add(BLOCK_OVERHEAD)?).ok()?;
     // `usize` is at most 64 bits wide, so exact.
-    intact(bytes.get(at..at.checked_add(size)?)?, at as u64, id)
+    candidate(bytes, at).and_then(|block| intact(block, at as u64, id))
 }
 
 /// The block at `at` in `bytes`, if its header is intact, whether or not
@@ -312,7 +308,7 @@ fn framed_record(bytes: &[u8], block: &DamagedRecord, ty: FileType) -> bool {
     // Within `bytes`, and at least a block's overhead long, so exact.
     let end = block.end as usize;
     let len = block.end - block.start - BLOCK_OVERHEAD;
-    u64_at(bytes, end - BACK_LEN) == len && bytes[end - 16..end] == ty.record()
+    back_is(&bytes[end - BACK_LEN..end], len, &ty.record())
 }
 
 /// Whether anything in `bytes` from `from` on is framed like a record of
@@ -484,8 +480,7 @@ impl Search<'_> {
 fn candidate(bytes: &[u8], at: usize) -> Option<&[u8]> {
     let front = bytes.get(at..at.checked_add(TAG_LEN_AT + 2)?)?;
     let len = u64_at(front, 0);
-    let tag_len = u16::from_le_bytes([front[TAG_LEN_AT], front[TAG_LEN_AT + 1]]);
-    if !(u64::from(tag_len) + 2..=MAX_BLOCK).contains(&len) {
+    if !len_fits(len, tag_len_of(front)) {
         return None;
     }
     let size = usize::try_from(len + BLOCK_OVERHEAD).ok()?;
