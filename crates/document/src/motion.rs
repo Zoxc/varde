@@ -277,9 +277,14 @@ impl Move {
         self.turn.as_ref().and_then(|(axis, _)| axis.refers())
     }
 
-    /// Its values: the offsets and the angle.
-    pub(crate) fn values_mut(&mut self) -> (&mut [Value; 3], Option<&mut Value>) {
-        (&mut self.offset, self.turn.as_mut().map(|(_, angle)| angle))
+    /// Its values: the offsets and the angle, with the ask each is
+    /// checked against in `design`.
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
+        let offset = Move::offset_ask(design);
+        let angle = (self.turn.as_mut()).map(|(_, angle)| (angle, Move::angle_ask(design)));
+        (self.offset.iter_mut().map(|v| (v, offset)))
+            .chain(angle)
+            .collect()
     }
 }
 

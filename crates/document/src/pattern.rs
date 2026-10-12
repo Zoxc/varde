@@ -281,13 +281,13 @@ impl Pattern {
 
     /// Its values: the count, and the spacing or angle, with the ask
     /// each is checked against in `design`.
-    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> [(&mut Value, Ask<'p>); 2] {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         match &mut self.kind {
-            PatternKind::Linear { count, spacing, .. } => [
+            PatternKind::Linear { count, spacing, .. } => vec![
                 (count, Pattern::count_ask(design)),
                 (spacing, Pattern::spacing_ask(design)),
             ],
-            PatternKind::Circular { count, angle, .. } => [
+            PatternKind::Circular { count, angle, .. } => vec![
                 (count, Pattern::count_ask(design)),
                 (angle, Pattern::angle_ask(design)),
             ],

@@ -114,6 +114,13 @@ impl Turn {
 }
 
 impl Revolve {
+    /// Its values: its extent's angles, with the ask they're checked
+    /// against in `design`.
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
+        let angle = Turn::ask(design);
+        self.extent.values_mut().map(|v| (v, angle)).collect()
+    }
+
     /// Where the revolve turns about its axis, as `(from, to)` in radians
     /// with `from < to`, the sketch plane at 0 and positive angles
     /// right-handed about the axis: flipped, one side turns back from the

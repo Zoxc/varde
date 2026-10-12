@@ -6,7 +6,7 @@ use std::fmt;
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use varde_expr::Value;
+use varde_expr::{Ask, Value};
 use varde_kernel::mesh::FaceKey;
 
 use crate::motion::Referred;
@@ -221,6 +221,14 @@ impl AlignRefs {
 }
 
 impl Align {
+    /// Its values: the offset and the turn, with the ask each is checked
+    /// against in `design`, a move's.
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
+        let offset = (self.offset.as_mut()).map(|v| (v, Move::offset_ask(design)));
+        let turn = (self.turn.as_mut()).map(|v| (v, Move::angle_ask(design)));
+        offset.into_iter().chain(turn).collect()
+    }
+
     /// Checks what needs only the align and `design`: its sides shaped
     /// alike (a primary on both or neither, a secondary likewise, a
     /// secondary only with a primary), the flip, offset and turn only

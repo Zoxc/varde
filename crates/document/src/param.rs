@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, MAX_LEN, MAX_PARAMS, NameError, Params, Value, check_name};
 
 use crate::{
-    ChamferSize, Design, Document, FeatureId, FeatureKind, Move, PathRef, PatternKind, ScaleFactor,
-    Turn,
+    ChamferSize, Design, Document, FeatureId, FeatureKind, PathRef, PatternKind, ScaleFactor,
 };
 
 /// A parameter as the document holds it: its name and its expression as
@@ -141,26 +140,10 @@ impl FeatureKind {
     pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         match self {
             FeatureKind::Extrude(extrude) => extrude.values_mut(design),
-            FeatureKind::Revolve(revolve) => {
-                let angle = Turn::ask(design);
-                revolve.extent.values_mut().map(|v| (v, angle)).collect()
-            }
-            FeatureKind::Move(moved) => {
-                let offset = Move::offset_ask(design);
-                let (offsets, angle) = moved.values_mut();
-                let angle = angle.map(|v| (v, Move::angle_ask(design)));
-                offsets
-                    .iter_mut()
-                    .map(|v| (v, offset))
-                    .chain(angle)
-                    .collect()
-            }
-            FeatureKind::Pattern(pattern) => pattern.values_mut(design).into(),
-            FeatureKind::Align(align) => {
-                let offset = (align.offset.as_mut()).map(|v| (v, Move::offset_ask(design)));
-                let turn = (align.turn.as_mut()).map(|v| (v, Move::angle_ask(design)));
-                offset.into_iter().chain(turn).collect()
-            }
+            FeatureKind::Revolve(revolve) => revolve.values_mut(design),
+            FeatureKind::Move(moved) => moved.values_mut(design),
+            FeatureKind::Pattern(pattern) => pattern.values_mut(design),
+            FeatureKind::Align(align) => align.values_mut(design),
             FeatureKind::Scale(scale) => scale.values_mut(design),
             FeatureKind::Chamfer(chamfer) => chamfer.values_mut(design),
             FeatureKind::Shell(shell) => shell.values_mut(design),
