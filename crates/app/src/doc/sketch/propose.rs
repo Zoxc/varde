@@ -1082,11 +1082,10 @@ impl Doc {
         let SketchEdit::Add(add) = &proposal.edit else {
             return None;
         };
-        let alone = add.points.is_empty()
-            && add.curves.is_empty()
-            && add.constraints.is_empty()
-            && add.auto.is_empty();
-        if !alone || add.dimensions.is_empty() || add.dimensions.iter().any(|d| !d.driving) {
+        if !add.only_dimensions()
+            || add.dimensions.is_empty()
+            || add.dimensions.iter().any(|d| !d.driving)
+        {
             return None;
         }
         let document = self.editor.document();

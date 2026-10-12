@@ -379,6 +379,26 @@ impl Add {
         }
     }
 
+    /// Adding `dimension` alone to `sketch`.
+    pub fn dimension(sketch: &Sketch, dimension: Dimension) -> Add {
+        let mut add = Add::new(sketch);
+        add.dimensions.push(dimension);
+        add
+    }
+
+    /// Whether it adds dimensions and nothing else (or nothing at all).
+    pub fn only_dimensions(&self) -> bool {
+        let Add {
+            first: _,
+            points,
+            curves,
+            constraints,
+            dimensions: _,
+            auto,
+        } = self;
+        points.is_empty() && curves.is_empty() && constraints.is_empty() && auto.is_empty()
+    }
+
     /// The next placeholder: one past the points and curves so far.
     fn placeholder(&self) -> Result<Id, OutOfIds> {
         let made = self.points.len() + self.curves.len();

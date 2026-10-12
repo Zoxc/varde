@@ -81,14 +81,16 @@ impl Doc {
             }
         };
         if let Some((value, side)) = held {
-            let mut add = Add::new(sketch);
-            add.dimensions.push(Dimension {
-                measure,
-                value,
-                driving: false,
-                label,
-                side,
-            });
+            let add = Add::dimension(
+                sketch,
+                Dimension {
+                    measure,
+                    value,
+                    driving: false,
+                    label,
+                    side,
+                },
+            );
             if self.propose(SketchEdit::Add(add)) {
                 drawing.restart();
                 self.set_drawing(drawing);
@@ -103,15 +105,16 @@ impl Doc {
             .held(&measure, side, &design)
             .ok()
             .map(|(value, side)| {
-                let mut add = Add::new(sketch);
-                add.dimensions.push(Dimension {
-                    measure: measure.clone(),
-                    value,
-                    driving: true,
-                    label,
-                    side,
-                });
-                add
+                Add::dimension(
+                    sketch,
+                    Dimension {
+                        measure: measure.clone(),
+                        value,
+                        driving: true,
+                        label,
+                        side,
+                    },
+                )
             });
         drawing.restart();
         self.set_drawing(drawing);
@@ -208,15 +211,14 @@ impl Doc {
                 side,
                 label,
             } => Value::new(&field.text, &measure.ask(&design)).map(|value| {
-                let mut add = Add::new(sketch);
-                add.dimensions.push(Dimension {
+                let dimension = Dimension {
                     measure: measure.clone(),
                     value,
                     driving: true,
                     label: *label,
                     side: *side,
-                });
-                Some(SketchEdit::Add(add))
+                };
+                Some(SketchEdit::Add(Add::dimension(sketch, dimension)))
             }),
             ValueTarget::Dimension(id) => {
                 let Some(entry) = sketch.dimension(*id) else {
