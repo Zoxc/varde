@@ -396,25 +396,47 @@ impl Sketch {
     /// the parts of them kept. `NothingLeft` if none are.
     fn raw_offset(&self, chain: &Chain, distance: f64, side: Side) -> Result<Offset, EditError> {
         let shift = offset_shift(distance, side)?;
-        let mut raws: Vec<Raw> = Vec::new();
-        // Each piece's raw curve, by the piece.
-        let mut of_piece = Vec::with_capacity(chain.links.len());
-        for (index, link) in chain.links.iter().enumerate() {
-            of_piece.push(link.raw(shift).map(|geom| {
-                raws.push(Raw {
-                    forward: link.forward || matches!(geom, Geom::Segment { .. }),
-                    geom,
-                    source: Source::Piece(index),
-                });
-                raws.len() - 1
-            }));
-        }
+        let (mut raws, of_piece) = piece_copies(chain, shift);
         // Places are one within the tolerance of the sketch and the copy
         // together.
         let geoms: Vec<Geom> = self.geoms().collect();
         let tol = tolerance(geoms.iter().chain(raws.iter().map(|raw| &raw.geom)));
-        // The corners run on to meet: each the corner of the chain, where
-        // the one copy ended, where they meet and where the other started.
+        let corners = self.join_corners(chain, &mut raws, &of_piece, shift, distance, tol);
+        cross_gaps(chain, &mut raws, &of_piece, distance, tol);
+        self.round_vanished(chain, &mut raws, &of_piece, distance);
+        let mut work = Work::default();
+        let band = Band {
+            chain,
+            distance,
+            side,
+            tol,
+        };
+        let kept = self.kept(&band, &raws, &corners, &mut work)?;
+        if kept.is_empty() {
+            return Err(EditError::NothingLeft);
+        }
+        Ok(Offset {
+            raws,
+            kept,
+            tol,
+            work,
+        })
+    }
+
+    /// At each corner of `chain` between two pieces' copies in `raws`
+    /// (`of_piece`) that don't meet, the copies crossed, mitred or joined
+    /// by a round of `distance` pushed to `raws`. The corners run on to
+    /// meet: each the corner of the chain, where the one copy ended, where
+    /// they meet and where the other started.
+    fn join_corners(
+        &self,
+        chain: &Chain,
+        raws: &mut Vec<Raw>,
+        of_piece: &[Option<usize>],
+        shift: f64,
+        distance: f64,
+        tol: f64,
+    ) -> Vec<[DVec2; 4]> {
         let mut corners = Vec::new();
         let count = chain.links.len();
         let joins = if chain.closed && count > 1 {
@@ -442,7 +464,7 @@ impl Sketch {
             if !opens {
                 // The copies cross.
                 cross(
-                    &mut raws,
+                    raws,
                     [i, j],
                     [&links[after..=after], &links[before..=before]],
                     distance,
@@ -487,29 +509,20 @@ impl Sketch {
                 },
             });
         }
-        // Pieces with no copy between two that have: theirs may cross past
-        // them, as copies at a corner do.
-        let kept: Vec<usize> = (0..count).filter(|&k| of_piece[k].is_some()).collect();
-        let runs = kept.windows(2).map(|pair| (pair[0], pair[1]));
-        let round = (chain.closed && kept.len() > 1).then(|| (kept[kept.len() - 1], kept[0]));
-        for (before, after) in runs.chain(round) {
-            let between = (after + count - before) % count;
-            if between < 2 {
-                continue;
-            }
-            let (Some(i), Some(j)) = (of_piece[before], of_piece[after]) else {
-                continue;
-            };
-            // The pieces after `before` up to `after`, and from `before`
-            // up to the one before `after`, round the loop.
-            let from: Vec<Link> = (1..=between)
-                .map(|k| chain.links[(before + k) % count].clone())
-                .collect();
-            let to: Vec<Link> = (0..between)
-                .map(|k| chain.links[(before + k) % count].clone())
-                .collect();
-            cross(&mut raws, [i, j], [&from, &to], distance, tol);
-        }
+        corners
+    }
+
+    /// Full circles of `distance` pushed to `raws` round the ends of the
+    /// pieces of `chain` with no copy (`of_piece`) that another piece
+    /// meets.
+    fn round_vanished(
+        &self,
+        chain: &Chain,
+        raws: &mut Vec<Raw>,
+        of_piece: &[Option<usize>],
+        distance: f64,
+    ) {
+        let count = chain.links.len();
         // An arc offset inwards by more than its radius has no copy: round
         // each of its ends that another piece meets, as round joins would
         // do, whose parts beyond the distance are what's left there.
@@ -541,23 +554,6 @@ impl Sketch {
                 }
             }
         }
-        let mut work = Work::default();
-        let band = Band {
-            chain,
-            distance,
-            side,
-            tol,
-        };
-        let kept = self.kept(&band, &raws, &corners, &mut work)?;
-        if kept.is_empty() {
-            return Err(EditError::NothingLeft);
-        }
-        Ok(Offset {
-            raws,
-            kept,
-            tol,
-            work,
-        })
     }
 
     /// The parts of `raws` beyond `band`, each as long as it can be, see
@@ -586,75 +582,15 @@ impl Sketch {
         let mut found = Vec::new();
         for (index, raw) in raws.iter().enumerate() {
             let geom = &raw.geom;
-            let last = geom.last();
-            let mut cuts = Vec::new();
             let others = raws
                 .iter()
                 .enumerate()
                 .filter(|&(other, _)| other != index)
                 .map(|(other, raw)| (&raw.geom, bounds[other]))
                 .chain(edges.iter().zip(edge_bounds.iter().copied()));
-            for (other, other_bounds) in others {
-                work.spend(1)?;
-                if !bounds::overlap(bounds[index], other_bounds, tol) {
-                    continue;
-                }
-                found.clear();
-                // Splines lying along each other run out of steps before
-                // every place is found: too complex, not cut short.
-                if meet(geom, other, tol, &mut found) == usize::MAX {
-                    return Err(EditError::TooComplex);
-                }
-                // Where a circle starts is no end of it, and changes
-                // nothing, but `meet` cuts there as at an end.
-                let starts = |geom: &Geom, u: f64| !geom.has_ends() && u == 0.0;
-                let cut = found
-                    .iter()
-                    .filter(|&&(u, v)| !starts(geom, u) && !starts(other, v));
-                cuts.extend(cut.map(|&(u, _)| u));
-            }
-            // Cuts at its ends, or near them, cut nothing.
+            let cuts = cuts_of(geom, bounds[index], others, tol, &mut found, work)?;
             let near = NEAR * tol;
-            cuts.retain(|&u| {
-                u.is_finite()
-                    && (!geom.has_ends()
-                        || (geom.length(0.0, u) > near && geom.length(u, last) > near))
-            });
-            cuts.sort_by(f64::total_cmp);
-            let mut places: Vec<f64> = Vec::with_capacity(cuts.len() + 2);
-            if geom.has_ends() {
-                places.push(0.0);
-            }
-            for u in cuts {
-                if places
-                    .last()
-                    .is_none_or(|&before| geom.length(before, u) > near)
-                {
-                    places.push(u);
-                }
-            }
-            if geom.has_ends() {
-                places.push(last);
-            } else if places.len() > 1
-                && let (Some(&first), Some(&end)) = (places.first(), places.last())
-                && geom.length(end, first + TAU) <= near
-            {
-                // Round a circle, the last is near the first.
-                places.pop();
-            }
-            // The parts between, round a circle from the last cut back to
-            // the first.
-            let spans: Vec<(f64, f64)> = if geom.has_ends() {
-                places.windows(2).map(|pair| (pair[0], pair[1])).collect()
-            } else if places.is_empty() {
-                vec![(0.0, TAU)]
-            } else {
-                let mut spans: Vec<(f64, f64)> =
-                    places.windows(2).map(|pair| (pair[0], pair[1])).collect();
-                let (first, end) = (places[0], places[places.len() - 1]);
-                spans.push((end, first + TAU));
-                spans
-            };
+            let spans = spans_between(geom, cuts, near);
             // Nearer a piece than the distance, it's within the band, and
             // inside a corner run on to meet it's within the copy too.
             // And on the other side of the chain, it's no part of this
@@ -666,25 +602,7 @@ impl Sketch {
                     && !corners.iter().any(|corner| within(corner, middle, tol))
             };
             work.spend(spans.len().saturating_mul(chain.links.len()))?;
-            let mut parts: Vec<(f64, f64)> = Vec::new();
-            for span in spans {
-                if !keeps(span) {
-                    continue;
-                }
-                match parts.last_mut() {
-                    // Joined to the part before, with nothing cut out.
-                    Some(part) if part.1 == span.0 => part.1 = span.1,
-                    _ => parts.push(span),
-                }
-            }
-            // Round a circle, the last part may go on into the first.
-            if !geom.has_ends() && parts.len() > 1 {
-                let (first, end) = (parts[0], parts[parts.len() - 1]);
-                if end.1 == first.0 + TAU {
-                    parts.pop();
-                    parts[0] = (end.0, first.1 + TAU);
-                }
-            }
+            let parts = merge_kept(geom, spans, keeps);
             let whole = !geom.has_ends()
                 && parts.len() == 1
                 && geom.length(parts[0].0, parts[0].1) >= geom.length(0.0, TAU) - NEAR * tol;
@@ -697,30 +615,7 @@ impl Sketch {
                 });
             }
         }
-        // Copies on each other, as those of a loop's sides offset inwards
-        // by half its width are, leave no width between them: both go.
-        let on_another = |index: usize, kept_one: &Kept| {
-            let geom = &raws[kept_one.raw].geom;
-            let middle = geom.at((kept_one.from + kept_one.to) / 2.0);
-            kept.iter().enumerate().any(|(other, part)| {
-                other != index
-                    && part.raw != kept_one.raw
-                    && span_distance(&raws[part.raw].geom, part.from, part.to, middle) <= tol
-            })
-        };
-        let lying = kept
-            .iter()
-            .enumerate()
-            .map(|(index, part)| {
-                work.spend(kept.len())?;
-                Ok(on_another(index, part))
-            })
-            .collect::<Result<Vec<bool>, EditError>>()?;
-        Ok(kept
-            .into_iter()
-            .zip(lying)
-            .filter_map(|(part, lying)| (!lying).then_some(part))
-            .collect())
+        drop_lying(raws, kept, tol, work)
     }
 
     /// Offsets the chain `chain` by `distance` to `side`, see
@@ -1340,6 +1235,207 @@ impl Work {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Where `geom`, in the box `bounds`, is cut by the curves `others`, each
+/// with its box: where it meets them within `tol`, but where a circle
+/// starts. `found` is room for the places met. Spends a step of `work`
+/// per curve; `TooComplex` past the limit, or where splines lying along
+/// each other run out of steps.
+fn cuts_of<'g>(
+    geom: &Geom,
+    bounds: (DVec2, DVec2),
+    others: impl Iterator<Item = (&'g Geom, (DVec2, DVec2))>,
+    tol: f64,
+    found: &mut Vec<(f64, f64)>,
+    work: &mut Work,
+) -> Result<Vec<f64>, EditError> {
+    let mut cuts = Vec::new();
+    for (other, other_bounds) in others {
+        work.spend(1)?;
+        if !bounds::overlap(bounds, other_bounds, tol) {
+            continue;
+        }
+        found.clear();
+        // Splines lying along each other run out of steps before
+        // every place is found: too complex, not cut short.
+        if meet(geom, other, tol, found) == usize::MAX {
+            return Err(EditError::TooComplex);
+        }
+        // Where a circle starts is no end of it, and changes
+        // nothing, but `meet` cuts there as at an end.
+        let starts = |geom: &Geom, u: f64| !geom.has_ends() && u == 0.0;
+        let cut = found
+            .iter()
+            .filter(|&&(u, v)| !starts(geom, u) && !starts(other, v));
+        cuts.extend(cut.map(|&(u, _)| u));
+    }
+    Ok(cuts)
+}
+
+/// The spans of `geom` between its `cuts` (and its ends), but cuts at or
+/// within `near` of its ends or of the cut before; round a circle, from
+/// the last cut back to the first.
+fn spans_between(geom: &Geom, mut cuts: Vec<f64>, near: f64) -> Vec<(f64, f64)> {
+    let last = geom.last();
+    // Cuts at its ends, or near them, cut nothing.
+    cuts.retain(|&u| {
+        u.is_finite()
+            && (!geom.has_ends() || (geom.length(0.0, u) > near && geom.length(u, last) > near))
+    });
+    cuts.sort_by(f64::total_cmp);
+    let mut places: Vec<f64> = Vec::with_capacity(cuts.len() + 2);
+    if geom.has_ends() {
+        places.push(0.0);
+    }
+    for u in cuts {
+        if places
+            .last()
+            .is_none_or(|&before| geom.length(before, u) > near)
+        {
+            places.push(u);
+        }
+    }
+    if geom.has_ends() {
+        places.push(last);
+    } else if places.len() > 1
+        && let (Some(&first), Some(&end)) = (places.first(), places.last())
+        && geom.length(end, first + TAU) <= near
+    {
+        // Round a circle, the last is near the first.
+        places.pop();
+    }
+    // The parts between, round a circle from the last cut back to
+    // the first.
+    if geom.has_ends() {
+        places.windows(2).map(|pair| (pair[0], pair[1])).collect()
+    } else if places.is_empty() {
+        vec![(0.0, TAU)]
+    } else {
+        let mut spans: Vec<(f64, f64)> = places.windows(2).map(|pair| (pair[0], pair[1])).collect();
+        let (first, end) = (places[0], places[places.len() - 1]);
+        spans.push((end, first + TAU));
+        spans
+    }
+}
+
+/// The spans of `geom` that `keeps`, those that follow on from each
+/// other with nothing cut out joined into one, and round a circle the
+/// last into the first.
+fn merge_kept(
+    geom: &Geom,
+    spans: Vec<(f64, f64)>,
+    keeps: impl Fn((f64, f64)) -> bool,
+) -> Vec<(f64, f64)> {
+    let mut parts: Vec<(f64, f64)> = Vec::new();
+    for span in spans {
+        if !keeps(span) {
+            continue;
+        }
+        match parts.last_mut() {
+            // Joined to the part before, with nothing cut out.
+            Some(part) if part.1 == span.0 => part.1 = span.1,
+            _ => parts.push(span),
+        }
+    }
+    // Round a circle, the last part may go on into the first.
+    if !geom.has_ends() && parts.len() > 1 {
+        let (first, end) = (parts[0], parts[parts.len() - 1]);
+        if end.1 == first.0 + TAU {
+            parts.pop();
+            parts[0] = (end.0, first.1 + TAU);
+        }
+    }
+    parts
+}
+
+/// `kept` less the parts lying on another raw's part, within `tol`: both
+/// go. Spends `kept.len()` steps of `work` a part.
+fn drop_lying(
+    raws: &[Raw],
+    kept: Vec<Kept>,
+    tol: f64,
+    work: &mut Work,
+) -> Result<Vec<Kept>, EditError> {
+    // Copies on each other, as those of a loop's sides offset inwards
+    // by half its width are, leave no width between them: both go.
+    let on_another = |index: usize, kept_one: &Kept| {
+        let geom = &raws[kept_one.raw].geom;
+        let middle = geom.at((kept_one.from + kept_one.to) / 2.0);
+        kept.iter().enumerate().any(|(other, part)| {
+            other != index
+                && part.raw != kept_one.raw
+                && span_distance(&raws[part.raw].geom, part.from, part.to, middle) <= tol
+        })
+    };
+    let lying = kept
+        .iter()
+        .enumerate()
+        .map(|(index, part)| {
+            work.spend(kept.len())?;
+            Ok(on_another(index, part))
+        })
+        .collect::<Result<Vec<bool>, EditError>>()?;
+    Ok(kept
+        .into_iter()
+        .zip(lying)
+        .filter_map(|(part, lying)| (!lying).then_some(part))
+        .collect())
+}
+
+/// Each piece of `chain`'s raw copy shifted by `shift`, and the index
+/// among them of each piece's, `None` where a piece has none.
+fn piece_copies(chain: &Chain, shift: f64) -> (Vec<Raw>, Vec<Option<usize>>) {
+    let mut raws: Vec<Raw> = Vec::new();
+    // Each piece's raw curve, by the piece.
+    let mut of_piece = Vec::with_capacity(chain.links.len());
+    for (index, link) in chain.links.iter().enumerate() {
+        of_piece.push(link.raw(shift).map(|geom| {
+            raws.push(Raw {
+                forward: link.forward || matches!(geom, Geom::Segment { .. }),
+                geom,
+                source: Source::Piece(index),
+            });
+            raws.len() - 1
+        }));
+    }
+    (raws, of_piece)
+}
+
+/// The copies in `raws` of pieces of `chain` either side of pieces with
+/// no copy (`of_piece`), crossed where they cross past them, as copies at
+/// a corner do.
+fn cross_gaps(
+    chain: &Chain,
+    raws: &mut [Raw],
+    of_piece: &[Option<usize>],
+    distance: f64,
+    tol: f64,
+) {
+    let count = chain.links.len();
+    // Pieces with no copy between two that have: theirs may cross past
+    // them, as copies at a corner do.
+    let kept: Vec<usize> = (0..count).filter(|&k| of_piece[k].is_some()).collect();
+    let runs = kept.windows(2).map(|pair| (pair[0], pair[1]));
+    let round = (chain.closed && kept.len() > 1).then(|| (kept[kept.len() - 1], kept[0]));
+    for (before, after) in runs.chain(round) {
+        let between = (after + count - before) % count;
+        if between < 2 {
+            continue;
+        }
+        let (Some(i), Some(j)) = (of_piece[before], of_piece[after]) else {
+            continue;
+        };
+        // The pieces after `before` up to `after`, and from `before`
+        // up to the one before `after`, round the loop.
+        let from: Vec<Link> = (1..=between)
+            .map(|k| chain.links[(before + k) % count].clone())
+            .collect();
+        let to: Vec<Link> = (0..between)
+            .map(|k| chain.links[(before + k) % count].clone())
+            .collect();
+        cross(raws, [i, j], [&from, &to], distance, tol);
     }
 }
 
