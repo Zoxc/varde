@@ -1457,6 +1457,7 @@ impl std::error::Error for CheckError {
         match self {
             CheckError::Sketch(_, why) => Some(why),
             CheckError::SketchPlane(_, why) => Some(why),
+            CheckError::SketchLink(_, why) => Some(why),
             CheckError::Extrude(_, why) => Some(why),
             CheckError::Revolve(_, why) => Some(why),
             CheckError::Combine(_, why) => Some(why),
@@ -1474,7 +1475,19 @@ impl std::error::Error for CheckError {
             CheckError::Sweep(_, why) => Some(why),
             CheckError::Loft(_, why) => Some(why),
             CheckError::Param(_, why) => Some(why),
-            _ => None,
+            CheckError::NameLength(..)
+            | CheckError::Opacity(..)
+            | CheckError::Tint(..)
+            | CheckError::Creator(..)
+            | CheckError::Order(..)
+            | CheckError::NextId(..)
+            | CheckError::Held(..)
+            | CheckError::FeatureNameLength(..)
+            | CheckError::Tolerance(..)
+            | CheckError::FeatureTwice(..)
+            | CheckError::FeatureNextId(..)
+            | CheckError::Rollback(..)
+            | CheckError::Params(..) => None,
         }
     }
 }
