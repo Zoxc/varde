@@ -479,19 +479,7 @@ pub(crate) const PENDING_BYTES: usize = 512;
 /// the popup, saying so: `pending_edit` in its structured content (and
 /// so its text), or a line after its text.
 fn with_pending_edit(reply: ToolReply, pending: String) -> ToolReply {
-    match reply.structured {
-        Some(mut data) if data.is_object() && !reply.is_error => {
-            data["pending_edit"] = json!(pending);
-            ToolReply {
-                png: reply.png,
-                ..ToolReply::data(data)
-            }
-        }
-        _ => ToolReply {
-            text: format!("{}\n\npending_edit: {pending}", reply.text),
-            ..reply
-        },
-    }
+    reply.with_fields(vec![("pending_edit", json!(pending))])
 }
 
 /// `call`'s tool and arguments: "rename feature Extrude 1 to Base".

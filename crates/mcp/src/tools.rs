@@ -4345,6 +4345,38 @@ impl ToolReply {
         }
     }
 
+    /// The same with `fields` added: into its structured content (and so
+    /// its text, the PNG kept) when it's data, else as `key: value` lines
+    /// after its text, strings bare. Nothing to add leaves it as it is.
+    pub fn with_fields(self, fields: Vec<(&str, Value)>) -> Self {
+        if fields.is_empty() {
+            return self;
+        }
+        match self.structured {
+            Some(Value::Object(mut data)) if !self.is_error => {
+                for (key, value) in fields {
+                    data.insert(key.to_owned(), value);
+                }
+                Self {
+                    png: self.png,
+                    ..Self::data(Value::Object(data))
+                }
+            }
+            _ => {
+                let mut text = self.text;
+                text.push('\n');
+                for (key, value) in fields {
+                    let value = match value {
+                        Value::String(value) => value,
+                        value => value.to_string(),
+                    };
+                    text.push_str(&format!("\n{key}: {value}"));
+                }
+                Self { text, ..self }
+            }
+        }
+    }
+
     /// The `tools/call` result, the text cut to `cap` bytes with a note
     /// saying so. Cut data can't be structured content any more, nor meet
     /// the tool's `outputSchema`, so it goes as text alone, with `isError`

@@ -769,30 +769,14 @@ pub(crate) fn attach(
     changes: Option<Value>,
     revision: Revision,
 ) -> varde_mcp::tools::ToolReply {
-    use varde_mcp::tools::ToolReply;
     let revision = serde_json::to_value(revision).unwrap_or(Value::Null);
-    match reply.structured {
-        Some(mut data) if data.is_object() && !reply.is_error => {
-            if let Some(changes) = changes {
-                data["user_changes"] = changes;
-            }
-            data["revision"] = revision;
-            ToolReply {
-                png: reply.png,
-                ..ToolReply::data(data)
-            }
-        }
-        _ => match changes {
-            Some(changes) => ToolReply {
-                text: format!(
-                    "{}\n\nuser_changes: {changes}\nrevision: {revision}",
-                    reply.text
-                ),
-                ..reply
-            },
-            None => reply,
-        },
-    }
+    let data = reply.structured.as_ref().is_some_and(Value::is_object) && !reply.is_error;
+    let fields = match changes {
+        Some(changes) => vec![("user_changes", changes), ("revision", revision)],
+        None if data => vec![("revision", revision)],
+        None => Vec::new(),
+    };
+    reply.with_fields(fields)
 }
 
 /// `reply` carrying `changes` as [`attach`] does, if it then fits
