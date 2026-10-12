@@ -18,12 +18,12 @@ use varde_document::{Command, Document, FeatureId, LoftMode, MAX_SWEEP_REGIONS, 
 use varde_mcp::tools::{self, Profiles, Reference, SectionShape, SweepAlong};
 use varde_view::{MotionField, MotionKind, OperationKind, SweepPath};
 
-use super::blend::edges;
+use super::args::{
+    Given, Wrong, curve_in, edges, excluded, goes_with, keyed, made_of, operation, pick, point_in,
+    regions, said, sketch_named, tool_for, typed, typed_given, world_axis,
+};
 use super::edit::{Made, Refused};
-use super::make::{Given, excluded, operation, pick, regions, sketch_named, tool_for};
-use super::modify::curve_in;
-use super::motion::{Wrong, goes_with, keyed, made_of, said, typed, typed_given, world_axis};
-use crate::doc::{Doc, MotionSession, RegionPick, sketch_of};
+use crate::doc::{Doc, MotionSession, RegionPick};
 
 /// The commands `sweep` makes on `doc`'s design, and what it's to make:
 /// its profile's regions as an extrude's, then what it runs along, by
@@ -302,18 +302,4 @@ fn region_of(
         &Profiles::Picked(vec![profile.clone()]),
     )?;
     (one.picked.first().copied()).ok_or_else(|| "no region was picked".to_owned())
-}
-
-/// The point numbered `number` of the sketch `sketch` of `document`, as
-/// a click on it names it: why not, if the sketch hasn't one.
-pub(super) fn point_in(
-    document: &Document,
-    sketch: FeatureId,
-    number: u32,
-) -> Result<varde_sketch::Id, String> {
-    let drawn = sketch_of(document, sketch).ok_or("the sketch is gone")?;
-    (drawn.points.iter())
-        .find(|point| point.id.get() == number)
-        .map(|point| point.id)
-        .ok_or_else(|| format!("the sketch has no point {number}"))
 }

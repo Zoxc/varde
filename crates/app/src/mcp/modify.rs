@@ -11,18 +11,17 @@
 //! choice it doesn't offer) the call refuses, saying why; what it leaves
 //! to the document the editor refuses.
 
-use varde_document::{Command, Document, FeatureId, Keep, MAX_EXTRUDE_REGIONS, Side};
-use varde_mcp::tools::{self, ItemKind, Reference, SplitWith};
+use varde_document::{Command, Keep, MAX_EXTRUDE_REGIONS, Side};
+use varde_mcp::tools::{self, Reference, SplitWith};
 use varde_view::{MotionField, MotionKind, MotionPick, ShellDirection, SplitMode};
 
+use super::args::{
+    Given, SET_FEATURE, Wrong, by_key, committed_marks, curve_in, faces, faces_given, failed,
+    goes_with, keyed, made, made_of, origin_plane, pick, picked_bodies, said, sketch_named,
+    tool_for, typed_given,
+};
 use super::edit::{Made, Refused};
-use super::make::{
-    Given, SET_FEATURE, committed_marks, failed, pick, picked_bodies, sketch_named, tool_for,
-};
-use super::motion::{
-    Wrong, by_key, goes_with, keyed, made, made_of, origin_plane, said, typed_given,
-};
-use crate::doc::{Doc, MotionSession, RegionPick, sketch_of};
+use crate::doc::{Doc, MotionSession, RegionPick};
 
 /// The commands `split` makes on `doc`'s design, and what it's to make:
 /// its body by name as a click picks it, then its tool as its tile picks
@@ -291,55 +290,4 @@ pub(super) fn set_draft(
         session.tangent = args.tangent;
     }
     Ok(())
-}
-
-/// Picks the faces `keys` in `session` if `given` has them: an edited
-/// one's own taken out first, as clicks on them again would.
-pub(super) fn faces_given(
-    doc: &Doc,
-    session: &mut MotionSession,
-    keys: &[String],
-    given: Given,
-) -> Result<(), String> {
-    if !given.has("faces") {
-        return Ok(());
-    }
-    if session.feature.is_some() {
-        session.faces = Default::default();
-        session.refs_body();
-    }
-    faces(doc, session, keys)
-}
-
-/// Picks the faces `keys` in the face session `session`, each as a click
-/// on it in the committed model picks it ([`Doc::pick_face`]): why not,
-/// naming the argument, for a key refused, a face the panel refuses
-/// (another body's, made later, past the limit), or one named twice
-/// (two keys of one face too), which a click again would take out.
-pub(super) fn faces(doc: &Doc, session: &mut MotionSession, keys: &[String]) -> Result<(), String> {
-    for (at, text) in keys.iter().enumerate() {
-        let argument = format!("faces[{at}]");
-        let before = session.faces.refs.len();
-        by_key(doc, text, ItemKind::Face, &argument, |index, pick| {
-            doc.pick_face(session, index, pick)
-        })?;
-        if session.faces.refs.len() == before {
-            return Err(said(&argument, "that face is named twice"));
-        }
-    }
-    Ok(())
-}
-
-/// The curve numbered `number` of the sketch `sketch` of `document`, as
-/// a click on it names it: why not, if the sketch hasn't one.
-pub(super) fn curve_in(
-    document: &Document,
-    sketch: FeatureId,
-    number: u32,
-) -> Result<varde_sketch::Id, String> {
-    let drawn = sketch_of(document, sketch).ok_or("the sketch is gone")?;
-    (drawn.curves.iter())
-        .find(|curve| curve.id.get() == number)
-        .map(|curve| curve.id)
-        .ok_or_else(|| format!("the sketch has no curve {number}"))
 }

@@ -26,9 +26,8 @@ use varde_mcp::tools::{self, AddLink, Call, ItemKind, LinkFrom, Reference, Worde
 use varde_sketch::{Id, LinkKind, SketchEdit};
 use varde_view::{Picked, PlanePick, SketchItem, Tool};
 
+use super::args::{committed_marks, failed, origin_plane, said};
 use super::edit::{Made, Refused, feature_named};
-use super::make::{committed_marks, failed};
-use super::motion::{origin_plane, said};
 use super::waiting::{From, Wait, Waiter};
 use crate::doc::{
     Doc, Settled, Step, face_placement_in, outside_model_in, outside_sketch_item_at,
@@ -70,7 +69,7 @@ pub(super) fn add_sketch(
     let mut command = document.add_sketch(plane);
     let mut notes = Vec::new();
     if let (Some(wanted), Command::AddSketch { name, .. }) = (name, &mut command) {
-        *name = super::make::given_name(document, "add_sketch", wanted, &mut notes)?;
+        *name = super::args::given_name(document, "add_sketch", wanted, &mut notes)?;
     }
     let name = match &command {
         Command::AddSketch { name, .. } => name.clone(),
@@ -220,8 +219,8 @@ pub(super) fn add_link(doc: &Doc, args: &AddLink) -> Result<Proposed, Refused> {
 }
 
 /// Another sketch's curve or point (`what`) numbered `number`, of the
-/// sketch named `sketch` ([`super::modify::curve_in`],
-/// [`super::sweep::point_in`]).
+/// sketch named `sketch` ([`super::args::curve_in`],
+/// [`super::args::point_in`]).
 fn item_in(
     document: &Document,
     sketch: &str,
@@ -230,8 +229,8 @@ fn item_in(
 ) -> Result<SketchItem, Refused> {
     let feature = sketch_named(document, sketch)?;
     let item = match what {
-        "curve" => super::modify::curve_in(document, feature, number),
-        _ => super::sweep::point_in(document, feature, number),
+        "curve" => super::args::curve_in(document, feature, number),
+        _ => super::args::point_in(document, feature, number),
     };
     let item = item.map_err(|why| failed("add_link", said("from", why)))?;
     Ok(SketchItem {

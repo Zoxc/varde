@@ -310,7 +310,7 @@ fn plan(doc: &Doc, call: &Call, from: &From, queued: bool) -> Result<Plan, Refus
 fn commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused> {
     let planned = made_commands(doc, call)?;
     match call.naming() {
-        Some(naming) => super::make::named(doc, call.tool(), naming, planned),
+        Some(naming) => super::args::named(doc, call.tool(), naming, planned),
         None => Ok(planned),
     }
 }

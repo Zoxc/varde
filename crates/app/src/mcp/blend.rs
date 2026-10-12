@@ -10,13 +10,11 @@
 //! each applies and fails in regeneration, as for the user.
 
 use varde_document::Command;
-use varde_mcp::tools::{self, ItemKind, Worded};
+use varde_mcp::tools::{self, Worded};
 use varde_view::{ChamferType, MotionField, MotionKind};
 
+use super::args::{Given, Wrong, edges, faces, goes_with, made_of, typed_given};
 use super::edit::{Made, Refused};
-use super::make::Given;
-use super::modify::faces;
-use super::motion::{Wrong, by_key, goes_with, made_of, said, typed_given};
 use crate::doc::{Doc, MotionSession};
 
 /// The commands `chamfer` makes on `doc`'s design, and what it's to
@@ -147,31 +145,6 @@ fn lists(
     }
     if given.has("faces") {
         faces(doc, session, face_keys)?;
-    }
-    Ok(())
-}
-
-/// Picks the edges `keys` (the argument `argument`) in `session`, a
-/// blend's or a sweep's path's, each as a click on it in the committed
-/// model picks it ([`Doc::pick_edge`]): why not, naming the argument,
-/// for a key refused, an edge the panel refuses (another body's, made
-/// later, past the limit), or one a click would take out again (named
-/// twice, or in the tangent chain of one named).
-pub(super) fn edges(
-    doc: &Doc,
-    session: &mut MotionSession,
-    keys: &[String],
-    argument: &str,
-) -> Result<(), String> {
-    for (at, text) in keys.iter().enumerate() {
-        let argument = format!("{argument}[{at}]");
-        let (_, taken) = by_key(doc, text, ItemKind::Edge, &argument, |index, pick| {
-            doc.pick_edge(session, index, pick)
-        })?;
-        if !taken {
-            let why = "that edge is named twice, or is in the tangent chain of one named";
-            return Err(said(&argument, why));
-        }
     }
     Ok(())
 }

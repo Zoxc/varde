@@ -627,7 +627,7 @@ impl<'a> Shape<'a> {
             Ok(_) => return Ok(first),
             Err(why) => why,
         };
-        let merged = crate::mcp::make::committed_merges(doc, None)?;
+        let merged = crate::mcp::args::committed_merges(doc, None)?;
         let held = |body: BodyId| merged.holder(body).filter(|&holder| holder != body);
         let moved = match item {
             Ref::Face(face) => held(face.body).map(|body| Ref::Face(FaceRef { body, ..face })),

@@ -9,7 +9,7 @@
 //! are; radii, areas and measured values typed text. A dimension's value
 //! is its text as typed. Regions are listed in [`Sketch::profiles`]'
 //! order, by the index the feature tools take in `profiles`
-//! (`make::pick`), so an index read here picks the same region there.
+//! (`args::pick`), so an index read here picks the same region there.
 
 use std::sync::Arc;
 

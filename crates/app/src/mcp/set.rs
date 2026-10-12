@@ -31,15 +31,15 @@ use serde_json::{Map, Value};
 use varde_document::{Command, FeatureId, FeatureKind};
 use varde_mcp::tools::{self, Call, CallError};
 
+use super::args::{Given, SET_FEATURE, Wrong, failed};
 use super::edit::{Made, Refused, feature_named};
-use super::make::{self, Given, failed};
-use super::motion::Wrong;
+use super::make;
 use super::query::{Shape, tool_of};
 use super::{blend, modify, motion, sweep};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, MotionSession, RevolveSession};
 
 /// The tool refusals here go under.
-const TOOL: &str = make::SET_FEATURE;
+const TOOL: &str = SET_FEATURE;
 
 /// The fields read anew when the one before them changes, each with
 /// those: sent as `feature` shows them, they're taken all the same.

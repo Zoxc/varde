@@ -15,6 +15,7 @@
 //! by [`LOG_CAP`]: the session's, cleared as the next session starts, the
 //! server stops or restarts, or the design closes.
 
+mod args;
 mod ask;
 mod blend;
 mod changes;

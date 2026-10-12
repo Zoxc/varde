@@ -741,6 +741,10 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   `MAX_FIT`, then `Tolerance::new`: any fit in its range, not only the
   menu's three. `set_rollback`: `Command::SetRollback`, as the
   Timeline's marker.
+- The feature tools' shared argument helpers (`Given`, `failed`,
+  `Wrong`, `said`, `typed`, `by_key`, the body, sketch, curve, point,
+  region, face and edge pickers, `added`, `named`, `made`, `made_of`)
+  live in `mcp/args.rs`; each tool file keeps its own tools.
 - `extrude`, `revolve`, `combine` (`mcp/make.rs`): set up in the
   panel's own session (`ExtrudeSession::for_client`,
   `RevolveSession::new`, `CombineSession::new`), so its defaults
@@ -780,7 +784,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   the bodies it makes, and a `note` for each name asked for that was
   taken.
 - The names asked for (`Naming`, every feature tool): `edit::commands`
-  passes the planned commands through `make::named`. The feature's
+  passes the planned commands through `args::named`. The feature's
   name goes in the `Command::AddFeature` itself, by
   `Document::new_name` (the check `Document::rename` shares: line
   breaks and tabs as spaces, other controls and bidi marks dropped,
@@ -805,11 +809,11 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   follows the view), so the defaults are the panel's (a move by 0 mm,
   0° about Z; a mirror keeping the original; a linear pattern along X,
   3, joined; a circular one about Z, 4, Full 360°; a scale by 1 about
-  the origin). Bodies by name as clicks pick them (`make::picked_bodies`,
+  the origin). Bodies by name as clicks pick them (`args::picked_bodies`,
   which `combine` shares: a merged one as its holder, by the merges
   before the rollback marker only, each `pickable`),
   one named twice refused. Each tool is a closure setting up the session
-  run by `motion::made` (the bodies picked, the kind's noun naming the
+  run by `args::made` (the bodies picked, the kind's noun naming the
   feature in refusals) or `made_of` (bodies given: none, or a shell's
   only one), which builds the session, runs it, and adds the feature;
   the closure's `Wrong` is words the tool's name prefixes or a refusal
@@ -824,7 +828,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   same on `Doc::operation`'s motion session, taken out meanwhile by `Doc::on_session`), so
   their refusals are the panel's notices ("Only a flat face can be the
   mirror plane", "Pick it on Body 2, the body aligned", ...), prefixed
-  with the argument (`motion::by_key`: `key::found` then the click path,
+  with the argument (`args::by_key`: `key::found` then the click path,
   each refusal naming the argument). An align's slots are taken in the order the panel's
   clicks go to them, so a round edge's centre gives its side the rim's
   axis as a click does, a direction given replacing it. The feature is
@@ -852,17 +856,17 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   in the panel's words ("A shell's faces are all on one body: pick faces
   of Body 1"), prefixed with `faces[i]`; a face named twice (two keys
   of one face too) is refused, as a click again would take it out. A
-  split's body as an align's (`make::picked_bodies`), then its tile
+  split's body as an align's (`args::picked_bodies`), then its tile
   (`MotionSession::split_mode`) and tool: an origin plane through
   `split_origin`, a face key through `Doc::pick_split_tool` (the
   panel's `split_tool` runs it: flat as its plane, curved as its
   surface), a body by name through `Doc::split_tool_body` (the body
   split refused, "That's the body being split ...") and
   `take_split_tool`, regions picked in its `RegionPick` by
-  `make::pick` as an extrude's, a line's curves by id through
+  `args::pick` as an extrude's, a line's curves by id through
   `split_curve` (an id not in the sketch or named twice refused, as
   the panel's clicks can't make either); the sketch made before where
-  the split goes (`make::sketch_named`). `original` only with keep
+  the split goes (`args::sketch_named`). `original` only with keep
   both: the panel's Keeps tiles are off for a trim. A shell's body
   only with no faces (the panel's Objects row picks one only then;
   its body is its faces'), and with neither, the model's only body as
@@ -894,18 +898,18 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   `refs_click_unit_in` on a session and index (the panel's runs it on
   `Doc::motion` through `on_session`), and `refs_unit_in` gives the
   unit `refs_click`, `refs_selected` and the client share. Faces go
-  through `modify::faces`, as a face tool's. A chamfer's value of
+  through `args::faces`, as a face tool's. A chamfer's value of
   another type (`second_distance` without two distances, `angle`
   without distance and angle) and Flip with Equal (the panel shows it
   for the other two; Equal is stored unflipped) are refused saying so.
 - `sweep`, `loft` (`mcp/sweep.rs`): `for_client` sets a helix's pitch
   to `CLIENT_PITCH`, 10 mm; 5 turns, no twist, Follow path and a new
   body are the panel's. A sweep's profile is picked in a fresh
-  `RegionPick` of its sketch by `make::pick` (as split's regions), its
+  `RegionPick` of its sketch by `args::pick` (as split's regions), its
   tile set by `MotionSession::sweep_mode`; a path's chains by
   `sweep_curve` (the profile's own sketch refused in the panel's words;
   a curve of a chain already named would take it out, so it's refused),
-  its edges by `blend::edges` (`Doc::pick_edge`, the sweep's tick stored
+  its edges by `args::edges` (`Doc::pick_edge`, the sweep's tick stored
   as `PathPart::Edges`' `tangent`, nothing grown); a helix's axis
   through `MotionSession::origin_axis` (which now hands a sweep's clicks
   to nothing, as its toolbar buttons did inline) or `keyed`
@@ -913,7 +917,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   clicks to nothing: `picks_faces` is false for it). Keep orientation
   and the twist with a helix are refused (the panel shows them for a
   path). A loft's sections are added in order, each as a click adds it:
-  a region (its index found by `make::pick` on a fresh one-region
+  a region (its index found by `args::pick` on a fresh one-region
   `RegionPick`; its sketch put in the loft's `RegionPick::also` so its
   profiles are found, shown or not, as a section's own are) through
   `Doc::loft_region_in` (the panel's `loft_region`, now on a session,
@@ -926,8 +930,8 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   in the middle is the panel's foot ("its section 2 is a point ...").
   Closed before the rails, so a rail with it is `loft_rail`'s refusal;
   a rail taking one out is refused. Sketches by name made before the
-  marker (`make::sketch_named`), curves and points by id
-  (`modify::curve_in`, which split's line now shares, `point_in`).
+  marker (`args::sketch_named`), curves and points by id
+  (`args::curve_in`, which split's line now shares, `point_in`).
   `made_of` also refuses what `Doc::motion_held_in` (the panel's
   `motion_held` on a session) says, as OK waits on it: a sweep's path or
   a loft's names the document refuses at its place. The kernel builds
@@ -959,7 +963,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   sketch's place: a key through `key::found`, then
   `doc::outside_model_in` on the committed index with
   `Doc::naming_in(Some(sketch), committed marks)`; another sketch's
-  curve or point by id (`modify::curve_in`, `sweep::point_in`), then
+  curve or point by id (`args::curve_in`, `args::point_in`), then
   `doc::outside_sketch_item_at` (both factored out of
   `Doc::outside_model` and `outside_sketch_item`, which the tool's
   clicks still run), so Intersect on a corner or a sketch's item, and
@@ -1003,7 +1007,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   `corner1`..`corner4`, `center` drawn from it; a polygon's `side`s,
   `corner`s, `center` and `circle`), still there. A shape's point is
   `[x, y]` (typed text or numbers, lengths within `MAX_COORD`, read as
-  `make::pick` reads a profile's point) or a point by id or label, taken
+  `args::pick` reads a profile's point) or a point by id or label, taken
   as the tool takes a snap to it (`edit::place`: the shape's own; the
   origin a new point coincident with it). Each operation is made on the
   sketch the ones before leave (applied, not solved), so an error
@@ -1063,7 +1067,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   with it (`set::GOES_WITH`: a new `sketch`'s `profiles` and `axis`, a
   new align `body`'s `from`). The fields left are read by the tool's parser (`tools::parse_patch`,
   its error under `set_feature:`) and taken, those
-  given only (`make::Given::Only`), into the session opened on the
+  given only (`args::Given::Only`), into the session opened on the
   feature as the panel's EditFeature opens it, but with the client's
   defaults for the values the feature has none for
   (`ExtrudeSession::editing_for_client`, `MotionSession::editing_for_client`:
@@ -1759,9 +1763,9 @@ model shown is still its preview until regeneration answers, whose
 merges and failures (an earlier combine or join being edited) aren't the
 design's. The click paths read the merges, touched lists and failures of
 the model their index is of (`MeshFeed::marks_of`), and the body names
-(`make::picked_bodies`, `make::excluded`, a shell's only body through
-`Doc::only_body_in`) take `make::committed_marks` (merged through
-`make::committed_merges`), which says the model
+(`args::picked_bodies`, `args::excluded`, a shell's only body through
+`Doc::only_body_in`) take `args::committed_marks` (merged through
+`args::committed_merges`), which says the model
 isn't built yet, or is being rebuilt, rather than fall back on the shown
 one. It comes
 back as `Found`: the index, the reference, and a `Pick` as a click on it
@@ -1857,7 +1861,7 @@ end of the Timeline).
   dimensions (id, `measure` in snake case, `items`, `value` its text as
   typed, `driving`, `measured` as the UI shows it), and its regions
   (`Sketch::profiles()`, in that order, each with its `index`, which
-  `extrude`, `revolve`, `split`, `sweep` and `loft` take, as `make::pick`
+  `extrude`, `revolve`, `split`, `sweep` and `loft` take, as `args::pick`
   indexes the same profiles; its `area` as typed text, a point
   `inside` from `Region::inside`, now public, and its `outer` curves and
   `holes`, ids sorted, at most 50 curves a loop and 50 holes, the rest

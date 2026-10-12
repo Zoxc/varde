@@ -17,18 +17,17 @@
 //! and a value of a mode the result doesn't show is refused, as the
 //! panel has no field for it.
 
-use std::borrow::Cow;
-
-use varde_document::{Axis3, BodyId, Command, OriginPlane};
-use varde_mcp::tools::{self, Item, ItemKind, Reference, Worded, WorldAxis, WorldPlane};
+use varde_document::{Axis3, Command};
+use varde_mcp::tools::{self, Item, ItemKind, Reference, Worded, WorldAxis};
 use varde_view::{
-    AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode, Pick,
-    PickIndex, ScaleMode,
+    AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode, ScaleMode,
 };
 
+use super::args::{
+    Given, SET_FEATURE, Wrong, by_key, goes_with, keyed, made, origin_plane, picked_bodies, said,
+    typed_given, world_axis,
+};
 use super::edit::{Made, Refused};
-use super::key;
-use super::make::{Given, SET_FEATURE, added, failed, picked_bodies, read};
 use crate::doc::{Doc, MotionSession};
 
 /// The commands `move_body` makes on `doc`'s design, and what it's to
@@ -436,140 +435,6 @@ fn bodies_given(
     Ok(())
 }
 
-/// [`typed`] if `given` has the argument `said`.
-pub(super) fn typed_given(
-    doc: &Doc,
-    session: &mut MotionSession,
-    given: Given,
-    field: MotionField,
-    text: &Option<String>,
-    said: &str,
-) -> Result<(), Wrong> {
-    if !given.has(said) {
-        return Ok(());
-    }
-    typed(doc, session, field, text, said)
-}
-
-/// Why a motion-kind tool refuses its arguments: in words, which
-/// [`made`] says as the tool's ([`failed`]), or refused whole already.
-pub(super) enum Wrong {
-    Said(String),
-    Refused(Refused),
-}
-
-impl Wrong {
-    /// It as the refusal of `tool`.
-    pub(super) fn of(self, tool: &str) -> Refused {
-        match self {
-            Wrong::Said(why) => failed(tool, why),
-            Wrong::Refused(refused) => refused,
-        }
-    }
-}
-
-impl From<String> for Wrong {
-    fn from(why: String) -> Self {
-        Wrong::Said(why)
-    }
-}
-
-impl From<Refused> for Wrong {
-    fn from(refused: Refused) -> Self {
-        Wrong::Refused(refused)
-    }
-}
-
-/// The commands a motion-kind tool, `tool`, makes on `doc`'s design,
-/// and what it's to make: a session setting up `kind` of the bodies
-/// `names` (picked as clicks on them pick them, [`picked_bodies`]), set
-/// up by `set`, then added where the panel's OK adds it ([`made_of`]).
-pub(super) fn made(
-    doc: &Doc,
-    tool: &str,
-    kind: MotionKind,
-    names: &[String],
-    set: impl FnOnce(&mut MotionSession) -> Result<(), Wrong>,
-) -> Result<(Vec<Command>, Made), Refused> {
-    let bodies = picked_bodies(doc, tool, &kind.noun().to_lowercase(), names, None)?;
-    made_of(doc, tool, kind, bodies, set)
-}
-
-/// The commands `tool` makes on `doc`'s design, and what it's to make:
-/// a session setting up `kind` of `bodies` for the client
-/// ([`MotionSession::for_client`]), set up by `set`, the feature it sets
-/// up then added where the panel's OK adds it; refused, saying why in
-/// the panel's words, where its OK would be off (a sweep's or loft's
-/// names the document refuses at its place among those,
-/// [`Doc::motion_held_in`]).
-pub(super) fn made_of(
-    doc: &Doc,
-    tool: &str,
-    kind: MotionKind,
-    bodies: Vec<BodyId>,
-    set: impl FnOnce(&mut MotionSession) -> Result<(), Wrong>,
-) -> Result<(Vec<Command>, Made), Refused> {
-    let document = doc.editor.document();
-    let mut session = MotionSession::for_client(kind, document, bodies);
-    set(&mut session).map_err(|wrong| wrong.of(tool))?;
-    let kind = (session.built(&document.design())).map_err(|why| failed(tool, why))?;
-    if let Some(why) = doc.motion_held_in(&session) {
-        return Err(failed(tool, why));
-    }
-    Ok(added(document, kind))
-}
-
-/// Types `text`, if given, into `field` of `session`, trimmed, as typed
-/// into the panel's: why not, naming the argument `said`, if the field
-/// refuses it.
-pub(super) fn typed(
-    doc: &Doc,
-    session: &mut MotionSession,
-    field: MotionField,
-    text: &Option<String>,
-    said: &str,
-) -> Result<(), Wrong> {
-    let Some(text) = text else {
-        return Ok(());
-    };
-    session.input(field, text.trim().to_owned(), doc.editor.document());
-    Ok(read(session.field_error(field), said)?)
-}
-
-/// The face, edge or corner (`kind`) the key `text` (the argument
-/// `said`) names, found in the committed model ([`key::found`]) and
-/// taken by `take` as a click on it there is, with what that gave: why
-/// not, naming the argument, if the key or `take` refuses it.
-pub(super) fn by_key<T>(
-    doc: &Doc,
-    text: &str,
-    kind: ItemKind,
-    said: &str,
-    take: impl FnOnce(&PickIndex, Pick) -> Result<T, Cow<'static, str>>,
-) -> Result<(key::Found, T), String> {
-    let found = key::found(doc, text, kind).map_err(|why| self::said(said, why))?;
-    let taken = take(&found.index, found.pick).map_err(|why| self::said(said, why))?;
-    Ok((found, taken))
-}
-
-/// The origin plane for the tools'.
-pub(super) fn origin_plane(plane: WorldPlane) -> OriginPlane {
-    match plane {
-        WorldPlane::Xy => OriginPlane::XY,
-        WorldPlane::Xz => OriginPlane::XZ,
-        WorldPlane::Yz => OriginPlane::YZ,
-    }
-}
-
-/// The world's axis for the tools'.
-pub(super) fn world_axis(axis: WorldAxis) -> Axis3 {
-    match axis {
-        WorldAxis::X => Axis3::X,
-        WorldAxis::Y => Axis3::Y,
-        WorldAxis::Z => Axis3::Z,
-    }
-}
-
 /// Takes `axis` as a move's or pattern's axis: a world axis as the
 /// toolbar's buttons take it, or an edge or face by key as a click on it
 /// is taken.
@@ -585,22 +450,6 @@ fn motion_axis(
         }
         Reference::Key(item) => keyed(doc, session, item, "axis"),
     }
-}
-
-/// Takes the face or edge `item` names as `session`'s axis or plane
-/// (the argument `said`), as a click on it in the committed model is
-/// taken ([`Doc::reference_in`]).
-pub(super) fn keyed(
-    doc: &Doc,
-    session: &mut MotionSession,
-    item: &Item,
-    said: &str,
-) -> Result<(), String> {
-    let (_, reference) = by_key(doc, &item.key, item.kind, said, |index, pick| {
-        doc.reference_in(session, index, pick)
-    })?;
-    session.take_reference(reference);
-    Ok(())
 }
 
 /// Takes the face, edge or corner `item` names as `slot` of the align
@@ -634,15 +483,4 @@ fn align_origin(
         said,
         "the origin and its axes can only be what it's aligned to, in to",
     ))
-}
-
-/// `why`, of the argument `said`.
-pub(super) fn said(said: &str, why: impl Into<String>) -> String {
-    format!("{said}: {}", why.into())
-}
-
-/// The refusal of the argument `name` given without what it `goes`
-/// with.
-pub(super) fn goes_with(name: &str, goes: &str) -> Wrong {
-    Wrong::Said(format!("{name} goes with {goes}"))
 }
