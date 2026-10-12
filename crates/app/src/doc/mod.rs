@@ -1843,8 +1843,8 @@ impl Doc {
         self.view_with(peek, mode, options, offers, None, None)
     }
 
-    /// [`Doc::view`], with the `settings` page in the viewport's place
-    /// while it shows.
+    /// The document screen (see [`Doc::state`]), with the `settings`
+    /// page in the viewport's place while it shows.
     pub(crate) fn view_with<'a>(
         &'a self,
         peek: bool,
@@ -1862,7 +1862,7 @@ impl Doc {
         varde_view::document(state)
     }
 
-    /// What the document screen is built from, see [`Doc::view`].
+    /// What the document screen is built from, see [`Doc::view_with`].
     pub(crate) fn state(
         &self,
         peek: bool,

@@ -83,12 +83,11 @@ pub(crate) fn design_summary(doc: &Doc, page: Page) -> ToolReply {
 /// to keep it there ([`pages`]): the cap less [`changes::ROOM`], for
 /// the revision and the user's changes at their briefest, and less
 /// [`PENDING_BYTES`] for the `pending_edit` added after (with its key).
+/// The changes' full form gets no room kept: [`changes::fitted`] falls
+/// back to the brief form when it won't fit, the changes said in full
+/// by a later reply.
 ///
-/// [`PENDING_BYTES`]: super::waiting::PENDING_BYTES The changes'
-/// full form gets no room kept: [`changes::fitted`] falls back to the
-/// brief form when it won't fit, the changes said in full by a later
-/// reply.
-///
+/// [`PENDING_BYTES`]: super::waiting::PENDING_BYTES
 /// [`changes::ROOM`]: super::changes::ROOM
 /// [`changes::fitted`]: super::changes::fitted
 pub(super) const BUDGET: usize =

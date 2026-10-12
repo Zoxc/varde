@@ -1,6 +1,6 @@
 //! `render`: a picture of the committed model, PNG, as MCP's image
 //! content. Only the viewport has the GPU, so the picture is drawn by its
-//! next frame ([`PreviewRequest`], beside the save's thumbnail), and the
+//! next frame ([`PreviewRequest`](varde_view::PreviewRequest), beside the save's thumbnail), and the
 //! PNG encoded in the IO lane (`varde_io::Request::EncodePng`); the call
 //! waits for both (`Wait::Render`, `Wait::Encoding`), within the bound
 //! every call has.

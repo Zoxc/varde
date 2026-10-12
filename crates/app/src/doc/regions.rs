@@ -35,7 +35,7 @@ pub(crate) fn also_work() -> usize {
 }
 
 /// The unit of [`refresh_work`] and [`also_work`]: [`MAX_WORK`], or in
-/// tests what [`with_work_unit`] sets on this thread, so that tests of
+/// tests what `with_work_unit` sets on this thread, so that tests of
 /// the budgets needn't spend the whole of them in a debug build.
 fn work_unit() -> usize {
     #[cfg(test)]
