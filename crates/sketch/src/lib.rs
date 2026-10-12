@@ -560,6 +560,12 @@ impl Sketch {
             .retain(|entry| stays(&deleted, entry.id, entry.dimension.measure.items()));
         // A spline that kept its points may have lost a handle, which a
         // smooth join or an angle needed.
+        self.drop_unfit();
+    }
+
+    /// Deletes the constraints and dimensions that no longer fit, as an
+    /// edit can leave them.
+    pub(crate) fn drop_unfit(&mut self) {
         let tips = self.tips();
         let unfit: HashSet<Id> = self
             .constraints

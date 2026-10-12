@@ -3,8 +3,6 @@
 //! runs on from its last point round to its first, its ends one point
 //! where they meet; and opening a closed one at one of its points.
 
-use std::collections::HashSet;
-
 use glam::DVec2;
 
 use crate::{Constraint, Curve, EditError, Id, Sketch, Spline, SplineKind, control_knots};
@@ -59,23 +57,6 @@ impl Sketch {
         self.points.retain(|point| point.id != gone);
         self.drop_unfit();
         Ok(())
-    }
-
-    /// Deletes the constraints and dimensions that no longer fit.
-    fn drop_unfit(&mut self) {
-        let tips = self.tips();
-        let unfit: Vec<Id> = (self.constraints.iter())
-            .filter(|entry| !entry.constraint.fits(self))
-            .map(|entry| entry.id)
-            .chain(
-                (self.dimensions.iter())
-                    .filter(|entry| !entry.dimension.measure.fits(self, &tips))
-                    .map(|entry| entry.id),
-            )
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        self.delete(&unfit);
     }
 
     /// Whether the open spline `curve`'s ends meet, so closing it makes
