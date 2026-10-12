@@ -36,17 +36,82 @@ pub(super) fn sample_count(device: &wgpu::Device, formats: &[wgpu::TextureFormat
 /// The format of the target the errors' halo is drawn into as coverage.
 pub(super) const HALO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
+/// A 2D texture's view on `device` of `size`, `samples` a pixel.
+fn texture_view(
+    device: &wgpu::Device,
+    label: &str,
+    [width, height]: [u32; 2],
+    samples: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
+}
+
+/// A colour target drawn into, multisampled when there's more than one
+/// sample, and what that resolves to, single sampled and bindable to be
+/// read back.
+pub(super) struct ColorTarget {
+    /// The multisampled target, resolving to `resolved`; `None` drawing
+    /// into `resolved` itself.
+    samples: Option<wgpu::TextureView>,
+    resolved: wgpu::TextureView,
+}
+
+impl ColorTarget {
+    fn new(
+        device: &wgpu::Device,
+        [label, samples_label]: [&str; 2],
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+        samples: u32,
+    ) -> ColorTarget {
+        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let resolved = texture_view(
+            device,
+            label,
+            size,
+            1,
+            format,
+            attachment | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let samples = (samples > 1)
+            .then(|| texture_view(device, samples_label, size, samples, format, attachment));
+        ColorTarget { samples, resolved }
+    }
+
+    /// The target drawn into and what it resolves to, if anything.
+    pub(super) fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
+        match &self.samples {
+            Some(samples) => (samples, Some(&self.resolved)),
+            None => (&self.resolved, None),
+        }
+    }
+}
+
 /// A slot's targets, the size of the frame: the depth, the colour the
 /// scene is drawn into, multisampled when [`Renderer::samples`] is above
 /// 1, and what that resolves to, single sampled, which is composited over
 /// the frame's target last.
 pub(super) struct DepthTarget {
     pub(super) view: wgpu::TextureView,
-    /// The multisampled colour, resolving to `resolved`; `None` drawing
-    /// into `resolved` itself.
-    pub(super) color: Option<wgpu::TextureView>,
-    pub(super) resolved: wgpu::TextureView,
-    /// Group 0 of [`Renderer::composite`]: `resolved`.
+    color: ColorTarget,
+    /// Group 0 of [`Renderer::composite`]: the colour, resolved.
     pub(super) composite: wgpu::BindGroup,
     pub(super) size: [u32; 2],
 }
@@ -54,20 +119,16 @@ pub(super) struct DepthTarget {
 impl DepthTarget {
     /// The colour target drawn into and what it resolves to, if anything.
     pub(super) fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
-        match &self.color {
-            Some(color) => (color, Some(&self.resolved)),
-            None => (&self.resolved, None),
-        }
+        self.color.color()
     }
 }
 
 /// A target of the frame's size drawn into beside the scene and read
 /// back over it: the errors' halo's (see [`HALO_FORMAT`]), with their
 /// colours, or the selected faces' pattern's mask (the colours unused).
+/// Multisampled as the scene's colour.
 pub(super) struct CoverageTarget {
-    pub(super) view: wgpu::TextureView,
-    /// The multisampled target, resolving to `view`, as the scene's colour.
-    pub(super) samples: Option<wgpu::TextureView>,
+    target: ColorTarget,
     /// [`ErrorUniforms`], written each frame there are errors.
     pub(super) uniforms: wgpu::Buffer,
     /// Group 0 of the composite and the core: the scene's uniforms, the
@@ -85,28 +146,7 @@ impl CoverageTarget {
         size: [u32; 2],
         samples: u32,
     ) -> CoverageTarget {
-        let [width, height] = size;
-        let texture = |label, samples, usage| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        };
-        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let view = texture(label, 1, attachment | wgpu::TextureUsages::TEXTURE_BINDING);
-        let samples = (samples > 1).then(|| texture(label, samples, attachment));
+        let target = ColorTarget::new(device, [label, label], format, size, samples);
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("varde error colours"),
             size: size_of::<ErrorUniforms>() as u64,
@@ -127,74 +167,49 @@ impl CoverageTarget {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(&target.resolved),
                 },
             ],
         });
         CoverageTarget {
-            view,
-            samples,
+            target,
             uniforms,
             group,
             size,
         }
     }
-}
 
-impl CoverageTarget {
-    /// The halo's target drawn into and what it resolves to, if anything.
+    /// The target drawn into and what it resolves to, if anything.
     pub(super) fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
-        match &self.samples {
-            Some(samples) => (samples, Some(&self.view)),
-            None => (&self.view, None),
-        }
+        self.target.color()
     }
 }
 
 impl Renderer {
     /// A slot's targets of `size`: see [`DepthTarget`].
     pub(super) fn create_targets(&self, device: &wgpu::Device, size: [u32; 2]) -> DepthTarget {
-        let [width, height] = size;
-        let texture = |label, samples, format, usage| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let view = texture("varde depth", self.samples, self.depth_format, attachment);
-        let color = (self.samples > 1)
-            .then(|| texture("varde scene samples", self.samples, self.format, attachment));
-        let resolved = texture(
-            "varde scene",
-            1,
-            self.format,
-            attachment | wgpu::TextureUsages::TEXTURE_BINDING,
+        let view = texture_view(
+            device,
+            "varde depth",
+            size,
+            self.samples,
+            self.depth_format,
+            attachment,
         );
+        let labels = ["varde scene", "varde scene samples"];
+        let color = ColorTarget::new(device, labels, self.format, size, self.samples);
         let composite = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("varde composite"),
             layout: &self.composite_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&resolved),
+                resource: wgpu::BindingResource::TextureView(&color.resolved),
             }],
         });
         DepthTarget {
             view,
             color,
-            resolved,
             composite,
             size,
         }
