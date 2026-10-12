@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use iced::time::Instant;
 use iced::window;
-use varde_document::name::{UNTITLED, with_extension};
+use varde_document::name::{UNTITLED, with_extension_of};
 use varde_document::{Command, EXTENSION, Revision};
 use varde_io::{
     Chosen, Closing, FileId, LastDownload, OpenId, Picked, Request as IoRequest, SaveError, SaveTo,
@@ -1317,19 +1317,10 @@ impl Doc {
         self.persist.picking = None;
         match chosen {
             Some(chosen) => {
-                let to = match chosen {
-                    // The dialog only asked about replacing the file the
-                    // user named, not one with the extension added.
-                    Chosen::Path(path) => {
-                        let (path, overwrite) = with_extension(path);
-                        SaveTo::Path { path, overwrite }
-                    }
-                    Chosen::File(picked) => SaveTo::Picked(picked),
-                    Chosen::Browser(name) => SaveTo::Browser {
-                        name,
-                        overwrite: false,
-                    },
-                };
+                let to = save_to(chosen, EXTENSION).unwrap_or_else(|name| SaveTo::Browser {
+                    name,
+                    overwrite: false,
+                });
                 self.save_as(cx, to);
                 Next::Stay
             }
@@ -1522,5 +1513,21 @@ impl Doc {
                 self.save_or_ask(cx)
             }
         }
+    }
+}
+
+/// Where to write what the user `chosen` in a save dialog, `extension`
+/// (without the dot) added to a path that lacks it; the name of a design
+/// in browser storage is left to the caller as the error.
+pub(super) fn save_to(chosen: Chosen, extension: &str) -> Result<SaveTo, String> {
+    match chosen {
+        // The dialog only asked about replacing the file the user named,
+        // not one with the extension added.
+        Chosen::Path(path) => {
+            let (path, overwrite) = with_extension_of(path, extension);
+            Ok(SaveTo::Path { path, overwrite })
+        }
+        Chosen::File(picked) => Ok(SaveTo::Picked(picked)),
+        Chosen::Browser(name) => Err(name),
     }
 }

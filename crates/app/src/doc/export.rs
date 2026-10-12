@@ -4,13 +4,14 @@
 //! web without the File System Access API. Each step is something the user
 //! did or a lane answered, like saving's (see `save.rs`).
 
-use varde_document::name::{download_name_with, with_extension_of};
+use varde_document::name::download_name_with;
 use varde_io::three_mf::{self, Body};
 use varde_io::{Chosen, Request as IoRequest, SaveTo};
 use varde_regen::ExportedBody;
 use varde_view::MeshStatus;
 
 use super::Doc;
+use super::save::save_to;
 use crate::Next;
 use crate::files::Files;
 
@@ -100,17 +101,9 @@ impl Doc {
             return;
         }
         self.export.exporting = None;
-        let to = match chosen {
-            None => return,
-            // The dialog only asked about replacing the file the user
-            // named, not one with the extension added.
-            Some(Chosen::Path(path)) => {
-                let (path, overwrite) = with_extension_of(path, three_mf::EXTENSION);
-                SaveTo::Path { path, overwrite }
-            }
-            Some(Chosen::File(picked)) => SaveTo::Picked(picked),
-            // Exports are never kept in browser storage.
-            Some(Chosen::Browser(_)) => return,
+        // Exports are never kept in browser storage.
+        let Some(Ok(to)) = chosen.map(|chosen| save_to(chosen, three_mf::EXTENSION)) else {
+            return;
         };
         self.weld(Some(to));
     }
