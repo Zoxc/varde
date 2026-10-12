@@ -32,9 +32,11 @@ and the grid stays: MSAA only adds to it.
 iced redraws the whole window for any change in it (a button's hover),
 so the scene's passes run only when a prepare changed something: an
 upload, a target made, the bytes written to the uniforms, tints or live
-sketch layer (`Slot::written`), or what the draws read of the slot
-(`SlotState`). Otherwise `record` composites the resolved target it
-drew last for the same clip (`Slot::drawn`) again.
+sketch layer (`Slot::written`), the mesh's wireframe or tessellation
+flags, or what the draws read of the slot (`Slot::state`, a `SlotState`
+set afresh each prepare and compared with the last). Otherwise `record`
+composites the resolved target it drew last for the same clip
+(`Slot::drawn`) again.
 
 iced builds the widget's pipeline (`viewport::Pipeline`, and with it the
 `Renderer`'s render pipelines) the first time it prepares one of its

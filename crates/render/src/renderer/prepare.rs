@@ -328,9 +328,6 @@ pub struct Slot {
     /// [`Frame::fading_grid`]'s crossfade, and their group 0.
     pub(super) other_grid: wgpu::Buffer,
     pub(super) other_grid_group: wgpu::BindGroup,
-    /// The alpha steps the grid is drawn at, on [`Frame::grid`] and on
-    /// the other plane if it's crossfading: see [`Frame::fading_grid`].
-    pub(super) grid_steps: (u32, Option<u32>),
     /// The colours the mesh's parts are drawn in, linear, an entry each
     /// [`Renderer::tint_stride`] apart: the first [`Colors::model`], then
     /// one for each other colour of [`Frame::tints`]. Written each
@@ -353,26 +350,9 @@ pub struct Slot {
     pub(super) sketch_base: SketchBuffers,
     pub(super) sketch_source: Weak<SketchLayer>,
     pub(super) sketch_live: SketchBuffers,
-    /// Whether the frame has a sketch to draw, and whether it's depth
-    /// tested.
-    pub(super) sketching: bool,
-    pub(super) sketch_depth: bool,
     pub(super) depth: Option<DepthTarget>,
-    pub(super) viewport: Viewport,
-    pub(super) faded: bool,
-    /// [`Frame::hover_through`], never while faded.
-    pub(super) hover_through: bool,
-    /// How the mesh's parts are drawn, by [`Frame::opacity`].
-    pub(super) draws: PartDraws,
-    /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
-    /// and not [`Self::faded`].
-    pub(super) hidden_edges: bool,
-    /// What's drawn of [`Frame::origin`]: while [`Self::faded`], in a
-    /// sketch, only the grid's axis lines and the marker, the sketch's.
-    pub(super) origin: OriginShown,
-    /// The faces hovered and selected, the hovered first: none while
-    /// [`Self::faded`].
-    pub(super) faces: Vec<FaceDraw>,
+    /// What the draws do, set afresh each prepare.
+    pub(super) state: SlotState,
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
     pub(super) highlights: HighlightBuffers,
     pub(super) highlights_source: Weak<Highlights>,
@@ -398,36 +378,46 @@ pub struct Slot {
 }
 
 /// What [`Renderer::prepare`] leaves in a [`Slot`] for the draws, beside
-/// its buffers: two alike draw the same.
+/// its buffers, all of it set afresh each prepare: two alike draw the same.
 #[derive(PartialEq)]
 pub(super) struct SlotState {
+    /// The alpha steps the grid is drawn at, on [`Frame::grid`] and on
+    /// the other plane if it's crossfading: see [`Frame::fading_grid`].
     pub(super) grid_steps: (u32, Option<u32>),
+    /// Whether the frame has a sketch to draw, and whether it's depth
+    /// tested.
     pub(super) sketching: bool,
     pub(super) sketch_depth: bool,
     pub(super) viewport: Viewport,
     pub(super) faded: bool,
+    /// [`Frame::hover_through`], never while faded.
     pub(super) hover_through: bool,
+    /// How the mesh's parts are drawn, by [`Frame::opacity`].
     pub(super) draws: PartDraws,
+    /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
+    /// and not [`Self::faded`].
     pub(super) hidden_edges: bool,
+    /// What's drawn of [`Frame::origin`]: while [`Self::faded`], in a
+    /// sketch, only the grid's axis lines and the marker, the sketch's.
     pub(super) origin: OriginShown,
+    /// The faces hovered and selected, the hovered first: none while
+    /// [`Self::faded`].
     pub(super) faces: Vec<FaceDraw>,
-    pub(super) lines: Option<(bool, bool)>,
 }
 
-impl Slot {
-    pub(super) fn state(&self) -> SlotState {
+impl Default for SlotState {
+    fn default() -> SlotState {
         SlotState {
-            grid_steps: self.grid_steps,
-            sketching: self.sketching,
-            sketch_depth: self.sketch_depth,
-            viewport: self.viewport,
-            faded: self.faded,
-            hover_through: self.hover_through,
-            draws: self.draws.clone(),
-            hidden_edges: self.hidden_edges,
-            origin: self.origin,
-            faces: self.faces.clone(),
-            lines: (self.mesh.as_ref()).map(|mesh| (mesh.wireframe, mesh.tessellation)),
+            grid_steps: (0, None),
+            sketching: false,
+            sketch_depth: false,
+            viewport: Viewport::default(),
+            faded: false,
+            hover_through: false,
+            draws: PartDraws::default(),
+            hidden_edges: false,
+            origin: OriginShown::NONE,
+            faces: Vec::new(),
         }
     }
 }
@@ -541,7 +531,6 @@ impl Renderer {
             bind_group,
             other_grid,
             other_grid_group,
-            grid_steps: (self.alphas.opaque, None),
             tints,
             tint_room: 1,
             part_tints: Vec::new(),
@@ -552,16 +541,11 @@ impl Renderer {
             sketch_base: SketchBuffers::default(),
             sketch_source: Weak::new(),
             sketch_live: SketchBuffers::default(),
-            sketching: false,
-            sketch_depth: false,
             depth: None,
-            viewport: Viewport::default(),
-            faded: false,
-            hover_through: false,
-            draws: PartDraws::default(),
-            hidden_edges: false,
-            origin: OriginShown::NONE,
-            faces: Vec::new(),
+            state: SlotState {
+                grid_steps: (self.alphas.opaque, None),
+                ..SlotState::default()
+            },
             highlights: HighlightBuffers::default(),
             highlights_source: Weak::new(),
             errors: ErrorBuffers::default(),
@@ -594,13 +578,13 @@ impl Renderer {
         queue: &wgpu::Queue,
         frame: &Frame<'_>,
     ) -> Result<(), PrepareError> {
-        let before = slot.state();
+        let before = std::mem::take(&mut slot.state);
         // Whether something was uploaded or made, which the comparisons
         // below don't see.
         let mut changed = false;
         let mut written = Vec::with_capacity(slot.written.len());
         let colors = frame.colors.sanitized();
-        slot.viewport = frame.viewport;
+        slot.state.viewport = frame.viewport;
         let fade = if frame.fade.is_nan() {
             0.0
         } else {
@@ -609,12 +593,12 @@ impl Renderer {
         let faded = fade > 0.0;
         // Wholly faded, the model's drawn as one faded surface; on the way,
         // its parts as glass growing fainter, and its hidden edges with it.
-        slot.faded = fade == 1.0;
-        slot.hover_through = frame.hover_through && !faded;
-        slot.hidden_edges = frame.hidden_edges && !slot.faded;
+        slot.state.faded = fade == 1.0;
+        slot.state.hover_through = frame.hover_through && !faded;
+        slot.state.hidden_edges = frame.hidden_edges && !slot.state.faded;
         // In a sketch, the grid's axis lines and the marker are the
         // sketch's.
-        slot.origin = if faded {
+        slot.state.origin = if faded {
             OriginShown::SKETCH
         } else {
             frame.origin.with_hovered()
@@ -624,7 +608,7 @@ impl Renderer {
         let opacity = opacity(slot, frame, &colors, fade);
         self.write_tints(slot, device, queue, frame, &mut written);
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
-        slot.draws = PartDraws::new(
+        slot.state.draws = PartDraws::new(
             parts,
             &opacity,
             &slot.part_tints,
@@ -632,8 +616,8 @@ impl Renderer {
             frame.camera,
         );
         self.face_draws(slot, frame, &opacity);
-        slot.sketching = frame.sketch.is_some();
-        slot.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
+        slot.state.sketching = frame.sketch.is_some();
+        slot.state.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
 
         let uniforms = uniforms(slot, frame, &colors, fade);
         self.write_grids(slot, queue, frame, &uniforms, fade, &mut written);
@@ -646,7 +630,7 @@ impl Renderer {
             &mut written,
             &mut changed,
         );
-        if changed || written != slot.written || before != slot.state() {
+        if changed || written != slot.written || before != slot.state {
             *slot.drawn.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         }
         slot.written = written;
@@ -690,6 +674,9 @@ impl Renderer {
             });
         }
         if let Some(mesh) = &mut slot.mesh {
+            // Drawn otherwise, though nothing's uploaded.
+            *changed |=
+                mesh.wireframe != frame.wireframe || mesh.tessellation != frame.tessellation;
             mesh.wireframe = frame.wireframe;
             mesh.tessellation = frame.tessellation;
             if frame.tessellation && matches!(mesh.triangles, Triangles::Unbuilt) {
@@ -756,7 +743,7 @@ impl Renderer {
     /// Lists the draws of `frame`'s hovered, selected and second faces in
     /// `slot`, each at its part's `opacity`.
     fn face_draws(&self, slot: &mut Slot, frame: &Frame<'_>, opacity: &[f32]) {
-        slot.faces.clear();
+        slot.state.faces.clear();
         let Some(gpu) = &slot.mesh else {
             return;
         };
@@ -769,7 +756,7 @@ impl Renderer {
             .flat_map(|(faces, tint)| faces.iter().map(move |&face| (face, tint)));
         for (face, tint) in faces {
             if let Some((indices, part)) = gpu.face(frame.mesh, face) {
-                slot.faces.push(FaceDraw {
+                slot.state.faces.push(FaceDraw {
                     indices,
                     step: self.alphas.step(opacity.get(part).copied()),
                     tint,
@@ -842,7 +829,7 @@ impl Renderer {
             }
             None => ((self.alphas.opaque, None), *uniforms, None),
         };
-        slot.grid_steps = steps;
+        slot.state.grid_steps = steps;
         if let Some(other) = other {
             write(queue, &slot.other_grid, bytemuck::bytes_of(&other), written);
         }
@@ -920,7 +907,7 @@ fn opacity<'a>(
     colors: &Colors,
     fade: f32,
 ) -> std::borrow::Cow<'a, [f32]> {
-    if slot.faded {
+    if slot.state.faded {
         return Default::default();
     }
     if fade == 0.0 {
@@ -961,7 +948,7 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
         slot.mesh.as_ref().and_then(|m| m.bounds),
         slot.lines.as_ref().and_then(|l| l.bounds),
         slot.errors.bounds,
-        planes_bounds(frame.camera, slot.origin),
+        planes_bounds(frame.camera, slot.state.origin),
     ]
     .into_iter()
     .chain(sketch_bounds.into_iter().flatten());
@@ -969,7 +956,11 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
     let sketch_plane = frame.sketch.map_or(*grid, |sketch| sketch.plane);
     let aspect = frame.viewport.aspect();
     let half = camera.half_extents(aspect);
-    let alpha = if slot.faded { colors.faded_alpha } else { 1.0 };
+    let alpha = if slot.state.faded {
+        colors.faded_alpha
+    } else {
+        1.0
+    };
     let with_alpha = |color, alpha| {
         let [r, g, b, _] = linear(color);
         [r, g, b, alpha]
@@ -1010,7 +1001,7 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
             .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
         pivot_color: linear(colors.pivot),
         grid_origin: (grid.origin())
-            .extend(slot.origin.mask(grid) as f32)
+            .extend(slot.state.origin.mask(grid) as f32)
             .to_array(),
         grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
         grid_y: grid.y().extend(axis_index(grid.y())).to_array(),

@@ -89,10 +89,10 @@ pub(super) fn draw_stream(
 pub(super) fn patterned(slot: &Slot) -> bool {
     let drawn = |f: &FaceDraw| match f.tint {
         Tint::Selected => true,
-        Tint::Hovered => !slot.hover_through,
+        Tint::Hovered => !slot.state.hover_through,
         Tint::Second => false,
     };
-    slot.mesh.is_some() && (slot.faces.iter()).any(|f| drawn(f) && !f.indices.is_empty())
+    slot.mesh.is_some() && (slot.state.faces.iter()).any(|f| drawn(f) && !f.indices.is_empty())
 }
 
 /// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
@@ -282,7 +282,7 @@ impl Renderer {
             occlusion_query_set: None,
         });
 
-        let vp = slot.viewport;
+        let vp = slot.state.viewport;
         pass.set_viewport(vp.x, vp.y, vp.width, vp.height, 0.0, 1.0);
         pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
         pass.set_bind_group(0, &slot.bind_group, &[0]);
@@ -312,7 +312,7 @@ impl Renderer {
         let mut pass = self.begin(slot, encoder, target, depth, load, clip);
         bind_faces(&mut pass, mesh);
         // The hover's, unless drawn whole, then the selection's over it.
-        let hover = (!slot.hover_through).then_some((
+        let hover = (!slot.state.hover_through).then_some((
             Tint::Hovered,
             PICK_MARKS[0],
             &self.hovered_face_shown,
@@ -326,7 +326,8 @@ impl Renderer {
         ));
         for (tint, mark, marking, drawn) in hover.into_iter().chain(selection) {
             pass.set_stencil_reference(mark);
-            let tinted = || (slot.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
+            let tinted =
+                || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
             pass.set_pipeline(marking);
             for face in tinted() {
                 self.alphas.set(&mut pass, face.step);
@@ -458,10 +459,10 @@ impl Renderer {
         }
 
         let mesh = slot.mesh.as_ref();
-        let draws = &slot.draws;
+        let draws = &slot.state.draws;
         if let Some(mesh) = mesh {
             bind_faces(pass, mesh);
-            if slot.faded {
+            if slot.state.faded {
                 let all = 0..mesh.parts.len();
                 pass.set_pipeline(&self.mesh_depth);
                 draw_faces(pass, mesh, all.clone());
@@ -474,7 +475,7 @@ impl Renderer {
                 }
                 pass.set_bind_group(0, &slot.bind_group, &[0]);
                 // What a sketch's tool picks of the model, over it.
-                self.draw_picked_faces(pass, &slot.faces, false);
+                self.draw_picked_faces(pass, &slot.state.faces, false);
                 draw_edges(pass, &self.edges, mesh, all.clone());
                 self.draw_triangle_edges(pass, mesh, all);
             } else {
@@ -485,7 +486,7 @@ impl Renderer {
                 }
                 pass.set_bind_group(0, &slot.bind_group, &[0]);
                 // Before anything else writes depth where they are.
-                self.draw_picked_faces(pass, &slot.faces, false);
+                self.draw_picked_faces(pass, &slot.state.faces, false);
                 for run in &draws.opaque {
                     draw_edges(pass, &self.edges, mesh, run.clone());
                     self.draw_triangle_edges(pass, mesh, run.clone());
@@ -499,7 +500,7 @@ impl Renderer {
         if backdrop {
             pass.set_pipeline(&self.grid);
             pass.set_bind_group(0, &slot.bind_group, &[0]);
-            let (step, other) = slot.grid_steps;
+            let (step, other) = slot.state.grid_steps;
             self.alphas.set(pass, step);
             pass.draw(0..3, 0..1);
             if let Some(step) = other {
@@ -513,7 +514,7 @@ impl Renderer {
 
         // Under the finished sketches, which often lie on them, unless
         // drawn over the model, below.
-        if backdrop && !slot.origin.planes_on_top {
+        if backdrop && !slot.state.origin.planes_on_top {
             self.draw_origin_planes(pass, slot, &self.origin_planes);
         }
 
@@ -526,10 +527,10 @@ impl Renderer {
         // Only the opaque parts have written depth so far, so the hidden
         // edges here are those they hide; what glass hides is dashed below.
         // Then the glass's visible edges, under the faces drawn next.
-        if !slot.faded
+        if !slot.state.faded
             && let Some(mesh) = mesh
         {
-            if slot.hidden_edges {
+            if slot.state.hidden_edges {
                 for run in &draws.opaque {
                     draw_edges(pass, &self.hidden_edges, mesh, run.clone());
                 }
@@ -542,7 +543,7 @@ impl Renderer {
         // is any, and so under the origin marker too.
         let glass = mesh.is_some() && !draws.transparent.is_empty();
         let layers = [&slot.sketch_base, &slot.sketch_live];
-        if slot.sketching && slot.sketch_depth && glass {
+        if slot.state.sketching && slot.state.sketch_depth && glass {
             for layer in layers {
                 self.sketch_depth_tested.draw(pass, layer);
             }
@@ -553,7 +554,7 @@ impl Renderer {
         // followed by the edges it hides, dashed; then its picked faces and
         // its edges again, undimmed on the glass they lie on.
         if let Some(mesh) = mesh.filter(|_| glass) {
-            if !slot.faded {
+            if !slot.state.faded {
                 self.draw_highlights(pass, slot);
             }
             bind_faces(pass, mesh);
@@ -580,7 +581,7 @@ impl Renderer {
                 bind_faces(pass, mesh);
                 pass.set_pipeline(&self.glass_depth);
                 draw_faces(pass, mesh, part..part + 1);
-                if slot.hidden_edges {
+                if slot.state.hidden_edges {
                     self.draw_hidden_by_glass(pass, mesh, draws, step);
                 }
             }
@@ -594,13 +595,13 @@ impl Renderer {
                 pass.set_vertex_buffer(0, lines.segments.slice(..));
                 pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
             }
-            if slot.sketching && slot.sketch_depth {
+            if slot.state.sketching && slot.state.sketch_depth {
                 for layer in layers {
                     self.sketch_over_glass.draw(pass, layer);
                 }
             }
             bind_faces(pass, mesh);
-            self.draw_picked_faces(pass, &slot.faces, true);
+            self.draw_picked_faces(pass, &slot.state.faces, true);
             self.draw_glass_edges(pass, &self.edges, mesh, draws);
             for &(part, step) in &draws.transparent {
                 self.alphas.set(pass, step);
@@ -613,7 +614,7 @@ impl Renderer {
         if mesh.is_some() {
             self.draw_highlights(pass, slot);
         }
-        if let Some(mesh) = mesh.filter(|_| slot.hover_through) {
+        if let Some(mesh) = mesh.filter(|_| slot.state.hover_through) {
             self.draw_hover_through(pass, slot, mesh);
         }
     }
@@ -634,14 +635,14 @@ impl Renderer {
         }
 
         // Over the model, which can't hide them while one is picked.
-        if backdrop && slot.origin.planes_on_top {
+        if backdrop && slot.state.origin.planes_on_top {
             self.draw_origin_planes(pass, slot, &self.origin_planes_on_top);
         }
 
         if backdrop {
             pass.set_pipeline(&self.origin);
             // The pivot's marker is the second instance.
-            let first = if slot.origin.marker { 0 } else { 1 };
+            let first = if slot.state.origin.marker { 0 } else { 1 };
             pass.draw(0..ORIGIN_VERTICES, first..MARKERS);
         }
     }
@@ -655,8 +656,14 @@ impl Renderer {
     ) {
         pass.set_pipeline(pipeline);
         // The hovered one's instance is 3 on, see `vs_origin_plane`.
-        for (plane, _) in (0..).zip(slot.origin.planes).filter(|(_, shown)| *shown) {
-            let hovered = slot.origin.emphasised(OriginPart::Plane(plane as usize));
+        for (plane, _) in (0..)
+            .zip(slot.state.origin.planes)
+            .filter(|(_, shown)| *shown)
+        {
+            let hovered = slot
+                .state
+                .origin
+                .emphasised(OriginPart::Plane(plane as usize));
             let instance = if hovered { plane + 3 } else { plane };
             pass.draw(0..PLANE_VERTICES, instance..instance + 1);
         }
@@ -668,9 +675,9 @@ impl Renderer {
     /// hide what's edited; or depth tested, unless [`Self::draw_scene`]
     /// drew it under the glass.
     pub(super) fn draw_sketch(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot) {
-        let glass = slot.mesh.is_some() && !slot.draws.transparent.is_empty();
-        if slot.sketching && !(slot.sketch_depth && glass) {
-            let pipelines = if slot.sketch_depth {
+        let glass = slot.mesh.is_some() && !slot.state.draws.transparent.is_empty();
+        if slot.state.sketching && !(slot.state.sketch_depth && glass) {
+            let pipelines = if slot.state.sketch_depth {
                 &self.sketch_depth_tested
             } else {
                 &self.sketch_on_top
@@ -767,7 +774,7 @@ impl Renderer {
         pattern: Option<&CoverageTarget>,
     ) {
         let highlights = &slot.highlights;
-        let hover = (!slot.hover_through).then_some((
+        let hover = (!slot.state.hover_through).then_some((
             Tint::Hovered,
             PICK_MARKS[0],
             [&self.hovered_face_mark, &self.hovered_face_hidden],
@@ -790,7 +797,8 @@ impl Renderer {
             // striped by the selection alone, from the hover's colour.
             bind_faces(pass, mesh);
             pass.set_stencil_reference(mark);
-            let tinted = || (slot.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
+            let tinted =
+                || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
             pass.set_pipeline(marking);
             for face in tinted() {
                 self.alphas.set(pass, face.step);
@@ -838,7 +846,7 @@ impl Renderer {
     ) {
         bind_faces(pass, mesh);
         pass.set_pipeline(&self.hover_face_through);
-        for face in &slot.faces {
+        for face in &slot.state.faces {
             if face.tint == Tint::Hovered && !face.indices.is_empty() {
                 self.alphas.set(pass, face.step);
                 pass.draw_indexed(face.indices.clone(), 0, 0..1);
