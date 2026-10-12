@@ -36,7 +36,7 @@ use crate::doc::OperationSlot;
 use glam::DVec2;
 use varde_document::{BodyId, BodyOp, Combine, Command, FeatureId, Operation, Targets};
 use varde_expr::LengthUnit;
-use varde_kernel::mesh::Form;
+use varde_kernel_compat::mesh::Form;
 use varde_view::{OverlapItems, Overlaps, PanelHover, Pick};
 
 use super::super::chamfer::fuzz::Rng;
@@ -255,7 +255,10 @@ fn random_overlaps(plates: &Plates, rng: &mut Rng) -> Option<Overlaps> {
 }
 
 /// The form of the region `face` names on `solid`, if found.
-fn form_of<'a>(solid: &'a varde_kernel::Solid, face: &varde_document::FaceRef) -> Option<&'a Form> {
+fn form_of<'a>(
+    solid: &'a varde_kernel_compat::Solid,
+    face: &varde_document::FaceRef,
+) -> Option<&'a Form> {
     let topology = solid.topology();
     let region = topology.face(solid, &face.key, face.near).ok()?;
     let mesh = solid.mesh();
@@ -269,7 +272,7 @@ fn form_of<'a>(solid: &'a varde_kernel::Solid, face: &varde_document::FaceRef) -
 /// pull, each side drafted moving in by `tan α` times the height above
 /// the neutral plane.
 fn wanted_volume(
-    solid: &varde_kernel::Solid,
+    solid: &varde_kernel_compat::Solid,
     before: &varde_regen::Evaluation,
     draft: &FaceDraft,
 ) -> Option<f64> {

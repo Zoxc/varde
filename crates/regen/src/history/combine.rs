@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document};
-use varde_kernel::{Budget, KernelError, Op, Solid, Tolerance};
+use varde_kernel_compat::{Budget, KernelError, Op, Solid, Tolerance};
 
 use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge, own_solids};
 use crate::cache::{Cache, Key};
@@ -19,7 +19,7 @@ use crate::message::{self, Doing};
 /// one a join or an earlier combine consumed fails it, naming the body
 /// holding it, and so does one whose maker failed. The target's solid is then united with,
 /// less, or intersected with each tool's, in the order the tools were
-/// made, the running solid first, each step a [`varde_kernel::boolean`]
+/// made, the running solid first, each step a [`varde_kernel_compat::boolean`]
 /// cached by the operation, the running solid's key and the tool's (as
 /// a join's merge chain is: a union step is keyed as a join's merging
 /// two bodies, so the two share what they work out). A union whose step
@@ -64,8 +64,14 @@ pub(super) fn evaluate(
     let mut step = |running: &mut Running, tool: &BodySolid| {
         let next = boolean_key(doing, running.key, tool.key);
         let result = cache.boolean(next, || {
-            varde_kernel::boolean(&running.solid, &tool.solid, op, tolerance, &Budget::DEFAULT)
-                .map_err(|failure| KernelFailure::new(failure, tolerance))
+            varde_kernel_compat::boolean(
+                &running.solid,
+                &tool.solid,
+                op,
+                tolerance,
+                &Budget::DEFAULT,
+            )
+            .map_err(|failure| KernelFailure::new(failure, tolerance))
         });
         let words = match doing {
             // The messages say "joining" for a union.

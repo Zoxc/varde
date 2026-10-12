@@ -80,7 +80,7 @@ before it in `Run::sketches`), in history order:
   the first) on one plane fail before the kernel, "sections 1 and 2 are
   on one plane" (a point on the plane of the section next to it:
   "section 3 is a point on section 2's plane: move it off the plane"),
-  by the kernel's own rule (`varde_kernel::loft::on_one_plane`:
+  by the kernel's own rule (`varde_kernel_compat::loft::on_one_plane`:
   each one's vertices within the resolution of the other's plane; a
   point on a loop's plane; two points never).
 - **Rails**: each sketch chain ordered by `profile::chain` (as a
@@ -90,7 +90,7 @@ before it in `Run::sketches`), in history order:
   runs from the first section to the last", "rail 1's curves don't join
   end to end into one line", "rail 1 can't be used: ...", "rail 1's
   sketch isn't placed".
-- **The loft**: `varde_kernel::loft::loft(sections, mode, closed, rails,
+- **The loft**: `varde_kernel_compat::loft::loft(sections, mode, closed, rails,
   feature, tol, budget)`, cached as an `Entry::Solid` by the feature,
   the fit tolerance, the mode, `closed`, and every section's and rail's
   sketch key, placement bits and what the feature names of it (an edit
@@ -103,7 +103,7 @@ before it in `Run::sketches`), in history order:
   out", "lofting isn't supported yet" for `NotImplemented`, else as an extrude's tool with the verb "loft"). Then the tool
   goes on as an extrude's: a new body, or touches and booleans (a join
   touching several bodies merges them).
-- **Kernel stand-in**: `varde_kernel::loft::loft` (`kernel/src/loft.rs`)
+- **Kernel stand-in**: `varde_kernel_compat::loft::loft` (`kernel/src/loft.rs`)
   isn't built: it fails with `NotImplemented`, so every loft that gets as
   far as the kernel fails today with "lofting isn't supported yet",
   making no body, and the rest of the history

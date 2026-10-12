@@ -1,6 +1,6 @@
 //! Evaluating an offset face: the body's solid, as the features before
 //! it leave it, with the faces it names moved along their normals by
-//! the kernel's [`varde_kernel::offset_faces()`].
+//! the kernel's [`varde_kernel_compat::offset_faces()`].
 //!
 //! The faces are found on the body's topology (the one drawing it
 //! keeps) by their keys and points, as a shell's
@@ -24,7 +24,7 @@
 //! to work out", and the rest of the history goes on.
 
 use varde_document::{Document, FeatureId, OffsetFace};
-use varde_kernel::{Budget, OffsetError, Solid, Tolerance, Topology};
+use varde_kernel_compat::{Budget, OffsetError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
 use super::{Evaluation, Failed};
@@ -50,7 +50,7 @@ pub(crate) type Offsetter = fn(
 
 kernel_op! {
     /// The offset to run: the kernel's, or the one a test set.
-    fn offsetter() -> Offsetter = varde_kernel::offset_faces, offset;
+    fn offsetter() -> Offsetter = varde_kernel_compat::offset_faces, offset;
 }
 
 /// Changes the body of `evaluation` as the offset face `offset`, the

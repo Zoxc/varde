@@ -13,7 +13,7 @@ use crate::history::in_place;
 /// meeting inside, or one as thick as the body is across (no hollow
 /// left), is [`ShellError::TooThick`].
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn by_boxes(
     solid: &Solid,
@@ -26,7 +26,7 @@ pub(crate) fn by_boxes(
     budget: &Budget,
 ) -> Result<Solid, ShellError> {
     use glam::{DVec2, DVec3};
-    use varde_kernel::{Frame, KernelError, Loop, Op, Profile, Segment};
+    use varde_kernel_compat::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || ShellError::Failed(KernelError::TooComplex.into());
     let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
     let mut opened = [[false; 2]; 3];
@@ -50,7 +50,7 @@ pub(crate) fn by_boxes(
         let profile = Profile {
             loops: vec![Loop { segments }],
         };
-        Ok(varde_kernel::extrude(
+        Ok(varde_kernel_compat::extrude(
             &profile,
             &Frame::XY,
             lo.z,
@@ -91,7 +91,7 @@ pub(crate) fn by_boxes(
         }
         let (in_lo, in_hi) = moved(0.0);
         let outer = block(lo, hi)?;
-        varde_kernel::boolean(&outer, &block(in_lo, in_hi)?, Op::Difference, tol, budget)?
+        varde_kernel_compat::boolean(&outer, &block(in_lo, in_hi)?, Op::Difference, tol, budget)?
     } else {
         let (lo, hi) = moved(-thickness);
         // The hollow must reach into the body on every axis: a wall as
@@ -101,7 +101,7 @@ pub(crate) fn by_boxes(
         if (0..3).any(|axis| lo[axis].max(min[axis]) >= hi[axis].min(max[axis])) {
             return Err(ShellError::TooThick);
         }
-        varde_kernel::boolean(solid, &block(lo, hi)?, Op::Difference, tol, budget)?
+        varde_kernel_compat::boolean(solid, &block(lo, hi)?, Op::Difference, tol, budget)?
     };
     Ok(result)
 }

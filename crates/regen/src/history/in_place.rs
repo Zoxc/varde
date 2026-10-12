@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FaceRef, FeatureId};
-use varde_kernel::{Budget, Evidence, Failure, Solid, Tolerance, Topology};
+use varde_kernel_compat::{Budget, Evidence, Failure, Solid, Tolerance, Topology};
 
 use super::{Evaluation, Failed, own_solid};
 use crate::ErrorGeometry;
@@ -189,7 +189,7 @@ pub(super) type BoxSides = (glam::DVec3, glam::DVec3, Vec<(usize, usize)>);
 /// for anything else.
 #[cfg(any(test, feature = "testing"))]
 pub(super) fn box_sides(solid: &Solid, topology: &Topology) -> Option<BoxSides> {
-    use varde_kernel::mesh::Form;
+    use varde_kernel_compat::mesh::Form;
     let bounds = solid.bounds3()?;
     let (min, max) = (bounds.min, bounds.max);
     let size = max - min;

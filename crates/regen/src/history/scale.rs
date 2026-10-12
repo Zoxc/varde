@@ -24,9 +24,9 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use varde_document::{BodyId, Document, EdgeRef, FeatureId, MAX_SCALE_FACTOR, Scale, ScaleFactor};
-use varde_kernel::measure::{EdgeShape, Measured, Pick, Target, measure};
-use varde_kernel::mesh::Surface;
-use varde_kernel::{Budget, Evidence, Motion, Tolerance};
+use varde_kernel_compat::measure::{EdgeShape, Measured, Pick, Target, measure};
+use varde_kernel_compat::mesh::Surface;
+use varde_kernel_compat::{Budget, Evidence, Motion, Tolerance};
 
 use super::align::Found;
 use super::motion::{How, place, reference_key};

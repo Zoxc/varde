@@ -3,7 +3,7 @@
 //! an axis, put together in the body, or each copy a body of its own.
 
 use varde_document::{Document, FeatureId, Pattern, PatternKind};
-use varde_kernel::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
+use varde_kernel_compat::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
 
 use super::motion::{note_reference, resolve_axis, within};
 use super::{BodySolid, Evaluation, Failed, own_solids};

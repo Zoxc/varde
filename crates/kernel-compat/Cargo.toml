@@ -1,5 +1,5 @@
 [package]
-name = "varde-kernel"
+name = "varde-kernel-compat"
 description = "Geometry kernel: rational quadratic patches, shapes, solids and tessellation"
 version.workspace = true
 edition.workspace = true

@@ -12,7 +12,7 @@ use super::*;
 /// its face is [`BlendError::TooBig`] only as far as the stand-in can
 /// tell (an angled cut that never meets the other face).
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 pub(crate) fn by_wedges(
     solid: &Solid,
     topology: &Topology,
@@ -22,8 +22,8 @@ pub(crate) fn by_wedges(
     budget: &Budget,
 ) -> Result<Solid, BlendError> {
     use glam::DVec3;
-    use varde_kernel::mesh::Form;
-    use varde_kernel::{Frame, KernelError, Loop, Op, Profile, Segment};
+    use varde_kernel_compat::mesh::Form;
+    use varde_kernel_compat::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || BlendError::Failed(KernelError::TooComplex.into());
     let mesh = solid.mesh();
     let mut result = solid.clone();
@@ -76,7 +76,7 @@ pub(crate) fn by_wedges(
                 let c1 = other.dot(into[on]);
                 let m = (other - into[on] * c1).normalize();
                 let c2 = other.dot(m);
-                let (sin, cos) = varde_kernel::trig::sin_cos(angle);
+                let (sin, cos) = varde_kernel_compat::trig::sin_cos(angle);
                 let k = distance * sin / (c1 * sin + c2 * cos);
                 if !(k.is_finite() && k > 0.0) {
                     return Err(BlendError::TooBig {
@@ -109,7 +109,7 @@ pub(crate) fn by_wedges(
             loops: vec![Loop { segments }],
         };
         let margin = d0 + d1 + 1.0;
-        let prism = varde_kernel::extrude(
+        let prism = varde_kernel_compat::extrude(
             &profile,
             &frame,
             -margin,
@@ -118,7 +118,7 @@ pub(crate) fn by_wedges(
             tol,
             budget,
         )?;
-        result = varde_kernel::boolean(&result, &prism, Op::Difference, tol, budget)?;
+        result = varde_kernel_compat::boolean(&result, &prism, Op::Difference, tol, budget)?;
     }
     Ok(result)
 }

@@ -6,7 +6,7 @@
 //! by them, and so the vertices of its profiles and the solids built from
 //! them. These wrap the `libm` crate instead: pure Rust, pinned by
 //! `Cargo.lock`, the same code natively and on wasm (where std's are
-//! already this code). The kernel's `varde_kernel::trig` wraps the same
+//! already this code). The kernel's `varde_kernel_compat::trig` wraps the same
 //! functions, so the two agree to the bit.
 //!
 //! The crate's `clippy.toml` refuses std's versions, so the sketch keeps

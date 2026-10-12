@@ -8,7 +8,7 @@ use std::any::Any;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel_compat::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ERROR_EDGE_WIDTH, ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame,
@@ -524,7 +524,7 @@ fn block() -> RenderMesh {
         &Tolerance::DEFAULT,
     )
     .unwrap()
-    .tessellate(&varde_kernel::Display::default())
+    .tessellate(&varde_kernel_compat::Display::default())
     .unwrap()
 }
 
@@ -589,7 +589,7 @@ fn nothing_is_drawn_without_errors() {
     let block = Arc::new(
         Solid::cuboid(DVec3::ZERO, DVec3::splat(6.0), 0, &Tolerance::DEFAULT)
             .unwrap()
-            .tessellate(&varde_kernel::Display::default())
+            .tessellate(&varde_kernel_compat::Display::default())
             .unwrap(),
     );
     let none = scene.draw(&frame(&camera, &block, &[], false));

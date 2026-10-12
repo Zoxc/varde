@@ -7,10 +7,10 @@ use std::f64::consts::PI;
 use varde_document::{
     AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, MAX_COORD, Mirror, Move, PlaneRef,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::Form;
-use varde_kernel::topology::Unresolved;
-use varde_kernel::{Budget, Instance, Motion, Solid, Tolerance, assemble};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::Form;
+use varde_kernel_compat::topology::Unresolved;
+use varde_kernel_compat::{Budget, Instance, Motion, Solid, Tolerance, assemble};
 
 use super::{
     BodySolid, Evaluation, Failed, chain_curves, chain_runs_with, face_geometry, own_solids,
@@ -248,7 +248,7 @@ fn moved(
 /// axis through its centre, turning the way the edge runs as so
 /// directed); a face must be round, a cylinder, cone, torus or other
 /// surface of revolution (its form's axis, directed as the form has it,
-/// through the point of it nearest the face's point: [`beside`](varde_kernel::topology::beside)).
+/// through the point of it nearest the face's point: [`beside`](varde_kernel_compat::topology::beside)).
 /// Cached by the solid's key, the reference and the fit tolerance.
 pub(super) fn resolve_axis(
     axis: &AxisRef,
@@ -376,7 +376,7 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
 /// so the one found is within the wire's bounds even where the face is
 /// at the limit.
 ///
-/// [`Topology::face_axis`]: varde_kernel::Topology::face_axis
+/// [`Topology::face_axis`]: varde_kernel_compat::Topology::face_axis
 fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
     topology

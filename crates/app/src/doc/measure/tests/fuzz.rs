@@ -12,8 +12,8 @@ use std::cell::RefCell;
 
 use glam::DVec3;
 use varde_document::{Command, Editor, Opacity, Operation, Targets};
-use varde_kernel::measure::{self, EdgeShape, Measured, Pick as KernelPick, Target};
-use varde_kernel::{Budget, Topology};
+use varde_kernel_compat::measure::{self, EdgeShape, Measured, Pick as KernelPick, Target};
+use varde_kernel_compat::{Budget, Topology};
 use varde_regen::{At, EdgeForm, Entity, Inspected, Measure, Request, Summary};
 use varde_view::{
     Edit, Look, MeasureLook, MeasureSlot, ModelHighlight, Pick, Picked, measure_values,
@@ -153,7 +153,11 @@ fn direct(
 }
 
 /// A pick resolved on its body's solid by the kernel.
-type Resolved = (KernelPick, std::sync::Arc<varde_kernel::Solid>, Topology);
+type Resolved = (
+    KernelPick,
+    std::sync::Arc<varde_kernel_compat::Solid>,
+    Topology,
+);
 
 /// `measured` as the lane answers it.
 fn answered(measured: &Measured) -> Measure {

@@ -742,7 +742,7 @@ fn handles_at(doc: &Doc) -> DVec3 {
 /// What a ring of the handles at `centre` sends turning about `axis`
 /// to `angle` degrees from `from` degrees, the offsets `offset`.
 fn ring(axis: Axis3, centre: DVec3, offset: DVec3, from: f64, angle: f64) -> MotionLook {
-    let shift = varde_kernel::Motion::turn(centre, axis.direction(), angle - from)
+    let shift = varde_kernel_compat::Motion::turn(centre, axis.direction(), angle - from)
         .unwrap()
         .point(offset);
     let units = Some(varde_expr::Unit::Length(varde_expr::LengthUnit::Mm));
@@ -862,7 +862,7 @@ fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
         .unwrap()
         .line
         .expect("the rim's axis");
-    let about = varde_kernel::Motion::turn(point, along, 120.0).unwrap();
+    let about = varde_kernel_compat::Motion::turn(point, along, 120.0).unwrap();
     assert!(near(handles_at(&plates.doc), about.point(start)));
 
     // Typed back to nothing, the bodies are back, and the handles.

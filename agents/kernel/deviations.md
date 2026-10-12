@@ -394,7 +394,7 @@
   merging of the result's own triangles (nor of repair's splits).
 - **`MAX_TRACE_STEPS` is 4096** per cut, in `lib.rs`; a cut that runs out
   falls back to one conic along its ends' tangents, or a straight edge.
-- **The kernel has its own trig module**, `varde_kernel::trig`, beside
+- **The kernel has its own trig module**, `varde_kernel_compat::trig`, beside
   the sketch's `angle` module, rather than one helper shared by both: the
   sketch doesn't depend on the kernel, and both wrap the same `libm`
   functions, so they agree to the bit. A crate of its own for a dozen
@@ -1171,7 +1171,7 @@
   budget) -> Result<Solid, SweepError>` with its planned signature,
   failing with `SweepError::Failed(NotImplemented)`, to be replaced whole by
   the real one (with what it needs beside it under `sweep/`). Reached
-  as `varde_kernel::sweep::sweep` and `varde_kernel::sweep::{Path,
+  as `varde_kernel_compat::sweep::sweep` and `varde_kernel_compat::sweep::{Path,
   Piece, Helix, Orientation, SweepError}`, not re-exported at the
   crate's root, where revolve's `Sweep` (its span) already is. A
   `Path` is `Chain { pieces, closed }` or `Helix(Helix { point, axis,
@@ -1200,7 +1200,7 @@
   tol, budget) -> Result<Solid, LoftError>` with its planned signature,
   failing with `LoftError::Failed(NotImplemented)`, to be replaced whole by
   the real one (with what it needs beside it under `loft/`). Reached as
-  `varde_kernel::loft::{loft, Section, LoftMode, Rail, LoftError,
+  `varde_kernel_compat::loft::{loft, Section, LoftMode, Rail, LoftError,
   on_one_plane, MAX_SECTIONS, MAX_RAILS}`, not re-exported at the
   crate's root. A `Section` is `Loop { outline: Loop, frame: Frame,
   start: Option<usize> }` (one loop, no holes, the start the index of

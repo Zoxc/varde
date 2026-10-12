@@ -1,6 +1,6 @@
 use glam::DVec3;
 use varde_document::{BodyId, Document, Editor, Operation, Targets};
-use varde_kernel::{Solid, Tolerance};
+use varde_kernel_compat::{Solid, Tolerance};
 
 use super::*;
 use crate::history::tests::{add_extrude, disc, two_sides};
@@ -308,8 +308,10 @@ fn bad_facts_are_not_valid() {
 mod solids {
     use super::*;
     use glam::DVec2;
-    use varde_kernel::Op;
-    use varde_kernel::{Budget, Frame, Loop, Motion, Profile, Segment, Sweep, boolean, revolve};
+    use varde_kernel_compat::Op;
+    use varde_kernel_compat::{
+        Budget, Frame, Loop, Motion, Profile, Segment, Sweep, boolean, revolve,
+    };
 
     /// `solid`'s edges' facts, checked against the traversal: each
     /// valid, a round edge's axis turns the way its halfedges run, a

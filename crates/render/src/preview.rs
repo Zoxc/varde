@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use glam::Vec3;
-use varde_kernel::{RenderLines, RenderMesh};
+use varde_kernel_compat::{RenderLines, RenderMesh};
 
 use crate::{
     BodyTint, Camera, ClipRect, Colors, Frame, GridPlane, Highlights, PrepareError, Projection,

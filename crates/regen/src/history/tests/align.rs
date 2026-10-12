@@ -10,9 +10,9 @@ use glam::DVec3;
 use varde_document::{
     Align, AlignRefs, Axis3, AxisRef, BodyOp, Combine, DirRef, EdgeRef, FaceRef, Move, PointRef,
 };
-use varde_kernel::Budget;
-use varde_kernel::mesh::{FaceKey, Form};
-use varde_kernel::topology::Topology;
+use varde_kernel_compat::Budget;
+use varde_kernel_compat::mesh::{FaceKey, Form};
+use varde_kernel_compat::topology::Topology;
 
 use super::motion::{add, block, boxed, cylinder, failure, key_on, key_where, near_box, set};
 use super::*;
@@ -448,7 +448,7 @@ fn refusals() {
     // A reference gone: a side the pin's extrude never made.
     let mut changed = align.clone();
     let mut gone = foot;
-    gone.faces[1].part = varde_kernel::mesh::PartKey::Side { curve: 999 };
+    gone.faces[1].part = varde_kernel_compat::mesh::PartKey::Side { curve: 999 };
     gone.faces.sort();
     changed.from.primary = Some(DirRef::Axis(AxisRef::Edge(gone)));
     fails(

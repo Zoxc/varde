@@ -16,10 +16,10 @@
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::FaceKey;
-use varde_kernel::topology::Chain;
-use varde_kernel::{RenderMesh, Solid, Topology};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::FaceKey;
+use varde_kernel_compat::topology::Chain;
+use varde_kernel_compat::{RenderMesh, Solid, Topology};
 
 use crate::bounds::point;
 use crate::inspect::EdgeForm;
@@ -130,7 +130,7 @@ const SMOOTH_SINE: f64 = 0.017_452_406_437_283_51;
 /// that of the triangle across, the edge is smooth where `a·b > 0` and
 /// `|a × b| ≤ sin 1° |a||b|`, else convex where `(a × b)·t > 0` and
 /// concave where it's below. Decided by `+ − ×` on the patches' normals
-/// ([`Patch::normal`](varde_kernel::patch::Patch::normal), counter-clockwise seen from outside).
+/// ([`Patch::normal`](varde_kernel_compat::patch::Patch::normal), counter-clockwise seen from outside).
 fn convexity(solid: &Solid, chain: &Chain) -> Option<Convexity> {
     let mesh = solid.mesh();
     let tris = mesh.tris().len();

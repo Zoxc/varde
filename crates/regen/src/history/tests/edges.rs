@@ -8,9 +8,9 @@
 
 use glam::DVec3;
 use varde_document::{AxisLine, EdgeRef, Placement, Revolve, Turn};
-use varde_kernel::mesh::{FaceKey, Form, PartKey};
-use varde_kernel::topology::Region;
-use varde_kernel::{Budget, Motion};
+use varde_kernel_compat::mesh::{FaceKey, Form, PartKey};
+use varde_kernel_compat::topology::Region;
+use varde_kernel_compat::{Budget, Motion};
 
 use super::*;
 use crate::Draft;

@@ -15,8 +15,8 @@ use std::cell::RefCell;
 
 use glam::DVec3;
 use varde_document::{FaceDraft, FaceRef, PlaneRef, Scale, ScaleFactor};
-use varde_kernel::mesh::{FaceKey, Form};
-use varde_kernel::{DraftError, Topology};
+use varde_kernel_compat::mesh::{FaceKey, Form};
+use varde_kernel_compat::{DraftError, Topology};
 
 use super::chamfer::slot;
 use super::motion::{add, block, cylinder, failure, key_on, key_where, revolved, set};

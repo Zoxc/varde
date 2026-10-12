@@ -45,8 +45,8 @@
 use std::f64::consts::FRAC_1_SQRT_2;
 
 use glam::DVec2;
-use varde_kernel::MAX_PROFILE_SEGMENTS;
-use varde_kernel::patch::Conic2;
+use varde_kernel_compat::MAX_PROFILE_SEGMENTS;
+use varde_kernel_compat::patch::Conic2;
 use varde_sketch::BSpline;
 
 use super::{ProfileError, Segments};

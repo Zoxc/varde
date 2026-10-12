@@ -18,8 +18,8 @@
 //! made; and the document survives its bytes, flipped bits included.
 
 use varde_document::{Combine, Plane};
-use varde_kernel::mesh::Form;
-use varde_kernel::{Budget, Op};
+use varde_kernel_compat::mesh::Form;
+use varde_kernel_compat::{Budget, Op};
 
 use super::super::combine::fuzz::{
     Rng, bytes, not_stuck, random_combine, random_shape, same_bodies, solid, truncated,
@@ -194,7 +194,8 @@ fn check_splits(document: &Document, evaluation: &Evaluation, cache: &mut Cache,
         if let SplitTool::Body(tool) = split.tool {
             // The booleans' pieces, worked out here.
             let tool = solid(&before, tool).expect("a tool body");
-            let piece = |op| varde_kernel::boolean(body, tool, op, &tolerance, &Budget::DEFAULT);
+            let piece =
+                |op| varde_kernel_compat::boolean(body, tool, op, &tolerance, &Budget::DEFAULT);
             let front = piece(Op::Intersection).unwrap();
             let back = piece(Op::Difference).unwrap();
             let (mine, theirs) = match split.kept() {

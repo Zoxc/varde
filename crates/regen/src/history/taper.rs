@@ -1,6 +1,6 @@
 //! A tapered extrude's tool: its regions extruded as an untapered
 //! extrude's are, its walls leaning by the taper, by the kernel's
-//! [`varde_kernel::extrude_tapered`]. What's done with the tool (a new
+//! [`varde_kernel_compat::extrude_tapered`]. What's done with the tool (a new
 //! body, or touches and booleans) is an extrude's (`Run::evaluate`).
 //!
 //! The tool is cached as the untapered extrude's, with the taper's bits
@@ -13,7 +13,7 @@
 //! complex, which reaches the user as that message, and the rest of the
 //! history goes on.
 
-use varde_kernel::{Budget, Frame, KernelError, Profile, Solid, TaperError, Tolerance};
+use varde_kernel_compat::{Budget, Frame, KernelError, Profile, Solid, TaperError, Tolerance};
 
 use super::{Failed, Run};
 use crate::message::{self, TaperRefusal};
@@ -29,7 +29,7 @@ pub(crate) type Taperer =
 
 kernel_op! {
     /// The tapered extrude to run: the kernel's, or the one a test set.
-    pub(super) fn taperer() -> Taperer = varde_kernel::extrude_tapered, taper;
+    pub(super) fn taperer() -> Taperer = varde_kernel_compat::extrude_tapered, taper;
 }
 
 impl Run<'_> {

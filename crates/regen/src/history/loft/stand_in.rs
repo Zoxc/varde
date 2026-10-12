@@ -12,7 +12,7 @@ use super::*;
 /// is [`LoftError::Twists`], as the kernel's would twist. Anything else
 /// is [`KernelError::TooComplex`].
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 pub(crate) fn by_extrude(
     sections: &[kernel_loft::Section],
     _mode: kernel_loft::LoftMode,
@@ -23,7 +23,7 @@ pub(crate) fn by_extrude(
     budget: &Budget,
 ) -> Result<Solid, LoftError> {
     use glam::DVec3;
-    use varde_kernel::{KernelError, Profile};
+    use varde_kernel_compat::{KernelError, Profile};
     let too_complex = || LoftError::Failed(KernelError::TooComplex.into());
     let resolution = tol.resolution();
     let [first, second] = sections else {
@@ -96,7 +96,7 @@ pub(crate) fn by_extrude(
     } else {
         (height, 0.0)
     };
-    Ok(varde_kernel::extrude(
+    Ok(varde_kernel_compat::extrude(
         &profile, frame, from, to, feature, tol, budget,
     )?)
 }

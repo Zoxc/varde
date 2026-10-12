@@ -12,8 +12,8 @@ pub(crate) fn by_booleans(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<(Solid, Solid), Failure> {
-    use varde_kernel::Op;
-    let front = varde_kernel::boolean(body, tool, Op::Intersection, tol, budget)?;
-    let back = varde_kernel::boolean(body, tool, Op::Difference, tol, budget)?;
+    use varde_kernel_compat::Op;
+    let front = varde_kernel_compat::boolean(body, tool, Op::Intersection, tol, budget)?;
+    let back = varde_kernel_compat::boolean(body, tool, Op::Difference, tol, budget)?;
     Ok((front, back))
 }

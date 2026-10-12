@@ -62,7 +62,7 @@ made, through `Evaluation::holder` and then the splits before (`on_body`, by
 `Evaluation::following_splits` as `place_on_face` follows a sketch's face), so a later split moving it
 onto another body doesn't lose it, and a face or edge isn't looked for in
 the final model. A model edge projected is sampled along its conics
-(`varde_kernel::section::sample`, 32 places a conic) and fitted
+(`varde_kernel_compat::section::sample`, 32 places a conic) and fitted
 (`LinkShape::fit`, to the resolution, splines within the fit tolerance);
 a corner is a point; a face projected is its outline (`link::outline`):
 every edge of its region with another region beside it, outer loop and
@@ -129,6 +129,6 @@ relinks nothing. A file whose links are out of step with the model
 (saved by an older build, say) is put in step once it's opened, with no
 undo step.
 
-The sections themselves are `varde_kernel::section`'s
+The sections themselves are `varde_kernel_compat::section`'s
 (`agents/kernel/section.md`, Plane sections), called with the resolution as the
 distance within which something lies in the plane and pieces weld.

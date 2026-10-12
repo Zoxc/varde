@@ -1,5 +1,5 @@
 use super::*;
-use varde_kernel::NO_EDGE;
+use varde_kernel_compat::NO_EDGE;
 
 #[test]
 fn alpha_steps_are_the_nearest_of_the_table() {

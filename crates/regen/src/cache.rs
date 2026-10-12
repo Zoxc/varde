@@ -51,7 +51,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use serde::Serialize;
 use varde_document::Placement;
-use varde_kernel::{MeshUpload, RenderMesh, Solid, Topology};
+use varde_kernel_compat::{MeshUpload, RenderMesh, Solid, Topology};
 use varde_sketch::{Curve, LinkShape, Profiles, Sketch, TooComplex};
 
 use crate::error_geometry::{ErrorGeometry, KernelFailure};

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use glam::{DVec3, Vec3};
-use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel_compat::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, LineStyle, PrepareError,
@@ -149,7 +149,7 @@ fn mesh_past_the_buffer_limit_is_skipped() {
     assert_eq!(device.limits().max_buffer_size, 512);
     let mesh = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
-        .tessellate(&varde_kernel::Display::default())
+        .tessellate(&varde_kernel_compat::Display::default())
         .unwrap();
     assert_eq!(mesh.positions().len(), 24);
     let mesh = Arc::new(mesh);

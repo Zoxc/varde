@@ -8,7 +8,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use varde_kernel::{RenderLines, RenderMesh};
+use varde_kernel_compat::{RenderLines, RenderMesh};
 use varde_render::{BodyTint, Camera, Colors, Highlights, PreviewImage, PreviewShot};
 
 use crate::theme::Mode;

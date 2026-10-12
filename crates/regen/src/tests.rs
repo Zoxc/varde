@@ -2,7 +2,7 @@ use glam::{DVec2, Vec3};
 use varde_document::{
     Command, Document, Editor, Extent, Extrude, Operation, OriginPlane, Plane, Sketch,
 };
-use varde_kernel::{Solid, Tolerance};
+use varde_kernel_compat::{Solid, Tolerance};
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
 use super::*;
@@ -162,7 +162,7 @@ fn shown_scene(
     document: &Document,
     evaluation: &Evaluation,
     cache: &mut Cache,
-) -> Result<Shown, varde_kernel::MeshError> {
+) -> Result<Shown, varde_kernel_compat::MeshError> {
     let (mesh, picking) = tessellate_picking(document, evaluation, cache)?;
     assert_eq!(picking.bodies().len(), mesh.part_ends().len());
     assert_eq!(tessellate(document, evaluation, cache)?, mesh);
@@ -188,7 +188,7 @@ fn solids_are_drawn_into_one_mesh() {
     assert_eq!(mesh.triangle_count(), 24);
     assert_eq!(
         mesh.bounds().unwrap(),
-        varde_kernel::Aabb {
+        varde_kernel_compat::Aabb {
             min: Vec3::ZERO,
             max: Vec3::splat(5.0)
         }
@@ -479,7 +479,7 @@ pub(crate) struct Answer {
     pub(crate) mesh: Arc<RenderMesh>,
     pub(crate) parts: Vec<BodyId>,
     pub(crate) failed: Vec<crate::FeatureFailure>,
-    pub(crate) bodies: Vec<(BodyId, varde_kernel::Aabb)>,
+    pub(crate) bodies: Vec<(BodyId, varde_kernel_compat::Aabb)>,
     pub(crate) sketches: Arc<RenderLines>,
     pub(crate) placements: Vec<(FeatureId, varde_document::Placement)>,
 }
@@ -509,7 +509,7 @@ fn assert_same(cached: &Response, fresh: &Response, step: usize) {
 #[derive(PartialEq)]
 struct MeshBits {
     floats: [Vec<[u32; 3]>; 3],
-    parts: varde_kernel::MeshParts,
+    parts: varde_kernel_compat::MeshParts,
 }
 
 impl MeshBits {
@@ -567,7 +567,7 @@ fn the_example_plate_regenerates_and_draws() {
     assert!(answer.mesh.triangle_count() > 0);
     assert!(answer.mesh.edge_count() > 0);
     let body = editor.document().bodies()[0].id;
-    let bounds = varde_kernel::Aabb {
+    let bounds = varde_kernel_compat::Aabb {
         min: Vec3::new(-30.0, -20.0, 0.0),
         max: Vec3::new(30.0, 20.0, 10.0),
     };
@@ -2061,8 +2061,8 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
 #[test]
 fn every_form_has_its_summary_and_bad_numbers_none() {
     use glam::DVec3;
-    use varde_kernel::mesh::Form;
-    use varde_kernel::patch::{Conic2, Conic3};
+    use varde_kernel_compat::mesh::Form;
+    use varde_kernel_compat::patch::{Conic2, Conic3};
     let (z, origin) = (DVec3::Z, DVec3::new(1.0, 2.0, 3.0));
     let ellipse = Conic3::new(DVec3::X, DVec3::new(1.0, 2.0, 0.0), 0.5, DVec3::Y).unwrap();
     let meridian = Conic2::line(DVec2::new(1.0, 0.0), DVec2::new(2.0, 1.0)).unwrap();
@@ -2555,8 +2555,8 @@ fn picking_tables_follow_merges_drafts_and_edits() {
 
 /// The ellipse of half-axes `a` along x and `b` along y about `centre`,
 /// counterclockwise in four quarter arcs, as curve `curve`.
-fn ellipse_loop(centre: DVec2, a: f64, b: f64, curve: u64) -> varde_kernel::Loop {
-    use varde_kernel::patch::Conic2;
+fn ellipse_loop(centre: DVec2, a: f64, b: f64, curve: u64) -> varde_kernel_compat::Loop {
+    use varde_kernel_compat::patch::Conic2;
     let w = std::f64::consts::FRAC_1_SQRT_2;
     let at = |x: f64, y: f64| centre + DVec2::new(a * x, b * y);
     let quarters = [
@@ -2565,9 +2565,9 @@ fn ellipse_loop(centre: DVec2, a: f64, b: f64, curve: u64) -> varde_kernel::Loop
         (at(-1.0, 0.0), at(-1.0, -1.0), at(0.0, -1.0)),
         (at(0.0, -1.0), at(1.0, -1.0), at(1.0, 0.0)),
     ];
-    varde_kernel::Loop {
+    varde_kernel_compat::Loop {
         segments: quarters
-            .map(|(p0, c, p1)| varde_kernel::Segment {
+            .map(|(p0, c, p1)| varde_kernel_compat::Segment {
                 conic: Conic2::new(p0, c, w, p1).unwrap(),
                 curve,
             })
@@ -2582,7 +2582,7 @@ fn ellipse_loop(centre: DVec2, a: f64, b: f64, curve: u64) -> varde_kernel::Loop
 #[test]
 fn summaries_of_an_extrude_on_a_tilted_plane() {
     use glam::DVec3;
-    use varde_kernel::{Budget, Frame, Profile, extrude};
+    use varde_kernel_compat::{Budget, Frame, Profile, extrude};
     let frame = Frame {
         origin: DVec3::new(5.0, -3.0, 2.0),
         x: DVec3::new(0.6, 0.0, 0.8),
@@ -2697,7 +2697,7 @@ fn shown_bodies_are_exported_as_manifolds() {
 /// A tetrahedron with its corners 3e6 out: a solid, as the kernel's
 /// check takes it, but past the positions a mesh may have.
 fn far_tetrahedron() -> Solid {
-    use varde_kernel::mesh::{Face, FaceName, FacePart, Form, MeshBuilder, Surface};
+    use varde_kernel_compat::mesh::{Face, FaceName, FacePart, Form, MeshBuilder, Surface};
     let mut builder = MeshBuilder::new();
     let face = builder.face(Face {
         name: FaceName::new(1, FacePart::Split(0)),

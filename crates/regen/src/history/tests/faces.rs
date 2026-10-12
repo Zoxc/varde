@@ -6,7 +6,7 @@
 
 use glam::DVec3;
 use varde_document::{AxisLine, FaceRef, Placement, Revolve, Turn};
-use varde_kernel::mesh::{FaceKey, Form, PartKey};
+use varde_kernel_compat::mesh::{FaceKey, Form, PartKey};
 
 use super::*;
 use crate::Draft;
@@ -185,7 +185,7 @@ fn a_sketch_on_the_top_face_is_placed_on_it() {
     // Not placed, it isn't drawn.
     assert_eq!(
         crate::flatten_sketches(editor.document(), &[], None),
-        Ok(varde_kernel::RenderLines::default())
+        Ok(varde_kernel_compat::RenderLines::default())
     );
 }
 
@@ -567,7 +567,7 @@ fn a_sketch_whose_face_is_gone_fails() {
     assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 8.0));
     assert!(evaluation.failed.iter().all(|f| f.geometry.is_none()));
     let lines = crate::flatten_sketches(editor.document(), &evaluation.placements, None).unwrap();
-    assert_eq!(lines, varde_kernel::RenderLines::default());
+    assert_eq!(lines, varde_kernel_compat::RenderLines::default());
 
     // The plate's extrude removed: the body is gone, the sketches stay.
     let maker = editor.document().features()[1].id;
@@ -910,7 +910,10 @@ fn a_sketch_on_a_face_whose_plane_passes_the_limit_fails() {
     assert!(evaluation.failed.iter().all(|f| f.geometry.is_none()));
     // The rule's origin, n̂ (n̂·p), is past the limit along x.
     let origin = n * n.dot(at);
-    assert!(origin.x > f64::from(varde_kernel::MAX_COORD), "{origin}");
+    assert!(
+        origin.x > f64::from(varde_kernel_compat::MAX_COORD),
+        "{origin}"
+    );
 
     // Put on the block's top instead, it's placed and builds.
     let top = FaceRef {
@@ -1223,8 +1226,8 @@ fn a_face_of_too_many_triangles_is_truncated() {
     let solid = only_body(&evaluation);
     let topology = solid.topology();
     let region = &topology.regions()[0];
-    let many = varde_kernel::topology::Region {
-        tris: vec![region.tris[0]; varde_kernel::MAX_EVIDENCE.patches + 1],
+    let many = varde_kernel_compat::topology::Region {
+        tris: vec![region.tris[0]; varde_kernel_compat::MAX_EVIDENCE.patches + 1],
         ..region.clone()
     };
     let truncated = face_geometry(solid, &many, &Tolerance::DEFAULT).expect("drawn");
@@ -1367,7 +1370,7 @@ fn a_cross_hole_near_another_holes_mouth_is_cut() {
     let free: f64 = (0..mesh.tris().len())
         .filter(|&t| {
             let face = mesh.faces()[mesh.tris()[t].face as usize];
-            matches!(face.surface, varde_kernel::mesh::Surface::Free)
+            matches!(face.surface, varde_kernel_compat::mesh::Surface::Free)
         })
         .map(|t| {
             let p = mesh.patch(t).p;

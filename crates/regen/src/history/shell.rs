@@ -1,5 +1,5 @@
 //! Evaluating a shell: the body's solid, as the features before it
-//! leave it, hollowed by the kernel's [`varde_kernel::shell()`] and opened
+//! leave it, hollowed by the kernel's [`varde_kernel_compat::shell()`] and opened
 //! through the faces it names.
 //!
 //! The open faces are found on the body's topology (the one drawing it
@@ -21,7 +21,7 @@
 //! the rest of the history goes on.
 
 use varde_document::{Document, FeatureId, Shell};
-use varde_kernel::{Budget, ShellError, Solid, Tolerance, Topology};
+use varde_kernel_compat::{Budget, ShellError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
 use super::{Evaluation, Failed};
@@ -38,7 +38,7 @@ pub(crate) type Sheller =
 
 kernel_op! {
     /// The shell to run: the kernel's, or the one a test set.
-    fn sheller() -> Sheller = varde_kernel::shell, shell;
+    fn sheller() -> Sheller = varde_kernel_compat::shell, shell;
 }
 
 /// Changes the body of `evaluation` as the shell `shell`, the feature

@@ -253,7 +253,7 @@ fn merge(plates: &mut Plates, rng: &mut Rng) {
 /// the axes and the shell can work: from its box, the sides its faces
 /// open (by the plane all of their triangles' corners lie on), the
 /// thickness and the direction.
-fn wanted_volume(solid: &varde_kernel::Solid, shell: &Shell) -> Option<f64> {
+fn wanted_volume(solid: &varde_kernel_compat::Solid, shell: &Shell) -> Option<f64> {
     let topology = solid.topology();
     let bounds = solid.bounds3()?;
     let size = bounds.max - bounds.min;

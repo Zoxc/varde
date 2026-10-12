@@ -26,7 +26,7 @@ const MARGIN: u32 = 8;
 ///
 /// [`PreviewRequest`]: varde_view::PreviewRequest
 pub(crate) struct Shot {
-    pub(crate) mesh: Arc<varde_kernel::RenderMesh>,
+    pub(crate) mesh: Arc<varde_kernel_compat::RenderMesh>,
     pub(crate) opacity: Arc<[f32]>,
     pub(crate) tints: Arc<[Option<varde_render::BodyTint>]>,
     pub(crate) shot: PreviewShot,

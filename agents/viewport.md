@@ -938,7 +938,7 @@ spans along the line, so their ends fade over a pixel, and dashes shorter
 than a pixel (an edge seen nearly end on, or far off in perspective) blur
 to their average rather than beating.
 
-The edges are uploaded as a stream of points (`varde_kernel::EdgePoint`, 20 bytes:
+The edges are uploaded as a stream of points (`varde_kernel_compat::EdgePoint`, 20 bytes:
 position, how far along its polyline in world units, and which polyline),
 polyline after polyline, a point repeated in a row left out, with a point
 of no edge at each end: every part's edges, then every part's wires

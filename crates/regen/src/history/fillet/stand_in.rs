@@ -24,7 +24,7 @@ use super::*;
 /// stand-in can tell (past the edge's own faces' extent along the
 /// section). Anything else is too complex.
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 pub(crate) fn by_arcs(
     solid: &Solid,
     topology: &Topology,
@@ -35,9 +35,9 @@ pub(crate) fn by_arcs(
     budget: &Budget,
 ) -> Result<Solid, BlendError> {
     use glam::{DVec2, DVec3};
-    use varde_kernel::mesh::Form;
-    use varde_kernel::patch::Conic2;
-    use varde_kernel::{Frame, KernelError, Loop, Op, Profile, Segment};
+    use varde_kernel_compat::mesh::Form;
+    use varde_kernel_compat::patch::Conic2;
+    use varde_kernel_compat::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || BlendError::Failed(KernelError::TooComplex.into());
     let mesh = solid.mesh();
     let mut result = solid.clone();
@@ -163,7 +163,7 @@ pub(crate) fn by_arcs(
         let profile = Profile {
             loops: vec![Loop { segments }],
         };
-        let notch = varde_kernel::extrude(
+        let notch = varde_kernel_compat::extrude(
             &profile,
             &frame,
             -margin,
@@ -172,7 +172,7 @@ pub(crate) fn by_arcs(
             tol,
             budget,
         )?;
-        let rounded = varde_kernel::boolean(&result, &notch, Op::Difference, tol, budget)?;
+        let rounded = varde_kernel_compat::boolean(&result, &notch, Op::Difference, tol, budget)?;
         // What a round takes off: the kite between the edge, the rails
         // and the centre less the arc's sector, along the edge.
         let theta = cos.acos();

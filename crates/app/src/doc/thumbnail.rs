@@ -20,7 +20,7 @@ use iced::futures::channel::oneshot;
 use iced::time::Instant;
 use varde_document::{FeatureId, FeatureKind, Generation};
 use varde_io::thumbnail::Thumbnail;
-use varde_kernel::{RenderLines, RenderMesh};
+use varde_kernel_compat::{RenderLines, RenderMesh};
 use varde_render::Camera;
 use varde_view::{PreviewRequest, ThumbnailImages};
 

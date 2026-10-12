@@ -13,7 +13,7 @@ use varde_document::{
     BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Id, Operation, Placement, Plane,
     Sketch, Snapshot,
 };
-use varde_kernel::{Aabb, RenderLines, RenderMesh};
+use varde_kernel_compat::{Aabb, RenderLines, RenderMesh};
 use varde_regen::{
     Asked, Detail, Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected,
     PickTables, Picking, Progress, Request, Response, Sight, Transport,

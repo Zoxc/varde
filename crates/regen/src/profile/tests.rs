@@ -1,7 +1,7 @@
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
 use glam::DVec2;
-use varde_kernel::{Loop, Profile};
+use varde_kernel_compat::{Loop, Profile};
 use varde_sketch::{Curve, Profiles, Sketch, Spline};
 
 use super::*;
@@ -428,11 +428,11 @@ fn wavy_plate(
 }
 
 /// Whether `profile` extrudes, at the tolerance `fit`.
-fn extrudes(profile: &Profile, fit: f64) -> Result<(), varde_kernel::KernelError> {
-    let tolerance = varde_kernel::Tolerance::new(fit).unwrap();
-    let frame = varde_kernel::Frame::XY;
-    let budget = varde_kernel::Budget::DEFAULT;
-    varde_kernel::extrude(profile, &frame, 0.0, 10.0, 1, &tolerance, &budget)
+fn extrudes(profile: &Profile, fit: f64) -> Result<(), varde_kernel_compat::KernelError> {
+    let tolerance = varde_kernel_compat::Tolerance::new(fit).unwrap();
+    let frame = varde_kernel_compat::Frame::XY;
+    let budget = varde_kernel_compat::Budget::DEFAULT;
+    varde_kernel_compat::extrude(profile, &frame, 0.0, 10.0, 1, &tolerance, &budget)
         .map(|_| ())
         .map_err(|failure| failure.error)
 }
@@ -504,9 +504,12 @@ fn steep_dense_wavy_edges_extrude_at_coarse_tolerances() {
         let mut sketch = Sketch::default();
         wavy_plate(&mut sketch, n, width, spacing, seed);
         let (profile, _) = picked_within(&sketch, |_| true, fit);
-        let tolerance = varde_kernel::Tolerance::new(fit).unwrap();
-        let (frame, budget) = (varde_kernel::Frame::XY, varde_kernel::Budget::DEFAULT);
-        match varde_kernel::extrude(&profile, &frame, 0.0, 10.0, 1, &tolerance, &budget) {
+        let tolerance = varde_kernel_compat::Tolerance::new(fit).unwrap();
+        let (frame, budget) = (
+            varde_kernel_compat::Frame::XY,
+            varde_kernel_compat::Budget::DEFAULT,
+        );
+        match varde_kernel_compat::extrude(&profile, &frame, 0.0, 10.0, 1, &tolerance, &budget) {
             Ok(solid) => {
                 let exact = profile.area() * 10.0;
                 let volume = solid.volume();
@@ -672,7 +675,7 @@ fn errors_display() {
         ProfileError::Missing,
         ProfileError::TooManySegments,
         ProfileError::Fit,
-        ProfileError::Patch(varde_kernel::patch::PatchError::Degenerate),
+        ProfileError::Patch(varde_kernel_compat::patch::PatchError::Degenerate),
     ] {
         assert!(!error.to_string().is_empty());
     }

@@ -19,7 +19,7 @@
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use varde_kernel::ManifoldMesh;
+use varde_kernel_compat::ManifoldMesh;
 
 /// The extension of a 3MF file, without the dot.
 pub const EXTENSION: &str = "3mf";

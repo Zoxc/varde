@@ -15,7 +15,7 @@
 //! point, a face its boundary's edges (outer loop and holes) projected
 //! likewise; an edge intersected gives the points where it crosses the
 //! plane, a face the curves where the plane cuts it
-//! ([`varde_kernel::section`]), or its outline where it lies in the
+//! ([`varde_kernel_compat::section`]), or its outline where it lies in the
 //! plane, each fitted likewise. One that isn't
 //! found, or gives nothing, is broken with why, keeping what it holds.
 //!
@@ -35,7 +35,7 @@ use glam::{DAffine2, DMat2, DVec2, DVec3};
 use varde_document::{
     BodyId, Document, FeatureId, LinkSource, OutsideRef, Placement, PointRef, Sketch, Tolerance,
 };
-use varde_kernel::section::{self, Plane as CutPlane, SectionError};
+use varde_kernel_compat::section::{self, Plane as CutPlane, SectionError};
 use varde_sketch::{Budget, Id, LinkKind, LinkShape, SampledChain, SketchEdit};
 
 use super::{BodySolid, Evaluation, SketchOutput};
@@ -308,12 +308,12 @@ fn not_there(why: &str) -> bool {
 }
 
 /// The boundary of the region `region` of `made`'s solid, its outer
-/// loop and holes, each edge ([`Chain`](varde_kernel::topology::Chain))
+/// loop and holes, each edge ([`Chain`](varde_kernel_compat::topology::Chain))
 /// with another region beside it sampled along its conics and projected
 /// square onto the plane of the sketch at `placement`, in that sketch.
 fn outline(
     made: &BodySolid,
-    topology: &varde_kernel::topology::Topology,
+    topology: &varde_kernel_compat::topology::Topology,
     region: u32,
     placement: &Placement,
 ) -> Result<Vec<SampledChain>, String> {

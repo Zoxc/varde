@@ -1,5 +1,5 @@
 use glam::{DVec2, DVec3};
-use varde_kernel::mesh::{FaceKey, PartKey};
+use varde_kernel_compat::mesh::{FaceKey, PartKey};
 use varde_sketch::Curve;
 
 use super::*;

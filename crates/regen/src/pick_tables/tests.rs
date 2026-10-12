@@ -29,7 +29,7 @@ fn the_lane_builds_the_tables_and_the_upload() {
     assert!(!tables.triangles().nodes().is_empty());
     assert!(!tables.segments().nodes().is_empty());
     assert!(!tables.vertices().nodes().is_empty());
-    assert_eq!(*mesh.upload(), varde_kernel::MeshUpload::new(&mesh));
+    assert_eq!(*mesh.upload(), varde_kernel_compat::MeshUpload::new(&mesh));
 }
 
 #[test]

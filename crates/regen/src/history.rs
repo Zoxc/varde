@@ -10,22 +10,22 @@
 //! ([`Profiles::resolve`]; one that's gone is "region not found"), merges
 //! them ([`Profiles::merge`]) and turns the loops into a kernel profile
 //! ([`profile`]). An extrude sweeps it
-//! with [`varde_kernel::extrude`] on the sketch's plane, over
+//! with [`varde_kernel_compat::extrude`] on the sketch's plane, over
 //! [`Extrude::span`] (a tapered one with
-//! [`varde_kernel::extrude_tapered`], a stand-in for now failing as too
+//! [`varde_kernel_compat::extrude_tapered`], a stand-in for now failing as too
 //! complex: see `taper`); a revolve finds its axis in the sketch
 //! ([`axis_line`]; a line that's gone is "axis not found") or, about a
 //! model edge, on the edge's body as the features before it leave it
 //! ([`edge_axis`]: straight and in the sketch's plane), moves the
 //! profile into the axis's frame ([`axis_frame`]) and turns it with
-//! [`varde_kernel::revolve`] over [`Revolve::span`]. Both run within the
+//! [`varde_kernel_compat::revolve`] over [`Revolve::span`]. Both run within the
 //! document's tolerance and the default budget, their faces named by
 //! their feature id: the tool solid. A new body gets it. A join, cut or
 //! intersect finds the bodies made before it,
 //! less those it excludes, that the tool touches
-//! ([`varde_kernel::touches`]). A cut or intersect replaces each of those
+//! ([`varde_kernel_compat::touches`]). A cut or intersect replaces each of those
 //! by its difference from or intersection with the tool
-//! ([`varde_kernel::boolean`], the body first), one at a time. A join
+//! ([`varde_kernel_compat::boolean`], the body first), one at a time. A join
 //! touching one body replaces it by its union with the tool; one touching
 //! several merges them: the first made gets the union of them all and the
 //! tool, and the others are *consumed*, left out of
@@ -38,7 +38,7 @@
 //! unless it keeps them (see `combine::evaluate`); one naming a body with
 //! no solid of its own (consumed before, or its maker failed) fails.
 //! A move or a mirror works on the bodies the same way: one
-//! [`varde_kernel::Motion`] each, a move's turn about its axis then its
+//! [`varde_kernel_compat::Motion`] each, a move's turn about its axis then its
 //! shift, a mirror's reflection in its plane (axes and planes found on
 //! their bodies as the features before leave them), each body moved by
 //! [`Solid::transformed`] keeping its faces' names, a mirror keeping the
@@ -117,10 +117,10 @@ use varde_document::{
     AxisLine, BodyId, Document, EdgeRef, Extrude, FaceRef, Feature, FeatureId, FeatureKind, Loft,
     MAX_COORD, Operation, Placement, Plane, Revolve, Section, Sketch, Sweep,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::Form;
-use varde_kernel::patch::{Conic2, Conic3};
-use varde_kernel::{Budget, Failure, Frame, Loop, Op, Profile, Segment, Solid, Tolerance};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::Form;
+use varde_kernel_compat::patch::{Conic2, Conic3};
+use varde_kernel_compat::{Budget, Failure, Frame, Loop, Op, Profile, Segment, Solid, Tolerance};
 use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
@@ -503,7 +503,7 @@ pub fn evaluate(document: &Document, cache: &mut Cache) -> Evaluation {
 }
 
 /// [`evaluate`], with `touching` the budget of each
-/// [`varde_kernel::touches`], which tests make small to see it fail.
+/// [`varde_kernel_compat::touches`], which tests make small to see it fail.
 pub(crate) fn evaluate_within(
     document: &Document,
     cache: &mut Cache,
@@ -803,7 +803,7 @@ struct Run<'a> {
     /// and rails.
     sketches: &'a [SketchOutput<'a>],
     tolerance: Tolerance,
-    /// The budget of each [`varde_kernel::touches`].
+    /// The budget of each [`varde_kernel_compat::touches`].
     touching: Budget,
 }
 
@@ -883,8 +883,14 @@ impl Run<'_> {
             let key = boolean_key(doing, made.key, tool_key);
             let solid = cache
                 .boolean(key, || {
-                    varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
-                        .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
+                    varde_kernel_compat::boolean(
+                        &made.solid,
+                        &tool,
+                        op,
+                        &self.tolerance,
+                        &Budget::DEFAULT,
+                    )
+                    .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
                 })
                 .map_err(|failure| {
                     let words = fails(message::boolean(doing, name, failure.error));
@@ -942,7 +948,7 @@ impl Run<'_> {
         let key = boolean_key(Doing::Intersecting, made.key, tool_key);
         let common = cache.boolean(key, || {
             let op = Op::Intersection;
-            varde_kernel::boolean(&made.solid, tool, op, &self.tolerance, &Budget::DEFAULT)
+            varde_kernel_compat::boolean(&made.solid, tool, op, &self.tolerance, &Budget::DEFAULT)
                 .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
         });
         common.is_ok_and(|common| common.is_empty())
@@ -983,7 +989,7 @@ impl Run<'_> {
 
     /// The union of `bodies` (two or more, in the order they were made)
     /// and the tool filed under `tool_key`, and the key it's filed under;
-    /// or why it fails. Every step is a [`varde_kernel::boolean`] union,
+    /// or why it fails. Every step is a [`varde_kernel_compat::boolean`] union,
     /// the running solid first, cached under its own key from its
     /// operands' keys ([`merge_keys`]). The bodies are united first and
     /// the tool last: that passes the bodies' own faces first, which
@@ -1008,7 +1014,7 @@ impl Run<'_> {
         let (first, rest) = bodies.split_first().expect("two or more bodies are merged");
         let mut unite = |key: Key, a: &Solid, b: &Solid| {
             let solid = cache.boolean(key, || {
-                varde_kernel::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
+                varde_kernel_compat::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
                     .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
             });
             solid.map(|solid| (solid, key))
@@ -1077,7 +1083,7 @@ impl Run<'_> {
         let mut touched = Vec::new();
         for made in bodies.iter().filter(|made| !excluded.contains(&made.body)) {
             let touches = cache.touches(touches_key(made.key, tool_key), || {
-                varde_kernel::touches(&made.solid, tool, &self.tolerance, &self.touching)
+                varde_kernel_compat::touches(&made.solid, tool, &self.tolerance, &self.touching)
                     .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
             });
             match touches {
@@ -1142,7 +1148,7 @@ impl Run<'_> {
             let profile = self.profile()?;
             let (feature, budget) = (self.feature.id.get(), &Budget::DEFAULT);
             match tapered {
-                None => varde_kernel::extrude(
+                None => varde_kernel_compat::extrude(
                     &profile,
                     &frame,
                     from,
@@ -1223,14 +1229,14 @@ impl Run<'_> {
             let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)
                 .map_err(|error| self.axis_failed(error, &placement))?;
             let sweep = match span {
-                None => varde_kernel::Sweep::Full,
-                Some((from, to)) if same_way => varde_kernel::Sweep::Part { from, to },
-                Some((from, to)) => varde_kernel::Sweep::Part {
+                None => varde_kernel_compat::Sweep::Full,
+                Some((from, to)) if same_way => varde_kernel_compat::Sweep::Part { from, to },
+                Some((from, to)) => varde_kernel_compat::Sweep::Part {
                     from: -to,
                     to: -from,
                 },
             };
-            varde_kernel::revolve(
+            varde_kernel_compat::revolve(
                 &profile,
                 &frame,
                 sweep,
@@ -1252,7 +1258,7 @@ impl Run<'_> {
         let AxisError::NoLength { at, curve } = error else {
             return error.message().into();
         };
-        let mut evidence = varde_kernel::Evidence::default();
+        let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_points([placement.to_world(at)]);
         evidence.add_sketch_curves(curve.map(|id| u64::from(id.get())));
         Failed {
@@ -1292,9 +1298,9 @@ impl Run<'_> {
 /// made (`evaluation`), or why it isn't anywhere. The face's body is
 /// looked for through [`Evaluation::holder`] (a body a join consumed
 /// lives on in the one holding it; one with no solid is "gone"); the
-/// face is found on its solid's [`Topology`](varde_kernel::Topology) by
+/// face is found on its solid's [`Topology`](varde_kernel_compat::Topology) by
 /// name or alias, the nearest to its point among several
-/// ([`Topology::face`](varde_kernel::Topology::face); none is "wasn't
+/// ([`Topology::face`](varde_kernel_compat::Topology::face); none is "wasn't
 /// found", unless a split before the sketch gave the face to its new
 /// body: the face is then looked for on the bodies splits made of the
 /// holder or made it of, in [`Evaluation::splits`]' order, and on those
@@ -1374,9 +1380,9 @@ fn place_on(
 
 /// What a face that can't be sketched on shows: `region` of `solid` (the
 /// face found), its triangles as patches, the first
-/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.patches` of them (marked
+/// [`MAX_EVIDENCE`](varde_kernel_compat::MAX_EVIDENCE)`.patches` of them (marked
 /// truncated past that), drawn at the
-/// [`Display`](varde_kernel::Display) of `tolerance`. By value, not
+/// [`Display`](varde_kernel_compat::Display) of `tolerance`. By value, not
 /// resolved through the picking tables as an operand face is: the solid
 /// is the body as the features before the sketch leave it, which later
 /// ones may change. Bounded as the kernel's evidence is: taking each
@@ -1386,10 +1392,10 @@ fn place_on(
 /// worked out (the cache keeps it).
 pub(crate) fn face_geometry(
     solid: &Solid,
-    region: &varde_kernel::topology::Region,
+    region: &varde_kernel_compat::topology::Region,
     tolerance: &Tolerance,
 ) -> Option<Arc<ErrorGeometry>> {
-    let mut evidence = varde_kernel::Evidence::default();
+    let mut evidence = varde_kernel_compat::Evidence::default();
     let mesh = solid.mesh();
     evidence.add_patches((region.tris.iter()).map(|&tri| mesh.patch(tri as usize)));
     ErrorGeometry::of_evidence(&evidence, tolerance)
@@ -1464,9 +1470,9 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, AxisErr
 /// features before it made (`evaluation`), or why there's none. The
 /// edge's body is looked for through [`Evaluation::holder`], as a sketch
 /// on a face's is (one with no solid is "gone"); the edge is found on its
-/// solid's [`Topology`](varde_kernel::Topology) between faces of its two
+/// solid's [`Topology`](varde_kernel_compat::Topology) between faces of its two
 /// names, the nearest to its point among several
-/// ([`Topology::edge`](varde_kernel::Topology::edge); none is "wasn't
+/// ([`Topology::edge`](varde_kernel_compat::Topology::edge); none is "wasn't
 /// found"); it must be a line ([`edge_shape`]; "isn't straight"),
 /// directed as [`EdgeRef`] says ([`edge_ends`]). Both its ends must be
 /// within the tolerance's resolution of the sketch's plane, a decision
@@ -1498,7 +1504,7 @@ pub(crate) fn edge_axis(
     let resolution = tolerance.resolution();
     if !(a.abs() <= resolution && b.abs() <= resolution) {
         // The edge, and its ends: those off the plane show where.
-        let mut evidence = varde_kernel::Evidence::default();
+        let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_curves(Conic3::line(from, to).ok());
         evidence.add_points([from, to]);
         return Err(Failed {
@@ -1510,7 +1516,7 @@ pub(crate) fn edge_axis(
     // the placement's origin too, so the difference is finite.
     let along = end - at;
     if along == DVec2::ZERO {
-        let mut evidence = varde_kernel::Evidence::default();
+        let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_points([from]);
         return Err(Failed {
             message: message::AXIS_NO_LENGTH.to_owned(),
@@ -1535,8 +1541,8 @@ pub(crate) fn edge_axis(
 /// a mirror reverses them), so they run the right way where that region
 /// is the first key's ([`EdgeRef::runs_with`]). An edge that isn't
 /// straight shows its curves, drawn at the
-/// [`Display`](varde_kernel::Display) of `tolerance` (the first
-/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.curves`), by value as a
+/// [`Display`](varde_kernel_compat::Display) of `tolerance` (the first
+/// [`MAX_EVIDENCE`](varde_kernel_compat::MAX_EVIDENCE)`.curves`), by value as a
 /// face that isn't flat is ([`face_geometry`]); one whose direction
 /// can't be told, itself.
 pub(crate) fn edge_ends(
@@ -1558,7 +1564,7 @@ pub(crate) fn edge_ends(
         Some(true) => Ok([from, to]),
         Some(false) => Ok([to, from]),
         None => {
-            let mut evidence = varde_kernel::Evidence::default();
+            let mut evidence = varde_kernel_compat::Evidence::default();
             evidence.add_curves(Conic3::line(from, to).ok());
             Err(Failed {
                 message: message::EDGE_UNDIRECTED.to_owned(),
@@ -1576,8 +1582,8 @@ pub(crate) fn edge_ends(
 /// the first key's. `None` where aliases name both its faces by both
 /// keys and that can't be told.
 pub(crate) fn chain_runs_with(
-    topology: &varde_kernel::Topology,
-    chain: &varde_kernel::topology::Chain,
+    topology: &varde_kernel_compat::Topology,
+    chain: &varde_kernel_compat::topology::Chain,
     edge: &EdgeRef,
 ) -> Option<bool> {
     let [left, right] = chain.regions.map(|r| {
@@ -1588,18 +1594,18 @@ pub(crate) fn chain_runs_with(
 }
 
 /// What an edge that isn't the shape a feature needs shows: `chain`'s
-/// curves on `solid`, drawn at the [`Display`](varde_kernel::Display) of
+/// curves on `solid`, drawn at the [`Display`](varde_kernel_compat::Display) of
 /// `tolerance` (the first
-/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.curves`), by value as a
+/// [`MAX_EVIDENCE`](varde_kernel_compat::MAX_EVIDENCE)`.curves`), by value as a
 /// face that isn't flat is ([`face_geometry`]).
 pub(crate) fn chain_curves(
     solid: &Solid,
-    chain: &varde_kernel::topology::Chain,
+    chain: &varde_kernel_compat::topology::Chain,
     tolerance: &Tolerance,
 ) -> Option<Arc<ErrorGeometry>> {
     let mesh = solid.mesh();
     let tris = mesh.tris().len();
-    let mut evidence = varde_kernel::Evidence::default();
+    let mut evidence = varde_kernel_compat::Evidence::default();
     evidence.add_curves(
         (chain.halfedges.iter())
             .filter(|&&h| (h as usize) / 3 < tris)

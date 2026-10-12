@@ -1,6 +1,6 @@
 //! Evaluating a chamfer: the body's solid, as the features before it
 //! leave it, with the chamfer's edges cut off by the kernel's
-//! [`varde_kernel::chamfer`].
+//! [`varde_kernel_compat::chamfer`].
 //!
 //! The edges are found, grown along tangent chains, given their first
 //! faces and named as a fillet's are (`super::blend`).
@@ -16,7 +16,9 @@
 //! and the rest of the history goes on.
 
 use varde_document::{Chamfer, ChamferSize, Document, FeatureId};
-use varde_kernel::{BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology};
+use varde_kernel_compat::{
+    BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology,
+};
 
 use super::blend::{find_edges, find_faces, plan, refused};
 use super::in_place::InPlace;
@@ -35,7 +37,7 @@ pub(crate) type Chamferer =
 
 kernel_op! {
     /// The chamfer to run: the kernel's, or the one a test set.
-    fn chamferer() -> Chamferer = varde_kernel::chamfer, chamfer;
+    fn chamferer() -> Chamferer = varde_kernel_compat::chamfer, chamfer;
 }
 
 /// Changes the body of `evaluation` as the chamfer `chamfer`, the

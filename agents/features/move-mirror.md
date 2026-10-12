@@ -68,7 +68,7 @@ pub enum PlaneRef { Origin(OriginPlane), Face(FaceRef) }
 
 - **Bodies with no solid of their own fail it**, worded as a combine's
   (`history::own_solids`, which the combine shares).
-- **The motion**: one `varde_kernel::Motion` per feature. A move's is
+- **The motion**: one `varde_kernel_compat::Motion` per feature. A move's is
   `Motion::turn(point, direction, degrees)` then
   `Motion::translation(offsets)`. The angle is stored in radians and
   turned back into degrees by `value / (π/180)`: a value typed in

@@ -134,7 +134,7 @@ impl Camera {
     /// Bound on the target's coordinates and the orbit distance, the
     /// kernel's coordinate limit, so the camera stays finite however far it
     /// is panned or zoomed.
-    pub const EXTENT: f32 = varde_kernel::MAX_COORD;
+    pub const EXTENT: f32 = varde_kernel_compat::MAX_COORD;
     /// The closest [`Self::zoom`] brings the eye to the target.
     pub const MIN_DISTANCE: f32 = 1e-3;
 

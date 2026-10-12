@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use glam::DVec3;
 use varde_document::{Document, FaceRef, FeatureId, FeatureKind, Plane};
-use varde_kernel::mesh::PartKey;
+use varde_kernel_compat::mesh::PartKey;
 
 use crate::document::CURVED_FACE;
 use crate::naming::{Naming, Shown, Unnamed};

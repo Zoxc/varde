@@ -5,7 +5,7 @@ use varde_document::{Command, Document, FeatureId, FeatureKind};
 
 use varde_regen::handle;
 
-use varde_kernel::Aabb;
+use varde_kernel_compat::Aabb;
 use varde_render::{Camera, Projection};
 
 use super::*;

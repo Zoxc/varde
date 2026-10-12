@@ -1,6 +1,6 @@
 //! Evaluating a draft: the body's solid, as the features before it
 //! leave it, with the faces it names turned about the neutral plane by
-//! the kernel's [`varde_kernel::draft_faces()`].
+//! the kernel's [`varde_kernel_compat::draft_faces()`].
 //!
 //! The faces are found on the body's topology (the one drawing it
 //! keeps) by their keys and points, as an offset face's are; one not
@@ -33,7 +33,7 @@
 
 use glam::DVec3;
 use varde_document::{Document, FaceDraft, FeatureId};
-use varde_kernel::{Budget, DraftError, Solid, Tolerance, Topology};
+use varde_kernel_compat::{Budget, DraftError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
 use super::motion::{NEUTRAL_PLANE, resolve_plane};
@@ -61,7 +61,7 @@ pub(crate) type Drafter = fn(
 
 kernel_op! {
     /// The draft to run: the kernel's, or the one a test set.
-    fn drafter() -> Drafter = varde_kernel::draft_faces, draft;
+    fn drafter() -> Drafter = varde_kernel_compat::draft_faces, draft;
 }
 
 /// Changes the body of `evaluation` as the draft `draft`, the feature

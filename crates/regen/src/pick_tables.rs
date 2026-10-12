@@ -9,7 +9,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use varde_kernel::{Aabb, RenderMesh};
+use varde_kernel_compat::{Aabb, RenderMesh};
 
 use crate::Picking;
 

@@ -24,7 +24,7 @@
 //! its answer cross the wire as they went.
 
 use varde_document::Placement;
-use varde_kernel::Topology;
+use varde_kernel_compat::Topology;
 
 use super::super::combine::fuzz::{
     Rng, bytes, not_stuck, random_combine, random_shape, same_bodies, solid, truncated, wire,

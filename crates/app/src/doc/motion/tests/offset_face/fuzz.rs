@@ -338,7 +338,7 @@ fn random_overlaps(plates: &Plates, rng: &mut Rng) -> Option<Overlaps> {
 /// the axes and the offset can work: from its box, the sides its faces
 /// move (by the plane all of their triangles' corners lie on) and the
 /// signed distance.
-fn wanted_volume(solid: &varde_kernel::Solid, offset: &OffsetFace) -> Option<f64> {
+fn wanted_volume(solid: &varde_kernel_compat::Solid, offset: &OffsetFace) -> Option<f64> {
     let topology = solid.topology();
     let bounds = solid.bounds3()?;
     let size = bounds.max - bounds.min;

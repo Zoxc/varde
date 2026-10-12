@@ -4,17 +4,17 @@
 //!
 //! The tool is built from the body's box (its faces past the box lie
 //! clear of the body): an origin plane's or a flat face's half-space
-//! ([`varde_kernel::half_space`], the face found on its body as the
+//! ([`varde_kernel_compat::half_space`], the face found on its body as the
 //! features before the split leave it, as a mirror's plane is), a face's
-//! surface continued past the body ([`varde_kernel::surface_tool`], the
+//! surface continued past the body ([`varde_kernel_compat::surface_tool`], the
 //! face found the same way; a form with no surface to continue is
 //! refused), another body's solid as it is, a sketch's regions extruded
 //! through the body both ways (as an extrude's tool, from the body's
 //! extent along the sketch's normal with through all's margin), or an
 //! open chain of the sketch's curves ([`chain`], then
-//! [`varde_kernel::chain_tool`]). Each tool is cached by its inputs, the
+//! [`varde_kernel_compat::chain_tool`]). Each tool is cached by its inputs, the
 //! body's box and the fit tolerance; a tool body by its own key. Then
-//! one [`varde_kernel::split`] gives both pieces from one arrangement,
+//! one [`varde_kernel_compat::split`] gives both pieces from one arrangement,
 //! cached by the body's key and the tool's. A side that holds nothing
 //! fails the split ("lies all on one side"): no body is ever empty.
 //!
@@ -31,9 +31,9 @@
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FaceRef, FeatureId, PlaneRef, Side, Split, SplitTool};
-use varde_kernel::mesh::Form;
-use varde_kernel::patch::Bounds3;
-use varde_kernel::{Budget, Failure, Solid, Tolerance, ToolError};
+use varde_kernel_compat::mesh::Form;
+use varde_kernel_compat::patch::Bounds3;
+use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
 use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solid, through_all};
 use crate::cache::{Cache, Key, Keyer};
@@ -53,7 +53,7 @@ pub(crate) type Splitter =
 
 kernel_op! {
     /// The split to run: the kernel's, or the one a test set.
-    fn splitter() -> Splitter = varde_kernel::split, split;
+    fn splitter() -> Splitter = varde_kernel_compat::split, split;
 }
 
 /// The profile curve id a chain tool's rectangle is named by: past every
@@ -219,7 +219,7 @@ impl Building<'_> {
                     .finish();
                 let solid = cache.solid(key, || {
                     let profile = sketch.profile(regions, self.tolerance.fit())?;
-                    varde_kernel::extrude(
+                    varde_kernel_compat::extrude(
                         &profile,
                         &frame,
                         from,
@@ -257,7 +257,7 @@ impl Building<'_> {
                         self.tolerance.fit(),
                     )
                     .map_err(message::split_line)?;
-                    varde_kernel::chain_tool(
+                    varde_kernel_compat::chain_tool(
                         &segments,
                         &frame,
                         &self.bounds,
@@ -303,7 +303,7 @@ impl Building<'_> {
     fn half_space(&self, n: glam::DVec3, d: f64) -> Result<Solid, Failed> {
         let feature = self.feature.get();
         let budget = &Budget::DEFAULT;
-        varde_kernel::half_space(n, d, &self.bounds, feature, &self.tolerance, budget)
+        varde_kernel_compat::half_space(n, d, &self.bounds, feature, &self.tolerance, budget)
             .map_err(|failure| self.tool_failed(failure))
     }
 
@@ -323,7 +323,7 @@ impl Building<'_> {
             .eval(glam::DVec3::splat(1.0 / 3.0));
         let feature = self.feature.get();
         let budget = &Budget::DEFAULT;
-        varde_kernel::surface_tool(form, on, &self.bounds, feature, &self.tolerance, budget)
+        varde_kernel_compat::surface_tool(form, on, &self.bounds, feature, &self.tolerance, budget)
             .map_err(|error| match error {
                 ToolError::CantExtend => Failed {
                     message: message::SPLIT_CANT_EXTEND.to_owned(),

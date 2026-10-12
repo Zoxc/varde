@@ -1554,7 +1554,7 @@ slope not certified.
     tests) runs out in 4 s; at angles 0.3 and 0.7 it is refused as "no
     clean solid" in 0.3 to 0.6 s. Not diagnosed further.
 
-  Repros: `cargo test -p varde-kernel --release
+  Repros: `cargo test -p varde-kernel-compat --release
   near_tangent_cylinders_at_the_default_tolerance -- --ignored
   --nocapture` prints each operation's result, units and time (`NEAR`)
   and the list over a million units; the regen cases evaluate those

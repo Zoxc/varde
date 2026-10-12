@@ -21,7 +21,7 @@ use iced::widget::shader::{self, Action};
 use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_document::OriginPlane;
-use varde_kernel::{RenderLines, RenderMesh};
+use varde_kernel_compat::{RenderLines, RenderMesh};
 use varde_render::{
     BodyTint, Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, OriginShown, PLANE_GAP,
     PLANE_REACH, PLANE_SIDES, Pivot, PrepareError, Renderer, Shading, SketchLayer, SketchScene,

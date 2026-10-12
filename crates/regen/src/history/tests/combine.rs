@@ -7,7 +7,7 @@
 
 use glam::DVec3;
 use varde_document::{BodyOp, Combine, FaceRef};
-use varde_kernel::mesh::{FaceKey, PartKey};
+use varde_kernel_compat::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::Draft;
@@ -166,12 +166,12 @@ fn a_union_tries_a_tool_again_once_another_bridges_it() {
     let edge = block(&mut editor, 10.0, 10.0, 20.0, 20.0, "10");
     let bridge = block(&mut editor, 5.0, 5.0, 15.0, 15.0, "10");
     let before = evaluated(editor.document());
-    let alone = varde_kernel::boolean(
+    let alone = varde_kernel_compat::boolean(
         solid_of(&before, a),
         solid_of(&before, edge),
-        varde_kernel::Op::Union,
+        varde_kernel_compat::Op::Union,
         &editor.document().tolerance(),
-        &varde_kernel::Budget::DEFAULT,
+        &varde_kernel_compat::Budget::DEFAULT,
     );
     assert!(alone.is_err(), "the blocks alone make a solid");
     let united = add_combine(&mut editor, combine(a, &[edge, bridge], BodyOp::Union));

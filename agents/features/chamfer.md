@@ -107,7 +107,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   `FacePart::Blend { edge, .. }` edge, `blend_edge(pair, ordinal)` of a
   picked edge's reference keys or a grown chain's regions' keys, the
   ordinal counting chains before it with the same pair.
-- **The chamfer**: `varde_kernel::chamfer(solid, topology, chains,
+- **The chamfer**: `varde_kernel_compat::chamfer(solid, topology, chains,
   feature, tol, budget)`, cached as an `Entry::Solid` by the body's key,
   the feature, the fit tolerance and each chain's index, name and cut
   bits; the result replaces the body's solid under that key (an empty
@@ -123,7 +123,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   ("chamfering Body 1 is too complex to work out" for `TooComplex`,
   "chamfering Body 1 isn't supported yet" for `NotImplemented`,
   `message::blending`), the evidence's faces on the body.
-- **Kernel stand-in**: `varde_kernel::chamfer` (`kernel/src/blend.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::chamfer` (`kernel/src/blend.rs`,
   with `ChamferChain`, `ChamferCut`, `BlendError`) isn't built yet: it
   has its planned signature and fails with `NotImplemented`. So every
   chamfer that finds its edges fails today with "chamfering Body 1

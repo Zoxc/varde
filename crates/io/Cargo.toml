@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 varde-document.workspace = true
-varde-kernel.workspace = true
+varde-kernel-compat.workspace = true
 varde-lane.workspace = true
 serde.workspace = true
 # The wire format, src/wire.rs.

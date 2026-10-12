@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use varde_document::{Command, Document, Editor, FeatureKind};
-use varde_kernel::MeshPart;
-use varde_kernel::mesh::{FaceKey, PartKey};
+use varde_kernel_compat::MeshPart;
+use varde_kernel_compat::mesh::{FaceKey, PartKey};
 use varde_sketch::{MAX_LINKS, MAX_POINTS};
 
 use super::*;
@@ -3099,8 +3099,8 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
 /// point, a sketch curve and the model's one face, of `BodyId::NEW`.
 fn failure_geometry() -> Arc<ErrorGeometry> {
     use glam::DVec3;
-    use varde_kernel::patch::{Conic3, Patch};
-    use varde_kernel::{Evidence, Failure, KernelError, Operand, Tolerance};
+    use varde_kernel_compat::patch::{Conic3, Patch};
+    use varde_kernel_compat::{Evidence, Failure, KernelError, Operand, Tolerance};
 
     let mut evidence = Evidence::default();
     evidence.add_patches([Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap()]);

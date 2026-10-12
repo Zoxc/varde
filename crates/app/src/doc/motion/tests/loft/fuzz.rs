@@ -35,7 +35,7 @@ use crate::doc::OperationSlot;
 use glam::DVec2;
 use varde_document::{BodyOp, Combine, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, Operation, Targets};
 use varde_expr::LengthUnit;
-use varde_kernel::Tolerance;
+use varde_kernel_compat::Tolerance;
 use varde_view::{LoftShape, OperationKind, OverlapItems, Overlaps, Pick};
 
 use super::super::chamfer::fuzz::Rng;

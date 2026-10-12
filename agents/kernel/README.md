@@ -1,6 +1,6 @@
 # Kernel
 
-`varde-kernel` (`crates/kernel`) is heading for solids that are closed,
+`varde-kernel-compat` (`crates/kernel-compat`) is heading for solids that are closed,
 oriented 2-manifolds of **rational quadratic triangle patches**, with
 union, difference and intersection built the way
 [Manifold](https://github.com/elalish/manifold) builds them for flat

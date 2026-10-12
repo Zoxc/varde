@@ -5,9 +5,9 @@ use crate::projection::top_camera;
 
 /// A box from the origin to (2, 2, 2), tessellated.
 fn cube() -> RenderMesh {
-    let tol = varde_kernel::Tolerance::DEFAULT;
-    let solid = varde_kernel::Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &tol);
-    let display = varde_kernel::Display::new(&tol);
+    let tol = varde_kernel_compat::Tolerance::DEFAULT;
+    let solid = varde_kernel_compat::Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &tol);
+    let display = varde_kernel_compat::Display::new(&tol);
     solid.unwrap().tessellate(&display).unwrap()
 }
 

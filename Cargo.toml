@@ -9,7 +9,7 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-varde-kernel = { path = "crates/kernel" }
+varde-kernel-compat = { path = "crates/kernel-compat" }
 varde-expr = { path = "crates/expr" }
 varde-sketch = { path = "crates/sketch" }
 varde-render = { path = "crates/render" }
@@ -123,7 +123,7 @@ debug = false
 
 # The kernel's vector math is glam's inline functions, compiled at the
 # kernel's own opt-level: at 0 its tests run about 8 times slower.
-[profile.dev.package.varde-kernel]
+[profile.dev.package.varde-kernel-compat]
 opt-level = 1
 
 # Likewise the sketch solver's sparse factorization, faer's generic code

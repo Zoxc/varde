@@ -5,7 +5,7 @@ use glam::DVec3;
 use varde_document::{
     BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Operation, PointRef,
 };
-use varde_kernel::mesh::{FaceKey, PartKey};
+use varde_kernel_compat::mesh::{FaceKey, PartKey};
 
 use crate::pick::PickIndex;
 

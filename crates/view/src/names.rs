@@ -12,7 +12,7 @@ use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::Shaping;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 use varde_document::{BodyId, Document, FeatureId};
-use varde_kernel::mesh::{FaceKey, PartKey};
+use varde_kernel_compat::mesh::{FaceKey, PartKey};
 use varde_render::Camera;
 
 use crate::Message;

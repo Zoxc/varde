@@ -36,7 +36,7 @@ fn taper(document: &Document, text: &str) -> Value {
 
 /// The tangent of `degrees`, as the stand-in and the kernel take it.
 fn tan(degrees: f64) -> f64 {
-    let (sin, cos) = varde_kernel::trig::sin_cos(degrees.to_radians());
+    let (sin, cos) = varde_kernel_compat::trig::sin_cos(degrees.to_radians());
     sin / cos
 }
 

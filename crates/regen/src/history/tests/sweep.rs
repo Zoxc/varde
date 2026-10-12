@@ -18,9 +18,9 @@ use glam::DVec3;
 use varde_document::{
     Axis3, AxisRef, CurveChain, EdgeRef, Helix, Orientation, PathPart, PathRef, Sweep,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::sweep::{Path, Piece, SweepError};
-use varde_kernel::{KernelError, Profile};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::sweep::{Path, Piece, SweepError};
+use varde_kernel_compat::{KernelError, Profile};
 use varde_sketch::{Id, RegionRef};
 
 use super::motion::{add, block, failure, set, the_plate};
@@ -263,9 +263,9 @@ thread_local! {
 #[allow(clippy::too_many_arguments)]
 fn recording(
     _: &Profile,
-    _: &varde_kernel::Frame,
+    _: &varde_kernel_compat::Frame,
     path: &Path,
-    _: varde_kernel::sweep::Orientation,
+    _: varde_kernel_compat::sweep::Orientation,
     _: f64,
     _: u64,
     _: &Tolerance,
@@ -747,7 +747,7 @@ fn a_helix_s_axis_is_resolved() {
     );
     assert_eq!(
         paths[1],
-        Path::Helix(varde_kernel::sweep::Helix {
+        Path::Helix(varde_kernel_compat::sweep::Helix {
             point: DVec3::ZERO,
             axis: -DVec3::Z,
             pitch: 4.0,
@@ -964,7 +964,7 @@ mod with_the_kernel {
 #[test]
 fn a_piece_closed_on_itself_has_no_corner() {
     use crate::history::sweep::{Part, join};
-    use varde_kernel::patch::Conic3;
+    use varde_kernel_compat::patch::Conic3;
     let tolerance = Tolerance::DEFAULT;
     let v = DVec3::new;
     // Four quarters round the origin on XY of radius 10, the last's

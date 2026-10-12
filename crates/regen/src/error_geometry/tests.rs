@@ -1,6 +1,6 @@
 use glam::DVec3;
-use varde_kernel::mesh::PartKey;
-use varde_kernel::{BooleanError, KernelError, Solid, Tolerance};
+use varde_kernel_compat::mesh::PartKey;
+use varde_kernel_compat::{BooleanError, KernelError, Solid, Tolerance};
 
 use super::*;
 use crate::picking::Drawn;

@@ -8,7 +8,7 @@
 
 use glam::DVec3;
 use varde_document::{Axis3, AxisRef, BodyOp, Combine, EdgeRef, FaceRef, Mirror, Move, PlaneRef};
-use varde_kernel::mesh::{FaceKey, Form, PartKey};
+use varde_kernel_compat::mesh::{FaceKey, Form, PartKey};
 
 use super::*;
 use crate::picking::region_form;
@@ -676,15 +676,18 @@ fn a_symmetric_body_mirrored_onto_itself_is_itself_or_fails() {
 #[test]
 fn an_axis_is_found_beside_its_face() {
     let far = DVec3::new(0.0, 0.0, -3.0e7);
-    let at =
-        varde_kernel::topology::beside(far, DVec3::new(0.0, 0.0, 2.0), DVec3::new(8.0, 0.0, 5.0));
+    let at = varde_kernel_compat::topology::beside(
+        far,
+        DVec3::new(0.0, 0.0, 2.0),
+        DVec3::new(8.0, 0.0, 5.0),
+    );
     assert_eq!(at, DVec3::new(0.0, 0.0, 5.0));
-    let along = varde_kernel::topology::beside(far, DVec3::ZERO, DVec3::new(8.0, 0.0, 5.0));
+    let along = varde_kernel_compat::topology::beside(far, DVec3::ZERO, DVec3::new(8.0, 0.0, 5.0));
     assert_eq!(along, far);
     // A face at the coordinate limit whose axis is just past it: the
     // point beside it, not the far apex, which the wire would refuse.
     let apex = DVec3::new(1.0e6 + 5.0, 0.0, -3.0e7);
-    let at = varde_kernel::topology::beside(apex, DVec3::Z, DVec3::new(1.0e6, 0.0, 5.0));
+    let at = varde_kernel_compat::topology::beside(apex, DVec3::Z, DVec3::new(1.0e6, 0.0, 5.0));
     assert_eq!(at, DVec3::new(1.0e6 + 5.0, 0.0, 5.0));
     assert!(crate::reference_fits(&[at.to_array(), [0.0, 0.0, 1.0]]));
 }

@@ -3,7 +3,7 @@ use crate::testing::{plate, with_body};
 use crate::{
     CheckError, Command, Document, EditError, Editor, Extrude, FeatureKind, Operation, Removable,
 };
-use varde_kernel::mesh::PartKey;
+use varde_kernel_compat::mesh::PartKey;
 
 /// The world axis `letter` names.
 fn axis(letter: char) -> DVec3 {

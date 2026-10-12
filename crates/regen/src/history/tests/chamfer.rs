@@ -17,9 +17,9 @@ use std::cell::RefCell;
 
 use glam::DVec3;
 use varde_document::{Chamfer, ChamferSize, EdgeRef, FaceRef};
-use varde_kernel::mesh::{FaceKey, Form};
-use varde_kernel::topology::blend_edge;
-use varde_kernel::{BlendError, ChamferChain, Topology};
+use varde_kernel_compat::mesh::{FaceKey, Form};
+use varde_kernel_compat::topology::blend_edge;
+use varde_kernel_compat::{BlendError, ChamferChain, Topology};
 
 use crate::picking::region_form;
 
@@ -556,7 +556,10 @@ fn tangent_chains_take_in_the_rim() {
         let sides = topology.chains()[chain.chain as usize].regions;
         assert!(sides.contains(&top_region));
         // Equal distances either way.
-        assert_eq!(chain.cut, varde_kernel::ChamferCut::Distances([1.0; 2]));
+        assert_eq!(
+            chain.cut,
+            varde_kernel_compat::ChamferCut::Distances([1.0; 2])
+        );
     }
     // Two distances: the top's first all round.
     let two = Chamfer {
@@ -572,7 +575,10 @@ fn tangent_chains_take_in_the_rim() {
         } else {
             [2.0, 1.0]
         };
-        assert_eq!(chain.cut, varde_kernel::ChamferCut::Distances(wanted));
+        assert_eq!(
+            chain.cut,
+            varde_kernel_compat::ChamferCut::Distances(wanted)
+        );
     }
     set(
         &mut editor,
@@ -871,7 +877,7 @@ fn a_grown_edge_sharing_no_face_takes_the_picked_edge_s_side() {
             let wanted = if first == 0 { [1.0, 2.0] } else { [2.0, 1.0] };
             assert_eq!(
                 chain.cut,
-                varde_kernel::ChamferCut::Distances(wanted),
+                varde_kernel_compat::ChamferCut::Distances(wanted),
                 "flip {flip}: {:?}",
                 sides.map(form)
             );

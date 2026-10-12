@@ -73,7 +73,7 @@
 //!
 //! An export's bodies follow a [`Head::Exported`] that went as one part,
 //! their postcard, copied only within [`MAX_EXPORT_BYTES`]; each
-//! [`ManifoldMesh`](varde_kernel::ManifoldMesh) is checked again as it's
+//! [`ManifoldMesh`](varde_kernel_compat::ManifoldMesh) is checked again as it's
 //! decoded, so the page only ever writes a checked manifold. Bodies that
 //! fail to decode answer the export with the error.
 //!
@@ -101,7 +101,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, DecodeError, FeatureId, Generation, Id, Placement, Sketch, codec};
-use varde_kernel::{
+use varde_kernel_compat::{
     Aabb, LinesError, LinesPart, MeshError, MeshPart, MeshParts, MeshUpload, RenderLines,
     RenderMesh, UploadError,
 };
@@ -153,7 +153,7 @@ pub const MAX_BROKEN: usize = 1 << 16;
 mod bounded {
     use serde::{Deserialize, Deserializer};
     use varde_document::{BodyId, FeatureId, Id, Sketch};
-    use varde_kernel::RenderMesh;
+    use varde_kernel_compat::RenderMesh;
     use varde_sketch::{
         ConstraintEntry, CurveEntry, DimensionEntry, Link, MAX_CONSTRAINTS, MAX_CURVES,
         MAX_DIMENSIONS, MAX_LINKS, MAX_POINTS, Point,

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{DVec2, Vec3};
 use tess2_rust::{ElementType, Tessellator, WindingRule};
-use varde_kernel::{Aabb, RenderLines};
+use varde_kernel_compat::{Aabb, RenderLines};
 
 use crate::GridPlane;
 use crate::renderer::srgb_to_linear;

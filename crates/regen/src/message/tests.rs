@@ -1,4 +1,4 @@
-use varde_kernel::mesh::CheckError;
+use varde_kernel_compat::mesh::CheckError;
 
 use super::*;
 
@@ -71,7 +71,7 @@ fn merging_failures_name_both_bodies_and_how_to_keep_them_apart() {
         KernelError::Boolean(BooleanError::Inconsistent),
         KernelError::Boolean(BooleanError::Degenerate),
         KernelError::Boolean(BooleanError::NotManifold),
-        KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
+        KernelError::Patch(varde_kernel_compat::patch::PatchError::Mismatch),
     ] {
         let text = merging("Body 1", "Body 2", error);
         let tail = boolean(Doing::Joining, "Body 1", error)
@@ -107,7 +107,7 @@ fn extrude_errors() -> Vec<KernelError> {
         ProfileError::Empty,
         ProfileError::TooManySegments(70_000),
         ProfileError::Short(0),
-        ProfileError::Segment(0, 1, varde_kernel::patch::PatchError::Mismatch),
+        ProfileError::Segment(0, 1, varde_kernel_compat::patch::PatchError::Mismatch),
         ProfileError::Degenerate(0, 1),
         ProfileError::Open(0, 1),
         ProfileError::Area(0),
@@ -120,7 +120,7 @@ fn extrude_errors() -> Vec<KernelError> {
     let mut errors = vec![
         KernelError::TooComplex,
         KernelError::Invalid(CheckError::Counts),
-        KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
+        KernelError::Patch(varde_kernel_compat::patch::PatchError::Mismatch),
         KernelError::Boolean(BooleanError::Inconsistent),
     ];
     errors.extend(profile.map(KernelError::Profile));
@@ -149,7 +149,7 @@ fn extrude_failures_name_the_tolerance_only_to_suggest_a_finer_one() {
         crate::ProfileError::Missing,
         crate::ProfileError::TooManySegments,
         crate::ProfileError::Fit,
-        crate::ProfileError::Patch(varde_kernel::patch::PatchError::Mismatch),
+        crate::ProfileError::Patch(varde_kernel_compat::patch::PatchError::Mismatch),
     ];
     for error in profile {
         let text = error.to_string();
@@ -183,7 +183,7 @@ fn every_boolean_failure_starts_in_lower_case() {
     let errors = [
         KernelError::TooComplex,
         KernelError::Invalid(CheckError::Counts),
-        KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
+        KernelError::Patch(varde_kernel_compat::patch::PatchError::Mismatch),
         KernelError::Profile(ProfileError::Nesting(0)),
         KernelError::Profile(ProfileError::TooFine(0, 3)),
         KernelError::Boolean(BooleanError::Inconsistent),

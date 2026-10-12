@@ -8,9 +8,9 @@
 
 use glam::DVec3;
 use varde_document::{BodyOp, Combine, EdgeRef, PointRef, Scale, ScaleFactor};
-use varde_kernel::measure::{EdgeShape, Measured, Pick, Target, measure};
-use varde_kernel::mesh::{FaceKey, Form, Surface};
-use varde_kernel::{Budget, Tolerance};
+use varde_kernel_compat::measure::{EdgeShape, Measured, Pick, Target, measure};
+use varde_kernel_compat::mesh::{FaceKey, Form, Surface};
+use varde_kernel_compat::{Budget, Tolerance};
 
 use super::combine::fuzz::truncated;
 use super::motion::{
@@ -78,7 +78,7 @@ fn flat_edge(
 }
 
 /// What the measure tool says of `edge` on `solid`.
-fn measured(solid: &Solid, edge: &EdgeRef) -> varde_kernel::measure::EdgeMeasure {
+fn measured(solid: &Solid, edge: &EdgeRef) -> varde_kernel_compat::measure::EdgeMeasure {
     let topology = solid.topology();
     let chain = topology.edge(solid, edge.faces, edge.near).unwrap();
     let target = Target {

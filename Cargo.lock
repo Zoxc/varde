@@ -4192,7 +4192,7 @@ dependencies = [
  "varde-document",
  "varde-expr",
  "varde-io",
- "varde-kernel",
+ "varde-kernel-compat",
  "varde-mcp",
  "varde-regen",
  "varde-render",
@@ -4213,7 +4213,7 @@ dependencies = [
  "postcard",
  "serde",
  "varde-expr",
- "varde-kernel",
+ "varde-kernel-compat",
  "varde-sketch",
 ]
 
@@ -4249,7 +4249,7 @@ dependencies = [
  "toml",
  "varde-document",
  "varde-expr",
- "varde-kernel",
+ "varde-kernel-compat",
  "varde-lane",
  "varde-mcp",
  "varde-sketch",
@@ -4261,7 +4261,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "varde-kernel"
+name = "varde-kernel-compat"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -4310,7 +4310,7 @@ dependencies = [
  "serde",
  "varde-document",
  "varde-expr",
- "varde-kernel",
+ "varde-kernel-compat",
  "varde-lane",
  "varde-sketch",
  "varde-testing",
@@ -4325,7 +4325,7 @@ dependencies = [
  "glam 0.30.10",
  "pollster",
  "tess2-rust",
- "varde-kernel",
+ "varde-kernel-compat",
  "wgpu",
 ]
 
@@ -4376,7 +4376,7 @@ dependencies = [
  "varde-document",
  "varde-expr",
  "varde-io",
- "varde-kernel",
+ "varde-kernel-compat",
  "varde-regen",
  "varde-render",
  "varde-sketch",

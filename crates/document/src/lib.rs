@@ -81,8 +81,8 @@ use serde::{Deserialize, Serialize};
 // The types and limits the model's API names, so that clients editing a
 // document need only this crate.
 pub use varde_expr::{LengthUnit, Params};
-pub use varde_kernel::mesh::{FaceKey, PartKey};
-pub use varde_kernel::{MAX_COORD, Tolerance};
+pub use varde_kernel_compat::mesh::{FaceKey, PartKey};
+pub use varde_kernel_compat::{MAX_COORD, Tolerance};
 pub use varde_sketch::{Design, Id, RegionRef, Sketch, SketchError};
 
 /// Whether `point` is a reference's point a file may hold: finite and

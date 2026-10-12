@@ -20,7 +20,7 @@ use iced::widget::{MouseArea, column, container, mouse_area, row, text};
 use iced::{Alignment, Color, Element, Event, Padding, Point, Rectangle, Vector};
 use varde_document::{MAX_COORD, Placement};
 use varde_expr::LengthUnit;
-use varde_kernel::RenderLines;
+use varde_kernel_compat::RenderLines;
 use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
     Curve, CurveEntry, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Selectable,

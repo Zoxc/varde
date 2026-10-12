@@ -444,7 +444,7 @@ fn project_commits_links_the_model_fills_and_undo_takes_back() {
 /// into two lines up it.
 #[test]
 fn intersect_cuts_the_hole_s_wall_into_two_lines() {
-    use varde_kernel::mesh::Form;
+    use varde_kernel_compat::mesh::Form;
 
     let (mut doc, requests) = example();
     doc.apply(

@@ -7,7 +7,7 @@ use std::ops::Range;
 use glam::DVec3;
 use serde_json::{Value, json};
 use varde_document::{BodyId, EdgeRef, FaceRef, FeatureId, Generation, MAX_COORD};
-use varde_kernel::RenderPart;
+use varde_kernel_compat::RenderPart;
 use varde_mcp::tools::{Direction, EdgeFilter, Page, ToolReply, Topology};
 use varde_regen::{Convexity, EdgeFacts, EdgeForm, Summary};
 

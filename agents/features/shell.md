@@ -61,12 +61,12 @@ stand-ins):
   fails the shell before the kernel: "its open face wasn't found", or
   with several "its open face 2 of 3 wasn't found" (its place in the
   list). The regions found go to the kernel sorted, each once.
-- **The shell**: `varde_kernel::shell(solid, topology, open, thickness,
+- **The shell**: `varde_kernel_compat::shell(solid, topology, open, thickness,
   outward, feature, tol, budget)`, cached as an `Entry::Solid` by the
   body's key, the feature, the fit tolerance, the thickness's bits, the
   direction and the regions; the result replaces the body's solid under
   that key (an empty result: "shelling Body 1 leaves nothing of it").
-  Its refusals (`varde_kernel::ShellError`) are worded by
+  Its refusals (`varde_kernel_compat::ShellError`) are worded by
   `message::shell_refused`: a round shrinking to nothing "the shell is
   thicker than the smallest round of Body 1: try a thinner wall" (the
   face drawn), the offsets crossing "the shell is too thick for Body 1:
@@ -76,7 +76,7 @@ stand-ins):
   boolean's ("shelling Body 1 is too complex to work out" for
   `TooComplex`, "shelling Body 1 isn't supported yet" for
   `NotImplemented`, `message::shelling`), the evidence's faces on the body.
-- **Kernel stand-in**: `varde_kernel::shell` (`kernel/src/shell.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::shell` (`kernel/src/shell.rs`,
   with `ShellError`) isn't built yet: it has its planned signature and
   fails with `NotImplemented`. So every shell that finds its faces fails
   today with "shelling Body 1 isn't supported yet", its body left

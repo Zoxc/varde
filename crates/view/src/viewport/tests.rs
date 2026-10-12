@@ -7,9 +7,10 @@ use super::*;
 
 /// A box's mesh, as a document with one would show.
 fn cube() -> Arc<RenderMesh> {
-    let tol = varde_kernel::Tolerance::DEFAULT;
-    let solid = varde_kernel::Solid::cuboid(glam::DVec3::ZERO, glam::DVec3::splat(2.0), 0, &tol);
-    let display = varde_kernel::Display::new(&tol);
+    let tol = varde_kernel_compat::Tolerance::DEFAULT;
+    let solid =
+        varde_kernel_compat::Solid::cuboid(glam::DVec3::ZERO, glam::DVec3::splat(2.0), 0, &tol);
+    let display = varde_kernel_compat::Display::new(&tol);
     Arc::new(solid.unwrap().tessellate(&display).unwrap())
 }
 

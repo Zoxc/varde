@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use glam::{DVec3, Vec3};
-use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel_compat::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     CREASE_ALPHA, CREASE_WIDTH, Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane,
     HIDDEN_DASH, HOVER_RIM, HOVERED_EDGE_WIDTH, Highlights, LINE_WIDTH, LineStyle, Pivot,
@@ -590,7 +590,7 @@ fn axes_stay_put_zoomed_into_a_large_scene() {
     // to find the ground loses pixels to rounding.
     let mut camera = Camera::default();
     camera.zoom(0.01 / camera.view_height());
-    let mesh = cube(1.0, Vec3::Y * varde_kernel::MAX_COORD);
+    let mesh = cube(1.0, Vec3::Y * varde_kernel_compat::MAX_COORD);
     let Some(pixels) = render(&camera, &mesh, VIEWPORT, CLIP, 1.0) else {
         eprintln!("no GPU adapter, skipping");
         return;
@@ -868,11 +868,13 @@ fn cube(size: f32, at: Vec3) -> RenderMesh {
 }
 
 /// A box from `at`, `size` on each side, tessellated. Built at the origin
-/// and moved, so it can reach past [`varde_kernel::MAX_COORD`], which a
+/// and moved, so it can reach past [`varde_kernel_compat::MAX_COORD`], which a
 /// solid can't.
 fn block(at: Vec3, size: Vec3) -> RenderMesh {
     let solid = Solid::cuboid(DVec3::ZERO, size.as_dvec3(), 0, &Tolerance::DEFAULT);
-    let mesh = solid.unwrap().tessellate(&varde_kernel::Display::default());
+    let mesh = solid
+        .unwrap()
+        .tessellate(&varde_kernel_compat::Display::default());
     let mut moved = RenderMesh::default();
     moved.append_at(&mesh.unwrap(), at).unwrap();
     moved
@@ -3449,7 +3451,7 @@ fn a_sketch_axis_through_the_origin_lies_on_the_grid_axis() {
     // on the grid's axis line zoomed in, either side of the origin, in
     // either projection. A segment starting that far away was pixels off.
     let plane = GridPlane::new(Vec3::new(40.0, 25.0, 30.0), Vec3::X, Vec3::Y).unwrap();
-    let reach = f64::from(varde_kernel::MAX_COORD);
+    let reach = f64::from(varde_kernel_compat::MAX_COORD);
     let halves = [-reach, reach].map(|end| [glam::DVec2::ZERO, glam::DVec2::new(end, 0.0)]);
     // The whole target, large enough for the error to show.
     let [width, height] = SIZE;
@@ -3519,7 +3521,7 @@ fn a_sketch_axis_fades_with_the_grid_axis_it_lies_on() {
     // A sketch's axes drawn as axis polylines, from the front with the
     // sketch on XY: its Y axis points at the camera and is gone, nearly
     // so too, its X axis stays. Tilted further, the Y axis is back.
-    let reach = f64::from(varde_kernel::MAX_COORD);
+    let reach = f64::from(varde_kernel_compat::MAX_COORD);
     let mut layer = SketchLayer::default();
     for (along, color) in [(glam::DVec2::X, YELLOW), (glam::DVec2::Y, BLUE)] {
         let style = LineStyle {

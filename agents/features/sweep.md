@@ -127,7 +127,7 @@ body", the uncut note).
   start's tangent square to the profile's plane within a sine of
   `1e-6`, else "its profile isn't square to its path where the path
   starts". These are regen's own refusals, before the kernel, by the
-  kernel's rule (`varde_kernel::sweep::JOINT_SINE`, the sine both
+  kernel's rule (`varde_kernel_compat::sweep::JOINT_SINE`, the sine both
   use), which the kernel's sweep keeps as a guard.
 - **A helix**: its axis resolved as a move's turn's
   (`motion::resolve_axis`: its messages, "its axis edge wasn't found"
@@ -136,7 +136,7 @@ body", the uncut note).
   made unit ("its helix's axis has no direction"); `pitch × turns`
   within `MAX_COORD` (both checked, so finite), else "its helix is too
   long".
-- **The kernel**: `varde_kernel::sweep::sweep(profile, frame, path,
+- **The kernel**: `varde_kernel_compat::sweep::sweep(profile, frame, path,
   orientation, twist, feature, tol, budget)` (`Orientation::Follow` or
   `Keep`, the twist's value or 0), cached as an `Entry::Solid` by the
   feature, the regions, the fit tolerance, the profile sketch's key and

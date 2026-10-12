@@ -1,5 +1,5 @@
 use glam::DVec3;
-use varde_kernel::{Budget, Display, ManifoldMesh, Op, Solid, Tolerance, boolean};
+use varde_kernel_compat::{Budget, Display, ManifoldMesh, Op, Solid, Tolerance, boolean};
 
 use super::*;
 

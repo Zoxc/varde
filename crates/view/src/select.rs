@@ -33,7 +33,7 @@
 
 use glam::DVec3;
 use varde_document::{BodyId, FaceRef, FeatureId};
-use varde_kernel::mesh::FaceKey;
+use varde_kernel_compat::mesh::FaceKey;
 use varde_sketch::Id;
 
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks};

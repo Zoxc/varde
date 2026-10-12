@@ -64,7 +64,7 @@ pub struct FaceDraft {
   found is noted for the session to draw even when a face isn't found
   (that failure still comes first). The pull is the plane's unit
   normal, negated by `flip`.
-- **The draft**: `varde_kernel::draft_faces(solid, topology, faces,
+- **The draft**: `varde_kernel_compat::draft_faces(solid, topology, faces,
   neutral point, pull, angle in radians, tangent, feature, tol,
   budget)`, cached as an `Entry::Solid` by the body's key, the feature,
   the fit tolerance, the neutral point's and pull's bits, the angle's
@@ -72,7 +72,7 @@ pub struct FaceDraft {
   body's solid under that key. Faces keep their names, so a sketch on a
   drafted face after it is placed on the face as turned, and follows
   the angle, the flip or a dimension upstream. Its refusals
-  (`varde_kernel::DraftError`) are worded by `message::draft_refused`:
+  (`varde_kernel_compat::DraftError`) are worded by `message::draft_refused`:
   facing the pull "a face of Body 1 faces the pull direction: nothing
   to draft", can't be drafted "a face of Body 1 can't be drafted: only
   flat faces and walls along the pull can", past a neighbour "the face
@@ -87,7 +87,7 @@ pub struct FaceDraft {
   work out" for `TooComplex`, "drafting faces of Body 1 isn't supported
   yet" for `NotImplemented`, `message::drafting`); an empty result
   "drafting faces of Body 1 leaves nothing of it".
-- **Kernel stand-in**: `varde_kernel::draft_faces` (`kernel/src/shell.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::draft_faces` (`kernel/src/shell.rs`,
   beside `offset_faces`, with `DraftError`) isn't built: it fails with
   `NotImplemented`, so every draft that finds its faces and neutral
   plane fails today with "drafting faces of Body 1 isn't supported

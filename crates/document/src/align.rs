@@ -7,7 +7,7 @@ use std::fmt;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
-use varde_kernel::mesh::FaceKey;
+use varde_kernel_compat::mesh::FaceKey;
 
 use crate::motion::Referred;
 use crate::{

@@ -3,8 +3,8 @@ use varde_document::{
     BodyId, Command, Document, Editor, Extent, Extrude, Operation, OriginPlane, Plane,
 };
 use varde_expr::Value;
-use varde_kernel::mesh::PartKey;
-use varde_kernel::{MeshParts, RenderMesh};
+use varde_kernel_compat::mesh::PartKey;
+use varde_kernel_compat::{MeshParts, RenderMesh};
 use varde_regen::{
     Cache, FaceEdgeTables, PickFace, Picking, PickingParts, Summary, evaluate, tessellate_picking,
 };

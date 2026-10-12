@@ -113,7 +113,7 @@ fn pan_and_zoom_stay_bounded() {
     assert_eq!(camera.target.abs().max_element(), Camera::EXTENT);
     camera.set_target(Vec3::new(0.0, 0.0, -1e30));
     assert_eq!(camera.target, Vec3::new(0.0, 0.0, -Camera::EXTENT));
-    let bounds = varde_kernel::Aabb {
+    let bounds = varde_kernel_compat::Aabb {
         min: Vec3::ZERO,
         max: Vec3::ONE,
     };

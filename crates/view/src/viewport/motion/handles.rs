@@ -8,7 +8,7 @@ use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
 use varde_document::{Axis3, MAX_COORD};
 use varde_expr::Unit;
-use varde_kernel::Motion;
+use varde_kernel_compat::Motion;
 use varde_render::{Camera, Colors, SketchLayer, Space as LayerSpace};
 use varde_sketch::angle;
 

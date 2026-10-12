@@ -45,7 +45,7 @@ equal bits). `on_threads(n, f)` runs `f` on an `n`-thread pool.
 std's `sin`, `cos`, `atan2`, `ln`, `powi`, ... are not: they come from the
 platform's maths library (glibc natively on Linux, the system's own on
 macOS and Windows), whose last bits differ. On `wasm32-unknown-unknown`
-std's are the `libm` crate's code already. `varde_kernel::trig` wraps
+std's are the `libm` crate's code already. `varde_kernel_compat::trig` wraps
 `libm` (pure Rust, pinned by `Cargo.lock`): `sin`, `cos`, `sin_cos`,
 `tan`, `asin`, `acos`, `atan2`, `unit(angle)` (`(cos, sin)` as a `DVec2`)
 and `angle(v)` (`atan2(v.y, v.x)`). So natively the kernel gets the web's
@@ -53,7 +53,7 @@ bits, and every platform the same. `sin_cos` is two calls, never a joint
 `sincos`. A `libm` upgrade can change bits, on every platform at once.
 
 The kernel's decisions use only `+ − × ÷ √`, exact signs and `trig`.
-`crates/kernel/clippy.toml` keeps it so: `disallowed-methods` refuses
+`crates/kernel-compat/clippy.toml` keeps it so: `disallowed-methods` refuses
 std's `f64` trigonometry, exponentials, logarithms, `powf`, `powi`,
 `cbrt` and `hypot`, and glam's methods built on them (`DVec2::from_angle`,
 `to_angle`, `angle_to`, the vectors' `angle_between`, `rotate_*` and

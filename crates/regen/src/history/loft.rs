@@ -1,5 +1,5 @@
 //! Evaluating a loft's tool: its sections placed in the world in order
-//! and lofted by the kernel's [`varde_kernel::loft::loft`]. What's done
+//! and lofted by the kernel's [`varde_kernel_compat::loft::loft`]. What's done
 //! with the tool (a new body, or touches and booleans) is an extrude's
 //! (`Run::evaluate`).
 //!
@@ -46,16 +46,16 @@
 //! out", and the rest of the history goes on.
 //!
 //! [`Profiles::resolve`]: varde_sketch::Profiles::resolve
-//! [`on_one_plane`]: varde_kernel::loft::on_one_plane
+//! [`on_one_plane`]: varde_kernel_compat::loft::on_one_plane
 //! [`loft_corner`]: crate::loft_corner
 //! [`profile`]: crate::profile()
 
 use std::sync::Arc;
 
 use varde_document::{Loft, LoftMode, Placement, Section};
-use varde_kernel::loft::{self as kernel_loft, LoftError, Rail};
-use varde_kernel::patch::Conic3;
-use varde_kernel::{Budget, Solid, Tolerance};
+use varde_kernel_compat::loft::{self as kernel_loft, LoftError, Rail};
+use varde_kernel_compat::patch::Conic3;
+use varde_kernel_compat::{Budget, Solid, Tolerance};
 
 use super::{Failed, Run, SketchOutput};
 use crate::cache::{Cache, Key, Keyer};

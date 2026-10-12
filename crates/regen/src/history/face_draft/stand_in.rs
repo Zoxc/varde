@@ -15,11 +15,11 @@ use crate::history::in_place;
 /// theirs, every face keeping its name. Sides drafted until they meet
 /// the one opposite at the box's top or bottom are
 /// [`DraftError::PastNeighbour`], a box past
-/// [`MAX_COORD`](varde_kernel::MAX_COORD) [`DraftError::OutOfRange`];
+/// [`MAX_COORD`](varde_kernel_compat::MAX_COORD) [`DraftError::OutOfRange`];
 /// anything else is [`KernelError::TooComplex`]. The result passes the
 /// kernel's check as every solid does.
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn by_boxes(
     solid: &Solid,
@@ -33,8 +33,8 @@ pub(crate) fn by_boxes(
     tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, DraftError> {
-    use varde_kernel::KernelError;
-    use varde_kernel::mesh::{Edge, Form, Mesh, Surface};
+    use varde_kernel_compat::KernelError;
+    use varde_kernel_compat::mesh::{Edge, Form, Mesh, Surface};
     let too_complex = || DraftError::Failed(KernelError::TooComplex.into());
     let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
     let mesh = solid.mesh();
@@ -43,7 +43,7 @@ pub(crate) fn by_boxes(
         return Err(too_complex());
     }
     let sign = pull[up].signum();
-    let (sin, cos) = varde_kernel::trig::sin_cos(angle);
+    let (sin, cos) = varde_kernel_compat::trig::sin_cos(angle);
     let tan = sin / cos;
     // Each axis's low and high side: the region drafted there, if any.
     let mut drafted = [[None; 2]; 3];
@@ -88,7 +88,7 @@ pub(crate) fn by_boxes(
             moved
         })
         .collect();
-    let reach = f64::from(varde_kernel::MAX_COORD);
+    let reach = f64::from(varde_kernel_compat::MAX_COORD);
     if verts.iter().any(|v| v.abs().max_element() > reach) {
         return Err(DraftError::OutOfRange);
     }

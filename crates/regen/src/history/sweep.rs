@@ -1,5 +1,5 @@
 //! Evaluating a sweep's tool: its regions, as an extrude's, moved along
-//! its path by the kernel's [`varde_kernel::sweep::sweep`]. What's done
+//! its path by the kernel's [`varde_kernel_compat::sweep::sweep`]. What's done
 //! with the tool (a new body, or touches and booleans) is an extrude's
 //! (`Run::evaluate`).
 //!
@@ -59,9 +59,9 @@
 //! complex to work out", and the rest of the history goes on.
 //!
 //! [`profile::path_chain`]: crate::profile::path_chain
-//! [`Topology::tangent_chains`]: varde_kernel::Topology::tangent_chains
-//! [`edge_shape`]: varde_kernel::measure::edge_shape
-//! [`JOINT_SINE`]: varde_kernel::sweep::JOINT_SINE
+//! [`Topology::tangent_chains`]: varde_kernel_compat::Topology::tangent_chains
+//! [`edge_shape`]: varde_kernel_compat::measure::edge_shape
+//! [`JOINT_SINE`]: varde_kernel_compat::sweep::JOINT_SINE
 
 use std::sync::Arc;
 
@@ -69,10 +69,10 @@ use glam::DVec3;
 use varde_document::{
     CurveChain, EdgeRef, Helix, MAX_COORD, Orientation, PathPart, PathRef, Placement, Sweep,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::patch::Conic3;
-use varde_kernel::sweep::{self as path_sweep, Path, Piece, SweepError};
-use varde_kernel::{Budget, Evidence, Frame, Profile, Solid, Tolerance, Topology};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::patch::Conic3;
+use varde_kernel_compat::sweep::{self as path_sweep, Path, Piece, SweepError};
+use varde_kernel_compat::{Budget, Evidence, Frame, Profile, Solid, Tolerance, Topology};
 use varde_sketch::Curve;
 
 use super::{Evaluation, Failed, Run, motion};
@@ -243,7 +243,7 @@ impl Run<'_> {
             ChainError::Profile(error) => message::path_curves(error),
         })?;
         let world = |p| placement.to_world(p);
-        let conic = |segment: &varde_kernel::Segment| Conic3 {
+        let conic = |segment: &varde_kernel_compat::Segment| Conic3 {
             p0: world(segment.conic.p0),
             c: world(segment.conic.c),
             w: segment.conic.w,

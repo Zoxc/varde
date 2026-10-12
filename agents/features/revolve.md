@@ -153,7 +153,7 @@ into a kernel profile in the sketch's coordinates, then:
   2.8 × `MAX_COORD` from an axis at the far side of the sketch), else
   "its regions are too far from the axis to revolve", before the
   kernel is asked. Angles are the document's, checked by `Turn::ask`.
-- **The tool** is `varde_kernel::revolve(profile, frame, sweep, feature
+- **The tool** is `varde_kernel_compat::revolve(profile, frame, sweep, feature
   id, tolerance, Budget::DEFAULT)`, its faces named by the feature id as
   an extrude's. Kernel errors are worded as an extrude's with
   "revolve"/"revolved" for "extrude"/"extruded" (`message::tool`,

@@ -11,7 +11,7 @@ use super::*;
 /// taper), `h` its height above the plane: a frustum of a pyramid, each
 /// wall still flat and keeping its name. One closing within the
 /// resolution before the span's far end is [`TaperError::Closes`], one
-/// past [`MAX_COORD`](varde_kernel::MAX_COORD)
+/// past [`MAX_COORD`](varde_kernel_compat::MAX_COORD)
 /// [`TaperError::OutOfRange`]; a zero taper is the extrude; anything
 /// else (a span across the plane, whose walls the kernel splits there,
 /// another profile) is [`KernelError::TooComplex`]. The result passes
@@ -28,9 +28,9 @@ pub(crate) fn by_frustum(
     budget: &Budget,
 ) -> Result<Solid, TaperError> {
     use glam::{DVec2, DVec3};
-    use varde_kernel::mesh::{Edge, Form, Mesh, Surface};
+    use varde_kernel_compat::mesh::{Edge, Form, Mesh, Surface};
     let too_complex = || TaperError::Failed(KernelError::TooComplex.into());
-    let solid = varde_kernel::extrude(profile, frame, from, to, feature, tol, budget)?;
+    let solid = varde_kernel_compat::extrude(profile, frame, from, to, feature, tol, budget)?;
     if taper == 0.0 {
         return Ok(solid);
     }
@@ -60,7 +60,7 @@ pub(crate) fn by_frustum(
         let (p, _) = local(v);
         (lo, hi) = (lo.min(p), hi.max(p));
     }
-    let (sin, cos) = varde_kernel::trig::sin_cos(taper);
+    let (sin, cos) = varde_kernel_compat::trig::sin_cos(taper);
     let tan = sin / cos;
     // The width left at the far end, the farthest from the plane.
     let far = from.abs().max(to.abs());
@@ -77,7 +77,7 @@ pub(crate) fn by_frustum(
             frame.origin + frame.x * q.x + frame.y * q.y + normal * h
         })
         .collect();
-    let reach = f64::from(varde_kernel::MAX_COORD);
+    let reach = f64::from(varde_kernel_compat::MAX_COORD);
     if verts
         .iter()
         .any(|v| !v.is_finite() || v.abs().max_element() > reach)

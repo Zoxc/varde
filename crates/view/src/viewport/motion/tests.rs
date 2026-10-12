@@ -468,7 +468,7 @@ fn angle_steps_are_round_degrees_a_few_pixels_apart() {
 /// world axis, either way.
 #[test]
 fn a_ring_turns_on_about_the_centre() {
-    use varde_kernel::Motion;
+    use varde_kernel_compat::Motion;
     let (offset, centre) = (DVec3::new(1.0, 2.0, 3.0), DVec3::new(5.0, -4.0, 7.0));
     let p = DVec3::new(-2.0, 6.0, 1.5);
     for axis in Axis3::ALL {

@@ -74,7 +74,7 @@ fn state<'a>(
         edge_ends: None,
         edge_body: None,
         index: crate::pick::empty_index(),
-        resolution: varde_kernel::Tolerance::DEFAULT.resolution(),
+        resolution: varde_kernel_compat::Tolerance::DEFAULT.resolution(),
         picking,
         extent: TurnKind::Full,
         fields: [field; 2],
@@ -498,8 +498,10 @@ fn the_model_shown_directs_edges_as_regenerating_does() {
 fn a_model_edge_is_in_the_plane_within_the_resolution() {
     use crate::revolve::{EDGE_OFF_PLANE, axis_edge};
     let index = block();
-    let fine = varde_kernel::Tolerance::DEFAULT.resolution();
-    let coarse = varde_kernel::Tolerance::new(0.1).unwrap().resolution();
+    let fine = varde_kernel_compat::Tolerance::DEFAULT.resolution();
+    let coarse = varde_kernel_compat::Tolerance::new(0.1)
+        .unwrap()
+        .resolution();
     let top: Vec<u32> = (0..index.mesh().edge_count() as u32)
         .filter(|&edge| axis_edge(&index, edge, &OriginPlane::XY.placement(), fine).is_ok())
         .collect();

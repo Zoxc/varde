@@ -7,7 +7,7 @@ use std::ops::RangeInclusive;
 
 use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
-use varde_kernel::mesh::FaceKey;
+use varde_kernel_compat::mesh::FaceKey;
 
 use crate::{BodyId, FeatureId, MAX_COORD};
 
@@ -53,7 +53,7 @@ impl Plane {
 /// A face of a body, as picked: the body, the face's key (the kernel's
 /// name for it, from the feature that made it) and the picked point,
 /// which chooses among several faces with the key (see
-/// `varde_kernel::topology::Topology::face`). The body may since have been
+/// `varde_kernel_compat::topology::Topology::face`). The body may since have been
 /// removed, or the face renamed or gone: the reference then doesn't
 /// resolve, which regenerating reports, as a region it can't find.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

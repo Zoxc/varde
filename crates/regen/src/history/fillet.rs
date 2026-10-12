@@ -1,6 +1,6 @@
 //! Evaluating a fillet: the body's solid, as the features before it
 //! leave it, with the fillet's edges rounded off by the kernel's
-//! [`varde_kernel::fillet()`].
+//! [`varde_kernel_compat::fillet()`].
 //!
 //! The edges are found, grown along tangent chains and named as a
 //! chamfer's are (`super::blend`; a fillet, of one radius, has no use
@@ -17,7 +17,7 @@
 //! and the rest of the history goes on.
 
 use varde_document::{Document, FeatureId, Fillet};
-use varde_kernel::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
+use varde_kernel_compat::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
 use super::blend::{find_edges, find_faces, plan, refused};
 use super::in_place::InPlace;
@@ -42,7 +42,7 @@ pub(crate) type Filleter = fn(
 
 kernel_op! {
     /// The fillet to run: the kernel's, or the one a test set.
-    fn filleter() -> Filleter = varde_kernel::fillet, fillet;
+    fn filleter() -> Filleter = varde_kernel_compat::fillet, fillet;
 }
 
 /// Changes the body of `evaluation` as the fillet `fillet`, the feature

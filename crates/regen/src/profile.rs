@@ -24,8 +24,8 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use std::fmt;
 
 use glam::DVec2;
-use varde_kernel::patch::{Conic2, PatchError};
-use varde_kernel::{Loop, MAX_PROFILE_SEGMENTS, Profile, Segment};
+use varde_kernel_compat::patch::{Conic2, PatchError};
+use varde_kernel_compat::{Loop, MAX_PROFILE_SEGMENTS, Profile, Segment};
 use varde_sketch::{Curve, Id, Piece, Profiles, Sketch};
 
 mod fit;
@@ -441,7 +441,7 @@ fn walk_chain(
                 let center = at(center).ok_or(ChainError::Missing)?;
                 // Counter-clockwise from its start to its end.
                 let radius = first.1.distance(center);
-                let turn = |p: DVec2| varde_kernel::trig::angle(p - center);
+                let turn = |p: DVec2| varde_kernel_compat::trig::angle(p - center);
                 let mut sweep = turn(last.1) - turn(first.1);
                 if sweep <= 0.0 {
                     sweep += 2.0 * PI;

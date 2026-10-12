@@ -6,8 +6,8 @@ use varde_sketch::Selectable;
 
 use glam::{DVec2, DVec3};
 use varde_document::{Command, FaceRef, FeatureKind, OriginPlane, OutsideRef, Plane, Sketch};
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::Form;
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::Form;
 use varde_regen::Request;
 use varde_sketch::LinkKind;
 use varde_view::{Edit, Look, RowMenu};

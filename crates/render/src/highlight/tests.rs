@@ -1,5 +1,5 @@
 use glam::Vec3;
-use varde_kernel::MeshParts;
+use varde_kernel_compat::MeshParts;
 
 use super::*;
 

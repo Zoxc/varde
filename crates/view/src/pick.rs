@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
 use varde_document::{BodyId, EdgeRef, FaceRef, Placement};
-use varde_kernel::RenderMesh;
-use varde_kernel::mesh::FaceKey;
+use varde_kernel_compat::RenderMesh;
+use varde_kernel_compat::mesh::FaceKey;
 use varde_regen::{Bvh, BvhNode, PickTables, Picking, Summary, vertex_runs};
 use varde_render::{Camera, Highlights, Vertex};
 
@@ -164,7 +164,7 @@ pub struct PickIndex {
     tables: Arc<PickTables>,
     /// The mesh's bounds, kept: working them out walks every position,
     /// and each point tested for being hidden needs them.
-    bounds: Option<varde_kernel::Aabb>,
+    bounds: Option<varde_kernel_compat::Aabb>,
 }
 
 /// An index of no model, for tests that pick nothing in the model.
@@ -1290,7 +1290,7 @@ pub(crate) fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -
 }
 
 /// The corners of `bounds`, as [`through_box`] takes them.
-pub(crate) fn aabb(bounds: varde_kernel::Aabb) -> [DVec3; 2] {
+pub(crate) fn aabb(bounds: varde_kernel_compat::Aabb) -> [DVec3; 2] {
     [bounds.min.as_dvec3(), bounds.max.as_dvec3()]
 }
 

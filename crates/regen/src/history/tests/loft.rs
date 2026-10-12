@@ -9,16 +9,16 @@
 //! transition piece joined between two bosses, a section's sketch
 //! edited and a section moved with the loft following, sections handed
 //! over in order and placed, twisted starts, the cache. The kernel's
-//! own analytic tests are in `varde_kernel::loft`'s, ignored until it's
+//! own analytic tests are in `varde_kernel_compat::loft`'s, ignored until it's
 //! built.
 
 use std::cell::RefCell;
 
 use glam::DVec3;
 use varde_document::{CurveChain, FaceRef, Loft, LoftMode, Move, Section};
-use varde_kernel::loft::{LoftError, Rail};
-use varde_kernel::mesh::{FaceKey, PartKey};
-use varde_kernel::{Budget, KernelError};
+use varde_kernel_compat::loft::{LoftError, Rail};
+use varde_kernel_compat::mesh::{FaceKey, PartKey};
+use varde_kernel_compat::{Budget, KernelError};
 
 use super::*;
 
@@ -29,7 +29,7 @@ fn with_extrudes() {
 
 /// What [`recording`] was asked once: the sections, whether closed, the
 /// rails.
-type Asked = (Vec<varde_kernel::loft::Section>, bool, Vec<Rail>);
+type Asked = (Vec<varde_kernel_compat::loft::Section>, bool, Vec<Rail>);
 
 thread_local! {
     /// What [`recording`] was asked to loft, on this test's thread.
@@ -42,8 +42,8 @@ thread_local! {
 /// A loft that notes what it was asked and fails with [`ANSWER`] (too
 /// complex unless set).
 fn recording(
-    sections: &[varde_kernel::loft::Section],
-    _mode: varde_kernel::loft::LoftMode,
+    sections: &[varde_kernel_compat::loft::Section],
+    _mode: varde_kernel_compat::loft::LoftMode,
     closed: bool,
     rails: &[Rail],
     _feature: u64,
@@ -474,7 +474,7 @@ fn sections_are_placed_in_order() {
         panic!("asked once: {asked:?}");
     };
     assert!(!closed && rails.is_empty());
-    use varde_kernel::loft::Section as Placed;
+    use varde_kernel_compat::loft::Section as Placed;
     let [
         Placed::Point(point),
         Placed::Loop {
@@ -1020,7 +1020,7 @@ fn starts_are_the_pieces_corners() {
         .iter()
         .zip([DVec2::new(-5.0, 0.0), DVec2::new(5.0, 0.0)])
     {
-        let varde_kernel::loft::Section::Loop { outline, start, .. } = &sections[0] else {
+        let varde_kernel_compat::loft::Section::Loop { outline, start, .. } = &sections[0] else {
             panic!("a loop first");
         };
         assert_eq!(outline.segments.len(), 3, "a line and two quarters");

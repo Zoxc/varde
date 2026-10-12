@@ -394,10 +394,14 @@ fn a_knob_is_grabbed_behind_the_model_but_not_read_only() {
 
     // Inside a box around it, seen from the top: the handle is drawn
     // over the model, so it shows and grabs.
-    let tol = varde_kernel::Tolerance::DEFAULT;
-    let solid =
-        varde_kernel::Solid::cuboid(glam::DVec3::splat(-20.0), glam::DVec3::splat(40.0), 0, &tol);
-    let display = varde_kernel::Display::new(&tol);
+    let tol = varde_kernel_compat::Tolerance::DEFAULT;
+    let solid = varde_kernel_compat::Solid::cuboid(
+        glam::DVec3::splat(-20.0),
+        glam::DVec3::splat(40.0),
+        0,
+        &tol,
+    );
+    let display = varde_kernel_compat::Display::new(&tol);
     let mesh = Arc::new(solid.unwrap().tessellate(&display).unwrap());
     let state = knob_state(&profiles, feature, &picked);
     let viewport = program(

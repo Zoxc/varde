@@ -16,7 +16,7 @@ use varde_document::{
     FeatureKind, Opacity, Placement, Plane, Tint,
 };
 use varde_expr::LengthUnit;
-use varde_kernel::{RenderLines, RenderMesh};
+use varde_kernel_compat::{RenderLines, RenderMesh};
 use varde_render::{BodyTint, Camera};
 use varde_sketch::{
     Analysis, Failure, Id, Kind, LinkKind, Measure, Profiles, Rejected, Selectable, Side, Sketch,

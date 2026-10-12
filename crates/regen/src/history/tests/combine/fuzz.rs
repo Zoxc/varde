@@ -9,7 +9,7 @@
 //! survives its bytes, flipped bits included; and a request with a
 //! combine's draft and its answer cross the wire as they went.
 
-use varde_kernel::{Budget, Op};
+use varde_kernel_compat::{Budget, Op};
 
 use super::*;
 use crate::wire::{decode_reply, decode_request, encode_reply, encode_request};
@@ -149,14 +149,15 @@ fn check_combines(document: &Document, evaluation: &Evaluation, cache: &mut Cach
             let Some(solid) = running.take() else {
                 break;
             };
-            let Ok(next) = varde_kernel::boolean(&solid, tool, op, &tolerance, &Budget::DEFAULT)
+            let Ok(next) =
+                varde_kernel_compat::boolean(&solid, tool, op, &tolerance, &Budget::DEFAULT)
             else {
                 assert_eq!(op, Op::Union, "{what}: a step failed that regen took");
                 break;
             };
             let common = Op::Intersection;
             if let Ok(common) =
-                varde_kernel::boolean(&solid, tool, common, &tolerance, &Budget::DEFAULT)
+                varde_kernel_compat::boolean(&solid, tool, common, &tolerance, &Budget::DEFAULT)
             {
                 let (a, b, c, n) = (
                     solid.volume(),

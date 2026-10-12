@@ -41,7 +41,7 @@ pub struct Fillet {
   each chain's `FacePart::Blend` name: all as a chamfer's
   (`history/blend.rs`; a fillet has no use for the first faces, so
   they're worked out unflipped and left).
-- **The fillet**: `varde_kernel::fillet(solid, topology, chains,
+- **The fillet**: `varde_kernel_compat::fillet(solid, topology, chains,
   radius, feature, tol, budget)`, each chain a `FilletChain { chain,
   name }`, cached as an `Entry::Solid` by the body's key, the feature,
   the fit tolerance, the radius's bits and each chain's index and name;
@@ -57,7 +57,7 @@ pub struct Fillet {
   its failures as a boolean's ("filleting Body 1 is too complex to work
   out" for `TooComplex`, "filleting Body 1 isn't supported yet" for
   `NotImplemented`, `message::blending`).
-- **Kernel stand-in**: `varde_kernel::fillet` (`kernel/src/blend.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::fillet` (`kernel/src/blend.rs`,
   with `FilletChain`) isn't built yet: it has its planned signature and
   fails with `NotImplemented`. So every fillet that finds its edges
   fails today with "filleting Body 1 isn't supported yet", its body

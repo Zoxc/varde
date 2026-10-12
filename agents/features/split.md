@@ -83,22 +83,22 @@ pub enum SplitTool {
   (`own_solids`, as a combine's: consumed or failed fails the split).
 - **The tool**, from the body's box (`Solid::bounds3`), cached as an
   `Entry::Solid` by the feature, the box's bits and the fit tolerance
-  and, by kind: an origin plane, `varde_kernel::half_space(normal, 0)`;
+  and, by kind: an origin plane, `varde_kernel_compat::half_space(normal, 0)`;
   a flat face (found on its body's holder by key and point, as a
   mirror's plane: "its plane face's body is gone", "... wasn't found",
   "... isn't flat" with the face drawn), `half_space(n, d)` of its form,
   keyed by the holder's key and the reference; a face,
-  `varde_kernel::surface_tool(form, on, bounds, ..)` with its region's
+  `varde_kernel_compat::surface_tool(form, on, bounds, ..)` with its region's
   form and a point inside it (the middle of its first patch, picking a
   cone's nappe; "its face's body is gone", "its face wasn't found";
   `ToolError::CantExtend` is "its face can't be extended to split with",
   the face drawn); a tool body, its solid and key as they are; a
   sketch's regions, found and merged as an extrude's and extruded by
-  `varde_kernel::extrude` over the body's span along the sketch's
+  `varde_kernel_compat::extrude` over the body's span along the sketch's
   normal with through all's margin (`through_all` of the body alone),
   its walls `Side { curve, .. }` of the split, keyed by the regions, the
   span's bits, the sketch's key and placement; a chain, ordered by
-  `profile::chain` then `varde_kernel::chain_tool(segments, frame,
+  `profile::chain` then `varde_kernel_compat::chain_tool(segments, frame,
   bounds, RIM, ..)` (the rectangle round the shadow named as profile
   curve `RIM = 1 << 32`, past every sketch curve id), keyed by the
   curves, the sketch's key and placement. A sketch not placed is "its
@@ -120,7 +120,7 @@ pub enum SplitTool {
   curves weren't found", "its line is closed: split with the region it
   encloses instead", "its line's curves don't join end to end into one
   line".
-- **The split**: `varde_kernel::split(body, tool, tol, budget)` →
+- **The split**: `varde_kernel_compat::split(body, tool, tol, budget)` →
   `(front, back)`, cached as `Entry::Split` (both pieces, or the
   `KernelFailure`) by the body's key and the tool's; its failure is
   worded as a boolean's, "splitting Body 1 ...", the evidence's faces on

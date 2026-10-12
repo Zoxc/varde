@@ -18,9 +18,9 @@ use std::cell::RefCell;
 
 use glam::DVec3;
 use varde_document::{EdgeRef, Fillet};
-use varde_kernel::mesh::{FaceKey, Form};
-use varde_kernel::topology::blend_edge;
-use varde_kernel::{BlendError, FilletChain, Topology};
+use varde_kernel_compat::mesh::{FaceKey, Form};
+use varde_kernel_compat::topology::blend_edge;
+use varde_kernel_compat::{BlendError, FilletChain, Topology};
 
 use crate::picking::region_form;
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{LengthUnit, exact};
-use varde_kernel::Tolerance;
+use varde_kernel_compat::Tolerance;
 use varde_sketch::{Budget, LinkKind, Sketch, Unrevalued};
 
 use crate::{

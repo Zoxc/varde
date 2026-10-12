@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use varde_kernel::{Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines, RenderMesh};
+use varde_kernel_compat::{
+    Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines, RenderMesh,
+};
 use wgpu::util::DeviceExt;
 
 use crate::Camera;

@@ -85,7 +85,7 @@ use varde_document::{
     BodyId, Command, Document, Editor, FeatureId, FeatureKind, Generation, Placement, Plane,
     Sketch, Snapshot,
 };
-use varde_kernel::{
+use varde_kernel_compat::{
     Aabb, Display, LinesError, ManifoldError, ManifoldMesh, MeshError, RenderLines, RenderMesh,
 };
 use varde_sketch::{Budget, Goal, Id};
@@ -1244,7 +1244,7 @@ impl std::error::Error for ExportError {}
 /// The solids of the visible bodies of `document` in `evaluation`, in the
 /// order the history made them, each welded into a closed, oriented
 /// [`ManifoldMesh`] at the [`Display`] of the document's tolerance (the
-/// samples it is drawn with, see [`varde_kernel::Solid::manifold_mesh`]),
+/// samples it is drawn with, see [`varde_kernel_compat::Solid::manifold_mesh`]),
 /// for a file such as 3MF. None visible gives none. Fails with the first
 /// body whose mesh fails its check or is too large: a body is never
 /// written as something that isn't a manifold.

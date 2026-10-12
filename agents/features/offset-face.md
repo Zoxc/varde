@@ -44,7 +44,7 @@ pub struct OffsetFace {
   near)`); one not found fails the offset before the kernel: "its face
   wasn't found", or with several "its face 2 of 3 wasn't found". The
   regions go to the kernel sorted, each once.
-- **The offset**: `varde_kernel::offset_faces(solid, topology, faces,
+- **The offset**: `varde_kernel_compat::offset_faces(solid, topology, faces,
   signed distance, tangent, feature, tol, budget)`, cached as an
   `Entry::Solid` by the body's key, the feature, the fit tolerance, the
   signed distance's bits, the tangent flag and the regions; the result
@@ -52,7 +52,7 @@ pub struct OffsetFace {
   names, a sketch on a moved face after the offset is placed on it
   where it went (`Evaluation::placements`), and follows a change of the
   distance or of a dimension upstream. Its refusals
-  (`varde_kernel::OffsetError`) are worded by `message::offset_refused`:
+  (`varde_kernel_compat::OffsetError`) are worded by `message::offset_refused`:
   past a neighbour "the face moves past a neighbouring face of Body 1:
   try a smaller distance", into the body "the face runs into another
   part of Body 1: try a smaller distance", a round to nothing "a round
@@ -67,7 +67,7 @@ pub struct OffsetFace {
   Body 1 isn't supported yet" for `NotImplemented`,
   `message::offsetting`); an empty
   result "offsetting faces of Body 1 leaves nothing of it".
-- **Kernel stand-in**: `varde_kernel::offset_faces` (`kernel/src/shell.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::offset_faces` (`kernel/src/shell.rs`,
   beside `shell`, with `OffsetError`) isn't built: it fails with
   `NotImplemented`, so every offset that finds its faces fails today
   with "offsetting faces of Body 1 isn't supported yet", the body left

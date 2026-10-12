@@ -7,8 +7,8 @@ use varde_document::{
     OriginPlane, Plane, Targets,
 };
 use varde_expr::Value;
-use varde_kernel::mesh::FaceKey;
-use varde_kernel::{Frame, Solid, Tolerance};
+use varde_kernel_compat::mesh::FaceKey;
+use varde_kernel_compat::{Frame, Solid, Tolerance};
 use varde_sketch::{Curve, Sketch};
 
 use super::*;
@@ -562,7 +562,9 @@ fn a_join_touching_two_bodies_merges_them() {
     assert_eq!(evaluation.holder(top), Some(top));
     // The plates' sides and holes are one face each where they meet
     // flush at z = 0: no line is drawn there.
-    let render = solid.tessellate(&varde_kernel::Display::default()).unwrap();
+    let render = solid
+        .tessellate(&varde_kernel_compat::Display::default())
+        .unwrap();
     let z = |i: u32| render.positions()[i as usize][2];
     for [a, b] in render.edge_segments() {
         assert!(z(a).abs() > 1e-4 || z(b).abs() > 1e-4, "a line at the seam");
@@ -593,12 +595,12 @@ fn a_join_bridging_bodies_meeting_along_an_edge_merges_them() {
     let b = add_body(&mut editor, rectangle((10.0, 10.0), (20.0, 20.0)), "10");
     let before = evaluated(editor.document());
     let tolerance = editor.document().tolerance();
-    let alone = varde_kernel::boolean(
+    let alone = varde_kernel_compat::boolean(
         solid_of(&before, a),
         solid_of(&before, b),
-        varde_kernel::Op::Union,
+        varde_kernel_compat::Op::Union,
         &tolerance,
-        &varde_kernel::Budget::DEFAULT,
+        &varde_kernel_compat::Budget::DEFAULT,
     );
     assert!(alone.is_err(), "the blocks alone make a solid");
     let extent = Extent::OneSide(length(editor.document(), "15"));
@@ -1051,7 +1053,7 @@ fn faces_are_named_by_the_extrude_and_its_curves() {
         .collect();
     for face in evaluation.bodies[0].solid.mesh().faces() {
         assert_eq!(face.name.feature, feature);
-        if let varde_kernel::mesh::FacePart::Side { curve, .. } = face.name.part {
+        if let varde_kernel_compat::mesh::FacePart::Side { curve, .. } = face.name.part {
             assert!(curves.contains(&curve), "{curve}");
         }
     }

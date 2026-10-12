@@ -17,7 +17,7 @@
 //! says where each pick is in its own picking tables ([`At`]), for the
 //! viewport to highlight, or why it wasn't found.
 //!
-//! The measures are the kernel's ([`varde_kernel::measure`]), each within
+//! The measures are the kernel's ([`varde_kernel_compat::measure`]), each within
 //! [`Budget::DEFAULT`], the most an operation may do: coaxial curved faces
 //! can take millions of units for a distance, and past the budget the
 //! answer is "too complex to measure", never a hang. Each pick's measure
@@ -40,9 +40,11 @@ use std::sync::Arc;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, Document};
-use varde_kernel::measure::{self, Direction, EdgeShape, MeasureError, Measured, Pick, Target};
-use varde_kernel::mesh::FaceKey;
-use varde_kernel::{Budget, RenderMesh, Solid, Topology};
+use varde_kernel_compat::measure::{
+    self, Direction, EdgeShape, MeasureError, Measured, Pick, Target,
+};
+use varde_kernel_compat::mesh::FaceKey;
+use varde_kernel_compat::{Budget, RenderMesh, Solid, Topology};
 
 use crate::bounds::{non_negative, point, positive, unit};
 use crate::cache::{Cache, Keyer};
@@ -125,7 +127,7 @@ pub enum At {
     Corner(u32),
 }
 
-/// What a pick measures (see [`varde_kernel::measure`]), in model units
+/// What a pick measures (see [`varde_kernel_compat::measure`]), in model units
 /// (millimetres) and radians.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Measure {
@@ -547,7 +549,7 @@ fn resolve<'a>(
     if pick.entity != Entity::Body && !near.is_finite() {
         return Err("the pick has no point".to_owned());
     }
-    let found = |e: varde_kernel::topology::NotFound| e.to_string();
+    let found = |e: varde_kernel_compat::topology::NotFound| e.to_string();
     let places = scene.map(|(mesh, picking)| Places::of(mesh, picking, holder, &topology, solid));
     let places = places.as_ref();
     let (pick, at) = match pick.entity {

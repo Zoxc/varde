@@ -1,5 +1,5 @@
 use glam::DVec3;
-use varde_kernel::{Display, Solid, Tolerance};
+use varde_kernel_compat::{Display, Solid, Tolerance};
 use varde_lane::thread::testing::next;
 
 use super::*;

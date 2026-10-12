@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-varde-kernel.workspace = true
+varde-kernel-compat.workspace = true
 varde-sketch.workspace = true
 varde-expr = { workspace = true, features = ["serde"] }
 glam.workspace = true

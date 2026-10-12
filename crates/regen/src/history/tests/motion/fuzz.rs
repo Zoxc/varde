@@ -39,9 +39,9 @@ use std::collections::BTreeMap;
 use glam::{DMat3, DQuat};
 use varde_document::{Align, AlignRefs, DirRef, PointRef, Scale, ScaleFactor};
 use varde_document::{Copies, Pattern, PatternKind};
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::topology::Topology;
-use varde_kernel::{Budget, Instance, Motion, Op};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::topology::Topology;
+use varde_kernel_compat::{Budget, Instance, Motion, Op};
 
 use super::super::combine::fuzz::{
     Rng, bytes, not_stuck, random_combine, random_shape, same_bodies, solid, truncated, wire,
@@ -70,7 +70,7 @@ fn movable(document: &Document, evaluation: &Evaluation, before: Option<usize>) 
 }
 
 /// A point on the face `region` of `solid`: its first triangle's middle.
-fn on_face(solid: &Solid, region: &varde_kernel::topology::Region) -> DVec3 {
+fn on_face(solid: &Solid, region: &varde_kernel_compat::topology::Region) -> DVec3 {
     let patch = solid.mesh().patch(region.tris[0] as usize);
     patch.eval(DVec3::splat(1.0 / 3.0))
 }
@@ -587,14 +587,14 @@ fn edge_length(evaluation: &Evaluation, edge: &EdgeRef) -> Option<(f64, Option<[
         return None;
     }
     let chain = topology.edge(&made.solid, edge.faces, edge.near).ok()?;
-    let target = varde_kernel::measure::Target {
+    let target = varde_kernel_compat::measure::Target {
         solid: &made.solid,
         topology: &topology,
-        pick: varde_kernel::measure::Pick::Edge(chain),
+        pick: varde_kernel_compat::measure::Pick::Edge(chain),
     };
     let tolerance = Tolerance::default();
-    match varde_kernel::measure::measure(&target, &tolerance, &Budget::DEFAULT).ok()? {
-        varde_kernel::measure::Measured::Edge(measured) => Some((
+    match varde_kernel_compat::measure::measure(&target, &tolerance, &Budget::DEFAULT).ok()? {
+        varde_kernel_compat::measure::Measured::Edge(measured) => Some((
             measured.length,
             match measured.shape {
                 EdgeShape::Line { from, to } => Some([from, to]),
@@ -1328,7 +1328,7 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
             let (image_volume, image_centre) = mass(&image);
             assert!(close(image_volume, volume, volume), "{what}");
             assert!(close_at(image_centre, map(centre), scale), "{what}");
-            let common = varde_kernel::boolean(
+            let common = varde_kernel_compat::boolean(
                 &made.solid,
                 &image,
                 Op::Intersection,
@@ -1485,7 +1485,7 @@ fn check_pattern(
         }
         let scale = size(&made.solid).max(size(now));
         let united = (copies[1..].iter()).try_fold(copies[0].clone(), |all, copy| {
-            varde_kernel::boolean(&all, copy, Op::Union, &tolerance, &Budget::DEFAULT)
+            varde_kernel_compat::boolean(&all, copy, Op::Union, &tolerance, &Budget::DEFAULT)
         });
         match united {
             Ok(united) => {

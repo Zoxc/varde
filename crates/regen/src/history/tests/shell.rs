@@ -16,8 +16,8 @@ use std::cell::RefCell;
 
 use glam::DVec3;
 use varde_document::{FaceRef, Shell};
-use varde_kernel::mesh::{FaceKey, Form};
-use varde_kernel::{ShellError, Topology};
+use varde_kernel_compat::mesh::{FaceKey, Form};
+use varde_kernel_compat::{ShellError, Topology};
 
 use super::motion::{add, block, failure, key_on, key_where, set};
 use super::*;

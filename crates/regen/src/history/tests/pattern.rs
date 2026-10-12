@@ -12,8 +12,8 @@ use glam::DVec3;
 use varde_document::{
     Axis3, AxisRef, BodyOp, Combine, EdgeRef, FaceRef, MAX_PATTERN_COUNT, Pattern, PatternKind,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::{FaceKey, Form};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::{FaceKey, Form};
 
 use super::combine::fuzz::truncated;
 use super::*;
@@ -90,7 +90,9 @@ fn near(a: f64, b: f64, relative: f64) -> bool {
 
 /// The volume and centre of mass of `solid`.
 fn mass(solid: &Solid) -> (f64, DVec3) {
-    let moments = solid.moments(&varde_kernel::Budget::DEFAULT).unwrap();
+    let moments = solid
+        .moments(&varde_kernel_compat::Budget::DEFAULT)
+        .unwrap();
     (moments.volume, moments.centre.unwrap())
 }
 
@@ -470,7 +472,7 @@ fn copies_out_of_range_are_refused_before_copying() {
 /// copied.
 #[test]
 fn copies_are_bounded_by_the_patches_they_make() {
-    let max = varde_kernel::MAX_PATCHES;
+    let max = varde_kernel_compat::MAX_PATCHES;
     assert!(copies_fit(MAX_PATTERN_COUNT, max / 1024));
     assert!(!copies_fit(MAX_PATTERN_COUNT, max / 1024 + 1));
     assert!(copies_fit(2, max / 2));

@@ -5,7 +5,7 @@
 use std::any::Any;
 use std::sync::{Arc, LazyLock, Weak};
 
-use varde_kernel::RenderLines;
+use varde_kernel_compat::RenderLines;
 use varde_regen::ErrorGeometry;
 use varde_render::ErrorParts;
 

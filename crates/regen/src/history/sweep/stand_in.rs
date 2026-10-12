@@ -8,7 +8,7 @@ use super::*;
 /// square to it, untwisted, is the profile extruded along it, as far as
 /// the pieces reach. Anything else is [`KernelError::TooComplex`].
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn by_extrude(
     profile: &Profile,
@@ -20,7 +20,7 @@ pub(crate) fn by_extrude(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, SweepError> {
-    use varde_kernel::KernelError;
+    use varde_kernel_compat::KernelError;
     let too_complex = || SweepError::Failed(KernelError::TooComplex.into());
     let Path::Chain {
         pieces,
@@ -66,7 +66,7 @@ pub(crate) fn by_extrude(
     } else {
         (length, 0.0)
     };
-    Ok(varde_kernel::extrude(
+    Ok(varde_kernel_compat::extrude(
         profile, frame, from, to, feature, tol, budget,
     )?)
 }

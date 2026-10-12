@@ -639,7 +639,7 @@ fn plane_forms_facing_in_are_caught() {
 fn solids_with_wrong_face_tags_are_refused() {
     // `check` tests face tags in every build, so `Solid::new` refuses a
     // mesh whose only fault is a wrong tag. Debug builds always did; this
-    // failed only under `cargo test -p varde-kernel --release`.
+    // failed only under `cargo test -p varde-kernel-compat --release`.
     // Face 3 of the box is the side on x = 1, triangles 6 and 7.
     let mut mesh = Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
     assert_eq!(mesh.check_embedding(&TOL).err(), None);

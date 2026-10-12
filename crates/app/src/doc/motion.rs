@@ -48,7 +48,7 @@ use varde_document::{
     PlaneRef, Scale,
 };
 use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
-use varde_kernel::Motion;
+use varde_kernel_compat::Motion;
 use varde_regen::Summary;
 use varde_render::Camera;
 use varde_view::{
@@ -895,7 +895,7 @@ impl MotionSession {
                 let Some(spread) = spread else {
                     return Ok(None);
                 };
-                let limit = f64::from(varde_kernel::MAX_COORD);
+                let limit = f64::from(varde_kernel_compat::MAX_COORD);
                 if self.mode != PatternMode::Total && spread.value * f64::from(steps) > limit {
                     let limit = varde_expr::Shown::current()
                         .format(limit, Some(Unit::Length(design.units)));

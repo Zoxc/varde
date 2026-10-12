@@ -6,7 +6,7 @@ use std::fmt;
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use varde_kernel::mesh::FaceKey;
+use varde_kernel_compat::mesh::FaceKey;
 
 use crate::{BodyId, FeatureId};
 
@@ -14,7 +14,7 @@ use crate::{BodyId, FeatureId};
 /// side of it (the kernel's names for them, from the features that made
 /// them), the lower first, and the picked point, which chooses among
 /// several edges between faces of those keys (see
-/// `varde_kernel::topology::Topology::edge`). The body may since have
+/// `varde_kernel_compat::topology::Topology::edge`). The body may since have
 /// been removed, or the faces renamed, gone or no longer meeting: the
 /// reference then doesn't resolve, which regenerating reports.
 ///
@@ -57,7 +57,7 @@ impl EdgeRef {
         left: (&FaceKey, &[FaceKey]),
         right: (&FaceKey, &[FaceKey]),
     ) -> Option<bool> {
-        varde_kernel::topology::runs_with(faces, left, right)
+        varde_kernel_compat::topology::runs_with(faces, left, right)
     }
 
     /// The order lists of references are kept in (a chamfer's edges): by

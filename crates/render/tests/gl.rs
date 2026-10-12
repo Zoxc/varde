@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel_compat::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, Projection, Renderer,
@@ -107,7 +107,7 @@ fn cube_from_top() -> (Camera, Arc<RenderMesh>) {
         &Tolerance::DEFAULT,
     )
     .unwrap()
-    .tessellate(&varde_kernel::Display::default())
+    .tessellate(&varde_kernel_compat::Display::default())
     .unwrap();
     let mut camera = Camera::default();
     camera.look_from(View::Top);
@@ -272,7 +272,7 @@ fn a_closed_edge_is_joined_where_it_closes_on_gl() {
     };
     let mesh = Solid::cylinder(DVec3::ZERO, 3.0, 2.0, 0, &Tolerance::DEFAULT)
         .unwrap()
-        .tessellate(&varde_kernel::Display::default())
+        .tessellate(&varde_kernel_compat::Display::default())
         .unwrap();
     let mesh = Arc::new(mesh);
     let mut camera = Camera::default();

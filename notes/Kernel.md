@@ -1,6 +1,6 @@
 # Kernel
 
-`varde-kernel` (`crates/kernel`) is Varde's geometry kernel. Its solids are
+`varde-kernel-compat` (`crates/kernel-compat`) is Varde's geometry kernel. Its solids are
 closed, oriented 2-manifolds of **rational quadratic triangle patches**. It
 extrudes sketch profiles exactly, and it unites, subtracts and intersects
 solids the way [Manifold](https://github.com/elalish/manifold) does for flat

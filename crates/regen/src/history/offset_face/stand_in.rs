@@ -11,10 +11,10 @@ use crate::history::in_place;
 /// face keeps its name (as the kernel's keeps them). A face moved onto
 /// or past the face opposite it (the walls between shrinking to
 /// nothing) is [`OffsetError::PastNeighbour`], a box past
-/// [`MAX_COORD`](varde_kernel::MAX_COORD) [`OffsetError::OutOfRange`];
+/// [`MAX_COORD`](varde_kernel_compat::MAX_COORD) [`OffsetError::OutOfRange`];
 /// anything else is [`KernelError::TooComplex`].
 ///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
+/// [`KernelError::TooComplex`]: varde_kernel_compat::KernelError::TooComplex
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn by_boxes(
     solid: &Solid,
@@ -26,8 +26,8 @@ pub(crate) fn by_boxes(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, OffsetError> {
-    use varde_kernel::KernelError;
-    use varde_kernel::Motion;
+    use varde_kernel_compat::KernelError;
+    use varde_kernel_compat::Motion;
     let too_complex = || OffsetError::Failed(KernelError::TooComplex.into());
     let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
     let size = max - min;
@@ -52,7 +52,7 @@ pub(crate) fn by_boxes(
             return Err(OffsetError::PastNeighbour { region: moved });
         }
     }
-    let reach = f64::from(varde_kernel::MAX_COORD);
+    let reach = f64::from(varde_kernel_compat::MAX_COORD);
     if lo.abs().max_element() > reach || hi.abs().max_element() > reach {
         return Err(OffsetError::OutOfRange);
     }

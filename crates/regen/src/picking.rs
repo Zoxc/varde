@@ -3,11 +3,11 @@
 //! face and edge of the mesh.
 //!
 //! The mesh's faces are the kernel's regions
-//! ([`Topology::regions`](varde_kernel::Topology::regions)): connected
+//! ([`Topology::regions`](varde_kernel_compat::Topology::regions)): connected
 //! triangles of one [`FaceKey`], so a circle's quarter walls, or flush
 //! faces merged under one name, are one face, and a face cut in two by a
 //! groove is two of one key. Its first edges in each part are the
-//! chains ([`Topology::chains`](varde_kernel::Topology::chains)): maximal
+//! chains ([`Topology::chains`](varde_kernel_compat::Topology::chains)): maximal
 //! runs of mesh edges between the same two faces; the rest are creases
 //! inside one face (see [`RenderMesh`]). So the tables here are indexed
 //! by the mesh's own face and edge ids, and which face a triangle is on
@@ -26,10 +26,10 @@ use crate::bounds::{point, point_dvec, positive, ratio, unit, value};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::{FaceKey, Form};
-use varde_kernel::topology::Region;
-use varde_kernel::{Display, MeshError, RenderMesh, Solid, Topology};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::{FaceKey, Form};
+use varde_kernel_compat::topology::Region;
+use varde_kernel_compat::{Display, MeshError, RenderMesh, Solid, Topology};
 
 /// What a face is, as far as the viewport needs to know: a plane's
 /// outward unit normal `n` and offset `d` (the plane `n·x = d`), from
@@ -441,7 +441,7 @@ impl Picking {
     /// Each of the mesh's edges' tangent chain, by edge id, as the
     /// lowest edge in it: the edges of its part it runs on into smoothly,
     /// end to end (see
-    /// [`Topology::tangent_chains`](varde_kernel::Topology::tangent_chains)).
+    /// [`Topology::tangent_chains`](varde_kernel_compat::Topology::tangent_chains)).
     /// Itself if none, and a crease's itself.
     pub fn tangents(&self) -> &[u32] {
         &self.tables.tangents
@@ -449,7 +449,7 @@ impl Picking {
 
     /// Each of the mesh's edges' point, by edge id, where it has one: a
     /// straight edge's middle, a round (circular or elliptic) edge's
-    /// centre ([`varde_kernel::measure::edge_shape`]), within
+    /// centre ([`varde_kernel_compat::measure::edge_shape`]), within
     /// [`Picking::MAX_VALUE`]. A snap point for picking points. A
     /// crease's is `None`.
     pub fn snaps(&self) -> &[Option<[f64; 3]>] {
@@ -518,7 +518,7 @@ pub(crate) mod bounded {
 
     use serde::Deserializer;
     use serde::de::{Deserialize, Error, SeqAccess, Visitor};
-    use varde_kernel::mesh::FaceKey;
+    use varde_kernel_compat::mesh::FaceKey;
 
     use super::Picking;
 

@@ -3,8 +3,8 @@ use varde_document::{
     Command, Document, EdgeRef, Editor, FaceRef, FeatureKind, LinkSource, OriginPlane, OutsideRef,
     Plane,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::mesh::Form;
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::mesh::Form;
 use varde_sketch::{Curve, LinkKind, LinkShape, SketchEdit};
 
 use super::*;
@@ -45,7 +45,7 @@ fn sketch_of(editor: &Editor, feature: FeatureId) -> &Sketch {
 }
 
 /// The plate's body and solid.
-fn plate() -> (BodyId, Arc<varde_kernel::Solid>) {
+fn plate() -> (BodyId, Arc<varde_kernel_compat::Solid>) {
     let document = Document::example();
     let evaluation = evaluate(&document, &mut Cache::default());
     let made = &evaluation.bodies[0];

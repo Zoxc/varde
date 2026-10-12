@@ -34,9 +34,9 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, FeatureId};
-use varde_kernel::mesh::FaceKey;
-use varde_kernel::patch::{Bounds3, Conic3, Patch};
-use varde_kernel::{
+use varde_kernel_compat::mesh::FaceKey;
+use varde_kernel_compat::patch::{Bounds3, Conic3, Patch};
+use varde_kernel_compat::{
     Aabb, Display, Evidence, Failure, KernelError, LinesError, MAX_EVIDENCE, MeshError, MeshParts,
     Operand, RenderLines, RenderMesh, Tolerance,
 };
@@ -490,7 +490,7 @@ impl ErrorGeometry {
     }
 
     /// The sketch curves of the profile segments it is about
-    /// ([`Segment::curve`](varde_kernel::Segment::curve)), for the sketch
+    /// ([`Segment::curve`](varde_kernel_compat::Segment::curve)), for the sketch
     /// editor to mark. Only marks: an id naming no curve marks nothing.
     pub fn sketch_curves(&self) -> &[u64] {
         &self.sketch_curves

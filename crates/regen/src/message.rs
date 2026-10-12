@@ -4,7 +4,7 @@
 //! view capitalises them where they stand alone, in the Timeline's
 //! tooltip and the panel (`varde_view`'s `chrome::sentence`).
 
-use varde_kernel::{BooleanError, KernelError, ProfileError};
+use varde_kernel_compat::{BooleanError, KernelError, ProfileError};
 
 /// Why a sketch on a face isn't placed: no face of its body as the
 /// features before it leave it has the face's name.
@@ -137,7 +137,7 @@ impl Moving {
 /// Why `moving` the body named `body` fails before it's tried: it would
 /// take the body past the coordinate limit.
 pub(crate) fn out_of_range(moving: Moving, body: &str) -> String {
-    let limit = varde_kernel::MAX_COORD;
+    let limit = varde_kernel_compat::MAX_COORD;
     format!(
         "{} {body} takes it out of range: every part must stay within {limit} mm of the origin",
         moving.doing()
@@ -184,7 +184,7 @@ pub(crate) fn too_many_copies(body: &str, count: u32, patches: usize) -> String 
     format!(
         "{count} copies of {body} are too many to work out: it has {patches} patches, and a \
          body may have {} in all; use fewer copies",
-        varde_kernel::MAX_PATCHES
+        varde_kernel_compat::MAX_PATCHES
     )
 }
 
@@ -299,7 +299,7 @@ pub(crate) const SCALE_EDGE_SLANTED: &str =
 pub(crate) const SCALE_FACTOR: &str = "a factor is out of range";
 
 /// Why a scale fails: the kernel gave up measuring its edge.
-pub(crate) fn scale_measure(error: varde_kernel::measure::MeasureError) -> String {
+pub(crate) fn scale_measure(error: varde_kernel_compat::measure::MeasureError) -> String {
     format!("its edge can't be measured: {error}")
 }
 
@@ -1225,7 +1225,7 @@ pub(crate) const HELIX_NO_DIRECTION: &str = "its helix's axis has no direction";
 pub(crate) fn helix_too_long() -> String {
     format!(
         "its helix is too long: its pitch times its turns must stay within {} mm",
-        varde_kernel::MAX_COORD
+        varde_kernel_compat::MAX_COORD
     )
 }
 

@@ -13,12 +13,12 @@
 //! target of. What's found on each side is noted for the draft's reply
 //! ([`Evaluation::aligned`]), whether or not the align goes on to work.
 //!
-//! [`Topology::corner_point`]: varde_kernel::Topology::corner_point
-//! [`Topology::middle`]: varde_kernel::Topology::middle
-//! [`Topology::centre`]: varde_kernel::Topology::centre
-//! [`Topology::normal`]: varde_kernel::Topology::normal
-//! [`Topology::face_axis`]: varde_kernel::Topology::face_axis
-//! [`Topology::edge_direction`]: varde_kernel::Topology::edge_direction
+//! [`Topology::corner_point`]: varde_kernel_compat::Topology::corner_point
+//! [`Topology::middle`]: varde_kernel_compat::Topology::middle
+//! [`Topology::centre`]: varde_kernel_compat::Topology::centre
+//! [`Topology::normal`]: varde_kernel_compat::Topology::normal
+//! [`Topology::face_axis`]: varde_kernel_compat::Topology::face_axis
+//! [`Topology::edge_direction`]: varde_kernel_compat::Topology::edge_direction
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -28,9 +28,9 @@ use varde_document::{
     Align, AlignRefs, AxisRef, BodyId, DirRef, Document, EdgeRef, FaceRef, FeatureId, MAX_COORD,
     PointRef,
 };
-use varde_kernel::measure::{EdgeShape, edge_shape};
-use varde_kernel::topology::Unresolved;
-use varde_kernel::{AlignError, AlignOptions, Evidence, Motion, Solid, Tolerance, Topology};
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
+use varde_kernel_compat::topology::Unresolved;
+use varde_kernel_compat::{AlignError, AlignOptions, Evidence, Motion, Solid, Tolerance, Topology};
 
 use super::motion::{How, place, reference_key};
 use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_solid};
@@ -107,7 +107,7 @@ pub(super) fn evaluate_align(
 /// One side of an align as found: the kernel's datum, and whether its
 /// primary points out of its body ([`Datum::outward`]).
 struct Resolved {
-    datum: varde_kernel::Datum,
+    datum: varde_kernel_compat::Datum,
     outward: bool,
 }
 
@@ -162,7 +162,7 @@ impl Found<'_> {
         let primary = direction(AlignRef::Primary, &refs.primary)?;
         let secondary = direction(AlignRef::Secondary, &refs.secondary)?;
         Ok(Resolved {
-            datum: varde_kernel::Datum {
+            datum: varde_kernel_compat::Datum {
                 point,
                 primary: primary.map(|found| found.at),
                 secondary: secondary.map(|found| found.at),

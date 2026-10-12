@@ -29,7 +29,7 @@
 //! for one grown into, the region it shares with its picked edge's first
 //! face, else the other region beside the one it shares with the picked
 //! edge's other face, else its lower-keyed region. Each chain's faces are
-//! named [`FacePart::Blend`](varde_kernel::mesh::FacePart::Blend) of
+//! named [`FacePart::Blend`](varde_kernel_compat::mesh::FacePart::Blend) of
 //! [`blend_edge`]: a picked edge's of its reference's keys, a grown
 //! one's of its regions' keys, the ordinal counting the chains before it
 //! in that order with the same pair.
@@ -38,9 +38,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use varde_document::{EdgeRef, FaceRef};
-use varde_kernel::mesh::FaceKey;
-use varde_kernel::topology::blend_edge;
-use varde_kernel::{BlendError, Evidence, Solid, Tolerance, Topology};
+use varde_kernel_compat::mesh::FaceKey;
+use varde_kernel_compat::topology::blend_edge;
+use varde_kernel_compat::{BlendError, Evidence, Solid, Tolerance, Topology};
 
 use super::Failed;
 use super::in_place::InPlace;

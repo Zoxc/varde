@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use glam::{Mat4, Vec3};
 
-use varde_kernel::Aabb;
+use varde_kernel_compat::Aabb;
 
 use crate::Camera;
 

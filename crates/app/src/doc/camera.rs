@@ -28,14 +28,14 @@ pub(super) const FRAME_MARGIN: f32 = 1.5;
 /// A length that fits the view of `camera`, in millimetres, for a fresh
 /// default of a tool in a design of `units`: `share` (positive, up to
 /// one) of the view's height at the target, kept within that share of
-/// [`MAX_COORD`](varde_kernel::MAX_COORD), rounded down to 1, 2 or 5
+/// [`MAX_COORD`](varde_kernel_compat::MAX_COORD), rounded down to 1, 2 or 5
 /// times a power of ten of `units`, and no less than a thousandth of
 /// one. Tools pick their defaults with it so what they make fits the view
 /// as it is: the camera never moves for them. Made as
 /// [`snap_step`](varde_view::snap_step) makes its step, so it's the same
 /// natively and on the web.
 pub(crate) fn fitting_length(camera: &Camera, units: LengthUnit, share: f64) -> f64 {
-    let height = f64::from(camera.view_height()).min(f64::from(varde_kernel::MAX_COORD));
+    let height = f64::from(camera.view_height()).min(f64::from(varde_kernel_compat::MAX_COORD));
     let most = height * share / units.mm();
     // The view's height is positive and bounded, so the decade is within
     // ±324. Should the logarithm round down across a power of ten, the 10
@@ -142,7 +142,7 @@ impl Doc {
         let bounds = [self.feed.mesh().bounds(), self.feed.sketches().bounds()]
             .into_iter()
             .flatten()
-            .reduce(|a, b| varde_kernel::Aabb {
+            .reduce(|a, b| varde_kernel_compat::Aabb {
                 min: a.min.min(b.min),
                 max: a.max.max(b.max),
             });
@@ -298,7 +298,7 @@ mod tests {
             // Zoomed out past the coordinate limit: within its share.
             let huge = fitting_length(&holding(f32::MAX), unit, 0.25);
             assert!(huge.is_finite() && huge > 0.0);
-            assert!(huge <= 0.25 * f64::from(varde_kernel::MAX_COORD));
+            assert!(huge <= 0.25 * f64::from(varde_kernel_compat::MAX_COORD));
         }
     }
 }

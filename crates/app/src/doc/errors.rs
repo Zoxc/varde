@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use varde_document::{FeatureId, Id};
-use varde_kernel::Aabb;
+use varde_kernel_compat::Aabb;
 use varde_regen::ErrorGeometry;
 use varde_view::{Framing, ShownError, ShownErrors};
 

@@ -101,20 +101,20 @@ there is no adapter.
 Tests pass temporary directories (or none) to `varde_io::Stores` so they never
 touch the user's config/data dirs.
 
-The dev profile builds `varde-kernel` at `opt-level = 1` (its tests run about
+The dev profile builds `varde-kernel-compat` at `opt-level = 1` (its tests run about
 8 times slower at 0), and `varde-sketch` too (over twice as slow at 0). To
 debug one unoptimized, pass
-`--config 'profile.dev.package.varde-kernel.opt-level=0'` (or `varde-sketch`).
+`--config 'profile.dev.package.varde-kernel-compat.opt-level=0'` (or `varde-sketch`).
 Dev builds carry line tables only (dependencies none); for variables in a
 debugger, add `--config 'profile.dev.debug="full"'`.
 
 ## Architecture
 
 Crates in `crates/`, dependencies only pointing down:
-`binary`/`web` → `app` → `view` → `render` → `kernel`; `document` → `kernel`,
+`binary`/`web` → `app` → `view` → `render` → `kernel-compat`; `document` → `kernel-compat`,
 `sketch`; `regen`, `solve` and `io` → `document` + `lane` (`solve` also
-`sketch`, `io` also `kernel` for 3MF export); `view` also → `regen`, for the
-picking tables. `kernel`, `sketch`, `document`, `lane`, `regen`, `solve`, `io`
+`sketch`, `io` also `kernel-compat` for 3MF export); `view` also → `regen`, for the
+picking tables. `kernel-compat`, `sketch`, `document`, `lane`, `regen`, `solve`, `io`
 have no UI code; `render` has no iced dependency.
 
 - **State and update**: all app state lives in `varde-app` and is mutated only
