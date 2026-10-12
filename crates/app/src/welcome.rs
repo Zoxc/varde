@@ -112,7 +112,7 @@ impl Welcome {
             }
             WelcomeUi::ConfirmDelete => {
                 if let Some(name) = self.deleting.take() {
-                    delete(files, name);
+                    files.delete_from_browser(name);
                 }
                 Next::Stay
             }
@@ -329,9 +329,7 @@ impl Welcome {
         if self.prompting() {
             return Next::Stay;
         }
-        // Gone from the list at once. The lane lists what's left after.
-        files.recovered.retain(|design| design.path != path);
-        files.io.send(IoRequest::DiscardRecovered { path });
+        files.discard_recovered(path);
         Next::Stay
     }
 
@@ -347,7 +345,7 @@ impl Welcome {
         let latest =
             listed.is_some_and(|design| matches!(design.download, DownloadStatus::Latest(_)));
         if latest {
-            delete(files, name);
+            files.delete_from_browser(name);
         } else {
             self.deleting = Some(name);
         }
@@ -868,13 +866,6 @@ fn bytes(n: u64) -> String {
         _ if value < 10.0 => format!("{value:.1} {}", UNITS[unit]),
         _ => format!("{value:.0} {}", UNITS[unit]),
     }
-}
-
-/// Deletes the design `name` in browser storage, gone from the list at
-/// once: the lane lists what's left after.
-fn delete(files: &mut Files, name: String) {
-    files.browser.retain(|design| design.name != name);
-    files.io.send(IoRequest::DeleteFromBrowser { name });
 }
 
 /// Whether there's a list of recently opened files. Browsers only hand

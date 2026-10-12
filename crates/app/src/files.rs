@@ -137,6 +137,20 @@ impl Files {
         }
     }
 
+    /// Discards the new design at `path` left behind by a crash, gone
+    /// from the list at once: the lane lists what's left after.
+    pub(crate) fn discard_recovered(&mut self, path: PathBuf) {
+        self.recovered.retain(|design| design.path != path);
+        self.io.send(IoRequest::DiscardRecovered { path });
+    }
+
+    /// Deletes the design `name` in browser storage, gone from the list at
+    /// once: the lane lists what's left after.
+    pub(crate) fn delete_from_browser(&mut self, name: String) {
+        self.browser.retain(|design| design.name != name);
+        self.io.send(IoRequest::DeleteFromBrowser { name });
+    }
+
     /// Takes the designs in browser storage as listed. Their thumbnails'
     /// handles are kept while the design is saved as it was, by its sum:
     /// a handle is uploaded once per id.
