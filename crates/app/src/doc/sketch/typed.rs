@@ -135,9 +135,7 @@ impl Doc {
     /// Switches the Rectangle tool between drawing from a corner and from
     /// the centre, the point placed, if any, becoming the other.
     pub(crate) fn toggle_centered(&mut self) {
-        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
-        if let Some(drawing) = drawing.filter(|drawing| drawing.tool == varde_view::Tool::Rectangle)
-        {
+        if let Some(drawing) = self.tool_mut(varde_view::Tool::Rectangle) {
             drawing.centered = !drawing.centered;
         }
     }

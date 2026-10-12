@@ -65,7 +65,7 @@ impl Doc {
     /// kind it draws, from its points placed where they snapped (see
     /// [`place`]), and starts it afresh. Nothing if it has too few for
     /// its kind.
-    fn end_spline(&mut self, mut drawing: Drawing, closed: bool) {
+    fn end_spline(&mut self, drawing: Drawing, closed: bool) {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
@@ -80,17 +80,13 @@ impl Doc {
                 return;
             }
         };
-        if self.propose(SketchEdit::Add(add)) {
-            drawing.restart();
-            self.set_drawing(drawing);
-        }
+        self.propose_shape(SketchEdit::Add(add), drawing);
     }
 
     /// Switches the Spline tool between drawing through fit points and by
     /// control points, keeping the points placed.
     pub(crate) fn toggle_spline_kind(&mut self) {
-        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
-        if let Some(drawing) = drawing.filter(|drawing| drawing.tool == Tool::Spline) {
+        if let Some(drawing) = self.tool_mut(Tool::Spline) {
             drawing.control = !drawing.control;
         }
     }

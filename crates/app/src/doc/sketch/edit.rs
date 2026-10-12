@@ -141,7 +141,7 @@ impl Doc {
     /// point back to its first, as a click on the first does, and ends
     /// it. Nothing without a chain of two lines or more, or where a line
     /// joins the two already.
-    pub(super) fn close_chain(&mut self, mut drawing: Drawing) {
+    pub(super) fn close_chain(&mut self, drawing: Drawing) {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
@@ -157,10 +157,22 @@ impl Doc {
             self.refuse(out.into());
             return;
         }
-        if self.propose(SketchEdit::Add(add)) {
+        self.propose_shape(SketchEdit::Add(add), drawing);
+    }
+
+    /// Proposes `edit`, the shape `drawing` drew, and if it's taken puts
+    /// `drawing` back started afresh, for the next shape.
+    pub(super) fn propose_shape(&mut self, edit: SketchEdit, mut drawing: Drawing) {
+        if self.propose(edit) {
             drawing.restart();
             self.set_drawing(drawing);
         }
+    }
+
+    /// The tool in use, if it's `tool`.
+    pub(super) fn tool_mut(&mut self, tool: Tool) -> Option<&mut Drawing> {
+        let drawing = self.mode.sketch_mut()?.tool.as_mut()?;
+        (drawing.tool == tool).then_some(drawing)
     }
 
     /// Puts `drawing` in place of the tool in use.

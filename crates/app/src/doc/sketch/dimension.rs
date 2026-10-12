@@ -91,10 +91,7 @@ impl Doc {
                     side,
                 },
             );
-            if self.propose(SketchEdit::Add(add)) {
-                drawing.restart();
-                self.set_drawing(drawing);
-            }
+            self.propose_shape(SketchEdit::Add(add), drawing);
             return;
         }
         // It's proposed driving, holding what it measures, before the

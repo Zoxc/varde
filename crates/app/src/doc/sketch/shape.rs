@@ -139,10 +139,7 @@ impl Doc {
         let Some(edit) = edit else {
             return;
         };
-        if self.propose(edit) {
-            drawing.restart();
-            self.set_drawing(drawing);
-        }
+        self.propose_shape(edit, drawing);
     }
 
     /// What Offset, Fillet or Chamfer, `drawing`, makes of what it's
@@ -191,8 +188,7 @@ impl Doc {
     /// Ends the Mirror tool's picking, once it has picked something: its
     /// next click is on the line to mirror about.
     pub(crate) fn mirror_about(&mut self) {
-        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
-        if let Some(drawing) = drawing.filter(|drawing| drawing.tool == Tool::Mirror)
+        if let Some(drawing) = self.tool_mut(Tool::Mirror)
             && !drawing.picked.is_empty()
         {
             drawing.about = true;
