@@ -7,7 +7,6 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 use super::{Dir, Make};
 use crate::UnixSeconds;
@@ -103,8 +102,7 @@ impl Dir for FsDir {
             .ok()?
             .modified()
             .ok()?;
-        let seconds = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
-        i64::try_from(seconds).ok().map(UnixSeconds)
+        Some(UnixSeconds::of(modified))
     }
 
     async fn remove(&self, name: &str) -> io::Result<()> {

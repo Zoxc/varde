@@ -3,7 +3,6 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
 
 use varde_document::EXTENSION;
 
@@ -100,8 +99,7 @@ fn recovered(dir: &Path, path: &Path) -> Option<Recovered> {
 /// When `entry` was last written.
 fn modified(entry: &LockFile) -> Option<UnixSeconds> {
     let modified = entry.as_file().metadata().ok()?.modified().ok()?;
-    let seconds = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
-    i64::try_from(seconds).ok().map(UnixSeconds)
+    Some(UnixSeconds::of(modified))
 }
 
 /// Deletes the entry at `path` in `dir`, left behind by a session that

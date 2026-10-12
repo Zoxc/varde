@@ -743,21 +743,27 @@ impl UnixSeconds {
     pub(crate) fn now() -> UnixSeconds {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            UnixSeconds(match SystemTime::now().duration_since(UNIX_EPOCH) {
-                Ok(since) => i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
-                // Before the epoch: at most `i64::MAX` seconds back, so
-                // negating it can't overflow.
-                Err(before) => {
-                    i64::try_from(before.duration().as_secs()).map_or(i64::MIN, |secs| -secs)
-                }
-            })
+            UnixSeconds::of(std::time::SystemTime::now())
         }
         #[cfg(target_arch = "wasm32")]
         {
             // Milliseconds. `as` saturates, and makes NaN 0.
             UnixSeconds((js_sys::Date::now() / 1000.0).floor() as i64)
         }
+    }
+
+    /// `time`, in whole seconds from the epoch: negative before it,
+    /// saturating where it's out of range.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn of(time: std::time::SystemTime) -> UnixSeconds {
+        UnixSeconds(match time.duration_since(std::time::UNIX_EPOCH) {
+            Ok(since) => i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
+            // Before the epoch: at most `i64::MAX` seconds back, so
+            // negating it can't overflow.
+            Err(before) => {
+                i64::try_from(before.duration().as_secs()).map_or(i64::MIN, |secs| -secs)
+            }
+        })
     }
 }
 
