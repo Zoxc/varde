@@ -270,6 +270,14 @@ pub(crate) struct Settled {
 }
 
 impl Proposals {
+    /// Drops the proposal with the lane, if there's one: its answer,
+    /// still to come, is ignored.
+    fn drop_in_flight(&mut self) {
+        if self.in_flight.take().is_some() {
+            self.dropped = self.dropped.saturating_add(1);
+        }
+    }
+
     /// Whether edits are waiting on the solver, or changes behind them,
     /// or the user's answer to a change from the queue.
     pub(crate) fn any(&self) -> bool {
@@ -373,8 +381,7 @@ impl Proposals {
             .and_then(|(_, proposal)| proposal.client)
             .is_some_and(|tag| !kept(tag));
         if ended {
-            self.in_flight = None;
-            self.dropped = self.dropped.saturating_add(1);
+            self.drop_in_flight();
             went = true;
         }
         self.settle();
@@ -791,8 +798,7 @@ impl Doc {
             if mem::take(&mut proposals.asking) {
                 self.deleting = None;
             } else if proposals.users_in_flight() {
-                proposals.in_flight = None;
-                proposals.dropped = proposals.dropped.saturating_add(1);
+                proposals.drop_in_flight();
             }
         }
         proposals.settle();
@@ -804,9 +810,7 @@ impl Doc {
     /// the lane is answered still, and ignored.
     pub(crate) fn drop_proposals(&mut self) {
         let proposals = &mut self.proposals;
-        if proposals.in_flight.take().is_some() {
-            proposals.dropped = proposals.dropped.saturating_add(1);
-        }
+        proposals.drop_in_flight();
         proposals.queued.clear();
         if mem::take(&mut proposals.asking) {
             self.deleting = None;
