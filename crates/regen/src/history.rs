@@ -425,7 +425,7 @@ fn walk(
     let mut evaluation = Evaluation::default();
     for (index, feature) in document.features().iter().enumerate() {
         starting(index, feature);
-        match &feature.kind {
+        let result = match &feature.kind {
             FeatureKind::Sketch {
                 plane,
                 sketch,
@@ -477,6 +477,7 @@ fn walk(
                     placement,
                     key,
                 });
+                Ok(())
             }
             FeatureKind::Extrude(_)
             | FeatureKind::Revolve(_)
@@ -516,165 +517,117 @@ fn walk(
                 };
                 // A checked document's extrude, revolve, sweep or loft names a
                 // sketch before it.
-                let Some(sketch) = sketches.iter().find(|s| s.id == sketch) else {
-                    let failed = Failed::from("its sketch isn't there");
-                    evaluation.failed.push(failed.of(feature.id));
-                    continue;
-                };
-                let run = Run {
-                    document,
-                    feature,
-                    shape,
-                    operation,
-                    sketch,
-                    sketches: &sketches,
-                    tolerance,
-                    touching,
-                };
-                if let Err(failed) = run.evaluate(&mut evaluation, cache) {
-                    evaluation.failed.push(failed.of(feature.id));
+                match sketches.iter().find(|s| s.id == sketch) {
+                    None => Err(Failed::from("its sketch isn't there")),
+                    Some(sketch) => Run {
+                        document,
+                        feature,
+                        shape,
+                        operation,
+                        sketch,
+                        sketches: &sketches,
+                        tolerance,
+                        touching,
+                    }
+                    .evaluate(&mut evaluation, cache),
                 }
             }
             FeatureKind::Combine(combine) => {
-                if let Err(failed) =
-                    combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
-                {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
+                combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
             }
-            FeatureKind::Move(moved) => {
-                if let Err(failed) = motion::evaluate_move(
-                    document,
-                    feature.id,
-                    moved,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Mirror(mirror) => {
-                if let Err(failed) = motion::evaluate_mirror(
-                    document,
-                    feature.id,
-                    mirror,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Pattern(pattern) => {
-                if let Err(failed) = pattern::evaluate_pattern(
-                    document,
-                    feature.id,
-                    pattern,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Align(align) => {
-                if let Err(failed) = align::evaluate_align(
-                    document,
-                    feature.id,
-                    align,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Scale(scale) => {
-                if let Err(failed) = scale::evaluate_scale(
-                    document,
-                    feature.id,
-                    scale,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Chamfer(chamfer) => {
-                if let Err(failed) = chamfer::evaluate_chamfer(
-                    document,
-                    feature.id,
-                    chamfer,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Shell(shell) => {
-                if let Err(failed) = shell::evaluate_shell(
-                    document,
-                    feature.id,
-                    shell,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Fillet(fillet) => {
-                if let Err(failed) = fillet::evaluate_fillet(
-                    document,
-                    feature.id,
-                    fillet,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::OffsetFace(offset) => {
-                if let Err(failed) = offset_face::evaluate_offset_face(
-                    document,
-                    feature.id,
-                    offset,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::FaceDraft(draft) => {
-                if let Err(failed) = face_draft::evaluate_face_draft(
-                    document,
-                    feature.id,
-                    draft,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
-            FeatureKind::Split(split) => {
-                if let Err(failed) = split::evaluate_split(
-                    document,
-                    feature.id,
-                    split,
-                    &sketches,
-                    &tolerance,
-                    &mut evaluation,
-                    cache,
-                ) {
-                    evaluation.failed.push(failed.of(feature.id));
-                }
-            }
+            FeatureKind::Move(moved) => motion::evaluate_move(
+                document,
+                feature.id,
+                moved,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Mirror(mirror) => motion::evaluate_mirror(
+                document,
+                feature.id,
+                mirror,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Pattern(pattern) => pattern::evaluate_pattern(
+                document,
+                feature.id,
+                pattern,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Align(align) => align::evaluate_align(
+                document,
+                feature.id,
+                align,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Scale(scale) => scale::evaluate_scale(
+                document,
+                feature.id,
+                scale,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Chamfer(chamfer) => chamfer::evaluate_chamfer(
+                document,
+                feature.id,
+                chamfer,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Shell(shell) => shell::evaluate_shell(
+                document,
+                feature.id,
+                shell,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Fillet(fillet) => fillet::evaluate_fillet(
+                document,
+                feature.id,
+                fillet,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::OffsetFace(offset) => offset_face::evaluate_offset_face(
+                document,
+                feature.id,
+                offset,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::FaceDraft(draft) => face_draft::evaluate_face_draft(
+                document,
+                feature.id,
+                draft,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+            FeatureKind::Split(split) => split::evaluate_split(
+                document,
+                feature.id,
+                split,
+                &sketches,
+                &tolerance,
+                &mut evaluation,
+                cache,
+            ),
+        };
+        // A sketch records its own failures, and answers `Ok`.
+        if let Err(failed) = result {
+            evaluation.failed.push(failed.of(feature.id));
         }
     }
     // In the document's order (bodies are kept in increasing id order).
