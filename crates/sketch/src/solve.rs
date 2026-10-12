@@ -361,7 +361,6 @@ impl Solver<'_, '_> {
     fn settle(&mut self) -> Result<(), Failure> {
         let tolerance = TOLERANCE * self.scale;
         let converged = |f: &[f64]| f.iter().all(|&r| within(r, tolerance));
-        let squared = |f: &[f64]| f.iter().map(|r| r * r).sum::<f64>();
         let mut f = self.residuals();
         if converged(&f) {
             return Ok(());
@@ -374,36 +373,10 @@ impl Solver<'_, '_> {
             .iter()
             .map(|&var| 1.0 / self.weights[var].sqrt())
             .collect();
-        // The bounded variables' columns, with their bounds.
-        let bounded: Vec<(usize, f64, f64)> = self
-            .system
-            .bounds
-            .iter()
-            .filter_map(|&(var, least, most)| {
-                let column = self.component.vars.binary_search(&var).ok()?;
-                Some((column, least, most))
-            })
-            .collect();
-        // The splines through fit points its equations read, each once,
-        // and the points on them.
-        let mut refits: Vec<Rc<SplineSlots>> = Vec::new();
-        let mut on: Vec<(PointSlots, usize, Rc<SplineSlots>)> = Vec::new();
-        for &index in &self.component.equations {
-            let residual = &self.system.equations[index].residual;
-            for spline in residual.splines() {
-                if spline.moves() && !refits.iter().any(|seen| Rc::ptr_eq(seen, spline)) {
-                    refits.push(spline.clone());
-                }
-            }
-            if let Some((point, var, spline)) = residual.on_spline()
-                && spline.moves()
-            {
-                on.push((point, var, spline.clone()));
-            }
-        }
+        let bounded = self.bounded_columns();
+        let (refits, on) = self.moving_splines();
         let mut held = vec![false; n];
         let mut damping = DAMPING_START;
-        let mut before = vec![0.0; n];
         let mut normal: Option<Normal> = None;
         'steps: loop {
             let scaling: Vec<f64> = scaling
@@ -425,6 +398,8 @@ impl Solver<'_, '_> {
                 return Err(self.not_converged(&f));
             };
             let diagonal = normal.largest_diagonal();
+            // Damped tries from this Jacobian, until one improves or
+            // meets a bound.
             loop {
                 if *self.spent >= self.budget.iterations {
                     return Err(self.not_converged(&f));
@@ -435,40 +410,16 @@ impl Solver<'_, '_> {
                 *self.spent += 1;
                 let lambda = diagonal.max(1.0)
                     * (damping * cost / (self.scale * self.scale)).max(DAMPING_FLOOR);
-                let rhs: Vec<f64> = f.iter().map(|r| -r).collect();
-                let step = normal.solve(lambda, &rhs).map(|u| {
-                    let mut step = vec![0.0; n];
-                    for (row, u) in u.iter().enumerate() {
-                        for &(column, value) in a.row(row) {
-                            step[column] += value * u;
-                        }
-                    }
-                    step
-                });
-                if let Some(step) = step {
-                    let value = |column: usize| self.system.values[self.component.vars[column]];
-                    let past: Vec<usize> = bounded
-                        .iter()
-                        .filter(|&&(column, least, most)| {
-                            let (at, by) = (value(column), step[column]);
-                            !held[column] && ((at <= least && by < 0.0) || (at >= most && by > 0.0))
-                        })
-                        .map(|&(column, ..)| column)
-                        .collect();
+                if let Some(step) = step(&a, normal, lambda, &f, n) {
+                    let past = self.past_bounds(&step, &bounded, &held);
                     if !past.is_empty() {
+                        // Found again without them.
                         for column in past {
                             held[column] = true;
                         }
                         continue 'steps;
                     }
-                    for (column, &var) in self.component.vars.iter().enumerate() {
-                        before[column] = self.system.values[var];
-                        self.system.values[var] += scaling[column] * step[column];
-                    }
-                    for &(column, least, most) in &bounded {
-                        let var = self.component.vars[column];
-                        self.system.values[var] = self.system.values[var].clamp(least, most);
-                    }
+                    let before = self.take(&step, &scaling, &bounded);
                     let trial = self.residuals();
                     let trial_cost = squared(&trial);
                     if trial_cost < cost {
@@ -479,36 +430,18 @@ impl Solver<'_, '_> {
                             if refits.is_empty() {
                                 return Ok(());
                             }
-                            // Solved as its splines were; as they are
-                            // where their points went, perhaps not. The
-                            // points on them first slide to where they're
-                            // nearest now, as their parameters mean other
-                            // places.
-                            for spline in &refits {
-                                spline.refit(&self.system.values);
-                            }
-                            for (point, var, spline) in &on {
-                                let t = self.system.values[*var];
-                                self.system.values[*var] =
-                                    spline.project(&self.system.values, *point, t);
-                            }
-                            f = self.residuals();
+                            f = self.refit(&refits, &on);
                             cost = squared(&f);
                             if converged(&f) {
                                 return Ok(());
                             }
-                            held.fill(false);
-                            break;
-                        }
-                        if stalled {
+                        } else if stalled {
                             return Err(self.not_converged(&f));
                         }
                         held.fill(false);
-                        break;
+                        continue 'steps;
                     }
-                    for (column, &var) in self.component.vars.iter().enumerate() {
-                        self.system.values[var] = before[column];
-                    }
+                    self.restore(&before);
                 }
                 damping *= 10.0;
                 if damping > DAMPING_MAX {
@@ -516,6 +449,102 @@ impl Solver<'_, '_> {
                 }
             }
         }
+    }
+
+    /// The columns of the component's bounded variables, with their
+    /// bounds.
+    fn bounded_columns(&self) -> Vec<(usize, f64, f64)> {
+        self.system
+            .bounds
+            .iter()
+            .filter_map(|&(var, least, most)| {
+                let column = self.component.vars.binary_search(&var).ok()?;
+                Some((column, least, most))
+            })
+            .collect()
+    }
+
+    /// The splines through fit points the component's equations read,
+    /// each once, and the points on them with their parameters'
+    /// variables.
+    fn moving_splines(&self) -> MovingSplines {
+        let mut refits: Vec<Rc<SplineSlots>> = Vec::new();
+        let mut on: Vec<(PointSlots, usize, Rc<SplineSlots>)> = Vec::new();
+        for &index in &self.component.equations {
+            let residual = &self.system.equations[index].residual;
+            for spline in residual.splines() {
+                if spline.moves() && !refits.iter().any(|seen| Rc::ptr_eq(seen, spline)) {
+                    refits.push(spline.clone());
+                }
+            }
+            if let Some((point, var, spline)) = residual.on_spline()
+                && spline.moves()
+            {
+                on.push((point, var, spline.clone()));
+            }
+        }
+        (refits, on)
+    }
+
+    /// The bounded columns not `held` that `step` would push past a
+    /// bound they're at.
+    fn past_bounds(
+        &self,
+        step: &[f64],
+        bounded: &[(usize, f64, f64)],
+        held: &[bool],
+    ) -> Vec<usize> {
+        let value = |column: usize| self.system.values[self.component.vars[column]];
+        bounded
+            .iter()
+            .filter(|&&(column, least, most)| {
+                let (at, by) = (value(column), step[column]);
+                !held[column] && ((at <= least && by < 0.0) || (at >= most && by > 0.0))
+            })
+            .map(|&(column, ..)| column)
+            .collect()
+    }
+
+    /// Moves by `step`, scaled by `scaling`, the bounded variables put
+    /// back within their bounds: the values before, for
+    /// [`Solver::restore`].
+    fn take(&mut self, step: &[f64], scaling: &[f64], bounded: &[(usize, f64, f64)]) -> Vec<f64> {
+        let mut before = Vec::with_capacity(step.len());
+        for (column, &var) in self.component.vars.iter().enumerate() {
+            before.push(self.system.values[var]);
+            self.system.values[var] += scaling[column] * step[column];
+        }
+        for &(column, least, most) in bounded {
+            let var = self.component.vars[column];
+            self.system.values[var] = self.system.values[var].clamp(least, most);
+        }
+        before
+    }
+
+    /// Puts back the component's values from before a step.
+    fn restore(&mut self, before: &[f64]) {
+        for (column, &var) in self.component.vars.iter().enumerate() {
+            self.system.values[var] = before[column];
+        }
+    }
+
+    /// Solved as its splines were; as they are where their points went,
+    /// perhaps not: finds them anew, the points on them first sliding to
+    /// where they're nearest now, as their parameters mean other places.
+    /// The residuals after.
+    fn refit(
+        &mut self,
+        refits: &[Rc<SplineSlots>],
+        on: &[(PointSlots, usize, Rc<SplineSlots>)],
+    ) -> Vec<f64> {
+        for spline in refits {
+            spline.refit(&self.system.values);
+        }
+        for (point, var, spline) in on {
+            let t = self.system.values[*var];
+            self.system.values[*var] = spline.project(&self.system.values, *point, t);
+        }
+        self.residuals()
     }
 
     /// Every constraint and arc with an equation in the component.
@@ -553,6 +582,33 @@ impl Solver<'_, '_> {
         }
         Failure::NotConverged { involved }
     }
+}
+
+/// The splines a component's equations read that move with their fit
+/// points, and the points on them with their parameters' variables.
+type MovingSplines = (
+    Vec<Rc<SplineSlots>>,
+    Vec<(PointSlots, usize, Rc<SplineSlots>)>,
+);
+
+/// The sum of the squares of residuals `f`.
+fn squared(f: &[f64]) -> f64 {
+    f.iter().map(|r| r * r).sum()
+}
+
+/// The step of a damped try at `lambda`: `Aᵀ u` for `u` solving
+/// `(A Aᵀ + λ I) u = -f`, over `n` columns. `None` where it can't be
+/// solved.
+fn step(a: &Jacobian, normal: &Normal, lambda: f64, f: &[f64], n: usize) -> Option<Vec<f64>> {
+    let rhs: Vec<f64> = f.iter().map(|r| -r).collect();
+    let u = normal.solve(lambda, &rhs)?;
+    let mut step = vec![0.0; n];
+    for (row, u) in u.iter().enumerate() {
+        for &(column, value) in a.row(row) {
+            step[column] += value * u;
+        }
+    }
+    Some(step)
 }
 
 #[cfg(test)]
