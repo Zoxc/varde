@@ -110,8 +110,8 @@ use varde_lane::bytes::Buffer;
 use crate::{
     Answer, Asked, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FaceEdgeTables,
     FeatureFailure, GeometryError, GeometryParts, Inspected, PickCorner, PickFace, PickTables,
-    PickTablesError, PickTablesParts, Picking, PickingError, PickingParts, Progress, Request,
-    Response,
+    PickTablesError, PickTablesParts, Picking, PickingError, PickingParts, Progress, Regenerated,
+    Request, Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
@@ -504,23 +504,24 @@ fn relinked_weight(relinked: &[(FeatureId, Arc<Sketch>)]) -> usize {
 /// links past [`MAX_BROKEN`].
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
-        Response::Regenerated {
-            asked,
-            draft,
-            mesh,
-            picking,
-            tables,
-            sketches,
-            unsolved,
-            failed,
-            touched,
-            merged,
-            placements,
-            bodies,
-            inspected,
-            relinked,
-            broken,
-        } => {
+        Response::Regenerated(model) => {
+            let Regenerated {
+                asked,
+                draft,
+                mesh,
+                picking,
+                tables,
+                sketches,
+                unsolved,
+                failed,
+                touched,
+                merged,
+                placements,
+                bodies,
+                inspected,
+                relinked,
+                broken,
+            } = model;
             let geometry = |geometry: &Option<Arc<ErrorGeometry>>| {
                 geometry.as_deref().map(ErrorGeometry::to_parts)
             };
@@ -810,7 +811,7 @@ fn decode_regenerated(head: RegeneratedHead, parts: &[impl Buffer]) -> Result<Re
     if let Some(draft) = &mut draft {
         draft.geometry = draft_geometry;
     }
-    Ok(Response::Regenerated {
+    Ok(Response::Regenerated(Regenerated {
         asked,
         draft: draft.map(Box::new),
         inspected: inspected.map(|inspected| Box::new(inspected.checked(Some((&mesh, &picking))))),
@@ -828,7 +829,7 @@ fn decode_regenerated(head: RegeneratedHead, parts: &[impl Buffer]) -> Result<Re
             .map(|(feature, sketch)| (feature, Arc::new(sketch)))
             .collect(),
         broken,
-    })
+    }))
 }
 
 /// Checks the merged bodies of a [`Head::Regenerated`]: each consumed

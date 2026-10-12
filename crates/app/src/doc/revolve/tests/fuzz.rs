@@ -524,7 +524,7 @@ fn run(seed: u64, steps: usize) {
             && let Some(request) = &last_sent
             && let Request::Regenerate { draft: Some(_), .. } = request
         {
-            let varde_regen::Response::Regenerated { draft, .. } =
+            let varde_regen::Response::Regenerated(varde_regen::Regenerated { draft, .. }) =
                 varde_regen::handle(request.clone())
             else {
                 panic!("a regeneration");

@@ -494,12 +494,12 @@ fn a_failing_step_shows_the_faces_on_their_bodies() {
         &mut editor,
         combine(target, &[first, beside], BodyOp::Union),
     );
-    let crate::Response::Regenerated {
+    let crate::Response::Regenerated(crate::Regenerated {
         mesh,
         picking,
         failed,
         ..
-    } = crate::handle(regenerate_with(&editor, None))
+    }) = crate::handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -575,7 +575,8 @@ fn a_tool_failing_again_fails_the_union_with_the_faces_of_its_second_try() {
         &mut editor,
         combine(a, &[alone, edge, bridge], BodyOp::Union),
     );
-    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    let crate::Response::Regenerated(crate::Regenerated { failed, .. }) =
+        crate::handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };

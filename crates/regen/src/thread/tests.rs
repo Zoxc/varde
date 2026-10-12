@@ -2,7 +2,7 @@ use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, OriginPl
 use varde_lane::thread::testing::{close, join_in_time};
 
 use super::*;
-use crate::{Asked, Transport, handle};
+use crate::{Asked, Regenerated, Transport, handle};
 
 /// The next response that isn't a [`Response::Progress`].
 fn next(responses: &mut Responses) -> Response {
@@ -63,11 +63,11 @@ fn round_trip() {
     let (editor, _) = crate::tests::sketched();
     let (mut lane, mut responses) = spawn();
     lane.send(regenerate(&editor));
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         asked: Asked { generation, .. },
         sketches,
         ..
-    } = next(&mut responses)
+    }) = next(&mut responses)
     else {
         panic!("regeneration failed");
     };
@@ -90,11 +90,11 @@ fn burst_ends_with_the_newest() {
     // is the newest.
     let mut last = 0;
     while last < u64::from(editor.generation()) {
-        let Response::Regenerated {
+        let Response::Regenerated(Regenerated {
             asked: Asked { generation, .. },
             sketches,
             ..
-        } = next(&mut responses)
+        }) = next(&mut responses)
         else {
             panic!("regeneration failed");
         };
@@ -145,11 +145,11 @@ fn lane_keeps_going_after_a_job_panics() {
 
     add_line(&mut editor, feature);
     lane.send(regenerate(&editor));
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         asked: Asked { generation, .. },
         sketches,
         ..
-    } = next(&mut responses)
+    }) = next(&mut responses)
     else {
         panic!("generation 2 failed");
     };
@@ -239,13 +239,13 @@ fn an_export_edge_facts_and_a_measure_are_answered_though_regenerations_follow_t
                 assert!(!measured, "answered twice");
                 measured = true;
             }
-            Response::Regenerated {
+            Response::Regenerated(Regenerated {
                 asked: Asked { generation, .. },
                 ..
-            } if generation == editor.generation() => {
+            }) if generation == editor.generation() => {
                 break;
             }
-            Response::Regenerated { .. } => {}
+            Response::Regenerated(Regenerated { .. }) => {}
             Response::Failed { error, .. } => panic!("{error}"),
             Response::Progress(_) => unreachable!("skipped by next"),
         }
@@ -266,7 +266,7 @@ fn progress_comes_ahead_of_the_answer() {
             answer => break answer,
         }
     };
-    assert!(matches!(answer, Response::Regenerated { .. }));
+    assert!(matches!(answer, Response::Regenerated(Regenerated { .. })));
     let steps = u32::try_from(features.len()).unwrap() + 1;
     let mut expected: Vec<_> = (features.iter().zip(0..))
         .map(|(feature, step)| crate::Progress {

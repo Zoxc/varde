@@ -504,7 +504,7 @@ fn a_merge_that_fails_shows_where() {
         [5.0, 5.0, 0.0, 10.0, 15.0, 8.0],
         Operation::Join(Targets::default()),
     );
-    let crate::Response::Regenerated { failed, .. } =
+    let crate::Response::Regenerated(crate::Regenerated { failed, .. }) =
         crate::handle(crate::tests::regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");

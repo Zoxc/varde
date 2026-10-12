@@ -13,7 +13,7 @@ use varde_kernel_compat::{Budget, Op};
 
 use super::*;
 use crate::wire::{decode_reply, decode_request, encode_reply, encode_request};
-use crate::{Regenerator, Request, Response};
+use crate::{Regenerated, Regenerator, Request, Response};
 
 /// A small deterministic generator: xorshift64*.
 pub(in crate::history::tests) struct Rng(pub(in crate::history::tests) u64);
@@ -305,20 +305,20 @@ pub(in crate::history::tests) fn wire(
     let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
     let back = decode_reply(&head[..], &parts).unwrap();
     let (
-        Response::Regenerated {
+        Response::Regenerated(Regenerated {
             draft,
             failed,
             merged,
             bodies,
             ..
-        },
-        Response::Regenerated {
+        }),
+        Response::Regenerated(Regenerated {
             draft: draft_back,
             failed: failed_back,
             merged: merged_back,
             bodies: bodies_back,
             ..
-        },
+        }),
     ) = (&response, &back)
     else {
         panic!("{what}: not regenerated: {back:?}");

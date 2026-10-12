@@ -4,7 +4,7 @@ use varde_document::{Command, Document, Editor};
 
 use super::*;
 use crate::history::tests::{length, plate_below, set_extrude};
-use crate::{Regenerator, Request, Response};
+use crate::{Regenerated, Regenerator, Request, Response};
 
 /// The example plate: 60 × 40 × 10 from (−30, −20, 0), with a hole of
 /// radius 8 through it around the z axis.
@@ -61,12 +61,12 @@ fn ask(regenerator: &mut Regenerator, editor: &Editor, inspect: Inspect) -> (Tab
         response.asked().and_then(|asked| asked.inspect),
         Some(inspect_revision(&response))
     );
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh,
         picking,
         inspected,
         ..
-    } = response
+    }) = response
     else {
         panic!("regeneration failed: {response:?}");
     };
@@ -78,7 +78,9 @@ fn ask(regenerator: &mut Regenerator, editor: &Editor, inspect: Inspect) -> (Tab
 
 fn inspect_revision(response: &Response) -> u64 {
     match response {
-        Response::Regenerated { inspected, .. } => inspected.as_ref().unwrap().revision,
+        Response::Regenerated(Regenerated { inspected, .. }) => {
+            inspected.as_ref().unwrap().revision
+        }
         _ => panic!("not a model"),
     }
 }
@@ -94,12 +96,12 @@ fn tables(editor: &Editor) -> Tables {
         draft: None,
         inspect: None,
     });
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh,
         picking,
         inspected,
         ..
-    } = response
+    }) = response
     else {
         panic!("regeneration failed");
     };
@@ -551,7 +553,7 @@ fn of_several_faces_of_the_same_key_the_nearest_is_measured() {
     assert!(tops.contains(&right) && tops.contains(&left));
     // The right piece's place is the one drawn at the right: one of its
     // triangles has a vertex past the slot.
-    let Response::Regenerated { mesh, .. } = crate::handle(Request::Regenerate {
+    let Response::Regenerated(Regenerated { mesh, .. }) = crate::handle(Request::Regenerate {
         sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
@@ -702,10 +704,10 @@ fn a_measure_on_a_draft_is_of_the_drafted_model() {
         })),
         inspect: Some(Box::new(inspect)),
     });
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         inspected: Some(inspected),
         ..
-    } = response
+    }) = response
     else {
         panic!("regeneration failed");
     };

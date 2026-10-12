@@ -7,12 +7,13 @@ use glam::Vec3;
 
 use super::*;
 use crate::tests::regenerate_with;
-use crate::{ErrorGeometry, Response, handle};
+use crate::{ErrorGeometry, Regenerated, Response, handle};
 
 /// The geometry of the one failure of `editor`'s document as
 /// regenerated, `feature`'s.
 fn failed(editor: &Editor, feature: FeatureId) -> Arc<ErrorGeometry> {
-    let Response::Regenerated { failed, .. } = handle(regenerate_with(editor, None)) else {
+    let Response::Regenerated(Regenerated { failed, .. }) = handle(regenerate_with(editor, None))
+    else {
         panic!("regeneration failed");
     };
     let [failure] = &failed[..] else {
@@ -81,12 +82,12 @@ fn a_join_touching_along_a_line_shows_the_faces_that_touch() {
         extent,
         Operation::Join(Targets::default()),
     );
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh,
         picking,
         failed,
         ..
-    } = handle(regenerate_with(&editor, None))
+    }) = handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -186,7 +187,8 @@ fn an_intersect_that_cant_be_worked_out_shows_where() {
         thin,
         Operation::Intersect(Targets::default()),
     );
-    let Response::Regenerated { failed, .. } = handle(regenerate_with(&editor, None)) else {
+    let Response::Regenerated(Regenerated { failed, .. }) = handle(regenerate_with(&editor, None))
+    else {
         panic!("regeneration failed");
     };
     let [failure] = &failed[..] else {

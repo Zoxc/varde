@@ -624,7 +624,8 @@ impl Response {
     /// model's) or a [`Response::Progress`].
     pub fn asked(&self) -> Option<Asked> {
         match self {
-            Response::Regenerated { asked, .. } | Response::Failed { asked, .. } => Some(*asked),
+            Response::Regenerated(model) => Some(model.asked),
+            Response::Failed { asked, .. } => Some(*asked),
             Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
@@ -702,6 +703,64 @@ fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Documen
     }
 }
 
+/// A [`Response::Regenerated`]: the model a regeneration made.
+#[derive(Debug, Clone)]
+pub struct Regenerated {
+    /// What the request asked for: `sketches` leaves out its
+    /// `exclude`, and the mesh may be drawn otherwise than by its
+    /// [`Sight`], if too large by it. Its draft and inspect revisions
+    /// are `draft`'s and `inspected`'s.
+    pub asked: Asked,
+    /// How the request's draft went, if it had one. Boxed, as the
+    /// struct is large enough.
+    pub draft: Option<Box<Drafted>>,
+    pub mesh: Arc<RenderMesh>,
+    /// The body of each of `mesh`'s parts, and its faces' and edges'
+    /// tables, see [`Picking`].
+    pub picking: Arc<Picking>,
+    /// The hierarchies the viewport picks `mesh` with, built here so
+    /// the UI thread doesn't, see [`PickTables`]. `mesh`'s
+    /// [`RenderMesh::upload`] is built too.
+    pub tables: Arc<PickTables>,
+    /// The visible sketches' curves, see [`flatten_sketches`].
+    pub sketches: Arc<RenderLines>,
+    /// The sketches that don't solve, see [`unsolved`], in the
+    /// document's order.
+    pub unsolved: Vec<FeatureId>,
+    /// The features that failed, why and where, in the document's
+    /// order, see [`evaluate`]; their geometry's faces are this
+    /// model's.
+    pub failed: Vec<FeatureFailure>,
+    /// Each join, cut or intersect that got as far as its tool, with
+    /// the bodies it touches, see [`Evaluation::touched`]: with a
+    /// draft that goes, as the document with it applied found.
+    pub touched: Vec<(FeatureId, Vec<BodyId>)>,
+    /// Each body a join merged into another and the body holding it
+    /// now, see [`Evaluation::merged`]: a consumed body has no solid
+    /// and isn't in `bodies`.
+    pub merged: Vec<(BodyId, BodyId)>,
+    /// Each sketch on a face that was placed, and where, in the
+    /// document's order, see [`Evaluation::placements`]: with a draft
+    /// that goes, as the document with it applied placed them. A
+    /// sketch on a face that isn't listed isn't placed (it failed).
+    pub placements: Vec<(FeatureId, Placement)>,
+    /// The box around each body that has a solid, shown or not, in
+    /// the order they were made.
+    pub bodies: Vec<(BodyId, Aabb)>,
+    /// The answer to the request's measure, if it had one, measured
+    /// on this model.
+    pub inspected: Option<Box<Inspected>>,
+    /// Each sketch whose links found other geometry than they hold,
+    /// relinked and solved, in the document's order (see
+    /// [`Evaluation::relinked`]): for the app to fold into the change
+    /// it's of. None with a draft: only the committed document's
+    /// links are followed.
+    pub relinked: Vec<(FeatureId, Arc<Sketch>)>,
+    /// Each link that found nothing, its sketch, its id and why, in
+    /// the document's order (see [`Evaluation::broken`]).
+    pub broken: Vec<(FeatureId, Id, String)>,
+}
+
 /// The answer to a [`Request`].
 #[derive(Debug, Clone)]
 // On wasm32 the variants' pointers are smaller and the lint doesn't fire.
@@ -713,65 +772,14 @@ fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Documen
     )
 )]
 pub enum Response {
-    Regenerated {
-        /// What the request asked for: `sketches` leaves out its
-        /// `exclude`, and the mesh may be drawn otherwise than by its
-        /// [`Sight`], if too large by it. Its draft and inspect revisions
-        /// are `draft`'s and `inspected`'s.
-        asked: Asked,
-        /// How the request's draft went, if it had one. Boxed, as the
-        /// variant is large enough.
-        draft: Option<Box<Drafted>>,
-        mesh: Arc<RenderMesh>,
-        /// The body of each of `mesh`'s parts, and its faces' and edges'
-        /// tables, see [`Picking`].
-        picking: Arc<Picking>,
-        /// The hierarchies the viewport picks `mesh` with, built here so
-        /// the UI thread doesn't, see [`PickTables`]. `mesh`'s
-        /// [`RenderMesh::upload`] is built too.
-        tables: Arc<PickTables>,
-        /// The visible sketches' curves, see [`flatten_sketches`].
-        sketches: Arc<RenderLines>,
-        /// The sketches that don't solve, see [`unsolved`], in the
-        /// document's order.
-        unsolved: Vec<FeatureId>,
-        /// The features that failed, why and where, in the document's
-        /// order, see [`evaluate`]; their geometry's faces are this
-        /// model's.
-        failed: Vec<FeatureFailure>,
-        /// Each join, cut or intersect that got as far as its tool, with
-        /// the bodies it touches, see [`Evaluation::touched`]: with a
-        /// draft that goes, as the document with it applied found.
-        touched: Vec<(FeatureId, Vec<BodyId>)>,
-        /// Each body a join merged into another and the body holding it
-        /// now, see [`Evaluation::merged`]: a consumed body has no solid
-        /// and isn't in `bodies`.
-        merged: Vec<(BodyId, BodyId)>,
-        /// Each sketch on a face that was placed, and where, in the
-        /// document's order, see [`Evaluation::placements`]: with a draft
-        /// that goes, as the document with it applied placed them. A
-        /// sketch on a face that isn't listed isn't placed (it failed).
-        placements: Vec<(FeatureId, Placement)>,
-        /// The box around each body that has a solid, shown or not, in
-        /// the order they were made.
-        bodies: Vec<(BodyId, Aabb)>,
-        /// The answer to the request's measure, if it had one, measured
-        /// on this model.
-        inspected: Option<Box<Inspected>>,
-        /// Each sketch whose links found other geometry than they hold,
-        /// relinked and solved, in the document's order (see
-        /// [`Evaluation::relinked`]): for the app to fold into the change
-        /// it's of. None with a draft: only the committed document's
-        /// links are followed.
-        relinked: Vec<(FeatureId, Arc<Sketch>)>,
-        /// Each link that found nothing, its sketch, its id and why, in
-        /// the document's order (see [`Evaluation::broken`]).
-        broken: Vec<(FeatureId, Id, String)>,
-    },
+    Regenerated(Regenerated),
     /// The work `asked` failed, e.g. the kernel panicked. The request
     /// leaving out its `exclude` did: one of the same generation leaving
     /// out another sketch may not.
-    Failed { asked: Asked, error: String },
+    Failed {
+        asked: Asked,
+        error: String,
+    },
     /// Answers [`Request::Export`] tagged `export`: the visible bodies
     /// welded, in the order the history made them, or why they can't be
     /// (see [`ExportError`]), in words to follow a colon.
@@ -833,25 +841,8 @@ impl Regenerator {
                 self.cache.begin();
                 let document = rolled_back(document, asked.until);
                 let payloads = (draft.as_deref(), inspect.as_deref());
-                match self.regenerate(&document, asked.exclude, payloads, sight.as_deref(), report)
-                {
-                    Ok(model) => Response::Regenerated {
-                        asked,
-                        draft: model.draft.map(Box::new),
-                        mesh: model.scene.mesh,
-                        picking: model.scene.picking,
-                        tables: model.scene.tables,
-                        sketches: Arc::new(model.sketches),
-                        unsolved: model.unsolved,
-                        failed: model.failed,
-                        touched: model.touched,
-                        merged: model.merged,
-                        placements: model.placements,
-                        bodies: model.bodies,
-                        inspected: model.inspected.map(Box::new),
-                        relinked: model.relinked,
-                        broken: model.broken,
-                    },
+                match self.regenerate(&document, asked, payloads, sight.as_deref(), report) {
+                    Ok(model) => Response::Regenerated(model),
                     Err(error) => Response::Failed { asked, error },
                 }
             }
@@ -908,13 +899,13 @@ impl Regenerator {
     fn regenerate(
         &mut self,
         document: &Document,
-        exclude: Option<FeatureId>,
+        asked: Asked,
         (draft, inspect): (Option<&Draft>, Option<&Inspect>),
         sight: Option<&Sight>,
         report: &mut dyn FnMut(Progress),
-    ) -> Result<Model, String> {
+    ) -> Result<Regenerated, String> {
         let Some(draft) = draft else {
-            return self.model(document, exclude, None, (inspect, sight), report);
+            return self.model(document, asked, None, (inspect, sight), report);
         };
         let mut drafted = Drafted {
             revision: draft.revision,
@@ -958,28 +949,28 @@ impl Regenerator {
                             .map(|(_, uncut)| uncut.clone())
                             .unwrap_or_default();
                         report(Progress::drawing(with_draft.features().len()));
-                        let asked = (inspect, sight);
-                        return self.draw(&with_draft, evaluation, exclude, Some(drafted), asked);
+                        let payloads = (inspect, sight);
+                        return self.draw(&with_draft, evaluation, asked, Some(drafted), payloads);
                     }
                 }
             }
             Err(error) => drafted.error = Some(error),
         }
-        self.model(document, exclude, Some(drafted), (inspect, sight), report)
+        self.model(document, asked, Some(drafted), (inspect, sight), report)
     }
 
     /// The model of `document`, telling `report` how far it has got.
     fn model(
         &mut self,
         document: &Document,
-        exclude: Option<FeatureId>,
+        asked: Asked,
         draft: Option<Drafted>,
-        asked: (Option<&Inspect>, Option<&Sight>),
+        payloads: (Option<&Inspect>, Option<&Sight>),
         report: &mut dyn FnMut(Progress),
-    ) -> Result<Model, String> {
+    ) -> Result<Regenerated, String> {
         let evaluation = self.evaluate(document, report);
         report(Progress::drawing(document.features().len()));
-        self.draw(document, evaluation, exclude, draft, asked)
+        self.draw(document, evaluation, asked, draft, payloads)
     }
 
     /// The history of `document` evaluated, telling `report` of each
@@ -997,10 +988,10 @@ impl Regenerator {
         &mut self,
         document: &Document,
         mut evaluation: Evaluation,
-        exclude: Option<FeatureId>,
+        asked: Asked,
         mut draft: Option<Drafted>,
         (inspect, sight): (Option<&Inspect>, Option<&Sight>),
-    ) -> Result<Model, String> {
+    ) -> Result<Regenerated, String> {
         // Only a draft that worked is drawn: one that failed is answered
         // with the committed model.
         let drafted = draft.as_ref().is_some_and(|draft| draft.error.is_none());
@@ -1022,7 +1013,7 @@ impl Regenerator {
             }
         }
         .map_err(|error| error.to_string())?;
-        let sketches = flatten_sketches(document, &evaluation.placements, exclude)
+        let sketches = flatten_sketches(document, &evaluation.placements, asked.exclude)
             .map_err(|error| error.to_string())?;
         // The failures' operand faces, on the model drawn.
         let mut failed = std::mem::take(&mut evaluation.failed);
@@ -1053,19 +1044,22 @@ impl Regenerator {
         } else {
             std::mem::take(&mut evaluation.relinked)
         };
-        Ok(Model {
+        Ok(Regenerated {
+            asked,
             relinked,
             broken: std::mem::take(&mut evaluation.broken),
-            draft,
-            scene,
-            sketches,
+            draft: draft.map(Box::new),
+            mesh: scene.mesh,
+            picking: scene.picking,
+            tables: scene.tables,
+            sketches: Arc::new(sketches),
             unsolved: unsolved(document, &mut self.cache),
             failed: evaluation.failed,
             touched: evaluation.touched,
             merged: evaluation.merged,
             placements: evaluation.placements,
             bodies,
-            inspected,
+            inspected: inspected.map(Box::new),
         })
     }
 
@@ -1073,22 +1067,6 @@ impl Regenerator {
     pub fn cache(&self) -> &Cache {
         &self.cache
     }
-}
-
-/// A [`Response::Regenerated`]'s model.
-struct Model {
-    draft: Option<Drafted>,
-    scene: Scene,
-    sketches: RenderLines,
-    unsolved: Vec<FeatureId>,
-    failed: Vec<FeatureFailure>,
-    touched: Vec<(FeatureId, Vec<BodyId>)>,
-    merged: Vec<(BodyId, BodyId)>,
-    placements: Vec<(FeatureId, Placement)>,
-    bodies: Vec<(BodyId, Aabb)>,
-    inspected: Option<Inspected>,
-    relinked: Vec<(FeatureId, Arc<Sketch>)>,
-    broken: Vec<(FeatureId, Id, String)>,
 }
 
 /// `document` with `draft` applied, and the draft's feature, or why it

@@ -645,12 +645,12 @@ impl Gpu {
             draft: None,
             inspect: None,
         });
-        let varde_regen::Response::Regenerated {
+        let varde_regen::Response::Regenerated(varde_regen::Regenerated {
             mesh,
             picking,
             sketches,
             ..
-        } = response
+        }) = response
         else {
             panic!("the design doesn't regenerate");
         };

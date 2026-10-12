@@ -12,7 +12,7 @@ use varde_mcp::rpc::Id;
 use varde_mcp::server::Reply;
 use varde_mcp::session::SessionId;
 use varde_mcp::tools::{Call, Direction, Page, ToolReply};
-use varde_regen::{Request, Response, handle};
+use varde_regen::{Regenerated, Request, Response, handle};
 
 use super::key::{self, BadKey, Key, Ref};
 use super::*;
@@ -41,7 +41,7 @@ fn answer_failing(doc: &mut Doc, requests: &RefCell<Vec<Request>>, failing: Feat
     while !requests.borrow().is_empty() {
         for request in requests.take() {
             let mut response = handle(request);
-            if let Response::Regenerated { failed, .. } = &mut response {
+            if let Response::Regenerated(Regenerated { failed, .. }) = &mut response {
                 failed.push(varde_regen::FeatureFailure {
                     feature: failing,
                     message: "the profile is gone".to_owned(),
@@ -4107,7 +4107,7 @@ fn a_query_waits_for_regeneration_and_says_its_failures() {
     let id = varde.screen.doc().unwrap().id;
     for request in requests.take() {
         let mut response = handle(request);
-        if let Response::Regenerated { failed, .. } = &mut response {
+        if let Response::Regenerated(Regenerated { failed, .. }) = &mut response {
             failed.push(varde_regen::FeatureFailure {
                 feature: extrude,
                 message: "the profile is gone".to_owned(),

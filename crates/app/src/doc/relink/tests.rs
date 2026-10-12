@@ -221,7 +221,9 @@ fn a_relinked_sketch_refused_shows_its_links_broken_and_asks_no_more() {
     let mut refused = false;
     for request in requests.take() {
         let mut response = varde_regen::handle(request);
-        if let varde_regen::Response::Regenerated { relinked, .. } = &mut response {
+        if let varde_regen::Response::Regenerated(varde_regen::Regenerated { relinked, .. }) =
+            &mut response
+        {
             for (_, sketch) in relinked.iter_mut() {
                 let more = SketchEdit::AddLink {
                     kind: LinkKind::Project,

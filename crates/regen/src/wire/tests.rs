@@ -7,7 +7,7 @@ use varde_sketch::{MAX_LINKS, MAX_POINTS};
 
 use super::*;
 use crate::tests::sketched;
-use crate::{Draft, Query, handle};
+use crate::{Draft, Query, Regenerated, handle};
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
@@ -155,7 +155,8 @@ fn a_revolve_and_its_draft_round_trip() {
 
     // Both cross the plate's axes, so both fail, the draft with the
     // model without it, and say why.
-    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(request)) else {
+    let Response::Regenerated(Regenerated { draft, failed, .. }) = round_trip(&handle(request))
+    else {
         panic!("regeneration failed");
     };
     let crosses = "its outline crosses the axis".to_owned();
@@ -253,7 +254,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
     };
     let request = decode_request(&encode_request(&request)).unwrap();
     let response = handle(request);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         draft,
         failed,
         touched,
@@ -262,7 +263,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         mesh,
         picking,
         ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
@@ -297,11 +298,11 @@ fn a_revolve_that_works_crosses_in_the_reply() {
     assert_eq!(bodies[0].0, plate);
     // The joined plate's faces and the quarter ring's, all drawn.
     assert!(mesh.triangle_count() > 0);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh: sent,
         picking: sent_picking,
         ..
-    } = &response
+    }) = &response
     else {
         unreachable!()
     };
@@ -344,7 +345,7 @@ fn request_with_a_draft_round_trips() {
     assert_eq!(back, Some(Box::new(draft)));
 
     // The answer says which draft it had.
-    let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
+    let Response::Regenerated(Regenerated { draft, .. }) = round_trip(&handle(request)) else {
         panic!("regeneration failed");
     };
     assert_eq!(
@@ -379,7 +380,7 @@ fn request_with_a_draft_round_trips() {
         })),
         inspect: None,
     };
-    let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
+    let Response::Regenerated(Regenerated { draft, .. }) = round_trip(&handle(request)) else {
         panic!("regeneration failed");
     };
     let draft = draft.unwrap();
@@ -409,11 +410,11 @@ fn request_leaving_out_a_sketch_round_trips() {
 
     // The answer says which sketch it left out.
     let response = handle(request);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         asked: Asked { exclude, .. },
         sketches,
         ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
@@ -461,16 +462,16 @@ fn regenerated_round_trips() {
         .unwrap();
     let bytes = encode_request(&regenerate(&editor));
     let response = handle(decode_request(&bytes).unwrap());
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh: sent,
         picking: picked,
         bodies: boxes,
         ..
-    } = &response
+    }) = &response
     else {
         panic!("regeneration failed");
     };
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         asked: Asked {
             generation,
             exclude,
@@ -488,7 +489,7 @@ fn regenerated_round_trips() {
         bodies,
         inspected,
         ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
@@ -568,7 +569,7 @@ fn draft_references_must_be_lines_within_bounds() {
             sweep: None,
         });
     }
-    let Response::Regenerated { draft, .. } =
+    let Response::Regenerated(Regenerated { draft, .. }) =
         decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
     else {
         panic!("a good reference was refused");
@@ -637,7 +638,7 @@ fn draft_datums_must_be_within_bounds() {
         assert_eq!(error, Error::Reference.to_string());
     }
     let good = with(&|_| {});
-    let Response::Regenerated { draft, .. } = head_with(good) else {
+    let Response::Regenerated(Regenerated { draft, .. }) = head_with(good) else {
         panic!("good datums were refused");
     };
     assert_eq!(draft.unwrap().datums.as_deref(), Some(&good));
@@ -719,7 +720,7 @@ fn a_scale_draft_s_findings_must_be_within_bounds() {
             ..good
         },
     ] {
-        let Response::Regenerated { draft, .. } = head_with(good) else {
+        let Response::Regenerated(Regenerated { draft, .. }) = head_with(good) else {
             panic!("a good scale was refused");
         };
         assert_eq!(draft.unwrap().scale.as_deref(), Some(&good));
@@ -773,7 +774,7 @@ fn a_sweep_draft_s_handles_must_be_within_bounds() {
         end([1.0, 2.0, 3.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
         helix([10.0, 0.0, 0.0], [0.0; 3], [0.0, 1.0, 0.0]),
     ] {
-        let Response::Regenerated { draft, .. } = head_with(good) else {
+        let Response::Regenerated(Regenerated { draft, .. }) = head_with(good) else {
             panic!("a good sweep's handles were refused");
         };
         assert_eq!(draft.unwrap().sweep.as_deref(), Some(&good));
@@ -817,7 +818,7 @@ fn merged_bodies_round_trip() {
     let join = Operation::Join(Targets::default());
     add_extrude(&mut editor, disc((20.0, 0.0), 5.0), extent, join);
     let bytes = encode_request(&regenerate(&editor));
-    let Response::Regenerated { merged, bodies, .. } =
+    let Response::Regenerated(Regenerated { merged, bodies, .. }) =
         round_trip(&handle(decode_request(&bytes).unwrap()))
     else {
         panic!("regeneration failed");
@@ -877,12 +878,12 @@ fn a_pattern_and_its_draft_round_trip() {
     };
     assert_eq!(**document, *editor.document());
     assert_eq!(back, &Some(Box::new(draft)));
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         draft,
         failed,
         bodies,
         ..
-    } = round_trip(&handle(decoded))
+    }) = round_trip(&handle(decoded))
     else {
         panic!("regeneration failed");
     };
@@ -969,12 +970,12 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
     };
     assert_eq!(**document, *editor.document());
     assert_eq!(back, &Some(Box::new(draft)));
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         draft,
         failed,
         bodies,
         ..
-    } = round_trip(&handle(decoded))
+    }) = round_trip(&handle(decoded))
     else {
         panic!("regeneration failed");
     };
@@ -1049,12 +1050,12 @@ fn a_combine_and_its_draft_round_trip() {
     assert_eq!(**document, *editor.document());
     assert_eq!(back, &Some(Box::new(draft)));
     // The draft keeps its tool, so nothing is merged.
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         draft,
         merged,
         bodies,
         ..
-    } = round_trip(&handle(decoded))
+    }) = round_trip(&handle(decoded))
     else {
         panic!("regeneration failed");
     };
@@ -1062,7 +1063,8 @@ fn a_combine_and_its_draft_round_trip() {
     assert!(merged.is_empty());
     assert_eq!(bodies.len(), 2);
     // Committed, the union consumes it.
-    let Response::Regenerated { merged, bodies, .. } = round_trip(&handle(regenerate(&editor)))
+    let Response::Regenerated(Regenerated { merged, bodies, .. }) =
+        round_trip(&handle(regenerate(&editor)))
     else {
         panic!("regeneration failed");
     };
@@ -1095,7 +1097,7 @@ fn merged_bodies_are_each_consumed_once_and_hold_none() {
         *merged = vec![(b, a), (c, a)];
     }
     let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
-    let Response::Regenerated { merged, .. } = reply else {
+    let Response::Regenerated(Regenerated { merged, .. }) = reply else {
         panic!("good merged bodies were refused");
     };
     assert_eq!(merged, [(b, a), (c, a)]);
@@ -1115,7 +1117,7 @@ fn ids() -> [BodyId; 3] {
 fn empty_model_round_trips() {
     let bytes = encode_request(&regenerate(&Editor::new(Document::default())));
     let response = handle(decode_request(&bytes).unwrap());
-    let Response::Regenerated { mesh, sketches, .. } = round_trip(&response) else {
+    let Response::Regenerated(Regenerated { mesh, sketches, .. }) = round_trip(&response) else {
         panic!("regeneration failed");
     };
     assert_eq!(*mesh, RenderMesh::default());
@@ -1333,7 +1335,7 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     };
     let picking = Picking::from_parts(parts, &mesh).unwrap();
     let tables = PickTables::new(&mesh, &picking);
-    Response::Regenerated {
+    Response::Regenerated(Regenerated {
         asked: Asked {
             sight: None,
             generation: Generation::from(0),
@@ -1356,7 +1358,7 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
         inspected: None,
         broken: Vec::new(),
         relinked: Vec::new(),
-    }
+    })
 }
 
 /// The parts of a model of [`triangle_mesh`] and a polyline of two
@@ -1390,11 +1392,11 @@ fn a_mesh_of_parts_round_trips_with_their_bodies() {
     mesh.append_at(&triangle_mesh(), glam::Vec3::X).unwrap();
     assert_eq!(mesh.part_ends(), [[1, 1, 1, 1], [1, 1, 1, 1], [2, 2, 2, 2]]);
     let response = answer(mesh.clone(), vec![a, b, c]);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh: back,
         picking,
         ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
@@ -1650,14 +1652,14 @@ impl Rng {
 /// Decodes `head` and `parts` as a reply and checks that an accepted
 /// model holds together, which the renderer and picking rely on.
 fn decode_any(head: &[u8], parts: &[Vec<u8>]) {
-    if let Ok(Response::Regenerated {
+    if let Ok(Response::Regenerated(Regenerated {
         mesh,
         sketches,
         picking,
         tables,
         bodies,
         ..
-    }) = decode_reply(head, &slices(parts))
+    })) = decode_reply(head, &slices(parts))
     {
         // Each hierarchy walks each node once, from the root.
         for bvh in [tables.triangles(), tables.segments(), tables.vertices()] {
@@ -1801,7 +1803,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
 fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
     match decode_reply(&head.encode()[..], &slices(parts)).unwrap() {
         Response::Failed { error, .. } => error,
-        Response::Regenerated { .. }
+        Response::Regenerated(Regenerated { .. })
         | Response::Exported { .. }
         | Response::Answered { .. }
         | Response::Progress(_) => {
@@ -1900,7 +1902,7 @@ fn closed_edges_must_close_between_two_faces() {
             &slices(&two_triangles(closed)),
         )
         .unwrap();
-        let Response::Regenerated { mesh, picking, .. } = reply else {
+        let Response::Regenerated(Regenerated { mesh, picking, .. }) = reply else {
             panic!("a good edge was refused");
         };
         assert_eq!(picking.closed(), [closed]);
@@ -1919,7 +1921,7 @@ fn closed_edges_must_close_between_two_faces() {
     );
     // A crease has no keys.
     let reply = decode_reply(&regenerated(1).encode()[..], &slices(&triangle())).unwrap();
-    let Response::Regenerated { mesh, picking, .. } = reply else {
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) = reply else {
         panic!("the triangle was refused");
     };
     assert_eq!(picking.edge_keys(&mesh, 0), None);
@@ -2006,7 +2008,7 @@ fn picked_faces_must_hold_sound_summaries_and_aliases() {
     });
     assert!(matches!(
         decode_reply(&head.encode()[..], &slices(&triangle())),
-        Ok(Response::Regenerated { .. })
+        Ok(Response::Regenerated(Regenerated { .. }))
     ));
 }
 
@@ -2028,7 +2030,8 @@ fn two_plates() -> (Vec<u8>, Vec<Vec<u8>>) {
     let (head, parts) = encode_reply(&response);
     let parts: Vec<Vec<u8>> = parts.iter().map(|part| part.to_vec()).collect();
     // It round-trips as it is.
-    let Response::Regenerated { picking, .. } = decode_reply(&head[..], &slices(&parts)).unwrap()
+    let Response::Regenerated(Regenerated { picking, .. }) =
+        decode_reply(&head[..], &slices(&parts)).unwrap()
     else {
         panic!("the plates were refused");
     };
@@ -2074,7 +2077,7 @@ fn cut_short_parts_the_tables_go_by_are_refused() {
             short[part].truncate(len);
             match decode_reply(&head[..], &slices(&short)).unwrap() {
                 Response::Failed { .. } => {}
-                Response::Regenerated { .. }
+                Response::Regenerated(Regenerated { .. })
                 | Response::Exported { .. }
                 | Response::Answered { .. }
                 | Response::Progress(_) => {
@@ -2213,7 +2216,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
         };
         let picking = Picking::from_parts(parts, &mesh).unwrap();
         let tables = PickTables::new(&mesh, &picking);
-        Response::Regenerated {
+        Response::Regenerated(Regenerated {
             asked: Asked {
                 sight: None,
                 generation: 4.into(),
@@ -2242,18 +2245,18 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             inspected: None,
             broken: Vec::new(),
             relinked: Vec::new(),
-        }
+        })
     };
     assert!(matches!(
         round_trip(&response(3)),
-        Response::Regenerated { .. }
+        Response::Regenerated(Regenerated { .. })
     ));
     match round_trip(&response(MAX_FACES + 1)) {
         Response::Failed {
             asked: Asked { generation, .. },
             ..
         } => assert_eq!(generation, 4.into()),
-        Response::Regenerated { .. }
+        Response::Regenerated(Regenerated { .. })
         | Response::Exported { .. }
         | Response::Answered { .. }
         | Response::Progress(_) => {
@@ -2454,18 +2457,18 @@ fn placements_round_trip() {
         .apply(Command::SetFeatureVisible(sketch, true))
         .unwrap();
     let response = handle(decode_request(&encode_request(&regenerate(&editor))).unwrap());
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         placements: sent, ..
-    } = &response
+    }) = &response
     else {
         panic!("regeneration failed");
     };
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         placements,
         sketches,
         failed,
         ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
@@ -2534,7 +2537,7 @@ fn hostile_placements_are_refused() {
         *placements = vec![(a, far), (b, good)];
     }
     let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
-    let Response::Regenerated { placements, .. } = reply else {
+    let Response::Regenerated(Regenerated { placements, .. }) = reply else {
         panic!("good placements were refused");
     };
     assert_eq!(placements.len(), 2);
@@ -2547,7 +2550,7 @@ fn hostile_placements_are_refused() {
 fn a_measure_round_trips() {
     let editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
-    let Response::Regenerated { picking, .. } = handle(regenerate(&editor)) else {
+    let Response::Regenerated(Regenerated { picking, .. }) = handle(regenerate(&editor)) else {
         panic!("regeneration failed");
     };
     assert_eq!(picking.corners().len(), 8);
@@ -2581,20 +2584,20 @@ fn a_measure_round_trips() {
     };
     assert_eq!(back.as_ref(), Some(&Box::new(inspect.clone())));
     let response = handle(decoded);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         inspected: Some(sent),
         ..
-    } = &response
+    }) = &response
     else {
         panic!("regeneration failed");
     };
     assert!(sent.first.is_ok() && matches!(sent.second, Some(Ok(_))));
     assert!(sent.between.as_ref().unwrap().distance.is_ok());
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         inspected,
         picking: back,
         ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("the reply was refused");
     };
@@ -2651,10 +2654,10 @@ fn a_broken_measure_is_answered_as_an_error() {
         }
         let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
         assert_eq!(reply.asked().and_then(|asked| asked.inspect), Some(2));
-        let Response::Regenerated {
+        let Response::Regenerated(Regenerated {
             inspected: Some(inspected),
             ..
-        } = reply
+        }) = reply
         else {
             panic!("the model was refused");
         };
@@ -2760,7 +2763,7 @@ fn fan(split: bool) -> (Head, Vec<Vec<u8>>) {
 fn picked_corners_are_three_faces_of_one_part() {
     let (head, parts) = fan(false);
     let reply = decode_reply(&head.encode()[..], &slices(&parts)).unwrap();
-    let Response::Regenerated { picking, .. } = reply else {
+    let Response::Regenerated(Regenerated { picking, .. }) = reply else {
         panic!("a good corner was refused");
     };
     assert_eq!(picking.corners().len(), 1);
@@ -2810,7 +2813,7 @@ fn snap_points_are_within_bounds_and_only_on_chains() {
         &slices(&two_triangles(false)),
     )
     .unwrap();
-    let Response::Regenerated { picking, .. } = reply else {
+    let Response::Regenerated(Regenerated { picking, .. }) = reply else {
         panic!("a good snap point was refused");
     };
     assert_eq!(picking.snaps(), [Some([0.5, 0.5, 0.0])]);
@@ -2974,7 +2977,8 @@ fn assert_sound_measure(inspected: &Inspected, mesh: &RenderMesh, picking: &Pick
 fn measured_replies() -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
     let editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
-    let Response::Regenerated { mesh, picking, .. } = handle(regenerate(&editor)) else {
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) = handle(regenerate(&editor))
+    else {
         panic!("regeneration failed");
     };
     let faces = picking.faces();
@@ -3024,10 +3028,10 @@ fn measured_replies() -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
                 }));
             }
             let response = handle(request);
-            let Response::Regenerated {
+            let Response::Regenerated(Regenerated {
                 inspected: Some(inspected),
                 ..
-            } = &response
+            }) = &response
             else {
                 panic!("regeneration failed");
             };
@@ -3051,12 +3055,12 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
     // Quick tries a fifth of the damage.
     let rounds = varde_testing::pick(600, 3000);
     for (head, parts) in measured_replies() {
-        let Ok(Response::Regenerated {
+        let Ok(Response::Regenerated(Regenerated {
             inspected: Some(sent),
             mesh,
             picking,
             ..
-        }) = decode_reply(&head[..], &slices(&parts))
+        })) = decode_reply(&head[..], &slices(&parts))
         else {
             panic!("the reply was refused");
         };
@@ -3073,12 +3077,12 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
             let mut damaged = head[..at].to_vec();
             damaged.extend(rng.mutate(&bytes));
             damaged.extend(tail);
-            if let Ok(Response::Regenerated {
+            if let Ok(Response::Regenerated(Regenerated {
                 inspected: Some(inspected),
                 mesh,
                 picking,
                 ..
-            }) = decode_reply(&damaged[..], &slices(&parts))
+            })) = decode_reply(&damaged[..], &slices(&parts))
             {
                 assert_sound_measure(&inspected, &mesh, &picking);
                 taken += 1;
@@ -3114,7 +3118,8 @@ fn failure_geometry() -> Arc<ErrorGeometry> {
     };
     let failure = crate::error_geometry::KernelFailure::new(failure, &Tolerance::DEFAULT);
     let mut geometry = Arc::unwrap_or_clone(failure.geometry([&[BodyId::NEW], &[]]).unwrap());
-    let Response::Regenerated { mesh, picking, .. } = answer(triangle_mesh(), vec![BodyId::NEW])
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) =
+        answer(triangle_mesh(), vec![BodyId::NEW])
     else {
         unreachable!("an answer")
     };
@@ -3127,12 +3132,12 @@ fn failure_geometry() -> Arc<ErrorGeometry> {
 /// draft, each with [`failure_geometry`].
 fn answer_with_failures() -> Response {
     let mut response = answer(triangle_mesh(), vec![BodyId::NEW]);
-    if let Response::Regenerated {
+    if let Response::Regenerated(Regenerated {
         asked,
         draft,
         failed,
         ..
-    } = &mut response
+    }) = &mut response
     {
         let feature: FeatureId = postcard::from_bytes(&[5]).unwrap();
         failed.push(FeatureFailure {
@@ -3166,15 +3171,15 @@ fn answer_with_failures() -> Response {
 #[test]
 fn failure_geometry_round_trips() {
     let response = answer_with_failures();
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         draft: sent_draft,
         failed: sent,
         ..
-    } = &response
+    }) = &response
     else {
         unreachable!("an answer")
     };
-    let Response::Regenerated { draft, failed, .. } = round_trip(&response) else {
+    let Response::Regenerated(Regenerated { draft, failed, .. }) = round_trip(&response) else {
         panic!("refused");
     };
     assert_eq!(failed, *sent);
@@ -3237,14 +3242,15 @@ fn a_head_too_large_with_failure_geometry_is_sent_without_it() {
         indices: (0..n as u32 / 3 * 3).collect(),
         ..GeometryParts::default()
     };
-    let Response::Regenerated { mesh, picking, .. } = answer(triangle_mesh(), vec![BodyId::NEW])
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) =
+        answer(triangle_mesh(), vec![BodyId::NEW])
     else {
         unreachable!("an answer")
     };
     let big = Arc::new(ErrorGeometry::from_parts(parts, &mesh, &picking).unwrap());
     let copies = MAX_HEAD_BYTES / (24 * n) + 1;
     let mut response = answer_with_failures();
-    if let Response::Regenerated { failed, draft, .. } = &mut response {
+    if let Response::Regenerated(Regenerated { failed, draft, .. }) = &mut response {
         let feature = failed[0].feature;
         failed.extend((0..copies).map(|_| FeatureFailure {
             feature,
@@ -3253,7 +3259,7 @@ fn a_head_too_large_with_failure_geometry_is_sent_without_it() {
         }));
         draft.as_mut().unwrap().geometry = Some(big.clone());
     }
-    let Response::Regenerated { draft, failed, .. } = round_trip(&response) else {
+    let Response::Regenerated(Regenerated { draft, failed, .. }) = round_trip(&response) else {
         panic!("refused");
     };
     assert_eq!(failed.len(), copies + 2);
@@ -3337,7 +3343,8 @@ fn a_revolve_about_an_edge_round_trips() {
         panic!("not a regeneration");
     };
     assert_eq!(**document, *editor.document());
-    let Response::Regenerated { failed, bodies, .. } = round_trip(&handle(back)) else {
+    let Response::Regenerated(Regenerated { failed, bodies, .. }) = round_trip(&handle(back))
+    else {
         panic!("regeneration failed");
     };
     assert!(failed.is_empty(), "{failed:?}");
@@ -3368,7 +3375,7 @@ fn a_revolve_about_an_edge_round_trips() {
         inspect: None,
     };
     let back = decode_request(&encode_request(&request)).unwrap();
-    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(back)) else {
+    let Response::Regenerated(Regenerated { draft, failed, .. }) = round_trip(&handle(back)) else {
         panic!("regeneration failed");
     };
     assert!(failed.is_empty(), "{failed:?}");
@@ -3450,12 +3457,12 @@ fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
     for list in lists {
         let what = format!("{} listed", list.len());
         let decoded = decode_request(&encode_request(&request(list))).unwrap();
-        let Response::Regenerated {
+        let Response::Regenerated(Regenerated {
             draft,
             failed,
             bodies,
             ..
-        } = round_trip(&handle(decoded))
+        }) = round_trip(&handle(decoded))
         else {
             panic!("{what}: regeneration failed");
         };
@@ -3577,7 +3584,8 @@ fn a_sweep_and_a_helix_draft_round_trip() {
     };
     assert_eq!(**document, *editor.document());
     assert_eq!(back, &Some(Box::new(draft)));
-    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(decoded)) else {
+    let Response::Regenerated(Regenerated { draft, failed, .. }) = round_trip(&handle(decoded))
+    else {
         panic!("regeneration failed");
     };
     let not_built = "sweeping along a path isn't supported yet";
@@ -3686,7 +3694,8 @@ fn a_loft_and_its_draft_round_trip() {
     };
     assert_eq!(**document, *editor.document());
     assert_eq!(back, &Some(Box::new(draft)));
-    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(decoded)) else {
+    let Response::Regenerated(Regenerated { draft, failed, .. }) = round_trip(&handle(decoded))
+    else {
         panic!("regeneration failed");
     };
     let not_built = "lofting isn't supported yet";
@@ -3728,7 +3737,7 @@ fn a_tapered_draft_crosses_the_wire() {
         panic!("an extrude");
     };
     assert_eq!(back.taper, tapered.taper);
-    let Response::Regenerated { draft, .. } = round_trip(&handle(sent)) else {
+    let Response::Regenerated(Regenerated { draft, .. }) = round_trip(&handle(sent)) else {
         panic!("regeneration failed");
     };
     let error = draft.unwrap().error;
@@ -3739,7 +3748,8 @@ fn a_tapered_draft_crosses_the_wire() {
 
     let mut tampered = tapered;
     tampered.taper.as_mut().unwrap().value = 1.6;
-    let Response::Regenerated { draft, .. } = round_trip(&handle(request(tampered))) else {
+    let Response::Regenerated(Regenerated { draft, .. }) = round_trip(&handle(request(tampered)))
+    else {
         panic!("regeneration failed");
     };
     let error = draft.unwrap().error.expect("refused");
@@ -3799,20 +3809,20 @@ fn relinked_and_broken_links_round_trip() {
         })
         .unwrap();
     let response = handle(decode_request(&encode_request(&regenerate(&editor))).unwrap());
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         relinked: sent,
         broken: marked,
         ..
-    } = &response
+    }) = &response
     else {
         panic!("regeneration failed");
     };
     assert_eq!(sent.len(), 1);
     assert_eq!(marked.len(), 1);
     assert_eq!(marked[0].1, gone);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         relinked, broken, ..
-    } = round_trip(&response)
+    }) = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
@@ -3885,10 +3895,10 @@ fn relinked_sketches_and_broken_links_are_bounded_as_the_head_is_decoded() {
     // Relinked sketches past the budget aren't sent: the model goes
     // without them.
     let mut response = answer(triangle_mesh(), vec![BodyId::NEW]);
-    if let Response::Regenerated { relinked, .. } = &mut response {
+    if let Response::Regenerated(Regenerated { relinked, .. }) = &mut response {
         *relinked = vec![(a_sketch(), Arc::new(full)); fit + 1];
     }
-    let Response::Regenerated { relinked, .. } = round_trip(&response) else {
+    let Response::Regenerated(Regenerated { relinked, .. }) = round_trip(&response) else {
         panic!("the model wasn't sent");
     };
     assert!(relinked.is_empty());
@@ -3900,15 +3910,15 @@ fn relinked_sketches_and_broken_links_are_bounded_as_the_head_is_decoded() {
 fn the_upload_and_the_hierarchies_round_trip() {
     let editor = Editor::new(Document::example());
     let response = handle(crate::tests::regenerate_with(&editor, None));
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh: sent,
         tables: sent_tables,
         ..
-    } = &response
+    }) = &response
     else {
         panic!("the plate regenerates");
     };
-    let Response::Regenerated { mesh, tables, .. } = round_trip(&response) else {
+    let Response::Regenerated(Regenerated { mesh, tables, .. }) = round_trip(&response) else {
         panic!("the plate crosses");
     };
     assert_eq!(*tables, **sent_tables);

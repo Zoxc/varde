@@ -416,12 +416,12 @@ fn a_picked_face_s_summary_places_a_sketch_as_regenerating_does() {
     let response = crate::handle(regenerate_with(&editor, None));
     let (head, parts) = crate::wire::encode_reply(&response);
     let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
-    let crate::Response::Regenerated {
+    let crate::Response::Regenerated(crate::Regenerated {
         mesh,
         picking,
         placements,
         ..
-    } = crate::wire::decode_reply(&head[..], &parts).unwrap()
+    }) = crate::wire::decode_reply(&head[..], &parts).unwrap()
     else {
         panic!("regeneration failed");
     };
@@ -635,7 +635,8 @@ fn a_sketch_on_a_curved_face_fails() {
     let kept = again.failed[0].geometry.as_ref().expect("the wall");
     assert!(Arc::ptr_eq(kept, &geometry));
     // And answered with the model, as it is.
-    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    let crate::Response::Regenerated(crate::Regenerated { failed, .. }) =
+        crate::handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -1158,7 +1159,8 @@ fn a_curved_face_shows_as_it_was_before_later_features() {
     let (mut editor, sketch) = sketch_on_the_wall();
     let extent = two_sides(editor.document(), "11", "1");
     add_extrude(&mut editor, disc((0.0, 0.0), 9.0), extent, cut());
-    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    let crate::Response::Regenerated(crate::Regenerated { failed, .. }) =
+        crate::handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };

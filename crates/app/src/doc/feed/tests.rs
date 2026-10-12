@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use varde_document::{Command, Document, FeatureId, FeatureKind};
 
-use varde_regen::handle;
+use varde_regen::{Regenerated, handle};
 
 use varde_kernel_compat::Aabb;
 use varde_render::{Camera, Projection};
@@ -614,7 +614,7 @@ fn the_same_model_answered_anew_keeps_its_count() {
         .unwrap();
     feed.request(&editor, None);
     let mut response = handle(regen.take().pop().unwrap());
-    let Response::Regenerated { mesh, picking, .. } = &mut response else {
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) = &mut response else {
         panic!("{response:?}");
     };
     // Copies, as from the other side of the web worker.
@@ -672,7 +672,7 @@ fn the_parts_bodies_follow_the_mesh_shown() {
 
 /// `response`, a model's, with `failure` listed as failing.
 fn failing(mut response: Response, failure: FeatureId) -> Response {
-    let Response::Regenerated { failed, .. } = &mut response else {
+    let Response::Regenerated(Regenerated { failed, .. }) = &mut response else {
         panic!("{response:?}");
     };
     failed.push(varde_regen::FeatureFailure {

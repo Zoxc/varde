@@ -16,7 +16,7 @@ use varde_document::{
 use varde_io::{
     Access, Closing, FileId, Offer, OpenId, Opened, PickedFrom, ReadOnly, SaveError, SaveTo,
 };
-use varde_regen::{Request, Response, Transport, handle, lane};
+use varde_regen::{Regenerated, Request, Response, Transport, handle, lane};
 use varde_render::Camera;
 use varde_solve::{Request as SolveRequest, Response as SolveResponse, Solver};
 use varde_view::{Edit, MeshStatus, Panel, RowMenu, Welcome as WelcomeUi};
@@ -2963,7 +2963,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
     let answer_marking = |doc: &mut Doc, requests: Vec<Request>, id: FeatureId| {
         for request in requests {
             let response = match handle(request) {
-                Response::Regenerated {
+                Response::Regenerated(Regenerated {
                     asked,
                     draft,
                     mesh,
@@ -2972,7 +2972,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     sketches,
                     bodies,
                     ..
-                } => Response::Regenerated {
+                }) => Response::Regenerated(Regenerated {
                     asked: varde_regen::Asked {
                         until: None,
                         inspect: None,
@@ -2997,7 +2997,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     inspected: None,
                     broken: Vec::new(),
                     relinked: Vec::new(),
-                },
+                }),
                 failed => failed,
             };
             doc.computed(response);

@@ -686,7 +686,8 @@ fn an_axis_line_of_no_length_shows_where_it_is() {
     let AxisLine::Curve(line) = made.axis else {
         panic!("about a line");
     };
-    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    let crate::Response::Regenerated(crate::Regenerated { failed, .. }) =
+        crate::handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -1095,7 +1096,8 @@ fn an_axis_line_too_short_for_a_direction_shows_where_it_is() {
     };
     let axis = axis_line(sketch, made.axis).expect("a line of some length");
     assert_eq!(axis.along, DVec2::new(tiny, 0.0));
-    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    let crate::Response::Regenerated(crate::Regenerated { failed, .. }) =
+        crate::handle(regenerate_with(&editor, None))
     else {
         panic!("regeneration failed");
     };

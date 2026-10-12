@@ -62,7 +62,7 @@ pub(crate) fn sketched() -> (Editor, FeatureId) {
 #[test]
 fn regenerate_tessellates_the_snapshot() {
     let (editor, _) = sketched();
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         asked: Asked {
             generation,
             exclude,
@@ -80,7 +80,7 @@ fn regenerate_tessellates_the_snapshot() {
         bodies,
         inspected,
         ..
-    } = handle(regenerate(&editor, None))
+    }) = handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -283,9 +283,9 @@ pub(crate) fn unsolvable(editor: &mut Editor) -> FeatureId {
 fn sketches_that_do_not_solve_are_named() {
     let (mut editor, solved) = sketched();
     let unsolved = unsolvable(&mut editor);
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         unsolved: named, ..
-    } = handle(regenerate(&editor, None))
+    }) = handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -296,7 +296,9 @@ fn sketches_that_do_not_solve_are_named() {
 #[test]
 fn regenerate_flattens_the_sketches() {
     let (editor, feature) = sketched();
-    let Response::Regenerated { mesh, sketches, .. } = handle(regenerate(&editor, None)) else {
+    let Response::Regenerated(Regenerated { mesh, sketches, .. }) =
+        handle(regenerate(&editor, None))
+    else {
         panic!("regeneration failed");
     };
     assert_eq!(mesh.triangle_count(), 0);
@@ -307,11 +309,11 @@ fn regenerate_flattens_the_sketches() {
     assert_eq!(sketches.ends().len(), 2);
 
     // The sketch being edited is left out, and the answer says so.
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         asked: Asked { exclude, .. },
         sketches,
         ..
-    } = handle(regenerate(&editor, Some(feature)))
+    }) = handle(regenerate(&editor, Some(feature)))
     else {
         panic!("regeneration failed");
     };
@@ -492,7 +494,7 @@ fn assert_same(cached: &Response, fresh: &Response, step: usize) {
     fn parts(response: &Response) -> (Option<MeshBits>, String) {
         let mut response = response.clone();
         let mesh = match &mut response {
-            Response::Regenerated { mesh, .. } => {
+            Response::Regenerated(Regenerated { mesh, .. }) => {
                 Some(MeshBits::of(std::mem::take(Arc::make_mut(mesh))))
             }
             _ => None,
@@ -533,7 +535,7 @@ impl MeshBits {
 }
 
 pub(crate) fn answered(response: Response) -> Answer {
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         draft,
         mesh,
         picking,
@@ -542,7 +544,7 @@ pub(crate) fn answered(response: Response) -> Answer {
         sketches,
         placements,
         ..
-    } = response
+    }) = response
     else {
         panic!("regeneration failed: {response:?}");
     };
@@ -2249,7 +2251,9 @@ fn chains(mesh: &RenderMesh) -> usize {
 fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
     let editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
-    let Response::Regenerated { mesh, picking, .. } = handle(regenerate(&editor, None)) else {
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) =
+        handle(regenerate(&editor, None))
+    else {
         panic!("regeneration failed");
     };
     assert_picks_match(&mesh, &picking);
@@ -2303,13 +2307,13 @@ fn faces_merged_flush_are_one_entry_in_the_tables() {
         extent,
         Operation::Join(Targets::default()),
     );
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh,
         picking,
         failed,
         bodies,
         ..
-    } = handle(regenerate(&editor, None))
+    }) = handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -2344,7 +2348,7 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     let mut editor = Editor::new(Document::example());
     crate::history::tests::plate_below(&mut editor);
     let tables = |response: Response| match response {
-        Response::Regenerated { mesh, picking, .. } => (mesh, picking),
+        Response::Regenerated(Regenerated { mesh, picking, .. }) => (mesh, picking),
         Response::Failed { error, .. } => panic!("{error}"),
         Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => {
             panic!("not a regeneration")
@@ -2390,7 +2394,8 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
 fn the_cache_counts_the_picking_tables() {
     let editor = Editor::new(Document::example());
     let mut regenerator = Regenerator::default();
-    let Response::Regenerated { mesh, picking, .. } = regenerator.handle(regenerate(&editor, None))
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) =
+        regenerator.handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
     };
@@ -2408,13 +2413,13 @@ fn the_cache_counts_the_picking_tables() {
 
 /// The tables of a regeneration that worked, checked against its mesh.
 fn picked(response: Response) -> (Arc<RenderMesh>, Arc<Picking>, Vec<BodyId>) {
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh,
         picking,
         bodies,
         failed,
         ..
-    } = response
+    }) = response
     else {
         panic!("regeneration failed: {response:?}");
     };
@@ -2519,7 +2524,7 @@ fn picking_tables_follow_merges_drafts_and_edits() {
         kind: extrude.clone().into(),
     };
     let response = regenerator.handle(regenerate_with(&sketched, Some(draft)));
-    let Response::Regenerated { draft, merged, .. } = &response else {
+    let Response::Regenerated(Regenerated { draft, merged, .. }) = &response else {
         panic!("regeneration failed");
     };
     assert_eq!(draft.as_ref().unwrap().error, None);
@@ -2777,11 +2782,11 @@ fn each_body_is_drawn_at_its_level_of_the_sight() {
             unreachable!()
         };
         *asked = sight.map(Box::new);
-        let Response::Regenerated {
+        let Response::Regenerated(Regenerated {
             asked: Asked { sight, .. },
             mesh,
             ..
-        } = handle(request)
+        }) = handle(request)
         else {
             panic!("the plate regenerates");
         };

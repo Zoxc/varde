@@ -16,7 +16,7 @@ use varde_document::{
 use varde_kernel_compat::{Aabb, RenderLines, RenderMesh};
 use varde_regen::{
     Asked, Detail, Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected,
-    PickTables, Picking, Progress, Request, Response, Sight, Transport,
+    PickTables, Picking, Progress, Regenerated, Request, Response, Sight, Transport,
 };
 use varde_render::{Camera, Projection};
 pub(crate) use varde_view::Shown as Marks;
@@ -532,7 +532,7 @@ impl MeshFeed {
             return;
         }
         match response {
-            Response::Regenerated {
+            Response::Regenerated(Regenerated {
                 mesh,
                 picking,
                 tables,
@@ -548,7 +548,7 @@ impl MeshFeed {
                 relinked,
                 broken,
                 ..
-            } => {
+            }) => {
                 // The lane hands an unchanged model back as the same
                 // `Arc`s, natively; the web worker's come anew, so they're
                 // compared, far cheaper than building the index again

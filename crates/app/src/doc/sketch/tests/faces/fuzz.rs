@@ -8,7 +8,7 @@
 
 use crate::doc::OperationSlot;
 use varde_document::{AxisLine, BodyId, Operation, Revolve, Targets, Turn};
-use varde_regen::Response;
+use varde_regen::{Regenerated, Response};
 use varde_view::RevolveLook;
 
 use super::*;
@@ -137,7 +137,7 @@ fn sketches(document: &Document) -> Vec<FeatureId> {
 /// Where regenerating `document` places each sketch on a face.
 fn regen_placements(request: Request) -> Option<Vec<(FeatureId, Placement)>> {
     match varde_regen::handle(request) {
-        Response::Regenerated { placements, .. } => Some(placements),
+        Response::Regenerated(Regenerated { placements, .. }) => Some(placements),
         _ => None,
     }
 }

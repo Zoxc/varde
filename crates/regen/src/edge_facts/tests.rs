@@ -4,7 +4,7 @@ use varde_kernel_compat::{Solid, Tolerance};
 
 use super::*;
 use crate::history::tests::{add_extrude, disc, two_sides};
-use crate::{Answer, EdgeForm, Query, Request, Response, handle};
+use crate::{Answer, EdgeForm, Query, Regenerated, Request, Response, handle};
 
 const TOL: Tolerance = Tolerance::DEFAULT;
 
@@ -30,7 +30,7 @@ fn first_body(editor: &Editor) -> BodyId {
 /// closed where the facts have no ends (none of these is past the
 /// bound).
 fn paired(editor: &Editor, body: BodyId) -> Vec<EdgeFacts> {
-    let Response::Regenerated { mesh, picking, .. } = handle(Request::Regenerate {
+    let Response::Regenerated(Regenerated { mesh, picking, .. }) = handle(Request::Regenerate {
         sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),

@@ -4,18 +4,18 @@ use varde_document::{Document, Editor};
 
 use super::*;
 use crate::tests::regenerate_with;
-use crate::{Response, handle};
+use crate::{Regenerated, Response, handle};
 
 /// The example plate's mesh, its picking tables and its hierarchies, as
 /// the lane answers them.
 fn plate() -> (Arc<RenderMesh>, Arc<Picking>, Arc<PickTables>) {
     let editor = Editor::new(Document::example());
-    let Response::Regenerated {
+    let Response::Regenerated(Regenerated {
         mesh,
         picking,
         tables,
         ..
-    } = handle(regenerate_with(&editor, None))
+    }) = handle(regenerate_with(&editor, None))
     else {
         panic!("the plate regenerates");
     };

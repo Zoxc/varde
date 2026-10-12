@@ -799,7 +799,7 @@ fn a_near_cylinder_cone_is_an_axis_end_to_end() {
     let response = crate::handle(crate::tests::regenerate_with(&editor, Some(draft)));
     let (head, parts) = crate::wire::encode_reply(&response);
     let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
-    let Ok(crate::Response::Regenerated { draft, .. }) =
+    let Ok(crate::Response::Regenerated(crate::Regenerated { draft, .. })) =
         crate::wire::decode_reply(&head[..], &parts)
     else {
         panic!("the reply didn't cross");

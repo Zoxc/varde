@@ -1142,7 +1142,7 @@ fn while_quitting(message: &Message) -> bool {
                 _,
                 ForDoc::RegenReady(_)
                     | ForDoc::Computed(
-                        varde_regen::Response::Regenerated { .. }
+                        varde_regen::Response::Regenerated(varde_regen::Regenerated { .. })
                             | varde_regen::Response::Failed { .. }
                     )
                     | ForDoc::SolveReady(_)
