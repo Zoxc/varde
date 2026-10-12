@@ -28,7 +28,8 @@ use varde_document::{
 use varde_regen::{AlignDatums, Summary};
 use varde_view::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionPick,
-    Naming, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name, point_name,
+    Naming, NamingPicks, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name,
+    point_name,
 };
 
 use super::{Doc, Merges, MotionSession, merged_in, unnamed};

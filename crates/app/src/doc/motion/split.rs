@@ -22,8 +22,8 @@ use varde_document::{
 use varde_regen::Summary;
 use varde_sketch::Id;
 use varde_view::{
-    MotionKind, MotionPick, Pick, PickIndex, Picked, SketchLines, SplitMode, SplitPiece, SplitView,
-    Unnamed, plane_name, split_info,
+    MotionKind, MotionPick, NamingPicks, Pick, PickIndex, Picked, SketchLines, SplitMode,
+    SplitPiece, SplitView, Unnamed, plane_name, split_info,
 };
 
 use super::sketches::{count, sketch_name};

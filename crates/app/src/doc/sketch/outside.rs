@@ -19,7 +19,8 @@ use std::sync::Arc;
 use varde_document::{BodyId, Document, OutsideRef, PointRef};
 use varde_sketch::{Id, LinkKind, SketchEdit};
 use varde_view::{
-    ModelHighlight, Naming, Pick, PickIndex, Picked, SketchItem, SketchLines, Tool, Unnamed,
+    ModelHighlight, Naming, NamingPicks, Pick, PickIndex, Picked, SketchItem, SketchLines, Tool,
+    Unnamed,
 };
 
 use super::super::Doc;

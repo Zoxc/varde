@@ -232,8 +232,8 @@ first angle's field and "90°" in the second, a new body.
   at the revolve: the edited one's place, or the end): the two faces'
   keys sorted, the point clicked, and the body its first face is on as
   of the revolve, the merges before it replayed (`Naming::before`, in
-  the document's order: the joins the model shown found working and the
-  combines using their tools up that it didn't find failing, as
+  `regen/src/naming.rs`, in the document's order: the joins the model
+  shown found working and the combines using their tools up that it didn't find failing, as
   `MeshFeed::merged_before` does; an edge between a target's face and a
   used-up tool's is on the target). Refused, with a notice (the status
   bar's, the app's stand-in for the mock's toast on a refused pick)

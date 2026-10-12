@@ -9,8 +9,9 @@ use varde_document::{Document, FaceRef, FeatureId, FeatureKind, Plane};
 use varde_kernel_compat::mesh::PartKey;
 
 use crate::document::CURVED_FACE;
-use crate::naming::{Naming, Shown, Unnamed};
+use crate::naming::NamingPicks;
 use crate::pick::PickIndex;
+use varde_regen::{Naming, Shown, Unnamed};
 
 /// What a plane is being picked for, and so which faces can take it.
 #[derive(Debug, Clone, Default, PartialEq)]

@@ -116,7 +116,7 @@ pub use motion::{
     plane_name, point_name, scale_info, split_info,
 };
 pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
-pub use naming::{Naming, Shown, Unnamed};
+pub use naming::NamingPicks;
 pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, NO_REGIONS, OperationKind, PANEL_BODY, PanelHover, Side, Sides,
@@ -152,6 +152,7 @@ pub use thumbnail::{
     PreviewRequest, RENDER_SCALE, THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, thumbnail_shot,
 };
 pub use toast::toast;
+pub use varde_regen::{Naming, Shown, Unnamed};
 pub use viewport::ModelPicking;
 pub use viewport::sketch_grid;
 pub use viewport::warm_up;

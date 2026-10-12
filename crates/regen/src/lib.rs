@@ -27,6 +27,7 @@ mod edge_facts;
 mod error_geometry;
 mod history;
 mod inspect;
+mod naming;
 mod newest;
 mod pick_tables;
 mod picking;
@@ -93,6 +94,7 @@ pub use history::{BodySolid, Evaluation, evaluate, merged_into, note_merge};
 pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
 };
+pub use naming::{Naming, Shown, Unnamed};
 pub use pick_tables::{Bvh, BvhNode, PickTables, PickTablesError, PickTablesParts, vertex_runs};
 pub use picking::{
     FaceEdgeTables, PickCorner, PickFace, Picking, PickingError, PickingParts, Summary,

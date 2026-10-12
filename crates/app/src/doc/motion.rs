@@ -53,9 +53,9 @@ use varde_regen::Summary;
 use varde_render::Camera;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
-    MotionKind, MotionLook, MotionParts, MotionPick, MotionState, OperationKind, PanelHover,
-    PatternMode, Pick, PickIndex, Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name,
-    pattern_copies, plane_name,
+    MotionKind, MotionLook, MotionParts, MotionPick, MotionState, NamingPicks, OperationKind,
+    PanelHover, PatternMode, Pick, PickIndex, Picked, ShellDirection, SplitMode, SweepPath,
+    Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;

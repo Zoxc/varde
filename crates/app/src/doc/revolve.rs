@@ -18,8 +18,8 @@ use varde_document::{
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{
-    Angle, OperationKind, PanelHover, PickIndex, RevolveLook, RevolvePick, RevolveState, Selected,
-    TurnKind, Unnamed, axis_edge,
+    Angle, NamingPicks, OperationKind, PanelHover, PickIndex, RevolveLook, RevolvePick,
+    RevolveState, Selected, TurnKind, Unnamed, axis_edge,
 };
 
 use super::extrude::is_sketch;

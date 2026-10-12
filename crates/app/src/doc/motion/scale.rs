@@ -18,8 +18,8 @@ use varde_document::{AxisRef, BodyId, Document, EdgeRef, PointRef, Scale, ScaleF
 use varde_expr::{Unit, Value};
 use varde_regen::{EdgeForm, Entity, InspectPick, Measure};
 use varde_view::{
-    MotionField, MotionKind, MotionPick, Pick, PickIndex, Picked, ScaleMode, ScaleView, Unnamed,
-    axis_name, point_name, scale_info,
+    MotionField, MotionKind, MotionPick, NamingPicks, Pick, PickIndex, Picked, ScaleMode,
+    ScaleView, Unnamed, axis_name, point_name, scale_info,
 };
 
 use super::align::{Mark, Taken, point_at, point_of};
