@@ -1358,7 +1358,10 @@ fn bodies<'a>(
 /// The body a join merges the bodies it's ticked for into, if it's
 /// ticked for two or more of `targets`: the first made of them, which
 /// then holds them all. A body merged away before isn't one of them.
-pub(crate) fn joined_into<'a>(operation: OperationKind, targets: &[BodyTarget<'a>]) -> Option<&'a str> {
+pub(crate) fn joined_into<'a>(
+    operation: OperationKind,
+    targets: &[BodyTarget<'a>],
+) -> Option<&'a str> {
     if operation != OperationKind::Join {
         return None;
     }

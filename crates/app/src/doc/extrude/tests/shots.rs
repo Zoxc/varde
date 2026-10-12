@@ -1934,7 +1934,7 @@ fn shots_31_save_as_dialog() {
             move |mode| {
                 let mut state = doc.state(false, mode, Default::default(), Default::default());
                 state.overlay = Some(varde_view::Overlay::NamePrompt);
-                state.naming = Some(varde_view::NamePrompt {
+                state.file.naming = Some(varde_view::NamePrompt {
                     name: "",
                     place,
                     places: true,
@@ -2007,12 +2007,12 @@ fn web_view(
     mode: Mode,
 ) -> iced::Element<'_, varde_view::Message> {
     let mut state = doc.state(false, mode, Default::default(), Default::default());
-    state.location = Some(location);
+    state.file.location = Some(location);
     if menu {
         state.overlay = Some(varde_view::Overlay::FileMenu);
-        state.downloads = Some(varde_view::Downloads::Changed(Some("Sep 30".into())));
-        state.downloadable = true;
-        state.rename = Some(true);
+        state.file.downloads = Some(varde_view::Downloads::Changed(Some("Sep 30".into())));
+        state.file.downloadable = true;
+        state.file.rename = Some(true);
     }
     varde_view::document(state)
 }

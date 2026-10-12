@@ -54,6 +54,56 @@ pub enum OperationState<'a> {
     Measure(crate::MeasureState<'a>),
 }
 
+/// The design's file as the document screen shows it: its name and
+/// where it's kept, its saving, recovery and damage, and exporting.
+pub struct FileShown<'a> {
+    /// The document name, without extension.
+    pub name: &'a str,
+    /// Whether the design has no name, never saved: [`NOT_SAVED`] shows
+    /// in its name's place in the file cell.
+    ///
+    /// [`NOT_SAVED`]: crate::NOT_SAVED
+    pub unnamed: bool,
+    /// Natively, the path of the design's own file, which pointing at the
+    /// file cell shows.
+    pub path: Option<&'a str>,
+    /// Where the design is kept, on the web: a bar under the file cell
+    /// says, and pointing at the cell says more.
+    pub location: Option<Location>,
+    /// Where a design in browser storage stands against its downloads, as
+    /// the file menu says.
+    pub downloads: Option<Downloads>,
+    /// Whether the file menu offers Download: on the web.
+    pub downloadable: bool,
+    /// For a design in browser storage, the file menu offers Rename…:
+    /// whether it may be renamed now, not while it's read-only, or saving,
+    /// or asked about.
+    pub rename: Option<bool>,
+    /// The app's own Save As dialog, on the web, while it shows.
+    pub naming: Option<NamePrompt<'a>>,
+    /// Whether there are unsaved changes.
+    pub edited: bool,
+    /// Whether a save is in flight.
+    pub saving: bool,
+    /// Why the last save or auto-save failed, if it did. Shown with Save
+    /// As, which keeps what the user has whatever went wrong with the file.
+    pub save_error: Option<Cow<'a, str>>,
+    /// Unsaved changes a session that crashed left of the document, if
+    /// there are any to offer to restore.
+    pub recovered: Option<RecoveredChanges>,
+    /// How the file the document was opened from was found damaged, if
+    /// it was, until dismissed.
+    pub damage: Option<DamagedFile>,
+    /// Whether the visible bodies can be exported now: there are some,
+    /// regenerating hasn't failed, and no export is on its way.
+    pub exportable: bool,
+    /// Whether an export is on its way to its file, after the user chose
+    /// where.
+    pub exporting: bool,
+    /// Why the last export failed, if it did, until dismissed.
+    pub export_error: Option<&'a str>,
+}
+
 /// Borrowed state needed to build the document screen.
 pub struct DocumentState<'a> {
     pub editor: &'a Editor,
@@ -109,32 +159,9 @@ pub struct DocumentState<'a> {
     /// `model_selection`, which the status bar shows with them: `None`
     /// while it's on its way, or where they aren't measured.
     pub selection_measured: Option<&'a varde_regen::Inspected>,
-    /// The document name, without extension.
-    pub name: &'a str,
-    /// Whether the design has no name, never saved: [`NOT_SAVED`] shows
-    /// in its name's place in the file cell.
-    ///
-    /// [`NOT_SAVED`]: crate::NOT_SAVED
-    pub unnamed: bool,
-    /// Natively, the path of the design's own file, which pointing at the
-    /// file cell shows.
-    pub path: Option<&'a str>,
-    /// Where the design is kept, on the web: a bar under the file cell
-    /// says, and pointing at the cell says more.
-    pub location: Option<Location>,
-    /// Where a design in browser storage stands against its downloads, as
-    /// the file menu says.
-    pub downloads: Option<Downloads>,
-    /// Whether the file menu offers Download: on the web.
-    pub downloadable: bool,
-    /// For a design in browser storage, the file menu offers Rename…:
-    /// whether it may be renamed now, not while it's read-only, or saving,
-    /// or asked about.
-    pub rename: Option<bool>,
-    /// The app's own Save As dialog, on the web, while it shows.
-    pub naming: Option<NamePrompt<'a>>,
-    /// Whether there are unsaved changes.
-    pub edited: bool,
+    /// The design's file and its saving and exporting, as the banners,
+    /// the file cell and the file menu show it.
+    pub file: FileShown<'a>,
     /// Why the document can't be edited, if it can't. Edit commands are
     /// disabled then; the camera still works.
     pub read_only: Option<&'a str>,
@@ -147,25 +174,6 @@ pub struct DocumentState<'a> {
     /// A sketch edit the solver refused after its sketch was left, if
     /// there's one not dismissed: a banner over the viewport says so.
     pub refused_edit: Option<RefusedEdit<'a>>,
-    /// Whether a save is in flight.
-    pub saving: bool,
-    /// Why the last save or auto-save failed, if it did. Shown with Save
-    /// As, which keeps what the user has whatever went wrong with the file.
-    pub save_error: Option<Cow<'a, str>>,
-    /// Unsaved changes a session that crashed left of the document, if
-    /// there are any to offer to restore.
-    pub recovered: Option<RecoveredChanges>,
-    /// How the file the document was opened from was found damaged, if
-    /// it was, until dismissed.
-    pub damage: Option<DamagedFile>,
-    /// Whether the visible bodies can be exported now: there are some,
-    /// regenerating hasn't failed, and no export is on its way.
-    pub exportable: bool,
-    /// Whether an export is on its way to its file, after the user chose
-    /// where.
-    pub exporting: bool,
-    /// Why the last export failed, if it did, until dismissed.
-    pub export_error: Option<&'a str>,
     /// What's shown over the screen, if anything.
     pub overlay: Option<Overlay>,
     /// The selected side panel tab.
@@ -353,7 +361,7 @@ impl<'a> DocumentState<'a> {
             .with_measure(self.measure().is_some())
             .with_picking_plane(self.picking_plane.is_some())
             .with_rail(self.rail)
-            .with_edited(self.edited)
+            .with_edited(self.file.edited)
             .with_settings(self.settings.is_some())
             .with_history(
                 self.editor.can_undo() || self.proposing,
@@ -834,7 +842,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     let read_only = state
         .read_only
         .map(|reason| banner(text("Read-only").font(theme::SEMIBOLD), reason, None));
-    let save_error = state.save_error.as_deref().map(|error| {
+    let save_error = state.file.save_error.as_deref().map(|error| {
         let save_as =
             small_button("Save As…", Emphasis::Primary).on_press(Message::File(File::SaveAs));
         let dismiss = small_button("Dismiss", Emphasis::Secondary)
@@ -848,7 +856,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         )
     });
 
-    let export_error = state.export_error.map(|error| {
+    let export_error = state.file.export_error.map(|error| {
         let dismiss = small_button("Dismiss", Emphasis::Secondary)
             .on_press(Message::Edit(Edit::DismissExportError));
         banner(
@@ -860,7 +868,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         )
     });
 
-    let recovered = state.recovered.as_ref().map(|recovered| {
+    let recovered = state.file.recovered.as_ref().map(|recovered| {
         // Nothing to restore of what can't be read.
         let restore = (!recovered.unreadable).then(|| {
             small_button("Restore", Emphasis::Primary).on_press(Message::File(File::RestoreChanges))
@@ -874,7 +882,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         )
     });
 
-    let damage = state.damage.as_ref().map(|damaged| {
+    let damage = state.file.damage.as_ref().map(|damaged| {
         let dismiss = small_button("Dismiss", Emphasis::Secondary)
             .on_press(Message::Edit(Edit::DismissDamage));
         banner(
@@ -942,9 +950,9 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     // which shows over the menus.
     let screen = match (state.overlay, &state.deleting) {
         (Some(Overlay::UnsavedPrompt), _) => {
-            Element::from(stack![content, unsaved_prompt(state.name)])
+            Element::from(stack![content, unsaved_prompt(state.file.name)])
         }
-        (Some(Overlay::NamePrompt), _) => match &state.naming {
+        (Some(Overlay::NamePrompt), _) => match &state.file.naming {
             Some(prompt) => Element::from(stack![content, name_prompt(prompt.clone())]),
             None => content.into(),
         },
@@ -953,13 +961,13 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             let document = state.editor.document();
             let menu = toolbar::file_menu(toolbar::FileMenu {
                 editable,
-                edited: state.edited,
-                exportable: state.exportable,
+                edited: state.file.edited,
+                exportable: state.file.exportable,
                 units: document.units(),
                 tolerance: document.tolerance(),
-                downloads: state.downloads.clone(),
-                downloadable: state.downloadable,
-                rename: state.rename,
+                downloads: state.file.downloads.clone(),
+                downloadable: state.file.downloadable,
+                rename: state.file.rename,
             });
             Element::from(stack![content, menu])
         }
@@ -1181,7 +1189,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     // The name prompt's field takes the keys: `Enter` confirms it, as
     // its button says, unless that's blocked, and `Esc` cancels it.
     if state.overlay == Some(Overlay::NamePrompt)
-        && let Some(prompt) = &state.naming
+        && let Some(prompt) = &state.file.naming
     {
         let (action, blocked) = name_action(prompt);
         let enter = (!blocked).then(|| key_hint(Shortcut::ENTER, action));
@@ -2381,8 +2389,8 @@ fn status_notes(state: &DocumentState<'_>) -> Vec<String> {
         .edit_error
         .map(|error| format!("Couldn't edit: {error}"));
     let notice = state.notice.map(str::to_owned);
-    let saving = state.saving.then(|| "Saving…".to_owned());
-    let exporting = state.exporting.then(|| "Exporting…".to_owned());
+    let saving = state.file.saving.then(|| "Saving…".to_owned());
+    let exporting = state.file.exporting.then(|| "Exporting…".to_owned());
     [regenerating, edit_error, notice, saving, exporting]
         .into_iter()
         .flatten()

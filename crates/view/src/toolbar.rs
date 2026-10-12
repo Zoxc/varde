@@ -98,7 +98,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let bar = row![
         // The rule right after the file cell, its wash meeting it.
         row![file_cell(state), vrule()],
-        save_cell(state.editable(), state.edited),
+        save_cell(state.editable(), state.file.edited),
         vrule(),
         container(row![context, tag].spacing(6).align_y(Alignment::Center))
             // A pill starts left of where the text would, so its name
@@ -302,16 +302,16 @@ fn save_cell<'a>(editable: bool, edited: bool) -> Element<'a, Message> {
 /// its path, and whether it has changes not saved.
 fn file_cell<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let open = state.overlay == Some(Overlay::FileMenu);
-    let dirty =
-        (state.edited).then(|| container(Space::new().width(6).height(6)).style(theme::dirty_dot));
-    let name: Element<'a, Message> = if state.unnamed {
+    let dirty = (state.file.edited)
+        .then(|| container(Space::new().width(6).height(6)).style(theme::dirty_dot));
+    let name: Element<'a, Message> = if state.file.unnamed {
         container(text(NOT_SAVED).size(11.5).font(SEMIBOLD))
             .padding([1, 8])
             .style(theme::name_pill)
             .into()
     } else {
         row![
-            text(state.name).font(SEMIBOLD),
+            text(state.file.name).font(SEMIBOLD),
             text(format!(".{EXTENSION}")).style(theme::faint_text)
         ]
         .into()
@@ -339,12 +339,12 @@ fn file_cell<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
 
     // Not while the menu it opens shows under it.
     let mut lines: Vec<Element<'a, Message>> = Vec::new();
-    match (state.location, state.path) {
+    match (state.file.location, state.file.path) {
         (Some(location), _) if !open => {
             let (said, kept, why) = location_told(location);
             lines.push(text(said).size(12).font(SEMIBOLD).into());
             lines.push(
-                text(format!("{}.{EXTENSION}, {kept}", state.name))
+                text(format!("{}.{EXTENSION}, {kept}", state.file.name))
                     .size(12)
                     .into(),
             );
@@ -353,7 +353,7 @@ fn file_cell<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         (None, Some(path)) if !open => lines.push(text(path).size(12).into()),
         _ => {}
     }
-    if state.edited && !open {
+    if state.file.edited && !open {
         lines.push(text("Changes not saved").size(12).into());
     }
     if lines.is_empty() {

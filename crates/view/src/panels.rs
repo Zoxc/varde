@@ -153,7 +153,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let content = mouse_area(content).on_press(CLEAR_SELECTION);
 
     // On the web, under the file cell, where the design is kept.
-    let location = state.location.map(crate::toolbar::location_bar);
+    let location = state.file.location.map(crate::toolbar::location_bar);
     edged(
         container(column![location, strip, content])
             .height(Length::Fill)

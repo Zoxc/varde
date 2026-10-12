@@ -152,6 +152,7 @@ fn saving_a_new_design_asks_for_a_name_and_keeps_it_in_browser_storage() {
     assert_eq!(doc.title_name(), "bracket_1.vrdp");
     assert_eq!(
         doc.state(false, Mode::Light, Default::default(), Default::default())
+            .file
             .location,
         Some(varde_view::Location::Browser)
     );
@@ -661,7 +662,9 @@ fn natively_save_as_shows_the_system_dialog() {
     assert_eq!(naming(&varde), None);
     assert_eq!(document(&varde).picking(), Some(Picking::SaveAs));
     let state = document(&varde).state(false, Mode::Light, Default::default(), Default::default());
-    assert!(!state.downloadable && state.rename.is_none() && state.location.is_none());
+    assert!(
+        !state.file.downloadable && state.file.rename.is_none() && state.file.location.is_none()
+    );
     assert!(sent(&requests).is_empty());
 }
 
@@ -801,7 +804,9 @@ fn rename_waits_for_saves() {
     let (mut varde, _requests, _) = stored_with_downloads();
     let rename = |varde: &Varde| {
         let offers = varde.files.offers();
-        (document(varde).state(false, Mode::Light, Default::default(), offers)).rename
+        (document(varde).state(false, Mode::Light, Default::default(), offers))
+            .file
+            .rename
     };
     assert_eq!(rename(&varde), Some(true));
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
@@ -809,7 +814,7 @@ fn rename_waits_for_saves() {
     assert_eq!(rename(&varde), Some(false));
     let state =
         (document(&varde)).state(false, Mode::Light, Default::default(), varde.files.offers());
-    assert!(state.downloadable);
+    assert!(state.file.downloadable);
 }
 
 /// The answer to opening a file from a file input.

@@ -87,9 +87,9 @@ pub use chamfer::chamfer_info;
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, LinkRow, MeshStatus,
-    NamePrompt, OperationState, Overlay, RecoveredChanges, RefusedEdit, SketchState, ValueField,
-    ValueTarget, body_tint, document,
+    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, FileShown, LinkRow,
+    MeshStatus, NamePrompt, OperationState, Overlay, RecoveredChanges, RefusedEdit, SketchState,
+    ValueField, ValueTarget, body_tint, document,
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
