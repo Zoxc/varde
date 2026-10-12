@@ -716,7 +716,7 @@ fn the_committed_model_keeps_what_it_found() {
         assert_eq!(committed.generation, generation);
         assert_eq!(committed.until, None);
         assert_eq!(committed.parts, [body]);
-        assert!(Arc::ptr_eq(committed.picking, &feed.picking));
+        assert!(Arc::ptr_eq(committed.picking, &feed.shown_model.picking));
         let failed: Vec<_> = committed.failures.iter().map(|f| f.feature).collect();
         assert_eq!(failed, [extrude]);
         committed.picking.clone()
@@ -731,7 +731,7 @@ fn the_committed_model_keeps_what_it_found() {
     feed.request_with(&editor, None, None, draft, None);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert!(feed.shows_draft());
-    assert!(!Arc::ptr_eq(&feed.picking, &picking));
+    assert!(!Arc::ptr_eq(&feed.shown_model.picking, &picking));
     assert!(feed.failed_features().is_empty());
     let committed = feed.committed().unwrap();
     assert_eq!(committed.generation, generation);
@@ -1072,7 +1072,7 @@ fn plate() -> (Editor, MeshFeed, Rc<RefCell<Vec<Request>>>, BodyId, Aabb) {
     let (mut feed, regen) = connected();
     feed.request(&editor, None);
     feed.apply(handle(regen.borrow_mut().remove(0)));
-    let &[(body, aabb)] = &feed.boxes[..] else {
+    let &[(body, aabb)] = &feed.shown_model.boxes[..] else {
         panic!("the plate is one body");
     };
     (editor, feed, regen, body, aabb)

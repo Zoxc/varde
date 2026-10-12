@@ -39,50 +39,21 @@ pub(crate) struct MeshFeed {
     ///
     /// [`Varde::regen_lane`]: crate::Varde::regen_lane
     regen: Option<Box<dyn Transport<Request>>>,
-    mesh: Arc<RenderMesh>,
-    /// `mesh`'s picking tables: the body each of its parts is of, its
-    /// faces' keys and summaries, its edges' tangent chains.
-    picking: Arc<Picking>,
-    /// The hierarchies `mesh` is picked with, built with it in the lane.
-    tables: Arc<PickTables>,
-    /// Counts the models shown, up as `mesh` or `picking` changes: what
+    /// The model shown: what the answer it came in held. Shared with
+    /// `committed` when it's the committed model.
+    shown_model: Arc<Model>,
+    /// Counts the models shown, up as the mesh or picking tables shown change: what
     /// picks name the model by ([`varde_view::Pick::model`]).
     model: u64,
-    /// `mesh` and `picking` made ready for picking, once it's asked for.
+    /// The model shown made ready for picking, once it's asked for.
     index: OnceCell<PickIndex>,
-    /// The visible sketches' curves, of the same generation as `mesh`.
-    sketches: Arc<RenderLines>,
-    /// The sketches that don't solve, of the same generation as `mesh`.
-    unsolved: Vec<FeatureId>,
-    /// The features that failed and why, of the same generation as
-    /// `mesh`, in the document's order.
-    failed_features: Vec<FeatureFailure>,
-    /// Each join, cut or intersect that got as far as its tool, with the
-    /// bodies it touches, of the same generation as `mesh`, in the
-    /// document's order.
-    touched_features: Vec<(FeatureId, Vec<BodyId>)>,
-    /// Each body a join merged into another, and the body holding it, of
-    /// the same generation as `mesh`, in the document's order.
-    merged_bodies: Vec<(BodyId, BodyId)>,
-    /// The bodies that have a solid, shown or not, of the same generation
-    /// as `mesh`, in the order they were made.
-    solid_bodies: Vec<BodyId>,
-    /// Where each sketch on a face that was placed is, of the same
-    /// generation as `mesh`, in the document's order: those that failed
-    /// aren't listed.
-    placements: Vec<(FeatureId, Placement)>,
     /// The links that found nothing, their sketches and why, of the same
-    /// generation as `mesh`, in the document's order.
+    /// generation as `shown_model`, in the document's order.
     broken: Vec<(FeatureId, Id, String)>,
     /// The sketches whose links found other geometry than they hold,
     /// relinked, and the generation they're of: taken once, by
     /// [`MeshFeed::take_relinked`].
     relinked: Option<(Generation, Relinked)>,
-    /// The document `mesh` is of, if it's known (see `asked`): a
-    /// placement is given out only for a sketch on the plane it had
-    /// there, so one an undo has put on another face since isn't drawn
-    /// or edited at the old face's place.
-    shown_document: Option<Snapshot>,
     /// The documents asked about whose models may yet come, oldest first,
     /// at most [`MAX_ASKED`]: an answer whose document has been let go of
     /// gives out no placements.
@@ -90,7 +61,7 @@ pub(crate) struct MeshFeed {
     /// Tags the next [`Request::Export`].
     next_export: u64,
     /// The generation the document was last replaced whole by, if it was,
-    /// see [`MeshFeed::replaced`]: the ids in `unsolved`,
+    /// see [`MeshFeed::replaced`]: the ids in its `Model`'s `unsolved`,
     /// `failed_features`, `touched_features` and `merged_bodies` of an
     /// older answer may name other features or bodies now, so they aren't
     /// given out.
@@ -107,7 +78,7 @@ pub(crate) struct MeshFeed {
     /// asked for after none, or for another feature; touched bodies
     /// answered for an earlier run aren't listed.
     run: u64,
-    /// What `mesh` is of, or `None` before the first one arrives.
+    /// What `shown_model` is of, or `None` before the first one arrives.
     shown: Option<Asked>,
     /// What was asked for last.
     requested: Option<Asked>,
@@ -120,10 +91,6 @@ pub(crate) struct MeshFeed {
     /// bodies' boxes ([`MeshFeed::view`]): `None` until the first model
     /// shows, which is drawn within a share of each solid's size.
     sight: Option<Sight>,
-    /// The boxes of the bodies with a solid, of the same generation as
-    /// `mesh`, sorted by body: what [`MeshFeed::view`] picks their
-    /// levels by.
-    boxes: Vec<(BodyId, Aabb)>,
     /// The draft asked for last, if any: another one is given the next
     /// revision.
     draft: Option<Draft>,
@@ -140,7 +107,7 @@ pub(crate) struct MeshFeed {
     /// document's life as drafts' are.
     inspect_revision: u64,
     /// What the measure asked with the model shown came to, if it had
-    /// one: its places name entries of `picking`.
+    /// one: its places name entries of the picking tables shown.
     inspected: Option<Inspected>,
     /// The newest model shown without a draft, if there's been one: what
     /// a save's thumbnail shows, see [`MeshFeed::committed`].
@@ -251,23 +218,53 @@ fn body_chord(camera: &Camera, aspect: f64, aabb: Aabb) -> Option<f64> {
     }
 }
 
-/// A model shown without a draft: its mesh, its picking tables for the
-/// bodies of its parts, the features that failed in it, and what it's
-/// of.
-struct Committed {
+/// What an answer's model is: its mesh and sketch lines, their picking
+/// tables, and what the regeneration found of its document.
+#[derive(Default)]
+struct Model {
     mesh: Arc<RenderMesh>,
-    sketches: Arc<RenderLines>,
+    /// The mesh's picking tables: the body each of its parts is of, its
+    /// faces' keys and summaries, its edges' tangent chains.
     picking: Arc<Picking>,
+    /// The hierarchies the mesh is picked with, built with it in the lane.
+    tables: Arc<PickTables>,
+    /// The visible sketches' curves, of the same generation as the mesh.
+    sketches: Arc<RenderLines>,
+    /// The sketches that don't solve, of the same generation as the mesh.
+    unsolved: Vec<FeatureId>,
+    /// The features that failed and why, of the same generation as
+    /// the mesh, in the document's order.
     failed_features: Vec<FeatureFailure>,
-    /// What the shown model's `touched_features` and `merged_bodies`
-    /// were: what naming and merging read of this model.
+    /// Each join, cut or intersect that got as far as its tool, with the
+    /// bodies it touches, of the same generation as the mesh, in the
+    /// document's order.
     touched_features: Vec<(FeatureId, Vec<BodyId>)>,
+    /// Each body a join merged into another, and the body holding it, of
+    /// the same generation as the mesh, in the document's order.
     merged_bodies: Vec<(BodyId, BodyId)>,
+    /// The bodies that have a solid, shown or not, of the same generation
+    /// as the mesh, in the order they were made.
+    solid_bodies: Vec<BodyId>,
+    /// Where each sketch on a face that was placed is, of the same
+    /// generation as the mesh, in the document's order: those that failed
+    /// aren't listed.
+    placements: Vec<(FeatureId, Placement)>,
+    /// The boxes of the bodies with a solid, of the same generation as
+    /// the mesh, sorted by body: what [`MeshFeed::view`] picks their
+    /// levels by.
+    boxes: Vec<(BodyId, Aabb)>,
+    /// The document the mesh is of, if it's known (see `asked`): a
+    /// placement is given out only for a sketch on the plane it had
+    /// there, so one an undo has put on another face since isn't drawn
+    /// or edited at the old face's place.
+    document: Option<Snapshot>,
+}
+
+/// A model shown without a draft, and what it's of.
+struct Committed {
+    model: Arc<Model>,
     generation: Generation,
     until: Option<FeatureId>,
-    /// The document it's of, if it's still known: what
-    /// [`MeshFeed::request_query`] asks about.
-    document: Option<Snapshot>,
 }
 
 /// The model a committed document regenerated to, see
@@ -468,7 +465,7 @@ impl MeshFeed {
         // A body is kept at the level it was asked for at, the view's if
         // it wasn't listed.
         let kept = |body: BodyId| last.map(|sight| sight.level(body));
-        let bodies: Vec<(BodyId, Option<Detail>)> = (self.boxes.iter())
+        let bodies: Vec<(BodyId, Option<Detail>)> = (self.shown_model.boxes.iter())
             .map(|&(body, aabb)| {
                 let ideal = body_chord(camera, aspect, aabb).map(f64::log2);
                 (body, ideal.map(|ideal| level(kept(body).flatten(), ideal)))
@@ -533,7 +530,7 @@ impl MeshFeed {
         query: varde_regen::Query,
     ) -> Option<(Generation, Option<FeatureId>)> {
         let committed = self.committed.as_ref()?;
-        let document = committed.document.clone()?;
+        let document = committed.model.document.clone()?;
         let regen = self.regen.as_mut()?;
         let (generation, until) = (committed.generation, committed.until);
         regen.send(Request::Query {
@@ -588,29 +585,34 @@ impl MeshFeed {
                 fn same<T: PartialEq>(a: &Arc<T>, b: &Arc<T>) -> bool {
                     Arc::ptr_eq(a, b) || a == b
                 }
-                if !(same(&self.mesh, &mesh) && same(&self.picking, &picking)) {
+                let shown = &self.shown_model;
+                if !(same(&shown.mesh, &mesh) && same(&shown.picking, &picking)) {
                     self.model = self.model.wrapping_add(1);
                     self.index = OnceCell::new();
                 }
-                self.mesh = mesh;
-                self.solid_bodies = bodies.iter().map(|&(body, _)| body).collect();
-                self.boxes = bodies;
-                self.boxes.sort_unstable_by_key(|&(body, _)| body);
-                self.picking = picking;
-                self.tables = tables;
-                self.sketches = sketches;
-                self.unsolved = unsolved;
-                self.failed_features = failed;
-                self.touched_features = touched;
-                self.merged_bodies = merged;
-                self.placements = placements;
                 self.broken = broken;
                 self.relinked = Some((asked.generation, relinked));
                 // Older documents' models won't be shown any more.
                 (self.asked).retain(|&(generation, _)| generation >= asked.generation);
-                self.shown_document = (self.asked.front())
-                    .filter(|&&(generation, _)| generation == asked.generation)
-                    .map(|(_, document)| document.clone());
+                let mut boxes = bodies;
+                let solid_bodies = boxes.iter().map(|&(body, _)| body).collect();
+                boxes.sort_unstable_by_key(|&(body, _)| body);
+                self.shown_model = Arc::new(Model {
+                    mesh,
+                    picking,
+                    tables,
+                    sketches,
+                    unsolved,
+                    failed_features: failed,
+                    touched_features: touched,
+                    merged_bodies: merged,
+                    solid_bodies,
+                    placements,
+                    boxes,
+                    document: (self.asked.front())
+                        .filter(|&&(generation, _)| generation == asked.generation)
+                        .map(|(_, document)| document.clone()),
+                });
                 if let Some(Drafted {
                     revision,
                     touched: Some(touched),
@@ -630,15 +632,9 @@ impl MeshFeed {
                 (self.hidden).retain(|hid| hid.generation >= asked.generation);
                 if draft.is_none() && !hidden {
                     self.committed = Some(Committed {
-                        mesh: self.mesh.clone(),
-                        sketches: self.sketches.clone(),
-                        picking: self.picking.clone(),
-                        failed_features: self.failed_features.clone(),
-                        touched_features: self.touched_features.clone(),
-                        merged_bodies: self.merged_bodies.clone(),
+                        model: self.shown_model.clone(),
                         generation: asked.generation,
                         until: asked.until,
-                        document: self.shown_document.clone(),
                     });
                 }
                 if !hidden {
@@ -971,7 +967,8 @@ impl MeshFeed {
     /// Whether the model shown has a solid for a body `document` shows:
     /// one of the bodies an export would write, if the model is current.
     pub(crate) fn shows_a_body(&self, document: &Document) -> bool {
-        (self.solid_bodies.iter()).any(|&body| document.body(body).is_some_and(|body| body.visible))
+        (self.shown_model.solid_bodies.iter())
+            .any(|&body| document.body(body).is_some_and(|body| body.visible))
     }
 
     /// The generation of the mesh shown, if there is one yet.
@@ -999,7 +996,7 @@ impl MeshFeed {
     }
 
     pub(crate) fn mesh(&self) -> &Arc<RenderMesh> {
-        &self.mesh
+        &self.shown_model.mesh
     }
 
     /// Whether the model shown has a draft applied: the preview of the
@@ -1017,19 +1014,17 @@ impl MeshFeed {
     /// [`MeshFeed::parts`]. `None` before there's been one.
     pub(crate) fn committed(&self) -> Option<Shown<'_>> {
         let committed = self.committed.as_ref()?;
-        let current = self
-            .replaced
-            .is_none_or(|replaced| committed.generation >= replaced);
-        let (parts, failures) = if current {
-            (committed.picking.bodies(), &committed.failed_features[..])
+        let model = &committed.model;
+        let (parts, failures) = if self.current(committed.generation) {
+            (model.picking.bodies(), &model.failed_features[..])
         } else {
             (&[][..], &[][..])
         };
         Some(Shown {
-            mesh: &committed.mesh,
-            sketches: &committed.sketches,
+            mesh: &model.mesh,
+            sketches: &model.sketches,
             parts,
-            picking: &committed.picking,
+            picking: &model.picking,
             failures,
             generation: committed.generation,
             until: committed.until,
@@ -1045,8 +1040,9 @@ impl MeshFeed {
     /// asked for.
     pub(crate) fn pick_index(&self) -> &PickIndex {
         self.index.get_or_init(|| {
-            let (mesh, picking) = (self.mesh.clone(), self.picking.clone());
-            PickIndex::with_tables(mesh, picking, self.tables.clone(), self.model)
+            let shown = &self.shown_model;
+            let (mesh, picking) = (shown.mesh.clone(), shown.picking.clone());
+            PickIndex::with_tables(mesh, picking, shown.tables.clone(), self.model)
         })
     }
 
@@ -1054,15 +1050,11 @@ impl MeshFeed {
     /// None after the document is replaced, whose ids may name other
     /// bodies, until a model of it shows: the parts are drawn opaque.
     pub(crate) fn parts(&self) -> &[BodyId] {
-        if self.marks() {
-            self.picking.bodies()
-        } else {
-            &[]
-        }
+        self.marked().map_or(&[], |model| model.picking.bodies())
     }
 
     pub(crate) fn sketches(&self) -> &Arc<RenderLines> {
-        &self.sketches
+        &self.shown_model.sketches
     }
 
     /// Notes that the document was replaced whole (restoring recovered
@@ -1081,13 +1073,17 @@ impl MeshFeed {
             (Some(shown), Some(replaced)) if shown.generation < replaced)
     }
 
-    /// Whether the features the model shown found name features of the
-    /// document as it is, see [`MeshFeed::replaced`].
-    fn marks(&self) -> bool {
-        match (self.shown, self.replaced) {
-            (Some(shown), Some(replaced)) => shown.generation >= replaced,
-            (shown, _) => shown.is_some(),
-        }
+    /// The model shown, if there's one and the features it found name
+    /// features of the document as it is, see [`MeshFeed::replaced`].
+    fn marked(&self) -> Option<&Model> {
+        let shown = self.shown?;
+        self.current(shown.generation).then_some(&*self.shown_model)
+    }
+
+    /// Whether a model of `generation` is of the document as it is: not
+    /// from before it was replaced whole, see [`MeshFeed::replaced`].
+    fn current(&self, generation: Generation) -> bool {
+        self.replaced.is_none_or(|replaced| generation >= replaced)
     }
 
     /// Where the sketch on a face `feature`, now on `plane`, is, as the
@@ -1097,16 +1093,15 @@ impl MeshFeed {
     /// change of plane since) or its document isn't known, or the
     /// document was replaced since.
     pub(crate) fn placement(&self, feature: FeatureId, plane: &Plane) -> Option<Placement> {
-        let on_plane = self.shown_document.as_ref().is_some_and(|document| {
+        let model = self.marked()?;
+        let on_plane = model.document.as_ref().is_some_and(|document| {
             matches!(document.feature(feature).map(|feature| &feature.kind),
                 Some(FeatureKind::Sketch { plane: shown, .. }) if shown == plane)
         });
-        let placements = if self.marks() && on_plane {
-            &self.placements[..]
-        } else {
-            &[]
-        };
-        (placements.iter())
+        if !on_plane {
+            return None;
+        }
+        (model.placements.iter())
             .find(|(placed, _)| *placed == feature)
             .map(|&(_, placement)| placement)
     }
@@ -1114,16 +1109,14 @@ impl MeshFeed {
     /// The sketches that don't solve, as the model shown found, unless
     /// the document was replaced since.
     pub(crate) fn unsolved(&self) -> &[FeatureId] {
-        if self.marks() { &self.unsolved } else { &[] }
+        self.marked().map_or(&[], |model| &model.unsolved)
     }
 
     /// Why the link `link` of the sketch `feature` found nothing, as the
     /// model shown found, if it did. None if the document was replaced
     /// since.
     pub(crate) fn broken(&self, feature: FeatureId, link: Id) -> Option<&str> {
-        if !self.marks() {
-            return None;
-        }
+        self.marked()?;
         (self.broken.iter())
             .find(|(sketch, id, _)| *sketch == feature && *id == link)
             .map(|(_, _, why)| why.as_str())
@@ -1153,11 +1146,7 @@ impl MeshFeed {
     /// a draft, those of the document with the draft applied. None if the
     /// document was replaced since.
     pub(crate) fn failed_features(&self) -> &[FeatureFailure] {
-        if self.marks() {
-            &self.failed_features
-        } else {
-            &[]
-        }
+        self.marked().map_or(&[], |model| &model.failed_features)
     }
 
     /// Each join, cut or intersect that got as far as its tool, with the
@@ -1165,11 +1154,7 @@ impl MeshFeed {
     /// of the document with the draft applied. None if the document was
     /// replaced since.
     pub(crate) fn touched_features(&self) -> &[(FeatureId, Vec<BodyId>)] {
-        if self.marks() {
-            &self.touched_features
-        } else {
-            &[]
-        }
+        self.marked().map_or(&[], |model| &model.touched_features)
     }
 
     /// Each body a join merged into another (*consumed*), with the body
@@ -1177,11 +1162,7 @@ impl MeshFeed {
     /// document with the draft applied merges them. None if the document
     /// was replaced since.
     pub(crate) fn merged_bodies(&self) -> &[(BodyId, BodyId)] {
-        if self.marks() {
-            &self.merged_bodies
-        } else {
-            &[]
-        }
+        self.marked().map_or(&[], |model| &model.merged_bodies)
     }
 
     /// The body the model shown draws `body` as: the one holding it if a
@@ -1226,13 +1207,11 @@ impl MeshFeed {
     /// predates a replacement of the document (it's being rebuilt).
     pub(crate) fn committed_marks(&self) -> Option<Marks<'_>> {
         let committed = self.committed.as_ref()?;
-        let current = self
-            .replaced
-            .is_none_or(|replaced| committed.generation >= replaced);
-        current.then(|| Marks {
-            merged: &committed.merged_bodies,
-            touched: &committed.touched_features,
-            failed: &committed.failed_features,
+        let model = &committed.model;
+        self.current(committed.generation).then(|| Marks {
+            merged: &model.merged_bodies,
+            touched: &model.touched_features,
+            failed: &model.failed_features,
         })
     }
 
@@ -1241,8 +1220,8 @@ impl MeshFeed {
     /// keys are found on), else the model shown's.
     pub(crate) fn marks_of(&self, index: &PickIndex) -> Marks<'_> {
         let committed = (self.committed.as_ref())
-            .is_some_and(|committed| Arc::ptr_eq(index.picking(), &committed.picking));
-        if committed && !Arc::ptr_eq(index.picking(), &self.picking) {
+            .is_some_and(|committed| Arc::ptr_eq(index.picking(), &committed.model.picking));
+        if committed && !Arc::ptr_eq(index.picking(), &self.shown_model.picking) {
             self.committed_marks().unwrap_or_default()
         } else {
             self.shown_marks()
