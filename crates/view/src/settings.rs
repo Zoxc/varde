@@ -466,21 +466,12 @@ fn theme_said(theme: ThemeChoice) -> &'static str {
     }
 }
 
-/// Each interface scale offered, as shown: from [`INTERFACE_SCALE_MIN`]
-/// in steps of [`INTERFACE_SCALE_STEP`].
-const SCALE_LABELS: [&str; 26] = [
-    "75%", "80%", "85%", "90%", "95%", "100%", "105%", "110%", "115%", "120%", "125%", "130%",
-    "135%", "140%", "145%", "150%", "155%", "160%", "165%", "170%", "175%", "180%", "185%", "190%",
-    "195%", "200%",
-];
-
-fn scale_said(percent: u16) -> &'static str {
-    if !crate::interface_scale_offered(percent) {
-        return "Other";
+fn scale_said(percent: u16) -> Cow<'static, str> {
+    if crate::interface_scale_offered(percent) {
+        format!("{percent}%").into()
+    } else {
+        "Other".into()
     }
-    // Offered, so at least the least and a whole step from it.
-    let index = usize::from((percent - INTERFACE_SCALE_MIN) / INTERFACE_SCALE_STEP);
-    SCALE_LABELS.get(index).copied().unwrap_or("Other")
 }
 
 fn angle_said(unit: AngleUnit) -> &'static str {
@@ -490,14 +481,10 @@ fn angle_said(unit: AngleUnit) -> &'static str {
     }
 }
 
-fn decimals_said(decimals: Option<u8>) -> &'static str {
-    const COUNTS: [&str; 7] = ["0", "1", "2", "3", "4", "5", "6"];
+fn decimals_said(decimals: Option<u8>) -> Cow<'static, str> {
     match decimals {
-        None => "Auto",
-        Some(count) => COUNTS
-            .get(usize::from(count.min(Shown::MAX_DECIMALS)))
-            .copied()
-            .unwrap_or("6"),
+        None => "Auto".into(),
+        Some(count) => count.min(Shown::MAX_DECIMALS).to_string().into(),
     }
 }
 
@@ -542,23 +529,19 @@ fn zoom_said(wheel_down_zooms_in: bool) -> &'static str {
     }
 }
 
-fn auto_save_said(minutes: u16) -> &'static str {
+fn auto_save_said(minutes: u16) -> Cow<'static, str> {
     match minutes {
-        0 => "Off",
-        1 => "1 min",
-        5 => "5 min",
-        10 => "10 min",
-        _ => "Other",
+        0 => "Off".into(),
+        _ if crate::AUTO_SAVE_MINUTES.contains(&minutes) => format!("{minutes} min").into(),
+        _ => "Other".into(),
     }
 }
 
-fn recent_said(count: u16) -> &'static str {
-    match count {
-        10 => "10",
-        25 => "25",
-        50 => "50",
-        100 => "100",
-        _ => "Other",
+fn recent_said(count: u16) -> Cow<'static, str> {
+    if crate::RECENT_DESIGNS.contains(&count) {
+        count.to_string().into()
+    } else {
+        "Other".into()
     }
 }
 
@@ -1251,20 +1234,20 @@ fn setting<'a>(
 /// `all`, each its `icon`, if it has them, and its `label`, the one chosen
 /// the first of `(value, default)`. Each is chosen, and reset, as `to`
 /// it, the default said as [`Setting::said`] says it.
-fn choice<'a, T: Copy + PartialEq, const N: usize>(
+fn choice<'a, T: Copy + PartialEq, L: Into<Cow<'static, str>>, const N: usize>(
     name: &'static str,
     does: &'static str,
     all: [T; N],
     (value, default): (T, T),
     to: fn(T) -> Setting,
-    label: fn(T) -> &'static str,
+    label: fn(T) -> L,
     icon: Option<fn(T) -> Icon>,
 ) -> SettingRow<'a> {
     let set = |each| Message::Settings(SettingsPage::Set(to(each)));
     let control = segmented(all.map(|each| {
         (
             icon.map(|icon| icon(each)),
-            label(each),
+            label(each).into(),
             each == value,
             set(each),
         )
@@ -1371,7 +1354,7 @@ const CHANGED_BAR: f32 = 3.0;
 /// A choice among a few, as one bar of buttons, each its icon, if it has
 /// one, its label, whether it's the one chosen and what it sends.
 fn segmented<'a, const N: usize>(
-    choices: [(Option<Icon>, &'static str, bool, Message); N],
+    choices: [(Option<Icon>, Cow<'static, str>, bool, Message); N],
 ) -> Element<'a, Message> {
     let buttons = choices.into_iter().map(|(icon, label, on, message)| {
         let label = text(label)
