@@ -134,9 +134,11 @@ pub enum McpPanel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpRow<'a> {
     Call(McpCall<'a>),
-    User(Cow<'a, str>),
-    /// One of the user's own edits since taken back: greyed.
-    UserReverted(Cow<'a, str>),
+    User {
+        said: Cow<'a, str>,
+        /// Whether it's since been taken back: greyed, marked *Reverted*.
+        reverted: bool,
+    },
     /// A revert made from the panel.
     Revert(McpRevert<'a>),
 }
@@ -635,8 +637,7 @@ pub(crate) fn panel<'a>(mcp: &McpShown<'a>) -> Option<Element<'a, Message>> {
                 .map(|name| note(format!("{} disconnected", client_name(name))));
             let rows = mcp.rows.iter().map(|row| match row {
                 McpRow::Call(call) => call_row(call),
-                McpRow::User(said) => user_row(said, false),
-                McpRow::UserReverted(said) => user_row(said, true),
+                McpRow::User { said, reverted } => you_row(None, said, *reverted),
                 McpRow::Revert(revert) => revert_row(revert),
             });
             chrome::scrolled(
@@ -735,15 +736,10 @@ fn call_row<'a>(call: &McpCall<'a>) -> Element<'a, Message> {
     match &call.told {
         Some(told) => column![
             row,
-            container(
-                text(told.clone())
-                    .size(11.5)
-                    .style(theme::faint_text)
-                    .wrapping(text::Wrapping::None)
-            )
-            .padding(Padding::from([0, 8]))
-            .width(Length::Fill)
-            .clip(true)
+            container(small_text(told.clone(), theme::faint_text))
+                .padding(Padding::from([0, 8]))
+                .width(Length::Fill)
+                .clip(true)
         ]
         .into(),
         None => row,
@@ -805,13 +801,8 @@ fn revert_row<'a>(revert: &McpRevert<'a>) -> Element<'a, Message> {
     )
 }
 
-/// A row of the user's own edit: "You: renamed Hole 2 to Bolt hole",
-/// greyed and marked *Reverted* once taken back.
-fn user_row<'a>(said: &Cow<'a, str>, reverted: bool) -> Element<'a, Message> {
-    you_row(None, said, reverted)
-}
-
-/// A row of something the user did, after `icon` if any.
+/// A row of something the user did, after `icon` if any: "You: renamed
+/// Hole 2 to Bolt hole", greyed and marked *Reverted* once taken back.
 fn you_row<'a>(icon: Option<Icon>, said: &Cow<'a, str>, reverted: bool) -> Element<'a, Message> {
     container(
         row![
@@ -844,9 +835,20 @@ fn faded(reverted: bool) -> fn(&iced::Theme) -> text::Style {
 
 /// The *Reverted* a row taken back ends with.
 fn reverted_tag<'a>() -> iced::widget::Text<'a> {
-    text("Reverted")
-        .size(11.5)
-        .style(theme::faint_text)
+    small_text("Reverted", theme::faint_text)
+}
+
+/// How big a row's small text is: its state, what the client was told.
+const SMALL_SIZE: f32 = 11.5;
+
+/// A row's small text `said`, styled by `style`, on one line.
+fn small_text<'a>(
+    said: impl text::IntoFragment<'a>,
+    style: fn(&iced::Theme) -> text::Style,
+) -> iced::widget::Text<'a> {
+    text(said)
+        .size(SMALL_SIZE)
+        .style(style)
         .wrapping(text::Wrapping::None)
 }
 
@@ -857,25 +859,15 @@ fn call_line<'a>(call: &McpCall<'a>) -> Element<'a, Message> {
     let state: Element<'a, Message> = match call.state {
         // Taken back since: greyed, saying so.
         McpCallState::Applied if reverted => reverted_tag().into(),
-        McpCallState::Applied if not_told => text("Applied (client not told)")
-            .size(11.5)
-            .style(theme::ok_text)
-            .wrapping(text::Wrapping::None)
-            .into(),
+        McpCallState::Applied if not_told => {
+            small_text("Applied (client not told)", theme::ok_text).into()
+        }
         McpCallState::Waiting => icons::tinted(Icon::More, icons::INLINE, |p| p.accent).into(),
         McpCallState::Answered => icons::tinted(Icon::Check, icons::INLINE, |p| p.ok).into(),
         McpCallState::Failed => icons::tinted(Icon::Close, icons::INLINE, |p| p.danger).into(),
         // An edit says how it went in words: whether the design changed.
-        McpCallState::Applied => text(call.state.said())
-            .size(11.5)
-            .style(theme::ok_text)
-            .wrapping(text::Wrapping::None)
-            .into(),
-        McpCallState::NotApplied => text(call.state.said())
-            .size(11.5)
-            .style(theme::danger_text)
-            .wrapping(text::Wrapping::None)
-            .into(),
+        McpCallState::Applied => small_text(call.state.said(), theme::ok_text).into(),
+        McpCallState::NotApplied => small_text(call.state.said(), theme::danger_text).into(),
     };
     let said = text(call.tool.said()).wrapping(text::Wrapping::None);
     let said = match reverted {

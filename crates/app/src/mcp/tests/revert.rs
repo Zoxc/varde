@@ -171,10 +171,16 @@ fn rows_grey_as_undo_and_redo_take_them_back() {
         },
     );
     summary(&mut varde);
-    let told = McpRow::User("renamed body Body 1 to Plate".into());
+    let told = McpRow::User {
+        said: "renamed body Body 1 to Plate".into(),
+        reverted: false,
+    };
     assert!(varde.mcp_panel_shown().unwrap().rows.contains(&told));
     undo(&mut varde);
-    let greyed = McpRow::UserReverted("renamed body Body 1 to Plate".into());
+    let greyed = McpRow::User {
+        said: "renamed body Body 1 to Plate".into(),
+        reverted: true,
+    };
     assert!(varde.mcp_panel_shown().unwrap().rows.contains(&greyed));
     redo(&mut varde);
     assert!(varde.mcp_panel_shown().unwrap().rows.contains(&told));
@@ -429,7 +435,7 @@ fn an_edit_reverted_while_regen_is_late_says_undone() {
 fn user_rows(varde: &Varde) -> Vec<String> {
     (varde.mcp_panel_shown().unwrap().rows.into_iter())
         .filter_map(|row| match row {
-            McpRow::User(said) | McpRow::UserReverted(said) => Some(said.into_owned()),
+            McpRow::User { said, .. } => Some(said.into_owned()),
             _ => None,
         })
         .collect()

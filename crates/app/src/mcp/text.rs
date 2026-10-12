@@ -18,10 +18,7 @@ pub(super) fn user_rows(
     reverted: bool,
 ) -> impl Iterator<Item = varde_view::McpRow<'_>> {
     fn row(said: std::borrow::Cow<'_, str>, reverted: bool) -> varde_view::McpRow<'_> {
-        match reverted {
-            true => varde_view::McpRow::UserReverted(said),
-            false => varde_view::McpRow::User(said),
-        }
+        varde_view::McpRow::User { said, reverted }
     }
     let more = lines.len().saturating_sub(changes::LINES);
     (lines.iter().take(changes::LINES))

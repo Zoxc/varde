@@ -356,9 +356,10 @@ fn the_panel_shows_the_users_edits_and_what_was_told() {
     let rows = varde.mcp_panel_shown().unwrap().rows;
     assert_eq!(
         rows.last(),
-        Some(&varde_view::McpRow::User(
-            "renamed Extrude 1 to Bolt hole".into()
-        ))
+        Some(&varde_view::McpRow::User {
+            said: "renamed Extrude 1 to Bolt hole".into(),
+            reverted: false
+        })
     );
     assert!(on_screen(&varde).iter().any(|text| text == "You:"));
 
@@ -367,7 +368,10 @@ fn the_panel_shows_the_users_edits_and_what_was_told() {
     assert_eq!(rows.len(), 3, "{rows:?}");
     assert_eq!(
         rows[1],
-        varde_view::McpRow::User("renamed Extrude 1 to Bolt hole".into())
+        varde_view::McpRow::User {
+            said: "renamed Extrude 1 to Bolt hole".into(),
+            reverted: false
+        }
     );
     let varde_view::McpRow::Call(call) = &rows[2] else {
         panic!("a call row");

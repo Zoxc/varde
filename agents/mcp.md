@@ -1560,7 +1560,7 @@ since the last call show after the last row as they're made
 (`Mcp::live`, worked out again in `Mcp::sync` only while the panel is
 open and when the design's revision moved, `changes::Seen::is_now`). At most `changes::LINES` (20)
 rows per call, the rest counted in one more. Text goes through `plain`
-as the rest does. Greyed (`McpRow::UserReverted`) when taken back, as
+as the rest does. Greyed (`McpRow::User`'s `reverted`) when taken back, as
 the client's rows are (below): each `Logged` keeps the revision its
 lines were worked out on (`told_at`: an edit's before, else the design
 at the tell), and they grey while that state isn't in effect
