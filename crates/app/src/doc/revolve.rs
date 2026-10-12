@@ -59,12 +59,12 @@ pub(crate) struct RevolveSession {
     /// The bodies a join, cut or intersect leaves out: the edited
     /// revolve's to start with.
     pub(crate) targets: BodyTargets,
-    /// The design as the fields' texts were last read, whose units bare
-    /// lengths in them are in: see [`RevolveSession::follow_design`].
     /// The panel's row the cursor is over, if any.
     pub(crate) hover: Option<PanelHover>,
     /// The knob being dragged in the viewport, if one is.
     pub(crate) grabbed: Option<Angle>,
+    /// The design as the fields' texts were last read, whose units bare
+    /// lengths in them are in: see [`RevolveSession::follow_design`].
     read_in: ReadIn,
 }
 
@@ -129,6 +129,8 @@ impl RevolveSession {
         };
         session.extent = extent;
         let flips = session.extent.flips();
+        // Unlike an extrude's, two sides switched to from one keep the
+        // second's default angle rather than taking the first's.
         (session.sides).open([first, second], revolve.flip, flips, &ask);
         session.operation = OperationKind::of(&revolve.operation);
         session.targets = BodyTargets::new(revolve.operation.excluded());
