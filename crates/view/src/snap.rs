@@ -273,22 +273,8 @@ pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64)
         .flat_map(|entry| entry.curve.points())
         .filter(|point| !closes.contains(point))
         .collect();
-    let near = |candidates: Vec<Snap>| {
-        candidates
-            .into_iter()
-            .filter(|snap| snap.at.is_finite())
-            .map(|snap| (snap.at.distance(cursor), snap))
-            .filter(|&(distance, _)| distance <= tolerance)
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, snap)| snap)
-    };
-    let points = (sketch.points.iter())
-        .filter(|point| point.id != dragged && !neighbours.contains(&point.id))
-        .map(|point| (point.at, point.id))
-        .chain([(DVec2::ZERO, Id::ORIGIN)])
-        .filter(|&(_, id)| id != dragged)
-        .map(|(at, id)| Snap::on(at, Target::Point(id)))
-        .collect();
+    let near = |candidates: Vec<Snap>| nearest(candidates, cursor, tolerance);
+    let points = point_snaps(sketch, |id, _| id != dragged && !neighbours.contains(&id)).collect();
     let special = || {
         (special_points(sketch).into_iter())
             .filter(|snap| {
@@ -326,15 +312,33 @@ pub(crate) fn snap_rim(sketch: &Sketch, circle: Id, cursor: DVec2, pixel: f64) -
         return Snap::free(cursor);
     };
     let tolerance = SNAP_TOLERANCE * pixel;
-    (sketch.points.iter())
-        .filter(|point| point.id != center)
-        .map(|point| (point.at, point.id))
-        .chain([(DVec2::ZERO, Id::ORIGIN)])
-        .filter(|&(at, id)| id != center && at.is_finite())
-        .map(|(at, id)| (at.distance(cursor), Snap::on(at, Target::Point(id))))
+    let points = point_snaps(sketch, |id, _| id != center);
+    nearest(points, cursor, tolerance).unwrap_or(Snap::free(cursor))
+}
+
+/// The nearest of `candidates` to `cursor` within `tolerance`, the first
+/// of those as near; those at no finite place left out.
+fn nearest(
+    candidates: impl IntoIterator<Item = Snap>,
+    cursor: DVec2,
+    tolerance: f64,
+) -> Option<Snap> {
+    (candidates.into_iter())
+        .filter(|snap| snap.at.is_finite())
+        .map(|snap| (snap.at.distance(cursor), snap))
         .filter(|&(distance, _)| distance <= tolerance)
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map_or(Snap::free(cursor), |(_, snap)| snap)
+        .map(|(_, snap)| snap)
+}
+
+/// The points of `sketch`, then the origin, to snap to: those `keep`
+/// takes, by id and place.
+fn point_snaps(sketch: &Sketch, keep: impl Fn(Id, DVec2) -> bool) -> impl Iterator<Item = Snap> {
+    (sketch.points.iter())
+        .map(|point| (point.id, point.at))
+        .chain([(Id::ORIGIN, DVec2::ZERO)])
+        .filter(move |&(id, at)| keep(id, at))
+        .map(|(id, at)| Snap::on(at, Target::Point(id)))
 }
 
 /// The points of the curve `curve` of `sketch` its point `point`,
@@ -389,28 +393,14 @@ fn snap_within(
     pixel: f64,
 ) -> Option<Snap> {
     // The nearest within reach, the first of those as near.
-    let near = |candidates: Vec<Snap>| {
-        candidates
-            .into_iter()
-            .map(|snap| (snap.at.distance(cursor), snap))
-            .filter(|&(distance, _)| distance <= tolerance)
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, snap)| snap)
-    };
+    let near = |candidates: Vec<Snap>| nearest(candidates, cursor, tolerance);
     let start = match (tool.tool, tool.placed) {
         (Tool::Line, &[start]) => Some(start),
         _ => None,
     };
     // A line doesn't snap to the point it starts from, which would make
     // it no line.
-    let points = sketch
-        .points
-        .iter()
-        .map(|point| (point.at, point.id))
-        .chain([(DVec2::ZERO, Id::ORIGIN)])
-        .filter(|&(at, _)| Some(at) != start)
-        .map(|(at, id)| Snap::on(at, Target::Point(id)))
-        .collect();
+    let points = point_snaps(sketch, |_, at| Some(at) != start).collect();
     if let Some(snap) = near(own_points(tool, pixel)).or_else(|| near(points)) {
         return Some(snap);
     }
