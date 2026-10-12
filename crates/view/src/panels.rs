@@ -32,7 +32,7 @@ use crate::toolbar::{menu_item, menu_separator, ticked};
 use crate::{
     ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
     ObjectRow, OriginObject, Panel, RENAME_FIELD, RowMenu, SketchState, VALUE_FIELD, ValueTarget,
-    dimension, split,
+    dimension, divider,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -1405,7 +1405,7 @@ fn sketch_tab<'a>(
     .height(ROW_HEIGHT)
     .padding([0, 16])
     .align_y(Alignment::Center);
-    let lists = split::vertical_split(
+    let lists = divider::vertical_split(
         sketch.split,
         move |height| geometry(sketch, height),
         move |height| constraints(sketch, height),
