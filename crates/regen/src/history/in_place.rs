@@ -91,6 +91,7 @@ impl<'a> InPlace<'a> {
             }
         }
         Failed {
+            missing: false,
             message,
             geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
         }

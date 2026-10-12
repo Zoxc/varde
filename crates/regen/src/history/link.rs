@@ -73,6 +73,40 @@ pub(crate) const WRONG_KIND: &str = "it can't take what it comes from";
 /// What one link of a sketch found: its shape, or why it's broken.
 pub(crate) type Found = (Id, Result<LinkShape, String>);
 
+/// Why a link finds nothing: its words, and whether what it looks for
+/// isn't on the body, which a split may have moved onto another: told by
+/// this, never by the words.
+#[derive(Debug, Clone)]
+pub(crate) struct Broken {
+    pub(crate) why: String,
+    missing: bool,
+}
+
+impl Broken {
+    /// What it looks for isn't on the body, in `why`'s words.
+    fn missing(why: &str) -> Broken {
+        Broken {
+            why: why.to_owned(),
+            missing: true,
+        }
+    }
+}
+
+impl From<String> for Broken {
+    fn from(why: String) -> Broken {
+        Broken {
+            why,
+            missing: false,
+        }
+    }
+}
+
+impl From<&str> for Broken {
+    fn from(why: &str) -> Broken {
+        Broken::from(why.to_owned())
+    }
+}
+
 /// Finds the links of the sketch feature `feature` holding `sketch`, at
 /// `placement` (`None` where it isn't placed), whose sources are
 /// `sources`, on the model `evaluation` holds and the sketches before it,
@@ -109,6 +143,7 @@ pub(super) fn find(
                 tolerance,
                 cache,
             )
+            .map_err(|broken| broken.why)
             .and_then(|shape| {
                 if shape.fits(design.max) {
                     Ok(shape)
@@ -130,9 +165,9 @@ fn one(
     evaluation: &Evaluation,
     tolerance: Tolerance,
     cache: &mut Cache,
-) -> Result<LinkShape, String> {
+) -> Result<LinkShape, Broken> {
     if !source.takes(kind) {
-        return Err(WRONG_KIND.to_owned());
+        return Err(WRONG_KIND.into());
     }
     let (exact, fit) = (tolerance.resolution(), tolerance.fit());
     match *source {
@@ -151,56 +186,56 @@ fn one(
                 .finish();
             cache.link(key, || {
                 (source.sketch.project_item(item, &map, exact, fit)).map_err(|why| match why {
-                    varde_sketch::ProjectError::Missing => SOURCE_ITEM_GONE.to_owned(),
-                    varde_sketch::ProjectError::Fit(why) => why.to_string(),
+                    varde_sketch::ProjectError::Missing => SOURCE_ITEM_GONE.into(),
+                    varde_sketch::ProjectError::Fit(why) => why.to_string().into(),
                 })
             })
         }
-        OutsideRef::Edge(edge) => {
-            on_body(edge.body, evaluation, |made| {
-                let key = model_key("link edge", made, source, kind, placement, &tolerance);
-                let topology = crate::inspect::topology(made, cache);
-                cache.link(key, || {
-                    let solid = &made.solid;
-                    let chain = (topology.edge(solid, edge.faces, edge.near))
-                        .map_err(|_| EDGE_NOT_FOUND.to_owned())?;
-                    let chain = &topology.chains()[chain as usize];
-                    let mesh = solid.mesh();
-                    let tris = mesh.tris().len();
-                    if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
-                        return Err(EDGE_NOT_FOUND.to_owned());
+        OutsideRef::Edge(edge) => on_body(edge.body, evaluation, |made| {
+            let key = model_key("link edge", made, source, kind, placement, &tolerance);
+            let topology = crate::inspect::topology(made, cache);
+            cache.link(key, || {
+                let solid = &made.solid;
+                let chain = (topology.edge(solid, edge.faces, edge.near))
+                    .map_err(|_| Broken::missing(EDGE_NOT_FOUND))?;
+                let chain = &topology.chains()[chain as usize];
+                let mesh = solid.mesh();
+                let tris = mesh.tris().len();
+                if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
+                    return Err(Broken::missing(EDGE_NOT_FOUND));
+                }
+                let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
+                match kind {
+                    LinkKind::Project => {
+                        let places = section::sample(&curves, PER_CONIC, chain.closed)
+                            .map_err(|_| TOO_COMPLEX)?;
+                        let places = places.iter().map(|&p| placement.to_sketch(p)).collect();
+                        let chain = SampledChain {
+                            places,
+                            closed: chain.closed,
+                        };
+                        LinkShape::fit(&[chain], exact, fit).map_err(|why| why.to_string().into())
                     }
-                    let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
-                    match kind {
-                        LinkKind::Project => {
-                            let places = section::sample(&curves, PER_CONIC, chain.closed)
-                                .map_err(|_| TOO_COMPLEX.to_owned())?;
-                            let places = places.iter().map(|&p| placement.to_sketch(p)).collect();
-                            let chain = SampledChain {
-                                places,
-                                closed: chain.closed,
-                            };
-                            LinkShape::fit(&[chain], exact, fit).map_err(|why| why.to_string())
+                    LinkKind::Intersect => {
+                        let points =
+                            section::crossings(&curves, &cut(placement), exact).map_err(|why| {
+                                match why {
+                                    SectionError::InPlane => Broken::from(EDGE_IN_PLANE),
+                                    SectionError::TooComplex => Broken::from(TOO_COMPLEX),
+                                }
+                            })?;
+                        if points.is_empty() {
+                            return Err(EDGE_MISSES.into());
                         }
-                        LinkKind::Intersect => {
-                            let points = section::crossings(&curves, &cut(placement), exact)
-                                .map_err(|why| match why {
-                                    SectionError::InPlane => EDGE_IN_PLANE.to_owned(),
-                                    SectionError::TooComplex => TOO_COMPLEX.to_owned(),
-                                })?;
-                            if points.is_empty() {
-                                return Err(EDGE_MISSES.to_owned());
-                            }
-                            let mut shape = LinkShape::default();
-                            for p in points {
-                                shape.point(placement.to_sketch(p));
-                            }
-                            Ok(shape)
+                        let mut shape = LinkShape::default();
+                        for p in points {
+                            shape.point(placement.to_sketch(p));
                         }
+                        Ok(shape)
                     }
-                })
+                }
             })
-        }
+        }),
         OutsideRef::Face(face) => {
             on_body(face.body, evaluation, |made| {
                 let key = model_key("link face", made, source, kind, placement, &tolerance);
@@ -208,10 +243,10 @@ fn one(
                 cache.link(key, || {
                     let solid = &made.solid;
                     let region = (topology.face(solid, &face.key, face.near))
-                        .map_err(|_| FACE_NOT_FOUND.to_owned())?;
+                        .map_err(|_| Broken::missing(FACE_NOT_FOUND))?;
                     let outline = || {
                         let chains = outline(made, &topology, region, placement)?;
-                        LinkShape::fit(&chains, exact, fit).map_err(|why| why.to_string())
+                        LinkShape::fit(&chains, exact, fit).map_err(|why| why.to_string().into())
                     };
                     if kind == LinkKind::Project {
                         return outline();
@@ -222,13 +257,13 @@ fn one(
                         Ok(sections) => sections,
                         // Cut by its own plane, a face gives its outline.
                         Err(SectionError::InPlane) => return outline(),
-                        Err(SectionError::TooComplex) => return Err(TOO_COMPLEX.to_owned()),
+                        Err(SectionError::TooComplex) => return Err(TOO_COMPLEX.into()),
                     };
                     if sections.is_empty() {
-                        return Err(FACE_MISSES.to_owned());
+                        return Err(FACE_MISSES.into());
                     }
                     LinkShape::fit(&chains(placement, sections), exact, fit)
-                        .map_err(|why| why.to_string())
+                        .map_err(|why| why.to_string().into())
                 })
             })
         }
@@ -238,14 +273,14 @@ fn one(
                 let topology = crate::inspect::topology(made, cache);
                 cache.link(key, || {
                     let at = (topology.corner_point(&made.solid, faces, near))
-                        .map_err(|_| CORNER_NOT_FOUND.to_owned())?;
+                        .map_err(|_| Broken::missing(CORNER_NOT_FOUND))?;
                     let mut shape = LinkShape::default();
                     shape.point(placement.to_sketch(at));
                     Ok(shape)
                 })
             })
         }
-        OutsideRef::Corner(_) => Err(WRONG_KIND.to_owned()),
+        OutsideRef::Corner(_) => Err(WRONG_KIND.into()),
     }
 }
 
@@ -286,25 +321,19 @@ fn affine(from: &Placement, to: &Placement) -> DAffine2 {
 
 /// `find` on the body `body`'s solid among those `evaluation` holds
 /// (through [`Evaluation::holder`]), or, where it says what it looks for
-/// isn't there ([`not_there`]), on the bodies splits before made of it
+/// isn't there ([`Broken::missing`](Broken)), on the bodies splits before made of it
 /// and it of others, the first split first, as a sketch's face is
 /// followed.
 fn on_body<T>(
     body: BodyId,
     evaluation: &Evaluation,
-    find: impl FnMut(&BodySolid) -> Result<T, String>,
-) -> Result<T, String> {
+    find: impl FnMut(&BodySolid) -> Result<T, Broken>,
+) -> Result<T, Broken> {
     evaluation
         .following_splits(body, find, |found| {
-            found.as_ref().is_err_and(|why| not_there(why))
+            found.as_ref().is_err_and(|broken| broken.missing)
         })
         .unwrap_or(Err(BODY_GONE.into()))
-}
-
-/// Whether `why` says what was looked for isn't on the body, which a
-/// split may have moved onto another.
-fn not_there(why: &str) -> bool {
-    [EDGE_NOT_FOUND, FACE_NOT_FOUND, CORNER_NOT_FOUND].contains(&why)
 }
 
 /// The boundary of the region `region` of `made`'s solid, its outer
@@ -316,7 +345,7 @@ fn outline(
     topology: &varde_kernel_compat::topology::Topology,
     region: u32,
     placement: &Placement,
-) -> Result<Vec<SampledChain>, String> {
+) -> Result<Vec<SampledChain>, Broken> {
     let mesh = made.solid.mesh();
     let tris = mesh.tris().len();
     let mut out = Vec::new();
@@ -326,18 +355,17 @@ fn outline(
             continue;
         }
         if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
-            return Err(FACE_NOT_FOUND.to_owned());
+            return Err(Broken::missing(FACE_NOT_FOUND));
         }
         let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
-        let places = section::sample(&curves, PER_CONIC, chain.closed)
-            .map_err(|_| TOO_COMPLEX.to_owned())?;
+        let places = section::sample(&curves, PER_CONIC, chain.closed).map_err(|_| TOO_COMPLEX)?;
         out.push(SampledChain {
             places: places.iter().map(|&p| placement.to_sketch(p)).collect(),
             closed: chain.closed,
         });
     }
     if out.is_empty() {
-        return Err(FACE_NOT_FOUND.to_owned());
+        return Err(Broken::missing(FACE_NOT_FOUND));
     }
     Ok(out)
 }

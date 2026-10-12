@@ -55,7 +55,7 @@ use varde_kernel_compat::{MeshUpload, RenderMesh, Solid, Topology};
 use varde_sketch::{Curve, LinkShape, Profiles, Sketch, TooComplex};
 
 use crate::error_geometry::{ErrorGeometry, KernelFailure};
-use crate::history::Failed;
+use crate::history::{Broken, Failed};
 use crate::inspect::{Gap, Kept};
 use crate::picking::{Drawn, Scene};
 
@@ -237,7 +237,7 @@ enum Entry {
     Distance(Result<Gap, String>),
     /// What a sketch's link finds of its source, or why it finds
     /// nothing.
-    Link(Result<LinkShape, String>),
+    Link(Result<LinkShape, Broken>),
     /// A sketch with its stale links given what they found, solved, or
     /// why it can't be.
     Relinked(Result<Arc<Sketch>, String>),
@@ -279,7 +279,7 @@ impl Entry {
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
             Entry::Link(found) => match found {
                 Ok(shape) => link_bytes(shape),
-                Err(why) => why.len(),
+                Err(broken) => broken.why.len(),
             },
             Entry::Relinked(relinked) => match relinked {
                 Ok(sketch) => sketch_bytes(sketch),
@@ -603,8 +603,8 @@ impl Cache {
     pub(crate) fn link(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<LinkShape, String>,
-    ) -> Result<LinkShape, String> {
+        make: impl FnOnce() -> Result<LinkShape, Broken>,
+    ) -> Result<LinkShape, Broken> {
         take!(self.entry(key), Link(make()))
     }
 

@@ -139,9 +139,9 @@ pub enum SplitTool {
   merged bodies: `place_on_face` looks for the face on the holder, and
   where it isn't found, on the holders of the new bodies of splits of
   it (in `Evaluation::splits`' order), and on those of splits of those,
-  and the sketch is placed on the first it's found on (a placement's
-  cached failure keeps only its words, so "not found" is told by
-  `FACE_NOT_FOUND`, which `place_on` says for that alone). The search
+  and the sketch is placed on the first it's found on ("not found" is
+  told by `Failed::missing`, which `place_on` sets for that alone, as a
+  link's by `Broken`'s, never by the words). The search
   goes back through splits too: a face named on a split's new body that
   isn't found there is looked for on the body split (and on through
   that body's splits), so a sketch on a face of the new body follows it

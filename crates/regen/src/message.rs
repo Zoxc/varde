@@ -3,6 +3,9 @@
 //! kernel's terms. Messages start in lower case, to follow a colon; the
 //! view capitalises them where they stand alone, in the Timeline's
 //! tooltip and the panel (`varde_view`'s `chrome::sentence`).
+//!
+//! The words are only for showing: nothing keys a cache by them or
+//! tells one failure from another by comparing them.
 
 use varde_kernel_compat::{BooleanError, KernelError, ProfileError};
 
@@ -895,13 +898,24 @@ pub(crate) enum Doing {
     Joining,
     Cutting,
     Intersecting,
-    /// Uniting a body a join touches with the others it touches (the key's
-    /// name only: [`merging`] words its errors).
+    /// Uniting a body a join touches with the others it touches (for the
+    /// key only: [`merging`] words its errors).
     Merging,
 }
 
 impl Doing {
-    /// Its name, which also keys what it works out.
+    /// What keys what it works out, apart from its name's wording.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Doing::Touching => "touch",
+            Doing::Joining => "join",
+            Doing::Cutting => "cut",
+            Doing::Intersecting => "intersect",
+            Doing::Merging => "merge",
+        }
+    }
+
+    /// Its name, in a message.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Doing::Touching => "finding where it meets",

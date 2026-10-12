@@ -310,6 +310,7 @@ impl Found<'_> {
                 let (side, refs) = named[at];
                 let shown = refs.directions().filter_map(dir_shown);
                 Failed {
+                    missing: false,
                     message: message::align_parallel(side),
                     geometry: self.shown(shown),
                 }
@@ -320,6 +321,7 @@ impl Found<'_> {
                     .unwrap_or(0);
                 let (side, refs) = named[at];
                 Failed {
+                    missing: false,
                     message: message::align_too_far(side),
                     geometry: self.shown(point_shown(&refs.point)),
                 }
@@ -423,6 +425,7 @@ fn unresolved(
         }
     };
     Failed {
+        missing: false,
         message: message::reference(whose, why),
         geometry,
     }

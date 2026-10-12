@@ -400,6 +400,9 @@ pub(crate) fn own_solid<'e>(
 pub(crate) struct Failed {
     pub(crate) message: String,
     pub(crate) geometry: Option<Arc<ErrorGeometry>>,
+    /// Whether what was looked for isn't on the body, which a split may
+    /// have given to its new body: told by this, never by the words.
+    pub(crate) missing: bool,
 }
 
 impl Failed {
@@ -411,8 +414,18 @@ impl Failed {
         operands: [&[BodyId]; 2],
     ) -> Failed {
         Failed {
+            missing: false,
             message,
             geometry: failure.geometry(operands),
+        }
+    }
+
+    /// What was looked for isn't on the body, in `message`'s words, see
+    /// [`Failed::missing`].
+    pub(crate) fn missing(message: &str) -> Failed {
+        Failed {
+            missing: true,
+            ..Failed::from(message)
         }
     }
 
@@ -429,6 +442,7 @@ impl Failed {
 impl From<String> for Failed {
     fn from(message: String) -> Failed {
         Failed {
+            missing: false,
             message,
             geometry: None,
         }
@@ -1241,6 +1255,7 @@ impl Run<'_> {
         evidence.add_points([placement.to_world(at)]);
         evidence.add_sketch_curves(curve.map(|id| u64::from(id.get())));
         Failed {
+            missing: false,
             message: error.message().to_owned(),
             geometry: ErrorGeometry::of_evidence(&evidence, &self.tolerance),
         }
@@ -1309,13 +1324,9 @@ pub(crate) fn place_on_face(
 }
 
 /// Whether [`place_on`] found no face of the name on its body, which a
-/// split before the sketch may have given to its new body. The cached
-/// placement keeps only the words, and [`place_on`] says
-/// [`message::FACE_NOT_FOUND`] for that alone.
+/// split before the sketch may have given to its new body.
 fn not_found(placed: &Result<Placement, Failed>) -> bool {
-    placed
-        .as_ref()
-        .is_err_and(|failed| failed.message == message::FACE_NOT_FOUND)
+    placed.as_ref().is_err_and(|failed| failed.missing)
 }
 
 /// Where a sketch on `face` is on the body `made` holds, or why it isn't
@@ -1335,10 +1346,11 @@ fn place_on(
     cache.placement(key, || {
         let solid = &made.solid;
         let topology = solid.topology();
-        let region =
-            (topology.face(solid, &face.key, face.near)).map_err(|_| message::FACE_NOT_FOUND)?;
+        let region = (topology.face(solid, &face.key, face.near))
+            .map_err(|_| Failed::missing(message::FACE_NOT_FOUND))?;
         let region = &topology.regions()[region as usize];
         let not_flat = || Failed {
+            missing: false,
             message: message::FACE_NOT_FLAT.to_owned(),
             geometry: face_geometry(solid, region, tolerance),
         };
@@ -1523,6 +1535,7 @@ pub(crate) fn edge_axis(
         evidence.add_curves(Conic3::line(from, to).ok());
         evidence.add_points([from, to]);
         return Err(Failed {
+            missing: false,
             message: message::EDGE_OFF_PLANE.to_owned(),
             geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
         });
@@ -1534,6 +1547,7 @@ pub(crate) fn edge_axis(
         let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_points([from]);
         return Err(Failed {
+            missing: false,
             message: message::AXIS_NO_LENGTH.to_owned(),
             geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
         });
@@ -1571,6 +1585,7 @@ pub(crate) fn edge_ends(
     let chain = &topology.chains()[chain as usize];
     let EdgeShape::Line { from, to } = edge_shape(solid, chain) else {
         return Err(Failed {
+            missing: false,
             message: message::EDGE_NOT_STRAIGHT.to_owned(),
             geometry: chain_curves(solid, chain, tolerance),
         });
@@ -1582,6 +1597,7 @@ pub(crate) fn edge_ends(
             let mut evidence = varde_kernel_compat::Evidence::default();
             evidence.add_curves(Conic3::line(from, to).ok());
             Err(Failed {
+                missing: false,
                 message: message::EDGE_UNDIRECTED.to_owned(),
                 geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
             })
@@ -1735,6 +1751,8 @@ fn touches_key(body: Key, tool: Key) -> Key {
     Keyer::new("touches").key(body).key(tool).finish()
 }
 
+pub(crate) use link::Broken;
+
 /// The share of a body's volume below which a cut may have taken
 /// nothing from it, for [`Run::cuts_nothing`] to make sure of: the
 /// volumes are integrated, accurate to rounding but not exact.
@@ -1744,7 +1762,7 @@ const UNCUT_SHARE: f64 = 1e-6;
 /// filed under `body`: the body's new solid's.
 fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
     Keyer::new("boolean")
-        .bytes(doing.name().as_bytes())
+        .bytes(doing.key().as_bytes())
         .key(body)
         .key(tool)
         .finish()

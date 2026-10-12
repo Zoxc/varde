@@ -1246,6 +1246,7 @@ fn a_kept_curved_face_counts_in_the_cache_s_size() {
     let mut cache = Cache::default();
     let key = crate::cache::Keyer::new("placement").finish();
     let failed = Failed {
+        missing: false,
         message: "its face isn't flat".to_owned(),
         geometry: Some(geometry.clone()),
     };

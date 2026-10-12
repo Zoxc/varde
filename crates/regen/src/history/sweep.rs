@@ -434,6 +434,7 @@ fn corner(at: DVec3, tolerance: &Tolerance) -> Failed {
     let mut evidence = Evidence::default();
     evidence.add_points([at]);
     Failed {
+        missing: false,
         message: message::sweep_refused(SweepRefusal::Corner),
         geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
     }

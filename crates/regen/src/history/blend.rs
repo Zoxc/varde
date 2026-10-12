@@ -246,6 +246,7 @@ pub(super) fn refused(
     let edge_failed = |chain: u32, why: BlendRefusal| {
         let which = about(chain).map(|p| (p.source, p.grown));
         Failed {
+            missing: false,
             message: message::blend_refused(blend, why, which, counts, own.name),
             geometry: chain_geometry(&own.solid, &own.topology, chain, tolerance),
         }

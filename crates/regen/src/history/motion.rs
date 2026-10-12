@@ -348,6 +348,7 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
         EdgeShape::Circle { centre, axis, .. } => [centre, axis],
         EdgeShape::Ellipse { .. } | EdgeShape::Other => {
             return Err(Failed {
+                missing: false,
                 message: message::EDGE_NOT_AN_AXIS.to_owned(),
                 geometry: chain_curves(solid, chain, tolerance),
             });
@@ -357,6 +358,7 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
         Some(true) => Ok(line),
         Some(false) => Ok([line[0], -line[1]]),
         None => Err(Failed {
+            missing: false,
             message: message::EDGE_UNDIRECTED.to_owned(),
             geometry: chain_curves(solid, chain, tolerance),
         }),
@@ -379,6 +381,7 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
         .face_axis(solid, &face.key, face.near)
         .map_err(|why| match why {
             Unresolved::NotRound { region } => Failed {
+                missing: false,
                 message: message::AXIS_FACE_NOT_ROUND.to_owned(),
                 geometry: face_geometry(solid, &topology.regions()[region as usize], tolerance),
             },
@@ -402,6 +405,7 @@ pub(super) fn face_plane(
     match *region_form(solid, region) {
         Form::Plane { n, d } if n != DVec3::ZERO && n.is_finite() && d.is_finite() => Ok((n, d)),
         _ => Err(Failed {
+            missing: false,
             message: words.not_flat.to_owned(),
             geometry: face_geometry(solid, region, tolerance),
         }),

@@ -82,6 +82,7 @@ pub(super) fn evaluate_scale(
     // factors) shows the edge, once it's found.
     let factors = factors.map_err(|failed| match scale.factor.edge() {
         Some(on) if failed.geometry.is_none() => Failed {
+            missing: false,
             geometry: edge_geometry(on, evaluation, tolerance, cache),
             ..failed
         },
