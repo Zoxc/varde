@@ -71,11 +71,51 @@ struct Planner<'a> {
     sketch: Sketch,
     labels: Vec<Labelled>,
     steps: Vec<Step>,
-    /// The shapes and constraints in a row not yet a step: their `Add`,
-    /// and the first and the last of their operations.
-    geometry: Option<(Add, usize, usize)>,
-    /// The moves in a row not yet a step.
-    moves: Option<(Moves, usize, usize)>,
+    /// The operations in a row not yet a step.
+    open: Option<Run>,
+}
+
+/// Operations of one sort in a row, to be one step.
+struct Run {
+    edit: RunEdit,
+    /// The first and the last of the operations.
+    first: usize,
+    last: usize,
+}
+
+/// What a [`Run`] edits.
+enum RunEdit {
+    /// Shapes and constraints, one `Add`.
+    Geometry(Add),
+    /// Moves.
+    Moves(Moves),
+}
+
+impl Run {
+    /// A run of the one operation `index`.
+    fn new(edit: RunEdit, index: usize) -> Run {
+        Run {
+            edit,
+            first: index,
+            last: index,
+        }
+    }
+
+    /// The step the run makes.
+    fn into_step(self) -> Step {
+        let edit = match self.edit {
+            RunEdit::Geometry(add) => SketchEdit::Add(add),
+            RunEdit::Moves(points) => SketchEdit::Move {
+                points,
+                radii: Vec::new(),
+            },
+        };
+        Step {
+            edit,
+            ops: (self.first, self.last),
+            measured: None,
+        }
+    }
 }
 
 /// An operation's argument error, failing the call.
@@ -107,8 +147,7 @@ pub(super) fn edit_sketch(doc: &Doc, args: &EditSketch, queued: bool) -> Result<
         sketch: base,
         labels: Vec::new(),
         steps: Vec::new(),
-        geometry: None,
-        moves: None,
+        open: None,
     };
     for (index, operation) in args.operations.iter().enumerate() {
         planner.operation(index, operation)?;
@@ -337,14 +376,26 @@ impl Planner<'_> {
     /// Adds `add`, made on the sketch, to it and to the shapes and
     /// constraints in a row.
     fn add(&mut self, index: usize, add: Add) -> Result<(), Refused> {
-        self.flush_moves();
+        if !matches!(
+            self.open,
+            Some(Run {
+                edit: RunEdit::Geometry(_),
+                ..
+            })
+        ) {
+            self.flush();
+        }
         self.sketch = SketchEdit::Add(add.clone())
             .apply(&self.sketch, &self.design)
             .map_err(|why| refused(index, why))?;
-        match &mut self.geometry {
+        match &mut self.open {
             // Made on the sketch the group's left, its new items' ids go
             // on from the group's, so it's one `Add` with them.
-            Some((group, _, last)) => {
+            Some(Run {
+                edit: RunEdit::Geometry(group),
+                last,
+                ..
+            }) => {
                 group.points.extend(add.points);
                 group.curves.extend(add.curves);
                 group.constraints.extend(add.constraints);
@@ -352,40 +403,15 @@ impl Planner<'_> {
                 group.auto.extend(add.auto);
                 *last = index;
             }
-            None => self.geometry = Some((add, index, index)),
+            _ => self.open = Some(Run::new(RunEdit::Geometry(add), index)),
         }
         Ok(())
     }
 
-    /// Ends the shapes and constraints, and the moves, in a row, each a
-    /// step.
+    /// Ends the operations in a row, a step.
     fn flush(&mut self) {
-        self.flush_geometry();
-        self.flush_moves();
-    }
-
-    /// Ends the shapes and constraints in a row, a step.
-    fn flush_geometry(&mut self) {
-        if let Some((add, first, last)) = self.geometry.take() {
-            self.steps.push(Step {
-                edit: SketchEdit::Add(add),
-                ops: (first, last),
-                measured: None,
-            });
-        }
-    }
-
-    /// Ends the moves in a row, a step.
-    fn flush_moves(&mut self) {
-        if let Some((points, first, last)) = self.moves.take() {
-            self.steps.push(Step {
-                edit: SketchEdit::Move {
-                    points,
-                    radii: Vec::new(),
-                },
-                ops: (first, last),
-                measured: None,
-            });
+        if let Some(run) = self.open.take() {
+            self.steps.push(run.into_step());
         }
     }
 
@@ -538,22 +564,34 @@ impl Planner<'_> {
             ));
         }
         let to = self.coordinates(index, to)?;
-        self.flush_geometry();
+        if !matches!(
+            self.open,
+            Some(Run {
+                edit: RunEdit::Moves(_),
+                ..
+            })
+        ) {
+            self.flush();
+        }
         let edit = SketchEdit::Move {
             points: vec![(id, to)],
             radii: Vec::new(),
         };
         self.sketch =
             (edit.apply(&self.sketch, &self.design)).map_err(|why| refused(index, why))?;
-        match &mut self.moves {
-            Some((points, _, last)) => {
+        match &mut self.open {
+            Some(Run {
+                edit: RunEdit::Moves(points),
+                last,
+                ..
+            }) => {
                 match points.iter_mut().find(|(moved, _)| *moved == id) {
                     Some((_, at)) => *at = to,
                     None => points.push((id, to)),
                 }
                 *last = index;
             }
-            None => self.moves = Some((vec![(id, to)], index, index)),
+            _ => self.open = Some(Run::new(RunEdit::Moves(vec![(id, to)]), index)),
         }
         Ok(())
     }
