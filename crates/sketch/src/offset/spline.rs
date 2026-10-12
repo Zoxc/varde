@@ -10,10 +10,8 @@
 use glam::DVec2;
 use varde_expr::Value;
 
-use crate::{
-    BSpline, Constraint, Curve, Dimension, EditError, Id, MAX_SPLINE_POINTS, Measure, Side, Sketch,
-    Spline, SplineKind,
-};
+use super::offset_shift;
+use crate::{BSpline, Curve, EditError, Id, MAX_SPLINE_POINTS, Side, Sketch, Spline, SplineKind};
 
 /// How closely a spline's copy follows its exact offset where it's made,
 /// as a share of the copy's size: fit points are added until it's within
@@ -66,14 +64,11 @@ impl Sketch {
         distance: f64,
         side: Side,
     ) -> Result<(BSpline, f64), EditError> {
-        if !(distance > 0.0 && distance.is_finite()) {
-            return Err(EditError::NothingLeft);
-        }
+        let shift = offset_shift(distance, side)?;
         let target = EditError::Target(curve);
         let shape = self
             .spline_shape(self.spline(curve).ok_or(target)?)
             .ok_or(target)?;
-        let shift = distance * side.sign();
         for t in shape.samples(SAMPLES) {
             let curvature = shape.curvature(t);
             if curvature.is_finite() && curvature * shift >= 1.0 - FOLD_MARGIN {
@@ -198,8 +193,8 @@ impl Sketch {
     /// [`SketchEdit::Offset`](crate::SketchEdit::Offset): its copy through
     /// fit points along its exact offset ([`Sketch::spline_offset`]),
     /// construction if it is, the first held by a driving
-    /// [`Measure::Offset`] of `distance`, the rest each by a
-    /// [`Constraint::EqualOffset`] to it.
+    /// [`Measure::Offset`](crate::Measure::Offset) of `distance`, the rest each by a
+    /// [`Constraint::EqualOffset`](crate::Constraint::EqualOffset) to it.
     pub(super) fn offset_spline(
         &mut self,
         curve: Id,
@@ -217,22 +212,8 @@ impl Sketch {
         }
         let copy = Spline::through(points.clone(), closed);
         self.add_curve(Curve::Spline(copy), construction)?;
-        let lead = [curve, points[0]];
-        for &point in &points[1..] {
-            self.add_constraint(Constraint::EqualOffset {
-                a: lead,
-                b: [curve, point],
-            })?;
-        }
-        let measure = Measure::Offset(curve, points[0]);
-        let side = self.side(&measure);
-        self.add_dimension(Dimension {
-            measure,
-            value: distance.clone(),
-            driving: true,
-            label: DVec2::ZERO,
-            side,
-        })?;
+        let others = points[1..].iter().map(|&point| [curve, point]);
+        self.tie_offsets([curve, points[0]], others, distance)?;
         Ok(())
     }
 }

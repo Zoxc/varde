@@ -394,10 +394,7 @@ impl Sketch {
     /// The offset of `chain` by `distance` to `side`: its raw curves and
     /// the parts of them kept. `NothingLeft` if none are.
     fn raw_offset(&self, chain: &Chain, distance: f64, side: Side) -> Result<Offset, EditError> {
-        if !(distance > 0.0 && distance.is_finite()) {
-            return Err(EditError::NothingLeft);
-        }
-        let shift = distance * side.sign();
+        let shift = offset_shift(distance, side)?;
         let mut raws: Vec<Raw> = Vec::new();
         // Each piece's raw curve, by the piece.
         let mut of_piece = Vec::with_capacity(chain.links.len());
@@ -991,25 +988,36 @@ impl Sketch {
         tangents: Vec<Constraint>,
         distance: &Value,
     ) -> Result<(), EditError> {
-        let lead_pair = [lead.base, lead.id];
-        let measure = Measure::Offset(lead.base, lead.id);
-        let side = self.side(&measure);
         for copy in copies {
             if copy.parallel {
                 self.add_constraint(Constraint::Parallel(copy.base, copy.id))?;
             }
         }
-        for copy in copies {
-            if copy.distance && copy.id != lead.id {
-                self.add_constraint(Constraint::EqualOffset {
-                    a: lead_pair,
-                    b: [copy.base, copy.id],
-                })?;
-            }
-        }
+        let others = copies
+            .iter()
+            .filter(|copy| copy.distance && copy.id != lead.id)
+            .map(|copy| [copy.base, copy.id]);
+        self.tie_offsets([lead.base, lead.id], others, distance)?;
         for tangent in tangents {
             self.add_constraint(tangent)?;
         }
+        Ok(())
+    }
+
+    /// Holds the offset pair `lead` by a driving [`Measure::Offset`] of
+    /// `distance`, and each of `others` by a [`Constraint::EqualOffset`]
+    /// to it: the one dimension drives the whole copy.
+    pub(super) fn tie_offsets(
+        &mut self,
+        lead: [Id; 2],
+        others: impl IntoIterator<Item = [Id; 2]>,
+        distance: &Value,
+    ) -> Result<(), EditError> {
+        for other in others {
+            self.add_constraint(Constraint::EqualOffset { a: lead, b: other })?;
+        }
+        let measure = Measure::Offset(lead[0], lead[1]);
+        let side = self.side(&measure);
         self.add_dimension(Dimension {
             measure,
             value: distance.clone(),
@@ -1019,6 +1027,15 @@ impl Sketch {
         })?;
         Ok(())
     }
+}
+
+/// How far to the left of a curve (to the right, below zero) its offset
+/// `distance` to `side` is. `NothingLeft` for no distance.
+pub(super) fn offset_shift(distance: f64, side: Side) -> Result<f64, EditError> {
+    if !(distance > 0.0 && distance.is_finite()) {
+        return Err(EditError::NothingLeft);
+    }
+    Ok(distance * side.sign())
 }
 
 /// The curves ending at each point, of `curves`, each an id and its ends
