@@ -415,7 +415,7 @@ fn tool_calls_go_to_the_app() {
             page: crate::tools::Page::FEATURE,
         }
     );
-    let reply = dispatch.respond(&ToolReply::text("done"));
+    let reply = respond(&dispatch.id, &ToolReply::text("done"));
     let reply: Value = serde_json::from_slice(&reply.body).unwrap();
     assert_eq!(reply["id"], 5);
     assert_eq!(reply["result"]["content"][0]["text"], "done");

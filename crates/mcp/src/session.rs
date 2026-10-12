@@ -10,7 +10,7 @@
 //! `notifications/initialized` only `ping`, a reused id -32600, unknown
 //! methods -32601. `initialize`, `ping` and `tools/list` are answered
 //! here; a `tools/call` goes to the app as a [`Dispatch`], answered
-//! later through [`Dispatch::respond`].
+//! later through [`respond`].
 
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
@@ -121,8 +121,7 @@ pub enum Event {
     },
 }
 
-/// A tool call for the app to run, and answer with
-/// [`Dispatch::respond`].
+/// A tool call for the app to run, and answer with [`respond`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dispatch {
     pub session: SessionId,
@@ -130,11 +129,10 @@ pub struct Dispatch {
     pub call: Call,
 }
 
-impl Dispatch {
-    /// The HTTP response carrying `reply`, cut at [`ToolReply::CAP`].
-    pub fn respond(&self, reply: &ToolReply) -> Response {
-        Response::json(rpc::success(&self.id, reply.result(ToolReply::CAP)))
-    }
+/// The HTTP response carrying `reply` to the request `id`, cut at
+/// [`ToolReply::CAP`].
+pub fn respond(id: &Id, reply: &ToolReply) -> Response {
+    Response::json(rpc::success(id, reply.result(ToolReply::CAP)))
 }
 
 /// What to do with a request.

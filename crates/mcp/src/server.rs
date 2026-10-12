@@ -503,7 +503,7 @@ fn serve(stream: TcpStream, shared: &Shared) {
         };
         let response = match answer {
             Err(response) => response,
-            Ok((dispatch, receiver)) => wait(shared, dispatch, receiver),
+            Ok((session, id, receiver)) => wait(shared, &session, &id, receiver),
         };
         let close = request.close || shared.stopped();
         writer.start(shared.timeouts.write);
@@ -514,24 +514,26 @@ fn serve(stream: TcpStream, shared: &Shared) {
 }
 
 /// Hands `dispatch`, of a request come at `came`, to the app, under the
-/// state's lock; the reply comes on the receiver.
+/// state's lock; the reply comes on the receiver, for the request `id` of
+/// `session`, which are kept to answer it.
 fn dispatch_call(
     shared: &Shared,
     dispatch: Dispatch,
     came: Instant,
-) -> (Dispatch, Receiver<ToolReply>) {
+) -> (SessionId, Id, Receiver<ToolReply>) {
+    let Dispatch { session, id, call } = dispatch;
     let (sender, receiver) = mpsc::sync_channel(1);
     shared.send(Event::Call {
-        session: dispatch.session.clone(),
-        id: dispatch.id.clone(),
-        call: dispatch.call.clone(),
+        session: session.clone(),
+        id: id.clone(),
+        call,
         reply: Reply { sender, came },
     });
-    (dispatch, receiver)
+    (session, id, receiver)
 }
 
-/// Waits for the app's reply to `dispatch`.
-fn wait(shared: &Shared, dispatch: Dispatch, receiver: Receiver<ToolReply>) -> Response {
+/// Waits for the app's reply to the request `id` of `session`.
+fn wait(shared: &Shared, session: &SessionId, id: &Id, receiver: Receiver<ToolReply>) -> Response {
     // With the stream gone, the event (and the reply in it) is dropped
     // at once: the wait ends as disconnected.
     let reply = match receiver.recv_timeout(shared.timeouts.reply) {
@@ -546,10 +548,8 @@ fn wait(shared: &Shared, dispatch: Dispatch, receiver: Receiver<ToolReply>) -> R
         },
     };
     drop(receiver);
-    shared
-        .state()
-        .finish(&dispatch.session, &dispatch.id, shared.now());
-    dispatch.respond(&reply)
+    shared.state().finish(session, id, shared.now());
+    session::respond(id, &reply)
 }
 
 #[cfg(test)]
