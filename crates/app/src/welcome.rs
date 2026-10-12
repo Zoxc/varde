@@ -744,10 +744,11 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// `bytes` in kilobytes, as the prompt about a damaged file says how much
-/// can't be read: rounded up, so that any is at least "1 KB".
+/// `bytes` in kilobytes (of 1000, as [`bytes`] counts them), as the
+/// prompt about a damaged file says how much can't be read: rounded up,
+/// so that any is at least "1 KB".
 fn kilobytes(bytes: u64) -> String {
-    format!("{} KB", bytes.div_ceil(1024).max(1))
+    format!("{} KB", bytes.div_ceil(1000).max(1))
 }
 
 /// What a crashed session left of a design, from `recovered` as the lane
