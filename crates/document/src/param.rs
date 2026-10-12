@@ -7,6 +7,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, MAX_LEN, MAX_PARAMS, NameError, Params, Value, check_name};
 
+use crate::sorted_unique;
 use crate::{
     ChamferSize, Design, Document, FeatureId, FeatureKind, PathRef, PatternKind, ScaleFactor,
 };
@@ -197,20 +198,15 @@ impl Document {
         let mut uses = vec![ParamUses::default(); self.params.len()];
         // The parameters `text` names, each once.
         let named = |text: &str| {
-            let mut named: Vec<usize> = (varde_expr::names(text).into_iter())
-                .filter_map(|span| by_name.get(&text[span.range()]))
-                .flatten()
-                .copied()
-                .collect();
-            named.sort_unstable();
-            named.dedup();
-            named
+            sorted_unique(
+                (varde_expr::names(text).into_iter())
+                    .filter_map(|span| by_name.get(&text[span.range()]))
+                    .flatten()
+                    .copied(),
+            )
         };
         for feature in &self.features {
-            let mut named: Vec<usize> = feature.kind.expression_texts().flat_map(&named).collect();
-            named.sort_unstable();
-            named.dedup();
-            for index in named {
+            for index in sorted_unique(feature.kind.expression_texts().flat_map(&named)) {
                 uses[index].features.push(feature.id);
             }
         }

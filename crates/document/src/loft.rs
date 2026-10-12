@@ -9,6 +9,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
+use crate::sorted_unique;
 use crate::{CurveChain, FeatureId, MAX_COORD, Operation, OperationError};
 
 /// The most sections one loft may have.
@@ -85,21 +86,16 @@ impl Loft {
     /// The sketches its sections and rails are of, sorted without
     /// repeats: what it uses.
     pub fn sketches(&self) -> Vec<FeatureId> {
-        let mut sketches: Vec<FeatureId> = (self.sections.iter().map(Section::sketch))
-            .chain(self.rails.iter().map(|rail| rail.sketch))
-            .collect();
-        sketches.sort_unstable();
-        sketches.dedup();
-        sketches
+        sorted_unique(
+            (self.sections.iter().map(Section::sketch))
+                .chain(self.rails.iter().map(|rail| rail.sketch)),
+        )
     }
 
     /// The sketches its sections are of, sorted without repeats: those
     /// adding it hides.
     pub fn section_sketches(&self) -> Vec<FeatureId> {
-        let mut sketches: Vec<FeatureId> = self.sections.iter().map(Section::sketch).collect();
-        sketches.sort_unstable();
-        sketches.dedup();
-        sketches
+        sorted_unique(self.sections.iter().map(Section::sketch))
     }
 
     /// Checks what needs only the loft: the section count, each region

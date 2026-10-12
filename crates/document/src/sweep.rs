@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
+use crate::sorted_unique;
 use crate::{
     AxisRef, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, Operation, OperationError,
     RefError,
@@ -172,7 +173,7 @@ impl Sweep {
 
     /// The sketches its path's parts name, sorted without repeats.
     pub fn path_sketches(&self) -> Vec<FeatureId> {
-        let mut sketches: Vec<FeatureId> = match &self.path {
+        let sketches: Vec<FeatureId> = match &self.path {
             PathRef::Chain(parts) => (parts.iter())
                 .filter_map(|part| match part {
                     PathPart::Curves(chain) => Some(chain.sketch),
@@ -181,15 +182,13 @@ impl Sweep {
                 .collect(),
             PathRef::Helix(_) => Vec::new(),
         };
-        sketches.sort_unstable();
-        sketches.dedup();
-        sketches
+        sorted_unique(sketches)
     }
 
     /// The bodies it names, which it depends on: those its path's edges
     /// are on, and its helix's axis's, sorted without repeats.
     pub fn bodies(&self) -> Vec<BodyId> {
-        let mut bodies: Vec<BodyId> = match &self.path {
+        let bodies: Vec<BodyId> = match &self.path {
             PathRef::Chain(parts) => (parts.iter())
                 .filter_map(|part| match part {
                     PathPart::Edges { edges, .. } => edges.first().map(|edge| edge.body),
@@ -198,9 +197,7 @@ impl Sweep {
                 .collect(),
             PathRef::Helix(helix) => helix.axis.refers().map(|r| r.body()).into_iter().collect(),
         };
-        bodies.sort_unstable();
-        bodies.dedup();
-        bodies
+        sorted_unique(bodies)
     }
 
     /// Checks what needs only the sweep and `design`: the region count

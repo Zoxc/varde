@@ -9,6 +9,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
+use crate::sorted_unique;
 use crate::{BodyId, FaceRef, FeatureId, MAX_EXTRUDE_REGIONS, PlaneError, PlaneRef};
 
 /// The most curves a split's open chain may hold.
@@ -178,10 +179,7 @@ impl Split {
             SplitTool::Face(face) => Some(face.body),
             SplitTool::Plane(_) | SplitTool::Regions { .. } | SplitTool::Chain { .. } => None,
         };
-        let mut bodies: Vec<BodyId> = [Some(self.body), tool].into_iter().flatten().collect();
-        bodies.sort_unstable();
-        bodies.dedup();
-        bodies
+        sorted_unique([Some(self.body), tool].into_iter().flatten())
     }
 
     /// Checks what needs only the split: its new body there when both

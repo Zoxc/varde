@@ -99,6 +99,15 @@ pub(crate) fn in_bounds(point: glam::DVec3) -> bool {
     point.is_finite() && point.abs().max_element() <= f64::from(MAX_COORD)
 }
 
+/// `items` sorted, without repeats: what the lists of ids a feature names
+/// or uses promise.
+pub(crate) fn sorted_unique<T: Ord>(items: impl IntoIterator<Item = T>) -> Vec<T> {
+    let mut items: Vec<T> = items.into_iter().collect();
+    items.sort_unstable();
+    items.dedup();
+    items
+}
+
 /// The application's name, as the user sees it.
 pub const APP_NAME: &str = "Varde CAD";
 

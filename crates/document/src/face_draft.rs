@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
 use crate::plane::check_face_list_own;
+use crate::sorted_unique;
 use crate::{
     BodyId, Design, FaceListError, FaceRef, FaceSetError, FeatureId, PlaneError, PlaneRef,
 };
@@ -73,12 +74,7 @@ impl FaceDraft {
     /// The bodies it names, which it depends on: its faces' body and the
     /// neutral plane's face's body. Sorted, without repeats.
     pub fn bodies(&self) -> Vec<BodyId> {
-        let mut bodies: Vec<BodyId> = (self.body().into_iter())
-            .chain(self.neutral_face().map(|face| face.body))
-            .collect();
-        bodies.sort_unstable();
-        bodies.dedup();
-        bodies
+        sorted_unique((self.body().into_iter()).chain(self.neutral_face().map(|face| face.body)))
     }
 
     /// Checks what needs only the draft and `design`: the face count,

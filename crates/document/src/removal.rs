@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::sorted_unique;
 use crate::{BodyId, Document, FeatureId, Operation};
 
 /// A feature or a body to remove, see [`Document::removal`].
@@ -102,14 +103,11 @@ impl Document {
     ///
     /// [`Command::RemoveOnly`]: crate::Command::RemoveOnly
     pub fn breaking_removal(&self, targets: &[Removable]) -> Removal {
-        let mut features: Vec<FeatureId> = (targets.iter())
-            .filter_map(|&target| match target {
+        let features: Vec<FeatureId> =
+            sorted_unique(targets.iter().filter_map(|&target| match target {
                 Removable::Feature(id) => self.feature(id).map(|feature| feature.id),
                 Removable::Body(id) => self.body(id).map(|body| body.created_by),
-            })
-            .collect();
-        features.sort_unstable();
-        features.dedup();
+            }));
         let bodies = (self.bodies.iter())
             .filter(|body| features.binary_search(&body.created_by).is_ok())
             .map(|body| body.id)

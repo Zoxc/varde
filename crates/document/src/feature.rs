@@ -7,6 +7,7 @@ use std::error::Error;
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
+use crate::sorted_unique;
 use crate::{
     Align, BodyId, Chamfer, Combine, Design, Extrude, FaceDraft, Fillet, LinkSource, Loft, Mirror,
     Move, OffsetFace, Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
@@ -137,13 +138,10 @@ impl FeatureKind {
         if let FeatureKind::Loft(loft) = self {
             return loft.sketches();
         }
-        let mut uses: Vec<FeatureId> = self.sketch().into_iter().collect();
         if let FeatureKind::Sweep(sweep) = self {
-            uses.extend(sweep.path_sketches());
-            uses.sort_unstable();
-            uses.dedup();
+            return sorted_unique(self.sketch().into_iter().chain(sweep.path_sketches()));
         }
-        uses
+        self.sketch().into_iter().collect()
     }
 
     /// The sketches whose regions (or points) it takes, which adding it
