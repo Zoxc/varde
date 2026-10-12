@@ -394,7 +394,7 @@ pub fn rail_rows(sketching: bool, set: usize) -> usize {
 /// one of its key's (with Shift) and its label's, if any is free, never
 /// one of the mode's sets' keys (`sketching` or not).
 pub(crate) fn letters(entries: &[Entry], sketching: bool) -> Vec<Option<char>> {
-    let shortcuts: Vec<Shortcut> = entries
+    let shortcuts: Vec<Option<Shortcut>> = entries
         .iter()
         .map(|entry| entry.binding(DocumentKeys::default()).shortcut)
         .collect();
@@ -402,7 +402,9 @@ pub(crate) fn letters(entries: &[Entry], sketching: bool) -> Vec<Option<char>> {
     let mut letters: Vec<Option<char>> = shortcuts
         .iter()
         .map(|shortcut| {
-            let own = shortcut.letter_key().filter(|_| shortcut.is_plain())?;
+            let own = shortcut
+                .filter(|shortcut| shortcut.is_plain())?
+                .letter_key()?;
             (!taken.contains(&own)).then(|| {
                 taken.push(own);
                 own
@@ -414,7 +416,7 @@ pub(crate) fn letters(entries: &[Entry], sketching: bool) -> Vec<Option<char>> {
             continue;
         }
         let label = entry.label().chars().map(|c| c.to_ascii_lowercase());
-        *letter = (shortcut.letter_key().into_iter())
+        *letter = (shortcut.and_then(Shortcut::letter_key).into_iter())
             .chain(label)
             .find(|c| c.is_ascii_lowercase() && !taken.contains(c));
         taken.extend(*letter);
@@ -437,9 +439,7 @@ pub(crate) fn letter_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .entries
         .iter()
         .zip(letters(set.entries, keys.sketching))
-        .filter_map(|(entry, letter)| {
-            Some(entry.binding(keys).claiming(Shortcut::letter(letter?)))
-        });
+        .filter_map(|(entry, letter)| Some(entry.binding(keys).claiming(Shortcut::plain(letter?))));
     let enter =
         (set.entries.get(open.row)).map(|entry| entry.binding(keys).claiming(Shortcut::ENTER));
     let step = |shortcut, step| Binding::new(shortcut, Message::Look(Look::Rail(step)), true);
@@ -459,7 +459,7 @@ pub(crate) const SET_KEYS: [char; 9] = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 
 
 /// The key opening the set at index `set`, if it has one.
 pub(crate) fn set_key(set: usize) -> Option<Shortcut> {
-    SET_KEYS.get(set).map(|&key| Shortcut::letter(key))
+    SET_KEYS.get(set).map(|&key| Shortcut::plain(key))
 }
 
 /// The sets' keys, from `Q`, each opening its set's list or closing it.

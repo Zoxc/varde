@@ -69,12 +69,10 @@ pub(crate) fn failure_tip<'a>(
 pub(crate) fn side_tip<'a>(
     content: impl Into<Element<'a, Message>>,
     label: &'a str,
-    key: impl Into<KeyName>,
+    key: Option<impl Into<KeyName>>,
 ) -> Element<'a, Message> {
-    // A tool with no key ([`Shortcut::NONE`]) shows none.
-    let key: KeyName = key.into();
-    let chip = (!matches!(key, KeyName::Press(shortcut) if shortcut.is_none()))
-        .then(|| key_chip(key, ChipSize::Small));
+    // A tool with no key shows none.
+    let chip = key.map(|key| key_chip(key, ChipSize::Small));
     let tip = row![text(label).size(12), chip]
         .spacing(6)
         .align_y(Alignment::Center);

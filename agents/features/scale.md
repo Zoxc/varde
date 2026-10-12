@@ -132,7 +132,7 @@ built in the style of the mock's nearest one, Move's.
 
 - **Starting**: `Look::StartMotion(MotionKind::Scale)` from the rail's Modify set ("Scale",
   before Combine as the mock orders them; no key: `motion_binding`,
-  `Shortcut::NONE`, the rail's list letter `S`), again backing out; not
+  no `Shortcut`, the rail's list letter `S`), again backing out; not
   on the toolbar (the mock's bar has no Scale, and it's nearly full at
   1280 px); or editing one (`Look::EditFeature`: double-click, `Enter`,
   "Edit scale"), which opens with its bodies, point, mode and values.

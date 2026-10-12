@@ -180,7 +180,7 @@ face picked, the origin planes on the toolbar).
 
 - **Starting**: `Look::StartMotion(MotionKind::Split)` from the rail's Modify set ("Split
   body", after Combine as the icon mock orders them; no key:
-  `motion_binding`, `Shortcut::NONE`, the rail's list letter `P`), again
+  `motion_binding`, no `Shortcut`, the rail's list letter `P`), again
   backing out; not on the toolbar (the mock's bar has none). Or editing
   one (`Look::EditFeature`: double-click, `Enter`, "Edit split"), which
   opens with its body, tool and options, picking nothing. A new one

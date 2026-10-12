@@ -472,15 +472,18 @@ fn start_action<'a>(
     binding: Binding,
     emphasis: Emphasis,
 ) -> Element<'a, Message> {
-    let content = row![
-        action_icon(icon, 18.0, emphasis),
-        text(label).font(theme::SEMIBOLD),
-        space::horizontal(),
-        chrome::key_chip(binding.shortcut, ChipSize::Normal).style(emphasis.key_chip()),
-    ]
-    .spacing(10)
-    .height(Length::Fill)
-    .align_y(Alignment::Center);
+    let content =
+        row![
+            action_icon(icon, 18.0, emphasis),
+            text(label).font(theme::SEMIBOLD),
+            space::horizontal(),
+            (binding.shortcut)
+                .map(|shortcut| chrome::key_chip(shortcut, ChipSize::Normal)
+                    .style(emphasis.key_chip())),
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .align_y(Alignment::Center);
     let primary = emphasis == Emphasis::Primary;
     button(content)
         .width(Length::Fill)
@@ -508,8 +511,10 @@ fn page_button<'a>(
     let content = row![
         action_icon(icon, icons::INLINE, emphasis),
         text(label).font(theme::SEMIBOLD),
-        container(chrome::key_chip(binding.shortcut, ChipSize::Normal).style(emphasis.key_chip()))
-            .padding(Padding::ZERO.left(4)),
+        (binding.shortcut).map(|shortcut| {
+            container(chrome::key_chip(shortcut, ChipSize::Normal).style(emphasis.key_chip()))
+                .padding(Padding::ZERO.left(4))
+        }),
     ]
     .spacing(8)
     .height(Length::Fill)

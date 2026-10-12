@@ -43,9 +43,6 @@ enum Key {
     Menu,
     /// `,`.
     Comma,
-    /// No key: a tool the UI mock gives none, reached from the toolbar
-    /// and the rail. Never pressed, and shown as nothing.
-    None,
 }
 
 impl Shortcut {
@@ -92,9 +89,6 @@ impl Shortcut {
     /// Picking an origin plane while picking the plane for a sketch: `1`
     /// XY, `2` XZ, `3` YZ, as the toolbar orders them.
     pub const PLANES: [Self; 3] = [Self::plain('1'), Self::plain('2'), Self::plain('3')];
-    /// No key: what a tool the UI mock gives none is bound to, never
-    /// pressed (the mirror's).
-    pub const NONE: Self = Self::named(Key::None);
     /// Opens the settings page, or closes it.
     pub const SETTINGS: Self = Self {
         command: true,
@@ -151,7 +145,7 @@ impl Shortcut {
     /// selected, or opens them: with Shift, as `O` is Offset's (clOse).
     pub const CLOSE: Self = Self::shifted('o');
 
-    const fn plain(key: char) -> Self {
+    pub(crate) const fn plain(key: char) -> Self {
         assert!(key.is_ascii_lowercase() || key.is_ascii_digit());
         Self::named(Key::Letter(key))
     }
@@ -164,12 +158,6 @@ impl Shortcut {
         }
     }
 
-    /// A letter on its own, `key` in lower case: picks a tool from the
-    /// rail's open set.
-    pub(crate) fn letter(key: char) -> Self {
-        Self::plain(key)
-    }
-
     /// Its letter, with or without Shift, if it's a letter without the
     /// command modifier.
     pub(crate) fn letter_key(self) -> Option<char> {
@@ -177,11 +165,6 @@ impl Shortcut {
             Key::Letter(letter) if !self.command => Some(letter),
             _ => None,
         }
-    }
-
-    /// Whether it's no key ([`Shortcut::NONE`]): nothing to show.
-    pub(crate) fn is_none(self) -> bool {
-        self.key == Key::None
     }
 
     /// Whether it's a key pressed on its own, with no modifier.
@@ -227,7 +210,6 @@ impl Shortcut {
             Key::F10 => "F10".into(),
             Key::Menu => "Menu".into(),
             Key::Comma => ",".into(),
-            Key::None => "".into(),
         };
         format!("{command}{shift}{key}")
     }
@@ -272,7 +254,9 @@ impl Shortcut {
 /// is disabled.
 #[derive(Debug, Clone)]
 pub struct Binding {
-    pub(crate) shortcut: Shortcut,
+    /// Its key, if it has one: a tool the UI mock gives none is reached
+    /// from the toolbar and the rail only.
+    pub(crate) shortcut: Option<Shortcut>,
     message: Message,
     enabled: bool,
     /// Whether it keeps its key from the bindings after it even while
@@ -286,12 +270,19 @@ impl Binding {
     /// Whether it takes pressing `key` with `modifiers`: it's that key and
     /// it's enabled or claims it.
     fn takes(&self, key: &KeyPress, modifiers: Modifiers) -> bool {
-        (self.enabled || self.claims) && self.shortcut.matches(key, modifiers)
+        (self.enabled || self.claims)
+            && (self.shortcut).is_some_and(|shortcut| shortcut.matches(key, modifiers))
     }
 
-    pub(crate) fn new(shortcut: Shortcut, message: Message, enabled: bool) -> Self {
+    /// The binding of `shortcut`, if it has a key, sending `message` if
+    /// `enabled`.
+    pub(crate) fn new(
+        shortcut: impl Into<Option<Shortcut>>,
+        message: Message,
+        enabled: bool,
+    ) -> Self {
         Self {
-            shortcut,
+            shortcut: shortcut.into(),
             message,
             enabled,
             claims: false,
@@ -302,9 +293,18 @@ impl Binding {
     /// disabled, see [`Binding::claims`].
     pub(crate) fn claiming(self, shortcut: Shortcut) -> Self {
         Self {
-            shortcut,
+            shortcut: Some(shortcut),
             claims: true,
             ..self
+        }
+    }
+
+    /// `label` as a tooltip tells it, with its key if it has one:
+    /// "Line (L)".
+    pub(crate) fn tip(&self, label: &str) -> String {
+        match self.shortcut {
+            Some(shortcut) => format!("{label} ({})", shortcut.label()),
+            None => label.to_owned(),
         }
     }
 
@@ -342,9 +342,9 @@ pub fn file_bindings(editable: bool, edited: bool) -> [Binding; 2] {
 }
 
 impl Tool {
-    /// The key taking up the tool.
-    pub fn shortcut(self) -> Shortcut {
-        match self {
+    /// The key taking up the tool, if it has one.
+    pub fn shortcut(self) -> Option<Shortcut> {
+        Some(match self {
             Tool::Line => Shortcut::plain('l'),
             Tool::Circle => Shortcut::plain('c'),
             Tool::Arc => Shortcut::plain('a'),
@@ -369,8 +369,8 @@ impl Tool {
             Tool::Chamfer => Shortcut::shifted('b'),
             // No free letter of theirs: `P` is the Point tool's, `I`
             // Coincident's, and `Shift P` Parallel's.
-            Tool::Project | Tool::Intersect => Shortcut::NONE,
-        }
+            Tool::Project | Tool::Intersect => return None,
+        })
     }
 }
 
@@ -796,10 +796,10 @@ pub fn combine_binding(keys: DocumentKeys) -> Binding {
 /// (`F`) have the UI mock's keys; the rest none, as the mocks have them.
 pub fn motion_binding(kind: MotionKind, keys: DocumentKeys) -> Binding {
     let shortcut = match kind {
-        MotionKind::Move => Shortcut::MOVE,
-        MotionKind::LinearPattern => Shortcut::PATTERN,
-        MotionKind::Chamfer => Shortcut::CHAMFER,
-        MotionKind::Fillet => Shortcut::FILLET,
+        MotionKind::Move => Some(Shortcut::MOVE),
+        MotionKind::LinearPattern => Some(Shortcut::PATTERN),
+        MotionKind::Chamfer => Some(Shortcut::CHAMFER),
+        MotionKind::Fillet => Some(Shortcut::FILLET),
         MotionKind::Mirror
         | MotionKind::CircularPattern
         | MotionKind::Align
@@ -809,7 +809,7 @@ pub fn motion_binding(kind: MotionKind, keys: DocumentKeys) -> Binding {
         | MotionKind::OffsetFace
         | MotionKind::Draft
         | MotionKind::Sweep
-        | MotionKind::Loft => Shortcut::NONE,
+        | MotionKind::Loft => None,
     };
     let needs_body = !matches!(kind, MotionKind::Sweep | MotionKind::Loft);
     Binding::new(
@@ -834,7 +834,7 @@ pub fn measure_binding(keys: DocumentKeys) -> Binding {
 /// the model mock has it. A document that can't be changed shows them
 /// without letting them be edited.
 pub fn params_binding() -> Binding {
-    Binding::new(Shortcut::NONE, Message::Look(Look::ToggleParams), true)
+    Binding::new(None, Message::Look(Look::ToggleParams), true)
 }
 
 /// Taking up `tool`, or putting it down: in a sketch that can be changed.
@@ -970,7 +970,7 @@ pub fn close_binding(keys: DocumentKeys) -> Binding {
 /// that can be changed and no drawing tool is in use.
 pub fn insert_point_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
-        Shortcut::NONE,
+        None,
         Message::Look(Look::ToggleInsertPoint),
         keys.editable && keys.sketching && !keys.drawing,
     )
@@ -980,7 +980,7 @@ pub fn insert_point_binding(keys: DocumentKeys) -> Binding {
 /// toolbar's, without a key, while they can be.
 pub fn remove_point_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
-        Shortcut::NONE,
+        None,
         Message::Edit(Edit::RemoveSplinePoints),
         keys.editable && keys.sketching && !keys.drawing && keys.removing == Some(true),
     )
@@ -1294,7 +1294,7 @@ mod tests {
         assert_eq!(Shortcut::DELETE.label(), "Del");
         assert_eq!(Shortcut::ESCAPE.label(), "Esc");
         assert_eq!(Shortcut::SPACE.label(), "Space");
-        assert_eq!(Tool::Line.shortcut().label(), "L");
+        assert_eq!(Tool::Line.shortcut().unwrap().label(), "L");
     }
 
     #[test]
@@ -1477,11 +1477,11 @@ mod tests {
             sketching: true,
             ..keys(true)
         };
-        for tool in Tool::ALL
+        for (tool, shortcut) in Tool::ALL
             .into_iter()
-            .filter(|tool| !tool.shortcut().is_none())
+            .filter_map(|tool| Some((tool, tool.shortcut()?)))
         {
-            let label = tool.shortcut().label().to_lowercase();
+            let label = shortcut.label().to_lowercase();
             // Mirror and Chamfer take Shift.
             let (letter, held) = match label.strip_prefix("shift ") {
                 Some(letter) => (letter.to_uppercase(), Modifiers::SHIFT),
@@ -1593,8 +1593,7 @@ mod tests {
         // Project and Intersect have no key.
         let shortcuts: Vec<_> = document_bindings(all)
             .into_iter()
-            .map(|binding| binding.shortcut)
-            .filter(|shortcut| !shortcut.is_none())
+            .filter_map(|binding| binding.shortcut)
             .collect();
         for (i, shortcut) in shortcuts.iter().enumerate() {
             assert!(
@@ -1720,8 +1719,8 @@ mod tests {
             pressed(document_bindings(rectangle), &q, none),
             Some(Message::Look(Look::ToggleCentered))
         ));
-        assert_eq!(Tool::Rectangle.shortcut().label(), "B");
-        assert_eq!(Tool::Polygon.shortcut().label(), "G");
+        assert_eq!(Tool::Rectangle.shortcut().unwrap().label(), "B");
+        assert_eq!(Tool::Polygon.shortcut().unwrap().label(), "G");
     }
 
     #[test]
@@ -1788,7 +1787,7 @@ mod tests {
         };
         assert!(sent(read_only, &key("z"), none).is_none());
         assert!(sent(read_only, &key("H"), Modifiers::SHIFT).is_none());
-        assert_eq!(Tool::Spline.shortcut().label(), "N");
+        assert_eq!(Tool::Spline.shortcut().unwrap().label(), "N");
         assert_eq!(Shortcut::HANDLES.label(), "Shift H");
     }
 

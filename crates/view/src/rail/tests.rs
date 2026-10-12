@@ -34,7 +34,9 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
                 // Another set opens from an open list.
                 assert!(!set_keys.contains(&letter), "{letter} opens a set");
                 let shortcut = entry.binding(DocumentKeys::default()).shortcut;
-                if shortcut.is_plain() && !shortcut.is_none() {
+                if let Some(shortcut) = shortcut
+                    && shortcut.is_plain()
+                {
                     assert_eq!(shortcut.letter_key(), Some(letter), "{}", entry.label());
                 }
             }

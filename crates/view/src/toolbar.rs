@@ -287,7 +287,7 @@ fn save_cell<'a>(editable: bool, edited: bool) -> Element<'a, Message> {
             .padding(0)
             .style(theme::flat_button(false, theme::Tone::Text))
             .on_press_maybe(message),
-        text(format!("Save ({})", save.shortcut.label())),
+        text(save.tip("Save")),
     );
     container(button)
         .center_x(SAVE_CELL_WIDTH)
@@ -915,8 +915,7 @@ fn bound_op(
     on: bool,
 ) -> Element<'static, Message> {
     let message = binding.sends();
-    let key = Some(binding.shortcut).filter(|shortcut| !shortcut.is_none());
-    op_button(icon, label, key, on, message)
+    op_button(icon, label, binding.shortcut, on, message)
 }
 
 /// A sketch toolbar's button for `binding`, highlighted while `on`, its
@@ -927,11 +926,7 @@ fn tipped_op(
     binding: Binding,
     on: bool,
 ) -> Element<'static, Message> {
-    let tip = if binding.shortcut.is_none() {
-        label.to_owned()
-    } else {
-        format!("{label} ({})", binding.shortcut.label())
-    };
+    let tip = binding.tip(label);
     let button = button(
         row![icons::icon(icon, icons::INLINE), text(label)]
             .spacing(6)
@@ -1010,7 +1005,7 @@ fn tolerance_choices(tolerance: Tolerance) -> Vec<(f64, String, bool)> {
 fn history_button<'a>(icon: Icon, label: &str, binding: Binding) -> Element<'a, Message> {
     crate::chrome::tip(
         icon_button(icon, Tone::Muted, binding.sends()),
-        text(format!("{label} ({})", binding.shortcut.label())),
+        text(binding.tip(label)),
     )
 }
 
@@ -1054,7 +1049,7 @@ pub fn file_menu(state: FileMenu) -> Element<'static, Message> {
 
     let bound = |icon, label: &'static str, binding: Binding| {
         let message = binding.sends();
-        item(icon, label.into(), Some(binding.shortcut), message)
+        item(icon, label.into(), binding.shortcut, message)
     };
 
     let [save, save_as] = file_bindings(editable, edited);

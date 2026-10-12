@@ -128,7 +128,7 @@ chamfers, its `MotionKind` saying which; their own parts are under
 toolbar's Move after Combine, the rail's Transform set) or
 `Look::StartMotion(MotionKind::Mirror)` (no key, as the mock has none: the rail only, as
 the mock's model bar has no Mirror, which leaves room for Chamfer at
-1280 px; `Shortcut::NONE`, a binding that's never
+1280 px; a binding with no `Shortcut`, never
 pressed and shows no key, so the rail's list gives it the first free
 letter of its name, `I`), again (or `Esc`, Cancel) backing out of it and
 one of the other kind replaced; or by editing one (`Look::EditFeature`: a
