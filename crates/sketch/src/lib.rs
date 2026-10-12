@@ -48,10 +48,10 @@ pub use check::{
     Design, List, MAX_CONSTRAINTS, MAX_CURVES, MAX_DIMENSIONS, MAX_POINTS, SketchError,
 };
 pub use constraint::{Constraint, ConstraintEntry, Role, Shape, Side, tangent_between};
-pub use corner::{Corner, Setback};
+pub use corner::{Corner, Setback, cut_line};
 pub use dimension::{Dimension, DimensionEntry, MIN_LENGTH, Measure};
 pub use edit::{Add, EditError, NewCurve, SketchEdit};
-pub use flatten::{CIRCLE_SEGMENTS, cut_line, flatten_arc, flatten_circle};
+pub use flatten::{CIRCLE_SEGMENTS, flatten_arc, flatten_circle};
 pub use geometry::{ArcPoints, arc_sweep, arc_through, crossing, foot, signed_distance};
 pub use joint::Joint;
 pub use link::{

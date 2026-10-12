@@ -53,29 +53,6 @@ impl Sketch {
     }
 }
 
-/// The line from `start` to `end` in parts, by what a corner's fillet or
-/// chamfer keeps of it, `kept` (see [`Sketch::cut_back`]): the part kept,
-/// if anything is, and the ends cut off, each from the kept part out.
-pub fn cut_line(
-    start: DVec2,
-    end: DVec2,
-    [from, to]: [f64; 2],
-) -> (Option<[DVec2; 2]>, Vec<[DVec2; 2]>) {
-    let at = |u: f64| start.lerp(end, u);
-    if from >= to {
-        return (None, vec![[start, end]]);
-    }
-    let kept = [at(from), at(to)];
-    let mut cut = Vec::new();
-    if from > 0.0 {
-        cut.push([kept[0], start]);
-    }
-    if to < 1.0 {
-        cut.push([kept[1], end]);
-    }
-    (Some(kept), cut)
-}
-
 /// The circle around `center` of `radius` as a closed polyline of
 /// [`CIRCLE_SEGMENTS`] segments, counter-clockwise from its rightmost
 /// point, as [`Sketch::flatten`] draws a circle.
