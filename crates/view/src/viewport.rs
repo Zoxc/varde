@@ -1168,6 +1168,80 @@ impl Program<'_> {
         )
     }
 
+    /// A left click at `at` on the model, `picking` it: an operation's
+    /// origin plane nearer than the model, as its toolbar button picks
+    /// it; while a sketch's plane is picked, an origin plane or a face
+    /// that can take it; else the sketch item or model pick under it,
+    /// selected.
+    fn click_model(
+        &self,
+        state: &mut Interaction,
+        picking: &ModelPicking<'_>,
+        bounds: Rectangle,
+        at: Point,
+    ) -> Action<Message> {
+        let pick = self.pick_point(picking, bounds, at);
+        // An operation's origin plane nearer than the model is picked as
+        // its toolbar button picks it.
+        if picking.origin_planes
+            && picking.planes.is_none()
+            && let Some(plane) = self.origin_plane_at(bounds, at, pick.map(|pick| pick.at))
+        {
+            let picked = Message::Look(Look::Motion(MotionLook::OriginPlane(plane)));
+            return Action::publish(picked).and_capture();
+        }
+        if let Some(planes) = picking.planes {
+            // An origin plane nearer than the model is picked, else a face
+            // that can take the sketch; anything else nothing.
+            let near = pick.map(|pick| pick.at);
+            if let Some(plane) = self.origin_plane_at(bounds, at, near) {
+                let picked = Message::Edit(Edit::PlanePicked(plane));
+                return Action::publish(picked).and_capture();
+            }
+            let face = pick.and_then(|pick| match pick.target {
+                Picked::Face(face) if planes.takes(picking.index, face) => {
+                    planes.face_ref(picking.index, face, pick.at)
+                }
+                _ => None,
+            });
+            return match face {
+                Some(face) => Action::publish(Message::Edit(Edit::FacePicked(face))).and_capture(),
+                None => Action::capture(),
+            };
+        }
+        let local = local(bounds, at);
+        let double = sketch::double_click(&mut state.last_click, local);
+        let add = Held::TOGGLE.is_held(state.modifiers);
+        let message = match self.sketch_point(picking, bounds, at, pick) {
+            Some(item) => Look::ClickSketch { item, add },
+            None => Look::ClickModel { pick, add, double },
+        };
+        Action::publish(Message::Look(message)).and_capture()
+    }
+
+    /// A middle click at `at`: sets the point orbited about, if it's the
+    /// click the settings have for that.
+    fn click_middle(
+        &self,
+        state: &mut Interaction,
+        bounds: Rectangle,
+        at: Point,
+    ) -> Action<Message> {
+        // The click that sets the point orbited about, as the
+        // settings have it.
+        let local = local(bounds, at);
+        let sets = match self.mouse.pivot_click {
+            PivotClick::Middle => true,
+            PivotClick::MiddleDouble => sketch::double_click(&mut state.last_middle, local),
+            PivotClick::ShiftMiddle => Held::FREE.is_held(state.modifiers),
+        };
+        if !sets {
+            return Action::capture();
+        }
+        let pivot = self.pivot_at(bounds, at);
+        Action::publish(Message::Look(Look::SetPivot(pivot))).and_capture()
+    }
+
     /// Takes the mouse `event` as a move of the camera: orbiting, panning
     /// and zooming.
     fn camera(
@@ -1218,47 +1292,7 @@ impl Program<'_> {
                     let Some(at) = state.click.take() else {
                         return Some(Action::capture());
                     };
-                    let pick = self.pick_point(picking, bounds, at);
-                    // An operation's origin plane nearer than the model
-                    // is picked as its toolbar button picks it.
-                    if picking.origin_planes
-                        && picking.planes.is_none()
-                        && let Some(plane) =
-                            self.origin_plane_at(bounds, at, pick.map(|pick| pick.at))
-                    {
-                        let picked = Message::Look(Look::Motion(MotionLook::OriginPlane(plane)));
-                        return Some(Action::publish(picked).and_capture());
-                    }
-                    if let Some(planes) = picking.planes {
-                        // An origin plane nearer than the model is
-                        // picked, else a face that can take the sketch;
-                        // anything else nothing.
-                        let near = pick.map(|pick| pick.at);
-                        if let Some(plane) = self.origin_plane_at(bounds, at, near) {
-                            let picked = Message::Edit(Edit::PlanePicked(plane));
-                            return Some(Action::publish(picked).and_capture());
-                        }
-                        let face = pick.and_then(|pick| match pick.target {
-                            Picked::Face(face) if planes.takes(picking.index, face) => {
-                                planes.face_ref(picking.index, face, pick.at)
-                            }
-                            _ => None,
-                        });
-                        return Some(match face {
-                            Some(face) => {
-                                Action::publish(Message::Edit(Edit::FacePicked(face))).and_capture()
-                            }
-                            None => Action::capture(),
-                        });
-                    }
-                    let local = local(bounds, at);
-                    let double = sketch::double_click(&mut state.last_click, local);
-                    let add = Held::TOGGLE.is_held(state.modifiers);
-                    let message = match self.sketch_point(picking, bounds, at, pick) {
-                        Some(item) => Look::ClickSketch { item, add },
-                        None => Look::ClickModel { pick, add, double },
-                    };
-                    return Some(Action::publish(Message::Look(message)).and_capture());
+                    return Some(self.click_model(state, picking, bounds, at));
                 }
                 let click = state
                     .click
@@ -1267,19 +1301,7 @@ impl Program<'_> {
                 let Some(at) = click else {
                     return Some(Action::capture());
                 };
-                // The click that sets the point orbited about, as the
-                // settings have it.
-                let local = local(bounds, at);
-                let sets = match self.mouse.pivot_click {
-                    PivotClick::Middle => true,
-                    PivotClick::MiddleDouble => sketch::double_click(&mut state.last_middle, local),
-                    PivotClick::ShiftMiddle => Held::FREE.is_held(state.modifiers),
-                };
-                if !sets {
-                    return Some(Action::capture());
-                }
-                let pivot = self.pivot_at(bounds, at);
-                Some(Action::publish(Message::Look(Look::SetPivot(pivot))).and_capture())
+                Some(self.click_middle(state, bounds, at))
             }
             mouse::Event::CursorMoved { position } => {
                 // A middle click until the cursor moves far enough.
@@ -1376,6 +1398,10 @@ impl Program<'_> {
                 *modifiers,
             );
         }
+        let redrawing = matches!(
+            event,
+            Event::Window(iced::window::Event::RedrawRequested(_))
+        );
         if let Event::Window(iced::window::Event::RedrawRequested(now)) = event
             && let Some(action) = self.hold(state, *now, bounds)
         {
@@ -1387,7 +1413,7 @@ impl Program<'_> {
         // changed.
         if let Some(Operating::Motion(moving)) = &self.operating
             && state.drag.is_none()
-            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+            && redrawing
             && let Some(action) = moving.redraw(
                 &mut state.motion,
                 bounds,
@@ -1431,21 +1457,15 @@ impl Program<'_> {
         // While the camera's dragged (past a click), nothing's hovered:
         // what was moves away from the cursor. It's worked out again once
         // the drag ends. A sweep's region or path curve likewise.
-        if state.drag.is_some()
-            && state.click.is_none()
-            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
-            && state.motion.leave_sketches()
-            && (self.picking.as_ref()).is_none_or(|picking| !picking.hovers())
-        {
-            return Some(Action::request_redraw());
-        }
-        if let Some(picking) = &self.picking
-            && state.drag.is_some()
-            && state.click.is_none()
-            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
-        {
-            state.hover_seen = None;
-            if picking.hovers() {
+        if state.drag.is_some() && state.click.is_none() && redrawing {
+            let hovers = (self.picking.as_ref()).is_some_and(ModelPicking::hovers);
+            if state.motion.leave_sketches() && !hovers {
+                return Some(Action::request_redraw());
+            }
+            if self.picking.is_some() {
+                state.hover_seen = None;
+            }
+            if hovers {
                 return Some(Action::publish(Message::Look(Look::Hover(None))));
             }
         }
