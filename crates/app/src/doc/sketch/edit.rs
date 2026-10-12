@@ -151,11 +151,7 @@ impl Doc {
             return;
         };
         let (start, end) = (chain.last, chain.first);
-        let joined = |entry: &varde_sketch::CurveEntry| match entry.curve {
-            Curve::Line { start: a, end: b } => [a, b] == [start, end] || [b, a] == [start, end],
-            _ => false,
-        };
-        if start == end || sketch.curves.iter().any(joined) {
+        if already_joined(sketch, start, end) {
             return;
         }
         let mut add = Add::new(sketch);
@@ -713,11 +709,7 @@ fn line(
         None => place(sketch, &mut add, end_at, click.target)?,
     };
     // Nor over a line joining the same points, such as the one just drawn.
-    let joined = |entry: &varde_sketch::CurveEntry| match entry.curve {
-        Curve::Line { start: a, end: b } => [a, b] == [start, end] || [b, a] == [start, end],
-        _ => false,
-    };
-    if start == end || sketch.curves.iter().any(joined) {
+    if already_joined(sketch, start, end) {
         return Ok(Step::Refused);
     }
     let new = add.curve(Curve::Line { start, end }, drawing.construction)?;
@@ -1150,6 +1142,16 @@ fn rim_snapped(sketch: &Sketch, circle: Id, target: Target) -> Option<SketchEdit
         auto: vec![auto],
         ..Add::new(sketch)
     }))
+}
+
+/// Whether a line from `start` to `end` would join nothing new: they're
+/// the one point, or a line in `sketch` joins them already, either way.
+fn already_joined(sketch: &Sketch, start: Id, end: Id) -> bool {
+    start == end
+        || sketch.curves.iter().any(|entry| match entry.curve {
+            Curve::Line { start: a, end: b } => [a, b] == [start, end] || [b, a] == [start, end],
+            _ => false,
+        })
 }
 
 #[cfg(test)]
