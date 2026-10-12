@@ -454,7 +454,16 @@ impl Head {
 /// mesh's [`MeshUpload`] (its points, its parts' ranges and boxes) and its
 /// [`PickTables`] (each hierarchy's nodes and items, triangles', segments'
 /// and vertices', the corners' faces, the chains' starts and items).
-pub const MODEL_PARTS: usize = 26;
+pub const MODEL_PARTS: usize = MESH_PARTS + LINES_PARTS + UPLOAD_PARTS + TABLES_PARTS;
+
+/// The mesh's parts: [`MeshParts`]' fields ([`mesh_parts`]).
+const MESH_PARTS: usize = 12;
+/// The sketches' lines' parts ([`lines_parts`]).
+const LINES_PARTS: usize = 2;
+/// The mesh's [`MeshUpload`]'s parts ([`upload_parts`]).
+const UPLOAD_PARTS: usize = 3;
+/// The mesh's [`PickTables`]' parts ([`tables_parts`]).
+const TABLES_PARTS: usize = 9;
 
 /// A part's box in an upload's [`MeshUpload::bounds`] as it crosses: its
 /// least corner then its greatest, or [`NO_BOX`] for none.
@@ -599,26 +608,12 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             }
             (
                 head,
-                [
-                    bytemuck::cast_slice(mesh.positions()),
-                    bytemuck::cast_slice(mesh.normals()),
-                    bytemuck::cast_slice(mesh.indices()),
-                    bytemuck::cast_slice(mesh.face_ends()),
-                    bytemuck::cast_slice(mesh.edge_vertices()),
-                    bytemuck::cast_slice(mesh.edge_ends()),
-                    bytemuck::cast_slice(mesh.edge_faces()),
-                    bytemuck::cast_slice(mesh.corners()),
-                    bytemuck::cast_slice(mesh.edge_corners()),
-                    bytemuck::cast_slice(mesh.wire_vertices()),
-                    bytemuck::cast_slice(mesh.wire_ends()),
-                    bytemuck::cast_slice(mesh.part_ends()),
-                    bytemuck::cast_slice(sketches.points()),
-                    bytemuck::cast_slice(sketches.ends()),
-                ]
-                .map(Cow::Borrowed)
-                .into_iter()
-                .chain(prepared_parts(mesh, tables))
-                .collect(),
+                (mesh_parts(mesh).into_iter())
+                    .chain(lines_parts(sketches))
+                    .map(Cow::Borrowed)
+                    .chain(upload_parts(mesh))
+                    .chain(tables_parts(tables))
+                    .collect(),
             )
         }
         Response::Failed { asked, error } => (
@@ -891,12 +886,36 @@ fn decode_bodies(bodies: &[(BodyId, [[f32; 3]; 2])]) -> Result<Vec<(BodyId, Aabb
         .collect()
 }
 
-/// The parts of `mesh`'s [`MeshUpload`] and its `tables`, as they follow
-/// the sketches' lines.
-fn prepared_parts<'a>(
-    mesh: &'a RenderMesh,
-    tables: &'a PickTables,
-) -> impl Iterator<Item = Cow<'a, [u8]>> {
+/// The parts of `mesh`, [`MeshParts`]' fields in order, as
+/// [`decode_mesh`] takes them.
+fn mesh_parts(mesh: &RenderMesh) -> [&[u8]; MESH_PARTS] {
+    [
+        bytemuck::cast_slice(mesh.positions()),
+        bytemuck::cast_slice(mesh.normals()),
+        bytemuck::cast_slice(mesh.indices()),
+        bytemuck::cast_slice(mesh.face_ends()),
+        bytemuck::cast_slice(mesh.edge_vertices()),
+        bytemuck::cast_slice(mesh.edge_ends()),
+        bytemuck::cast_slice(mesh.edge_faces()),
+        bytemuck::cast_slice(mesh.corners()),
+        bytemuck::cast_slice(mesh.edge_corners()),
+        bytemuck::cast_slice(mesh.wire_vertices()),
+        bytemuck::cast_slice(mesh.wire_ends()),
+        bytemuck::cast_slice(mesh.part_ends()),
+    ]
+}
+
+/// The parts of `lines`, its points and ends, as [`decode_lines`] takes
+/// them.
+fn lines_parts(lines: &RenderLines) -> [&[u8]; LINES_PARTS] {
+    [
+        bytemuck::cast_slice(lines.points()),
+        bytemuck::cast_slice(lines.ends()),
+    ]
+}
+
+/// The parts of `mesh`'s [`MeshUpload`], as [`decode_upload`] takes them.
+fn upload_parts(mesh: &RenderMesh) -> [Cow<'_, [u8]>; UPLOAD_PARTS] {
     let upload = mesh.upload();
     let ranges: Vec<[u32; 4]> = (upload.parts().iter())
         .map(|[e, w]| [e.start, e.end, w.start, w.end])
@@ -908,29 +927,38 @@ fn prepared_parts<'a>(
             })
         })
         .collect();
-    let corner_faces: Vec<[u32; 2]> = (tables.corner_faces().iter())
-        .map(|&(corner, face)| [corner, face])
-        .collect();
-    let tree = |bvh: &'a Bvh| {
-        [
-            Cow::Borrowed(bytemuck::cast_slice(bvh.nodes())),
-            Cow::Borrowed(bytemuck::cast_slice(bvh.items())),
-        ]
-    };
     [
         Cow::Borrowed(bytemuck::cast_slice(upload.points())),
         Cow::Owned(bytemuck::cast_slice(&ranges).to_vec()),
         Cow::Owned(bytemuck::cast_slice(&boxes).to_vec()),
     ]
-    .into_iter()
-    .chain(tree(tables.triangles()))
-    .chain(tree(tables.segments()))
-    .chain(tree(tables.vertices()))
-    .chain([
+}
+
+/// The parts of `tables`, as [`decode_tables`] takes them.
+fn tables_parts(tables: &PickTables) -> [Cow<'_, [u8]>; TABLES_PARTS] {
+    let corner_faces: Vec<[u32; 2]> = (tables.corner_faces().iter())
+        .map(|&(corner, face)| [corner, face])
+        .collect();
+    fn tree(bvh: &Bvh) -> [&[u8]; 2] {
+        [
+            bytemuck::cast_slice(bvh.nodes()),
+            bytemuck::cast_slice(bvh.items()),
+        ]
+    }
+    let [triangle_nodes, triangle_items] = tree(tables.triangles());
+    let [segment_nodes, segment_items] = tree(tables.segments());
+    let [vertex_nodes, vertex_items] = tree(tables.vertices());
+    [
+        Cow::Borrowed(triangle_nodes),
+        Cow::Borrowed(triangle_items),
+        Cow::Borrowed(segment_nodes),
+        Cow::Borrowed(segment_items),
+        Cow::Borrowed(vertex_nodes),
+        Cow::Borrowed(vertex_items),
         Cow::Owned(bytemuck::cast_slice(&corner_faces).to_vec()),
         Cow::Borrowed(bytemuck::cast_slice(tables.chain_starts())),
         Cow::Borrowed(bytemuck::cast_slice(tables.chain_items())),
-    ])
+    ]
 }
 
 /// Decodes and checks the model's parts following a [`Head::Regenerated`]:
@@ -940,12 +968,19 @@ pub fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines, P
     let Ok(parts) = <&[_; MODEL_PARTS]>::try_from(parts) else {
         return Err(Error::Parts(parts.len()));
     };
-    let (mesh, rest) = parts.split_first_chunk::<12>().expect("as many parts");
-    let (lines, rest) = rest.split_first_chunk::<2>().expect("as many parts");
-    let (upload, rest) = rest.split_first_chunk::<3>().expect("as many parts");
-    let tables: &[_; 9] = rest.try_into().expect("as many parts");
+    let (mesh, rest) = parts
+        .split_first_chunk::<MESH_PARTS>()
+        .expect("as many parts");
+    let (lines, rest) = rest
+        .split_first_chunk::<LINES_PARTS>()
+        .expect("as many parts");
+    let (upload, rest) = rest
+        .split_first_chunk::<UPLOAD_PARTS>()
+        .expect("as many parts");
+    let tables: &[_; TABLES_PARTS] = rest.try_into().expect("as many parts");
     let mesh = decode_mesh(mesh)?;
-    let lines = decode_lines([&lines[0], &lines[1]])?;
+    let [points, ends] = lines;
+    let lines = decode_lines([points, ends])?;
     mesh.set_upload(decode_upload(upload, &mesh)?);
     let tables = decode_tables(tables, &mesh)?;
     Ok((mesh, lines, tables))
@@ -954,7 +989,7 @@ pub fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines, P
 /// Decodes and checks `mesh`'s [`MeshUpload`]: its points, its parts'
 /// ranges and boxes.
 fn decode_upload<B: Buffer>(
-    [points, ranges, boxes]: &[B; 3],
+    [points, ranges, boxes]: &[B; UPLOAD_PARTS],
     mesh: &RenderMesh,
 ) -> Result<MeshUpload, Error> {
     let part = Part::Upload;
@@ -989,7 +1024,7 @@ fn decode_tables<B: Buffer>(
         corner_faces,
         chain_starts,
         chain_items,
-    ]: &[B; 9],
+    ]: &[B; TABLES_PARTS],
     mesh: &RenderMesh,
 ) -> Result<PickTables, Error> {
     let part = Part::PickTables;
@@ -1030,7 +1065,7 @@ fn decode_mesh<B: Buffer>(
         wire_vertices,
         wire_ends,
         part_ends,
-    ]: &[B; 12],
+    ]: &[B; MESH_PARTS],
 ) -> Result<RenderMesh, Error> {
     use RenderMesh as M;
     let part = Part::RenderMesh;
@@ -1064,7 +1099,9 @@ fn decode_mesh<B: Buffer>(
 }
 
 /// Decodes and checks lines' points and ends.
-fn decode_lines<B: Buffer + ?Sized>([points, ends]: [&B; 2]) -> Result<RenderLines, Error> {
+fn decode_lines<B: Buffer + ?Sized>(
+    [points, ends]: [&B; LINES_PARTS],
+) -> Result<RenderLines, Error> {
     RenderLines::from_parts(
         copy(
             Part::RenderLines(LinesPart::Points),
