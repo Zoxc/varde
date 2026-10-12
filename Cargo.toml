@@ -75,6 +75,9 @@ spade = { version = "2.15", default-features = false, features = ["std"] }
 # Pinned exactly: a new version may change the last bits of a result
 # (deny.toml holds it there too).
 libm = "=0.2.16"
+# Exact rationals, the oracle the kernel's numerics tests check bounds
+# against. Tests only.
+num-rational = "0.4"
 # O_NONBLOCK and O_NOFOLLOW for opening the MCP token (crates/io), Unix
 # only. The version the lock already holds.
 libc = "0.2"

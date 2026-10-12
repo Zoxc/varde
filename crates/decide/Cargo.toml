@@ -9,3 +9,8 @@ publish = false
 [dependencies]
 glam.workspace = true
 libm.workspace = true
+
+[dev-dependencies]
+num-rational.workspace = true
+varde-testing.workspace = true
+varde-testkit.workspace = true
