@@ -177,10 +177,13 @@ fn bodies_read_back_as_written() {
         .map(|s| s.manifold_mesh(&display).unwrap())
         .collect();
     let names = ["Body 1", "Rod & <\"axle\">", "Cube\u{1}\u{fffe}"];
-    let objects: Vec<Object<'_>> = (names.iter().zip(&meshes))
-        .map(|(name, mesh)| Object { name, mesh })
+    let bodies: Vec<Body> = (names.iter().zip(&meshes))
+        .map(|(name, mesh)| Body {
+            name: name.to_string(),
+            mesh: mesh.clone(),
+        })
         .collect();
-    let zip = write("Bracket 'v2'", &objects).unwrap();
+    let zip = package("Bracket 'v2'", &bodies).unwrap();
 
     let (title, read) = read(&zip);
     assert_eq!(title, "Bracket 'v2'");
@@ -218,11 +221,11 @@ fn small_and_negative_coordinates_read_back() {
     )
     .unwrap();
     let mesh = cube.manifold_mesh(&Display::new(&TOL)).unwrap();
-    let zip = write(
+    let zip = package(
         "",
-        &[Object {
-            name: "",
-            mesh: &mesh,
+        &[Body {
+            name: String::new(),
+            mesh: mesh.clone(),
         }],
     )
     .unwrap();
@@ -232,7 +235,7 @@ fn small_and_negative_coordinates_read_back() {
 
 #[test]
 fn nothing_to_write_is_refused() {
-    assert_eq!(write("x", &[]), Err(Error::NoObjects));
+    assert_eq!(package("x", &[]), Err(Error::NoObjects));
 }
 
 #[test]
@@ -259,12 +262,13 @@ fn coordinates_are_written_within_their_bound() {
 fn the_model_stays_within_its_bound() {
     let mesh = block().manifold_mesh(&Display::new(&TOL)).unwrap();
     let name = "\"&\"".repeat(10);
-    let objects = [Object {
-        name: &name,
-        mesh: &mesh,
-    }; 2];
-    let text = model(&name, &objects);
-    assert!(text.len() as u64 <= model_bound(&name, &objects).unwrap());
+    let body = Body {
+        name: name.clone(),
+        mesh,
+    };
+    let bodies = [body.clone(), body];
+    let text = model(&name, &bodies);
+    assert!(text.len() as u64 <= model_bound(&name, &bodies).unwrap());
 }
 
 /// A mesh crossing to the IO worker is checked again on the way in.
@@ -288,24 +292,24 @@ fn a_body_is_placed_by_its_origin() {
     let meshes = [&far, &centred].map(|s| s.manifold_mesh(&display).unwrap());
     assert_eq!(meshes[0].origin(), [9e5, -4e5, 2e5 + 2.0]);
     assert_eq!(meshes[1].origin(), [0.0; 3]);
-    let objects = [
-        Object {
-            name: "far",
-            mesh: &meshes[0],
+    let bodies = [
+        Body {
+            name: "far".to_owned(),
+            mesh: meshes[0].clone(),
         },
-        Object {
-            name: "centred",
-            mesh: &meshes[1],
+        Body {
+            name: "centred".to_owned(),
+            mesh: meshes[1].clone(),
         },
     ];
-    let text = model("t", &objects);
+    let text = model("t", &bodies);
     assert!(
         text.contains(
             "<item objectid=\"1\" transform=\"1 0 0 0 1 0 0 0 1 900000 -400000 200002\"/>"
         )
     );
     assert!(text.contains("<item objectid=\"2\"/>"));
-    let (_, read) = read(&write("t", &objects).unwrap());
+    let (_, read) = read(&package("t", &bodies).unwrap());
     assert_eq!(read[0].mesh, meshes[0]);
     assert_eq!(read[1].mesh, meshes[1]);
     // Its vertices are near zero, where `f32`s are fine.

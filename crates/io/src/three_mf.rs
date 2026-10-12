@@ -13,7 +13,7 @@
 //!
 //! The zip is written here (its parts deflated by `miniz_oxide`): local
 //! headers, the central directory and its end record, no zip64, so the
-//! package and each part must stay under 4 GiB, which [`write()`] checks
+//! package and each part must stay under 4 GiB, which [`package()`] checks
 //! before it builds anything.
 
 use std::fmt::Write as _;
@@ -24,34 +24,12 @@ use varde_kernel_compat::ManifoldMesh;
 /// The extension of a 3MF file, without the dot.
 pub const EXTENSION: &str = "3mf";
 
-/// One body to write: its name and its mesh, in millimetres.
-#[derive(Debug, Clone, Copy)]
-pub struct Object<'a> {
-    pub name: &'a str,
-    pub mesh: &'a ManifoldMesh,
-}
-
-/// A body to write, owned, as [`Request::Export`](crate::Request::Export)
+/// A body to write, its name and its mesh, in millimetres, as [`Request::Export`](crate::Request::Export)
 /// carries it to the lane: its mesh is checked again as it's decoded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub name: String,
     pub mesh: ManifoldMesh,
-}
-
-impl Body {
-    pub fn object(&self) -> Object<'_> {
-        Object {
-            name: &self.name,
-            mesh: &self.mesh,
-        }
-    }
-}
-
-/// [`write()`] of `bodies`.
-pub fn package(title: &str, bodies: &[Body]) -> Result<Vec<u8>, Error> {
-    let objects: Vec<Object<'_>> = bodies.iter().map(Body::object).collect();
-    write(title, &objects)
 }
 
 /// Why no package was written.
@@ -75,7 +53,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// The model part's path in the package.
-pub const MODEL_PATH: &str = "3D/3dmodel.model";
+const MODEL_PATH: &str = "3D/3dmodel.model";
 
 /// The 3MF core namespace.
 const CORE: &str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
@@ -114,19 +92,19 @@ const OBJECT: u64 = 256;
 /// title.
 const MODEL: u64 = 1024;
 
-/// The package of `objects`, titled `title` (the design's name). Fails
+/// The package of `bodies`, titled `title` (the design's name). Fails
 /// with [`Error::NoObjects`] for none, and with [`Error::TooLarge`] if
 /// the model could be past what the zip holds, worked out from the
 /// meshes' sizes before anything is written.
-pub fn write(title: &str, objects: &[Object<'_>]) -> Result<Vec<u8>, Error> {
-    if objects.is_empty() {
+pub fn package(title: &str, bodies: &[Body]) -> Result<Vec<u8>, Error> {
+    if bodies.is_empty() {
         return Err(Error::NoObjects);
     }
-    let bound = model_bound(title, objects).ok_or(Error::TooLarge)?;
+    let bound = model_bound(title, bodies).ok_or(Error::TooLarge)?;
     if bound > MAX_MODEL {
         return Err(Error::TooLarge);
     }
-    let model = model(title, objects);
+    let model = model(title, bodies);
     debug_assert!(model.len() as u64 <= bound);
     let mut zip = Zip::default();
     zip.add("[Content_Types].xml", CONTENT_TYPES.as_bytes())?;
@@ -135,18 +113,18 @@ pub fn write(title: &str, objects: &[Object<'_>]) -> Result<Vec<u8>, Error> {
     zip.finish()
 }
 
-/// The most bytes the model of `objects` takes, or `None` past `u64`.
-fn model_bound(title: &str, objects: &[Object<'_>]) -> Option<u64> {
+/// The most bytes the model of `bodies` takes, or `None` past `u64`.
+fn model_bound(title: &str, bodies: &[Body]) -> Option<u64> {
     let text = |s: &str| (s.len() as u64).checked_mul(6);
     let mut total = MODEL.checked_add(text(title)?)?;
-    for object in objects {
-        let vertices = (object.mesh.positions().len() as u64)
+    for body in bodies {
+        let vertices = (body.mesh.positions().len() as u64)
             .checked_mul(VERTEX.checked_add(3 * MAX_NUMBER)?)?;
-        let triangles = (object.mesh.triangles().len() as u64).checked_mul(TRIANGLE)?;
+        let triangles = (body.mesh.triangles().len() as u64).checked_mul(TRIANGLE)?;
         total = total
             .checked_add(OBJECT)?
             .checked_add(3 * MAX_NUMBER)?
-            .checked_add(text(object.name)?)?
+            .checked_add(text(&body.name)?)?
             .checked_add(vertices)?
             .checked_add(triangles)?;
     }
@@ -154,7 +132,7 @@ fn model_bound(title: &str, objects: &[Object<'_>]) -> Option<u64> {
 }
 
 /// The model part: see the module's docs.
-fn model(title: &str, objects: &[Object<'_>]) -> String {
+fn model(title: &str, bodies: &[Body]) -> String {
     let mut out = String::new();
     // Writing to a `String` doesn't fail.
     let _ = write!(
@@ -166,14 +144,14 @@ fn model(title: &str, objects: &[Object<'_>]) -> String {
          <resources>\n",
         escaped(title)
     );
-    for (i, object) in objects.iter().enumerate() {
+    for (i, body) in bodies.iter().enumerate() {
         let _ = write!(
             out,
             "  <object id=\"{}\" type=\"model\" name=\"{}\">\n   <mesh>\n    <vertices>\n",
             i + 1,
-            escaped(object.name)
+            escaped(&body.name)
         );
-        for p in object.mesh.positions() {
+        for p in body.mesh.positions() {
             out.push_str("     <vertex x=\"");
             number(&mut out, p[0]);
             out.push_str("\" y=\"");
@@ -183,15 +161,15 @@ fn model(title: &str, objects: &[Object<'_>]) -> String {
             out.push_str("\"/>\n");
         }
         out.push_str("    </vertices>\n    <triangles>\n");
-        for [a, b, c] in object.mesh.triangles() {
+        for [a, b, c] in body.mesh.triangles() {
             let _ = writeln!(out, "     <triangle v1=\"{a}\" v2=\"{b}\" v3=\"{c}\"/>");
         }
         out.push_str("    </triangles>\n   </mesh>\n  </object>\n");
     }
     out.push_str(" </resources>\n <build>\n");
-    for (i, object) in objects.iter().enumerate() {
+    for (i, body) in bodies.iter().enumerate() {
         let _ = write!(out, "  <item objectid=\"{}\"", i + 1);
-        let origin = object.mesh.origin();
+        let origin = body.mesh.origin();
         if origin != [0.0; 3] {
             out.push_str(" transform=\"1 0 0 0 1 0 0 0 1");
             for x in origin {
