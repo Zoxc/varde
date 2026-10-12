@@ -231,15 +231,7 @@ impl canvas::Program<Message> for Names<'_> {
                 &Target::Model(target) => self.draw_target(&mut frame, &projector, target, colour),
                 Target::Line(points) => {
                     let path = Path::new(|b| {
-                        for (k, p) in points.iter().enumerate() {
-                            let s = projector.show(*p);
-                            let s = Point::new(s.x as f32, s.y as f32);
-                            if k == 0 {
-                                b.move_to(s);
-                            } else {
-                                b.line_to(s);
-                            }
-                        }
+                        trace(b, points.iter().map(|&p| projector.show(p)));
                     });
                     frame.stroke(
                         &path,
@@ -285,20 +277,7 @@ impl Names<'_> {
         let picking = self.index.picking();
         let positions = mesh.positions();
         let at = |i: u32| glam::Vec3::from(positions[i as usize]).as_dvec3();
-        let in_front = |p: glam::DVec3| {
-            !projector.perspective() || projector.world_depth(p) >= projector.near()
-        };
-        // Whether `p` is in view, and unless what's there is selected
-        // itself (labelled hidden or not), nothing hides it.
-        let shows = |p: glam::DVec3, picked: bool| {
-            let s = projector.show(p);
-            in_front(p)
-                && s.x >= 0.0
-                && s.y >= 0.0
-                && s.x <= f64::from(size[0])
-                && s.y <= f64::from(size[1])
-                && (picked || !self.index.hides(&self.camera, size, p))
-        };
+        let shows = |p: glam::DVec3, picked: bool| self.shows(projector, size, p, picked);
         let normals = mesh.normals();
         let normal = |i: u32| glam::Vec3::from(normals[i as usize]).as_dvec3();
         let (eye, backward) = projector.eye();
@@ -313,33 +292,16 @@ impl Names<'_> {
         };
         // Whether face `face` turns towards the eye near `p`: its
         // triangle nearest there does, by its normals.
+        let triangle_normal = |t: [u32; 3]| normal(t[0]) + normal(t[1]) + normal(t[2]);
         let facing = |face: u32, p: glam::DVec3| {
-            let Some(range) = mesh.face_indices(face as usize) else {
-                return false;
-            };
-            let nearest = (mesh.indices()[range].as_chunks::<3>().0.iter())
-                .map(|t| {
-                    let c = (at(t[0]) + at(t[1]) + at(t[2])) / 3.0;
-                    (c.distance_squared(p), t)
-                })
-                .min_by(|a, b| a.0.total_cmp(&b.0));
-            nearest.is_some_and(|(_, t)| faces_eye(p, normal(t[0]) + normal(t[1]) + normal(t[2])))
+            (self.nearest_triangle(face, p)).is_some_and(|t| faces_eye(p, triangle_normal(t)))
         };
         // The unit normal of face `face` near `p`, by its nearest
         // triangle's normals.
         let normal_near = |face: u32, p: glam::DVec3| {
-            let Some(range) = mesh.face_indices(face as usize) else {
-                return glam::DVec3::ZERO;
-            };
-            (mesh.indices()[range].as_chunks::<3>().0.iter())
-                .map(|t| {
-                    let c = (at(t[0]) + at(t[1]) + at(t[2])) / 3.0;
-                    (c.distance_squared(p), t)
-                })
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map_or(glam::DVec3::ZERO, |(_, t)| {
-                    (normal(t[0]) + normal(t[1]) + normal(t[2])).normalize_or_zero()
-                })
+            (self.nearest_triangle(face, p)).map_or(glam::DVec3::ZERO, |t| {
+                triangle_normal(t).normalize_or_zero()
+            })
         };
         let across = |n: glam::DVec3| n.any_orthonormal_vector();
         // The corners of the vertices selected: a selected vertex is a
@@ -356,136 +318,154 @@ impl Names<'_> {
         let (near_faces, near_edges, near_corners) = self.connected(&corners);
         let mut wanted = Vec::new();
 
-        {
-            for face in 0..mesh.face_count() {
-                let picked = self.targets.contains(&Picked::Face(face as u32));
-                if !named(face as u32) && !picked && !near_faces.contains(&(face as u32)) {
-                    continue;
-                }
-                let Some(key) = picking.faces().get(face).map(|f| f.key) else {
-                    continue;
-                };
-                let Some(range) = mesh.face_indices(face) else {
-                    continue;
-                };
-                let tris = mesh.indices()[range].as_chunks::<3>().0;
-                let triangles: Vec<_> = tris
-                    .iter()
-                    .map(|t| [at(t[0]), at(t[1]), at(t[2])])
-                    .collect();
-                // The centroid by area, then the triangles nearest it,
-                // on the face, until one shows.
-                let mut total = 0.0;
-                let mut sum = glam::DVec3::ZERO;
-                for [a, b, c] in &triangles {
-                    let area = (*b - *a).cross(*c - *a).length();
-                    total += area;
-                    sum += (*a + *b + *c) / 3.0 * area;
-                }
-                if total <= 0.0 {
-                    continue;
-                }
-                let centre = sum / total;
-                // Only the triangles turned towards the eye: a face seen
-                // from behind is hidden.
-                let mut centres: Vec<_> = (triangles.iter().zip(tris))
-                    .filter(|&([a, b, c], t)| {
-                        picked
-                            || faces_eye(
-                                (*a + *b + *c) / 3.0,
-                                normal(t[0]) + normal(t[1]) + normal(t[2]),
-                            )
-                    })
-                    .map(|([a, b, c], _)| (*a + *b + *c) / 3.0)
-                    .collect();
-                centres.sort_by(|a, b| {
-                    a.distance_squared(centre)
-                        .total_cmp(&b.distance_squared(centre))
+        for face in 0..mesh.face_count() {
+            let picked = self.targets.contains(&Picked::Face(face as u32));
+            if !named(face as u32) && !picked && !near_faces.contains(&(face as u32)) {
+                continue;
+            }
+            let Some(key) = picking.faces().get(face).map(|f| f.key) else {
+                continue;
+            };
+            let Some(range) = mesh.face_indices(face) else {
+                continue;
+            };
+            let tris = mesh.indices()[range].as_chunks::<3>().0;
+            let triangles: Vec<_> = tris
+                .iter()
+                .map(|t| [at(t[0]), at(t[1]), at(t[2])])
+                .collect();
+            // The centroid by area, then the triangles nearest it,
+            // on the face, until one shows.
+            let mut total = 0.0;
+            let mut sum = glam::DVec3::ZERO;
+            for [a, b, c] in &triangles {
+                let area = (*b - *a).cross(*c - *a).length();
+                total += area;
+                sum += (*a + *b + *c) / 3.0 * area;
+            }
+            if total <= 0.0 {
+                continue;
+            }
+            let centre = sum / total;
+            // Only the triangles turned towards the eye: a face seen
+            // from behind is hidden.
+            let mut centres: Vec<_> = (triangles.iter().zip(tris))
+                .filter(|&([a, b, c], t)| {
+                    picked
+                        || faces_eye(
+                            (*a + *b + *c) / 3.0,
+                            normal(t[0]) + normal(t[1]) + normal(t[2]),
+                        )
+                })
+                .map(|([a, b, c], _)| (*a + *b + *c) / 3.0)
+                .collect();
+            centres.sort_by(|a, b| {
+                a.distance_squared(centre)
+                    .total_cmp(&b.distance_squared(centre))
+            });
+            // Labelled where any of it shows, not only near its
+            // centre.
+            if let Some(p) = spread(&centres, 8, TRIES).find(|p| shows(*p, picked)) {
+                let n = normal_near(face as u32, p);
+                wanted.push(Wanted {
+                    kind: Kind::Face,
+                    point: p,
+                    normal: n,
+                    tangent: if n == glam::DVec3::ZERO { n } else { across(n) },
+                    target: Target::Model(Picked::Face(face as u32)),
+                    anchor: projector.show(p),
+                    words: self.words(&[key]),
                 });
-                // Labelled where any of it shows, not only near its
-                // centre.
-                if let Some(p) = spread(&centres, 8, TRIES).find(|p| shows(*p, picked)) {
-                    let n = normal_near(face as u32, p);
-                    wanted.push(Wanted {
-                        kind: Kind::Face,
-                        point: p,
-                        normal: n,
-                        tangent: if n == glam::DVec3::ZERO { n } else { across(n) },
-                        target: Target::Model(Picked::Face(face as u32)),
-                        anchor: projector.show(p),
-                        words: self.words(&[key]),
-                    });
-                }
             }
         }
 
-        {
-            for edge in 0..mesh.edge_count() {
-                let picked = self.targets.contains(&Picked::Edge(edge as u32));
-                if !(self.index.edge_faces(edge as u32)).is_some_and(|[a, _]| named(a))
-                    && !picked
-                    && !near_edges.contains(&(edge as u32))
-                {
-                    continue;
-                }
-                let Some(keys) = picking.edge_keys(mesh, edge as u32) else {
-                    continue;
-                };
-                let Some(line) = mesh.polyline(edge) else {
-                    continue;
-                };
-                let points: Vec<_> = line.iter().map(|&i| at(i)).collect();
-                // Labelled at the point nearest its middle that shows,
-                // one of its faces turned towards the eye there.
-                let sides = self.index.edge_faces(edge as u32).unwrap_or_default();
-                if let Some(p) = out_from_middle(&points)
-                    .find(|&p| (picked || sides.iter().any(|&f| facing(f, p))) && shows(p, picked))
-                {
-                    // The direction of its segment through `p`.
-                    let tangent = (points.windows(2))
-                        .map(|w| (w[1] - w[0], (w[0] + w[1]) / 2.0))
-                        .min_by(|a, b| a.1.distance_squared(p).total_cmp(&b.1.distance_squared(p)))
-                        .map_or(glam::DVec3::ZERO, |(d, _)| d.normalize_or_zero());
-                    wanted.push(Wanted {
-                        kind: Kind::Edge,
-                        point: p,
-                        normal: glam::DVec3::ZERO,
-                        tangent,
-                        target: Target::Model(Picked::Edge(edge as u32)),
-                        anchor: projector.show(p),
-                        words: self.words(&keys),
-                    });
-                }
+        for edge in 0..mesh.edge_count() {
+            let picked = self.targets.contains(&Picked::Edge(edge as u32));
+            if !(self.index.edge_faces(edge as u32)).is_some_and(|[a, _]| named(a))
+                && !picked
+                && !near_edges.contains(&(edge as u32))
+            {
+                continue;
+            }
+            let Some(keys) = picking.edge_keys(mesh, edge as u32) else {
+                continue;
+            };
+            let Some(line) = mesh.polyline(edge) else {
+                continue;
+            };
+            let points: Vec<_> = line.iter().map(|&i| at(i)).collect();
+            // Labelled at the point nearest its middle that shows,
+            // one of its faces turned towards the eye there.
+            let sides = self.index.edge_faces(edge as u32).unwrap_or_default();
+            if let Some(p) = out_from_middle(&points)
+                .find(|&p| (picked || sides.iter().any(|&f| facing(f, p))) && shows(p, picked))
+            {
+                // The direction of its segment through `p`.
+                let tangent = tangent_at(&points, p);
+                wanted.push(Wanted {
+                    kind: Kind::Edge,
+                    point: p,
+                    normal: glam::DVec3::ZERO,
+                    tangent,
+                    target: Target::Model(Picked::Edge(edge as u32)),
+                    anchor: projector.show(p),
+                    words: self.words(&keys),
+                });
             }
         }
 
-        {
-            for (corner, c) in picking.corners().iter().enumerate() {
-                let p = glam::DVec3::from(c.point);
-                let picked = corners.contains(&(corner as u32));
-                if (named(c.faces[0]) || picked || near_corners.contains(&(corner as u32)))
-                    && (picked || c.faces.iter().any(|&f| facing(f, p)))
-                    && shows(p, picked)
-                {
-                    let Some(keys) = picking.corner_keys(corner as u32) else {
-                        continue;
-                    };
-                    wanted.push(Wanted {
-                        kind: Kind::Corner,
-                        point: p,
-                        normal: glam::DVec3::ZERO,
-                        tangent: glam::DVec3::ZERO,
-                        target: Target::Model(Picked::Vertex(corner as u32)),
-                        anchor: projector.show(p),
-                        words: self.words(&keys),
-                    });
-                }
+        for (corner, c) in picking.corners().iter().enumerate() {
+            let p = glam::DVec3::from(c.point);
+            let picked = corners.contains(&(corner as u32));
+            if (named(c.faces[0]) || picked || near_corners.contains(&(corner as u32)))
+                && (picked || c.faces.iter().any(|&f| facing(f, p)))
+                && shows(p, picked)
+            {
+                let Some(keys) = picking.corner_keys(corner as u32) else {
+                    continue;
+                };
+                wanted.push(Wanted {
+                    kind: Kind::Corner,
+                    point: p,
+                    normal: glam::DVec3::ZERO,
+                    tangent: glam::DVec3::ZERO,
+                    target: Target::Model(Picked::Vertex(corner as u32)),
+                    anchor: projector.show(p),
+                    words: self.words(&keys),
+                });
             }
         }
 
         self.sketch_wanted(projector, size, &mut wanted);
         wanted.truncate(MOST);
         wanted
+    }
+
+    /// Whether `p` is in view, and unless what's there is selected itself
+    /// (`picked`, labelled hidden or not), nothing hides it.
+    fn shows(&self, projector: &Projector, size: [f32; 2], p: DVec3, picked: bool) -> bool {
+        let s = projector.show(p);
+        (!projector.perspective() || projector.world_depth(p) >= projector.near())
+            && s.x >= 0.0
+            && s.y >= 0.0
+            && s.x <= f64::from(size[0])
+            && s.y <= f64::from(size[1])
+            && (picked || !self.index.hides(&self.camera, size, p))
+    }
+
+    /// The triangle of face `face` whose centre is nearest `p`, if it
+    /// has any.
+    fn nearest_triangle(&self, face: u32, p: DVec3) -> Option<[u32; 3]> {
+        let mesh = self.index.mesh();
+        let at = |i: u32| glam::Vec3::from(mesh.positions()[i as usize]).as_dvec3();
+        let range = mesh.face_indices(face as usize)?;
+        (mesh.indices()[range].as_chunks::<3>().0.iter())
+            .map(|t| {
+                let c = (at(t[0]) + at(t[1]) + at(t[2])) / 3.0;
+                (c.distance_squared(p), *t)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, t)| t)
     }
 
     /// The named bodies' outline on screen: their faces' positions
@@ -562,15 +542,7 @@ impl Names<'_> {
     /// its sketch, its name and its id (which a face swept from it
     /// carries, "S5"), a point by its sketch and name.
     fn sketch_wanted(&self, projector: &Projector, size: [f32; 2], wanted: &mut Vec<Wanted>) {
-        let in_view = |p: DVec3, picked: bool| {
-            let s = projector.show(p);
-            (!projector.perspective() || projector.world_depth(p) >= projector.near())
-                && s.x >= 0.0
-                && s.y >= 0.0
-                && s.x <= f64::from(size[0])
-                && s.y <= f64::from(size[1])
-                && (picked || !self.index.hides(&self.camera, size, p))
-        };
+        let in_view = |p: DVec3, picked: bool| self.shows(projector, size, p, picked);
         for lines in &self.sketches {
             let whole = self.whole.contains(&lines.feature);
             let picked = |id| {
@@ -610,10 +582,7 @@ impl Names<'_> {
                 let Some(p) = out_from_middle(&points).find(|&p| in_view(p, picked)) else {
                     continue;
                 };
-                let tangent = (points.windows(2))
-                    .map(|w| (w[1] - w[0], (w[0] + w[1]) / 2.0))
-                    .min_by(|a, b| a.1.distance_squared(p).total_cmp(&b.1.distance_squared(p)))
-                    .map_or(DVec3::ZERO, |(d, _)| d.normalize_or_zero());
+                let tangent = tangent_at(&points, p);
                 wanted.push(Wanted {
                     kind: Kind::Curve,
                     point: p,
@@ -697,13 +666,7 @@ impl Names<'_> {
         };
         let faint = |a: f32| Color { a, ..colour };
         let polyline = |b: &mut canvas::path::Builder, line: &[u32]| {
-            for (k, &i) in line.iter().enumerate() {
-                if k == 0 {
-                    b.move_to(screen(at(i)));
-                } else {
-                    b.line_to(screen(at(i)));
-                }
-            }
+            trace(b, line.iter().map(|&i| projector.show(at(i))));
         };
         let line = |frame: &mut Frame, path: &Path, width: f32| {
             frame.stroke(
@@ -991,7 +954,27 @@ fn small(n: u64) -> String {
     }
 }
 
-/// The point halfway along a polyline, by length.
+/// The direction of the segment of the polyline `points` nearest `p`, by
+/// its middle; zero if it has none.
+fn tangent_at(points: &[DVec3], p: DVec3) -> DVec3 {
+    (points.windows(2))
+        .map(|w| (w[1] - w[0], (w[0] + w[1]) / 2.0))
+        .min_by(|a, b| a.1.distance_squared(p).total_cmp(&b.1.distance_squared(p)))
+        .map_or(DVec3::ZERO, |(d, _)| d.normalize_or_zero())
+}
+
+/// Traces the polyline through the screen points `points` on `b`.
+fn trace(b: &mut canvas::path::Builder, points: impl IntoIterator<Item = DVec2>) {
+    for (k, s) in points.into_iter().enumerate() {
+        let s = Point::new(s.x as f32, s.y as f32);
+        if k == 0 {
+            b.move_to(s);
+        } else {
+            b.line_to(s);
+        }
+    }
+}
+
 /// Points along the polyline `points` to try a label at, the one
 /// halfway first, then out towards its ends, [`TRIES`] at most.
 fn out_from_middle(points: &[glam::DVec3]) -> impl Iterator<Item = glam::DVec3> + '_ {
