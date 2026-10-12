@@ -143,7 +143,7 @@ impl MotionSession {
                     }
                 }
                 if let Some((picked, tangent)) = edges {
-                    self.blend = super::blend::BlendSetup::of(&picked, tangent);
+                    self.blend = super::blend::BlendSetup::sweep_path(&picked, tangent);
                 }
             }
             PathRef::Helix(helix) => {

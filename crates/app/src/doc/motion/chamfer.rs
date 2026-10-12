@@ -98,7 +98,7 @@ impl MotionSession {
         };
         self.chamfer_type = kind;
         self.flip = chamfer.flip;
-        self.blend = BlendSetup::blend_of(&chamfer.edges, chamfer.chains);
+        self.blend = BlendSetup::blend(&chamfer.edges, chamfer.chains);
         self.faces = Refs::of(&chamfer.faces);
         self.blend_body();
     }

@@ -48,19 +48,21 @@ impl Default for BlendSetup {
 }
 
 impl BlendSetup {
-    /// The edges `edges` (a stored feature's), tick `chains`, picked on
-    /// no model shown.
-    pub(super) fn of(edges: &[EdgeRef], chains: bool) -> Self {
+    /// A stored sweep's path `edges` and its tangent chain tick
+    /// `tangent`, which goes in `chains` (a sweep stores the tick),
+    /// picked on no model shown.
+    pub(super) fn sweep_path(edges: &[EdgeRef], tangent: bool) -> Self {
         Self {
             edges: Refs::of(edges),
-            chains,
+            chains: tangent,
             stored: false,
         }
     }
 
-    /// A blend's edges `edges` and stored `chains`, picked on no model
-    /// shown, with the tick on.
-    pub(super) fn blend_of(edges: &[EdgeRef], stored: bool) -> Self {
+    /// A stored blend's edges `edges` and its `chains`, which go in
+    /// `stored` (a blend's tick says what clicks pick: on), picked on no
+    /// model shown.
+    pub(super) fn blend(edges: &[EdgeRef], stored: bool) -> Self {
         Self {
             edges: Refs::of(edges),
             chains: true,

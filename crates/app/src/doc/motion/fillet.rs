@@ -42,7 +42,7 @@ impl MotionSession {
     pub(super) fn open_fillet(&mut self, fillet: &Fillet) {
         let ask = Fillet::radius_ask(&self.read_in.design());
         self.fields[MotionField::Radius.index()] = TypedText::of(&fillet.radius, &ask);
-        self.blend = BlendSetup::blend_of(&fillet.edges, fillet.chains);
+        self.blend = BlendSetup::blend(&fillet.edges, fillet.chains);
         self.faces = Refs::of(&fillet.faces);
         self.blend_body();
     }
