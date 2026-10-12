@@ -884,11 +884,21 @@ pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
 /// How opaque a disabled button is, all of it: the mock's `opacity`.
 const DISABLED_OPACITY: f32 = 0.45;
 
+/// `color` as a disabled control shows it, at [`DISABLED_OPACITY`],
+/// unless `enabled`.
+fn fade_unless(enabled: bool, color: Color) -> Color {
+    if enabled {
+        color
+    } else {
+        color.scale_alpha(DISABLED_OPACITY)
+    }
+}
+
 /// `style` faded as a whole, as a disabled button is: its fill, text and
 /// border at [`DISABLED_OPACITY`]. Fading the fill alone would leave white
 /// text on a dark panel looking pressable.
 fn faded(style: button::Style) -> button::Style {
-    let fade = |color: Color| color.scale_alpha(DISABLED_OPACITY);
+    let fade = |color: Color| fade_unless(false, color);
     button::Style {
         background: style.background.map(|background| match background {
             Background::Color(color) => Background::Color(fade(color)),
@@ -949,11 +959,7 @@ pub fn well(p: &Palette) -> Color {
 /// The colour of the operation panel's card behind its head, and of its
 /// controls on the well.
 fn control_fill(p: &Palette, enabled: bool) -> Color {
-    if enabled {
-        p.panel
-    } else {
-        p.panel.scale_alpha(DISABLED_OPACITY)
-    }
+    fade_unless(enabled, p.panel)
 }
 
 /// A square icon button in the operation panel's head, Cancel or (the
@@ -1303,26 +1309,16 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
     } else {
         p.faint
     };
-    let style = checkbox::Style {
-        background: Background::Color(if checked { p.fill } else { Color::TRANSPARENT }),
+    let fade = |color: Color| fade_unless(enabled, color);
+    checkbox::Style {
+        background: Background::Color(if checked {
+            fade(p.fill)
+        } else {
+            Color::TRANSPARENT
+        }),
         icon_color: Color::WHITE,
-        border: outline(edge, TICK_RADIUS),
-        text_color: Some(p.text),
-    };
-    if enabled {
-        style
-    } else {
-        let fade = |color: Color| color.scale_alpha(DISABLED_OPACITY);
-        checkbox::Style {
-            background: Background::Color(if checked {
-                fade(p.fill)
-            } else {
-                Color::TRANSPARENT
-            }),
-            border: outline(fade(edge), TICK_RADIUS),
-            text_color: Some(fade(p.text)),
-            ..style
-        }
+        border: outline(fade(edge), TICK_RADIUS),
+        text_color: Some(fade(p.text)),
     }
 }
 
@@ -1352,13 +1348,7 @@ pub const SLIDER_HANDLE_RADIUS: f32 = 6.0;
 pub fn slider(enabled: bool) -> impl Fn(&Theme, slide::Status) -> slide::Style {
     move |theme, status| {
         let p = palette(theme);
-        let fade = |color: Color| {
-            if enabled {
-                color
-            } else {
-                color.scale_alpha(DISABLED_OPACITY)
-            }
-        };
+        let fade = |color: Color| fade_unless(enabled, color);
         let fill = match status {
             slide::Status::Hovered | slide::Status::Dragged if enabled => {
                 mix(p.accent, p.panel, 0.2)
@@ -1505,12 +1495,7 @@ pub fn color_rail_strip(
 fn rail_color(p: &Palette, tint: Option<BodyTint>, enabled: bool) -> Color {
     let model = p.scene.model;
     let Srgb([r, g, b]) = tint.map_or(model, |tint| model.tinted(tint));
-    let color = Color::from_rgb(r, g, b);
-    if enabled {
-        color
-    } else {
-        color.scale_alpha(DISABLED_OPACITY)
-    }
+    fade_unless(enabled, Color::from_rgb(r, g, b))
 }
 
 /// The height of a [`color_rail`].
