@@ -118,35 +118,12 @@ impl Doc {
 /// Whether `message` only hovers, scrolls or moves the camera, which
 /// leaves the rename field open.
 pub(super) fn passive(message: &Look) -> bool {
-    matches!(
-        message,
-        Look::HoverItem(_)
-            | Look::LeaveItem(_)
-            | Look::HoverLink(_)
-            | Look::LeaveLink(_)
-            | Look::HoverOverlap(_)
-            | Look::LeaveOverlap(_)
-            | Look::Rail(RailLook::Hover(..) | RailLook::Row(_))
-            | Look::HoverFeature(_)
-            | Look::LeaveFeature(_)
-            | Look::HoverOrigin(_)
-            | Look::HoverPlane(_)
-            | Look::LeaveOrigin(_)
-            | Look::HoverBodyRow(_)
-            | Look::LeaveBodyRow(_)
-            | Look::HoverPanel(_)
-            | Look::LeavePanel(_)
-            | Look::Hover(_)
-            | Look::HoverSketch(_)
-            | Look::HoverCube(_)
-            | Look::Snap(_)
-            | Look::Aim(_)
-            | Look::ScrollGeometry(_)
-            | Look::ScrollConstraints(_)
-            | Look::Orbit { .. }
-            | Look::Pan { .. }
-            | Look::Zoom { .. }
-            | Look::ViewAspect(_)
-            | Look::SetPivot(_)
-    )
+    super::hovers(message)
+        || super::moves_camera(message)
+        || matches!(
+            message,
+            Look::HoverOverlap(_)
+                | Look::LeaveOverlap(_)
+                | Look::Rail(RailLook::Hover(..) | RailLook::Row(_))
+        )
 }

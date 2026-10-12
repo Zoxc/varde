@@ -1044,28 +1044,8 @@ impl Doc {
                     | Look::LeaveOverlap(_)
                     | Look::ChooseOverlap { .. }
                     | Look::ToggleOverlap(_)
-                    | Look::Hover(_)
-                    | Look::HoverSketch(_)
-                    | Look::HoverItem(_)
-                    | Look::HoverLink(_)
-                    | Look::LeaveItem(_)
-                    | Look::LeaveLink(_)
-                    | Look::HoverFeature(_)
-                    | Look::LeaveFeature(_)
-                    | Look::HoverOrigin(_)
-                    | Look::HoverPlane(_)
-                    | Look::LeaveOrigin(_)
-                    | Look::HoverBodyRow(_)
-                    | Look::LeaveBodyRow(_)
-                    | Look::HoverBodyLook(_)
-                    | Look::HoverPanel(_)
-                    | Look::LeavePanel(_)
-                    | Look::HoverCube(_)
-                    | Look::Snap(_)
-                    | Look::Aim(_)
-                    | Look::ScrollGeometry(_)
-                    | Look::ScrollConstraints(_)
-            ) {
+            ) && !hovers(&message)
+            {
                 self.close_overlaps();
             }
         }
@@ -1105,36 +1085,7 @@ impl Doc {
             self.close_value();
         }
         // What the app refused shows until something else is asked.
-        if !matches!(
-            message,
-            Look::Hover(_)
-                | Look::HoverSketch(_)
-                | Look::HoverItem(_)
-                | Look::HoverLink(_)
-                | Look::LeaveItem(_)
-                | Look::LeaveLink(_)
-                | Look::HoverFeature(_)
-                | Look::LeaveFeature(_)
-                | Look::HoverOrigin(_)
-                | Look::HoverPlane(_)
-                | Look::LeaveOrigin(_)
-                | Look::HoverBodyRow(_)
-                | Look::LeaveBodyRow(_)
-                | Look::HoverBodyLook(_)
-                | Look::HoverPanel(_)
-                | Look::LeavePanel(_)
-                | Look::HoverCube(_)
-                | Look::Snap(_)
-                | Look::Aim(_)
-                | Look::Rail(_)
-                | Look::ScrollGeometry(_)
-                | Look::ScrollConstraints(_)
-                | Look::Orbit { .. }
-                | Look::Pan { .. }
-                | Look::Zoom { .. }
-                | Look::ViewAspect(_)
-                | Look::SetPivot(_)
-        ) {
+        if !(hovers(&message) || moves_camera(&message) || matches!(message, Look::Rail(_))) {
             self.notice = None;
         }
         // A row's context menu does its job or is left by anything else
@@ -1146,28 +1097,8 @@ impl Doc {
                 | Look::PreviewOpacity(..)
                 | Look::PreviewColor(..)
                 | Look::Escape
-                | Look::HoverItem(_)
-                | Look::HoverLink(_)
-                | Look::LeaveItem(_)
-                | Look::LeaveLink(_)
-                | Look::HoverFeature(_)
-                | Look::LeaveFeature(_)
-                | Look::HoverOrigin(_)
-                | Look::HoverPlane(_)
-                | Look::LeaveOrigin(_)
-                | Look::HoverBodyRow(_)
-                | Look::LeaveBodyRow(_)
-                | Look::HoverBodyLook(_)
-                | Look::HoverPanel(_)
-                | Look::LeavePanel(_)
-                | Look::Hover(_)
-                | Look::HoverSketch(_)
-                | Look::HoverCube(_)
-                | Look::Snap(_)
-                | Look::Aim(_)
-                | Look::ScrollGeometry(_)
-                | Look::ScrollConstraints(_)
-        ) {
+        ) && !hovers(&message)
+        {
             self.row_menu = None;
         }
         // Picking a tool, from the rail's list or not, closes the list.
@@ -2041,6 +1972,47 @@ fn opens_operation(message: &Look) -> bool {
             | Look::StartSweep
             | Look::StartLoft
             | Look::EditFeature(_)
+    )
+}
+
+/// Whether `message` only hovers, leaves, scrolls, snaps or aims, which
+/// leaves menus, lists, notices and fields open.
+pub(super) fn hovers(message: &Look) -> bool {
+    matches!(
+        message,
+        Look::Hover(_)
+            | Look::HoverSketch(_)
+            | Look::HoverItem(_)
+            | Look::HoverLink(_)
+            | Look::LeaveItem(_)
+            | Look::LeaveLink(_)
+            | Look::HoverFeature(_)
+            | Look::LeaveFeature(_)
+            | Look::HoverOrigin(_)
+            | Look::HoverPlane(_)
+            | Look::LeaveOrigin(_)
+            | Look::HoverBodyRow(_)
+            | Look::LeaveBodyRow(_)
+            | Look::HoverBodyLook(_)
+            | Look::HoverPanel(_)
+            | Look::LeavePanel(_)
+            | Look::HoverCube(_)
+            | Look::Snap(_)
+            | Look::Aim(_)
+            | Look::ScrollGeometry(_)
+            | Look::ScrollConstraints(_)
+    )
+}
+
+/// Whether `message` moves the camera.
+pub(super) fn moves_camera(message: &Look) -> bool {
+    matches!(
+        message,
+        Look::Orbit { .. }
+            | Look::Pan { .. }
+            | Look::Zoom { .. }
+            | Look::ViewAspect(_)
+            | Look::SetPivot(_)
     )
 }
 
