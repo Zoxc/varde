@@ -16,6 +16,11 @@ use crate::UnixSeconds;
 /// The most files kept.
 pub const MAX: usize = 100;
 
+/// The largest `recent.toml` read: [`MAX`] entries of 8 KiB each, room for
+/// the longest paths.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_BYTES: u64 = MAX as u64 * 8 * 1024;
+
 /// A recently opened file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecentFile {

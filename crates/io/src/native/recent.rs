@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::config;
-use crate::recent::{Listed, MAX, RecentFile};
+use crate::recent::{Listed, MAX, MAX_BYTES, RecentFile};
 
 /// The on-disk layout, read one entry at a time, so a bad one loses only
 /// itself.
@@ -30,11 +30,10 @@ pub(crate) fn home() -> Option<PathBuf> {
 }
 
 /// Reads the list from `store`. A missing or unreadable store gives an
-/// empty list. Files that can't be found are kept: they may be on a drive
+/// empty list, as does one over [`MAX_BYTES`]. Files that can't be found are kept: they may be on a drive
 /// that isn't mounted just now, see [`listed`].
 pub(crate) fn load(store: &Path) -> Vec<RecentFile> {
-    std::fs::read_to_string(store)
-        .ok()
+    config::read(store, MAX_BYTES)
         .and_then(|toml| parse(&toml).ok())
         .unwrap_or_default()
 }
