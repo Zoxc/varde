@@ -12,6 +12,7 @@ use glam::Vec3;
 use varde_kernel_compat::{Aabb, RenderMesh};
 
 use crate::Picking;
+use crate::cache::size::HeapSize;
 
 /// The most triangles or edges in a leaf of a hierarchy.
 const LEAF: usize = 4;
@@ -181,19 +182,6 @@ impl PickTables {
             chain_starts: self.tangent_chains.starts.clone(),
             chain_items: self.tangent_chains.items.clone(),
         }
-    }
-
-    /// About how many bytes they take.
-    pub(crate) fn bytes(&self) -> usize {
-        let tree =
-            |bvh: &Bvh| size_of_val(&bvh.nodes[..]).saturating_add(size_of_val(&bvh.items[..]));
-        (tree(&self.triangles))
-            .saturating_add(tree(&self.segments))
-            .saturating_add(tree(&self.vertices))
-            .saturating_add(size_of_val(&self.corner_faces[..]))
-            .saturating_add(size_of_val(&self.tangent_chains.starts[..]))
-            .saturating_add(size_of_val(&self.tangent_chains.items[..]))
-            .saturating_add(size_of_val(self))
     }
 
     /// Over the mesh's triangles, by index.
@@ -520,6 +508,20 @@ fn build(entries: &mut [Entry], offset: usize, nodes: &mut Vec<BvhNode>) {
     build(right, offset + half, nodes);
     nodes[index].start = at(second);
     nodes[index].count = 0;
+}
+
+impl HeapSize for PickTables {
+    /// Its hierarchies and lists.
+    fn heap_bytes(&self) -> usize {
+        let tree =
+            |bvh: &Bvh| size_of_val(&bvh.nodes[..]).saturating_add(size_of_val(&bvh.items[..]));
+        (tree(&self.triangles))
+            .saturating_add(tree(&self.segments))
+            .saturating_add(tree(&self.vertices))
+            .saturating_add(size_of_val(&self.corner_faces[..]))
+            .saturating_add(size_of_val(&self.tangent_chains.starts[..]))
+            .saturating_add(size_of_val(&self.tangent_chains.items[..]))
+    }
 }
 
 #[cfg(test)]

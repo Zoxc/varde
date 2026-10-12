@@ -1253,7 +1253,11 @@ fn a_kept_curved_face_counts_in_the_cache_s_size() {
         geometry: Some(geometry.clone()),
     };
     assert!(cache.placement(key, || Err(failed)).is_err());
-    assert!(cache.bytes() > geometry.bytes(), "{}", cache.bytes());
+    assert!(
+        cache.bytes() > crate::cache::size::total(&*geometry),
+        "{}",
+        cache.bytes()
+    );
     assert_eq!(cache.audit().0, cache.bytes());
 }
 

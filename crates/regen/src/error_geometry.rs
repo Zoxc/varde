@@ -42,6 +42,7 @@ use varde_kernel_compat::{
 };
 
 use crate::Picking;
+use crate::cache::size::{HeapSize, total};
 use crate::picking::bounded::seq;
 
 /// A feature that failed: which, why in words for the Timeline, and what
@@ -129,13 +130,6 @@ impl KernelFailure {
         geometry.pending = pending;
         geometry.truncated |= left_out;
         Some(Arc::new(geometry))
-    }
-
-    /// About how many bytes it holds, for the cache.
-    pub(crate) fn bytes(&self) -> usize {
-        (size_of::<KernelFailure>())
-            .saturating_add(size_of_val(&self.faces[..]))
-            .saturating_add(self.geometry.as_deref().map_or(0, ErrorGeometry::bytes))
     }
 }
 
@@ -417,21 +411,6 @@ impl ErrorGeometry {
             && self.sketch_curves.is_empty()
             && self.faces.is_empty()
             && self.pending.is_empty()
-    }
-
-    /// About how many bytes it holds, for the cache.
-    pub(crate) fn bytes(&self) -> usize {
-        let mesh = &self.mesh;
-        (size_of::<ErrorGeometry>())
-            .saturating_add(size_of_val(mesh.positions()))
-            .saturating_add(size_of_val(mesh.normals()))
-            .saturating_add(size_of_val(mesh.indices()))
-            .saturating_add(size_of_val(self.lines.points()))
-            .saturating_add(size_of_val(self.lines.ends()))
-            .saturating_add(size_of_val(&self.points[..]))
-            .saturating_add(size_of_val(&self.sketch_curves[..]))
-            .saturating_add(size_of_val(&self.faces[..]))
-            .saturating_add(size_of_val(&self.pending[..]))
     }
 
     /// The box around its mesh, lines and points, and its faces in
@@ -822,6 +801,25 @@ fn diagonal(evidence: &Evidence) -> f64 {
     };
     let diagonal = (bounds.max - bounds.min).length();
     if diagonal.is_finite() { diagonal } else { 0.0 }
+}
+
+impl HeapSize for KernelFailure {
+    /// Its operand faces and its geometry.
+    fn heap_bytes(&self) -> usize {
+        (size_of_val(&self.faces[..])).saturating_add(self.geometry.as_deref().map_or(0, total))
+    }
+}
+
+impl HeapSize for ErrorGeometry {
+    fn heap_bytes(&self) -> usize {
+        (self.mesh.heap_bytes())
+            .saturating_add(size_of_val(self.lines.points()))
+            .saturating_add(size_of_val(self.lines.ends()))
+            .saturating_add(size_of_val(&self.points[..]))
+            .saturating_add(size_of_val(&self.sketch_curves[..]))
+            .saturating_add(size_of_val(&self.faces[..]))
+            .saturating_add(size_of_val(&self.pending[..]))
+    }
 }
 
 #[cfg(test)]

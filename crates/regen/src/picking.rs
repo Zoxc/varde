@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use crate::PickTables;
 use crate::bounds::{point, point_dvec, positive, ratio, unit, value};
+use crate::cache::size::{HeapSize, total};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
@@ -273,19 +274,6 @@ pub struct FaceEdgeTables {
 }
 
 impl FaceEdgeTables {
-    /// About how many bytes they hold, the faces' aliases too.
-    fn bytes(&self) -> usize {
-        let aliases = (self.faces.iter()).fold(0usize, |sum, face| {
-            sum.saturating_add(size_of_val(&face.aliases[..]))
-        });
-        size_of_val(&self.faces[..])
-            .saturating_add(aliases)
-            .saturating_add(size_of_val(&self.closed[..]))
-            .saturating_add(size_of_val(&self.tangents[..]))
-            .saturating_add(size_of_val(&self.snaps[..]))
-            .saturating_add(size_of_val(&self.corners[..]))
-    }
-
     /// Appends `other`'s, its edge and face ids moved past these. Fails
     /// with [`MeshError::TooLarge`] where an id wouldn't fit.
     fn append(&mut self, other: &FaceEdgeTables) -> Result<(), MeshError> {
@@ -489,13 +477,6 @@ impl Picking {
         Some(keys)
     }
 
-    /// About how many bytes it holds, for the cache.
-    pub(crate) fn bytes(&self) -> usize {
-        (self.tables.bytes())
-            .saturating_add(size_of_val(&self.bodies[..]))
-            .saturating_add(size_of_val(self))
-    }
-
     /// Appends one body's drawing's tables, its parts (one, as a solid is
     /// drawn) given to `body`, as its mesh is appended to the scene's.
     /// Fails with [`MeshError::TooLarge`] where an edge id wouldn't fit,
@@ -652,12 +633,6 @@ impl Drawn {
         };
         Ok(Drawn { mesh, tables })
     }
-
-    /// About how many bytes its tables hold, for the cache, besides its
-    /// mesh's.
-    pub(crate) fn bytes(&self) -> usize {
-        self.tables.bytes()
-    }
 }
 
 /// A model's mesh with its picking tables and hierarchies, as a scene is
@@ -722,3 +697,40 @@ impl fmt::Display for PickingError {
 }
 
 impl std::error::Error for PickingError {}
+
+impl HeapSize for FaceEdgeTables {
+    /// Its lists, the faces' aliases too.
+    fn heap_bytes(&self) -> usize {
+        let aliases = (self.faces.iter()).fold(0usize, |sum, face| {
+            sum.saturating_add(size_of_val(&face.aliases[..]))
+        });
+        size_of_val(&self.faces[..])
+            .saturating_add(aliases)
+            .saturating_add(size_of_val(&self.closed[..]))
+            .saturating_add(size_of_val(&self.tangents[..]))
+            .saturating_add(size_of_val(&self.snaps[..]))
+            .saturating_add(size_of_val(&self.corners[..]))
+    }
+}
+
+impl HeapSize for Picking {
+    fn heap_bytes(&self) -> usize {
+        (self.tables.heap_bytes()).saturating_add(size_of_val(&self.bodies[..]))
+    }
+}
+
+impl HeapSize for Drawn {
+    fn heap_bytes(&self) -> usize {
+        (self.mesh.heap_bytes()).saturating_add(self.tables.heap_bytes())
+    }
+}
+
+impl HeapSize for Scene {
+    /// Its mesh with its upload, and its tables, each behind its pointer.
+    fn heap_bytes(&self) -> usize {
+        (total(&*self.mesh))
+            .saturating_add(self.mesh.upload().heap_bytes())
+            .saturating_add(total(&*self.picking))
+            .saturating_add(total(&*self.tables))
+    }
+}

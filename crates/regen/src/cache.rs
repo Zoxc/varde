@@ -43,22 +43,24 @@
 //! evicted either: however long a draft is dragged, the committed model's
 //! scene stays, and putting the draft away finds it.
 
+pub(crate) mod size;
+
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::mem::{size_of, size_of_val};
 use std::sync::Arc;
 
 use glam::DVec3;
 use serde::Serialize;
 use varde_document::Placement;
-use varde_kernel_compat::{MeshUpload, RenderMesh, Solid, Topology};
-use varde_sketch::{Curve, LinkShape, Profiles, Sketch, TooComplex};
+use varde_kernel_compat::{Solid, Topology};
+use varde_sketch::{LinkShape, Profiles, Sketch, TooComplex};
 
-use crate::error_geometry::{ErrorGeometry, KernelFailure};
+use crate::error_geometry::KernelFailure;
 use crate::history::{Broken, Failed};
 use crate::inspect::{Gap, Kept};
 use crate::picking::{Drawn, Scene};
+use size::{HeapSize, total};
 
 /// How many bytes of results a cache holds before it evicts the least
 /// recently used: several requests' worth of a large model natively; less
@@ -267,35 +269,33 @@ impl Entry {
     fn bytes(&self) -> usize {
         let data = match self {
             Entry::Profiles(profiles) => match &**profiles {
-                Ok(profiles) => profiles_bytes(profiles),
+                Ok(profiles) => total(profiles),
                 Err(TooComplex) => 0,
             },
-            Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
+            Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => total(&**solid),
             Entry::Solid(Err(failed))
             | Entry::Placement(Err(failed))
             | Entry::Edge(Err(failed))
             | Entry::Reference(Err(failed))
             | Entry::Datum(Err(failed))
-            | Entry::Length(Err(failed)) => (failed.message.len())
-                .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
-            Entry::Split(Ok([front, back])) => solid_bytes(front).saturating_add(solid_bytes(back)),
+            | Entry::Length(Err(failed)) => {
+                (failed.message.len()).saturating_add(failed.geometry.as_deref().map_or(0, total))
+            }
+            Entry::Split(Ok([front, back])) => total(&**front).saturating_add(total(&**back)),
             Entry::Touches(Err(failure))
             | Entry::Boolean(Err(failure))
-            | Entry::Split(Err(failure)) => failure.bytes(),
-            Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
-            Entry::Scene(scene) => (mesh_bytes(&scene.mesh))
-                .saturating_add(upload_bytes(scene.mesh.upload()))
-                .saturating_add(scene.picking.bytes())
-                .saturating_add(scene.tables.bytes()),
-            Entry::Topology(topology) => topology_bytes(topology),
+            | Entry::Split(Err(failure)) => total(&**failure),
+            Entry::Drawn(drawn) => total(&**drawn),
+            Entry::Scene(scene) => scene.heap_bytes(),
+            Entry::Topology(topology) => total(&**topology),
             Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
             Entry::Link(found) => match found {
-                Ok(shape) => link_bytes(shape),
+                Ok(shape) => shape.heap_bytes(),
                 Err(broken) => broken.why.len(),
             },
             Entry::Relinked(relinked) => match relinked {
-                Ok(sketch) => sketch_bytes(sketch),
+                Ok(sketch) => sketch.heap_bytes(),
                 Err(why) => why.len(),
             },
             Entry::Solves(_)
@@ -308,105 +308,6 @@ impl Entry {
         };
         data.saturating_add(OVERHEAD)
     }
-}
-
-/// About what a link's shape holds: its lists, and its splines' points.
-fn link_bytes(shape: &LinkShape) -> usize {
-    (size_of_val(&shape.points[..]))
-        .saturating_add(size_of_val(&shape.curves[..]))
-        .saturating_add(splines_bytes(&shape.curves))
-}
-
-/// About what a sketch holds: its lists' entries, and a spline's points.
-fn sketch_bytes(sketch: &Sketch) -> usize {
-    (size_of_val(&sketch.points[..]))
-        .saturating_add(size_of_val(&sketch.curves[..]))
-        .saturating_add(size_of_val(&sketch.constraints[..]))
-        .saturating_add(size_of_val(&sketch.dimensions[..]).saturating_mul(2))
-        .saturating_add(size_of_val(&sketch.links[..]))
-        .saturating_add(splines_bytes(
-            sketch.curves.iter().map(|entry| &entry.curve),
-        ))
-}
-
-/// What the splines among `curves` hold beyond their entries: their
-/// points and knots.
-fn splines_bytes<'a>(curves: impl IntoIterator<Item = &'a Curve>) -> usize {
-    (curves.into_iter()).fold(0usize, |sum, curve| match curve {
-        Curve::Spline(spline) => sum
-            .saturating_add(size_of_val(&spline.points[..]))
-            .saturating_add(size_of_val(&spline.knots[..])),
-        _ => sum,
-    })
-}
-
-fn solid_bytes(solid: &Solid) -> usize {
-    let mesh = solid.mesh();
-    (size_of_val(mesh.verts()))
-        .saturating_add(size_of_val(mesh.edges()))
-        .saturating_add(size_of_val(mesh.tris()))
-        .saturating_add(size_of_val(mesh.faces()))
-        .saturating_add(size_of_val(solid))
-}
-
-fn topology_bytes(topology: &Topology) -> usize {
-    let mut bytes = (size_of_val(topology))
-        .saturating_add(size_of_val(topology.regions()))
-        .saturating_add(size_of_val(topology.chains()))
-        .saturating_add(size_of_val(topology.corners()))
-        .saturating_add(topology.triangles().saturating_mul(size_of::<u32>()));
-    for region in topology.regions() {
-        bytes = (bytes.saturating_add(size_of_val(&region.tris[..])))
-            .saturating_add(size_of_val(&region.aliases[..]));
-    }
-    for chain in topology.chains() {
-        bytes = bytes.saturating_add(size_of_val(&chain.halfedges[..]));
-    }
-    for corner in topology.corners() {
-        bytes = bytes.saturating_add(size_of_val(&corner.regions[..]));
-    }
-    bytes
-}
-
-fn mesh_bytes(mesh: &RenderMesh) -> usize {
-    (size_of_val(mesh.positions()))
-        .saturating_add(size_of_val(mesh.normals()))
-        .saturating_add(size_of_val(mesh.indices()))
-        .saturating_add(size_of_val(mesh.face_ends()))
-        .saturating_add(size_of_val(mesh.edge_vertices()))
-        .saturating_add(size_of_val(mesh.edge_ends()))
-        .saturating_add(size_of_val(mesh.edge_faces()))
-        .saturating_add(size_of_val(mesh.corners()))
-        .saturating_add(size_of_val(mesh.edge_corners()))
-        .saturating_add(size_of_val(mesh.wire_vertices()))
-        .saturating_add(size_of_val(mesh.wire_ends()))
-        .saturating_add(size_of_val(mesh.part_ends()))
-        .saturating_add(size_of_val(mesh))
-}
-
-fn upload_bytes(upload: &MeshUpload) -> usize {
-    (size_of_val(upload.points()))
-        .saturating_add(size_of_val(upload.parts()))
-        .saturating_add(size_of_val(upload.bounds()))
-}
-
-fn profiles_bytes(profiles: &Profiles) -> usize {
-    let mut bytes = (size_of_val(profiles))
-        .saturating_add(size_of_val(&profiles.regions[..]))
-        .saturating_add(size_of_val(&profiles.vertices[..]))
-        .saturating_add(size_of_val(&profiles.open_ends[..]));
-    for region in &profiles.regions {
-        bytes = bytes.saturating_add(size_of_val(&region.outer[..]));
-        for hole in &region.holes {
-            bytes =
-                (bytes.saturating_add(size_of_val(hole))).saturating_add(size_of_val(&hole[..]));
-        }
-        for outline in &region.outline {
-            bytes = (bytes.saturating_add(size_of_val(outline)))
-                .saturating_add(size_of_val(&outline[..]));
-        }
-    }
-    bytes
 }
 
 /// A result held, with its size and when it was last used.

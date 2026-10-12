@@ -420,7 +420,8 @@ keys, which then keys the body's solid (a merge step's likewise, by the
 running solid's key and the next operand's), and a body's mesh by its solid's
 key and the tolerance. Editing an earlier extrude changes its body's key
 and so reruns every boolean after it on that body. The cache is bounded
-by size: each entry records its approximate heap size (`Entry::bytes`: a
+by size: each entry records its approximate heap size (`Entry::bytes`, from each
+type's `HeapSize` in `cache/size.rs` or beside its fields: a
 solid's four mesh arrays, a render mesh's four, profiles' regions, pieces,
 outlines, vertices and open ends, an error string's length, plus 128 B
 for the map slot and the `Arc`; saturating sums, since the sizes come
