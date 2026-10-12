@@ -15,8 +15,8 @@ use crate::operation_panel::PanelHover;
 use crate::theme::SketchColors;
 use crate::viewport::local_cursor;
 use crate::viewport::regions::{Regions, grid_plane};
-use crate::viewport::sketch::line;
 use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH, SketchHit, curve_under};
+use crate::viewport::style::line;
 use crate::{Look, Message};
 
 /// A sweep's sketches whose regions show, those picked, and the one

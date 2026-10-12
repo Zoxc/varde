@@ -20,7 +20,7 @@ use crate::projection::Projector;
 use crate::theme::SketchColors;
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::knobs;
-use crate::viewport::sketch::line;
+use crate::viewport::style::line;
 use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
 

@@ -10,7 +10,7 @@ use iced::Color;
 use varde_render::{SketchLayer, Space as LayerSpace};
 use varde_sketch::angle;
 
-use super::sketch::{line, srgba};
+use super::style::{line, srgba};
 use crate::hit::segment_distance;
 use crate::motion::KnobTone;
 use crate::projection::Projector;
@@ -178,10 +178,7 @@ pub(crate) fn draw_puck<K>(
     if let [whole] = &runs[..]
         && whole.len() == ring.len()
     {
-        let fill = Color {
-            a: color.a * RING_FILL,
-            ..color
-        };
+        let fill = color.scale_alpha(RING_FILL);
         live.fill(LayerSpace::Screen, [&whole[..]], srgba(fill));
     }
     for run in &runs {

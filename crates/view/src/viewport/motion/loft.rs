@@ -18,10 +18,10 @@ use crate::theme::opaque;
 use crate::theme::{self, SketchColors};
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::regions::{Regions, grid_plane};
-use crate::viewport::sketch::{fill_region_in, line, mark_dot, srgba};
 use crate::viewport::sketch_pick::{
     Points, SELECTED_WIDTH, SketchHit, curve_under, loose, point_under,
 };
+use crate::viewport::style::{fill_region_in, line, mark_dot, srgba};
 use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
 

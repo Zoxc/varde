@@ -14,9 +14,9 @@ use glam::DVec2;
 use iced::Element;
 use iced::widget::{container, text};
 use varde_document::Placement;
-use varde_render::{Camera, Colors, LineStyle, SketchLayer};
+use varde_render::{Camera, Colors, SketchLayer};
 
-use super::sketch::{mark_dot, srgba};
+use super::style::{line, mark_dot};
 use crate::Message;
 use crate::anchors::Anchors;
 use crate::measure::{MeasureSlot, MeasureState};
@@ -31,9 +31,8 @@ const SNAPPED_RADIUS: f32 = 5.0;
 /// How wide a picked point's dot is, and the ends of the distance's.
 const POINT_RADIUS: f32 = 5.0;
 const END_RADIUS: f32 = 3.0;
-/// How wide the distance's segment is, and its dashes and gaps.
+/// How wide the distance's segment is, dashed.
 const SEGMENT_WIDTH: f32 = 2.0;
-const SEGMENT_DASH: [f32; 2] = [6.0, 4.0];
 
 /// The measure tool, as the viewport shows it.
 #[derive(Debug, Clone)]
@@ -66,11 +65,7 @@ impl<'a> Measuring<'a> {
         // Picks that touch have no segment to draw.
         if let Some(gap) = self.state.gap().filter(|gap| gap.distance > 0.0) {
             let [a, b] = gap.points.map(|p| glam::DVec3::from(p).as_vec3());
-            let style = LineStyle {
-                color: srgba(colour(MeasureSlot::A)),
-                width: SEGMENT_WIDTH,
-                dash: Some(SEGMENT_DASH),
-            };
+            let style = line(colour(MeasureSlot::A), SEGMENT_WIDTH, true);
             layer.world_polyline(&[a, b], style);
             layer.world_point(
                 a,

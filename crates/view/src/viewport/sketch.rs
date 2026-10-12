@@ -21,10 +21,10 @@ use iced::{Alignment, Color, Element, Event, Padding, Rectangle, Vector};
 use varde_document::{MAX_COORD, Placement};
 use varde_expr::LengthUnit;
 use varde_kernel_compat::RenderLines;
-use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
+use varde_render::{Camera, GridPlane, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
-    Curve, CurveEntry, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Selectable,
-    Side, Sketch, SplineKind, cut_line, foot,
+    Curve, CurveEntry, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Selectable, Side,
+    Sketch, SplineKind, cut_line, foot,
 };
 
 use crate::document::tied_items;
@@ -36,6 +36,7 @@ use crate::snap::{self, Snap};
 use crate::theme::{self, SketchColors};
 use crate::typed::{self, Field};
 use crate::viewport::sketch_pick::{HIT_PIXELS, HOVERED_WIDTH};
+use crate::viewport::style::{fill_region, line, srgba};
 use crate::viewport::{local, local_cursor};
 use crate::{
     ActiveTool, ConstraintKind, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField,
@@ -55,9 +56,6 @@ const SELECTED_WIDTH: f32 = 2.6;
 const POINT_RADIUS: f32 = 3.6;
 const HOVERED_POINT_RADIUS: f32 = 5.1;
 const POINT_RIM: f32 = 1.2;
-/// The dashes of construction geometry, and of a box touching what it
-/// selects: on and off, in pixels.
-const DASH: [f32; 2] = [6.0, 4.0];
 /// How wide the outline of the box dragged to select is, in pixels.
 const BOX_LINE_WIDTH: f32 = 1.0;
 /// How soon a second press of a tool has to follow the first, near where
@@ -202,10 +200,7 @@ impl States {
 
 /// `color` faded, as what waits on the solver is.
 fn fade(color: Color) -> Color {
-    Color {
-        a: color.a * PENDING_ALPHA,
-        ..color
-    }
+    color.scale_alpha(PENDING_ALPHA)
 }
 
 /// What the viewport keeps of the sketch between events and frames.
@@ -2142,15 +2137,6 @@ fn field_error<'a>(field: ValueField<'_>) -> Option<Element<'a, Message>> {
     })
 }
 
-/// A line `width` pixels wide in `color`, dashed if `dashed`.
-pub(super) fn line(color: Color, width: f32, dashed: bool) -> LineStyle {
-    LineStyle {
-        color: srgba(color),
-        width,
-        dash: dashed.then_some(DASH),
-    }
-}
-
 /// A point `radius` pixels across, `fill` inside a `rim`, not filled as
 /// fixed.
 fn dot(radius: f32, fill: Color, rim: Color) -> PointStyle {
@@ -2185,35 +2171,6 @@ fn snap_disc(color: Color) -> PointStyle {
         rim: wash,
         fill: wash,
         fixed: false,
-    }
-}
-
-/// Fills `region` on `layer` in `color`, by its outline, holes left out.
-pub(super) fn fill_region(layer: &mut SketchLayer, region: &Region, color: Color) {
-    fill_region_in(layer, Space::Sketch, region, color);
-}
-
-/// Like [`fill_region`], with the region's coordinates in `space`.
-pub(super) fn fill_region_in(layer: &mut SketchLayer, space: Space, region: &Region, color: Color) {
-    let outline = region.outline.iter().map(Vec::as_slice);
-    layer.fill(space, outline, srgba(color));
-}
-
-/// `color` for the renderer.
-pub(super) fn srgba(color: Color) -> Srgba {
-    Srgba([color.r, color.g, color.b, color.a])
-}
-
-/// A dot the tools mark a point with: `radius` pixels with a rim of
-/// `rim` round the sketch's point fill, or filled with the rim if
-/// `fixed`.
-pub(super) fn mark_dot(radius: f32, rim: Color, colors: SketchColors, fixed: bool) -> PointStyle {
-    PointStyle {
-        radius,
-        rim_width: 1.5,
-        rim: srgba(rim),
-        fill: srgba(colors.point_fill),
-        fixed,
     }
 }
 

@@ -24,7 +24,7 @@ use varde_render::{Camera, SketchLayer, Space};
 use varde_sketch::{Id, Sketch};
 
 use super::regions::grid_plane;
-use super::sketch::{line, mark_dot};
+use super::style::{line, mark_dot};
 use crate::hit;
 use crate::pick::{Pick, PickIndex, Picked};
 use crate::projection::Projector;

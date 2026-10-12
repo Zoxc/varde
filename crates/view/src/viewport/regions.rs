@@ -16,7 +16,7 @@ use varde_document::{FeatureId, Placement};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::Profiles;
 
-use super::sketch::{fill_region, fill_region_in, line, srgba};
+use super::style::{fill_region, fill_region_in, line, srgba};
 use crate::operation_panel::Candidate;
 use crate::projection::Projector;
 use crate::theme::SketchColors;

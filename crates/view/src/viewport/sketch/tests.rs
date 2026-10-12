@@ -6,12 +6,12 @@ use iced::{Point, Size};
 use varde_document::OriginPlane;
 use varde_sketch::{Curve, Measure, Side};
 
-use super::line as line_style;
 use super::*;
 use crate::Target;
 use crate::projection::top_camera;
 use crate::testing;
 use crate::theme::Mode;
+use crate::viewport::style::line as line_style;
 use crate::viewport::{Interaction, Program, program};
 
 /// The viewport's width and height: through [`top_camera`], 20 sketch
