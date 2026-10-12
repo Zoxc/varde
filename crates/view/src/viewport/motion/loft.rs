@@ -21,7 +21,7 @@ use crate::viewport::sketch::{fill_region_in, line, srgba};
 use crate::viewport::sketch_pick::{
     Points, SELECTED_WIDTH, SketchHit, curve_under, loose, point_under,
 };
-use crate::viewport::{local, local_cursor};
+use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
 
 use super::sweep::sweep_lines;
@@ -265,23 +265,12 @@ impl<'a> Moving<'a> {
                                 *sent = Some(point);
                                 MotionLook::LoftStart { section, point }
                             });
-                    return Some(
-                        match look {
-                            Some(look) => Action::publish(Message::Look(Look::Motion(look))),
-                            None => Action::capture(),
-                        }
-                        .and_capture(),
-                    );
+                    return Some(drag_step(look));
                 }
                 let over = (cursor.position_over(bounds))
                     .and_then(|at| self.seam_under(loft, local(bounds, at), camera, bounds));
                 let was = std::mem::replace(&mut input.hover, over);
-                match (over, was != over) {
-                    (Some(_), true) => Some(Action::request_redraw().and_capture()),
-                    (Some(_), false) => Some(Action::capture()),
-                    (None, true) => Some(Action::request_redraw()),
-                    (None, false) => None,
-                }
+                hover_action(over.is_some(), was != over, false)
             }
             mouse::Event::CursorLeft if input.drag.is_none() => {
                 input.hover.take().map(|_| Action::request_redraw())

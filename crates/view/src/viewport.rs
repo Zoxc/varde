@@ -596,6 +596,35 @@ pub(super) fn local_cursor(bounds: Rectangle, cursor: mouse::Cursor) -> Option<D
     cursor.position_over(bounds).map(|p| local(bounds, p))
 }
 
+/// What a step of a handle's or a knob's drag does: sends `look`, the
+/// value it moved to, if there's a new one; the cursor is captured
+/// either way, so the camera doesn't take the drag.
+pub(super) fn drag_step(look: Option<MotionLook>) -> Action<Message> {
+    match look {
+        Some(look) => Action::publish(Message::Look(Look::Motion(look))).and_capture(),
+        None => Action::capture(),
+    }
+}
+
+/// What the cursor moving does to a tool's handles: over one it's
+/// captured, and the model's hover let go of if `model_hovered`; a
+/// `changed` hover redraws.
+pub(super) fn hover_action(
+    over: bool,
+    changed: bool,
+    model_hovered: bool,
+) -> Option<Action<Message>> {
+    match (over, changed) {
+        (true, _) if model_hovered => {
+            Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
+        }
+        (true, true) => Some(Action::request_redraw().and_capture()),
+        (true, false) => Some(Action::capture()),
+        (false, true) => Some(Action::request_redraw()),
+        (false, false) => None,
+    }
+}
+
 fn drag_said(action: DragAction) -> &'static str {
     match action {
         DragAction::Orbit => "Orbit",

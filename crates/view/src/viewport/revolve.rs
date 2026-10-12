@@ -43,7 +43,7 @@ use crate::revolve::{
     axis_reach,
 };
 use crate::theme::SketchColors;
-use crate::viewport::{local, local_cursor};
+use crate::viewport::{hover_action, local, local_cursor};
 use crate::{Look, Message};
 
 /// How wide the sketches' lines and axes are drawn while the axis is
@@ -136,11 +136,7 @@ impl<'a> Revolving<'a> {
                         | input.axis.take().is_some()
                         | input.edge.take().is_some()
                         | input.regions.hover.take().is_some();
-                    return Some(if changed {
-                        Action::request_redraw().and_capture()
-                    } else {
-                        Action::capture()
-                    });
+                    return hover_action(true, changed, false);
                 }
                 let knob_left = input.knob.take().is_some();
                 let axis = over.and_then(|at| self.axis_under(at, camera, bounds));
@@ -155,7 +151,7 @@ impl<'a> Revolving<'a> {
                     || std::mem::replace(&mut input.edge, edge).map(|(e, _)| e)
                         != edge.map(|(e, _)| e)
                     || std::mem::replace(&mut input.regions.hover, region) != region;
-                (changed || knob_left).then(Action::request_redraw)
+                hover_action(false, changed || knob_left, false)
             }
             mouse::Event::CursorLeft => {
                 let had = input.axis.take().is_some()

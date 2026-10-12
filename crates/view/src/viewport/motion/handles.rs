@@ -21,7 +21,7 @@ use crate::theme::SketchColors;
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::knobs;
 use crate::viewport::sketch::line;
-use crate::viewport::{local, local_cursor};
+use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
 
 use crate::viewport::handle::{angle_step, wrapped};
@@ -625,28 +625,14 @@ impl<'a> Moving<'a> {
                     // The raw position, so a drag goes on over the rest
                     // of the window.
                     let message = self.drag(drag, &handles, local(bounds, position));
-                    return Some(
-                        match message {
-                            Some(look) => Action::publish(Message::Look(Look::Motion(look))),
-                            None => Action::capture(),
-                        }
-                        .and_capture(),
-                    );
+                    return Some(drag_step(message));
                 }
                 let over = local_cursor(bounds, cursor);
                 let grip = over.and_then(|at| handles.grip_at(at));
                 let changed = std::mem::replace(&mut input.hover, grip) != grip;
-                match grip {
-                    Some(_) if hovered => {
-                        Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
-                    }
-                    Some(_) if changed => Some(Action::request_redraw().and_capture()),
-                    Some(_) => Some(Action::capture()),
-                    // Just off the handles: redrawn, and what's under the
-                    // cursor worked out again as the frame is drawn.
-                    None if changed => Some(Action::request_redraw()),
-                    None => None,
-                }
+                // Just off the handles, a change redraws, and what's under
+                // the cursor is worked out again as the frame is drawn.
+                hover_action(grip.is_some(), changed, hovered)
             }
             mouse::Event::CursorLeft => input.hover.take().map(|_| Action::request_redraw()),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {

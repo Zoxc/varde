@@ -27,7 +27,7 @@ use crate::extrude::snap_step;
 use crate::motion::{KnobPath, KnobRadius, KnobSnap, MotionLook, OpKnob};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
-use crate::viewport::{local, local_cursor};
+use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
 
 /// How many segments a whole turn of an arc's shaft and rail is drawn
@@ -239,26 +239,12 @@ pub(crate) fn mouse(
                 // The raw position, so a drag goes on over the rest of
                 // the window.
                 let look = dragged(drag, &projector, local(bounds, position), units);
-                return Some(
-                    match look {
-                        Some(look) => Action::publish(Message::Look(Look::Motion(look))),
-                        None => Action::capture(),
-                    }
-                    .and_capture(),
-                );
+                return Some(drag_step(look));
             }
             let over = (cursor.position_over(bounds))
                 .and_then(|at| knob_under(knobs, &projector, local(bounds, at)));
             let changed = std::mem::replace(&mut input.hover, over) != over;
-            match (over, changed) {
-                (Some(_), _) if hovered => {
-                    Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
-                }
-                (Some(_), true) => Some(Action::request_redraw().and_capture()),
-                (Some(_), false) => Some(Action::capture()),
-                (None, true) => Some(Action::request_redraw()),
-                (None, false) => None,
-            }
+            hover_action(over.is_some(), changed, hovered)
         }
         mouse::Event::CursorLeft => input.hover.take().map(|_| Action::request_redraw()),
         mouse::Event::ButtonPressed(mouse::Button::Left) => {

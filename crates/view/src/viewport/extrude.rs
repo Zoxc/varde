@@ -21,7 +21,7 @@ use crate::motion::KnobTone;
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
-use crate::viewport::{local, local_cursor};
+use crate::viewport::{hover_action, local, local_cursor};
 use crate::{Look, Message};
 
 /// The extrude being set up, as the viewport shows it.
@@ -123,12 +123,7 @@ impl<'a> Extruding<'a> {
                 let knob_changed = std::mem::replace(&mut input.knob, knob) != knob;
                 let region_changed = std::mem::replace(&mut input.regions.hover, hover) != hover;
                 let changed = knob_changed || region_changed;
-                match (changed, knob) {
-                    (true, Some(_)) => Some(Action::request_redraw().and_capture()),
-                    (false, Some(_)) => Some(Action::capture()),
-                    (true, None) => Some(Action::request_redraw()),
-                    (false, None) => None,
-                }
+                hover_action(knob.is_some(), changed, false)
             }
             mouse::Event::CursorLeft => {
                 let had = input.knob.take().is_some() | input.regions.hover.take().is_some();
