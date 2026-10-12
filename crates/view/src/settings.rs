@@ -16,6 +16,7 @@ use varde_render::{Projection, Rotation, Shading};
 
 use crate::chrome::{self, Edge, dialog_button, dialog_of_width, edged, icon_button, scrolled};
 use crate::icons::{self, Icon};
+use crate::mcp_config::{mcp_client_lines, mcp_port_of, mcp_stdio_lines};
 use crate::mouse::{DragAction, PivotClick, RotationPoint};
 use crate::mouse_only::MouseOnly;
 use crate::shortcut::{KeyName, Shortcut};
@@ -99,114 +100,6 @@ pub struct McpClient<'a> {
     pub name: Option<&'a str>,
     /// When it connected, as said: "just now", "5 min ago".
     pub since: String,
-}
-
-/// The port typed into the MCP tab's field, if it's one it takes: digits
-/// alone, from [`MCP_PORT_MIN`] to [`MCP_PORT_MAX`].
-pub fn mcp_port_of(typed: &str) -> Option<u16> {
-    let typed = typed.trim();
-    if typed.is_empty() || typed.len() > 5 || !typed.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    typed
-        .parse::<u16>()
-        .ok()
-        .filter(|port| (MCP_PORT_MIN..=MCP_PORT_MAX).contains(port))
-}
-
-/// The lines adding the server at `port` to a client, carrying `token`:
-/// Claude Code's command, Codex's `~/.codex/config.toml` table (its
-/// `mcp add` takes no header) and opencode's `opencode.json` entry,
-/// under `"mcp"` (no OAuth, which it would otherwise try).
-pub fn mcp_client_lines(port: u16, token: &str) -> [String; 3] {
-    let url = format!("http://127.0.0.1:{port}/mcp");
-    [
-        format!(
-            "claude mcp add --transport http varde {url} --header \"Authorization: Bearer {token}\""
-        ),
-        format!(
-            "[mcp_servers.varde]\nurl = \"{url}\"\nhttp_headers = {{ Authorization = \"Bearer {token}\" }}"
-        ),
-        format!(
-            "\"varde\": {{ \"type\": \"remote\", \"url\": \"{url}\", \"oauth\": false, \"headers\": {{ \"Authorization\": \"Bearer {token}\" }} }}"
-        ),
-    ]
-}
-
-/// The lines adding the server to a client through `varde mcp`, the
-/// stdio relay, run from `exe`: Claude Code's command, Codex's
-/// `~/.codex/config.toml` table and opencode's `opencode.json` entry,
-/// as [`mcp_client_lines`] has them, but with no token: the relay reads
-/// it. The path quoted for the shell the command is pasted into (on
-/// Windows double quotes, which cmd and PowerShell both read, else
-/// POSIX's single). `None` if the path can't be quoted safely: a control
-/// character in it (a newline would run half the command when pasted),
-/// or on Windows something cmd or PowerShell expands or ends a string at
-/// even in double quotes (`%`, `$`, `` ` ``, `!`, `"`, `“`, `”`, `„`).
-pub fn mcp_stdio_lines(exe: &str) -> Option<[String; 3]> {
-    mcp_stdio_lines_for(exe, cfg!(windows))
-}
-
-fn mcp_stdio_lines_for(exe: &str, windows: bool) -> Option<[String; 3]> {
-    if exe.chars().any(char::is_control) {
-        return None;
-    }
-    let shell = if windows {
-        windows_quoted(exe)?
-    } else {
-        posix_quoted(exe)
-    };
-    let string = json_string(exe);
-    Some([
-        format!("claude mcp add varde -- {shell} mcp"),
-        format!("[mcp_servers.varde]\ncommand = {string}\nargs = [\"mcp\"]"),
-        format!("\"varde\": {{ \"type\": \"local\", \"command\": [{string}, \"mcp\"] }}"),
-    ])
-}
-
-/// `word` as one POSIX shell word: as it is if nothing in it is special,
-/// else in single quotes, each `'` closed, escaped and reopened.
-fn posix_quoted(word: &str) -> String {
-    let plain = |c: char| c.is_ascii_alphanumeric() || "/._-+:@%,=".contains(c);
-    if !word.is_empty() && word.chars().all(plain) {
-        return word.to_owned();
-    }
-    format!("'{}'", word.replace('\'', r"'\''"))
-}
-
-/// `word` as one word for cmd and PowerShell: as it is if nothing in it
-/// is special to either (PowerShell splits at `,`, splats at `@`), else
-/// in double quotes; `None` if it holds what either expands or ends a
-/// string at inside them.
-fn windows_quoted(word: &str) -> Option<String> {
-    if word
-        .chars()
-        .any(|c| "%$`!\"\u{201C}\u{201D}\u{201E}".contains(c))
-    {
-        return None;
-    }
-    let plain = |c: char| c.is_ascii_alphanumeric() || "/\\._-+:".contains(c);
-    if !word.is_empty() && word.chars().all(plain) {
-        return Some(word.to_owned());
-    }
-    Some(format!("\"{word}\""))
-}
-
-/// `text` as a string both JSON and TOML read: double quotes, with `"`,
-/// `\\` and control characters escaped.
-fn json_string(text: &str) -> String {
-    let mut quoted = String::with_capacity(text.len() + 2);
-    quoted.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            c if c.is_control() => quoted.push_str(&format!("\\u{:04x}", c as u32)),
-            c => quoted.push(c),
-        }
-    }
-    quoted.push('"');
-    quoted
 }
 
 /// A token hidden: dots in its place.

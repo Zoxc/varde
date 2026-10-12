@@ -30,6 +30,7 @@ mod icons;
 mod loft;
 pub use loft::loft_info;
 mod mcp;
+mod mcp_config;
 mod measure;
 mod menu;
 mod motion;
@@ -102,6 +103,7 @@ pub use mcp::{
     MCP_PANEL_WIDTH, McpAsk, McpCall, McpCallState, McpEdit, McpPanel, McpRevert, McpRevertAsk,
     McpRow, McpShown, McpTool,
 };
+pub use mcp_config::{mcp_client_lines, mcp_port_of, mcp_stdio_lines};
 pub use measure::{
     MeasureLook, MeasureSlot, MeasureState, Outcome, PickKind as MeasuredPickKind,
     Picked as MeasuredPick, Value as MeasureValue, between_values, edge_kind, face_kind,
@@ -138,7 +140,7 @@ pub use revolve::{
 pub use select::{Selected, Selection, SelectionMode, SketchItem};
 pub use settings::{
     KeptIn, McpClient, McpState, McpStatus, Setting, SettingChange, SettingsPage, SettingsState,
-    SettingsTab, changed_settings, mcp_client_lines, mcp_port_of, mcp_stdio_lines,
+    SettingsTab, changed_settings,
 };
 pub use shell::shell_info;
 pub use shortcut::{
