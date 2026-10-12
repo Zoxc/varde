@@ -447,7 +447,7 @@ fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
     let list = varde_view::Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(vec![line, other]),
+        items: varde_view::OverlapItems::picked(vec![line, other]),
     };
     let notes = |plates: &Plates| -> Vec<OverlapNote> {
         let ticks = plates.doc.overlap_ticks().expect("the session's");
@@ -492,7 +492,7 @@ fn the_overlap_list_ticks_and_picks_the_fillet_s_edges() {
     let list = varde_view::Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(vec![front, right]),
+        items: varde_view::OverlapItems::picked(vec![front, right]),
     };
     plates.doc.look(Look::OpenOverlaps(list));
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false]));
@@ -622,7 +622,7 @@ fn the_overlap_list_follows_each_preview() {
     let list = varde_view::Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(vec![front, right, back]),
+        items: varde_view::OverlapItems::picked(vec![front, right, back]),
     };
     plates.doc.look(Look::OpenOverlaps(list));
     plates.doc.look(Look::ToggleOverlap(0));
@@ -651,9 +651,7 @@ fn the_overlap_list_follows_each_preview() {
     assert!(plates.doc.feed.draft_error().is_none());
     let rows = |plates: &Plates| {
         let listed = plates.doc.overlaps.as_ref().expect("still open");
-        let varde_view::OverlapItems::Model(picks) = &listed.list.items else {
-            panic!("the model's");
-        };
+        let picks = listed.list.items.picks();
         assert!(
             picks
                 .iter()

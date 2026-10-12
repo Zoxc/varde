@@ -1110,12 +1110,12 @@ impl Program<'_> {
         };
         let most = overlaps::MAX_OVERLAPS;
         let items = if hits.is_empty() && planes.is_empty() {
-            OverlapItems::Model(picks)
+            OverlapItems::picked(picks)
         } else {
             let mut items: Vec<OverlapItem> = planes.into_iter().map(OverlapItem::Origin).collect();
             items.extend(sketch_pick::listed_with(hits, picks, camera, size, most));
             items.truncate(most);
-            OverlapItems::Mixed(items)
+            OverlapItems::Model(items)
         };
         if items.len() < 2 {
             return None;

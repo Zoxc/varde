@@ -146,7 +146,7 @@ fn a_face_listed_while_picking_a_plane_is_picked_for_the_sketch() {
     doc.look(Look::OpenOverlaps(varde_view::Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(picks),
+        items: varde_view::OverlapItems::picked(picks),
     }));
     assert!(doc.overlaps.is_some());
     // Each row picks alone: no ticks, and Ctrl held picks all the same.
@@ -189,7 +189,7 @@ fn an_origin_plane_listed_while_picking_a_plane_is_hovered_and_picked() {
     doc.look(Look::OpenOverlaps(varde_view::Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: varde_view::OverlapItems::Mixed(items),
+        items: varde_view::OverlapItems::Model(items),
     }));
     doc.look(Look::HoverOverlap(Some(0)));
     assert_eq!(doc.plane_hover, Some(varde_document::OriginPlane::XY));
@@ -222,7 +222,7 @@ fn a_face_listed_where_faces_overlap_is_hovered_and_chosen() {
     let list = varde_view::Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(picks.clone()),
+        items: varde_view::OverlapItems::picked(picks.clone()),
     };
     doc.look(Look::OpenOverlaps(list.clone()));
     assert!(!doc.hovers_through());
@@ -968,7 +968,7 @@ fn a_sketch_s_curve_listed_with_the_model_is_hovered_ticked_and_chosen() {
     let list = Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: OverlapItems::Mixed(vec![OverlapItem::Sketch(item), OverlapItem::Model(face)]),
+        items: OverlapItems::Model(vec![OverlapItem::Sketch(item), OverlapItem::Model(face)]),
     };
     doc.look(Look::OpenOverlaps(list));
     assert!(doc.overlaps.is_some());

@@ -284,7 +284,7 @@ fn project_s_overlaps_tick_its_picks_and_their_rows_click() {
     let list = Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: OverlapItems::Mixed(vec![
+        items: OverlapItems::Model(vec![
             OverlapItem::Sketch(item(before)),
             OverlapItem::Model(edge),
             OverlapItem::Sketch(item(after)),

@@ -356,7 +356,7 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     let list = |picks| varde_view::Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(picks),
+        items: varde_view::OverlapItems::picked(picks),
     };
     let picks = vec![top(&plates), front(&plates, body)];
     plates.doc.look(Look::OpenOverlaps(list(picks)));

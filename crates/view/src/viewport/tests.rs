@@ -1197,9 +1197,7 @@ fn a_left_press_held_still_on_the_model_lists_what_overlaps_there() {
     let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
         panic!("{sent:?}");
     };
-    let crate::OverlapItems::Model(picks) = &list.items else {
-        panic!("{list:?}");
-    };
+    let picks = list.items.picks();
     // The top and the bottom under it.
     assert_eq!(picks.len(), 2);
     assert!((picks.iter()).all(|pick| matches!(pick.target, Picked::Face(_))));
@@ -1481,7 +1479,7 @@ fn a_press_held_on_a_sketch_s_curve_over_the_model_lists_it_with_the_model() {
     let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
         panic!("{sent:?}");
     };
-    let OverlapItems::Mixed(items) = &list.items else {
+    let OverlapItems::Model(items) = &list.items else {
         panic!("{list:?}");
     };
     let high_item = SketchItem {
@@ -1542,7 +1540,7 @@ fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
     let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
         panic!("{sent:?}");
     };
-    let OverlapItems::Mixed(items) = &list.items else {
+    let OverlapItems::Model(items) = &list.items else {
         panic!("{list:?}");
     };
     assert!(
@@ -1609,7 +1607,7 @@ fn a_press_held_still_lists_the_origin_planes_there_too() {
     let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
         panic!("{sent:?}");
     };
-    let crate::OverlapItems::Mixed(items) = &list.items else {
+    let crate::OverlapItems::Model(items) = &list.items else {
         panic!("{list:?}");
     };
     // The XY plane under the top, then the top and the bottom.

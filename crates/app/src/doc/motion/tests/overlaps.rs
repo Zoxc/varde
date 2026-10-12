@@ -41,7 +41,7 @@ fn list(plates: &mut Plates, picks: Vec<Pick>) {
     plates.doc.look(Look::OpenOverlaps(Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
-        items: OverlapItems::Model(picks),
+        items: OverlapItems::picked(picks),
     }));
     assert!(plates.doc.overlaps.is_some());
 }

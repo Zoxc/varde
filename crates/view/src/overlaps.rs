@@ -51,12 +51,10 @@ pub struct Overlaps {
 pub enum OverlapItems {
     /// Of the sketch being edited.
     Sketch(Vec<Selectable>),
-    /// Of the model shown.
-    Model(Vec<Pick>),
-    /// Of the model shown and of the finished sketches picked with it
-    /// ([`ModelPicking::sketches`](crate::ModelPicking::sketches)): listed
-    /// so only where one of those sketches has something there.
-    Mixed(Vec<OverlapItem>),
+    /// Of the model shown, and of the finished sketches picked with it
+    /// ([`ModelPicking::sketches`](crate::ModelPicking::sketches)) and
+    /// the origin planes while they're picked.
+    Model(Vec<OverlapItem>),
 }
 
 /// A row of a list of the model's overlaps with sketches' items.
@@ -128,8 +126,25 @@ impl OverlapItems {
     pub fn len(&self) -> usize {
         match self {
             OverlapItems::Sketch(ids) => ids.len(),
-            OverlapItems::Model(picks) => picks.len(),
-            OverlapItems::Mixed(items) => items.len(),
+            OverlapItems::Model(items) => items.len(),
+        }
+    }
+
+    /// A list of the model's faces, edges and vertices `picks` alone.
+    pub fn picked(picks: impl IntoIterator<Item = Pick>) -> Self {
+        OverlapItems::Model(picks.into_iter().map(OverlapItem::Model).collect())
+    }
+
+    /// The model's faces, edges and vertices listed, in order.
+    pub fn picks(&self) -> Vec<Pick> {
+        match self {
+            OverlapItems::Sketch(_) => Vec::new(),
+            OverlapItems::Model(items) => (items.iter())
+                .filter_map(|item| match *item {
+                    OverlapItem::Model(pick) => Some(pick),
+                    OverlapItem::Sketch(_) | OverlapItem::Origin(_) => None,
+                })
+                .collect(),
         }
     }
 
@@ -162,19 +177,11 @@ pub(crate) fn view<'a>(
         model_selection.model() == Some(pick.model) && targets.contains(&pick.target)
     };
     let checked: Vec<bool> = match (&overlaps.items, ticks) {
-        (OverlapItems::Model(_) | OverlapItems::Mixed(_), Some(ticks)) => {
-            ticks.iter().map(|tick| tick.ticked).collect()
-        }
+        (OverlapItems::Model(_), Some(ticks)) => ticks.iter().map(|tick| tick.ticked).collect(),
         (OverlapItems::Sketch(ids), _) => (ids.iter())
             .map(|id| sketch.is_some_and(|(_, selection)| selection.contains(id)))
             .collect(),
-        (OverlapItems::Model(picks), None) => {
-            let targets: Vec<Picked> = model_selection.targets().collect();
-            (picks.iter())
-                .map(|pick| selected(pick, &targets))
-                .collect()
-        }
-        (OverlapItems::Mixed(items), None) => {
+        (OverlapItems::Model(items), None) => {
             let targets: Vec<Picked> = model_selection.targets().collect();
             let items_selected: Vec<SketchItem> = model_selection.sketch_items().collect();
             (items.iter())
@@ -195,19 +202,13 @@ pub(crate) fn view<'a>(
                     .unwrap_or_default()
             })
             .collect(),
-        OverlapItems::Model(picks) => (picks.iter().enumerate())
-            .map(|(row, pick)| {
-                let body = document.body(pick.body).map(|body| body.name.as_str());
-                let tick = ticks.and_then(|ticks| ticks.get(row));
-                let note = tick.map_or(OverlapNote::None, |tick| tick.note);
-                model_name(pick.target, body, note)
-            })
-            .collect(),
-        OverlapItems::Mixed(items) => (items.iter())
-            .map(|item| match *item {
+        OverlapItems::Model(items) => (items.iter().enumerate())
+            .map(|(row, item)| match *item {
                 OverlapItem::Model(pick) => {
                     let body = document.body(pick.body).map(|body| body.name.as_str());
-                    model_name(pick.target, body, OverlapNote::None)
+                    let tick = ticks.and_then(|ticks| ticks.get(row));
+                    let note = tick.map_or(OverlapNote::None, |tick| tick.note);
+                    model_name(pick.target, body, note)
                 }
                 OverlapItem::Sketch(item) => sketch_item_name(document, item),
                 OverlapItem::Origin(plane) => format!("{} plane", plane.name()),

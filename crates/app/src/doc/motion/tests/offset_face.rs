@@ -445,7 +445,7 @@ fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
     let list = varde_view::Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: varde_view::OverlapItems::Model(vec![
+        items: varde_view::OverlapItems::picked(vec![
             top(&plates, body, 10.0),
             front(&plates, body, 0.0),
         ]),
@@ -464,9 +464,7 @@ fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
     plates.answer();
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true]));
     let listed = plates.doc.overlaps.as_ref().expect("still open");
-    let varde_view::OverlapItems::Model(picks) = &listed.list.items else {
-        panic!("the model's");
-    };
+    let picks = listed.list.items.picks();
     assert!(
         picks
             .iter()

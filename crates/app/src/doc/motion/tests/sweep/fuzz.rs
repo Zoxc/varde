@@ -150,9 +150,10 @@ fn check_session(plates: &Plates, what: &str) {
         return;
     };
     if let (Some(ticks), Some(listed)) = (plates.doc.overlap_ticks(), &plates.doc.overlaps)
-        && let OverlapItems::Model(picks) = &listed.list.items
+        && let OverlapItems::Model(_) = &listed.list.items
     {
-        for (tick, &pick) in ticks.iter().zip(picks) {
+        let picks = listed.list.items.picks();
+        for (tick, &pick) in ticks.iter().zip(&picks) {
             if tick.note == varde_view::OverlapNote::Removed {
                 continue;
             }
@@ -320,7 +321,7 @@ fn random_overlaps(plates: &Plates, rng: &mut Rng) -> Option<Overlaps> {
     (picks.len() > 1).then_some(Overlaps {
         held: DVec2::ZERO,
         at: DVec2::ZERO,
-        items: OverlapItems::Model(picks),
+        items: OverlapItems::picked(picks),
     })
 }
 
@@ -673,8 +674,9 @@ fn run(seed: u64, steps: usize) {
             plates.answer();
         }
         if let Some(listed) = &plates.doc.overlaps
-            && let OverlapItems::Model(picks) = &listed.list.items
+            && let OverlapItems::Model(_) = &listed.list.items
         {
+            let picks = listed.list.items.picks();
             assert!(!picks.is_empty(), "{what}");
             let model = plates.doc.feed.model();
             assert!(picks.iter().all(|pick| pick.model == model), "{what}");

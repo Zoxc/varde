@@ -1592,9 +1592,8 @@ that reach, where they're nearest the cursor, those the model hides
 left out as the cursor leaves them (none in a sketch, behind the faded
 model; `sketch_pick::items_near`), each before the faces and before the
 first vertex or edge it wins over by depth (`sketch_pick::listed_with`,
-as `sketch_pick::wins`): then the list is `OverlapItems::Mixed`, of
-`OverlapItem`s, its sketch rows named "Line 3 of Sketch 2"; without any
-it's `OverlapItems::Model` as before. While the list is open, a ring of that
+as `sketch_pick::wins`), its sketch rows named "Line 3 of Sketch 2";
+the list is `OverlapItems::Model`, of `OverlapItem`s, either way. While the list is open, a ring of that
 radius marks where the button was held (`Overlaps::held`,
 `theme::pick_ring`). Over one item or none the press goes on as it was (a click, a
 drag). Over more it ends (no click, drag or orbit; letting go does
