@@ -5,7 +5,7 @@
 use std::io;
 use std::path::Path;
 
-use js_sys::{ArrayBuffer, AsyncIterator, Function, IteratorNext, Promise, Reflect, Uint8Array};
+use js_sys::{ArrayBuffer, AsyncIterator, Function, IteratorNext, Promise, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     File, FileReaderSync, FileSystemDirectoryHandle, FileSystemFileHandle,
@@ -18,7 +18,7 @@ use crate::dir::{Dir, Make};
 use crate::js::{self, number, offset, seconds, size};
 use crate::opfs::{dir_names, done};
 use crate::vrdp::{ReadAt, Storage};
-use crate::web::js::{call, js_error};
+use crate::web::js::{call, copy_exact, js_error};
 use crate::wire::MAX_MESSAGE_BYTES;
 
 /// The root of the Origin Private File System. A browser without it, or
@@ -224,12 +224,7 @@ impl ReadAt for Snapshot {
         let buffer = FileReaderSync::new()
             .and_then(|reader| reader.read_as_array_buffer(&part))
             .map_err(js_error)?;
-        let bytes = Uint8Array::new(&buffer);
-        if usize::try_from(bytes.length()).ok() != Some(buf.len()) {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-        bytes.copy_to(buf);
-        Ok(())
+        copy_exact(&buffer, buf)
     }
 }
 
@@ -292,14 +287,10 @@ impl Dir for OpfsDir {
             )
         })?;
         let buffer: ArrayBuffer = call(file.array_buffer()).await?.unchecked_into();
-        let bytes = Uint8Array::new(&buffer);
-        // The length is the browser's to say, twice: they must agree.
-        if usize::try_from(bytes.length()).ok() != Some(len) {
-            return Err(io::Error::other(format!(
-                "{name} changed while it was read"
-            )));
-        }
-        Ok(bytes.to_vec())
+        let mut bytes = vec![0; len];
+        copy_exact(&buffer, &mut bytes)
+            .map_err(|_| io::Error::other(format!("{name} changed while it was read")))?;
+        Ok(bytes)
     }
 
     async fn reader(&self, name: &str) -> io::Result<Snapshot> {

@@ -3,7 +3,7 @@
 
 use std::io;
 
-use js_sys::Promise;
+use js_sys::{ArrayBuffer, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::DomException;
@@ -25,4 +25,19 @@ pub(crate) fn js_error(error: JsValue) -> io::Error {
         return io::Error::new(error_kind(&name), String::from(error.message()));
     }
     io::Error::other(format!("{error:?}"))
+}
+
+/// The bytes of `buffer` into `buf`, refused unless the browser made it
+/// exactly `buf.len()` long: the length is the browser's to say, twice,
+/// and the two must agree.
+pub(crate) fn copy_exact(buffer: &ArrayBuffer, buf: &mut [u8]) -> io::Result<()> {
+    let bytes = Uint8Array::new(buffer);
+    if usize::try_from(bytes.length()).ok() != Some(buf.len()) {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the file changed while it was read",
+        ));
+    }
+    bytes.copy_to(buf);
+    Ok(())
 }
