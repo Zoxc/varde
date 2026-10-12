@@ -241,7 +241,7 @@ impl Session {
         let success = |result| Outcome::respond(Response::json(rpc::success(&r.id, result)));
         match r.method.as_str() {
             "ping" => success(json!({})),
-            "tools/list" => success(tools::list()),
+            "tools/list" => success(tools::list().clone()),
             "tools/call" => match tools::parse_call(r.params.as_ref()) {
                 Ok(call) => {
                     self.in_flight.insert(r.id.clone());

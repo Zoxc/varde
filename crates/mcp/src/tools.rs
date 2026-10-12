@@ -2786,8 +2786,14 @@ fn normalize(v: [f64; 3]) -> Option<[f64; 3]> {
     Some(scaled.map(|c| c / length))
 }
 
-/// The `tools/list` result: the tools built so far.
-pub fn list() -> Value {
+/// The `tools/list` result: the tools built so far, built once.
+pub fn list() -> &'static Value {
+    static LIST: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    LIST.get_or_init(build_list)
+}
+
+/// Builds [`list`]'s catalogue.
+fn build_list() -> Value {
     let parameter = json!({ "type": "string", "description": "The parameter's name" });
     let expression = json!({
         "type": "string",

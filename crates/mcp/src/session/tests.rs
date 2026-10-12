@@ -290,7 +290,7 @@ fn only_ping_before_initialized() {
         json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
     );
     let list = json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list" });
-    assert_eq!(body(&post(&mut state, &id, list))["result"], tools::list());
+    assert_eq!(body(&post(&mut state, &id, list))["result"], *tools::list());
 }
 
 #[test]
