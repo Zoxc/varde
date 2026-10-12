@@ -12,6 +12,7 @@
 //! takes is kept and said to be gone.
 
 use crate::doc::OperationSlot;
+use crate::doc::regions::Found;
 use std::borrow::Cow;
 
 use glam::DVec2;
@@ -20,7 +21,7 @@ use varde_document::{
     MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
 use varde_regen::{chain_closes, loft_corner, loft_corners};
-use varde_sketch::{Id, Profiles, Sketch};
+use varde_sketch::{Id, Region};
 use varde_view::{
     LoftSection, LoftShape, LoftView, MotionLook, MotionPick, OperationKind, SketchLines,
     SweepPart, loft_info,
@@ -69,41 +70,65 @@ impl Default for LoftSetup {
     }
 }
 
-/// The corners of region `region` of `profiles` (of `sketch`) a start
-/// can be at, in its outer loop's order, each a sketch point and where
-/// the corner is: by regeneration's rule, a point within `resolution` of
-/// a piece's start vertex ([`loft_corners`]).
-fn corners(
-    sketch: &Sketch,
-    profiles: &Profiles,
-    region: usize,
-    resolution: f64,
-) -> Vec<(Id, DVec2)> {
-    (profiles.regions.get(region))
-        .map(|region| loft_corners(sketch, profiles, &region.outer, resolution))
-        .unwrap_or_default()
+/// Region `index` of a sketch's profiles, as a loft section names it.
+struct Outline<'a> {
+    found: &'a Found,
+    index: usize,
+    region: &'a Region,
 }
 
-/// The corner of `corners` (region `region`'s, [`corners`]) that the start
-/// `start` is at by regeneration's rule ([`loft_corner`]), as its dot
-/// shows it: `start` itself, or that corner's first point where two
-/// points are on one vertex and the start is a later one, which
-/// regeneration takes as well. `None` if it's at none of them.
-fn shown_start(
-    sketch: &Sketch,
-    profiles: &Profiles,
-    region: usize,
-    corners: &[(Id, DVec2)],
-    start: Id,
-    resolution: f64,
-) -> Option<Id> {
-    if corners.iter().any(|&(id, _)| id == start) {
-        return Some(start);
+impl<'a> Outline<'a> {
+    /// Region `index` of `found`'s profiles, if it has one.
+    fn new(found: &'a Found, index: usize) -> Option<Self> {
+        let region = found.profiles.regions.get(index)?;
+        Some(Self {
+            found,
+            index,
+            region,
+        })
     }
-    let outer = &profiles.regions.get(region)?.outer;
-    let piece = loft_corner(sketch, profiles, outer, start, resolution)?;
-    let vertex = profiles.vertices.get(outer.get(piece)?.start)?;
-    (corners.iter()).find_map(|&(id, corner)| (corner == *vertex).then_some(id))
+
+    /// The piece of the outer loop whose start vertex `point` is at, by
+    /// regeneration's rule ([`loft_corner`]): within `resolution`.
+    fn corner(&self, point: Id, resolution: f64) -> Option<usize> {
+        let found = self.found;
+        loft_corner(
+            &found.sketch,
+            &found.profiles,
+            &self.region.outer,
+            point,
+            resolution,
+        )
+    }
+
+    /// The corners a start can be at, in the outer loop's order, each a
+    /// sketch point and where the corner is: by regeneration's rule, a
+    /// point within `resolution` of a piece's start vertex
+    /// ([`loft_corners`]).
+    fn corners(&self, resolution: f64) -> Vec<(Id, DVec2)> {
+        let found = self.found;
+        loft_corners(
+            &found.sketch,
+            &found.profiles,
+            &self.region.outer,
+            resolution,
+        )
+    }
+
+    /// The corner of `corners` ([`Outline::corners`]) that the start
+    /// `start` is at by regeneration's rule ([`loft_corner`]), as its dot
+    /// shows it: `start` itself, or that corner's first point where two
+    /// points are on one vertex and the start is a later one, which
+    /// regeneration takes as well. `None` if it's at none of them.
+    fn shown_start(&self, corners: &[(Id, DVec2)], start: Id, resolution: f64) -> Option<Id> {
+        if corners.iter().any(|&(id, _)| id == start) {
+            return Some(start);
+        }
+        let piece = self.corner(start, resolution)?;
+        let outer = &self.region.outer;
+        let vertex = self.found.profiles.vertices.get(outer.get(piece)?.start)?;
+        (corners.iter()).find_map(|&(id, corner)| (corner == *vertex).then_some(id))
+    }
 }
 
 impl MotionSession {
@@ -196,32 +221,27 @@ impl MotionSession {
         match section {
             Section::Point { point, .. } => drawn.point(*point).is_none(),
             Section::Region { start, .. } => {
-                let Some(found) = regions.found(sketch) else {
+                if regions.found(sketch).is_none() {
                     return (regions.skipped.iter()).any(|(skipped, _)| *skipped == sketch);
-                };
-                let Some((profiles, index)) = self.section_region(section) else {
+                }
+                let Some(outline) = self.section_outline(section) else {
                     return true;
                 };
                 let resolution = document.tolerance().resolution();
-                start.is_some_and(|start| {
-                    (profiles.regions.get(index)).is_none_or(|region| {
-                        loft_corner(&found.sketch, profiles, &region.outer, start, resolution)
-                            .is_none()
-                    })
-                })
+                start.is_some_and(|start| outline.corner(start, resolution).is_none())
             }
         }
     }
 
-    /// The region of the section `section` of `document`, as its sketch's
-    /// profiles find it: the profiles and the region's index.
-    fn section_region(&self, section: &Section) -> Option<(&Profiles, usize)> {
+    /// The region of the section `section`, as its sketch's profiles
+    /// find it.
+    fn section_outline(&self, section: &Section) -> Option<Outline<'_>> {
         let Section::Region { sketch, region, .. } = section else {
             return None;
         };
         let found = self.loft.regions.found(*sketch)?;
         let index = found.profiles.resolve(std::slice::from_ref(region))[0]?;
-        Some((&found.profiles, index))
+        Outline::new(found, index)
     }
 
     /// Adds the point `point` of `sketch` as its first or last section,
@@ -264,17 +284,9 @@ impl MotionSession {
     /// `document`.
     pub(crate) fn loft_start(&mut self, section: usize, point: Id, document: &Document) {
         let resolution = document.tolerance().resolution();
-        let is_corner = (self.loft.sections.get(section)).is_some_and(|section| {
-            let (Some((profiles, region)), Some(found)) = (
-                self.section_region(section),
-                self.loft.regions.found(section.sketch()),
-            ) else {
-                return false;
-            };
-            (profiles.regions.get(region)).is_some_and(|region| {
-                loft_corner(&found.sketch, profiles, &region.outer, point, resolution).is_some()
-            })
-        });
+        let is_corner = (self.loft.sections.get(section))
+            .and_then(|section| self.section_outline(section))
+            .is_some_and(|outline| outline.corner(point, resolution).is_some());
         if !is_corner {
             return;
         }
@@ -469,15 +481,15 @@ impl Doc {
         let Some(found) = session.loft.regions.found(sketch) else {
             return Ok(());
         };
-        if region >= found.profiles.regions.len() {
+        let Some(outline) = Outline::new(found, region) else {
             return Ok(());
-        }
+        };
         // The section of this region, if it's one already: out it goes.
         let same = (session.loft.sections.iter()).position(|section| {
             section.sketch() == sketch
                 && session
-                    .section_region(section)
-                    .is_some_and(|(_, index)| index == region)
+                    .section_outline(section)
+                    .is_some_and(|outline| outline.index == region)
         });
         if let Some(at) = same {
             session.drop_section(at);
@@ -496,7 +508,7 @@ impl Doc {
         // The start: the corner nearest the previous section's start in
         // the world, or the first corner.
         let resolution = document.tolerance().resolution();
-        let corners = corners(&found.sketch, &found.profiles, region, resolution);
+        let corners = outline.corners(resolution);
         let placement = self.placement(sketch);
         let insert_at = match sections.last() {
             Some(last) if last.is_point() && sections.len() >= 2 => sections.len() - 1,
@@ -575,25 +587,16 @@ impl Doc {
                 let drawn = sketch_of(document, sketch);
                 let shape = match section {
                     Section::Region { start, .. } => {
-                        let found = setup.regions.found(sketch);
-                        let resolved = session.section_region(section);
-                        let (region, corners, start) = match (found, resolved) {
-                            (Some(found), Some((profiles, index))) => {
-                                let corners = corners(&found.sketch, profiles, index, resolution);
+                        let (region, corners, start) = match session.section_outline(section) {
+                            Some(outline) => {
+                                let corners = outline.corners(resolution);
                                 let start = (*start).map(|start| {
-                                    shown_start(
-                                        &found.sketch,
-                                        profiles,
-                                        index,
-                                        &corners,
-                                        start,
-                                        resolution,
-                                    )
-                                    .unwrap_or(start)
+                                    (outline.shown_start(&corners, start, resolution))
+                                        .unwrap_or(start)
                                 });
-                                (profiles.regions.get(index), corners, start)
+                                (Some(outline.region), corners, start)
                             }
-                            _ => (None, Vec::new(), *start),
+                            None => (None, Vec::new(), *start),
                         };
                         LoftShape::Region {
                             region,
