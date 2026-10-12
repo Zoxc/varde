@@ -1,6 +1,6 @@
 //! A design file's previews: `PREVIEW` blocks after its last record,
 //! written with each save, and read from the end of the file without
-//! reading any record's payload, see [`read_previews`].
+//! reading any record's payload, see `read_previews` (native).
 
 use std::io;
 
@@ -97,7 +97,7 @@ pub(super) fn append_previews(
 /// The previews of the design file `file` that `supported` accepts, in
 /// their order, see [`previews`]. Any failure, of reading the file
 /// included, is none.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) fn read_previews(
     file: &(impl ReadAt + ?Sized),
     supported: impl Fn(&Preview) -> bool,
@@ -123,6 +123,7 @@ pub(crate) enum FileEnd {
 }
 
 /// The previews of the design file `file`'s newest record, see [`end`].
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(super) fn previews(file: &(impl ReadAt + ?Sized)) -> io::Result<Vec<Preview>> {
     Ok(match end(file)? {
         FileEnd::NotADesign => Vec::new(),

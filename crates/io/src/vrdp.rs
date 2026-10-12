@@ -428,7 +428,7 @@ enum After {
 impl Tail {
     /// The last record's `sum`, which tells it from any other save, as
     /// downloads are recorded by (`src/downloads.rs`).
-    #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+    #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn sum(&self) -> u128 {
         self.sum
     }
