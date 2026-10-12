@@ -52,7 +52,7 @@ use varde_expr::{AngleUnit, Ask, Unit};
 use varde_regen::SweepFound;
 use varde_view::{
     ChamferType, KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, MotionField, MotionKind,
-    OpKnob, PatternMode, ScaleMode, ShellDirection, SweepPath, arc_tangent,
+    OpKnob, PatternMode, ScaleMode, ShellDirection, SweepPath,
 };
 
 use super::{Doc, MotionSession, field_ask};
@@ -85,6 +85,14 @@ pub(crate) enum KnobAnchor {
         at: DVec3,
         normals: [DVec3; 2],
     },
+}
+
+/// The tangent of the arc round the unit `axis` from the unit `radial`
+/// (square to it), right-handed about `axis`, `angle` radians round:
+/// the way a knob there moves as its value grows.
+fn arc_tangent(axis: DVec3, radial: DVec3, angle: f64) -> DVec3 {
+    let (sin, cos) = angle.sin_cos();
+    axis.cross(radial) * cos - radial * sin
 }
 
 impl KnobAnchor {
@@ -405,6 +413,7 @@ impl Doc {
             path,
             angle,
             KnobSnap::Angle,
+            arc_tangent(axis, radial, angle),
             KnobTone::Modify,
         ))
     }
@@ -543,6 +552,7 @@ impl Doc {
                 ring,
                 turn,
                 KnobSnap::Angle,
+                arc_tangent(primary, radial, turn),
                 KnobTone::Create,
             ),
         ]
@@ -654,17 +664,15 @@ impl Doc {
                 radius: KnobRadius::World(radius),
             };
             // Its arrow at the span, the spread times the copies' steps.
-            knobs.push(OpKnob {
-                out: tangent,
-                ..OpKnob::arc(
-                    MotionField::Spread,
-                    path,
-                    spread,
-                    KnobSnap::Angle,
-                    KnobTone::Create,
-                )
-                .with_scale(KnobScale::Times(times))
-            });
+            let knob = OpKnob::arc(
+                MotionField::Spread,
+                path,
+                spread,
+                KnobSnap::Angle,
+                tangent,
+                KnobTone::Create,
+            );
+            knobs.push(knob.with_scale(KnobScale::Times(times)));
         }
         if let Some(count) = count {
             let knob = OpKnob::line(
@@ -700,16 +708,17 @@ impl Doc {
                     radial: zero,
                     radius: KnobRadius::Pixels(TURN_PIXELS),
                 };
-                let knob = OpKnob::arc(
+                // Its arrow the way it turns.
+                let along = arc_tangent(tangent, zero, twist);
+                let out = if twist < 0.0 { -along } else { along };
+                vec![OpKnob::arc(
                     MotionField::Twist,
                     ring,
                     twist,
                     KnobSnap::Angle,
+                    out,
                     KnobTone::Count,
-                );
-                // Its arrow the way it turns.
-                let out = if twist < 0.0 { -knob.out } else { knob.out };
-                vec![OpKnob { out, ..knob }]
+                )]
             }
             (SweepPath::Helix, SweepFound::Helix { middle, foot, axis }) => {
                 let axis = v(axis);

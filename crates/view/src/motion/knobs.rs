@@ -87,14 +87,6 @@ pub enum KnobSnap {
     Count,
 }
 
-/// The tangent of the arc round the unit `axis` from the unit `radial`
-/// (square to it), right-handed about `axis`, `angle` radians round:
-/// the way a knob there moves as its value grows.
-pub fn arc_tangent(axis: DVec3, radial: DVec3, angle: f64) -> DVec3 {
-    let (sin, cos) = angle.sin_cos();
-    axis.cross(radial) * cos - radial * sin
-}
-
 /// The colours of a knob: those of its tool's icon category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnobTone {
@@ -132,19 +124,16 @@ impl OpKnob {
     }
 
     /// A knob on `path`, an arc ([`KnobPath::Arc`]), a radian a radian,
-    /// its arrow along the arc's tangent at `value` ([`arc_tangent`]),
+    /// its arrow pointing `out` (the arc's tangent where it is, mostly),
     /// its shaft from zero.
     pub fn arc(
         field: MotionField,
         path: KnobPath,
         value: f64,
         snap: KnobSnap,
+        out: DVec3,
         tone: KnobTone,
     ) -> Self {
-        let out = match path {
-            KnobPath::Arc { axis, radial, .. } => arc_tangent(axis, radial, value),
-            KnobPath::Line { along, .. } => along,
-        };
         Self {
             field,
             path,

@@ -1253,7 +1253,7 @@ pub use sweep::{SweepPart, SweepPath, SweepView};
 mod loft;
 pub use loft::{LoftSection, LoftShape, LoftView};
 mod knobs;
-pub use knobs::{KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, OpKnob, arc_tangent};
+pub use knobs::{KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, OpKnob};
 
 #[cfg(test)]
 mod tests;
