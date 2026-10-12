@@ -39,7 +39,7 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
   (`Pattern::copy_body`, `copy_bodies`), so a higher count adds bodies
   at the end. **Identity**: `Command::AddFeature` and `SetFeature` lay
   the list out whatever it held (as an extrude's `BodyId::NEW`,
-  `editor.rs`'s `planned_copies`): each copy, by its original's id and
+  `command.rs`'s `planned_copies`): each copy, by its original's id and
   its `k`, keeps the body the feature it replaces made of it (a spacing
   or axis edited, a count raised, a body added or taken out, the kind
   swapped between linear and circular: the copies left keep their

@@ -1,9 +1,10 @@
 use super::*;
 use crate::testing::{extrude_again, extrude_of, plate, with_body};
 use crate::{
-    CheckError, Design, ExtrudeError, FeatureId, FeatureKind, Opacity, Operation, Plane, Removable,
-    Removal, Sketch, Targets,
+    BodyId, CheckError, Design, ExtrudeError, FeatureId, FeatureKind, Opacity, Operation, Plane,
+    Removable, Removal, Sketch, Targets, Tint,
 };
+use varde_expr::LengthUnit;
 
 #[test]
 fn undo_redo_roundtrip() {

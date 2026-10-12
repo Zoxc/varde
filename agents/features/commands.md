@@ -1,6 +1,6 @@
 # Commands shared by every kind
 
-`crates/document/src/editor.rs`.
+`crates/document/src/command.rs` (the undo history, `Editor`, in `editor.rs`).
 
 - `Command::AddFeature { name, kind: Box<FeatureKind> }`, made by
   `Document::add_feature(kind)`, which names it one past the highest
