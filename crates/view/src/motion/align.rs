@@ -12,7 +12,7 @@ use super::{AlignRole, AlignSide, AlignSlot, MotionField, MotionLook, MotionPick
 use varde_document::{AxisRef, DirRef, Document, PointRef};
 
 use crate::icons::Icon;
-use crate::operation_panel::{ListRow, PanelHover, field, pick_field, toggle};
+use crate::operation_panel::{ListRow, PanelHover, field, pick_rows, toggle};
 use crate::pick::{Pick, PickIndex};
 use crate::plane_pick::face_name;
 use crate::{Look, Message};
@@ -114,10 +114,9 @@ pub(super) fn body<'a>(
                     .press(pick.clone())
                     .view(state.hover)
             });
-            let place = (row.is_none() || on).then(|| place(slot).to_owned());
             field(
                 role.label(),
-                pick_field(row.into_iter().collect(), place, on, pick),
+                pick_rows(row.into_iter().collect(), place(slot), on, pick),
             )
         });
         column(fields).spacing(8)

@@ -26,7 +26,7 @@ use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
     Footer, Framing, ListRow, OperationKind, PanelHover, Parts, RowTone, TypedField, field,
-    footer_message, label, message_text, operation_panel, pick_field, tile, tiles, toggle,
+    footer_message, label, message_text, operation_panel, pick_rows, tile, tiles, toggle,
     value_field,
 };
 use crate::plane_pick::face_name;
@@ -1008,10 +1008,9 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         MotionKind::Align | MotionKind::Split => ("Body", "Click a body"),
         _ => ("Bodies", "Click bodies"),
     };
-    let place = (rows.is_empty() || picking_bodies).then(|| bodies_place.to_owned());
     let bodies = field(
         bodies_label,
-        pick_field(rows, place, picking_bodies, pick_bodies),
+        pick_rows(rows, bodies_place, picking_bodies, pick_bodies),
     );
 
     let picking_reference = state.picking == MotionPick::Reference;
@@ -1038,11 +1037,9 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             .press(pick_reference.clone())
             .view(state.hover)
     });
-    let reference_place =
-        (reference_row.is_none() || picking_reference).then(|| reference_place.to_owned());
     let reference = field(
         reference_label,
-        pick_field(
+        pick_rows(
             reference_row.into_iter().collect(),
             reference_place,
             picking_reference,
@@ -1224,8 +1221,7 @@ fn picks_field<'a>(
                 .view(state.hover)
         })
         .collect();
-    let place = (rows.is_empty() || on).then(|| place.to_owned());
-    field(label, pick_field(rows, place, on, press))
+    field(label, pick_rows(rows, place, on, press))
 }
 
 mod align;

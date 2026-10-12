@@ -18,7 +18,7 @@ use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, ListRow, OperationKind, PanelHover, Parts, Side, Sides,
     TypedField, field, footer_message, message_text, operation_panel, operation_section,
-    pick_field, region_rows, tile, tiles, toggle,
+    pick_field, pick_rows, region_rows, tile, tiles, toggle,
 };
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
@@ -469,16 +469,14 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         state.hover,
     );
     let empty = Candidate::none_closed(&state.candidates);
-    let place = (rows.is_empty() || picking_regions).then(|| {
-        if state.picked.is_empty() && empty {
-            "No closed regions to revolve".to_owned()
-        } else {
-            "Click regions".to_owned()
-        }
-    });
+    let place = if state.picked.is_empty() && empty {
+        "No closed regions to revolve"
+    } else {
+        "Click regions"
+    };
     let profile = field(
         "Profile",
-        pick_field(rows, place, picking_regions, pick_regions),
+        pick_rows(rows, place, picking_regions, pick_regions),
     );
     let picking_axis = state.picking == RevolvePick::Axis;
     let pick_axis = send(RevolveLook::Picking(RevolvePick::Axis));

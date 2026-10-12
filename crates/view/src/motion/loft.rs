@@ -20,7 +20,7 @@ use super::{MotionLook, MotionPick, MotionState, PickedRow, SketchLines, picks_f
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, ListRow, OperationKind, PanelHover, RowTone, field, operation_section,
-    pick_field, tile, tiles, toggle,
+    pick_rows, tile, tiles, toggle,
 };
 use crate::{Look, Message};
 
@@ -146,8 +146,8 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                 .view(state.hover)
         })
         .collect();
-    let place = (rows.is_empty() || picking).then(|| "Click regions or sketch points".to_owned());
-    let sections = field("Sections", pick_field(rows, place, picking, press));
+    let place = "Click regions or sketch points";
+    let sections = field("Sections", pick_rows(rows, place, picking, press));
 
     let modes = MODES.map(|(mode, icon, label)| {
         tile(

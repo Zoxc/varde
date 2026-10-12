@@ -15,7 +15,7 @@ use super::{MotionField, MotionLook, MotionPick, MotionState};
 use varde_document::Axis3;
 
 use crate::icons::Icon;
-use crate::operation_panel::{ListRow, PanelHover, field, pick_field, tile, tiles, toggle};
+use crate::operation_panel::{ListRow, PanelHover, field, pick_rows, tile, tiles, toggle};
 use crate::pick::{Pick, PickIndex};
 use crate::{Look, Message};
 
@@ -106,8 +106,7 @@ pub(super) fn body<'a>(
                 .press(press.clone())
                 .view(state.hover)
         });
-        let place = (row.is_none() || on).then(|| place.to_owned());
-        pick_field(row.into_iter().collect(), place, on, press)
+        pick_rows(row.into_iter().collect(), place, on, press)
     };
     let point = field(
         "Point",

@@ -952,6 +952,18 @@ pub(crate) fn toggle<'a>(
     }
 }
 
+/// A [`pick_field`] of `rows`, with where to click, `place`, while it has
+/// none or is the one picking (`on`).
+pub(crate) fn pick_rows<'a>(
+    rows: Vec<Element<'a, Message>>,
+    place: &str,
+    on: bool,
+    message: Option<Message>,
+) -> Element<'a, Message> {
+    let place = (rows.is_empty() || on).then(|| place.to_owned());
+    pick_field(rows, place, on, message)
+}
+
 /// A field picked into by clicks in the viewport: what's picked as
 /// `rows` ([`ListRow`]), then where to click for more, `place`, if
 /// there is one, under a rule (or alone, the field's one row). Outlined
