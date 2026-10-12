@@ -166,20 +166,38 @@ impl Files {
     /// Whether listing browser storage made an entry in the store since
     /// this was last asked: then the store is listed again, as it is
     /// after a request that may change it, see [`Files::relists`].
-    pub(crate) fn take_rescued(&mut self) -> bool {
+    fn take_rescued(&mut self) -> bool {
         mem::take(&mut self.rescued)
     }
 
     /// Whether handling `request` may change the recovered designs, see
     /// `OpenFiles::relists`: any design with an entry may be left holding
     /// it.
-    pub(crate) fn relists(&self, request: &Request) -> bool {
+    fn relists(&self, request: &Request) -> bool {
         self.open.relists(request, Open::has_entry)
+    }
+
+    /// Handles `request`, with `object` as for [`Files::handle`]: its
+    /// answer, followed by the recovered designs as they are now if
+    /// handling it may have changed which there are (see
+    /// [`Files::relists`]) or listing browser storage made an entry (see
+    /// [`Files::take_rescued`]), see [`Response::RecoveredListed`].
+    pub(crate) async fn answer(
+        &mut self,
+        request: Request,
+        object: Option<Handed>,
+    ) -> Vec<Response> {
+        let relist = self.relists(&request);
+        let mut responses = vec![self.handle(request, object).await];
+        if self.take_rescued() || relist {
+            responses.push(self.handle(Request::ListRecovered, None).await);
+        }
+        responses
     }
 
     /// Handles `request`, with `object`, what the browser handed over for
     /// the file it picked, if it uses one.
-    pub(crate) async fn handle(&mut self, request: Request, object: Option<Handed>) -> Response {
+    async fn handle(&mut self, request: Request, object: Option<Handed>) -> Response {
         match request {
             // Refused, as by a failure.
             Request::Open {

@@ -12,7 +12,7 @@ use super::files::Files;
 use crate::queue::{Queue, Queued};
 use crate::web::message_bytes;
 use crate::wire::{self, ToWorker};
-use crate::{Request, Stores};
+use crate::{Request, Response, Stores};
 
 /// A request the worker was posted, with its number and what was posted
 /// along with it, see `page::picked`.
@@ -74,24 +74,25 @@ async fn run(mut woken: UnboundedReceiver<Numbered>) {
             else {
                 break;
             };
-            let relist = files.relists(&request);
             answer(seq, &mut files, request, object).await;
-            // Listing browser storage may have made an entry, too.
-            if relist || files.take_rescued() {
-                answer(seq, &mut files, Request::ListRecovered, None).await;
-            }
         }
     }
 }
 
-/// Handles `request` and posts its answer, numbered `seq`: the number of
-/// the request it answers, or for recovered designs listed after one (see
-/// `Files::relists` and `Files::take_rescued`), of that one.
+/// Handles `request` and posts its answers, all numbered `seq`: its own,
+/// then the recovered designs if `Files::answer` lists them after it.
 async fn answer(seq: u64, files: &mut Files, request: Request, object: Option<Handed>) {
-    let failed = request.failure();
-    let response = files.handle(request, object).await;
-    // A response too large to post loses only its request.
-    let bytes = wire::encode_response(seq, response, failed, wire::MAX_MESSAGE_BYTES)
-        .unwrap_or_else(|e| wasm_bindgen::throw_str(&e.to_string()));
-    worker::post(&[&bytes]);
+    let mut first = Some(request.failure());
+    for response in files.answer(request, object).await {
+        // A response too large to post loses only its request: the first
+        // answers the one posted, any after it a listing of the recovered
+        // designs.
+        let failed: Box<dyn FnOnce(String) -> Response> = match first.take() {
+            Some(failed) => Box::new(failed),
+            None => Box::new(Request::ListRecovered.failure()),
+        };
+        let bytes = wire::encode_response(seq, response, failed, wire::MAX_MESSAGE_BYTES)
+            .unwrap_or_else(|e| wasm_bindgen::throw_str(&e.to_string()));
+        worker::post(&[&bytes]);
+    }
 }
