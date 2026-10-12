@@ -54,7 +54,8 @@ use varde_render::Camera;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
     MotionKind, MotionLook, MotionPick, MotionState, OperationKind, PanelHover, PatternMode, Pick,
-    Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name, pattern_copies, plane_name,
+    PickIndex, Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name, pattern_copies,
+    plane_name,
 };
 
 use self::align::AlignSetup;
@@ -2086,15 +2087,31 @@ impl Doc {
     /// up ([`Doc::reference_in`]), handing the clicks back to bodies, or
     /// says why it can't be.
     fn motion_reference(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        if !self.feed.answers_request() || self.feed.predates_replacement() {
-            return Err(OUT_OF_DATE.into());
-        }
-        let taken = self.on_session(|doc, session| {
-            let reference = doc.reference_in(session, doc.feed.pick_index(), pick)?;
+        let taken = self.on_shown_session(|doc, session, index| {
+            let reference = doc.reference_in(session, index, pick)?;
             session.take_reference(reference);
             Ok(())
-        });
+        })?;
         taken.unwrap_or(Err("Nothing is set up".into()))
+    }
+
+    /// Whether the model shown is the one asked for last, so a click on
+    /// it can be taken: not one before a replacement.
+    fn shows_requested(&self) -> bool {
+        self.feed.answers_request() && !self.feed.predates_replacement()
+    }
+
+    /// Runs `f` on the session being set up ([`Doc::on_session`]) with
+    /// the model shown's pick index, for a click on it; refused while
+    /// that model is out of date ([`Doc::shows_requested`]).
+    pub(super) fn on_shown_session<T>(
+        &mut self,
+        f: impl FnOnce(&Doc, &mut MotionSession, &PickIndex) -> T,
+    ) -> Result<Option<T>, Cow<'static, str>> {
+        if !self.shows_requested() {
+            return Err(OUT_OF_DATE.into());
+        }
+        Ok(self.on_session(|doc, session| f(doc, session, doc.feed.pick_index())))
     }
 
     /// Runs `f` on the session being set up, taken out of the document
@@ -2423,7 +2440,7 @@ impl Doc {
             return self.refs_take::<FaceRef>(pick);
         }
         let index = self.feed.pick_index();
-        (self.feed.answers_request() && !self.feed.predates_replacement())
+        self.shows_requested()
             && match session.picking {
                 MotionPick::Align(slot) => {
                     self.align_reference_in(session, index, slot, pick).is_ok()

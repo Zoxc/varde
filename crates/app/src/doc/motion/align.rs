@@ -31,7 +31,7 @@ use varde_view::{
     Naming, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name, point_name,
 };
 
-use super::{Doc, Merges, MotionSession, OUT_OF_DATE, merged_in, unnamed};
+use super::{Doc, Merges, MotionSession, merged_in, unnamed};
 
 /// Why a pick can't be an align's point or direction, in the words the
 /// status bar shows.
@@ -662,10 +662,7 @@ impl Doc {
         slot: AlignSlot,
         pick: Pick,
     ) -> Result<(), Cow<'static, str>> {
-        if !self.feed.answers_request() || self.feed.predates_replacement() {
-            return Err(OUT_OF_DATE.into());
-        }
-        (self.on_session(|doc, session| doc.pick_align(session, doc.feed.pick_index(), slot, pick)))
+        (self.on_shown_session(|doc, session, index| doc.pick_align(session, index, slot, pick)))?
             .unwrap_or(Ok(()))
     }
 

@@ -27,7 +27,7 @@ use varde_view::{
 };
 
 use super::sketches::{count, sketch_name};
-use super::{Doc, Marks, MotionSession, OUT_OF_DATE, merged_in, unnamed};
+use super::{Doc, Marks, MotionSession, merged_in, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
 use crate::doc::regions::{GoneRegions, RegionPick};
@@ -457,10 +457,7 @@ impl Doc {
     /// Takes `pick` as the tool of the split being set up, handing the
     /// clicks on to nothing (the preview shows), or says why it can't be.
     pub(super) fn split_tool(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        if !self.feed.answers_request() || self.feed.predates_replacement() {
-            return Err(OUT_OF_DATE.into());
-        }
-        (self.on_session(|doc, session| doc.pick_split_tool(session, doc.feed.pick_index(), pick)))
+        (self.on_shown_session(|doc, session, index| doc.pick_split_tool(session, index, pick)))?
             .unwrap_or(Ok(()))
     }
 

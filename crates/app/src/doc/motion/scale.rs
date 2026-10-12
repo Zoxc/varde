@@ -23,7 +23,7 @@ use varde_view::{
 };
 
 use super::align::{Mark, Taken, point_at, point_of};
-use super::{Doc, MotionSession, OUT_OF_DATE, merged_in, unnamed};
+use super::{Doc, MotionSession, merged_in, unnamed};
 use crate::doc::regions::TypedText;
 
 /// A scale's point and edge as picked, and where they were picked.
@@ -300,10 +300,7 @@ impl Doc {
     /// Takes `pick` as the point of the scale being set up, handing the
     /// clicks back to the bodies, or says why it can't be.
     pub(super) fn scale_point(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        if !self.feed.answers_request() || self.feed.predates_replacement() {
-            return Err(OUT_OF_DATE.into());
-        }
-        (self.on_session(|doc, session| doc.pick_scale_point(session, doc.feed.pick_index(), pick)))
+        (self.on_shown_session(|doc, session, index| doc.pick_scale_point(session, index, pick)))?
             .unwrap_or(Ok(()))
     }
 
@@ -333,10 +330,7 @@ impl Doc {
     /// the one scaled if none is yet), handing the clicks back to the
     /// bodies, or says why it can't be.
     pub(super) fn scale_edge(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
-        if !self.feed.answers_request() || self.feed.predates_replacement() {
-            return Err(OUT_OF_DATE.into());
-        }
-        (self.on_session(|doc, session| doc.pick_scale_edge(session, doc.feed.pick_index(), pick)))
+        (self.on_shown_session(|doc, session, index| doc.pick_scale_edge(session, index, pick)))?
             .unwrap_or(Ok(()))
     }
 
