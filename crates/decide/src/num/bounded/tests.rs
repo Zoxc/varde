@@ -552,3 +552,18 @@ fn edge_values_hold_their_bounds() {
         }
     }
 }
+
+/// A value built by hand that isn't finite is uncertified whatever its
+/// errors say, and so is everything computed from it.
+#[test]
+fn hand_built_non_finite_values_are_uncertified() {
+    let one = Bounded::exact(1.0);
+    for v in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        let x = Bounded::new(v, 0.0, 0.0);
+        assert!(!x.is_certified());
+        assert!(x.sign().is_none());
+        for r in [-x, x.abs(), x + one, x * one, one / x, x / one, x.sqrt()] {
+            assert!(!r.is_certified(), "{r:?}");
+        }
+    }
+}

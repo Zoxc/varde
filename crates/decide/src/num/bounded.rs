@@ -28,9 +28,10 @@
 //! uncertified (and escalates), never wrong. So does anything that would
 //! be a NaN in an error term (`∞ · 0`).
 //!
-//! A value that isn't finite has an infinite error: certified
-//! ([`Bounded::is_certified`]) means a finite value within a finite error
-//! of the true one.
+//! Certified ([`Bounded::is_certified`]) means a finite value within a
+//! finite error of the true one: a value that isn't finite counts as
+//! uncertified whatever its error parts say ([`Level::is_finite`]), and
+//! every operation's result is uncertified when an operand is.
 //!
 //! The operations of the first level are `+ − × ÷`, `√`, negation and
 //! `abs` on `Bounded<f64>`: each rounds its value once, adds its own
@@ -43,6 +44,9 @@
 //! afterwards (de Casteljau, Bernstein evaluation), [`gamma`] and
 //! [`gamma_bound`] give the classical `γₘ = m·u / (1 − m·u)` bounds for a
 //! level's unit roundoff `u`, rounded up.
+//!
+//! The second level, double-double, and the promotion of a value to it are
+//! in [`super::dd`].
 
 use std::cmp::Ordering;
 use std::ops::{Add, Div, Mul, Neg, Sub};
@@ -106,7 +110,7 @@ pub fn div_up(a: f64, b: f64) -> f64 {
 
 /// The smaller of two error terms (neither a NaN), by compare and select.
 #[inline]
-fn least(a: f64, b: f64) -> f64 {
+pub(crate) fn least(a: f64, b: f64) -> f64 {
     if b < a { b } else { a }
 }
 
@@ -140,6 +144,21 @@ pub fn gamma_bound(m: u32, a_hat: f64, u: f64) -> f64 {
     let g = gamma(m, u);
     let rel = div_up(mul_up(g, a_hat), down(1.0 - g));
     add_up(rel, mul_up(f64::from(m), ETA))
+}
+
+/// A precision level's value format, as far as certification needs it.
+/// Not `Copy`: a big-float level's values own their digits.
+pub trait Level {
+    /// Whether the value is finite. A value that isn't is never
+    /// certified, whatever its error parts say.
+    fn is_finite(&self) -> bool;
+}
+
+impl Level for f64 {
+    #[inline]
+    fn is_finite(&self) -> bool {
+        f64::is_finite(*self)
+    }
 }
 
 /// A value at a precision level with certified bounds on its truncation and
@@ -183,14 +202,6 @@ impl<T> Bounded<T> {
         }
     }
 
-    /// Whether the error is finite. Each level's operations make the error
-    /// infinite when the value isn't finite, so a certified value is finite
-    /// and within [`err`](Self::err) of the true one.
-    #[inline]
-    pub fn is_certified(&self) -> bool {
-        self.err() < f64::INFINITY
-    }
-
     /// Whether the rounding error dominates, `err_round > err_trunc`: the
     /// item escalates in precision, else in space.
     #[inline]
@@ -209,11 +220,11 @@ impl<T> Bounded<T> {
     }
 }
 
-impl Bounded<f64> {
+impl<T: Level> Bounded<T> {
     /// An exact value: zero errors, unless `v` isn't finite (then the
     /// rounding error is `+∞`).
     #[inline]
-    pub const fn exact(v: f64) -> Self {
+    pub fn exact(v: T) -> Self {
         let err_round = if v.is_finite() { 0.0 } else { f64::INFINITY };
         Bounded {
             v,
@@ -222,10 +233,22 @@ impl Bounded<f64> {
         }
     }
 
+    /// Whether the value is finite and the error too: then the true value
+    /// is within [`err`](Self::err) of the value. Each level's operations
+    /// also make the error infinite when the value isn't finite, but a
+    /// value built by hand may not.
+    #[inline]
+    pub fn is_certified(&self) -> bool {
+        self.v.is_finite() && self.err() < f64::INFINITY
+    }
+}
+
+impl Bounded<f64> {
     /// The certified sign of the true value: `Some` when `|v| > err`, which
-    /// also leaves it non-zero, `None` when the error doesn't settle it.
+    /// also leaves it non-zero, `None` when the error doesn't settle it
+    /// (and for a value that isn't finite).
     pub fn sign(&self) -> Option<Ordering> {
-        if self.v.abs() > self.err() {
+        if self.v.is_finite() && self.v.abs() > self.err() {
             Some(if self.v > 0.0 {
                 Ordering::Greater
             } else {
@@ -365,14 +388,14 @@ impl Div for Bounded<f64> {
 
     /// `|xa/xb − va/vb| ≤ (ea + |va/vb|·eb) / |xb|` and
     /// `|xb| ≥ |vb| − eb`; each part takes its own errors over that lower
-    /// bound. Uncertified unless the divisor is certainly non-zero
-    /// (`|vb| > eb`).
+    /// bound. Uncertified unless the divisor is finite and certainly
+    /// non-zero (`|vb| > eb`).
     fn div(self, o: Self) -> Self {
         let v = self.v / o.v;
         let (a, b) = (self, o);
         let den = down(b.v.abs() - b.err());
         // False for a NaN too.
-        let non_zero = den > 0.0;
+        let non_zero = b.v.is_finite() && den > 0.0;
         if !non_zero {
             return Bounded::new(v, f64::INFINITY, f64::INFINITY);
         }

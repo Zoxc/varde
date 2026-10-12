@@ -1,5 +1,6 @@
 //! Numerics: bounded evaluation, exact predicates, the precision levels
-//! and the `libm` wrapper ([`trig`]).
+//! (double-double in [`dd`]) and the `libm` wrapper ([`trig`]).
 
 pub mod bounded;
+pub mod dd;
 pub mod trig;

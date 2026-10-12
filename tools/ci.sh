@@ -12,7 +12,8 @@
 # per capability and crate, and fails if one waits on a capability in
 # KERNEL_LANDED (below) or given after it.
 # `test` runs the workspace's tests, then the kernel crates' again on
-# one rayon thread (their results must not depend on the thread count).
+# one rayon thread (their results must not depend on the thread count),
+# then varde-decide's with hardware FMA on (x86_64; the same bits).
 # `bans` checks clippy refuses each banned call in
 # crates/kernel/tests/ban_probe.rs and that the kernel crates' clippy.toml
 # copies agree. `deny` needs cargo-deny (`cargo install cargo-deny`) and
@@ -83,6 +84,13 @@ step_kernel-ignores() {
 step_test() {
     cargo test --workspace --locked
     RAYON_NUM_THREADS=1 cargo test --locked "${KERNEL_CRATES[@]}"
+    # The decision layer's results must be the same bits with hardware
+    # FMA: its tests pin them (in their own target directory, as the flag
+    # rebuilds everything).
+    if [[ $(uname -m) == x86_64 ]]; then
+        RUSTFLAGS="${RUSTFLAGS-} -C target-feature=+fma" \
+            cargo test --locked -p varde-decide --target-dir target/fma
+    fi
 }
 
 step_wasm() {
