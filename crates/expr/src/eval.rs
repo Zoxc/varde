@@ -65,18 +65,36 @@ pub(crate) struct Dim {
 }
 
 impl Dim {
-    pub(crate) const NONE: Dim = Dim {
+    const NONE: Dim = Dim {
         length: 0,
         angle: 0,
     };
-    pub(crate) const LENGTH: Dim = Dim {
+    const LENGTH: Dim = Dim {
         length: 1,
         angle: 0,
     };
-    pub(crate) const ANGLE: Dim = Dim {
+    const ANGLE: Dim = Dim {
         length: 0,
         angle: 1,
     };
+
+    fn of_quantity(quantity: Quantity) -> Dim {
+        match quantity {
+            Quantity::Length => Dim::LENGTH,
+            Quantity::Angle => Dim::ANGLE,
+            Quantity::Number => Dim::NONE,
+        }
+    }
+
+    /// The quantity of these powers, if they're one's.
+    fn quantity(self) -> Option<Quantity> {
+        match self {
+            Dim::NONE => Some(Quantity::Number),
+            Dim::LENGTH => Some(Quantity::Length),
+            Dim::ANGLE => Some(Quantity::Angle),
+            _ => None,
+        }
+    }
 
     fn of(unit: Unit) -> Dim {
         match unit {
@@ -112,9 +130,19 @@ impl Dim {
 /// units were settled where it was defined.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Quant {
-    pub(crate) value: f64,
-    pub(crate) dim: Dim,
-    pub(crate) bare: bool,
+    value: f64,
+    dim: Dim,
+    bare: bool,
+}
+
+impl From<Resolved> for Quant {
+    fn from(resolved: Resolved) -> Quant {
+        Quant {
+            value: resolved.value,
+            dim: Dim::of_quantity(resolved.quantity),
+            bare: false,
+        }
+    }
 }
 
 /// A bare part that took the design's length unit, and whether it needs
@@ -168,16 +196,11 @@ impl<'a> Evaluator<'a> {
     /// it's bare, but not an area or a mix of units.
     fn free(&mut self, expr: &Expr) -> Result<Resolved, Error> {
         let quant = self.eval(expr)?;
-        let quantity = match quant.dim {
-            Dim::NONE => Quantity::Number,
-            Dim::LENGTH => Quantity::Length,
-            Dim::ANGLE => Quantity::Angle,
-            dim => {
-                return Err(Error {
-                    kind: ErrorKind::ParamKind(dim.kind()),
-                    span: expr.span,
-                });
-            }
+        let Some(quantity) = quant.dim.quantity() else {
+            return Err(Error {
+                kind: ErrorKind::ParamKind(quant.dim.kind()),
+                span: expr.span,
+            });
         };
         Ok(Resolved {
             value: quant.value,
@@ -188,11 +211,7 @@ impl<'a> Evaluator<'a> {
     /// The whole expression's value, as asked for.
     fn result(&mut self, expr: &Expr, ask: &Ask) -> Result<f64, Error> {
         let quant = self.eval(expr)?;
-        let want = match ask.quantity {
-            Quantity::Length => Dim::LENGTH,
-            Quantity::Angle => Dim::ANGLE,
-            Quantity::Number => Dim::NONE,
-        };
+        let want = Dim::of_quantity(ask.quantity);
         let quant = if quant.dim == want {
             quant
         } else if quant.bare {

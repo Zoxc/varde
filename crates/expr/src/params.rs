@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::eval::{Dim, Quant, evaluate_param, pin_param_units};
+use crate::eval::{Quant, evaluate_param, pin_param_units};
 use crate::parse::{name_spans, unit, word_char};
 use crate::{Error, ErrorKind, LengthUnit, MAX_LEN, Quantity, Span};
 
@@ -272,15 +272,7 @@ impl Params {
             });
         };
         match result {
-            Ok(resolved) => Ok(Quant {
-                value: resolved.value,
-                dim: match resolved.quantity {
-                    Quantity::Length => Dim::LENGTH,
-                    Quantity::Angle => Dim::ANGLE,
-                    Quantity::Number => Dim::NONE,
-                },
-                bare: false,
-            }),
+            Ok(resolved) => Ok((*resolved).into()),
             Err(_) => Err(Error {
                 kind: ErrorKind::BrokenParam(name.to_owned()),
                 span,
