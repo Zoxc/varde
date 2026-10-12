@@ -1472,6 +1472,31 @@ const DRAFTED_NEUTRAL_PLANE: &str =
     "That face is one the draft tilts: pick a face it doesn't, or an origin plane";
 
 impl Doc {
+    /// `body` of the model shown as the body a feature being set up names:
+    /// the body holding it before the feature where a join merged it,
+    /// and the body a split at or after the feature cut it from.
+    pub(super) fn named_body(&self, body: BodyId) -> BodyId {
+        match self.mode.motion() {
+            Some(session) => self.named_body_in(session, body, self.shown()),
+            None => body,
+        }
+    }
+
+    /// `body` as the body `session`'s feature names: see
+    /// [`Doc::named_body`], as the model whose `marks` these are found
+    /// its merges.
+    pub(super) fn named_body_in(
+        &self,
+        session: &MotionSession,
+        body: BodyId,
+        marks: Marks,
+    ) -> BodyId {
+        let document = self.editor.document();
+        let merged = merged_in(document, session.feature, marks);
+        let body = self.naming_in(session.feature, marks).unsplit(body);
+        merged.holder(body).unwrap_or(body)
+    }
+
     /// Starts setting up a new move, mirror or pattern (`kind`), in a
     /// document that can be changed and outside a sketch, or cancels the
     /// one being set up (one of another kind is replaced). What's

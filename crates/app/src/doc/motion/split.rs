@@ -16,7 +16,7 @@ use std::borrow::Cow;
 
 use glam::DVec3;
 use varde_document::{
-    BodyId, Document, Feature, FeatureId, FeatureKind, Keep, MAX_EXTRUDE_REGIONS, MAX_SPLIT_CURVES,
+    BodyId, Document, FeatureId, FeatureKind, Keep, MAX_EXTRUDE_REGIONS, MAX_SPLIT_CURVES,
     PlaneRef, Side, Split, SplitTool,
 };
 use varde_regen::Summary;
@@ -27,7 +27,7 @@ use varde_view::{
 };
 
 use super::sketches::{count, sketch_name};
-use super::{Doc, Marks, MotionSession, merged_in, unnamed};
+use super::{Doc, MotionSession, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
 use crate::doc::regions::{GoneRegions, RegionPick};
@@ -341,19 +341,6 @@ impl MotionSession {
         let index = self.index_in(document);
         self.split.gone = self.split.tool_gone(document, index);
     }
-
-    /// Whether its tool is picked in the viewport in its sketches, where
-    /// the model isn't picked: regions or a line.
-    /// A sweep's profile's regions likewise, and a loft's sections and
-    /// rails.
-    pub(crate) fn picks_sketches(&self) -> bool {
-        let split = self.kind == MotionKind::Split
-            && self.picking == MotionPick::Tool
-            && matches!(self.split.mode, SplitMode::Regions | SplitMode::Line);
-        let loft = self.kind == MotionKind::Loft
-            && matches!(self.picking, MotionPick::Regions | MotionPick::Path);
-        split || loft || (self.kind == MotionKind::Sweep && self.picking == MotionPick::Regions)
-    }
 }
 
 /// Why a pick can't be a split's tool.
@@ -361,26 +348,6 @@ const NOT_A_FACE: &str = "Only a face or an origin plane can split a body here";
 const SAME_BODY: &str = "That's the body being split: pick another body to split with";
 
 impl Doc {
-    /// `body` of the model shown as the body a feature being set up names:
-    /// the body holding it before the feature where a join merged it,
-    /// and the body a split at or after the feature cut it from.
-    pub(super) fn named_body(&self, body: BodyId) -> BodyId {
-        match self.mode.motion() {
-            Some(session) => self.named_body_in(session, body, self.shown()),
-            None => body,
-        }
-    }
-
-    /// `body` as the body `session`'s feature names: see
-    /// [`Doc::named_body`], as the model whose `marks` these are found
-    /// its merges.
-    fn named_body_in(&self, session: &MotionSession, body: BodyId, marks: Marks) -> BodyId {
-        let document = self.editor.document();
-        let merged = merged_in(document, session.feature, marks);
-        let body = self.naming_in(session.feature, marks).unsplit(body);
-        merged.holder(body).unwrap_or(body)
-    }
-
     /// `pick` of `index`'s model as the tool of the split `session`,
     /// of the kind its mode picks: a face, flat as its plane, curved as its
     /// surface, named as the feature stores it; or the body it's on, any
@@ -657,21 +624,6 @@ impl Doc {
         self.sketch_lines(session, |feature| match chosen {
             Some(sketch) => feature.id == sketch,
             None => feature.visible,
-        })
-    }
-
-    /// The sketches of the features `wanted` takes whose curves or points
-    /// the feature being set up in `session` (a split, a sweep, a loft)
-    /// picks, where they're placed: each a sketch it can take at its
-    /// place ([`MotionSession::takes_sketch`]) that's placed.
-    pub(super) fn sketch_lines<'s>(
-        &'s self,
-        session: &MotionSession,
-        wanted: impl Fn(&Feature) -> bool,
-    ) -> Vec<SketchLines<'s>> {
-        let document = self.editor.document();
-        self.placed_sketches(|feature| {
-            wanted(feature) && session.takes_sketch(document, feature.id)
         })
     }
 

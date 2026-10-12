@@ -3,9 +3,9 @@
 //! sketches the feature at its place takes, the regions offered, the
 //! chains of curves picked, and how they're named.
 
-use varde_document::{BodyId, CurveChain, Document, FeatureId};
+use varde_document::{BodyId, CurveChain, Document, Feature, FeatureId};
 use varde_sketch::{Id, Sketch};
-use varde_view::Candidate;
+use varde_view::{Candidate, MotionKind, MotionPick, SketchLines, SplitMode};
 
 use super::{Doc, MotionSession};
 use crate::doc::OperationSlot;
@@ -29,9 +29,37 @@ impl MotionSession {
         (document.features()[..index].iter())
             .any(|feature| feature.id == sketch && sketch_of(document, feature.id).is_some())
     }
+
+    /// Whether a split's tool is picked in the viewport in its sketches, where
+    /// the model isn't picked: regions or a line.
+    /// A sweep's profile's regions likewise, and a loft's sections and
+    /// rails.
+    pub(crate) fn picks_sketches(&self) -> bool {
+        let split = self.kind == MotionKind::Split
+            && self.picking == MotionPick::Tool
+            && matches!(self.split.mode, SplitMode::Regions | SplitMode::Line);
+        let loft = self.kind == MotionKind::Loft
+            && matches!(self.picking, MotionPick::Regions | MotionPick::Path);
+        split || loft || (self.kind == MotionKind::Sweep && self.picking == MotionPick::Regions)
+    }
 }
 
 impl Doc {
+    /// The sketches of the features `wanted` takes whose curves or points
+    /// the feature being set up in `session` (a split, a sweep, a loft)
+    /// picks, where they're placed: each a sketch it can take at its
+    /// place ([`MotionSession::takes_sketch`]) that's placed.
+    pub(super) fn sketch_lines<'s>(
+        &'s self,
+        session: &MotionSession,
+        wanted: impl Fn(&Feature) -> bool,
+    ) -> Vec<SketchLines<'s>> {
+        let document = self.editor.document();
+        self.placed_sketches(|feature| {
+            wanted(feature) && session.takes_sketch(document, feature.id)
+        })
+    }
+
     /// The sketches whose regions `regions` offers for the feature
     /// `session` sets up: those placed, before it.
     pub(super) fn region_candidates<'s>(
