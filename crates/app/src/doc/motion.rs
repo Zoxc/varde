@@ -34,6 +34,7 @@
 //! edges and faces clicked are where the feature finds them. A click is
 //! taken only on the model answering what was asked last.
 
+use super::pick::CachedHighlight;
 use crate::doc::{OperationSession, OperationSlot};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -157,11 +158,7 @@ pub(crate) struct MotionSession {
     /// The design as the fields' texts were last read, whose units bare
     /// lengths in them are in.
     read_in: ReadIn,
-    /// Built when what it's of changes, so the renderer uploads it only
-    /// then.
-    highlight: Arc<ModelHighlight>,
-    /// What `highlight` was built of.
-    built: Option<Built>,
+    highlight: CachedHighlight<Built>,
     /// Where a move's handles stand, as a point of its bodies before the
     /// move, once the model shown has told: [`Pivot`].
     pivot: Option<Pivot>,
@@ -181,7 +178,7 @@ struct Pivot {
     at: DVec3,
 }
 
-/// What a move's, mirror's or pattern's highlight is built of: the model, what's
+/// What a move's, mirror's or pattern's highlight is built of: what's
 /// hovered and whether its row in the panel is, what clicks pick, and
 /// the bodies.
 /// An align's lit picks, the moved side's and the target's
@@ -190,7 +187,6 @@ struct Pivot {
 /// take in their tangent chains, which light with the edge hovered. A
 /// shell's faces are lit as an align's moved side.
 type Built = (
-    u64,
     Option<(Picked, bool)>,
     MotionPick,
     Vec<BodyId>,
@@ -498,8 +494,7 @@ impl MotionSession {
             hover: None,
             edited_bodies: Vec::new(),
             read_in: ReadIn::of(document),
-            highlight: Arc::default(),
-            built: None,
+            highlight: CachedHighlight::default(),
             pivot: None,
         }
     }
@@ -2506,8 +2501,8 @@ impl Doc {
         };
         // A split's tool body lights whole while hovered.
         let tool_body = session.kind == MotionKind::Split && session.split.mode == SplitMode::Body;
+        let model = self.feed.model();
         let key = (
-            self.feed.model(),
             hovered,
             session.picking,
             session.bodies.clone(),
@@ -2515,7 +2510,7 @@ impl Doc {
             tool_body,
             session.blend.chains,
         );
-        if session.built.as_ref() == Some(&key) {
+        if session.highlight.is_built(model, &key) {
             return;
         }
         let index = self.feed.pick_index();
@@ -2528,15 +2523,15 @@ impl Doc {
         // in the second colour, rather than its body.
         let (picked, second): (Vec<Picked>, Vec<Picked>) = match session.picking {
             MotionPick::Align(_) => {
-                let [moved, target] = key.4.clone();
+                let [moved, target] = key.3.clone();
                 (moved, target)
             }
             // A chamfer's edges and faces lit as selected (those it leaves
             // out in the second colour, purple), a shell's faces, its body
             // as it is.
-            _ if session.kind.blends() => (key.4[0].clone(), key.4[1].clone()),
+            _ if session.kind.blends() => (key.3[0].clone(), key.3[1].clone()),
             _ if session.kind.picks_faces() || session.kind == MotionKind::Sweep => {
-                (key.4[0].clone(), Vec::new())
+                (key.3[0].clone(), Vec::new())
             }
             _ => (
                 (session.bodies.iter())
@@ -2546,7 +2541,7 @@ impl Doc {
                 // A scale's edge in the second colour, on its bodies; a
                 // split's piece not keeping the body's id.
                 if matches!(session.kind, MotionKind::Scale | MotionKind::Split) {
-                    key.4[1].clone()
+                    key.3[1].clone()
                 } else {
                     Vec::new()
                 },
@@ -2584,19 +2579,15 @@ impl Doc {
         };
         let mut highlight = index.highlight_with(&hover, &picked, &second);
         highlight.second_excluded = session.kind.blends();
-        let highlight = Arc::new(highlight);
         if let Some(session) = self.operation.motion_mut() {
-            session.highlight = highlight;
-            session.built = Some(key);
+            session.highlight.set(model, key, highlight);
         }
     }
 
     /// The move's or mirror's highlight, if one is set up and it's built
     /// for the model shown.
     pub(crate) fn motion_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        let session = self.operation.motion()?;
-        let current = (session.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());
-        Some(&session.highlight).filter(|highlight| current && !highlight.is_empty())
+        (self.operation.motion()?.highlight).current(self.feed.model())
     }
 
     /// What the session's axis or plane is called, and where it's drawn: a

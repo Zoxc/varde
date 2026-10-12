@@ -17,6 +17,7 @@
 //! the new model. One the new model doesn't have is shown as not found,
 //! and kept, so an undo finds it again.
 
+use super::pick::CachedHighlight;
 use std::sync::Arc;
 
 use varde_document::BodyId;
@@ -39,16 +40,12 @@ pub(crate) struct MeasureSession {
     /// Whether each pick's own values are folded away under what's
     /// between them: both to start with.
     folded: [bool; 2],
-    /// Built when what it's of changes, so the renderer uploads it only
-    /// then.
-    highlight: Arc<ModelHighlight>,
-    /// What `highlight` was built of.
-    built: Option<Built>,
+    highlight: CachedHighlight<Built>,
 }
 
-/// What a measure highlight is built of: the model, the target hovered
-/// and what's highlighted of A and of B.
-type Built = (u64, Option<Picked>, [Vec<Picked>; 2]);
+/// What a measure highlight is built of: the target hovered and what's
+/// highlighted of A and of B.
+type Built = (Option<Picked>, [Vec<Picked>; 2]);
 
 impl MeasureSession {
     fn new() -> Self {
@@ -336,30 +333,29 @@ impl Doc {
         }
         let targets = self.measure_targets();
         let hovered = self.pick.hover().map(|pick| pick.target);
-        let key = (self.feed.model(), hovered, targets);
+        let model = self.feed.model();
+        let key = (hovered, targets);
         let Some(session) = &mut self.measure else {
             return;
         };
-        if session.built.as_ref() == Some(&key) {
+        if session.highlight.is_built(model, &key) {
             return;
         }
-        let (_, hovered, [a, b]) = &key;
+        let (hovered, [a, b]) = &key;
         let index = self.feed.pick_index();
         // What's picked keeps its colour under the cursor.
         let hover: Vec<Picked> = (hovered.iter())
             .filter(|target| !a.contains(target) && !b.contains(target))
             .copied()
             .collect();
-        session.highlight = Arc::new(index.highlight_with(&hover, a, b));
-        session.built = Some(key);
+        let highlight = index.highlight_with(&hover, a, b);
+        session.highlight.set(model, key, highlight);
     }
 
     /// The measure tool's highlight, if it's in use and built for the
     /// model shown.
     pub(crate) fn measure_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        let session = self.measure.as_ref()?;
-        let current = (session.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());
-        Some(&session.highlight).filter(|highlight| current && !highlight.is_empty())
+        (self.measure.as_ref()?.highlight).current(self.feed.model())
     }
 
     /// The name the panel shows `pick` by: what it is and its body's

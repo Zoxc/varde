@@ -14,6 +14,7 @@
 //! Objects does: the combine would fail naming the merged body ("Body 3
 //! is in Body 2 now").
 
+use super::pick::CachedHighlight;
 use crate::doc::{OperationSession, OperationSlot};
 use std::sync::Arc;
 
@@ -38,18 +39,14 @@ pub(crate) struct CombineSession {
     pub(crate) picking: CombinePick,
     pub(crate) op: BodyOp,
     pub(crate) keep_tools: bool,
-    /// Built when what it's of changes, so the renderer uploads it only
-    /// then.
-    highlight: Arc<ModelHighlight>,
-    /// What `highlight` was built of.
-    built: Option<Built>,
+    highlight: CachedHighlight<Built>,
     /// The panel's row the cursor is over, if any.
     pub(crate) hover: Option<PanelHover>,
 }
 
-/// What a combine's highlight is built of: the model, the body hovered and
-/// whether its row in the panel is, the target and the tools.
-type Built = (u64, Option<(BodyId, bool)>, Option<BodyId>, Vec<BodyId>);
+/// What a combine's highlight is built of: the body hovered and whether
+/// its row in the panel is, the target and the tools.
+type Built = (Option<(BodyId, bool)>, Option<BodyId>, Vec<BodyId>);
 
 impl CombineSession {
     /// A session setting up a new combine of `target` with `tools`, if
@@ -71,8 +68,7 @@ impl CombineSession {
             tools,
             op: BodyOp::Union,
             keep_tools: false,
-            highlight: Arc::default(),
-            built: None,
+            highlight: CachedHighlight::default(),
             hover: None,
         }
     }
@@ -410,13 +406,9 @@ impl Doc {
         let Some(session) = self.operation.combine_mut() else {
             return;
         };
-        let key = (
-            self.feed.model(),
-            hovered,
-            session.target,
-            session.tools.clone(),
-        );
-        if session.built.as_ref() == Some(&key) {
+        let model = self.feed.model();
+        let key = (hovered, session.target, session.tools.clone());
+        if session.highlight.is_built(model, &key) {
             return;
         }
         let index = self.feed.pick_index();
@@ -440,16 +432,14 @@ impl Doc {
             }
             _ => Vec::new(),
         };
-        session.highlight = Arc::new(index.highlight_with(&hover, &target, &tools));
-        session.built = Some(key);
+        let highlight = index.highlight_with(&hover, &target, &tools);
+        session.highlight.set(model, key, highlight);
     }
 
     /// The combine's highlight, if one is set up and it's built for the
     /// model shown.
     pub(crate) fn combine_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        let session = self.operation.combine()?;
-        let current = (session.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());
-        Some(&session.highlight).filter(|highlight| current && !highlight.is_empty())
+        (self.operation.combine()?.highlight).current(self.feed.model())
     }
 
     /// The combine being set up, for the view.

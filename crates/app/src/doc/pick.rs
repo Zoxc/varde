@@ -19,6 +19,50 @@ use varde_view::{
 
 use super::{Doc, MotionSession};
 
+/// A highlight built when what it's of changes, so the renderer uploads
+/// it only then: of the model `built` names, from what its key holds.
+#[derive(Debug, Clone)]
+pub(super) struct CachedHighlight<K> {
+    highlight: Arc<ModelHighlight>,
+    built: Option<(u64, K)>,
+}
+
+impl<K> Default for CachedHighlight<K> {
+    fn default() -> Self {
+        Self {
+            highlight: Arc::default(),
+            built: None,
+        }
+    }
+}
+
+impl<K: PartialEq> CachedHighlight<K> {
+    /// Whether the highlight is built of `key` in `model`.
+    pub(super) fn is_built(&self, model: u64, key: &K) -> bool {
+        (self.built.as_ref()).is_some_and(|(built, of)| *built == model && of == key)
+    }
+
+    /// Keeps `highlight` as built of `key` in `model`.
+    pub(super) fn set(&mut self, model: u64, key: K, highlight: ModelHighlight) {
+        self.highlight = Arc::new(highlight);
+        self.built = Some((model, key));
+    }
+
+    /// Drops the highlight: it's of nothing.
+    pub(super) fn clear(&mut self) {
+        if self.built.is_some() {
+            *self = Self::default();
+        }
+    }
+
+    /// The highlight, if it's built for `model` and lights something:
+    /// one built for an earlier model would be drawn over another.
+    pub(super) fn current(&self, model: u64) -> Option<&Arc<ModelHighlight>> {
+        let current = (self.built.as_ref()).is_some_and(|(built, _)| *built == model);
+        Some(&self.highlight).filter(|highlight| current && !highlight.is_empty())
+    }
+}
+
 /// What's hovered and selected in the model shown, and its highlight.
 #[derive(Debug, Default)]
 pub(crate) struct ModelPick {
@@ -27,21 +71,15 @@ pub(crate) struct ModelPick {
     /// The curve or point of a sketch shown hovered, in place of `hover`.
     sketch_hover: Option<SketchItem>,
     pub(crate) selection: Selection,
-    /// Built when what it's of changes, so the renderer uploads it only
-    /// then.
-    highlight: Arc<ModelHighlight>,
+    /// Of the target hovered, the selection and the body row hovered.
+    highlight: CachedHighlight<(Option<Picked>, Selection, Option<BodyId>)>,
     /// The body whose row in Objects is hovered, if one is: its faces
     /// are lit hovered with the selection, in place of the cursor's
     /// hover.
     pub(crate) row_hover: Option<BodyId>,
-    /// What `highlight` was built of: the model, the target hovered, the
-    /// selection and the body row hovered.
-    built: Option<(u64, Option<Picked>, Selection, Option<BodyId>)>,
     /// While an extrude or revolve is set up, the body whose row in its
     /// panel is hovered, lit in the model shown (its preview).
-    panel_highlight: Arc<ModelHighlight>,
-    /// What `panel_highlight` was built of: the model and the body.
-    panel_built: Option<(u64, BodyId)>,
+    panel_highlight: CachedHighlight<BodyId>,
     /// While Project or Intersect picks outside the sketch being edited,
     /// what it has picked of the model and what's hovered, built for the
     /// model shown ([`Doc::outside_highlight`]).
@@ -429,13 +467,13 @@ impl Doc {
         }
         let hover = self.shown_hover();
         let row = self.pick.row_hover;
+        let model = self.feed.model();
         let key = (
-            self.feed.model(),
             hover.map(|pick| pick.target),
             self.pick.selection.clone(),
             row,
         );
-        if self.pick.built.as_ref() == Some(&key) {
+        if self.pick.highlight.is_built(model, &key) {
             return;
         }
         let highlight = if let Some(body) = row {
@@ -456,8 +494,7 @@ impl Doc {
             let index = self.feed.pick_index();
             self.pick.selection.highlight(index, hover)
         };
-        self.pick.highlight = Arc::new(highlight);
-        self.pick.built = Some(key);
+        self.pick.highlight.set(model, key, highlight);
     }
 
     /// Rebuilds the extrude's or revolve's highlight, the body whose row in
@@ -469,19 +506,18 @@ impl Doc {
         let body = (self.panel_hover())
             .filter(|_| operating)
             .and_then(PanelHover::body);
-        let key = body.map(|body| (self.feed.model(), body));
-        if self.pick.panel_built == key {
+        let Some(body) = body else {
+            self.pick.panel_highlight.clear();
+            return;
+        };
+        let model = self.feed.model();
+        if self.pick.panel_highlight.is_built(model, &body) {
             return;
         }
-        self.pick.panel_highlight = Arc::new(match body {
-            Some(body) => {
-                let index = self.feed.pick_index();
-                let faces: Vec<Picked> = index.body_faces(body).map(Picked::Face).collect();
-                index.highlight_with(&faces, &[], &[])
-            }
-            None => ModelHighlight::default(),
-        });
-        self.pick.panel_built = key;
+        let index = self.feed.pick_index();
+        let faces: Vec<Picked> = index.body_faces(body).map(Picked::Face).collect();
+        let highlight = index.highlight_with(&faces, &[], &[]);
+        self.pick.panel_highlight.set(model, body, highlight);
     }
 
     /// What's hovered as it's highlighted: while picking a plane, only a
@@ -603,15 +639,10 @@ impl Doc {
         }
         // An extrude's or revolve's: the body hovered in its panel.
         if self.operation.extrude().is_some() || self.operation.revolve().is_some() {
-            let current =
-                (self.pick.panel_built).is_some_and(|(model, _)| model == self.feed.model());
-            return current.then_some(&self.pick.panel_highlight);
+            return self.pick.panel_highlight.current(self.feed.model());
         }
-        // Only of the model shown: one built for an earlier model would be
-        // drawn over another.
-        let current = (self.pick.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());
-        Some(&self.pick.highlight)
-            .filter(|highlight| self.picks() && current && !highlight.is_empty())
+        // Only of the model shown.
+        (self.pick.highlight.current(self.feed.model())).filter(|_| self.picks())
     }
 }
 
