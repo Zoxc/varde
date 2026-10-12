@@ -52,7 +52,7 @@ use varde_sketch::{
     Measure, OffsetPair, Rejected, Setback, Sketch, SketchEdit, SketchError,
 };
 
-use crate::{MAX, Request, Response, Solver, Tag, design};
+use crate::{Job, MAX, Request, Response, Tag, design};
 use varde_document::Design;
 
 /// The most bytes a request or a reply may have. A sketch at its limits
@@ -97,21 +97,13 @@ type Sources = Vec<(String, String)>;
 /// A request as the worker decodes it, its parameters resolved.
 pub type Decoded = Posted<Sketch, SketchEdit, Params>;
 
-impl<S, E, P> Posted<S, E, P> {
-    pub fn tag(&self) -> Tag {
-        match self {
-            Posted::Propose { base, .. } => Tag::Propose(*base),
-            Posted::Drag { session, .. } => Tag::Drag(*session),
-            Posted::Analyse {
-                revision, query, ..
-            } => Tag::analysis(*revision, *query),
-        }
-    }
-}
-
 impl Decoded {
-    /// Does the work, as [`Solver::handle`] does for a [`Request`].
-    pub fn answer(self, solver: &mut Solver) -> Option<Response> {
+    pub fn tag(&self) -> Tag {
+        self.job().tag()
+    }
+
+    /// The work it asks for, as [`Request::job`] is a [`Request`]'s.
+    pub fn job(&self) -> Job<'_> {
         match self {
             Posted::Propose {
                 base,
@@ -119,30 +111,34 @@ impl Decoded {
                 edit,
                 units,
                 params,
-            } => Some(crate::propose(
-                base,
-                &sketch,
-                &edit,
-                &design(units, &params),
-            )),
+            } => Job::Propose {
+                base: *base,
+                sketch,
+                edit,
+                design: design(*units, params),
+            },
             Posted::Drag {
                 session,
                 sketch,
                 points,
                 radii,
                 units,
-            } => {
-                let started =
-                    (sketch.as_ref()).map(|(sketch, params)| (sketch, design(units, params)));
-                let started = (started.as_ref()).map(|(sketch, design)| (*sketch, design));
-                solver.drag(session, started, points, radii)
-            }
+            } => Job::Drag {
+                session: *session,
+                start: (sketch.as_ref()).map(|(sketch, params)| (sketch, design(*units, params))),
+                points,
+                radii,
+            },
             Posted::Analyse {
                 query,
                 revision,
                 sketch,
                 ..
-            } => Some(crate::analyse(query, revision, &sketch)),
+            } => Job::Analyse {
+                query: *query,
+                revision: *revision,
+                sketch,
+            },
         }
     }
 }

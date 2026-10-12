@@ -107,7 +107,7 @@ pub fn serve() {
         let bytes = bytes::copy(part, wire::MAX_MESSAGE_BYTES)?;
         let posted = wire::decode_request(&bytes)?;
         let tag = posted.tag();
-        let response = posted.answer(&mut solver);
+        let response = solver.answer(posted.job());
         worker::post(&[&wire::encode_reply(tag, response.as_ref())]);
         Ok(())
     });

@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use varde_sketch::{Add, Constraint, Dimension, Measure, Side};
 
 use super::*;
+use crate::Solver;
 use crate::tests::{Drawn, analyse_at, drag, drawn, propose_on, query_at};
 
 /// `request` posted and decoded, then answered by `solver` as the worker
@@ -11,7 +12,7 @@ fn through(solver: &mut Solver, request: &Request, with_sketch: bool) -> Option<
     let posted = decode_request(&encode_request(request, with_sketch)).unwrap();
     let tag = posted.tag();
     assert_eq!(tag, request.tag());
-    let response = posted.answer(solver);
+    let response = solver.answer(posted.job());
     decode_reply(&encode_reply(tag, response.as_ref()), request).unwrap()
 }
 

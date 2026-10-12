@@ -22,6 +22,9 @@ has the details.
   request that panics, or that a worker died on, is `Failed` with its
   `Tag`.
 - **The `Solver`** answers them (`Solver::handle`), keeping the drag
+  session. Both a `Request` and one decoded on the worker
+  (`wire::Decoded`) borrow as a `Job` (`job()`, which also gives their
+  `Tag`), and `Solver::answer` is the one dispatch both lanes use. The
   session: a step of the session in progress goes on from its last
   solution and ignores the sketch it carries; another session replaces
   it, starting from its sketch. Proposals get `PROPOSAL_TIME` per solve, drag

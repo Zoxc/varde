@@ -158,12 +158,43 @@ impl Tag {
 
 impl Request {
     pub fn tag(&self) -> Tag {
+        self.job().tag()
+    }
+
+    /// The work it asks for, see [`Solver::answer`].
+    pub fn job(&self) -> Job<'_> {
+        let design = self.design();
         match self {
-            Request::Propose { base, .. } => Tag::Propose(*base),
-            Request::Drag { session, .. } => Tag::Drag(*session),
+            Request::Propose {
+                base, sketch, edit, ..
+            } => Job::Propose {
+                base: *base,
+                sketch,
+                edit,
+                design,
+            },
+            Request::Drag {
+                session,
+                sketch,
+                points,
+                radii,
+                ..
+            } => Job::Drag {
+                session: *session,
+                start: Some((sketch, design)),
+                points,
+                radii,
+            },
             Request::Analyse {
-                revision, query, ..
-            } => Tag::analysis(*revision, *query),
+                query,
+                revision,
+                sketch,
+                ..
+            } => Job::Analyse {
+                query: *query,
+                revision: *revision,
+                sketch,
+            },
         }
     }
 
@@ -188,6 +219,44 @@ impl Request {
     /// What its sketch is checked against, see [`design`].
     pub fn design(&self) -> Design<'_> {
         design(self.units(), self.params())
+    }
+}
+
+/// The work a request asks for, borrowed from a [`Request`] or from one
+/// decoded on the worker ([`Decoded`](wire::Decoded)): what
+/// [`Solver::answer`] does, so both lanes answer alike.
+#[derive(Debug, Clone, Copy)]
+pub enum Job<'a> {
+    Propose {
+        base: Revision,
+        sketch: &'a Sketch,
+        edit: &'a SketchEdit,
+        design: Design<'a>,
+    },
+    /// `start` is the sketch a new session starts from, in its design:
+    /// `None` once the worker has the session.
+    Drag {
+        session: u64,
+        start: Option<(&'a Sketch, Design<'a>)>,
+        points: &'a [(Id, DVec2)],
+        radii: &'a [(Id, f64)],
+    },
+    Analyse {
+        query: Option<u64>,
+        revision: Revision,
+        sketch: &'a Sketch,
+    },
+}
+
+impl Job<'_> {
+    pub fn tag(&self) -> Tag {
+        match self {
+            Job::Propose { base, .. } => Tag::Propose(*base),
+            Job::Drag { session, .. } => Tag::Drag(*session),
+            Job::Analyse {
+                revision, query, ..
+            } => Tag::analysis(*revision, *query),
+        }
     }
 }
 
@@ -259,33 +328,31 @@ impl Solver {
     /// Does the work of `request`: `None` for a drag step that didn't
     /// converge, which isn't answered.
     pub fn handle(&mut self, request: Request) -> Option<Response> {
-        match request {
-            Request::Propose {
+        self.answer(request.job())
+    }
+
+    /// Does `job`, the one dispatch both a [`Request`] and a request
+    /// decoded on the worker go through: `None` for a drag step that
+    /// didn't converge, which isn't answered.
+    pub fn answer(&mut self, job: Job) -> Option<Response> {
+        match job {
+            Job::Propose {
                 base,
                 sketch,
                 edit,
-                units,
-                params,
-            } => Some(propose(base, &sketch, &edit, &design(units, &params))),
-            Request::Drag {
+                design,
+            } => Some(propose(base, sketch, edit, &design)),
+            Job::Drag {
                 session,
-                sketch,
+                start,
                 points,
                 radii,
-                units,
-                params,
-            } => self.drag(
-                session,
-                Some((&sketch, &design(units, &params))),
-                points,
-                radii,
-            ),
-            Request::Analyse {
+            } => self.drag(session, start, points.to_vec(), radii.to_vec()),
+            Job::Analyse {
                 query,
                 revision,
                 sketch,
-                ..
-            } => Some(analyse(query, revision, &sketch)),
+            } => Some(analyse(query, revision, sketch)),
         }
     }
 
@@ -297,13 +364,13 @@ impl Solver {
     pub(crate) fn drag(
         &mut self,
         session: u64,
-        sketch: Option<(&Sketch, &Design)>,
+        sketch: Option<(&Sketch, Design)>,
         points: Vec<(Id, DVec2)>,
         radii: Vec<(Id, f64)>,
     ) -> Option<Response> {
         if self.drag.as_ref().is_none_or(|(id, _)| *id != session) {
             let (sketch, design) = sketch?;
-            let started = DragSession::new(sketch.clone(), design);
+            let started = DragSession::new(sketch.clone(), &design);
             self.drag = Some((session, started));
         }
         let (_, drag) = self.drag.as_mut()?;
