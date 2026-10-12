@@ -752,7 +752,7 @@ pub fn decode_reply(
                     let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
                     listed.sort_unstable();
                     if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
-                        return Err(Error::Picking(PickingError::Body));
+                        return Err(Error::UnlistedBody);
                     }
                     let (mesh, sketches, tables) = decode_model(parts)?;
                     let parts = PickingParts {
@@ -1261,9 +1261,10 @@ pub enum Error {
     /// A sketch's placement isn't [`Placement::valid`], or a sketch is
     /// listed twice.
     Placement,
-    /// The picking tables don't go with the mesh, or name a body the head
-    /// doesn't list.
+    /// The picking tables don't go with the mesh.
     Picking(PickingError),
+    /// A part's body isn't one the head lists.
+    UnlistedBody,
     /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
     Geometry(GeometryError),
     /// A draft's axis or plane, an align draft's points and directions,
@@ -1297,6 +1298,7 @@ impl fmt::Display for Error {
             Error::Merged => f.write_str("a merged body is listed twice or holds another"),
             Error::Placement => f.write_str("a sketch's placement isn't one"),
             Error::Picking(e) => e.fmt(f),
+            Error::UnlistedBody => f.write_str("a part's body isn't one the answer lists"),
             Error::Geometry(e) => e.fmt(f),
             Error::Reference => f.write_str("a draft's axis or plane isn't one"),
             Error::EdgeFacts => f.write_str("a body's edge facts aren't valid"),
@@ -1321,6 +1323,7 @@ impl std::error::Error for Error {
             | Error::Merged
             | Error::Placement
             | Error::Picking(_)
+            | Error::UnlistedBody
             | Error::Geometry(_)
             | Error::Reference
             | Error::EdgeFacts

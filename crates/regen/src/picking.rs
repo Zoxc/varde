@@ -686,8 +686,6 @@ pub enum PickingError {
     /// An edge said to close is a crease, or doesn't start and end at one
     /// corner.
     Closed,
-    /// A part's body isn't one the answer lists.
-    Body,
     /// An edge's tangent chain's first isn't an edge of its part between
     /// two faces, no later than it and its own first, or a crease's isn't
     /// itself.
@@ -706,7 +704,6 @@ impl fmt::Display for PickingError {
             PickingError::Lengths => "the picking tables don't match the mesh",
             PickingError::Face => "a picked face's summary or aliases aren't valid",
             PickingError::Closed => "a closed edge isn't one",
-            PickingError::Body => "a part's body isn't one the answer lists",
             PickingError::Tangent => "a picked edge's tangent chain isn't one",
             PickingError::Snap => "a picked edge's snap point isn't valid",
             PickingError::Corner => "a picked corner's faces or point aren't valid",

@@ -1974,10 +1974,7 @@ fn parts_must_be_of_listed_bodies() {
     if let Head::Regenerated { bodies, .. } = &mut head {
         bodies.clear();
     }
-    assert_eq!(
-        refused(&head, &triangle()),
-        Error::Picking(PickingError::Body).to_string()
-    );
+    assert_eq!(refused(&head, &triangle()), Error::UnlistedBody.to_string());
 }
 
 /// The reply to two plates, one above the other: real tables of two
