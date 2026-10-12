@@ -11,7 +11,7 @@ use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, LineStyle, PrepareError,
-    Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Viewport, wgpu,
+    Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Upload, Viewport, wgpu,
 };
 
 /// Nothing hovered or selected.
@@ -133,7 +133,8 @@ fn frame<'a>(
 /// A cube's edges on a device taking 512-byte buffers: its 12 edges' 24
 /// points, its 6 wires' 12 (the sides' diagonals) and the stream's two
 /// ends, 20 bytes each.
-const TOO_LARGE: PrepareError = PrepareError::MeshTooLarge {
+const TOO_LARGE: PrepareError = PrepareError {
+    upload: Upload::Mesh,
     bytes: 760,
     limit: 512,
 };
@@ -200,7 +201,8 @@ fn mesh_past_the_buffer_limit_is_skipped() {
                 ..frame
             }
         ),
-        Err(PrepareError::MeshTooLarge {
+        Err(PrepareError {
+            upload: Upload::Mesh,
             bytes: 576,
             limit: 512
         })
@@ -255,7 +257,8 @@ fn edges_fit_up_to_the_buffer_limit() {
         assert_eq!(prepare(&fits), Ok(()), "closed: {closed}");
         assert_eq!(
             prepare(&too_large),
-            Err(PrepareError::MeshTooLarge {
+            Err(PrepareError {
+                upload: Upload::Mesh,
                 bytes: 520,
                 limit: 512
             }),
@@ -274,7 +277,8 @@ fn lines_past_the_buffer_limit_are_skipped() {
     let mut lines = RenderLines::default();
     lines.push((0..24).map(|i| Vec3::X * i as f32)).unwrap();
     let lines = Arc::new(lines);
-    let too_large = PrepareError::LinesTooLarge {
+    let too_large = PrepareError {
+        upload: Upload::Lines,
         bytes: 552,
         limit: 512,
     };
@@ -326,7 +330,8 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
         layer
     };
     let (fits, too_large) = (Arc::new(layer(5)), Arc::new(layer(6)));
-    let error = PrepareError::SketchTooLarge {
+    let error = PrepareError {
+        upload: Upload::Sketch,
         bytes: 576,
         limit: 512,
     };
@@ -376,7 +381,8 @@ fn errors_past_the_buffer_limit_are_skipped() {
         halo_only: false,
     };
     let errors = [parts(&source)];
-    let too_large = PrepareError::ErrorsTooLarge {
+    let too_large = PrepareError {
+        upload: Upload::Errors,
         bytes: 640,
         limit: 512,
     };

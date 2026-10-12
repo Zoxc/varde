@@ -265,50 +265,61 @@ impl PartDraws {
     }
 }
 
-/// Why [`Renderer::prepare`] couldn't upload a frame's mesh or lines.
+/// Why [`Renderer::prepare`] couldn't upload some of a frame: a buffer of
+/// `upload` would take `bytes`, more than the device's `max_buffer_size`
+/// of `limit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrepareError {
-    /// A buffer of the mesh would take `bytes`, more than the device's
-    /// `max_buffer_size` of `limit`.
-    MeshTooLarge { bytes: u64, limit: u64 },
-    /// The same for the sketches' lines.
-    LinesTooLarge { bytes: u64, limit: u64 },
-    /// The same for a layer of the sketch being edited.
-    SketchTooLarge { bytes: u64, limit: u64 },
-    /// The same for the hovered and selected edges and vertices.
-    HighlightsTooLarge { bytes: u64, limit: u64 },
-    /// The same for the errors' geometry ([`Frame::errors`]).
-    ErrorsTooLarge { bytes: u64, limit: u64 },
+pub struct PrepareError {
+    pub upload: Upload,
+    pub bytes: u64,
+    pub limit: u64,
+}
+
+/// What of a frame [`PrepareError`] couldn't upload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Upload {
+    /// The mesh, or its triangles' edges.
+    Mesh,
+    /// The sketches' lines.
+    Lines,
+    /// A layer of the sketch being edited.
+    Sketch,
+    /// The hovered and selected edges and vertices.
+    Highlights,
+    /// The errors' geometry ([`Frame::errors`]).
+    Errors,
+}
+
+impl Upload {
+    /// What the error's sentence is about, and its verb.
+    fn subject(self) -> (&'static str, &'static str) {
+        match self {
+            Upload::Mesh => ("the mesh", "needs"),
+            Upload::Lines => ("the sketches", "need"),
+            Upload::Sketch => ("the sketch being edited", "needs"),
+            Upload::Highlights => ("what's hovered and selected", "needs"),
+            Upload::Errors => ("the errors' geometry", "needs"),
+        }
+    }
+
+    /// The error for a buffer of this taking `bytes`, past `limit`.
+    pub(super) fn too_large(self, bytes: u64, limit: u64) -> PrepareError {
+        PrepareError {
+            upload: self,
+            bytes,
+            limit,
+        }
+    }
 }
 
 impl std::fmt::Display for PrepareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PrepareError::MeshTooLarge { bytes, limit } => write!(
-                f,
-                "the mesh needs a {bytes}-byte buffer, but the device allows at most {limit} bytes"
-            ),
-            PrepareError::LinesTooLarge { bytes, limit } => write!(
-                f,
-                "the sketches need a {bytes}-byte buffer, but the device allows at most {limit} \
-                 bytes"
-            ),
-            PrepareError::SketchTooLarge { bytes, limit } => write!(
-                f,
-                "the sketch being edited needs a {bytes}-byte buffer, but the device allows at \
-                 most {limit} bytes"
-            ),
-            PrepareError::HighlightsTooLarge { bytes, limit } => write!(
-                f,
-                "what's hovered and selected needs a {bytes}-byte buffer, but the device allows \
-                 at most {limit} bytes"
-            ),
-            PrepareError::ErrorsTooLarge { bytes, limit } => write!(
-                f,
-                "the errors' geometry needs a {bytes}-byte buffer, but the device allows at most \
-                 {limit} bytes"
-            ),
-        }
+        let (subject, needs) = self.upload.subject();
+        let (bytes, limit) = (self.bytes, self.limit);
+        write!(
+            f,
+            "{subject} {needs} a {bytes}-byte buffer, but the device allows at most {limit} bytes"
+        )
     }
 }
 
@@ -559,16 +570,16 @@ impl Renderer {
 
     /// Uploads what `frame` needs to draw into `slot`.
     ///
-    /// Fails with [`PrepareError::MeshTooLarge`] when the frame's mesh
+    /// Fails with [`Upload::Mesh`] when the frame's mesh
     /// doesn't fit in the device's buffers, which can be smaller than the
     /// 256 MiB every mesh the kernel allows fits in. The frame is then
     /// drawn without it, and it isn't tried again until the slot's frame
     /// has another mesh, so this is only reported once per mesh. The same
-    /// for the frame's sketches with [`PrepareError::LinesTooLarge`], and
+    /// for the frame's sketches with [`Upload::Lines`], and
     /// the layers of the sketch being edited with
-    /// [`PrepareError::SketchTooLarge`], its live layer reported each frame
+    /// [`Upload::Sketch`], its live layer reported each frame
     /// it's too large, and the errors' geometry with
-    /// [`PrepareError::ErrorsTooLarge`], tried again only once their
+    /// [`Upload::Errors`], tried again only once their
     /// sources change; should several fail at once, the mesh's error is
     /// the one returned, then the sketches'.
     pub fn prepare(

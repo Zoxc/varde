@@ -138,10 +138,7 @@ pub(super) fn upload_mesh(
     .max()
     .unwrap_or(0);
     if largest > limit {
-        return Err(PrepareError::MeshTooLarge {
-            bytes: largest,
-            limit,
-        });
+        return Err(Upload::Mesh.too_large(largest, limit));
     }
     let edges = edge_points.map(|points| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -203,7 +200,7 @@ pub(super) fn upload_mesh(
 }
 
 /// The edges of `mesh`'s triangles, each once in its part of `parts`, as
-/// segments uploaded to a buffer. Fails with [`PrepareError::MeshTooLarge`]
+/// segments uploaded to a buffer. Fails with [`Upload::Mesh`]
 /// where they might not fit in one.
 pub(super) fn triangle_edges(
     device: &wgpu::Device,
@@ -215,7 +212,7 @@ pub(super) fn triangle_edges(
     let bytes = (mesh.indices().len() as u64).saturating_mul(size_of::<Segment>() as u64);
     let limit = device.limits().max_buffer_size;
     if bytes > limit {
-        return Err(PrepareError::MeshTooLarge { bytes, limit });
+        return Err(Upload::Mesh.too_large(bytes, limit));
     }
     let positions = mesh.positions();
     let mut segments: Vec<Segment> = Vec::new();
@@ -264,7 +261,7 @@ pub(super) fn upload_lines(
     // The kernel's limits keep this within `MAX_BUFFER_BYTES`.
     let bytes = lines.segment_count().saturating_mul(size_of::<Segment>()) as u64;
     if bytes > limit {
-        return Err(PrepareError::LinesTooLarge { bytes, limit });
+        return Err(Upload::Lines.too_large(bytes, limit));
     }
     let segments: Vec<Segment> = lines
         .polylines()
@@ -301,14 +298,15 @@ impl SketchBuffers {
         queue: &wgpu::Queue,
         layer: &SketchLayer,
     ) -> Result<(), PrepareError> {
-        let too_large = |bytes, limit| PrepareError::SketchTooLarge { bytes, limit };
         let (d, q) = (device, queue);
         let written = (self.lines)
-            .write(d, q, "varde sketch lines", &layer.lines, too_large)
+            .write(d, q, "varde sketch lines", &layer.lines, Upload::Sketch)
             .and_then(|()| {
-                (self.points).write(d, q, "varde sketch points", &layer.points, too_large)
+                (self.points).write(d, q, "varde sketch points", &layer.points, Upload::Sketch)
             })
-            .and_then(|()| (self.fills).write(d, q, "varde sketch fills", &layer.fills, too_large));
+            .and_then(|()| {
+                (self.fills).write(d, q, "varde sketch fills", &layer.fills, Upload::Sketch)
+            });
         if written.is_err() {
             *self = SketchBuffers::default();
         }
@@ -331,14 +329,14 @@ impl Instances {
 
     /// Replaces what it holds with `items`, in a larger buffer if they
     /// don't fit. Past the device's buffer size, holds nothing and fails
-    /// with what `too_large` makes of the bytes needed and that size.
+    /// with `upload` too large.
     pub(super) fn write<T: Pod>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         label: &str,
         items: &[T],
-        too_large: fn(u64, u64) -> PrepareError,
+        upload: Upload,
     ) -> Result<(), PrepareError> {
         let bytes: &[u8] = bytemuck::cast_slice(items);
         let size = bytes.len() as u64;
@@ -346,7 +344,7 @@ impl Instances {
         let count = u32::try_from(items.len()).ok().filter(|_| size <= limit);
         let Some(count) = count else {
             self.count = 0;
-            return Err(too_large(size, limit));
+            return Err(upload.too_large(size, limit));
         };
         self.count = count;
         if items.is_empty() {
@@ -407,12 +405,17 @@ impl HighlightBuffers {
         highlights: &Highlights,
     ) -> Result<(), PrepareError> {
         let built = highlights.build(mesh);
-        let too_large = |bytes, limit| PrepareError::HighlightsTooLarge { bytes, limit };
         let (d, q) = (device, queue);
         let written = (self.edges)
-            .write(d, q, "varde highlighted edges", &built.edges, too_large)
+            .write(
+                d,
+                q,
+                "varde highlighted edges",
+                &built.edges,
+                Upload::Highlights,
+            )
             .and_then(|()| {
-                (self.vertices).write(d, q, "varde vertices", &built.vertices, too_large)
+                (self.vertices).write(d, q, "varde vertices", &built.vertices, Upload::Highlights)
             });
         *self = match written {
             Ok(()) => HighlightBuffers {
@@ -454,16 +457,17 @@ impl ErrorBuffers {
         errors: &[ErrorParts<'_>],
     ) -> Result<(), PrepareError> {
         let built = BuiltErrors::new(errors);
-        let too_large = |bytes, limit| PrepareError::ErrorsTooLarge { bytes, limit };
         let (d, q) = (device, queue);
         let written = (self.positions)
-            .write(d, q, "varde error faces", &built.positions, too_large)
+            .write(d, q, "varde error faces", &built.positions, Upload::Errors)
             .and_then(|()| {
-                (self.normals).write(d, q, "varde error normals", &built.normals, too_large)
+                (self.normals).write(d, q, "varde error normals", &built.normals, Upload::Errors)
             })
-            .and_then(|()| (self.edges).write(d, q, "varde error lines", &built.edges, too_large))
             .and_then(|()| {
-                (self.points).write(d, q, "varde error points", &built.points, too_large)
+                (self.edges).write(d, q, "varde error lines", &built.edges, Upload::Errors)
+            })
+            .and_then(|()| {
+                (self.points).write(d, q, "varde error points", &built.points, Upload::Errors)
             });
         *self = match written {
             Ok(()) => ErrorBuffers {

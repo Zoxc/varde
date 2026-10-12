@@ -798,7 +798,7 @@ before it (`Triangles::Built`), uploaded to a buffer of their own and
 drawn as finished sketches' lines are (`vs_triangle_edge`, depth tested
 and pulled), `CREASE_WIDTH` wide at `CREASE_ALPHA` of the edge colour,
 as wires are. Where they might not fit a buffer (24 bytes an index)
-the frame's `prepare` fails with `MeshTooLarge` once and they're not
+the frame's `prepare` fails with `Upload::Mesh` once and they're not
 drawn for that mesh.
 
 The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
@@ -1870,7 +1870,7 @@ the patches' triangles a corner at a time, unindexed, the curves as an
 only when one differs, as `highlights` is; their box joins the depth
 range's bounds. A point not finite or past `RenderLines::MAX_POSITION`
 isn't drawn. Past the device's buffer size they're skipped and reported
-once (`PrepareError::ErrorsTooLarge`). Errors with nothing to draw (no
+once (a `PrepareError` of `Upload::Errors`). Errors with nothing to draw (no
 triangles, curves or points) count as none: no passes, no target. Parts
 `halo_only` get their halo but no core: of each kind those drawn whole
 are built first, then the rest, and the core's draws stop at the first

@@ -26,7 +26,7 @@ pub use renderer::{
     ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM,
     HOVER_THROUGH_ALPHA, HOVERED_EDGE_WIDTH, LINE_WIDTH, OriginPart, OriginShown, PLANE_GAP,
     PLANE_REACH, PLANE_SIDES, PatternStyle, Pivot, PrepareError, Renderer, SELECTED_EDGE_WIDTH,
-    SELECTED_RIM, Shading, Slot, Srgb, VERTEX_RADIUS, Viewport,
+    SELECTED_RIM, Shading, Slot, Srgb, Upload, VERTEX_RADIUS, Viewport,
 };
 pub use scene::{GRID_FADE_HEIGHTS, GridPlane};
 pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space, Srgba};
