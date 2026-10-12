@@ -68,8 +68,6 @@ use rail::Rail;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use regions::{BodyTargets, RegionPick};
 pub(crate) use revolve::RevolveSession;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use revolve::sketch_of;
 use save::Persist;
 pub(crate) use save::{AUTO_SAVE_WAIT, Downloader, Leave, Target};
 #[cfg(test)]
@@ -474,6 +472,14 @@ const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's r
 const HOME_DISTANCE: f32 = 1000.0;
 
 /// The camera Home turns to, framed on the origin.
+/// The sketch of the sketch feature `id` of `document`, if it's one.
+pub(crate) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
+    match &document.feature(id)?.kind {
+        FeatureKind::Sketch { sketch, .. } => Some(sketch),
+        _ => None,
+    }
+}
+
 fn home_camera(projection: Projection) -> Camera {
     let mut camera = Camera::default();
     camera.set_projection(projection);

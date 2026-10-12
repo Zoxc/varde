@@ -31,14 +31,13 @@ use varde_view::{
 
 use super::camera::FRAME_MARGIN;
 use super::extrude::is_sketch;
-use super::{Change, Doc, HOME_TARGET, OUT_OF_DATE, home_camera};
+use super::{Change, Doc, HOME_TARGET, OUT_OF_DATE, home_camera, sketch_of};
 pub(crate) use dimension::Focus;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use edit::{Clicks, clicked};
 pub(crate) use outside::OutsideClick;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use outside::{outside_model_in, outside_sketch_item_at, outside_target_in};
-use propose::sketch_of;
 pub(crate) use propose::{Analyses, Proposals};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use propose::{Settled, Step};
@@ -722,9 +721,9 @@ impl Doc {
         let Some(feature) = self.editor.document().feature(id) else {
             return;
         };
-        if !matches!(feature.kind, FeatureKind::Sketch { .. }) {
+        let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
             return;
-        }
+        };
         let Some(placement) = self.placement(id) else {
             let failed = self.failure(id);
             if let Some(why) = &failed
@@ -762,11 +761,7 @@ impl Doc {
             self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
             self.panel_before_sketch = Some(self.panel);
         }
-        let entered = match &feature.kind {
-            FeatureKind::Sketch { sketch, .. } => sketch.clone(),
-            _ => Sketch::default(),
-        };
-        self.sketch = Some(SketchSession::new(id, placement, entered));
+        self.sketch = Some(SketchSession::new(id, placement, sketch.clone()));
         self.fade.start(1.0, &placement, iced::time::Instant::now());
         self.panel = Panel::Sketch;
         // The rail's sets are the sketch's now.

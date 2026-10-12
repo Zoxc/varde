@@ -675,11 +675,7 @@ fn an_edit_refused_after_the_sketch_was_left_shows_a_banner_until_dismissed() {
     t.lane.answer(&mut t.doc);
     assert_eq!(t.editor.revision(), revision);
     assert!(t.edited_sketch().is_none());
-    let Some(FeatureKind::Sketch { sketch, .. }) =
-        t.editor.document().feature(feature).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
+    let sketch = sketch_of(t.editor.document(), feature).expect("a sketch");
     assert_eq!(*sketch, committed);
     let refused = t.refused_edit().expect("a banner says so");
     assert_eq!(refused.name, "Sketch 1");

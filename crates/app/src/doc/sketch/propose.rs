@@ -21,9 +21,7 @@ use std::mem;
 use std::sync::Arc;
 
 use iced::time::Instant;
-use varde_document::{
-    Command, Document, FeatureId, FeatureKind, LinkSource, OutsideRef, Revision, Sketch,
-};
+use varde_document::{Command, FeatureId, LinkSource, OutsideRef, Revision, Sketch};
 use varde_expr::LengthUnit;
 use varde_sketch::{Analysis, Design, Id, LinkKind, Rejected, SketchEdit};
 use varde_solve::{Request, Response, Tag};
@@ -31,7 +29,7 @@ use varde_view::RefusedEdit;
 
 use super::{Refusal, ValueEdit, Waiting};
 use crate::doc::feed::SLOW;
-use crate::doc::{Change, Doc};
+use crate::doc::{Change, Doc, sketch_of};
 
 /// Why the MCP client's proposal isn't applied when its sketch went
 /// before its turn.
@@ -476,30 +474,6 @@ impl Analyses {
     /// Whether the analysis of `revision` is to be asked for.
     fn wanted(&self, revision: Revision) -> bool {
         self.get(revision).is_none() && self.failed != Some(revision)
-    }
-}
-
-/// The sketch of the sketch feature `feature` of `document`, if it holds
-/// one.
-pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sketch> {
-    match &document.feature(feature)?.kind {
-        FeatureKind::Sketch { sketch, .. } => Some(sketch),
-        FeatureKind::Extrude(_)
-        | FeatureKind::Revolve(_)
-        | FeatureKind::Combine(_)
-        | FeatureKind::Move(_)
-        | FeatureKind::Mirror(_)
-        | FeatureKind::Pattern(_)
-        | FeatureKind::Align(_)
-        | FeatureKind::Scale(_)
-        | FeatureKind::Split(_)
-        | FeatureKind::Chamfer(_)
-        | FeatureKind::Shell(_)
-        | FeatureKind::Fillet(_)
-        | FeatureKind::OffsetFace(_)
-        | FeatureKind::FaceDraft(_)
-        | FeatureKind::Sweep(_)
-        | FeatureKind::Loft(_) => None,
     }
 }
 

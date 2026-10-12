@@ -212,7 +212,7 @@ fn check_session(plates: &Plates, what: &str) {
         .check_path(index, sweep.sketch, &sweep.path)
         .unwrap_or_else(|why| panic!("{what}: {why}: {sweep:?}"));
     sweep
-        .check_curves(|id| crate::doc::revolve::sketch_of(document, id))
+        .check_curves(|id| crate::doc::sketch_of(document, id))
         .unwrap_or_else(|why| panic!("{what}: {why}: {sweep:?}"));
     assert_eq!(
         plates.doc.motion_draft(),

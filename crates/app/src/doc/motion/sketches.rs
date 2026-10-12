@@ -10,7 +10,7 @@ use varde_view::Candidate;
 use super::{Doc, MotionSession};
 use crate::doc::OperationSlot;
 use crate::doc::regions::{BodyTargets, RegionPick};
-use crate::doc::revolve::sketch_of;
+use crate::doc::sketch_of;
 
 impl MotionSession {
     /// The feature's place in `document`: the edited one's, or where a

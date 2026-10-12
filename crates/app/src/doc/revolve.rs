@@ -26,7 +26,7 @@ use super::extrude::is_sketch;
 use super::regions::{
     BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
 };
-use super::{Doc, Focus, OUT_OF_DATE};
+use super::{Doc, Focus, OUT_OF_DATE, sketch_of};
 
 /// The revolve being set up, while one is: [`Doc::operation`].
 #[derive(Debug)]
@@ -310,14 +310,6 @@ impl RevolveSession {
             && self
                 .revolve(document)
                 .is_some_and(|revolve| revolve.check_own(&design).is_ok())
-    }
-}
-
-/// The sketch of the sketch feature `id` of `document`, if it's one.
-pub(crate) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
-    match &document.feature(id)?.kind {
-        FeatureKind::Sketch { sketch, .. } => Some(sketch),
-        _ => None,
     }
 }
 

@@ -30,7 +30,7 @@ use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
 use super::{Doc, MotionSession, length_field};
 use crate::doc::camera::fitting_length;
 use crate::doc::regions::{BodyTargets, GoneRegions, RegionPick, TypedText};
-use crate::doc::revolve::sketch_of;
+use crate::doc::sketch_of;
 
 /// A sweep's profile, path and options as picked; its model edges are
 /// the session's blend's ([`MotionSession::blend`]), its helix's axis

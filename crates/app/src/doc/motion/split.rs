@@ -31,7 +31,7 @@ use super::{Doc, Marks, MotionSession, OUT_OF_DATE, merged_in, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
 use crate::doc::regions::{GoneRegions, RegionPick};
-use crate::doc::revolve::sketch_of;
+use crate::doc::sketch_of;
 
 /// A split's tool as picked for each of its "Split with" tiles, and
 /// which pieces it keeps.

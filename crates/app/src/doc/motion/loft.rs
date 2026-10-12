@@ -29,7 +29,7 @@ use varde_view::{
 use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
 use super::{Doc, MotionSession};
 use crate::doc::regions::{BodyTargets, RegionPick};
-use crate::doc::revolve::sketch_of;
+use crate::doc::sketch_of;
 
 /// A loft's sections, rails and options as picked.
 #[derive(Debug, Clone)]
