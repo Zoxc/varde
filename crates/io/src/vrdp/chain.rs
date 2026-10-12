@@ -110,23 +110,23 @@ impl Chain {
                     break;
                 }
                 None => {
-                    let bridge = header_at(bytes, at, prev).and_then(|damaged| {
+                    let bridge = header_at(bytes, at, prev).and_then(|header| {
                         // Within `bytes`, so exact.
-                        let next = intact_at(bytes, damaged.end as usize, chain.id)?;
-                        (next.prev == damaged.sum).then_some((damaged, next))
+                        let next = intact_at(bytes, header.end as usize, chain.id)?;
+                        (next.prev == header.sum).then_some((header, next))
                     });
-                    let Some((damaged, next)) = bridge else {
+                    let Some((header, next)) = bridge else {
                         chain.damaged(bytes, ty, at, sums, stepped);
                         break;
                     };
-                    let (_, unreadable) = stepped.get_or_insert((damaged.start, 0));
-                    *unreadable += damaged.end - damaged.start;
-                    if framed_record(bytes, &damaged, ty) {
-                        newest_damaged = Some(damaged);
+                    let (_, unreadable) = stepped.get_or_insert((header.start, 0));
+                    *unreadable += header.end - header.start;
+                    if framed_record(bytes, &header, ty) {
+                        newest_damaged = Some(header.into());
                         chain.stepped_over(stepped.take());
                     }
-                    sums.push(damaged.sum);
-                    last = Some(damaged.start);
+                    sums.push(header.sum);
+                    last = Some(header.start);
                     next
                 }
             };
@@ -184,13 +184,13 @@ impl Chain {
         // `usize` is at most 64 bits wide, so exact.
         self.damage.get_or_insert(at as u64);
         let prev = *sums.last().unwrap();
-        if let Some(damaged) = header_at(bytes, at, prev)
-            && framed_record(bytes, &damaged, ty)
+        if let Some(header) = header_at(bytes, at, prev)
+            && framed_record(bytes, &header, ty)
             // Within `bytes`, so exact.
-            && !framed_from(bytes, damaged.end as usize, ty)
+            && !framed_from(bytes, header.end as usize, ty)
         {
-            self.unreadable += damaged.end - damaged.start;
-            self.end = End::NewestDamaged(damaged);
+            self.unreadable += header.end - header.start;
+            self.end = End::NewestDamaged(header.into());
             return;
         }
         // What follows on from the chain's last block may be its own.
@@ -288,17 +288,35 @@ fn intact_at(bytes: &[u8], at: usize, id: u128) -> Option<Block> {
     candidate(bytes, at).and_then(|block| intact(block, at as u64, id))
 }
 
+/// A block by its intact header, whatever its kind and whether or not
+/// the rest of it is intact: where it is and the `sum` its header holds.
+#[derive(Debug, Clone, Copy)]
+struct Header {
+    start: u64,
+    /// The offset just past it, by its header's `len`, within the file.
+    end: u64,
+    sum: u128,
+}
+
+impl From<Header> for DamagedRecord {
+    /// The newest save, damaged, at `header`.
+    fn from(header: Header) -> DamagedRecord {
+        let Header { start, end, sum } = header;
+        DamagedRecord { start, end, sum }
+    }
+}
+
 /// The block at `at` in `bytes`, if its header is intact, whether or not
 /// the block is: its first `len` within bounds, see [`stored_at`], the
 /// block within `bytes`, and its `prev` equal to `prev`, the `sum` of the
 /// block before.
-fn header_at(bytes: &[u8], at: usize, prev: u128) -> Option<DamagedRecord> {
+fn header_at(bytes: &[u8], at: usize, prev: u128) -> Option<Header> {
     // `usize` is at most 64 bits wide, so exact.
     let (start, len) = (at as u64, bytes.len() as u64);
     // A slice fails to read only past its end, which `stored_at` checks.
     let stored = stored_at(bytes, start, len).ok()??;
     let end = stored.end.filter(|&end| end <= len)?;
-    (stored.prev == prev).then_some(DamagedRecord {
+    (stored.prev == prev).then_some(Header {
         start,
         end,
         sum: stored.sum,
@@ -308,7 +326,7 @@ fn header_at(bytes: &[u8], at: usize, prev: u128) -> Option<DamagedRecord> {
 /// Whether `block`, a block by its header in `bytes`, is framed like a
 /// record of a file of type `ty`: its kind that of the records, and its
 /// trailing `len` its first.
-fn framed_record(bytes: &[u8], block: &DamagedRecord, ty: FileType) -> bool {
+fn framed_record(bytes: &[u8], block: &Header, ty: FileType) -> bool {
     // Within `bytes`, and at least a block's overhead long, so exact.
     let end = block.end as usize;
     let len = block.end - block.start - BLOCK_OVERHEAD;
