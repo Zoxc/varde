@@ -444,14 +444,9 @@ impl Planner<'_> {
                 ),
             )
         })?;
-        let add = match SketchEdit::constrain(&self.sketch, constraints) {
-            SketchEdit::Add(add) => add,
-            _ => {
-                return Err(failed(
-                    index,
-                    "internal error: a constraint isn't an addition",
-                ));
-            }
+        let add = Add {
+            constraints,
+            ..Add::new(&self.sketch)
         };
         self.add(index, add)
     }
