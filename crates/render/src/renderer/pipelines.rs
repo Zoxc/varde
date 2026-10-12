@@ -242,6 +242,238 @@ pub(super) fn composite_pipeline(
     (pipeline, group)
 }
 
+/// What makes a pipeline from a [`Pass`]: the scene shader, its layout,
+/// and the targets' formats and samples.
+struct PipelineBuilder<'d> {
+    device: &'d wgpu::Device,
+    shader: &'d wgpu::ShaderModule,
+    /// The same, for the sketch's depth tested pipelines: see
+    /// [`Renderer::new`].
+    depth_shader: &'d wgpu::ShaderModule,
+    layout: &'d wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    depth_format: wgpu::TextureFormat,
+    samples: u32,
+}
+
+impl PipelineBuilder<'_> {
+    fn build(&self, pass: Pass<'_>) -> wgpu::RenderPipeline {
+        let constants = constants(self.format, pass.sketch_depth);
+        let shader = if pass.sketch_depth {
+            self.depth_shader
+        } else {
+            self.shader
+        };
+        let compilation_options = wgpu::PipelineCompilationOptions {
+            constants: &constants,
+            ..Default::default()
+        };
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(pass.label),
+                layout: Some(pass.layout.unwrap_or(self.layout)),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some(pass.vs),
+                    buffers: pass.buffers,
+                    compilation_options: compilation_options.clone(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some(pass.fs),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: pass.format.unwrap_or(self.format),
+                        blend: Some(pass.blend),
+                        write_mask: pass.write_mask,
+                    })],
+                    compilation_options: compilation_options.clone(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: pass.topology,
+                    cull_mode: pass.cull_mode,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: self.depth_format,
+                    depth_write_enabled: pass.depth_write,
+                    depth_compare: pass.depth_compare,
+                    stencil: pass.stencil,
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: self.samples,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+    }
+}
+
+/// Overrides in the scene shader. `ENCODE_SRGB` is set if the target
+/// `format` stores what the shader writes as is, so the shader must
+/// sRGB-encode its linear output. `SKETCH_DEPTH` is set for the sketch's
+/// depth tested layers.
+fn constants(format: wgpu::TextureFormat, sketch_depth: bool) -> [(&'static str, f64); 19] {
+    [
+        ("GRID_FADE_HEIGHTS", f64::from(GRID_FADE_HEIGHTS)),
+        ("LINE_WIDTH", f64::from(LINE_WIDTH)),
+        ("EDGE_WIDTH", f64::from(EDGE_WIDTH)),
+        ("HIDDEN_EDGE_WIDTH", f64::from(HIDDEN_EDGE_WIDTH)),
+        ("CREASE_WIDTH", f64::from(CREASE_WIDTH)),
+        ("CREASE_ALPHA", f64::from(CREASE_ALPHA)),
+        ("HIDDEN_DASH", f64::from(HIDDEN_DASH[0])),
+        ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
+        ("HOVERED_EDGE_WIDTH", f64::from(HOVERED_EDGE_WIDTH)),
+        ("HOVER_RIM", f64::from(HOVER_RIM)),
+        ("HOVER_THROUGH_ALPHA", f64::from(HOVER_THROUGH_ALPHA)),
+        ("SELECTED_RIM", f64::from(SELECTED_RIM)),
+        ("SELECTED_EDGE_WIDTH", f64::from(SELECTED_EDGE_WIDTH)),
+        ("VERTEX_RADIUS", f64::from(VERTEX_RADIUS)),
+        ("ERROR_EDGE_WIDTH", f64::from(ERROR_EDGE_WIDTH)),
+        ("ERROR_HALO", f64::from(ERROR_HALO)),
+        ("ERROR_POINT_RADIUS", f64::from(ERROR_POINT_RADIUS)),
+        ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
+        ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
+    ]
+}
+
+/// The vertex buffer layouts the pipelines read.
+struct VertexLayouts {
+    /// Positions in slot 0 and normals in slot 1, each a buffer of its own.
+    faces: [wgpu::VertexBufferLayout<'static>; 2],
+    /// A segment per instance, its ends in slots 0 and 1.
+    segments: wgpu::VertexBufferLayout<'static>,
+    edge_points: [wgpu::VertexBufferLayout<'static>; EDGE_SLOTS as usize],
+    vertices: wgpu::VertexBufferLayout<'static>,
+    sketch_fills: wgpu::VertexBufferLayout<'static>,
+    sketch_lines: wgpu::VertexBufferLayout<'static>,
+    sketch_points: wgpu::VertexBufferLayout<'static>,
+}
+
+/// `EdgePoint`'s field at `offset` as `format`, at `shader_location`.
+const fn edge_attribute(
+    format: wgpu::VertexFormat,
+    offset: usize,
+    shader_location: u32,
+) -> wgpu::VertexAttribute {
+    wgpu::VertexAttribute {
+        format,
+        offset: offset as u64,
+        shader_location,
+    }
+}
+
+const fn edge_position(location: u32) -> wgpu::VertexAttribute {
+    edge_attribute(
+        wgpu::VertexFormat::Float32x3,
+        std::mem::offset_of!(EdgePoint, position),
+        location,
+    )
+}
+
+const fn edge_along(location: u32) -> wgpu::VertexAttribute {
+    edge_attribute(
+        wgpu::VertexFormat::Float32,
+        std::mem::offset_of!(EdgePoint, along),
+        location,
+    )
+}
+
+const fn edge_id(location: u32) -> wgpu::VertexAttribute {
+    edge_attribute(
+        wgpu::VertexFormat::Uint32,
+        std::mem::offset_of!(EdgePoint, edge),
+        location,
+    )
+}
+
+/// The feature edges' attributes in each of their slots: see
+/// [`VertexLayouts::new`].
+const EDGE_ATTRIBUTES: [&[wgpu::VertexAttribute]; EDGE_SLOTS as usize] = [
+    &[edge_position(0), edge_id(1)],
+    &[edge_position(2), edge_along(3), edge_id(4)],
+    &[edge_position(5), edge_id(6)],
+    &[edge_position(7), edge_id(8)],
+];
+
+impl VertexLayouts {
+    fn new() -> Self {
+        // Positions in slot 0 and normals in slot 1, each a buffer of its
+        // own. Lines take a segment per instance, its ends in slots 0 and 1.
+        let positions = wgpu::VertexBufferLayout {
+            array_stride: size_of::<[f32; 3]>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: const { &wgpu::vertex_attr_array![0 => Float32x3] },
+        };
+        let normals = wgpu::VertexBufferLayout {
+            array_stride: size_of::<[f32; 3]>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: const { &wgpu::vertex_attr_array![1 => Float32x3] },
+        };
+        let segments = wgpu::VertexBufferLayout {
+            array_stride: size_of::<Segment>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: const { &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3] },
+        };
+        // The sketch being edited: a segment or a point per instance, and
+        // fills as triangles.
+        let sketch_lines = wgpu::VertexBufferLayout {
+            array_stride: size_of::<LineInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: const {
+                &wgpu::vertex_attr_array![
+                    0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
+                    4 => Float32x4, 5 => Float32x2, 6 => Uint32,
+                ]
+            },
+        };
+        let sketch_points = wgpu::VertexBufferLayout {
+            array_stride: size_of::<PointInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: const {
+                &wgpu::vertex_attr_array![
+                    0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4,
+                    4 => Float32, 5 => Uint32,
+                ]
+            },
+        };
+        let sketch_fills = wgpu::VertexBufferLayout {
+            array_stride: size_of::<FillVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: const {
+                &wgpu::vertex_attr_array![
+                    0 => Float32x2, 1 => Uint32, 2 => Float32x4, 3 => Float32,
+                ]
+            },
+        };
+        // The feature edges: the `EdgePoint` stream in slots 0 to 3, a
+        // point apart, an instance per segment. Only the start needs
+        // `along`, for the dashes. 9 attributes and 4 slots, within
+        // WebGL2's 16 and 8.
+        let edge_points = EDGE_ATTRIBUTES.map(|attributes| wgpu::VertexBufferLayout {
+            array_stride: size_of::<EdgePoint>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes,
+        });
+        // The hovered and selected vertices, a disc per instance.
+        let vertices = wgpu::VertexBufferLayout {
+            array_stride: size_of::<VertexInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: const { &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32] },
+        };
+        Self {
+            faces: [positions, normals],
+            segments,
+            edge_points,
+            vertices,
+            sketch_fills,
+            sketch_lines,
+            sketch_points,
+        }
+    }
+}
+
 impl Renderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let module = |label| {
@@ -336,175 +568,26 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        // Overrides in the scene shader. `ENCODE_SRGB` is set if the target
-        // stores what the shader writes as is, so the shader must sRGB-encode
-        // its linear output.
-        // `SKETCH_DEPTH` is set for the sketch's depth tested layers.
-        let constants = |sketch_depth: bool| {
-            [
-                ("GRID_FADE_HEIGHTS", f64::from(GRID_FADE_HEIGHTS)),
-                ("LINE_WIDTH", f64::from(LINE_WIDTH)),
-                ("EDGE_WIDTH", f64::from(EDGE_WIDTH)),
-                ("HIDDEN_EDGE_WIDTH", f64::from(HIDDEN_EDGE_WIDTH)),
-                ("CREASE_WIDTH", f64::from(CREASE_WIDTH)),
-                ("CREASE_ALPHA", f64::from(CREASE_ALPHA)),
-                ("HIDDEN_DASH", f64::from(HIDDEN_DASH[0])),
-                ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
-                ("HOVERED_EDGE_WIDTH", f64::from(HOVERED_EDGE_WIDTH)),
-                ("HOVER_RIM", f64::from(HOVER_RIM)),
-                ("HOVER_THROUGH_ALPHA", f64::from(HOVER_THROUGH_ALPHA)),
-                ("SELECTED_RIM", f64::from(SELECTED_RIM)),
-                ("SELECTED_EDGE_WIDTH", f64::from(SELECTED_EDGE_WIDTH)),
-                ("VERTEX_RADIUS", f64::from(VERTEX_RADIUS)),
-                ("ERROR_EDGE_WIDTH", f64::from(ERROR_EDGE_WIDTH)),
-                ("ERROR_HALO", f64::from(ERROR_HALO)),
-                ("ERROR_POINT_RADIUS", f64::from(ERROR_POINT_RADIUS)),
-                ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
-                ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
-            ]
-        };
-
-        let pipeline = |pass: Pass<'_>| {
-            let constants = constants(pass.sketch_depth);
-            let shader = if pass.sketch_depth {
-                &depth_shader
-            } else {
-                &shader
-            };
-            let compilation_options = wgpu::PipelineCompilationOptions {
-                constants: &constants,
-                ..Default::default()
-            };
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(pass.label),
-                layout: Some(pass.layout.unwrap_or(&layout)),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some(pass.vs),
-                    buffers: pass.buffers,
-                    compilation_options: compilation_options.clone(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some(pass.fs),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: pass.format.unwrap_or(format),
-                        blend: Some(pass.blend),
-                        write_mask: pass.write_mask,
-                    })],
-                    compilation_options: compilation_options.clone(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: pass.topology,
-                    cull_mode: pass.cull_mode,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth_format,
-                    depth_write_enabled: pass.depth_write,
-                    depth_compare: pass.depth_compare,
-                    stencil: pass.stencil,
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: samples,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        // Positions in slot 0 and normals in slot 1, each a buffer of its
-        // own. Lines take a segment per instance, its ends in slots 0 and 1.
-        let positions = wgpu::VertexBufferLayout {
-            array_stride: size_of::<[f32; 3]>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-        };
-        let normals = wgpu::VertexBufferLayout {
-            array_stride: size_of::<[f32; 3]>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![1 => Float32x3],
-        };
-        let segments = wgpu::VertexBufferLayout {
-            array_stride: size_of::<Segment>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-        };
-        // The sketch being edited: a segment or a point per instance, and
-        // fills as triangles.
-        let sketch_lines = wgpu::VertexBufferLayout {
-            array_stride: size_of::<LineInstance>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
-                4 => Float32x4, 5 => Float32x2, 6 => Uint32,
-            ],
-        };
-        let sketch_points = wgpu::VertexBufferLayout {
-            array_stride: size_of::<PointInstance>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4,
-                4 => Float32, 5 => Uint32,
-            ],
-        };
-        let sketch_fills = wgpu::VertexBufferLayout {
-            array_stride: size_of::<FillVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x2, 1 => Uint32, 2 => Float32x4, 3 => Float32,
-            ],
-        };
-        // The feature edges: the `EdgePoint` stream in slots 0 to 3, a
-        // point apart, an instance per segment. Only the start needs
-        // `along`, for the dashes. 9 attributes and 4 slots, within
-        // WebGL2's 16 and 8.
-        let attribute = |format, offset: usize, shader_location| wgpu::VertexAttribute {
+        let builder = PipelineBuilder {
+            device,
+            shader: &shader,
+            depth_shader: &depth_shader,
+            layout: &layout,
             format,
-            offset: offset as u64,
-            shader_location,
+            depth_format,
+            samples,
         };
-        let position = |location| {
-            attribute(
-                wgpu::VertexFormat::Float32x3,
-                std::mem::offset_of!(EdgePoint, position),
-                location,
-            )
-        };
-        let along = |location| {
-            attribute(
-                wgpu::VertexFormat::Float32,
-                std::mem::offset_of!(EdgePoint, along),
-                location,
-            )
-        };
-        let edge = |location| {
-            attribute(
-                wgpu::VertexFormat::Uint32,
-                std::mem::offset_of!(EdgePoint, edge),
-                location,
-            )
-        };
-        let edge_attributes: [&[_]; EDGE_SLOTS as usize] = [
-            &[position(0), edge(1)],
-            &[position(2), along(3), edge(4)],
-            &[position(5), edge(6)],
-            &[position(7), edge(8)],
-        ];
-        let edge_points = edge_attributes.map(|attributes| wgpu::VertexBufferLayout {
-            array_stride: size_of::<EdgePoint>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes,
-        });
-        // The hovered and selected vertices, a disc per instance.
-        let vertices = wgpu::VertexBufferLayout {
-            array_stride: size_of::<VertexInstance>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
-        };
-        let faces = [positions, normals];
+        let pipeline = |pass: Pass<'_>| builder.build(pass);
+
+        let VertexLayouts {
+            faces,
+            segments,
+            edge_points,
+            vertices,
+            sketch_fills,
+            sketch_lines,
+            sketch_points,
+        } = VertexLayouts::new();
         let mesh = Pass {
             label: "varde mesh",
             vs: "vs_mesh",
