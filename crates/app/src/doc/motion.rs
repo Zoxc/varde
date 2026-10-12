@@ -178,22 +178,25 @@ struct Pivot {
     at: DVec3,
 }
 
-/// What a move's, mirror's or pattern's highlight is built of: what's
-/// hovered and whether its row in the panel is, what clicks pick, and
-/// the bodies.
-/// An align's lit picks, the moved side's and the target's
-/// ([`Doc::align_lit`]), too; whether a split's tool body is picked,
-/// which lights the body hovered whole; and whether a chamfer's edges
-/// take in their tangent chains, which light with the edge hovered. A
-/// shell's faces are lit as an align's moved side.
-type Built = (
-    Option<(Picked, bool)>,
-    MotionPick,
-    Vec<BodyId>,
-    [Vec<Picked>; 2],
-    bool,
-    bool,
-);
+/// What a move's, mirror's or pattern's highlight is built of.
+#[derive(Debug, Clone, PartialEq)]
+struct Built {
+    /// What's hovered and whether its row in the panel is.
+    hovered: Option<(Picked, bool)>,
+    /// What clicks pick.
+    picking: MotionPick,
+    bodies: Vec<BodyId>,
+    /// An align's lit picks, the moved side's and the target's
+    /// ([`Doc::align_lit`]); a shell's faces are lit as an align's
+    /// moved side.
+    lit: [Vec<Picked>; 2],
+    /// Whether a split's tool body is picked, which lights the body
+    /// hovered whole.
+    tool_body: bool,
+    /// Whether a chamfer's edges take in their tangent chains, which
+    /// light with the edge hovered.
+    chains: bool,
+}
 
 /// An edited pattern's spacing or angle as stored, and the mode, Flip
 /// and spread field the session opened it with: while those are as they
@@ -2502,14 +2505,14 @@ impl Doc {
         // A split's tool body lights whole while hovered.
         let tool_body = session.kind == MotionKind::Split && session.split.mode == SplitMode::Body;
         let model = self.feed.model();
-        let key = (
+        let key = Built {
             hovered,
-            session.picking,
-            session.bodies.clone(),
+            picking: session.picking,
+            bodies: session.bodies.clone(),
             lit,
             tool_body,
-            session.blend.chains,
-        );
+            chains: session.blend.chains,
+        };
         if session.highlight.is_built(model, &key) {
             return;
         }
@@ -2523,15 +2526,15 @@ impl Doc {
         // in the second colour, rather than its body.
         let (picked, second): (Vec<Picked>, Vec<Picked>) = match session.picking {
             MotionPick::Align(_) => {
-                let [moved, target] = key.3.clone();
+                let [moved, target] = key.lit.clone();
                 (moved, target)
             }
             // A chamfer's edges and faces lit as selected (those it leaves
             // out in the second colour, purple), a shell's faces, its body
             // as it is.
-            _ if session.kind.blends() => (key.3[0].clone(), key.3[1].clone()),
+            _ if session.kind.blends() => (key.lit[0].clone(), key.lit[1].clone()),
             _ if session.kind.picks_faces() || session.kind == MotionKind::Sweep => {
-                (key.3[0].clone(), Vec::new())
+                (key.lit[0].clone(), Vec::new())
             }
             _ => (
                 (session.bodies.iter())
@@ -2541,7 +2544,7 @@ impl Doc {
                 // A scale's edge in the second colour, on its bodies; a
                 // split's piece not keeping the body's id.
                 if matches!(session.kind, MotionKind::Scale | MotionKind::Split) {
-                    key.3[1].clone()
+                    key.lit[1].clone()
                 } else {
                     Vec::new()
                 },
