@@ -15,7 +15,7 @@ use varde_document::Document;
 
 use super::{BrowserDesign, DownloadStatus, is_design_name, within};
 use crate::autosave::{AutoSaved, Ending, Held, Origin};
-use crate::dir::{Dir, Make, remove_if_free, take_waiting};
+use crate::dir::{Dir, Make, end_held, remove_if_free, take_waiting};
 use crate::downloads::Downloads;
 use crate::lock::{Left, Lock, READ_ONLY};
 use crate::vrdp::{
@@ -487,16 +487,10 @@ pub(crate) async fn rename<D: Dir>(
 pub(crate) async fn end<D: Dir>(
     dir: &D,
     name: &str,
-    mut held: Held<D::File>,
+    held: Held<D::File>,
     ending: Ending,
 ) -> io::Result<()> {
-    let delete = held.end(ending)?;
-    // Let go of first: a file that's held can't be deleted.
-    drop(held);
-    if delete {
-        remove_if_free(dir, &sidecar_name(name)).await?;
-    }
-    Ok(())
+    end_held(dir, &sidecar_name(name), held, ending).await
 }
 
 /// Lets go of `design` as `ending` says, as it's closed.

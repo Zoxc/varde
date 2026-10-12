@@ -23,6 +23,7 @@
 use std::io;
 
 use crate::UnixSeconds;
+use crate::autosave::{Ending, Held};
 use crate::vrdp::{ReadAt, Storage};
 
 /// How [`Dir::take`] finds the file it takes.
@@ -127,6 +128,23 @@ pub(crate) async fn remove_if_free(dir: &impl Dir, name: &str) -> io::Result<()>
         }
         result => result,
     }
+}
+
+/// Lets go of `held`, the file `name` in `dir`, as `ending` says,
+/// deleting it unless that keeps what's in it.
+pub(crate) async fn end_held<D: Dir>(
+    dir: &D,
+    name: &str,
+    mut held: Held<D::File>,
+    ending: Ending,
+) -> io::Result<()> {
+    let delete = held.end(ending)?;
+    // Let go of first: a file that's held can't be deleted.
+    drop(held);
+    if delete {
+        remove_if_free(dir, name).await?;
+    }
+    Ok(())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

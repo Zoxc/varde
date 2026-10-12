@@ -20,7 +20,7 @@ use super::settings;
 use crate::autosave::{Ending, Held, to_open};
 use crate::browser::folder::{self, Design};
 use crate::browser::{self, BrowserDesign, LastDownload};
-use crate::dir::{Dir, Make, remove_if_free};
+use crate::dir::{Dir, Make, end_held, remove_if_free};
 use crate::downloads::{self, Downloads};
 use crate::open::{NOT_FOUND, OpenFiles};
 use crate::opfs::{lost_to_another_tab, new_name};
@@ -478,14 +478,8 @@ impl Files {
     /// Lets go of `entry` as `ending` says, deleting it unless that keeps
     /// what's in it.
     async fn end(&mut self, entry: Entry, ending: Ending) -> io::Result<()> {
-        let Entry { name, mut held } = entry;
-        let delete = held.end(ending)?;
-        // Let go of first: an entry that's held can't be deleted.
-        drop(held);
-        if delete {
-            self.remove(&name).await?;
-        }
-        Ok(())
+        let dir = self.dirs.store().await?;
+        end_held(&dir, &entry.name, entry.held, ending).await
     }
 
     /// Closes the file the open tagged `id` opened, if it's still open.
@@ -494,14 +488,6 @@ impl Files {
             Some(file) => self.close(file, Closing::Keep).await,
             None => Ok(()),
         }
-    }
-
-    /// Deletes the entry `name`, which nobody may hold. One that's gone
-    /// already, or that another tab took just now, which then finds it
-    /// empty and deletes it itself, is fine.
-    async fn remove(&mut self, name: &str) -> io::Result<()> {
-        let dir = self.dirs.store().await?;
-        remove_if_free(&dir, name).await
     }
 
     /// The new designs left behind by tabs closed or reloaded with them
@@ -540,7 +526,9 @@ impl Files {
             match listing(designs.join(&name), dir.modified(&name).await, read) {
                 Listing::Listed(recovered) => found.push(recovered),
                 Listing::Empty => {
-                    let _ = self.remove(&name).await;
+                    // Gone already, or taken by another tab just now,
+                    // which then finds it empty and deletes it itself.
+                    let _ = remove_if_free(&dir, &name).await;
                 }
                 Listing::Skipped => {}
             }
