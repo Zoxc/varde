@@ -495,7 +495,7 @@ fn with_pending_edit(reply: ToolReply, pending: String) -> ToolReply {
 
 /// `call`'s tool and arguments: "rename feature Extrude 1 to Base".
 pub(crate) fn label(call: &Call) -> String {
-    let args = super::plain(&super::args(call));
+    let args = super::text::plain(&super::text::args(call));
     match args.is_empty() {
         true => call.tool().to_owned(),
         false => format!("{} {args}", call.tool()),
@@ -923,7 +923,7 @@ impl Waiting {
             session: from.session.clone(),
             after,
             label: label(call),
-            shown: super::tool(call).with(&super::plain(&super::args(call))),
+            shown: super::text::tool(call).with(&super::text::plain(&super::text::args(call))),
             told_done: true,
             undone: false,
             feature,

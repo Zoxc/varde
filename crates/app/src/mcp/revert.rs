@@ -81,10 +81,10 @@ pub(crate) const TIP_CHANGES: usize = 10;
 /// changed, `made`, a line each, at most [`TIP_CHANGES`], then "and N
 /// more".
 fn tip(to: &str, made: &[String]) -> String {
-    let mut tip = super::plain(&format!("You: reverted to {to}"));
+    let mut tip = super::text::plain(&format!("You: reverted to {to}"));
     for line in made.iter().take(TIP_CHANGES) {
         tip.push('\n');
-        tip.push_str(&super::plain(line));
+        tip.push_str(&super::text::plain(line));
     }
     let more = made.len().saturating_sub(TIP_CHANGES);
     if more > 0 {

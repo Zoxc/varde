@@ -15,6 +15,7 @@ use varde_mcp::tools::ItemKind;
 use varde_view::{Pick, PickIndex, Picked, Snapped};
 
 use crate::doc::{Doc, DocId};
+use crate::words::with_article;
 
 /// What a refused key's answer says after why.
 const ASK_AGAIN: &str = "ask body_topology again for its keys";
@@ -128,21 +129,14 @@ pub(crate) fn edge(doc: &Doc, text: &str) -> Result<FoundEdge, String> {
     }
 }
 
-/// What `item` names, in words.
-fn named(item: &Ref) -> &'static str {
-    with_article(match item {
-        Ref::Face(_) => ItemKind::Face,
-        Ref::Edge(_) => ItemKind::Edge,
-        Ref::Corner { .. } => ItemKind::Corner,
-    })
-}
-
-/// `kind` in words, with its article.
-fn with_article(kind: ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Face => "a face",
-        ItemKind::Edge => "an edge",
-        ItemKind::Corner => "a corner",
+impl Ref {
+    /// The kind of thing this names.
+    fn kind(&self) -> ItemKind {
+        match self {
+            Ref::Face(_) => ItemKind::Face,
+            Ref::Edge(_) => ItemKind::Edge,
+            Ref::Corner { .. } => ItemKind::Corner,
+        }
     }
 }
 
@@ -164,13 +158,11 @@ pub(crate) fn found(doc: &Doc, text: &str, kind: ItemKind) -> Result<Found, Stri
     if !key.is_of(doc.id) {
         return Err(format!("that key is of another design: {ASK_AGAIN}"));
     }
-    let wanted = match kind {
-        ItemKind::Face => matches!(key.item, Ref::Face(_)),
-        ItemKind::Edge => matches!(key.item, Ref::Edge(_)),
-        ItemKind::Corner => matches!(key.item, Ref::Corner { .. }),
-    };
-    if !wanted {
-        let (names, not) = (named(&key.item), with_article(kind));
+    if key.item.kind() != kind {
+        let (names, not) = (
+            with_article(key.item.kind().word()),
+            with_article(kind.word()),
+        );
         return Err(format!("that key names {names}, not {not}"));
     }
     let model = super::query::committed(doc)?;

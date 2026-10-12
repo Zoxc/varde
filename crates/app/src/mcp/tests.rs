@@ -10,7 +10,7 @@ use varde_mcp::guard::Token;
 use varde_mcp::rpc::Id;
 use varde_mcp::server::Reply;
 use varde_mcp::session::SessionId;
-use varde_mcp::tools::{Call, Page, ToolReply};
+use varde_mcp::tools::{Call, Direction, Page, ToolReply};
 use varde_regen::{Request, Response, handle};
 
 use super::key::{self, BadKey, Key, Ref};

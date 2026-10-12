@@ -156,8 +156,8 @@ impl Doc {
             self.mcp.ask = Some(Ask {
                 tag,
                 editing: editing.clone(),
-                tool: super::tool(&call),
-                args: super::plain(&super::args(&call)),
+                tool: super::text::tool(&call),
+                args: super::text::plain(&super::text::args(&call)),
                 refused: None,
                 cancelled: false,
             });

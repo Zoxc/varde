@@ -1512,7 +1512,8 @@ and ✕ too; it doesn't open the panel with the feature off), Start
 `DisconnectMcp`.
 
 The log is `Mcp::log`, a `Logged` per call (with the user's changes
-its result told, below): its tool
+its result told, below), worded by `mcp/text.rs` (counts and articles
+from the crate's `words.rs`): its tool
 (`varde_view::McpTool`), its arguments as typed text (`args`: names as
 given, filters as `+z` or numbers, a page only where it isn't the
 default, a `set_feature` as its feature and the fields it patches, `McpTool::SetFeature`;

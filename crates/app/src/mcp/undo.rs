@@ -67,7 +67,7 @@ pub(super) fn plan(doc: &Doc, steps: usize, from: &From) -> Result<Undoing, Refu
         let (Some(&revision), true) = (history.get(at), at + 1 < history.len()) else {
             return Err(Refused::not_applied(format_args!(
                 "the design's undo history reaches back only {}, so nothing was undone",
-                super::counted(history.len().saturating_sub(1), "step", "steps")
+                crate::words::counted(history.len().saturating_sub(1), "step", "steps")
             )));
         };
         let step = (mcp.steps.iter())
@@ -100,7 +100,7 @@ const LABEL_BYTES: usize = 200;
 fn listed(labels: Vec<String>) -> serde_json::Value {
     let total = labels.len();
     let kept: Vec<String> = (labels.into_iter().take(LISTED))
-        .map(|label| super::clipped(label, LABEL_BYTES))
+        .map(|label| super::text::clipped(label, LABEL_BYTES))
         .collect();
     match total > LISTED {
         true => json!({ "items": kept, "total": total }),

@@ -269,11 +269,7 @@ impl Said {
             false => (&mut self.undone, "undid"),
         };
         labels.push(step.label.clone());
-        let mut shown = step.shown.chars();
-        let shown: String = (shown.next().into_iter())
-            .flat_map(char::to_lowercase)
-            .chain(shown)
-            .collect();
+        let shown = crate::words::lowercase_first(&step.shown);
         self.lines.push(format!("{did} its edit: {shown}"));
     }
 
