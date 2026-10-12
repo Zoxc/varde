@@ -12,6 +12,7 @@ mod regions;
 mod revolve;
 mod sketch;
 mod sketch_pick;
+mod style;
 
 use std::any::Any;
 use std::sync::{Arc, Weak};
