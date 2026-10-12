@@ -388,6 +388,15 @@ pub struct Slot {
     pub(super) drawn: Mutex<Option<ClipRect>>,
 }
 
+impl Slot {
+    /// Whether the model has glass to draw: [`Renderer::draw_scene`] draws
+    /// a depth-tested sketch under it, and [`Renderer::draw_sketch`] only
+    /// one without.
+    pub(super) fn has_glass(&self) -> bool {
+        self.mesh.is_some() && !self.state.draws.transparent.is_empty()
+    }
+}
+
 /// What [`Renderer::prepare`] leaves in a [`Slot`] for the draws, beside
 /// its buffers, all of it set afresh each prepare: two alike draw the same.
 #[derive(PartialEq)]

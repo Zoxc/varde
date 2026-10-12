@@ -325,25 +325,41 @@ impl Renderer {
             &self.selected_face_pattern,
         ));
         for (tint, mark, marking, drawn) in hover.into_iter().chain(selection) {
-            pass.set_stencil_reference(mark);
-            let tinted =
-                || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
-            pass.set_pipeline(marking);
-            for face in tinted() {
-                self.alphas.set(&mut pass, face.step);
-                pass.draw_indexed(face.indices.clone(), 0, 0..1);
-            }
-            for face in tinted() {
-                let pipeline = match (tint, face.hovered) {
-                    (Tint::Hovered, true) => continue,
-                    (Tint::Selected, true) => &self.hovered_selected_face_pattern,
-                    _ => drawn,
-                };
-                pass.set_pipeline(pipeline);
-                self.set_tint(&mut pass, slot, face.part);
-                self.alphas.set(&mut pass, face.step);
-                pass.draw_indexed(face.indices.clone(), 0, 0..1);
-            }
+            let both = &self.hovered_selected_face_pattern;
+            self.draw_marked_faces(&mut pass, slot, (tint, mark), marking, [drawn, both]);
+        }
+    }
+
+    /// Records marking `slot`'s faces tinted `tint` with `mark` by
+    /// `marking`, then drawing them by `drawn`, in their parts' tints: a
+    /// hovered face as the hover's only if it isn't selected too, a
+    /// selected one also hovered by `both`.
+    fn draw_marked_faces(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        slot: &Slot,
+        (tint, mark): (Tint, u32),
+        marking: &wgpu::RenderPipeline,
+        [drawn, both]: [&wgpu::RenderPipeline; 2],
+    ) {
+        pass.set_stencil_reference(mark);
+        let tinted =
+            || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
+        pass.set_pipeline(marking);
+        for face in tinted() {
+            self.alphas.set(pass, face.step);
+            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+        }
+        for face in tinted() {
+            let pipeline = match (tint, face.hovered) {
+                (Tint::Hovered, true) => continue,
+                (Tint::Selected, true) => both,
+                _ => drawn,
+            };
+            pass.set_pipeline(pipeline);
+            self.set_tint(pass, slot, face.part);
+            self.alphas.set(pass, face.step);
+            pass.draw_indexed(face.indices.clone(), 0, 0..1);
         }
     }
 
@@ -541,7 +557,7 @@ impl Renderer {
 
         // The extrude's layers under the glass in front of them, if there
         // is any, and so under the origin marker too.
-        let glass = mesh.is_some() && !draws.transparent.is_empty();
+        let glass = slot.has_glass();
         let layers = [&slot.sketch_base, &slot.sketch_live];
         if slot.state.sketching && slot.state.sketch_depth && glass {
             for layer in layers {
@@ -675,8 +691,7 @@ impl Renderer {
     /// hide what's edited; or depth tested, unless [`Self::draw_scene`]
     /// drew it under the glass.
     pub(super) fn draw_sketch(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot) {
-        let glass = slot.mesh.is_some() && !slot.state.draws.transparent.is_empty();
-        if slot.state.sketching && !(slot.state.sketch_depth && glass) {
+        if slot.state.sketching && !(slot.state.sketch_depth && slot.has_glass()) {
             let pipelines = if slot.state.sketch_depth {
                 &self.sketch_depth_tested
             } else {
@@ -796,25 +811,8 @@ impl Renderer {
             // in its part's tint; a face both hovered and selected is
             // striped by the selection alone, from the hover's colour.
             bind_faces(pass, mesh);
-            pass.set_stencil_reference(mark);
-            let tinted =
-                || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
-            pass.set_pipeline(marking);
-            for face in tinted() {
-                self.alphas.set(pass, face.step);
-                pass.draw_indexed(face.indices.clone(), 0, 0..1);
-            }
-            for face in tinted() {
-                let pipeline = match (tint, face.hovered) {
-                    (Tint::Hovered, true) => continue,
-                    (Tint::Selected, true) => &self.hovered_selected_face_hidden,
-                    _ => hidden,
-                };
-                self.set_tint(pass, slot, face.part);
-                self.alphas.set(pass, face.step);
-                pass.set_pipeline(pipeline);
-                pass.draw_indexed(face.indices.clone(), 0, 0..1);
-            }
+            let both = &self.hovered_selected_face_hidden;
+            self.draw_marked_faces(pass, slot, (tint, mark), marking, [hidden, both]);
             // The hovered and selected faces' pattern's edge, from its
             // mask, over both.
             if tint == Tint::Selected
