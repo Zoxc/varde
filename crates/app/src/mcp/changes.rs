@@ -20,6 +20,9 @@
 //!
 //! [`Waiting::steps`]: super::waiting::Waiting::steps
 
+use std::collections::BTreeMap;
+
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use varde_document::{Body, BodyId, Document, Feature, FeatureId, FeatureKind, Revision, Snapshot};
 use varde_mcp::session::SessionId;
@@ -212,9 +215,9 @@ struct Said {
     redone: Vec<String>,
     /// The reverts made from the panel: what each went back to.
     reverted: Vec<String>,
-    features: Kinds,
-    bodies: Kinds,
-    parameters: Kinds,
+    features: Kinds<FeatureChange>,
+    bodies: Kinds<BodyChange>,
+    parameters: Kinds<ParamChange>,
     design: Map<String, Value>,
     /// The names of the features added, removed or changed, for the
     /// bounded form.
@@ -222,37 +225,232 @@ struct Said {
     lines: Vec<String>,
 }
 
-/// Things of one kind added, removed and changed.
-#[derive(Debug, Default)]
-struct Kinds {
+/// Things of one kind added, removed and changed (`C`, a change).
+#[derive(Debug, Serialize)]
+struct Kinds<C> {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     added: Vec<Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     removed: Vec<Value>,
-    changed: Vec<Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    changed: Vec<C>,
 }
 
-impl Kinds {
+impl<C> Default for Kinds<C> {
+    fn default() -> Self {
+        Self {
+            added: Vec::new(),
+            removed: Vec::new(),
+            changed: Vec::new(),
+        }
+    }
+}
+
+impl<C: Change> Kinds<C> {
     fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
     }
 
-    fn value(&self) -> Value {
-        let mut map = Map::new();
-        for (key, items) in [
-            ("added", &self.added),
-            ("removed", &self.removed),
-            ("changed", &self.changed),
-        ] {
-            if !items.is_empty() {
-                map.insert(key.to_owned(), Value::Array(items.clone()));
-            }
+    /// `change`, if it says one, among the changes, merged into the
+    /// entry of the same thing changed in an earlier run if there's one,
+    /// as [`Change::then`] merges; the entry dropped if nothing's left.
+    fn change(&mut self, change: C) {
+        if !change.says() {
+            return;
         }
-        Value::Object(map)
+        let Some(at) = self.changed.iter().position(|was| change.follows(was)) else {
+            self.changed.push(change);
+            return;
+        };
+        self.changed[at].then(change);
+        if !self.changed[at].says() {
+            self.changed.remove(at);
+        }
+    }
+}
+
+/// A thing's change, merged with a later one of the same thing.
+trait Change {
+    /// Whether this is a later change of what `was` changed.
+    fn follows(&self, was: &Self) -> bool;
+    /// Takes the later change `later`: each field's first old and last
+    /// new, a value back where it was dropped. A field something else
+    /// moved between the two (a client's edit) is said from where that
+    /// left it.
+    fn then(&mut self, later: Self);
+    /// Whether it says anything changed, beyond what it names.
+    fn says(&self) -> bool;
+}
+
+/// A value's change: `{"old": old, "new": new}`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct OldNew<T> {
+    old: T,
+    new: T,
+}
+
+impl<T: PartialEq> OldNew<T> {
+    fn new(old: T, new: T) -> Option<Self> {
+        (old != new).then_some(Self { old, new })
+    }
+
+    /// `field`, a change if any, followed by `later`'s: changed on from
+    /// where the earlier left it, from its old to the later's new; else
+    /// the later's. None if that's back where it was.
+    fn then(field: &mut Option<Self>, later: Option<Self>) {
+        let Some(later) = later else { return };
+        *field = match field.take() {
+            Some(mut was) if was.new == later.old => {
+                was.new = later.new;
+                (was.old != was.new).then_some(was)
+            }
+            _ => Some(later),
+        };
+    }
+}
+
+/// A flag said as its new value, `field`, followed by `later`: changed
+/// again, it's back where it was, unless something between flipped it
+/// too.
+fn flag_then(field: &mut Option<bool>, later: Option<bool>) {
+    match (*field, later) {
+        (Some(was), Some(later)) if was != later => *field = None,
+        (None, Some(later)) => *field = Some(later),
+        _ => {}
     }
 }
 
 /// `{"old": old, "new": new}`.
 fn old_new(old: impl Into<Value>, new: impl Into<Value>) -> Value {
     json!({ "old": old.into(), "new": new.into() })
+}
+
+/// A feature's change, known by its id.
+#[derive(Debug, Serialize)]
+struct FeatureChange {
+    name: String,
+    id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renamed: Option<OldNew<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visible: Option<bool>,
+    /// The settings changed, by name; empty where its kind changed in
+    /// none it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settings: Option<BTreeMap<String, Setting>>,
+}
+
+/// A feature setting's change.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Setting {
+    Changed(OldNew<Value>),
+    /// A sketch's points moved, its counts and plane the same: `"changed"`.
+    Geometry(&'static str),
+}
+
+impl Change for FeatureChange {
+    fn follows(&self, was: &Self) -> bool {
+        was.id == self.id
+    }
+
+    fn then(&mut self, later: Self) {
+        self.name = later.name;
+        OldNew::then(&mut self.renamed, later.renamed);
+        flag_then(&mut self.visible, later.visible);
+        let Some(later) = later.settings else { return };
+        let Some(settings) = &mut self.settings else {
+            self.settings = Some(later);
+            return;
+        };
+        for (key, value) in later {
+            match (settings.remove(&key), value) {
+                (Some(Setting::Changed(was)), Setting::Changed(value)) => {
+                    let mut field = Some(was);
+                    OldNew::then(&mut field, Some(value));
+                    if let Some(field) = field {
+                        settings.insert(key, Setting::Changed(field));
+                    }
+                }
+                (_, value) => {
+                    settings.insert(key, value);
+                }
+            }
+        }
+        if settings.is_empty() {
+            self.settings = None;
+        }
+    }
+
+    fn says(&self) -> bool {
+        self.renamed.is_some() || self.visible.is_some() || self.settings.is_some()
+    }
+}
+
+/// A body's change, known by name.
+#[derive(Debug, Serialize)]
+struct BodyChange {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renamed: Option<OldNew<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<OldNew<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    opacity: Option<OldNew<Value>>,
+}
+
+impl Change for BodyChange {
+    fn follows(&self, was: &Self) -> bool {
+        was.name == from_name(&self.name, &self.renamed)
+    }
+
+    fn then(&mut self, later: Self) {
+        self.name = later.name;
+        OldNew::then(&mut self.renamed, later.renamed);
+        flag_then(&mut self.visible, later.visible);
+        OldNew::then(&mut self.color, later.color);
+        OldNew::then(&mut self.opacity, later.opacity);
+    }
+
+    fn says(&self) -> bool {
+        self.renamed.is_some()
+            || self.visible.is_some()
+            || self.color.is_some()
+            || self.opacity.is_some()
+    }
+}
+
+/// A parameter's change, known by name.
+#[derive(Debug, Serialize)]
+struct ParamChange {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renamed: Option<OldNew<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expression: Option<OldNew<String>>,
+}
+
+impl Change for ParamChange {
+    fn follows(&self, was: &Self) -> bool {
+        was.name == from_name(&self.name, &self.renamed)
+    }
+
+    fn then(&mut self, later: Self) {
+        self.name = later.name;
+        OldNew::then(&mut self.renamed, later.renamed);
+        OldNew::then(&mut self.expression, later.expression);
+    }
+
+    fn says(&self) -> bool {
+        self.renamed.is_some() || self.expression.is_some()
+    }
+}
+
+/// The name a change of a thing known by name, `name` now, starts from.
+fn from_name<'a>(name: &'a str, renamed: &'a Option<OldNew<String>>) -> &'a str {
+    renamed.as_ref().map_or(name, |renamed| &renamed.old)
 }
 
 impl Said {
@@ -364,15 +562,19 @@ impl Said {
     }
 
     fn feature_changed(&mut self, was: &Shape, is: &Shape, old: &Feature, new: &Feature) {
-        let mut change = json!({ "name": new.name, "id": new.id.get() });
-        let mut said = Vec::new();
-        if old.name != new.name {
-            change["renamed"] = old_new(old.name.clone(), new.name.clone());
+        let mut change = FeatureChange {
+            name: new.name.clone(),
+            id: new.id.get(),
+            renamed: OldNew::new(old.name.clone(), new.name.clone()),
+            visible: None,
+            settings: None,
+        };
+        if change.renamed.is_some() {
             self.lines
                 .push(format!("renamed {} to {}", old.name, new.name));
         }
         if old.visible != new.visible {
-            change["visible"] = json!(new.visible);
+            change.visible = Some(new.visible);
             self.lines.push(format!(
                 "{} {}",
                 if new.visible { "showed" } else { "hid" },
@@ -381,30 +583,34 @@ impl Said {
         }
         if old.kind != new.kind {
             let fields = settings_diff(was, is, old, new);
-            said.extend(fields.keys().cloned());
-            change["settings"] = Value::Object(fields);
+            let said: Vec<&str> = fields.keys().map(String::as_str).collect();
             let what = match said.is_empty() {
                 true => String::new(),
                 false => format!(" ({})", said.join(", ")),
             };
             self.lines.push(format!("changed {}{what}", new.name));
+            change.settings = Some(fields);
         }
-        if change.as_object().is_some_and(|change| change.len() > 2) {
-            let id = change["id"].clone();
-            merge(&mut self.features.changed, change, |was| was["id"] == id);
+        if change.says() {
+            self.features.change(change);
             self.feature_named(&new.name);
         }
     }
 
     fn body_changed(&mut self, old: &Body, new: &Body) {
-        let mut change = json!({ "name": new.name });
-        if old.name != new.name {
-            change["renamed"] = old_new(old.name.clone(), new.name.clone());
+        let mut change = BodyChange {
+            name: new.name.clone(),
+            renamed: OldNew::new(old.name.clone(), new.name.clone()),
+            visible: None,
+            color: None,
+            opacity: None,
+        };
+        if change.renamed.is_some() {
             self.lines
                 .push(format!("renamed body {} to {}", old.name, new.name));
         }
         if old.visible != new.visible {
-            change["visible"] = json!(new.visible);
+            change.visible = Some(new.visible);
             self.lines.push(format!(
                 "{} {}",
                 if new.visible { "showed" } else { "hid" },
@@ -412,18 +618,16 @@ impl Said {
             ));
         }
         if old.color != new.color {
-            change["color"] = old_new(color(old), color(new));
+            change.color = OldNew::new(color(old), color(new));
             self.lines
                 .push(format!("changed the colour of {}", new.name));
         }
         if old.opacity != new.opacity {
-            change["opacity"] = old_new(opacity(old), opacity(new));
+            change.opacity = OldNew::new(opacity(old), opacity(new));
             self.lines
                 .push(format!("changed the opacity of {}", new.name));
         }
-        if change.as_object().is_some_and(|change| change.len() > 1) {
-            merge_named(&mut self.bodies.changed, change);
-        }
+        self.bodies.change(change);
     }
 
     /// Parameters by name; one whose name alone changed at its place, a
@@ -455,19 +659,19 @@ impl Said {
                 continue;
             };
             let new = &is[now];
-            let mut change = json!({ "name": new.name });
-            if param.name != new.name {
-                change["renamed"] = old_new(param.name.clone(), new.name.clone());
+            let change = ParamChange {
+                name: new.name.clone(),
+                renamed: OldNew::new(param.name.clone(), new.name.clone()),
+                expression: OldNew::new(param.text.clone(), new.text.clone()),
+            };
+            if change.renamed.is_some() {
                 self.lines
                     .push(format!("renamed parameter {} to {}", param.name, new.name));
             }
-            if param.text != new.text {
-                change["expression"] = old_new(param.text.clone(), new.text.clone());
+            if change.expression.is_some() {
                 self.lines.push(format!("set {} to {}", new.name, new.text));
             }
-            if change.as_object().is_some_and(|change| change.len() > 1) {
-                merge_named(&mut self.parameters.changed, change);
-            }
+            self.parameters.change(change);
         }
         for (at, param) in is.iter().enumerate() {
             let was_there = renamed.contains(&Some(at)) || named(was, &param.name).is_some();
@@ -533,13 +737,18 @@ impl Said {
             }
         }
         let mut full = value.clone();
-        for (key, kinds) in [
-            ("features", &self.features),
-            ("bodies", &self.bodies),
-            ("parameters", &self.parameters),
-        ] {
-            if !kinds.is_empty() {
-                full.insert(key.to_owned(), kinds.value());
+        let kinds = [
+            ("features", self.features.is_empty(), json!(self.features)),
+            ("bodies", self.bodies.is_empty(), json!(self.bodies)),
+            (
+                "parameters",
+                self.parameters.is_empty(),
+                json!(self.parameters),
+            ),
+        ];
+        for (key, empty, kinds) in kinds {
+            if !empty {
+                full.insert(key.to_owned(), kinds);
             }
         }
         full.extend(self.design.clone());
@@ -627,80 +836,6 @@ pub(super) fn briefest(replaced: bool) -> Value {
     json!({ "bounded": said })
 }
 
-/// `change` among `changed`, merged into the entry `same` picks if
-/// there's one (the same thing changed in an earlier run): each `old`
-/// kept, each `new` taken, a value back where it was dropped, and the
-/// entry with it if nothing's left but its name and id. A field
-/// something else moved between the two (a client's edit) is said from
-/// where that left it.
-fn merge(changed: &mut Vec<Value>, change: Value, same: impl Fn(&Value) -> bool) {
-    let Some(at) = changed.iter().position(same) else {
-        changed.push(change);
-        return;
-    };
-    merge_value(&mut changed[at], change);
-    let says = (changed[at].as_object())
-        .is_some_and(|entry| entry.keys().any(|key| key != "name" && key != "id"));
-    if !says {
-        changed.remove(at);
-    }
-}
-
-/// [`merge`] for a thing known by name: the entry that ends at the name
-/// `change` starts from.
-fn merge_named(changed: &mut Vec<Value>, change: Value) {
-    let from = match change.get("renamed") {
-        Some(renamed) => renamed["old"].clone(),
-        None => change["name"].clone(),
-    };
-    merge(changed, change, |was| was["name"] == from);
-}
-
-/// Merges a field's later change `value` into `was`; whether it still
-/// says a change.
-fn merge_value(was: &mut Value, value: Value) -> bool {
-    let is_old_new = |value: &Value| {
-        value
-            .as_object()
-            .is_some_and(|map| map.len() == 2 && map.contains_key("old") && map.contains_key("new"))
-    };
-    match (was, value) {
-        // Changed on from where the earlier change left it: from the
-        // first old to the last new. Else something between (a client's
-        // edit) moved it, and the later change says it from there.
-        (was, value) if is_old_new(was) && is_old_new(&value) => {
-            if was["new"] == value["old"] {
-                was["new"] = value["new"].clone();
-            } else {
-                *was = value;
-            }
-            was["old"] != was["new"]
-        }
-        // A flag (`visible`) said as its new value: changed again, it's
-        // back where it was, unless something between flipped it too.
-        (Value::Bool(was), Value::Bool(value)) => *was == value,
-        (Value::Object(was), Value::Object(value)) => {
-            for (key, value) in value {
-                let keep = match was.get_mut(&key) {
-                    Some(field) => merge_value(field, value),
-                    None => {
-                        was.insert(key.clone(), value);
-                        true
-                    }
-                };
-                if !keep {
-                    was.remove(&key);
-                }
-            }
-            !was.is_empty()
-        }
-        (was, value) => {
-            *was = value;
-            true
-        }
-    }
-}
-
 /// A feature named, as an added or removed one is listed.
 fn brief(feature: &Feature) -> Value {
     let mut said = json!({
@@ -717,26 +852,32 @@ fn brief(feature: &Feature) -> Value {
 /// The settings that differ between `old` and `new`, the same feature,
 /// each with its old and new value. A sketch changed where its counts and
 /// plane didn't (a point moved) says so as `geometry`.
-fn settings_diff(was: &Shape, is: &Shape, old: &Feature, new: &Feature) -> Map<String, Value> {
+fn settings_diff(
+    was: &Shape,
+    is: &Shape,
+    old: &Feature,
+    new: &Feature,
+) -> BTreeMap<String, Setting> {
     let (Value::Object(old_settings), Value::Object(new_settings)) =
         (was.settings(old), is.settings(new))
     else {
-        return Map::new();
+        return BTreeMap::new();
     };
-    let mut fields = Map::new();
+    let mut fields = BTreeMap::new();
     for (key, value) in &old_settings {
         let now = new_settings.get(key).cloned().unwrap_or(Value::Null);
-        if *value != now {
-            fields.insert(key.clone(), old_new(value.clone(), now));
+        if let Some(change) = OldNew::new(value.clone(), now) {
+            fields.insert(key.clone(), Setting::Changed(change));
         }
     }
     for (key, value) in &new_settings {
         if !old_settings.contains_key(key) {
-            fields.insert(key.clone(), old_new(Value::Null, value.clone()));
+            let change = OldNew::new(Value::Null, value.clone());
+            fields.extend(change.map(|change| (key.clone(), Setting::Changed(change))));
         }
     }
     if fields.is_empty() && matches!(new.kind, FeatureKind::Sketch { .. }) {
-        fields.insert("geometry".to_owned(), json!("changed"));
+        fields.insert("geometry".to_owned(), Setting::Geometry("changed"));
     }
     fields
 }
