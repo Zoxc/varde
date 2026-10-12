@@ -629,14 +629,8 @@ impl Doc {
         // on the design before that edit. A cancelled popup gives way,
         // those behind it going on first.
         self.drop_cancelled_ask();
-        if let Some(ask) = &self.mcp.ask {
-            let editing = ask.editing.clone();
-            return self.mcp.add(Waiter {
-                tag,
-                from,
-                call,
-                waits: Wait::Asking { editing },
-            });
+        if let Some(editing) = self.mcp.ask.as_ref().map(|ask| ask.editing.clone()) {
+            return self.wait_on_ask(tag, from, call, editing);
         }
         // An undo is checked at its turn only: the session's edits
         // before it may not have applied yet.
@@ -651,11 +645,7 @@ impl Doc {
             if self.model_ready(self.editor.generation()) && !self.mcp.any_unapplied() {
                 match plan(self, &call, &from, true) {
                     Err(refused) => return self.edit_not_applied(tag, from, call, refused),
-                    Ok(plan) if plan.is_empty() => {
-                        return self
-                            .mcp
-                            .answer(from, call, ToolReply::text(NOTHING_TO_CHANGE));
-                    }
+                    Ok(plan) if plan.is_empty() => return self.answer_unchanged(from, call),
                     Ok(_) => {}
                 }
             }
@@ -674,23 +664,16 @@ impl Doc {
         // With the popup up (not cancelled) it waits behind the edit
         // asked about, its commands made once that one went: they may
         // name what it makes.
-        if let Some(ask) = self.mcp.ask.as_ref().filter(|ask| !ask.cancelled) {
-            let editing = ask.editing.clone();
-            return self.mcp.add(Waiter {
-                tag,
-                from,
-                call,
-                waits: Wait::Asking { editing },
-            });
+        let asking = self.mcp.ask.as_ref().filter(|ask| !ask.cancelled);
+        if let Some(editing) = asking.map(|ask| ask.editing.clone()) {
+            return self.wait_on_ask(tag, from, call, editing);
         }
         let plan = match plan(self, &call, &from, false) {
             Ok(plan) => plan,
             Err(refused) => return self.edit_not_applied(tag, from, call, refused),
         };
         if plan.is_empty() {
-            return self
-                .mcp
-                .answer(from, call, ToolReply::text(NOTHING_TO_CHANGE));
+            return self.answer_unchanged(from, call);
         }
         // A cancelled popup gives way; edits behind it went first, so
         // this one's commands are made again on what they left, keeping
@@ -718,6 +701,23 @@ impl Doc {
             Plan::Propose(proposed) => self.client_propose(tag, from, call, proposed),
             Plan::Undo => self.client_undo(tag, from, call),
         }
+    }
+
+    /// Has `call`, from `from`, wait under `tag` behind the popup asking
+    /// about the edit `editing`.
+    fn wait_on_ask(&mut self, tag: u64, from: From, call: Call, editing: String) {
+        self.mcp.add(Waiter {
+            tag,
+            from,
+            call,
+            waits: Wait::Asking { editing },
+        });
+    }
+
+    /// Answers `call`, from `from`, that it changes nothing.
+    fn answer_unchanged(&mut self, from: From, call: Call) {
+        self.mcp
+            .answer(from, call, ToolReply::text(NOTHING_TO_CHANGE));
     }
 
     /// The refusal of an edit while the design is read-only, saying
@@ -748,10 +748,7 @@ impl Doc {
                 let why = crate::doc::params::refusal(self.editor.document(), &why);
                 self.edit_not_applied(tag, from, call, Refused::NotApplied(why))
             }
-            Ok(()) if self.editor.generation() == before => {
-                self.mcp
-                    .answer(from, call, ToolReply::text(NOTHING_TO_CHANGE));
-            }
+            Ok(()) if self.editor.generation() == before => self.answer_unchanged(from, call),
             Ok(()) => {
                 self.client_applied(tag, &from);
                 self.proposals.client_applied();
