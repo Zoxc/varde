@@ -20,7 +20,7 @@ use varde_view::{MotionField, MotionKind, OperationKind, SweepPath};
 
 use super::args::{
     Given, Wrong, curve_in, edges, excluded, goes_with, keyed, made_of, operation, pick, point_in,
-    regions, said, sketch_named, tool_for, typed, typed_given, world_axis,
+    regions, said, sketch_before, tool_for, typed, typed_given, world_axis,
 };
 use super::edit::{Made, Refused};
 use crate::doc::{Doc, MotionSession, RegionPick};
@@ -55,7 +55,7 @@ pub(super) fn set_sweep(
     let tool = tool_for("sweep", edited);
     match edited {
         None => {
-            let sketch = sketch_named(document, tool, &args.sketch, None)?;
+            let sketch = sketch_before(document, tool, &args.sketch, None)?;
             let regions = &mut session.sweep.regions;
             *regions = RegionPick::new(Some(sketch), MAX_SWEEP_REGIONS);
             pick(regions, document, sketch, &args.profiles).map_err(|why| said("profiles", why))?;
@@ -102,7 +102,7 @@ pub(super) fn set_sweep(
                 session.blend.chains = *tangent;
                 for (at, chain) in curves.iter().enumerate() {
                     let argument = format!("path.curves[{at}]");
-                    let id = sketch_named(document, tool, &chain.sketch, edited)?;
+                    let id = sketch_before(document, tool, &chain.sketch, edited)?;
                     let curve =
                         curve_in(document, id, chain.curve).map_err(|why| said(&argument, why))?;
                     let before = session.sweep.chains.len();
@@ -195,7 +195,7 @@ pub(super) fn set_loft(
         let mut wanted: Vec<Section> = Vec::with_capacity(args.sections.len());
         for (at, section) in args.sections.iter().enumerate() {
             let argument = format!("sections[{at}]");
-            let sketch = sketch_named(document, tool, &section.sketch, edited)?;
+            let sketch = sketch_before(document, tool, &section.sketch, edited)?;
             let before = session.loft.sections.clone();
             match &section.shape {
                 SectionShape::Region(profile) => {
@@ -269,7 +269,7 @@ pub(super) fn set_loft(
         }
         for (at, rail) in args.rails.iter().enumerate() {
             let argument = format!("rails[{at}]");
-            let sketch = sketch_named(document, tool, &rail.sketch, edited)?;
+            let sketch = sketch_before(document, tool, &rail.sketch, edited)?;
             let curve =
                 curve_in(document, sketch, rail.curve).map_err(|why| said(&argument, why))?;
             let before = session.loft.rails.len();

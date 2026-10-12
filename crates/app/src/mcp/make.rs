@@ -19,7 +19,7 @@ use varde_view::{Angle, Distance, ExtentKind, OperationKind, TurnKind};
 
 use super::args::{
     Given, added, curve_in, excluded, failed, gone_sketch, operation, picked_bodies, read, regions,
-    sketch_named, tool_for,
+    sketch_before, tool_for,
 };
 use super::edit::{Made, Refused};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, RevolveSession, sketch_of};
@@ -33,7 +33,7 @@ const FLIP_EXTENT: &str = "flip goes with extent one_side or two_sides";
 pub(super) fn extrude(doc: &Doc, args: &tools::Extrude) -> Result<(Vec<Command>, Made), Refused> {
     let document = doc.editor.document();
     const TOOL: &str = "extrude";
-    let sketch = sketch_named(document, TOOL, &args.sketch, None)?;
+    let sketch = sketch_before(document, TOOL, &args.sketch, None)?;
     let mut session = ExtrudeSession::for_client(document, sketch);
     set_extrude(doc, &mut session, args, Given::All)?;
     let extrude =
@@ -134,7 +134,7 @@ pub(super) fn set_extrude(
 pub(super) fn revolve(doc: &Doc, args: &tools::Revolve) -> Result<(Vec<Command>, Made), Refused> {
     let document = doc.editor.document();
     const TOOL: &str = "revolve";
-    let sketch = sketch_named(document, TOOL, &args.sketch, None)?;
+    let sketch = sketch_before(document, TOOL, &args.sketch, None)?;
     let mut session = RevolveSession::new(document, Some(sketch));
     set_revolve(doc, &mut session, args, Given::All)?;
     let revolve = (session.revolve(document))

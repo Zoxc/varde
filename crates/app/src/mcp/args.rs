@@ -98,7 +98,7 @@ pub(super) fn regions(
     let document = doc.editor.document();
     let wrong = |why: String| failed(tool, why);
     if edited.is_some() && given.has("sketch") {
-        let sketch = sketch_named(document, tool, sketch, edited)?;
+        let sketch = sketch_before(document, tool, sketch, edited)?;
         if regions.source != Some(sketch) {
             if !given.has("profiles") {
                 let why = "sketch goes with profiles: the regions of the new sketch";
@@ -329,19 +329,25 @@ fn made_after(name: &str, feature: &str, edited: Option<FeatureId>) -> String {
     }
 }
 
-/// The sketch feature named `name`, made before the feature `edited` (or
-/// where a new one goes), the `tool`'s.
-pub(super) fn sketch_named(
-    document: &Document,
-    tool: &str,
-    name: &str,
-    edited: Option<FeatureId>,
-) -> Result<FeatureId, Refused> {
+/// The sketch feature named `name`, refused if it isn't one.
+pub(super) fn sketch_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
     let id = feature_named(document, name)?;
     if sketch_of(document, id).is_none() {
         let why = format!("\"{}\" isn't a sketch", varde_mcp::shown(name));
         return Err(Refused::failed(why));
     }
+    Ok(id)
+}
+
+/// The sketch feature named `name`, made before the feature `edited` (or
+/// where a new one goes), the `tool`'s.
+pub(super) fn sketch_before(
+    document: &Document,
+    tool: &str,
+    name: &str,
+    edited: Option<FeatureId>,
+) -> Result<FeatureId, Refused> {
+    let id = sketch_named(document, name)?;
     let at = match edited {
         None => Some(document.insert_at()),
         Some(edited) => document.feature_index(edited),

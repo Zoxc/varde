@@ -41,8 +41,9 @@ use varde_sketch::{
 use varde_view::typed::{MAX_SIDES, MIN_SIDES};
 use varde_view::{ConstraintKind, Target, Tool};
 
+use super::args::sketch_named;
 use super::edit::{Made, Refused};
-use super::sketches::{Proposed, Proposing, sketch_made, sketch_named};
+use super::sketches::{Proposed, Proposing, sketch_made};
 use crate::doc::{Clicks, Doc, Step, clicked, sketch_of};
 
 /// The smallest a shape the client draws may be, as a tool refuses one

@@ -26,8 +26,8 @@ use varde_mcp::tools::{self, AddLink, Call, ItemKind, LinkFrom, Reference, Worde
 use varde_sketch::{Id, LinkKind, SketchEdit};
 use varde_view::{Picked, PlanePick, SketchItem, Tool};
 
-use super::args::{committed_marks, failed, origin_plane, said};
-use super::edit::{Made, Refused, feature_named};
+use super::args::{committed_marks, failed, origin_plane, said, sketch_named};
+use super::edit::{Made, Refused};
 use super::waiting::{From, Wait, Waiter};
 use crate::doc::{
     Doc, Settled, Step, face_placement_in, outside_model_in, outside_sketch_item_at,
@@ -94,16 +94,6 @@ pub(super) fn set_sketch_plane(
     Ok((vec![command], Made::Sketch(feature)))
 }
 
-/// The sketch feature named `name`, refused if it isn't one.
-pub(super) fn sketch_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
-    let id = feature_named(document, name)?;
-    if sketch_of(document, id).is_none() {
-        let why = format!("\"{}\" isn't a sketch", varde_mcp::shown(name));
-        return Err(Refused::failed(why));
-    }
-    Ok(id)
-}
-
 /// The plane `plane` names for `tool`: an origin plane, or a face by
 /// key found on the committed model, checked as a click picking a plane
 /// is ([`face_placement_in`]): for a new sketch, or for the sketch
@@ -167,12 +157,12 @@ pub(super) fn add_link(doc: &Doc, args: &AddLink) -> Result<Proposed, Refused> {
             source
         }
         LinkFrom::Curve(curve) => {
-            let item = item_in(document, &curve.sketch, curve.curve, "curve")?;
+            let item = item_in(document, &curve.sketch, curve.curve, super::args::curve_in)?;
             outside_sketch_item_at(document, tool, item, name, at)
                 .map_err(|why| refused(why.into_owned()))?
         }
         LinkFrom::Point { sketch, point } => {
-            let item = item_in(document, sketch, *point, "point")?;
+            let item = item_in(document, sketch, *point, super::args::point_in)?;
             outside_sketch_item_at(document, tool, item, name, at)
                 .map_err(|why| refused(why.into_owned()))?
         }
@@ -218,21 +208,18 @@ pub(super) fn add_link(doc: &Doc, args: &AddLink) -> Result<Proposed, Refused> {
     })
 }
 
-/// Another sketch's curve or point (`what`) numbered `number`, of the
-/// sketch named `sketch` ([`super::args::curve_in`],
+/// Another sketch's curve or point numbered `number`, of the sketch
+/// named `sketch`, as `find` finds it ([`super::args::curve_in`],
 /// [`super::args::point_in`]).
 fn item_in(
     document: &Document,
     sketch: &str,
     number: u32,
-    what: &str,
+    find: fn(&Document, FeatureId, u32) -> Result<varde_sketch::Id, String>,
 ) -> Result<SketchItem, Refused> {
     let feature = sketch_named(document, sketch)?;
-    let item = match what {
-        "curve" => super::args::curve_in(document, feature, number),
-        _ => super::args::point_in(document, feature, number),
-    };
-    let item = item.map_err(|why| failed("add_link", said("from", why)))?;
+    let item =
+        find(document, feature, number).map_err(|why| failed("add_link", said("from", why)))?;
     Ok(SketchItem {
         sketch: feature,
         item,

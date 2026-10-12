@@ -17,7 +17,7 @@ use varde_view::{MotionField, MotionKind, MotionPick, ShellDirection, SplitMode}
 
 use super::args::{
     Given, SET_FEATURE, Wrong, by_key, committed_marks, curve_in, faces, faces_given, failed,
-    goes_with, keyed, made, made_of, origin_plane, pick, picked_bodies, said, sketch_named,
+    goes_with, keyed, made, made_of, origin_plane, pick, picked_bodies, said, sketch_before,
     tool_for, typed_given,
 };
 use super::edit::{Made, Refused};
@@ -88,14 +88,14 @@ pub(super) fn set_split(
                 session.take_split_tool(tool);
             }
             SplitWith::Regions { sketch, profiles } => {
-                let sketch = sketch_named(document, tool, sketch, edited)?;
+                let sketch = sketch_before(document, tool, sketch, edited)?;
                 let regions = &mut session.split.regions;
                 *regions = RegionPick::new(Some(sketch), MAX_EXTRUDE_REGIONS);
                 pick(regions, document, sketch, profiles)
                     .map_err(|why| said("tool.profiles", why))?;
             }
             SplitWith::Line { sketch, curves } => {
-                let id = sketch_named(document, tool, sketch, edited)?;
+                let id = sketch_before(document, tool, sketch, edited)?;
                 for (at, &number) in curves.iter().enumerate() {
                     if curves[..at].contains(&number) {
                         let why = format!("curve {number} is named twice");
