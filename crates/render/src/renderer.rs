@@ -85,29 +85,15 @@ pub struct Renderer {
     outline_through: wgpu::RenderPipeline,
     hovered_edges_through: wgpu::RenderPipeline,
     vertices_through: wgpu::RenderPipeline,
-    /// What the model hides of the selected and hovered faces and edges,
-    /// over everything: the faces washed and striped, the edges dashed.
-    selected_face_hidden: wgpu::RenderPipeline,
+    /// What the model hides of the hovered and the selected faces and
+    /// edges, over everything, and the faces' pattern: a group each.
+    hover_pick: PickPipelines,
+    selection_pick: PickPipelines,
+    /// A face both hovered and selected, hidden and in the pattern's
+    /// mask: drawn with the selection's.
     hovered_selected_face_hidden: wgpu::RenderPipeline,
-    /// Marking where a hovered or selected face is the nearest in the
-    /// stencil (`PICK_MARKS`), which the hidden faces are drawn outside.
-    hovered_face_mark: wgpu::RenderPipeline,
-    selected_face_mark: wgpu::RenderPipeline,
-    /// The marks again into the pattern's mask, where the faces show, so
-    /// its edge isn't drawn where the face goes on but shows.
-    hovered_face_shown: wgpu::RenderPipeline,
-    selected_face_shown: wgpu::RenderPipeline,
-    selected_edges_hidden: wgpu::RenderPipeline,
-    hovered_face_hidden: wgpu::RenderPipeline,
-    hovered_edges_hidden: wgpu::RenderPipeline,
-    /// The rims of the hidden hovered and selected edges, dashed.
-    outline_hidden: wgpu::RenderPipeline,
-    selected_outline_hidden: wgpu::RenderPipeline,
-    /// The hovered and selected faces' pattern as a mask into
-    /// [`Slot::pattern_target`], and its edge from that over the frame.
-    selected_face_pattern: wgpu::RenderPipeline,
     hovered_selected_face_pattern: wgpu::RenderPipeline,
-    hovered_face_pattern: wgpu::RenderPipeline,
+    /// The pattern's edge, from [`Slot::pattern_target`], over the frame.
     pattern_edge: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The finished sketches' lines again where glass is the nearest of

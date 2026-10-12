@@ -311,26 +311,27 @@ impl Renderer {
         let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Store);
         let mut pass = self.begin(slot, encoder, target, depth, load, clip);
         bind_faces(&mut pass, mesh);
-        // The hover's, unless drawn whole, then the selection's over it.
-        let hover = (!slot.state.hover_through).then_some((
-            Tint::Hovered,
-            PICK_MARKS[0],
-            &self.hovered_face_shown,
-            &self.hovered_face_pattern,
-        ));
-        let selection = Some((
-            Tint::Selected,
-            PICK_MARKS[1],
-            &self.selected_face_shown,
-            &self.selected_face_pattern,
-        ));
-        for (tint, mark, marking, drawn) in hover.into_iter().chain(selection) {
+        for pick in self.picks(slot) {
             let both = &self.hovered_selected_face_pattern;
-            self.draw_marked_faces(&mut pass, slot, (tint, mark), marking, [drawn, both]);
+            self.draw_marked_faces(
+                &mut pass,
+                slot,
+                pick,
+                &pick.face_shown,
+                [&pick.face_pattern, both],
+            );
         }
     }
 
-    /// Records marking `slot`'s faces tinted `tint` with `mark` by
+    /// The hidden faces' and edges' pipelines `slot` draws with, in order:
+    /// the hover's, unless [`Frame::hover_through`] draws it whole, then
+    /// the selection's over it.
+    fn picks(&self, slot: &Slot) -> impl Iterator<Item = &PickPipelines> {
+        let hover = (!slot.state.hover_through).then_some(&self.hover_pick);
+        hover.into_iter().chain([&self.selection_pick])
+    }
+
+    /// Records marking `slot`'s faces tinted `pick.tint` with `pick.mark` by
     /// `marking`, then drawing them by `drawn`, in their parts' tints: a
     /// hovered face as the hover's only if it isn't selected too, a
     /// selected one also hovered by `both`.
@@ -338,10 +339,11 @@ impl Renderer {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         slot: &Slot,
-        (tint, mark): (Tint, u32),
+        pick: &PickPipelines,
         marking: &wgpu::RenderPipeline,
         [drawn, both]: [&wgpu::RenderPipeline; 2],
     ) {
+        let (tint, mark) = (pick.tint, pick.mark);
         pass.set_stencil_reference(mark);
         let tinted =
             || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
@@ -789,21 +791,11 @@ impl Renderer {
         pattern: Option<&CoverageTarget>,
     ) {
         let highlights = &slot.highlights;
-        let hover = (!slot.state.hover_through).then_some((
-            Tint::Hovered,
-            PICK_MARKS[0],
-            [&self.hovered_face_mark, &self.hovered_face_hidden],
-            [&self.outline_hidden, &self.hovered_edges_hidden],
-            &highlights.outlined,
-        ));
-        let selection = Some((
-            Tint::Selected,
-            PICK_MARKS[1],
-            [&self.selected_face_mark, &self.selected_face_hidden],
-            [&self.selected_outline_hidden, &self.selected_edges_hidden],
-            &highlights.selected,
-        ));
-        for (tint, mark, [marking, hidden], edges, drawn) in hover.into_iter().chain(selection) {
+        for pick in self.picks(slot) {
+            let drawn = match pick.tint {
+                Tint::Hovered => &highlights.outlined,
+                _ => &highlights.selected,
+            };
             // Marking where the faces are the nearest, then striping
             // where they're hidden, outside that: what they hide of
             // themselves, as a selected body's far side, isn't striped.
@@ -812,10 +804,10 @@ impl Renderer {
             // striped by the selection alone, from the hover's colour.
             bind_faces(pass, mesh);
             let both = &self.hovered_selected_face_hidden;
-            self.draw_marked_faces(pass, slot, (tint, mark), marking, [hidden, both]);
+            self.draw_marked_faces(pass, slot, pick, &pick.face_mark, [&pick.face_hidden, both]);
             // The hovered and selected faces' pattern's edge, from its
             // mask, over both.
-            if tint == Tint::Selected
+            if pick.tint == Tint::Selected
                 && let Some(pattern) = pattern
             {
                 self.alphas.set(pass, self.alphas.opaque);
@@ -827,7 +819,7 @@ impl Renderer {
             pass.set_stencil_reference(0);
             self.alphas.set(pass, self.alphas.opaque);
             if let Some(stream) = highlights.edges.held() {
-                for pipeline in edges {
+                for pipeline in &pick.edges_hidden {
                     draw_stream(pass, pipeline, stream, drawn.clone());
                 }
             }

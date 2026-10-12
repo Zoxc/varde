@@ -16,6 +16,28 @@ pub(super) const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {
 /// as hidden. Above the glass's references.
 pub(super) const PICK_MARKS: [u32; 2] = [0x40, 0x80];
 
+/// The pipelines drawing what the model hides of the faces and edges of
+/// one tint, hovered or selected, over everything (see
+/// [`Renderer::draw_hidden_picks`] and [`Renderer::draw_pattern`]).
+pub(super) struct PickPipelines {
+    /// The faces it draws.
+    pub(super) tint: Tint,
+    /// Its bit of [`PICK_MARKS`], which its pipelines are built with.
+    pub(super) mark: u32,
+    /// Marking where its faces are the nearest in the stencil, which the
+    /// hidden faces are drawn outside.
+    pub(super) face_mark: wgpu::RenderPipeline,
+    /// The marks again into the pattern's mask, where the faces show, so
+    /// its edge isn't drawn where the face goes on but shows.
+    pub(super) face_shown: wgpu::RenderPipeline,
+    /// The faces' pattern as a mask into [`Slot::pattern_target`].
+    pub(super) face_pattern: wgpu::RenderPipeline,
+    /// The hidden faces, washed and striped.
+    pub(super) face_hidden: wgpu::RenderPipeline,
+    /// The hidden edges, dashed: their rim, then the edges.
+    pub(super) edges_hidden: [wgpu::RenderPipeline; 2],
+}
+
 /// Each pixel keeps the most drawn there: the errors' halo's coverage, so
 /// overlapping halos don't add up, and where a face shows in the pattern's
 /// mask, so it never covers the pattern.
@@ -573,6 +595,67 @@ impl Renderer {
             ..face_mark(label, mark)
         };
 
+        // Exactly the pixels the edges didn't draw, as the hidden edges are
+        // the visible ones'.
+        let edges_hidden = |label, vs| {
+            pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..edge_pass(label, vs)
+            })
+        };
+        // Where something hides the faces, either side, but not where the
+        // faces so tinted are the nearest, as marked; the pattern's mask
+        // where it's drawn, opaque.
+        let hover_pick = {
+            let mark = PICK_MARKS[0];
+            PickPipelines {
+                tint: Tint::Hovered,
+                mark,
+                face_mark: pipeline(face_mark("varde hovered face mark", mark)),
+                face_shown: pipeline(face_shown("varde hovered face shown", mark)),
+                face_pattern: pipeline(face_pattern(
+                    "varde hovered face pattern",
+                    "fs_hovered_face_pattern",
+                    mark,
+                )),
+                face_hidden: pipeline(face_hidden(
+                    "varde hovered face hidden",
+                    "fs_hovered_face_hidden",
+                    mark,
+                )),
+                edges_hidden: [
+                    edges_hidden("varde hover outline hidden", "vs_outline_hidden"),
+                    edges_hidden("varde hovered edges hidden", "vs_hovered_edge_hidden"),
+                ],
+            }
+        };
+        let selection_pick = {
+            let mark = PICK_MARKS[1];
+            PickPipelines {
+                tint: Tint::Selected,
+                mark,
+                face_mark: pipeline(face_mark("varde selected face mark", mark)),
+                face_shown: pipeline(face_shown("varde selected face shown", mark)),
+                face_pattern: pipeline(face_pattern(
+                    "varde selected face pattern",
+                    "fs_selected_face_pattern",
+                    mark,
+                )),
+                face_hidden: pipeline(face_hidden(
+                    "varde selected face hidden",
+                    "fs_selected_face_hidden",
+                    mark,
+                )),
+                edges_hidden: [
+                    edges_hidden(
+                        "varde selected outline hidden",
+                        "vs_selected_outline_hidden",
+                    ),
+                    edges_hidden("varde selected edges hidden", "vs_selected_edge_hidden"),
+                ],
+            }
+        };
+
         // The errors' geometry where it shows and where the model hides
         // it: the same programs, so the two split the pixels between them.
         let (seen, hidden) = (
@@ -632,34 +715,19 @@ impl Renderer {
                 cull_mode: None,
                 ..mesh.clone()
             }),
-            // Where something hides it, either side, but not where the
-            // faces so tinted are the nearest, as marked.
-            selected_face_hidden: pipeline(face_hidden(
-                "varde selected face hidden",
-                "fs_selected_face_hidden",
-                PICK_MARKS[1],
-            )),
+            // A face both hovered and selected, drawn with the selection.
             hovered_selected_face_hidden: pipeline(face_hidden(
                 "varde hovered selected face hidden",
                 "fs_hovered_selected_face_hidden",
-                PICK_MARKS[1],
-            )),
-            // The pattern's mask: where it's drawn, opaque.
-            selected_face_pattern: pipeline(face_pattern(
-                "varde selected face pattern",
-                "fs_selected_face_pattern",
-                PICK_MARKS[1],
+                selection_pick.mark,
             )),
             hovered_selected_face_pattern: pipeline(face_pattern(
                 "varde hovered selected face pattern",
                 "fs_hovered_selected_face_pattern",
-                PICK_MARKS[1],
+                selection_pick.mark,
             )),
-            hovered_face_pattern: pipeline(face_pattern(
-                "varde hovered face pattern",
-                "fs_hovered_face_pattern",
-                PICK_MARKS[0],
-            )),
+            hover_pick,
+            selection_pick,
             pattern_edge: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Always,
                 layout: Some(&errors_layout),
@@ -669,15 +737,6 @@ impl Renderer {
                     "fs_pattern_edge",
                 )
             }),
-            hovered_face_hidden: pipeline(face_hidden(
-                "varde hovered face hidden",
-                "fs_hovered_face_hidden",
-                PICK_MARKS[0],
-            )),
-            hovered_face_mark: pipeline(face_mark("varde hovered face mark", PICK_MARKS[0])),
-            selected_face_mark: pipeline(face_mark("varde selected face mark", PICK_MARKS[1])),
-            hovered_face_shown: pipeline(face_shown("varde hovered face shown", PICK_MARKS[0])),
-            selected_face_shown: pipeline(face_shown("varde selected face shown", PICK_MARKS[1])),
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
@@ -685,27 +744,6 @@ impl Renderer {
             hovered_edges: pipeline(edge_pass("varde hovered edges", "vs_hovered_edge")),
             selected_outline: pipeline(edge_pass("varde selected outline", "vs_selected_outline")),
             selected_edges: pipeline(edge_pass("varde selected edges", "vs_selected_edge")),
-            // Exactly the pixels the selected edges didn't draw, as the
-            // hidden edges are the visible ones'.
-            selected_edges_hidden: pipeline(Pass {
-                depth_compare: wgpu::CompareFunction::Greater,
-                ..edge_pass("varde selected edges hidden", "vs_selected_edge_hidden")
-            }),
-            outline_hidden: pipeline(Pass {
-                depth_compare: wgpu::CompareFunction::Greater,
-                ..edge_pass("varde hover outline hidden", "vs_outline_hidden")
-            }),
-            selected_outline_hidden: pipeline(Pass {
-                depth_compare: wgpu::CompareFunction::Greater,
-                ..edge_pass(
-                    "varde selected outline hidden",
-                    "vs_selected_outline_hidden",
-                )
-            }),
-            hovered_edges_hidden: pipeline(Pass {
-                depth_compare: wgpu::CompareFunction::Greater,
-                ..edge_pass("varde hovered edges hidden", "vs_hovered_edge_hidden")
-            }),
             second_outline: pipeline(edge_pass("varde second outline", "vs_second_outline")),
             second_edges: pipeline(edge_pass("varde second edges", "vs_second_edge")),
             vertices: pipeline(Pass {
