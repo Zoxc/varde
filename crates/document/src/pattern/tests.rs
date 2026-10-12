@@ -143,20 +143,20 @@ fn counts_spacings_and_angles_are_checked() {
             value,
         };
         tamper(&mut wrong, value);
-        assert_eq!(wrong.check_own(&design), Err(MotionError::Count), "{text}");
+        assert_eq!(wrong.check_own(&design), Err(PatternError::Count), "{text}");
         // The count read alone goes by the value.
         assert_eq!(wrong.count().is_none(), alone, "{text}");
     }
     // Spacings: lengths within the limit, not zero.
     let mut wrong = linear(&document, &[a], "3", "0");
-    assert_eq!(wrong.check_own(&design), Err(MotionError::Spacing));
+    assert_eq!(wrong.check_own(&design), Err(PatternError::Spacing));
     if let PatternKind::Linear { spacing, .. } = &mut wrong.kind {
         *spacing = Value {
             text: "2e6".into(),
             value: 2e6,
         };
     }
-    assert_eq!(wrong.check_own(&design), Err(MotionError::Spacing));
+    assert_eq!(wrong.check_own(&design), Err(PatternError::Spacing));
     assert!(Value::new("30 deg", &Pattern::spacing_ask(&design)).is_err());
     // Angles: above zero, at most a turn.
     let ask = Pattern::angle_ask(&design);
@@ -170,21 +170,28 @@ fn counts_spacings_and_angles_are_checked() {
             value: 720f64.to_radians(),
         };
     }
-    assert_eq!(wrong.check_own(&design), Err(MotionError::Angle));
+    assert_eq!(
+        wrong.check_own(&design),
+        Err(PatternError::Motion(MotionError::Angle))
+    );
     // Bodies as a move's.
     assert_eq!(
         linear(&document, &[], "2", "1").check_own(&design),
-        Err(MotionError::Bodies(BodiesError::Count(0)))
+        Err(PatternError::Motion(MotionError::Bodies(
+            BodiesError::Count(0)
+        )))
     );
     assert_eq!(
         linear(&document, &[a, a], "2", "1").check_own(&design),
-        Err(MotionError::Bodies(BodiesError::Order))
+        Err(PatternError::Motion(MotionError::Bodies(
+            BodiesError::Order
+        )))
     );
     let many: Vec<BodyId> = (0..=MAX_FEATURE_BODIES as u64).map(BodyId).collect();
     assert_eq!(
         linear(&document, &many, "2", "1").check_own(&design),
-        Err(MotionError::Bodies(BodiesError::Count(
-            MAX_FEATURE_BODIES + 1
+        Err(PatternError::Motion(MotionError::Bodies(
+            BodiesError::Count(MAX_FEATURE_BODIES + 1)
         )))
     );
     // An axis edge's own parts.
@@ -201,7 +208,9 @@ fn counts_spacings_and_angles_are_checked() {
     });
     assert_eq!(
         edged.check_own(&design),
-        Err(MotionError::Ref(RefError::Edge(EdgeError::Faces)))
+        Err(PatternError::Motion(MotionError::Ref(RefError::Edge(
+            EdgeError::Faces
+        ))))
     );
 }
 
@@ -213,7 +222,10 @@ fn bodies_and_axes_name_what_comes_before() {
     let missing = BodyId(document.next_id + 3);
     assert_eq!(
         add(&mut editor, linear(&document, &[a, missing], "2", "5")).unwrap_err(),
-        EditError::Invalid(CheckError::Pattern(next, MotionError::Body(missing)))
+        EditError::Invalid(CheckError::Pattern(
+            next,
+            PatternError::Motion(MotionError::Body(missing))
+        ))
     );
     // An axis face made later is refused.
     let later = FeatureId(document.next_id + 1);
@@ -229,7 +241,10 @@ fn bodies_and_axes_name_what_comes_before() {
     });
     assert_eq!(
         add(&mut editor, wrong).unwrap_err(),
-        EditError::Invalid(CheckError::Pattern(next, MotionError::RefMaker(later)))
+        EditError::Invalid(CheckError::Pattern(
+            next,
+            PatternError::Motion(MotionError::RefMaker(later))
+        ))
     );
     // A pattern set in place of the first extrude can't copy a body
     // made after it.

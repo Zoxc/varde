@@ -289,23 +289,6 @@ pub enum MotionError {
     /// an angle [`Move::angle_ask`] takes; for a circular pattern, one
     /// [`Pattern::angle_ask`](crate::Pattern::angle_ask) takes.
     Angle,
-    /// A pattern's count's expression doesn't give its value, or the
-    /// value isn't a count [`Pattern::count_ask`](crate::Pattern::count_ask)
-    /// takes.
-    Count,
-    /// A linear pattern's spacing's expression doesn't give its value, or
-    /// the value isn't a length
-    /// [`Pattern::spacing_ask`](crate::Pattern::spacing_ask) takes, or is
-    /// zero.
-    Spacing,
-    /// A pattern whose copies aren't joined to their originals makes this
-    /// many new bodies, over
-    /// [`MAX_PATTERN_BODIES`](crate::pattern::MAX_PATTERN_BODIES).
-    Separate(usize),
-    /// A pattern's copy bodies aren't as [`Copies`](crate::Copies) lays
-    /// them out: not one per copy, repeated, not the pattern's own, or a
-    /// body it makes isn't listed (or a joined one makes bodies).
-    CopyBodies,
     /// Its axis's edge or face, or its plane's face, fails its own check.
     Ref(RefError),
     /// Its axis's or plane's body, this one, is made by the feature or one
@@ -329,18 +312,6 @@ impl fmt::Display for MotionError {
             ),
             MotionError::Offset => f.write_str("an offset's expression doesn't give its value"),
             MotionError::Angle => f.write_str("its angle's expression doesn't give its value"),
-            MotionError::Count => f.write_str("its count isn't a whole number from 2 to 1024"),
-            MotionError::Spacing => {
-                f.write_str("its spacing's expression doesn't give its value, or it's zero")
-            }
-            MotionError::Separate(count) => write!(
-                f,
-                "makes {count} bodies of its copies, over {}",
-                crate::pattern::MAX_PATTERN_BODIES
-            ),
-            MotionError::CopyBodies => {
-                f.write_str("its copy bodies aren't one of its own per copy")
-            }
             MotionError::Ref(why) => why.fmt(f),
             MotionError::RefBody(body) => write!(
                 f,

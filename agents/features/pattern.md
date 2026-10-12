@@ -74,7 +74,9 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
 - **Axes**: `AxisRef` as a move's turn has it (origin axes, straight or
   round model edges, round faces, found on the bodies as the features
   before it leave them).
-- **Checks** (`CheckError::Pattern(id, MotionError)`):
+- **Checks** (`CheckError::Pattern(id, PatternError)`: its own
+  `Count`, `Spacing`, `Separate`, `CopyBodies`, and a move's
+  `Motion(MotionError)` for the rest):
   `Pattern::check_own(design)`: bodies as a move's (`Bodies(BodiesError)`), the count by `Pattern::count_ask` (`Ask::number(…,
   1024).whole().at_least(2)`: `Count`), a linear spacing by
   `Pattern::spacing_ask` (a length within `MAX_COORD` of zero) and not

@@ -66,7 +66,9 @@ pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};
 pub use param::{Param, ParamError, ParamUses};
-pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
+pub use pattern::{
+    Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternError, PatternKind,
+};
 pub use plane::{FaceListError, FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use rename::{Named, NewName, Rename};

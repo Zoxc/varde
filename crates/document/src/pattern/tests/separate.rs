@@ -206,11 +206,11 @@ fn too_many_copy_bodies_are_refused() {
     let most = separate(linear(&document, &[a, b], "512", "1"));
     assert_eq!(most.check_own(&design), Ok(()));
     let over = separate(linear(&document, &[a, b], "514", "1"));
-    assert_eq!(over.check_own(&design), Err(MotionError::Separate(1026)));
+    assert_eq!(over.check_own(&design), Err(PatternError::Separate(1026)));
     let next = FeatureId(document.next_id);
     assert_eq!(
         add(&mut editor, over).unwrap_err(),
-        EditError::Invalid(CheckError::Pattern(next, MotionError::Separate(1026)))
+        EditError::Invalid(CheckError::Pattern(next, PatternError::Separate(1026)))
     );
     // Joined, the count is the only bound.
     assert_eq!(
@@ -251,7 +251,7 @@ fn wrong_copy_bodies_are_refused_when_read() {
     };
     let wrong = Err(crate::DecodeError::from(CheckError::Pattern(
         id,
-        MotionError::CopyBodies,
+        PatternError::CopyBodies,
     )));
     assert_eq!(read(&|_| {}), Ok(document.clone()));
     // One short, one too many, repeated, swapped for an original.
@@ -307,7 +307,7 @@ fn wrong_copy_bodies_are_refused_when_read() {
         read(&many),
         Err(crate::DecodeError::from(CheckError::Pattern(
             id,
-            MotionError::Separate(1998)
+            PatternError::Separate(1998)
         )))
     );
 }

@@ -12,9 +12,9 @@ use crate::{
     Copies, Document, EdgeRef, Extrude, ExtrudeError, FaceDraftError, FaceRef, FaceSetError,
     FeatureId, FeatureKind, FilletError, LinkError, LinkSource, Loft, LoftError, MAX_NAME_LEN,
     MotionError, OffsetFaceError, Opacity, Operation, OperationError, OutsideRef, ParamError,
-    PathPart, PathRef, Pattern, Plane, PlaneError, PlaneRef, PointRef, Revolve, RevolveError,
-    Scale, ScaleError, ShellError, Split, SplitError, SplitTool, Sweep, SweepError, Tint, motion,
-    param,
+    PathPart, PathRef, Pattern, PatternError, Plane, PlaneError, PlaneRef, PointRef, Revolve,
+    RevolveError, Scale, ScaleError, ShellError, Split, SplitError, SplitTool, Sweep, SweepError,
+    Tint, motion, param,
 };
 
 impl Document {
@@ -183,7 +183,7 @@ impl Document {
                     .check_own(design)
                     .map_err(|why| CheckError::Pattern(id, why))?;
                 self.check_motion(index, &pattern.bodies, pattern.referred())
-                    .map_err(|why| CheckError::Pattern(id, why))?;
+                    .map_err(|why| CheckError::Pattern(id, why.into()))?;
                 let made = copies.get(&id).copied().unwrap_or(0);
                 self.check_copies(id, pattern, made)
                     .map_err(|why| CheckError::Pattern(id, why))?;
@@ -495,7 +495,7 @@ impl Document {
         id: FeatureId,
         pattern: &Pattern,
         made: usize,
-    ) -> Result<(), MotionError> {
+    ) -> Result<(), PatternError> {
         let listed: &[BodyId] = match &pattern.copies {
             Copies::Joined => &[],
             Copies::Separate(listed) => listed,
@@ -506,7 +506,7 @@ impl Document {
             pattern.separate_count()
         };
         if wanted != Some(listed.len()) || made != listed.len() {
-            return Err(MotionError::CopyBodies);
+            return Err(PatternError::CopyBodies);
         }
         let mut sorted = listed.to_vec();
         sorted.sort_unstable();
@@ -514,7 +514,7 @@ impl Document {
         let theirs =
             (listed.iter()).all(|&body| self.body(body).is_some_and(|b| b.created_by == id));
         if repeated || !theirs {
-            return Err(MotionError::CopyBodies);
+            return Err(PatternError::CopyBodies);
         }
         Ok(())
     }
@@ -863,8 +863,8 @@ pub enum CheckError {
     Move(FeatureId, MotionError),
     /// A mirror feature is wrong, see [`MotionError`].
     Mirror(FeatureId, MotionError),
-    /// A pattern feature is wrong, see [`MotionError`].
-    Pattern(FeatureId, MotionError),
+    /// A pattern feature is wrong, see [`PatternError`].
+    Pattern(FeatureId, PatternError),
     /// An align feature is wrong, see [`AlignError`].
     Align(FeatureId, AlignError),
     /// A scale feature is wrong, see [`ScaleError`].
@@ -948,9 +948,10 @@ impl fmt::Display for CheckError {
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Combine(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Move(id, why)
-            | CheckError::Mirror(id, why)
-            | CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Move(id, why) | CheckError::Mirror(id, why) => {
+                write!(f, "feature {}: {why}", id.0)
+            }
+            CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Align(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Scale(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Split(id, why) => write!(f, "feature {}: {why}", id.0),
@@ -997,9 +998,8 @@ impl std::error::Error for CheckError {
             CheckError::Extrude(_, why) => Some(why),
             CheckError::Revolve(_, why) => Some(why),
             CheckError::Combine(_, why) => Some(why),
-            CheckError::Move(_, why) | CheckError::Mirror(_, why) | CheckError::Pattern(_, why) => {
-                Some(why)
-            }
+            CheckError::Move(_, why) | CheckError::Mirror(_, why) => Some(why),
+            CheckError::Pattern(_, why) => Some(why),
             CheckError::Align(_, why) => Some(why),
             CheckError::Scale(_, why) => Some(why),
             CheckError::Split(_, why) => Some(why),

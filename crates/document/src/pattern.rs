@@ -4,6 +4,7 @@
 //! body of its own.
 
 use std::f64::consts::TAU;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -260,25 +261,25 @@ impl Pattern {
     /// listed, is
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
-    pub fn check_own(&self, design: &Design) -> Result<(), MotionError> {
+    pub fn check_own(&self, design: &Design) -> Result<(), PatternError> {
         check_bodies(&self.bodies).map_err(MotionError::Bodies)?;
         (self.kind.count_value())
             .check(&Pattern::count_ask(design))
-            .map_err(|_| MotionError::Count)?;
+            .map_err(|_| PatternError::Count)?;
         if !self.joins() {
             // The count is checked, so this is a product in range.
             let bodies = self.separate_count().unwrap_or(usize::MAX);
             if bodies > MAX_PATTERN_BODIES {
-                return Err(MotionError::Separate(bodies));
+                return Err(PatternError::Separate(bodies));
             }
         }
         match &self.kind {
             PatternKind::Linear { spacing, .. } => {
                 spacing
                     .check(&Pattern::spacing_ask(design))
-                    .map_err(|_| MotionError::Spacing)?;
+                    .map_err(|_| PatternError::Spacing)?;
                 if spacing.value == 0.0 {
-                    return Err(MotionError::Spacing);
+                    return Err(PatternError::Spacing);
                 }
             }
             PatternKind::Circular { angle, .. } => angle
@@ -308,6 +309,62 @@ impl Pattern {
                 (count, Pattern::count_ask(design)),
                 (angle, Pattern::angle_ask(design)),
             ],
+        }
+    }
+}
+
+/// What's wrong with a pattern, see
+/// [`CheckError::Pattern`](crate::CheckError::Pattern).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PatternError {
+    /// What it shares with a move: its bodies, its angle or its axis.
+    Motion(MotionError),
+    /// Its count's expression doesn't give its value, or the value isn't
+    /// a count [`Pattern::count_ask`] takes.
+    Count,
+    /// A linear pattern's spacing's expression doesn't give its value, or
+    /// the value isn't a length [`Pattern::spacing_ask`] takes, or is
+    /// zero.
+    Spacing,
+    /// Its copies aren't joined to their originals and make this many new
+    /// bodies, over [`MAX_PATTERN_BODIES`].
+    Separate(usize),
+    /// Its copy bodies aren't as [`Copies`] lays them out: not one per
+    /// copy, repeated, not the pattern's own, or a body it makes isn't
+    /// listed (or a joined one makes bodies).
+    CopyBodies,
+}
+
+impl From<MotionError> for PatternError {
+    fn from(why: MotionError) -> Self {
+        PatternError::Motion(why)
+    }
+}
+
+impl fmt::Display for PatternError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PatternError::Motion(why) => why.fmt(f),
+            PatternError::Count => f.write_str("its count isn't a whole number from 2 to 1024"),
+            PatternError::Spacing => {
+                f.write_str("its spacing's expression doesn't give its value, or it's zero")
+            }
+            PatternError::Separate(count) => write!(
+                f,
+                "makes {count} bodies of its copies, over {MAX_PATTERN_BODIES}"
+            ),
+            PatternError::CopyBodies => {
+                f.write_str("its copy bodies aren't one of its own per copy")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PatternError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PatternError::Motion(why) => Some(why),
+            _ => None,
         }
     }
 }
