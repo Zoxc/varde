@@ -36,19 +36,27 @@ pub(crate) enum Lock<H> {
     /// The design's sidecar, held.
     Sidecar {
         sidecar: H,
-        /// Whether it holds what a crashed session left, offered to the
-        /// user as [`Opened::recovered`](crate::Opened::recovered) and not
-        /// answered yet: until it's discarded or auto-saved over, saves
-        /// leave it be. So is one whose records are all damaged, or that
-        /// couldn't be read, which the offer says why.
-        offered: bool,
-        /// Whether it's offered so, as one that can't be read
-        /// ([`RecoveryError::kept`]): auto-saves are refused till it's
-        /// discarded.
-        kept: bool,
+        /// What a crashed session left in it, offered to the user and not
+        /// answered yet.
+        left: Left,
     },
     /// Not held: the document is read-only.
     ReadOnly(ReadOnly),
+}
+
+/// What a crashed session left in a held sidecar, as offered to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Left {
+    /// Nothing offered, or the offer is answered.
+    Nothing,
+    /// Offered as [`Opened::recovered`](crate::Opened::recovered), not
+    /// answered yet: until it's discarded or auto-saved over, saves leave
+    /// it be. So is one whose records are all damaged, which the offer
+    /// says why.
+    Offered,
+    /// Offered so, as one that can't be read ([`RecoveryError::kept`]):
+    /// auto-saves are refused, too, till it's discarded.
+    Kept,
 }
 
 impl<H: AsHeld> Lock<H> {
@@ -57,8 +65,7 @@ impl<H: AsHeld> Lock<H> {
         match taken {
             Ok(sidecar) => Lock::Sidecar {
                 sidecar,
-                offered: false,
-                kept: false,
+                left: Left::Nothing,
             },
             Err(read_only) => Lock::ReadOnly(read_only),
         }
@@ -70,8 +77,8 @@ impl<H: AsHeld> Lock<H> {
     /// auto-save based on a save of the design was based on a newer one
     /// than the one opened, which couldn't be read (see
     /// [`vrdp::based_past`](crate::vrdp::based_past)). Marks the lock
-    /// `offered` if there's an offer, and `kept` too if it's kept as it
-    /// can't be read.
+    /// [`Left::Offered`] if there's an offer, or [`Left::Kept`] if it's
+    /// kept as it can't be read.
     pub(crate) fn offer(
         &mut self,
         tail: Tail,
@@ -80,18 +87,13 @@ impl<H: AsHeld> Lock<H> {
     ) -> Result<Option<Offer>, RecoveryError> {
         // Only the editor holding the lock may look: otherwise the sidecar
         // is another editor's, auto-saving as it goes.
-        let Lock::Sidecar {
-            sidecar,
-            offered,
-            kept,
-        } = self
-        else {
+        let Lock::Sidecar { sidecar, left } = self else {
             return Ok(None);
         };
-        (*offered, *kept) = (false, false);
+        *left = Left::Nothing;
         match sidecar.as_held().read_with_report() {
             Ok(Some(read)) if *read.payload.document != *document => {
-                *offered = true;
+                *left = Left::Offered;
                 let recovered = read.payload;
                 let newer_base = recovered
                     .base
@@ -111,7 +113,9 @@ impl<H: AsHeld> Lock<H> {
                 // over, nor do saves empty it. What can't ever be read,
                 // auto-saving starts over.
                 let unreadable = matches!(error, FileError::Corrupt { .. } | FileError::Io(_));
-                (*offered, *kept) = (unreadable, unreadable);
+                if unreadable {
+                    *left = Left::Kept;
+                }
                 let message = match error {
                     FileError::Corrupt { .. } => {
                         "what was auto-saved is damaged and can't be read".to_owned()
@@ -129,7 +133,13 @@ impl<H: AsHeld> Lock<H> {
     /// Whether it holds what a crashed session left that can't be read,
     /// kept till the user discards it, see [`RecoveryError::kept`].
     pub(crate) fn kept(&self) -> bool {
-        matches!(self, Lock::Sidecar { kept: true, .. })
+        matches!(
+            self,
+            Lock::Sidecar {
+                left: Left::Kept,
+                ..
+            }
+        )
     }
 
     pub(crate) fn access(&self) -> Access {
@@ -154,13 +164,19 @@ impl<H: AsHeld> Lock<H> {
     }
 
     pub(crate) fn offered(&self) -> bool {
-        matches!(self, Lock::Sidecar { offered: true, .. })
+        matches!(
+            self,
+            Lock::Sidecar {
+                left: Left::Offered | Left::Kept,
+                ..
+            }
+        )
     }
 
     /// The user answered the offer of what a crashed session left.
     pub(crate) fn answered(&mut self) {
-        if let Lock::Sidecar { offered, kept, .. } = self {
-            (*offered, *kept) = (false, false);
+        if let Lock::Sidecar { left, .. } = self {
+            *left = Left::Nothing;
         }
     }
 
@@ -209,8 +225,7 @@ impl<H: AsHeld> Lock<H> {
     pub(crate) fn saved(&mut self) {
         if let Lock::Sidecar {
             sidecar,
-            offered: false,
-            ..
+            left: Left::Nothing,
         } = self
         {
             let _ = sidecar.as_held().clear();

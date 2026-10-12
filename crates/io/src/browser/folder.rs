@@ -17,7 +17,7 @@ use super::{BrowserDesign, DownloadStatus, is_design_name, within};
 use crate::autosave::{AutoSaved, Ending, Held, Origin};
 use crate::dir::{Dir, Make, remove_if_free, take_waiting};
 use crate::downloads::Downloads;
-use crate::lock::{Lock, READ_ONLY};
+use crate::lock::{Left, Lock, READ_ONLY};
 use crate::vrdp::{
     self, Error as FileError, FileEnd, Known, Preview, Storage, Tail, WithFound,
     from_bytes_with_report, write_new,
@@ -472,8 +472,8 @@ pub(crate) async fn rename<D: Dir>(
         }
         let _ = end(dir, &design.name, held, Ending::Close).await;
     }
-    if offered && let Lock::Sidecar { offered, .. } = &mut lock {
-        *offered = true;
+    if offered && let Lock::Sidecar { left, .. } = &mut lock {
+        *left = Left::Offered;
     }
     design.lock = lock;
     design.name = to.to_owned();
