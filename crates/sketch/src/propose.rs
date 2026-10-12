@@ -136,14 +136,15 @@ pub fn propose(
 ) -> Result<Accepted, Rejected> {
     let (applied, auto) = edit.apply_marked(sketch, design).map_err(Rejected::Edit)?;
     let driving = edit.driving(sketch, &applied);
-    proposed(sketch, edit, applied, auto, design, budget).map_err(|why| {
+    proposed(sketch, edit, applied, auto, &driving, design, budget).map_err(|why| {
         let involved = match &why {
             Rejected::Redundant { involved }
             | Rejected::Unsolved(Failure::NotConverged { involved }) => involved,
             _ => return why,
         };
         let dimensions: BTreeSet<Id> = driving
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|id| involved.contains(id))
             .collect();
         if dimensions.is_empty() {
@@ -157,12 +158,14 @@ pub fn propose(
 }
 
 /// [`propose`] once `edit` is `applied`, `auto` the ids its `auto`
-/// constraints got.
+/// constraints got and `driving` its new driving dimensions
+/// ([`SketchEdit::driving`]).
 fn proposed(
     sketch: &Sketch,
     edit: &SketchEdit,
     applied: Sketch,
     auto: Vec<Id>,
+    driving: &[Id],
     design: &Design,
     budget: &Budget,
 ) -> Result<Accepted, Rejected> {
@@ -191,10 +194,9 @@ fn proposed(
     // placed to the values they're given, as a value set does.
     let applied = match edit {
         SketchEdit::Add(_) => {
-            let placed: Vec<_> = edit
-                .driving(sketch, &applied)
-                .into_iter()
-                .filter_map(|id| {
+            let placed: Vec<_> = driving
+                .iter()
+                .filter_map(|&id| {
                     let dimension = &applied.dimension(id)?.dimension;
                     let old = applied.measure(&dimension.measure, dimension.side)?;
                     (old > 0.0).then_some((id, old, dimension.value.value))
