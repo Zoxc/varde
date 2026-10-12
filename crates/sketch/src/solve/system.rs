@@ -265,6 +265,29 @@ impl System {
     /// than the place nearest it: dragged along a spline, it starts where
     /// it's going, not across from where it was.
     pub fn toward(sketch: &Sketch, fixing: Fixing, targets: &HashMap<Id, DVec2>) -> Self {
+        let linked = sketch.linked();
+        let mut system = System::slots(sketch, fixing, &linked);
+        system.read_splines(sketch);
+        let images = images(sketch);
+        system.add_arc_radii(sketch, &images, &linked);
+        system.add_handles(sketch);
+        system.add_corners(sketch, &images);
+        for entry in &sketch.constraints {
+            system.add(sketch, entry.id, &entry.constraint, fixing, targets);
+        }
+        for entry in &sketch.dimensions {
+            if entry.dimension.driving {
+                system.add_dimension(sketch, entry.id, &entry.dimension, targets);
+            }
+        }
+        system
+    }
+
+    /// The system with a slot for each point's coordinates and each
+    /// circle's radius, and no equations yet: a constant where held (a
+    /// fixed item's, under [`Fixing::Constants`], or one of `linked`),
+    /// else a variable.
+    fn slots(sketch: &Sketch, fixing: Fixing, linked: &HashSet<Id>) -> Self {
         let mut fixed = HashSet::new();
         for entry in &sketch.constraints {
             if let Constraint::Fix(item) = entry.constraint {
@@ -277,7 +300,6 @@ impl System {
         let constant = fixing == Fixing::Constants;
         // A link's points and radii are constants however a fix is
         // modelled, as the origin's are: nothing in the sketch moves them.
-        let linked = sketch.linked();
         let held = |id: &Id| (constant && fixed.contains(id)) || linked.contains(id);
         let mut values = Vec::new();
         let mut slot = |value: f64, held: bool| {
@@ -304,17 +326,20 @@ impl System {
                 _ => None,
             })
             .collect();
-        let mut system = System {
+        System {
             values,
             equations: Vec::new(),
             points,
             radii,
             bounds: Vec::new(),
             splines: HashMap::new(),
-        };
-        system.read_splines(sketch);
-        let images = images(sketch);
-        let mirrored = mirrored_arcs(sketch, &images);
+        }
+    }
+
+    /// Holds each arc's end at its start's distance from its centre,
+    /// but for a mirror image's (see [`mirrored_arcs`]) and a link's.
+    fn add_arc_radii(&mut self, sketch: &Sketch, images: &Images, linked: &HashSet<Id>) {
+        let mirrored = mirrored_arcs(sketch, images);
         for entry in &sketch.curves {
             // A link's arc is held as found: its radii are constants,
             // equal to rounding, so no equation of its own. A closed
@@ -324,18 +349,21 @@ impl System {
                 && !mirrored.contains(&entry.id)
                 && !linked.contains(&entry.id)
                 && let (Some(center), Some(start), Some(end)) = (
-                    system.point(sketch, center),
-                    system.point(sketch, start),
-                    system.point(sketch, end),
+                    self.point(sketch, center),
+                    self.point(sketch, start),
+                    self.point(sketch, end),
                 )
             {
-                system.push(entry.id, Residual::ArcRadius { center, start, end });
+                self.push(entry.id, Residual::ArcRadius { center, start, end });
             }
         }
-        // A handle's end mirrors its tip in its fit point.
+    }
+
+    /// Holds each spline handle's end mirroring its tip in its fit point.
+    fn add_handles(&mut self, sketch: &Sketch) {
         for (id, spline) in sketch.splines() {
             for handle in &spline.handles {
-                let slots = |id| system.point(sketch, id);
+                let slots = |id| self.point(sketch, id);
                 if let (Some(center), Some(a), Some(b)) =
                     (slots(handle.at), slots(handle.tip), slots(handle.end))
                 {
@@ -344,50 +372,58 @@ impl System {
                         // Nothing to hold where all three are fixed.
                         let constant = |slot| matches!(slot, Slot::Const(_));
                         if ![a, b, center].into_iter().all(constant) {
-                            system.push(id, Residual::Mirrored { a, b, center });
+                            self.push(id, Residual::Mirrored { a, b, center });
                         }
                     }
                 }
             }
         }
-        let mirrored = mirrored_corners(sketch, &images);
+    }
+
+    /// The equations of each corner: implied by its mirror image's where
+    /// it has one (see [`mirrored_corners`]), else its own.
+    fn add_corners(&mut self, sketch: &Sketch, images: &Images) {
+        let mirrored = mirrored_corners(sketch, images);
         for entry in &sketch.curves {
             let Some(corner) = entry.corner else {
                 continue;
             };
             match mirrored.get(&entry.id) {
-                Some((about, shared)) => system.implied(sketch, entry.id, *about, shared),
+                Some((about, shared)) => self.implied(sketch, entry.id, *about, shared),
                 None => {
-                    for residual in system.corner(sketch, entry, corner).into_iter().flatten() {
-                        system.push(entry.id, residual);
+                    for residual in self.corner(sketch, entry, corner).into_iter().flatten() {
+                        self.push(entry.id, residual);
                     }
                 }
             }
         }
-        for entry in &sketch.constraints {
-            system.add(sketch, entry.id, &entry.constraint, fixing, targets);
-        }
-        for entry in &sketch.dimensions {
-            let dimension = &entry.dimension;
-            if !dimension.driving {
-                continue;
+    }
+
+    /// Adds the equation of the driving dimension `source`, or none if
+    /// it names what the sketch doesn't have. An offset's pair is read
+    /// here, as it may add equations of its own (see
+    /// [`System::pair_read`]); the others' are [`System::dimension`]'s.
+    fn add_dimension(
+        &mut self,
+        sketch: &Sketch,
+        source: Id,
+        dimension: &Dimension,
+        targets: &HashMap<Id, DVec2>,
+    ) {
+        let residual = match dimension.measure {
+            Measure::Offset(a, b) => {
+                self.pair_read(sketch, source, [a, b], targets)
+                    .map(|pair| Residual::PairOffset {
+                        pair,
+                        sign: dimension.side.sign(),
+                        value: dimension.value.value,
+                    })
             }
-            let residual =
-                match dimension.measure {
-                    Measure::Offset(a, b) => system
-                        .pair_read(sketch, entry.id, [a, b], targets)
-                        .map(|pair| Residual::PairOffset {
-                            pair,
-                            sign: dimension.side.sign(),
-                            value: dimension.value.value,
-                        }),
-                    _ => system.dimension(sketch, dimension),
-                };
-            if let Some(residual) = residual {
-                system.push(entry.id, residual);
-            }
+            _ => self.dimension(sketch, dimension),
+        };
+        if let Some(residual) = residual {
+            self.push(source, residual);
         }
-        system
     }
 
     /// Maps the splines the constraints and dimensions read (a point on
@@ -869,69 +905,75 @@ impl System {
                     Residual::Across { a, b, line },
                 ]
             }
-            // Its pairs may add equations of their own: see `System::add`.
+            // Read by `System::add`, never reaching here.
             Constraint::EqualOffset { .. } => return None,
-            Constraint::Fix(item) => {
-                if fixing == Fixing::Constants {
-                    return Some(Vec::new());
+            Constraint::Fix(item) => return self.fix(sketch, item, fixing),
+        })
+    }
+
+    /// The equations of a fix of `item`: none under
+    /// [`Fixing::Constants`], whose slots are constants already, else
+    /// each of its slots held where it is.
+    fn fix(&self, sketch: &Sketch, item: Id, fixing: Fixing) -> Option<Vec<Residual>> {
+        let point = |id| self.point(sketch, id);
+        if fixing == Fixing::Constants {
+            return Some(Vec::new());
+        }
+        let mut slots: Vec<Slot> = Vec::new();
+        let mut residuals = Vec::new();
+        if let Some(p) = point(item) {
+            slots.extend(p);
+        } else {
+            let index = sketch.curve_index(item)?;
+            let entry = &sketch.curves[index];
+            match entry.curve {
+                // Its radius equation holds the end at the
+                // start's distance, so only the end's direction
+                // from the centre is left to fix: nothing for a
+                // closed arc's.
+                Curve::Arc { center, start, end } if start == end => {
+                    slots.extend(point(center)?);
+                    slots.extend(point(start)?);
                 }
-                let mut slots: Vec<Slot> = Vec::new();
-                let mut residuals = Vec::new();
-                if let Some(p) = point(item) {
-                    slots.extend(p);
-                } else {
-                    let index = sketch.curve_index(item)?;
-                    let entry = &sketch.curves[index];
-                    match entry.curve {
-                        // Its radius equation holds the end at the
-                        // start's distance, so only the end's direction
-                        // from the centre is left to fix: nothing for a
-                        // closed arc's.
-                        Curve::Arc { center, start, end } if start == end => {
-                            slots.extend(point(center)?);
-                            slots.extend(point(start)?);
-                        }
-                        Curve::Arc { center, start, end } => {
-                            let (center, end) = (point(center)?, point(end)?);
-                            slots.extend(center);
-                            slots.extend(point(start)?);
-                            let at = |p: PointSlots| p.map(|slot| self.value(slot));
-                            let ([cx, cy], [ex, ey]) = (at(center), at(end));
-                            let (dx, dy) = (ex - cx, ey - cy);
-                            let length = angle::hypot(dx, dy);
-                            if length > 0.0 {
-                                residuals.push(Residual::FixDirection {
-                                    point: end,
-                                    center,
-                                    direction: [dx / length, dy / length],
-                                });
-                            } else {
-                                slots.extend(end);
-                            }
-                        }
-                        // A spline's handles' ends mirror their tips:
-                        // held by those equations, not fixed again.
-                        Curve::Spline(ref spline) => {
-                            let ends: Vec<Id> = spline.handles.iter().map(|h| h.end).collect();
-                            for id in entry.curve.points().filter(|id| !ends.contains(id)) {
-                                slots.extend(point(id)?);
-                            }
-                        }
-                        _ => {
-                            for id in entry.curve.points() {
-                                slots.extend(point(id)?);
-                            }
-                            slots.extend(self.radii[index]);
-                        }
+                Curve::Arc { center, start, end } => {
+                    let (center, end) = (point(center)?, point(end)?);
+                    slots.extend(center);
+                    slots.extend(point(start)?);
+                    let at = |p: PointSlots| p.map(|slot| self.value(slot));
+                    let ([cx, cy], [ex, ey]) = (at(center), at(end));
+                    let (dx, dy) = (ex - cx, ey - cy);
+                    let length = angle::hypot(dx, dy);
+                    if length > 0.0 {
+                        residuals.push(Residual::FixDirection {
+                            point: end,
+                            center,
+                            direction: [dx / length, dy / length],
+                        });
+                    } else {
+                        slots.extend(end);
                     }
                 }
-                residuals.extend(slots.into_iter().map(|slot| Residual::Fix {
-                    slot,
-                    at: self.value(slot),
-                }));
-                residuals
+                // A spline's handles' ends mirror their tips:
+                // held by those equations, not fixed again.
+                Curve::Spline(ref spline) => {
+                    let ends: Vec<Id> = spline.handles.iter().map(|h| h.end).collect();
+                    for id in entry.curve.points().filter(|id| !ends.contains(id)) {
+                        slots.extend(point(id)?);
+                    }
+                }
+                _ => {
+                    for id in entry.curve.points() {
+                        slots.extend(point(id)?);
+                    }
+                    slots.extend(self.radii[index]);
+                }
             }
-        })
+        }
+        residuals.extend(slots.into_iter().map(|slot| Residual::Fix {
+            slot,
+            at: self.value(slot),
+        }));
+        Some(residuals)
     }
 
     /// The equation of a driving dimension, or none if it names what the
@@ -1002,7 +1044,7 @@ impl System {
                 round: self.round(sketch, id)?,
                 value: value / 2.0,
             },
-            // Its pair may add equations of its own: see `System::toward`.
+            // Read by `System::add_dimension`, never reaching here.
             Measure::Offset(..) => return None,
             Measure::EdgeDistance(round, other) => Residual::EdgeGap {
                 round: self.round(sketch, round)?,
