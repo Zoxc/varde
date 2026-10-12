@@ -815,31 +815,21 @@ impl Files {
         let title = Some(picked.name.clone());
         let file = match file {
             Some(file) => {
-                let has_entry = matches!(self.open.get_mut(file)?.place, Place::Entry(_));
-                // A design leaving browser storage gets an entry for its
-                // auto-saves, as one opened from a file of the user's.
-                let entry = if has_entry {
-                    None
-                } else {
-                    Some(self.entry().await)
-                };
                 let open = self.open.get_mut(file)?;
                 open.found = None;
-                match (&mut open.place, entry) {
-                    (Place::Entry(unsaved), None) => {
-                        unsaved.disk = disk;
-                        unsaved.title = title;
-                        unsaved.saved();
-                    }
-                    (_, entry) => {
-                        let unsaved = Unsaved {
-                            entry: entry.unwrap_or_else(|| Err(NOT_FOUND.to_owned())),
-                            disk,
-                            title,
-                        };
-                        let old = mem::replace(&mut open.place, Place::Entry(unsaved));
-                        self.saved_elsewhere(old).await;
-                    }
+                if let Place::Entry(unsaved) = &mut open.place {
+                    unsaved.disk = disk;
+                    unsaved.title = title;
+                    unsaved.saved();
+                } else {
+                    // A design leaving browser storage gets an entry for
+                    // its auto-saves, as one opened from a file of the
+                    // user's.
+                    let entry = self.entry().await;
+                    let unsaved = Unsaved { entry, disk, title };
+                    let open = self.open.get_mut(file)?;
+                    let old = mem::replace(&mut open.place, Place::Entry(unsaved));
+                    self.saved_elsewhere(old).await;
                 }
                 file
             }
