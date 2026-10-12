@@ -36,7 +36,7 @@
 
 use glam::{DMat3, DVec3};
 
-use super::{Motion, outer};
+use super::{Motion, outer, unit};
 use crate::MAX_COORD;
 
 /// How near its primary, as the sine of the angle between them, a
@@ -173,7 +173,7 @@ impl Motion {
                     return Err(AlignError::Options);
                 }
                 let shift = target.point - moved.point;
-                return Ok(Motion::translation(shift + DVec3::ZERO).expect("within range"));
+                return Motion::translation(shift + DVec3::ZERO).ok_or(AlignError::Point);
             }
             _ => return Err(AlignError::Unpaired),
         };
@@ -232,19 +232,6 @@ impl Motion {
             ..Motion::IDENTITY
         })
     }
-}
-
-/// `v` scaled to unit length by dividing by its length, after dividing by
-/// its largest coordinate (so its square neither overflows nor
-/// underflows, and a vector along a world axis is that axis exactly);
-/// `None` for a zero or non-finite vector.
-fn unit(v: DVec3) -> Option<DVec3> {
-    let largest = v.abs().max_element();
-    if !v.is_finite() || largest == 0.0 {
-        return None;
-    }
-    let v = v / largest;
-    Some(v / v.length())
 }
 
 /// A direction square to the unit `d`, as a sketch placement on a plane

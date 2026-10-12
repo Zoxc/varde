@@ -21,7 +21,7 @@ const WEIGHTS: [f64; 4] = [
 
 /// The 8-point Gauss–Legendre rule on `[0, 1]`, as `(node, weight)` in
 /// ascending order of the nodes. The weights sum to 1.
-pub(crate) const GAUSS8: [(f64, f64); 8] = {
+pub const GAUSS8: [(f64, f64); 8] = {
     let mut out = [(0.0, 0.0); 8];
     let mut i = 0;
     while i < 4 {

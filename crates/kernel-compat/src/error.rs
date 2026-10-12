@@ -5,18 +5,18 @@ use crate::profile::ProfileError;
 
 /// Why a kernel operation gives no solid. It never gives an invalid one
 /// instead.
+///
+/// The variants are the old kernel's, which callers match on. The facade
+/// itself only gives [`TooComplex`](Self::TooComplex) and
+/// [`NotImplemented`](Self::NotImplemented), and the Varde kernel's own
+/// [`varde_kernel::KernelError`] converts into this one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KernelError {
-    /// The operation ran out of its [`Budget`](crate::Budget), or needed
-    /// more than [`MAX_PATCHES`](crate::MAX_PATCHES) patches or deeper
-    /// refinement than [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), or
-    /// past another limit that keeps it from running on. Never for detail
-    /// too small for the tolerance: that is [`Invalid`](Self::Invalid) or
-    /// [`ProfileError::TooFine`].
+    /// The operation ran out of its [`Budget`](crate::Budget), or past
+    /// another limit that keeps it from running on.
     TooComplex,
     /// The input breaks an invariant the operation can't restore, such
-    /// as its topology, or comes out invalid for the tolerance (a solid
-    /// too small for its resolution, say).
+    /// as its topology, or comes out invalid for the tolerance.
     Invalid(CheckError),
     /// A parameter or a split gave geometry outside the patch bounds.
     Patch(PatchError),
@@ -24,8 +24,8 @@ pub enum KernelError {
     Profile(ProfileError),
     /// A boolean that can't be worked out.
     Boolean(BooleanError),
-    /// The operation, or this case of it, isn't implemented yet; names
-    /// what isn't.
+    /// The operation, or this case of it, isn't implemented yet (in the
+    /// Varde kernel, which replaces the old one); names what isn't.
     NotImplemented(&'static str),
 }
 
@@ -44,6 +44,15 @@ impl std::fmt::Display for KernelError {
 
 impl std::error::Error for KernelError {}
 
+impl From<varde_kernel::KernelError> for KernelError {
+    fn from(e: varde_kernel::KernelError) -> Self {
+        match e {
+            varde_kernel::KernelError::TooComplex => KernelError::TooComplex,
+            varde_kernel::KernelError::NotImplemented(what) => KernelError::NotImplemented(what),
+        }
+    }
+}
+
 impl From<PatchError> for KernelError {
     fn from(e: PatchError) -> Self {
         KernelError::Patch(e)
@@ -53,5 +62,11 @@ impl From<PatchError> for KernelError {
 impl From<ProfileError> for KernelError {
     fn from(e: ProfileError) -> Self {
         KernelError::Profile(e)
+    }
+}
+
+impl From<CheckError> for KernelError {
+    fn from(e: CheckError) -> Self {
+        KernelError::Invalid(e)
     }
 }

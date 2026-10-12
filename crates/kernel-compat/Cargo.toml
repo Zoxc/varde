@@ -1,20 +1,16 @@
 [package]
 name = "varde-kernel-compat"
-description = "Geometry kernel: rational quadratic patches, shapes, solids and tessellation"
+description = "The facade between the app and the Varde kernel: the old kernel's public API, stubbed"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 varde-decide.workspace = true
+varde-kernel.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
-libm.workspace = true
 serde.workspace = true
-spade.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rayon.workspace = true
 
 [dev-dependencies]
-varde-testing = { workspace = true }
+varde-testkit.workspace = true

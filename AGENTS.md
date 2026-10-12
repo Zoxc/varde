@@ -57,11 +57,12 @@ it describes changes:
   combine, move, pattern, the blends, sweep, loft, ...): their document
   types and checks, the commands every kind shares, their regeneration
   and UI; a file per kind (its `README.md` lists them).
-- `agents/kernel/`: the geometry kernel: rational quadratic curves and
-  patches, their splits, the fold check, exact arcs and cylinders.
-- `notes/Kernel.md`: the kernel's high-level overview (ideas, invariants,
-  the boolean pipeline, limits); `agents/kernel/` holds the detail, a
-  file per part (its `README.md` lists them).
+- `agents/kernel-compat/`: the kernel facade in `kernel-compat`: what it
+  keeps of the old kernel's API (removed, at the tag
+  `varde-kernel-legacy`) and what it stubs, a file per part (its
+  `README.md` lists them).
+- `notes/Kernel.md`: the kernel's high-level overview: the facade, and
+  how the Varde kernel replaces it.
 - `notes/Threading.md`: the threading plan (built steps and what's still open).
 - `agents/mcp.md`: the MCP server (`varde-mcp`: HTTP, the guard, JSON-RPC,
   the session, the tools, the threads) and the app's side of it: the
@@ -102,10 +103,9 @@ there is no adapter.
 Tests pass temporary directories (or none) to `varde_io::Stores` so they never
 touch the user's config/data dirs.
 
-The dev profile builds `varde-kernel-compat` at `opt-level = 1` (its tests run about
-8 times slower at 0), and `varde-sketch` too (over twice as slow at 0). To
-debug one unoptimized, pass
-`--config 'profile.dev.package.varde-kernel-compat.opt-level=0'` (or `varde-sketch`).
+The dev profile builds `varde-sketch` at `opt-level = 1` (its tests run over
+twice as slow at 0). To debug it unoptimized, pass
+`--config 'profile.dev.package.varde-sketch.opt-level=0'`.
 Dev builds carry line tables only (dependencies none); for variables in a
 debugger, add `--config 'profile.dev.debug="full"'`.
 

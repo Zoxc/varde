@@ -10,35 +10,16 @@
 //! faces merged into it ([`Mesh::aliases`]).
 //!
 //! A face as users see it (a [`FaceKey`]) is an edge-connected region of
-//! one surface: booleans and extrude name adjacent faces on one plane or
-//! quadric alike once they are repaired (`merge_faces`, in `merge.rs`).
+//! one surface.
 //!
-//! [`Mesh::check`] is where a mesh becomes trusted. It covers:
+//! The old kernel checked, refined and repaired these meshes; the facade
+//! keeps only the data model, the names and forms of faces, and the
+//! [`MeshBuilder`] that pairs halfedges up. A [`Solid`](crate::Solid)
+//! refuses every mesh with triangles ([`KernelError::NotImplemented`]),
+//! so nothing built here becomes a solid until the Varde kernel's own
+//! store takes the names over.
 //!
-//! 1. Topology: every halfedge has a pair running the other way, directed
-//!    edges are unique, and every vertex has one fan: a closed, oriented
-//!    2-manifold; aliases name faces that exist.
-//! 2. Shared edges: a halfedge and its pair name the same `Edge`, each
-//!    `Edge` is used by exactly one pair, and coordinates and weights are
-//!    within the patch bounds.
-//! 3. Fold: every patch passes the fold check.
-//! 4. Control hulls: patches that share no vertex have hulls more than the
-//!    resolution apart, and neighbours are split by a plane through what
-//!    they share (or, across a curved edge, by the cylinder over it).
-//! 5. Orientation: every shell (connected part) faces out, or in where it
-//!    bounds a void, so the winding number is 0 or 1 everywhere.
-//! 6. Face tags: patches on `Plane` and `Quadric` faces lie on them within
-//!    the resolution, checked in every build.
-//!
-//! Debug builds also check each face's [`Form`], what surface it was meant
-//! to be, against its patches within the fit tolerance.
-//!
-//! [`Mesh::repair`] restores invariants 3 and 4 by exact red–green
-//! refinement, and [`Mesh::cuboid`] and [`Mesh::cylinder`] build boxes and
-//! cylinders that pass them all.
-//!
-//! The rules and the reasons for them are written down in
-//! `agents/kernel/mesh.md`.
+//! [`KernelError::NotImplemented`]: crate::KernelError::NotImplemented
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, DefaultHasher};
@@ -48,32 +29,14 @@ use glam::DVec3;
 use crate::patch::{Conic3, Patch};
 
 mod build;
-mod bvh;
 mod check;
 mod face;
 mod form;
-mod hull;
-mod intact;
-mod merge;
-mod orient;
-mod primitive;
-mod refine;
-mod repair;
-mod shape;
 
 pub use build::{BuildError, MeshBuilder};
-pub use bvh::Bvh;
 pub use check::CheckError;
-pub(crate) use check::{off_surface, samples};
 pub use face::{Face, FaceKey, FaceName, FacePart, PartKey, Quadric, Surface};
 pub use form::Form;
-pub(crate) use form::{circle_of, hypot};
-pub(crate) use hull::{apart, edge_neighbours_apart, flat, straight};
-pub(crate) use intact::{Hint, tested};
-pub(crate) use orient::{QUADRATURE, lune_bound, lune_cones};
-pub(crate) use refine::{Node, Refiner};
-pub(crate) use repair::{MIN_CURVED_SPLIT, MIN_SPLIT, Refusal};
-pub(crate) use shape::{SIN_SHAPE, circumcentre_from};
 
 /// A hash map with a fixed hasher, for maps only looked up in, never
 /// iterated: nothing can then depend on its order, and lookups by vertex
@@ -83,9 +46,9 @@ pub(crate) type LookupMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher
 /// A closed mesh of rational quadratic patches. Halfedge `h` is corner
 /// `h % 3` of triangle `h / 3`, running from that corner to the next.
 ///
-/// Nothing is trusted until [`Mesh::check`] passes: the accessors that
-/// follow indices ([`Mesh::patch`], [`Mesh::end`]) may panic on a mesh
-/// that doesn't.
+/// The accessors that follow indices ([`Mesh::patch`], [`Mesh::end`])
+/// index like slices: they panic on a mesh whose indices are out of
+/// range, which only a caller's own [`Mesh::from_parts`] can make.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Mesh {
     verts: Vec<DVec3>,
@@ -106,14 +69,6 @@ pub struct Edge {
 }
 
 impl Edge {
-    /// The middle of `conic`.
-    pub(crate) fn of(conic: &Conic3) -> Edge {
-        Edge {
-            ctrl: conic.c,
-            weight: conic.w,
-        }
-    }
-
     /// The straight edge between `a` and `b`: the control point at the
     /// midpoint and weight 1.
     pub fn straight(a: DVec3, b: DVec3) -> Edge {
@@ -146,7 +101,7 @@ pub struct Tri {
 }
 
 impl Mesh {
-    /// The mesh made of these parts, unchecked: see [`Mesh::check`].
+    /// The mesh made of these parts, unchecked.
     /// [`MeshBuilder`] pairs the halfedges up from a list of triangles.
     pub fn from_parts(
         verts: Vec<DVec3>,
@@ -165,7 +120,6 @@ impl Mesh {
 
     /// The mesh with `aliases` as its faces' aliases (see
     /// [`Mesh::aliases`]): sorted, repeats and a face's own key dropped.
-    /// [`Mesh::check`] refuses one naming a face that doesn't exist.
     pub fn with_aliases(mut self, mut aliases: Vec<(u32, FaceKey)>) -> Self {
         let faces = &self.faces;
         aliases.retain(|&(f, key)| {
@@ -256,6 +210,3 @@ impl Mesh {
         }
     }
 }
-
-#[cfg(test)]
-pub(crate) mod tests;

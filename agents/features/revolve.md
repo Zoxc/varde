@@ -184,7 +184,7 @@ an extrude's.
 
 **The session** (`app/src/doc/revolve.rs`, `Doc::mode` holding a
 `RevolveSession`) follows the extrude's (see "The extrude UI" in
-`agents/kernel/extrude-ui.md`), sharing its parts (`app/src/doc/regions.rs`):
+`agents/features/extrude-ui.md`), sharing its parts (`app/src/doc/regions.rs`):
 `RegionPick` (the source sketch, the candidates' profiles found within
 `refresh_work()`, the regions picked and their references, found again
 when the sketch changes, the edited feature's missing ones kept: listed

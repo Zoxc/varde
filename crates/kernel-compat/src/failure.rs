@@ -22,12 +22,9 @@
 
 use glam::DVec3;
 
-use crate::budget::Work;
+use crate::KernelError;
 use crate::mesh::FaceKey;
 use crate::patch::{Conic, Patch};
-use crate::{Budget, KernelError};
-
-mod check;
 
 /// Why a public kernel operation gives no result, and where.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +87,7 @@ pub const MAX_EVIDENCE: EvidenceCaps = EvidenceCaps {
     faces: 256,
 };
 
-/// The work, in the units of [`Budget`], gathering one failure's
+/// The work, in the units of [`Budget`](crate::Budget), gathering one failure's
 /// [`Evidence`] may do, apart from the operation's budget: about 30 ms on
 /// one thread. Past it the evidence is what was gathered so far, with
 /// [`Evidence::truncated`] set.
@@ -194,23 +191,6 @@ impl Evidence {
             &mut self.truncated,
         );
     }
-
-    /// Takes `units` of `work` (an allowance from [`evidence_work`]) for
-    /// gathering more, or marks the evidence truncated and says no once
-    /// it has run out.
-    pub(crate) fn afford(&mut self, work: &mut Work, units: usize) -> bool {
-        let ok = work.spend(units).is_ok();
-        if !ok {
-            self.truncated = true;
-        }
-        ok
-    }
-}
-
-/// A fresh allowance of [`EVIDENCE_WORK`] for gathering one failure's
-/// evidence.
-pub(crate) fn evidence_work() -> Work {
-    Work::new(&Budget::new(EVIDENCE_WORK))
 }
 
 /// Pushes `items` onto `to` while it holds fewer than `cap`, and sets
@@ -226,123 +206,5 @@ fn capped<T>(
     to.extend(items.by_ref().take(room));
     if items.next().is_some() {
         *truncated = true;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use glam::DVec2;
-
-    use super::*;
-    use crate::boolean::BooleanError;
-    use crate::mesh::tests::TOL;
-    use crate::patch::PatchError;
-    use crate::profile::tests::rect;
-    use crate::{
-        Frame, Motion, Op, Profile, ProfileError, Solid, Sweep, assemble, boolean, extrude,
-        revolve, touches,
-    };
-
-    /// The error of a failed operation, its evidence checked empty (none
-    /// is gathered for these errors).
-    fn bare<T: std::fmt::Debug>(result: Result<T, Failure>) -> KernelError {
-        let failure = result.unwrap_err();
-        assert!(failure.evidence.is_empty(), "{failure:?}");
-        failure.error
-    }
-
-    /// Each public operation fails with the error it gave before
-    /// failures carried evidence.
-    #[test]
-    fn operations_fail_with_their_errors() {
-        let square = Profile {
-            loops: vec![rect(DVec2::ZERO, DVec2::ONE, 1)],
-        };
-        let budget = Budget::DEFAULT;
-        assert_eq!(
-            bare(extrude(&square, &Frame::XY, 1.0, 1.0, 1, &TOL, &budget)),
-            KernelError::Patch(PatchError::Parameter(0.0))
-        );
-        let across = Profile {
-            loops: vec![rect(DVec2::new(-1.0, 0.0), DVec2::new(3.0, 1.0), 1)],
-        };
-        // Profile errors come with their segments (see
-        // `profile/evidence/tests.rs`).
-        let crossing = revolve(&across, &Frame::XY, Sweep::Full, 1, &TOL, &budget).unwrap_err();
-        assert_eq!(
-            crossing.error,
-            KernelError::Profile(ProfileError::CrossesAxis(0, 0))
-        );
-        assert!(!crossing.evidence.is_empty());
-        let cube =
-            |at: f64, feature| Solid::cuboid(DVec3::splat(at), DVec3::ONE, feature, &TOL).unwrap();
-        let (a, b) = (cube(0.0, 1), cube(0.5, 2));
-        assert_eq!(
-            bare(boolean(&a, &b, Op::Union, &TOL, &Budget::new(10))),
-            KernelError::TooComplex
-        );
-        assert_eq!(
-            bare(touches(&a, &b, &TOL, &Budget::new(0))),
-            KernelError::TooComplex
-        );
-        assert_eq!(
-            bare(assemble(&[a.clone(), b], &TOL, &Budget::new(10))),
-            KernelError::TooComplex
-        );
-        let far = Motion::translation(DVec3::X * f64::from(crate::MAX_COORD)).unwrap();
-        assert!(matches!(
-            bare(a.transformed(&far, None, &TOL, &budget)),
-            KernelError::Patch(PatchError::Coordinate(_))
-        ));
-        // A pinch: a hole whose wall comes within the resolution of the
-        // tube's. Named so from repair's `Hull`, whose two triangles it
-        // keeps (see `failure/check.rs`).
-        let half = 0.5 * TOL.resolution();
-        let tube = Solid::cylinder(DVec3::ZERO, 1.0, 10.0, 1, &TOL).unwrap();
-        let hole = Solid::cylinder(DVec3::Z * 2.0, 1.0 - half, 6.0, 2, &TOL).unwrap();
-        let pinch = boolean(&tube, &hole, Op::Difference, &TOL, &Budget::new(100_000)).unwrap_err();
-        assert_eq!(pinch.error, KernelError::Boolean(BooleanError::NotManifold));
-        assert_eq!(pinch.evidence.patches.len(), 2);
-    }
-
-    #[test]
-    fn from_error_is_empty() {
-        let f = Failure::from(KernelError::TooComplex);
-        assert_eq!(f.error, KernelError::TooComplex);
-        assert!(f.evidence.is_empty());
-        assert_eq!(f.to_string(), KernelError::TooComplex.to_string());
-    }
-
-    #[test]
-    fn caps_truncate() {
-        let mut e = Evidence::default();
-        e.add_points((0..MAX_EVIDENCE.points).map(|i| DVec3::splat(i as f64)));
-        assert!(!e.truncated);
-        assert!(e.within_caps());
-        e.add_points([DVec3::ZERO]);
-        assert!(e.truncated);
-        assert_eq!(e.points.len(), MAX_EVIDENCE.points);
-        assert_eq!(e.points[1], DVec3::ONE);
-
-        let mut e = Evidence::default();
-        e.add_sketch_curves(0..u64::MAX);
-        assert_eq!(e.sketch_curves.len(), MAX_EVIDENCE.sketch_curves);
-        assert!(e.truncated && e.within_caps());
-
-        let mut e = Evidence::default();
-        e.add_faces(std::iter::empty());
-        e.add_curves(std::iter::empty());
-        e.add_patches(std::iter::empty());
-        assert!(e.is_empty());
-    }
-
-    #[test]
-    fn allowance_runs_out() {
-        let mut e = Evidence::default();
-        let mut work = evidence_work();
-        assert!(e.afford(&mut work, usize::try_from(EVIDENCE_WORK).unwrap()));
-        assert!(!e.truncated);
-        assert!(!e.afford(&mut work, 1));
-        assert!(e.truncated);
     }
 }

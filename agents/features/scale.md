@@ -19,8 +19,8 @@ pub enum ScaleFactor {
   variant (`FeatureKind::Scale(Scale)`, "Scale N"; not boxed, it isn't
   the largest). It makes no body; each body keeps its id and its faces
   their names (instance 0), `x ↦ c + S·(x − c)` along the world axes
-  (`Motion::scale`, see "Transforms and assembly" in
-  `agents/kernel/transform.md`). Positive
+  (`Motion::scale`, see "Motions" in
+  `agents/kernel-compat/transform.md`). Positive
   factors only (a negative one is a mirror, its own feature).
 - **To an edge's length**: the factor is worked out at every
   regeneration as the typed length over the edge's measured one, so an

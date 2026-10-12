@@ -3,10 +3,10 @@
 The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets, offset faces,
 drafts, sweeps and lofts), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
-described in `agents/kernel/history.md` ("The extrude feature") and
-`agents/kernel/extrude-ui.md`; what
-they share with the newer kinds is here. The kernel math of each is in
-`agents/kernel/`.
+described in `extrude.md` ("The extrude feature") and
+`extrude-ui.md`; what
+they share with the newer kinds is here. The kernel's side, for now a
+facade that makes no solids, is in `agents/kernel-compat/`.
 
 The detail is split by part; a section named in quotes is a heading in one of these files:
 

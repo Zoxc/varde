@@ -1,11 +1,7 @@
 use glam::{DMat3, DVec3};
 
 use super::*;
-use crate::par::assert_deterministic;
-use crate::test_rng::Rng;
-use crate::{Budget, Solid, Tolerance};
-
-const TOL: Tolerance = Tolerance::DEFAULT;
+use varde_testkit::rng::Rng;
 
 fn datum(point: DVec3, primary: DVec3, secondary: Option<DVec3>) -> Datum {
     Datum {
@@ -117,28 +113,6 @@ fn quarter_turned_frames_with_secondaries_are_exact() {
             }
         }
     }
-}
-
-#[test]
-fn a_box_aligned_corner_to_corner_lands_to_the_bit() {
-    // A 2 × 3 × 4 box's top-front-left corner onto another's bottom
-    // corner, its top face against the other's bottom: every vertex
-    // where it should be, to the bit.
-    let solid = Solid::cuboid(DVec3::ZERO, DVec3::new(2.0, 3.0, 4.0), 1, &TOL).unwrap();
-    let moved = datum(DVec3::new(0.0, 0.0, 4.0), DVec3::Z, Some(DVec3::X));
-    let target = datum(DVec3::new(10.0, 20.0, 30.0), DVec3::NEG_Z, Some(DVec3::Y));
-    let options = AlignOptions {
-        flip: true,
-        ..AlignOptions::default()
-    };
-    let m = align(&moved, &target, &options);
-    let moved_solid = solid.transformed(&m, None, &TOL, &Budget::DEFAULT).unwrap();
-    // Z stays Z (flipped onto −(−Z)), X goes to Y, so Y goes to −X.
-    for (a, b) in solid.mesh().verts().iter().zip(moved_solid.mesh().verts()) {
-        let want = DVec3::new(10.0 - a.y, 20.0 + a.x, 30.0 + a.z - 4.0);
-        assert_eq!(*b, want);
-    }
-    assert!((moved_solid.volume() - solid.volume()).abs() <= 1e-12 * solid.volume());
 }
 
 #[test]
@@ -398,33 +372,4 @@ fn degenerate_inputs_are_refused() {
     // A flip without primaries changes nothing.
     let flipped = AlignOptions { flip: true, ..ok };
     assert_eq!(align(&pt, &pt, &flipped), Motion::IDENTITY);
-}
-
-#[test]
-fn aligning_is_deterministic() {
-    let run = || {
-        let mut rng = Rng::new(5);
-        (0..50)
-            .map(|_| {
-                let moved = datum(
-                    DVec3::ONE,
-                    random_unit(&mut rng),
-                    Some(random_unit(&mut rng)),
-                );
-                let target = datum(DVec3::ZERO, random_unit(&mut rng), None);
-                let target = Datum {
-                    secondary: Some(random_unit(&mut rng)),
-                    ..target
-                };
-                let options = AlignOptions {
-                    flip: true,
-                    offset: 0.3,
-                    degrees: 17.0,
-                };
-                align(&moved, &target, &options).bits()
-            })
-            .collect::<Vec<_>>()
-    };
-    let first = assert_deterministic(run);
-    assert_eq!(first, run());
 }

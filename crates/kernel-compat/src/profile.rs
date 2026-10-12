@@ -11,9 +11,10 @@
 
 use glam::DVec2;
 
+use varde_kernel::measure::quadrature::GAUSS8;
+
 use crate::MAX_COORD;
 use crate::patch::{Conic2, PatchError};
-use crate::quadrature::GAUSS8;
 
 /// The most segments a profile may have, all loops together.
 pub const MAX_PROFILE_SEGMENTS: usize = 1 << 16;
@@ -277,7 +278,5 @@ fn pieces(c: &Conic2, depth: u32, f: &mut impl FnMut(&Conic2)) {
     f(c);
 }
 
-pub(crate) mod evidence;
-
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

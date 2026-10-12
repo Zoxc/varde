@@ -136,11 +136,16 @@ pub fn runs_with(
 impl Topology {
     /// The form of region `region` of `solid` (the one the topology was
     /// made from): a region's faces lie on one surface, so its first
-    /// triangle's face's form stands for them.
+    /// triangle's face's form stands for them. [`Form::Unknown`] for a
+    /// region it doesn't have.
     pub fn form<'a>(&self, solid: &'a Solid, region: u32) -> &'a Form {
+        static UNKNOWN: Form = Form::Unknown;
         let mesh = solid.mesh();
-        let tri = &mesh.tris()[self.regions[region as usize].tris[0] as usize];
-        &mesh.faces()[tri.face as usize].form
+        (self.regions.get(region as usize))
+            .and_then(|r| r.tris.first())
+            .and_then(|&t| mesh.tris().get(t as usize))
+            .and_then(|tri| mesh.faces().get(tri.face as usize))
+            .map_or(&UNKNOWN, |face| &face.form)
     }
 
     /// Whether chain `chain` runs the way a reference naming it by
@@ -149,12 +154,14 @@ impl Topology {
     /// that region's own boundary (anticlockwise seen from outside, a
     /// mirrored copy's too, as a mirror reverses its triangles), so they
     /// run the right way where that region is the first key's.
+    /// `None` too for a chain it doesn't have.
     pub fn runs_with(&self, chain: u32, faces: &[FaceKey; 2]) -> Option<bool> {
-        let [left, right] = self.chains[chain as usize].regions.map(|r| {
-            let region = &self.regions[r as usize];
-            (&region.key, &region.aliases[..])
-        });
-        runs_with(faces, left, right)
+        let [r0, r1] = self.chains.get(chain as usize)?.regions;
+        let side = |r: u32| {
+            let region = self.regions.get(r as usize)?;
+            Some((&region.key, &region.aliases[..]))
+        };
+        runs_with(faces, side(r0)?, side(r1)?)
     }
 
     /// The corner named by `faces`, nearest `near` ([`Topology::corner`]):
@@ -166,7 +173,10 @@ impl Topology {
         near: DVec3,
     ) -> Result<DVec3, Unresolved> {
         let corner = self.corner(solid, faces, near)?;
-        Ok(solid.mesh().verts()[self.corners[corner as usize].vertex as usize])
+        (self.corners.get(corner as usize))
+            .and_then(|c| solid.mesh().verts().get(c.vertex as usize))
+            .copied()
+            .ok_or(Unresolved::NotFound(NotFound::Corner))
     }
 
     /// The middle of the straight edge named by `faces`, nearest `near`

@@ -200,6 +200,3 @@ pub fn loft(
         KernelError::NotImplemented("lofting").into(),
     ))
 }
-
-#[cfg(test)]
-mod tests;

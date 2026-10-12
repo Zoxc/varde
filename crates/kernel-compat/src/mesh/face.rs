@@ -174,11 +174,9 @@ pub enum PartKey {
 }
 
 /// The surface a face lies on, as its construction claims. It is a claim
-/// the kernel may use to cut exactly, checked by
-/// [`Mesh::check_faces`](super::Mesh::check_faces) as part of every
-/// [`Mesh::check`](super::Mesh::check) (so every `Solid`'s tags hold), and
-/// by repair before it splits a patch as planar; never a second copy of
-/// the geometry.
+/// the kernel may use to cut exactly (the old kernel checked it in every
+/// mesh check, and by repair before it split a patch as planar); never a
+/// second copy of the geometry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Surface {
     /// The points `x` with `n·x = d`; `n` need not be a unit vector.
@@ -233,7 +231,7 @@ impl Quadric {
     /// The circular cylinder of `radius` around the line through `point`
     /// along `axis`, or `None` for a zero or non-finite axis.
     pub fn cylinder(point: DVec3, axis: DVec3, radius: f64) -> Option<Quadric> {
-        let axis = axis.try_normalize()?;
+        let axis = crate::transform::unit(axis)?;
         // |y|² - (y·axis)² - r²
         let a = DMat3::IDENTITY - outer(axis, axis);
         Some(Quadric {
@@ -260,7 +258,7 @@ impl Quadric {
     /// (`cos² + sin² = 1` folds the sine in). `None` for a zero or
     /// non-finite axis.
     pub fn cone(apex: DVec3, axis: DVec3, cos: f64, sin: f64) -> Option<Quadric> {
-        let axis = axis.try_normalize()?;
+        let axis = crate::transform::unit(axis)?;
         // Normalized here, so a half-angle given a little off unit still
         // describes one cone.
         let length = (cos * cos + sin * sin).sqrt();
@@ -280,7 +278,7 @@ impl Quadric {
     /// paraboloid or a hyperboloid of revolution. `None` for a zero or
     /// non-finite axis.
     pub fn revolution(origin: DVec3, axis: DVec3, r0: f64, r1: f64, r2: f64) -> Option<Quadric> {
-        let axis = axis.try_normalize()?;
+        let axis = crate::transform::unit(axis)?;
         // |y|² − (y·axis)² − r0 − r1·(y·axis) − r2·(y·axis)²
         Some(Quadric {
             origin,

@@ -1,6 +1,7 @@
 //! Why a kernel operation fails. Only the variants of Varde's
-//! `KernelError` that don't name the old kernel's types moved here; C55
-//! grows this into the plan's error enum (§2.4).
+//! `KernelError` that don't name the old kernel's types moved here; it
+//! grows a variant for each way the kernel's operations can fail as they
+//! land.
 
 /// Why a kernel operation gives no solid. It never gives an invalid one
 /// instead.

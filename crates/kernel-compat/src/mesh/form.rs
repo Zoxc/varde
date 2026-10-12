@@ -3,7 +3,7 @@
 use glam::{DMat3, DVec2, DVec3};
 
 use super::Quadric;
-use crate::patch::{Conic, Conic2, Conic3, Point};
+use crate::patch::{Conic2, Conic3};
 
 /// What surface a face was built to lie on: the construction's intent,
 /// with its parameters. [`Surface`](super::Surface) is the claim the
@@ -18,8 +18,7 @@ use crate::patch::{Conic, Conic2, Conic3, Point};
 /// curved form is the same surface either way, and which side is out is
 /// the patches' normals'. Debug builds check every triangle against its
 /// face's form within the fit tolerance times the face's
-/// [`slack`](super::Face::slack) (see
-/// [`Mesh::check`](super::Mesh::check)).
+/// [`slack`](super::Face::slack).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Form {
     /// No known surface.
@@ -142,174 +141,6 @@ impl Form {
             Form::Quadric(q) => q.distance(x),
         }
     }
-
-    /// The signed distance from `x` to the surface and the unit direction
-    /// it grows along (the surface's normal near it), what fitted patches
-    /// are fitted against: exact for planes, cylinders, cones (to the
-    /// whole line of the half-angle, either side of the apex), spheres
-    /// and tori, to first order for the conic forms and quadrics. Which
-    /// side is positive is the form's own (out of a sphere or a torus's
-    /// tube, away from a cylinder's or cone's axis, where a quadric's `F`
-    /// is positive), not the solid's. `None`
-    /// for [`Form::Unknown`], or where it isn't defined (on a cylinder's,
-    /// cone's or torus's axis or tube circle, at a sphere's centre).
-    pub(crate) fn signed(&self, x: DVec3) -> Option<(f64, DVec3)> {
-        let unit = |v: DVec3| {
-            let length = v.length();
-            (length > 0.0 && length.is_finite()).then(|| v / length)
-        };
-        // `y` across `axis` and along it, with the unit direction across.
-        let split = |y: DVec3, axis: DVec3| {
-            let h = y.dot(axis);
-            let across = y - axis * h;
-            let r = across.length();
-            (r, h, (r > 0.0).then(|| across / r))
-        };
-        let found = match *self {
-            Form::Unknown => None,
-            Form::Plane { n, d } => Some((n.dot(x) - d, n)),
-            Form::Cylinder {
-                point,
-                axis,
-                radius,
-            } => {
-                let (r, _, radial) = split(x - point, axis);
-                radial.map(|radial| (r - radius, radial))
-            }
-            Form::ConicCylinder { conic, along } => {
-                conic_cylinder_signed(&conic, along, x).and_then(|(d, g)| Some((d, unit(g)?)))
-            }
-            Form::Cone {
-                apex,
-                axis,
-                cos,
-                sin,
-            } => {
-                let (r, h, radial) = split(x - apex, axis);
-                radial.map(|radial| (r * cos - h * sin, radial * cos - axis * sin))
-            }
-            Form::Sphere { centre, radius } => {
-                let y = x - centre;
-                unit(y).map(|n| (y.length() - radius, n))
-            }
-            Form::Torus {
-                centre,
-                axis,
-                major,
-                minor,
-            } => {
-                let (r, h, radial) = split(x - centre, axis);
-                let tube = hypot(r - major, h);
-                match radial {
-                    Some(radial) if tube > 0.0 => {
-                        Some((tube - minor, (radial * (r - major) + axis * h) / tube))
-                    }
-                    _ => None,
-                }
-            }
-            Form::Revolved {
-                origin,
-                axis,
-                meridian,
-            } => {
-                let (r, h, radial) = split(x - origin, axis);
-                let (d, g) = conic_signed(&meridian, DVec2::new(r, h))?;
-                radial.and_then(|radial| Some((d, unit(radial * g.x + axis * g.y)?)))
-            }
-            Form::Quadric(q) => {
-                let (f, g) = (q.value(x), q.gradient(x));
-                let length = g.length();
-                (length > 0.0).then(|| (f / length, g / length))
-            }
-        };
-        found.filter(|(d, n)| d.is_finite() && n.is_finite())
-    }
-}
-
-#[cfg(test)]
-impl Form {
-    /// The form moved by `f`, a rigid motion (turns, mirrors and moves),
-    /// as tests move whole meshes. A plane's normal goes by the cofactor
-    /// matrix, as the patches' normals do, so it still points out of a
-    /// mirrored mesh whose triangles keep their corners' order (which
-    /// turns it inside out, as it turns the patches).
-    pub(crate) fn moved(self, f: impl Fn(DVec3) -> DVec3) -> Form {
-        let origin = f(DVec3::ZERO);
-        let turn = |d: DVec3| f(d) - origin;
-        let unit = |d: DVec3| turn(d).normalize();
-        let r = DMat3::from_cols(turn(DVec3::X), turn(DVec3::Y), turn(DVec3::Z));
-        let cofactor = r.inverse().transpose() * r.determinant();
-        match self {
-            Form::Unknown => Form::Unknown,
-            Form::Plane { n, d } => {
-                let normal = cofactor * n;
-                Form::plane(normal, normal.dot(f(n * d)))
-            }
-            Form::Cylinder {
-                point,
-                axis,
-                radius,
-            } => Form::Cylinder {
-                point: f(point),
-                axis: unit(axis),
-                radius,
-            },
-            Form::ConicCylinder { conic, along } => Form::ConicCylinder {
-                conic: Conic3 {
-                    p0: f(conic.p0),
-                    c: f(conic.c),
-                    w: conic.w,
-                    p1: f(conic.p1),
-                },
-                along: unit(along),
-            },
-            Form::Cone {
-                apex,
-                axis,
-                cos,
-                sin,
-            } => Form::Cone {
-                apex: f(apex),
-                axis: unit(axis),
-                cos,
-                sin,
-            },
-            Form::Sphere { centre, radius } => Form::Sphere {
-                centre: f(centre),
-                radius,
-            },
-            Form::Torus {
-                centre,
-                axis,
-                major,
-                minor,
-            } => Form::Torus {
-                centre: f(centre),
-                axis: unit(axis),
-                major,
-                minor,
-            },
-            Form::Revolved {
-                origin,
-                axis,
-                meridian,
-            } => Form::Revolved {
-                origin: f(origin),
-                axis: unit(axis),
-                meridian,
-            },
-            Form::Quadric(q) => {
-                // F'(x) = F(f⁻¹(x)): y = r⁻¹·y' around the moved origin.
-                let m = r.inverse();
-                Form::Quadric(Quadric {
-                    origin: f(q.origin),
-                    a: m.transpose() * q.a * m,
-                    b: m.transpose() * q.b,
-                    c: q.c,
-                })
-            }
-        }
-    }
 }
 
 /// `√(a² + b²)` by `+ − × ÷ √` (std's `hypot` isn't the same on every
@@ -323,38 +154,6 @@ pub(crate) fn hypot(a: f64, b: f64) -> f64 {
 fn polar(y: DVec3, axis: DVec3) -> DVec2 {
     let h = y.dot(axis);
     DVec2::new((y - axis * h).length(), h)
-}
-
-/// The circle `conic` is an arc of, as its centre and radius, if it is
-/// one: its control point off its chord and equally far from its ends,
-/// and its weight the cosine of half the arc's angle (half the chord over
-/// that distance), each within `1e-10` of the arc's size plus a few
-/// roundings of its coordinates. The centre is where the lines square to
-/// the end tangents meet, `c + (m − c)·|c − p0|²/|c − m|²` with `m` the
-/// chord's middle (the triangle centre, end, control point is
-/// right-angled at the end), and the radius the mean of the distances to
-/// the ends. Only `+ − × ÷ √`.
-///
-/// It names an arc's intent (an extrude's wall is a [`Form::Cylinder`]
-/// over one, and measuring takes an edge's length, centre and radius
-/// from it), in the plane or in space; no topology depends on it.
-pub(crate) fn circle_of<P: Point>(conic: &Conic<P>) -> Option<(P, f64)> {
-    const SLACK: f64 = 1e-10;
-    let length = |v: P| v.dot(v).sqrt();
-    let (p0, c, p1) = (conic.p0, conic.c, conic.p1);
-    let (l0, l1) = (length(c - p0), length(c - p1));
-    let half = length(p1 - p0) * 0.5;
-    let m = (p0 + p1) * 0.5;
-    let rise = length(c - m);
-    let leg = (l0 + l1) * 0.5;
-    let coords = p0.max_abs().max(c.max_abs()).max(p1.max_abs());
-    let slack = SLACK * leg + 64.0 * f64::EPSILON * coords;
-    if !(rise > slack && (l0 - l1).abs() <= slack && (conic.w * leg - half).abs() <= slack) {
-        return None;
-    }
-    let centre = c + (m - c) * (leg * leg / (rise * rise));
-    let radius = (length(centre - p0) + length(centre - p1)) * 0.5;
-    (centre.is_finite() && radius.is_finite()).then_some((centre, radius))
 }
 
 /// `F = λ1² − 4w²·λ0·λ2` of a conic of weight `w` at barycentric
@@ -393,16 +192,6 @@ fn conic_implicit(conic: &Conic2, q: DVec2) -> (f64, DVec2) {
     (f, g1 * k1 + (-g1 - g2) * k0 + g2 * k2)
 }
 
-/// `F/|∇F|` at `q` and `∇F`: the signed distance to the conic to first
-/// order, positive on the side its control point is on (outside a
-/// circle), and the direction it grows along. `None` where the gradient
-/// vanishes.
-fn conic_signed(conic: &Conic2, q: DVec2) -> Option<(f64, DVec2)> {
-    let (f, gradient) = conic_implicit(conic, q);
-    let length = gradient.length();
-    (length > 0.0).then(|| (f / length, gradient))
-}
-
 /// The distance from `x` to the cylinder over `conic` along `along`, to
 /// first order: the conic's barycentric coordinates are affine in the
 /// point and don't change along `along`.
@@ -422,13 +211,3 @@ fn conic_cylinder_implicit(conic: &Conic3, along: DVec3, x: DVec3) -> (f64, DVec
     let (f, [k1, k0, k2]) = implicit(conic.w, [1.0 - l1 - l2, l1, l2]);
     (f, g1 * k1 + (-g1 - g2) * k0 + g2 * k2)
 }
-
-/// [`conic_signed`] for the cylinder over `conic` along `along`.
-fn conic_cylinder_signed(conic: &Conic3, along: DVec3, x: DVec3) -> Option<(f64, DVec3)> {
-    let (f, gradient) = conic_cylinder_implicit(conic, along, x);
-    let length = gradient.length();
-    (length > 0.0).then(|| (f / length, gradient))
-}
-
-#[cfg(test)]
-mod tests;

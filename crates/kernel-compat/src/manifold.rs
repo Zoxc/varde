@@ -12,7 +12,6 @@
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
-use crate::boolean::exact::{Num, Pred, Pt, sign, sub};
 use crate::patch::Bounds3;
 use crate::{MAX_COORD, RenderMesh};
 
@@ -242,9 +241,49 @@ impl ManifoldMesh {
             // axis. Only the rest need the exact sign.
             let (i, j) = ((axis + 1) % 3, (axis + 2) % 3);
             let plainly_zero = (u[i] == 0.0 || v[j] == 0.0) && (u[j] == 0.0 || v[i] == 0.0);
-            plainly_zero || sign(&CrossComponent { p, axis }) == 0
+            plainly_zero || cross_component_is_zero(p, axis)
         })
     }
+}
+
+/// Whether component `axis` of `(p1 − p0) × (p2 − p0)` is exactly zero.
+///
+/// The component is `Σ (P[i]·Q[j] − P[j]·Q[i])` over the corner pairs
+/// `(p0, p1)`, `(p1, p2)`, `(p2, p0)`. The positions are `f32` values (as
+/// [`ManifoldMesh::new`] checks before this), so each of the six products
+/// is exact in `f64` (24-bit significands, and no underflow at these
+/// magnitudes), and their sum is summed exactly as an expansion
+/// (Shewchuk's grow-expansion, two-sum without FMA): it is zero exactly
+/// when every component of the expansion is.
+fn cross_component_is_zero(p: [DVec3; 3], axis: usize) -> bool {
+    let (i, j) = ((axis + 1) % 3, (axis + 2) % 3);
+    let mut expansion: Vec<f64> = Vec::with_capacity(6);
+    for (a, b) in [(p[0], p[1]), (p[1], p[2]), (p[2], p[0])] {
+        for term in [a[i] * b[j], -(a[j] * b[i])] {
+            grow(&mut expansion, term);
+        }
+    }
+    expansion.iter().all(|&x| x == 0.0)
+}
+
+/// Adds `b` to the expansion `e` exactly: afterwards `e`'s components
+/// sum, without rounding, to the old sum plus `b`.
+fn grow(e: &mut Vec<f64>, mut b: f64) {
+    for x in e.iter_mut() {
+        let (sum, err) = two_sum(b, *x);
+        *x = err;
+        b = sum;
+    }
+    e.push(b);
+}
+
+/// `a + b` rounded, and the rounding error, so the two sum to `a + b`
+/// exactly (Knuth's two-sum).
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    let bv = s - a;
+    let av = s - bv;
+    (s, (a - av) + (b - bv))
 }
 
 /// A sixth of the sum of `triangles`' determinants about the middle of
@@ -262,21 +301,6 @@ fn signed_volume(positions: &[[f64; 3]], triangles: &[[u32; 3]]) -> f64 {
         })
         .sum();
     sum / 6.0
-}
-
-/// Component `axis` of `(p1 − p0) × (p2 − p0)`, for its exact sign.
-struct CrossComponent {
-    p: [DVec3; 3],
-    axis: usize,
-}
-
-impl Pred for CrossComponent {
-    fn eval<N: Num>(&self) -> N {
-        let [a, b, c] = self.p.map(|p| Pt { p, n: None }.v3::<N>());
-        let (u, v) = (sub(&b, &a), sub(&c, &a));
-        let (i, j) = ((self.axis + 1) % 3, (self.axis + 2) % 3);
-        u[i].mul(&v[j]).sub(&u[j].mul(&v[i]))
-    }
 }
 
 /// Why a solid gives no [`ManifoldMesh`], or parts don't make one.

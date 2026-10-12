@@ -130,5 +130,5 @@ relinks nothing. A file whose links are out of step with the model
 undo step.
 
 The sections themselves are `varde_kernel_compat::section`'s
-(`agents/kernel/section.md`, Plane sections), called with the resolution as the
+(`agents/kernel-compat/section.md`, Plane sections), called with the resolution as the
 distance within which something lies in the plane and pieces weld.

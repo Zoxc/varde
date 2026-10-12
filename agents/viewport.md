@@ -699,7 +699,7 @@ of them dims them (and the origin marker goes over them).
 Each body is drawn as opaque as its `Body::opacity` (10 to 100 %), or
 as its context menu's Opacity slider has it while that's dragged
 (`DocumentState::opacity_preview`, `shown_opacity`; the menu is in
-`agents/kernel/extrude-ui.md`). The view hands the frame an alpha per part of the
+`agents/features/extrude-ui.md`). The view hands the frame an alpha per part of the
 mesh (`Frame::opacity`, from `MeshFeed::parts` and the document); a part
 of no body in the document (a draft's new body), with no entry, or out
 of range or NaN is opaque. It isn't part of the mesh, so changing it
@@ -964,8 +964,8 @@ stream starting and ending with its point of no edge and each range in
 order between them, as the draw reads a point either side), so the UI
 thread's upload only creates the buffers; a mesh from elsewhere (tests)
 builds it on first upload. Creases (an edge with one face
-both sides, see `agents/kernel/`: patches whose normals part inside a
-face, as where a boolean's cut leaves fitted patches on a cylinder) and
+both sides: patches whose normals part inside a face, as where a
+boolean's cut leaves fitted patches on a cylinder) and
 wires are marked `CREASE` (the next bit) and drawn `CREASE_WIDTH` (1)
 logical pixel wide at `CREASE_ALPHA` (0.35) of the edges' opacity, seen
 and hidden, in the same quads, so they read as how a face was cut into
@@ -1038,7 +1038,7 @@ vertical normal (see `notes/SketchImpl.md`).
 The document mesh (the regeneration lane evaluates the feature history
 into the bodies' solids, extruding sketch regions, and tessellates the
 visible ones with `Solid::tessellate`, see "Bodies from the history" in
-`agents/kernel/history.md`) and the visible sketches'
+`agents/features/extrude.md`) and the visible sketches'
 lines are kept in the app's `MeshFeed` and keyed by `Editor::generation()`, so they're only
 rebuilt when the document changes; the viewport widget just draws what it's
 handed. The renderer's GPU copies are keyed by their `Arc`s instead, since
@@ -1191,7 +1191,7 @@ for last. While the draft asked for last (or its absence) isn't the one
 the model shown has, a preview changed or cancelled, it's regenerating
 too (`MeshStatus::Regenerating`). The feed keeps the answer's `failed` with the model shown, and
 the Timeline marks those features (see "The extrude UI" in
-`agents/kernel/extrude-ui.md`).
+`agents/features/extrude-ui.md`).
 
 An answer carries the model's **picking tables** (`regen::Picking`, with
 the mesh), by the mesh's own ids: the body of each part (the shown
@@ -1213,8 +1213,8 @@ scale's). What each edge is (its form, ends and convexity) isn't in
 the tables: only MCP's `body_topology` needs it, so it's asked for apart,
 one body at a time (`Query::Topology`, under "Regeneration" below). Everything else is the mesh's
 to say: its faces are the kernel topology's regions and the first edges
-of each part its chains, the creases after them (see "Tessellation" and
-"Topology and names" in `agents/kernel/`), so a circle's quarter walls,
+of each part its chains, the creases after them (see `RenderMesh` in
+`agents/kernel-compat/render.md`), so a circle's quarter walls,
 or flush faces merged under one name, are one face, a face cut in two by
 a groove is two faces of one key, a triangle's face is the `face_ends`
 range holding it, and an edge's faces are its `edge_faces` (a crease's
@@ -1715,7 +1715,7 @@ once the cursor picks. The highlight is drawn only over the model it was
 built for.
 
 Tangent chains come from the kernel: `Topology::tangent_chains` (see
-`agents/kernel/topology.md`) gives each chain its tangent chain's lowest chain,
+`agents/kernel-compat/topology.md`) gives each chain its tangent chain's lowest chain,
 regen carries it per edge of the mesh as `Picking::tangents` (a crease
 its own; checked on the page: the first of a tangent chain is an edge
 between two faces of the same part, no later than its members and its

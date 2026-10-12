@@ -1,7 +1,7 @@
 # cargo-deny (tools/ci.sh): licenses, bans and sources of every dependency
-# of the workspace, as impl/03-license-check.md §4 of the kernel design
-# repository sets them. The whole is AGPL-3.0-or-later; a dependency's
-# license must allow that.
+# of the workspace. The whole is AGPL-3.0-or-later; a dependency's
+# license must allow that: permissive licenses, MPL-2.0 (file-level
+# copyleft) and AGPL-3.0-or-later itself.
 
 [graph]
 all-features = true
@@ -20,15 +20,13 @@ allow = [
     "BSL-1.0",
     "MPL-2.0",
     "AGPL-3.0-or-later",
-    # Public-domain dedication; hexf-parse, through naga (wgpu). Not in the
-    # design's list (impl/03-license-check.md §4), which covered the
-    # kernel's dependencies only.
+    # Public-domain dedication; hexf-parse, through naga (wgpu).
     "CC0-1.0",
 ]
 confidence-threshold = 0.9
 exceptions = [
-    # Big floats for the kernel's L2+ precision (A-06): LGPL-3 code may be
-    # combined with the AGPL-3 whole. Cargo says LGPL-3.0-only, the file
+    # Big floats for the kernel's exact and extended-precision arithmetic:
+    # LGPL-3 code may be combined with the AGPL-3 whole. Cargo says LGPL-3.0-only, the file
     # headers "or any later version".
     { name = "malachite", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
     { name = "malachite-base", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },

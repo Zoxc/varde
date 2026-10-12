@@ -337,8 +337,9 @@ waiting for an answer the old lane won't send. On the web, see `web-files.md`.
 
 `varde_regen::export` welds each visible body's solid,
 in the order the history made them, into a `varde_kernel_compat::ManifoldMesh` at
-the document's tolerance (see "Solids and tessellation" in
-`agents/kernel/solid.md`), failing with the first body that doesn't give one, by
+the document's tolerance (see "Manifold meshes for export" in
+`agents/kernel-compat/render.md`; the facade's solids are empty, so for
+now every export fails), failing with the first body that doesn't give one, by
 name; `varde_io::three_mf::write` makes the package's bytes from them, the
 design's name as its title. The package is an OPC zip:
 `[Content_Types].xml` (defaults for `rels` and `model`), `_rels/.rels`

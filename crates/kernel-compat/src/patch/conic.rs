@@ -147,7 +147,7 @@ pub type Conic3 = Conic<DVec3>;
 
 /// The corner `h` as a point, with its homogeneous weight, which must be
 /// positive.
-pub(super) fn standard_corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchError> {
+fn standard_corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchError> {
     let (x, w) = P::parts(h);
     if w > 0.0 && w.is_finite() {
         Ok((x / w, w))
@@ -161,7 +161,7 @@ pub(super) fn standard_corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchErro
 /// `w / (√wa·√wb)`. Symmetric in `wa` and `wb`, so both directions of an
 /// edge give the same bits. Taking the roots first keeps the product
 /// from overflowing or going subnormal for weights of any scale.
-pub(super) fn standard_edge<P: Point>(h: P::Hom, wa: f64, wb: f64) -> Result<(P, f64), PatchError> {
+fn standard_edge<P: Point>(h: P::Hom, wa: f64, wb: f64) -> Result<(P, f64), PatchError> {
     let (x, w) = P::parts(h);
     if w > 0.0 && w.is_finite() {
         Ok((x / w, w / (wa.sqrt() * wb.sqrt())))

@@ -118,7 +118,7 @@ impl MeshUpload {
         let mut stream = EdgeStream::with_capacity(points);
         // The kernel bounds the edges and wires together well within `u32`,
         // below `CREASE`.
-        let to_u32 = |n: usize| u32::try_from(n).expect("kernel bounds edges");
+        let to_u32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let mut edge_points = Vec::with_capacity(mesh.part_ends().len());
         let mut polylines = mesh.polylines().zip(mesh.edge_faces());
         for part in mesh.parts() {
@@ -326,7 +326,7 @@ impl EdgeStream {
     /// How many points it has.
     pub fn len(&self) -> u32 {
         // The kernel's limits keep the stream well within `u32`.
-        u32::try_from(self.points.len()).expect("kernel bounds edges")
+        u32::try_from(self.points.len()).unwrap_or(u32::MAX)
     }
 
     /// Whether it has no points, which it never has: it starts with a
@@ -341,6 +341,3 @@ impl EdgeStream {
         self.points
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -29,19 +29,14 @@
 //! curve is polynomial and blossoming is exact, and then return to the
 //! standard form. With positive weights every curve and patch lies in the
 //! convex hull of its control points. The formulas and conventions are
-//! written down in `agents/kernel/patch.md`.
+//! written down in `agents/kernel-compat/patch.md`.
 
 use glam::{DVec2, DVec3};
 
 mod conic;
-mod fold;
-mod strip;
 mod triangle;
 
 pub use conic::{Conic, Conic2, Conic3, Point};
-pub use fold::NormalCone;
-pub(crate) use fold::smallest_cone;
-pub use strip::cylinder_strip;
 pub use triangle::Patch;
 
 /// The smallest weight a curve or patch edge may have. Smaller weights
@@ -57,16 +52,6 @@ pub const W_MAX: f64 = 64.0;
 /// the edge of the model space still fit, and every product the patch
 /// math forms stays finite.
 pub const MAX_CONTROL: f64 = 1e7;
-
-/// The fold check's margin: a direction `d` passes when every normal
-/// coefficient `c` has `c·d > FOLD_MARGIN·|c|·|d|`, so a patch doesn't
-/// flicker between valid and invalid under rounding.
-pub const FOLD_MARGIN: f64 = 1e-6;
-
-/// A normal coefficient smaller than this, relative to the size of the
-/// terms it was summed from, is taken as zero: rounding decides its
-/// direction. The fold check fails on it.
-pub const FOLD_FLOOR: f64 = 1e-8;
 
 /// An axis-aligned box of points of type `P`, from `min` to `max`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,6 +146,3 @@ fn check_weight(w: f64) -> Result<(), PatchError> {
         Err(PatchError::Weight(w))
     }
 }
-
-#[cfg(test)]
-mod tests;

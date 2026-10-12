@@ -201,4 +201,4 @@ details and the timings.
   sketch shown (a drag's step included). The extrude session finds the
   profiles of its source, or before there is one of every visible
   sketch, on the UI thread too: see "The extrude UI" in
-  `agents/kernel/extrude-ui.md` for its cache and shared budget.
+  `agents/features/extrude-ui.md` for its cache and shared budget.

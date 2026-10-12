@@ -1,9 +1,10 @@
-# Bans for the Varde kernel crates (varde-decide, varde-kernel, varde-testkit),
-# the determinism rules of the porting guide (impl/80-porting-guide.md §2,
-# component C06). The same file is in crates/decide, crates/kernel and
-# crates/testkit: clippy reads the one in the crate's own directory, and a
-# workspace-wide file would bind every other crate too. tools/ci.sh checks
-# the three copies are equal.
+# Bans for the Varde kernel crates (varde-decide, varde-kernel, varde-testkit):
+# the kernel's results must be the same bits on every platform, at every
+# thread count and on every run, and each ban below names a call that
+# would make them depend on one of those. The same file is in
+# crates/decide, crates/kernel and crates/testkit: clippy reads the one
+# in the crate's own directory, and a workspace-wide file would bind
+# every other crate too. tools/ci.sh checks the three copies are equal.
 #
 # - std's angles, logarithms and powers, and glam's methods built on them,
 #   come from the platform's maths library, whose last bits differ between

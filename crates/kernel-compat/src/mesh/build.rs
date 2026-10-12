@@ -4,7 +4,6 @@ use glam::DVec3;
 
 use super::{Edge, Face, FaceKey, Halfedge, LookupMap, Mesh, Tri};
 use crate::MAX_PATCHES;
-use crate::patch::{Conic3, Patch, PatchError, cylinder_strip};
 
 /// Builds a [`Mesh`] from vertices and triangles given by vertex ids,
 /// pairing halfedges by the vertices they run between: `a → b` pairs with
@@ -12,7 +11,7 @@ use crate::patch::{Conic3, Patch, PatchError, cylinder_strip};
 /// straight unless given a curve with [`MeshBuilder::edge`].
 ///
 /// The mesh built has its halfedges paired and its `Edge` records shared;
-/// it still has to pass [`Mesh::check`].
+/// it is not checked otherwise.
 #[derive(Debug, Clone, Default)]
 pub struct MeshBuilder {
     verts: Vec<DVec3>,
@@ -90,49 +89,6 @@ impl MeshBuilder {
         self.tris.push((corners, face));
     }
 
-    /// Adds the flat wall swept by moving the straight edge from `a0` to
-    /// `a1` to the one from `b0` to `b1`, on `face`: the triangles `(a0,
-    /// a1, b1)` and `(a0, b1, b0)`, as [`cylinder_strip`] makes them.
-    pub(crate) fn wall(&mut self, [a0, a1]: [u32; 2], [b0, b1]: [u32; 2], face: u32) {
-        self.tri([a0, a1, b1], face);
-        self.tri([a0, b1, b0], face);
-    }
-
-    /// Adds the wall swept by moving `bottom`, the curve from vertex `a[0]`
-    /// to `a[1]`, along `offset` to the vertices `b`, on `face`: the two
-    /// patches of [`cylinder_strip`], with the bottom, the top and the
-    /// diagonal from `a[0]` to `b[1]` made its curves. Walls and caps
-    /// sharing those vertices share the curves.
-    pub(crate) fn curved_wall(
-        &mut self,
-        a: [u32; 2],
-        b: [u32; 2],
-        bottom: &Conic3,
-        offset: DVec3,
-        face: u32,
-    ) -> Result<(), PatchError> {
-        let [first, second] = cylinder_strip(bottom, offset)?;
-        self.edge(a[0], a[1], bottom.c, bottom.w);
-        self.edge(b[0], b[1], second.c[1], second.w[1]);
-        self.edge(a[0], b[1], first.c[2], first.w[2]);
-        self.wall(a, b, face);
-        Ok(())
-    }
-
-    /// Adds a strip's two patches, `(a[0], a[1], b[1])` and `(a[0], b[1],
-    /// b[0])` (as [`crate::sweep`] makes them), on `face`, with their five
-    /// edges made their curves: walls and caps sharing those vertices
-    /// share the curves.
-    pub fn strip(&mut self, a: [u32; 2], b: [u32; 2], patches: &[Patch; 2], face: u32) {
-        let [first, second] = patches;
-        self.edge(a[0], a[1], first.c[0], first.w[0]);
-        self.edge(a[1], b[1], first.c[1], first.w[1]);
-        self.edge(b[1], a[0], first.c[2], first.w[2]);
-        self.edge(b[1], b[0], second.c[1], second.w[1]);
-        self.edge(b[0], a[0], second.c[2], second.w[2]);
-        self.wall(a, b, face);
-    }
-
     /// The mesh, with each halfedge paired to the one running back and
     /// the `Edge` records numbered in the order their first halfedge
     /// comes.
@@ -199,8 +155,9 @@ impl MeshBuilder {
                 .curves
                 .keys()
                 .find(|&&(a, b)| !directed.contains_key(&(a, b)));
-            let &(a, b) = unused.expect("a curve no triangle uses");
-            return Err(BuildError::UnusedEdge(a, b));
+            if let Some(&(a, b)) = unused {
+                return Err(BuildError::UnusedEdge(a, b));
+            }
         }
         Ok(Mesh::from_parts(self.verts, edges, tris, self.faces).with_aliases(self.aliases))
     }

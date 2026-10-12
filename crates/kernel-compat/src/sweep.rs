@@ -1,290 +1,199 @@
-//! Swept strips: the two patches between two stations of a swept
-//! surface, exactly where the surface allows.
+//! Path sweeps: a profile moved along a path of pieces in order, or
+//! carried round a helix.
 //!
-//! A strip runs between a **bottom** curve from `a0` to `a1` and a
-//! **top** from `b0` to `b1`, joined by a **left** edge from `a0` to `b0`
-//! and a **right** one from `a1` to `b1`. Its patches are `(a0, a1, b1)`
-//! and `(a0, b1, b0)`, as
-//! [`cylinder_strip`](crate::patch::cylinder_strip) makes them, and the
-//! **diagonal** from `a0` to `b1` is the one curve a strip makes; the
-//! other four are given, so strips beside each other share them (one
-//! edge record each).
+//! **Not built yet**: [`sweep`] is a stand-in with the planned signature
+//! that fails with [`KernelError::NotImplemented`], so the sweep feature
+//! above the kernel (its document, regeneration and messages) is built
+//! against it. The real implementation replaces this file (and adds
+//! what it needs beside it, under `sweep/`): each piece built from the
+//! section the piece before ended with (lines as extrude walls, exact;
+//! circular arcs as revolve pieces about the arc's axis moved to the
+//! section; curve pieces by stations, halved until the strips fit, the
+//! frame rotation-minimizing: a plane curve's `T`, the plane's normal and
+//! `T × N` with the roll carried in, a curve out of any one plane by
+//! double reflection), the sections exact copies of the profile's conics
+//! and the rails and diagonals fitted against the swept surface within
+//! half the fit tolerance; closed paths built round to the first section
+//! (a turn left out of one plane spread back as a twist); keep
+//! orientation (straight profile edges sweeping exact cylinders over the
+//! path's conics); a twist; a helix by its screw motion, every station
+//! the profile moved directly from its angle; caps and names; and the
+//! refusals [`SweepError`] lists.
 //!
-//! Why the strips here are exact: a rational quadratic triangle lies on a
-//! quadric when its three sides are conics on it whose planes meet in one
-//! point `O` of the quadric (the patch is then the inverse of the
-//! projection from `O`). A straight side is a degenerate conic whose plane
-//! turns freely about it, but its parametrization must be the one the
-//! projection from `O` induces.
-//!
-//! - **Cone rulings.** On a cone the projection from any `O` takes a
-//!   ruling to a curve through the apex twice over (the plane through `O`
-//!   and the ruling cuts the cone in that ruling and the one through `O`,
-//!   which meet at the apex), so the ruling's distance from the apex is a
-//!   perfect square along it: `((1 − t)·√da + t·√db)²`. That is weight 1
-//!   with the control point at the geometric mean `√(da·db)` from the
-//!   apex ([`cone_ruling`]), whatever `O` is, so the patches either side
-//!   of a ruling (each with its own `O`) share it. (A cylinder's rulings,
-//!   the apex at infinity, have it at the midpoint.)
-//! - **The diagonal** lies in the plane through `a0` and `b1` along the
-//!   bottom's bisecting direction `m = c − (a0 + a1)/2` (on a parallel of
-//!   a surface of revolution: square to the axis, through the arc's
-//!   middle). That plane meets the bottom's plane in the line through `a0`
-//!   along `m`, which cuts the bottom's conic again at `a1'` (on a
-//!   parallel: half a turn round from `a1`), and the top's plane in the
-//!   line through `b1` along `m`, cutting the top at `b0'`. So the first
-//!   patch's planes meet at `a1'`, on the surface, when the right edge's
-//!   plane holds it: a cone's ruling (any plane), or a meridian of a
-//!   surface of revolution (its plane holds the axis, and `a1'`). Likewise
-//!   the second patch's at `b0'`. A cylinder strip's diagonal, the bottom
-//!   sheared along the rulings, lies in that same plane.
-//!
-//! [`cone_strip`] covers any cone over a conic (circular, oblique,
-//! elliptic: the bottom and top homothetic about the apex), its diagonal
-//! the bottom projected from the apex into that plane.
-//! [`revolution_strip`] covers the quadrics of revolution (spheres,
-//! ellipsoids, paraboloids, hyperboloids, and cones and cylinders too)
-//! between two parallels and two meridians, its diagonal the conic in that
-//! plane through `a0` and `b1`, tangent to the surface there, through
-//! `a1'`.
-//!
-//! Where no strip is exact (a torus, another conic about an axis, a pole
-//! or an apex), they are **fitted** within half the fit tolerance of the
-//! face's [`Form`](crate::mesh::Form): [`fitted_strip`] keeps the four
-//! given edges (exact parallels and meridians) and fits the diagonal,
-//! [`deviation`] measures how far a patch is from a form, and a [`Lathe`]
-//! (stations about an axis) makes the bands of a surface of revolution in
-//! fitted strips, halved until they fit ([`fitted_band`]), and the caps
-//! round poles and apexes ([`pole_cap`]).
-//!
-//! [`path`] is the sweep along a path of pieces or a helix, which the
-//! sweep feature calls; it isn't built yet (a stand-in failing as too
-//! complex, see its docs).
+//! The path is in the world, built by the caller (regeneration) from
+//! what the feature names: sketch chains placed by their sketches, model
+//! edges found on their bodies, joined end to end and ordered from their
+//! end on the profile's plane, or a helix's axis. The kernel knows
+//! nothing of sketches or bodies.
 
-use glam::{DVec3, DVec4};
+use glam::DVec3;
 
-use crate::patch::{Conic, Conic3, Patch, PatchError, Point};
+use crate::patch::Conic3;
+use crate::{Budget, Failure, Frame, KernelError, Profile, Solid, Tolerance};
 
-mod fit;
-mod lathe;
-pub mod path;
+/// How far apart the unit tangents at a joint between two pieces may be,
+/// and an open path's start from square to the profile's plane, as a
+/// sine: the solver holds tangent and smooth joints to `1e-10`, so a
+/// sketch's run past this is a corner (a decision on geometry, stated as
+/// one). Regeneration refuses past it before the sweep is asked, and the
+/// sweep guards with the same rule.
+pub const JOINT_SINE: f64 = 1e-6;
 
-pub use fit::{Fitted, deviation, fitted_strip};
-pub use lathe::{Band, Cap, Lathe, Pole, fitted_band, pole_cap};
-pub(crate) use lathe::{fitted_band_with, pole_cap_with};
-pub use path::{Helix, JOINT_SINE, Orientation, Path, Piece, SweepError, sweep};
-
-/// How far the diagonal's plane must keep from the apex, or two tangents
-/// from parallel, as a sine.
-const MIN_SINE: f64 = 1e-9;
-
-/// The straight ruling of a cone from `p` to `q`, which lie on one line
-/// through `apex`, on the same side of it: weight 1, with the control
-/// point on the line at the geometric mean `√(dp·dq)` of their distances
-/// from the apex (see the [module](self) docs). Written symmetrically,
-/// `apex + ((p − apex)·√(dq/dp) + (q − apex)·√(dp/dq))/2`, so the ruling
-/// from `q` to `p` has the same bits.
-///
-/// Refuses `p` or `q` at the apex, or on opposite sides of it, with
-/// [`PatchError::Degenerate`]; that the three are on one line is the
-/// caller's (a face tag checks the patches built on it).
-pub fn cone_ruling<P: Point>(p: P, q: P, apex: P) -> Result<Conic<P>, PatchError> {
-    let (u, v) = (p - apex, q - apex);
-    let (dp, dq) = (u.dot(u).sqrt(), v.dot(v).sqrt());
-    if !(dp > 0.0 && dq > 0.0 && u.dot(v) > 0.0) || p == q {
-        return Err(PatchError::Degenerate);
-    }
-    let (rp, rq) = (dp.sqrt(), dq.sqrt());
-    let c = apex + (u * (rq / rp) + v * (rp / rq)) * 0.5;
-    Conic::new(p, c, 1.0, q)
+/// One piece of a path, in the world, running from its start to its end.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Piece {
+    /// A straight run from `from` to `to`.
+    Line { from: DVec3, to: DVec3 },
+    /// A circular arc: its `conics` end to end (each at most a quarter
+    /// turn), about `centre`, turning right-handed about the unit `axis`.
+    Arc {
+        conics: Vec<Conic3>,
+        centre: DVec3,
+        axis: DVec3,
+    },
+    /// Any other curve: its `conics` end to end (a spline's fit, an
+    /// ellipse, a chain a boolean traced), with the unit normal of the
+    /// plane it lies in where that's known (a sketch's), `None` where it
+    /// isn't (a model edge).
+    Curve {
+        conics: Vec<Conic3>,
+        normal: Option<DVec3>,
+    },
 }
 
-/// The strip of the cone over `bottom` with its apex at `apex`, up to
-/// `top`, which must be `bottom` scaled about the apex (as the caller
-/// promises; the rulings are built from the ends): its rulings by
-/// [`cone_ruling`], its diagonal `bottom` projected from the apex onto
-/// the plane through `a0` and `b1` along the bottom's bisecting
-/// direction. Exact on any cone over a conic (see the [module](self)
-/// docs): circular, oblique (a ruled loft between two circles on parallel
-/// planes) or elliptic.
-///
-/// Refuses a straight bottom (the strip would be flat: a plane strip's
-/// business), an apex too close to the diagonal's plane, or a bottom whose
-/// control point the projection takes to infinity, with
-/// [`PatchError::Degenerate`].
-pub fn cone_strip(bottom: &Conic3, top: &Conic3, apex: DVec3) -> Result<[Patch; 2], PatchError> {
-    cone_strip_along(bottom, top, apex, bisector(bottom)?)
+impl Piece {
+    /// Where it starts. `None` for an arc or a curve of no conics.
+    pub fn start(&self) -> Option<DVec3> {
+        match self {
+            Piece::Line { from, .. } => Some(*from),
+            Piece::Arc { conics, .. } | Piece::Curve { conics, .. } => conics.first().map(|c| c.p0),
+        }
+    }
+
+    /// Where it ends. `None` for an arc or a curve of no conics.
+    pub fn end(&self) -> Option<DVec3> {
+        match self {
+            Piece::Line { to, .. } => Some(*to),
+            Piece::Arc { conics, .. } | Piece::Curve { conics, .. } => conics.last().map(|c| c.p1),
+        }
+    }
 }
 
-/// [`cone_strip`] with the diagonal in the plane through `a0` and `b1`
-/// along `along`, any such plane clear of the apex: exact for every one.
-pub(crate) fn cone_strip_along(
-    bottom: &Conic3,
-    top: &Conic3,
-    apex: DVec3,
-    along: DVec3,
-) -> Result<[Patch; 2], PatchError> {
-    bottom.check()?;
-    top.check()?;
-    let (a0, a1, b0, b1) = (bottom.p0, bottom.p1, top.p0, top.p1);
-    let left = cone_ruling(a0, b0, apex)?;
-    let right = cone_ruling(a1, b1, apex)?;
-    let mut n = (b1 - a0).cross(along);
-    let mut k = n.dot(a0 - apex);
-    if k < 0.0 {
-        (n, k) = (-n, -k);
-    }
-    if !above(k, MIN_SINE * n.length() * (a0 - apex).length()) {
-        return Err(PatchError::Degenerate);
-    }
-    // x ↦ apex + k·(x − apex)/(n·(x − apex)), homogeneously: linear in
-    // (w·x, w), so the conic's homogeneous control points map to the
-    // projected conic's.
-    let project = |h: DVec4| {
-        let rel = h.truncate() - apex * h.w;
-        let depth = n.dot(rel);
-        (apex * depth + rel * k).extend(depth)
-    };
-    let image = Conic3::from_hom(bottom.hom().map(project))?;
-    // The ends are `a0` and `b1` up to rounding; the corners are those.
-    let diagonal = Conic3::new(a0, image.c, image.w, b1)?;
-    strip(bottom, top, &left, &right, &diagonal)
+/// A helix: the axis through `point` along the unit `axis`, climbing
+/// `pitch` (in model units, positive) a turn along it for `turns` turns
+/// (positive), counter-clockwise seen from the tip of `axis` (right-handed)
+/// unless `left`. It needs no radius: each point of the profile runs on
+/// a helix of its own about the axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Helix {
+    pub point: DVec3,
+    pub axis: DVec3,
+    pub pitch: f64,
+    pub turns: f64,
+    pub left: bool,
 }
 
-/// The strip of a quadric of revolution about the line through `origin`
-/// along `axis` between two parallels, `bottom` from `a0` to `a1` and
-/// `top` from `b0` to `b1` (circular arcs square to the axis, `top` turned
-/// through the same angle), and two meridians, `left` from `a0` to `b0`
-/// and `right` from `a1` to `b1` (plane sections through the axis, one
-/// turned onto the other; on a cone, rulings by [`cone_ruling`]). The
-/// diagonal is the conic in the plane through `a0`, `b1` and `a1'`, `a1`
-/// turned half a turn about the axis (the plane along the bottom's
-/// bisecting direction, see the [module](self) docs), that touches the
-/// surface at `a0` and `b1` (its tangent planes there are spanned by the
-/// edges' tangents) and passes through `a1'`. Exact on spheres,
-/// ellipsoids, paraboloids and hyperboloids of revolution, cones and
-/// cylinders; how the edges lie is the caller's (a face tag checks the
-/// patches).
-///
-/// `a1'` comes from the axis rather than from the bottom's conic: met
-/// again along its bisecting direction, the conic gives it only to about
-/// `ε/θ²` of the radius for a piece of angle `θ` (the bisecting direction
-/// is the control point less the chord's middle, a sagitta), which tilts
-/// the plane; from the axis it is good to a rounding of the coordinates.
-///
-/// The edges must meet at the corners to the bit
-/// ([`PatchError::Mismatch`]); a zero axis, `a1` on it, or a diagonal that
-/// can't be made (its tangents parallel, or `a1'` on it) is
-/// [`PatchError::Degenerate`].
-pub fn revolution_strip(
-    bottom: &Conic3,
-    top: &Conic3,
-    left: &Conic3,
-    right: &Conic3,
-    origin: DVec3,
-    axis: DVec3,
-) -> Result<[Patch; 2], PatchError> {
-    for edge in [bottom, top, left, right] {
-        edge.check()?;
-    }
-    let (a0, a1, b0, b1) = (bottom.p0, bottom.p1, top.p0, top.p1);
-    if left.p0 != a0 || left.p1 != b0 || right.p0 != a1 || right.p1 != b1 {
-        return Err(PatchError::Mismatch);
-    }
-    let axis = axis.try_normalize().ok_or(PatchError::Degenerate)?;
-    let foot = origin + axis * (a1 - origin).dot(axis);
-    if !above((a1 - foot).length(), MIN_SINE * (a1 - a0).length()) {
-        return Err(PatchError::Degenerate);
-    }
-    let other = foot + (foot - a1);
-    let (diagonal, across) = (b1 - a0, other - a0);
-    let n = diagonal.cross(across);
-    if !above(n.length(), MIN_SINE * diagonal.length() * across.length()) {
-        return Err(PatchError::Degenerate);
-    }
-    // The surface's normals at `a0` and `b1`, from the edges' tangents.
-    let n0 = (bottom.c - a0).cross(left.c - a0);
-    let n1 = (top.c - b1).cross(right.c - b1);
-    let diagonal = conic_touching(a0, n.cross(n0), b1, n.cross(n1), other)?;
-    strip(bottom, top, left, right, &diagonal)
+/// What a profile is swept along.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Path {
+    /// Pieces end to end, in order, tangent-continuous at their joints,
+    /// the first starting on the profile's plane, square to it. A closed
+    /// chain's last piece ends where the first starts; it starts anywhere
+    /// (the kernel finds where the profile's plane crosses it).
+    Chain { pieces: Vec<Piece>, closed: bool },
+    /// A helix, alone; the profile's plane holds its axis.
+    Helix(Helix),
 }
 
-/// The bottom's bisecting direction, `c − (a0 + a1)/2`: refused for a
-/// straight bottom.
-fn bisector(bottom: &Conic3) -> Result<DVec3, PatchError> {
-    let chord = bottom.p1 - bottom.p0;
-    let m = bottom.c - (bottom.p0 + bottom.p1) * 0.5;
-    if !above(
-        m.cross(chord).length(),
-        MIN_SINE * m.length() * chord.length(),
-    ) {
-        return Err(PatchError::Degenerate);
+/// How the section is carried along a chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Orientation {
+    /// Turned with the path, by rotation-minimizing frames: the section
+    /// stays square to it and doesn't spin about it.
+    Follow,
+    /// Only moved along it, never turned.
+    Keep,
+}
+
+/// Why a sweep gives no solid. Pieces are named by their index in the
+/// path's chain.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SweepError {
+    /// Two pieces meet at `at` with tangents more than a sine of
+    /// [`JOINT_SINE`] apart (or turned back), or one doesn't start within
+    /// the resolution of where the one before ends. A piece's own conics
+    /// aren't joints (a traced edge's are tangent only to its fit), nor is
+    /// a closed path's start where it's one piece closed on itself.
+    Corner { at: DVec3 },
+    /// An open path's start isn't within the resolution of the profile's
+    /// plane.
+    OffStart,
+    /// The profile's plane isn't square to an open path at its start,
+    /// within a sine of [`JOINT_SINE`].
+    NotSquare,
+    /// Piece `piece` bends tighter than the profile: the section would
+    /// reach its arc's axis or its curve's centre of curvature.
+    TooTight { piece: u32 },
+    /// With the orientation kept, the path turns parallel to the
+    /// profile's plane.
+    Parallel,
+    /// The profile's plane doesn't hold the helix's axis.
+    HelixPlane,
+    /// The profile reaches the helix's axis.
+    ReachesAxis,
+    /// The profile is longer along the helix's axis than its pitch:
+    /// neighbouring turns would meet.
+    Pitch,
+    /// The swept volume runs into itself.
+    IntoItself,
+    /// The kernel failed otherwise: out of budget, or its checks.
+    Failed(Failure),
+}
+
+impl std::fmt::Display for SweepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SweepError::Corner { at } => write!(f, "the path has a corner at {at}"),
+            SweepError::OffStart => f.write_str("the path doesn't start on the profile's plane"),
+            SweepError::NotSquare => f.write_str("the profile isn't square to the path"),
+            SweepError::TooTight { piece } => {
+                write!(f, "piece {piece} bends tighter than the profile")
+            }
+            SweepError::Parallel => f.write_str("the path turns parallel to the profile"),
+            SweepError::HelixPlane => f.write_str("the profile's plane doesn't hold the axis"),
+            SweepError::ReachesAxis => f.write_str("the profile reaches the helix's axis"),
+            SweepError::Pitch => f.write_str("the pitch is smaller than the profile"),
+            SweepError::IntoItself => f.write_str("the sweep runs into itself"),
+            SweepError::Failed(failure) => write!(f, "{}", failure.error),
+        }
     }
-    Ok(m)
 }
 
-/// The conic from `p0` to `p1` whose tangents there run along `t0` and
-/// `t1` (either way) and which passes through `x` off the arc between
-/// them: its control point where the tangents meet, its weight from `x`'s
-/// barycentric coordinates `β` on the control triangle, `|β1| /
-/// 2√(β0·β2)` (every point of the conic has `β1² = 4w²·β0·β2`).
-fn conic_touching(
-    p0: DVec3,
-    t0: DVec3,
-    p1: DVec3,
-    t1: DVec3,
-    x: DVec3,
-) -> Result<Conic3, PatchError> {
-    let chord = p1 - p0;
-    let across = t0.cross(t1);
-    let square = across.length_squared();
-    let floor = MIN_SINE * t0.length() * t1.length();
-    if !above(square, floor * floor) {
-        return Err(PatchError::Degenerate);
+impl std::error::Error for SweepError {}
+
+impl From<Failure> for SweepError {
+    fn from(failure: Failure) -> Self {
+        SweepError::Failed(failure)
     }
-    let c = p0 + t0 * (chord.cross(t1).dot(across) / square);
-    // Signed areas in the triangle's plane, against its own.
-    let normal = (c - p0).cross(chord);
-    let area = |p: DVec3, q: DVec3, r: DVec3| (q - p).cross(r - p).dot(normal);
-    let whole = area(p0, c, p1);
-    let beta = [area(x, c, p1), area(p0, x, p1), area(p0, c, x)].map(|a| a / whole);
-    // On the arc itself (every coordinate positive), or not on a conic
-    // with these tangents.
-    if !above(beta[0] * beta[2], 0.0) || beta.iter().all(|&b| b > 0.0) {
-        return Err(PatchError::Degenerate);
-    }
-    let w = beta[1].abs() / (2.0 * (beta[0] * beta[2]).sqrt());
-    Conic3::new(p0, c, w, p1)
 }
 
-/// `x > floor`, false for NaN: the guards here refuse what isn't clearly
-/// past their floor.
-fn above(x: f64, floor: f64) -> bool {
-    x > floor
+/// `profile`, on the plane of `frame`, swept along `path`, carried as
+/// `orientation` says and turned by `twist` radians about the path over
+/// its length (none with a helix), the faces named for `feature`. Not
+/// built yet: always [`SweepError::Failed`] with
+/// [`KernelError::NotImplemented`].
+#[allow(clippy::too_many_arguments)]
+pub fn sweep(
+    _profile: &Profile,
+    _frame: &Frame,
+    _path: &Path,
+    _orientation: Orientation,
+    _twist: f64,
+    _feature: u64,
+    _tol: &Tolerance,
+    _budget: &Budget,
+) -> Result<Solid, SweepError> {
+    Err(SweepError::Failed(
+        KernelError::NotImplemented("sweeping along a path").into(),
+    ))
 }
-
-/// The two patches from the five edges.
-fn strip(
-    bottom: &Conic3,
-    top: &Conic3,
-    left: &Conic3,
-    right: &Conic3,
-    diagonal: &Conic3,
-) -> Result<[Patch; 2], PatchError> {
-    let (a0, a1, b0, b1) = (bottom.p0, bottom.p1, top.p0, top.p1);
-    Ok([
-        Patch::new(
-            [a0, a1, b1],
-            [bottom.c, right.c, diagonal.c],
-            [bottom.w, right.w, diagonal.w],
-        )?,
-        Patch::new(
-            [a0, b1, b0],
-            [diagonal.c, top.c, left.c],
-            [diagonal.w, top.w, left.w],
-        )?,
-    ])
-}
-
-#[cfg(test)]
-pub(crate) mod tests;

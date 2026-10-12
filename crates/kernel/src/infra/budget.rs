@@ -1,5 +1,5 @@
-//! The work budget of one kernel operation, as Varde's kernel counted it.
-//! A-02 grows this into the plan's step ledger (§2.4).
+//! The work budget of one kernel operation, as Varde's old kernel counted
+//! it. It is to grow into a ledger of the steps each operation takes.
 
 use super::error::KernelError;
 

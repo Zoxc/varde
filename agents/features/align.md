@@ -22,7 +22,7 @@ pub enum DirRef { Origin(Axis3), Normal(FaceRef), Axis(AxisRef) }
   largest kind; serde sees through the box; "Align N"). It makes no body; the body
   keeps its id and its faces their names (a move). Its motion is worked
   out from the references at every regeneration (`Motion::align`, see
-  "Aligning" in `agents/kernel/transform.md`), so the body follows either side's
+  "Aligning" in `agents/kernel-compat/transform.md`), so the body follows either side's
   upstream edits. A point alone is a move between the points; a point
   and a primary pair also turn the primary onto the target's by the
   smallest rotation (a pin into a hole: its turn about its own axis
@@ -347,5 +347,5 @@ bounds; a sketch holds its points within the coordinate limit, so only
 rounding takes a centre found from the curve past it. Such a centre is
 as good as the arc's control point times `(2r/chord)²`: profiles build
 it from the ends' middle (see `Conic::arc_between` in
-`agents/kernel/patch.md`) so it's the drawn centre within `1e-4` mm for a
+`agents/kernel-compat/patch.md`) so it's the drawn centre within `1e-4` mm for a
 10 mm arc a 1e5 away (it was 0.01 off).
