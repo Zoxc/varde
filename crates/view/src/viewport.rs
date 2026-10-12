@@ -949,7 +949,6 @@ impl Program<'_> {
         })
     }
 
-    /// What of the model shows at `at`, in the window's pixels.
     /// The origin plane drawn under the screen point `at`, if one is, and
     /// nearer than the point `near` of the model if there's one there,
     /// unless they're drawn over it ([`OriginShown::planes_on_top`]):
@@ -1006,6 +1005,9 @@ impl Program<'_> {
         hits.into_iter().map(|(plane, _)| plane).collect()
     }
 
+    /// What of the model shows at `at`, in the window's pixels: with
+    /// `picking.snaps`, snapped to a point of it, or of what's held
+    /// hovered (`picking.hovered`) though the cursor has left it.
     fn pick_point(&self, picking: &ModelPicking<'_>, bounds: Rectangle, at: Point) -> Option<Pick> {
         let at = local(bounds, at);
         let size = [bounds.width, bounds.height];
