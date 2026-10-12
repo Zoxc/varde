@@ -117,7 +117,7 @@ pub(crate) enum FileEnd {
         /// The `sum` its newest record's header holds, if walking back to
         /// it found it: not checked, so the record may turn out damaged.
         newest: Option<u128>,
-        /// Its previews, as [`previews`] reads them.
+        /// Its previews, as `previews` reads them.
         previews: Vec<Preview>,
     },
 }

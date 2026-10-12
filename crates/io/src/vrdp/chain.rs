@@ -497,7 +497,7 @@ impl Search<'_> {
 
 /// The block at `at` in `bytes` by its first `len`, if it passes the
 /// checks that come before hashing it: both its lengths agree, within
-/// [`MAX_BLOCK`] (the bound for every kind so far), and
+/// [`MAX_BLOCK`](super::MAX_BLOCK) (the bound for every kind so far), and
 /// long enough for its `tag_len`.
 fn candidate(bytes: &[u8], at: usize) -> Option<&[u8]> {
     let front = bytes.get(at..at.checked_add(TAG_LEN_AT + 2)?)?;

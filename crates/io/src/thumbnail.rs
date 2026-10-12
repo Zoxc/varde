@@ -111,7 +111,7 @@ impl fmt::Debug for Image {
 }
 
 /// `image` as PNG bytes, 8 bit RGBA: what a thumbnail's previews hold,
-/// and what [`Request::EncodePng`](crate::Request::EncodePng) gives the
+/// and what `Request::EncodePng` gives the
 /// MCP server's `render`.
 pub fn encode_png(image: &Image) -> Result<Vec<u8>, png::EncodingError> {
     let mut bytes = Vec::new();
@@ -195,7 +195,7 @@ fn theme(preview: &Preview) -> Option<Theme> {
 }
 
 /// The thumbnail the whole design file `bytes` holds, if it has one that
-/// decodes (see [`decode`]): what a sample design built into the app
+/// decodes (see `decode`): what a sample design built into the app
 /// shows.
 pub fn of_file(bytes: &[u8]) -> Option<Thumbnail> {
     match crate::vrdp::end(bytes).ok()? {
