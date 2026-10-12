@@ -213,38 +213,22 @@ fn piece_segments(
     let curve = u64::from(piece.curve.get());
     let sweep = (piece.to - piece.from).abs();
     let ccw = piece.to > piece.from;
+    let spec = |center: DVec2, radius| ArcSpec {
+        center,
+        radius,
+        sweep,
+        ccw,
+    };
     match &entry.curve {
         Curve::Line { .. } => out.push(Conic2::line(a, b)?, curve),
         &Curve::Circle { center, radius } => {
             let center = at(center).ok_or(ProfileError::Missing)?;
-            arc(
-                ArcSpec {
-                    center,
-                    radius,
-                    sweep,
-                    ccw,
-                },
-                a,
-                b,
-                curve,
-                out,
-            )
+            arc(spec(center, radius), a, b, curve, out)
         }
         &Curve::Arc { center, start, .. } => {
             let center = at(center).ok_or(ProfileError::Missing)?;
             let radius = at(start).ok_or(ProfileError::Missing)?.distance(center);
-            arc(
-                ArcSpec {
-                    center,
-                    radius,
-                    sweep,
-                    ccw,
-                },
-                a,
-                b,
-                curve,
-                out,
-            )
+            arc(spec(center, radius), a, b, curve, out)
         }
         Curve::Spline(spline) => {
             let shape = sketch.spline_shape(spline).ok_or(ProfileError::Missing)?;
@@ -320,19 +304,11 @@ pub(crate) fn path_chain(
 /// 1 is closed"); the work is that of finding the joints, no conics are
 /// made.
 pub fn chain_closes(sketch: &Sketch, curves: &[Id], join: f64) -> bool {
-    let mut ends = Vec::with_capacity(curves.len());
-    for &id in curves {
-        let Some(entry) = sketch.curve(id) else {
-            return false;
-        };
-        let Some([a, b]) = entry.curve.ends() else {
-            return true;
-        };
-        let (Some(pa), Some(pb)) = (sketch.point(a), sketch.point(b)) else {
-            return false;
-        };
-        ends.push([(a, pa.at), (b, pb.at)]);
-    }
+    let ends = match curve_ends(sketch, curves) {
+        Ok(ends) => ends,
+        Err(EndsError::Missing) => return false,
+        Err(EndsError::NoEnds) => return true,
+    };
     // Three ends at a point are branches, which `chain` says rather
     // than closed.
     let Ok(partner) = partners(&ends, join) else {
@@ -340,6 +316,30 @@ pub fn chain_closes(sketch: &Sketch, curves: &[Id], join: f64) -> bool {
     };
     ends.iter().any(|&pair| own_loop(pair, join))
         || (!ends.is_empty() && partner.iter().flatten().all(Option::is_some))
+}
+
+/// Why [`curve_ends`] found no ends.
+enum EndsError {
+    /// A curve isn't in the sketch any more, or names a point it doesn't
+    /// have.
+    Missing,
+    /// A curve has no ends: a circle or a closed spline.
+    NoEnds,
+}
+
+/// Each of the curves `curves` of `sketch`'s end points and where they
+/// are, in order, or why the first one that has none has none.
+fn curve_ends(sketch: &Sketch, curves: &[Id]) -> Result<Vec<[(Id, DVec2); 2]>, EndsError> {
+    let mut ends = Vec::with_capacity(curves.len());
+    for &id in curves {
+        let entry = sketch.curve(id).ok_or(EndsError::Missing)?;
+        let [a, b] = entry.curve.ends().ok_or(EndsError::NoEnds)?;
+        let (Some(pa), Some(pb)) = (sketch.point(a), sketch.point(b)) else {
+            return Err(EndsError::Missing);
+        };
+        ends.push([(a, pa.at), (b, pb.at)]);
+    }
+    Ok(ends)
 }
 
 /// The end an end joins, as (curve, end), if it joins one.
@@ -392,16 +392,10 @@ fn walk_chain(
             return closed_curve(sketch, *only, fit).map(|segments| (segments, true));
         }
     }
-    // Each curve's end points and where they are.
-    let mut ends: Vec<[(Id, DVec2); 2]> = Vec::with_capacity(curves.len());
-    for &id in curves {
-        let entry = sketch.curve(id).ok_or(ChainError::Missing)?;
-        let [a, b] = entry.curve.ends().ok_or(ChainError::Closed)?;
-        let (Some(pa), Some(pb)) = (at(a), at(b)) else {
-            return Err(ChainError::Missing);
-        };
-        ends.push([(a, pa), (b, pb)]);
-    }
+    let ends = curve_ends(sketch, curves).map_err(|e| match e {
+        EndsError::Missing => ChainError::Missing,
+        EndsError::NoEnds => ChainError::Closed,
+    })?;
     let n = ends.len();
     let partner = partners(&ends, join)?;
     if ends.iter().any(|&pair| own_loop(pair, join)) {
