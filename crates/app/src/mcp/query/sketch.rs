@@ -18,7 +18,7 @@ use varde_document::FeatureKind;
 use varde_mcp::tools::{SketchQuery, ToolReply};
 use varde_sketch::{Analysis, Constraint, Curve, Id, Measure, Region, Sketch};
 
-use super::{BUDGET, Numbers, Shape, pages};
+use super::{BUDGET, Numbers, Shape, paged_into};
 use crate::doc::Doc;
 
 /// The most redundant constraints and dimensions an answer names: past
@@ -141,23 +141,18 @@ pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
         "plane": Shape::new(doc).sketch_plane(plane),
         "revision": serde_json::to_value(doc.editor.revision()).unwrap_or(Value::Null),
     });
-    let mut keys = vec!["points", "curves", "constraints", "dimensions"];
-    let mut lists = vec![points, curves, constraints, dimensions];
+    let mut lists = vec![
+        ("points", points),
+        ("curves", curves),
+        ("constraints", constraints),
+        ("dimensions", dimensions),
+    ];
     let mut answer = answer;
     match regions {
-        Ok(regions) => {
-            keys.push("regions");
-            lists.push(regions);
-        }
+        Ok(regions) => lists.push(("regions", regions)),
         Err(error) => answer["regions"] = error,
     }
-    let data = pages(&lists, args.page, BUDGET - ANALYSIS_BYTES, |pages| {
-        let mut answer = answer.clone();
-        for (key, page) in keys.iter().zip(pages) {
-            answer[*key] = page;
-        }
-        answer
-    });
+    let data = paged_into(&answer, lists, args.page, BUDGET - ANALYSIS_BYTES);
     Ok(Read {
         sketch: Arc::new(sketch.clone()),
         data,

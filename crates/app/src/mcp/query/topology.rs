@@ -11,7 +11,7 @@ use varde_kernel::RenderPart;
 use varde_mcp::tools::{Direction, EdgeFilter, Page, ToolReply, Topology};
 use varde_regen::{Convexity, EdgeFacts, EdgeForm, Summary};
 
-use super::{BUDGET, Numbers, model_state, pages};
+use super::{BUDGET, Numbers, model_state, paged_into};
 use crate::doc::{Doc, Shown};
 use crate::mcp::key::{Key, Ref};
 
@@ -184,18 +184,16 @@ pub(crate) fn listed(
              so their faces and edges aren't listed."
         );
     }
-    let lists = [face_items, edge_items, corner_items];
+    let lists = vec![
+        ("faces", face_items),
+        ("edges", edge_items),
+        ("corners", corner_items),
+    ];
     let at = Page {
         offset: args.offset,
         limit: args.limit,
     };
-    let answer = pages(&lists, at, BUDGET, |pages| {
-        let mut answer = answer.clone();
-        for (key, page) in ["faces", "edges", "corners"].into_iter().zip(pages) {
-            answer[key] = page;
-        }
-        answer
-    });
+    let answer = paged_into(&answer, lists, at, BUDGET);
     Some(ToolReply::data(answer))
 }
 

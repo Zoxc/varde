@@ -69,14 +69,12 @@ pub(crate) fn design_summary(doc: &Doc, page: Page) -> ToolReply {
         "rollback": rollback,
         "model": model,
     });
-    let lists = [bodies, timeline, parameters(document)];
-    ToolReply::data(pages(&lists, page, BUDGET, |pages| {
-        let mut answer = answer.clone();
-        for (key, page) in ["bodies", "timeline", "parameters"].into_iter().zip(pages) {
-            answer[key] = page;
-        }
-        answer
-    }))
+    let lists = vec![
+        ("bodies", bodies),
+        ("timeline", timeline),
+        ("parameters", parameters(document)),
+    ];
+    ToolReply::data(paged_into(&answer, lists, page, BUDGET))
 }
 
 /// The most bytes of JSON a query's answer takes, its pages shortened
@@ -118,6 +116,24 @@ pub(super) fn is_page(value: &Value) -> bool {
         ["items", "total", "left_out"]
             .iter()
             .all(|key| page.contains_key(*key))
+    })
+}
+
+/// `answer` with each of `lists`' pages by `at` under its key, shortened
+/// to `budget` as [`pages`] does.
+pub(super) fn paged_into(
+    answer: &Value,
+    lists: Vec<(&str, Vec<Value>)>,
+    at: Page,
+    budget: usize,
+) -> Value {
+    let (keys, lists): (Vec<&str>, Vec<Vec<Value>>) = lists.into_iter().unzip();
+    pages(&lists, at, budget, |pages| {
+        let mut answer = answer.clone();
+        for (key, page) in keys.iter().zip(pages) {
+            answer[*key] = page;
+        }
+        answer
     })
 }
 
