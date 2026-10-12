@@ -61,9 +61,8 @@ pub(crate) struct Mcp {
     /// The running server's handle, once it's said ready.
     handle: Option<varde_mcp::server::Handle>,
     status: Status,
-    /// The session open, its client's name and when it started, if one
-    /// is.
-    session: Option<(SessionId, Option<String>, varde_io::UnixSeconds)>,
+    /// The session open, if one is.
+    session: Option<Session>,
     /// The client's calls, oldest first, at most [`LOG_CAP`]: what the
     /// panel lists.
     log: VecDeque<Logged>,
@@ -105,6 +104,16 @@ pub(crate) struct Mcp {
 /// task's worth of calls to look back over. The edit rows' designs
 /// before and after are bounded apart ([`revert::SNAPSHOTS`]).
 pub(crate) const LOG_CAP: usize = 200;
+
+/// The session open on the server.
+#[derive(Debug, PartialEq)]
+struct Session {
+    id: SessionId,
+    /// The name its client gave, if any.
+    client: Option<String>,
+    /// When it started.
+    since: varde_io::UnixSeconds,
+}
 
 /// Pushes `item` onto `queue`, first letting the oldest go if `queue`
 /// holds `cap` already: the one it let go, if any.
@@ -255,7 +264,7 @@ impl Mcp {
             if let Some(handle) = &self.handle {
                 handle.end_session();
             }
-            if let Some((session, ..)) = self.session.clone() {
+            if let Some(session) = self.open_session().cloned() {
                 self.session_ended(&session, doc);
                 ended = true;
             }
@@ -320,7 +329,7 @@ impl Mcp {
         doc: Option<&'a Doc>,
     ) -> Option<varde_view::McpShown<'a>> {
         let client = (self.session.as_ref())
-            .map(|(_, name, _)| name.as_deref())
+            .map(|session| session.client.as_deref())
             .or(self.gone.as_ref().map(Option::as_deref))
             .flatten();
         Some(varde_view::McpShown {
@@ -329,7 +338,7 @@ impl Mcp {
             open: self.open,
             status: self.shown(now).status,
             port,
-            client: (self.session.as_ref()).map(|(_, name, _)| name.as_deref()),
+            client: (self.session.as_ref()).map(|session| session.client.as_deref()),
             gone: self.gone.as_ref().map(Option::as_deref),
             rows: self.rows(now, doc),
             dropped: self.dropped,
@@ -464,8 +473,7 @@ impl Mcp {
         from: &waiting::From,
         reply: ToolReply,
     ) -> (ToolReply, Option<changes::Changes>) {
-        let open = self.session.as_ref().map(|(session, ..)| session);
-        if open != Some(&from.session) {
+        if self.open_session() != Some(&from.session) {
             return (reply, None);
         }
         let changes = match &self.seen {
@@ -492,12 +500,9 @@ impl Mcp {
     /// previous call out again, if `doc`'s design changed since and the
     /// panel is open (opened, the sync after works them out).
     fn refresh_live(&mut self, doc: &Doc) {
-        let (true, Some((session, ..)), Some(seen), Some(start)) = (
-            self.open,
-            &self.session,
-            &self.seen,
-            self.serve.as_ref().map(|serve| serve.start),
-        ) else {
+        let (true, Some(session), Some(seen), Some(start)) =
+            (self.open, self.open_session(), &self.seen, self.serving())
+        else {
             self.live = None;
             return;
         };
@@ -530,9 +535,9 @@ impl Mcp {
                 (Status::BindFailed(why), true) => McpStatus::BindFailed(why),
                 (Status::Off, true) => McpStatus::Starting,
             },
-            client: (self.session.as_ref()).map(|(_, name, since)| McpClient {
-                name: name.as_deref(),
-                since: crate::when::ago_in_sentence(*since, now),
+            client: (self.session.as_ref()).map(|session| McpClient {
+                name: session.client.as_deref(),
+                since: crate::when::ago_in_sentence(session.since, now),
             }),
             token: self.token.as_ref().map(Token::to_string),
             token_shown: false,
@@ -546,7 +551,7 @@ impl Mcp {
     /// from a server since stopped is dropped (a call answered with an
     /// error, which goes nowhere).
     pub(crate) fn event(&mut self, start: u64, event: Event, doc: Option<&mut Doc>) {
-        if self.serve.as_ref().map(|serve| serve.start) != Some(start) {
+        if self.serving() != Some(start) {
             if let Event::Call { reply, .. } = event {
                 reply.send(ToolReply::error(waiting::SERVER_STOPPED));
             }
@@ -597,7 +602,11 @@ impl Mcp {
                 self.live = None;
                 let client =
                     (client.map(|name| plain(&name))).filter(|name| !name.trim().is_empty());
-                self.session = Some((session, client, crate::when::now()));
+                self.session = Some(Session {
+                    id: session,
+                    client,
+                    since: crate::when::now(),
+                });
             }
             Event::Session(session::Event::Ended { session, end: _ }) => {
                 self.session_ended(&session, doc);
@@ -614,16 +623,24 @@ impl Mcp {
         }
     }
 
+    /// The open session's id, if one is open.
+    fn open_session(&self) -> Option<&SessionId> {
+        self.session.as_ref().map(|session| &session.id)
+    }
+
+    /// The running server's start, if one is running: what tells its
+    /// calls and events from a stopped one's.
+    fn serving(&self) -> Option<u64> {
+        self.serve.as_ref().map(|serve| serve.start)
+    }
+
     /// The session `session` ended: its client shown gone if it's the
     /// one open, its calls waiting in `doc` answered so.
     fn session_ended(&mut self, session: &SessionId, doc: Option<&mut Doc>) {
-        if self
-            .session
-            .as_ref()
-            .is_some_and(|(open, ..)| open == session)
-            && let Some((_, name, _)) = self.session.take()
+        if self.open_session() == Some(session)
+            && let Some(open) = self.session.take()
         {
-            self.gone = Some(name);
+            self.gone = Some(open.client);
         }
         self.end(
             doc,
@@ -689,7 +706,7 @@ impl Mcp {
         let Some(doc) = doc else {
             return;
         };
-        let start = self.serve.as_ref().map(|serve| serve.start);
+        let start = self.serving();
         doc.mcp_end(
             |from| Some(from.start) != start,
             waiting::Ended::ServerStopped,
@@ -698,8 +715,7 @@ impl Mcp {
             self.log_answer(done.from.serial, &done.call, &done.reply, done.state);
             let feature =
                 (done.reply.structured.as_ref()).and_then(|data| data.get("id")?.as_u64());
-            let open = self.session.as_ref().map(|(session, ..)| session);
-            let session_open = open == Some(&done.from.session);
+            let session_open = self.open_session() == Some(&done.from.session);
             let cancelled = untold(&done.from);
             let (reply, told) = match cancelled {
                 true => (done.reply, None),
