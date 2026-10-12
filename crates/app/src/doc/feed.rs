@@ -684,18 +684,35 @@ impl MeshFeed {
     /// Why the draft asked for last fails, once its answer is shown: none
     /// if it goes, it's not answered yet, or there's none.
     pub(crate) fn draft_error(&self) -> Option<&str> {
-        let revision = self.draft.as_ref()?.revision;
-        let drafted = self.drafted.as_ref()?;
-        (drafted.revision == revision)
-            .then_some(drafted.error.as_deref())
-            .flatten()
+        self.answered_drafted()?.error.as_deref()
     }
 
     /// Whether the draft asked for last is answered, if there's one.
     pub(crate) fn draft_answered(&self) -> bool {
-        self.draft.as_ref().is_none_or(|draft| {
-            (self.drafted.as_ref()).is_some_and(|drafted| drafted.revision == draft.revision)
-        })
+        self.draft.is_none() || self.answered_drafted().is_some()
+    }
+
+    /// The answer for exactly the draft asked for last, once it's shown.
+    fn answered_drafted(&self) -> Option<&Drafted> {
+        let revision = self.draft.as_ref()?.revision;
+        self.drafted
+            .as_ref()
+            .filter(|drafted| drafted.revision == revision)
+    }
+
+    /// The newest draft answered of the current run of drafts, while a
+    /// draft is asked for: see [`MeshFeed::draft_shown`].
+    fn run_drafted(&self) -> Option<&Drafted> {
+        self.drafted.as_ref().filter(|_| self.draft_shown())
+    }
+
+    /// The newest touch test answered of the current run of drafts, its
+    /// revision and the bodies found, while a draft is asked for: see
+    /// [`MeshFeed::draft_touched`].
+    fn run_touched(&self) -> Option<(u64, &[BodyId])> {
+        self.draft.as_ref()?;
+        let (revision, touched) = self.touched.as_ref()?;
+        (*revision >= self.run).then_some((*revision, &touched[..]))
     }
 
     /// Why the draft fails, as its panel says: [`MeshFeed::draft_error`],
@@ -721,20 +738,16 @@ impl MeshFeed {
     /// The bodies the draft asked for last, a cut that works, takes
     /// nothing from, once its answer is shown ([`Drafted::uncut`]).
     pub(crate) fn draft_uncut(&self) -> &[BodyId] {
-        match (&self.draft, &self.drafted) {
-            (Some(draft), Some(drafted)) if drafted.revision == draft.revision => &drafted.uncut,
-            _ => &[],
-        }
+        self.answered_drafted()
+            .map_or(&[], |drafted| &drafted.uncut)
     }
 
     /// What to draw of where the draft asked for last fails, when
     /// [`MeshFeed::draft_error`] gives why and the failure has geometry.
     pub(crate) fn draft_geometry(&self) -> Option<&Arc<ErrorGeometry>> {
-        let revision = self.draft.as_ref()?.revision;
-        let drafted = self.drafted.as_ref()?;
-        (drafted.revision == revision && drafted.error.is_some())
-            .then_some(drafted.geometry.as_ref())
-            .flatten()
+        let drafted = self.answered_drafted()?;
+        drafted.error.as_ref()?;
+        drafted.geometry.as_ref()
     }
 
     /// The geometry of the failure [`MeshFeed::shown_draft_error`] gives,
@@ -768,10 +781,7 @@ impl MeshFeed {
     /// ([`Drafted::reference`]): a point on it and its direction (a
     /// plane's normal), while a draft is asked for.
     pub(crate) fn draft_reference(&self) -> Option<[glam::DVec3; 2]> {
-        if !self.draft_shown() {
-            return None;
-        }
-        let [point, along] = *self.drafted.as_ref()?.reference.as_deref()?;
+        let [point, along] = *self.run_drafted()?.reference.as_deref()?;
         Some([point.into(), along.into()])
     }
 
@@ -779,10 +789,7 @@ impl MeshFeed {
     /// of an align's references, if it's an align's
     /// ([`Drafted::datums`]), while a draft is asked for.
     pub(crate) fn draft_datums(&self) -> Option<varde_regen::AlignDatums> {
-        if !self.draft_shown() {
-            return None;
-        }
-        self.drafted.as_ref()?.datums.as_deref().copied()
+        self.run_drafted()?.datums.as_deref().copied()
     }
 
     /// What the newest draft answered of the current run of drafts found
@@ -790,20 +797,14 @@ impl MeshFeed {
     /// fitted faces), if it's a scale's ([`Drafted::scale`]), while a
     /// draft is asked for.
     pub(crate) fn draft_scale(&self) -> Option<varde_regen::ScaleFound> {
-        if !self.draft_shown() {
-            return None;
-        }
-        self.drafted.as_ref()?.scale.as_deref().copied()
+        self.run_drafted()?.scale.as_deref().copied()
     }
 
     /// Where the newest draft answered of the current run of drafts found
     /// a sweep's handles, if it's a sweep's ([`Drafted::sweep`]), while a
     /// draft is asked for.
     pub(crate) fn draft_sweep(&self) -> Option<varde_regen::SweepFound> {
-        if !self.draft_shown() {
-            return None;
-        }
-        self.drafted.as_ref()?.sweep.as_deref().copied()
+        self.run_drafted()?.sweep.as_deref().copied()
     }
 
     /// Whether the model shown answers what was asked last: picks on it
@@ -823,19 +824,13 @@ impl MeshFeed {
     /// panel's list doesn't blink. Empty until the run's first such
     /// answer, so another extrude's bodies aren't listed.
     pub(crate) fn draft_touched(&self) -> &[BodyId] {
-        match (&self.draft, &self.touched) {
-            (Some(_), Some((revision, touched))) if *revision >= self.run => touched,
-            _ => &[],
-        }
+        self.run_touched().map_or(&[], |(_, touched)| touched)
     }
 
     /// The draft revision whose answer [`MeshFeed::draft_touched`] gives,
     /// if it gives one.
     pub(crate) fn draft_touched_revision(&self) -> Option<u64> {
-        match (&self.draft, &self.touched) {
-            (Some(_), Some((revision, _))) if *revision >= self.run => Some(*revision),
-            _ => None,
-        }
+        self.run_touched().map(|(revision, _)| revision)
     }
 
     /// What the measure asked for last came to on the model shown, once
