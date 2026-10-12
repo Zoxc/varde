@@ -52,15 +52,46 @@ impl Params {
     /// they were made, and makes them of the list as it is.
     fn rebase(&mut self, document: &Document) {
         if !self.current(document) {
-            self.drafts.clear();
-            self.typing = None;
-            self.refused = None;
+            self.clear_drafts();
             self.basis = document.params().to_vec();
         }
     }
 
+    /// Drops the drafts, the field typed in and what was refused.
+    fn clear_drafts(&mut self) {
+        self.drafts.clear();
+        self.typing = None;
+        self.refused = None;
+    }
+
     fn draft(&self, index: usize, field: ParamField) -> Option<&ParamDraft> {
         (self.drafts.iter()).find(|draft| draft.index == index && draft.field == field)
+    }
+
+    fn draft_mut(&mut self, index: usize, field: ParamField) -> Option<&mut ParamDraft> {
+        (self.drafts.iter_mut()).find(|draft| draft.index == index && draft.field == field)
+    }
+
+    /// Has the draft of `field` of row `index` follow a command made of
+    /// `text` or refused with why: dropped once made, kept with why; left
+    /// as it is where it's been typed in since.
+    fn answered(
+        &mut self,
+        index: usize,
+        field: ParamField,
+        text: &str,
+        outcome: Result<(), String>,
+    ) {
+        let Some(draft) = self
+            .draft_mut(index, field)
+            .filter(|draft| draft.text.trim() == text)
+        else {
+            return;
+        };
+        match outcome {
+            Ok(()) => self.drop_draft(index, field),
+            Err(why) => draft.error = Some(why),
+        }
     }
 
     fn drop_draft(&mut self, index: usize, field: ParamField) {
@@ -76,9 +107,7 @@ impl Doc {
         self.rail.close();
         self.params.open = !self.params.open;
         if !self.params.open {
-            self.params.drafts.clear();
-            self.params.typing = None;
-            self.params.refused = None;
+            self.params.clear_drafts();
         }
         self.refresh_param_uses();
     }
@@ -269,28 +298,12 @@ impl Doc {
                 self.params.typing = None;
             }
             (&Command::RemoveParam(index), Err(why)) => self.params.refused = Some((index, why)),
-            (
-                &Command::RenameParam {
-                    index,
-                    name: ref text,
-                }
-                | &Command::SetParam { index, ref text },
-                outcome,
-            ) => {
-                let field = match command {
-                    Command::RenameParam { .. } => ParamField::Name,
-                    _ => ParamField::Expression,
-                };
-                let Some(draft) = (self.params.drafts.iter_mut())
-                    .find(|draft| draft.index == index && draft.field == field)
-                    .filter(|draft| draft.text.trim() == text)
-                else {
-                    return self.rebase_after(made);
-                };
-                match outcome {
-                    Ok(()) => self.params.drop_draft(index, field),
-                    Err(why) => draft.error = Some(why),
-                }
+            (&Command::RenameParam { index, ref name }, outcome) => {
+                self.params.answered(index, ParamField::Name, name, outcome);
+            }
+            (&Command::SetParam { index, ref text }, outcome) => {
+                self.params
+                    .answered(index, ParamField::Expression, text, outcome);
             }
             _ => {}
         }
