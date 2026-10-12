@@ -9,7 +9,7 @@ use varde_document::FeatureId;
 use varde_render::{Camera, SketchLayer, Space as LayerSpace};
 use varde_sketch::Id;
 
-use super::{CURVE_WIDTH, Input, Moving};
+use super::{CURVE_WIDTH, Input, Moving, SplitInput};
 use crate::motion::{MotionLook, MotionPick, SketchLines, SweepView};
 use crate::operation_panel::PanelHover;
 use crate::theme::SketchColors;
@@ -33,12 +33,11 @@ pub(super) fn sweep_regions<'s, 'a>(
     }
 }
 
-/// Draws a sweep's path (or a loft's rails, or a split's line) on `live`:
-/// while it's picked
-/// (`picking`), the curves of the sketches of `lines` (construction ones
-/// dashed, the chain of the one `hovered` stronger), and each part's
-/// curves of `chains` in the selected colour, those of the part whose
-/// row is hovered (`part`) in the hovered one.
+/// Draws a sweep's path (or a loft's rails, or a split's line) on
+/// `live`: while it's picked (`picking`), the curves of the sketches of
+/// `lines` (construction ones dashed, the chain of the one `hovered`
+/// stronger), and each part's curves of `chains` in the selected colour,
+/// those of the part whose row is hovered (`part`) in the hovered one.
 pub(super) fn sweep_lines(
     live: &mut SketchLayer,
     lines: &[SketchLines<'_>],
@@ -120,22 +119,9 @@ impl<'a> Moving<'a> {
         match event {
             mouse::Event::CursorMoved { .. } => {
                 let over = local_cursor(bounds, cursor);
-                let (region, curve) = match picking {
-                    MotionPick::Regions => (
-                        over.and_then(|at| regions.region_under(at, camera, bounds)),
-                        None,
-                    ),
-                    _ => (
-                        None,
-                        over.and_then(|at| {
-                            curve_under(&sweep.lines, at, camera, bounds, None).map(SketchHit::of)
-                        }),
-                    ),
-                };
-                let changed = std::mem::replace(&mut input.regions.hover, region) != region
-                    || std::mem::replace(&mut input.curve, curve) != curve;
+                let changed = self.sweep_hover(picking, input, over, camera, bounds);
                 // Over a curve, the model's edge under it isn't hovered.
-                match curve {
+                match input.curve {
                     Some(_) if changed => {
                         Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
                     }
@@ -228,7 +214,36 @@ impl<'a> Moving<'a> {
         bounds: Rectangle,
         hovered: bool,
     ) -> Option<Action<Message>> {
-        let sweep = self.state.sweep.as_ref()?;
+        self.state.sweep.as_ref()?;
+        let changed = self.sweep_hover(picking, &mut input.sweep, at, camera, bounds);
+        match input.sweep.curve {
+            // The model isn't hovered under a path curve.
+            Some(_) if hovered => Some(Action::publish(Message::Look(Look::Hover(None)))),
+            Some(_) if changed => Some(Action::request_redraw()),
+            // Off a path curve, the model under the cursor is picked
+            // again; the frame drawing the curve away is asked for after.
+            None if changed => {
+                input.redraw = true;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Works out what of a sweep's sketches is under the cursor at `at`
+    /// as it picks them (`picking`): a region of its profile or a curve
+    /// of its path. Whether that changed.
+    fn sweep_hover(
+        &self,
+        picking: MotionPick,
+        input: &mut SplitInput,
+        at: Option<DVec2>,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) -> bool {
+        let Some(sweep) = self.state.sweep.as_ref() else {
+            return false;
+        };
         let (region, curve) = match picking {
             MotionPick::Regions => (
                 at.and_then(|at| sweep_regions(sweep, None).region_under(at, camera, bounds)),
@@ -241,20 +256,7 @@ impl<'a> Moving<'a> {
                 }),
             ),
         };
-        let (redraw, input) = (&mut input.redraw, &mut input.sweep);
-        let changed = std::mem::replace(&mut input.regions.hover, region) != region
-            || std::mem::replace(&mut input.curve, curve) != curve;
-        match curve {
-            // The model isn't hovered under a path curve.
-            Some(_) if hovered => Some(Action::publish(Message::Look(Look::Hover(None)))),
-            Some(_) if changed => Some(Action::request_redraw()),
-            // Off a path curve, the model under the cursor is picked
-            // again; the frame drawing the curve away is asked for after.
-            None if changed => {
-                *redraw = true;
-                None
-            }
-            _ => None,
-        }
+        std::mem::replace(&mut input.regions.hover, region) != region
+            || std::mem::replace(&mut input.curve, curve) != curve
     }
 }
