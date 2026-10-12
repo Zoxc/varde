@@ -12,7 +12,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 
 use varde_document::{Document, Snapshot};
-use web_sys::FileSystemFileHandle;
+use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle};
 
 use super::disk::{self, Handed};
 use super::opfs::{self, Handle, OpfsDir};
@@ -48,17 +48,10 @@ pub(crate) struct Files {
     open: OpenFiles<Open>,
     /// Counts the names made for new entries.
     named: u64,
-    /// Where new designs are kept, if anywhere, see [`Stores::designs`](crate::Stores::designs).
-    designs: Option<PathBuf>,
     /// Where the settings are kept, if anywhere, see [`Stores::settings`](crate::Stores::settings).
     settings: Option<PathBuf>,
-    /// The directory `designs` names, once found.
-    dir: Option<OpfsDir>,
-    /// Browser storage's directory, `saved`, once found.
-    browser: Option<OpfsDir>,
-    /// The root of the Origin Private File System, where `downloads.toml`
-    /// is, once found.
-    root: Option<OpfsDir>,
+    /// The directories the worker keeps designs in, once found.
+    dirs: Dirs,
     /// Whether listing browser storage made an entry in the store, of
     /// changes a tab closed as it renamed a design left, since this was
     /// last asked: see [`Files::take_rescued`].
@@ -154,11 +147,13 @@ impl Files {
         Self {
             open: OpenFiles::new(),
             named: 0,
-            designs: stores.designs,
             settings: stores.settings,
-            dir: None,
-            browser: None,
-            root: None,
+            dirs: Dirs {
+                designs: stores.designs,
+                store: None,
+                browser: None,
+                root: None,
+            },
             rescued: false,
         }
     }
@@ -371,40 +366,6 @@ impl Files {
         }
     }
 
-    /// The store's directory, made if needed.
-    async fn dir(&mut self) -> io::Result<OpfsDir> {
-        if let Some(dir) = &self.dir {
-            return Ok(dir.clone());
-        }
-        let designs = self
-            .designs
-            .as_deref()
-            .ok_or_else(|| io::Error::other(NO_STORE))?;
-        let dir = OpfsDir(opfs::dir(designs).await?);
-        self.dir = Some(dir.clone());
-        Ok(dir)
-    }
-
-    /// Browser storage's directory, made if needed.
-    async fn browser_dir(&mut self) -> io::Result<OpfsDir> {
-        if let Some(dir) = &self.browser {
-            return Ok(dir.clone());
-        }
-        let dir = OpfsDir(opfs::dir(Path::new(browser::DIR)).await?);
-        self.browser = Some(dir.clone());
-        Ok(dir)
-    }
-
-    /// The root, where `downloads.toml` is.
-    async fn root(&mut self) -> io::Result<OpfsDir> {
-        if let Some(root) = &self.root {
-            return Ok(root.clone());
-        }
-        let root = OpfsDir(opfs::root().await?);
-        self.root = Some(root.clone());
-        Ok(root)
-    }
-
     /// Makes and holds an entry for a new design.
     async fn create(&mut self, open_id: OpenId) -> Result<FileId, String> {
         let entry = self.entry().await?;
@@ -424,7 +385,7 @@ impl Files {
     /// Makes and holds a new entry.
     async fn entry(&mut self) -> Result<Entry, String> {
         let error = |e: io::Error| format!("couldn't make a place to auto-save the design: {e}");
-        let dir = self.dir().await.map_err(error)?;
+        let dir = self.dirs.store().await.map_err(error)?;
         for _ in 0..ATTEMPTS {
             let name = entry_name(&mut self.named);
             let handle = match dir.take(&name, Make::IfMissing).await {
@@ -496,7 +457,7 @@ impl Files {
             }) => self.end(entry, ending).await,
             Place::Entry(_) => Ok(()),
             Place::Browser(design) => {
-                let dir = self.browser_dir().await?;
+                let dir = self.dirs.browser().await?;
                 folder::close(&dir, design, ending).await
             }
         }
@@ -539,7 +500,7 @@ impl Files {
     /// already, or that another tab took just now, which then finds it
     /// empty and deletes it itself, is fine.
     async fn remove(&mut self, name: &str) -> io::Result<()> {
-        let dir = self.dir().await?;
+        let dir = self.dirs.store().await?;
         remove_if_free(&dir, name).await
     }
 
@@ -548,7 +509,7 @@ impl Files {
     /// Empty ones are deleted. Damaged ones are listed, marked so, see
     /// [`listing`].
     async fn list(&mut self) -> Vec<Recovered> {
-        let (Some(designs), Ok(dir)) = (self.designs.clone(), self.dir().await) else {
+        let (Some(designs), Ok(dir)) = (self.dirs.designs.clone(), self.dirs.store().await) else {
             return Vec::new();
         };
         let Ok(names) = dir.names().await else {
@@ -591,9 +552,9 @@ impl Files {
     /// Takes the entry at `path`, listed by [`Files::list`]: one left
     /// behind.
     async fn take(&mut self, path: &Path) -> Result<Entry, String> {
-        let designs = self.designs.clone().ok_or(NO_RECOVERED)?;
+        let designs = self.dirs.designs.clone().ok_or(NO_RECOVERED)?;
         let name = listed_entry(&designs, path)?.to_owned();
-        let dir = self.dir().await.map_err(|e| e.to_string())?;
+        let dir = self.dirs.store().await.map_err(|e| e.to_string())?;
         match dir.take(&name, Make::No).await {
             Ok(handle) => Ok(Entry {
                 name,
@@ -701,7 +662,7 @@ impl Files {
         bytes: &[u8],
         read: vrdp::WithFound,
     ) -> Result<folder::Opened<Handle>, folder::NotCopied> {
-        let dir = match self.browser_dir().await {
+        let dir = match self.dirs.browser().await {
             Ok(dir) => dir,
             Err(e) => {
                 let error = format!("couldn't copy it into browser storage: {e}");
@@ -717,7 +678,7 @@ impl Files {
     /// they're of another design of the name. Best effort: what's lost is
     /// only what the downloads say.
     async fn forget_downloads(&mut self, name: &str) {
-        if let Ok(root) = self.root().await {
+        if let Ok(root) = self.dirs.root().await {
             let _ = downloads::update(&root, |downloads| downloads.removed(name)).await;
         }
     }
@@ -729,7 +690,7 @@ impl Files {
         open_id: Option<OpenId>,
         name: &str,
     ) -> Result<Opened, String> {
-        let dir = self.browser_dir().await.map_err(|e| e.to_string())?;
+        let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
         let opened = folder::open(&dir, name).await?;
         Ok(self.opened_in_browser(open_id, opened).await)
     }
@@ -744,7 +705,10 @@ impl Files {
         let name = opened.design.name().to_owned();
         let damage = Damage::of_design(&opened.read);
         let access = opened.design.access();
-        let download = self.last_download(&name, opened.read.opened.tail).await;
+        let download = self
+            .dirs
+            .last_download(&name, opened.read.opened.tail)
+            .await;
         let document = opened.read.opened.payload;
         let file = self.open.add(
             open_id,
@@ -765,13 +729,6 @@ impl Files {
         }
     }
 
-    /// The last download recorded of the design `name`, whose file ends at
-    /// `tail`.
-    async fn last_download(&mut self, name: &str, tail: Tail) -> Option<LastDownload> {
-        let root = self.root().await.ok()?;
-        downloads::load(&root).await.last(name, tail.sum())
-    }
-
     /// Opens the save a search found past damage in the file `file` was
     /// opened from, named by its tail `found`, instead of the one opened,
     /// see [`Request::OpenFound`]. What a closed tab left of a design in
@@ -787,11 +744,8 @@ impl Files {
             Place::Browser(design) => {
                 let document = design.open_found(chosen);
                 let (name, tail) = (design.name().to_owned(), design.tail());
-                let dir = self.browser_dir().await.map_err(|e| e.to_string())?;
-                let download = self.last_download(&name, tail).await;
-                let Place::Browser(design) = &mut self.open.get_mut(file)?.place else {
-                    return Err(NOT_FOUND.to_owned());
-                };
+                let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
+                let download = self.dirs.last_download(&name, tail).await;
                 let recovered = folder::offer_again(&dir, design, &document).await;
                 Ok(Opened {
                     file,
@@ -824,15 +778,13 @@ impl Files {
         document: &Document,
         previews: &[Preview],
     ) -> Result<(), SaveError> {
-        if let Place::Browser(_) = self.open.get_mut(file)?.place {
-            let dir = (self.browser_dir().await).map_err(|e| SaveError::Failed(e.to_string()))?;
-            let Place::Browser(design) = &mut self.open.get_mut(file)?.place else {
-                return Err(SaveError::Failed(NOT_FOUND.to_owned()));
-            };
-            return folder::save(&dir, design, document, previews).await;
-        }
-        let Place::Entry(unsaved) = &mut self.open.get_mut(file)?.place else {
-            return Err(SaveError::Failed(NOT_FOUND.to_owned()));
+        let unsaved = match &mut self.open.get_mut(file)?.place {
+            Place::Browser(design) => {
+                let dir =
+                    (self.dirs.browser().await).map_err(|e| SaveError::Failed(e.to_string()))?;
+                return folder::save(&dir, design, document, previews).await;
+            }
+            Place::Entry(unsaved) => unsaved,
         };
         let disk = unsaved
             .disk
@@ -955,7 +907,7 @@ impl Files {
         document: &Document,
         previews: &[Preview],
     ) -> Result<SavedAs, SaveError> {
-        let dir = (self.browser_dir().await).map_err(|e| SaveError::Failed(e.to_string()))?;
+        let dir = (self.dirs.browser().await).map_err(|e| SaveError::Failed(e.to_string()))?;
         if let Some(file) = file {
             let open = self.open.get_mut(file)?;
             if let Place::Browser(design) = &mut open.place
@@ -998,14 +950,14 @@ impl Files {
     /// Gives `file`, a design in browser storage, the name `name`, see
     /// [`Request::Rename`].
     async fn rename(&mut self, file: FileId, name: &str) -> Result<(), String> {
-        let dir = self.browser_dir().await.map_err(|e| e.to_string())?;
+        let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
         let Place::Browser(design) = &mut self.open.get_mut(file)?.place else {
             return Err("only a design in browser storage is renamed".to_owned());
         };
         let from = design.name().to_owned();
         folder::rename(&dir, design, name).await?;
         // Best effort: what's lost is only what the downloads say.
-        if let Ok(root) = self.root().await {
+        if let Ok(root) = self.dirs.root().await {
             let _ = downloads::update(&root, |downloads| downloads.renamed(&from, name)).await;
         }
         Ok(())
@@ -1015,14 +967,14 @@ impl Files {
     /// Changes a tab closed as it renamed a design left go to the store,
     /// as a new design, see [`folder::list`].
     async fn list_browser(&mut self) -> Vec<BrowserDesign> {
-        let Ok(dir) = self.browser_dir().await else {
+        let Ok(dir) = self.dirs.browser().await else {
             return Vec::new();
         };
-        let downloads = match self.root().await {
+        let downloads = match self.dirs.root().await {
             Ok(root) => downloads::load(&root).await,
             Err(_) => Default::default(),
         };
-        let store = self.dir().await.ok();
+        let store = self.dirs.store().await.ok();
         let (open, named) = (&self.open, &mut self.named);
         let held = |name: &str| open.values().any(|open| open.browser_name() == Some(name));
         let listing =
@@ -1034,7 +986,7 @@ impl Files {
     /// Deletes the design `name` in browser storage, see
     /// [`Request::DeleteFromBrowser`].
     async fn delete_from_browser(&mut self, name: &str) -> Result<(), String> {
-        let dir = self.browser_dir().await.map_err(|e| e.to_string())?;
+        let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
         let held = (self.open.values()).any(|open| open.browser_name() == Some(name));
         folder::delete(&dir, name, held).await?;
         self.forget_downloads(name).await;
@@ -1053,7 +1005,7 @@ impl Files {
         };
         let (name, sum) = (design.name().to_owned(), design.tail().sum());
         let time = UnixSeconds::now();
-        let root = self.root().await.map_err(|e| e.to_string())?;
+        let root = self.dirs.root().await.map_err(|e| e.to_string())?;
         downloads::update(&root, |downloads| {
             downloads.record(&name, time, (!edited).then_some(sum));
         })
@@ -1072,10 +1024,10 @@ impl Files {
         &mut self,
         name: &str,
     ) -> Result<(Vec<u8>, Result<(), String>), String> {
-        let dir = self.browser_dir().await.map_err(|e| e.to_string())?;
+        let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
         let (bytes, sum) = folder::read_whole(&dir, name).await?;
         let time = UnixSeconds::now();
-        let recorded = match self.root().await {
+        let recorded = match self.dirs.root().await {
             Ok(root) => {
                 downloads::update(&root, |downloads| downloads.record(name, time, Some(sum))).await
             }
@@ -1097,6 +1049,63 @@ impl Files {
 /// A name for a new entry in the store, `named` counting the names made:
 /// never one made before in this tab, and unlikely to be one another tab
 /// made.
+/// The directories the worker keeps designs in, each found and made on
+/// first use and kept from then on.
+#[derive(Debug)]
+struct Dirs {
+    /// Where new designs are kept, if anywhere, see [`Stores::designs`](crate::Stores::designs).
+    designs: Option<PathBuf>,
+    /// The directory `designs` names, once found.
+    store: Option<OpfsDir>,
+    /// Browser storage's directory, `saved`, once found.
+    browser: Option<OpfsDir>,
+    /// The root of the Origin Private File System, where `downloads.toml`
+    /// is, once found.
+    root: Option<OpfsDir>,
+}
+
+impl Dirs {
+    /// The directory in `slot`, found by `find` and kept there if it's
+    /// not yet.
+    async fn cached(
+        slot: &mut Option<OpfsDir>,
+        find: impl Future<Output = io::Result<FileSystemDirectoryHandle>>,
+    ) -> io::Result<OpfsDir> {
+        if let Some(dir) = slot {
+            return Ok(dir.clone());
+        }
+        let dir = OpfsDir(find.await?);
+        *slot = Some(dir.clone());
+        Ok(dir)
+    }
+
+    /// The store's directory, made if needed.
+    async fn store(&mut self) -> io::Result<OpfsDir> {
+        let designs = self
+            .designs
+            .as_deref()
+            .ok_or_else(|| io::Error::other(NO_STORE))?;
+        Self::cached(&mut self.store, opfs::dir(designs)).await
+    }
+
+    /// Browser storage's directory, made if needed.
+    async fn browser(&mut self) -> io::Result<OpfsDir> {
+        Self::cached(&mut self.browser, opfs::dir(Path::new(browser::DIR))).await
+    }
+
+    /// The root, where `downloads.toml` is.
+    async fn root(&mut self) -> io::Result<OpfsDir> {
+        Self::cached(&mut self.root, opfs::root()).await
+    }
+
+    /// The last download recorded of the design `name`, whose file ends at
+    /// `tail`.
+    async fn last_download(&mut self, name: &str, tail: Tail) -> Option<LastDownload> {
+        let root = self.root().await.ok()?;
+        downloads::load(&root).await.last(name, tail.sum())
+    }
+}
+
 fn entry_name(named: &mut u64) -> String {
     let name = new_name(js_sys::Date::now(), js_sys::Math::random(), *named);
     // Counted up once per name made: never overflows.
