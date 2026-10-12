@@ -36,15 +36,32 @@ pub(crate) struct ScaleSetup {
     pub(crate) edge: Option<EdgeRef>,
     /// An edge length's "Along its axis only".
     pub(crate) axis_only: bool,
-    /// Where the point and the edge are on a model shown: where they
-    /// were picked, or found again by their names on one shown since
-    /// ([`ScaleSetup::follow`]).
-    marks: [Option<Mark>; 2],
-    /// Whether the point, and the edge, are gone: the document no longer
-    /// takes them at the feature's place (an undo took their body or a
-    /// face's maker away), or no longer holds their body. Kept, said to
-    /// be gone, until picked again or back.
-    gone: [bool; 2],
+    /// Where the point is on a model shown, and whether it's gone.
+    about_at: Tracked,
+    /// Where the edge is on a model shown, and whether it's gone.
+    edge_at: Tracked,
+}
+
+/// Where a scale's point or edge is on a model shown, and whether it's
+/// gone.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Tracked {
+    /// Where it was picked, or found again by its name on a model shown
+    /// since ([`ScaleSetup::follow`]).
+    mark: Option<Mark>,
+    /// Whether it's gone: the document no longer takes it at the
+    /// feature's place (an undo took its body or a face's maker away),
+    /// or no longer holds its body. Kept, said to be gone, until picked
+    /// again or back.
+    gone: bool,
+}
+
+impl Tracked {
+    /// Marks it at `mark` (or nowhere), as picked anew: not gone.
+    fn set(&mut self, mark: Option<Mark>) {
+        self.mark = mark;
+        self.gone = false;
+    }
 }
 
 impl Default for ScaleSetup {
@@ -54,8 +71,8 @@ impl Default for ScaleSetup {
             about: PointRef::Origin,
             edge: None,
             axis_only: false,
-            marks: [None, None],
-            gone: [false; 2],
+            about_at: Tracked::default(),
+            edge_at: Tracked::default(),
         }
     }
 }
@@ -86,11 +103,11 @@ impl ScaleSetup {
     fn follow(&mut self, index: &PickIndex, shown: impl Fn(BodyId) -> BodyId) {
         let model = index.model();
         let current = |mark: &Option<Mark>| mark.is_some_and(|mark| mark.model == model);
-        if !current(&self.marks[0]) {
-            self.marks[0] = Some(Taken::Point(self.about).found(index, &shown));
+        if !current(&self.about_at.mark) {
+            self.about_at.mark = Some(Taken::Point(self.about).found(index, &shown));
         }
-        if !current(&self.marks[1]) {
-            self.marks[1] = self.edge.map(|edge| Mark {
+        if !current(&self.edge_at.mark) {
+            self.edge_at.mark = self.edge.map(|edge| Mark {
                 model,
                 target: (index.find_edge(shown(edge.body), edge.faces, edge.near))
                     .map(Picked::Edge),
@@ -101,14 +118,14 @@ impl ScaleSetup {
 
     /// The edge picked lit on `model`, if it's marked there.
     fn lit(&self, model: u64) -> Vec<Picked> {
-        (self.marks[1].iter())
+        (self.edge_at.mark.iter())
             .filter(|mark| mark.model == model && self.mode == ScaleMode::EdgeLength)
             .filter_map(|mark| mark.target)
             .collect()
     }
 
     /// Notes whether the point and the edge are gone from `document` at
-    /// feature `index` (see [`ScaleSetup::gone`]).
+    /// feature `index` ([`Tracked::gone`]).
     fn prune(&mut self, document: &Document, index: usize, bodies: &[BodyId]) {
         let design = document.design();
         let Ok(one) = Value::new("1", &Scale::factor_ask(&design)) else {
@@ -120,9 +137,9 @@ impl ScaleSetup {
             about: self.about,
             factor: ScaleFactor::Uniform(one.clone()),
         };
-        self.gone[0] =
+        self.about_at.gone =
             !held(self.about.body()) || document.check_scale_refs(index, &point).is_err();
-        self.gone[1] = self.edge.is_some_and(|edge| {
+        self.edge_at.gone = self.edge.is_some_and(|edge| {
             let named = Scale {
                 bodies: bodies.to_vec(),
                 about: PointRef::Origin,
@@ -209,10 +226,10 @@ impl MotionSession {
 
     /// The words for its point or edge being gone, if one is.
     pub(super) fn scale_gone(&self) -> Option<&'static str> {
-        if self.scale.gone[0] {
+        if self.scale.about_at.gone {
             return Some("The point is gone: pick another");
         }
-        (self.scale.gone[1] && self.scale.mode == ScaleMode::EdgeLength)
+        (self.scale.edge_at.gone && self.scale.mode == ScaleMode::EdgeLength)
             .then_some("The edge is gone: pick another")
     }
 
@@ -238,8 +255,7 @@ impl MotionSession {
             return;
         }
         self.scale.about = PointRef::Origin;
-        self.scale.marks[0] = None;
-        self.scale.gone[0] = false;
+        self.scale.about_at.set(None);
         self.picking = MotionPick::Bodies;
     }
 }
@@ -319,8 +335,7 @@ impl Doc {
             at: point_at(index, pick),
         };
         session.scale.about = point;
-        session.scale.marks[0] = Some(mark);
-        session.scale.gone[0] = false;
+        session.scale.about_at.set(Some(mark));
         session.picking = MotionPick::Bodies;
         Ok(())
     }
@@ -347,12 +362,11 @@ impl Doc {
             session.bodies = vec![edge.body];
         }
         session.scale.edge = Some(edge);
-        session.scale.marks[1] = Some(Mark {
+        session.scale.edge_at.set(Some(Mark {
             model,
             target: Some(pick.target),
             at: None,
-        });
-        session.scale.gone[1] = false;
+        }));
         session.picking = MotionPick::Bodies;
         Ok(())
     }
@@ -462,7 +476,7 @@ impl Doc {
             .filter(|_| !picking)
             .and_then(|found| found.centre)
             .map(DVec3::from);
-        let marked = (setup.marks[0])
+        let marked = (setup.about_at.mark)
             .filter(|mark| mark.model == model)
             .and_then(|mark| mark.at);
         let origin = match setup.about {
