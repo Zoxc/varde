@@ -117,31 +117,11 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                 .map(|id| Message::Look(Look::ChangePlane(id)));
             sketch_tab(document, sketch, change)
         }
-        (Panel::Objects, _) => scrolled(objects(
-            document,
-            state.merged,
-            editable,
-            state.row_menu,
-            state.model_selection,
-            state.opacity_preview,
-            state.color_preview,
-            state.body_look_hovered,
-            state.origin,
-            state.objects_selected,
-            state.objects_folded,
-            state.renaming,
-        )),
+        (Panel::Objects, _) => scrolled(objects(ObjectsView::of(state))),
         _ => {
-            let selected = state.selected_feature;
-            let (rollback, menu) = (state.rollback, state.row_menu);
-            let (unsolved, failed) = (state.unsolved, state.failed);
-            let (renaming, palette) = (state.renaming, state.mode.palette());
-            let list = move || {
-                timeline(
-                    document, selected, rollback, menu, editable, unsolved, failed, renaming,
-                    palette,
-                )
-            };
+            let rollback = state.rollback;
+            let view = TimelineView::of(state);
+            let list = move || timeline(view);
             // Rolled back short of the end, and not while the marker is
             // dragged (even over where it was), the ghost marker after the list rolls to the end,
             // sticking to the panel's foot while the list scrolls. Always
@@ -218,6 +198,38 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
         .into()
 }
 
+/// What [`timeline`] lists, and how, out of a [`DocumentState`].
+#[derive(Clone, Copy)]
+struct TimelineView<'a> {
+    document: &'a Document,
+    selected: Option<FeatureId>,
+    /// The feature the marker is before, and whether it's only there as
+    /// a feature is edited.
+    rollback: (Option<FeatureId>, bool),
+    menu: Option<RowMenu>,
+    editable: bool,
+    unsolved: &'a [FeatureId],
+    failed: &'a [varde_regen::FeatureFailure],
+    renaming: Option<(Named, &'a str)>,
+    palette: &'static Palette,
+}
+
+impl<'a> TimelineView<'a> {
+    fn of(state: &DocumentState<'a>) -> Self {
+        Self {
+            document: state.editor.document(),
+            selected: state.selected_feature,
+            rollback: state.rollback,
+            menu: state.row_menu,
+            editable: state.editable(),
+            unsolved: state.unsolved,
+            failed: state.failed,
+            renaming: state.renaming,
+            palette: state.mode.palette(),
+        }
+    }
+}
+
 /// The features in the order they were added, the `selected` one
 /// highlighted, the rollback marker before the feature `rollback` names
 /// (at the end if none), the features after it faint, labelled (rolled
@@ -226,18 +238,18 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 /// right-clicking a feature asks for, those `unsolved` or
 /// `failed` marked. Features can only be deleted if the document is
 /// `editable`. The row `renaming` is of holds the rename field.
-#[expect(clippy::too_many_arguments)]
-fn timeline<'a>(
-    document: &'a Document,
-    selected: Option<FeatureId>,
-    (rollback, editing): (Option<FeatureId>, bool),
-    menu: Option<RowMenu>,
-    editable: bool,
-    unsolved: &[FeatureId],
-    failed: &'a [varde_regen::FeatureFailure],
-    renaming: Option<(Named, &'a str)>,
-    palette: &'static Palette,
-) -> Element<'a, Message> {
+fn timeline<'a>(view: TimelineView<'a>) -> Element<'a, Message> {
+    let TimelineView {
+        document,
+        selected,
+        rollback: (rollback, editing),
+        menu,
+        editable,
+        unsolved,
+        failed,
+        renaming,
+        palette,
+    } = view;
     if document.features().is_empty() {
         return empty_note(format!(
             "No features yet. Press {} to start a sketch.",
@@ -703,6 +715,65 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
     group_row(label, count).padding([0, 8]).into()
 }
 
+/// What [`objects`] lists, and how, out of a [`DocumentState`].
+#[derive(Clone, Copy)]
+struct ObjectsView<'a> {
+    document: &'a Document,
+    merged: &'a [(BodyId, BodyId)],
+    editable: bool,
+    menu: Option<RowMenu>,
+    selection: &'a crate::Selection,
+    preview: Option<(BodyId, Opacity)>,
+    color_preview: Option<(BodyId, Tint)>,
+    body_look_hovered: bool,
+    origin: OriginShown,
+    rows: &'a [ObjectRow],
+    folded: &'a BTreeSet<ObjectGroup>,
+    renaming: Option<(Named, &'a str)>,
+}
+
+impl<'a> ObjectsView<'a> {
+    /// `document`'s, editable, with nothing merged, selected, folded,
+    /// previewed or renamed, and the origin as a new document shows it.
+    #[cfg(test)]
+    fn plain(document: &'a Document) -> Self {
+        static NO_SELECTION: std::sync::LazyLock<crate::Selection> =
+            std::sync::LazyLock::new(Default::default);
+        static NOT_FOLDED: BTreeSet<ObjectGroup> = BTreeSet::new();
+        Self {
+            document,
+            merged: &[],
+            editable: true,
+            menu: None,
+            selection: &NO_SELECTION,
+            preview: None,
+            color_preview: None,
+            body_look_hovered: false,
+            origin: OriginShown::DEFAULT,
+            rows: &[],
+            folded: &NOT_FOLDED,
+            renaming: None,
+        }
+    }
+
+    fn of(state: &DocumentState<'a>) -> Self {
+        Self {
+            document: state.editor.document(),
+            merged: state.merged,
+            editable: state.editable(),
+            menu: state.row_menu,
+            selection: state.model_selection,
+            preview: state.opacity_preview,
+            color_preview: state.color_preview,
+            body_look_hovered: state.body_look_hovered,
+            origin: state.origin,
+            rows: state.objects_selected,
+            folded: state.objects_folded,
+            renaming: state.renaming,
+        }
+    }
+}
+
 /// The world's origin objects, as `origin` has them shown, then the
 /// bodies, then the sketches. The origin objects can be shown and hidden,
 /// read-only too, as that's no edit, but not deleted. A body a join merged into another
@@ -716,21 +787,21 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// `selection`, which marks the rows of the bodies it holds, says. Each
 /// group's header folds it, as the Sketch tab's do, those `folded`
 /// listing nothing under it.
-#[expect(clippy::too_many_arguments)]
-fn objects<'a>(
-    document: &'a Document,
-    merged: &[(BodyId, BodyId)],
-    editable: bool,
-    menu: Option<RowMenu>,
-    selection: &crate::Selection,
-    preview: Option<(BodyId, Opacity)>,
-    color_preview: Option<(BodyId, Tint)>,
-    body_look_hovered: bool,
-    origin: OriginShown,
-    rows: &[ObjectRow],
-    folded: &BTreeSet<ObjectGroup>,
-    renaming: Option<(Named, &'a str)>,
-) -> Element<'a, Message> {
+fn objects<'a>(view: ObjectsView<'a>) -> Element<'a, Message> {
+    let ObjectsView {
+        document,
+        merged,
+        editable,
+        menu,
+        selection,
+        preview,
+        color_preview,
+        body_look_hovered,
+        origin,
+        rows,
+        folded,
+        renaming,
+    } = view;
     let click = |row| Message::Look(Look::ClickObject { row, add: false });
     let origins = OriginObject::ALL.into_iter().map(|object| {
         let (icon, label) = origin_label(object);
@@ -2353,20 +2424,10 @@ mod tests {
         assert_eq!(consumed_note(document, &[], below), None);
 
         let texts = |merged: &[(BodyId, BodyId)]| -> Vec<String> {
-            let objects = objects(
-                document,
+            let objects = objects(ObjectsView {
                 merged,
-                true,
-                None,
-                &Default::default(),
-                None,
-                None,
-                false,
-                OriginShown::DEFAULT,
-                &[],
-                &BTreeSet::new(),
-                None,
-            );
+                ..ObjectsView::plain(document)
+            });
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
             laid.texts().into_iter().map(|shown| shown.text).collect()
         };
@@ -2380,20 +2441,10 @@ mod tests {
         // The row hovered is drawn over the plain one, which shows through
         // a translucent highlight: its note is laid out in the same place
         // in both, though the hovered one has its bin.
-        let objects = objects(
-            document,
-            &merged,
-            true,
-            None,
-            &Default::default(),
-            None,
-            None,
-            false,
-            OriginShown::DEFAULT,
-            &[],
-            &BTreeSet::new(),
-            None,
-        );
+        let objects = objects(ObjectsView {
+            merged: &merged,
+            ..ObjectsView::plain(document)
+        });
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
         let notes: Vec<_> = (laid.texts().into_iter())
             .filter(|shown| shown.text == "in Body 1")
@@ -2407,20 +2458,7 @@ mod tests {
     #[test]
     fn the_origin_objects_are_listed_first() {
         let document = Document::example();
-        let objects = objects(
-            &document,
-            &[],
-            true,
-            None,
-            &Default::default(),
-            None,
-            None,
-            false,
-            OriginShown::DEFAULT,
-            &[],
-            &BTreeSet::new(),
-            None,
-        );
+        let objects = objects(ObjectsView::plain(&document));
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 600.0));
         let shown: Vec<String> = laid.texts().into_iter().map(|shown| shown.text).collect();
         let at = |text: &str| shown.iter().position(|shown| shown == text);
