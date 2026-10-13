@@ -459,7 +459,7 @@ fn serve(stream: TcpStream, shared: &Shared) {
             Ok(None) => return,
             Err(error) => {
                 if let Some(status) = error.status() {
-                    writer.start(shared.timeouts.write);
+                    writer.start(timeouts.write);
                     let _ = write_response(&mut writer, &Response::empty(status), true);
                 }
                 return;
@@ -480,7 +480,7 @@ fn serve(stream: TcpStream, shared: &Shared) {
         }
         // What the app's bound on a call's wait runs from.
         let came = Instant::now();
-        let answer = {
+        let pending = {
             let mut state = shared.state();
             let outcome = state.handle(&request, shared.now());
             // Sent under the lock, so events reach the app in
@@ -490,20 +490,29 @@ fn serve(stream: TcpStream, shared: &Shared) {
                 shared.send(Event::Session(event));
             }
             match outcome.answer {
-                Answer::Respond(response) => Err(response),
-                Answer::Dispatch(dispatch) => Ok(dispatch_call(shared, dispatch, came)),
+                Answer::Respond(response) => Pending::Now(response),
+                Answer::Dispatch(dispatch) => {
+                    Pending::Waiting(dispatch_call(shared, dispatch, came))
+                }
             }
         };
-        let response = match answer {
-            Err(response) => response,
-            Ok((call, receiver)) => wait(call, receiver),
+        let response = match pending {
+            Pending::Now(response) => response,
+            Pending::Waiting(waiting) => waiting.wait(),
         };
         let close = request.close || shared.stopped();
-        writer.start(shared.timeouts.write);
+        writer.start(timeouts.write);
         if write_response(&mut writer, &response, close).is_err() || close {
             return;
         }
     }
+}
+
+/// What a request is answered with: a response now, or the app's reply
+/// to a call once it comes, waited for outside the state's lock.
+enum Pending<'a> {
+    Now(Response),
+    Waiting(Waiting<'a>),
 }
 
 /// A call handed to the app, the request `id` of `session`: dropping it
@@ -523,13 +532,8 @@ impl Drop for InFlight<'_> {
 }
 
 /// Hands `dispatch`, of a request come at `came`, to the app, under the
-/// state's lock; the reply comes on the receiver, for the call returned
-/// with it.
-fn dispatch_call<'a>(
-    shared: &'a Shared,
-    dispatch: Dispatch,
-    came: Instant,
-) -> (InFlight<'a>, Receiver<ToolReply>) {
+/// state's lock: what it returns waits for the reply.
+fn dispatch_call<'a>(shared: &'a Shared, dispatch: Dispatch, came: Instant) -> Waiting<'a> {
     let Dispatch { session, id, call } = dispatch;
     let (sender, receiver) = mpsc::sync_channel(1);
     shared.send(Event::Call {
@@ -540,36 +544,45 @@ fn dispatch_call<'a>(
     });
     // Made last, as nothing after it here can fail: dropped under the
     // state's lock, it would wait on that lock for good.
-    (
-        InFlight {
+    Waiting {
+        call: InFlight {
             shared,
             session,
             id,
         },
         receiver,
-    )
+    }
 }
 
-/// Waits for the app's reply to `call`.
-fn wait(call: InFlight<'_>, receiver: Receiver<ToolReply>) -> Response {
-    let shared = call.shared;
-    // With the stream gone, the event (and the reply in it) is dropped
-    // at once: the wait ends as disconnected.
-    let reply = match receiver.recv_timeout(shared.timeouts.reply) {
-        Ok(reply) => reply,
-        Err(RecvTimeoutError::Disconnected) => ToolReply::error(CLOSING),
-        // One sent as the wait ran out was taken ([`Reply::send`] said
-        // so): it's the answer. Then the receiver goes at once, before
-        // the state's lock, so a later send isn't taken.
-        Err(RecvTimeoutError::Timeout) => match receiver.try_recv() {
+/// A call handed to the app, and where its reply comes.
+struct Waiting<'a> {
+    call: InFlight<'a>,
+    receiver: Receiver<ToolReply>,
+}
+
+impl Waiting<'_> {
+    /// Waits for the app's reply to the call.
+    fn wait(self) -> Response {
+        let Waiting { call, receiver } = self;
+        let shared = call.shared;
+        // With the stream gone, the event (and the reply in it) is dropped
+        // at once: the wait ends as disconnected.
+        let reply = match receiver.recv_timeout(shared.timeouts.reply) {
             Ok(reply) => reply,
-            Err(_) => ToolReply::error(TIMED_OUT),
-        },
-    };
-    drop(receiver);
-    let response = session::respond(&call.id, &reply);
-    drop(call);
-    response
+            Err(RecvTimeoutError::Disconnected) => ToolReply::error(CLOSING),
+            // One sent as the wait ran out was taken ([`Reply::send`] said
+            // so): it's the answer. Then the receiver goes at once, before
+            // the state's lock, so a later send isn't taken.
+            Err(RecvTimeoutError::Timeout) => match receiver.try_recv() {
+                Ok(reply) => reply,
+                Err(_) => ToolReply::error(TIMED_OUT),
+            },
+        };
+        drop(receiver);
+        let response = session::respond(&call.id, &reply);
+        drop(call);
+        response
+    }
 }
 
 #[cfg(test)]
