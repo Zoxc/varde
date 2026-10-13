@@ -8,7 +8,6 @@ use iced::widget::{
 use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
 use varde_document::{BodyId, Document, Feature, FeatureId, FeatureKind, Named, Opacity, Tint};
-use varde_expr::LengthUnit;
 use varde_render::{BodyTint, OriginShown};
 
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Selectable, Sketch};
@@ -243,10 +242,8 @@ fn timeline<'a>(view: TimelineView<'a>) -> Element<'a, Message> {
         },
         menu,
         editable,
-        unsolved,
-        failed,
         renaming,
-        palette,
+        ..
     } = view;
     if document.features().is_empty() {
         return empty_note(format!(
@@ -254,7 +251,6 @@ fn timeline<'a>(view: TimelineView<'a>) -> Element<'a, Message> {
             Shortcut::SKETCH.label()
         ));
     }
-    let units = document.units();
     let features = document.features();
     let ids: Vec<FeatureId> = features.iter().map(|feature| feature.id).collect();
     let kept = rollback
@@ -288,15 +284,11 @@ fn timeline<'a>(view: TimelineView<'a>) -> Element<'a, Message> {
                 let roll = Message::Edit(Edit::SetRollback(after));
                 (label, (editable && !editing).then_some(roll))
             });
-            let unsolved = unsolved.contains(&feature.id);
-            let failed = (failed.iter()).find(|failed| failed.feature == feature.id);
-            let selected = selected == Some(feature.id);
             if let Some(text) = renamed(renaming, Named::Feature(feature.id)) {
                 return rename_row(feature_icon(feature), text, 8.0);
             }
-            let row = feature_row(
-                document, feature, units, selected, rolled, unsolved, failed, palette,
-            );
+            let selected = selected == Some(feature.id);
+            let row = feature_row(&view, feature, rolled);
             let on = RowMenu::Feature(feature.id);
             let menu =
                 (selected && menu == Some(on)).then(|| feature_menu(feature, editable, roll));
@@ -336,29 +328,26 @@ fn rename_row<'a>(icon: Icon, text: &'a str, indent: f32) -> Element<'a, Message
     .into()
 }
 
-/// A feature of `document` in the Timeline, with its note: a sketch's
-/// plane ([`plane_note`](crate::plane_note)), an extrude's distances in
-/// `units`, how far a revolve turns in all. Marked failed if it's
-/// `unsolved`, or `failed` and why, which hovering it tells ("Extrude
+/// A feature of the `view`'s document in the Timeline, with its note: a
+/// sketch's plane ([`plane_note`](crate::plane_note)), an extrude's
+/// distances in the document's units, how far a revolve turns in all.
+/// Marked failed if it's unsolved, or failed and why, which hovering it tells ("Extrude
 /// fails: ...", as its panel says it); a failure whose geometry has a box
 /// gets a Show button that frames the camera on it (a tooltip can't be
 /// clicked, so it's in the row). Hovering it shows the failure's geometry
 /// in the viewport. Faint if it's hidden, or `rolled` back (after the
 /// rollback marker). Clicking selects it, double-clicking edits it.
-#[expect(clippy::too_many_arguments)]
 fn feature_row<'a>(
-    document: &Document,
+    view: &TimelineView<'a>,
     feature: &'a Feature,
-    units: LengthUnit,
-    selected: bool,
     rolled: bool,
-    unsolved: bool,
-    failed: Option<&'a varde_regen::FeatureFailure>,
-    palette: &'static Palette,
 ) -> Element<'a, Message> {
+    let document = view.document;
+    let unsolved = view.unsolved.contains(&feature.id);
+    let failed = (view.failed.iter()).find(|failed| failed.feature == feature.id);
     let note = match &feature.kind {
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
-        _ => feature_note(document, feature, units).into(),
+        _ => feature_note(document, feature, document.units()).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -369,7 +358,7 @@ fn feature_row<'a>(
         failed: unsolved || failed.is_some(),
         note: Some(note),
         indent: 8.0,
-        selected,
+        selected: view.selected == Some(feature.id),
         construction: false,
     };
     let row = row
@@ -385,7 +374,7 @@ fn feature_row<'a>(
             row,
             format!("{} fails: ", feature.kind.noun()),
             crate::chrome::sentence(&failed.message),
-            palette,
+            view.palette,
         ),
         None => row.into(),
     }
@@ -2193,6 +2182,7 @@ mod tests {
     use super::*;
     use crate::feature_text::extrude::{extent_note, extrude_note};
     use varde_document::Extent;
+    use varde_expr::LengthUnit;
 
     #[test]
     fn a_size_the_constraints_set_is_noted_driven_and_one_a_dimension_gives_faint() {
