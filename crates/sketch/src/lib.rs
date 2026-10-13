@@ -388,7 +388,7 @@ impl Sketch {
             .map(|index| &self.dimensions[index])
     }
 
-    pub fn dimension_mut(&mut self, id: Id) -> Option<&mut DimensionEntry> {
+    pub(crate) fn dimension_mut(&mut self, id: Id) -> Option<&mut DimensionEntry> {
         self.dimension_index(id)
             .map(|index| &mut self.dimensions[index])
     }
