@@ -29,47 +29,18 @@ pub(crate) struct Listed {
     rows: Vec<Row>,
 }
 
-/// The item `pick` is of on `index`'s model by its names: its face's key,
-/// its edge's faces' or its vertex's, and its body as drawn there.
-fn name(index: &PickIndex, pick: &Pick) -> Option<Selected> {
-    let (body, near) = (pick.body, pick.at);
-    Some(match pick.target {
-        Picked::Face(face) => Selected::Face {
-            body,
-            key: index.face_key(face)?,
-            near,
-        },
-        Picked::Edge(chain) => Selected::Edge {
-            body,
-            faces: index.chain_keys(chain)?,
-            near,
-        },
-        Picked::Vertex(corner) => Selected::Vertex {
-            body,
-            faces: index.vertex_keys(corner)?,
-            near,
-        },
-    })
-}
-
 /// The item `named` on `index`'s model, drawn on `body` there, if it's
 /// there: a pick of it where it was named.
 fn found(index: &PickIndex, named: &Selected, body: varde_document::BodyId) -> Option<Pick> {
-    let (target, at) = match *named {
-        Selected::Face { key, near, .. } => {
-            (Picked::Face(index.find_face(body, &key, near)?), near)
-        }
-        Selected::Edge { faces, near, .. } => {
-            (Picked::Edge(index.find_edge(body, faces, near)?), near)
-        }
-        Selected::Vertex { faces, near, .. } => {
-            (Picked::Vertex(index.find_vertex(body, faces, near)?), near)
-        }
+    let at = match *named {
+        Selected::Face { near, .. }
+        | Selected::Edge { near, .. }
+        | Selected::Vertex { near, .. } => near,
         Selected::Body(_) | Selected::SketchItem(_) => return None,
     };
     Some(Pick {
         model: index.model(),
-        target,
+        target: named.find_in(index, body)?,
         body,
         at,
         snap: None,
@@ -155,7 +126,10 @@ impl Doc {
         let rows = (items.into_iter().flatten())
             .map(|item| {
                 let (named, held) = match item {
-                    OverlapItem::Model(pick) => (name(index, &pick), self.motion_ref_at(pick)),
+                    OverlapItem::Model(pick) => (
+                        Selected::named(index, pick.body, pick.target, pick.at),
+                        self.motion_ref_at(pick),
+                    ),
                     OverlapItem::Sketch(sketch_item) => {
                         (Some(Selected::SketchItem(sketch_item)), None)
                     }

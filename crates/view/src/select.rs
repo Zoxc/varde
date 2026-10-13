@@ -137,6 +137,43 @@ impl Selected {
             _ => None,
         }
     }
+
+    /// `target` of `body` on `index`'s model, picked at `near`, by its
+    /// names: its face's key, its edge's faces' or its vertex's.
+    pub fn named(index: &PickIndex, body: BodyId, target: Picked, near: DVec3) -> Option<Self> {
+        Some(match target {
+            Picked::Face(face) => Selected::Face {
+                body,
+                key: index.face_key(face)?,
+                near,
+            },
+            Picked::Edge(chain) => Selected::Edge {
+                body,
+                faces: index.chain_keys(chain)?,
+                near,
+            },
+            Picked::Vertex(corner) => Selected::Vertex {
+                body,
+                faces: index.vertex_keys(corner)?,
+                near,
+            },
+        })
+    }
+
+    /// Where this face, edge or vertex is on `index`'s model, looked for
+    /// on `body` there by its names; none for a body or a sketch's item.
+    pub fn find_in(&self, index: &PickIndex, body: BodyId) -> Option<Picked> {
+        match *self {
+            Selected::Face { key, near, .. } => index.find_face(body, &key, near).map(Picked::Face),
+            Selected::Edge { faces, near, .. } => {
+                index.find_edge(body, faces, near).map(Picked::Edge)
+            }
+            Selected::Vertex { faces, near, .. } => {
+                index.find_vertex(body, faces, near).map(Picked::Vertex)
+            }
+            Selected::Body(_) | Selected::SketchItem(_) => None,
+        }
+    }
 }
 
 /// What's selected in the model, in the order it was, kept by name
@@ -351,15 +388,11 @@ impl Selection {
                 _ if fresh && found => Some(target),
                 // Not found in this model before, so not now either.
                 _ if fresh => None,
-                Selected::Face { body, key, near } => drawn(body)
-                    .and_then(|body| index.find_face(body, &key, near))
-                    .map(|face| Some(Picked::Face(face))),
-                Selected::Edge { body, faces, near } => drawn(body)
-                    .and_then(|body| index.find_edge(body, faces, near))
-                    .map(|chain| Some(Picked::Edge(chain))),
-                Selected::Vertex { body, faces, near } => drawn(body)
-                    .and_then(|body| index.find_vertex(body, faces, near))
-                    .map(|corner| Some(Picked::Vertex(corner))),
+                Selected::Face { body, .. }
+                | Selected::Edge { body, .. }
+                | Selected::Vertex { body, .. } => drawn(body)
+                    .and_then(|body| item.find_in(index, body))
+                    .map(Some),
             };
             match found {
                 Some(target) => self.push(Part { item, target }),
@@ -485,16 +518,10 @@ impl Selection {
     /// What a click on `pick` selects or toggles as one in the mode, or
     /// its body if `body`: an edge's tangent chain where it's asked for.
     fn unit(&self, index: &PickIndex, pick: Pick, body: bool) -> Vec<Part> {
-        let edge = |chain: u32, near: DVec3| {
-            let faces = index.chain_keys(chain)?;
-            let item = Selected::Edge {
-                body: pick.body,
-                faces,
-                near,
-            };
+        let part = |target: Picked, near: DVec3| {
             Some(Part {
-                item,
-                target: Some(Picked::Edge(chain)),
+                item: Selected::named(index, pick.body, target, near)?,
+                target: Some(target),
             })
         };
         if body || self.mode == SelectionMode::Bodies {
@@ -507,20 +534,6 @@ impl Selection {
             return Vec::new();
         }
         match (self.mode, pick.target) {
-            (_, Picked::Face(face)) => {
-                let Some(key) = index.face_key(face) else {
-                    return Vec::new();
-                };
-                let item = Selected::Face {
-                    body: pick.body,
-                    key,
-                    near: pick.at,
-                };
-                vec![Part {
-                    item,
-                    target: Some(pick.target),
-                }]
-            }
             (SelectionMode::Edges { tangent: true }, Picked::Edge(chain)) => {
                 (index.tangent_chain(chain).iter())
                     .filter_map(|&other| {
@@ -529,25 +542,11 @@ impl Selection {
                         } else {
                             index.chain_point(other)
                         };
-                        edge(other, near?)
+                        part(Picked::Edge(other), near?)
                     })
                     .collect()
             }
-            (_, Picked::Edge(chain)) => edge(chain, pick.at).into_iter().collect(),
-            (_, Picked::Vertex(corner)) => {
-                let Some(faces) = index.vertex_keys(corner) else {
-                    return Vec::new();
-                };
-                let item = Selected::Vertex {
-                    body: pick.body,
-                    faces,
-                    near: pick.at,
-                };
-                vec![Part {
-                    item,
-                    target: Some(pick.target),
-                }]
-            }
+            (_, target) => part(target, pick.at).into_iter().collect(),
         }
     }
 
