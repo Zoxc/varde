@@ -7,15 +7,15 @@ use iced::widget::text::Wrapping;
 use iced::widget::{Button, Space, column, container, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{APP_NAME, EXTENSION};
-use varde_sketch::Sketch;
+use varde_sketch::{Failure, Rejected, Sketch};
 
 use crate::chrome::{self, dialog, dialog_button, small_button};
 use crate::feature_text::feature_icon;
 use crate::icons::{self, Icon};
+use crate::shortcut::Held;
 use crate::theme::Emphasis;
 use crate::{Edit, File, Look, Message, SavePlace, Unsaved, panels, theme};
 
-use super::status_text::refusal_text;
 use super::{
     Damage, DamagedFile, DeletePrompt, FileShown, NamePrompt, RecoveredChanges, Refusal,
     RefusedEdit,
@@ -119,6 +119,30 @@ pub(super) fn edit_refused(refusal: Refusal<'_>, sketch: &Sketch) -> Cow<'static
     match refusal {
         Refusal::Rejected(why) => refusal_text(why, sketch),
         Refusal::Failed(error) => format!("Couldn't check the edit: {error}").into(),
+    }
+}
+
+/// Why an edit of `sketch` was refused, as the status bar and the
+/// banner say it. A driving dimension refused is told how to have it as
+/// a reference: a new one placed with the reference modifier held, one
+/// made driving stays one.
+fn refusal_text(why: &Rejected, sketch: &Sketch) -> Cow<'static, str> {
+    match why {
+        Rejected::Edit(why) => format!("Couldn't edit: {why}").into(),
+        Rejected::Redundant { .. } => "Would over-constrain the sketch".into(),
+        Rejected::Driving { dimensions, .. }
+            if dimensions.iter().all(|&id| sketch.dimension(id).is_some()) =>
+        {
+            "Would over-constrain the sketch, so it stays a reference".into()
+        }
+        Rejected::Driving { .. } => format!(
+            "Would over-constrain the sketch: place it with {} held to add it as a reference",
+            Held::REFERENCE.label()
+        )
+        .into(),
+        Rejected::Unsolved(Failure::NotConverged { .. }) => "Can't be solved with the rest".into(),
+        Rejected::Unsolved(Failure::Degenerate { .. }) => "Would collapse the sketch".into(),
+        Rejected::Unsolved(Failure::OutOfTime) => "Took too long to solve".into(),
     }
 }
 
@@ -487,9 +511,13 @@ fn delete_warning(prompt: &DeletePrompt<'_>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use varde_document::{Body, Feature};
+    use std::collections::BTreeSet;
 
-    use super::{delete_question, delete_warning};
+    use glam::DVec2;
+    use varde_document::{Body, Feature};
+    use varde_sketch::{Curve, Measure, Rejected, Sketch};
+
+    use super::{Held, delete_question, delete_warning, refusal_text};
     use crate::document::DeletePrompt;
 
     #[test]
@@ -601,6 +629,45 @@ mod tests {
                 "Extrude 2, Extrude 3 and Extrude 4 work on Body 1 and stay, so they may fail \
                  with nothing to work on."
             )
+        );
+    }
+
+    #[test]
+    fn a_refusal_says_why() {
+        let mut sketch = Sketch::default();
+        let point = sketch.add_point(DVec2::ZERO).unwrap();
+        let why = Rejected::Redundant {
+            involved: BTreeSet::new(),
+        };
+        assert_eq!(
+            refusal_text(&why, &sketch),
+            "Would over-constrain the sketch"
+        );
+        // A driving dimension refused says how to have it as a reference:
+        // a new one placed so, one made driving staying one.
+        let refused = |dimension| Rejected::Driving {
+            dimensions: BTreeSet::from([dimension]),
+            involved: BTreeSet::from([dimension]),
+        };
+        let new = refusal_text(&refused(point), &sketch);
+        let held = Held::REFERENCE.label();
+        assert!(new.contains(&format!("place it with {held} held")), "{new}");
+        let b = sketch.add_point(DVec2::X).unwrap();
+        let line = sketch
+            .add_curve(
+                Curve::Line {
+                    start: point,
+                    end: b,
+                },
+                false,
+            )
+            .unwrap();
+        let measure = Measure::Length(line);
+        let placed = crate::testing::dimension(&mut sketch, measure, "1", false, DVec2::ZERO);
+        let made_driving = refusal_text(&refused(placed), &sketch);
+        assert_eq!(
+            made_driving,
+            "Would over-constrain the sketch, so it stays a reference"
         );
     }
 }

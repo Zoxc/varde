@@ -1,14 +1,12 @@
 //! What the document screen's status bar says: its hints, what's going
 //! on, and what's selected. The bar itself is `crate::status`.
 
-use std::borrow::Cow;
-
 use glam::DVec2;
 use iced::widget::text::Wrapping;
 use iced::widget::{row, text};
 use iced::{Alignment, Element};
 use varde_document::{BodyId, FeatureKind};
-use varde_sketch::{Failure, Id, Kind, Measure, Rejected, Selectable, Sketch, TooComplex};
+use varde_sketch::{Id, Kind, Measure, Selectable, Sketch, TooComplex};
 
 use crate::chrome::{self, Hint, chord_hint, double_hint, key_hint, mouse_hint, step_hint};
 use crate::feature_text::{feature_icon, feature_info};
@@ -695,30 +693,6 @@ fn standing(sketch: &SketchState<'_>) -> Option<(String, bool)> {
     })
 }
 
-/// Why an edit of `sketch` was refused, as the status bar says it. A
-/// driving dimension refused is told how to have it as a reference: a
-/// new one placed with the reference modifier held, one made driving
-/// stays one.
-pub(super) fn refusal_text(why: &Rejected, sketch: &Sketch) -> Cow<'static, str> {
-    match why {
-        Rejected::Edit(why) => format!("Couldn't edit: {why}").into(),
-        Rejected::Redundant { .. } => "Would over-constrain the sketch".into(),
-        Rejected::Driving { dimensions, .. }
-            if dimensions.iter().all(|&id| sketch.dimension(id).is_some()) =>
-        {
-            "Would over-constrain the sketch, so it stays a reference".into()
-        }
-        Rejected::Driving { .. } => format!(
-            "Would over-constrain the sketch: place it with {} held to add it as a reference",
-            Held::REFERENCE.label()
-        )
-        .into(),
-        Rejected::Unsolved(Failure::NotConverged { .. }) => "Can't be solved with the rest".into(),
-        Rejected::Unsolved(Failure::Degenerate { .. }) => "Would collapse the sketch".into(),
-        Rejected::Unsolved(Failure::OutOfTime) => "Took too long to solve".into(),
-    }
-}
-
 /// How many profiles `sketch` has, for the status bar, once the app has
 /// looked: "2 profiles", or that it's too complex to say. Nothing for a
 /// sketch without curves.
@@ -768,15 +742,14 @@ mod tests {
 
     use glam::DVec2;
     use varde_document::{Document, Feature};
-    use varde_sketch::{Analysis, Curve, Measure, Profiles, Rejected, Sketch, TooComplex};
+    use varde_sketch::{Analysis, Curve, Profiles, Sketch, TooComplex};
 
-    use super::{left_orbits, profile_count, refusal_text, standing};
+    use super::{left_orbits, profile_count, standing};
     use crate::Tool;
     use crate::document::SketchState;
     use crate::feature_text::sketch_summary;
     use crate::feature_text::{feature_icon, feature_info};
     use crate::icons::Icon;
-    use crate::shortcut::Held;
 
     /// The status bar's mouse hints say the left button orbits outside a
     /// sketch and in one while Project or Intersect picks outside it.
@@ -837,39 +810,6 @@ mod tests {
         assert_eq!(
             standing_of(&sketch, Some(&analysis), true),
             Some(("Doesn't solve".to_owned(), true))
-        );
-        let why = Rejected::Redundant {
-            involved: BTreeSet::new(),
-        };
-        assert_eq!(
-            refusal_text(&why, &sketch),
-            "Would over-constrain the sketch"
-        );
-        // A driving dimension refused says how to have it as a reference:
-        // a new one placed so, one made driving staying one.
-        let refused = |dimension| Rejected::Driving {
-            dimensions: BTreeSet::from([dimension]),
-            involved: BTreeSet::from([dimension]),
-        };
-        let new = refusal_text(&refused(point), &sketch);
-        let held = Held::REFERENCE.label();
-        assert!(new.contains(&format!("place it with {held} held")), "{new}");
-        let b = sketch.add_point(DVec2::X).unwrap();
-        let line = sketch
-            .add_curve(
-                Curve::Line {
-                    start: point,
-                    end: b,
-                },
-                false,
-            )
-            .unwrap();
-        let measure = Measure::Length(line);
-        let placed = crate::testing::dimension(&mut sketch, measure, "1", false, DVec2::ZERO);
-        let made_driving = refusal_text(&refused(placed), &sketch);
-        assert_eq!(
-            made_driving,
-            "Would over-constrain the sketch, so it stays a reference"
         );
     }
 
