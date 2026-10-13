@@ -28,7 +28,8 @@ use crate::typed::{self, Field};
 use crate::viewport::sketch_pick::HOVERED_WIDTH;
 use crate::viewport::style::line as line_style;
 use crate::viewport::style::{fill_region, srgba};
-use crate::viewport::{Interaction, Program, program};
+use crate::viewport::tests::program;
+use crate::viewport::{Interaction, Program};
 use crate::{
     ActiveTool, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField, ValueTarget,
 };

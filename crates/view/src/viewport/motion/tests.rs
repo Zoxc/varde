@@ -18,7 +18,8 @@ use crate::operation_panel::{TypedField, Verdict};
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
 use crate::theme::Mode;
-use crate::viewport::{Interaction, ModelPicking, Operating, Program, program};
+use crate::viewport::tests::program;
+use crate::viewport::{Interaction, ModelPicking, Operating, Program};
 
 fn field(value: f64) -> TypedField<'static> {
     TypedField {

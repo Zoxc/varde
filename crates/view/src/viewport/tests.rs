@@ -5,6 +5,55 @@ use varde_render::Camera;
 
 use super::*;
 
+/// The shader program drawing `mesh` and `sketches` from `camera` in
+/// `palette`'s colors, in `sketching`'s sketch if there is one, or
+/// setting up `operating`'s operation, with the edges the model hides,
+/// every part opaque, the grid shown in full in a sketch, and the
+/// default view options.
+pub(super) fn program<'a>(
+    mesh: &Arc<RenderMesh>,
+    sketches: &Arc<RenderLines>,
+    camera: &Camera,
+    pivot: Option<Pivot>,
+    palette: &Palette,
+    sketching: Option<Sketching<'a>>,
+    operating: Option<Operating<'a>>,
+) -> Program<'a> {
+    let input = SceneInput {
+        mesh,
+        opacity: Arc::new([]),
+        tints: Arc::new([]),
+        sketches,
+        camera,
+        pivot,
+        fade: (if sketching.is_some() { 1.0 } else { 0.0 }, None),
+        highlight: None,
+        hover_through: false,
+        errors: &NO_ERRORS,
+        origin: OriginShown::DEFAULT,
+        options: ViewOptions::default(),
+        previews: Arc::new([]),
+    };
+    Program::new(input, None, palette, sketching, operating, None)
+}
+
+/// What's drawn of failures while none show: one for all frames.
+static NO_ERRORS: std::sync::LazyLock<Arc<ShownErrors>> = std::sync::LazyLock::new(Arc::default);
+
+impl std::ops::Deref for Primitive {
+    type Target = Drawn;
+
+    fn deref(&self) -> &Drawn {
+        self.0.as_ref().expect("a viewport widget draws")
+    }
+}
+
+impl std::ops::DerefMut for Primitive {
+    fn deref_mut(&mut self) -> &mut Drawn {
+        self.0.as_mut().expect("a viewport widget draws")
+    }
+}
+
 /// A box's mesh, as a document with one would show.
 fn cube() -> Arc<RenderMesh> {
     let tol = varde_kernel_compat::Tolerance::DEFAULT;

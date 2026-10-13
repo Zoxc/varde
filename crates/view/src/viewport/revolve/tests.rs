@@ -12,7 +12,8 @@ use crate::projection::top_camera;
 use crate::revolve::TurnKind;
 use crate::testing;
 use crate::theme::Mode;
-use crate::viewport::{Interaction, Operating, Program, program};
+use crate::viewport::tests::program;
+use crate::viewport::{Interaction, Operating, Program};
 
 /// The viewport's side, in pixels: through [`top_camera`], a unit is 10
 /// pixels, the origin in the middle, y up.

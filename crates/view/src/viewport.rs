@@ -425,39 +425,6 @@ impl<'a> Program<'a> {
     }
 }
 
-/// The shader program drawing `mesh` and `sketches` from `camera` in
-/// `palette`'s colors, in `sketching`'s sketch if there is one, or
-/// setting up `operating`'s operation, with the edges the model hides,
-/// every part opaque, the grid shown in full in a sketch, and the
-/// default view options.
-#[cfg(test)]
-fn program<'a>(
-    mesh: &Arc<RenderMesh>,
-    sketches: &Arc<RenderLines>,
-    camera: &Camera,
-    pivot: Option<Pivot>,
-    palette: &Palette,
-    sketching: Option<Sketching<'a>>,
-    operating: Option<Operating<'a>>,
-) -> Program<'a> {
-    let input = SceneInput {
-        mesh,
-        opacity: Arc::new([]),
-        tints: Arc::new([]),
-        sketches,
-        camera,
-        pivot,
-        fade: (if sketching.is_some() { 1.0 } else { 0.0 }, None),
-        highlight: None,
-        hover_through: false,
-        errors: &NO_ERRORS,
-        origin: OriginShown::DEFAULT,
-        options: ViewOptions::default(),
-        previews: Arc::new([]),
-    };
-    Program::new(input, None, palette, sketching, operating, None)
-}
-
 /// What's drawn over the model while nothing is: one for all frames, so
 /// the renderer uploads nothing again for it.
 static NO_HIGHLIGHT: std::sync::LazyLock<Arc<ModelHighlight>> =
@@ -469,10 +436,6 @@ static NO_MESH: std::sync::LazyLock<RenderMesh> = std::sync::LazyLock::new(Rende
 /// A sketch frame's base layer where it has none, only a live one: one
 /// for all frames, so the renderer uploads nothing again for it.
 static NO_LAYER: std::sync::LazyLock<Arc<SketchLayer>> = std::sync::LazyLock::new(Arc::default);
-
-/// What's drawn of failures while none show: one for all frames.
-#[cfg(test)]
-static NO_ERRORS: std::sync::LazyLock<Arc<ShownErrors>> = std::sync::LazyLock::new(Arc::default);
 
 /// The viewport's shader program: handles input and hands iced the scene it
 /// was built with to draw.
@@ -1606,22 +1569,6 @@ impl Previews {
 }
 
 /// Tests read what a viewport widget draws, which is always something.
-#[cfg(test)]
-impl std::ops::Deref for Primitive {
-    type Target = Drawn;
-
-    fn deref(&self) -> &Drawn {
-        self.0.as_ref().expect("a viewport widget draws")
-    }
-}
-
-#[cfg(test)]
-impl std::ops::DerefMut for Primitive {
-    fn deref_mut(&mut self) -> &mut Drawn {
-        self.0.as_mut().expect("a viewport widget draws")
-    }
-}
-
 /// A frame's scene and the widget that draws it.
 #[derive(Debug, Clone)]
 struct Drawn {

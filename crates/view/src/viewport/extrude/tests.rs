@@ -12,7 +12,8 @@ use crate::operation_panel::{OperationKind, TypedField, Verdict};
 use crate::projection::top_camera;
 use crate::testing;
 use crate::theme::Mode;
-use crate::viewport::{Interaction, Program, program};
+use crate::viewport::tests::program;
+use crate::viewport::{Interaction, Program};
 use varde_document::ExtrudeError;
 
 /// The viewport's side, in pixels: through [`top_camera`], a unit is 10
