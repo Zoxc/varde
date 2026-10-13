@@ -9,7 +9,7 @@ use tess2_rust::{ElementType, Tessellator, WindingRule};
 use varde_kernel_compat::{Aabb, RenderLines};
 
 use crate::GridPlane;
-use crate::renderer::srgb_to_linear;
+use crate::Srgba;
 
 /// The sketch being edited, or the extrude being set up, drawn over the
 /// scene: [`Self::base`] first, then [`Self::live`], each its fills, then
@@ -33,18 +33,6 @@ pub struct SketchScene<'a> {
     /// What changes as the cursor moves: hover, a tool's preview, a box
     /// being dragged. Rewritten every frame into buffers kept for it.
     pub live: &'a SketchLayer,
-}
-
-/// An sRGB-encoded colour with straight alpha, like CSS and UI colours.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Srgba(pub [f32; 4]);
-
-impl Srgba {
-    /// In linear colour, which the shader works in, alpha as it is.
-    pub(crate) fn linear(self) -> [f32; 4] {
-        let [r, g, b, a] = self.0;
-        [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), a]
-    }
 }
 
 /// Where a layer's coordinates are.

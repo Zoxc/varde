@@ -1,11 +1,17 @@
-//! Colours: sRGB, body tints, the pattern style and the frame's palette.
-
+//! Colours: sRGB with and without alpha, body tints, the pattern style and
+//! the frame's palette.
+// For the docs' links.
+#[cfg(doc)]
 use super::*;
 
 /// An opaque sRGB-encoded colour, like CSS and UI colours. The renderer
 /// converts it for its target.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Srgb(pub [f32; 3]);
+
+/// An sRGB-encoded colour with straight alpha, like CSS and UI colours.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Srgba(pub [f32; 4]);
 
 /// A colour of a body's own: a hue and a saturation, its lightness the
 /// colour it's applied to's ([`Srgb::tinted`]).
@@ -196,6 +202,14 @@ impl Srgb {
     pub(super) fn linear(self) -> [f32; 4] {
         let [r, g, b] = self.0.map(srgb_to_linear);
         [r, g, b, 1.0]
+    }
+}
+
+impl Srgba {
+    /// In linear colour, which the shader works in, alpha as it is.
+    pub(crate) fn linear(self) -> [f32; 4] {
+        let [r, g, b, a] = self.0;
+        [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), a]
     }
 }
 

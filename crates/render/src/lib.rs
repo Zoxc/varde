@@ -24,9 +24,9 @@ pub use preview::{
 };
 pub use renderer::{
     BodyTint, ClipRect, Colors, ErrorParts, Frame, OriginPart, OriginShown, PatternStyle, Pivot,
-    PrepareError, Renderer, Shading, Slot, Srgb, Upload, Viewport,
+    PrepareError, Renderer, Shading, Slot, Srgb, Srgba, Upload, Viewport,
 };
 pub use scene::GridPlane;
-pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space, Srgba};
+pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space};
 
 pub use wgpu;
