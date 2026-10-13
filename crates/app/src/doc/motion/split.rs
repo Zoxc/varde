@@ -458,8 +458,8 @@ impl Doc {
     /// The pieces of the split being set up as the model shown has them,
     /// if it shows its preview splitting: the body's, keeping its id, and
     /// the other's, a body the document doesn't hold yet for a new split
-    /// (or one kept both sides again), named "New body" then.
-    fn split_pieces(&self, session: &MotionSession) -> Vec<(BodyId, String, bool)> {
+    /// (or one kept both sides again).
+    fn split_pieces(&self, session: &MotionSession) -> Vec<Piece> {
         let Some(split) = session.split() else {
             return Vec::new();
         };
@@ -472,11 +472,12 @@ impl Doc {
         }
         let document = self.editor.document();
         let parts = self.feed.parts();
-        let name = |body: BodyId| (document.body(body)).map(|body| body.name.clone());
         let mut pieces = Vec::new();
         if parts.contains(&split.body) {
-            let kept = name(split.body).unwrap_or_else(|| "Body".to_owned());
-            pieces.push((split.body, kept, true));
+            pieces.push(Piece {
+                body: split.body,
+                keeps: true,
+            });
         }
         if split.keeps_both() {
             let stored = (session.feature)
@@ -492,11 +493,24 @@ impl Doc {
                     .find(|&body| document.body(body).is_none())
             });
             if let Some(other) = other {
-                let named = name(other).unwrap_or_else(|| "New body".to_owned());
-                pieces.push((other, named, false));
+                pieces.push(Piece {
+                    body: other,
+                    keeps: false,
+                });
             }
         }
         pieces
+    }
+
+    /// The name the split's panel gives `piece`: its body's, or "Body"
+    /// for the one keeping the id and "New body" for the other if the
+    /// document doesn't hold it yet.
+    fn piece_name(&self, piece: &Piece) -> String {
+        match self.editor.document().body(piece.body) {
+            Some(body) => body.name.clone(),
+            None if piece.keeps => "Body".to_owned(),
+            None => "New body".to_owned(),
+        }
     }
 
     /// The faces of the piece of the split being set up that doesn't keep
@@ -508,8 +522,13 @@ impl Doc {
         };
         let index = self.feed.pick_index();
         (self.split_pieces(session).into_iter())
-            .filter(|(_, _, keeps)| !keeps)
-            .flat_map(|(body, _, _)| index.body_faces(body).map(Picked::Face).collect::<Vec<_>>())
+            .filter(|piece| !piece.keeps)
+            .flat_map(|piece| {
+                index
+                    .body_faces(piece.body)
+                    .map(Picked::Face)
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 
@@ -567,12 +586,12 @@ impl Doc {
         let setup = &session.split;
         let index = self.feed.pick_index();
         let pieces = (self.split_pieces(session).into_iter())
-            .filter_map(|(body, name, keeps)| {
-                let [low, high] = index.bodies_bounds(&[body])?;
+            .filter_map(|piece| {
+                let [low, high] = index.bodies_bounds(&[piece.body])?;
                 Some(SplitPiece {
                     at: (low + high) / 2.0,
-                    name,
-                    keeps,
+                    name: self.piece_name(&piece),
+                    keeps: piece.keeps,
                 })
             })
             .collect();
@@ -639,4 +658,12 @@ impl Doc {
             _ => (None, None),
         }
     }
+}
+
+/// A piece of the split being set up, as its preview shows it.
+struct Piece {
+    /// The body the preview gives the piece.
+    body: BodyId,
+    /// Whether the piece keeps the split body's id.
+    keeps: bool,
 }
