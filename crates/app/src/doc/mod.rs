@@ -851,6 +851,40 @@ impl Doc {
         self.opened_with = self.operation_built();
     }
 
+    /// Whether an operation may open: in a document that can be changed,
+    /// outside a sketch. One already open is dropped by the opener.
+    pub(crate) fn can_open_operation(&self) -> bool {
+        self.editable() && self.mode.sketch().is_none()
+    }
+
+    /// Opens `session` in place of whatever was open, selecting the
+    /// feature it edits, if it edits one, and giving the panel's first
+    /// field the focus if `focus`.
+    pub(crate) fn open_operation(
+        &mut self,
+        session: OperationSession,
+        edited: Option<FeatureId>,
+        focus: bool,
+    ) {
+        if edited.is_some() {
+            self.selected_feature = edited;
+        }
+        self.mode = DocMode::Operation(session);
+        if focus {
+            self.focus = Some(Focus::All);
+        }
+        self.opened_operation();
+    }
+
+    /// The sketch a new extrude or revolve takes its regions from: the
+    /// one selected in the Timeline if one is, or else the first one
+    /// selected in Objects.
+    fn region_source(&self) -> Option<FeatureId> {
+        let document = self.editor.document();
+        (self.selected_feature.filter(|&id| is_sketch(document, id)))
+            .or_else(|| self.selected_sketches().next())
+    }
+
     /// The feature the operation being set up would commit, if one is
     /// and it's whole.
     pub(crate) fn operation_built(&self) -> Option<FeatureKind> {

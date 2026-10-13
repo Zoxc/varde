@@ -1479,8 +1479,7 @@ impl Doc {
     /// a pattern's count, takes the focus.
     pub(crate) fn start_motion(&mut self, kind: MotionKind) {
         if (self.mode.take_motion()).is_some_and(|session| session.kind == kind)
-            || !self.editable()
-            || self.mode.sketch().is_some()
+            || !self.can_open_operation()
         {
             return;
         }
@@ -1670,7 +1669,7 @@ impl Doc {
     /// ([`MotionSession::prune`]), outside a sketch, in a document that
     /// can be changed. Another operation being set up is dropped.
     pub(crate) fn edit_motion(&mut self, id: FeatureId) {
-        if self.mode.sketch().is_some() || !self.editable() {
+        if !self.can_open_operation() {
             return;
         }
         let shape = self.pattern_shapes.get(&id);
@@ -1681,12 +1680,8 @@ impl Doc {
         // An axis or plane already gone (its body removed) is said to be
         // from the start.
         session.prune(document);
-        self.selected_feature = Some(id);
-        if !picks_first(session.kind) {
-            self.focus = Some(Focus::All);
-        }
-        self.mode = DocMode::Operation(OperationSession::Motion(session));
-        self.opened_operation();
+        let focus = !picks_first(session.kind);
+        self.open_operation(OperationSession::Motion(session), Some(id), focus);
     }
 
     /// Takes `message`, changing the move, mirror or pattern being set up.

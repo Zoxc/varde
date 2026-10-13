@@ -12,10 +12,10 @@ use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_render::Camera;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind, PanelHover};
 
+use super::Doc;
 use super::regions::{
     BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
 };
-use super::{Doc, Focus, is_sketch};
 
 /// The extrude being set up, while one is: [`Doc::mode`].
 #[derive(Debug)]
@@ -274,15 +274,12 @@ impl Doc {
     /// or combine being set up is dropped. The first
     /// distance's field takes the focus.
     pub(crate) fn start_extrude(&mut self) {
-        if self.mode.take_extrude().is_some() || !self.editable() || self.mode.sketch().is_some() {
+        if self.mode.take_extrude().is_some() || !self.can_open_operation() {
             return;
         }
         // Leaving whatever else was open.
         self.mode = DocMode::Idle;
-        let document = self.editor.document();
-        // Or the first selected in Objects.
-        let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
-            .or_else(|| self.selected_sketches().next());
+        let selected = self.region_source();
         let curves = self.selected_curves();
         let document = self.editor.document();
         let mut session = ExtrudeSession::new(document, &self.camera, selected);
@@ -291,9 +288,7 @@ impl Doc {
         if let Some((sketch, curves)) = curves {
             session.regions.take_curves(sketch, &curves, document);
         }
-        self.mode = DocMode::Operation(OperationSession::Extrude(session));
-        self.focus = Some(Focus::All);
-        self.opened_operation();
+        self.open_operation(OperationSession::Extrude(session), None, true);
     }
 
     /// Edits the extrude feature `id`, if the document holds it, in a
@@ -305,18 +300,11 @@ impl Doc {
         let Some(FeatureKind::Extrude(extrude)) = document.feature(id).map(|f| &f.kind) else {
             return;
         };
-        if self.mode.sketch().is_some() || !self.editable() {
+        if !self.can_open_operation() {
             return;
         }
-        self.selected_feature = Some(id);
-        self.mode = DocMode::Operation(OperationSession::Extrude(ExtrudeSession::editing(
-            document,
-            &self.camera,
-            id,
-            extrude,
-        )));
-        self.focus = Some(Focus::All);
-        self.opened_operation();
+        let session = ExtrudeSession::editing(document, &self.camera, id, extrude);
+        self.open_operation(OperationSession::Extrude(session), Some(id), true);
     }
 
     /// Takes `message`, changing the extrude being set up.

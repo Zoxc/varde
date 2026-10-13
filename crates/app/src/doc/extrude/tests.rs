@@ -13,6 +13,7 @@ use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationK
 
 use super::*;
 use crate::doc::feed::SLOW;
+use crate::doc::is_sketch;
 use crate::doc::regions::{refresh_work, with_work_unit};
 use crate::tests::{answer, deferred, example, example_and_a_hole, key_in, press_in};
 

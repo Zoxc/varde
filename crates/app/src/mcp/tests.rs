@@ -3202,8 +3202,8 @@ fn queries_never_ask() {
     assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
 }
 
-/// An opener refused while a panel is open (a combine can't start over
-/// an extrude) leaves that panel as it was, and what's unfinished in it
+/// An opener refused while a panel is open (the measure tool can't
+/// start over an extrude) leaves that panel as it was, and what's unfinished in it
 /// with it: the client's edit asks rather than closing it.
 #[test]
 fn an_opener_refused_keeps_the_panels_baseline() {
@@ -3211,7 +3211,7 @@ fn an_opener_refused_keeps_the_panels_baseline() {
     started(&mut varde, "a session", None);
     edit_extrude(&mut varde);
     extrude_distance(&mut varde, "7 mm");
-    look(&mut varde, varde_view::Look::StartCombine);
+    look(&mut varde, varde_view::Look::StartMeasure);
     assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     let reply = calling(
         &mut varde,

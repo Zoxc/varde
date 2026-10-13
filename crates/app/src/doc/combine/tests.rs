@@ -501,15 +501,13 @@ fn other_tools_end_it_and_it_ends_them() {
     assert!(plates.doc.mode.measure().is_none());
     assert!(plates.doc.mode.combine().is_some());
     // Not with the measure tool; an extrude or a revolve takes its place,
-    // and a new sketch.
+    // and a new sketch, and it takes theirs.
     plates.doc.look(Look::StartMeasure);
     assert!(plates.doc.mode.measure().is_none() && plates.doc.mode.combine().is_some());
     plates.doc.look(Look::StartExtrude);
     assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.extrude().is_some());
     plates.doc.look(Look::StartCombine);
-    assert!(plates.doc.mode.combine().is_none(), "not over an extrude");
-    plates.doc.look(Look::Escape);
-    plates.doc.look(Look::StartCombine);
+    assert!(plates.doc.mode.extrude().is_none() && plates.doc.mode.combine().is_some());
     plates.doc.look(Look::StartRevolve);
     assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.revolve().is_some());
     plates.doc.look(Look::Escape);
@@ -523,9 +521,7 @@ fn other_tools_end_it_and_it_ends_them() {
     plates.doc.look(Look::EditFeature(extrude));
     assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.extrude().is_some());
     plates.doc.look(Look::StartCombine);
-    assert!(plates.doc.mode.combine().is_none(), "not over an extrude");
-    plates.doc.look(Look::Escape);
-    plates.doc.look(Look::StartCombine);
+    assert!(plates.doc.mode.extrude().is_none() && plates.doc.mode.combine().is_some());
     plates.click(plate);
     // Entering a sketch ends it.
     let sketch = plates.doc.editor.document().features()[0].id;

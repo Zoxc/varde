@@ -22,7 +22,6 @@ use varde_view::{
     RevolveState, Selected, TurnKind, Unnamed, axis_edge,
 };
 
-use super::is_sketch;
 use super::regions::{
     BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
 };
@@ -343,15 +342,12 @@ impl Doc {
     /// or combine being set up is dropped. The first angle's field, if the extent has one, takes the
     /// focus.
     pub(crate) fn start_revolve(&mut self) {
-        if self.mode.take_revolve().is_some() || !self.editable() || self.mode.sketch().is_some() {
+        if self.mode.take_revolve().is_some() || !self.can_open_operation() {
             return;
         }
         // Leaving whatever else was open.
         self.mode = DocMode::Idle;
-        let document = self.editor.document();
-        // Or the first selected in Objects.
-        let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
-            .or_else(|| self.selected_sketches().next());
+        let selected = self.region_source();
         let curves = self.selected_curves();
         let document = self.editor.document();
         let mut session = RevolveSession::new(document, selected);
@@ -405,17 +401,14 @@ impl Doc {
         let Some(FeatureKind::Revolve(revolve)) = document.feature(id).map(|f| &f.kind) else {
             return;
         };
-        if self.mode.sketch().is_some() || !self.editable() {
+        if !self.can_open_operation() {
             return;
         }
-        self.selected_feature = Some(id);
         let mut session = RevolveSession::editing(document, id, revolve);
         if let AxisLine::Edge(edge) = &revolve.axis {
             session.edge_ends = self.shown_edge(edge);
         }
-        self.mode = DocMode::Operation(OperationSession::Revolve(session));
-        self.focus = Some(Focus::All);
-        self.opened_operation();
+        self.open_operation(OperationSession::Revolve(session), Some(id), true);
     }
 
     /// Moves the arrow of the revolve being set up, if its axis is a model

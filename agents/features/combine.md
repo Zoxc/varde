@@ -117,9 +117,9 @@ is, so it sees the bodies as the features before it leave them:
 Combine button after Revolve, the rail's Modify set; again, or `Esc`,
 cancels it) or by editing a combine (`Look::EditFeature`: a
 double-click or `Enter` on its row, Edit combine in its menu), in a
-document that can be changed, outside sketches and the other
-operations, as the revolve's: editing an extrude or a revolve drops it,
-editing a combine drops theirs, entering a sketch drops it, and it
+document that can be changed, outside sketches, as the revolve's: it
+drops another operation being set up as they drop it (starting or
+editing an extrude, revolve, move, ...), entering a sketch drops it, and it
 drops the measure tool (entering a sketch whose face is gone, which
 asks for a plane first, drops it too). A new one takes its bodies from what's selected
 in the model: the first item's body is the target, the others' bodies

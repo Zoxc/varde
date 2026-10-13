@@ -134,8 +134,7 @@ letter of its name, `I`), again (or `Esc`, Cancel) backing out of it and
 one of the other kind replaced; or by editing one (`Look::EditFeature`: a
 double-click or `Enter` on its row, Edit move / Edit mirror in its
 menu). In a document that can be changed, outside sketches; it drops the
-other operations as they drop it, and the measure tool; the combine's
-`B` is off while one is set up, as it is during an extrude or revolve.
+other operations as they drop it, and the measure tool.
 Both bindings want a body in the document (`DocumentKeys::bodies`). A
 new one takes its bodies from what's selected in the model (each item's
 body, a merged one as its holder), or with nothing selected the model's

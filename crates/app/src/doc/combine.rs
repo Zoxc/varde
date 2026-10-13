@@ -15,7 +15,7 @@
 //! is in Body 2 now").
 
 use super::pick::CachedHighlight;
-use crate::doc::{DocMode, OperationSession, OperationSlot};
+use crate::doc::{OperationSession, OperationSlot};
 use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document, FeatureId, FeatureKind};
@@ -179,26 +179,19 @@ pub(crate) fn pickable(document: &Document, body: BodyId, edited: Option<Feature
 
 impl Doc {
     /// Starts setting up a new combine, in a document that can be changed
-    /// and outside a sketch and the other operations, or cancels the one
-    /// being set up. What's selected in the model gives it its bodies: the
-    /// first selected's body is the target, the others' the tools.
+    /// and outside a sketch, or cancels the one being set up. What's
+    /// selected in the model gives it its bodies: the first selected's
+    /// body is the target, the others' the tools. Another operation being
+    /// set up is dropped.
     pub(crate) fn start_combine(&mut self) {
-        if self.mode.take_combine().is_some()
-            || !self.editable()
-            || self.mode.sketch().is_some()
-            || self.mode.extrude().is_some()
-            || self.mode.revolve().is_some()
-            || self.mode.motion().is_some()
-        {
+        if self.mode.take_combine().is_some() || !self.can_open_operation() {
             return;
         }
         let bodies = self.selected_bodies();
         let target = bodies.first().copied();
         let tools = bodies.get(1..).unwrap_or_default().to_vec();
-        self.mode = DocMode::Operation(OperationSession::Combine(CombineSession::new(
-            target, tools,
-        )));
-        self.opened_operation();
+        let session = CombineSession::new(target, tools);
+        self.open_operation(OperationSession::Combine(session), None, false);
     }
 
     /// The bodies of what's selected in the model, in the order selected,
@@ -224,23 +217,21 @@ impl Doc {
 
     /// Edits the combine feature `id`, if the document holds it, in a
     /// session with its values, outside a sketch, in a document that can
-    /// be changed: a read-only one has no session. An extrude or revolve
-    /// being set up is dropped.
+    /// be changed: a read-only one has no session. Another operation being
+    /// set up is dropped.
     pub(crate) fn edit_combine(&mut self, id: FeatureId) {
         let document = self.editor.document();
         let Some(FeatureKind::Combine(combine)) = document.feature(id).map(|f| &f.kind) else {
             return;
         };
-        if self.mode.sketch().is_some() || !self.editable() {
+        if !self.can_open_operation() {
             return;
         }
-        self.selected_feature = Some(id);
         let mut session = CombineSession::editing(id, combine);
         // One kept when its maker was deleted names a body that isn't
         // there, to be picked again.
         session.prune(document);
-        self.mode = DocMode::Operation(OperationSession::Combine(session));
-        self.opened_operation();
+        self.open_operation(OperationSession::Combine(session), Some(id), false);
     }
 
     /// Takes `message`, changing the combine being set up.

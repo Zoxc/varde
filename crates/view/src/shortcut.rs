@@ -773,18 +773,17 @@ pub fn revolve_binding(keys: DocumentKeys) -> Binding {
 }
 
 /// Starting a new combine, or backing out of the one being set up:
-/// outside a sketch and the other operations being set up, while the
-/// document has two bodies or more, in a document that can be changed.
+/// outside a sketch, while the document has two bodies or more, in a
+/// document that can be changed. Another operation being set up is
+/// dropped for it.
 pub fn combine_binding(keys: DocumentKeys) -> Binding {
+    let combining = keys
+        .operation
+        .is_some_and(|operation| operation.kind == Operating::Combine);
     Binding::new(
         Shortcut::COMBINE,
         Message::Look(Look::StartCombine),
-        keys.editable
-            && !keys.sketching
-            && match keys.operation {
-                None => keys.combinable,
-                Some(operation) => operation.kind == Operating::Combine,
-            },
+        keys.editable && !keys.sketching && (keys.combinable || combining),
     )
 }
 
@@ -1989,8 +1988,8 @@ mod tests {
             press(sketching, "b"),
             Some(Message::Look(Look::SelectTool(Tool::Rectangle)))
         ));
-        // Not while another operation is set up, nor the measure tool
-        // while it is; Sketch, Extrude and Revolve drop it.
+        // Over another operation, dropping it; not the measure tool while
+        // it is set up; Sketch, Extrude and Revolve drop it.
         let extruding = DocumentKeys {
             operation: Some(OperationKeys {
                 kind: Operating::Extrude,
@@ -1998,7 +1997,10 @@ mod tests {
             }),
             ..combinable
         };
-        assert!(press(extruding, "b").is_none());
+        assert!(matches!(
+            press(extruding, "b"),
+            Some(Message::Look(Look::StartCombine))
+        ));
         let combining = DocumentKeys {
             operation: Some(OperationKeys {
                 kind: Operating::Combine,
