@@ -81,9 +81,33 @@ impl Picks {
     /// Whether the cursor picks `target` in it.
     pub fn takes(self, target: Picked) -> bool {
         match target {
-            Picked::Face(_) => self != Picks::Edges,
-            Picked::Edge(_) => self != Picks::Faces,
-            Picked::Vertex(_) => self == Picks::All,
+            Picked::Face(_) => self.faces(),
+            Picked::Edge(_) => self.edges(),
+            Picked::Vertex(_) => self.vertices(),
+        }
+    }
+
+    /// Whether the cursor picks vertices in it.
+    pub fn vertices(self) -> bool {
+        match self {
+            Picks::All => true,
+            Picks::Faces | Picks::Edges | Picks::EdgesAndFaces => false,
+        }
+    }
+
+    /// Whether the cursor picks edges in it.
+    pub fn edges(self) -> bool {
+        match self {
+            Picks::All | Picks::Edges | Picks::EdgesAndFaces => true,
+            Picks::Faces => false,
+        }
+    }
+
+    /// Whether the cursor picks faces in it.
+    pub fn faces(self) -> bool {
+        match self {
+            Picks::All | Picks::Faces | Picks::EdgesAndFaces => true,
+            Picks::Edges => false,
         }
     }
 }
@@ -280,21 +304,21 @@ impl PickIndex {
         let projector = Projector::world(camera, size[0], size[1])?;
         let ray = self.ray(camera, &projector, at)?;
         let vertex = || {
-            (picks == Picks::All)
+            picks
+                .vertices()
                 .then(|| self.vertex_near(camera, &projector, &ray, at))
                 .flatten()
                 .map(|(corner, at)| (Picked::Vertex(corner), at))
         };
         let edge = || {
-            (picks != Picks::Faces)
+            picks
+                .edges()
                 .then(|| self.edge_near(camera, &projector, &ray, at))
                 .flatten()
                 .map(|(chain, at)| (Picked::Edge(chain), at))
         };
         let face = || {
-            let (t, triangle) = (picks != Picks::Edges)
-                .then(|| self.first_front(&ray))
-                .flatten()?;
+            let (t, triangle) = picks.faces().then(|| self.first_front(&ray)).flatten()?;
             Some((Picked::Face(self.triangle_face(triangle)?), ray.at(t)))
         };
         let (target, at) = vertex().or_else(edge).or_else(face)?;
@@ -359,19 +383,19 @@ impl PickIndex {
             found
         };
         let mut vertices = Vec::new();
-        if picks == Picks::All {
+        if picks.vertices() {
             vertices = (self.vertices_near(&projector, &ray, at, pixels).into_iter())
                 .map(|near| near.by_depth(Picked::Vertex(near.item)))
                 .collect();
         }
         let mut edges = Vec::new();
-        if picks != Picks::Faces {
+        if picks.edges() {
             edges = (self.segments_near(&projector, &ray, at, pixels).into_iter())
                 .map(|near| near.by_depth(Picked::Edge(self.segment_edge(near.item))))
                 .collect();
         }
         let mut faces = Vec::new();
-        if picks != Picks::Edges {
+        if picks.faces() {
             let grown = reach(&projector, pixels);
             self.tables.triangles().near(&ray, grown, |triangle| {
                 let [a, b, c] = self.triangle_points(triangle)?;
