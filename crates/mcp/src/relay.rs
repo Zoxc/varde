@@ -211,6 +211,25 @@ impl Kind {
             }
         )
     }
+
+    /// The session headers it's sent with: none on `initialize`, which
+    /// starts a session.
+    fn headers(&self) -> Headers {
+        if self.initialize() {
+            Headers::Fresh
+        } else {
+            Headers::Session
+        }
+    }
+}
+
+/// The session headers a POST carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Headers {
+    /// The session's id and protocol version, those there are.
+    Session,
+    /// None: an `initialize`, starting a session.
+    Fresh,
 }
 
 /// Opens connections to the server; the fake in tests.
@@ -339,7 +358,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
             return Ok(());
         }
         let kind = Kind::of(&line);
-        let result = self.send(&line, kind.initialize(), true);
+        let result = self.send_replaying(&line, kind.headers());
         if let Kind::Notification { initialized } = kind {
             // Never answered, whatever came back.
             if initialized && result.is_ok_and(|a| a.status == 202) {
@@ -391,28 +410,31 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         self.initialize = Some(line);
     }
 
-    /// POSTs `body`, reading the token again after a 401 and, if
-    /// `replay`, starting a new session after a 404, each once. Not
-    /// `replay` within a replay, which would start one after another
-    /// for as long as the server 404s.
-    fn send(&mut self, body: &[u8], initialize: bool, replay: bool) -> Result<Answer, Failure> {
-        let mut reread = false;
-        let mut replayed = false;
-        loop {
-            let answer = self.post(body, initialize)?;
-            match answer.status {
-                401 if reread => return Err(Failure::Unauthorized),
-                401 => {
-                    reread = true;
-                    self.token = None;
-                }
-                404 if replay && !replayed && !initialize && self.initialize.is_some() => {
-                    replayed = true;
-                    self.replay().map_err(|f| Failure::Replay(Box::new(f)))?;
-                }
-                _ => return Ok(answer),
-            }
+    /// [`send`](Self::send)s `body`, and after a 404 to one with the
+    /// session's headers starts a new session and sends it again, once.
+    /// A replay itself only sends, or it would start one session after
+    /// another for as long as the server 404s.
+    fn send_replaying(&mut self, body: &[u8], headers: Headers) -> Result<Answer, Failure> {
+        let answer = self.send(body, headers)?;
+        if answer.status != 404 || headers != Headers::Session || self.initialize.is_none() {
+            return Ok(answer);
         }
+        self.replay().map_err(|f| Failure::Replay(Box::new(f)))?;
+        self.send(body, headers)
+    }
+
+    /// POSTs `body`, reading the token again after a 401, once.
+    fn send(&mut self, body: &[u8], headers: Headers) -> Result<Answer, Failure> {
+        let answer = self.post(body, headers)?;
+        if answer.status != 401 {
+            return Ok(answer);
+        }
+        self.token = None;
+        let answer = self.post(body, headers)?;
+        if answer.status == 401 {
+            return Err(Failure::Unauthorized);
+        }
+        Ok(answer)
     }
 
     /// Starts a new session with the kept `initialize` and
@@ -423,7 +445,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         };
         self.session = None;
         self.version = None;
-        let answer = self.send(&initialize, true, false)?;
+        let answer = self.send(&initialize, Headers::Fresh)?;
         if answer.status != 200 {
             return Err(Failure::Status(answer.status, answer.reason));
         }
@@ -432,7 +454,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         }
         self.started(&answer, initialize);
         if let Some(initialized) = self.initialized.clone() {
-            let answer = self.send(&initialized, false, false)?;
+            let answer = self.send(&initialized, Headers::Session)?;
             if answer.status != 202 {
                 return Err(Failure::Status(answer.status, answer.reason));
             }
@@ -440,7 +462,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         Ok(())
     }
 
-    fn post(&mut self, body: &[u8], initialize: bool) -> Result<Answer, Failure> {
+    fn post(&mut self, body: &[u8], session: Headers) -> Result<Answer, Failure> {
         let token = match &self.token {
             Some(token) => token.clone(),
             None => {
@@ -455,8 +477,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
             ("Accept", "application/json, text/event-stream"),
             ("Content-Length", length.as_str()),
         ];
-        // No session on `initialize`: it starts one.
-        if !initialize {
+        if session == Headers::Session {
             if let Some(session) = &self.session {
                 headers.push(("MCP-Session-Id", session));
             }
