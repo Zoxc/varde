@@ -83,8 +83,8 @@ pub(crate) struct Refs<R> {
     pub(crate) refs: Vec<R>,
     /// Each one's place on a model shown, by `refs`' order: where it was
     /// picked, or found again by its names on one shown since
-    /// ([`Refs::follow`]).
-    marks: Vec<Mark>,
+    /// ([`Refs::follow`]); `None` where not looked for on any model yet.
+    marks: Vec<Option<Mark>>,
     /// Whether they're gone: the document no longer takes them at the
     /// feature's place (an undo took their body or a face's maker away),
     /// or no longer holds their body. Kept, said to be gone, until
@@ -114,10 +114,9 @@ impl<R: Ref> Refs<R> {
     /// The references `refs` (a stored feature's), picked on no model
     /// shown.
     pub(super) fn of(refs: &[R]) -> Self {
-        let mark = Mark { model: 0, at: None };
         Self {
             refs: refs.to_vec(),
-            marks: vec![mark; refs.len()],
+            marks: vec![None; refs.len()],
             gone: false,
         }
     }
@@ -130,8 +129,9 @@ impl<R: Ref> Refs<R> {
     /// The one picked that is one of `targets` of the model `model`, if
     /// one is: where a click on them takes it out.
     fn picked(&self, model: u64, targets: &[u32]) -> Option<usize> {
-        (self.marks.iter())
-            .position(|mark| mark.model == model && mark.at.is_some_and(|at| targets.contains(&at)))
+        (self.marks.iter()).position(|mark| {
+            mark.is_some_and(|m| m.model == model && m.at.is_some_and(|at| targets.contains(&at)))
+        })
     }
 
     /// Adds `found`, picked as `target` of the model `model`, in its
@@ -158,7 +158,7 @@ impl<R: Ref> Refs<R> {
             model,
             at: Some(target),
         };
-        self.marks.insert(at, mark);
+        self.marks.insert(at, Some(mark));
         Ok(())
     }
 
@@ -199,11 +199,11 @@ impl<R: Ref> Refs<R> {
     fn follow(&mut self, index: &PickIndex, shown: impl Fn(BodyId) -> BodyId) {
         let model = index.model();
         for (found, mark) in self.refs.iter().zip(&mut self.marks) {
-            if mark.model != model {
-                *mark = Mark {
+            if mark.is_none_or(|m| m.model != model) {
+                *mark = Some(Mark {
                     model,
                     at: found.find(index, shown(found.body())),
-                };
+                });
             }
         }
     }
@@ -213,7 +213,7 @@ impl<R: Ref> Refs<R> {
     pub(super) fn found(&self, model: u64) -> impl Iterator<Item = (R, Option<u32>)> + '_ {
         (self.refs.iter().copied())
             .zip(&self.marks)
-            .map(move |(r, mark)| (r, (mark.model == model).then_some(mark.at).flatten()))
+            .map(move |(r, mark)| (r, mark.filter(|m| m.model == model).and_then(|m| m.at)))
     }
 
     /// Moves those on bodies `merges` has merged into others on to the
@@ -227,7 +227,7 @@ impl<R: Ref> Refs<R> {
             }
         }
         if moved {
-            let mut pairs: Vec<(R, Mark)> = (self.refs.iter().copied())
+            let mut pairs: Vec<(R, Option<Mark>)> = (self.refs.iter().copied())
                 .zip(self.marks.iter().copied())
                 .collect();
             pairs.sort_by(|a, b| a.0.order(&b.0));
