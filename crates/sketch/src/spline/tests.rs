@@ -1129,7 +1129,7 @@ fn handles_added_keep_the_tangent() {
     // The tangent where each is, as it was.
     let params = chord_params(&wave(), false);
     let (was, is) = (
-        sketch.spline_shape(sketch.spline(id).unwrap()).unwrap(),
+        sketch.curve_shape(id).unwrap(),
         handled.spline_shape(spline).unwrap(),
     );
     for i in [0, 2] {

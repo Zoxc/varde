@@ -181,7 +181,7 @@ pub fn spline_chain(splines: usize, fit: usize, on: usize) -> (Sketch, Id) {
         previous = Some((id, *points.last().unwrap()));
     }
     for (i, &id) in ids.iter().enumerate() {
-        let shape = sketch.spline_shape(sketch.spline(id).unwrap()).unwrap();
+        let shape = sketch.curve_shape(id).unwrap();
         for j in 0..on {
             let at = shape.point((j as f64 + 0.5) / on as f64) + DVec2::splat(0.05 * wobble(i, j));
             let point = sketch.add_point(at).unwrap();

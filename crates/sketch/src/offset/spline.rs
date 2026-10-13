@@ -67,9 +67,7 @@ impl Sketch {
     ) -> Result<(BSpline, f64), EditError> {
         let shift = offset_shift(distance, side)?;
         let target = EditError::Target(curve);
-        let shape = self
-            .spline_shape(self.spline(curve).ok_or(target)?)
-            .ok_or(target)?;
+        let shape = self.curve_shape(curve).ok_or(target)?;
         for t in shape.samples(SAMPLES) {
             let curvature = shape.curvature(t);
             if curvature.is_finite() && curvature * shift >= 1.0 - FOLD_MARGIN {
@@ -177,7 +175,7 @@ impl Sketch {
     /// How far `at` is from the spline `curve` and on which side, left of
     /// the way it runs [`Side::Positive`]: from the place on it nearest.
     pub(super) fn spline_side(&self, curve: Id, at: DVec2) -> Option<(f64, Side)> {
-        let shape = self.spline_shape(self.spline(curve)?)?;
+        let shape = self.curve_shape(curve)?;
         let t = shape.path().closest(at);
         let [place, first, _] = shape.eval(t);
         let distance = place.distance(at);

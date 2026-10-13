@@ -1294,7 +1294,7 @@ fn a_spline_is_extruded_within_the_tolerance() {
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     let solid = &evaluation.bodies[0].solid;
     // The spline's area, finely sampled.
-    let shape = sketch.spline_shape(sketch.spline(curve).unwrap()).unwrap();
+    let shape = sketch.curve_shape(curve).unwrap();
     let n = 100_000;
     let area: f64 = (0..n)
         .map(|i| {

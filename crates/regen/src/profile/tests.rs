@@ -208,7 +208,7 @@ fn blob(sketch: &mut Sketch) -> varde_sketch::Id {
 /// the blob, 20 000 samples are off by about 1e-6 mm², far inside the
 /// tests' bounds (4e-4 mm² at the finest fit).
 fn spline_area(sketch: &Sketch, curve: varde_sketch::Id) -> f64 {
-    let shape = sketch.spline_shape(sketch.spline(curve).unwrap()).unwrap();
+    let shape = sketch.curve_shape(curve).unwrap();
     let n = 20_000;
     let points: Vec<DVec2> = (0..n).map(|i| shape.point(i as f64 / n as f64)).collect();
     (0..n)
@@ -219,7 +219,7 @@ fn spline_area(sketch: &Sketch, curve: varde_sketch::Id) -> f64 {
 /// The largest distance from sampled points of `l`'s segments of `curve` to the
 /// spline `curve`, sampled finely.
 fn largest_error(sketch: &Sketch, curve: varde_sketch::Id, l: &Loop) -> f64 {
-    let shape = sketch.spline_shape(sketch.spline(curve).unwrap()).unwrap();
+    let shape = sketch.curve_shape(curve).unwrap();
     let n = 20_000;
     let dense: Vec<DVec2> = (0..=n).map(|i| shape.point(i as f64 / n as f64)).collect();
     // The polyline's pieces bucketed by where they start, in cells as

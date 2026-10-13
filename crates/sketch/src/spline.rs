@@ -351,6 +351,12 @@ impl Sketch {
         spline.shape_of(points, &tips)
     }
 
+    /// The [`Sketch::spline_shape`] of the spline `curve`: `None` if
+    /// there's no such spline, too.
+    pub fn curve_shape(&self, curve: Id) -> Option<BSpline> {
+        self.spline_shape(self.spline(curve)?)
+    }
+
     /// Converts the spline `curve` to `to`, keeping its shape: through
     /// fit points to by control points exactly (the interpolation's
     /// control points and knots), the other way through the places its
@@ -728,7 +734,7 @@ impl Sketch {
     /// curvature is left at zero. `None` if `curve` is no spline with a
     /// shape.
     pub fn curvature_comb(&self, curve: Id) -> Option<Vec<[DVec2; 2]>> {
-        let shape = self.spline_shape(self.spline(curve)?)?;
+        let shape = self.curve_shape(curve)?;
         let segments = shape.breaks().len() - 1;
         let per = (MAX_COMB_TEETH.saturating_sub(1) / segments.max(1)).clamp(1, COMB_PER_SEGMENT);
         let mut params = shape.samples(per);
