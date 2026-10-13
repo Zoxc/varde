@@ -55,10 +55,12 @@ pub(crate) use sketch::Sketching;
 
 /// The operation being set up in the viewport, if one is: never with a
 /// sketch.
+///
+/// The operations box their states, which are large, so the enum stays
+/// small.
 #[derive(Debug, Clone)]
 pub(crate) enum Operating<'a> {
-    // Boxed: the largest by far, with its fields.
-    Extrude(Box<Extruding<'a>>),
+    Extrude(Extruding<'a>),
     Revolve(Revolving<'a>),
     /// The measure tool: not an operation, but drawn over the model as
     /// one is, while the cursor picks the model as outside the sessions.

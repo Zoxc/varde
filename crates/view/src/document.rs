@@ -1180,7 +1180,7 @@ fn viewport_stack<'a>(
 fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
     Some(match state.operation.as_ref()? {
         OperationState::Extrude(extrude) => {
-            viewport::Operating::Extrude(Box::new(viewport::Extruding::new(extrude.clone())))
+            viewport::Operating::Extrude(viewport::Extruding::new(extrude.clone()))
         }
         OperationState::Revolve(revolve) => {
             viewport::Operating::Revolve(viewport::Revolving::new(revolve.clone()))

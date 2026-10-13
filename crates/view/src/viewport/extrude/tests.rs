@@ -100,9 +100,7 @@ fn shown(state: ExtrudeState<'_>) -> Program<'_> {
         None,
         Mode::Light.palette(),
         None,
-        Some(crate::viewport::Operating::Extrude(Box::new(
-            Extruding::new(state),
-        ))),
+        Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
     )
 }
 
@@ -407,9 +405,7 @@ fn a_knob_is_grabbed_behind_the_model_but_not_read_only() {
         None,
         Mode::Light.palette(),
         None,
-        Some(crate::viewport::Operating::Extrude(Box::new(
-            Extruding::new(state),
-        ))),
+        Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
     );
     assert!(grabs(&viewport));
 }

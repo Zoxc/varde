@@ -169,7 +169,7 @@ impl Input {
 /// The move or mirror being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
 pub(crate) struct Moving<'a> {
-    /// Boxed: it's the largest of what the viewport operates.
+    /// Boxed, as every operation's state is (see [`Operating`](super::Operating)).
     state: Box<MotionState<'a>>,
 }
 

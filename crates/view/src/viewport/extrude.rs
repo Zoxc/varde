@@ -27,7 +27,8 @@ use crate::{Look, Message};
 /// The extrude being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
 pub(crate) struct Extruding<'a> {
-    state: ExtrudeState<'a>,
+    /// Boxed, as every operation's state is (see [`Operating`](super::Operating)).
+    state: Box<ExtrudeState<'a>>,
     handle: Option<Handle>,
 }
 
@@ -43,7 +44,10 @@ pub(crate) struct Input {
 impl<'a> Extruding<'a> {
     pub(crate) fn new(state: ExtrudeState<'a>) -> Self {
         let handle = state.handle();
-        Self { state, handle }
+        Self {
+            state: Box::new(state),
+            handle,
+        }
     }
 
     /// Its sketches and the regions picked.

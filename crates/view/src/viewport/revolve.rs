@@ -57,7 +57,7 @@ const SHAFT_STEP: f64 = 3.0;
 /// The revolve being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
 pub(crate) struct Revolving<'a> {
-    /// Boxed, as a move's is: it's of the largest the viewport operates.
+    /// Boxed, as every operation's state is (see [`Operating`](super::Operating)).
     state: Box<RevolveState<'a>>,
     handle: Option<RevolveHandle>,
 }
