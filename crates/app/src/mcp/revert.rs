@@ -1,4 +1,4 @@
-//! The MCP panel's Revert (`notes/AgentSupport.md`, "Revert"): each applied
+//! The MCP panel's Revert (`agents/mcp.md`, "Revert"): each applied
 //! edit's row keeps the design before and after it ([`Edited`]), and its
 //! context menu reverts to either through [`Editor::restore`], one
 //! undoable step. A revert that would undo later changes (anyone's)

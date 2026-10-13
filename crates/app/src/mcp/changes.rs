@@ -1,5 +1,5 @@
-//! The user's changes since a client's previous call (`notes/AgentSupport.md`,
-//! "The user's changes since the client's last call"): what each call's
+//! The user's changes since a client's previous call (`agents/mcp.md`,
+//! "The user's changes"): what each call's
 //! result carries as `user_changes`, and what the MCP panel shows as the
 //! user's own rows.
 //!

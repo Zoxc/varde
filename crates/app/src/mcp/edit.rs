@@ -1,4 +1,4 @@
-//! The MCP client's edits (see `notes/AgentSupport.md`, "Edits"): each the
+//! The MCP client's edits (see `agents/mcp.md`, "Edits"): each the
 //! `Command`s a panel's OK would make, applied through
 //! [`Doc::apply_client`] (`Doc::apply`'s sibling: its refusal comes back
 //! to the call, never to the user's `edit_error`), as one undo step.

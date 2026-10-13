@@ -1,5 +1,5 @@
-//! Never under the user's hands (`notes/AgentSupport.md`, "Editing while the
-//! user is"): a client edit, at its turn, first closes the sketch or the
+//! Never under the user's hands (`agents/mcp.md`, "Edits"): a client
+//! edit, at its turn, first closes the sketch or the
 //! extrude, revolve, combine or motion session the user has open, new or
 //! on a feature, and with it picking a plane, the Timeline marker's drag
 //! and the measure tool, as Esc would. A panel keeps a working copy its

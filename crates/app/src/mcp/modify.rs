@@ -1,5 +1,5 @@
 //! The MCP client's tools for the motion panel's other kinds, `split`,
-//! `shell`, `offset_face` and `draft` (see `notes/AgentSupport.md`, "Edits"):
+//! `shell`, `offset_face` and `draft` (see `agents/mcp.md`, "Edits"):
 //! each set up in the panel's own session
 //! ([`MotionSession::for_client`]) as the motion tools are (see
 //! `motion`), built from what its panel shows (typed text read by its

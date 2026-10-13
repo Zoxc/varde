@@ -1,5 +1,5 @@
 //! The MCP client's feature tools, `extrude`, `revolve` and `combine`
-//! (see `notes/AgentSupport.md`, "Edits"): each set up in the panel's own
+//! (see `agents/mcp.md`, "Edits"): each set up in the panel's own
 //! session, built from what the panel shows (typed text read by the
 //! panel's fields, regions picked as its clicks pick them, bodies by
 //! name), its defaults the panel's, and added where the panel's OK adds

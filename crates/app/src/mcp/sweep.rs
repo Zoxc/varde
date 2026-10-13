@@ -1,5 +1,5 @@
 //! The MCP client's tools for the motion panel's Create kinds, `sweep`
-//! and `loft` (see `notes/AgentSupport.md`, "Edits"): each set up in the
+//! and `loft` (see `agents/mcp.md`, "Edits"): each set up in the
 //! panel's own session
 //! ([`MotionSession::for_client`](crate::doc::MotionSession::for_client))
 //! as the motion tools are (see `motion`), built from what its panel
