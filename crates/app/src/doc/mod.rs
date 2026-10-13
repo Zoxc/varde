@@ -1318,6 +1318,8 @@ impl Doc {
             Look::PickPlane => self.pick_plane(),
             Look::ChangePlane(id) => self.change_plane(id),
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
+                None => {}
+                Some(FeatureKind::Sketch { .. }) => self.enter_sketch(id),
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
                 Some(FeatureKind::Combine(_)) => self.edit_combine(id),
@@ -1336,7 +1338,6 @@ impl Doc {
                     | FeatureKind::Sweep(_)
                     | FeatureKind::Loft(_),
                 ) => self.edit_motion(id),
-                _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
             Look::Extrude(message) => self.extrude_look(message),
