@@ -40,7 +40,6 @@
 //! A reply failing those answers its request with [`Response::Failed`].
 //! Malformed bytes are refused, never a panic.
 
-use std::fmt;
 use std::sync::Arc;
 
 use glam::DVec2;
@@ -604,20 +603,26 @@ fn solution(
 }
 
 /// Why bytes from the other side were refused, or what they hold is.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {
     /// A request couldn't be decoded.
-    Request(DecodeError),
+    #[error("couldn't decode the request: {0}")]
+    Request(#[source] DecodeError),
     /// A reply couldn't be decoded.
-    Reply(DecodeError),
+    #[error("couldn't decode the reply: {0}")]
+    Reply(#[source] DecodeError),
     /// A reply answers the request this tag names, not the one asked.
+    #[error("a reply to another request: {0:?}")]
     Answers(Tag),
     /// An analysis is of this revision, not the one sent.
+    #[error("an answer of another revision: {0:?}")]
     Revision(Revision),
     /// A sketch fails its check.
-    Sketch(SketchError),
+    #[error("{0}")]
+    Sketch(#[source] SketchError),
     /// More of something than a request may hold: `what` names it, as a
     /// plural ("points", "bytes of a parameter's name").
+    #[error("{count} {what}, over the limit of {limit}")]
     TooMany {
         what: &'static str,
         count: usize,
@@ -625,40 +630,12 @@ pub enum Error {
     },
     /// An edit or a drag's targets out of bounds, past [`MAX_COORD`](varde_document::MAX_COORD)
     /// where it's a place or radius.
-    Bounds(BoundsError),
+    #[error("{0}")]
+    Bounds(#[source] BoundsError),
     /// A reply names items the sketch doesn't have, or not as many as it
     /// has.
+    #[error("a reply naming items the sketch doesn't have")]
     Items,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Request(e) => write!(f, "couldn't decode the request: {e}"),
-            Error::Reply(e) => write!(f, "couldn't decode the reply: {e}"),
-            Error::Answers(tag) => write!(f, "a reply to another request: {tag:?}"),
-            Error::Revision(revision) => {
-                write!(f, "an answer of another revision: {revision:?}")
-            }
-            Error::Sketch(e) => e.fmt(f),
-            Error::TooMany { what, count, limit } => {
-                write!(f, "{count} {what}, over the limit of {limit}")
-            }
-            Error::Bounds(e) => e.fmt(f),
-            Error::Items => f.write_str("a reply naming items the sketch doesn't have"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Request(e) | Error::Reply(e) => Some(e),
-            Error::Sketch(e) => Some(e),
-            Error::Bounds(e) => Some(e),
-            Error::Answers(_) | Error::Revision(_) | Error::TooMany { .. } | Error::Items => None,
-        }
-    }
 }
 
 #[cfg(test)]

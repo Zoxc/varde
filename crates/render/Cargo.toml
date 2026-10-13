@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+thiserror.workspace = true
 varde-kernel-compat.workspace = true
 wgpu.workspace = true
 glam.workspace = true

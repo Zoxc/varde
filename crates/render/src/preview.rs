@@ -45,32 +45,19 @@ pub struct PreviewImage {
 }
 
 /// Why [`render_preview`] couldn't draw.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PreviewError {
     /// The renderer draws to a format that isn't 8 bit RGBA or BGRA, which
     /// isn't read back.
+    #[error("a target of {0:?} isn't read back")]
     Format(wgpu::TextureFormat),
     /// The image is larger than the device's textures may be.
+    #[error("a {}×{} image is larger than the device's {limit} pixels", size[0], size[1])]
     TooLarge { size: [u32; 2], limit: u32 },
     /// The mesh didn't fit the device's buffers.
-    Prepare(PrepareError),
+    #[error("{0}")]
+    Prepare(#[source] PrepareError),
 }
-
-impl std::fmt::Display for PreviewError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PreviewError::Format(format) => write!(f, "a target of {format:?} isn't read back"),
-            PreviewError::TooLarge { size, limit } => write!(
-                f,
-                "a {}×{} image is larger than the device's {limit} pixels",
-                size[0], size[1]
-            ),
-            PreviewError::Prepare(error) => error.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for PreviewError {}
 
 /// The shot of `mesh` and `sketches` from `from`'s direction, framing
 /// them as large as fits within `max` pixels less `margin` on each side,

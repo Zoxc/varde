@@ -268,7 +268,12 @@ impl PartDraws {
 /// Why [`Renderer::prepare`] couldn't upload some of a frame: a buffer of
 /// `upload` would take `bytes`, more than the device's `max_buffer_size`
 /// of `limit`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "{} {} a {bytes}-byte buffer, but the device allows at most {limit} bytes",
+    upload.subject().0,
+    upload.subject().1
+)]
 pub struct PrepareError {
     pub upload: Upload,
     pub bytes: u64,
@@ -311,19 +316,6 @@ impl Upload {
         }
     }
 }
-
-impl std::fmt::Display for PrepareError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (subject, needs) = self.upload.subject();
-        let (bytes, limit) = (self.bytes, self.limit);
-        write!(
-            f,
-            "{subject} {needs} a {bytes}-byte buffer, but the device allows at most {limit} bytes"
-        )
-    }
-}
-
-impl std::error::Error for PrepareError {}
 
 /// One scene's state on the GPU, from [`Renderer::prepare`] to
 /// [`Renderer::render`]: its uniforms, mesh, lines and depth buffer.
