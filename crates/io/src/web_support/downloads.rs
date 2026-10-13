@@ -37,8 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::UnixSeconds;
 use crate::browser::{DownloadStatus, LastDownload, is_design_name};
-use crate::vrdp::{ReadAt, Storage};
-use crate::web_support::dir::{Dir, Make, take_waiting};
+use crate::web_support::dir::{Dir, Make, WholeFile, take_waiting};
 
 /// The file's name at the root of the Origin Private File System.
 pub(crate) const FILE: &str = "downloads.toml";
@@ -240,13 +239,13 @@ pub(crate) async fn update<T>(
     change: impl FnOnce(&mut Downloads) -> T,
 ) -> io::Result<T> {
     let mut file = take_waiting(dir, FILE, Make::IfMissing).await?;
-    let mut downloads = match file.read_all(MAX_BYTES)? {
+    let mut downloads = match file.read_whole(MAX_BYTES)? {
         Some(bytes) => Downloads::parse(&String::from_utf8_lossy(&bytes)),
         None => Downloads::default(),
     };
     let answer = change(&mut downloads);
     let bytes = downloads.serialize().into_bytes();
-    file.replace_all(&bytes)?;
+    file.replace_whole(&bytes)?;
     Ok(answer)
 }
 

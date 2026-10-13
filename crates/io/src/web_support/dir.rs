@@ -26,6 +26,30 @@ use crate::UnixSeconds;
 use crate::autosave::{Ending, Held};
 use crate::vrdp::{ReadAt, Storage};
 
+/// A small file read or written whole, such as the downloads and
+/// settings TOML files, on top of what the `.vrdp` code needs of a file.
+pub(crate) trait WholeFile: Storage {
+    /// The whole file, if it's at most `max` bytes long: `None` if longer.
+    fn read_whole(&self, max: usize) -> io::Result<Option<Vec<u8>>> {
+        let Some(len) = usize::try_from(self.len()?).ok().filter(|&len| len <= max) else {
+            return Ok(None);
+        };
+        let mut bytes = vec![0; len];
+        self.read_at(&mut bytes, 0)?;
+        Ok(Some(bytes))
+    }
+
+    /// Replaces the whole file with `bytes`, made durable.
+    fn replace_whole(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.write_at(bytes, 0)?;
+        // `usize` is at most 64 bits wide, so exact.
+        self.truncate(bytes.len() as u64)?;
+        self.sync()
+    }
+}
+
+impl<S: Storage + ?Sized> WholeFile for S {}
+
 /// How [`Dir::take`] finds the file it takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Make {

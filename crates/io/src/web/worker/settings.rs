@@ -6,8 +6,7 @@ use std::path::Path;
 
 use super::opfs::{self, OpfsDir, not_a_place};
 use crate::settings::{MAX_BYTES, Settings};
-use crate::vrdp::Storage;
-use crate::web_support::dir::{Dir, Make};
+use crate::web_support::dir::{Dir, Make, WholeFile};
 
 /// Reads the settings from `store`. A missing or unreadable store gives
 /// the defaults.
@@ -33,7 +32,7 @@ async fn read(store: &Path) -> io::Result<Vec<u8>> {
 pub(crate) async fn write(store: &Path, settings: &Settings) -> io::Result<()> {
     let bytes = settings.serialize().into_bytes();
     let (dir, name) = place(store).await?;
-    dir.take(name, Make::IfMissing).await?.replace_all(&bytes)
+    dir.take(name, Make::IfMissing).await?.replace_whole(&bytes)
 }
 
 /// The directory `store` is in, made if needed, and its name there.

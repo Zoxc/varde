@@ -16,7 +16,7 @@ use web_sys::{
 use crate::UnixSeconds;
 use crate::vrdp::{ReadAt, Storage};
 use crate::web::js::{call, call_method, copy_exact, js_error, method};
-use crate::web_support::dir::{Dir, Make};
+use crate::web_support::dir::{Dir, Make, WholeFile};
 use crate::web_support::names::{dir_names, done};
 use crate::web_support::numbers::{self, number, offset, seconds, size};
 use crate::web_support::wire::MAX_MESSAGE_BYTES;
@@ -313,7 +313,7 @@ impl Dir for OpfsDir {
         // read whole, as a design is, within what a design may be.
         let source = Handle::take(&handle).await?;
         let bytes = source
-            .read_all(MAX_MESSAGE_BYTES)?
+            .read_whole(MAX_MESSAGE_BYTES)?
             .ok_or(io::ErrorKind::FileTooLarge)?;
         let mut copy = self.take(to, Make::New).await?;
         let copied = copy.write_at(&bytes, 0).and_then(|()| copy.sync());
