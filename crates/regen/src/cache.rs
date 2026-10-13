@@ -464,11 +464,6 @@ impl Cache {
         entry
     }
 
-    /// Whether a result is filed under `key`, without using it.
-    pub(crate) fn holds(&self, key: Key) -> bool {
-        self.slots.contains_key(&key)
-    }
-
     /// The result filed under `key`, or `make`'s, filed, without
     /// counting it in [`Cache::counts`]: what isn't a feature's result
     /// (a topology, a measure).
@@ -520,9 +515,12 @@ impl Cache {
     pub(crate) fn length(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<EdgeLength, Failed>,
+        make: impl FnOnce(&mut Cache) -> Result<EdgeLength, Failed>,
     ) -> Result<EdgeLength, Failed> {
-        take!(self.entry(key), Length(make()))
+        let Ok(length) = self.try_get(key, Tally::Feature, |cache| {
+            Ok::<_, Infallible>(Entry::Length(make(cache)))
+        });
+        take!(length, Length)
     }
 
     pub(crate) fn link(
@@ -591,9 +589,11 @@ impl Cache {
     pub(crate) fn mesh<E>(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<Drawn, E>,
+        make: impl FnOnce(&mut Cache) -> Result<Drawn, E>,
     ) -> Result<Arc<Drawn>, E> {
-        let drawn = self.try_get(key, Tally::Feature, |_| Ok(Entry::Drawn(Arc::new(make()?))))?;
+        let drawn = self.try_get(key, Tally::Feature, |cache| {
+            Ok(Entry::Drawn(Arc::new(make(cache)?)))
+        })?;
         Ok(take!(drawn, Drawn))
     }
 

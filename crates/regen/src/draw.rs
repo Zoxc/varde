@@ -89,10 +89,12 @@ pub(crate) fn tessellate_scene(
                 None => Display::new(&tolerance),
             };
             // The topology is kept too, for the measure tool's picks.
-            let topology = (!cache.holds(*key)).then(|| crate::inspect::topology(made, cache));
-            let drawn = cache.mesh(*key, || match &topology {
-                Some(topology) => Drawn::new(&made.solid, topology, &display),
-                None => Drawn::new(&made.solid, &made.solid.topology(), &display),
+            let drawn = cache.mesh(*key, |cache| {
+                Drawn::new(
+                    &made.solid,
+                    &crate::inspect::topology(made, cache),
+                    &display,
+                )
             })?;
             mesh.append(&drawn.mesh)?;
             picking.append(made.body, &drawn)?;

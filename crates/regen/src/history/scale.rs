@@ -117,10 +117,9 @@ fn measured(
 ) -> Result<EdgeLength, Failed> {
     let made = (evaluation.solid(edge.body)).ok_or(why::SCALE_EDGE_NOT_FOUND)?;
     let key = reference_key("scale edge", made.key, &edge.faces, edge.near, tolerance);
-    let topology = (!cache.holds(key)).then(|| inspect::topology(made, cache));
-    cache.length(key, || {
+    cache.length(key, |cache| {
         let solid = &made.solid;
-        let topology = topology.unwrap_or_else(|| Arc::new(solid.topology()));
+        let topology = inspect::topology(made, cache);
         let chain =
             (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::SCALE_EDGE_NOT_FOUND)?;
         let target = Target {

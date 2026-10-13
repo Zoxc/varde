@@ -1578,7 +1578,7 @@ fn ask_meshes(cache: &mut Cache, keys: &[u64], mesh: &RenderMesh) -> Vec<bool> {
             let mut found = true;
             let key = Keyer::new("test").number(k).finish();
             cache
-                .mesh(key, || {
+                .mesh(key, |_| {
                     found = false;
                     Ok::<_, ()>(drawn(mesh))
                 })
@@ -1685,7 +1685,7 @@ fn the_cache_counts_its_bytes() {
 fn ask_meshes_unbegun(cache: &mut Cache, keys: &[u64], mesh: &RenderMesh) {
     for &k in keys {
         let key = Keyer::new("test").number(k).finish();
-        cache.mesh(key, || Ok::<_, ()>(drawn(mesh))).unwrap();
+        cache.mesh(key, |_| Ok::<_, ()>(drawn(mesh))).unwrap();
     }
     let (total, _) = cache.audit();
     assert_eq!(cache.bytes(), total);
