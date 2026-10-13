@@ -1103,6 +1103,12 @@ impl Page {
         offset: 0,
         limit: FEATURE_LIMIT,
     };
+
+    /// `body_topology`'s page when none is asked for.
+    pub const TOPOLOGY: Page = Page {
+        offset: 0,
+        limit: TOPOLOGY_LIMIT,
+    };
 }
 
 /// `sketch`'s arguments.
@@ -1198,10 +1204,8 @@ pub struct Topology {
     pub faces: Option<FaceFilter>,
     /// Only the edges passing this, if sent.
     pub edges: Option<EdgeFilter>,
-    /// How many to skip in each listing.
-    pub offset: usize,
-    /// How many to list at most in each, at most [`MAX_LIMIT`].
-    pub limit: usize,
+    /// Where each listing starts and how much of it to give.
+    pub page: Page,
 }
 
 /// Which faces to list.

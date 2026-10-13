@@ -154,8 +154,7 @@ fn reads_each_call() {
             body: "Body 1".into(),
             faces: None,
             edges: None,
-            offset: 0,
-            limit: LIMIT,
+            page: Page::TOPOLOGY,
         }
     );
 }
@@ -281,13 +280,23 @@ fn reads_edge_filters() {
 #[test]
 fn offset_and_limit_are_checked() {
     let t = topology(json!({ "body": "B", "offset": 7, "limit": 20 }));
-    assert_eq!((t.offset, t.limit), (7, 20));
     assert_eq!(
-        topology(json!({ "body": "B", "limit": 1_000_000 })).limit,
+        t.page,
+        Page {
+            offset: 7,
+            limit: 20
+        }
+    );
+    assert_eq!(
+        topology(json!({ "body": "B", "limit": 1_000_000 }))
+            .page
+            .limit,
         MAX_LIMIT
     );
     assert_eq!(
-        topology(json!({ "body": "B", "offset": u64::MAX })).offset,
+        topology(json!({ "body": "B", "offset": u64::MAX }))
+            .page
+            .offset,
         usize::try_from(u64::MAX).unwrap()
     );
     for bad in [json!(-1), json!(1.5), json!("3"), json!(1e30)] {

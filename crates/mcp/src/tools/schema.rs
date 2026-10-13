@@ -39,8 +39,8 @@ fn build_list() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "offset": { "type": "integer", "minimum": 0, "description": "How many to skip in each listing" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": "How many to list at most in each" }
+                    "offset": offset("How many to skip in each listing"),
+                    "limit": limit("How many to list at most in each")
                 },
                 "additionalProperties": false
             },
@@ -62,8 +62,8 @@ fn build_list() -> Value {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "The feature's name, as the Timeline shows it" },
-                    "offset": { "type": "integer", "minimum": 0, "description": "How many to skip in each list" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": "How many to give at most of each" }
+                    "offset": offset("How many to skip in each list"),
+                    "limit": limit("How many to give at most of each")
                 },
                 "required": ["name"],
                 "additionalProperties": false
@@ -103,8 +103,8 @@ fn build_list() -> Value {
                         },
                         "additionalProperties": false
                     },
-                    "offset": { "type": "integer", "minimum": 0, "description": "How many to skip in each listing" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": "How many to list at most in each" }
+                    "offset": offset("How many to skip in each listing"),
+                    "limit": limit("How many to list at most in each")
                 },
                 "required": ["body"],
                 "additionalProperties": false
@@ -126,8 +126,8 @@ fn build_list() -> Value {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "The sketch's name, as the Timeline shows it" },
-                    "offset": { "type": "integer", "minimum": 0, "description": "How many to skip in each listing" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": "How many to list at most in each" }
+                    "offset": offset("How many to skip in each listing"),
+                    "limit": limit("How many to list at most in each")
                 },
                 "required": ["name"],
                 "additionalProperties": false
@@ -1182,6 +1182,16 @@ fn undo_tool() -> Value {
         },
         "annotations": destructive(),
     })
+}
+
+/// A query's `offset` argument, described as `description`.
+fn offset(description: &str) -> Value {
+    json!({ "type": "integer", "minimum": 0, "description": description })
+}
+
+/// A query's `limit` argument, described as `description`.
+fn limit(description: &str) -> Value {
+    json!({ "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": description })
 }
 
 /// A read-only tool's annotations.

@@ -31,13 +31,12 @@ pub(super) fn topology(args: &mut Arguments) -> Result<Topology, CallError> {
             })
         }
     };
-    let Page { offset, limit } = page(args, LIMIT)?;
+    let page = page(args, TOPOLOGY_LIMIT)?;
     Ok(Topology {
         body,
         faces,
         edges,
-        offset,
-        limit,
+        page,
     })
 }
 

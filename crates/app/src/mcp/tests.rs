@@ -385,8 +385,7 @@ fn topology(body: &str) -> varde_mcp::tools::Topology {
         body: body.to_owned(),
         faces: None,
         edges: None,
-        offset: 0,
-        limit: varde_mcp::tools::LIMIT,
+        page: varde_mcp::tools::Page::TOPOLOGY,
     }
 }
 
@@ -605,8 +604,8 @@ fn body_topology_pages_each_listing() {
     // nothing that overflows.
     for offset in [9, usize::MAX] {
         let mut call = topology("Body 1");
-        call.offset = offset;
-        call.limit = varde_mcp::tools::MAX_LIMIT;
+        call.page.offset = offset;
+        call.page.limit = varde_mcp::tools::MAX_LIMIT;
         let past = data(&varde, &Call::BodyTopology(call));
         assert_eq!(past["corners"]["items"], json!([]));
         assert_eq!(past["corners"]["left_out"], json!(8));
@@ -625,7 +624,7 @@ fn body_topology_clamps_the_limit() {
     else {
         panic!();
     };
-    assert_eq!(clamped.limit, varde_mcp::tools::MAX_LIMIT);
+    assert_eq!(clamped.page.limit, varde_mcp::tools::MAX_LIMIT);
     let varde = with_example();
     let listed = data(&varde, &Call::BodyTopology(clamped));
     assert_eq!(listed["edges"]["left_out"], json!(0));
@@ -769,7 +768,7 @@ fn body_topology_at_its_default_limit_fits_the_cap() {
         let items = listed[listing]["items"].as_array().unwrap();
         let largest = items.iter().map(|item| item.to_string().len()).max();
         // Each point's three numbers as long as `12.345678`.
-        page += (largest.unwrap() + 3 * 3 * 9) * varde_mcp::tools::LIMIT;
+        page += (largest.unwrap() + 3 * 3 * 9) * varde_mcp::tools::TOPOLOGY_LIMIT;
     }
     assert!(page < ToolReply::CAP, "{page} bytes");
 }
@@ -1376,7 +1375,7 @@ fn the_panel_lists_the_calls() {
         direction: None,
         convex: Some(true),
     });
-    topology.limit = 5;
+    topology.page.limit = 5;
     let reply = calling(&mut varde, "a session", 4, Call::BodyTopology(topology));
     respond(&mut varde, &requests, is_topology);
     assert!(!reply.try_recv().unwrap().is_error);

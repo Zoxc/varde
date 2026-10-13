@@ -8,7 +8,7 @@ use glam::DVec3;
 use serde_json::{Value, json};
 use varde_document::{BodyId, EdgeRef, FaceRef, FeatureId, Generation, MAX_COORD};
 use varde_kernel_compat::RenderPart;
-use varde_mcp::tools::{Direction, EdgeFilter, Page, ToolReply, Topology};
+use varde_mcp::tools::{Direction, EdgeFilter, ToolReply, Topology};
 use varde_regen::{Convexity, EdgeFacts, EdgeForm, Summary};
 
 use super::{BUDGET, FAILURES_NOTES, ModelNotes, Numbers, model_state, paged_into};
@@ -187,11 +187,7 @@ pub(crate) fn listed(
         ("edges", edge_items),
         ("corners", corner_items),
     ];
-    let at = Page {
-        offset: args.offset,
-        limit: args.limit,
-    };
-    let answer = paged_into(&answer, lists, at, BUDGET);
+    let answer = paged_into(&answer, lists, args.page, BUDGET);
     Some(ToolReply::data(answer))
 }
 

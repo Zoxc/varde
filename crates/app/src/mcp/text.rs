@@ -138,9 +138,9 @@ pub(super) fn args(call: &Call) -> String {
                 said.push(format!("edges along {}", direction(along)));
             }
             said.extend(page(
-                topology.offset,
-                topology.limit,
-                varde_mcp::tools::LIMIT,
+                topology.page.offset,
+                topology.page.limit,
+                varde_mcp::tools::TOPOLOGY_LIMIT,
             ));
             said
         }

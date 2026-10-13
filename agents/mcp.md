@@ -159,7 +159,7 @@ largest component so squaring can't overflow or underflow.
   `set_feature`'s says such a page is refused.
 - `body_topology {body, faces?: {normal?}, edges?: {direction?,
   convex?}, offset?, limit?}`: `Call::BodyTopology(Topology)`, default
-  limit 16 per listing (`LIMIT`).
+  limit 16 per listing (`TOPOLOGY_LIMIT`, `Page::TOPOLOGY`).
 - `sketch {name, offset?, limit?}`: `Call::Sketch(SketchQuery { name,
   page })`, default limit 20 per listing (`SKETCH_LIMIT`).
 - `measure {a, b?}`: `Call::Measure(Measure { a, b })`, each a

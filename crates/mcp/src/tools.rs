@@ -43,7 +43,7 @@ pub const SUMMARY_LIMIT: usize = 30;
 /// `body_topology`'s default `limit`, per listing: a page of each of its
 /// three listings, at about 850 bytes for a face, an edge and a corner
 /// together, fits well under [`ToolReply::CAP`].
-pub const LIMIT: usize = 16;
+pub const TOPOLOGY_LIMIT: usize = 16;
 
 /// `feature`'s default `limit`, per list in a feature's settings (a
 /// chamfer's edges and faces, a loft's sections and rails, ...): at
