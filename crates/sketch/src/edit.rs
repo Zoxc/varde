@@ -282,17 +282,24 @@ impl SketchEdit {
             SketchEdit::CloseSpline(spline) => next.close_spline(*spline)?,
             SketchEdit::OpenSpline { spline, at } => next.open_spline(*spline, *at)?,
         }
-        // Only a link's own edits change what it made; deleting a link
-        // takes it whole.
-        match self {
-            SketchEdit::AddLink { .. }
-            | SketchEdit::Relink(_)
-            | SketchEdit::SetLinkProfiles { .. } => {}
-            SketchEdit::Delete(ids) => next.links_kept(sketch, ids)?,
-            _ => next.links_kept(sketch, &[])?,
+        if let Some(deleted) = self.may_unlink() {
+            next.links_kept(sketch, deleted)?;
         }
         next.check(design)?;
         Ok((next, auto))
+    }
+
+    /// The linked items the edit may change: `None` for a link's own
+    /// edits, which may change any of what it made, else those the edit
+    /// deletes, as deleting a link takes it whole.
+    fn may_unlink(&self) -> Option<&[Id]> {
+        match self {
+            SketchEdit::AddLink { .. }
+            | SketchEdit::Relink(_)
+            | SketchEdit::SetLinkProfiles { .. } => None,
+            SketchEdit::Delete(ids) => Some(ids),
+            _ => Some(&[]),
+        }
     }
 }
 
