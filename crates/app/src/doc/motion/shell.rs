@@ -3,22 +3,12 @@
 //! which way the walls grow (the model mock's Direction tiles: Inward,
 //! Outward).
 
-use varde_document::{Design, Shell};
-use varde_render::Camera;
+use varde_document::Shell;
 use varde_view::{MotionField, MotionKind, ShellDirection, ShellView};
 
 use super::refs::Refs;
-use super::{BLEND_SHARE, Doc, MotionSession, length_field};
-use crate::doc::camera::fitting_length;
+use super::{Doc, MotionSession};
 use crate::doc::regions::TypedText;
-
-/// The shell's thickness field as a new one opens it, seen by `camera`:
-/// [`BLEND_SHARE`] of the view's height made nice ([`fitting_length`]),
-/// in the design's units with their symbol.
-pub(super) fn thickness_field(design: &Design, camera: &Camera) -> TypedText {
-    let length = fitting_length(camera, design.units, BLEND_SHARE);
-    length_field(length, &Shell::thickness_ask(design), design)
-}
 
 impl MotionSession {
     /// The shell as set up, if it's whole: its body, the faces to remove

@@ -10,13 +10,9 @@
 //! move with the face it moves (its knob does).
 
 use glam::DVec3;
-use varde_document::{Design, FaceRef, FeatureKind, Generation, OffsetFace};
-use varde_render::Camera;
+use varde_document::{FaceRef, FeatureKind, Generation, OffsetFace};
 use varde_view::{MotionField, MotionKind, OffsetFaceView};
 
-use crate::doc::camera::fitting_length;
-
-use super::length_field;
 use super::refs::Refs;
 use super::{Doc, MotionSession};
 use crate::doc::regions::TypedText;
@@ -31,18 +27,6 @@ pub(crate) struct Anchor {
     at: DVec3,
     normal: DVec3,
 }
-
-/// The distance field as a new one opens it, seen by `camera`:
-/// [`DISTANCE_SHARE`] of the view's height made nice
-/// ([`fitting_length`]), in the design's units with their symbol.
-pub(super) fn distance_field(design: &Design, camera: &Camera) -> TypedText {
-    let length = fitting_length(camera, design.units, DISTANCE_SHARE);
-    length_field(length, &OffsetFace::distance_ask(design), design)
-}
-
-/// The part of the view's height a new offset face's distance starts at,
-/// at most.
-const DISTANCE_SHARE: f64 = super::BLEND_SHARE / 2.0;
 
 impl MotionSession {
     /// The offset face as set up, if it's whole: its faces (at least

@@ -27,8 +27,7 @@ use varde_view::{
 };
 
 use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
-use super::{Doc, MotionSession, length_field};
-use crate::doc::camera::fitting_length;
+use super::{Doc, MotionSession, fitted_length_field};
 use crate::doc::regions::{BodyTargets, GoneRegions, RegionPick, TypedText};
 use crate::doc::sketch_of;
 
@@ -98,11 +97,7 @@ const PITCH_SHARE: f64 = 0.1;
 pub(super) fn sweep_fields(design: &Design, camera: &Camera) -> [TypedText; 3] {
     let twist = Sweep::twist_ask(design);
     [
-        length_field(
-            fitting_length(camera, design.units, PITCH_SHARE),
-            &Sweep::pitch_ask(design),
-            design,
-        ),
+        fitted_length_field(design, camera, PITCH_SHARE, &Sweep::pitch_ask(design)),
         TypedText::opened("5", &Sweep::turns_ask(design)),
         TypedText::read(
             varde_expr::format(0.0, Some(Unit::Angle(AngleUnit::Deg))),

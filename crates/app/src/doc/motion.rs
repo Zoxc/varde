@@ -341,6 +341,12 @@ fn length_field(length: f64, ask: &Ask, design: &Design) -> TypedText {
     )
 }
 
+/// A field for `ask` reading `share` of `camera`'s view height made nice
+/// ([`fitting_length`]), as a new length opens.
+fn fitted_length_field(design: &Design, camera: &Camera, share: f64, ask: &Ask) -> TypedText {
+    length_field(fitting_length(camera, design.units, share), ask, design)
+}
+
 impl MotionSession {
     /// A session setting up a new `kind` of `document`, of `bodies`: a
     /// move by nothing yet about the Z axis, a mirror keeping the
@@ -407,19 +413,16 @@ impl MotionSession {
                 Some(AxisRef::Origin(Axis3::Z)),
                 PatternMode::Full,
             ),
-            _ => {
-                let spacing = fitting_length(camera, design.units, SPACING_SHARE);
-                (
-                    read("3", &count),
-                    length_field(spacing, &spread, &design),
-                    match kind {
-                        MotionKind::Move => Some(AxisRef::Origin(Axis3::Z)),
-                        MotionKind::LinearPattern => Some(AxisRef::Origin(Axis3::X)),
-                        _ => None,
-                    },
-                    PatternMode::Spacing,
-                )
-            }
+            _ => (
+                read("3", &count),
+                fitted_length_field(&design, camera, SPACING_SHARE, &spread),
+                match kind {
+                    MotionKind::Move => Some(AxisRef::Origin(Axis3::Z)),
+                    MotionKind::LinearPattern => Some(AxisRef::Origin(Axis3::X)),
+                    _ => None,
+                },
+                PatternMode::Spacing,
+            ),
         };
         Self {
             kind,
@@ -438,7 +441,12 @@ impl MotionSession {
                 copies,
                 spread_field,
                 if kind == MotionKind::OffsetFace {
-                    offset_face::distance_field(&design, camera)
+                    fitted_length_field(
+                        &design,
+                        camera,
+                        BLEND_SHARE / 2.0,
+                        &varde_document::OffsetFace::distance_ask(&design),
+                    )
                 } else {
                     read(&zero, &offset)
                 },
@@ -451,8 +459,18 @@ impl MotionSession {
                 chamfer_distance,
                 chamfer_second,
                 chamfer_angle,
-                shell::thickness_field(&design, camera),
-                fillet::radius_field(&design, camera),
+                fitted_length_field(
+                    &design,
+                    camera,
+                    BLEND_SHARE,
+                    &varde_document::Shell::thickness_ask(&design),
+                ),
+                fitted_length_field(
+                    &design,
+                    camera,
+                    BLEND_SHARE,
+                    &varde_document::Fillet::radius_ask(&design),
+                ),
                 pitch,
                 turns,
                 twist,
