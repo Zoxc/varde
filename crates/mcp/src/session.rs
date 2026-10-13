@@ -360,25 +360,26 @@ impl State {
 
     fn delete(&mut self, request: &Request, now: Duration) -> Outcome {
         let mut events = Vec::new();
-        if let Err(status) = self.find(request, now, &mut events) {
-            return Outcome::status(status).with_events(events);
-        }
-        let session = self.session.take().expect("found");
+        let session = match self.find(request, now, &mut events) {
+            Ok(session) => session.id.clone(),
+            Err(status) => return Outcome::status(status).with_events(events),
+        };
+        self.session = None;
         events.push(Event::Ended {
-            session: session.id,
+            session,
             end: End::Deleted,
         });
         Outcome::status(Status::NoContent).with_events(events)
     }
 
-    /// Finds the request's session: `Ok` if it's the open one, else the
+    /// Finds the request's session: the open one if it names it, else the
     /// status to answer. One found idle is ended, its event pushed.
     fn find(
         &mut self,
         request: &Request,
         now: Duration,
         events: &mut Vec<Event>,
-    ) -> Result<(), Status> {
+    ) -> Result<&mut Session, Status> {
         let id = request
             .once("mcp-session-id")
             .ok()
@@ -392,7 +393,7 @@ impl State {
             events.push(event);
             return Err(Status::NotFound);
         }
-        Ok(())
+        self.session.as_mut().ok_or(Status::NotFound)
     }
 
     fn post(&mut self, request: &Request, now: Duration) -> Outcome {
@@ -410,15 +411,15 @@ impl State {
             return self.initialize(r, now);
         }
         let mut events = Vec::new();
-        if let Err(status) = self.find(request, now, &mut events) {
-            return Outcome::status(status).with_events(events);
-        }
+        let session = match self.find(request, now, &mut events) {
+            Ok(session) => session,
+            Err(status) => return Outcome::status(status).with_events(events),
+        };
         match request.once("mcp-protocol-version") {
             Ok(None) => {}
             Ok(Some(version)) if VERSIONS.contains(&version.trim_matches([' ', '\t'])) => {}
             _ => return Outcome::status(Status::BadRequest),
         }
-        let session = self.session.as_mut().expect("found");
         session.last_active = now;
         match message {
             Message::Response => Outcome::status(Status::Accepted),
