@@ -459,7 +459,7 @@ impl Sketch {
     /// fit point. One whose fit point or tip is missing is left for
     /// [`Sketch::check`] to refuse.
     pub fn add_handle_ends(&mut self) -> Result<(), OutOfIds> {
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         // Each handle without an end, by its curve's index and its own,
         // and where its end goes.
         let mut missing = Vec::new();
@@ -609,7 +609,7 @@ impl Sketch {
         }
         let places = self.places(&spline.points).ok_or(target)?;
         let params = chord_params(&places, spline.closed);
-        let at = |id| self.point(id).map(|point| point.at).ok_or(target);
+        let at = |id| self.place(id).ok_or(target);
         let (start_at, end_at) = (at(start)?, at(end)?);
         // The fit points between, by where they are along it.
         let mut between: Vec<(f64, Id)> = Vec::new();

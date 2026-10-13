@@ -346,7 +346,7 @@ impl<'a> Sketching<'a> {
     /// colour, as its points are. Fit points without a handle show none.
     fn spline_aids(&self, layer: &mut SketchLayer, colors: SketchColors) {
         let sketch = self.sketch;
-        let at = |id: Id| sketch.point(id).map(|point| point.at);
+        let at = |id: Id| sketch.place(id);
         for entry in &sketch.curves {
             let Curve::Spline(spline) = &entry.curve else {
                 continue;
@@ -775,7 +775,7 @@ pub(super) fn tool_items(tool: &ActiveTool<'_>) -> Vec<Id> {
 /// point to its tip. `None` if `tip` is no handle's tip.
 pub(crate) fn handle_arms(sketch: &Sketch, tip: Id) -> Option<[DVec2; 3]> {
     let (_, handle) = sketch.handle(tip)?;
-    let at = |id| sketch.point(id).map(|point| point.at);
+    let at = |id| sketch.place(id);
     Some([at(handle.end)?, at(handle.at)?, at(handle.tip)?])
 }
 

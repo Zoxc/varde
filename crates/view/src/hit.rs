@@ -158,7 +158,7 @@ fn selectable((id, distance): (Id, f64)) -> (Selectable, f64) {
 /// line and a circle, from the polyline for an arc, whose radius may
 /// change along it (see [`Sketch::flatten`]).
 pub(crate) fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Option<f64> {
-    let point = |id| sketch.point(id).map(|point| point.at);
+    let point = |id| sketch.place(id);
     Some(match *curve {
         Curve::Line { start, end } => segment_distance(at, point(start)?, point(end)?),
         Curve::Circle { center, radius } => (at.distance(point(center)?) - radius).abs(),

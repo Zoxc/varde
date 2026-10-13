@@ -312,7 +312,7 @@ impl Sketch {
             .map(|(i, &id)| Some((id, Id::placeholder(i)?)))
             .collect::<Option<_>>()?;
         let points = (link.points.iter())
-            .map(|&id| self.point(id).map(|point| point.at))
+            .map(|&id| self.place(id))
             .collect::<Option<Vec<_>>>()?;
         let curves = (link.curves.iter())
             .map(|&id| {

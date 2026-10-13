@@ -473,7 +473,7 @@ impl System {
                 _ => {}
             }
         }
-        let at = |id| sketch.point(id).map(|point| point.at);
+        let at = |id| sketch.place(id);
         for (id, on) in read {
             let Some(spline) = sketch.spline(id) else {
                 continue;

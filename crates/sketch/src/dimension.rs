@@ -310,7 +310,7 @@ impl Sketch {
     /// (show its size); `None` if an item is missing or of another kind,
     /// or it isn't a number (a line of no length).
     pub fn measure(&self, measure: &Measure, side: Side) -> Option<f64> {
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         let value = match *measure {
             Measure::Distance(a, b) => {
                 let (distance, _, _) = self.distance(a, b)?;
@@ -365,7 +365,7 @@ impl Sketch {
     /// or the length of a line whose ends are: nothing a driving dimension
     /// could hold, as there's no telling which way to move them apart.
     pub fn same_place(&self, measure: &Measure) -> bool {
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         match *measure {
             Measure::Distance(a, b) => at(a).is_some_and(|a| Some(a) == at(b)),
             Measure::Length(line) => self.span(line).is_some_and(|(start, end)| start == end),
@@ -415,7 +415,7 @@ impl Sketch {
     /// middles, parallel), a circle's centre, halfway across an offset.
     /// `None` if an item is missing or of another kind.
     pub fn anchor(&self, measure: &Measure) -> Option<DVec2> {
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         let middle = |id| self.span(id).map(|(start, end)| start.midpoint(end));
         let anchor = match *measure {
             Measure::Distance(a, b) => self.distance(a, b)?.1,

@@ -747,7 +747,7 @@ impl Sketch {
             .unwrap_or_default();
 
         let ids: BTreeSet<Id> = ids.iter().copied().filter(|&id| id != about).collect();
-        let at = |id: Id| self.point(id).map(|point| point.at);
+        let at = |id: Id| self.place(id);
         let arc_points: BTreeSet<Id> = self
             .curves
             .iter()

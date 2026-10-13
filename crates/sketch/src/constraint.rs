@@ -360,7 +360,7 @@ impl Sketch {
     /// distance from its centre. `None` for anything else, or a point
     /// missing.
     pub fn round(&self, id: Id) -> Option<(DVec2, f64)> {
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         match self.curve(id)?.curve {
             Curve::Circle { center, radius } => Some((at(center)?, radius)),
             Curve::Arc { center, start, .. } => {

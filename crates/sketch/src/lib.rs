@@ -370,10 +370,13 @@ impl Sketch {
     }
 
     /// Where the points `ids` are, in order. `None` if one is missing.
+    /// Where the point `id` is, the origin included.
+    pub fn place(&self, id: Id) -> Option<DVec2> {
+        self.point(id).map(|point| point.at)
+    }
+
     pub(crate) fn places(&self, ids: &[Id]) -> Option<Vec<DVec2>> {
-        ids.iter()
-            .map(|&id| self.point(id).map(|point| point.at))
-            .collect()
+        ids.iter().map(|&id| self.place(id)).collect()
     }
 
     pub fn point_mut(&mut self, id: Id) -> Option<&mut Point> {
@@ -572,7 +575,7 @@ impl Sketch {
             }
             !gone
         });
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         let mut kept_splines = Vec::new();
         for (index, entry) in self.curves.iter().enumerate() {
             if let Curve::Spline(spline) = &entry.curve

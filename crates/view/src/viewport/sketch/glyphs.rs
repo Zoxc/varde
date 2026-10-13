@@ -10,7 +10,7 @@ use varde_sketch::{Constraint, Curve, Id, Sketch, crossing, foot};
 /// one on each; a tangent or a smooth join with a spline where it joins.
 /// None if what it names is missing.
 pub(crate) fn anchors(sketch: &Sketch, constraint: &Constraint) -> Vec<DVec2> {
-    let at = |id| sketch.point(id).map(|point| point.at);
+    let at = |id| sketch.place(id);
     let between = |a, b| Some((at(a)? + at(b)?) / 2.0);
     let found = match *constraint {
         Constraint::Coincident(point, _)

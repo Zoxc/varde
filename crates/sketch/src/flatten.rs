@@ -34,7 +34,7 @@ impl Sketch {
     /// `None` if the curve names a point the sketch doesn't have, which
     /// [`Sketch::check`] rules out.
     pub fn flatten(&self, curve: &Curve) -> Option<Vec<DVec2>> {
-        let at = |id| self.point(id).map(|point| point.at);
+        let at = |id| self.place(id);
         Some(match curve {
             &Curve::Line { start, end } => vec![at(start)?, at(end)?],
             &Curve::Circle { center, radius } => flatten_circle(at(center)?, radius),

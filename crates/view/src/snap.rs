@@ -598,7 +598,7 @@ fn tangent_arcs(sketch: &Sketch, tool: &ActiveTool, cursor: DVec2) -> Vec<Snap> 
 /// The lines and arcs of `sketch` ending at the point `point`, each with
 /// its direction there (either way along it).
 fn tangents_at(sketch: &Sketch, point: Id) -> Vec<(Id, DVec2)> {
-    let at = |id| sketch.point(id).map(|point| point.at);
+    let at = |id| sketch.place(id);
     let mut found = Vec::new();
     for entry in &sketch.curves {
         let direction = match entry.curve {
@@ -752,7 +752,7 @@ fn on_round(sketch: &Sketch, id: Id, at: DVec2) -> bool {
     match entry.curve {
         Curve::Circle { .. } => true,
         Curve::Arc { center, start, end } => {
-            let at_of = |id| sketch.point(id).map(|point| point.at);
+            let at_of = |id| sketch.place(id);
             let (Some(center), Some(start), Some(end)) = (at_of(center), at_of(start), at_of(end))
             else {
                 return false;

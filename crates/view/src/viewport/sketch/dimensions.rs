@@ -38,7 +38,7 @@ pub(crate) struct Lines {
 ///   circle or an arc, from the one to the other towards the label, or a
 ///   round join's as a radius.
 pub(crate) fn lines(sketch: &Sketch, measure: &Measure, side: Side, label: DVec2) -> Option<Lines> {
-    let at = |id| sketch.point(id).map(|point| point.at);
+    let at = |id| sketch.place(id);
     let mut lines = match *measure {
         Measure::Length(line) => {
             let (start, end) = sketch.span(line)?;

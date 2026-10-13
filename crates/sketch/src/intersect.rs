@@ -115,7 +115,7 @@ impl Geom {
     /// size (a line from a point to another at the same place, an arc
     /// starting at its centre, a spline all at one place).
     pub(crate) fn of(sketch: &Sketch, curve: &Curve) -> Option<Geom> {
-        let at = |id| sketch.point(id).map(|point| point.at);
+        let at = |id| sketch.place(id);
         let geom = match curve {
             &Curve::Line { start, end } => Geom::Segment {
                 start: at(start)?,

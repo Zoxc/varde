@@ -324,7 +324,7 @@ fn axis_holds(sketch: &varde_document::Sketch, axis: AxisLine) -> bool {
         AxisLine::SketchX | AxisLine::SketchY | AxisLine::Edge(_) => true,
         AxisLine::Curve(id) => match sketch.curve(id).map(|entry| &entry.curve) {
             Some(&varde_sketch::Curve::Line { start, end }) => {
-                let at = |point| sketch.point(point).map(|point| point.at);
+                let at = |point| sketch.place(point);
                 at(start)
                     .zip(at(end))
                     .is_some_and(|(start, end)| start != end)

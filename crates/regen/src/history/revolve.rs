@@ -156,7 +156,7 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, AxisErr
             let Curve::Line { start, end } = entry.curve else {
                 return Err(AxisError::NotFound);
             };
-            let at = |point| (sketch.point(point).map(|point| point.at)).ok_or(AxisError::NotFound);
+            let at = |point| sketch.place(point).ok_or(AxisError::NotFound);
             let (start, end) = (at(start)?, at(end)?);
             // Both within the coordinate limit, so the difference is
             // finite.

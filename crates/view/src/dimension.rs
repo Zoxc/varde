@@ -148,7 +148,7 @@ pub fn measure(
     if !measurable(sketch, picked) {
         return None;
     }
-    let point = |id| sketch.point(id).map(|point| point.at);
+    let point = |id| sketch.place(id);
     // Handles picked as lines are named by their tips.
     match *picked {
         [one] if one.handle_tip().is_some() => {
@@ -213,7 +213,7 @@ fn handle_of(sketch: &Sketch, id: Id) -> Option<Handle> {
 /// horizontal or vertical extent from its end to its tip.
 fn handle_length(sketch: &Sketch, id: Id, at: DVec2) -> Option<Measure> {
     let handle = handle_of(sketch, id)?;
-    let point = |id| sketch.point(id).map(|point| point.at);
+    let point = |id| sketch.place(id);
     let extent = extent(point(handle.end)?, point(handle.tip)?, at);
     Some(along(
         extent,
@@ -364,7 +364,7 @@ pub fn rectangle(sketch: &Sketch, selected: &[Id]) -> Option<(f64, f64)> {
     if corners.len() != 4 || points.iter().any(|point| !corners.contains(point)) {
         return None;
     }
-    let place = |id| sketch.point(id).map(|point| point.at);
+    let place = |id| sketch.place(id);
     let places = [0, 1, 2, 3].map(|i| place(corners[i]));
     let places: Vec<DVec2> = places.into_iter().collect::<Option<_>>()?;
     let sides: Vec<DVec2> = (0..4).map(|i| places[(i + 1) % 4] - places[i]).collect();

@@ -194,7 +194,7 @@ fn piece_segments(
         return Err(ProfileError::Missing);
     };
     let entry = sketch.curve(piece.curve).ok_or(ProfileError::Missing)?;
-    let at = |id| sketch.point(id).map(|point| point.at);
+    let at = |id| sketch.place(id);
     let curve = u64::from(piece.curve.get());
     let sweep = (piece.to - piece.from).abs();
     let ccw = piece.to > piece.from;
@@ -370,7 +370,7 @@ fn walk_chain(
     fit: f64,
     closed: bool,
 ) -> Result<(Vec<Segment>, bool), ChainError> {
-    let at = |id| sketch.point(id).map(|point| point.at);
+    let at = |id| sketch.place(id);
     if closed && let [only] = curves {
         let entry = sketch.curve(*only).ok_or(ChainError::Missing)?;
         if entry.curve.ends().is_none() {
@@ -481,7 +481,7 @@ fn closed_curve(sketch: &Sketch, id: Id, fit: f64) -> Result<Vec<Segment>, Chain
     let curve = u64::from(id.get());
     match &entry.curve {
         &Curve::Circle { center, radius } => {
-            let center = (sketch.point(center).map(|point| point.at)).ok_or(ChainError::Missing)?;
+            let center = sketch.place(center).ok_or(ChainError::Missing)?;
             let start = center + DVec2::new(radius, 0.0);
             let spec = ArcSpec {
                 center,
