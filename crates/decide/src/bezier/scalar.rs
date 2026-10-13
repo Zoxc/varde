@@ -1,6 +1,7 @@
 //! The scalar of a Bernstein form: a precision level's [`Bounded`] value
 //! (`f64`, double-double, big-float) or an exact `malachite` [`Rational`].
 
+use std::cmp::Ordering;
 use std::fmt;
 
 use malachite::Rational;
@@ -55,6 +56,15 @@ pub trait Scalar: Clone + fmt::Debug + PartialEq {
     /// `[lo, hi]` with the true value in it: `[−∞, +∞]` for a value that
     /// isn't certified.
     fn enclose(&self) -> [f64; 2];
+
+    /// The certified sign of the true value: `Some` when it is certainly
+    /// non-zero (`|v| > err`, compared exactly, so also for a big-float
+    /// value below the `f64` range), `None` when the error doesn't settle
+    /// it, for an exact zero and for a value that isn't certified.
+    fn sign(&self) -> Option<Ordering>;
+
+    /// The finite `x` exactly, at `like`'s level (and width).
+    fn from_f64(x: f64, like: &Self) -> Self;
 
     /// The polynomial with Bernstein coefficients `c` (non-empty) at `t`
     /// by a level's own faster method, if it has one for this `t`; `None`
@@ -179,6 +189,16 @@ impl Scalar for Bounded<f64> {
         widen_by(self.v, self.v, e)
     }
 
+    #[inline]
+    fn sign(&self) -> Option<Ordering> {
+        Bounded::<f64>::sign(self)
+    }
+
+    #[inline]
+    fn from_f64(x: f64, _: &Self) -> Self {
+        Bounded::exact(x)
+    }
+
     /// For an exact `t` in `[0, 1]`: de Casteljau in plain floats with
     /// weights `s = fl(1 − t)` and `t`, bounded afterwards by
     /// [`gamma_bound`] from the same evaluation on the `|bᵢ|`. That bounds
@@ -286,6 +306,16 @@ impl Scalar for Bounded<Dd> {
             r
         }
     }
+
+    #[inline]
+    fn sign(&self) -> Option<Ordering> {
+        Bounded::<Dd>::sign(self)
+    }
+
+    #[inline]
+    fn from_f64(x: f64, _: &Self) -> Self {
+        Bounded::exact(Dd::from_f64(x))
+    }
 }
 
 impl<B: BigF> Scalar for Bounded<B> {
@@ -354,6 +384,17 @@ impl<B: BigF> Scalar for Bounded<B> {
         }
         widen_by(down(f), up_signed(f), self.err())
     }
+
+    #[inline]
+    fn sign(&self) -> Option<Ordering> {
+        Bounded::<B>::sign(self)
+    }
+
+    /// Exact: every width holds an `f64`.
+    #[inline]
+    fn from_f64(x: f64, like: &Self) -> Self {
+        Bounded::exact(B::from_f64(x, like.v.width()))
+    }
 }
 
 impl Scalar for Rational {
@@ -403,5 +444,17 @@ impl Scalar for Rational {
             f64::rounding_from(self, Floor).0,
             f64::rounding_from(self, Ceiling).0,
         ]
+    }
+
+    fn sign(&self) -> Option<Ordering> {
+        match self.partial_cmp(&0u32) {
+            Some(Ordering::Equal) | None => None,
+            o => o,
+        }
+    }
+
+    /// Panics for a value that isn't finite.
+    fn from_f64(x: f64, _: &Self) -> Self {
+        Rational::try_from(x).expect("a finite f64")
     }
 }
