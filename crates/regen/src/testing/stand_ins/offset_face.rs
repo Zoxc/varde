@@ -53,8 +53,7 @@ pub(crate) fn by_boxes(
             return Err(OffsetError::PastNeighbour { region: moved });
         }
     }
-    let reach = f64::from(varde_kernel_compat::MAX_COORD);
-    if lo.abs().max_element() > reach || hi.abs().max_element() > reach {
+    if !super::in_reach(&[lo, hi]) {
         return Err(OffsetError::OutOfRange);
     }
     let factors = (hi - lo) / size;

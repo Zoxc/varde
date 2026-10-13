@@ -12,7 +12,7 @@ pub(super) mod sweep;
 pub(super) mod taper;
 
 use glam::DVec3;
-use varde_kernel_compat::mesh::Form;
+use varde_kernel_compat::mesh::{Edge, Face, Form, Mesh};
 use varde_kernel_compat::{Solid, Topology};
 
 /// A box's least and greatest corners, and each region's side of it
@@ -109,4 +109,27 @@ pub(super) fn convex_edge(solid: &Solid, topology: &Topology, chain: u32) -> Opt
         normal,
         regions: chain.regions,
     })
+}
+
+/// Whether every corner a stand-in moved is finite and within
+/// [`MAX_COORD`](varde_kernel_compat::MAX_COORD), as a solid's must be.
+pub(super) fn in_reach(verts: &[DVec3]) -> bool {
+    let reach = f64::from(varde_kernel_compat::MAX_COORD);
+    (verts.iter()).all(|v| v.is_finite() && v.abs().max_element() <= reach)
+}
+
+/// `mesh` with its vertices moved to `verts` (one each, in order) and
+/// its faces replaced by `faces`: every edge rebuilt straight between
+/// its moved ends, the triangles and aliases kept.
+pub(super) fn with_moved_corners(mesh: &Mesh, verts: Vec<DVec3>, faces: Vec<Face>) -> Mesh {
+    let mut edges = mesh.edges().to_vec();
+    for tri in mesh.tris() {
+        for (i, half) in tri.halfedges.iter().enumerate() {
+            let end = tri.halfedges[(i + 1) % 3].start;
+            edges[half.edge as usize] =
+                Edge::straight(verts[half.start as usize], verts[end as usize]);
+        }
+    }
+    Mesh::from_parts(verts, edges, mesh.tris().to_vec(), faces)
+        .with_aliases(mesh.aliases().to_vec())
 }

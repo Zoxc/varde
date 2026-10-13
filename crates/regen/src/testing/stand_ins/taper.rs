@@ -3,6 +3,8 @@
 
 use varde_kernel_compat::{Budget, Frame, KernelError, Profile, Solid, TaperError, Tolerance};
 
+use super::{in_reach, with_moved_corners};
+
 /// A stand-in for the kernel's tapered extrude, for tests: a rectangle
 /// along the frame's axes (one loop of four lines), over a span on one
 /// side of the sketch's plane (touching it or not), is the untapered
@@ -28,7 +30,7 @@ pub(crate) fn by_frustum(
     budget: &Budget,
 ) -> Result<Solid, TaperError> {
     use glam::{DVec2, DVec3};
-    use varde_kernel_compat::mesh::{Edge, Form, Mesh, Surface};
+    use varde_kernel_compat::mesh::{Form, Surface};
     let too_complex = || TaperError::Failed(KernelError::TooComplex.into());
     let solid = varde_kernel_compat::extrude(profile, frame, from, to, feature, tol, budget)?;
     if taper == 0.0 {
@@ -77,20 +79,8 @@ pub(crate) fn by_frustum(
             frame.origin + frame.x * q.x + frame.y * q.y + normal * h
         })
         .collect();
-    let reach = f64::from(varde_kernel_compat::MAX_COORD);
-    if verts
-        .iter()
-        .any(|v| !v.is_finite() || v.abs().max_element() > reach)
-    {
+    if !in_reach(&verts) {
         return Err(TaperError::OutOfRange);
-    }
-    let mut edges = mesh.edges().to_vec();
-    for tri in mesh.tris() {
-        for (i, half) in tri.halfedges.iter().enumerate() {
-            let end = tri.halfedges[(i + 1) % 3].start;
-            edges[half.edge as usize] =
-                Edge::straight(verts[half.start as usize], verts[end as usize]);
-        }
     }
     let mut faces = mesh.faces().to_vec();
     for (index, face) in faces.iter_mut().enumerate() {
@@ -117,7 +107,6 @@ pub(crate) fn by_frustum(
         face.form = Form::Plane { n, d };
         face.surface = Surface::Plane { n, d };
     }
-    let tapered = Mesh::from_parts(verts, edges, mesh.tris().to_vec(), faces)
-        .with_aliases(mesh.aliases().to_vec());
-    Solid::new(tapered, tol).map_err(|error| TaperError::Failed(error.into()))
+    Solid::new(with_moved_corners(mesh, verts, faces), tol)
+        .map_err(|error| TaperError::Failed(error.into()))
 }

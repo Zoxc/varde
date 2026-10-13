@@ -4,7 +4,7 @@
 use glam::DVec3;
 use varde_kernel_compat::{Budget, DraftError, Solid, Tolerance, Topology};
 
-use super::box_sides;
+use super::{box_sides, in_reach, with_moved_corners};
 
 /// A stand-in for the kernel's draft, for tests: the solid must be a box
 /// along the world's axes ([`box_sides`]) of eight corners,
@@ -36,7 +36,7 @@ pub(crate) fn by_boxes(
     _budget: &Budget,
 ) -> Result<Solid, DraftError> {
     use varde_kernel_compat::KernelError;
-    use varde_kernel_compat::mesh::{Edge, Form, Mesh, Surface};
+    use varde_kernel_compat::mesh::{Form, Surface};
     let too_complex = || DraftError::Failed(KernelError::TooComplex.into());
     let (min, max, sides) = box_sides(solid, topology).ok_or_else(too_complex)?;
     let mesh = solid.mesh();
@@ -90,17 +90,8 @@ pub(crate) fn by_boxes(
             moved
         })
         .collect();
-    let reach = f64::from(varde_kernel_compat::MAX_COORD);
-    if verts.iter().any(|v| v.abs().max_element() > reach) {
+    if !in_reach(&verts) {
         return Err(DraftError::OutOfRange);
-    }
-    let mut edges = mesh.edges().to_vec();
-    for tri in mesh.tris() {
-        for (i, half) in tri.halfedges.iter().enumerate() {
-            let end = tri.halfedges[(i + 1) % 3].start;
-            edges[half.edge as usize] =
-                Edge::straight(verts[half.start as usize], verts[end as usize]);
-        }
     }
     let mut new_faces = mesh.faces().to_vec();
     for (region, &(axis, end)) in sides.iter().enumerate() {
@@ -119,7 +110,6 @@ pub(crate) fn by_boxes(
             face.surface = Surface::Plane { n, d };
         }
     }
-    let drafted_mesh = Mesh::from_parts(verts, edges, mesh.tris().to_vec(), new_faces)
-        .with_aliases(mesh.aliases().to_vec());
-    Solid::new(drafted_mesh, tol).map_err(|error| DraftError::Failed(error.into()))
+    Solid::new(with_moved_corners(mesh, verts, new_faces), tol)
+        .map_err(|error| DraftError::Failed(error.into()))
 }
