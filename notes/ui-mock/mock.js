@@ -217,7 +217,7 @@ function litLin(n, d, base, c) {
   return base.map((b, i) => toLin(b) * Math.max(0, 0.8 + (ambient[i] + diffuse - 0.8) * c) + spec);
 }
 const enc = lin => `rgb(${lin.map(c => (toSrgb(clamp(c, 0, 1)) * 255).toFixed(0)).join(' ')})`;
-// The palettes' scene colours (crates/view/src/theme.rs): the model's, its
+// The palettes' scene colours (crates/view/src/theme/colors.rs): the model's, its
 // shading's contrast, the accent a selected face is tinted towards and how
 // far, and how far a hovered face is towards white (the app's hover_face).
 // The error and construction colours tint what a cut or an intersect being
@@ -1249,7 +1249,7 @@ function originSvg() {
   return out;
 }
 
-// The X, Y and Z axes' colours, the app's (`AXES` in crates/view/src/theme.rs).
+// The X, Y and Z axes' colours, the app's (`AXES` in crates/view/src/theme/colors.rs).
 const AXIS_COLORS = ['#c24740', '#59a14f', '#4073c4'];
 
 // The grid's x and y axis lines, as the app's: through its origin, on to
