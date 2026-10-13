@@ -7,7 +7,9 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
-use varde_document::{BodyId, Document, Feature, FeatureId, FeatureKind, Named, Opacity, Tint};
+use varde_document::{
+    BodyId, Document, Feature, FeatureId, FeatureKind, Named, Opacity, OriginPlane, Tint,
+};
 use varde_render::{BodyTint, OriginShown};
 
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Selectable, Sketch};
@@ -27,9 +29,8 @@ use crate::theme::{
     self, Palette, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone,
 };
 use crate::{
-    ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
-    ObjectRow, OriginObject, Panel, RENAME_FIELD, Rollback, RowMenu, SketchState, VALUE_FIELD,
-    ValueTarget, dimension, divider,
+    ConstraintKind, DocumentState, Edit, LinkRow, Look, Message, RENAME_FIELD, Rollback, RowMenu,
+    SketchState, VALUE_FIELD, ValueTarget, dimension, divider,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -2564,5 +2565,134 @@ mod tests {
             geometry_point_name(&sketch, tip_point, false),
             format!("End 1 of Handle 1 of {name}")
         );
+    }
+}
+
+/// A group of the Sketch tab's Geometry list, which can be folded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GeometryGroup {
+    /// The sketch's own points and curves.
+    Own,
+    /// Its sketch face: the outline of the face it's on, projected.
+    SketchFace,
+    /// Its links projecting outside geometry.
+    Projected,
+    /// Its links intersecting outside geometry with its plane.
+    Intersected,
+}
+
+/// A group of the Objects tab, which can be folded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ObjectGroup {
+    Origin,
+    Bodies,
+    Sketches,
+}
+
+/// A row of Objects that's selected in the list itself, not in the
+/// model: an origin object or a sketch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectRow {
+    Origin(OriginObject),
+    Sketch(FeatureId),
+}
+
+/// One of the world's origin objects, listed in Objects' Origin group,
+/// which can be shown and hidden but not deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginObject {
+    /// The origin's marker.
+    Point,
+    Axis(varde_document::Axis3),
+    Plane(OriginPlane),
+}
+
+impl OriginObject {
+    /// Each, in the order Objects lists them.
+    pub const ALL: [OriginObject; 7] = [
+        OriginObject::Point,
+        OriginObject::Axis(varde_document::Axis3::X),
+        OriginObject::Axis(varde_document::Axis3::Y),
+        OriginObject::Axis(varde_document::Axis3::Z),
+        OriginObject::Plane(OriginPlane::XY),
+        OriginObject::Plane(OriginPlane::XZ),
+        OriginObject::Plane(OriginPlane::YZ),
+    ];
+
+    /// It as the renderer has it.
+    pub fn part(self) -> varde_render::OriginPart {
+        match self {
+            OriginObject::Point => varde_render::OriginPart::Marker,
+            OriginObject::Axis(axis) => varde_render::OriginPart::Axis(axis as usize),
+            OriginObject::Plane(plane) => varde_render::OriginPart::Plane(plane as usize),
+        }
+    }
+
+    /// Its entry in `origin`, whether it's shown.
+    pub fn shown(self, origin: &mut varde_render::OriginShown) -> &mut bool {
+        match self {
+            OriginObject::Point => &mut origin.marker,
+            OriginObject::Axis(axis) => &mut origin.axes[axis as usize],
+            OriginObject::Plane(plane) => &mut origin.planes[plane as usize],
+        }
+    }
+}
+
+impl GeometryGroup {
+    /// The group of the links of `kind`.
+    pub fn of_links(kind: varde_sketch::LinkKind) -> Self {
+        match kind {
+            varde_sketch::LinkKind::Project => GeometryGroup::Projected,
+            varde_sketch::LinkKind::Intersect => GeometryGroup::Intersected,
+        }
+    }
+}
+
+/// A tab of the side panel. Two show at a time: Timeline and Objects, or
+/// in a sketch Sketch and Objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Panel {
+    #[default]
+    Timeline,
+    /// The sketch being edited: its geometry and constraints.
+    Sketch,
+    Objects,
+}
+
+impl Panel {
+    /// The tab listing the features, or in a sketch what it holds, which
+    /// shows with Objects.
+    fn features(sketching: bool) -> Self {
+        if sketching {
+            Panel::Sketch
+        } else {
+            Panel::Timeline
+        }
+    }
+
+    /// The other of the two tabs showing, given whether a sketch is being
+    /// edited.
+    pub fn other(self, sketching: bool) -> Self {
+        match self {
+            Panel::Timeline | Panel::Sketch => Panel::Objects,
+            Panel::Objects => Panel::features(sketching),
+        }
+    }
+
+    /// The tab to show on entering (`sketching`) or leaving a sketch:
+    /// Sketch and Timeline trade places, and Objects stays.
+    pub fn for_sketching(self, sketching: bool) -> Self {
+        match self {
+            Panel::Timeline | Panel::Sketch => Panel::features(sketching),
+            Panel::Objects => Panel::Objects,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Panel::Timeline => "Timeline",
+            Panel::Sketch => "Sketch",
+            Panel::Objects => "Objects",
+        }
     }
 }
