@@ -9,8 +9,8 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use iced::widget::{
-    Space, button, column, container, grid, hover, image, opaque, responsive, row, space, stack,
-    svg, text,
+    Button, Space, button, column, container, grid, hover, image, opaque, responsive, row, space,
+    stack, svg, text,
 };
 use iced::{Alignment, ContentFit, Element, Font, Length, Padding, Size, Theme};
 use varde_document::{APP_NAME, EXTENSION};
@@ -557,11 +557,8 @@ fn settings_button<'a>(open: bool, key: bool) -> Element<'a, Message> {
         .padding([0, 8])
         .align_y(Alignment::Center)
     };
-    // `hover` swaps in the icon's hover colour anywhere over the button,
-    // as the button's own does its text's: its padding is inside.
-    button(hover(content(false), content(true)))
+    hover_button(content)
         .height(28)
-        .padding(0)
         .style(theme::flat_button(open, Tone::Muted))
         .on_press(Message::ToggleSettings)
         .into()
@@ -960,6 +957,30 @@ fn damage_note(design: &DesignCard<'_>) -> Option<&'static str> {
 /// How big the delete button at the foot of a stored design's card is.
 const DELETE_SIZE: Size = Size::new(26.0, 24.0);
 
+/// A button showing `content(hovered)`, hovered anywhere over the button:
+/// `hover` swaps it in as the button's own status does its text and wash,
+/// so its padding is inside `content`.
+fn hover_button<'a, E: Into<Element<'a, Message>>>(
+    content: impl Fn(bool) -> E,
+) -> Button<'a, Message> {
+    button(hover(content(false), content(true))).padding(0)
+}
+
+/// A [`DELETE_SIZE`] [`hover_button`] at the foot of a card: `icon`
+/// centred, coloured `color(palette, hovered)`.
+fn foot_button<'a>(
+    icon: Icon,
+    color: impl Fn(&Palette, bool) -> iced::Color + Copy + 'static,
+) -> Button<'a, Message> {
+    hover_button(move |hovered| -> Element<'a, Message> {
+        container(icons::tinted(icon, 15.0, move |p| color(p, hovered)))
+            .center(Length::Fill)
+            .into()
+    })
+    .width(DELETE_SIZE.width)
+    .height(DELETE_SIZE.height)
+}
+
 /// The button at the foot of a card of a design in browser storage
 /// downloading it, as it's saved, beside the delete button; none for a
 /// new design left behind.
@@ -967,20 +988,13 @@ fn download_button<'a>(key: CardKey<'_>) -> Option<Element<'a, Message>> {
     let CardKey::Browser(name) = key else {
         return None;
     };
-    let arrow = |hovered| {
-        container(icons::tinted(Icon::Download, 15.0, move |p| {
-            theme::flat_content(p, Tone::Muted, true, hovered)
-        }))
-        .center(Length::Fill)
-    };
-    let download = button(hover(arrow(false), arrow(true)))
-        .width(DELETE_SIZE.width)
-        .height(DELETE_SIZE.height)
-        .padding(0)
-        .style(theme::flat_button(false, Tone::Muted))
-        .on_press(Message::Welcome(Welcome::DownloadFromBrowser(
-            name.to_owned(),
-        )));
+    let download = foot_button(Icon::Download, |p, hovered| {
+        theme::flat_content(p, Tone::Muted, true, hovered)
+    })
+    .style(theme::flat_button(false, Tone::Muted))
+    .on_press(Message::Welcome(Welcome::DownloadFromBrowser(
+        name.to_owned(),
+    )));
     Some(chrome::tip(download, text("Download")))
 }
 
@@ -990,29 +1004,20 @@ fn download_button<'a>(key: CardKey<'_>) -> Option<Element<'a, Message>> {
 /// faint and does nothing, its tip saying why: the design is open in
 /// another tab.
 fn delete_button<'a>(key: CardKey<'_>, enabled: bool) -> Element<'a, Message> {
-    // `hover` swaps in the icon's hover colour anywhere over the button,
-    // as the button's own does its wash: its padding is inside.
-    let trash = |hovered| {
-        container(icons::tinted(Icon::Trash, 15.0, move |p| {
-            if enabled {
-                theme::delete_icon(p, hovered)
-            } else {
-                p.faint
-            }
-        }))
-        .center(Length::Fill)
-    };
-    let delete = button(hover(trash(false), trash(true)))
-        .width(DELETE_SIZE.width)
-        .height(DELETE_SIZE.height)
-        .padding(0)
-        .style(theme::delete_button)
-        .on_press_maybe(enabled.then(|| {
-            Message::Welcome(match key {
-                CardKey::Recovered(path) => Welcome::DiscardStored(path.to_owned()),
-                CardKey::Browser(name) => Welcome::DeleteFromBrowser(name.to_owned()),
-            })
-        }));
+    let delete = foot_button(Icon::Trash, move |p, hovered| {
+        if enabled {
+            theme::delete_icon(p, hovered)
+        } else {
+            p.faint
+        }
+    })
+    .style(theme::delete_button)
+    .on_press_maybe(enabled.then(|| {
+        Message::Welcome(match key {
+            CardKey::Recovered(path) => Welcome::DiscardStored(path.to_owned()),
+            CardKey::Browser(name) => Welcome::DeleteFromBrowser(name.to_owned()),
+        })
+    }));
     if enabled {
         chrome::tip(delete, text("Delete"))
     } else {
@@ -1061,9 +1066,7 @@ fn card<'a>(
         ]
     };
 
-    // `hover` swaps in the highlighted content anywhere over the card, not
-    // just over the text.
-    button(hover(content(false), content(true)))
+    hover_button(content)
         .padding(1)
         .width(Length::Fill)
         .style(theme::card)
