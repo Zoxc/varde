@@ -387,6 +387,13 @@ impl Sketch {
         Ok(id)
     }
 
+    /// Whether `curve` is a fillet or a chamfer: one of the sketch's
+    /// curves made at a corner.
+    pub(crate) fn is_corner(&self, curve: Id) -> bool {
+        self.curve(curve)
+            .is_some_and(|entry| entry.corner.is_some())
+    }
+
     /// Makes the arc or line `id` the fillet or chamfer on `corner`,
     /// numbered as one.
     pub(crate) fn set_corner(&mut self, id: Id, corner: Corner) {
