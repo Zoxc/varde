@@ -50,17 +50,15 @@ impl Token {
         Self(bytes)
     }
 
-    /// Whether `text` is this token, in time that doesn't depend on where
-    /// they differ. Only its length can end it early, and that isn't a
-    /// secret.
-    fn matches(&self, text: &[u8]) -> bool {
-        let expected = self.to_string();
-        let expected = expected.as_bytes();
-        if text.len() != expected.len() {
+    /// Whether `text` is this token's text, in time that doesn't depend
+    /// on where their bytes differ. Only the text not being a token's
+    /// ends it early, which tells nothing of this one.
+    fn matches(&self, text: &str) -> bool {
+        let Ok(given) = text.parse::<Token>() else {
             return false;
-        }
+        };
         let mut differs = 0u8;
-        for (a, b) in text.iter().zip(expected) {
+        for (a, b) in given.0.iter().zip(&self.0) {
             differs |= black_box(a ^ b);
         }
         black_box(differs) == 0
@@ -208,8 +206,7 @@ impl Guard {
         let Some((scheme, token)) = value.trim_matches([' ', '\t']).split_once(' ') else {
             return false;
         };
-        scheme.eq_ignore_ascii_case("bearer")
-            && self.token.matches(token.trim_start_matches(' ').as_bytes())
+        scheme.eq_ignore_ascii_case("bearer") && self.token.matches(token.trim_start_matches(' '))
     }
 }
 

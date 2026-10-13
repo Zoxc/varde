@@ -68,8 +68,9 @@ a different one.
 
 The `Token` is 32 random bytes (`getrandom`, the browser's
 `crypto.getRandomValues` on the web), shown as 43 characters of
-base64url without padding; only the canonical text parses. It's compared
-in time that doesn't depend on where it differs, an `Authorization`
+base64url without padding; only the canonical text parses. The text
+sent is parsed and its bytes compared with the token's in time that
+doesn't depend on where they differ, an `Authorization`
 over 64 bytes isn't looked at, and its `Debug` doesn't show it.
 
 ## JSON-RPC
