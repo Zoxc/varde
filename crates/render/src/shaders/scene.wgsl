@@ -236,7 +236,7 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     );
     var color = u.grid.rgb;
     // The axis lines alone, see `AXES_ONLY` in renderer.rs.
-    var alpha = select(lines * fade * valid, 0.0, (mask & 128u) != 0u);
+    var alpha = select(lines * fade * valid, 0.0, (mask & AXES_ONLY) != 0u);
     var out_depth = clamp(depth, 0.0, 1.0);
     for (var i = 0u; i < 3u; i++) {
         let line = axes[i];
@@ -255,11 +255,13 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     return out;
 }
 
-// What's drawn of the origin objects: `OriginShown::mask` in renderer.rs.
+// What's drawn of the origin objects: `OriginShown::mask` in frame.rs.
 // Bits 0 to 2 the grid's x and y axis lines and the world's Z axis's, and
-// this; and bits 4 to 6 for the lines hovered, drawn wider.
-const ORIGIN_MARKER: u32 = 8u;
-const HOVERED_SHIFT: u32 = 4u;
+// this; and bits 4 to 6 for the lines hovered, drawn wider. AXES_ONLY
+// draws the grid's axis lines alone. Set from frame.rs's constants.
+override ORIGIN_MARKER: u32;
+override HOVERED_SHIFT: u32;
+override AXES_ONLY: u32;
 
 fn origin_shown() -> u32 {
     return u32(u.grid_origin.w);
@@ -368,10 +370,10 @@ fn vs_mesh(in: MeshIn) -> MeshOut {
 }
 
 // How the faces are lit, `Shading` in renderer.rs, kept in the viewport
-// origin's unused z.
-const SHADING_FLAT: f32 = 1.0;
-const SHADING_METAL: f32 = 2.0;
-const SHADING_FLAT_METAL: f32 = 3.0;
+// origin's unused z. Set from frame.rs's constants.
+override SHADING_FLAT: f32;
+override SHADING_METAL: f32;
+override SHADING_FLAT_METAL: f32;
 
 // About the middle of the light the regular shading gives a face, which
 // `Colors::contrast` spreads it from.
@@ -652,12 +654,12 @@ fn pulled(position: vec3<f32>) -> vec4<f32> {
 // Flags of a segment of the sketch being edited, as in sketch.rs: whether
 // it has a neighbour before and after it, and whether it's in logical
 // pixels from the viewport's top left, or in the world (x and y with z
-// apart), rather than sketch coordinates.
-const HAS_PREV: u32 = 1u;
-const HAS_NEXT: u32 = 2u;
-const SCREEN: u32 = 4u;
-const WORLD: u32 = 8u;
-const FADES: u32 = 16u;
+// apart), rather than sketch coordinates. Set from sketch.rs's constants.
+override HAS_PREV: u32;
+override HAS_NEXT: u32;
+override SCREEN: u32;
+override WORLD: u32;
+override FADES: u32;
 
 struct LineOut {
     // Invariant, so the hidden edges' pass, from another entry point, puts
@@ -917,11 +919,12 @@ fn vs_triangle_edge(
 }
 
 // Set in an edge point's edge where it's only a neighbour of its edge's
-// segments, as in renderer.rs: where a closed polyline joins itself.
-const NEIGHBOUR_ONLY: u32 = 0x80000000u;
-// Set in a crease's points' edge, as in renderer.rs: a feature edge inside
-// one face.
-const CREASE: u32 = 0x40000000u;
+// segments, set from mesh_upload.rs's: where a closed polyline joins
+// itself.
+override NEIGHBOUR_ONLY: u32;
+// Set in a crease's points' edge, set from mesh_upload.rs's: a feature
+// edge inside one face.
+override CREASE: u32;
 
 // How opaque an edge of `in` is drawn, of the feature edges: CREASE_ALPHA
 // for a crease.
@@ -1521,12 +1524,13 @@ fn fs_origin(in: OriginOut) -> @location(0) vec4<f32> {
 // axis they're normal to, with a firmer rim. Depth tested, writing no
 // depth.
 
-// As `PLANE_REACH` in renderer.rs.
-const PLANE_REACH: f32 = 0.2;
-// As `PLANE_GAP` in renderer.rs.
-const PLANE_GAP: f32 = 0.08;
-// As `PLANE_SIDES` in renderer.rs: the octant the planes fill.
-const PLANE_SIDES: vec3<f32> = vec3<f32>(1.0, -1.0, 1.0);
+// Set from `PLANE_REACH` and `PLANE_GAP` in style.rs.
+override PLANE_REACH: f32;
+override PLANE_GAP: f32;
+// Set from `PLANE_SIDES` in style.rs: the octant the planes fill.
+override PLANE_SIDE_X: f32;
+override PLANE_SIDE_Y: f32;
+override PLANE_SIDE_Z: f32;
 const PLANE_FILL: f32 = 0.1;
 const PLANE_RIM: f32 = 0.6;
 const PLANE_HOVERED_FILL: f32 = 0.3;
@@ -1563,7 +1567,7 @@ fn vs_origin_plane(
     let corner = square_corner(index) * grow;
     // From PLANE_GAP to 1 of the reach along each axis.
     let along = mix(vec2<f32>(PLANE_GAP), vec2<f32>(1.0), 0.5 * (corner + 1.0)) * reach;
-    let world = (xs[i] * along.x + ys[i] * along.y) * PLANE_SIDES;
+    let world = (xs[i] * along.x + ys[i] * along.y) * vec3<f32>(PLANE_SIDE_X, PLANE_SIDE_Y, PLANE_SIDE_Z);
     var out: PlaneOut;
     out.position = u.view_proj * vec4<f32>(world, 1.0);
     out.at = corner;
@@ -1665,9 +1669,10 @@ fn point_color(in: PointOut) -> vec4<f32> {
     return output(vec4<f32>(color.rgb, color.a * coverage));
 }
 
-// Flags of a hovered or selected vertex of the model, as in highlight.rs.
-const HOVERED: u32 = 1u;
-const SELECTED: u32 = 2u;
+// Flags of a hovered or selected vertex of the model, set from
+// highlight.rs's constants.
+override HOVERED: u32;
+override SELECTED: u32;
 
 // A vertex of the model, hovered or selected, drawn as a sketch point is
 // (`fs_point`): a disc of radius VERTEX_RADIUS in the edges' colour, or the

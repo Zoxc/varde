@@ -131,7 +131,8 @@ impl Default for OriginShown {
     }
 }
 
-/// Bits of [`OriginShown::mask`], as in the shader.
+/// Bits of [`OriginShown::mask`], passed to the shader as its constants
+/// of the same names (the grid's and Z's bits it takes by position).
 pub(super) const GRID_X: u32 = 1;
 pub(super) const GRID_Y: u32 = 1 << 1;
 pub(super) const WORLD_Z: u32 = 1 << 2;
@@ -198,8 +199,8 @@ pub enum Shading {
 }
 
 impl Shading {
-    /// Its number in the shader: `SHADING_FLAT`, `SHADING_METAL` and
-    /// `SHADING_FLAT_METAL`.
+    /// Its number in the shader, passed to it as `SHADING_FLAT`,
+    /// `SHADING_METAL` and `SHADING_FLAT_METAL`.
     pub(super) fn code(self) -> f32 {
         match self {
             Shading::Regular => 0.0,

@@ -31,11 +31,12 @@ pub const NO_EDGE: u32 = u32::MAX;
 
 /// Set in [`EdgePoint::edge`] for a point that is only a neighbour of its
 /// edge's segments, where a closed polyline joins itself. As
-/// `NEIGHBOUR_ONLY` in the shader.
+/// `NEIGHBOUR_ONLY` in varde-render's shader, which it passes in.
 pub const NEIGHBOUR_ONLY: u32 = 1 << 31;
 
 /// Set in [`EdgePoint::edge`] for a crease's points: an edge with one face
-/// on both sides. As `CREASE` in the shader.
+/// on both sides. As `CREASE` in varde-render's shader, which it passes
+/// in.
 pub const CREASE: u32 = 1 << 30;
 const _: () = assert!(RenderMesh::MAX_EDGE_POLYLINES <= CREASE as usize);
 

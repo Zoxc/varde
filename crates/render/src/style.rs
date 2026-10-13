@@ -9,8 +9,8 @@ use glam::Vec3;
 pub const GRID_FADE_HEIGHTS: f32 = 6.0;
 
 /// How far an origin plane reaches from the origin along its positive
-/// axes, in view heights, as `PLANE_REACH` in the shader: drawn the same size on
-/// screen at any zoom.
+/// axes, in view heights, passed to the shader as `PLANE_REACH`: drawn the
+/// same size on screen at any zoom.
 pub const PLANE_REACH: f32 = 0.2;
 
 /// Where an origin plane starts from the origin along its axes, of
@@ -20,8 +20,9 @@ pub const PLANE_REACH: f32 = 0.2;
 pub const PLANE_GAP: f32 = 0.08;
 
 /// Which way the origin planes run along each world axis, as
-/// `PLANE_SIDES` in the shader: into the octant the default camera looks
-/// from (front right, above), so it sees the cube's inside.
+/// `PLANE_SIDE_X`, `_Y` and `_Z` in the shader: into the octant the
+/// default camera looks from (front right, above), so it sees the cube's
+/// inside.
 pub const PLANE_SIDES: Vec3 = Vec3::new(1.0, -1.0, 1.0);
 
 /// How wide [`Frame::sketches`](crate::Frame::sketches) are drawn, in logical pixels.

@@ -50,9 +50,9 @@ pub struct Vertex {
 }
 
 /// Set in [`VertexInstance::flags`] for a hovered vertex, and a selected
-/// one. As `HOVERED` and `SELECTED` in the shader.
-const HOVERED: u32 = 1;
-const SELECTED: u32 = 2;
+/// one, passed to the shader as its `HOVERED` and `SELECTED`.
+pub(crate) const HOVERED: u32 = 1;
+pub(crate) const SELECTED: u32 = 2;
 
 /// A vertex as the GPU takes it, an instance each: see `vs_vertex`.
 #[repr(C)]

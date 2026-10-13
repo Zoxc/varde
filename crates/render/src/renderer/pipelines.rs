@@ -1,6 +1,8 @@
 //! Building the render pipelines: the pass shapes, blends and stencils.
 
 use super::*;
+use crate::{highlight, sketch};
+use varde_kernel_compat::NEIGHBOUR_ONLY;
 
 /// A pipeline's stencil state when it neither tests nor writes it.
 pub(super) const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {
@@ -288,11 +290,12 @@ impl PipelineBuilder<'_> {
     }
 }
 
-/// Overrides in the scene shader. `ENCODE_SRGB` is set if the target
+/// Overrides in the scene shader: the style's sizes and the flag bits it
+/// shares with the Rust side, each defined there alone. `ENCODE_SRGB` is set if the target
 /// `format` stores what the shader writes as is, so the shader must
 /// sRGB-encode its linear output. `SKETCH_DEPTH` is set for the sketch's
 /// depth tested layers.
-fn constants(format: wgpu::TextureFormat, sketch_depth: bool) -> [(&'static str, f64); 19] {
+fn constants(format: wgpu::TextureFormat, sketch_depth: bool) -> [(&'static str, f64); 39] {
     [
         ("GRID_FADE_HEIGHTS", f64::from(GRID_FADE_HEIGHTS)),
         ("LINE_WIDTH", f64::from(LINE_WIDTH)),
@@ -311,6 +314,26 @@ fn constants(format: wgpu::TextureFormat, sketch_depth: bool) -> [(&'static str,
         ("ERROR_EDGE_WIDTH", f64::from(ERROR_EDGE_WIDTH)),
         ("ERROR_HALO", f64::from(ERROR_HALO)),
         ("ERROR_POINT_RADIUS", f64::from(ERROR_POINT_RADIUS)),
+        ("PLANE_REACH", f64::from(PLANE_REACH)),
+        ("PLANE_GAP", f64::from(PLANE_GAP)),
+        ("PLANE_SIDE_X", f64::from(PLANE_SIDES.x)),
+        ("PLANE_SIDE_Y", f64::from(PLANE_SIDES.y)),
+        ("PLANE_SIDE_Z", f64::from(PLANE_SIDES.z)),
+        ("ORIGIN_MARKER", f64::from(ORIGIN_MARKER)),
+        ("HOVERED_SHIFT", f64::from(HOVERED_SHIFT)),
+        ("AXES_ONLY", f64::from(AXES_ONLY)),
+        ("SHADING_FLAT", f64::from(Shading::Flat.code())),
+        ("SHADING_METAL", f64::from(Shading::Metal.code())),
+        ("SHADING_FLAT_METAL", f64::from(Shading::FlatMetal.code())),
+        ("HAS_PREV", f64::from(sketch::HAS_PREV)),
+        ("HAS_NEXT", f64::from(sketch::HAS_NEXT)),
+        ("SCREEN", f64::from(sketch::SCREEN)),
+        ("WORLD", f64::from(sketch::WORLD)),
+        ("FADES", f64::from(sketch::FADES)),
+        ("NEIGHBOUR_ONLY", f64::from(NEIGHBOUR_ONLY)),
+        ("CREASE", f64::from(CREASE)),
+        ("HOVERED", f64::from(highlight::HOVERED)),
+        ("SELECTED", f64::from(highlight::SELECTED)),
         ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
         ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
     ]

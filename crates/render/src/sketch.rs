@@ -184,10 +184,10 @@ impl FillVertex {
     }
 }
 
-/// Flags of a [`LineInstance`] and a [`FillVertex`], as in the scene
-/// shader: whether the segment has a neighbour before and after it,
-/// whether its coordinates are [`Space::Screen`]'s or the world's
-/// ([`Space::On`]), and whether it fades out pointing at the camera
+/// Flags of a [`LineInstance`] and a [`FillVertex`], passed to the scene
+/// shader under these names: whether the segment has a neighbour before
+/// and after it, whether its coordinates are [`Space::Screen`]'s or the
+/// world's ([`Space::On`]), and whether it fades out pointing at the camera
 /// ([`SketchLayer::axis_polyline`]).
 pub(crate) const HAS_PREV: u32 = 1;
 pub(crate) const HAS_NEXT: u32 = 2;
