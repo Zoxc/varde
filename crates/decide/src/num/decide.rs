@@ -28,10 +28,14 @@
 //!   motion gradient is zero, a missing perturbation row: a bug. With
 //!   curved orders it is also reached when each order is a tie at the
 //!   target.
+//! - A flat value or order with an input that isn't finite has no sign at
+//!   any level, so escalating can't help: [`Fail::Internal`] too (the
+//!   kernel's stored data is finite, so this is a caller's bug).
 //!
 //! **Flat records are exact.** Their value and orders are exact signs from
 //! [`super::exact::sign`], which works the orders out lazily, in order;
-//! [`exact_orders`] hands them to [`decide`] as [`Ordering`] coefficients.
+//! [`exact_orders`] hands them to [`decide`] as [`ExactSign`] coefficients
+//! (a value with an input that isn't finite has none: the guard).
 //! An exact sign is never in a tie band (bands and `TAU_SIGN` apply to
 //! curved values only), so a flat record is a tie only when its value is
 //! exactly zero, and only exact zeros are passed over; a flat value that
@@ -49,7 +53,7 @@ use std::cmp::Ordering;
 use super::bigf::{BigF, Width};
 use super::bounded::{Bounded, Level};
 use super::dd::Dd;
-use super::exact::{ORDERS, Signs};
+use super::exact::{ExactSign, ORDERS, Signs};
 use super::expansion::Exp;
 
 /// A non-zero sign: what [`decide`] answers.
@@ -225,7 +229,9 @@ pub enum Fail {
     /// The guard: every order passed over. With exact orders the record's
     /// motion has no first-order effect on it, a missing perturbation
     /// rule, a bug; with curved ones every order may also be a tie at the
-    /// target. Reported with the record's key.
+    /// target. Also an exact value or order read before that with an input
+    /// that isn't finite ([`Coeff::refused`]), a caller's bug no level
+    /// resolves. Reported with the record's key.
     Internal {
         /// The record.
         key: TieKey,
@@ -248,6 +254,13 @@ pub trait Coeff {
 
     /// Whether the value is exactly zero: proven, not within an error.
     fn is_exact_zero(&self) -> bool;
+
+    /// Whether the value can have no sign at any level (an exact one with
+    /// an input that isn't finite): [`decide`] answers [`Fail::Internal`]
+    /// rather than escalate. `false` unless a coefficient says so.
+    fn refused(&self) -> bool {
+        false
+    }
 }
 
 /// An exact sign, from [`super::exact::sign`]: a flat record's value,
@@ -266,6 +279,30 @@ impl Coeff for Ordering {
 
     fn is_exact_zero(&self) -> bool {
         *self == Ordering::Equal
+    }
+}
+
+/// An exact sign or none ([`super::exact::NotFinite`]): a flat record's
+/// value or order, refused (the guard) when an input it reads isn't
+/// finite.
+impl Coeff for ExactSign {
+    fn beyond(&self, band: f64) -> Option<Sign> {
+        self.as_ref().ok().and_then(|s| s.beyond(band))
+    }
+
+    fn err(&self) -> f64 {
+        match self {
+            Ok(_) => 0.0,
+            Err(_) => f64::INFINITY,
+        }
+    }
+
+    fn is_exact_zero(&self) -> bool {
+        *self == Ok(Ordering::Equal)
+    }
+
+    fn refused(&self) -> bool {
+        self.is_err()
     }
 }
 
@@ -391,10 +428,11 @@ impl<B: BigF> Coeff for Bounded<B> {
 /// orders up to the first non-zero one (the ones [`super::exact::sign`]
 /// worked out; it stops there, as [`decide`] does), all four zero when
 /// every one is.
-pub fn exact_orders(signs: &Signs) -> (Ordering, impl Iterator<Item = Ordering> + use<>) {
-    let (k, s) = signs.first.unwrap_or((ORDERS, Ordering::Equal));
-    let g = if k == 0 { s } else { Ordering::Equal };
-    let ord = (1..=k).map(move |j| if j == k { s } else { Ordering::Equal });
+pub fn exact_orders(signs: &Signs) -> (ExactSign, impl Iterator<Item = ExactSign> + use<>) {
+    let (k, s) = signs.first.unwrap_or((ORDERS, Ok(Ordering::Equal)));
+    let zero = Ok(Ordering::Equal);
+    let g = if k == 0 { s } else { zero };
+    let ord = (1..=k).map(move |j| if j == k { s } else { zero });
     (g, ord)
 }
 
@@ -415,7 +453,10 @@ pub fn exact_orders(signs: &Signs) -> (Ordering, impl Iterator<Item = Ordering> 
 /// 4. otherwise `g` is a tie: the first order certified non-zero
 ///    (`|gₖ| > err`) gives the sign; an order that is neither that, nor an
 ///    exact zero, nor within an error at most the target escalates;
-/// 5. every order passed over: the guard, [`Fail::Internal`].
+/// 5. every order passed over: the guard, [`Fail::Internal`];
+///
+/// a value or order that is [`Coeff::refused`] when reached (an exact one
+/// with an input that isn't finite) gives the guard at once.
 ///
 /// `ord` is read for at most [`ORDERS`] values, each pulled only once the
 /// ones before are passed over (never a pull after the last); the guard
@@ -431,6 +472,9 @@ pub fn decide<C: Coeff>(
         BandKind::Flat => 0.0,      // exact: only an exact zero is a tie
         BandKind::Curved => b.tau,  // τ_k, 0 at rungs 0 and 1
     };
+    if g.refused() {
+        return Err(Fail::Internal { key });
+    }
     if let Some(s) = g.beyond(band) {
         return Ok(s);
     }
@@ -448,6 +492,9 @@ pub fn decide<C: Coeff>(
     let mut passed = 0;
     // At most the four orders: none pulled after the last is passed over.
     for (k, t) in (1..).zip(ord.into_iter().take(ORDERS)) {
+        if t.refused() {
+            return Err(Fail::Internal { key });
+        }
         if let Some(s) = t.beyond(0.0) {
             return Ok(s);
         }

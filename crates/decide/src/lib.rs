@@ -9,7 +9,7 @@
 //! [`num::trig`], the deterministic trigonometry, [`bezier`], the
 //! Bernstein forms over those numbers, in one and two parameters, and
 //! [`perturb`], the perturbation rows `decide` reads for each kind of
-//! record.
+//! record, and the directions the moving operand's elements move along.
 
 pub mod bezier;
 pub mod num;

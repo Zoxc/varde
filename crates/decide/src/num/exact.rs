@@ -40,8 +40,16 @@
 //! powers of `δ` (four coincident points moving apart have an orientation
 //! of order `δ³`).
 //!
-//! **Input range.** Every input, coordinate or rate, is finite and at most
-//! [`MAX_INPUT`] (`2³²`) in magnitude, which debug builds assert. The
+//! **Input range.** Every `f64` input, coordinate or rate, is at most
+//! [`MAX_INPUT`] (`2³²`) in magnitude, which debug builds assert. An input
+//! that isn't finite is never read as a number, in any build: the value,
+//! or the order it enters, has no sign ([`NotFinite`]), which [`decide`]
+//! refuses as its guard, since no level would give one (the kernel's
+//! stored data is finite, so this is a caller's bug, but never a confident
+//! wrong sign). Exact rational
+//! inputs ([`Num::rational`], a direction worked out from normals) have no
+//! bound: one beyond the expansions' range (or not dyadic) takes the
+//! rational stage. The
 //! kernel's stored positions are within its coordinate limit, `1e6 < 2²⁰`;
 //! points of the lattice tiles of planes lie within a cell of edge `2²²`
 //! about a point of that box, below `2²³`; directions are normals scaled to
@@ -72,12 +80,17 @@
 //! directed rounding; expansions use no fused multiply-add; rationals are
 //! exact. So every stage's answer, and which stage gives it, is the same
 //! on every platform.
+//!
+//! [`decide`]: super::decide::decide
 
 use std::cmp::Ordering;
 
 use glam::DVec3;
 use malachite::Rational;
-use malachite::base::num::arithmetic::traits::Sign;
+use malachite::base::num::arithmetic::traits::{IsPowerOf2, Sign};
+use malachite::base::num::conversion::traits::RoundingFrom;
+use malachite::base::num::logic::traits::SignificantBits;
+use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use super::bounded::{U, add_up, mul_up, up};
 use super::expansion::{Exp, bit_span, two_sum};
@@ -94,12 +107,12 @@ pub const MAX_INPUT: f64 = 4_294_967_296.0;
 /// stage's expansions, rationals, and first-order values in one motion
 /// over each. Implemented by this module's stages only.
 pub trait Num: Clone {
-    /// An input, unmoved: finite and at most [`MAX_INPUT`] in magnitude.
+    /// An input, unmoved: at most [`MAX_INPUT`] in magnitude (one that
+    /// isn't finite leaves what reads it without a sign, [`NotFinite`]).
     fn lit(x: f64) -> Self;
 
     /// An input moved along the motions at the rates `rows`
-    /// (`rows[k − 1]` along motion `k`), each finite and at most
-    /// [`MAX_INPUT`].
+    /// (`rows[k − 1]` along motion `k`), each as [`Num::lit`]'s.
     fn moved(x: f64, rows: [f64; ORDERS]) -> Self {
         Self::lit(x).moved_by(&rows.map(Self::lit))
     }
@@ -108,6 +121,12 @@ pub trait Num: Clone {
     /// values, worked out as expressions (an exact direction from
     /// normals); their own motion, if any, is ignored.
     fn moved_by(self, rows: &[Self; ORDERS]) -> Self;
+
+    /// An exact rational input, unmoved, of any magnitude (module docs):
+    /// a rate worked out exactly. The filter rounds it with its error, the
+    /// expansions take it when it is dyadic and within their range, else
+    /// the rational stage does.
+    fn rational(r: &Rational) -> Self;
 
     /// `self + o`.
     fn add(&self, o: &Self) -> Self;
@@ -143,20 +162,31 @@ pub struct Work {
     pub rationals: u32,
 }
 
+/// A value with an input that isn't finite (module docs): it has no sign,
+/// in any build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NotFinite;
+
+/// An exact sign, or none for an input that isn't finite.
+pub type ExactSign = Result<Ordering, NotFinite>;
+
 /// The sign of a perturbed predicate and what it took.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Signs {
-    /// The sign as the motions go to zero and the order that gave it, `0`
-    /// for the value `g` itself, `k` for `gₖ`; never `Equal`. `None` when
-    /// `g` and every `gₖ` are zero: no first-order sign (module docs).
-    pub first: Option<(usize, Ordering)>,
+    /// The first of `g, g₁, …, g₄` that isn't zero and the order it is,
+    /// `0` for the value `g` itself, `k` for `gₖ`: its sign (never
+    /// `Equal`), the sign as the motions go to zero, or [`NotFinite`]
+    /// when an input it reads isn't finite. `None` when `g` and every `gₖ`
+    /// are zero: no first-order sign (module docs).
+    pub first: Option<(usize, ExactSign)>,
     /// The stages run.
     pub work: Work,
 }
 
 /// The sign of `pred`'s value with its inputs unmoved, exactly, and what
 /// it took: for certificates on stored data, which are never perturbed.
-pub fn value_sign(pred: &impl Pred) -> (Ordering, Work) {
+/// [`NotFinite`] when an input isn't finite.
+pub fn value_sign(pred: &impl Pred) -> (ExactSign, Work) {
     let mut work = Work::default();
     let s = staged(
         &mut work,
@@ -172,7 +202,7 @@ pub fn value_sign(pred: &impl Pred) -> (Ordering, Work) {
 /// before are zero (module docs).
 pub fn sign<P: Pred>(pred: &P) -> Signs {
     let (s, mut work) = value_sign(pred);
-    if s != Ordering::Equal {
+    if s != Ok(Ordering::Equal) {
         return Signs {
             first: Some((0, s)),
             work,
@@ -180,7 +210,7 @@ pub fn sign<P: Pred>(pred: &P) -> Signs {
     }
     let first = (1..)
         .zip(order_signs(pred, &mut work))
-        .find(|&(_, s)| s != Ordering::Equal);
+        .find(|&(_, s)| s != Ok(Ordering::Equal));
     Signs { first, work }
 }
 
@@ -188,19 +218,19 @@ pub fn sign<P: Pred>(pred: &P) -> Signs {
 /// motions, each worked out through the stages when pulled, its work
 /// added to `work`: for a record whose value comes from elsewhere (a
 /// height shared by every record of its key) while its orders are its
-/// own.
+/// own. [`NotFinite`] for an order reading an input that isn't finite.
 pub fn order_signs<'a, P: Pred>(
     pred: &'a P,
     work: &'a mut Work,
-) -> impl Iterator<Item = Ordering> + 'a {
-    let orders: [fn(&P, &mut Work) -> Ordering; ORDERS] =
+) -> impl Iterator<Item = ExactSign> + 'a {
+    let orders: [fn(&P, &mut Work) -> ExactSign; ORDERS] =
         [order::<P, 1>, order::<P, 2>, order::<P, 3>, order::<P, 4>];
     orders.into_iter().map(move |order| order(pred, work))
 }
 
 /// The sign of `gₖ`, `pred`'s derivative along motion `K`, through the
 /// stages.
-fn order<P: Pred, const K: usize>(pred: &P, work: &mut Work) -> Ordering {
+fn order<P: Pred, const K: usize>(pred: &P, work: &mut Work) -> ExactSign {
     staged(
         work,
         || pred.eval::<Dual<Approx, K>>().d,
@@ -213,26 +243,28 @@ fn order<P: Pred, const K: usize>(pred: &P, work: &mut Work) -> Ordering {
 /// out otherwise.
 #[cfg(test)]
 pub(crate) fn order_value<P: Pred, const K: usize>(pred: &P) -> Rational {
-    pred.eval::<Dual<Rat, K>>().d.0
+    pred.eval::<Dual<Rat, K>>().d.0.expect("finite inputs")
 }
 
 /// `g` itself, exactly, for tests.
 #[cfg(test)]
 pub(crate) fn value(pred: &impl Pred) -> Rational {
-    pred.eval::<Rat>().0
+    pred.eval::<Rat>().0.expect("finite inputs")
 }
 
 /// One value's sign through the stages: the filter, then expansions,
-/// then rationals if the expansions would leave their range.
+/// then rationals if the expansions would leave their range. An input
+/// that isn't finite leaves the filter and the expansions undecided and
+/// the rationals without a value: [`NotFinite`].
 fn staged(
     work: &mut Work,
     filter: impl FnOnce() -> Approx,
     exact: impl FnOnce() -> Exact,
     rational: impl FnOnce() -> Rat,
-) -> Ordering {
+) -> ExactSign {
     work.filters += 1;
     if let Some(s) = filter().sign() {
-        return s;
+        return Ok(s);
     }
     work.expansions += 1;
     let e = exact();
@@ -240,19 +272,63 @@ fn staged(
         work.longest = e.longest;
     }
     if e.in_range {
-        return e.e.sign();
+        return Ok(e.e.sign());
     }
     work.rationals += 1;
-    rational().0.sign()
+    rational().0.map(|r| r.sign()).ok_or(NotFinite)
 }
 
-/// Debug builds: an input in the documented range (module docs).
+/// Debug builds: a finite input in the documented range (module docs);
+/// one that isn't finite is refused in every build, by the stages.
 fn input(x: f64) -> f64 {
     debug_assert!(
-        x.is_finite() && x.abs() <= MAX_INPUT,
+        !x.is_finite() || x.abs() <= MAX_INPUT,
         "predicate input {x:e} beyond 2³²"
     );
     x
+}
+
+/// `r` as a float rounded to nearest, and whether that is exact.
+fn round(r: &Rational) -> (f64, bool) {
+    let (v, o) = f64::rounding_from(r, Nearest);
+    (v, o == Ordering::Equal)
+}
+
+/// The most bits an exact rational input may span to be taken as an
+/// expansion: far beyond any direction from stored normals.
+const MAX_SPAN: u64 = 2048;
+
+/// `r` as an expansion and the exponent of its lowest set bit, when it is
+/// dyadic and every bit lies within the exact stage's range (`2⁻¹⁰⁷⁴` up
+/// to below [`TOP`]).
+fn dyadic(r: &Rational) -> Option<(Exp, i32)> {
+    if *r == 0u32 {
+        return Some((Exp::zero(), NO_BITS));
+    }
+    let den = r.denominator_ref();
+    if !den.is_power_of_2() {
+        return None;
+    }
+    let num = r.numerator_ref();
+    let (bits, zeros) = (num.significant_bits(), num.trailing_zeros()?);
+    if bits - zeros > MAX_SPAN {
+        return None;
+    }
+    let shift = i64::try_from(den.significant_bits() - 1).ok()?;
+    let lo = i64::try_from(zeros).ok()? - shift;
+    let hi = i64::try_from(bits).ok()? - 1 - shift;
+    if lo < -1074 || hi >= 1016 {
+        return None;
+    }
+    // Peel off the nearest float until nothing is left: each rest is a
+    // multiple of `2^lo` below half the last float's spacing, so exact.
+    let (mut e, mut rest) = (Exp::zero(), r.clone());
+    while rest != 0u32 {
+        let (c, _) = round(&rest);
+        e = &e + &Exp::from_f64(c);
+        rest -= Rational::try_from(c).ok()?;
+    }
+    Some((e, i32::try_from(lo).ok()?))
 }
 
 /// The filter's number: an `f64` value `v` and an upper bound `err` on
@@ -297,11 +373,12 @@ fn cmp_zero(x: f64) -> Ordering {
 }
 
 impl Num for Approx {
+    /// One that isn't finite is uncertified, and stays so through every
+    /// operation (no exact-zero shortcut takes it).
     fn lit(x: f64) -> Self {
-        Approx {
-            v: input(x),
-            err: 0.0,
-        }
+        let v = input(x);
+        let err = if v.is_finite() { 0.0 } else { f64::INFINITY };
+        Approx { v, err }
     }
 
     /// The filter runs first on every predicate, so debug builds check
@@ -315,6 +392,21 @@ impl Num for Approx {
 
     fn moved_by(self, _: &[Self; ORDERS]) -> Self {
         self
+    }
+
+    /// The nearest float, its rounding (half its spacing, or half the
+    /// least subnormal, which [`up`]'s floor covers) the error; past the
+    /// top float uncertified.
+    fn rational(r: &Rational) -> Self {
+        let (v, exact) = round(r);
+        let err = if !v.is_finite() {
+            f64::INFINITY
+        } else if exact {
+            0.0
+        } else {
+            up(U * v.abs())
+        };
+        Approx { v, err }
     }
 
     /// Exact when both operands are and `two_sum` leaves no error (a
@@ -334,10 +426,11 @@ impl Num for Approx {
     }
 
     /// `|xa·xb − va·vb| ≤ |va|·eb + |vb|·ea + ea·eb`; exactly zero when an
-    /// operand is.
+    /// operand is and the other is finite.
     fn mul(&self, o: &Self) -> Self {
         let exact_zero = |a: &Approx| a.err == 0.0 && a.v == 0.0;
-        if exact_zero(self) || exact_zero(o) {
+        let finite = |a: &Approx| a.v.is_finite() && a.err.is_finite();
+        if (exact_zero(self) && finite(o)) || (exact_zero(o) && finite(self)) {
             return Approx { v: 0.0, err: 0.0 };
         }
         let carried = add_up(
@@ -435,6 +528,13 @@ impl Num for Exact {
         self
     }
 
+    fn rational(r: &Rational) -> Self {
+        match dyadic(r) {
+            Some((e, lo)) => Exact::of(e, lo, 0),
+            None => Exact::out(0),
+        }
+    }
+
     fn add(&self, o: &Self) -> Self {
         let longest = self.longest.max(o.longest);
         if !(self.in_range && o.in_range) {
@@ -476,15 +576,20 @@ impl Num for Exact {
     }
 }
 
-/// The rational stage's number: exact, whatever the magnitudes.
+/// The rational stage's number: exact, whatever the magnitudes; `None`
+/// once an input that isn't finite enters, which every operation keeps.
 #[derive(Clone, Debug)]
-pub struct Rat(Rational);
+pub struct Rat(Option<Rational>);
+
+impl Rat {
+    fn with(&self, o: &Self, f: impl FnOnce(&Rational, &Rational) -> Rational) -> Self {
+        Rat(self.0.as_ref().zip(o.0.as_ref()).map(|(a, b)| f(a, b)))
+    }
+}
 
 impl Num for Rat {
-    /// A non-finite input (a bug, asserted in debug builds) is taken as
-    /// zero rather than panicking.
     fn lit(x: f64) -> Self {
-        Rat(Rational::try_from(input(x)).unwrap_or_default())
+        Rat(Rational::try_from(input(x)).ok())
     }
 
     fn moved(x: f64, _: [f64; ORDERS]) -> Self {
@@ -495,20 +600,24 @@ impl Num for Rat {
         self
     }
 
+    fn rational(r: &Rational) -> Self {
+        Rat(Some(r.clone()))
+    }
+
     fn add(&self, o: &Self) -> Self {
-        Rat(&self.0 + &o.0)
+        self.with(o, |a, b| a + b)
     }
 
     fn sub(&self, o: &Self) -> Self {
-        Rat(&self.0 - &o.0)
+        self.with(o, |a, b| a - b)
     }
 
     fn mul(&self, o: &Self) -> Self {
-        Rat(&self.0 * &o.0)
+        self.with(o, |a, b| a * b)
     }
 
     fn neg(&self) -> Self {
-        Rat(-&self.0)
+        Rat(self.0.as_ref().map(|a| -a))
     }
 }
 
@@ -548,6 +657,13 @@ impl<N: Num, const K: usize> Num for Dual<N, K> {
         Dual {
             v: self.v,
             d: self.d.add(&Self::rate(rows).v),
+        }
+    }
+
+    fn rational(r: &Rational) -> Self {
+        Dual {
+            v: N::rational(r),
+            d: N::lit(0.0),
         }
     }
 

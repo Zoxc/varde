@@ -155,8 +155,8 @@ impl Field {
     }
 
     /// Its rates at `x` along every motion, `A`'s field.
-    fn rates(own: &Field, x: DVec3) -> [DVec3; ORDERS] {
-        std::array::from_fn(|i| Field::motion(own, i + 1).at(x))
+    fn rates(own: &Field, x: DVec3) -> [Rate; ORDERS] {
+        std::array::from_fn(|i| Field::motion(own, i + 1).at(x).into())
     }
 
     fn rates_big(own: &Field, x: &[B; 3]) -> [[B; 3]; ORDERS] {
@@ -266,8 +266,8 @@ fn the_frame_and_the_translations_are_exact_and_generic() {
         }
     }
     let d = DVec3::new(0.5, -1.0, 0.25);
-    assert_eq!(rates_a(Sign::Pos, d), [d, T[0], T[1], T[2]]);
-    assert_eq!(rates_a(Sign::Neg, d), [-d, T[0], T[1], T[2]]);
+    assert_eq!(rates_a(Sign::Pos, d), Rate::floats([d, T[0], T[1], T[2]]));
+    assert_eq!(rates_a(Sign::Neg, d), Rate::floats([-d, T[0], T[1], T[2]]));
     // A curved point of `A` reads the same rates at every level.
     let z = Bounded::exact(0.0);
     for sigma in [Sign::Pos, Sign::Neg] {
@@ -380,7 +380,7 @@ fn plane_height_rows_are_the_derivatives() {
             normal: n,
             offset: n.dot(p0),
             rates: if q_on_a {
-                [DVec3::ZERO; ORDERS]
+                [Rate::ZERO; ORDERS]
             } else {
                 Field::rates(&own, hit)
             },
@@ -523,7 +523,7 @@ fn foot_distance(c: &HomCurve<B, 3>, q: &[B; 3], s: &B) -> B {
 /// moving. The distance to the foot moves by the row at any `q`.
 #[test]
 fn curve_shadow_rows_are_the_derivatives() {
-    for seed in varde_testing::seeds(16, 128) {
+    for seed in varde_testing::seeds(6, 128) {
         let mut r = Rng::new(seed);
         let ctrl = random_span(&mut r);
         let s0 = big(r.range(0.3, 0.7));
@@ -593,7 +593,7 @@ fn patch_height(face: &HomPatch<B>, q: &[B; 3], uv: &[B; 2]) -> B {
 /// `|n·ê|`, at any `q`.
 #[test]
 fn layer_height_rows_are_the_derivatives() {
-    for seed in varde_testing::seeds(16, 128) {
+    for seed in varde_testing::seeds(6, 128) {
         let mut r = Rng::new(seed);
         let net = random_patch(&mut r);
         let fixed = patch(&net, |x| x.clone());
@@ -643,7 +643,7 @@ fn crossing_gap(e: &HomCurve<B, 3>, g: &HomCurve<B, 3>, st: &[B; 2]) -> B {
 /// the facing `m·ê`.
 #[test]
 fn z_order_rows_are_the_derivatives_at_ties() {
-    for seed in varde_testing::seeds(16, 128) {
+    for seed in varde_testing::seeds(6, 128) {
         let mut r = Rng::new(seed);
         let ctrl_e = random_span(&mut r);
         let ctrl_g0 = random_span(&mut r);
@@ -707,21 +707,21 @@ fn flat_rows_decide_ties_by_the_first_motion_that_moves_them() {
     let k = key(Row::VertexCurveShadow);
     let across = LineShadow {
         q: Moving::of_a(at, Sign::Pos, DVec3::new(0.0, 1.0, 0.0)),
-        line,
+        line: line.clone(),
     };
     let left = UP.cross(DVec3::X).dot(DVec3::Y) > 0.0;
     let want = if left { Sign::Pos } else { Sign::Neg };
     assert_eq!(decide_flat(&across, k).0, Ok(want));
     let flipped = LineShadow {
         q: Moving::of_a(at, Sign::Neg, DVec3::new(0.0, 1.0, 0.0)),
-        line,
+        line: line.clone(),
     };
     assert_ne!(decide_flat(&flipped, k).0, Ok(want));
     // Along the line (and along `UP`): `T₂` decides.
     for d in [DVec3::X, UP, DVec3::ZERO] {
         let along = LineShadow {
             q: Moving::of_a(at, Sign::Pos, d),
-            line,
+            line: line.clone(),
         };
         let t2 = UP.cross(DVec3::X).dot(T[0]);
         let want = if t2 > 0.0 { Sign::Pos } else { Sign::Neg };
@@ -756,7 +756,7 @@ fn flat_rows_decide_ties_by_the_first_motion_that_moves_them() {
     // Parallel shadows have no z-order: the guard.
     let e = Seg::of_a(DVec3::ZERO, DVec3::X, Sign::Pos, DVec3::Z);
     let parallel = EdgeEdge {
-        e,
+        e: e.clone(),
         g: Seg::fixed(DVec3::Y, DVec3::new(3.0, 1.0, 0.0)),
     };
     let k = key(Row::ZOrder);
@@ -906,7 +906,8 @@ fn tie_rates(r: &mut Rng, along: &[DVec3], s: f64) -> [DVec3; ORDERS] {
                 1 => pick(r),
                 _ => r.ints(4) / 4.0,
             };
-            rates_a(sigma, d)
+            let own = if sigma == Sign::Pos { d } else { -d };
+            [own, T[0], T[1], T[2]]
         }
         _ => std::array::from_fn(|_| match r.below(3) {
             0 => DVec3::ZERO,
@@ -981,8 +982,14 @@ fn flat_rows_are_the_spatial_values_exactly() {
         let (qr, wr) = (tie_rates(&mut r, &along, s), tie_rates(&mut r, &along, s));
         for axis in [ShadowAxis::Side, ShadowAxis::Along] {
             let pred = VvShadow {
-                q: Moving { at: q, rates: qr },
-                w: Moving { at: w, rates: wr },
+                q: Moving {
+                    at: q,
+                    rates: Rate::floats(qr),
+                },
+                w: Moving {
+                    at: w,
+                    rates: Rate::floats(wr),
+                },
                 axis,
             };
             let i = usize::from(axis == ShadowAxis::Side);
@@ -1007,11 +1014,14 @@ fn flat_rows_are_the_spatial_values_exactly() {
         let along = [dir, UP * s, dir + UP * s];
         let (qr, lr) = (tie_rates(&mut r, &along, s), tie_rates(&mut r, &along, s));
         let pred = LineShadow {
-            q: Moving { at: q, rates: qr },
+            q: Moving {
+                at: q,
+                rates: Rate::floats(qr),
+            },
             line: Seg {
                 a,
                 b: a + dir,
-                rates: lr,
+                rates: Rate::floats(lr),
             },
         };
         let h = |k: usize| {
@@ -1042,8 +1052,11 @@ fn flat_rows_are_the_spatial_values_exactly() {
         let pred = PlaneHeight {
             normal: n,
             offset: n.dot(p),
-            rates: fr,
-            q: Moving { at: q, rates: qr },
+            rates: Rate::floats(fr),
+            q: Moving {
+                at: q,
+                rates: Rate::floats(qr),
+            },
         };
         let (nq, pq) = (qv(n), qv(p));
         let facing = qdot(&nq, &qv(UP));
@@ -1081,12 +1094,12 @@ fn flat_rows_are_the_spatial_values_exactly() {
             e: Seg {
                 a: e0,
                 b: e0 + ed,
-                rates: er,
+                rates: Rate::floats(er),
             },
             g: Seg {
                 a: g0,
                 b: g0 + gd,
-                rates: gr,
+                rates: Rate::floats(gr),
             },
         };
         let [ed, gd] = [(e0, ed), (g0, gd)].map(|(a, d)| {

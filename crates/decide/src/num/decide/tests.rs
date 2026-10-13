@@ -64,7 +64,7 @@ fn a_value_beyond_its_error_and_band_is_decided_by_it() {
         Ok(Sign::Pos)
     );
     let (g, ord) = exact_orders(&Signs {
-        first: Some((0, Ordering::Less)),
+        first: Some((0, Ok(Ordering::Less))),
         work: Default::default(),
     });
     assert_eq!(ord.count(), 0);
@@ -249,7 +249,33 @@ fn flat_records_take_their_signs_from_the_exact_predicates() {
         q: DVec3::ZERO,
         rows: along,
     }));
-    assert_eq!((g, ord.count()), (Ordering::Equal, ORDERS));
+    assert_eq!((g, ord.count()), (Ok(Ordering::Equal), ORDERS));
+}
+
+/// A flat record with an input that isn't finite has no sign at any
+/// level: the guard at the order that reads it, in every build, never an
+/// escalation.
+#[test]
+fn a_flat_record_with_an_input_that_isnt_finite_is_refused() {
+    let flat = |q: DVec3, rows: [DVec3; ORDERS]| {
+        let (g, ord) = exact_orders(&sign(&Above { q, rows }));
+        decide(g, ord, Band::FLAT, key())
+    };
+    let rows = [DVec3::X, DVec3::Y, DVec3::Z, DVec3::Z];
+    for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        assert_eq!(
+            flat(DVec3::new(1.0, 2.0, bad), rows),
+            Err(Fail::Internal { key: key() })
+        );
+        let mut moved = rows;
+        moved[0].z = bad;
+        assert_eq!(
+            flat(DVec3::new(1.0, 2.0, 0.0), moved),
+            Err(Fail::Internal { key: key() })
+        );
+        // Decided by value, the rates never enter.
+        assert_eq!(flat(DVec3::new(1.0, 2.0, -3.0), moved), Ok(Sign::Neg));
+    }
 }
 
 /// A flat value is a tie only when it is an exact zero: an inexact one

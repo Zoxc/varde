@@ -28,10 +28,14 @@
 //! the value, which is zero), so a straight segment in a record moves as a
 //! translation at its rate at the record's point ([`Seg`]), and a curve,
 //! a face or a plane by its rate at the record's point (the foot, the
-//! crossing, the anchor). Away from a tie the orders aren't read. A
-//! direction given as a fraction may be scaled by one positive factor per
-//! motion and record (its denominator cleared): every order keeps its
-//! sign.
+//! crossing, the anchor). Away from a tie the orders aren't read. A rate
+//! is a [`Rate`]: `f64` components, or exact rationals, as a flat
+//! element's direction is ([`dir`]: equal offsets or the max–min
+//! direction, and their blends, exact from the stored normals, of any
+//! size near a knife edge). The rows read exact rates as they are,
+//! never rounded; a record's one moving element may carry its rates
+//! times a positive factor per motion ([`Rate::cleared`], denominators
+//! cleared for the expansions), which keeps every sign.
 //!
 //! **The frame.** One projection [`UP`] (Varde's `(2, 3, 32)`) and one
 //! shadow-plane direction [`R_HAT`] `⊥ UP`, with [`NU`] `= UP × R_HAT` the
@@ -62,8 +66,11 @@
 //! ([`Coeffs`]).
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use glam::DVec3;
+use malachite::base::num::arithmetic::traits::Lcm;
+use malachite::{Natural, Rational};
 
 use crate::bezier::{HomCurve, HomPatch, Scalar};
 use crate::num::bigf::BigF;
@@ -71,6 +78,8 @@ use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Fail, Sign, TieKey, decide, exact_orders};
 use crate::num::exact::{self, Num, ORDERS, Pred, V3, Work, cross, dot, moved_point, point, sub};
+
+pub mod dir;
 
 /// The projection direction, Varde's `(2, 3, 32)`, unnormalised: heights
 /// are measured along it, shadows taken across it.
@@ -94,26 +103,115 @@ pub const T: [DVec3; 3] = [
     DVec3::new(7.0 / 16.0, -11.0 / 16.0, 2.0 / 16.0),
 ];
 
+/// A point's rate along one motion.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Rate {
+    /// These components, each finite and at most
+    /// [`MAX_INPUT`](exact::MAX_INPUT).
+    Float(DVec3),
+    /// These exact components, of any size: a flat element's direction
+    /// ([`dir`]).
+    Exact(Arc<[Rational; 3]>),
+}
+
+impl Rate {
+    /// No motion.
+    pub const ZERO: Rate = Rate::Float(DVec3::ZERO);
+
+    /// Every motion's rate as given.
+    pub fn floats(rates: [DVec3; ORDERS]) -> [Rate; ORDERS] {
+        rates.map(Rate::Float)
+    }
+
+    /// The exact vector `d`.
+    pub fn exact(d: [Rational; 3]) -> Rate {
+        Rate::Exact(Arc::new(d))
+    }
+
+    /// `d` times the least common multiple of its denominators: a
+    /// positive multiple with integer components, which the expansions
+    /// take exactly where `d`'s fractions would need the rational stage.
+    /// For the one moving element of a record (records compare an element
+    /// of `A` with one of `B`): its rates along a motion may carry any
+    /// positive factor without changing a sign.
+    pub fn cleared(d: [Rational; 3]) -> Rate {
+        let l = d
+            .iter()
+            .fold(Natural::from(1u32), |l, x| (&l).lcm(x.denominator_ref()));
+        let l = Rational::from(l);
+        Rate::exact(d.map(|x| x * &l))
+    }
+
+    /// `−self`.
+    pub fn neg(&self) -> Rate {
+        match self {
+            Rate::Float(v) => Rate::Float(-*v),
+            Rate::Exact(d) => Rate::exact(d.each_ref().map(|x| -x)),
+        }
+    }
+
+    /// Component `i` as an input.
+    fn coord<N: Num>(&self, i: usize) -> N {
+        match self {
+            Rate::Float(v) => N::lit(v[i]),
+            Rate::Exact(d) => N::rational(&d[i]),
+        }
+    }
+
+    /// The vector as inputs.
+    fn vec<N: Num>(&self) -> V3<N> {
+        [0, 1, 2].map(|i| self.coord(i))
+    }
+
+    /// The vector at a precision level, certified (exact where the level
+    /// is).
+    fn at<S: Scalar>(&self, like: &S) -> [S; 3] {
+        match self {
+            Rate::Float(v) => lit3(*v, like),
+            Rate::Exact(d) => d.each_ref().map(|x| rational_at(x, like)),
+        }
+    }
+}
+
+impl From<DVec3> for Rate {
+    fn from(v: DVec3) -> Rate {
+        Rate::Float(v)
+    }
+}
+
 /// The rates of a point of `A` along the motions: `σ_A·d`, then
 /// `T₂, T₃, T₄`. `d` is the direction field at the point (zero where
 /// the generic translations alone decide).
-pub fn rates_a(sigma_a: Sign, d: DVec3) -> [DVec3; ORDERS] {
+pub fn rates_a(sigma_a: Sign, d: impl Into<Rate>) -> [Rate; ORDERS] {
+    let d = d.into();
     let own = match sigma_a {
         Sign::Pos => d,
-        Sign::Neg => -d,
+        Sign::Neg => d.neg(),
     };
-    [own, T[0], T[1], T[2]]
+    [own, T[0].into(), T[1].into(), T[2].into()]
+}
+
+/// `p` moved at `rates` (`rates[k − 1]` along motion `k`).
+fn moved<N: Num>(p: DVec3, rates: &[Rate; ORDERS]) -> V3<N> {
+    let floats = |r: &Rate| match r {
+        Rate::Float(v) => Some(*v),
+        Rate::Exact(_) => None,
+    };
+    if let [Some(a), Some(b), Some(c), Some(d)] = rates.each_ref().map(floats) {
+        return moved_point(p, [a, b, c, d]);
+    }
+    [0, 1, 2].map(|i| N::lit(p[i]).moved_by(&rates.each_ref().map(|r| r.coord(i))))
 }
 
 /// A point with its rates along the motions (`rates[k − 1]` along motion
-/// `k`), each coordinate and rate finite and at most
+/// `k`), each coordinate finite and at most
 /// [`MAX_INPUT`](exact::MAX_INPUT).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Moving {
     /// The point.
     pub at: DVec3,
     /// Its rates.
-    pub rates: [DVec3; ORDERS],
+    pub rates: [Rate; ORDERS],
 }
 
 impl Moving {
@@ -121,12 +219,12 @@ impl Moving {
     pub const fn fixed(at: DVec3) -> Moving {
         Moving {
             at,
-            rates: [DVec3::ZERO; ORDERS],
+            rates: [Rate::ZERO; ORDERS],
         }
     }
 
     /// A point of `A` with the direction `d` there ([`rates_a`]).
-    pub fn of_a(at: DVec3, sigma_a: Sign, d: DVec3) -> Moving {
+    pub fn of_a(at: DVec3, sigma_a: Sign, d: impl Into<Rate>) -> Moving {
         Moving {
             at,
             rates: rates_a(sigma_a, d),
@@ -134,21 +232,21 @@ impl Moving {
     }
 
     fn eval<N: Num>(&self) -> V3<N> {
-        moved_point(self.at, self.rates)
+        moved(self.at, &self.rates)
     }
 }
 
 /// A straight segment from `a` to `b` moving as one at `rates`, its rates
 /// at the record's point (module docs): where the record reads it, the
 /// field's value there.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Seg {
     /// The start.
     pub a: DVec3,
     /// The end.
     pub b: DVec3,
     /// The rates of its point the record reads.
-    pub rates: [DVec3; ORDERS],
+    pub rates: [Rate; ORDERS],
 }
 
 impl Seg {
@@ -157,12 +255,12 @@ impl Seg {
         Seg {
             a,
             b,
-            rates: [DVec3::ZERO; ORDERS],
+            rates: [Rate::ZERO; ORDERS],
         }
     }
 
     /// A segment of `A` with the direction `d` at the record's point.
-    pub fn of_a(a: DVec3, b: DVec3, sigma_a: Sign, d: DVec3) -> Seg {
+    pub fn of_a(a: DVec3, b: DVec3, sigma_a: Sign, d: impl Into<Rate>) -> Seg {
         Seg {
             a,
             b,
@@ -171,10 +269,7 @@ impl Seg {
     }
 
     fn ends<N: Num>(&self) -> [V3<N>; 2] {
-        [
-            moved_point(self.a, self.rates),
-            moved_point(self.b, self.rates),
-        ]
+        [moved(self.a, &self.rates), moved(self.b, &self.rates)]
     }
 }
 
@@ -201,7 +296,7 @@ impl ShadowAxis {
 /// The vertex–vertex shadow row, flat: `axis·(w − q)`, the shadow side of
 /// `w` against `q`'s `r̂` line or whether it is ahead along it, times the
 /// axis's length.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VvShadow {
     /// The query vertex.
     pub q: Moving,
@@ -222,7 +317,7 @@ impl Pred for VvShadow {
 /// side's row (a tile line on a plane): `(UP × (b − a))·(q − a)`, the
 /// shadow side of `q` against the line's shadow, `+` to its left seen
 /// from above, times `|UP × (b − a)|`. Zero for a line along `UP`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LineShadow {
     /// The query vertex.
     pub q: Moving,
@@ -244,7 +339,7 @@ impl Pred for LineShadow {
 /// plane's rates at the anchor (its offset moves by `n·Δf`); its value is
 /// the height key's for a point–face key on the plane. Zero, orders too,
 /// on a vertical plane, where the fold rule decides instead.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlaneHeight {
     /// The plane's normal `n`, oriented as its face (scaled freely: a
     /// stored normal of largest component 1).
@@ -252,7 +347,7 @@ pub struct PlaneHeight {
     /// The offset `c`.
     pub offset: f64,
     /// The plane's rates at the anchor.
-    pub rates: [DVec3; ORDERS],
+    pub rates: [Rate; ORDERS],
     /// The query point.
     pub q: Moving,
 }
@@ -260,7 +355,7 @@ pub struct PlaneHeight {
 impl Pred for PlaneHeight {
     fn eval<N: Num>(&self) -> N {
         let n = point::<N>(self.normal);
-        let shift = self.rates.map(|r| dot(&n, &point(r)));
+        let shift = self.rates.each_ref().map(|r| dot(&n, &r.vec()));
         let c = N::lit(self.offset).moved_by(&shift);
         let above = c.sub(&dot(&n, &self.q.eval()));
         above.mul(&dot(&n, &point(UP)))
@@ -273,7 +368,7 @@ impl Pred for PlaneHeight {
 /// too, where `m·UP = 0`: parallel shadows (no crossing) or an edge
 /// along `UP` (its shadow a point); there [`decide`] reaches its guard,
 /// never a sign.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EdgeEdge {
     /// The edge of `A`, at its rates at the crossing.
     pub e: Seg,
@@ -307,7 +402,7 @@ pub fn decide_flat_orders(
     key: TieKey,
 ) -> (Result<Sign, Fail>, Work) {
     let mut work = Work::default();
-    let s = decide(g, exact::order_signs(pred, &mut work), Band::FLAT, key);
+    let s = decide(Ok(g), exact::order_signs(pred, &mut work), Band::FLAT, key);
     (s, work)
 }
 
@@ -367,12 +462,13 @@ impl<S: Scalar> MovingAt<S> {
         MovingAt { at, rates }
     }
 
-    /// A flat point at this level, exactly (`like` gives the level and
-    /// width).
+    /// A flat point at this level (`like` gives the level and width):
+    /// exactly, but for exact rates the level can't hold, which it
+    /// certifies.
     pub fn from_flat(m: &Moving, like: &S) -> Self {
         MovingAt {
             at: lit3(m.at, like),
-            rates: m.rates.map(|r| lit3(r, like)),
+            rates: m.rates.each_ref().map(|r| r.at(like)),
         }
     }
 }
@@ -471,6 +567,26 @@ fn oriented<S: Curved>(v: [S; 3], like: &S) -> Option<[S; 3]> {
         Ordering::Greater => Some(v),
         Ordering::Less => Some(v.map(|x| x.neg())),
         Ordering::Equal => None,
+    }
+}
+
+/// The rational `r` at `like`'s level, certified: its numerator and
+/// denominator built from their 64-bit limbs, then divided (exact at the
+/// rational level; uncertified where the level's range can't hold them).
+fn rational_at<S: Scalar>(r: &Rational, like: &S) -> S {
+    let natural = |n: &Natural| {
+        let base = S::from_f64(18_446_744_073_709_551_616.0, like); // 2⁶⁴
+        let limbs = n.to_limbs_asc();
+        limbs.iter().rev().fold(S::int(0, like), |acc, &l| {
+            acc.mul(&base).add(&S::int_u64(l, like))
+        })
+    };
+    let num = natural(r.numerator_ref());
+    let num = if *r < 0u32 { num.neg() } else { num };
+    if *r.denominator_ref() == 1u32 {
+        num
+    } else {
+        num.div(&natural(r.denominator_ref()))
     }
 }
 

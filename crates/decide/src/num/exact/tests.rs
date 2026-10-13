@@ -10,6 +10,7 @@
 use std::cmp::Ordering;
 
 use malachite::Rational as Q;
+use malachite::base::num::arithmetic::traits::PowerOf2;
 
 use super::*;
 
@@ -163,7 +164,7 @@ fn c2(p: DVec3) -> robust::Coord<f64> {
 /// exact zero.
 fn unmoved(s: Signs) -> Ordering {
     match s.first {
-        Some((0, s)) => s,
+        Some((0, Ok(s))) => s,
         None => Ordering::Equal,
         Some(other) => panic!("an unmoved predicate decided at order {other:?}"),
     }
@@ -179,7 +180,7 @@ fn orientations_match_robust() {
             let s = sign(&Orient3d::fixed(p));
             let want = sign_of(robust::orient3d(c3(p[0]), c3(p[1]), c3(p[2]), c3(p[3])));
             assert_eq!(unmoved(s), want, "orient3d {p:?}");
-            assert_eq!(value_sign(&Orient3d::fixed(p)).0, want, "{p:?}");
+            assert_eq!(value_sign(&Orient3d::fixed(p)).0, Ok(want), "{p:?}");
             let zero = [DVec3::ZERO; 4];
             assert_eq!(want, sign_q(&orient3d_q(&p, &zero, 0)), "{p:?}");
             assert_eq!(s.work.rationals, 0, "{p:?}");
@@ -195,7 +196,7 @@ fn orientations_match_robust() {
             let p: [DVec3; 3] = rng.points(2);
             let (s, _) = value_sign(&Orient2d(p));
             let want = sign_of(robust::orient2d(c2(p[0]), c2(p[1]), c2(p[2])));
-            assert_eq!(s, want, "orient2d {p:?}");
+            assert_eq!(s, Ok(want), "orient2d {p:?}");
         }
     }
     // Every stage was taken, and exact zeros were met.
@@ -227,11 +228,11 @@ fn tiny_coordinates_take_the_rationals() {
             let zero = [DVec3::ZERO; 4];
             let want = sign_q(&orient3d_q(&p, &zero, 0));
             let (s, work) = value_sign(&Orient3d::fixed(p));
-            assert_eq!(s, want, "{p:?}");
+            assert_eq!(s, Ok(want), "{p:?}");
             rationals += work.rationals;
             // Swapping two points flips the sign, through whichever stage.
             let swapped = [p[1], p[0], p[2], p[3]];
-            assert_eq!(value_sign(&Orient3d::fixed(swapped)).0, want.reverse());
+            assert_eq!(value_sign(&Orient3d::fixed(swapped)).0, Ok(want.reverse()));
         }
     }
     assert!(rationals > 100, "{rationals}");
@@ -277,7 +278,7 @@ fn products_beyond_the_range_take_the_rationals() {
                     Ordering::Greater => s,
                 });
             let (s, work) = value_sign(&Product(factors));
-            assert_eq!(s, want);
+            assert_eq!(s, Ok(want));
             assert_eq!(work.rationals > 0, rational, "{lo} {hi} {work:?}");
         }
     }
@@ -347,8 +348,8 @@ fn orders_are_the_derivatives_along_each_motion() {
             let want = exact
                 .iter()
                 .enumerate()
-                .map(|(k, g)| (k, sign_q(g)))
-                .find(|&(_, s)| s != Ordering::Equal);
+                .map(|(k, g)| (k, Ok(sign_q(g))))
+                .find(|&(_, s)| s != Ok(Ordering::Equal));
             let got = sign(&pred);
             assert_eq!(got.first, want, "{p:?} {rows:?}");
             decided[want.map_or(ORDERS + 1, |(k, _)| k)] += 1;
@@ -370,7 +371,7 @@ fn orders_are_the_derivatives_along_each_motion() {
                 p: [p[1], p[0], p[2], p[3]],
                 rows: [rows[1], rows[0], rows[2], rows[3]],
             };
-            let flipped = want.map(|(k, s)| (k, s.reverse()));
+            let flipped = want.map(|(k, s)| (k, s.map(Ordering::reverse)));
             assert_eq!(sign(&swapped).first, flipped, "{p:?} {rows:?}");
         }
     }
@@ -407,8 +408,8 @@ fn rates_from_expressions_move_as_numbers() {
         let rise = q(to.z) - q(from.z);
         let want = match (sign_of(z), sign_q(&rise)) {
             (Ordering::Equal, Ordering::Equal) => None,
-            (Ordering::Equal, s) => Some((1, s)),
-            (s, _) => Some((0, s)),
+            (Ordering::Equal, s) => Some((1, Ok(s))),
+            (s, _) => Some((0, Ok(s))),
         };
         assert_eq!(sign(&pred).first, want, "{z} {from} {to}");
     }
@@ -425,7 +426,7 @@ fn stages_are_reported() {
         DVec3::new(0.0, 0.0, -1.0),
     ];
     let (s, work) = value_sign(&Orient3d::fixed(p));
-    assert_eq!(s, Ordering::Greater);
+    assert_eq!(s, Ok(Ordering::Greater));
     assert_eq!(
         work,
         Work {
@@ -436,7 +437,10 @@ fn stages_are_reported() {
 
     let repeated = [p[0], p[1], p[0], p[3]];
     let (s, work) = value_sign(&Orient3d::fixed(repeated));
-    assert_eq!((s, work.filters, work.expansions), (Ordering::Equal, 1, 0));
+    assert_eq!(
+        (s, work.filters, work.expansions),
+        (Ok(Ordering::Equal), 1, 0)
+    );
 
     // On the plane `z = x`, far out: the filter can't prove the zero.
     let coplanar = [
@@ -446,7 +450,7 @@ fn stages_are_reported() {
         DVec3::new(1e6 + 0.2, 1e6 + 0.3, 1e6 + 0.2),
     ];
     let (s, work) = value_sign(&Orient3d::fixed(coplanar));
-    assert_eq!(s, Ordering::Equal);
+    assert_eq!(s, Ok(Ordering::Equal));
     assert_eq!((work.filters, work.expansions, work.rationals), (1, 1, 0));
     assert!(work.longest >= 1);
 
@@ -461,7 +465,7 @@ fn stages_are_reported() {
     let s = sign(&pred);
     assert!(matches!(
         s.first,
-        Some((2, Ordering::Less | Ordering::Greater))
+        Some((2, Ok(Ordering::Less | Ordering::Greater)))
     ));
     assert_eq!((s.work.filters, s.work.expansions), (3, 1));
 }
@@ -499,4 +503,113 @@ fn no_first_order_sign_is_none() {
     };
     assert_eq!(sign_q(&orient3d_q(&p, &moves, 1)), Ordering::Greater);
     assert_eq!(sign(&pred).first, None);
+}
+
+/// `(x − x)·y + z`: a product with an exact zero, which the filter takes
+/// as zero only when the other factor is finite.
+struct ZeroTimes {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Pred for ZeroTimes {
+    fn eval<N: Num>(&self) -> N {
+        let zero = N::lit(self.x).sub(&N::lit(self.x));
+        zero.mul(&N::lit(self.y)).add(&N::lit(self.z))
+    }
+}
+
+/// An input that isn't finite gives no sign, in every build: not a zero
+/// or a sign from reading it as some number. Only the orders reading an
+/// infinite rate lose theirs.
+#[test]
+fn inputs_that_arent_finite_have_no_sign() {
+    for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        let p = [DVec3::ZERO, DVec3::X, DVec3::new(0.0, bad, 0.0), DVec3::Z];
+        assert_eq!(value_sign(&Orient3d::fixed(p)).0, Err(NotFinite), "{bad}");
+        assert_eq!(sign(&Orient3d::fixed(p)).first, Some((0, Err(NotFinite))));
+        for z in [0.0, 1.0] {
+            let (s, work) = value_sign(&ZeroTimes { x: 3.0, y: bad, z });
+            assert_eq!((s, work.rationals), (Err(NotFinite), 1), "{bad} {z}");
+        }
+        assert_eq!(
+            value_sign(&ZeroTimes {
+                x: 3.0,
+                y: 2.0,
+                z: bad
+            })
+            .0,
+            Err(NotFinite)
+        );
+
+        // A rate along motion 2 that isn't finite: the value and order 1
+        // still decide, order 2 has no sign.
+        let mut rows = [DVec3::ZERO; ORDERS];
+        rows[1] = DVec3::new(0.0, 0.0, bad);
+        let coplanar = [DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::new(1.0, 1.0, 0.0)];
+        let pred = Orient3d {
+            p: coplanar,
+            rows: [None, None, None, Some(rows)],
+        };
+        assert_eq!(sign(&pred).first, Some((2, Err(NotFinite))));
+        let off = Orient3d {
+            p: [coplanar[0], coplanar[1], coplanar[2], DVec3::Z],
+            ..pred
+        };
+        assert!(matches!(sign(&off).first, Some((0, Ok(_)))));
+    }
+}
+
+/// `a·x + b`, `a` an exact rational input.
+struct Scaled {
+    a: Q,
+    x: f64,
+    b: f64,
+}
+
+impl Pred for Scaled {
+    fn eval<N: Num>(&self) -> N {
+        N::rational(&self.a)
+            .mul(&N::lit(self.x))
+            .add(&N::lit(self.b))
+    }
+}
+
+/// Exact rational inputs, of any size: their signs are exact at every
+/// stage; a dyadic one within range is taken by the expansions (also an
+/// exact zero), any other by the rationals.
+#[test]
+fn rational_inputs_are_exact() {
+    let mut rng = Rng::new(7);
+    let mut taken = [0; 2];
+    for _ in 0..2000 {
+        let k = rng.int(1 << 20) + 1.0;
+        let (j, den) = match rng.below(4) {
+            // Dyadic, spanning many bits.
+            0 => (rng.below(1000) as i64 - 1000, Q::from(1)),
+            // Dyadic, beyond the expansions' bottom or top.
+            1 => (-1200 - rng.below(100) as i64, Q::from(1)),
+            2 => (1000 + rng.below(100) as i64, Q::from(1)),
+            // Not dyadic.
+            _ => (rng.below(50) as i64 - 40, Q::from(3 + 2 * rng.below(50))),
+        };
+        let a = (q(k) * Q::power_of_2(j) + Q::power_of_2(-40i64)) / den;
+        let x = [1.0, 3.0, 0.5][rng.below(3) as usize];
+        let ax = &a * q(x);
+        // `b` the float nearest `−a·x` (often a tie, else a tiny value)
+        // while that is an input in range, else zero.
+        let (b, _) = f64::rounding_from(&-&ax, Nearest);
+        let b = if b.abs() <= MAX_INPUT { b } else { 0.0 };
+        let want = (ax + q(b)).sign();
+        let (s, work) = value_sign(&Scaled { a: a.clone(), x, b });
+        assert_eq!(s, Ok(want), "{a} {x} {b}");
+        let in_range = super::dyadic(&a).is_some();
+        if work.expansions > 0 {
+            assert_eq!(work.rationals > 0, !in_range, "{a} {work:?}");
+            taken[usize::from(in_range)] += 1;
+        }
+    }
+    // Ties met both ways: in the rationals, and in the expansions.
+    assert!(taken.iter().all(|&n| n > 100), "{taken:?}");
 }
