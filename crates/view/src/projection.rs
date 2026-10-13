@@ -69,6 +69,15 @@ impl Projector {
         Projector::world(camera, bounds.width, bounds.height)
     }
 
+    /// [`Projector::new`] for a viewport over `bounds`.
+    pub(crate) fn new_in(
+        camera: &Camera,
+        placement: Placement,
+        bounds: iced::Rectangle,
+    ) -> Option<Self> {
+        Projector::new(camera, placement, bounds.width, bounds.height)
+    }
+
     /// The projector for a sketch on `placement` seen by `camera` in a
     /// viewport `width` by `height` logical pixels. `None` for a viewport
     /// too small to show anything.

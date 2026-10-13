@@ -102,8 +102,7 @@ impl<'s, 'a> Regions<'s, 'a> {
         let mut nearest: Option<(f64, FeatureId, usize)> = None;
         for candidate in self.candidates {
             let placement = candidate.placement;
-            let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height)
-            else {
+            let Some(projector) = Projector::new_in(camera, placement, bounds) else {
                 continue;
             };
             let Some(cursor) = projector.cursor(at) else {
@@ -173,9 +172,7 @@ impl<'s, 'a> Regions<'s, 'a> {
         let Some(region) = candidate.profiles.regions.get(index) else {
             return;
         };
-        let Some(projector) =
-            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-        else {
+        let Some(projector) = Projector::new_in(camera, candidate.placement, bounds) else {
             return;
         };
         // Filled only if every point shows: one behind the near plane of a

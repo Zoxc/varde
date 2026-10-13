@@ -243,7 +243,7 @@ impl<'a> Sketching<'a> {
 
     /// The projector onto the sketch's plane for `camera` in `bounds`.
     fn projector(&self, camera: &Camera, bounds: Rectangle) -> Option<Projector> {
-        Projector::new(camera, self.placement, bounds.width, bounds.height)
+        Projector::new_in(camera, self.placement, bounds)
     }
 
     /// Whether tools snap with `modifiers` held: unless [`Held::FREE`]

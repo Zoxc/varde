@@ -86,7 +86,7 @@ fn corner_under(
         else {
             continue;
         };
-        let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height) else {
+        let Some(projector) = Projector::new_in(camera, placement, bounds) else {
             continue;
         };
         for &(id, corner) in corners {
@@ -147,7 +147,7 @@ fn nearest_corner(
     else {
         return None;
     };
-    let projector = Projector::new(camera, placement, bounds.width, bounds.height)?;
+    let projector = Projector::new_in(camera, placement, bounds)?;
     (corners.iter())
         .filter_map(|&(id, corner)| Some((id, projector.project(corner)?.distance(at))))
         .min_by(|a, b| a.1.total_cmp(&b.1))

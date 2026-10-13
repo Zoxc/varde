@@ -80,9 +80,7 @@ pub(crate) fn curve_under(
 ) -> Option<SketchHit> {
     let mut nearest: Option<SketchHit> = None;
     for candidate in lines {
-        let Some(projector) =
-            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-        else {
+        let Some(projector) = Projector::new_in(camera, candidate.placement, bounds) else {
             continue;
         };
         let Some(cursor) = projector.cursor(at) else {
@@ -124,9 +122,7 @@ pub(crate) fn point_under(
 ) -> Option<SketchHit> {
     let mut nearest: Option<(f64, SketchHit)> = None;
     for candidate in lines {
-        let Some(projector) =
-            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-        else {
+        let Some(projector) = Projector::new_in(camera, candidate.placement, bounds) else {
             continue;
         };
         let sketch = candidate.sketch;
@@ -186,9 +182,7 @@ pub(crate) fn items_near(
 ) -> Vec<SketchHit> {
     let mut found = Vec::new();
     for candidate in lines {
-        let Some(projector) =
-            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-        else {
+        let Some(projector) = Projector::new_in(camera, candidate.placement, bounds) else {
             continue;
         };
         let sketch = candidate.sketch;

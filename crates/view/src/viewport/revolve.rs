@@ -288,8 +288,7 @@ impl<'a> Revolving<'a> {
         let mut nearest: Option<(f64, FeatureId, AxisLine)> = None;
         for candidate in self.axis_candidates() {
             let placement = candidate.placement;
-            let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height)
-            else {
+            let Some(projector) = Projector::new_in(camera, placement, bounds) else {
                 continue;
             };
             let Some(cursor) = projector.cursor(at) else {
@@ -431,7 +430,7 @@ impl<'a> Revolving<'a> {
                 colors.selected
             };
             live.polyline(space, &[from, to], line(color, AXIS_WIDTH, false));
-            let projector = Projector::new(camera, source.placement, bounds.width, bounds.height);
+            let projector = Projector::new_in(camera, source.placement, bounds);
             if let Some((a, b)) = projector.and_then(|projector| projector.segment(from, to)) {
                 handle::screen_arrowhead(&mut live, a, b, colors.selected);
             }

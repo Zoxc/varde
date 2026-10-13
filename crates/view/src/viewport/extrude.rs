@@ -66,9 +66,7 @@ impl<'a> Extruding<'a> {
         let Some(handle) = &self.handle else {
             return Vec::new();
         };
-        let Some(projector) =
-            Projector::new(camera, handle.placement(), bounds.width, bounds.height)
-        else {
+        let Some(projector) = Projector::new_in(camera, handle.placement(), bounds) else {
             return Vec::new();
         };
         let puck = |(distance, t): (Distance, f64)| {
@@ -175,7 +173,7 @@ impl<'a> Extruding<'a> {
     /// without a handle or looking along its axis.
     fn drag_to(&self, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<f64> {
         let handle = self.handle.as_ref()?;
-        let projector = Projector::new(camera, handle.placement(), bounds.width, bounds.height)?;
+        let projector = Projector::new_in(camera, handle.placement(), bounds)?;
         let t = projector.along_line(handle.origin, handle.normal, at)?;
         let step = snap_step(projector.pixel(), self.state.units)?;
         let limit = (f64::from(MAX_COORD) / step).floor() * step;
@@ -211,9 +209,8 @@ impl<'a> Extruding<'a> {
         let mut live = SketchLayer::default();
         regions.live(input.regions.hover, colors, &mut live);
         regions.panel_region(camera, bounds, colors, &mut live);
-        let projector = (self.handle.as_ref()).and_then(|handle| {
-            Projector::new(camera, handle.placement(), bounds.width, bounds.height)
-        });
+        let projector = (self.handle.as_ref())
+            .and_then(|handle| Projector::new_in(camera, handle.placement(), bounds));
         if let Some(handle) = &self.handle
             && self.state.verdict.refused.is_none()
             && let Some(projector) = &projector
