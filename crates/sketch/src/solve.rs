@@ -16,6 +16,7 @@
 
 mod analysis;
 mod equation;
+mod jacobian;
 mod normal;
 mod real;
 mod system;
@@ -25,13 +26,13 @@ pub use analysis::{Analysis, analyse};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
-use faer::Mat;
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
 use crate::{Curve, Id, Sketch};
 
 use equation::{PointSlots, Slot, SplineSlots};
+use jacobian::Jacobian;
 use normal::Normal;
 use system::{Bound, Component, Fixing, System};
 
@@ -252,81 +253,6 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
         sketch: solved,
         iterations: spent,
     })
-}
-
-/// A component's Jacobian, a row per equation, each row's entries by
-/// the variable's position in the component.
-struct Jacobian {
-    starts: Vec<usize>,
-    entries: Vec<(usize, f64)>,
-}
-
-impl Jacobian {
-    /// At the system's values, each variable's column multiplied by its
-    /// entry of `scaling`, if given.
-    fn new(system: &System, component: &Component, scaling: Option<&[f64]>) -> Self {
-        let mut starts = Vec::with_capacity(component.equations.len() + 1);
-        let mut entries = Vec::new();
-        for &index in &component.equations {
-            starts.push(entries.len());
-            system.equations[index]
-                .residual
-                .gradient(&system.values, |var, derivative| {
-                    let column = component.column(var);
-                    let scale = scaling.map_or(1.0, |scaling| scaling[column]);
-                    entries.push((column, derivative * scale));
-                });
-        }
-        starts.push(entries.len());
-        Jacobian { starts, entries }
-    }
-
-    /// Whether every entry is a number.
-    fn is_finite(&self) -> bool {
-        self.entries.iter().all(|(_, value)| value.is_finite())
-    }
-
-    fn row(&self, row: usize) -> &[(usize, f64)] {
-        &self.entries[self.starts[row]..self.starts[row + 1]]
-    }
-
-    fn rows(&self) -> usize {
-        self.starts.len() - 1
-    }
-
-    /// As a dense matrix of `columns` columns, entries that aren't
-    /// numbers taken as zero.
-    fn dense(&self, columns: usize) -> Mat<f64> {
-        let mut matrix = Mat::zeros(self.rows(), columns);
-        for row in 0..self.rows() {
-            for &(column, value) in self.row(row) {
-                if value.is_finite() {
-                    matrix[(row, column)] += value;
-                }
-            }
-        }
-        matrix
-    }
-}
-
-impl Component {
-    /// The position of `var`, one of the component's variables.
-    fn column(&self, var: usize) -> usize {
-        self.vars
-            .binary_search(&var)
-            .expect("a variable of the component")
-    }
-
-    /// The [`analysis::counted_dependencies`] of the component's
-    /// equations, from their `jacobian` at the system's values.
-    fn dependencies(&self, system: &System, jacobian: &Jacobian) -> analysis::Dependencies {
-        let implied: Vec<bool> = self
-            .equations
-            .iter()
-            .map(|&index| system.equations[index].implied)
-            .collect();
-        analysis::counted_dependencies(&jacobian.dense(self.vars.len()), &implied)
-    }
 }
 
 /// Solving one component, in place in the system's values.

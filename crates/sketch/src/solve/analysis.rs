@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::{Curve, Id, Sketch};
 
 use super::equation::{PointSlots, Slot};
+use super::jacobian::Jacobian;
 use super::system::{Fixing, System};
-use super::{Jacobian, TOLERANCE, scale, within};
+use super::{TOLERANCE, scale, within};
 
 /// A diagonal entry of the factored Jacobian this small, relative to the
 /// largest (or to one, if that's smaller), counts as zero: the equation it

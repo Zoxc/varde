@@ -8,7 +8,7 @@ use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
 use faer::sparse::{SparseColMatRef, SymbolicSparseColMat};
 use faer::{Mat, Side};
 
-use super::Jacobian;
+use super::jacobian::Jacobian;
 
 /// `A Aᵀ` for Jacobians of one sparsity pattern: its lower triangle,
 /// column by column, with the pattern's symbolic factorization made once.
