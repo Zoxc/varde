@@ -5,7 +5,7 @@
 //! Flip (the session's flip) and Tangent faces.
 
 use glam::DVec3;
-use varde_document::{Design, FaceDraft, OriginPlane, PlaneRef};
+use varde_document::{Design, FaceDraft, OriginPlane, Plane};
 use varde_view::{DraftView, MotionField, MotionKind};
 
 use super::refs::Refs;
@@ -13,7 +13,7 @@ use super::{Doc, MotionSession};
 use crate::doc::regions::TypedText;
 
 /// The neutral plane a new draft starts with: XY, so the pull is up.
-pub(super) const NEUTRAL: PlaneRef = PlaneRef::Origin(OriginPlane::XY);
+pub(super) const NEUTRAL: Plane = Plane::Origin(OriginPlane::XY);
 
 /// The angle field as a new one opens it: 3 (degrees).
 pub(super) fn angle_field(design: &Design) -> TypedText {

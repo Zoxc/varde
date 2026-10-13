@@ -199,7 +199,7 @@ fn a_body_reads_with_or_without_a_color() {
 #[test]
 fn a_move_and_a_mirror_round_trip() {
     use glam::DVec3;
-    use varde_document::{AxisRef, FaceKey, FaceRef, FeatureKind, Mirror, Move, PartKey, PlaneRef};
+    use varde_document::{AxisRef, FaceKey, FaceRef, FeatureKind, Mirror, Move, PartKey, Plane};
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
@@ -224,7 +224,7 @@ fn a_move_and_a_mirror_round_trip() {
     };
     let mirror = Mirror {
         bodies: vec![plate],
-        plane: PlaneRef::Face(top),
+        plane: Plane::Face(top),
         keep_original: true,
     };
     for kind in [FeatureKind::from(moved), mirror.into()] {
@@ -2232,7 +2232,7 @@ mod saving;
 #[test]
 fn a_tampered_move_or_mirror_is_refused() {
     use glam::DVec3;
-    use varde_document::{Axis3, AxisRef, FaceKey, FaceRef, Mirror, Move, PartKey, PlaneRef};
+    use varde_document::{Axis3, AxisRef, FaceKey, FaceRef, Mirror, Move, PartKey, Plane};
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
@@ -2248,7 +2248,7 @@ fn a_tampered_move_or_mirror_is_refused() {
     };
     let mirror = Mirror {
         bodies: vec![plate],
-        plane: PlaneRef::Face(FaceRef {
+        plane: Plane::Face(FaceRef {
             body: plate,
             key: FaceKey {
                 feature: editor.document().features()[1].id.get(),
@@ -2890,7 +2890,7 @@ fn a_tampered_scale_is_refused() {
 fn split_plate() -> Document {
     use glam::DVec3;
     use varde_document::{
-        FaceKey, FaceRef, Keep, OriginPlane, PartKey, PlaneRef, Side, Split, SplitTool,
+        FaceKey, FaceRef, Keep, OriginPlane, PartKey, Plane, Side, Split, SplitTool,
     };
     let mut editor = Editor::new(Document::example());
     let document = editor.document();
@@ -2898,7 +2898,7 @@ fn split_plate() -> Document {
     let maker = document.features()[1].id.get();
     let by_xy = Split {
         body: plate,
-        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        tool: SplitTool::Plane(Plane::Origin(OriginPlane::XY)),
         original: Side::Back,
         keep: Keep::Both,
         new_body: None,
@@ -2917,7 +2917,7 @@ fn split_plate() -> Document {
     };
     let trim = Split {
         body: plate,
-        tool: SplitTool::Plane(PlaneRef::Face(top)),
+        tool: SplitTool::Plane(Plane::Face(top)),
         original: Side::Front,
         keep: Keep::Back,
         new_body: None,
@@ -2976,7 +2976,7 @@ fn a_tampered_split_is_refused() {
 #[test]
 fn held_body_ids_read_from_older_files_and_are_checked() {
     use varde_document::{
-        BodyId, Extrude, FeatureKind, Keep, Operation, PlaneRef, Side, Split, SplitTool, Targets,
+        BodyId, Extrude, FeatureKind, Keep, Operation, Plane, Side, Split, SplitTool, Targets,
     };
     // An older join: its targets' map of two fields made one.
     let mut editor = Editor::new(Document::example());
@@ -3025,7 +3025,7 @@ fn held_body_ids_read_from_older_files_and_are_checked() {
     let other = editor.document().bodies().last().unwrap().id;
     let split = |keep| Split {
         body: other,
-        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        tool: SplitTool::Plane(Plane::Origin(OriginPlane::XY)),
         original: Side::Front,
         keep,
         new_body: None,
@@ -4126,7 +4126,7 @@ fn an_offset_face_s_faces_and_values_are_checked_as_read() {
 /// left out (the stand-in's failure is regeneration's, not the file's).
 fn drafted_plate() -> Document {
     use glam::DVec3;
-    use varde_document::{FaceDraft, FaceKey, FaceRef, OriginPlane, PartKey, PlaneRef};
+    use varde_document::{FaceDraft, FaceKey, FaceRef, OriginPlane, PartKey, Plane};
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let document = editor.document();
@@ -4149,14 +4149,14 @@ fn drafted_plate() -> Document {
     faces.sort_by(FaceRef::order);
     let walls = FaceDraft {
         faces,
-        neutral: PlaneRef::Face(face(PartKey::StartCap, [7.75, -2.0, 0.0])),
+        neutral: Plane::Face(face(PartKey::StartCap, [7.75, -2.0, 0.0])),
         angle: Value::new("3", &ask).unwrap(),
         flip: false,
         tangent: true,
     };
     let top = FaceDraft {
         faces: vec![face(PartKey::EndCap, [3.0, 7.25, 10.0])],
-        neutral: PlaneRef::Origin(OriginPlane::XY),
+        neutral: Plane::Origin(OriginPlane::XY),
         angle: Value::new("7.5", &ask).unwrap(),
         flip: true,
         tangent: false,
@@ -4285,7 +4285,7 @@ fn a_damaged_draft_is_refused_or_checked() {
 /// read.
 #[test]
 fn a_draft_s_faces_and_values_are_checked_as_read() {
-    use varde_document::{FaceDraft, FeatureKind, MAX_DRAFT_FACES, PlaneRef};
+    use varde_document::{FaceDraft, FeatureKind, MAX_DRAFT_FACES, Plane};
     let document = drafted_plate();
     let raw = record_msgpack(&document);
     let FeatureKind::FaceDraft(two) = &document.features()[2].kind else {
@@ -4342,17 +4342,17 @@ fn a_draft_s_faces_and_values_are_checked_as_read() {
     refused(&|draft| draft.faces[0].key.feature = own);
     refused(&|draft| draft.faces[0].key.feature = own + 1);
     refused(&|draft| {
-        if let PlaneRef::Face(face) = &mut draft.neutral {
+        if let Plane::Face(face) = &mut draft.neutral {
             face.key.feature = own;
         }
     });
     refused(&|draft| {
-        if let PlaneRef::Face(face) = &mut draft.neutral {
+        if let Plane::Face(face) = &mut draft.neutral {
             face.body = varde_document::BodyId::NEW;
         }
     });
     let (_, origin) = changed(&|draft| {
-        draft.neutral = PlaneRef::Origin(varde_document::OriginPlane::XZ);
+        draft.neutral = Plane::Origin(varde_document::OriginPlane::XZ);
     });
     assert!(origin.is_ok());
 }

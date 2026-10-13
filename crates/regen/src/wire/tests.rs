@@ -913,7 +913,7 @@ fn a_pattern_and_its_draft_round_trip() {
 #[test]
 fn a_move_a_mirror_and_a_draft_round_trip() {
     use glam::DVec3;
-    use varde_document::{Axis3, AxisRef, Mirror, Move, OriginPlane, PlaneRef};
+    use varde_document::{Axis3, AxisRef, Mirror, Move, OriginPlane, Plane};
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
@@ -934,7 +934,7 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
         .unwrap();
     let mirror = Mirror {
         bodies: vec![plate],
-        plane: PlaneRef::Origin(OriginPlane::XY),
+        plane: Plane::Origin(OriginPlane::XY),
         keep_original: false,
     };
     editor

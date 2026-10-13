@@ -36,8 +36,8 @@ fn angle(document: &Document, text: &str) -> Value {
 }
 
 /// `body`'s bottom, made by `maker`, as a neutral plane.
-fn bottom(body: BodyId, maker: FeatureId) -> PlaneRef {
-    PlaneRef::Face(face(
+fn bottom(body: BodyId, maker: FeatureId) -> Plane {
+    Plane::Face(face(
         body,
         maker,
         PartKey::StartCap,
@@ -120,7 +120,7 @@ fn a_draft_is_added_and_undone() {
     assert!((draft.angle.value - 3f64.to_radians()).abs() < 1e-15);
     // From the XY plane, flipped: "Draft 2".
     let flipped = FaceDraft {
-        neutral: PlaneRef::Origin(OriginPlane::XY),
+        neutral: Plane::Origin(OriginPlane::XY),
         flip: true,
         tangent: false,
         ..draft.clone()
@@ -156,7 +156,7 @@ fn a_draft_is_edited() {
     assert_eq!(editor.generation(), generation);
     let mut edited = FaceDraft {
         angle: angle(&document, "7.5 deg"),
-        neutral: PlaneRef::Origin(OriginPlane::XZ),
+        neutral: Plane::Origin(OriginPlane::XZ),
         flip: true,
         tangent: false,
         ..two_walls(&document, body, maker)
@@ -240,7 +240,7 @@ fn its_own_parts_are_checked() {
         ));
         assert!(matches!(
             check(&|d| {
-                let PlaneRef::Face(face) = &mut d.neutral else {
+                let Plane::Face(face) = &mut d.neutral else {
                     unreachable!()
                 };
                 face.near = far;
@@ -330,7 +330,7 @@ fn bodies_and_makers_are_checked() {
         FaceDraftError::NeutralBody(BodyId(999)),
     );
     let mut wrong = two_walls(&document, a, later);
-    wrong.neutral = PlaneRef::Origin(OriginPlane::XY);
+    wrong.neutral = Plane::Origin(OriginPlane::XY);
     refused(
         &mut editor,
         wrong,
@@ -354,7 +354,7 @@ fn bodies_and_makers_are_checked() {
         Err(FaceDraftError::NeutralBody(a))
     );
     assert_eq!(
-        document.check_neutral_plane(1, &PlaneRef::Origin(OriginPlane::YZ)),
+        document.check_neutral_plane(1, &Plane::Origin(OriginPlane::YZ)),
         Ok(())
     );
     assert_eq!(
@@ -418,7 +418,7 @@ fn drafts_round_trip() {
     add(&mut editor, two_walls(&document, a, first)).unwrap();
     let flipped = FaceDraft {
         angle: angle(&document, "0.5"),
-        neutral: PlaneRef::Origin(OriginPlane::YZ),
+        neutral: Plane::Origin(OriginPlane::YZ),
         flip: true,
         tangent: false,
         ..two_walls(&document, b, second)

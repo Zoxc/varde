@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
 use crate::sorted_unique;
-use crate::{BodyId, FaceRef, FeatureId, MAX_EXTRUDE_REGIONS, PlaneError, PlaneRef};
+use crate::{BodyId, FaceRef, FeatureId, MAX_EXTRUDE_REGIONS, Plane, PlaneError};
 
 /// The most curves a split's open chain may hold.
 pub const MAX_SPLIT_CURVES: usize = 256;
@@ -57,7 +57,7 @@ pub struct Split {
 pub enum SplitTool {
     /// An origin plane or a flat face's plane: the front is on the side
     /// its normal points to (out of a face's body).
-    Plane(PlaneRef),
+    Plane(Plane),
     /// A face's surface, flat or curved, continued past the body: the
     /// front is inside the closed solid it bounds (a plane's or an open
     /// wall's on the side its normal points to). Found on its body as
@@ -193,8 +193,8 @@ impl Split {
             return Err(SplitError::NoNewBody);
         }
         match &self.tool {
-            SplitTool::Plane(PlaneRef::Origin(_)) => {}
-            SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) => {
+            SplitTool::Plane(Plane::Origin(_)) => {}
+            SplitTool::Plane(Plane::Face(face)) | SplitTool::Face(face) => {
                 face.check_own().map_err(SplitError::Face)?;
             }
             SplitTool::Body(tool) => {

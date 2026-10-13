@@ -12,9 +12,9 @@ use crate::{
     Copies, Document, EdgeRef, Extrude, ExtrudeError, FaceDraftError, FaceRef, FaceSetError,
     FeatureId, FeatureKind, FilletError, LinkError, LinkSource, Loft, LoftError, MAX_NAME_LEN,
     MotionError, OffsetFaceError, Opacity, Operation, OperationError, OutsideRef, ParamError,
-    PathPart, PathRef, Pattern, PatternError, Plane, PlaneError, PlaneRef, PointRef, Revolve,
-    RevolveError, Scale, ScaleError, ShellError, Split, SplitError, SplitTool, Sweep, SweepError,
-    Tint, motion, param,
+    PathPart, PathRef, Pattern, PatternError, Plane, PlaneError, PointRef, Revolve, RevolveError,
+    Scale, ScaleError, ShellError, Split, SplitError, SplitTool, Sweep, SweepError, Tint, motion,
+    param,
 };
 
 impl Document {
@@ -421,7 +421,7 @@ impl Document {
 
     /// Checks `plane` as the plane of a mirror at feature `index` would
     /// name it, as [`Document::check_axis_ref`] does a move's axis.
-    pub fn check_plane_ref(&self, index: usize, plane: &PlaneRef) -> Result<(), MotionError> {
+    pub fn check_plane_ref(&self, index: usize, plane: &Plane) -> Result<(), MotionError> {
         if let Some(referred) = plane.refers() {
             referred.check_own().map_err(MotionError::Ref)?;
         }
@@ -632,7 +632,7 @@ impl Document {
             SplitTool::Face(face) if !self.body_before(index, face.body) => {
                 return Err(SplitError::FaceBody(face.body));
             }
-            SplitTool::Plane(PlaneRef::Face(face)) if !self.body_before(index, face.body) => {
+            SplitTool::Plane(Plane::Face(face)) if !self.body_before(index, face.body) => {
                 return Err(SplitError::RefBody(face.body));
             }
             SplitTool::Regions { sketch, .. } | SplitTool::Chain { sketch, .. }
@@ -642,7 +642,7 @@ impl Document {
             }
             _ => {}
         }
-        if let SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) = tool
+        if let SplitTool::Plane(Plane::Face(face)) | SplitTool::Face(face) = tool
             && !self.maker_before(index, face.maker())
         {
             return Err(SplitError::RefMaker(face.maker()));
@@ -677,12 +677,8 @@ impl Document {
     /// made by a feature before it (the draft depends on it), its key's
     /// maker before it or not there with an id no later feature can
     /// take. For a panel keeping what it sets up one the document takes.
-    pub fn check_neutral_plane(
-        &self,
-        index: usize,
-        neutral: &PlaneRef,
-    ) -> Result<(), FaceDraftError> {
-        let PlaneRef::Face(face) = neutral else {
+    pub fn check_neutral_plane(&self, index: usize, neutral: &Plane) -> Result<(), FaceDraftError> {
+        let Plane::Face(face) = neutral else {
             return Ok(());
         };
         face.check_own().map_err(FaceDraftError::Neutral)?;

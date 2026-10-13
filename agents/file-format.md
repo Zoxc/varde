@@ -366,7 +366,7 @@ zero), `inward` (moved into the body) and `tangent` (tangent faces taken
 in). Offset faces are new, so no older record holds one; or a draft
 (`FaceDraft`), `crates/document/src/face_draft.rs`: the faces it turns
 (each as a sketch's face), sorted by body, key and point, its neutral
-plane (a `PlaneRef`, as a mirror's: an origin plane or a face), its
+plane (a `Plane`, as a mirror's: an origin plane or a face), its
 angle (a typed angle and its value in radians), `flip` (the pull
 against the plane's normal) and `tangent` (tangent faces taken in).
 Drafts are new, so no older record holds one; or a sweep, `crates/document/src/sweep.rs`: its profile's sketch's

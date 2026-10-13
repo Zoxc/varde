@@ -61,7 +61,7 @@ pub use fillet::{Fillet, FilletError};
 pub use loft::{
     Loft, LoftError, LoftMode, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
-pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef, RefError};
+pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, RefError};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};

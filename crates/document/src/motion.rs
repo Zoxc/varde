@@ -11,7 +11,7 @@ use varde_expr::{Ask, Value};
 
 use crate::bodies::check_bodies;
 use crate::{
-    BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, OriginPlane,
+    BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, Plane,
 };
 
 /// A move: the bodies it moves, each turned about `turn`'s axis by its
@@ -43,7 +43,7 @@ pub struct Mirror {
     /// As a move's: `1..=`[`MAX_FEATURE_BODIES`](crate::MAX_FEATURE_BODIES) bodies features before
     /// it make, sorted without repeats.
     pub bodies: Vec<BodyId>,
-    pub plane: PlaneRef,
+    pub plane: Plane,
     pub keep_original: bool,
 }
 
@@ -93,25 +93,6 @@ impl Axis3 {
     }
 }
 
-/// A plane in the world, for a mirror: an origin plane, or a flat face of
-/// a body as the features before the mirror leave it. New kinds are
-/// appended, as [`AxisRef`]'s.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum PlaneRef {
-    Origin(OriginPlane),
-    Face(FaceRef),
-}
-
-impl PlaneRef {
-    /// The plane as the user sees it: "XY", or "a face".
-    pub fn name(self) -> &'static str {
-        match self {
-            PlaneRef::Origin(plane) => plane.name(),
-            PlaneRef::Face(_) => "a face",
-        }
-    }
-}
-
 impl AxisRef {
     /// The edge or face it names on a body, if it names one.
     pub(crate) fn refers(&self) -> Option<Referred<'_>> {
@@ -123,13 +104,10 @@ impl AxisRef {
     }
 }
 
-impl PlaneRef {
+impl Plane {
     /// The face it names on a body, if it names one.
     pub(crate) fn refers(&self) -> Option<Referred<'_>> {
-        match self {
-            PlaneRef::Origin(_) => None,
-            PlaneRef::Face(face) => Some(Referred::Face(face)),
-        }
+        self.face().map(Referred::Face)
     }
 }
 

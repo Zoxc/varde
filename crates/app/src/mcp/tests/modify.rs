@@ -6,7 +6,7 @@
 
 use glam::DVec3;
 use serde_json::json;
-use varde_document::{FeatureKind, Keep, OriginPlane, PlaneRef, Side, SplitTool};
+use varde_document::{FeatureKind, Keep, OriginPlane, Plane, Side, SplitTool};
 
 use super::motion::{
     applied, applied_last, bodies, corner_at, edge_between, face_facing, face_of_form, moved_key,
@@ -45,10 +45,7 @@ fn split_takes_each_tool() {
     };
     let split = feature(&mut varde, json!({ "body": "Body 1", "tool": "XY" }));
     assert_eq!(split.body, plate);
-    assert_eq!(
-        split.tool,
-        SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY))
-    );
+    assert_eq!(split.tool, SplitTool::Plane(Plane::Origin(OriginPlane::XY)));
     assert_eq!((split.original, split.keep), (Side::Front, Keep::Both));
     assert!(split.new_body.is_some());
 
@@ -57,7 +54,7 @@ fn split_takes_each_tool() {
         &mut varde,
         json!({ "body": "Body 1", "tool": { "face": top }, "original": "back" }),
     );
-    assert!(matches!(split.tool, SplitTool::Plane(PlaneRef::Face(face)) if face.body == plate));
+    assert!(matches!(split.tool, SplitTool::Plane(Plane::Face(face)) if face.body == plate));
     assert_eq!(split.original, Side::Back);
 
     let hole = face_of_form(&varde, "Body 1", "cylinder");
@@ -346,7 +343,7 @@ fn draft_takes_its_faces_plane_and_values() {
         panic!("not a draft");
     };
     assert_eq!(draft.faces[0].body, plate);
-    assert_eq!(draft.neutral, PlaneRef::Origin(OriginPlane::XY));
+    assert_eq!(draft.neutral, Plane::Origin(OriginPlane::XY));
     assert!((draft.angle.value - 3f64.to_radians()).abs() < 1e-12);
     assert!(!draft.flip);
     assert!(draft.tangent);
@@ -362,7 +359,7 @@ fn draft_takes_its_faces_plane_and_values() {
     ) else {
         panic!("not a draft");
     };
-    assert!(matches!(draft.neutral, PlaneRef::Face(face) if face.body == plate));
+    assert!(matches!(draft.neutral, Plane::Face(face) if face.body == plate));
     assert!((draft.angle.value - 5f64.to_radians()).abs() < 1e-12);
     assert!(draft.flip);
     assert!(!draft.tangent);
@@ -378,7 +375,7 @@ fn draft_takes_its_faces_plane_and_values() {
     ) else {
         panic!("not a draft");
     };
-    assert_eq!(draft.neutral, PlaneRef::Origin(OriginPlane::YZ));
+    assert_eq!(draft.neutral, Plane::Origin(OriginPlane::YZ));
     undo(&mut varde);
     regenerate(&mut varde, &requests);
 

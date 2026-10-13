@@ -11,9 +11,7 @@ use varde_expr::{Ask, Value};
 
 use crate::plane::check_face_list_own;
 use crate::sorted_unique;
-use crate::{
-    BodyId, Design, FaceListError, FaceRef, FaceSetError, FeatureId, PlaneError, PlaneRef,
-};
+use crate::{BodyId, Design, FaceListError, FaceRef, FaceSetError, FeatureId, Plane, PlaneError};
 
 /// The most faces a draft may turn.
 pub const MAX_DRAFT_FACES: usize = 256;
@@ -36,7 +34,7 @@ pub struct FaceDraft {
     /// The neutral plane: an origin plane, or a flat face of a body a
     /// feature before it makes (its own body's or another's), found as
     /// the features before it leave that body.
-    pub neutral: PlaneRef,
+    pub neutral: Plane,
     /// The angle each face turns by ([`FaceDraft::angle_ask`]): above 0
     /// and under 90°.
     pub angle: Value,
@@ -65,10 +63,7 @@ impl FaceDraft {
 
     /// The neutral plane's face, if it's a face.
     pub fn neutral_face(&self) -> Option<&FaceRef> {
-        match &self.neutral {
-            PlaneRef::Origin(_) => None,
-            PlaneRef::Face(face) => Some(face),
-        }
+        self.neutral.face()
     }
 
     /// The bodies it names, which it depends on: its faces' body and the

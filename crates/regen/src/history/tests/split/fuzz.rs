@@ -111,7 +111,7 @@ fn random_split(editor: &mut Editor, rng: &mut Rng) -> Option<Split> {
                 regions: vec![region],
             }
         }
-        6 => SplitTool::Plane(PlaneRef::Origin(
+        6 => SplitTool::Plane(Plane::Origin(
             [OriginPlane::XY, OriginPlane::XZ, OriginPlane::YZ][rng.below(3)],
         )),
         7 => {
@@ -122,7 +122,7 @@ fn random_split(editor: &mut Editor, rng: &mut Rng) -> Option<Split> {
                 rng,
             )?;
             if rng.below(2) == 0 {
-                SplitTool::Plane(PlaneRef::Face(face))
+                SplitTool::Plane(Plane::Face(face))
             } else {
                 SplitTool::Face(face)
             }

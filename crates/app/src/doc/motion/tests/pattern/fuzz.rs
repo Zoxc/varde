@@ -364,9 +364,7 @@ fn run(seed: u64, steps: usize) {
                     } else {
                         varde_document::Mirror {
                             bodies: vec![body],
-                            plane: varde_document::PlaneRef::Origin(
-                                varde_document::OriginPlane::YZ,
-                            ),
+                            plane: varde_document::Plane::Origin(varde_document::OriginPlane::YZ),
                             keep_original: rng.below(2) == 0,
                         }
                         .into()

@@ -5,7 +5,7 @@
 ```rust
 pub struct FaceDraft {
     pub faces: Vec<FaceRef>,   // 1..=MAX_DRAFT_FACES (256), one body, FaceRef::order, no repeats
-    pub neutral: PlaneRef,     // an origin plane, or a flat face of a body made before
+    pub neutral: Plane,        // an origin plane, or a flat face of a body made before
     pub angle: Value,          // above 0 and under 90° (FaceDraft::angle_ask)
     pub flip: bool,            // the pull against the neutral plane's normal
     pub tangent: bool,         // tangent faces taken in (the kernel grows them)

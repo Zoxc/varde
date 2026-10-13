@@ -5,7 +5,7 @@
 use glam::DVec3;
 use std::f64::consts::PI;
 use varde_document::{
-    AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, MAX_COORD, Mirror, Move, PlaneRef,
+    AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, MAX_COORD, Mirror, Move, Plane,
 };
 use varde_kernel_compat::measure::{EdgeShape, edge_shape};
 use varde_kernel_compat::mesh::Form;
@@ -301,15 +301,15 @@ pub(super) const NEUTRAL_PLANE: PlaneWords = PlaneWords {
 /// the origin; a face must be flat (its form's plane, its normal out of
 /// the solid: then unit). Failures are worded by `words`.
 pub(super) fn resolve_plane(
-    plane: &PlaneRef,
+    plane: &Plane,
     words: &PlaneWords,
     evaluation: &Evaluation,
     tolerance: &Tolerance,
     cache: &mut Cache,
 ) -> Result<[DVec3; 2], Failed> {
     match plane {
-        PlaneRef::Origin(origin) => Ok([DVec3::ZERO, origin.placement().normal]),
-        PlaneRef::Face(face) => {
+        Plane::Origin(origin) => Ok([DVec3::ZERO, origin.placement().normal]),
+        Plane::Face(face) => {
             let made = evaluation.holding(face.body).ok_or(words.body_gone)?;
             let key = reference_key(words.kind, made.key, &face.key, face.near, tolerance);
             cache.reference(key, || {

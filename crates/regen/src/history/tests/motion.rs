@@ -7,7 +7,7 @@
 //! face, and what's cached.
 
 use glam::DVec3;
-use varde_document::{Axis3, AxisRef, BodyOp, Combine, EdgeRef, FaceRef, Mirror, Move, PlaneRef};
+use varde_document::{Axis3, AxisRef, BodyOp, Combine, EdgeRef, FaceRef, Mirror, Move, Plane};
 use varde_kernel_compat::mesh::{FaceKey, Form, PartKey};
 
 use super::*;
@@ -306,7 +306,7 @@ fn a_mirror_without_the_original_replaces_the_body() {
     let before = Arc::clone(&evaluated(editor.document()).bodies[0].solid);
     let mirror = Mirror {
         bodies: vec![a],
-        plane: PlaneRef::Origin(OriginPlane::YZ),
+        plane: Plane::Origin(OriginPlane::YZ),
         keep_original: false,
     };
     add(&mut editor, mirror);
@@ -338,7 +338,7 @@ fn a_mirror_keeping_the_original_holds_both() {
         let a = block(&mut editor, x0, 0.0, x0 + 10.0, 10.0, "10");
         let mirror = Mirror {
             bodies: vec![a],
-            plane: PlaneRef::Origin(OriginPlane::YZ),
+            plane: Plane::Origin(OriginPlane::YZ),
             keep_original: true,
         };
         add(&mut editor, mirror);
@@ -380,7 +380,7 @@ fn a_planar_face_is_a_mirror_plane() {
         &mut editor,
         Mirror {
             bodies: vec![a],
-            plane: PlaneRef::Face(end),
+            plane: Plane::Face(end),
             keep_original: true,
         },
     );
@@ -417,7 +417,7 @@ fn a_planar_face_is_a_mirror_plane() {
         &mut editor,
         Mirror {
             bodies: vec![b],
-            plane: PlaneRef::Face(slant),
+            plane: Plane::Face(slant),
             keep_original: false,
         },
     );
@@ -456,7 +456,7 @@ fn references_of_the_wrong_shape_fail() {
         &mut editor,
         Mirror {
             bodies: vec![plate],
-            plane: PlaneRef::Face(wall),
+            plane: Plane::Face(wall),
             keep_original: false,
         },
     );
@@ -521,7 +521,7 @@ fn out_of_range_is_refused() {
         &mut editor,
         Mirror {
             bodies: vec![a, far],
-            plane: PlaneRef::Face(face),
+            plane: Plane::Face(face),
             keep_original: false,
         },
     );
@@ -643,7 +643,7 @@ fn a_symmetric_body_mirrored_onto_itself_is_itself_or_fails() {
         let plate = editor.document().bodies()[0].id;
         let mirror = Mirror {
             bodies: vec![plate],
-            plane: PlaneRef::Origin(plane),
+            plane: Plane::Origin(plane),
             keep_original: true,
         };
         let id = add(&mut editor, mirror);
@@ -827,7 +827,7 @@ fn later_features_name_the_faces_of_a_mirror_s_image() {
     };
     let doubled = Mirror {
         bodies: vec![a],
-        plane: PlaneRef::Face(end),
+        plane: Plane::Face(end),
         keep_original: true,
     };
     let first = add(&mut editor, doubled.clone());
@@ -848,7 +848,7 @@ fn later_features_name_the_faces_of_a_mirror_s_image() {
         &mut editor,
         Mirror {
             bodies: vec![a],
-            plane: PlaneRef::Face(far),
+            plane: Plane::Face(far),
             keep_original: true,
         },
     );
@@ -881,7 +881,7 @@ fn later_features_name_the_faces_of_a_mirror_s_image() {
         &mut editor,
         Mirror {
             bodies: vec![a],
-            plane: PlaneRef::Face(top),
+            plane: Plane::Face(top),
             keep_original: false,
         },
     );

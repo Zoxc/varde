@@ -164,13 +164,13 @@ fn random_motion(
             0 => random_face(evaluation, any, rng, |form| {
                 matches!(form, Form::Plane { .. })
             })
-            .map(PlaneRef::Face),
+            .map(Plane::Face),
             _ => None,
         };
         return Some(
             Mirror {
                 bodies: picked,
-                plane: plane.unwrap_or(PlaneRef::Origin(PLANES[rng.below(3)])),
+                plane: plane.unwrap_or(Plane::Origin(PLANES[rng.below(3)])),
                 keep_original: rng.below(2) == 0,
             }
             .into(),
@@ -1279,7 +1279,7 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
             }
             (None, Some(mirror)) => {
                 let [point, normal] = reference.expect("a mirror's plane is found");
-                if let PlaneRef::Origin(plane) = mirror.plane {
+                if let Plane::Origin(plane) = mirror.plane {
                     assert_eq!(point, DVec3::ZERO, "{what}");
                     assert_eq!(normal, plane.placement().normal, "{what}");
                 }

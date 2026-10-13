@@ -208,7 +208,7 @@ fn merge(plates: &mut Plates, rng: &mut Rng) {
         let mut tool = *rng.pick(&all);
         let session = plates.doc.mode.motion();
         let neutral = session.and_then(|session| match session.plane {
-            Some(PlaneRef::Face(face)) => Some(face.body),
+            Some(Plane::Face(face)) => Some(face.body),
             _ => None,
         });
         let own = session.and_then(|session| session.bodies.first().copied());
@@ -285,8 +285,8 @@ fn wanted_volume(
         return None;
     }
     let (normal, point) = match &draft.neutral {
-        PlaneRef::Origin(origin) => (origin.placement().normal, DVec3::ZERO),
-        PlaneRef::Face(face) => {
+        Plane::Origin(origin) => (origin.placement().normal, DVec3::ZERO),
+        Plane::Face(face) => {
             let holder = before.holder(face.body)?;
             let made = before.bodies.iter().find(|made| made.body == holder)?;
             match *form_of(&made.solid, face)? {

@@ -187,7 +187,7 @@ fn notes_and_infos_are_the_mock_s() {
     };
     let mirror = varde_document::Mirror {
         bodies: vec![plate],
-        plane: PlaneRef::Face(face),
+        plane: Plane::Face(face),
         keep_original: true,
     };
     assert_eq!(plane_short(document, &mirror.plane), "Extrude 1's end");
@@ -196,7 +196,7 @@ fn notes_and_infos_are_the_mock_s() {
         "Body 1 across Extrude 1's end · copy"
     );
     let mirror = varde_document::Mirror {
-        plane: PlaneRef::Origin(OriginPlane::XY),
+        plane: Plane::Origin(OriginPlane::XY),
         keep_original: false,
         ..mirror
     };
@@ -414,7 +414,7 @@ fn a_scale_s_notes() {
 /// A split's note names its tool, and the side kept for a trim.
 #[test]
 fn a_split_s_notes() {
-    use varde_document::{Keep, OriginPlane, PlaneRef, Side, Split, SplitTool};
+    use varde_document::{Keep, OriginPlane, Plane, Side, Split, SplitTool};
     let example = Document::example();
     let document = &example;
     let plate = document.bodies()[0].id;
@@ -422,7 +422,7 @@ fn a_split_s_notes() {
     let sketch = document.features()[0].id;
     let mut split = Split {
         body: plate,
-        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        tool: SplitTool::Plane(Plane::Origin(OriginPlane::XY)),
         original: Side::Front,
         keep: Keep::Both,
         new_body: None,

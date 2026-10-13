@@ -16,8 +16,8 @@ use std::borrow::Cow;
 
 use glam::DVec3;
 use varde_document::{
-    BodyId, Document, FeatureId, FeatureKind, Keep, MAX_EXTRUDE_REGIONS, MAX_SPLIT_CURVES,
-    PlaneRef, Side, Split, SplitTool,
+    BodyId, Document, FeatureId, FeatureKind, Keep, MAX_EXTRUDE_REGIONS, MAX_SPLIT_CURVES, Plane,
+    Side, Split, SplitTool,
 };
 use varde_regen::Summary;
 use varde_sketch::Id;
@@ -137,7 +137,7 @@ impl SplitSetup {
         let held = |body: BodyId| document.body(body).is_some();
         self.tool().is_some_and(|tool| {
             let body = match &tool {
-                SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) => Some(face.body),
+                SplitTool::Plane(Plane::Face(face)) | SplitTool::Face(face) => Some(face.body),
                 SplitTool::Body(body) => Some(*body),
                 _ => None,
             };
@@ -283,7 +283,7 @@ impl MotionSession {
         if self.picking != MotionPick::Tool || self.split.mode != SplitMode::Face {
             return;
         }
-        self.split.surface = Some(SplitTool::Plane(PlaneRef::Origin(plane)));
+        self.split.surface = Some(SplitTool::Plane(Plane::Origin(plane)));
         self.split.gone = false;
         self.picking = MotionPick::Nothing;
     }
@@ -369,7 +369,7 @@ impl Doc {
                     .map_err(|why| unnamed(why, "face", MotionKind::Split))?;
                 let summary = (index.picking().faces().get(face as usize)).map(|face| face.summary);
                 Ok(match summary {
-                    Some(Summary::Plane { .. }) => SplitTool::Plane(PlaneRef::Face(named)),
+                    Some(Summary::Plane { .. }) => SplitTool::Plane(Plane::Face(named)),
                     _ => SplitTool::Face(named),
                 })
             }
@@ -409,7 +409,7 @@ impl Doc {
         match session.split.mode {
             SplitMode::Body => session.split.body == Some(self.named_body(pick.body)),
             SplitMode::Face => match &session.split.surface {
-                Some(SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face)) => {
+                Some(SplitTool::Plane(Plane::Face(face)) | SplitTool::Face(face)) => {
                     self.shown_face_ref(face) == Some(pick.target)
                 }
                 _ => false,
@@ -546,7 +546,7 @@ impl Doc {
         let document = self.editor.document();
         Some(match session.split.tool()? {
             SplitTool::Plane(plane) => (plane_name(document, &plane), None),
-            SplitTool::Face(face) => (plane_name(document, &PlaneRef::Face(face)), None),
+            SplitTool::Face(face) => (plane_name(document, &Plane::Face(face)), None),
             SplitTool::Body(body) => (
                 (document.body(body)).map_or_else(|| "Missing body".to_owned(), |b| b.name.clone()),
                 None,
@@ -633,7 +633,7 @@ impl Doc {
         session: &MotionSession,
     ) -> (Option<String>, Option<[DVec3; 2]>) {
         match session.split.tool() {
-            Some(SplitTool::Plane(plane @ PlaneRef::Origin(origin))) => (
+            Some(SplitTool::Plane(plane @ Plane::Origin(origin))) => (
                 Some(plane_name(self.editor.document(), &plane)),
                 Some([DVec3::ZERO, origin.placement().normal]),
             ),

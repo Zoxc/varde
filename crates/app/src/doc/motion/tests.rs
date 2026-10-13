@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use glam::DVec3;
 use iced::keyboard::{self, key};
-use varde_document::{Axis3, Document, Editor, Mirror, Operation, PlaneRef};
+use varde_document::{Axis3, Document, Editor, Mirror, Operation, Plane};
 use varde_regen::{Request, Summary};
 use varde_view::{Edit, Look, MotionField, MotionLook, MotionPick, Picked};
 
@@ -329,7 +329,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
     });
     plates.click_at(plate, Picked::Face(side), DVec3::new(30.0, 0.0, 5.0));
     let session = plates.doc.mode.motion().unwrap();
-    let Some(PlaneRef::Face(face)) = session.plane else {
+    let Some(Plane::Face(face)) = session.plane else {
         panic!("a face plane: {:?}", session.plane);
     };
     assert_eq!(face.body, plate);
@@ -349,7 +349,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
         kind,
         FeatureKind::Mirror(Mirror {
             bodies: vec![right],
-            plane: PlaneRef::Face(face),
+            plane: Plane::Face(face),
             keep_original: true,
         })
     );
@@ -1031,7 +1031,7 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     plates.click_at(later, Picked::Face(top), DVec3::new(0.0, 30.0, 5.0));
     assert!(matches!(
         plates.doc.mode.motion().unwrap().plane,
-        Some(PlaneRef::Face(_))
+        Some(Plane::Face(_))
     ));
     assert!(plates.doc.motion_ready());
     plates.doc.update(Edit::Undo);

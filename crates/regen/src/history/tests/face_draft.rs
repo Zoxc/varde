@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 
 use glam::DVec3;
-use varde_document::{FaceDraft, FaceRef, PlaneRef, Scale, ScaleFactor};
+use varde_document::{FaceDraft, FaceRef, Plane, Scale, ScaleFactor};
 use varde_kernel_compat::mesh::{FaceKey, Form};
 use varde_kernel_compat::{DraftError, Topology};
 
@@ -48,14 +48,14 @@ fn face(body: BodyId, key: FaceKey, near: [f64; 3]) -> FaceRef {
 }
 
 /// The XY plane, its normal +Z.
-const XY: PlaneRef = PlaneRef::Origin(OriginPlane::XY);
+const XY: Plane = Plane::Origin(OriginPlane::XY);
 
 /// `faces` drafted by `degrees` from `neutral`, flipped or not, tangent
 /// faces taken in.
 fn draft(
     document: &Document,
     mut faces: Vec<FaceRef>,
-    neutral: PlaneRef,
+    neutral: Plane,
     degrees: &str,
     flip: bool,
 ) -> FaceDraft {
@@ -185,7 +185,7 @@ fn a_draft_the_kernel_cant_do_fails_as_too_complex() {
     let flipped = draft(
         editor.document(),
         vec![front(&solid, body)],
-        PlaneRef::Face(top(&solid, body)),
+        Plane::Face(top(&solid, body)),
         "3",
         true,
     );
@@ -272,7 +272,7 @@ fn the_neutral_face_gone_is_not_found() {
     let kind = draft(
         editor.document(),
         vec![top(&solid, body)],
-        PlaneRef::Face(wall),
+        Plane::Face(wall),
         "3",
         false,
     );
@@ -298,7 +298,7 @@ fn the_neutral_face_gone_is_not_found() {
     let kind = draft(
         editor.document(),
         vec![front(&solid, body)],
-        PlaneRef::Face(wall),
+        Plane::Face(wall),
         "3",
         false,
     );
@@ -357,7 +357,7 @@ fn flip_reverses_the_pull() {
         draft(&mm, vec![front(&solid, body)], XY, "5", true),
     );
     assert_near(volume(&editor, id, body), 1000.0 + wedge);
-    let from_top = PlaneRef::Face(top(&solid, body));
+    let from_top = Plane::Face(top(&solid, body));
     set(
         &mut editor,
         id,
@@ -423,7 +423,7 @@ fn drafts_turn_faces_by_their_volumes() {
     let kind = draft(
         editor.document(),
         sides(&solid, body),
-        PlaneRef::Face(slab_top),
+        Plane::Face(slab_top),
         "10",
         false,
     );
@@ -473,7 +473,7 @@ fn on_plane(placement: &Placement, at: DVec3) -> bool {
 fn a_sketch_on_a_drafted_face_follows_it() {
     with_boxes();
     let (mut editor, body, solid) = cube();
-    let from_top = PlaneRef::Face(top(&solid, body));
+    let from_top = Plane::Face(top(&solid, body));
     let kind = draft(
         editor.document(),
         vec![front(&solid, body)],
@@ -615,7 +615,7 @@ fn a_face_named_twice_is_drafted_once() {
         ..draft(
             &mm,
             vec![front(&solid, body), twice, left(&solid, body)],
-            PlaneRef::Face(top(&solid, body)),
+            Plane::Face(top(&solid, body)),
             "2.5",
             true,
         )
@@ -814,7 +814,7 @@ fn the_stand_in_drafts_boxes_by_their_volumes() {
             sides.push((axis, face(body, key_on(&solid, n, d), near.into())));
         }
     }
-    let top = PlaneRef::Face(sides[5].1);
+    let top = Plane::Face(sides[5].1);
     let mm = editor.document().clone();
     let id = add(&mut editor, draft(&mm, vec![sides[0].1], XY, "1", false));
     // One cache, so the block is made once.
@@ -899,7 +899,7 @@ fn the_kernel_drafts_a_box_s_sides() {
     before.sort();
     after.sort();
     assert_eq!(before, after);
-    let from_top = PlaneRef::Face(top(&solid, body));
+    let from_top = Plane::Face(top(&solid, body));
     set(
         &mut editor,
         id,
@@ -961,7 +961,7 @@ fn the_kernel_drafts_a_boss_and_a_hole_into_cones() {
     let mm = editor.document().clone();
     let id = add(
         &mut editor,
-        draft(&mm, vec![wall], PlaneRef::Face(plate_top), "5", false),
+        draft(&mm, vec![wall], Plane::Face(plate_top), "5", false),
     );
     let t = tan(5.0);
     let boss = PI * integral(0.0, 5.0, |u| (3.0 - t * u).powi(2));

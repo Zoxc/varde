@@ -16,7 +16,7 @@ use std::cmp::Ordering;
 use crate::words::capital_article;
 
 use glam::DVec3;
-use varde_document::{AxisRef, BodyId, EdgeRef, FaceRef, PlaneRef};
+use varde_document::{AxisRef, BodyId, EdgeRef, FaceRef, Plane};
 use varde_view::{
     MotionKind, MotionPick, Naming, NamingPicks, OverlapNote, OverlapTick, Pick, PickIndex, Picked,
     Selected, Unnamed,
@@ -484,8 +484,8 @@ impl Doc {
             }
         } else {
             match session.plane? {
-                PlaneRef::Face(face) => self.shown_face_ref(&face),
-                PlaneRef::Origin(_) => None,
+                Plane::Face(face) => self.shown_face_ref(&face),
+                Plane::Origin(_) => None,
             }
         }
     }

@@ -6,7 +6,7 @@
 use glam::DVec3;
 use serde_json::{Value, json};
 use varde_document::{
-    AxisRef, BodyId, Copies, DirRef, FeatureKind, PatternKind, PlaneRef, PointRef, ScaleFactor,
+    AxisRef, BodyId, Copies, DirRef, FeatureKind, PatternKind, Plane, PointRef, ScaleFactor,
 };
 
 use super::*;
@@ -319,10 +319,7 @@ fn mirror_takes_a_plane_or_a_flat_face() {
         panic!("not a mirror");
     };
     assert_eq!(mirror.bodies, vec![plate]);
-    assert_eq!(
-        mirror.plane,
-        PlaneRef::Origin(varde_document::OriginPlane::YZ)
-    );
+    assert_eq!(mirror.plane, Plane::Origin(varde_document::OriginPlane::YZ));
     assert!(mirror.keep_original);
     assert_eq!(varde.mcp.log.back().unwrap().args, "Body 1 across yz");
     undo(&mut varde);
@@ -337,7 +334,7 @@ fn mirror_takes_a_plane_or_a_flat_face() {
     ) else {
         panic!("not a mirror");
     };
-    let PlaneRef::Face(face) = mirror.plane else {
+    let Plane::Face(face) = mirror.plane else {
         panic!("{:?}", mirror.plane);
     };
     assert_eq!(face.body, plate);

@@ -20,7 +20,7 @@
 //! and a request with a draft's draft and its answer cross the wire as
 //! they went.
 
-use varde_document::{OriginPlane, PlaneRef};
+use varde_document::{OriginPlane, Plane};
 
 use super::super::combine::fuzz::{
     Rng, bytes, not_stuck, random_combine, random_shape, same_bodies, solid, truncated, wire,
@@ -60,17 +60,17 @@ fn random_neutral(
     evaluation: &Evaluation,
     faces: &[FaceRef],
     rng: &mut Rng,
-) -> PlaneRef {
+) -> Plane {
     match rng.below(8) {
-        0..=2 => PlaneRef::Origin(OriginPlane::XY),
-        3 => PlaneRef::Origin([OriginPlane::XZ, OriginPlane::YZ][rng.below(2)]),
-        4 if !faces.is_empty() => PlaneRef::Face(faces[rng.below(faces.len())]),
+        0..=2 => Plane::Origin(OriginPlane::XY),
+        3 => Plane::Origin([OriginPlane::XZ, OriginPlane::YZ][rng.below(2)]),
+        4 if !faces.is_empty() => Plane::Face(faces[rng.below(faces.len())]),
         _ => {
             let Some(made) = evaluation.bodies.get(rng.below(evaluation.bodies.len())) else {
-                return PlaneRef::Origin(OriginPlane::XY);
+                return Plane::Origin(OriginPlane::XY);
             };
             let Some(mut face) = random_face(made, made.body, rng) else {
-                return PlaneRef::Origin(OriginPlane::XY);
+                return Plane::Origin(OriginPlane::XY);
             };
             let maker = face.key.feature;
             if rng.below(4) == 0
@@ -79,7 +79,7 @@ fn random_neutral(
             {
                 face.body = other.id;
             }
-            PlaneRef::Face(face)
+            Plane::Face(face)
         }
     }
 }
@@ -139,8 +139,8 @@ fn tweaked(draft: &FaceDraft, document: &Document, rng: &mut Rng) -> FaceDraft {
 /// flat.
 fn neutral_plane(before: &Evaluation, draft: &FaceDraft) -> Option<(DVec3, DVec3)> {
     match &draft.neutral {
-        PlaneRef::Origin(origin) => Some((origin.placement().normal, DVec3::ZERO)),
-        PlaneRef::Face(face) => {
+        Plane::Origin(origin) => Some((origin.placement().normal, DVec3::ZERO)),
+        Plane::Face(face) => {
             // Found on the body holding its body's solid (a combine may
             // have merged it).
             let solid = solid(before, before.holder(face.body)?)?;

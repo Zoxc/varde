@@ -13,7 +13,7 @@ use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{
     BodyId, BodyOp, Combine, Command, Document, Editor, FeatureId, FeatureKind, Keep, Move,
-    OriginPlane, Plane, PlaneRef, Side, Split, SplitTool,
+    OriginPlane, Plane, Side, Split, SplitTool,
 };
 use varde_regen::Summary;
 use varde_sketch::{Curve, Id};
@@ -165,7 +165,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     let split = drafted(&plates).expect("a split's draft");
     assert_eq!(
         split,
-        split_of(plate, SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)))
+        split_of(plate, SplitTool::Plane(Plane::Origin(OriginPlane::XY)))
     );
     assert!(plates.doc.motion_ready());
     assert!(shows(&plates, "Body 1 by XY"));
@@ -218,7 +218,7 @@ fn a_flat_face_splits_by_its_plane_and_a_curved_one_by_its_surface() {
     let (mut plates, plate) = plate();
     plates.doc.look(Look::StartMotion(MotionKind::Split));
     click_face(&mut plates, plate, top, DVec3::new(20.0, 10.0, 10.0));
-    let Some(SplitTool::Plane(PlaneRef::Face(face))) = tool(&plates) else {
+    let Some(SplitTool::Plane(Plane::Face(face))) = tool(&plates) else {
         panic!("a plane face: {:?}", tool(&plates));
     };
     assert_eq!(face.body, plate);
@@ -631,7 +631,7 @@ fn faces_of_an_edited_split_s_new_body_are_named_on_the_body_split() {
     assert!(plates.last_draft().is_none(), "the document's model");
     plates.answer();
     click_face(&mut plates, new, top, DVec3::new(-20.0, 10.0, 10.0));
-    let Some(SplitTool::Plane(PlaneRef::Face(face))) = tool(&plates) else {
+    let Some(SplitTool::Plane(Plane::Face(face))) = tool(&plates) else {
         panic!("a plane face: {:?} {:?}", tool(&plates), plates.doc.notice);
     };
     assert_eq!(face.body, plate);
@@ -666,7 +666,7 @@ fn a_face_joined_into_a_split_s_new_body_later_is_named_on_its_own_body() {
     // Rolled back to the split, the combine isn't applied: the disc
     // stands apart.
     click_face(&mut plates, disc, disc_top, DVec3::new(-20.0, 0.0, 15.0));
-    let Some(SplitTool::Plane(PlaneRef::Face(face))) = tool(&plates) else {
+    let Some(SplitTool::Plane(Plane::Face(face))) = tool(&plates) else {
         panic!("a plane face: {:?} {:?}", tool(&plates), plates.doc.notice);
     };
     assert_eq!(face.body, disc);

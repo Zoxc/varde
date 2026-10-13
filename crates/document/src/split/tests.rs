@@ -35,7 +35,7 @@ fn top(body: BodyId, maker: FeatureId) -> FaceRef {
 fn by_xy(body: BodyId) -> Split {
     Split {
         body,
-        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        tool: SplitTool::Plane(Plane::Origin(OriginPlane::XY)),
         original: Side::Front,
         keep: Keep::Both,
         new_body: Some(BodyId::NEW),
@@ -309,14 +309,14 @@ fn bodies_and_faces_are_checked() {
     far.near.x = f64::INFINITY;
     refused(
         &mut editor,
-        with(SplitTool::Plane(PlaneRef::Face(far))),
+        with(SplitTool::Plane(Plane::Face(far))),
         SplitError::Face(PlaneError::Near(far.near)),
     );
     // A plane face's body made later.
     let next_body = BodyId(editor.document().next_id + 2);
     refused(
         &mut editor,
-        with(SplitTool::Plane(PlaneRef::Face(top(next_body, first)))),
+        with(SplitTool::Plane(Plane::Face(top(next_body, first)))),
         SplitError::RefBody(next_body),
     );
     // Those that are right: by the other body, by a face of either, by
@@ -325,7 +325,7 @@ fn bodies_and_faces_are_checked() {
         SplitTool::Body(b),
         SplitTool::Face(top(a, first)),
         SplitTool::Face(top(b, second)),
-        SplitTool::Plane(PlaneRef::Face(top(b, second))),
+        SplitTool::Plane(Plane::Face(top(b, second))),
     ] {
         add(&mut editor, with(tool)).unwrap();
     }
@@ -372,7 +372,7 @@ fn removal_follows_the_bodies_it_names() {
     let by_plane = add(
         &mut editor,
         Split {
-            tool: SplitTool::Plane(PlaneRef::Face(top(b, second))),
+            tool: SplitTool::Plane(Plane::Face(top(b, second))),
             ..by_xy(a)
         },
     )

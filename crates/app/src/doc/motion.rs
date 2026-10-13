@@ -44,8 +44,8 @@ use std::f64::consts::{PI, TAU};
 use glam::DVec3;
 use varde_document::{
     Axis3, AxisRef, BodyId, Copies, Design, Document, EdgeRef, FaceRef, FeatureId, FeatureKind,
-    Generation, MAX_FEATURE_BODIES, MAX_PATTERN_COUNT, Mirror, Move, Pattern, PatternKind,
-    PlaneRef, Scale,
+    Generation, MAX_FEATURE_BODIES, MAX_PATTERN_COUNT, Mirror, Move, Pattern, PatternKind, Plane,
+    Scale,
 };
 use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
 use varde_kernel_compat::Motion;
@@ -97,7 +97,7 @@ pub(crate) struct MotionSession {
     pub(crate) axis: Option<AxisRef>,
     /// A mirror's plane, once picked; a draft's neutral plane (XY to
     /// begin with).
-    pub(crate) plane: Option<PlaneRef>,
+    pub(crate) plane: Option<Plane>,
     /// The bodies picked that the document no longer holds, or that
     /// aren't made before the feature edited any more (an undo took them
     /// away), as of the last change to it: kept, said to be gone, until
@@ -564,7 +564,7 @@ impl MotionSession {
     /// Takes the origin plane `plane` as a mirror's plane or a draft's
     /// neutral plane ([`MotionSession::take_reference`]).
     pub(crate) fn origin_plane(&mut self, plane: varde_document::OriginPlane) {
-        self.take_reference(Reference::Plane(PlaneRef::Origin(plane)));
+        self.take_reference(Reference::Plane(Plane::Origin(plane)));
     }
 
     /// Sets a pattern's mode, if its kind offers it: whether it does.
@@ -2167,7 +2167,7 @@ impl Doc {
                 let face = naming
                     .checked_face_ref(index, face, at)
                     .map_err(|why| refused(why, "face"))?;
-                Ok(Reference::Plane(PlaneRef::Face(face)))
+                Ok(Reference::Plane(Plane::Face(face)))
             }
             (true, _) => Err(not_an_axis.into()),
             (false, _) => Err(not_a_plane.into()),
@@ -2619,7 +2619,7 @@ impl Doc {
             MotionKind::Mirror | MotionKind::Draft => {
                 let plane = session.plane.as_ref();
                 let origin = plane.and_then(|plane| match plane {
-                    PlaneRef::Origin(plane) => Some([DVec3::ZERO, plane.placement().normal]),
+                    Plane::Origin(plane) => Some([DVec3::ZERO, plane.placement().normal]),
                     _ => None,
                 });
                 (plane.map(|plane| plane_name(document, plane)), origin)
@@ -2828,7 +2828,7 @@ fn axis_body(axis: &AxisRef) -> Option<BodyId> {
 /// `kind` at feature `index`: a mirror's as a mirror's plane, a draft's
 /// as its neutral plane (whose face's body it depends on, so it must be
 /// made before it).
-fn plane_refused(kind: MotionKind, document: &Document, index: usize, plane: &PlaneRef) -> bool {
+fn plane_refused(kind: MotionKind, document: &Document, index: usize, plane: &Plane) -> bool {
     match kind {
         MotionKind::Draft => document.check_neutral_plane(index, plane).is_err(),
         _ => document.check_plane_ref(index, plane).is_err(),
@@ -2836,18 +2836,15 @@ fn plane_refused(kind: MotionKind, document: &Document, index: usize, plane: &Pl
 }
 
 /// The body `plane`'s face is on, if it names one.
-fn plane_body(plane: &PlaneRef) -> Option<BodyId> {
-    match plane {
-        PlaneRef::Origin(_) => None,
-        PlaneRef::Face(face) => Some(face.body),
-    }
+fn plane_body(plane: &Plane) -> Option<BodyId> {
+    plane.face().map(|face| face.body)
 }
 
 /// An edge or face taken as a move's axis or a mirror's plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Reference {
     Axis(AxisRef),
-    Plane(PlaneRef),
+    Plane(Plane),
 }
 
 /// `Naming`'s refusal `why` of a pick of `what` ("corner", "edge",

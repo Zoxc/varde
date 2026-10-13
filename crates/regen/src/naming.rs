@@ -487,8 +487,7 @@ fn holder(merged: &[(BodyId, BodyId)], body: BodyId) -> BodyId {
 #[cfg(test)]
 mod tests {
     use varde_document::{
-        Axis3, AxisRef, Copies, Editor, Mirror, OriginPlane, Pattern, PatternKind, PlaneRef,
-        Targets,
+        Axis3, AxisRef, Copies, Editor, Mirror, OriginPlane, Pattern, PatternKind, Plane, Targets,
     };
     use varde_expr::Value;
 
@@ -506,7 +505,7 @@ mod tests {
         let plate = editor.document().bodies()[0].id;
         let mirror = Mirror {
             bodies: vec![plate],
-            plane: PlaneRef::Origin(OriginPlane::XY),
+            plane: Plane::Origin(OriginPlane::XY),
             keep_original: true,
         };
         for _ in 0..2 {
@@ -605,7 +604,7 @@ mod tests {
         let plate = editor.document().bodies()[0].id;
         let mirror = Mirror {
             bodies: vec![plate],
-            plane: PlaneRef::Origin(OriginPlane::XY),
+            plane: Plane::Origin(OriginPlane::XY),
             keep_original: true,
         };
         let add = editor.document().add_feature(mirror.clone().into());

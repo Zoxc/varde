@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, FaceRef, FeatureId, PlaneRef, Side, Split, SplitTool};
+use varde_document::{BodyId, Document, FaceRef, FeatureId, Plane, Side, Split, SplitTool};
 use varde_kernel_compat::patch::Bounds3;
 use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
@@ -165,13 +165,13 @@ impl Building<'_> {
         cache: &mut Cache,
     ) -> Result<(Arc<Solid>, Key), Failed> {
         match tool {
-            SplitTool::Plane(PlaneRef::Origin(plane)) => {
+            SplitTool::Plane(Plane::Origin(plane)) => {
                 let normal = plane.placement().normal;
                 let key = self.keyer("split plane").value(plane).finish();
                 let solid = cache.solid(key, || self.half_space(normal, 0.0))?;
                 Ok((solid, key))
             }
-            SplitTool::Plane(PlaneRef::Face(face)) => {
+            SplitTool::Plane(Plane::Face(face)) => {
                 let made = evaluation.holding(face.body).ok_or(SPLIT_PLANE.body_gone)?;
                 let key = self.face_key(SPLIT_PLANE.kind, made.key, face);
                 let solid = cache.solid(key, || {

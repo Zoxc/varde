@@ -11,14 +11,15 @@ use varde_kernel_compat::mesh::FaceKey;
 
 use crate::{BodyId, FeatureId, MAX_COORD};
 
-/// A plane a sketch is drawn on. New kinds are appended: a kind's place
-/// in the list is how files store it.
+/// A plane in the world: the one a sketch is drawn on, a mirror's, a
+/// split's or a draft's neutral plane. New kinds are appended: a kind's
+/// place in the list is how files store it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Plane {
     Origin(OriginPlane),
-    /// A flat face of a body, as the features before the sketch leave
-    /// it. Where it is comes from regenerating the history up to the
-    /// sketch (the face's form, through [`Placement::on_plane`]): the
+    /// A flat face of a body, as the features before the one naming it
+    /// leave it. Where it is comes from regenerating the history up to
+    /// that feature (the face's form, through [`Placement::on_plane`]): the
     /// document stores the reference, never the placement.
     Face(FaceRef),
 }

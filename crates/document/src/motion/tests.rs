@@ -6,7 +6,7 @@ use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
     BodiesError, CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit,
-    MAX_FEATURE_BODIES, Removable, Removal,
+    MAX_FEATURE_BODIES, OriginPlane, Removable, Removal,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -36,7 +36,7 @@ fn shift(document: &Document, bodies: &[BodyId], [x, y, z]: [&str; 3]) -> Move {
     }
 }
 
-fn mirror(bodies: &[BodyId], plane: PlaneRef) -> Mirror {
+fn mirror(bodies: &[BodyId], plane: Plane) -> Mirror {
     Mirror {
         bodies: bodies.to_vec(),
         plane,
@@ -69,7 +69,7 @@ fn adding_a_move_and_a_mirror_makes_no_body() {
     let before = editor.document().clone();
     let moved = shift(editor.document(), &[a, b], ["10", "-5", "0"]);
     let id = add(&mut editor, moved.clone()).unwrap();
-    let flipped = mirror(&[b], PlaneRef::Origin(OriginPlane::XZ));
+    let flipped = mirror(&[b], Plane::Origin(OriginPlane::XZ));
     let other = add(&mut editor, flipped.clone()).unwrap();
     let document = editor.document();
     assert_eq!(document.bodies, before.bodies, "no body added");
@@ -104,7 +104,7 @@ fn bodies_are_bounded_sorted_and_made_before() {
         assert_eq!(error, EditError::Invalid(expected));
     };
     let document = editor.document().clone();
-    let plane = PlaneRef::Origin(OriginPlane::XY);
+    let plane = Plane::Origin(OriginPlane::XY);
     refused(
         &mut editor,
         shift(&document, &[], ["1", "0", "0"]).into(),
@@ -208,7 +208,7 @@ fn offsets_and_angles_are_checked() {
         Err(MotionError::Ref(RefError::Near(far.near)))
     );
     assert_eq!(
-        mirror(&[a], PlaneRef::Face(far)).check_own(),
+        mirror(&[a], Plane::Face(far)).check_own(),
         Err(MotionError::Ref(RefError::Near(far.near)))
     );
 }
@@ -221,7 +221,7 @@ fn references_name_what_comes_before() {
     let (mut editor, [a, b], [first, second]) = two_bodies();
     // Mirroring the first body in the second's top face, and turning it
     // about the first's own top face.
-    let id = add(&mut editor, mirror(&[a], PlaneRef::Face(face(b, second)))).unwrap();
+    let id = add(&mut editor, mirror(&[a], Plane::Face(face(b, second)))).unwrap();
     let mut turned = shift(editor.document(), &[a], ["0", "0", "0"]);
     turned.turn = Some((
         AxisRef::Face(face(a, first)),
@@ -242,7 +242,7 @@ fn references_name_what_comes_before() {
     );
     let body = BodyId(editor.document().next_id + 1);
     assert_eq!(
-        add(&mut editor, mirror(&[a], PlaneRef::Face(face(body, first)))).unwrap_err(),
+        add(&mut editor, mirror(&[a], Plane::Face(face(body, first)))).unwrap_err(),
         EditError::Invalid(CheckError::Mirror(next, MotionError::RefBody(body)))
     );
     // Removing the plane's body leaves the mirror, which then fails to
@@ -302,8 +302,8 @@ fn moves_and_mirrors_round_trip() {
     let mut about_edge = shift(editor.document(), &[b], ["0", "0", "-4"]);
     about_edge.turn = Some((AxisRef::Edge(edge), angle(editor.document(), "-15")));
     add(&mut editor, about_edge).unwrap();
-    add(&mut editor, mirror(&[a], PlaneRef::Face(face(a, first)))).unwrap();
-    let mut plain = mirror(&[a, b], PlaneRef::Origin(OriginPlane::YZ));
+    add(&mut editor, mirror(&[a], Plane::Face(face(a, first)))).unwrap();
+    let mut plain = mirror(&[a, b], Plane::Origin(OriginPlane::YZ));
     plain.keep_original = false;
     add(&mut editor, plain).unwrap();
     let document = editor.document().clone();
@@ -319,7 +319,7 @@ fn wrong_moves_and_mirrors_are_refused_when_read() {
     let (mut editor, [a, b], [first, _]) = two_bodies();
     let shifted = shift(editor.document(), &[a], ["1", "0", "0"]);
     let id = add(&mut editor, shifted).unwrap();
-    let other = add(&mut editor, mirror(&[b], PlaneRef::Face(face(a, first)))).unwrap();
+    let other = add(&mut editor, mirror(&[b], Plane::Face(face(a, first)))).unwrap();
     fn moved(kind: &mut FeatureKind) -> &mut Move {
         match kind {
             FeatureKind::Move(moved) => moved,
@@ -375,7 +375,7 @@ fn wrong_moves_and_mirrors_are_refused_when_read() {
     );
     assert_eq!(
         read(&|_, m| {
-            if let PlaneRef::Face(face) = &mut mirrored(m).plane {
+            if let Plane::Face(face) = &mut mirrored(m).plane {
                 face.near.y = f64::NAN;
             }
         }),
@@ -385,7 +385,7 @@ fn wrong_moves_and_mirrors_are_refused_when_read() {
     );
     assert_eq!(
         read(&|_, m| {
-            if let PlaneRef::Face(face) = &mut mirrored(m).plane {
+            if let Plane::Face(face) = &mut mirrored(m).plane {
                 face.key.feature = o;
             }
         }),
@@ -402,7 +402,7 @@ fn wrong_moves_and_mirrors_are_refused_when_read() {
 fn a_move_and_a_mirror_are_the_fifth_and_sixth_kinds() {
     let mirror = FeatureKind::Mirror(Mirror {
         bodies: vec![BodyId(1)],
-        plane: PlaneRef::Origin(OriginPlane::YZ),
+        plane: Plane::Origin(OriginPlane::YZ),
         keep_original: false,
     });
     assert_eq!(postcard::to_stdvec(&mirror).unwrap(), [5, 1, 1, 0, 2, 0]);
@@ -437,5 +437,5 @@ fn errors_say_what_is_wrong() {
     );
     assert_eq!(Axis3::Y.name(), "Y");
     assert_eq!(Axis3::Z.direction(), DVec3::Z);
-    assert_eq!(PlaneRef::Origin(OriginPlane::XZ).name(), "XZ");
+    assert_eq!(Plane::Origin(OriginPlane::XZ).name(), "XZ");
 }

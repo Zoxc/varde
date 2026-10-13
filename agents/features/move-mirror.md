@@ -8,9 +8,9 @@ pub struct Move {
     pub offset: [Value; 3],               // world X, Y, Z: lengths within MAX_COORD of 0 (Move::offset_ask)
     pub turn: Option<(AxisRef, Value)>,   // the axis and an angle within a turn either way (Move::angle_ask)
 }
-pub struct Mirror { pub bodies: Vec<BodyId>, pub plane: PlaneRef, pub keep_original: bool }
+pub struct Mirror { pub bodies: Vec<BodyId>, pub plane: Plane, pub keep_original: bool }
 pub enum AxisRef { Origin(Axis3), Edge(EdgeRef), Face(FaceRef) }   // Axis3: X, Y, Z
-pub enum PlaneRef { Origin(OriginPlane), Face(FaceRef) }
+pub enum Plane { Origin(OriginPlane), Face(FaceRef) } // the sketch plane's type, shared
 ```
 
 - **What they are**: timeline steps on bodies already made, as a

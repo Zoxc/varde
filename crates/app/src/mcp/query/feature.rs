@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 use varde_document::{
     AlignRefs, AxisLine, AxisRef, BodyId, ChamferSize, Copies, DirRef, Document, EdgeRef, FaceRef,
     Feature, FeatureId, FeatureKind, Operation, OriginPlane, PathPart, PatternKind, Plane,
-    PlaneRef, PointRef, RegionRef, ScaleFactor, Section, SplitTool,
+    PointRef, RegionRef, ScaleFactor, Section, SplitTool,
 };
 use varde_mcp::tools::{
     self, FeatureTool, ItemKind, Page, ToolReply, Worded, WorldAxis, WorldPlane,
@@ -729,10 +729,10 @@ impl<'a> Shape<'a> {
         }
     }
 
-    fn plane(&self, plane: &PlaneRef) -> Value {
+    fn plane(&self, plane: &Plane) -> Value {
         match plane {
-            PlaneRef::Origin(plane) => json!(plane_word(*plane)),
-            PlaneRef::Face(face) => self.face(face),
+            Plane::Origin(plane) => json!(plane_word(*plane)),
+            Plane::Face(face) => self.face(face),
         }
     }
 

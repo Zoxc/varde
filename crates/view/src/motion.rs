@@ -14,7 +14,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{
     Axis3, AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Keep, LoftMode,
-    OriginPlane, Pattern, PatternKind, PlaneRef, Side,
+    OriginPlane, Pattern, PatternKind, Plane, Side,
 };
 use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_sketch::Id;
@@ -897,19 +897,19 @@ pub fn axis_name(document: &Document, axis: &AxisRef) -> String {
 
 /// A mirror's plane as the panel and notes name it: "XY plane",
 /// "Extrude 1's end".
-pub fn plane_name(document: &Document, plane: &PlaneRef) -> String {
+pub fn plane_name(document: &Document, plane: &Plane) -> String {
     match plane {
-        PlaneRef::Origin(plane) => format!("{} plane", plane.name()),
-        PlaneRef::Face(face) => face_name(document, face),
+        Plane::Origin(plane) => format!("{} plane", plane.name()),
+        Plane::Face(face) => face_name(document, face),
     }
 }
 
 /// A mirror's plane as its Timeline row notes it, the mock's short form:
 /// "XY", "Extrude 1's end".
-pub(crate) fn plane_short(document: &Document, plane: &PlaneRef) -> String {
+pub(crate) fn plane_short(document: &Document, plane: &Plane) -> String {
     match plane {
-        PlaneRef::Origin(plane) => plane.name().to_owned(),
-        PlaneRef::Face(face) => face_name(document, face),
+        Plane::Origin(plane) => plane.name().to_owned(),
+        Plane::Face(face) => face_name(document, face),
     }
 }
 

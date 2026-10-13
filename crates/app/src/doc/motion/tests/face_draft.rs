@@ -12,7 +12,7 @@
 
 use crate::doc::OperationSlot;
 use glam::DVec3;
-use varde_document::{Document, Editor, FaceDraft, FeatureKind, OriginPlane, PlaneRef};
+use varde_document::{Document, Editor, FaceDraft, FeatureKind, OriginPlane, Plane};
 use varde_regen::Summary;
 use varde_view::{Edit, Look, MotionField, MotionKind, MotionLook, MotionPick, Picked, Picks};
 
@@ -51,7 +51,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     assert_eq!(session.kind, MotionKind::Draft);
     assert!(session.bodies.is_empty(), "its body is its faces'");
     assert_eq!(session.picking, MotionPick::Faces);
-    assert_eq!(session.plane, Some(PlaneRef::Origin(OriginPlane::XY)));
+    assert_eq!(session.plane, Some(Plane::Origin(OriginPlane::XY)));
     assert_eq!(
         plates.doc.model_picking().expect("picking").picks,
         Picks::Faces
@@ -101,7 +101,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     assert!(shows(&plates, "1 face · 3° from XY"));
     let draft = drafted(&plates).expect("a draft");
     assert_eq!(draft.faces, faces(&plates));
-    assert_eq!(draft.neutral, PlaneRef::Origin(OriginPlane::XY));
+    assert_eq!(draft.neutral, Plane::Origin(OriginPlane::XY));
     assert!((draft.angle.value - 3f64.to_radians()).abs() < 1e-15);
     assert!(!draft.flip && draft.tangent);
 
@@ -184,7 +184,7 @@ fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
     assert_eq!(picking(&plates), MotionPick::Faces);
     assert_eq!(faces(&plates).len(), 1, "the top isn't a face drafted");
     let draft = drafted(&plates).unwrap();
-    assert!(matches!(draft.neutral, PlaneRef::Face(_)));
+    assert!(matches!(draft.neutral, Plane::Face(_)));
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     assert!(near(
@@ -219,7 +219,7 @@ fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
     // An origin plane only while the plane picks.
     plates.motion(MotionLook::OriginPlane(OriginPlane::XY));
     let session = plates.doc.mode.motion().unwrap();
-    assert_eq!(session.plane, Some(PlaneRef::Origin(OriginPlane::XZ)));
+    assert_eq!(session.plane, Some(Plane::Origin(OriginPlane::XZ)));
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.motion(MotionLook::OriginPlane(OriginPlane::XY));
 
@@ -328,7 +328,7 @@ fn a_neutral_face_an_undo_takes_away_is_gone() {
     );
     click(&mut plates, other);
     let draft = drafted(&plates).expect("a draft");
-    assert!(matches!(draft.neutral, PlaneRef::Face(face) if face.body == second));
+    assert!(matches!(draft.neutral, Plane::Face(face) if face.body == second));
     assert!(shows(&plates, "1 face · 3° from Extrude 2's end"));
 
     plates.doc.update(Edit::Undo);
@@ -374,7 +374,7 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![false]));
     plates.doc.look(Look::ToggleOverlap(0));
     let session = plates.doc.mode.motion().unwrap();
-    assert!(matches!(session.plane, Some(PlaneRef::Face(_))));
+    assert!(matches!(session.plane, Some(Plane::Face(_))));
     assert_eq!(picking(&plates), MotionPick::Faces);
     assert_eq!(faces(&plates).len(), 1);
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![false]));
@@ -428,7 +428,7 @@ fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
         plates.doc.motion_draft().map(|draft| draft.1),
         Some(FeatureKind::FaceDraft(draft.clone()))
     );
-    assert!(matches!(draft.neutral, PlaneRef::Face(face) if face.body == second));
+    assert!(matches!(draft.neutral, Plane::Face(face) if face.body == second));
     // The front leans out below the plane at the top: its foot moved
     // out by 10 tan 3°.
     let [low, _] = plates.bounds(body);
@@ -458,7 +458,7 @@ fn the_neutral_face_among_the_faces_drafted_is_refused() {
     assert_eq!(picking(&plates), MotionPick::Faces);
     click(&mut plates, pick);
     let draft = drafted(&plates).expect("a draft");
-    assert!(matches!(draft.neutral, PlaneRef::Face(face) if face.key == draft.faces[0].key));
+    assert!(matches!(draft.neutral, Plane::Face(face) if face.key == draft.faces[0].key));
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("refused");
     assert!(error.contains("faces the pull direction"), "{error}");

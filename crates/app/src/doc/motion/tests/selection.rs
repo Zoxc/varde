@@ -4,7 +4,7 @@
 
 use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
-use varde_document::{AxisLine, AxisRef, BodyId, FeatureId, FeatureKind, PlaneRef};
+use varde_document::{AxisLine, AxisRef, BodyId, FeatureId, FeatureKind, Plane};
 use varde_regen::Summary;
 use varde_view::{
     Look, MotionKind, MotionLook, MotionPick, Pick, Picked, RevolveLook, Selection, SelectionMode,
@@ -294,7 +294,7 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
     plates.doc.look(Look::StartMotion(MotionKind::Mirror));
     let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [plate]);
-    let Some(varde_document::PlaneRef::Face(face)) = session.plane else {
+    let Some(varde_document::Plane::Face(face)) = session.plane else {
         panic!("a face plane: {:?}", session.plane);
     };
     assert_eq!(face.body, plate);
@@ -393,7 +393,7 @@ fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     plates.doc.look(Look::StartMotion(MotionKind::Draft));
     let session = plates.doc.mode.motion().unwrap();
     assert!(
-        matches!(session.plane, Some(PlaneRef::Face(_))),
+        matches!(session.plane, Some(Plane::Face(_))),
         "{:?}",
         session.plane
     );
@@ -407,7 +407,7 @@ fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     assert_eq!(picked_faces(&plates).len(), 1);
     assert_eq!(
         plates.doc.mode.motion().unwrap().plane,
-        Some(PlaneRef::Origin(varde_document::OriginPlane::XY))
+        Some(Plane::Origin(varde_document::OriginPlane::XY))
     );
 }
 

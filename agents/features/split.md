@@ -11,7 +11,7 @@ pub struct Split {
     #[serde(default)] pub new_body: Option<BodyId>, // Some when keep is Both; held while one side is
 }
 pub enum SplitTool {
-    Plane(PlaneRef),                                      // an origin plane or a flat face's
+    Plane(Plane),                                         // an origin plane or a flat face's
     Face(FaceRef),                                        // a face's surface, continued past the body
     Body(BodyId),                                         // another body, kept
     Regions { sketch: FeatureId, regions: Vec<RegionRef> },  // through the body both ways

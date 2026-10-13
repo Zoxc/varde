@@ -154,4 +154,4 @@
   alone), a sweep with no region bounded the chains through them as
   its path, and a split its line (`Doc::curves_selected`). Move,
   pattern, mirror, align and scale can't name a sketch's line or point
-  (`AxisRef`, `PlaneRef`, `PointRef`), so take none.
+  (`AxisRef`, `Plane`, `PointRef`), so take none.

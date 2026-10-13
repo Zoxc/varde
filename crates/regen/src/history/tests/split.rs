@@ -13,7 +13,7 @@
 //! out, ignored until the kernel's split is built.
 
 use glam::{DVec2, DVec3};
-use varde_document::{FaceRef, Keep, Mirror, Move, PlaneRef, Side, Split, SplitTool, Targets};
+use varde_document::{FaceRef, Keep, Mirror, Move, Plane, Side, Split, SplitTool, Targets};
 use varde_sketch::Id;
 
 use super::motion::{add, block, failure, key_on, set};
@@ -182,8 +182,8 @@ fn every_tool_reaches_the_kernel_and_fails_as_too_complex() {
     };
     let region = sketch.profiles().unwrap().reference(0).unwrap();
     let tools = [
-        SplitTool::Plane(PlaneRef::Origin(OriginPlane::YZ)),
-        SplitTool::Plane(PlaneRef::Face(side)),
+        SplitTool::Plane(Plane::Origin(OriginPlane::YZ)),
+        SplitTool::Plane(Plane::Face(side)),
         SplitTool::Face(side),
         SplitTool::Chain {
             sketch: line_sketch,
@@ -234,7 +234,7 @@ fn faces_and_lines_are_refused_before_the_kernel() {
     };
     let plane_gone = add(
         &mut editor,
-        split(cube, SplitTool::Plane(PlaneRef::Face(gone))),
+        split(cube, SplitTool::Plane(Plane::Face(gone))),
     );
     let face_gone = add(&mut editor, split(cube, SplitTool::Face(gone)));
     // A disc's wall isn't flat.
@@ -247,7 +247,7 @@ fn faces_and_lines_are_refused_before_the_kernel() {
     };
     let not_flat = add(
         &mut editor,
-        split(cube, SplitTool::Plane(PlaneRef::Face(wall))),
+        split(cube, SplitTool::Plane(Plane::Face(wall))),
     );
     // Lines: a circle, three lines from a point, two apart, a loop.
     let (circle_sketch, circles) = {
@@ -494,7 +494,7 @@ fn a_sketch_on_a_face_follows_it_into_the_new_body() {
         &mut editor,
         Mirror {
             bodies: vec![cube],
-            plane: PlaneRef::Face(left),
+            plane: Plane::Face(left),
             keep_original: false,
         },
     );
@@ -869,7 +869,7 @@ fn kernel_a_box_split_by_xy() {
     let cube = editor.document().bodies()[0].id;
     let id = add(
         &mut editor,
-        split(cube, SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY))),
+        split(cube, SplitTool::Plane(Plane::Origin(OriginPlane::XY))),
     );
     let piece = new_body(&editor, id);
     let (front, back) = (solid_after(&editor, cube), solid_after(&editor, piece));
@@ -929,7 +929,7 @@ fn kernel_a_body_split_by_its_own_face_plane() {
     };
     let id = add(
         &mut editor,
-        split(body, SplitTool::Plane(PlaneRef::Face(step))),
+        split(body, SplitTool::Plane(Plane::Face(step))),
     );
     let piece = new_body(&editor, id);
     assert_near(solid_after(&editor, body).volume(), 500.0);

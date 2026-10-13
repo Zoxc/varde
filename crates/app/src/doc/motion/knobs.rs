@@ -47,7 +47,7 @@
 
 use crate::doc::OperationSlot;
 use glam::DVec3;
-use varde_document::{EdgeRef, FaceRef, Generation, PlaneRef};
+use varde_document::{EdgeRef, FaceRef, Generation, Plane};
 use varde_expr::{AngleUnit, Ask, Unit};
 use varde_regen::SweepFound;
 use varde_view::{
@@ -380,8 +380,8 @@ impl Doc {
     fn draft_knob(&self, session: &MotionSession) -> Option<OpKnob> {
         let (at, normal) = self.face_anchor(session)?;
         let [point, plane_normal] = match session.plane.as_ref()? {
-            PlaneRef::Origin(plane) => [DVec3::ZERO, plane.placement().normal],
-            PlaneRef::Face(_) => self.feed.draft_reference()?,
+            Plane::Origin(plane) => [DVec3::ZERO, plane.placement().normal],
+            Plane::Face(_) => self.feed.draft_reference()?,
         };
         let pull = if session.flip {
             -plane_normal
