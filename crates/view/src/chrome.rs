@@ -76,14 +76,10 @@ pub(crate) fn side_tip<'a>(
     let tip = row![text(label).size(12), chip]
         .spacing(6)
         .align_y(Alignment::Center);
-    tooltip(
-        content,
-        container(tip).padding([3, 6]).style(theme::menu),
-        tooltip::Position::Right,
-    )
-    .gap(6)
-    .snap_within_viewport(true)
-    .into()
+    tooltip(content, tip_box(tip), tooltip::Position::Right)
+        .gap(6)
+        .snap_within_viewport(true)
+        .into()
 }
 
 /// A 1 px horizontal separator.
