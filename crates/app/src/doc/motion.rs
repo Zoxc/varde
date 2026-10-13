@@ -195,16 +195,22 @@ struct Built {
     /// What clicks pick.
     picking: MotionPick,
     bodies: Vec<BodyId>,
-    /// An align's lit picks, the moved side's and the target's
-    /// ([`Doc::align_lit`]); a shell's faces are lit as an align's
-    /// moved side.
-    lit: [Vec<Picked>; 2],
+    /// What's lit besides the hover ([`Doc::motion_lit`]).
+    lit: Lit,
     /// Whether a split's tool body is picked, which lights the body
     /// hovered whole.
     tool_body: bool,
     /// Whether a chamfer's edges take in their tangent chains, which
     /// light with the edge hovered.
     chains: bool,
+}
+
+/// What a motion session lights besides the hover: some as selected,
+/// some in the second colour.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct Lit {
+    selected: Vec<Picked>,
+    second: Vec<Picked>,
 }
 
 /// An edited pattern's spacing or angle as stored, and the mode, Flip
@@ -2411,15 +2417,6 @@ impl Doc {
             },
             (None, None) => None,
         };
-        let lit = match session.kind {
-            MotionKind::Scale => [Vec::new(), self.scale_lit()],
-            MotionKind::Split => [Vec::new(), self.split_lit()],
-            _ if session.kind.blends() => self.blend_lit_parts(),
-            MotionKind::Sweep => [self.refs_lit::<EdgeRef>(), Vec::new()],
-            MotionKind::Loft => [Vec::new(), Vec::new()],
-            _ if session.kind.picks_faces() => [self.faces_lit(), Vec::new()],
-            _ => self.align_lit(),
-        };
         // A split's tool body lights whole while hovered.
         let tool_body = session.kind == MotionKind::Split && session.split.mode == SplitMode::Body;
         let model = self.feed.model();
@@ -2427,7 +2424,7 @@ impl Doc {
             hovered,
             picking: session.picking,
             bodies: session.bodies.clone(),
-            lit,
+            lit: self.motion_lit(session, hovered),
             tool_body,
             chains: session.blend.chains,
         };
@@ -2436,38 +2433,6 @@ impl Doc {
         }
         let index = self.feed.pick_index();
         let faces = |body: BodyId| index.body_faces(body).map(Picked::Face);
-        let lit = hovered
-            .filter(|&(_, panel)| panel)
-            .and_then(|(target, _)| index.body(target));
-        // While an align's references are picked, those picked for its
-        // directions are lit, the moved side's as selected, the target's
-        // in the second colour, rather than its body.
-        let (picked, second): (Vec<Picked>, Vec<Picked>) = match session.picking {
-            MotionPick::Align(_) => {
-                let [moved, target] = key.lit.clone();
-                (moved, target)
-            }
-            // A chamfer's edges and faces lit as selected (those it leaves
-            // out in the second colour, purple), a shell's faces, its body
-            // as it is.
-            _ if session.kind.blends() => (key.lit[0].clone(), key.lit[1].clone()),
-            _ if session.kind.picks_faces() || session.kind == MotionKind::Sweep => {
-                (key.lit[0].clone(), Vec::new())
-            }
-            _ => (
-                (session.bodies.iter())
-                    .filter(|&&body| Some(body) != lit)
-                    .flat_map(|&body| faces(body))
-                    .collect(),
-                // A scale's edge in the second colour, on its bodies; a
-                // split's piece not keeping the body's id.
-                if matches!(session.kind, MotionKind::Scale | MotionKind::Split) {
-                    key.lit[1].clone()
-                } else {
-                    Vec::new()
-                },
-            ),
-        };
         let hover: Vec<Picked> = match (hovered, session.picking) {
             (Some((target, true)), _) | (Some((target, false)), MotionPick::Bodies) => index
                 .body(target)
@@ -2498,11 +2463,50 @@ impl Doc {
             (Some((target, false)), MotionPick::Nothing) if panel_edge.is_some() => vec![target],
             (Some((_, false)), MotionPick::Nothing | MotionPick::Regions) | (None, _) => Vec::new(),
         };
-        let mut highlight = index.highlight_with(&hover, &picked, &second);
+        let mut highlight = index.highlight_with(&hover, &key.lit.selected, &key.lit.second);
         highlight.second_excluded = session.kind.blends();
         if let Some(session) = self.mode.motion_mut() {
             session.highlight.set(model, key, highlight);
         }
+    }
+
+    /// What `session` lights besides the hover, `hovered` the hover
+    /// [`Doc::refresh_motion_highlight`] found (a body whose panel row is
+    /// hovered isn't lit as selected, its hover shows it).
+    fn motion_lit(&self, session: &MotionSession, hovered: Option<(Picked, bool)>) -> Lit {
+        let pair = |[selected, second]: [Vec<Picked>; 2]| Lit { selected, second };
+        let kind = session.kind;
+        match session.picking {
+            // While an align's references are picked, those picked for
+            // its directions are lit, the moved side's as selected, the
+            // target's in the second colour, rather than its body.
+            MotionPick::Align(_) => return pair(self.align_lit()),
+            // A chamfer's edges and faces lit as selected (those it leaves
+            // out in the second colour, purple).
+            _ if kind.blends() => return pair(self.blend_lit_parts()),
+            // A shell's faces, its body as it is; a sweep's path.
+            _ if kind.picks_faces() => return pair([self.faces_lit(), Vec::new()]),
+            _ if kind == MotionKind::Sweep => {
+                return pair([self.refs_lit::<EdgeRef>(), Vec::new()]);
+            }
+            _ => {}
+        }
+        let index = self.feed.pick_index();
+        let panel = hovered
+            .filter(|&(_, panel)| panel)
+            .and_then(|(target, _)| index.body(target));
+        let selected = (session.bodies.iter())
+            .filter(|&&body| Some(body) != panel)
+            .flat_map(|&body| index.body_faces(body).map(Picked::Face))
+            .collect();
+        // A scale's edge in the second colour, on its bodies; a split's
+        // piece not keeping the body's id.
+        let second = match kind {
+            MotionKind::Scale => self.scale_lit(),
+            MotionKind::Split => self.split_lit(),
+            _ => Vec::new(),
+        };
+        Lit { selected, second }
     }
 
     /// The move's or mirror's highlight, if one is set up and it's built
