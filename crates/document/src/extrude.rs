@@ -90,24 +90,34 @@ pub struct Targets {
 }
 
 impl Operation {
-    /// The bodies taken out of a join, cut or intersect's targets.
-    pub fn excluded(&self) -> &[BodyId] {
+    /// The bodies a join, cut or intersect works on; none for a new body.
+    pub fn targets(&self) -> Option<&Targets> {
         match self {
-            Operation::NewBody(_) => &[],
+            Operation::NewBody(_) => None,
             Operation::Join(targets) | Operation::Cut(targets) | Operation::Intersect(targets) => {
-                &targets.excluded
+                Some(targets)
             }
         }
     }
 
     /// The same, to change.
-    pub(crate) fn excluded_mut(&mut self) -> Option<&mut Vec<BodyId>> {
+    pub(crate) fn targets_mut(&mut self) -> Option<&mut Targets> {
         match self {
             Operation::NewBody(_) => None,
             Operation::Join(targets) | Operation::Cut(targets) | Operation::Intersect(targets) => {
-                Some(&mut targets.excluded)
+                Some(targets)
             }
         }
+    }
+
+    /// The bodies taken out of a join, cut or intersect's targets.
+    pub fn excluded(&self) -> &[BodyId] {
+        self.targets().map_or(&[], |targets| &targets.excluded)
+    }
+
+    /// The same, to change.
+    pub(crate) fn excluded_mut(&mut self) -> Option<&mut Vec<BodyId>> {
+        self.targets_mut().map(|targets| &mut targets.excluded)
     }
 
     /// The body it makes, for [`Operation::NewBody`].
@@ -121,12 +131,7 @@ impl Operation {
     /// The id it holds for the body it made as a new body before, for a
     /// join, cut or intersect ([`Targets::held`]).
     pub fn held_body(&self) -> Option<BodyId> {
-        match self {
-            Operation::NewBody(_) => None,
-            Operation::Join(targets) | Operation::Cut(targets) | Operation::Intersect(targets) => {
-                targets.held
-            }
-        }
+        self.targets().and_then(|targets| targets.held)
     }
 }
 
