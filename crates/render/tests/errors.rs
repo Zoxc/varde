@@ -13,7 +13,7 @@ use varde_render::OriginShown;
 use varde_render::style::*;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, LineStyle, Projection,
-    Renderer, Shading, SketchLayer, SketchScene, Slot, Space, Srgb, Srgba, View, Viewport, wgpu,
+    Renderer, SketchLayer, SketchScene, Slot, Space, Srgb, Srgba, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -175,42 +175,16 @@ fn frame<'a>(
     errors: &'a [ErrorParts<'a>],
     faded: bool,
 ) -> Frame<'a> {
-    let [width, height] = SIZE.map(|s| s as f32);
     Frame {
-        camera,
-        mesh,
-        opacity: &[],
-        tints: &[],
-        sketches: &NO_LINES,
         grid: hidden_grid(),
         fade: if faded { 1.0 } else { 0.0 },
-        fading_grid: None,
-        wireframe: false,
-        tessellation: false,
-        shading: Shading::Regular,
-        hidden_edges: false,
-        hovered_faces: &[],
-        selected_faces: &[],
-        second_faces: &[],
-        hover_through: false,
-        highlights: &NO_HIGHLIGHTS,
         errors,
-        sketch: None,
-        pivot: None,
         // The grid's axis lines, as before the Z axis was drawn.
         origin: OriginShown {
             axes: [true, true, false],
             ..OriginShown::DEFAULT
         },
-        viewport: Viewport {
-            x: 0.0,
-            y: 0.0,
-            width,
-            height,
-        },
-        target_size: SIZE,
-        scale_factor: 1.0,
-        colors: COLORS,
+        ..Frame::plain(camera, mesh, &NO_LINES, &NO_HIGHLIGHTS, SIZE, 1.0, COLORS)
     }
 }
 

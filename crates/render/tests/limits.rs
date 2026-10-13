@@ -11,7 +11,7 @@ use varde_kernel_compat::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, LineStyle, PrepareError,
-    Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Upload, Viewport, wgpu,
+    Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, Upload, wgpu,
 };
 
 /// Nothing hovered or selected.
@@ -93,40 +93,21 @@ fn frame<'a>(
     sketches: &'a Arc<RenderLines>,
 ) -> Frame<'a> {
     Frame {
-        camera,
-        mesh,
-        opacity: &[],
-        tints: &[],
-        sketches,
-        grid: GridPlane::XY,
-        fade: 0.0,
-        fading_grid: None,
-        wireframe: false,
-        tessellation: false,
-        shading: Shading::Regular,
         hidden_edges: true,
-        hovered_faces: &[],
-        selected_faces: &[],
-        second_faces: &[],
-        hover_through: false,
-        highlights: &NO_HIGHLIGHTS,
-        errors: &[],
-        sketch: None,
-        pivot: None,
         // The grid's axis lines, as before the Z axis was drawn.
         origin: OriginShown {
             axes: [true, true, false],
             ..OriginShown::DEFAULT
         },
-        viewport: Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: 64.0,
-            height: 64.0,
-        },
-        target_size: [64, 64],
-        scale_factor: 1.0,
-        colors: COLORS,
+        ..Frame::plain(
+            camera,
+            mesh,
+            sketches,
+            &NO_HIGHLIGHTS,
+            [64, 64],
+            1.0,
+            COLORS,
+        )
     }
 }
 

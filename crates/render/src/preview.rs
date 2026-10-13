@@ -10,8 +10,7 @@ use varde_kernel_compat::{RenderLines, RenderMesh};
 
 use crate::renderer::{linear_to_srgb, srgb_to_linear};
 use crate::{
-    BodyTint, Camera, ClipRect, Colors, Frame, GridPlane, Highlights, PrepareError, Projection,
-    Renderer, Shading, Viewport,
+    BodyTint, Camera, ClipRect, Colors, Frame, Highlights, PrepareError, Projection, Renderer,
 };
 
 /// Where a preview looks from and how large it is: see [`frame`].
@@ -283,56 +282,38 @@ pub fn render_preview(
         label: Some("varde preview"),
     });
     let none = Arc::new(Highlights::default());
+    // One target for all: each copy out is recorded before the next clear.
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("varde preview"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
     for (i, &colors) in colors.iter().enumerate() {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("varde preview"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-
         // A slot each, as the uniforms are written before the one submit.
         let mut slot = renderer.slot(device);
         let frame = Frame {
-            camera: &shot.camera,
-            mesh,
             opacity,
             tints,
-            sketches,
-            grid: GridPlane::XY,
-            fade: 0.0,
-            fading_grid: None,
-            wireframe: false,
-            tessellation: false,
-            shading: Shading::Regular,
-            hidden_edges: false,
-            hovered_faces: &[],
             selected_faces: selection.map_or(&[], |selection| selection.faces),
-            second_faces: &[],
-            hover_through: false,
-            highlights: selection.map_or(&none, |selection| selection.highlights),
-            errors: &[],
-            sketch: None,
-            pivot: None,
-            origin: crate::OriginShown::NONE,
-            viewport: Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: width as f32,
-                height: height as f32,
-            },
-            target_size: shot.size,
-            scale_factor,
-            colors,
+            ..Frame::plain(
+                &shot.camera,
+                mesh,
+                sketches,
+                selection.map_or(&none, |selection| selection.highlights),
+                shot.size,
+                scale_factor,
+                colors,
+            )
         };
         renderer
             .prepare(&mut slot, device, queue, &frame)

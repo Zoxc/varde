@@ -321,6 +321,56 @@ pub struct Frame<'a> {
     pub colors: Colors,
 }
 
+impl<'a> Frame<'a> {
+    /// A frame of `mesh` and `sketches` from `camera` filling a target of
+    /// `target_size`, with nothing else: no fade, overlays, faces hovered
+    /// or selected, failures, sketch being edited, pivot or origin, the
+    /// grid on the world's XY plane, the mesh's parts opaque and untinted,
+    /// lit as [`Shading::Regular`]. Other fields are set on the result.
+    pub fn plain(
+        camera: &'a Camera,
+        mesh: &'a Arc<RenderMesh>,
+        sketches: &'a Arc<RenderLines>,
+        highlights: &'a Arc<Highlights>,
+        target_size: [u32; 2],
+        scale_factor: f32,
+        colors: Colors,
+    ) -> Self {
+        Frame {
+            camera,
+            mesh,
+            opacity: &[],
+            tints: &[],
+            sketches,
+            grid: GridPlane::XY,
+            fade: 0.0,
+            fading_grid: None,
+            wireframe: false,
+            tessellation: false,
+            shading: Shading::Regular,
+            hidden_edges: false,
+            hovered_faces: &[],
+            selected_faces: &[],
+            second_faces: &[],
+            highlights,
+            hover_through: false,
+            sketch: None,
+            errors: &[],
+            pivot: None,
+            origin: OriginShown::NONE,
+            viewport: Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: target_size[0] as f32,
+                height: target_size[1] as f32,
+            },
+            target_size,
+            scale_factor,
+            colors,
+        }
+    }
+}
+
 /// The drawable parts of a failure's geometry, for [`Frame::errors`].
 #[derive(Debug, Clone)]
 pub struct ErrorParts<'a> {

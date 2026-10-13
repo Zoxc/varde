@@ -9,10 +9,9 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
 use varde_kernel_compat::{RenderLines, RenderMesh, Solid, Tolerance};
-use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, Projection, Renderer,
-    Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
+    SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -121,39 +120,10 @@ fn frame<'a>(
     mesh: &'a Arc<RenderMesh>,
     sketches: &'a Arc<RenderLines>,
 ) -> Frame<'a> {
-    let [width, height] = SIZE.map(|s| s as f32);
     Frame {
-        camera,
-        mesh,
-        opacity: &[],
-        tints: &[],
-        sketches,
-        grid: GridPlane::XY,
-        fade: 0.0,
-        fading_grid: None,
-        wireframe: false,
-        tessellation: false,
-        shading: Shading::Regular,
         hidden_edges: true,
-        hovered_faces: &[],
-        selected_faces: &[],
-        second_faces: &[],
-        hover_through: false,
-        highlights: &NO_HIGHLIGHTS,
-        errors: &[],
-        sketch: None,
-        pivot: None,
-        // The world's axes would cross what the tests read.
-        origin: OriginShown::NONE,
-        viewport: Viewport {
-            x: 0.0,
-            y: 0.0,
-            width,
-            height,
-        },
-        target_size: SIZE,
-        scale_factor: 1.0,
-        colors: COLORS,
+        // Without the world's axes, which would cross what the tests read.
+        ..Frame::plain(camera, mesh, sketches, &NO_HIGHLIGHTS, SIZE, 1.0, COLORS)
     }
 }
 
