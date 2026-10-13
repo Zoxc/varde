@@ -105,6 +105,12 @@ struct Knots {
     closed: bool,
 }
 
+/// Whether `knots` are a closed spline's ([`BSpline::periodic`]) or an
+/// open one's ([`BSpline::clamped`]) for `count` control points.
+pub(crate) fn knots_fit(knots: &[f64], closed: bool, count: usize) -> bool {
+    Knots::new(knots, closed).is_some_and(|knots| knots.count == count)
+}
+
 impl Knots {
     /// A closed spline's ([`Knots::periodic`]) or an open one's
     /// ([`Knots::clamped`]).

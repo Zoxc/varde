@@ -166,8 +166,7 @@ impl Spline {
                     })
             }
             SplineKind::Control => {
-                let control = vec![DVec2::ZERO; count];
-                self.handles.is_empty() && self.shape_of(control, &[]).is_some()
+                self.handles.is_empty() && basis::knots_fit(&self.knots, self.closed, count)
             }
         }
     }
