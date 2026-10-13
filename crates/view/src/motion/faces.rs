@@ -47,5 +47,5 @@ pub(super) fn faces_field<'a>(
         hover: PanelHover::Face(at),
         tone: RowTone::Plain,
     });
-    picks_field(state, MotionPick::Faces, label, place, rows)
+    picks_field(state, MotionPick::Faces, label, place, rows, 0)
 }

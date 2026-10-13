@@ -169,6 +169,7 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             "Rails",
             "Click sketch curves",
             rows,
+            0,
         )
     });
     let operation = operation_section(

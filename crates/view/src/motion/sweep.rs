@@ -123,21 +123,20 @@ pub(super) fn body<'a>(
             tone: RowTone::Plain,
         })
     });
-    let regions = regions.chain((0..sweep.missing).map(|index| PickedRow {
-        icon: Icon::SeRegion,
-        name: "Missing region".to_owned(),
-        meta: None,
-        drop: MotionLook::DropMissingRegion(index),
-        hover: PanelHover::Missing(index),
-        tone: RowTone::Failed,
-    }));
     let empty = Candidate::none_closed(&sweep.candidates);
     let place = if sweep.picked.is_empty() && empty {
         "No closed regions to sweep"
     } else {
         "Click regions"
     };
-    let profile = picks_field(state, MotionPick::Regions, "Profile", place, regions);
+    let profile = picks_field(
+        state,
+        MotionPick::Regions,
+        "Profile",
+        place,
+        regions,
+        sweep.missing,
+    );
 
     let paths = SweepPath::ALL.iter().map(|&path| {
         tile(
@@ -165,6 +164,7 @@ pub(super) fn body<'a>(
                 "Path",
                 "Click sketch curves or edges",
                 rows,
+                0,
             );
             let keep = toggle(
                 Icon::Move,

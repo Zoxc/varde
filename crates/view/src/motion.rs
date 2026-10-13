@@ -26,7 +26,7 @@ use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
     ListRow, OperationKind, PanelHover, Parts, RowTone, TypedField, Verdict, field, label,
-    operation_panel, pick_rows, tile, tiles, toggle, value_field,
+    missing_rows, operation_panel, pick_rows, tile, tiles, toggle, value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
@@ -1194,13 +1194,15 @@ struct PickedRow {
 
 /// The panel's field `label` of references picked by `pick` (a blend's
 /// edges, a face session's faces): a row each, pressing one picking
-/// them, and while picking, or with none, where to click (`place`).
+/// them, and while picking, or with none, where to click (`place`);
+/// after them the rows of the `missing` regions that weren't found.
 fn picks_field<'a>(
     state: &MotionState<'a>,
     pick: MotionPick,
     label: &'a str,
     place: &str,
     rows: impl Iterator<Item = PickedRow>,
+    missing: usize,
 ) -> Element<'a, Message> {
     let on = state.picking == pick;
     let press = state.send(MotionLook::Picking(pick));
@@ -1213,6 +1215,12 @@ fn picks_field<'a>(
                 .tone(row.tone)
                 .view(state.hover)
         })
+        .chain(missing_rows(
+            missing,
+            |index| state.send(MotionLook::DropMissingRegion(index)),
+            press.clone(),
+            state.hover,
+        ))
         .collect();
     field(label, pick_rows(rows, place, on, press))
 }

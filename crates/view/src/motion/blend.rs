@@ -92,7 +92,14 @@ pub(super) fn edges_field<'a>(
         tone: RowTone::Plain,
     });
     let rows = (edges.edges.iter().enumerate()).map(|(at, edge)| edge.row(at));
-    picks_field(state, MotionPick::Edges, "Edges", place, faces.chain(rows))
+    picks_field(
+        state,
+        MotionPick::Edges,
+        "Edges",
+        place,
+        faces.chain(rows),
+        0,
+    )
 }
 
 /// The Tangent chain tick, on to begin with: the model mock has it on
