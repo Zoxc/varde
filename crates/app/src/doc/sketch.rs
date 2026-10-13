@@ -604,16 +604,13 @@ impl Doc {
             }
             return;
         };
-        let (plane, placed) = match plane {
-            Plane::Origin(_) => (plane, None),
-            Plane::Face(face) => match self.face_placement(&face, &picking.pick) {
-                Ok((face, placement)) => (Plane::Face(face), Some(placement)),
-                Err(why) => {
-                    self.notice = Some(why.into_owned());
-                    self.mode = DocMode::PickingPlane(picking);
-                    return;
-                }
-            },
+        let (plane, placed) = match self.resolve_plane(plane, &picking.pick) {
+            Ok(resolved) => resolved,
+            Err(why) => {
+                self.notice = Some(why.into_owned());
+                self.mode = DocMode::PickingPlane(picking);
+                return;
+            }
         };
         let Some((feature, _)) = picking.pick.sketch.clone() else {
             self.change(Change::NewSketch(plane));
@@ -639,15 +636,8 @@ impl Doc {
     ) {
         let before = self.editor.revision();
         self.apply(Command::SetSketchPlane { feature, plane });
-        if self.editor.revision() != before
-            && let Some(placement) = placed
-        {
-            self.placed = Some(Placed {
-                feature,
-                plane,
-                placement,
-                generation: self.editor.generation(),
-            });
+        if self.editor.revision() != before {
+            self.remember_placed(feature, plane, placed);
         }
         if enter {
             self.enter_sketch(feature);
@@ -660,15 +650,12 @@ impl Doc {
     /// (see [`Doc::placement`]), so the session starts facing it.
     pub(crate) fn new_sketch(&mut self, plane: Plane) {
         self.mode.take_picking_plane();
-        let (plane, placed) = match plane {
-            Plane::Origin(_) => (plane, None),
-            Plane::Face(face) => match self.face_placement(&face, &self.new_sketch_pick()) {
-                Ok((face, placement)) => (Plane::Face(face), Some(placement)),
-                Err(why) => {
-                    self.notice = Some(why.into_owned());
-                    return;
-                }
-            },
+        let (plane, placed) = match self.resolve_plane(plane, &self.new_sketch_pick()) {
+            Ok(resolved) => resolved,
+            Err(why) => {
+                self.notice = Some(why.into_owned());
+                return;
+            }
         };
         let before = self.editor.revision();
         let at = self.editor.document().insert_at();
@@ -677,15 +664,39 @@ impl Doc {
             && let Some(feature) = self.editor.document().features().get(at)
         {
             let feature = feature.id;
-            if let Some(placement) = placed {
-                self.placed = Some(Placed {
-                    feature,
-                    plane,
-                    placement,
-                    generation: self.editor.generation(),
-                });
-            }
+            self.remember_placed(feature, plane, placed);
             self.enter_sketch(feature);
+        }
+    }
+
+    /// The plane a sketch picked on `plane` goes on, and where if that's
+    /// a face: an origin plane as it is, a face as [`Doc::face_placement`]
+    /// places it for `pick`, or refused, why.
+    fn resolve_plane(
+        &self,
+        plane: Plane,
+        pick: &PlanePick,
+    ) -> Result<(Plane, Option<Placement>), Cow<'static, str>> {
+        match plane {
+            Plane::Origin(_) => Ok((plane, None)),
+            Plane::Face(face) => {
+                let (face, placement) = self.face_placement(&face, pick)?;
+                Ok((Plane::Face(face), Some(placement)))
+            }
+        }
+    }
+
+    /// Notes that the sketch `feature`, just put on `plane`, is `placed`
+    /// there as of this generation, if it's on a face, for
+    /// [`Doc::placement`] to use until a model places it.
+    fn remember_placed(&mut self, feature: FeatureId, plane: Plane, placed: Option<Placement>) {
+        if let Some(placement) = placed {
+            self.placed = Some(Placed {
+                feature,
+                plane,
+                placement,
+                generation: self.editor.generation(),
+            });
         }
     }
 
