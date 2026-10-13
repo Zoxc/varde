@@ -741,8 +741,8 @@ impl Numbers {
     }
 }
 
-#[cfg(test)]
-mod testing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 #[cfg(test)]
 mod tests;

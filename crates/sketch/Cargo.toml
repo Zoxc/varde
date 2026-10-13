@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The helpers tests build sketches with, for other crates' tests.
+testing = []
+
 [dependencies]
 thiserror.workspace = true
 faer.workspace = true

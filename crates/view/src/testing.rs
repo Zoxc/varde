@@ -2,29 +2,16 @@
 //! and draw them headless.
 
 use glam::DVec2;
-use varde_expr::{LengthUnit, Value};
-use varde_sketch::{Curve, Design, Dimension, Handle, Id, Measure, Selectable, Sketch, Spline};
+use varde_expr::Value;
+use varde_sketch::{Curve, Dimension, Handle, Id, Measure, Selectable, Sketch, Spline};
+
+pub(crate) use varde_sketch::testing::{DESIGN, handle, line, point};
 
 use crate::typed::{DEFAULT_SIDES, Field};
 use crate::{ActiveTool, Target, Tool};
 
-/// A design in millimetres.
-pub(crate) const DESIGN: Design<'static> = Design {
-    max: 1e6,
-    units: LengthUnit::Mm,
-    params: varde_expr::Params::EMPTY,
-};
-
 pub(crate) fn at(x: f64, y: f64) -> DVec2 {
     DVec2::new(x, y)
-}
-
-pub(crate) fn point(sketch: &mut Sketch, x: f64, y: f64) -> Id {
-    sketch.add_point(at(x, y)).unwrap()
-}
-
-pub(crate) fn line(sketch: &mut Sketch, start: Id, end: Id) -> Id {
-    sketch.add_curve(Curve::Line { start, end }, false).unwrap()
 }
 
 /// An open spline through fit points at `places`: it and its fit points.
@@ -49,14 +36,6 @@ pub(crate) fn handled_spline(sketch: &mut Sketch) -> (Id, Vec<Id>, Id) {
         });
     }
     (spline, fit, tip)
-}
-
-/// A handle at the fit point `at` with its tip `tip`, its end a new
-/// point mirroring the tip.
-pub(crate) fn handle(sketch: &mut Sketch, at: Id, tip: Id) -> Handle {
-    let (from, to) = (sketch.point(at).unwrap().at, sketch.point(tip).unwrap().at);
-    let end = sketch.add_point(2.0 * from - to).unwrap();
-    Handle { at, tip, end }
 }
 
 /// A plate from (-`x`, -`y`) to (`x`, `y`) with a hole of `radius` at the
