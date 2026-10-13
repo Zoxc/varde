@@ -22,7 +22,6 @@ mod feature;
 mod fillet;
 mod loft;
 mod motion;
-pub mod name;
 mod offset_face;
 mod opacity;
 mod outside;

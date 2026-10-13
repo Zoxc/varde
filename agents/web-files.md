@@ -74,7 +74,7 @@ designs (`designs/`) one too. Reading in parts goes through the file's
 `getFile()` snapshot and `FileReaderSync`, which workers have.
 `src/browser/folder.rs` is the code over it.
 
-The file name is the design's name, as `document::name::download_name`
+The file name is the design's name, as `io::name::download_name`
 makes it, so a design downloads under the name it has in storage, and
 there's no metadata to keep in step. A name is cut, at its stem, to
 leave room for the longest name made from it, its temporary file's

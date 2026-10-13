@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use iced::Element;
 use varde_document::Document;
-use varde_document::name::UNTITLED;
+use varde_io::name::UNTITLED;
 use varde_io::{
     Access, BrowserDesign, Chosen, Closing, Damage, DamageKind, DownloadStatus, ListedDamage,
     OpenId, Opened, PickedFrom, Recovered, RecoveryError, Request as IoRequest, UnixSeconds,

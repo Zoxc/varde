@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use crate::EXTENSION;
+use varde_document::EXTENSION;
 
 /// The name of a design with no file.
 pub const UNTITLED: &str = "Untitled";

@@ -61,7 +61,7 @@
 //! On the web the pickers and downloads are the page's, see
 //! `src/web/page/pick.rs`, and reading and writing what they handed over
 //! is the IO worker's, see `src/web/worker/disk.rs`. How a design's file
-//! is named is [`varde_document::name`]'s.
+//! is named is [`crate::name`]'s.
 
 use varde_document::APP_NAME;
 

@@ -4,7 +4,7 @@
 //! web without the File System Access API. Each step is something the user
 //! did or a lane answered, like saving's (see `save.rs`).
 
-use varde_document::name::download_name_with;
+use varde_io::name::download_name_with;
 use varde_io::three_mf::{self, Body};
 use varde_io::{Chosen, Request as IoRequest, SaveTo};
 use varde_regen::ExportedBody;

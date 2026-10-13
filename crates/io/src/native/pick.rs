@@ -1,8 +1,8 @@
 //! The platform's file dialogs, where the user picks files of theirs
 //! natively.
 
+use crate::name::{download_name, download_name_with};
 use varde_document::EXTENSION;
-use varde_document::name::{download_name, download_name_with};
 
 use crate::pick::{Download, export_filter, filter};
 use crate::three_mf;

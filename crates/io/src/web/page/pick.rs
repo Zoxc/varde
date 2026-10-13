@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
 
+use crate::name::{download_name, download_name_with};
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
-use varde_document::name::{download_name, download_name_with};
 use varde_document::{APP_NAME, EXTENSION};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};

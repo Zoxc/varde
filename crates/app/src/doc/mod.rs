@@ -31,11 +31,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec3;
 use iced::Element;
 use iced::time::Instant;
-use varde_document::name::UNTITLED;
 use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Opacity,
     Plane, Removable, Removal, Revision, Tint, Tolerance,
 };
+use varde_io::name::UNTITLED;
 use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeconds};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};

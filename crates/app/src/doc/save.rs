@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use iced::time::Instant;
 use iced::window;
-use varde_document::name::{UNTITLED, with_extension_of};
 use varde_document::{Command, EXTENSION, Revision};
+use varde_io::name::{UNTITLED, with_extension_of};
 use varde_io::{
     Chosen, Closing, FileId, LastDownload, OpenId, Picked, Request as IoRequest, SaveError, SaveTo,
     UnixSeconds,
@@ -1209,7 +1209,7 @@ impl Doc {
         let Some(download) = &cx.downloader else {
             return;
         };
-        let name = varde_document::name::download_name(&self.name);
+        let name = varde_io::name::download_name(&self.name);
         let result = varde_io::vrdp::to_bytes(self.editor.document(), &[])
             .map_err(|e| e.to_string())
             .and_then(|(bytes, _)| download(&name, &bytes));

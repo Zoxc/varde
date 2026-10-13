@@ -52,6 +52,7 @@
 mod autosave;
 pub mod browser;
 mod lock;
+pub mod name;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod open;
@@ -1016,7 +1017,7 @@ pub enum Chosen {
     File(Picked),
     /// A design in browser storage, by its file name there, like
     /// `bracket.vrdp`: what the design is called, as
-    /// [`varde_document::name::download_name`] names it, so it downloads
+    /// [`crate::name::download_name`] names it, so it downloads
     /// by the same name.
     Browser(String),
 }

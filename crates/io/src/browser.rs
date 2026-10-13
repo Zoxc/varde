@@ -117,7 +117,7 @@ pub fn is_design_name(name: &str) -> bool {
 
 /// The file name in browser storage of a design called `name`, as typed
 /// or shown, with or without the extension: as it downloads (see
-/// [`varde_document::name::download_name`]), its stem cut to fit
+/// [`crate::name::download_name`]), its stem cut to fit
 /// [`MAX_NAME`].
 pub fn file_name(name: &str) -> String {
     within(name, "")
@@ -126,7 +126,7 @@ pub fn file_name(name: &str) -> String {
 /// [`file_name`] of `name` with `suffix` after its stem, such as " (2)",
 /// the stem cut, rather than the suffix, to fit [`MAX_NAME`].
 pub(crate) fn within(name: &str, suffix: &str) -> String {
-    use varde_document::name::download_name;
+    use crate::name::download_name;
     let whole = download_name(name);
     let stem = whole
         .rsplit_once('.')
