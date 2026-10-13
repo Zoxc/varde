@@ -64,6 +64,12 @@ impl SelectionMode {
         }
     }
 
+    /// Whether a click or hover on `target` counts in it: what the cursor
+    /// [`picks`](Self::picks) in it.
+    pub fn accepts(self, target: Picked) -> bool {
+        self.picks().takes(target)
+    }
+
     /// Whether bodies are selected in it, in the viewport or in Objects.
     pub fn takes_bodies(self) -> bool {
         matches!(self, SelectionMode::Any | SelectionMode::Bodies)
@@ -479,10 +485,14 @@ impl Selection {
             };
             Some((item, Some(Picked::Edge(chain))))
         };
+        if body || self.mode == SelectionMode::Bodies {
+            return vec![(Selected::Body(pick.body), None)];
+        }
+        if !self.mode.accepts(pick.target) {
+            return Vec::new();
+        }
         match (self.mode, pick.target) {
-            _ if body => vec![(Selected::Body(pick.body), None)],
-            (SelectionMode::Bodies, _) => vec![(Selected::Body(pick.body), None)],
-            (SelectionMode::Any | SelectionMode::Faces, Picked::Face(face)) => {
+            (_, Picked::Face(face)) => {
                 let Some(key) = index.picking().faces().get(face as usize).map(|f| f.key) else {
                     return Vec::new();
                 };
@@ -492,9 +502,6 @@ impl Selection {
                     near: pick.at,
                 };
                 vec![(item, Some(pick.target))]
-            }
-            (SelectionMode::Any | SelectionMode::Edges { tangent: false }, Picked::Edge(chain)) => {
-                edge(chain, pick.at).into_iter().collect()
             }
             (SelectionMode::Edges { tangent: true }, Picked::Edge(chain)) => {
                 (index.tangent_chain(chain).iter())
@@ -508,7 +515,8 @@ impl Selection {
                     })
                     .collect()
             }
-            (SelectionMode::Any, Picked::Vertex(corner)) => {
+            (_, Picked::Edge(chain)) => edge(chain, pick.at).into_iter().collect(),
+            (_, Picked::Vertex(corner)) => {
                 let Some(faces) = index.vertex_keys(corner) else {
                     return Vec::new();
                 };
@@ -519,8 +527,6 @@ impl Selection {
                 };
                 vec![(item, Some(pick.target))]
             }
-            (SelectionMode::Faces, Picked::Edge(_) | Picked::Vertex(_))
-            | (SelectionMode::Edges { .. }, Picked::Face(_) | Picked::Vertex(_)) => Vec::new(),
         }
     }
 
@@ -550,6 +556,9 @@ impl Selection {
     /// tangent chain where edges take theirs, or its body's faces where
     /// clicks select bodies.
     pub fn hovered(&self, index: &PickIndex, pick: Pick) -> Vec<Picked> {
+        if !self.mode.accepts(pick.target) {
+            return Vec::new();
+        }
         match (self.mode, pick.target) {
             (SelectionMode::Bodies, _) => index.body_faces(pick.body).map(Picked::Face).collect(),
             (SelectionMode::Edges { tangent: true }, Picked::Edge(chain)) => {
@@ -557,8 +566,6 @@ impl Selection {
                     .map(|&c| Picked::Edge(c))
                     .collect()
             }
-            (SelectionMode::Faces, Picked::Edge(_) | Picked::Vertex(_))
-            | (SelectionMode::Edges { .. }, Picked::Face(_) | Picked::Vertex(_)) => Vec::new(),
             (_, target) => vec![target],
         }
     }

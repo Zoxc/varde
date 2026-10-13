@@ -77,6 +77,17 @@ pub enum Picks {
     EdgesAndFaces,
 }
 
+impl Picks {
+    /// Whether the cursor picks `target` in it.
+    pub fn takes(self, target: Picked) -> bool {
+        match target {
+            Picked::Face(_) => self != Picks::Edges,
+            Picked::Edge(_) => self != Picks::Faces,
+            Picked::Vertex(_) => self == Picks::All,
+        }
+    }
+}
+
 /// A face, an edge or a vertex of the model shown: a face or edge of its
 /// mesh, so an index into its picking tables' [`Picking::faces`], or its
 /// [`Picking::closed`] and [`Picking::tangents`], or a corner of its mesh
