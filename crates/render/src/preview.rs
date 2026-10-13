@@ -225,12 +225,24 @@ pub struct PreviewSelection<'a> {
     pub highlights: &'a Arc<Highlights>,
 }
 
-/// Draws `mesh` and the finished `sketches` as `shot` frames them, its parts as opaque as `opacity` says
-/// (see [`Frame::opacity`]) and in the colours `tints` gives them (see
-/// [`Frame::tints`]), once in each of `colors`, with nothing behind
-/// it: no background, grid, sketch being edited or markers, nothing hovered or
-/// selected but `selection`, if given. Lines are as wide as `scale_factor` physical pixels to a
-/// logical one make them.
+/// What a preview draws: `mesh` and the finished `sketches`, its parts
+/// as opaque as `opacity` says (see [`Frame::opacity`]) and in the
+/// colours `tints` gives them (see [`Frame::tints`]), nothing hovered or
+/// selected but `selection`, if given, and lines as wide as
+/// `scale_factor` physical pixels to a logical one make them.
+#[derive(Debug, Clone, Copy)]
+pub struct PreviewScene<'a> {
+    pub mesh: &'a Arc<RenderMesh>,
+    pub sketches: &'a Arc<RenderLines>,
+    pub opacity: &'a [f32],
+    pub tints: &'a [Option<BodyTint>],
+    pub selection: Option<PreviewSelection<'a>>,
+    pub scale_factor: f32,
+}
+
+/// Draws `scene` as `shot` frames it, once in each of `colors`, with
+/// nothing behind it: no background, grid, sketch being edited or
+/// markers.
 ///
 /// The images are read back once the GPU is done: `done` is called with
 /// them, one for each of `colors` in their order, or with `None` should
@@ -239,19 +251,13 @@ pub struct PreviewSelection<'a> {
 /// polls the device too, `done` has been called by then; on the web the
 /// browser maps them later, on a later submit of the device's queue. On
 /// an error returned, nothing is drawn and `done` is dropped uncalled.
-#[expect(clippy::too_many_arguments, reason = "one frame's worth, as `Frame`")]
 pub fn render_preview(
     renderer: &Renderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    mesh: &Arc<RenderMesh>,
-    sketches: &Arc<RenderLines>,
-    opacity: &[f32],
-    tints: &[Option<BodyTint>],
+    scene: &PreviewScene<'_>,
     shot: &PreviewShot,
-    selection: Option<PreviewSelection<'_>>,
     colors: &[Colors],
-    scale_factor: f32,
     done: impl FnOnce(Option<Vec<PreviewImage>>) + Send + 'static,
 ) -> Result<(), PreviewError> {
     let format = renderer.format();
@@ -281,6 +287,14 @@ pub fn render_preview(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("varde preview"),
     });
+    let PreviewScene {
+        mesh,
+        sketches,
+        opacity,
+        tints,
+        selection,
+        scale_factor,
+    } = *scene;
     let none = Arc::new(Highlights::default());
     // One target for all: each copy out is recorded before the next clear.
     let texture = device.create_texture(&wgpu::TextureDescriptor {

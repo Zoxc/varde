@@ -20,7 +20,7 @@ pub mod style;
 pub use camera::{Camera, Projection, Rotation, View};
 pub use highlight::{Highlights, Vertex};
 pub use preview::{
-    PreviewError, PreviewImage, PreviewSelection, PreviewShot, frame, render_preview,
+    PreviewError, PreviewImage, PreviewScene, PreviewSelection, PreviewShot, frame, render_preview,
 };
 pub use renderer::{
     BodyTint, ClipRect, Colors, ErrorParts, Frame, OriginPart, OriginShown, PatternStyle, Pivot,

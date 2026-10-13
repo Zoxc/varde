@@ -618,14 +618,16 @@ impl Gpu {
             &self.renderer,
             &self.device,
             &self.queue,
-            &mesh,
-            &sketches,
-            &opacity,
-            &tints,
+            &varde_render::PreviewScene {
+                mesh: &mesh,
+                sketches: &sketches,
+                opacity: &opacity,
+                tints: &tints,
+                selection: None,
+                scale_factor: THUMBNAIL_SCALE as f32,
+            },
             &shot,
-            None,
             &PreviewRequest::THEMES,
-            THUMBNAIL_SCALE as f32,
             move |images| {
                 let _ = send.send(images);
             },

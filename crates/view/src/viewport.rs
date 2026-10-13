@@ -1736,14 +1736,16 @@ fn draw_previews(
             renderer,
             device,
             queue,
-            &preview.mesh,
-            &preview.sketches,
-            &preview.opacity,
-            &preview.tints,
+            &varde_render::PreviewScene {
+                mesh: &preview.mesh,
+                sketches: &preview.sketches,
+                opacity: &preview.opacity,
+                tints: &preview.tints,
+                selection: Some(selection),
+                scale_factor: preview.scale,
+            },
             &preview.shot,
-            Some(selection),
             colors,
-            preview.scale,
             done,
         ) {
             log::error!("Couldn't draw a picture offscreen: {error}");

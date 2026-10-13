@@ -3379,14 +3379,16 @@ fn a_preview_is_the_model_alone_on_nothing() {
             &renderer(&device, format),
             &device,
             &queue,
-            &mesh,
-            &Arc::new(RenderLines::default()),
-            &[],
-            &[],
+            &varde_render::PreviewScene {
+                mesh: &mesh,
+                sketches: &Arc::new(RenderLines::default()),
+                opacity: &[],
+                tints: &[],
+                selection: None,
+                scale_factor: 2.0,
+            },
             &shot,
-            None,
             &[COLORS, red],
-            2.0,
             // The tests share the device: another's poll may call it.
             move |images| {
                 let _ = send.send(images);
@@ -3671,14 +3673,16 @@ fn a_preview_of_sketch_lines_alone_draws_them() {
         &renderer(&device, wgpu::TextureFormat::Rgba8Unorm),
         &device,
         &queue,
-        &mesh,
-        &sketches,
-        &[],
-        &[],
+        &varde_render::PreviewScene {
+            mesh: &mesh,
+            sketches: &sketches,
+            opacity: &[],
+            tints: &[],
+            selection: None,
+            scale_factor: 2.0,
+        },
         &shot,
-        None,
         &[COLORS],
-        2.0,
         move |images| {
             let _ = send.send(images);
         },
@@ -3728,18 +3732,20 @@ fn a_preview_of_some_parts_leaves_the_others_out_and_draws_the_selection() {
             &renderer(&device, wgpu::TextureFormat::Rgba8Unorm),
             &device,
             &queue,
-            &mesh,
-            &Arc::new(RenderLines::default()),
-            // The tall block, which crosses the picture, not drawn.
-            &[1.0, 0.0],
-            &[],
+            &varde_render::PreviewScene {
+                mesh: &mesh,
+                sketches: &Arc::new(RenderLines::default()),
+                // The tall block, which crosses the picture, not drawn.
+                opacity: &[1.0, 0.0],
+                tints: &[],
+                selection: Some(varde_render::PreviewSelection {
+                    faces: selected,
+                    highlights: &highlights,
+                }),
+                scale_factor: 2.0,
+            },
             &shot,
-            Some(varde_render::PreviewSelection {
-                faces: selected,
-                highlights: &highlights,
-            }),
             &[COLORS],
-            2.0,
             move |images| {
                 let _ = send.send(images);
             },
