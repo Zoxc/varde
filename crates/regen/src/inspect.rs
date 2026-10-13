@@ -420,30 +420,30 @@ pub(crate) fn inspect(
     let fit = document.tolerance().fit().to_bits();
     let first = resolve(&inspect.first, evaluation, scene, cache);
     let second = (inspect.second.as_ref()).map(|pick| resolve(pick, evaluation, scene, cache));
-    let first_kept = kept(&first, document, fit, cache);
-    let second_kept = second
-        .as_ref()
-        .map(|second| kept(second, document, fit, cache));
+    let first = first.map(|resolved| Picked::new(resolved, document, fit, cache));
+    let second =
+        second.map(|second| second.map(|resolved| Picked::new(resolved, document, fit, cache)));
     let between = match (&first, &second) {
         (Ok(a), Some(Ok(b))) => {
             let mut keyer = Keyer::new("distance");
-            a.key(&mut keyer);
-            b.key(&mut keyer);
+            a.resolved.key(&mut keyer);
+            b.resolved.key(&mut keyer);
             let key = keyer.number(fit).finish();
             let distance = cache.distance(key, || {
                 let tol = document.tolerance();
-                let gap = measure::distance(&a.target(), &b.target(), &tol, &Budget::DEFAULT)
-                    .map_err(|e| e.to_string())?;
+                let gap = measure::distance(
+                    &a.resolved.target(),
+                    &b.resolved.target(),
+                    &tol,
+                    &Budget::DEFAULT,
+                )
+                .map_err(|e| e.to_string())?;
                 Ok(Gap {
                     distance: gap.distance,
                     points: gap.points.map(|p| p.to_array()),
                 })
             });
-            let direction = |kept: Option<&Arc<Kept>>| kept?.as_ref().as_ref().ok()?.1;
-            let angle = match (
-                direction(first_kept.as_ref()),
-                direction(second_kept.as_ref().and_then(Option::as_ref)),
-            ) {
+            let angle = match (a.direction(), b.direction()) {
                 (Some(a), Some(b)) => Some(measure::angle(a, b)),
                 _ => None,
             };
@@ -451,40 +451,44 @@ pub(crate) fn inspect(
         }
         _ => None,
     };
-    let probed = |resolved: Result<Resolved, String>, kept: Option<Arc<Kept>>| {
-        let resolved = resolved?;
-        let kept = kept.ok_or("not measured")?;
-        Ok(Probed {
-            at: resolved.at,
-            measure: kept
-                .as_ref()
-                .as_ref()
-                .map(|(m, _)| *m)
-                .map_err(Clone::clone),
-        })
-    };
     Inspected {
         revision: inspect.revision,
-        first: probed(first, first_kept),
-        second: second.map(|second| probed(second, second_kept.flatten())),
+        first: first.map(|picked| picked.probed()),
+        second: second.map(|second| second.map(|picked| picked.probed())),
         between,
     }
     .checked(scene)
 }
 
-/// What `resolved` measures, from `cache` or measured and kept there,
-/// if it was found.
-fn kept(
-    resolved: &Result<Resolved, String>,
-    document: &Document,
-    fit: u64,
-    cache: &mut Cache,
-) -> Option<Arc<Kept>> {
-    let resolved = resolved.as_ref().ok()?;
-    let mut keyer = Keyer::new("measure");
-    resolved.key(&mut keyer);
-    let key = keyer.number(fit).finish();
-    Some(cache.measure(key, || measure_one(resolved, document)))
+/// A pick found on the model, with what it measures.
+struct Picked<'a> {
+    resolved: Resolved<'a>,
+    kept: Arc<Kept>,
+}
+
+impl<'a> Picked<'a> {
+    /// `resolved` with what it measures, from `cache` or measured and
+    /// kept there.
+    fn new(resolved: Resolved<'a>, document: &Document, fit: u64, cache: &mut Cache) -> Self {
+        let mut keyer = Keyer::new("measure");
+        resolved.key(&mut keyer);
+        let key = keyer.number(fit).finish();
+        let kept = cache.measure(key, || measure_one(&resolved, document));
+        Picked { resolved, kept }
+    }
+
+    fn direction(&self) -> Option<Direction> {
+        self.kept.as_ref().as_ref().ok()?.1
+    }
+
+    fn probed(self) -> Probed {
+        Probed {
+            at: self.resolved.at,
+            measure: (self.kept.as_ref().as_ref())
+                .map(|(m, _)| *m)
+                .map_err(Clone::clone),
+        }
+    }
 }
 
 /// What `resolved` measures, with its direction.
