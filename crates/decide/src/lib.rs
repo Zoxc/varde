@@ -13,10 +13,12 @@
 //! [`ids`], the ids of a B-rep's entities, and [`records`], the records'
 //! canonical keys, the table each kind is stored in, decided once, and the
 //! flat shadow records (point against vertex, a point's ray against a
-//! straight edge).
+//! straight edge), and [`order`], the geometric order on vertices, points
+//! on edges and edges that choices read in place of ids.
 
 pub mod bezier;
 pub mod ids;
 pub mod num;
+pub mod order;
 pub mod perturb;
 pub mod records;
