@@ -62,7 +62,7 @@ pub(super) fn render(args: &Arguments) -> Result<Render, CallError> {
         }
         Some(_) => return Err(args.error(RENDER_FROM)),
     };
-    let perspective = args.choice("projection", PROJECTIONS)?;
+    let projection = args.choice("projection", PROJECTIONS)?;
     let zoom = match args.map.get("zoom") {
         None | Some(Value::Null) => 1.0,
         Some(_) => args.number_in(
@@ -97,16 +97,12 @@ pub(super) fn render(args: &Arguments) -> Result<Render, CallError> {
     Ok(Render {
         bodies: args.names("bodies")?,
         from,
-        perspective,
+        projection,
         zoom,
         highlight,
         size,
     })
 }
-
-/// The words `render`'s `projection` takes, the default first: whether
-/// it's perspective.
-pub(super) const PROJECTIONS: &[(&str, bool)] = &[("orthographic", false), ("perspective", true)];
 
 /// What `render`'s `from` takes, in words.
 const RENDER_FROM: &str = "from is \"iso\", \"front\", \"back\", \"left\", \"right\", \"top\" \

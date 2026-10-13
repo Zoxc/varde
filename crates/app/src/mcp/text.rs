@@ -173,7 +173,7 @@ pub(super) fn args(call: &Call) -> String {
                     format!("from yaw {yaw}, pitch {pitch}")
                 }
             });
-            if args.perspective {
+            if args.projection == varde_mcp::tools::Projection::Perspective {
                 said.push("in perspective".to_owned());
             }
             if args.zoom != 1.0 {

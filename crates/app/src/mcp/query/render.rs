@@ -10,7 +10,9 @@ use std::sync::Arc;
 use glam::Vec3;
 use serde_json::{Value, json};
 use varde_document::BodyId;
-use varde_mcp::tools::{ItemKind, NamedView, Render as Args, RenderFrom, ToolReply};
+use varde_mcp::tools::{
+    ItemKind, NamedView, Projection as Asked, Render as Args, RenderFrom, ToolReply, Worded,
+};
 use varde_render::{Camera, PreviewShot, Projection, View};
 use varde_view::Picked;
 
@@ -141,7 +143,7 @@ pub(crate) fn render(doc: &Doc, args: &Args) -> Result<Shot, ToolReply> {
     let data = json!({
         "bodies": listed(&names),
         "body_count": names.len(),
-        "projection": if args.perspective { "perspective" } else { "orthographic" },
+        "projection": args.projection.word(),
         "size": shot.size,
         "highlighted": picked.len(),
         "model": super::model_state(
@@ -224,9 +226,9 @@ fn camera(doc: &Doc, args: &Args) -> Result<Camera, ToolReply> {
             camera.face(normal, up);
         }
     }
-    camera.set_projection(match args.perspective {
-        true => Projection::Perspective,
-        false => Projection::Orthographic,
+    camera.set_projection(match args.projection {
+        Asked::Orthographic => Projection::Orthographic,
+        Asked::Perspective => Projection::Perspective,
     });
     Ok(camera)
 }

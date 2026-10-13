@@ -1805,7 +1805,7 @@ fn reads_render() {
         Ok(Call::Render(Render {
             bodies: Vec::new(),
             from: RenderFrom::View(NamedView::Iso),
-            perspective: false,
+            projection: Projection::Orthographic,
             zoom: 1.0,
             highlight: Vec::new(),
             size: RENDER_SIZE,
@@ -1829,7 +1829,7 @@ fn reads_render() {
                 yaw: "30 deg".to_owned(),
                 pitch: "-10".to_owned(),
             },
-            perspective: true,
+            projection: Projection::Perspective,
             zoom: 2.5,
             highlight: vec![
                 Item {

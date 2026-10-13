@@ -333,7 +333,9 @@ Every choice is a `(&str, T)` table (`UNITS`, `OPERATIONS`,
 with `words`, the parsers read it with `Arguments::choice` or
 `required_choice`, and every word, wherever taken, is looked up by one
 rule (`lookup`: trimmed, any ASCII case). Each choice enum is
-`Worded`, its `word` read off its table (`World` is `Worded`); the app
+declared with its words by `worded!`, which makes the enum, its table
+and `Worded`, whose `word` is a match, so no variant goes without one
+(`World` is `Worded`; `Projection` is one, not a bool); the app
 answers in those (`feature`'s choices, a refusal's `mode per_axis`,
 the call's row) rather than spelling the words again.
 

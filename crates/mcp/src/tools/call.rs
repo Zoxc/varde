@@ -3,6 +3,38 @@
 
 use super::*;
 
+/// Declares a choice the tools name by a word: the enum, its table
+/// `$table` of words in the variants' order (the default first, where
+/// there is one), and [`Worded`] by both, so every variant has its word.
+macro_rules! worded {
+    (
+        $(#[$table_meta:meta])*
+        $table:ident;
+        $(#[$meta:meta])*
+        $vis:vis enum $ty:ident {
+            $($(#[$variant_meta:meta])* $variant:ident = $word:literal,)*
+        }
+    ) => {
+        $(#[$meta])*
+        $vis enum $ty {
+            $($(#[$variant_meta])* $variant,)*
+        }
+
+        $(#[$table_meta])*
+        pub(super) const $table: &[(&str, $ty)] = &[$(($word, $ty::$variant)),*];
+
+        impl Worded for $ty {
+            const WORDS: &'static [(&'static str, Self)] = $table;
+
+            fn word(self) -> &'static str {
+                match self {
+                    $($ty::$variant => $word,)*
+                }
+            }
+        }
+    };
+}
+
 /// A `tools/call`, checked. The largest arguments, an align's, a
 /// scale's and a sweep's, are boxed to keep every call small.
 #[derive(Clone, Debug, PartialEq)]
@@ -232,15 +264,16 @@ pub struct Color {
     pub saturation: f64,
 }
 
-/// The design units `set_units` offers: the file menu's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Units {
-    Mm,
-    In,
+worded! {
+    /// The words `units` takes, as typed and shown.
+    UNITS;
+    /// The design units `set_units` offers: the file menu's.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Units {
+        Mm = "mm",
+        In = "in",
+    }
 }
-
-/// The words `units` takes, as typed and shown.
-pub(super) const UNITS: &[(&str, Units)] = &[("mm", Units::Mm), ("in", Units::In)];
 
 /// The most profiles, excluded bodies, tools, faces or curves a feature
 /// tool takes: `varde_document`'s `MAX_EXTRUDE_REGIONS`,
@@ -248,38 +281,6 @@ pub(super) const UNITS: &[(&str, Units)] = &[("mm", Units::Mm), ("in", Units::In
 /// `MAX_OFFSET_FACES`, `MAX_DRAFT_FACES` and `MAX_SPLIT_CURVES`, all
 /// 256.
 pub const MAX_ITEMS: usize = 256;
-
-/// The words `extent` takes for an extrude, the default first.
-pub(super) const EXTRUDE_EXTENTS: &[(&str, ExtrudeExtent)] = &[
-    ("one_side", ExtrudeExtent::OneSide),
-    ("symmetric", ExtrudeExtent::Symmetric),
-    ("two_sides", ExtrudeExtent::TwoSides),
-    ("through_all", ExtrudeExtent::ThroughAll),
-];
-
-/// The words `extent` takes for a revolve, the default first.
-pub(super) const REVOLVE_EXTENTS: &[(&str, RevolveExtent)] = &[
-    ("full", RevolveExtent::Full),
-    ("one_side", RevolveExtent::OneSide),
-    ("symmetric", RevolveExtent::Symmetric),
-    ("two_sides", RevolveExtent::TwoSides),
-];
-
-/// The words an extrude's or revolve's `operation` takes, the default
-/// first.
-pub(super) const OPERATIONS: &[(&str, Operation)] = &[
-    ("new_body", Operation::NewBody),
-    ("join", Operation::Join),
-    ("cut", Operation::Cut),
-    ("intersect", Operation::Intersect),
-];
-
-/// The words a combine's `operation` takes, the default first.
-pub(super) const BODY_OPS: &[(&str, BodyOp)] = &[
-    ("union", BodyOp::Union),
-    ("subtract", BodyOp::Subtract),
-    ("intersect", BodyOp::Intersect),
-];
 
 /// The words of `choices`, for a schema's `enum`.
 pub(super) fn words<T>(choices: &[(&str, T)]) -> Value {
@@ -302,41 +303,15 @@ pub trait Worded: Copy + PartialEq + 'static {
     const WORDS: &'static [(&'static str, Self)];
 
     /// The word it's named by, as the client gives it.
+    fn word(self) -> &'static str;
+}
+
+impl Worded for () {
+    const WORDS: &'static [(&'static str, Self)] = ORIGIN;
+
     fn word(self) -> &'static str {
-        (Self::WORDS.iter())
-            .find(|(_, choice)| *choice == self)
-            .map_or("", |(word, _)| word)
+        ORIGIN[0].0
     }
-}
-
-/// Implements [`Worded`] for each type by its table.
-macro_rules! worded {
-    ($($ty:ty => $table:ident),* $(,)?) => {
-        $(impl Worded for $ty {
-            const WORDS: &'static [(&'static str, Self)] = $table;
-        })*
-    };
-}
-
-worded! {
-    Units => UNITS,
-    ExtrudeExtent => EXTRUDE_EXTENTS,
-    RevolveExtent => REVOLVE_EXTENTS,
-    Operation => OPERATIONS,
-    BodyOp => BODY_OPS,
-    WorldAxis => WORLD_AXES,
-    WorldPlane => WORLD_PLANES,
-    () => ORIGIN,
-    PatternKind => PATTERN_KINDS,
-    PatternMode => PATTERN_MODES,
-    ScaleMode => SCALE_MODES,
-    SplitSide => SPLIT_SIDES,
-    SplitKeep => SPLIT_KEEPS,
-    ShellDirection => SHELL_DIRECTIONS,
-    ChamferType => CHAMFER_TYPES,
-    LoftMode => LOFT_MODES,
-    LinkKind => LINK_KINDS,
-    NamedView => NAMED_VIEWS,
 }
 
 /// The regions of a sketch a feature takes.
@@ -359,26 +334,35 @@ pub enum Profile {
     Point([String; 2]),
 }
 
-/// What an extrude or a revolve does with its solid: the panel's
-/// Operation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Operation {
-    #[default]
-    NewBody,
-    Join,
-    Cut,
-    Intersect,
+worded! {
+    /// The words an extrude's or revolve's `operation` takes, the default
+    /// first.
+    OPERATIONS;
+    /// What an extrude or a revolve does with its solid: the panel's
+    /// Operation.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum Operation {
+        #[default]
+        NewBody = "new_body",
+        Join = "join",
+        Cut = "cut",
+        Intersect = "intersect",
+    }
 }
 
-/// How far an extrude goes: the panel's Extent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ExtrudeExtent {
-    #[default]
-    OneSide,
-    Symmetric,
-    TwoSides,
-    /// Only with [`Operation::Cut`].
-    ThroughAll,
+worded! {
+    /// The words `extent` takes for an extrude, the default first.
+    EXTRUDE_EXTENTS;
+    /// How far an extrude goes: the panel's Extent.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum ExtrudeExtent {
+        #[default]
+        OneSide = "one_side",
+        Symmetric = "symmetric",
+        TwoSides = "two_sides",
+        /// Only with [`Operation::Cut`].
+        ThroughAll = "through_all",
+    }
 }
 
 /// `extrude`'s arguments: what the Extrude panel shows, values as
@@ -403,14 +387,18 @@ pub struct Extrude {
     pub exclude: Vec<String>,
 }
 
-/// How far a revolve turns: the panel's Extent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RevolveExtent {
-    #[default]
-    Full,
-    OneSide,
-    Symmetric,
-    TwoSides,
+worded! {
+    /// The words `extent` takes for a revolve, the default first.
+    REVOLVE_EXTENTS;
+    /// How far a revolve turns: the panel's Extent.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum RevolveExtent {
+        #[default]
+        Full = "full",
+        OneSide = "one_side",
+        Symmetric = "symmetric",
+        TwoSides = "two_sides",
+    }
 }
 
 /// What a revolve turns about.
@@ -446,13 +434,17 @@ pub struct Revolve {
     pub exclude: Vec<String>,
 }
 
-/// What a combine does: the panel's Operation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BodyOp {
-    #[default]
-    Union,
-    Subtract,
-    Intersect,
+worded! {
+    /// The words a combine's `operation` takes, the default first.
+    BODY_OPS;
+    /// What a combine does: the panel's Operation.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum BodyOp {
+        #[default]
+        Union = "union",
+        Subtract = "subtract",
+        Intersect = "intersect",
+    }
 }
 
 /// `combine`'s arguments: what the Combine panel shows.
@@ -469,35 +461,29 @@ pub struct Combine {
     pub keep_tools: bool,
 }
 
-/// A world axis through the origin, along its positive side.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorldAxis {
-    X,
-    Y,
-    Z,
+worded! {
+    /// The words a world axis is named by.
+    WORLD_AXES;
+    /// A world axis through the origin, along its positive side.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum WorldAxis {
+        X = "x",
+        Y = "y",
+        Z = "z",
+    }
 }
 
-/// The words a world axis is named by.
-pub(super) const WORLD_AXES: &[(&str, WorldAxis)] = &[
-    ("x", WorldAxis::X),
-    ("y", WorldAxis::Y),
-    ("z", WorldAxis::Z),
-];
-
-/// An origin plane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorldPlane {
-    Xy,
-    Xz,
-    Yz,
+worded! {
+    /// The words an origin plane is named by.
+    WORLD_PLANES;
+    /// An origin plane.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum WorldPlane {
+        Xy = "xy",
+        Xz = "xz",
+        Yz = "yz",
+    }
 }
-
-/// The words an origin plane is named by.
-pub(super) const WORLD_PLANES: &[(&str, WorldPlane)] = &[
-    ("xy", WorldPlane::Xy),
-    ("xz", WorldPlane::Xz),
-    ("yz", WorldPlane::Yz),
-];
 
 /// The word the origin is named by, as a point.
 pub(super) const ORIGIN: &[(&str, ())] = &[("origin", ())];
@@ -579,37 +565,32 @@ pub struct Mirror {
     pub keep_original: bool,
 }
 
-/// A pattern's kind: the panel's Linear or Circular pattern.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PatternKind {
-    #[default]
-    Linear,
-    Circular,
+worded! {
+    /// The words `kind` takes, the default first.
+    PATTERN_KINDS;
+    /// A pattern's kind: the panel's Linear or Circular pattern.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum PatternKind {
+        #[default]
+        Linear = "linear",
+        Circular = "circular",
+    }
 }
 
-/// The words `kind` takes, the default first.
-pub(super) const PATTERN_KINDS: &[(&str, PatternKind)] = &[
-    ("linear", PatternKind::Linear),
-    ("circular", PatternKind::Circular),
-];
-
-/// How a pattern's copies are spread: the panel's mode tiles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PatternMode {
-    /// `spread` is one step.
-    Spacing,
-    /// `spread` is from the first copy to the last.
-    Total,
-    /// A circular one's copies evenly round a full turn.
-    Full,
+worded! {
+    /// The words `mode` takes.
+    PATTERN_MODES;
+    /// How a pattern's copies are spread: the panel's mode tiles.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PatternMode {
+        /// `spread` is one step.
+        Spacing = "spacing",
+        /// `spread` is from the first copy to the last.
+        Total = "total",
+        /// A circular one's copies evenly round a full turn.
+        Full = "full",
+    }
 }
-
-/// The words `mode` takes.
-pub(super) const PATTERN_MODES: &[(&str, PatternMode)] = &[
-    ("spacing", PatternMode::Spacing),
-    ("total", PatternMode::Total),
-    ("full", PatternMode::Full),
-];
 
 /// `pattern`'s arguments: what the Linear or Circular pattern panel
 /// shows.
@@ -664,21 +645,18 @@ pub struct Align {
     pub angle: Option<String>,
 }
 
-/// How a scale scales: the panel's mode tiles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ScaleMode {
-    #[default]
-    Uniform,
-    PerAxis,
-    EdgeLength,
+worded! {
+    /// The words a scale's `mode` takes, the default first.
+    SCALE_MODES;
+    /// How a scale scales: the panel's mode tiles.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum ScaleMode {
+        #[default]
+        Uniform = "uniform",
+        PerAxis = "per_axis",
+        EdgeLength = "edge_length",
+    }
 }
-
-/// The words a scale's `mode` takes, the default first.
-pub(super) const SCALE_MODES: &[(&str, ScaleMode)] = &[
-    ("uniform", ScaleMode::Uniform),
-    ("per_axis", ScaleMode::PerAxis),
-    ("edge_length", ScaleMode::EdgeLength),
-];
 
 /// `scale`'s arguments: what the Scale panel shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -717,33 +695,30 @@ pub enum SplitWith {
     Line { sketch: String, curves: Vec<u32> },
 }
 
-/// A split's side: the part inside the tool (front) or the rest.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SplitSide {
-    #[default]
-    Front,
-    Back,
+worded! {
+    /// The words a split's `original` takes, the default first.
+    SPLIT_SIDES;
+    /// A split's side: the part inside the tool (front) or the rest.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum SplitSide {
+        #[default]
+        Front = "front",
+        Back = "back",
+    }
 }
 
-/// The words a split's `original` takes, the default first.
-pub(super) const SPLIT_SIDES: &[(&str, SplitSide)] =
-    &[("front", SplitSide::Front), ("back", SplitSide::Back)];
-
-/// Which of a split's pieces stay: the panel's Keep tiles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SplitKeep {
-    #[default]
-    Both,
-    Front,
-    Back,
+worded! {
+    /// The words a split's `keep` takes, the default first.
+    SPLIT_KEEPS;
+    /// Which of a split's pieces stay: the panel's Keep tiles.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum SplitKeep {
+        #[default]
+        Both = "both",
+        Front = "front",
+        Back = "back",
+    }
 }
-
-/// The words a split's `keep` takes, the default first.
-pub(super) const SPLIT_KEEPS: &[(&str, SplitKeep)] = &[
-    ("both", SplitKeep::Both),
-    ("front", SplitKeep::Front),
-    ("back", SplitKeep::Back),
-];
 
 /// `split`'s arguments: what the Split panel shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -759,19 +734,17 @@ pub struct Split {
     pub keep: SplitKeep,
 }
 
-/// Which way a shell's walls grow: the panel's Direction tiles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ShellDirection {
-    #[default]
-    Inward,
-    Outward,
+worded! {
+    /// The words a shell's `direction` takes, the default first.
+    SHELL_DIRECTIONS;
+    /// Which way a shell's walls grow: the panel's Direction tiles.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum ShellDirection {
+        #[default]
+        Inward = "inward",
+        Outward = "outward",
+    }
 }
-
-/// The words a shell's `direction` takes, the default first.
-pub(super) const SHELL_DIRECTIONS: &[(&str, ShellDirection)] = &[
-    ("inward", ShellDirection::Inward),
-    ("outward", ShellDirection::Outward),
-];
 
 /// `shell`'s arguments: what the Shell panel shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -822,24 +795,21 @@ pub struct Draft {
     pub tangent: bool,
 }
 
-/// How a chamfer is sized: the panel's Type tiles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ChamferType {
-    /// One distance along both faces.
-    #[default]
-    Equal,
-    /// A distance along each face.
-    TwoDistances,
-    /// A distance along the first face and the cut's angle to it.
-    DistanceAngle,
+worded! {
+    /// The words a chamfer's `type` takes, the default first.
+    CHAMFER_TYPES;
+    /// How a chamfer is sized: the panel's Type tiles.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum ChamferType {
+        /// One distance along both faces.
+        #[default]
+        Equal = "equal",
+        /// A distance along each face.
+        TwoDistances = "two_distances",
+        /// A distance along the first face and the cut's angle to it.
+        DistanceAngle = "distance_angle",
+    }
 }
-
-/// The words a chamfer's `type` takes, the default first.
-pub(super) const CHAMFER_TYPES: &[(&str, ChamferType)] = &[
-    ("equal", ChamferType::Equal),
-    ("two_distances", ChamferType::TwoDistances),
-    ("distance_angle", ChamferType::DistanceAngle),
-];
 
 /// `chamfer`'s arguments: what the Chamfer panel shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -954,17 +924,17 @@ pub struct Section {
     pub start: Option<u32>,
 }
 
-/// How a loft runs between its sections: the panel's tiles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum LoftMode {
-    #[default]
-    Smooth,
-    Ruled,
+worded! {
+    /// The words a loft's `mode` takes, the default first.
+    LOFT_MODES;
+    /// How a loft runs between its sections: the panel's tiles.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum LoftMode {
+        #[default]
+        Smooth = "smooth",
+        Ruled = "ruled",
+    }
 }
-
-/// The words a loft's `mode` takes, the default first.
-pub(super) const LOFT_MODES: &[(&str, LoftMode)] =
-    &[("smooth", LoftMode::Smooth), ("ruled", LoftMode::Ruled)];
 
 /// `loft`'s arguments: what the Loft panel shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -982,23 +952,21 @@ pub struct Loft {
     pub exclude: Vec<String>,
 }
 
-/// The kind of link `add_link` adds: the sketch tools' Project and
-/// Intersect.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum LinkKind {
-    /// Model edges, faces' outlines, corners, or another sketch's curves
-    /// and points, projected onto the sketch's plane.
-    #[default]
-    Project,
-    /// Model faces and edges cut with the sketch's plane.
-    Intersect,
+worded! {
+    /// The words `kind` takes, the default first.
+    LINK_KINDS;
+    /// The kind of link `add_link` adds: the sketch tools' Project and
+    /// Intersect.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum LinkKind {
+        /// Model edges, faces' outlines, corners, or another sketch's curves
+        /// and points, projected onto the sketch's plane.
+        #[default]
+        Project = "project",
+        /// Model faces and edges cut with the sketch's plane.
+        Intersect = "intersect",
+    }
 }
-
-/// The words `kind` takes, the default first.
-pub(super) const LINK_KINDS: &[(&str, LinkKind)] = &[
-    ("project", LinkKind::Project),
-    ("intersect", LinkKind::Intersect),
-];
 
 /// What a link comes from.
 #[derive(Clone, Debug, PartialEq)]
@@ -1127,6 +1095,17 @@ pub struct Measure {
     pub b: Option<Measured>,
 }
 
+worded! {
+    /// The words `render`'s `projection` takes, the default first.
+    PROJECTIONS;
+    /// How `render` projects the view.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Projection {
+        Orthographic = "orthographic",
+        Perspective = "perspective",
+    }
+}
+
 /// `render`'s arguments.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Render {
@@ -1135,7 +1114,7 @@ pub struct Render {
     pub bodies: Vec<String>,
     /// Where it looks from.
     pub from: RenderFrom,
-    pub perspective: bool,
+    pub projection: Projection,
     /// A factor on the framing, from [`MIN_ZOOM`] to [`MAX_ZOOM`]: above
     /// 1 closes in on the bodies' centre, below 1 shows more around them;
     /// the camera doesn't move, so it never goes inside them.
@@ -1155,28 +1134,21 @@ pub enum RenderFrom {
     Angles { yaw: String, pitch: String },
 }
 
-/// The views `render` names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NamedView {
-    /// From above the front right, as Home looks.
-    Iso,
-    Front,
-    Back,
-    Left,
-    Right,
-    Top,
-    Bottom,
+worded! {
+    NAMED_VIEWS;
+    /// The views `render` names.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum NamedView {
+        /// From above the front right, as Home looks.
+        Iso = "iso",
+        Front = "front",
+        Back = "back",
+        Left = "left",
+        Right = "right",
+        Top = "top",
+        Bottom = "bottom",
+    }
 }
-
-pub(super) const NAMED_VIEWS: &[(&str, NamedView)] = &[
-    ("iso", NamedView::Iso),
-    ("front", NamedView::Front),
-    ("back", NamedView::Back),
-    ("left", NamedView::Left),
-    ("right", NamedView::Right),
-    ("top", NamedView::Top),
-    ("bottom", NamedView::Bottom),
-];
 
 /// `render`'s smallest and largest `zoom`.
 pub const MIN_ZOOM: f64 = 0.1;
