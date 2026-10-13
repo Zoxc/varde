@@ -3,19 +3,18 @@
 
 use glam::DVec2;
 use iced::widget::shader::Action;
-use iced::widget::{container, text};
+use iced::widget::text;
 use iced::{Element, Rectangle, mouse};
-use varde_document::{FeatureId, OriginPlane, Placement};
+use varde_document::FeatureId;
 use varde_render::{Camera, Colors, PointStyle, SketchLayer, Space as LayerSpace};
 use varde_sketch::Id;
 
-use super::{HIT_PIXELS, Input, Moving};
-use crate::anchors::Anchors;
+use super::{HIT_PIXELS, Input, Moving, chips, world_chip};
 use crate::motion::{KnobTone, LoftShape, LoftView, MotionLook, MotionPick, SketchLines};
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
+use crate::theme::SketchColors;
 use crate::theme::opaque;
-use crate::theme::{self, SketchColors};
 use crate::viewport::handle::{self, Puck};
 use crate::viewport::regions::{Regions, grid_plane};
 use crate::viewport::sketch_pick::{
@@ -180,35 +179,26 @@ pub(super) fn loft_labels<'a>(
     loft: &LoftView<'_>,
     camera: &Camera,
 ) -> Option<Element<'a, Message>> {
-    let chips: Vec<Element<'a, Message>> = (loft.sections.iter().enumerate())
-        .filter_map(|(at, section)| {
-            let placement = section.placement?;
-            let middle = match &section.shape {
-                LoftShape::Region {
-                    region: Some(region),
-                    ..
-                } => (region.bounds.0 + region.bounds.1) / 2.0,
-                shape => shape.dot()?,
-            };
-            let world = placement.to_world(middle);
-            if !world.is_finite() {
-                return None;
-            }
-            let chip = container(text((at + 1).to_string()).size(12))
-                .padding([1, 4])
-                .style(|theme| theme::glyph(theme, false));
-            let placement = Placement {
-                origin: world,
-                ..OriginPlane::XY.placement()
-            };
-            Some(Element::from(Anchors::new(
-                *camera,
-                placement,
-                [(DVec2::ZERO, chip.into())],
-            )))
-        })
-        .collect();
-    (!chips.is_empty()).then(|| iced::widget::stack(chips).into())
+    chips(
+        loft.sections
+            .iter()
+            .enumerate()
+            .filter_map(|(at, section)| {
+                let placement = section.placement?;
+                let middle = match &section.shape {
+                    LoftShape::Region {
+                        region: Some(region),
+                        ..
+                    } => (region.bounds.0 + region.bounds.1) / 2.0,
+                    shape => shape.dot()?,
+                };
+                world_chip(
+                    camera,
+                    placement.to_world(middle),
+                    text((at + 1).to_string()),
+                )
+            }),
+    )
 }
 
 impl<'a> Moving<'a> {

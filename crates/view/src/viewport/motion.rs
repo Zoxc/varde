@@ -45,9 +45,9 @@
 
 use std::sync::Arc;
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
-use iced::widget::{container, text};
+use iced::widget::{Text, container, text};
 use iced::{Element, Rectangle, mouse};
 use varde_document::{OriginPlane, Placement};
 use varde_render::{Camera, Colors, GridPlane, SketchLayer};
@@ -296,34 +296,16 @@ impl<'a> Moving<'a> {
             return loft_labels(loft, camera);
         }
         let split = self.state.split()?;
-        if split.pieces.is_empty() {
-            return None;
-        }
-        let layers = (split.pieces.iter())
-            .filter(|piece| piece.at.is_finite())
-            .map(|piece| {
-                let keeps = piece.keeps;
-                let chip = container(text(piece.name.clone()).size(12).style(
-                    move |theme: &iced::Theme| {
-                        let palette = theme::palette(theme);
-                        text::Style {
-                            color: Some(if keeps { palette.accent } else { palette.text }),
-                        }
-                    },
-                ))
-                .padding([1, 4])
-                .style(|theme| theme::glyph(theme, false));
-                let placement = Placement {
-                    origin: piece.at,
-                    ..OriginPlane::XY.placement()
-                };
-                Element::from(Anchors::new(
-                    *camera,
-                    placement,
-                    [(DVec2::ZERO, chip.into())],
-                ))
+        chips(split.pieces.iter().filter_map(|piece| {
+            let keeps = piece.keeps;
+            let label = text(piece.name.clone()).style(move |theme: &iced::Theme| {
+                let palette = theme::palette(theme);
+                text::Style {
+                    color: Some(if keeps { palette.accent } else { palette.text }),
+                }
             });
-        Some(iced::widget::stack(layers).into())
+            world_chip(camera, piece.at, label)
+        }))
     }
 
     /// The value of `field` as it last read, if it reads.
@@ -539,6 +521,30 @@ enum Mode {
     Knobs,
     /// A move's handles.
     Handles,
+}
+
+/// `label` in a chip anchored at the world point `at`, seen by
+/// `camera`: none when `at` isn't finite.
+fn world_chip<'a>(camera: &Camera, at: DVec3, label: Text<'a>) -> Option<Element<'a, Message>> {
+    if !at.is_finite() {
+        return None;
+    }
+    let chip = container(label.size(12))
+        .padding([1, 4])
+        .style(|theme| theme::glyph(theme, false));
+    let placement = Placement {
+        origin: at,
+        ..OriginPlane::XY.placement()
+    };
+    Some(Anchors::new(*camera, placement, [(DVec2::ZERO, chip.into())]).into())
+}
+
+/// The chips stacked, none when there are none.
+fn chips<'a>(
+    chips: impl IntoIterator<Item = Element<'a, Message>>,
+) -> Option<Element<'a, Message>> {
+    let chips: Vec<_> = chips.into_iter().collect();
+    (!chips.is_empty()).then(|| iced::widget::stack(chips).into())
 }
 
 #[cfg(test)]
