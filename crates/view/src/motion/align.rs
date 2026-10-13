@@ -91,7 +91,7 @@ fn place(slot: AlignSlot) -> &'static str {
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
     body: Element<'a, Message>,
-    value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
+    value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let Some(align) = state.align() else {
         return body;
@@ -134,8 +134,8 @@ pub(super) fn body<'a>(
         side(AlignSide::Target),
         flip,
         super::section("Offset"),
-        value(MotionField::Distance, MotionField::Distance.label()),
-        value(MotionField::Angle, MotionField::Angle.label()),
+        value(MotionField::Distance),
+        value(MotionField::Angle),
     ]
     .spacing(10)
     .into()

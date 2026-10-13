@@ -107,7 +107,7 @@ pub struct SweepView<'a> {
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
     reference: Element<'a, Message>,
-    value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
+    value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let Some(sweep) = state.sweep() else {
         return column![].into();
@@ -177,7 +177,7 @@ pub(super) fn body<'a>(
                 field,
                 chain_toggle(state, &sweep.edges),
                 keep,
-                value(MotionField::Twist, "Twist"),
+                value(MotionField::Twist),
             ]
             .spacing(10)
             .into()
@@ -199,8 +199,8 @@ pub(super) fn body<'a>(
             );
             column![
                 reference,
-                value(MotionField::Pitch, "Pitch"),
-                value(MotionField::Turns, "Turns"),
+                value(MotionField::Pitch),
+                value(MotionField::Turns),
                 left,
                 flip,
             ]

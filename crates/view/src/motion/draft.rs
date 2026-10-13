@@ -36,7 +36,7 @@ pub struct DraftView {
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
     neutral: Element<'a, Message>,
-    value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
+    value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let Some(draft) = state.draft() else {
         return column![].into();
@@ -56,13 +56,7 @@ pub(super) fn body<'a>(
         state.send(MotionLook::TangentFaces),
         Some("Take in faces that run on smoothly"),
     );
-    column![
-        faces,
-        neutral,
-        value(MotionField::Angle, "Angle"),
-        flip,
-        tangent,
-    ]
-    .spacing(10)
-    .into()
+    column![faces, neutral, value(MotionField::Angle), flip, tangent,]
+        .spacing(10)
+        .into()
 }

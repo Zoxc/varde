@@ -89,7 +89,7 @@ pub struct ScaleView<'a> {
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
     body: Element<'a, Message>,
-    value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
+    value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let Some(scale) = state.scale() else {
         return body;
@@ -125,9 +125,9 @@ pub(super) fn body<'a>(
         )
     });
     let fields: Element<'a, Message> = match scale.mode {
-        ScaleMode::Uniform => value(MotionField::Factor, "Factor"),
+        ScaleMode::Uniform => value(MotionField::Factor),
         ScaleMode::PerAxis => {
-            let axes = Axis3::ALL.map(|axis| value(MotionField::AxisFactor(axis), axis.name()));
+            let axes = Axis3::ALL.map(|axis| value(MotionField::AxisFactor(axis)));
             column(axes).spacing(8).into()
         }
         ScaleMode::EdgeLength => {
@@ -150,7 +150,7 @@ pub(super) fn body<'a>(
                     Some("Stretch the bodies along the axis the edge runs along only"),
                 )
             });
-            column![edge, value(MotionField::Length, "Length"), axis_only]
+            column![edge, value(MotionField::Length), axis_only]
                 .spacing(10)
                 .into()
         }

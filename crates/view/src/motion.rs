@@ -1071,15 +1071,15 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     };
     let field_of = |which: MotionField| field_named(which, which.label());
     let body: Element<'a, Message> = match state.kind {
-        MotionKind::Align => align::body(state, bodies, field_named),
-        MotionKind::Scale => scale::body(state, bodies, field_named),
+        MotionKind::Align => align::body(state, bodies, field_of),
+        MotionKind::Scale => scale::body(state, bodies, field_of),
         MotionKind::Split => split::body(state, bodies),
         MotionKind::Chamfer => chamfer::body(state, field_named),
-        MotionKind::Shell => shell::body(state, field_named),
-        MotionKind::Fillet => fillet::body(state, field_named),
-        MotionKind::OffsetFace => offset_face::body(state, field_named),
-        MotionKind::Draft => draft::body(state, reference, field_named),
-        MotionKind::Sweep => sweep::body(state, reference, field_named),
+        MotionKind::Shell => shell::body(state, field_of),
+        MotionKind::Fillet => fillet::body(state, field_of),
+        MotionKind::OffsetFace => offset_face::body(state, field_of),
+        MotionKind::Draft => draft::body(state, reference, field_of),
+        MotionKind::Sweep => sweep::body(state, reference, field_of),
         MotionKind::Loft => loft::body(state),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));

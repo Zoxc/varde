@@ -34,7 +34,7 @@ pub struct OffsetFaceView {
 /// Tangent faces.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
-    value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
+    value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let Some(offset) = state.offset_face() else {
         return column![].into();
@@ -54,12 +54,7 @@ pub(super) fn body<'a>(
         state.send(MotionLook::TangentFaces),
         Some("Take in faces that run on smoothly"),
     );
-    column![
-        faces,
-        value(MotionField::Distance, "Distance"),
-        inward,
-        tangent,
-    ]
-    .spacing(10)
-    .into()
+    column![faces, value(MotionField::Distance), inward, tangent,]
+        .spacing(10)
+        .into()
 }

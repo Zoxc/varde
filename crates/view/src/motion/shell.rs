@@ -74,7 +74,7 @@ pub struct ShellView {
 /// tiles.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
-    value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
+    value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let Some(shell) = state.shell() else {
         return column![].into();
@@ -90,7 +90,7 @@ pub(super) fn body<'a>(
     });
     column![
         faces,
-        value(MotionField::Thickness, "Thickness"),
+        value(MotionField::Thickness),
         section("Direction"),
         tiles(directions),
     ]
