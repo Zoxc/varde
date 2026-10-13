@@ -305,34 +305,31 @@ pub(crate) enum OperationSession {
     Motion(MotionSession),
 }
 
+/// Evaluates `$body` with `$session` bound to whichever session `$of` holds.
+macro_rules! each_session {
+    ($of:expr, $session:ident => $body:expr) => {
+        match $of {
+            OperationSession::Extrude($session) => $body,
+            OperationSession::Revolve($session) => $body,
+            OperationSession::Combine($session) => $body,
+            OperationSession::Motion($session) => $body,
+        }
+    };
+}
+
 impl OperationSession {
     /// The feature it edits, none for a new one.
     fn feature(&self) -> Option<FeatureId> {
-        match self {
-            Self::Extrude(session) => session.feature,
-            Self::Revolve(session) => session.feature,
-            Self::Combine(session) => session.feature,
-            Self::Motion(session) => session.feature,
-        }
+        each_session!(self, session => session.feature)
     }
 
     /// The row of its panel the cursor is over, see [`Doc::panel_hover`].
     fn hover(&self) -> Option<PanelHover> {
-        match self {
-            Self::Extrude(session) => session.hover,
-            Self::Revolve(session) => session.hover,
-            Self::Combine(session) => session.hover,
-            Self::Motion(session) => session.hover,
-        }
+        each_session!(self, session => session.hover)
     }
 
     fn hover_mut(&mut self) -> &mut Option<PanelHover> {
-        match self {
-            Self::Extrude(session) => &mut session.hover,
-            Self::Revolve(session) => &mut session.hover,
-            Self::Combine(session) => &mut session.hover,
-            Self::Motion(session) => &mut session.hover,
-        }
+        each_session!(self, session => &mut session.hover)
     }
 }
 
