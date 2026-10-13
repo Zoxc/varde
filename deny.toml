@@ -53,6 +53,18 @@ deny = [
     # another crate.
     { name = "libm", version = "<0.2.16", reason = "pinned at 0.2.16" },
     { name = "libm", version = ">0.2.16", reason = "pinned at 0.2.16" },
+    # The big-float levels' bits: Cargo.toml asks for `malachite = "=0.12.0"`,
+    # and its parts must be that release too.
+    { name = "malachite", version = "<0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite", version = ">0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-base", version = "<0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-base", version = ">0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-nz", version = "<0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-nz", version = ">0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-q", version = "<0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-q", version = ">0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-float", version = "<0.12.0", reason = "pinned at 0.12.0" },
+    { name = "malachite-float", version = ">0.12.0", reason = "pinned at 0.12.0" },
 ]
 
 [sources]

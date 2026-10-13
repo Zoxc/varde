@@ -41,3 +41,8 @@ rebuilds nothing.
 
 Rendering tests draw offscreen on the GPU and are skipped when no GPU
 adapter is found.
+
+`tools/ci.sh` runs every check a change must pass. Besides the targets
+above it needs `rustup target add wasm32-wasip1` and Node.js (22 or
+later): its `wasm` step runs the kernel's same-bits tests as WebAssembly
+under Node's WASI, to see they give the native bits.

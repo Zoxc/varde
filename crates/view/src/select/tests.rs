@@ -490,7 +490,7 @@ fn names_find_faces_and_edges_by_alias_and_the_nearest() {
     // Each edge its own tangent chain, and a crease in none.
     assert_eq!(index.tangent_chain(0), [0]);
     assert_eq!(index.tangent_chain(1), [1]);
-    assert_eq!(index.tangent_chain(2), []);
+    assert!(index.tangent_chain(2).is_empty());
 }
 
 #[test]

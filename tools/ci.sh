@@ -14,6 +14,10 @@
 # `test` runs the workspace's tests, then the kernel crates' again on
 # one rayon thread (their results must not depend on the thread count),
 # then varde-decide's with hardware FMA on (x86_64; the same bits).
+# `wasm` builds for the browser, then runs varde-decide's same-bits tests
+# on wasm32-wasip1 under Node's WASI (tools/wasi_run.mjs): its results must
+# be the bits the native run pins. It needs the wasm32-unknown-unknown and
+# wasm32-wasip1 targets (`rustup target add`) and Node.js.
 # `bans` checks clippy refuses each banned call in
 # crates/kernel/tests/ban_probe.rs and that the kernel crates' clippy.toml
 # copies agree. `deny` needs cargo-deny (`cargo install cargo-deny`) and
@@ -96,6 +100,9 @@ step_test() {
 step_wasm() {
     cargo build --locked --target wasm32-unknown-unknown -p varde-decide -p varde-kernel
     cargo check --workspace --locked --target wasm32-unknown-unknown
+    need node Node.js "install Node.js 22 or later"
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings $PWD/tools/wasi_run.mjs" \
+        cargo test --locked -p varde-decide --target wasm32-wasip1 -- same_bits_everywhere
 }
 
 need() {

@@ -625,7 +625,7 @@ fn in_parts(
                 (MeshPart::EdgeFaces, edge_faces[edge], from[0]..to[0]),
                 (MeshPart::EdgeCorners, edge_corners[edge], from[2]..to[2]),
             ] {
-                if let Some(&id) = ids.iter().find(|id| !range.contains(id)) {
+                if let Some(&id) = ids.iter().find(|id| !range.contains(*id)) {
                     return Err(MeshError::OutsidePart { part, id });
                 }
             }

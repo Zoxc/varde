@@ -6,12 +6,12 @@
 
 use std::cmp::Ordering;
 
-use num_rational::BigRational as Q;
+use malachite::Rational as Q;
 
 use super::*;
 
 fn q(x: f64) -> Q {
-    Q::from_float(x).expect("finite")
+    Q::try_from(x).expect("finite")
 }
 
 fn qabs(x: Q) -> Q {

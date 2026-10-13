@@ -7,13 +7,15 @@
 
 use std::cmp::Ordering;
 
-use num_rational::BigRational as Q;
+use malachite::Rational as Q;
+use malachite::base::num::conversion::traits::RoundingFrom;
+use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use super::*;
 use crate::num::bounded::U;
 
 fn q(x: f64) -> Q {
-    Q::from_float(x).expect("finite")
+    Q::try_from(x).expect("finite")
 }
 
 fn qd(x: Dd) -> Q {
@@ -163,8 +165,7 @@ fn holds(what: &str, r: Bounded<Dd>, exact: Option<&Q>) -> bool {
 /// A rational's rough `f64` value, for messages and the worst-case
 /// report only.
 fn rat_f64(x: &Q) -> f64 {
-    let part = |n: String| n.parse::<f64>().unwrap_or(f64::NAN);
-    part(x.numer().to_string()) / part(x.denom().to_string())
+    f64::rounding_from(x, Nearest).0
 }
 
 /// The square root against `x`: `(v − e)² ≤ x ≤ (v + e)²`, the lower end
