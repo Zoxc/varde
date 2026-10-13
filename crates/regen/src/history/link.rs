@@ -172,10 +172,12 @@ fn one(
     let (exact, fit) = (tolerance.resolution(), tolerance.fit());
     match *source {
         OutsideRef::Sketch { sketch, item } => {
-            let source = (sketches.iter())
-                .find(|output| output.id == sketch)
-                .ok_or(SOURCE_SKETCH_GONE)?;
-            let from = source.placement.ok_or(SOURCE_SKETCH_NOT_PLACED)?;
+            let (source, from) = super::placed_sketch(
+                sketches,
+                sketch,
+                || SOURCE_SKETCH_GONE,
+                || SOURCE_SKETCH_NOT_PLACED,
+            )?;
             let map = affine(&from, placement);
             let key = Keyer::new("link sketch")
                 .key(source.key)

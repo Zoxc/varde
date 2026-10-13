@@ -518,6 +518,21 @@ impl SketchOutput<'_> {
     }
 }
 
+/// The sketch `id` among `sketches`, and where it's placed; `gone`'s
+/// error where it isn't among them, `not_placed`'s where it isn't placed.
+fn placed_sketch<'s, 'a, E>(
+    sketches: &'s [SketchOutput<'a>],
+    id: FeatureId,
+    gone: impl FnOnce() -> E,
+    not_placed: impl FnOnce() -> E,
+) -> Result<(&'s SketchOutput<'a>, Placement), E> {
+    let sketch = (sketches.iter())
+        .find(|sketch| sketch.id == id)
+        .ok_or_else(gone)?;
+    let placement = sketch.placement.ok_or_else(not_placed)?;
+    Ok((sketch, placement))
+}
+
 /// A sketch's `segment` in the world, as its `placement` puts it.
 fn world_conic(placement: &Placement, segment: &Segment) -> Conic3 {
     let world = |p| placement.to_world(p);

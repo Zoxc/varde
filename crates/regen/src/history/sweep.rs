@@ -221,10 +221,12 @@ impl Run<'_> {
 
     /// The part a chain of a sketch's curves makes, in the world.
     fn sketch_part(&self, chain: &CurveChain) -> Result<Part, Failed> {
-        let output = (self.sketches.iter())
-            .find(|output| output.id == chain.sketch)
-            .ok_or(why::PATH_SKETCH_GONE)?;
-        let placement = output.placement.ok_or(why::PATH_SKETCH_NOT_PLACED)?;
+        let (output, placement) = super::placed_sketch(
+            self.sketches,
+            chain.sketch,
+            || why::PATH_SKETCH_GONE,
+            || why::PATH_SKETCH_NOT_PLACED,
+        )?;
         let sketch = output.sketch;
         let (segments, closed) = path_chain(
             sketch,

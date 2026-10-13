@@ -94,24 +94,24 @@ impl Run<'_> {
             .number(u64::from(loft.closed));
         let mut placed: Vec<(&SketchOutput, Placement)> = Vec::with_capacity(loft.sections.len());
         for (index, section) in loft.sections.iter().enumerate() {
-            let output = self
-                .sketch_output(section.sketch())
-                .ok_or_else(|| why::section_sketch_gone(index))?;
-            let placement = output
-                .placement
-                .ok_or_else(|| why::section_not_placed(index))?;
+            let (output, placement) = super::placed_sketch(
+                self.sketches,
+                section.sketch(),
+                || why::section_sketch_gone(index),
+                || why::section_not_placed(index),
+            )?;
             keyer.key(output.key).placement(&placement).value(section);
             placed.push((output, placement));
         }
         let mut rails_placed: Vec<(&SketchOutput, Placement)> =
             Vec::with_capacity(loft.rails.len());
         for (index, rail) in loft.rails.iter().enumerate() {
-            let output = self
-                .sketch_output(rail.sketch)
-                .ok_or_else(|| why::rail_sketch_gone(index))?;
-            let placement = output
-                .placement
-                .ok_or_else(|| why::rail_not_placed(index))?;
+            let (output, placement) = super::placed_sketch(
+                self.sketches,
+                rail.sketch,
+                || why::rail_sketch_gone(index),
+                || why::rail_not_placed(index),
+            )?;
             keyer.key(output.key).placement(&placement).value(rail);
             rails_placed.push((output, placement));
         }
@@ -175,11 +175,6 @@ impl Run<'_> {
             .map_err(|error| self.loft_refused(error, count))
         })?;
         Ok((solid, key))
-    }
-
-    /// The sketch before the loft whose id is `sketch`.
-    fn sketch_output(&self, sketch: varde_document::FeatureId) -> Option<&SketchOutput<'_>> {
-        self.sketches.iter().find(|output| output.id == sketch)
     }
 
     /// Section `index` of the loft, `section`, as the kernel takes it,
