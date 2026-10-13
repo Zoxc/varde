@@ -11,9 +11,9 @@ use iced::Element;
 use varde_document::{EdgeRef, FaceRef};
 
 use super::{MotionLook, MotionPick, MotionState, PickedRow, picks_field};
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{PanelHover, RowTone, toggle};
-use crate::{Look, Message};
 
 /// An edge picked, as its row shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -101,14 +101,11 @@ pub(super) fn chain_toggle<'a>(
     state: &MotionState<'a>,
     edges: &BlendEdges,
 ) -> Element<'a, Message> {
-    let send = state
-        .editable
-        .then_some(Message::Look(Look::Motion(MotionLook::Chain)));
     toggle(
         Icon::TkChain,
         "Tangent chain",
         edges.chains,
-        send,
+        state.send(MotionLook::Chain),
         Some("Take in edges that run on smoothly"),
     )
 }
