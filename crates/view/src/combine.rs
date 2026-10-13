@@ -11,8 +11,8 @@ use varde_document::{BodyId, BodyOp};
 
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, ListRow, PanelHover, Parts, Verdict, field, message_text, operation_panel, pick_field,
-    tile, tiles, toggle,
+    Footer, ListRow, OperationKind, PanelHover, Parts, Verdict, field, message_text,
+    operation_panel, pick_field, tile, tiles, toggle,
 };
 use crate::theme;
 use crate::{Edit, Look, Message};
@@ -111,7 +111,7 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
     );
     let ops = OPS.map(|op| {
         tile(
-            op_icon(op),
+            OperationKind::from(op).icon(),
             op.label(),
             state.op == op,
             send(CombineLook::Operation(op)),
@@ -142,15 +142,6 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
         cancel: Message::Look(Look::Combine(CombineLook::Cancel)),
         close: false,
     })
-}
-
-/// The icon of `op`'s choice: the booleans as circles.
-fn op_icon(op: BodyOp) -> Icon {
-    match op {
-        BodyOp::Union => Icon::BoJoin,
-        BodyOp::Subtract => Icon::BoCut,
-        BodyOp::Intersect => Icon::BoInt,
-    }
 }
 
 /// A combine's status bar info: its target, tools and operation,

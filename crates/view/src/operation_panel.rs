@@ -30,7 +30,7 @@ use iced::widget::{
     text_input,
 };
 use iced::{Alignment, Border, Color, Element, Event, Length, Padding, Rectangle, Size, Vector};
-use varde_document::{BodyId, FeatureId, Placement};
+use varde_document::{BodyId, BodyOp, FeatureId, Placement};
 use varde_sketch::{Profiles, Sketch};
 
 use crate::chrome::{hrule, scrolled, sentence, tip};
@@ -312,6 +312,18 @@ pub enum OperationKind {
     Join,
     Cut,
     Intersect,
+}
+
+/// The operation a combine's `BodyOp` matches, for its icon: the
+/// booleans as circles.
+impl From<BodyOp> for OperationKind {
+    fn from(op: BodyOp) -> Self {
+        match op {
+            BodyOp::Union => OperationKind::Join,
+            BodyOp::Subtract => OperationKind::Cut,
+            BodyOp::Intersect => OperationKind::Intersect,
+        }
+    }
 }
 
 impl OperationKind {

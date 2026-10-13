@@ -476,23 +476,18 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
             pick_axis,
         ),
     );
-    let missing = {
-        let axis = state.axis_missing.then(|| {
-            match state.axis {
-                Some(AxisLine::Edge(_)) => "The axis edge wasn't found",
-                _ => "The axis line wasn't found",
-            }
-            .to_owned()
-        });
-        let notes = axis.into_iter().map(|note| {
-            text(note)
-                .size(12)
-                .wrapping(Wrapping::WordOrGlyph)
-                .style(theme::danger_text)
-                .into()
-        });
-        column(notes).spacing(2)
-    };
+    // An empty column while the axis is there, keeping the spacing.
+    let missing = column(state.axis_missing.then(|| {
+        let note = match state.axis {
+            Some(AxisLine::Edge(_)) => "The axis edge wasn't found",
+            _ => "The axis line wasn't found",
+        };
+        text(note)
+            .size(12)
+            .wrapping(Wrapping::WordOrGlyph)
+            .style(theme::danger_text)
+            .into()
+    }));
 
     let extents = TurnKind::ALL.map(|kind| {
         tile(
