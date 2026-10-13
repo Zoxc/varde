@@ -21,7 +21,7 @@ and `analyse(&Sketch)`. `notes/SketchImpl.md` ("Built so far (step 2a)",
   of an arc with a lower id (centre with centre, each end with the other's
   other end, as Mirror makes them) has no radius equation of its own: a
   mirror image keeps distances, so it would restate the other's, and every
-  mirrored arc would be refused as redundant (`mirrored_arcs`, by
+  mirrored arc would be refused as redundant (`system/mirror.rs`: `mirrored_arcs`, by
   `image_of`). A fillet or chamfer (`System::corner`) gives its start on
   the endless line `a` and its end on `b`; a fillet its radius at each end
   at right angles to the line, towards the inside of the corner, as a
