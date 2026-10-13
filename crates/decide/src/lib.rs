@@ -3,7 +3,9 @@
 //! [`num::bounded`], values with certified error bounds, [`num::dd`],
 //! double-double with them, [`num::bigf`], big-float with them,
 //! [`num::expansion`], the exact floating-point expansions,
-//! [`num::exact`], the exact flat predicates over them, and
-//! [`num::trig`], the deterministic trigonometry.
+//! [`num::exact`], the exact flat predicates over them,
+//! [`num::trig`], the deterministic trigonometry, and [`bezier`], the
+//! Bernstein forms over those numbers.
 
+pub mod bezier;
 pub mod num;
