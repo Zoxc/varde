@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::linalg::householder;
-use faer::{Conj, Mat, Par};
+use faer::{Conj, Mat, MatRef, Par};
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
@@ -204,12 +204,8 @@ pub(crate) fn counted_dependencies(jacobian: &Mat<f64>, implied: &[bool]) -> Dep
     if !implied.contains(&true) {
         return dependencies(jacobian);
     }
-    let (rows, columns) = jacobian.shape();
-    let rank_of = |taken: &[bool]| {
-        let chosen: Vec<usize> = (0..rows).filter(|&row| taken[row]).collect();
-        let rows = Mat::from_fn(chosen.len(), columns, |i, j| jacobian[(chosen[i], j)]);
-        dependencies(&rows).rank
-    };
+    let rows = jacobian.nrows();
+    let rank_of = |taken: &[bool]| rank(&rows_of(jacobian, taken).1);
     let mut taken: Vec<bool> = implied.iter().map(|&implied| !implied).collect();
     let mut rank = rank_of(&taken);
     for row in (0..rows).filter(|&row| implied[row]) {
@@ -219,14 +215,41 @@ pub(crate) fn counted_dependencies(jacobian: &Mat<f64>, implied: &[bool]) -> Dep
             _ => taken[row] = false,
         }
     }
-    let chosen: Vec<usize> = (0..rows).filter(|&row| taken[row]).collect();
-    let kept = Mat::from_fn(chosen.len(), columns, |i, j| jacobian[(chosen[i], j)]);
+    let (chosen, kept) = rows_of(jacobian, &taken);
     let found = dependencies(&kept);
     let mut involved = vec![false; rows];
     for (&row, &is_involved) in chosen.iter().zip(&found.involved) {
         involved[row] = is_involved;
     }
     Dependencies { involved, ..found }
+}
+
+/// The rows of `jacobian` `taken`, by index and as a matrix of them.
+fn rows_of(jacobian: &Mat<f64>, taken: &[bool]) -> (Vec<usize>, Mat<f64>) {
+    let (rows, columns) = jacobian.shape();
+    let chosen: Vec<usize> = (0..rows).filter(|&row| taken[row]).collect();
+    let matrix = Mat::from_fn(chosen.len(), columns, |i, j| jacobian[(chosen[i], j)]);
+    (chosen, matrix)
+}
+
+/// The number of independent rows of `jacobian`, as [`dependencies`]
+/// counts them, without the rest of its work.
+fn rank(jacobian: &Mat<f64>) -> usize {
+    if jacobian.nrows() == 0 {
+        return 0;
+    }
+    rank_of_r(jacobian.transpose().col_piv_qr().thin_R())
+}
+
+/// The rank a pivoted QR factorization's `R` shows: its diagonal entries
+/// above zero, relative to the largest.
+fn rank_of_r(r: MatRef<'_, f64>) -> usize {
+    let size = r.nrows();
+    let largest = if size == 0 { 0.0 } else { r[(0, 0)].abs() };
+    let threshold = RANK_TOLERANCE * largest.max(1.0);
+    (0..size)
+        .take_while(|&i| r[(i, i)].abs() > threshold)
+        .count()
 }
 
 /// Factors `jacobian`'s transpose, `Jᵀ P = Q R`, with column pivoting,
@@ -248,12 +271,7 @@ pub(crate) fn dependencies(jacobian: &Mat<f64>) -> Dependencies {
     }
     let qr = jacobian.transpose().col_piv_qr();
     let r = qr.thin_R();
-    let size = r.nrows();
-    let largest = if size == 0 { 0.0 } else { r[(0, 0)].abs() };
-    let threshold = RANK_TOLERANCE * largest.max(1.0);
-    let rank = (0..size)
-        .take_while(|&i| r[(i, i)].abs() > threshold)
-        .count();
+    let rank = rank_of_r(r);
 
     // Only the null space's columns of `Q`: few, unless much is free.
     let free = columns - rank;
