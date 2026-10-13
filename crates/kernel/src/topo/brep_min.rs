@@ -50,43 +50,7 @@ use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::{Curve3D, PCurve};
 use crate::geom::surface::Surface;
 
-/// The id that names no entity.
-pub const NONE: u32 = u32::MAX;
-
-macro_rules! ids {
-    ($($(#[$doc:meta])* $name:ident;)*) => {$(
-        $(#[$doc])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(pub u32);
-
-        impl $name {
-            /// No entity.
-            pub const NONE: $name = $name(NONE);
-
-            #[inline]
-            fn at(self) -> usize {
-                self.0 as usize
-            }
-        }
-    )*};
-}
-
-ids! {
-    /// A vertex.
-    VertId;
-    /// An edge.
-    EdgeId;
-    /// A coedge.
-    CoedgeId;
-    /// A loop.
-    LoopId;
-    /// A face.
-    FaceId;
-    /// A surface.
-    SurfId;
-    /// A space curve.
-    CurveId;
-}
+pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
 
 /// Why an entity can't be added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,8 +212,8 @@ impl Brep {
         v_start: VertId,
         v_end: VertId,
     ) -> Result<EdgeId, StoreError> {
-        let c = self.curves.get(curve.at()).ok_or(StoreError::Id)?;
-        if v_start.at() >= self.verts.pos.len() || v_end.at() >= self.verts.pos.len() {
+        let c = self.curves.get(curve.index()).ok_or(StoreError::Id)?;
+        if v_start.index() >= self.verts.pos.len() || v_end.index() >= self.verts.pos.len() {
             return Err(StoreError::Id);
         }
         if v_start > v_end {
@@ -272,7 +236,7 @@ impl Brep {
 
     /// Adds a face on `surface`, without loops.
     pub fn add_face(&mut self, surface: SurfId, flipped: bool) -> Result<FaceId, StoreError> {
-        if surface.at() >= self.surfaces.len() {
+        if surface.index() >= self.surfaces.len() {
             return Err(StoreError::Id);
         }
         let id = next_id(self.faces.surface.len())?;
@@ -295,7 +259,7 @@ impl Brep {
         is_outer: bool,
         uses: Vec<(EdgeId, bool, PCurve)>,
     ) -> Result<LoopId, StoreError> {
-        let surface = *self.faces.surface.get(face.at()).ok_or(StoreError::Id)?;
+        let surface = *self.faces.surface.get(face.index()).ok_or(StoreError::Id)?;
         if uses.is_empty() {
             return Err(StoreError::EmptyLoop);
         }
@@ -304,11 +268,11 @@ impl Brep {
         let n = uses.len();
         // The ids of the coedges, checked before any is added.
         next_id(first.checked_add(n - 1).ok_or(StoreError::Full)?)?;
-        let surf = &self.surfaces[surface.at()];
+        let surf = &self.surfaces[surface.index()];
         let mut bounds = Vec::with_capacity(n);
         for (index, (e, reversed, p)) in uses.iter().enumerate() {
             let why = |why| StoreError::Coedge { index, why };
-            let c = *self.edges.curve.get(e.at()).ok_or(StoreError::Id)?;
+            let c = *self.edges.curve.get(e.index()).ok_or(StoreError::Id)?;
             // Earlier coedges of this loop count as the edge's too.
             let mut users = self.edge_coedges(*e);
             users.extend(
@@ -323,13 +287,13 @@ impl Brep {
                 [_] => return Err(why(CoedgeError::SameWay)),
                 _ => return Err(why(CoedgeError::Third)),
             }
-            let [t0, t1] = self.edges.t_range[e.at()];
+            let [t0, t1] = self.edges.t_range[e.index()];
             let k = p.knots();
             if k[0].to_bits() != t0.to_bits() || k[k.len() - 1].to_bits() != t1.to_bits() {
                 return Err(why(CoedgeError::SameT));
             }
-            let b =
-                seam_bound(surf, &self.curves[c.at()], p).map_err(|s| why(CoedgeError::Seam(s)))?;
+            let b = seam_bound(surf, &self.curves[c.index()], p)
+                .map_err(|s| why(CoedgeError::Seam(s)))?;
             bounds.push(b);
         }
         let co = &mut self.coedges;
@@ -338,7 +302,7 @@ impl Brep {
             let id = CoedgeId((first + index) as u32);
             let next = CoedgeId((first + (index + 1) % n) as u32);
             let prev = CoedgeId((first + (index + n - 1) % n) as u32);
-            let other = self.edges.coedge[e.at()];
+            let other = self.edges.coedge[e.index()];
             co.edge.push(e);
             co.reversed.push(reversed);
             co.face.push(face);
@@ -349,25 +313,25 @@ impl Brep {
             co.pcurve.push(p);
             co.seam_bound.push(b);
             if other == CoedgeId::NONE {
-                self.edges.coedge[e.at()] = id;
+                self.edges.coedge[e.index()] = id;
             } else {
-                co.pair[other.at()] = id;
+                co.pair[other.index()] = id;
             }
-            let tol = &mut self.edges.tol[e.at()];
+            let tol = &mut self.edges.tol[e.index()];
             if b > *tol {
                 *tol = b;
             }
             let tol = *tol;
-            let (vs, ve) = (self.edges.v_start[e.at()], self.edges.v_end[e.at()]);
+            let (vs, ve) = (self.edges.v_start[e.index()], self.edges.v_end[e.index()]);
             for v in [vs, ve] {
-                let t = &mut self.verts.tol[v.at()];
+                let t = &mut self.verts.tol[v.index()];
                 if tol > *t {
                     *t = tol;
                 }
             }
             let start = if reversed { ve } else { vs };
-            if self.verts.coedge[start.at()] == CoedgeId::NONE {
-                self.verts.coedge[start.at()] = id;
+            if self.verts.coedge[start.index()] == CoedgeId::NONE {
+                self.verts.coedge[start.index()] = id;
             }
         }
         let l = &mut self.loops;
@@ -376,13 +340,13 @@ impl Brep {
         l.next_loop.push(LoopId::NONE);
         l.is_outer.push(is_outer);
         // Appended after the face's last loop.
-        match self.faces.first_loop[face.at()] {
-            f if f == LoopId::NONE => self.faces.first_loop[face.at()] = lp,
+        match self.faces.first_loop[face.index()] {
+            f if f == LoopId::NONE => self.faces.first_loop[face.index()] = lp,
             mut at => {
-                while self.loops.next_loop[at.at()] != LoopId::NONE {
-                    at = self.loops.next_loop[at.at()];
+                while self.loops.next_loop[at.index()] != LoopId::NONE {
+                    at = self.loops.next_loop[at.index()];
                 }
-                self.loops.next_loop[at.at()] = lp;
+                self.loops.next_loop[at.index()] = lp;
             }
         }
         Ok(lp)
@@ -390,14 +354,14 @@ impl Brep {
 
     /// The directions (`reversed`) of the edge's coedges so far.
     fn edge_coedges(&self, e: EdgeId) -> Vec<bool> {
-        let first = self.edges.coedge[e.at()];
+        let first = self.edges.coedge[e.index()];
         if first == CoedgeId::NONE {
             return Vec::new();
         }
-        let mut out = vec![self.coedges.reversed[first.at()]];
-        let pair = self.coedges.pair[first.at()];
+        let mut out = vec![self.coedges.reversed[first.index()]];
+        let pair = self.coedges.pair[first.index()];
         if pair != CoedgeId::NONE {
-            out.push(self.coedges.reversed[pair.at()]);
+            out.push(self.coedges.reversed[pair.index()]);
         }
         out
     }
@@ -426,7 +390,7 @@ impl Brep {
         }
         for c in 0..self.coedges.edge.len() {
             let id = CoedgeId(c as u32);
-            let [t0, t1] = self.edges.t_range[self.coedges.edge[c].at()];
+            let [t0, t1] = self.edges.t_range[self.coedges.edge[c].index()];
             let k = self.coedges.pcurve[c].knots();
             if k[0].to_bits() != t0.to_bits() || k[k.len() - 1].to_bits() != t1.to_bits() {
                 return Err(RibbonFault::SameT(id));
@@ -437,12 +401,12 @@ impl Brep {
 
     /// Whether (a) holds for `e`.
     fn edge_ends_hold(&self, e: EdgeId) -> bool {
-        let (vs, ve) = (self.edges.v_start[e.at()], self.edges.v_end[e.at()]);
+        let (vs, ve) = (self.edges.v_start[e.index()], self.edges.v_end[e.index()]);
         if vs > ve {
             return false;
         }
-        let c = &self.curves[self.edges.curve[e.at()].at()];
-        let [t0, t1] = self.edges.t_range[e.at()];
+        let c = &self.curves[self.edges.curve[e.index()].index()];
+        let [t0, t1] = self.edges.t_range[e.index()];
         let at = |t: f64| {
             c.knots()
                 .iter()
@@ -451,7 +415,8 @@ impl Brep {
         };
         match (at(t0), at(t1)) {
             (Some(a), Some(b)) => {
-                same_bits(&a, &self.verts.pos[vs.at()]) && same_bits(&b, &self.verts.pos[ve.at()])
+                same_bits(&a, &self.verts.pos[vs.index()])
+                    && same_bits(&b, &self.verts.pos[ve.index()])
             }
             _ => false,
         }
@@ -460,8 +425,8 @@ impl Brep {
     /// The vertex where coedge `c` ends (`end`) or starts, in its own
     /// direction; `None` for an id naming no coedge.
     fn coedge_vert(&self, c: CoedgeId, end: bool) -> Option<VertId> {
-        let e = self.coedges.edge.get(c.at())?.at();
-        let last = end != self.coedges.reversed[c.at()];
+        let e = self.coedges.edge.get(c.index())?.index();
+        let last = end != self.coedges.reversed[c.index()];
         Some(if last {
             self.edges.v_end[e]
         } else {
@@ -473,8 +438,8 @@ impl Brep {
     /// direction: its p-curve's last or first knot point, swapped when
     /// reversed.
     pub fn coedge_uv(&self, c: CoedgeId, end: bool) -> Option<[f64; 2]> {
-        let p = self.coedges.pcurve.get(c.at())?;
-        let last = end != self.coedges.reversed[c.at()];
+        let p = self.coedges.pcurve.get(c.index())?;
+        let last = end != self.coedges.reversed[c.index()];
         p.knot_point(if last { p.spans().len() } else { 0 })
     }
 
@@ -500,108 +465,108 @@ impl Brep {
 
     /// A vertex's position.
     pub fn pos(&self, v: VertId) -> [f64; 3] {
-        self.verts.pos[v.at()]
+        self.verts.pos[v.index()]
     }
 
     /// A vertex's tolerance.
     pub fn vert_tol(&self, v: VertId) -> f64 {
-        self.verts.tol[v.at()]
+        self.verts.tol[v.index()]
     }
 
     /// An edge's curve.
     pub fn curve(&self, e: EdgeId) -> &Curve3D {
-        &self.curves[self.edges.curve[e.at()].at()]
+        &self.curves[self.edges.curve[e.index()].index()]
     }
 
     /// An edge's parameter range on its curve.
     pub fn t_range(&self, e: EdgeId) -> [f64; 2] {
-        self.edges.t_range[e.at()]
+        self.edges.t_range[e.index()]
     }
 
     /// An edge's vertices, `[v_start, v_end]`.
     pub fn ends(&self, e: EdgeId) -> [VertId; 2] {
-        [self.edges.v_start[e.at()], self.edges.v_end[e.at()]]
+        [self.edges.v_start[e.index()], self.edges.v_end[e.index()]]
     }
 
     /// An edge's tolerance: the greatest seam bound of its coedges.
     pub fn edge_tol(&self, e: EdgeId) -> f64 {
-        self.edges.tol[e.at()]
+        self.edges.tol[e.index()]
     }
 
     /// One of an edge's coedges, `NONE` while it has none.
     pub fn edge_coedge(&self, e: EdgeId) -> CoedgeId {
-        self.edges.coedge[e.at()]
+        self.edges.coedge[e.index()]
     }
 
     /// A coedge's edge.
     pub fn edge(&self, c: CoedgeId) -> EdgeId {
-        self.coedges.edge[c.at()]
+        self.coedges.edge[c.index()]
     }
 
     /// Whether a coedge runs against its edge.
     pub fn reversed(&self, c: CoedgeId) -> bool {
-        self.coedges.reversed[c.at()]
+        self.coedges.reversed[c.index()]
     }
 
     /// A coedge's face.
     pub fn face(&self, c: CoedgeId) -> FaceId {
-        self.coedges.face[c.at()]
+        self.coedges.face[c.index()]
     }
 
     /// The next coedge round a coedge's loop.
     pub fn next(&self, c: CoedgeId) -> CoedgeId {
-        self.coedges.next[c.at()]
+        self.coedges.next[c.index()]
     }
 
     /// The previous coedge round a coedge's loop.
     pub fn prev(&self, c: CoedgeId) -> CoedgeId {
-        self.coedges.prev[c.at()]
+        self.coedges.prev[c.index()]
     }
 
     /// The other coedge of a coedge's edge, `NONE` if none.
     pub fn pair(&self, c: CoedgeId) -> CoedgeId {
-        self.coedges.pair[c.at()]
+        self.coedges.pair[c.index()]
     }
 
     /// A coedge's p-curve, over its edge's parameter.
     pub fn pcurve(&self, c: CoedgeId) -> &PCurve {
-        &self.coedges.pcurve[c.at()]
+        &self.coedges.pcurve[c.index()]
     }
 
     /// A coedge's seam bound: its ribbon's width.
     pub fn seam_bound(&self, c: CoedgeId) -> f64 {
-        self.coedges.seam_bound[c.at()]
+        self.coedges.seam_bound[c.index()]
     }
 
     /// A face's surface.
     pub fn surface(&self, f: FaceId) -> &Surface {
-        &self.surfaces[self.faces.surface[f.at()].at()]
+        &self.surfaces[self.faces.surface[f.index()].index()]
     }
 
     /// Whether a face's outward normal is against its surface's.
     pub fn flipped(&self, f: FaceId) -> bool {
-        self.faces.flipped[f.at()]
+        self.faces.flipped[f.index()]
     }
 
     /// A face's loops, in the order added.
     pub fn loops(&self, f: FaceId) -> impl Iterator<Item = LoopId> + '_ {
-        let first = self.faces.first_loop[f.at()];
+        let first = self.faces.first_loop[f.index()];
         std::iter::successors((first != LoopId::NONE).then_some(first), |l| {
-            let n = self.loops.next_loop[l.at()];
+            let n = self.loops.next_loop[l.index()];
             (n != LoopId::NONE).then_some(n)
         })
     }
 
     /// Whether a loop is its face's outer loop.
     pub fn is_outer(&self, l: LoopId) -> bool {
-        self.loops.is_outer[l.at()]
+        self.loops.is_outer[l.index()]
     }
 
     /// A loop's coedges, in order from its first.
     pub fn loop_coedges(&self, l: LoopId) -> impl Iterator<Item = CoedgeId> + '_ {
-        let first = self.loops.first_coedge[l.at()];
+        let first = self.loops.first_coedge[l.index()];
         std::iter::successors(Some(first), move |&c| {
-            let n = self.coedges.next[c.at()];
+            let n = self.coedges.next[c.index()];
             (n != first).then_some(n)
         })
     }

@@ -156,7 +156,7 @@ pub fn flat(normals: &[DVec3]) -> Option<FlatDir> {
 }
 
 /// The least `d` with `n·d = 1` for every `n` of `ns` (non-zero), if
-/// there is one ([`least_on`]).
+/// there is one (`least_on`).
 pub fn equal_offsets(ns: &[Q3]) -> Option<Q3> {
     let rows: Vec<Half> = ns.iter().map(|n| (n.clone(), Rational::from(1))).collect();
     least_on(&rows.iter().collect::<Vec<_>>())
@@ -242,10 +242,10 @@ pub fn max_min(ns: &[Q3]) -> (Q3, Rational) {
 /// 90° rotations, mirrors), not a vertex the simplex happens to reach.
 ///
 /// `t*` and the constraints tight on all of `F` (the equalities `E`)
-/// come from [`simplex`]. The least point `x*` of `F` is the least point
+/// come from `simplex`. The least point `x*` of `F` is the least point
 /// of the affine hull of the face of `F` it lies inside, which is cut out
 /// by `E` and at most `3 − rank E` more constraints tight there; so `x*`
-/// is the least of the points [`least_on`] gives for `E` and each such
+/// is the least of the points `least_on` gives for `E` and each such
 /// set that lie in `F` (each candidate lies in `F`, and `x*` is one).
 pub fn max_min_in(ns: &[Q3], lo: &Q3, hi: &Q3) -> (Q3, Rational) {
     let (t, tight) = simplex(ns, lo, hi);

@@ -831,4 +831,44 @@ mod tests {
             });
         }
     }
+
+    /// A record table filled by passes: each batch of keys not yet stored
+    /// is one pass over them in key order, a unit per key, so asking for
+    /// stored keys again charges nothing; a pass that runs out stores
+    /// nothing.
+    #[test]
+    fn record_tables_are_filled_by_charged_passes() {
+        use varde_decide::records::table::{FillError, Table};
+        let decide = |work: &mut Work, t: &mut Table<u32, u32>, wanted: &[u32]| {
+            t.fill(wanted.iter().copied(), |keys| {
+                work.pass(PASS, keys, |k, ledger| {
+                    ledger.charge(W, 1)?;
+                    Ok::<_, Stop<()>>(**k + 100)
+                })
+            })
+        };
+        let mut work = Work::new(&Budget::new(6));
+        let mut t = Table::new();
+        decide(&mut work, &mut t, &[3, 1, 2, 3]).unwrap();
+        assert_eq!(work.used(), 3);
+        decide(&mut work, &mut t, &[1, 2, 3, 4]).unwrap();
+        assert_eq!(work.used(), 4);
+        assert_eq!(t.get(&4), Some(&104));
+        let out = decide(&mut work, &mut t, &[5, 6, 7]);
+        assert!(matches!(out, Err(FillError::Decide(Halt::OutOfBudget(_)))));
+        assert_eq!(work.used(), 6);
+        assert_eq!(t.len(), 4);
+
+        // A batch that uses the budget up exactly is stored; stored keys
+        // still read free; the next key runs out at its own pass.
+        let mut work = Work::new(&Budget::new(3));
+        let mut t = Table::new();
+        decide(&mut work, &mut t, &[2, 3, 1]).unwrap();
+        assert_eq!(work.used(), 3);
+        decide(&mut work, &mut t, &[3, 1]).unwrap();
+        let out = decide(&mut work, &mut t, &[1, 4]);
+        assert!(matches!(out, Err(FillError::Decide(Halt::OutOfBudget(_)))));
+        assert_eq!(work.used(), 3);
+        assert_eq!(t.len(), 3);
+    }
 }

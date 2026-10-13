@@ -9,8 +9,12 @@
 //! [`num::trig`], the deterministic trigonometry, [`bezier`], the
 //! Bernstein forms over those numbers, in one and two parameters, and
 //! [`perturb`], the perturbation rows `decide` reads for each kind of
-//! record, and the directions the moving operand's elements move along.
+//! record, and the directions the moving operand's elements move along,
+//! [`ids`], the ids of a B-rep's entities, and [`records`], the records'
+//! canonical keys and the table each kind is stored in, decided once.
 
 pub mod bezier;
+pub mod ids;
 pub mod num;
 pub mod perturb;
+pub mod records;

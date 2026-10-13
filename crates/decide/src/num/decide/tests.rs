@@ -13,14 +13,24 @@ use glam::DVec3;
 use super::*;
 use malachite::Rational as Q;
 
+use crate::ids::{FaceId, VertId};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::ETA;
 use crate::num::exact::{Num, Pred, moved_point, sign};
+use crate::records::keys::{Anchor, HKey, HeightKey, LayerId, Operand, Point};
 
 fn key() -> TieKey {
+    let q = Point::vert(Operand::A, VertId(3));
     TieKey {
         row: Row::LayerHeight,
-        ids: [3, 7, TieKey::NONE, TieKey::NONE],
+        record: RecordKey::HeightAt(HeightKey {
+            h: HKey::Face {
+                q,
+                f: FaceId(7),
+                layer: LayerId(0),
+            },
+            anchor: Anchor::Face(Operand::B, FaceId(7)),
+        }),
     }
 }
 

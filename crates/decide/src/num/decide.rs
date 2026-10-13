@@ -55,6 +55,7 @@ use super::bounded::{Bounded, Level};
 use super::dd::Dd;
 use super::exact::{ExactSign, ORDERS, Signs};
 use super::expansion::Exp;
+use crate::records::keys::RecordKey;
 
 /// A non-zero sign: what [`decide`] answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -175,20 +176,15 @@ pub fn rung_target(tau_sign: f64, k: u32) -> f64 {
 }
 
 /// What a record's sign is a question about, for evidence: the
-/// perturbation row it is an instance of and the canonical ids of its
-/// elements (operand ids, never names), unused slots [`TieKey::NONE`].
-/// [`decide`] reads no part of it for the answer.
+/// perturbation row it is an instance of and the record's canonical key
+/// (operand ids, never names). [`decide`] reads no part of it for the
+/// answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TieKey {
     /// The row.
     pub row: Row,
-    /// The ids, in the row's order.
-    pub ids: [u32; 4],
-}
-
-impl TieKey {
-    /// An unused id slot.
-    pub const NONE: u32 = u32::MAX;
+    /// The record.
+    pub record: RecordKey,
 }
 
 /// The perturbation rows: every record whose sign [`decide`] gives is an

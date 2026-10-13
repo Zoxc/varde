@@ -16,9 +16,11 @@
 use malachite::{Float, Rational as Q};
 
 use super::*;
+use crate::ids::VertId;
 use crate::num::bigf::{Big, Width};
 use crate::num::decide::Row;
 use crate::num::exact::{order_value, value};
+use crate::records::keys::{Query, RecordKey, VvKey};
 
 type B = Bounded<Big>;
 
@@ -691,7 +693,10 @@ fn z_order_rows_are_the_derivatives_at_ties() {
 fn key(row: Row) -> TieKey {
     TieKey {
         row,
-        ids: [1, 2, TieKey::NONE, TieKey::NONE],
+        record: RecordKey::Vv(VvKey {
+            a: Query::Vert(VertId(1)),
+            b: Query::Vert(VertId(2)),
+        }),
     }
 }
 
