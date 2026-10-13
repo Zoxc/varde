@@ -778,7 +778,7 @@ impl Doc {
                     };
                     return Err(format!("Pick it on {}, the body aligned", body.name).into());
                 }
-                if !super::super::combine::pickable(document, held, session.feature) {
+                if !super::super::pickable(document, held, session.feature) {
                     return Err(refused(Unnamed::Later, "body"));
                 }
                 return Ok(taken.on(held));

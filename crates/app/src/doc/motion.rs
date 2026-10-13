@@ -67,8 +67,8 @@ use self::scale::ScaleSetup;
 use self::split::SplitSetup;
 use self::sweep::SweepSetup;
 use super::camera::fitting_length;
-use super::combine::pickable;
 use super::feed::{Marks, Merges, merged_in};
+use super::pickable;
 use super::regions::{ReadIn, TypedText};
 use super::{Doc, Focus, OUT_OF_DATE};
 

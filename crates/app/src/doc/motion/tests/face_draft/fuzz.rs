@@ -133,7 +133,7 @@ fn check_session(plates: &Plates, what: &str) {
         .check_neutral_plane(index, &draft.neutral)
         .unwrap_or_else(|why| panic!("{what}: {why}: {draft:?}"));
     assert!(
-        crate::doc::combine::pickable(document, body, session.feature),
+        crate::doc::pickable(document, body, session.feature),
         "{what}: {draft:?}"
     );
     assert_eq!(

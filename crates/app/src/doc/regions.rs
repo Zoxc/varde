@@ -19,6 +19,17 @@ use varde_view::{
 
 use super::{Doc, is_sketch};
 
+/// Whether an operation of `document` edited from `edited` (a new one,
+/// where new features go, if `None`) can name `body`: it's there, made by
+/// a feature before the operation, as the document's check wants.
+pub(crate) fn pickable(document: &Document, body: BodyId, edited: Option<FeatureId>) -> bool {
+    let at = edited.map_or(Some(document.insert_at()), |id| document.feature_index(id));
+    document.body(body).is_some_and(|made| {
+        let maker = document.feature_index(made.created_by);
+        maker.is_some_and(|maker| at.is_none_or(|at| maker < at))
+    })
+}
+
 /// The most work finding the profiles of the visible sketches may take
 /// in all, in the unit of [`MAX_WORK`], on the UI thread: a file can hold
 /// any number of sketches, each as complex as [`MAX_WORK`] allows.
@@ -504,7 +515,7 @@ impl BodyTargets {
                 self.reticked.push((body, revision));
             }
             Err(at) => {
-                if super::combine::pickable(document, body, edited) {
+                if pickable(document, body, edited) {
                     self.excluded.insert(at, body);
                 }
             }

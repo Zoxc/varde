@@ -282,7 +282,7 @@ impl Doc {
         if !session.bodies.is_empty() && session.bodies.binary_search(&held).is_err() {
             return Err("Pick an edge of a body it scales".into());
         }
-        if !super::super::combine::pickable(document, held, session.feature) {
+        if !super::super::pickable(document, held, session.feature) {
             return Err(unnamed(Unnamed::Later, "body", MotionKind::Scale));
         }
         Ok(EdgeRef {

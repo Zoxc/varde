@@ -129,7 +129,7 @@ fn check_session(plates: &Plates, what: &str) {
         .unwrap_or_else(|why| panic!("{what}: {why}: {fillet:?}"));
     let body = fillet.body().unwrap();
     assert!(
-        crate::doc::combine::pickable(document, body, session.feature),
+        crate::doc::pickable(document, body, session.feature),
         "{what}: {fillet:?}"
     );
     assert_eq!(

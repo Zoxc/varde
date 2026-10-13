@@ -27,8 +27,8 @@ use varde_view::{
 
 use super::sketches::{count, sketch_name};
 use super::{Doc, MotionSession, unnamed};
-use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
+use crate::doc::pickable;
 use crate::doc::regions::{GoneRegions, RegionPick};
 use crate::doc::sketch_of;
 

@@ -151,7 +151,7 @@ fn check_session(plates: &Plates, what: &str) {
         .check_face_set(index, shell.body, &shell.open)
         .unwrap_or_else(|why| panic!("{what}: {why}: {shell:?}"));
     assert!(
-        crate::doc::combine::pickable(document, shell.body, session.feature),
+        crate::doc::pickable(document, shell.body, session.feature),
         "{what}: {shell:?}"
     );
     assert_eq!(

@@ -51,8 +51,6 @@ use camera::Pivot;
 #[cfg(test)]
 pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
 pub(crate) use combine::CombineSession;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use combine::pickable;
 use delete::Deleting;
 use export::Export;
 #[cfg(test)]
@@ -65,6 +63,8 @@ pub(crate) use measure::MeasureSession;
 pub(crate) use motion::MotionSession;
 use pick::ModelPick;
 use rail::Rail;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use regions::pickable;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use regions::{BodyTargets, RegionPick};
 pub(crate) use revolve::RevolveSession;

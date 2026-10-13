@@ -329,7 +329,7 @@ impl Doc {
             )
             .into());
         }
-        if !super::super::combine::pickable(document, held, session.feature) {
+        if !super::super::pickable(document, held, session.feature) {
             return Err(unnamed(Unnamed::Later, "body", kind));
         }
         *named.body_mut() = held;

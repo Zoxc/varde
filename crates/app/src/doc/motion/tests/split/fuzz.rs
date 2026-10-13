@@ -117,7 +117,7 @@ fn check_session(plates: &Plates, what: &str) {
         .check_split_tool(index, &split.tool)
         .unwrap_or_else(|why| panic!("{what}: {why}: {split:?}"));
     assert!(
-        crate::doc::combine::pickable(document, split.body, session.feature),
+        crate::doc::pickable(document, split.body, session.feature),
         "{what}: {split:?}"
     );
     if session.picking == MotionPick::Nothing {
