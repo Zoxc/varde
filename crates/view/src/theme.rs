@@ -1226,7 +1226,7 @@ pub fn param_row(banded: bool) -> impl Fn(&Theme) -> container::Style {
 pub fn param_head(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
-        background: Some(Background::Color(mix(p.text, p.panel, 0.06))),
+        background: Some(Background::Color(well(p))),
         text_color: Some(p.muted),
         ..container::Style::default()
     }
@@ -1877,14 +1877,7 @@ pub fn rail_head(
         };
         button::Style {
             background: if held {
-                // Hovered, the selection's tint deepens.
-                let soft = p.accent_soft;
-                let a = if is_hovered(status) {
-                    soft.a * SELECTED_HOVER_DEEPEN
-                } else {
-                    soft.a
-                };
-                Some(Background::Color(Color { a, ..soft }))
+                Some(Background::Color(selected_tint(p, is_hovered(status))))
             } else {
                 (open || is_hovered(status)).then_some(Background::Color(p.hl))
             },
@@ -2037,16 +2030,25 @@ pub fn hovered_row(theme: &Theme) -> container::Style {
 /// is while hovered.
 const SELECTED_HOVER_DEEPEN: f32 = 1.75;
 
+/// A selected row's tint, the soft accent, deepened if `hovered`.
+fn selected_tint(p: &Palette, hovered: bool) -> Color {
+    let soft = p.accent_soft;
+    if hovered {
+        Color {
+            a: (soft.a * SELECTED_HOVER_DEEPEN).min(1.0),
+            ..soft
+        }
+    } else {
+        soft
+    }
+}
+
 /// Halfway between the accent and a hovered selected row's tint (the soft
 /// accent deepened) made opaque over the panel, for marks that stand for
 /// a selection in a list.
 pub fn selection_mark(p: &Palette) -> Color {
-    let soft = p.accent_soft;
-    let hovered = mix(
-        Color { a: 1.0, ..soft },
-        p.panel,
-        (soft.a * SELECTED_HOVER_DEEPEN).min(1.0),
-    );
+    let deep = selected_tint(p, true);
+    let hovered = mix(Color { a: 1.0, ..deep }, p.panel, deep.a);
     mix(p.accent, hovered, 0.5)
 }
 
