@@ -227,12 +227,11 @@ impl Projector {
         if !(at.is_finite() && at.abs().max_element() <= f64::from(MAX_COORD)) {
             return None;
         }
-        let pixel = if self.perspective {
-            self.view(hit).1 / (self.distance * self.scale)
-        } else {
-            1.0 / self.scale
-        };
-        let pixel = pixel.min(f64::from(MAX_COORD));
+        // A hit nearer than the near plane is clipped from view: its
+        // pixel is taken there, as everywhere pixels are sized.
+        let pixel = self
+            .pixel_at(self.world_depth(hit))
+            .min(f64::from(MAX_COORD));
         (pixel > 0.0).then_some(Cursor { at, pixel })
     }
 
