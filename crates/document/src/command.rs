@@ -727,7 +727,7 @@ impl Document {
             Command::AddSketch { name, plane } => {
                 let mut next = self.clone();
                 let sketch = Sketch::default();
-                next.push_feature(
+                let id = next.push_feature(
                     name,
                     FeatureKind::Sketch {
                         plane,
@@ -735,7 +735,8 @@ impl Document {
                         sources: Vec::new(),
                     },
                 )?;
-                next.follow_sketch_face(next.features.len() - 1, None)?;
+                let index = next.feature_index(id).expect("just added");
+                next.follow_sketch_face(index, None)?;
                 next
             }
             Command::SetSketch { feature, sketch } => {
@@ -809,7 +810,7 @@ impl Document {
                         next.features[index].visible = false;
                     }
                 }
-                let index = next.features.len() - 1;
+                let index = next.feature_index(id).expect("just added");
                 next.check_new(index, &next.features[index].kind)?;
                 next
             }

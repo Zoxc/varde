@@ -433,6 +433,31 @@ fn the_axis_is_a_line_of_its_sketch_when_added_or_set() {
     assert_eq!(*revolve_of(editor.document(), about_line), fixed);
 }
 
+/// Rolled back, a new revolve goes in before the feature rolled back to,
+/// and it is the one checked.
+#[test]
+fn the_axis_is_checked_on_a_revolve_added_while_rolled_back() {
+    let document = with_body();
+    let (_, _, _, circle) = sketch_of(&document);
+    let mut editor = Editor::new(document);
+    let last = editor.document().features.last().unwrap().id;
+    editor.apply(Command::SetRollback(Some(last))).unwrap();
+    let rolled = editor.document().clone();
+    let revolve = Revolve {
+        axis: AxisLine::Curve(circle),
+        ..ring(Operation::NewBody(BodyId::NEW))
+    };
+    let next = FeatureId(rolled.next_id);
+    assert_eq!(
+        editor.apply(rolled.add_feature(revolve.into())),
+        Err(EditError::Invalid(CheckError::Revolve(
+            next,
+            RevolveError::Axis(circle)
+        )))
+    );
+    assert_eq!(*editor.document(), rolled);
+}
+
 #[test]
 fn set_feature_keeps_adds_or_removes_a_revolve_s_body() {
     let (mut editor, id) = added(ring(Operation::NewBody(BodyId::NEW)));
