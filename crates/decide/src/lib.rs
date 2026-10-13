@@ -11,7 +11,9 @@
 //! [`perturb`], the perturbation rows `decide` reads for each kind of
 //! record, and the directions the moving operand's elements move along,
 //! [`ids`], the ids of a B-rep's entities, and [`records`], the records'
-//! canonical keys and the table each kind is stored in, decided once.
+//! canonical keys, the table each kind is stored in, decided once, and the
+//! flat shadow records (point against vertex, a point's ray against a
+//! straight edge).
 
 pub mod bezier;
 pub mod ids;

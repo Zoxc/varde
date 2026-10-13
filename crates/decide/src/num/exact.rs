@@ -162,6 +162,23 @@ pub struct Work {
     pub rationals: u32,
 }
 
+impl Work {
+    /// The work of this run and `o`'s together: the runs added, the
+    /// longest expansion the longer.
+    pub fn and(self, o: Work) -> Work {
+        Work {
+            filters: self.filters.saturating_add(o.filters),
+            expansions: self.expansions.saturating_add(o.expansions),
+            longest: if o.longest > self.longest {
+                o.longest
+            } else {
+                self.longest
+            },
+            rationals: self.rationals.saturating_add(o.rationals),
+        }
+    }
+}
+
 /// A value with an input that isn't finite (module docs): it has no sign,
 /// in any build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
