@@ -305,7 +305,7 @@ first angle's field and "90°" in the second, a new body.
 **The panel** (`view/src/revolve.rs`) is the extrude's floating panel
 (`operation_panel`), built of the same parts (tiles, icon toggles,
 fields picked into, typed fields, the Bodies list, the foot's message,
-in `operation_panel.rs`; their look is in `agents/viewport.md`): title
+in `operation_panel/controls.rs`; their look is in `agents/viewport.md`): title
 "New revolve" or the revolve's name; a Profile field (the regions
 picked as rows, "Region 1" with a cross taking it out, then "Click
 regions" while it's the one picking or empty) and an Axis field ("Line
