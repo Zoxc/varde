@@ -245,11 +245,10 @@ pub(super) fn refused(
     let about = |chain: u32| planned.iter().find(|p| p.chain == chain);
     let edge_failed = |chain: u32, why: BlendRefusal| {
         let which = about(chain).map(|p| (p.source, p.grown));
-        Failed {
-            missing: false,
-            message: why::blend_refused(blend, why, which, counts, own.name),
-            geometry: chain_geometry(&own.solid, &own.topology, chain, tolerance),
-        }
+        Failed::shown(
+            why::blend_refused(blend, why, which, counts, own.name),
+            chain_geometry(&own.solid, &own.topology, chain, tolerance),
+        )
     };
     match error {
         BlendError::Flat { chain } => edge_failed(chain, BlendRefusal::Flat),

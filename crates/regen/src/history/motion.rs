@@ -340,21 +340,19 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
         EdgeShape::Line { from, to } => [from, to - from],
         EdgeShape::Circle { centre, axis, .. } => [centre, axis],
         EdgeShape::Ellipse { .. } | EdgeShape::Other => {
-            return Err(Failed {
-                missing: false,
-                message: why::EDGE_NOT_AN_AXIS.to_owned(),
-                geometry: chain_curves(solid, chain, tolerance),
-            });
+            return Err(Failed::shown(
+                why::EDGE_NOT_AN_AXIS,
+                chain_curves(solid, chain, tolerance),
+            ));
         }
     };
     match chain_runs_with(&topology, chain, edge) {
         Some(true) => Ok(line),
         Some(false) => Ok([line[0], -line[1]]),
-        None => Err(Failed {
-            missing: false,
-            message: why::EDGE_UNDIRECTED.to_owned(),
-            geometry: chain_curves(solid, chain, tolerance),
-        }),
+        None => Err(Failed::shown(
+            why::EDGE_UNDIRECTED,
+            chain_curves(solid, chain, tolerance),
+        )),
     }
 }
 
@@ -373,11 +371,10 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
     topology
         .face_axis(solid, &face.key, face.near)
         .map_err(|why| match why {
-            Unresolved::NotRound { region } => Failed {
-                missing: false,
-                message: why::AXIS_FACE_NOT_ROUND.to_owned(),
-                geometry: face_geometry(solid, &topology.regions()[region as usize], tolerance),
-            },
+            Unresolved::NotRound { region } => Failed::shown(
+                why::AXIS_FACE_NOT_ROUND,
+                face_geometry(solid, &topology.regions()[region as usize], tolerance),
+            ),
             _ => why::AXIS_FACE_NOT_FOUND.into(),
         })
 }
@@ -397,10 +394,9 @@ pub(super) fn face_plane(
     let region = &topology.regions()[region as usize];
     match *region_form(solid, region) {
         Form::Plane { n, d } if n != DVec3::ZERO && n.is_finite() && d.is_finite() => Ok((n, d)),
-        _ => Err(Failed {
-            missing: false,
-            message: words.not_flat.to_owned(),
-            geometry: face_geometry(solid, region, tolerance),
-        }),
+        _ => Err(Failed::shown(
+            words.not_flat,
+            face_geometry(solid, region, tolerance),
+        )),
     }
 }

@@ -1247,11 +1247,7 @@ fn a_kept_curved_face_counts_in_the_cache_s_size() {
     let geometry = evaluation.failed[0].geometry.clone().expect("the wall");
     let mut cache = Cache::default();
     let key = crate::cache::Keyer::new("placement").finish();
-    let failed = Failed {
-        missing: false,
-        message: "its face isn't flat".to_owned(),
-        geometry: Some(geometry.clone()),
-    };
+    let failed = Failed::shown("its face isn't flat", Some(geometry.clone()));
     assert!(cache.placement(key, || Err(failed)).is_err());
     assert!(
         cache.bytes() > crate::cache::size::total(&*geometry),

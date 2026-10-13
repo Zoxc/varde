@@ -309,22 +309,17 @@ impl Found<'_> {
                     .unwrap_or(0);
                 let (side, refs) = named[at];
                 let shown = refs.directions().filter_map(dir_shown);
-                Failed {
-                    missing: false,
-                    message: why::align_parallel(side),
-                    geometry: self.shown(shown),
-                }
+                Failed::shown(why::align_parallel(side), self.shown(shown))
             }
             AlignError::Point => {
                 let at = (sides.iter())
                     .position(|side| !in_range(side.datum.point))
                     .unwrap_or(0);
                 let (side, refs) = named[at];
-                Failed {
-                    missing: false,
-                    message: why::align_too_far(side),
-                    geometry: self.shown(point_shown(&refs.point)),
-                }
+                Failed::shown(
+                    why::align_too_far(side),
+                    self.shown(point_shown(&refs.point)),
+                )
             }
             AlignError::Direction | AlignError::Unpaired | AlignError::Options => {
                 why::ALIGN_MALFORMED.into()
@@ -424,9 +419,5 @@ fn unresolved(
             ("is an edge whose direction can't be told", chain(c))
         }
     };
-    Failed {
-        missing: false,
-        message: why::reference(whose, why),
-        geometry,
-    }
+    Failed::shown(why::reference(whose, why), geometry)
 }

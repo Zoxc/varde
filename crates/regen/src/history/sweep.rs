@@ -78,7 +78,6 @@ use varde_sketch::Curve;
 use super::{Evaluation, Failed, Run, motion};
 use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::ErrorGeometry;
 use crate::inspect;
 use crate::profile::{ChainError, path_chain};
 use crate::why::{self, SweepRefusal};
@@ -414,11 +413,11 @@ fn helix_start(helix: &path_sweep::Helix, middle: DVec3) -> SweepFound {
 fn corner(at: DVec3, tolerance: &Tolerance) -> Failed {
     let mut evidence = Evidence::default();
     evidence.add_points([at]);
-    Failed {
-        missing: false,
-        message: why::sweep_refused(SweepRefusal::Corner),
-        geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
-    }
+    Failed::with_evidence(
+        why::sweep_refused(SweepRefusal::Corner),
+        &evidence,
+        tolerance,
+    )
 }
 
 /// The part a chain of model edges makes, `edges` of one body found on

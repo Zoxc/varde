@@ -81,11 +81,10 @@ pub(super) fn evaluate_scale(
     // An edge length refused (its edge's failure comes through the
     // factors) shows the edge, once it's found.
     let factors = factors.map_err(|failed| match scale.factor.edge() {
-        Some(on) if failed.geometry.is_none() => Failed {
-            missing: false,
-            geometry: edge_geometry(on, evaluation, tolerance, cache),
-            ..failed
-        },
+        Some(on) if failed.geometry.is_none() => Failed::shown(
+            failed.message,
+            edge_geometry(on, evaluation, tolerance, cache),
+        ),
         _ => failed,
     })?;
     let motion = Motion::scale(centre, factors).ok_or(why::SCALE_FACTOR)?;

@@ -406,6 +406,27 @@ pub(crate) struct Failed {
 }
 
 impl Failed {
+    /// `message`, showing `geometry`.
+    pub(crate) fn shown(
+        message: impl Into<String>,
+        geometry: Option<Arc<ErrorGeometry>>,
+    ) -> Failed {
+        Failed {
+            message: message.into(),
+            geometry,
+            missing: false,
+        }
+    }
+
+    /// `message`, showing `evidence` at the display of `tolerance`.
+    pub(crate) fn with_evidence(
+        message: impl Into<String>,
+        evidence: &varde_kernel_compat::Evidence,
+        tolerance: &Tolerance,
+    ) -> Failed {
+        Failed::shown(message, ErrorGeometry::of_evidence(evidence, tolerance))
+    }
+
     /// The kernel's `failure`, worded as `message`, of the bodies its
     /// operands are made of (`[a, b]`, see [`KernelFailure::geometry`]).
     pub(crate) fn kernel(
@@ -413,11 +434,7 @@ impl Failed {
         failure: &KernelFailure,
         operands: [&[BodyId]; 2],
     ) -> Failed {
-        Failed {
-            missing: false,
-            message,
-            geometry: failure.geometry(operands),
-        }
+        Failed::shown(message, failure.geometry(operands))
     }
 
     /// The kernel's `failure`, worded as `message`, with its evidence by
@@ -447,11 +464,7 @@ impl Failed {
 
 impl From<String> for Failed {
     fn from(message: String) -> Failed {
-        Failed {
-            missing: false,
-            message,
-            geometry: None,
-        }
+        Failed::shown(message, None)
     }
 }
 
@@ -841,11 +854,8 @@ fn place_on(
         let region = (topology.face(solid, &face.key, face.near))
             .map_err(|_| Failed::missing(why::FACE_NOT_FOUND))?;
         let region = &topology.regions()[region as usize];
-        let not_flat = || Failed {
-            missing: false,
-            message: why::FACE_NOT_FLAT.to_owned(),
-            geometry: face_geometry(solid, region, tolerance),
-        };
+        let not_flat =
+            || Failed::shown(why::FACE_NOT_FLAT, face_geometry(solid, region, tolerance));
         let Form::Plane { n, d } = *region_form(solid, region) else {
             return Err(not_flat());
         };

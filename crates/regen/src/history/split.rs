@@ -301,11 +301,10 @@ impl Building<'_> {
         let budget = &Budget::DEFAULT;
         varde_kernel_compat::surface_tool(form, on, &self.bounds, feature, &self.tolerance, budget)
             .map_err(|error| match error {
-                ToolError::CantExtend => Failed {
-                    missing: false,
-                    message: why::SPLIT_CANT_EXTEND.to_owned(),
-                    geometry: face_geometry(solid, region, &self.tolerance),
-                },
+                ToolError::CantExtend => Failed::shown(
+                    why::SPLIT_CANT_EXTEND,
+                    face_geometry(solid, region, &self.tolerance),
+                ),
                 ToolError::Failed(failure) => self.tool_failed(failure),
             })
     }

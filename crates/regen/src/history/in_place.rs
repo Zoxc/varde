@@ -10,7 +10,6 @@ use varde_document::{BodyId, Document, FaceRef, FeatureId};
 use varde_kernel_compat::{Budget, Evidence, Failure, Solid, Tolerance, Topology};
 
 use super::{BodySolid, Evaluation, Failed, own_solid};
-use crate::ErrorGeometry;
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
 use crate::inspect;
@@ -89,11 +88,7 @@ impl<'a> InPlace<'a> {
                 evidence.add_points(self.solid.mesh().verts().get(vertex as usize).copied());
             }
         }
-        Failed {
-            missing: false,
-            message,
-            geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
-        }
+        Failed::with_evidence(message, &evidence, tolerance)
     }
 
     /// The kernel failing on the body, in `words`, with its evidence.

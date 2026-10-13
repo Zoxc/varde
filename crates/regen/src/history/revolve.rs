@@ -12,7 +12,6 @@ use varde_kernel_compat::{Budget, Frame, Loop, Profile, Segment, Solid, Toleranc
 use varde_sketch::{Curve, Id};
 
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::ErrorGeometry;
 use crate::why::{self};
 
 use super::{Evaluation, Failed, Run, chain_curves, motion};
@@ -102,11 +101,7 @@ impl Run<'_> {
         let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_points([placement.to_world(at)]);
         evidence.add_sketch_curves(curve.map(|id| u64::from(id.get())));
-        Failed {
-            missing: false,
-            message: error.message().to_owned(),
-            geometry: ErrorGeometry::of_evidence(&evidence, &self.tolerance),
-        }
+        Failed::with_evidence(error.message(), &evidence, &self.tolerance)
     }
 }
 
@@ -214,11 +209,11 @@ pub(crate) fn edge_axis(
         let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_curves(Conic3::line(from, to).ok());
         evidence.add_points([from, to]);
-        return Err(Failed {
-            missing: false,
-            message: why::EDGE_OFF_PLANE.to_owned(),
-            geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
-        });
+        return Err(Failed::with_evidence(
+            why::EDGE_OFF_PLANE,
+            &evidence,
+            &tolerance,
+        ));
     }
     // The ends are a solid's vertices, within the coordinate limit, and
     // the placement's origin too, so the difference is finite.
@@ -226,11 +221,11 @@ pub(crate) fn edge_axis(
     if along == DVec2::ZERO {
         let mut evidence = varde_kernel_compat::Evidence::default();
         evidence.add_points([from]);
-        return Err(Failed {
-            missing: false,
-            message: why::AXIS_NO_LENGTH.to_owned(),
-            geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
-        });
+        return Err(Failed::with_evidence(
+            why::AXIS_NO_LENGTH,
+            &evidence,
+            &tolerance,
+        ));
     }
     Ok(Axis {
         at,
@@ -263,11 +258,10 @@ pub(crate) fn edge_ends(
     let chain = (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::EDGE_NOT_FOUND)?;
     let chain = &topology.chains()[chain as usize];
     let EdgeShape::Line { from, to } = edge_shape(solid, chain) else {
-        return Err(Failed {
-            missing: false,
-            message: why::EDGE_NOT_STRAIGHT.to_owned(),
-            geometry: chain_curves(solid, chain, tolerance),
-        });
+        return Err(Failed::shown(
+            why::EDGE_NOT_STRAIGHT,
+            chain_curves(solid, chain, tolerance),
+        ));
     };
     match chain_runs_with(&topology, chain, edge) {
         Some(true) => Ok([from, to]),
@@ -275,11 +269,11 @@ pub(crate) fn edge_ends(
         None => {
             let mut evidence = varde_kernel_compat::Evidence::default();
             evidence.add_curves(Conic3::line(from, to).ok());
-            Err(Failed {
-                missing: false,
-                message: why::EDGE_UNDIRECTED.to_owned(),
-                geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
-            })
+            Err(Failed::with_evidence(
+                why::EDGE_UNDIRECTED,
+                &evidence,
+                tolerance,
+            ))
         }
     }
 }
