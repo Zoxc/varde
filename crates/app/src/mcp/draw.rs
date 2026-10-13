@@ -84,11 +84,51 @@ struct Run {
 }
 
 /// What a [`Run`] edits.
+#[derive(Clone)]
 enum RunEdit {
     /// Shapes and constraints, one `Add`.
     Geometry(Add),
     /// Moves.
     Moves(Moves),
+}
+
+impl RunEdit {
+    /// The edit the run makes.
+    fn into_edit(self) -> SketchEdit {
+        match self {
+            RunEdit::Geometry(add) => SketchEdit::Add(add),
+            RunEdit::Moves(points) => SketchEdit::Move {
+                points,
+                radii: Vec::new(),
+            },
+        }
+    }
+
+    /// Folds `next`, made on the sketch this run's left, into the run if
+    /// it's of the same sort; gives it back if not.
+    fn absorb(&mut self, next: RunEdit) -> Option<RunEdit> {
+        match (self, next) {
+            // Its new items' ids go on from the run's, so it's one `Add`
+            // with them.
+            (RunEdit::Geometry(group), RunEdit::Geometry(add)) => {
+                group.points.extend(add.points);
+                group.curves.extend(add.curves);
+                group.constraints.extend(add.constraints);
+                group.dimensions.extend(add.dimensions);
+                group.auto.extend(add.auto);
+            }
+            (RunEdit::Moves(points), RunEdit::Moves(next)) => {
+                for (id, to) in next {
+                    match points.iter_mut().find(|(moved, _)| *moved == id) {
+                        Some((_, at)) => *at = to,
+                        None => points.push((id, to)),
+                    }
+                }
+            }
+            (_, next) => return Some(next),
+        }
+        None
+    }
 }
 
 impl Run {
@@ -103,15 +143,8 @@ impl Run {
 
     /// The step the run makes.
     fn into_step(self) -> Step {
-        let edit = match self.edit {
-            RunEdit::Geometry(add) => SketchEdit::Add(add),
-            RunEdit::Moves(points) => SketchEdit::Move {
-                points,
-                radii: Vec::new(),
-            },
-        };
         Step {
-            edit,
+            edit: self.edit.into_edit(),
             ops: (self.first, self.last),
             measured: None,
         }
@@ -366,35 +399,28 @@ impl Planner<'_> {
     /// Adds `add`, made on the sketch, to it and to the shapes and
     /// constraints in a row.
     fn add(&mut self, index: usize, add: Add) -> Result<(), Refused> {
-        if !matches!(
-            self.open,
-            Some(Run {
-                edit: RunEdit::Geometry(_),
-                ..
-            })
-        ) {
-            self.flush();
-        }
-        self.sketch = SketchEdit::Add(add.clone())
+        self.extend(index, RunEdit::Geometry(add))
+    }
+
+    /// Applies `edit`, the operation at `index`, to the sketch, and adds
+    /// it to the operations in a row if they're of its sort, else starts
+    /// a new row with it.
+    fn extend(&mut self, index: usize, edit: RunEdit) -> Result<(), Refused> {
+        self.sketch = (edit.clone().into_edit())
             .apply(&self.sketch, &self.design)
             .map_err(|why| refused(index, why))?;
-        match &mut self.open {
-            // Made on the sketch the group's left, its new items' ids go
-            // on from the group's, so it's one `Add` with them.
-            Some(Run {
-                edit: RunEdit::Geometry(group),
-                last,
-                ..
-            }) => {
-                group.points.extend(add.points);
-                group.curves.extend(add.curves);
-                group.constraints.extend(add.constraints);
-                group.dimensions.extend(add.dimensions);
-                group.auto.extend(add.auto);
-                *last = index;
-            }
-            _ => self.open = Some(Run::new(RunEdit::Geometry(add), index)),
-        }
+        let edit = match &mut self.open {
+            Some(open) => match open.edit.absorb(edit) {
+                None => {
+                    open.last = index;
+                    return Ok(());
+                }
+                Some(edit) => edit,
+            },
+            None => edit,
+        };
+        self.flush();
+        self.open = Some(Run::new(edit, index));
         Ok(())
     }
 
@@ -554,36 +580,7 @@ impl Planner<'_> {
             ));
         }
         let to = self.coordinates(index, to)?;
-        if !matches!(
-            self.open,
-            Some(Run {
-                edit: RunEdit::Moves(_),
-                ..
-            })
-        ) {
-            self.flush();
-        }
-        let edit = SketchEdit::Move {
-            points: vec![(id, to)],
-            radii: Vec::new(),
-        };
-        self.sketch =
-            (edit.apply(&self.sketch, &self.design)).map_err(|why| refused(index, why))?;
-        match &mut self.open {
-            Some(Run {
-                edit: RunEdit::Moves(points),
-                last,
-                ..
-            }) => {
-                match points.iter_mut().find(|(moved, _)| *moved == id) {
-                    Some((_, at)) => *at = to,
-                    None => points.push((id, to)),
-                }
-                *last = index;
-            }
-            _ => self.open = Some(Run::new(RunEdit::Moves(vec![(id, to)]), index)),
-        }
-        Ok(())
+        self.extend(index, RunEdit::Moves(vec![(id, to)]))
     }
 
     /// The item `item` names: by id, as `sketch` lists it; the origin or
