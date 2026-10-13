@@ -319,14 +319,17 @@ fn locate(knots: &[f64], t: f64) -> Option<(usize, At)> {
     Some((hi - 1, at))
 }
 
-/// The local parameter of `t` in `[a, b]`, exactly 0 or 1 at the ends,
-/// certified elsewhere.
-pub(crate) fn local(t: f64, a: f64, b: f64) -> Bounded<f64> {
+/// The local parameter of `t` in `[a, b]` at `like`'s level, exactly 0
+/// or 1 at the ends, certified elsewhere.
+pub(crate) fn local<S: Scalar>(t: f64, a: f64, b: f64, like: &S) -> S {
     if t == a {
-        Bounded::exact(0.0)
+        S::int(0, like)
     } else if t == b {
-        Bounded::exact(1.0)
+        S::int(1, like)
     } else {
-        (Bounded::exact(t) - Bounded::exact(a)) / (Bounded::exact(b) - Bounded::exact(a))
+        let a_s = S::from_f64(a, like);
+        S::from_f64(t, like)
+            .sub(&a_s)
+            .div(&S::from_f64(b, like).sub(&a_s))
     }
 }

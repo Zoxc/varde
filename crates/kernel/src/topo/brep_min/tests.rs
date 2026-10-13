@@ -15,14 +15,56 @@ use varde_decide::num::dd::Dd;
 use varde_testkit::rng::Rng;
 
 use super::*;
-use crate::geom::certify::SeamError;
+use crate::geom::certify::{SeamError, seam_bound_alone};
 use crate::geom::curve::{CurveError, Span2, Span3};
 use crate::geom::form::{CylinderKey, PlaneKey};
 use crate::geom::lattice::{CELL, Lattice};
+use crate::infra::budget::{Budget, Halt, MAX_WORK, Work};
+use crate::infra::error::KernelError;
 
 const R: f64 = 50.0;
 const H: f64 = 10.0;
 const ROOT_HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
+
+/// The seam target of the fixtures: a quarter of the least tolerance,
+/// `10⁻⁵` mm.
+const TARGET: f64 = 2.5e-6;
+
+/// Loops added towards [`TARGET`], each on a budget of its own.
+trait AddLoop {
+    fn add_test_loop(
+        &mut self,
+        face: FaceId,
+        is_outer: bool,
+        uses: Vec<(EdgeId, bool, PCurve)>,
+    ) -> Result<LoopId, StoreError>;
+}
+
+impl AddLoop for Brep {
+    fn add_test_loop(
+        &mut self,
+        face: FaceId,
+        is_outer: bool,
+        uses: Vec<(EdgeId, bool, PCurve)>,
+    ) -> Result<LoopId, StoreError> {
+        self.add_loop(
+            face,
+            is_outer,
+            uses,
+            TARGET,
+            &mut Work::new(&Budget::DEFAULT),
+        )
+    }
+}
+
+/// The seam bound of `p` on `s` against `c` towards [`TARGET`].
+fn seam_bound(s: &Surface, c: &Curve3D, p: &PCurve) -> Result<f64, SeamError> {
+    match seam_bound_alone(s, c, p, TARGET, MAX_WORK) {
+        Ok(b) => Ok(b.bound),
+        Err(Halt::Failed { error, .. }) => Err(error),
+        Err(halt) => panic!("{halt:?}"),
+    }
+}
 
 fn q(x: f64) -> Q {
     Q::try_from(x).expect("finite")
@@ -149,7 +191,7 @@ fn half_cylinder(cyl: [PCurve; 4]) -> Fixture {
     // The cylinder: its normal points out, the loop runs u up at z = 0.
     let cylinder = b.add_face(s_cyl, false).unwrap();
     let [p_arc0, p_arc1, p_rul0, p_rul1] = cyl;
-    b.add_loop(
+    b.add_test_loop(
         cylinder,
         true,
         vec![
@@ -183,7 +225,7 @@ fn half_cylinder(cyl: [PCurve; 4]) -> Fixture {
             .into_iter()
             .map(|(e, r)| (e, r, on_plane(&lat, b.curve(e))))
             .collect();
-        b.add_loop(f, true, uses).unwrap();
+        b.add_test_loop(f, true, uses).unwrap();
     }
     Fixture {
         brep: b,
@@ -476,7 +518,7 @@ fn add_loop_refuses_bad_coedges_and_adds_nothing() {
     let face = f.cylinder;
     // Every edge has its two coedges.
     assert_eq!(
-        b.add_loop(face, false, vec![(f.edges[0], true, a0.clone())]),
+        b.add_test_loop(face, false, vec![(f.edges[0], true, a0.clone())]),
         Err(StoreError::Coedge {
             index: 0,
             why: CoedgeError::Third
@@ -487,7 +529,7 @@ fn add_loop_refuses_bad_coedges_and_adds_nothing() {
     let id = b.add_curve(curve).unwrap();
     let e = b.add_edge(id, [0.0, 2.0], f.verts[0], f.verts[1]).unwrap();
     assert_eq!(
-        b.add_loop(
+        b.add_test_loop(
             face,
             false,
             vec![(e, false, a0.clone()), (e, false, a0.clone())]
@@ -499,7 +541,7 @@ fn add_loop_refuses_bad_coedges_and_adds_nothing() {
     );
     let short = PCurve::new(a0.spans().to_vec(), vec![0.0, 1.0, 1.5]).unwrap();
     assert_eq!(
-        b.add_loop(face, false, vec![(e, false, short)]),
+        b.add_test_loop(face, false, vec![(e, false, short)]),
         Err(StoreError::Coedge {
             index: 0,
             why: CoedgeError::SameT
@@ -507,13 +549,16 @@ fn add_loop_refuses_bad_coedges_and_adds_nothing() {
     );
     let off = a0.perturbed(&[[0.0, 0.0], [0.0, -0.6]]).unwrap();
     assert_eq!(
-        b.add_loop(face, false, vec![(e, false, off)]),
+        b.add_test_loop(face, false, vec![(e, false, off)]),
         Err(StoreError::Coedge {
             index: 0,
             why: CoedgeError::Seam(SeamError::Tile { span: 1 })
         })
     );
-    assert_eq!(b.add_loop(face, false, vec![]), Err(StoreError::EmptyLoop));
+    assert_eq!(
+        b.add_test_loop(face, false, vec![]),
+        Err(StoreError::EmptyLoop)
+    );
     assert_eq!((b.coedge_count(), b.edge_tol(f.edges[0])), before);
     assert_eq!(b.check_ribbons(), Ok(()));
     // Ends and ranges of edges.
@@ -662,7 +707,7 @@ fn weighted_half_disc() -> Brep {
         if flipped {
             uses.reverse();
         }
-        b.add_loop(f, true, uses).unwrap();
+        b.add_test_loop(f, true, uses).unwrap();
     }
     b
 }
@@ -732,15 +777,75 @@ fn weighted_ends_are_their_vertices_bit_for_bit() {
     });
     assert!(missed);
     assert_bounds_hold(&b, 8);
-    // Exact pairs: the bounds are the first level's rounding on the
-    // plane's one tile, 4 km across, scaled up by the spread of the
-    // weights (about 2·10⁻⁴ mm for the quarter with end weights 3 and ⅓,
-    // below 10⁻⁸ mm for the rest).
+    // Exact pairs: the bounds are the rounding on the plane's one tile,
+    // 4 km across, which grows with the spread of the weights (about
+    // 2·10⁻⁴ mm at the first level for the quarter with end weights 3 and
+    // ⅓, below 10⁻⁸ mm for the rest): that quarter escalates to its
+    // target.
     for c in 0..b.coedge_count() {
         let c = CoedgeId(c as u32);
-        let most = if b.edge(c) == EdgeId(1) { 1e-3 } else { 1e-8 };
-        assert!(b.seam_bound(c) < most, "{c:?}: {}", b.seam_bound(c));
+        assert!(b.seam_bound(c) <= TARGET, "{c:?}: {}", b.seam_bound(c));
     }
+}
+
+#[test]
+fn seam_bounds_out_of_budget_name_their_coedge() {
+    let b = weighted_half_disc();
+    let mut fresh = Brep::new();
+    let face = |to: &mut Brep| {
+        let s = to.add_surface(b.surface(FaceId(0)).clone()).unwrap();
+        let v = (0..b.vert_count())
+            .map(|v| to.add_vert(b.pos(VertId(v as u32))).unwrap())
+            .collect::<Vec<_>>();
+        let e = (0..b.edge_count())
+            .map(|e| {
+                let e = EdgeId(e as u32);
+                let c = to.add_curve(b.curve(e).clone()).unwrap();
+                let [s, t] = b.ends(e);
+                to.add_edge(c, b.t_range(e), v[s.index()], v[t.index()])
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        (to.add_face(s, false).unwrap(), e)
+    };
+    // The top face's first two coedges: the first quarter, then the one
+    // with end weights 3 and ⅓, which escalates.
+    let uses: Vec<_> = b
+        .loop_coedges(b.loops(FaceId(0)).next().unwrap())
+        .take(2)
+        .map(|c| (b.edge(c), b.reversed(c), b.pcurve(c).clone()))
+        .collect();
+    let on = |e: &[EdgeId], uses: &[(EdgeId, bool, PCurve)]| -> Vec<_> {
+        uses.iter()
+            .map(|(g, r, p)| (e[g.index()], *r, p.clone()))
+            .collect()
+    };
+    let (f, e) = face(&mut fresh);
+    let mut work = Work::new(&Budget::DEFAULT);
+    fresh
+        .add_loop(f, true, on(&e, &uses[..1]), TARGET, &mut work)
+        .unwrap();
+    let first = work.used();
+    // Room for the second's first-level computation and not for its
+    // double-double one.
+    let (f, e) = face(&mut fresh);
+    let mut work = Work::new(&Budget::new(first + 2));
+    let before = fresh.coedge_count();
+    match fresh.add_loop(f, true, on(&e, &uses), TARGET, &mut work) {
+        Err(StoreError::Coedge {
+            index: 1,
+            why: CoedgeError::OutOfBudget(KernelError::OutOfBudget { cause, profile }),
+        }) => {
+            assert_eq!(cause, crate::Cause::Precision);
+            assert_eq!(profile.stopped.at.item, 1);
+            assert_eq!(
+                profile.stopped.step,
+                Some(crate::Step::Precision { level: 1 })
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(fresh.coedge_count(), before);
 }
 
 #[test]
@@ -831,7 +936,7 @@ fn closed_edges_make_one_coedge_loops() {
             let p = on_plane(&lat, b.curve(e));
             // The hole runs the other way.
             let reversed = outer_reversed != (k == 1);
-            b.add_loop(f, k == 0, vec![(e, reversed, p)]).unwrap();
+            b.add_test_loop(f, k == 0, vec![(e, reversed, p)]).unwrap();
         }
     }
     assert_eq!(b.check_ribbons(), Ok(()));
@@ -850,7 +955,7 @@ fn closed_edges_make_one_coedge_loops() {
     // A third use of a closed edge, and an open edge alone in a loop.
     let p = on_plane(&lat, b.curve(edges[0]));
     assert_eq!(
-        b.add_loop(top, false, vec![(edges[0], true, p)]),
+        b.add_test_loop(top, false, vec![(edges[0], true, p)]),
         Err(StoreError::Coedge {
             index: 0,
             why: CoedgeError::Third
@@ -864,7 +969,7 @@ fn closed_edges_make_one_coedge_loops() {
     let id = b.add_curve(c).unwrap();
     let e = b.add_edge(id, [0.0, 1.0], v0, v1).unwrap();
     let p = on_plane(&lat, b.curve(e));
-    let l = b.add_loop(top, false, vec![(e, false, p)]).unwrap();
+    let l = b.add_test_loop(top, false, vec![(e, false, p)]).unwrap();
     let c = b.loop_coedges(l).next().unwrap();
     assert_eq!(b.check_ribbons(), Err(RibbonFault::Corner(c)));
 }
@@ -912,7 +1017,7 @@ fn add_loop_is_atomic_on_every_error() {
         (face, vec![]),
     ];
     for (k, (face, uses)) in cases.into_iter().enumerate() {
-        assert!(b.add_loop(face, false, uses).is_err(), "case {k}");
+        assert!(b.add_test_loop(face, false, uses).is_err(), "case {k}");
         assert_eq!(format!("{b:?}"), before, "case {k}");
     }
 }

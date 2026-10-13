@@ -18,7 +18,8 @@
 //!   the edge's other coedge (`NONE` while it has one only). Its p-curve
 //!   runs over the edge's `t_range` with the **edge's parameter**, whatever
 //!   the coedge's direction, and its `seam_bound` bounds
-//!   `|S_f(p(t)) − C(t)|` over it ([`seam_bound`]).
+//!   `|S_f(p(t)) − C(t)|` over it (the seam bound of
+//!   [`certify`](crate::geom::certify)).
 //! - A loop: its face, first coedge, the face's next loop, whether outer.
 //! - A face: its surface, `flipped` (the outward normal against the
 //!   surface's), its first loop.
@@ -49,18 +50,22 @@
 //! **Building.** Surfaces, curves, vertices, edges and faces are added
 //! one by one, each refused if it names an entity not there; a loop is
 //! added whole, with a p-curve per coedge: its seam bounds are computed
-//! then, and every coedge is paired with its edge's other coedge. The
+//! then, refined towards a target in one charged pass of the operation's
+//! work over its coedges (running out names the coedge), and every coedge
+//! is paired with its edge's other coedge. The
 //! joins are not tested on the way in; [`check_ribbons`](Brep::check_ribbons)
 //! tests them on the stored body.
 
 use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::{Curve3D, PCurve};
 use crate::geom::surface::Surface;
+use crate::infra::budget::{Halt, Pass, Work};
+use crate::infra::error::KernelError;
 
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
 
 /// Why an entity can't be added.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StoreError {
     /// An id names no entity of its kind.
     Id,
@@ -79,7 +84,7 @@ pub enum StoreError {
 }
 
 /// Why a coedge can't be added.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CoedgeError {
     /// Its edge has two coedges already.
     Third,
@@ -89,6 +94,10 @@ pub enum CoedgeError {
     SameT,
     /// Its seam bound can't be given.
     Seam(SeamError),
+    /// Its seam bound ran out of budget or reached a fixed limit
+    /// ([`KernelError::OutOfBudget`]); the coedges before it in the loop
+    /// had theirs.
+    OutOfBudget(KernelError),
 }
 
 /// The first failed ribbon join (module docs), in the order (a) over the
@@ -257,15 +266,20 @@ impl Brep {
     /// Adds a loop to `face`, after its other loops: a coedge per entry
     /// `(edge, reversed, p-curve)`, in the loop's order, each coedge's
     /// `next` the following entry's (the last's the first's). Each
-    /// coedge's seam bound is computed on the face's surface; its edge's
-    /// tolerance, and its vertices', are raised to it; it is paired with
-    /// the edge's coedge if there is one, which must run the other way.
-    /// Nothing is added unless every coedge can be.
-    pub fn add_loop(
+    /// coedge's seam bound is computed on the face's surface, refined
+    /// towards `target` ([`seam_bound`]), in one pass of `work` over the
+    /// loop's coedges in order; its edge's tolerance, and its vertices',
+    /// are raised to it; it is paired with the edge's coedge if there is
+    /// one, which must run the other way. Nothing is added unless every
+    /// coedge can be.
+    #[allow(dead_code, reason = "moved ahead of the operations that build bodies")]
+    pub(crate) fn add_loop(
         &mut self,
         face: FaceId,
         is_outer: bool,
         uses: Vec<(EdgeId, bool, PCurve)>,
+        target: f64,
+        work: &mut Work,
     ) -> Result<LoopId, StoreError> {
         let surface = *self.faces.surface.get(face.index()).ok_or(StoreError::Id)?;
         if uses.is_empty() {
@@ -276,8 +290,7 @@ impl Brep {
         let n = uses.len();
         // The ids of the coedges, checked before any is added.
         next_id(first.checked_add(n - 1).ok_or(StoreError::Full)?)?;
-        let surf = &self.surfaces[surface.index()];
-        let mut bounds = Vec::with_capacity(n);
+        let mut curves = Vec::with_capacity(n);
         for (index, (e, reversed, p)) in uses.iter().enumerate() {
             let why = |why| StoreError::Coedge { index, why };
             let c = *self.edges.curve.get(e.index()).ok_or(StoreError::Id)?;
@@ -300,10 +313,37 @@ impl Brep {
             if k[0].to_bits() != t0.to_bits() || k[k.len() - 1].to_bits() != t1.to_bits() {
                 return Err(why(CoedgeError::SameT));
             }
-            let b = seam_bound(surf, &self.curves[c.index()], p)
-                .map_err(|s| why(CoedgeError::Seam(s)))?;
-            bounds.push(b);
+            curves.push(c);
         }
+        let surf = &self.surfaces[surface.index()];
+        let items: Vec<(&Curve3D, &PCurve)> = curves
+            .iter()
+            .zip(&uses)
+            .map(|(c, (_, _, p))| (&self.curves[c.index()], p))
+            .collect();
+        let pass = Pass {
+            stage: "seam",
+            rung: 0,
+        };
+        let bounds = work
+            .pass(pass, &items, |(c, p), ledger| {
+                seam_bound(surf, c, p, target, ledger).map(|b| b.bound)
+            })
+            .map_err(|halt| match halt {
+                Halt::Failed { item, error } => StoreError::Coedge {
+                    index: item,
+                    why: CoedgeError::Seam(error),
+                },
+                Halt::OutOfBudget(error) => StoreError::Coedge {
+                    index: match &error {
+                        KernelError::OutOfBudget { profile, .. } => {
+                            profile.stopped.at.item as usize
+                        }
+                        _ => 0,
+                    },
+                    why: CoedgeError::OutOfBudget(error),
+                },
+            })?;
         let co = &mut self.coedges;
         for (index, ((e, reversed, p), b)) in uses.into_iter().zip(bounds).enumerate() {
             // Below `first + n`, whose ids were checked above.

@@ -13,42 +13,97 @@
 //! positive); the lower candidate where a span runs on a tile line at
 //! the domain's far side.
 //!
-//! **The bound on a piece.** The spans' homogeneous coefficients are
-//! formed at the first level from their affine control points, each
-//! product `w·x` rounded once with its rounding carried
-//! ([`Curve3D::span`]), and so are the tile's. With the span's local
+//! **The bound on a cell.** A piece is bounded cell by cell, a cell its
+//! `k`-th of `2^d` equal parts in `t`, at a precision level of the
+//! escalation schedule (`f64`, double-double, big-float at 212 to 3392
+//! bits). At the cell's level the spans' homogeneous coefficients are
+//! formed from their affine control points ([`Curve3D::span_at`]: each
+//! product `w·x` rounded once with its rounding carried at the first
+//! level, exact above), and so are the tile's; the spans are restricted
+//! to the piece and halved down to the cell. With the span's local
 //! homogeneous coordinates `U' = U − i·W`, `V' = V − j·W`, the tile's
-//! homogeneous net `Pₖₗ`
-//! composed with it is `H = Σₖₗ Pₖₗ·Bₖ(U', W)·Bₗ(V', W)`, `Bₖ` the
-//! homogeneous quadratic Bernstein basis (`(W − U')²`, `2U'(W − U')`,
-//! `U'²`): degree 8, the tile's point `(H₀, H₁, H₂) / H₃`. The difference
-//! with `C = (X, W_C)` is `N / D`, `Nₘ = Hₘ·W_C − Xₘ·H₃` of degree 10 and
-//! `D = H₃·W_C`. Its length is at most `Σₘ max|Nₘ| / min D`, the maxima and
-//! the minimum certified from the Bernstein coefficients (the forms lie
-//! in their coefficients' hull) at the first level, every error carried,
-//! rounded upwards. Where the denominator isn't certified positive, the
-//! piece is split at ½, up to [`MAX_SPLITS`] times.
+//! homogeneous net `Pₖₗ` composed with it is
+//! `H = Σₖₗ Pₖₗ·Bₖ(U', W)·Bₗ(V', W)`, `Bₖ` the homogeneous quadratic
+//! Bernstein basis (`(W − U')²`, `2U'(W − U')`, `U'²`): degree 8, the
+//! tile's point `(H₀, H₁, H₂) / H₃`. The difference with `C = (X, W_C)`
+//! is `N / D`, `Nₘ = Hₘ·W_C − Xₘ·H₃` of degree 10 and `D = H₃·W_C`. Its
+//! length is at most `√(Σₘ max|Nₘ|²) / min D`, the maxima and the
+//! minimum certified from the Bernstein coefficients (the forms lie in
+//! their coefficients' hull), every error carried, rounded upwards. The
+//! first and last coefficients are the values at the cell's ends, so they
+//! also give a certified **lower** bound of the deviation.
 //!
-//! This is the simple form of the bound: one Bernstein bound per piece
-//! (no subdivision to a target, no higher precision level), biquadratic
-//! tiles and Q spans only. Its rounding scales with the coordinates'
-//! magnitude: on a plane, whose one tile spans the coordinate box, about
-//! `1e-9` mm for weights near 1. It grows with the spread of the weights
-//! along a span, as the bound divides the largest coefficients' rounding
-//! by the least denominator: on that tile a 90° arc with end weights 3
-//! and ⅓ gets about `2·10⁻⁴` mm, with end weights 64 and 1/64 about
-//! `3·10⁹` mm, though the arc lies exactly on the plane.
+//! **Escalation: space, then precision.** A cell whose bound is at most
+//! the target is done. Otherwise its excess is split by a fixed
+//! comparison of computed values: the part due to rounding (the bound
+//! less the same bound from the coefficients' values alone) against the
+//! part due to the Bernstein hull (that value bound less the deviation at
+//! the cell's ends). Where rounding dominates, or the denominator is
+//! positive in value but not certified so, the cell is computed again one
+//! level up; else it is halved in `t`, its halves at its level. A cell is
+//! also done once its bound is within [`TIGHT`] of the greatest certified
+//! lower bound found on the coedge, if that is above the target: the
+//! target is out of reach then (the true deviation exceeds it), and the
+//! bound is within that factor of the greatest deviation ("Above the
+//! target", below). The cells run depth first in `t` order, so the
+//! result depends on the input alone.
+//!
+//! **Charges and limits.** Each cell's computation is charged before it
+//! runs: a unit at the first level, above it a precision step of the
+//! level's units (4 for double-double, `(bits/53)²` for big-float);
+//! running out of budget stops the coedge. A cell still open at the top
+//! level, or at [`MAX_DEPTH`] halvings, is done with its bound, above the
+//! target; without a certified bound it stops the coedge at
+//! [`Cap::PrecisionBits`] or [`Cap::SubdivisionDepth`].
+//!
+//! **Above the target.** A seam bound is an accuracy item: the result is
+//! always a certified bound, at most the target where it can be met.
+//! Above it (the target out of reach, or a cell open at a limit) the
+//! caller stores it all the same, as the coedge's seam bound and so its
+//! edge's tolerance, and lists the edge with this achieved bound among
+//! the operation's warnings; only running out of budget, or a cell with
+//! no certified bound at a limit, fails.
+//!
+//! Biquadratic tiles and Q spans only. On a plane, whose one tile spans
+//! the coordinate box (4·10⁶ mm), the first level's rounding is about
+//! `10⁻⁹` mm for weights near 1, but it grows with the spread of a span's
+//! weights, as the bound divides the largest coefficients' rounding by
+//! the least denominator: a 90° arc with end weights 3 and ⅓ gets about
+//! `2·10⁻⁴` mm there, with end weights 64 and 1/64 about `3·10⁹` mm,
+//! though the arc lies exactly on the plane. Such cells escalate.
 
 use varde_decide::bezier::{HomCurve, Poly, Scalar};
-use varde_decide::num::bounded::{Bounded, add_up, div_up};
+use varde_decide::num::bigf::{Big, BigF, Width};
+use varde_decide::num::bounded::{Bounded, add_up, div_up, down, mul_up, up};
+use varde_decide::num::dd::Dd;
 
 use super::curve::{Curve3D, PCurve, Span2, local};
 use super::surface::Surface;
 use super::tile::Tile;
+use crate::infra::budget::{Cap, LEVELS, Ledger, Stop, level_step, level_units};
 
-/// The most ½ splits of a piece whose denominator isn't certified
-/// positive.
-pub const MAX_SPLITS: u32 = 6;
+/// The most halvings of a piece.
+pub const MAX_DEPTH: u32 = 40;
+
+/// How far above the greatest lower bound found a cell's bound may be to
+/// be done when the target is out of reach (module docs).
+pub const TIGHT: f64 = 1.125;
+
+const _: () = assert!(LEVELS as usize == 2 + Width::ALL.len());
+
+/// A coedge's seam bound and the highest precision level it took.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeamBound {
+    /// The bound, certified and finite: at most the target unless the
+    /// target is out of reach (the bound then within [`TIGHT`] of the
+    /// greatest deviation) or a cell was open at the top level or at
+    /// [`MAX_DEPTH`]. Above the target it is an achieved bound the
+    /// caller warns of (module docs, "Above the target").
+    pub bound: f64,
+    /// The highest level a cell was done at: 0 for `f64`, 1 for
+    /// double-double, 2 to 6 for the big-float widths.
+    pub level: u8,
+}
 
 /// Why a seam bound can't be given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,22 +112,115 @@ pub enum SeamError {
     Range,
     /// Span `span` of the p-curve doesn't lie in one tile of the domain.
     Tile { span: usize },
-    /// The bound on a piece within span `span` of the p-curve isn't
-    /// certified after [`MAX_SPLITS`] splits.
-    Uncertified { span: usize },
 }
 
 type B = Bounded<f64>;
 
+/// A piece of the coedge: `[a, b]` of `t`, in span `sp` of the p-curve
+/// and span `sc` of the curve, on tile `(i, j)`.
+struct Piece<'a> {
+    tile: &'a Tile,
+    i: i64,
+    j: i64,
+    sp: usize,
+    sc: usize,
+    a: f64,
+    b: f64,
+}
+
+/// Part `k` of `2^depth` of a piece, at a precision level.
+#[derive(Clone, Copy)]
+struct Cell {
+    piece: usize,
+    k: u64,
+    depth: u32,
+    level: u8,
+}
+
 /// The seam bound of `pcurve` on `surface` against `curve` over the
-/// p-curve's knots' range (module docs).
-pub fn seam_bound(surface: &Surface, curve: &Curve3D, pcurve: &PCurve) -> Result<f64, SeamError> {
+/// p-curve's knots' range, refined towards `target` (module docs), each
+/// cell's computation charged to `ledger`. A target below 0, or a NaN,
+/// counts as 0. Stops when the ledger runs out, or at
+/// [`Cap::PrecisionBits`] or [`Cap::SubdivisionDepth`] on a cell with no
+/// certified bound there.
+pub(crate) fn seam_bound(
+    surface: &Surface,
+    curve: &Curve3D,
+    pcurve: &PCurve,
+    target: f64,
+    ledger: &mut Ledger<'_>,
+) -> Result<SeamBound, Stop<SeamError>> {
+    // A NaN compares false with every bound: never met, and never out of
+    // reach.
+    let target = if target > 0.0 { target } else { 0.0 };
+    let pieces = pieces(surface, curve, pcurve).map_err(Stop::Failed)?;
+    // A stack: the next cell last.
+    let mut cells: Vec<Cell> = (0..pieces.len())
+        .rev()
+        .map(|piece| Cell {
+            piece,
+            k: 0,
+            depth: 0,
+            level: 0,
+        })
+        .collect();
+    let mut out = SeamBound {
+        bound: 0.0,
+        level: 0,
+    };
+    // The greatest certified lower bound of the deviation found.
+    let mut lower = 0.0;
+    while let Some(cell) = cells.pop() {
+        ledger.charge(level_step(cell.level), level_units(cell.level))?;
+        let e = eval(curve, pcurve, &pieces[cell.piece], cell);
+        if e.lower > lower {
+            lower = e.lower;
+        }
+        let mut done = || {
+            if e.bound > out.bound {
+                out.bound = e.bound;
+            }
+            if cell.level > out.level {
+                out.level = cell.level;
+            }
+        };
+        match judge(&e, target, lower) {
+            Verdict::Done => done(),
+            Verdict::Precision if cell.level + 1 < LEVELS => cells.push(Cell {
+                level: cell.level + 1,
+                ..cell
+            }),
+            Verdict::Precision if e.bound < f64::INFINITY => done(),
+            Verdict::Precision => return Err(Stop::Cap(Cap::PrecisionBits)),
+            Verdict::Space if cell.depth < MAX_DEPTH => {
+                // The left half on top.
+                for k in [2 * cell.k + 1, 2 * cell.k] {
+                    cells.push(Cell {
+                        k,
+                        depth: cell.depth + 1,
+                        ..cell
+                    });
+                }
+            }
+            Verdict::Space if e.bound < f64::INFINITY => done(),
+            Verdict::Space => return Err(Stop::Cap(Cap::SubdivisionDepth)),
+        }
+    }
+    Ok(out)
+}
+
+/// The pieces of the coedge (module docs), in `t` order.
+fn pieces<'a>(
+    surface: &'a Surface,
+    curve: &Curve3D,
+    pcurve: &PCurve,
+) -> Result<Vec<Piece<'a>>, SeamError> {
     let (pk, ck) = (pcurve.knots(), curve.knots());
     let (t0, t1) = (pk[0], pk[pk.len() - 1]);
     if t0 < ck[0] || t1 > ck[ck.len() - 1] {
         return Err(SeamError::Range);
     }
-    let cells = pcurve
+    let tiles = pcurve
         .spans()
         .iter()
         .enumerate()
@@ -86,30 +234,144 @@ pub fn seam_bound(surface: &Surface, curve: &Curve3D, pcurve: &PCurve) -> Result
         .collect();
     cuts.sort_by(f64::total_cmp);
     cuts.dedup();
-    let mut bound = 0.0;
-    for w in cuts.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        // The spans holding the piece: the last starting at or below `a`.
-        let sp = pk.partition_point(|&k| k <= a) - 1;
-        let sc = ck.partition_point(|&k| k <= a) - 1;
-        let p = restrict(
-            &pcurve.span(sp).expect("a span"),
-            local(a, pk[sp], pk[sp + 1]),
-            local(b, pk[sp], pk[sp + 1]),
-        );
-        let c = restrict(
-            &curve.span(sc).expect("a span"),
-            local(a, ck[sc], ck[sc + 1]),
-            local(b, ck[sc], ck[sc + 1]),
-        );
-        let (tile, i, j) = cells[sp];
-        let piece = piece_bound(tile, i, j, &p, &c, MAX_SPLITS)
-            .ok_or(SeamError::Uncertified { span: sp })?;
-        if piece > bound {
-            bound = piece;
+    Ok(cuts
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (w[0], w[1]);
+            // The spans holding the piece: the last starting at or below
+            // `a`.
+            let sp = pk.partition_point(|&k| k <= a) - 1;
+            let sc = ck.partition_point(|&k| k <= a) - 1;
+            let (tile, i, j) = tiles[sp];
+            Piece {
+                tile,
+                i,
+                j,
+                sp,
+                sc,
+                a,
+                b,
+            }
+        })
+        .collect())
+}
+
+/// What to do with a cell.
+enum Verdict {
+    /// Its bound counts.
+    Done,
+    /// Compute it again one level up.
+    Precision,
+    /// Halve it.
+    Space,
+}
+
+/// The cell's next step (module docs), `lower` the greatest certified
+/// lower bound of the deviation found so far.
+fn judge(e: &Eval, target: f64, lower: f64) -> Verdict {
+    if e.bound == f64::INFINITY {
+        // Positive in value but not certified so: the rounding.
+        return if e.value < f64::INFINITY {
+            Verdict::Precision
+        } else {
+            Verdict::Space
+        };
+    }
+    if e.bound <= target || (lower > target && e.bound <= TIGHT * lower) {
+        return Verdict::Done;
+    }
+    let rounding = e.bound - e.value;
+    let hull = e.value - e.ends;
+    if rounding > hull {
+        Verdict::Precision
+    } else {
+        Verdict::Space
+    }
+}
+
+/// One cell's bounds (module docs).
+struct Eval {
+    /// The certified upper bound, `+∞` unless certified.
+    bound: f64,
+    /// The bound from the coefficients' values alone, `+∞` unless the
+    /// denominator's are positive.
+    value: f64,
+    /// The greater deviation at the cell's ends, from the values alone.
+    ends: f64,
+    /// A certified lower bound of the deviation at the cell's ends.
+    lower: f64,
+}
+
+/// A level's scalar with its value as an `f64`.
+trait Approx: Scalar {
+    /// The value, rounded to an `f64`.
+    fn approx(&self) -> f64;
+}
+
+impl Approx for Bounded<f64> {
+    fn approx(&self) -> f64 {
+        self.v
+    }
+}
+
+impl Approx for Bounded<Dd> {
+    fn approx(&self) -> f64 {
+        self.v.hi()
+    }
+}
+
+impl Approx for Bounded<Big> {
+    fn approx(&self) -> f64 {
+        self.v.to_f64()
+    }
+}
+
+/// The cell's bounds at its level.
+fn eval(curve: &Curve3D, pcurve: &PCurve, piece: &Piece<'_>, cell: Cell) -> Eval {
+    match cell.level {
+        0 => eval_at(curve, pcurve, piece, cell, &B::exact(0.0)),
+        1 => eval_at(
+            curve,
+            pcurve,
+            piece,
+            cell,
+            &Bounded::exact(Dd::from_f64(0.0)),
+        ),
+        l => {
+            let w = Width::ALL[usize::from(l - 2)];
+            let like = Bounded::exact(Big::from_f64(0.0, w));
+            eval_at(curve, pcurve, piece, cell, &like)
         }
     }
-    Ok(bound)
+}
+
+/// The cell's bounds at `like`'s level: the spans restricted to the
+/// piece, halved down to the cell.
+fn eval_at<S: Approx>(
+    curve: &Curve3D,
+    pcurve: &PCurve,
+    piece: &Piece<'_>,
+    cell: Cell,
+    like: &S,
+) -> Eval {
+    let (pk, ck) = (pcurve.knots(), curve.knots());
+    let (sp, sc) = (piece.sp, piece.sc);
+    let mut p = restrict(
+        &pcurve.span_at(sp, like).expect("a span"),
+        local(piece.a, pk[sp], pk[sp + 1], like),
+        local(piece.b, pk[sp], pk[sp + 1], like),
+    );
+    let mut c = restrict(
+        &curve.span_at(sc, like).expect("a span"),
+        local(piece.a, ck[sc], ck[sc + 1], like),
+        local(piece.b, ck[sc], ck[sc + 1], like),
+    );
+    for bit in (0..cell.depth).rev() {
+        let right = (cell.k >> bit) & 1 == 1;
+        let ([p0, p1], [c0, c1]) = (p.split_half(), c.split_half());
+        (p, c) = if right { (p1, c1) } else { (p0, c0) };
+    }
+    direct(piece.tile, piece.i, piece.j, &p, &c, like)
 }
 
 /// The tile holding span `s` and its indices: `(⌊u⌋, ⌊v⌋)` of the least
@@ -142,7 +404,7 @@ fn tile_of<'a>(surface: &'a Surface, s: &Span2) -> Option<(&'a Tile, i64, i64)> 
 }
 
 /// The span `c` restricted to `[sa, sb]`, as a span on `[0, 1]`.
-fn restrict<const N: usize>(c: &HomCurve<B, N>, sa: B, sb: B) -> HomCurve<B, N> {
+fn restrict<S: Scalar, const N: usize>(c: &HomCurve<S, N>, sa: S, sb: S) -> HomCurve<S, N> {
     let left = if sb.is_int(1) {
         c.clone()
     } else {
@@ -152,44 +414,82 @@ fn restrict<const N: usize>(c: &HomCurve<B, N>, sa: B, sb: B) -> HomCurve<B, N> 
     if sa.is_int(0) {
         left
     } else {
-        let [_, r] = left.split_at(&(sa / sb));
+        let [_, r] = left.split_at(&sa.div(&sb));
         r
     }
 }
 
-/// The bound of `|S(p) − C|` on one piece (module docs), splitting at ½
-/// up to `splits` more times; `None` if not certified.
-fn piece_bound(
+/// `x` rounded down, at least 0.
+fn down0(x: f64) -> f64 {
+    let d = down(x);
+    if d > 0.0 { d } else { 0.0 }
+}
+
+/// The greatest of `a` (none a NaN), by compare and select.
+fn greatest(a: [f64; 3]) -> f64 {
+    a.into_iter().fold(0.0, |m, x| if x > m { x } else { m })
+}
+
+/// The length of `a`, scaled by its greatest part so that no square
+/// underflows.
+fn norm(a: [f64; 3]) -> f64 {
+    let m = greatest(a.map(f64::abs));
+    if m > 0.0 && m < f64::INFINITY {
+        let s: f64 = a.iter().map(|x| (x / m) * (x / m)).sum();
+        m * s.sqrt()
+    } else {
+        m
+    }
+}
+
+/// An upper bound of the length of `a` (parts `≥ 0`), scaled as [`norm`].
+fn norm_up(a: [f64; 3]) -> f64 {
+    let m = greatest(a);
+    if m > 0.0 && m < f64::INFINITY {
+        let s = a
+            .iter()
+            .fold(0.0, |s, &x| add_up(s, mul_up(div_up(x, m), div_up(x, m))));
+        mul_up(m, up(s.sqrt()))
+    } else if a.iter().any(|x| x.is_nan()) {
+        f64::INFINITY
+    } else {
+        m
+    }
+}
+
+/// A lower bound of the length of `a` (parts `≥ 0`), scaled as [`norm`].
+fn norm_down(a: [f64; 3]) -> f64 {
+    let m = greatest(a);
+    if m > 0.0 && m < f64::INFINITY {
+        let s = a.iter().fold(0.0, |s, &x| {
+            let r = down0(x / m);
+            down0(s + down0(r * r))
+        });
+        // At least `m` itself: its own part's ratio is exactly 1.
+        let n = down0(m * down0(s.sqrt()));
+        if n > m { n } else { m }
+    } else {
+        0.0
+    }
+}
+
+/// The bounds of `|S(p) − C|` on one cell (module docs).
+fn direct<S: Approx>(
     tile: &Tile,
     i: i64,
     j: i64,
-    p: &HomCurve<B, 2>,
-    c: &HomCurve<B, 3>,
-    splits: u32,
-) -> Option<f64> {
-    if let Some(b) = direct(tile, i, j, p, c) {
-        return Some(b);
-    }
-    if splits == 0 {
-        return None;
-    }
-    let ([p0, p1], [c0, c1]) = (p.split_half(), c.split_half());
-    let a = piece_bound(tile, i, j, &p0, &c0, splits - 1)?;
-    let b = piece_bound(tile, i, j, &p1, &c1, splits - 1)?;
-    Some(if b > a { b } else { a })
-}
-
-/// One Bernstein bound of `|S(p) − C|` (module docs), `None` unless the
-/// denominator is certified positive and the numerators finite.
-fn direct(tile: &Tile, i: i64, j: i64, p: &HomCurve<B, 2>, c: &HomCurve<B, 3>) -> Option<f64> {
+    p: &HomCurve<S, 2>,
+    c: &HomCurve<S, 3>,
+    like: &S,
+) -> Eval {
     let [pu, pv] = p.coords();
     let w = p.weights();
     // Tile indices below 2⁵² in magnitude (`tile_of`): exact in `f64`.
-    let shift = |x: &Poly<B>, k: i64| x.sub(&w.scale(&B::exact(k as f64)));
+    let shift = |x: &Poly<S>, k: i64| x.sub(&w.scale(&S::from_f64(k as f64, like)));
     let (u, v) = (shift(pu, i), shift(pv, j));
-    let basis = |x: &Poly<B>| -> [Poly<B>; 3] {
+    let basis = |x: &Poly<S>| -> [Poly<S>; 3] {
         let y = w.sub(x);
-        let two = B::exact(2.0);
+        let two = S::int(2, like);
         [
             y.mul(&y).expect("degree 4"),
             x.mul(&y).expect("degree 4").scale(&two),
@@ -199,42 +499,118 @@ fn direct(tile: &Tile, i: i64, j: i64, p: &HomCurve<B, 2>, c: &HomCurve<B, 3>) -
     let (bu, bv) = (basis(&u), basis(&v));
     let net = tile.net();
     // The tile's homogeneous coefficient `m` of an affine control point:
-    // `w·x` rounded once with its rounding carried, or the weight.
+    // `w·x` at the level ([`Scalar::product`]), or the weight.
     let coef = |p: [f64; 4], m: usize| {
         if m == 3 {
-            B::exact(p[3])
+            S::from_f64(p[3], like)
         } else {
-            B::product(p[m], p[3], &B::exact(0.0))
+            S::product(p[m], p[3], like)
         }
     };
-    let h: [Poly<B>; 4] = std::array::from_fn(|m| {
-        let mut sum: Option<Poly<B>> = None;
-        for (k, a) in bu.iter().enumerate() {
-            for (l, b) in bv.iter().enumerate() {
-                let term = a.mul(b).expect("degree 8").scale(&coef(net[3 * k + l], m));
-                sum = Some(match sum {
-                    Some(s) => s.add(&term),
-                    None => term,
-                });
-            }
+    // The nine products `Bₖ(U')·Bₗ(V')`, shared by the four coordinates.
+    let products: Vec<Poly<S>> = bu
+        .iter()
+        .flat_map(|a| bv.iter().map(move |b| a.mul(b).expect("degree 8")))
+        .collect();
+    let h: [Poly<S>; 4] = std::array::from_fn(|m| {
+        let mut sum: Option<Poly<S>> = None;
+        for (kl, ab) in products.iter().enumerate() {
+            let term = ab.scale(&coef(net[kl], m));
+            sum = Some(match sum {
+                Some(s) => s.add(&term),
+                None => term,
+            });
         }
         sum.expect("nine terms")
     });
     let wc = c.weights();
-    let den = h[3].mul(wc).expect("degree 10").hull().lo;
-    if den.is_nan() || den <= 0.0 {
-        return None;
-    }
-    let mut num = 0.0;
-    for (m, x) in c.coords().iter().enumerate() {
-        let n = h[m]
-            .mul(wc)
+    let den = h[3].mul(wc).expect("degree 10");
+    let num: [Poly<S>; 3] = std::array::from_fn(|m| {
+        h[m].mul(wc)
             .expect("degree 10")
-            .sub(&x.mul(&h[3]).expect("degree 10"));
-        num = add_up(num, n.hull().abs_max());
+            .sub(&c.coords()[m].mul(&h[3]).expect("degree 10"))
+    });
+    // The certified bound.
+    let den_lo = den.hull().lo;
+    let bound = div_up(norm_up(num.each_ref().map(|n| n.hull().abs_max())), den_lo);
+    let bound = if bound < f64::INFINITY {
+        bound
+    } else {
+        f64::INFINITY
+    };
+    // From the values alone.
+    let least = den
+        .coefs()
+        .iter()
+        .map(Approx::approx)
+        .fold(f64::INFINITY, |a, x| if x < a { x } else { a });
+    let most = num.each_ref().map(|n| {
+        n.coefs()
+            .iter()
+            .map(|x| x.approx().abs())
+            .fold(0.0, |a, x| if x > a { x } else { a })
+    });
+    let value = if least > 0.0 {
+        norm(most) / least
+    } else {
+        f64::INFINITY
+    };
+    let value = if value < f64::INFINITY {
+        value
+    } else {
+        f64::INFINITY
+    };
+    // At the ends: the first and last coefficients.
+    let last = den.coefs().len() - 1;
+    let (mut ends, mut lower) = (0.0, 0.0);
+    for at in [0, last] {
+        let x = num.each_ref().map(|n| &n.coefs()[at]);
+        let d = &den.coefs()[at];
+        let e = norm(x.map(Approx::approx)) / d.approx();
+        if e > ends {
+            ends = e;
+        }
+        let least = x.map(|x| match x.enclose() {
+            [lo, _] if lo > 0.0 => lo,
+            [_, hi] if hi < 0.0 => -hi,
+            _ => 0.0,
+        });
+        let d_hi = d.enclose()[1];
+        if d_hi > 0.0 && d_hi < f64::INFINITY {
+            let l = down0(norm_down(least) / d_hi);
+            if l > lower {
+                lower = l;
+            }
+        }
     }
-    let b = div_up(num, den);
-    b.is_finite().then_some(b)
+    Eval {
+        bound,
+        value,
+        ends,
+        lower,
+    }
+}
+
+/// [`seam_bound`] alone, in a pass of its own on a fresh budget of
+/// `budget` units.
+#[cfg(test)]
+pub(crate) fn seam_bound_alone(
+    surface: &Surface,
+    curve: &Curve3D,
+    pcurve: &PCurve,
+    target: f64,
+    budget: u64,
+) -> Result<SeamBound, crate::infra::budget::Halt<SeamError>> {
+    use crate::infra::budget::{Budget, Pass, Work};
+    let pass = Pass {
+        stage: "seam",
+        rung: 0,
+    };
+    let mut work = Work::new(&Budget::new(budget));
+    work.pass(pass, &[()], |_, ledger| {
+        seam_bound(surface, curve, pcurve, target, ledger)
+    })
+    .map(|b| b[0])
 }
 
 #[cfg(test)]

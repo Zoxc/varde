@@ -2,9 +2,9 @@
 //! where an operation runs out doesn't depend on the thread count.
 //!
 //! An operation runs as passes: maps over items sorted by stable keys.
-//! [`Work::pass`] runs a pass's items through [`par_map`], each against its
-//! own [`Ledger`] with the share "budget left at the pass start", so a
-//! runaway item stops on its own. Then, sequentially and in key order, it
+//! [`Work::pass`] runs a pass's items through [`par_map_indexed`], each
+//! against its own [`Ledger`] with the share "budget left at the pass
+//! start", so a runaway item stops on its own. Then, sequentially and in key order, it
 //! sums the items' costs. The pass is decided at the first key whose
 //! cumulative cost goes past the budget (the budget runs out there), or,
 //! if earlier, at the first key that failed; at one key, running out comes
@@ -85,6 +85,33 @@ pub enum Step {
         /// The precision level.
         level: u8,
     },
+}
+
+/// The precision levels of the escalation schedule: `f64` (0),
+/// double-double (1), then big-float at 212, 424, 848, 1696 and 3392 bits
+/// (2 to 6). The top level's width is the highest precision there is:
+/// an item still open there reaches [`Cap::PrecisionBits`].
+pub(crate) const LEVELS: u8 = 7;
+
+/// The step of one computation at precision level `level`: ordinary work
+/// at the first level, a precision step above it.
+pub(crate) fn level_step(level: u8) -> Step {
+    match level {
+        0 => Step::Work,
+        level => Step::Precision { level },
+    }
+}
+
+/// The units of one computation at precision level `level`, in those of
+/// the same computation in `f64`: 1, 4 for double-double, `(bits/53)²`
+/// for big-float (16 at 212 bits, 4096 at 3392).
+pub(crate) fn level_units(level: u8) -> u64 {
+    match level {
+        0 => 1,
+        1 => 4,
+        // 212 = 4·53 bits, doubling.
+        l => 16 << (2 * u32::from(l - 2).min(30)),
+    }
 }
 
 /// What [`KernelError::OutOfBudget`] reached.
@@ -398,8 +425,8 @@ impl Work {
     }
 
     /// Runs `f` on each of `items` (sorted by their keys) with
-    /// [`par_map`], each charging its own [`Ledger`], and gives the results
-    /// in order; or how the pass ended without them: the budget ran out
+    /// [`par_map_indexed`], each charging its own [`Ledger`], and gives the
+    /// results in order; or how the pass ended without them: the budget ran out
     /// at a key, or an item reached a fixed limit or failed, whichever key
     /// came first (running out first at one key). The work used and the
     /// profile count the keys up to that one. `f` must depend only on its
