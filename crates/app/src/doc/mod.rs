@@ -40,7 +40,7 @@ use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
     DocumentKeys, Edit, Look, Message as Ui, Mode, OperationKeys, OperationState, Overlay, Panel,
-    PanelHover, RowMenu, Snap, ViewOptions,
+    PanelHover, Rollback, RowMenu, Snap, ViewOptions,
 };
 
 #[cfg(test)]
@@ -775,7 +775,8 @@ impl Doc {
         // Drawn as finely as the camera shows it, where an animation
         // ends rather than at each of its steps.
         self.feed.view(&self.camera_goal(), self.aspect);
-        let until = (before.then(|| self.opened_feature()).flatten()).or_else(|| self.rollback().0);
+        let until =
+            (before.then(|| self.opened_feature()).flatten()).or_else(|| self.rollback().before);
         self.feed
             .request_with(&self.editor, exclude, until, draft, inspect);
     }
@@ -793,19 +794,27 @@ impl Doc {
     /// being set up, which goes in where the document's marker is, the
     /// history up to there; otherwise the marker where it's dragged or
     /// where the document has it.
-    pub(crate) fn rollback(&self) -> (Option<FeatureId>, bool) {
+    pub(crate) fn rollback(&self) -> Rollback {
         let document = self.editor.document();
         if let Some(opened) = self.opened_feature() {
             let after = (document.feature_index(opened))
                 .and_then(|at| document.features().get(at + 1))
                 .map(|feature| feature.id);
-            return (after, true);
+            return Rollback {
+                before: after,
+                editing: true,
+            };
         }
         if self.operating() {
-            return (document.rollback(), true);
+            return Rollback {
+                before: document.rollback(),
+                editing: true,
+            };
         }
-        let until = self.rolling.unwrap_or_else(|| document.rollback());
-        (until, false)
+        Rollback {
+            before: self.rolling.unwrap_or_else(|| document.rollback()),
+            editing: false,
+        }
     }
 
     /// Whether the model shown is the one before the operation being set
@@ -1348,7 +1357,11 @@ impl Doc {
                 }
             }
             Look::ClickFeature { feature, roll } => {
-                if roll && self.editable() && !self.rollback().1 && self.mode.sketch().is_none() {
+                if roll
+                    && self.editable()
+                    && !self.rollback().editing
+                    && self.mode.sketch().is_none()
+                {
                     let document = self.editor.document();
                     if let Some(at) = document.feature_index(feature) {
                         let after = document.features().get(at + 1).map(|f| f.id);

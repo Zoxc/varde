@@ -20,7 +20,7 @@ use varde_io::{
 use varde_regen::{Regenerated, Request, Response, Transport, handle, lane};
 use varde_render::Camera;
 use varde_solve::{Request as SolveRequest, Response as SolveResponse, Solver};
-use varde_view::{Edit, MeshStatus, Panel, RowMenu, Welcome as WelcomeUi};
+use varde_view::{Edit, MeshStatus, Panel, Rollback, RowMenu, Welcome as WelcomeUi};
 
 use super::*;
 use crate::doc::{
@@ -6097,23 +6097,53 @@ fn the_rollback_marker_rolls_the_model_back() {
     doc.look(Look::DragRollback(Some(ids[1])));
     assert_eq!(until(&requests), Some(ids[1]));
     assert_eq!(doc.editor.document().rollback(), None);
-    assert_eq!(doc.rollback(), (Some(ids[1]), false));
+    assert_eq!(
+        doc.rollback(),
+        Rollback {
+            before: Some(ids[1]),
+            editing: false
+        }
+    );
     doc.update(Edit::DropRollback);
     answer(&mut doc, &requests);
     assert_eq!(doc.editor.document().rollback(), Some(ids[1]));
-    assert_eq!(doc.rollback(), (Some(ids[1]), false));
+    assert_eq!(
+        doc.rollback(),
+        Rollback {
+            before: Some(ids[1]),
+            editing: false
+        }
+    );
 
     // The sketch edited: rolled to after it, fixed while it's open.
     doc.look(Look::EditFeature(ids[0]));
-    assert_eq!(doc.rollback(), (ids.get(1).copied(), true));
+    assert_eq!(
+        doc.rollback(),
+        Rollback {
+            before: ids.get(1).copied(),
+            editing: true
+        }
+    );
     doc.look(Look::DragRollback(None));
-    assert_eq!(doc.rollback(), (ids.get(1).copied(), true));
+    assert_eq!(
+        doc.rollback(),
+        Rollback {
+            before: ids.get(1).copied(),
+            editing: true
+        }
+    );
     doc.look(Look::FinishSketch);
     answer(&mut doc, &requests);
 
     // A new operation goes in at the marker.
     doc.look(Look::StartExtrude);
-    assert_eq!(doc.rollback(), (Some(ids[1]), true));
+    assert_eq!(
+        doc.rollback(),
+        Rollback {
+            before: Some(ids[1]),
+            editing: true
+        }
+    );
     doc.look(Look::Extrude(varde_view::ExtrudeLook::Cancel));
 
     // A new sketch is added there, the marker staying after it.
@@ -6123,7 +6153,13 @@ fn the_rollback_marker_rolls_the_model_back() {
     assert!(!ids.contains(&added));
     assert_eq!(document.rollback(), Some(ids[1]));
     assert_eq!(doc.opened_feature(), Some(added));
-    assert_eq!(doc.rollback(), (Some(ids[1]), true));
+    assert_eq!(
+        doc.rollback(),
+        Rollback {
+            before: Some(ids[1]),
+            editing: true
+        }
+    );
     doc.look(Look::FinishSketch);
     answer(&mut doc, &requests);
 

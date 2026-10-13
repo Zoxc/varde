@@ -199,10 +199,8 @@ pub struct DocumentState<'a> {
     pub aspect: Option<f32>,
     /// The feature selected in the Timeline, if any.
     pub selected_feature: Option<FeatureId>,
-    /// The feature the model is rolled back to before, where the
-    /// Timeline's marker shows, and whether only while a feature is
-    /// edited, when the marker can't be dragged.
-    pub rollback: (Option<FeatureId>, bool),
+    /// Where the Timeline's marker shows.
+    pub rollback: Rollback,
     /// Whether the Timeline's marker is being dragged.
     pub rolling: bool,
     /// The row of the side panel whose context menu is open, if one is.
@@ -815,6 +813,16 @@ pub enum Refusal<'a> {
     Rejected(&'a Rejected),
     /// The solver couldn't answer: it panicked, or its worker stopped.
     Failed(&'a str),
+}
+
+/// Where the model is rolled back to, as the Timeline's marker shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rollback {
+    /// The feature the model is rolled back to before, if it is.
+    pub before: Option<FeatureId>,
+    /// Whether it's only there while a feature is edited, when the
+    /// marker can't be dragged.
+    pub editing: bool,
 }
 
 /// A layer over the whole document screen.

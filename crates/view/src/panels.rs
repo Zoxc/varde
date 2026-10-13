@@ -29,8 +29,8 @@ use crate::theme::{
 };
 use crate::{
     ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
-    ObjectRow, OriginObject, Panel, RENAME_FIELD, RowMenu, SketchState, VALUE_FIELD, ValueTarget,
-    dimension, divider,
+    ObjectRow, OriginObject, Panel, RENAME_FIELD, Rollback, RowMenu, SketchState, VALUE_FIELD,
+    ValueTarget, dimension, divider,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -124,12 +124,11 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             // dragged (even over where it was), the ghost marker after the list rolls to the end,
             // sticking to the panel's foot while the list scrolls. Always
             // in the same widgets, so a drag survives it showing.
-            let (until, editing) = rollback;
             let rolled = !state.rolling
-                && until.is_some_and(|until| {
+                && rollback.before.is_some_and(|until| {
                     (document.features().iter()).any(|feature| feature.id == until)
                 });
-            let ghost = rolled && editable && !editing;
+            let ghost = rolled && editable && !rollback.editing;
             let rows = document.features().len() as f32 * ROW_HEIGHT + MARKER_HEIGHT;
             responsive(move |size| {
                 let room = if ghost {
@@ -201,9 +200,7 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 struct TimelineView<'a> {
     document: &'a Document,
     selected: Option<FeatureId>,
-    /// The feature the marker is before, and whether it's only there as
-    /// a feature is edited.
-    rollback: (Option<FeatureId>, bool),
+    rollback: Rollback,
     menu: Option<RowMenu>,
     editable: bool,
     unsolved: &'a [FeatureId],
@@ -240,7 +237,10 @@ fn timeline<'a>(view: TimelineView<'a>) -> Element<'a, Message> {
     let TimelineView {
         document,
         selected,
-        rollback: (rollback, editing),
+        rollback: Rollback {
+            before: rollback,
+            editing,
+        },
         menu,
         editable,
         unsolved,
