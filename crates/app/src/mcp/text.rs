@@ -106,10 +106,30 @@ pub(super) fn tool(call: &Call) -> McpTool {
     }
 }
 
+/// `call`'s arguments as typed ([`args`]) made plain: what its log row,
+/// popup and undo label show.
+pub(super) fn shown_args(call: &Call) -> String {
+    plain(&args(call))
+}
+
+/// `call` as its row words it: its tool with [`shown_args`].
+pub(super) fn shown(call: &Call) -> String {
+    tool(call).with(&shown_args(call))
+}
+
+/// `call`'s tool and arguments: "rename feature Extrude 1 to Base".
+pub(super) fn label(call: &Call) -> String {
+    let args = shown_args(call);
+    match args.is_empty() {
+        true => call.tool().to_owned(),
+        false => format!("{} {args}", call.tool()),
+    }
+}
+
 /// `call`'s arguments as the panel shows them, as typed: names as given,
 /// filters and pages as the client set them, what's left at its default
 /// unsaid.
-pub(super) fn args(call: &Call) -> String {
+fn args(call: &Call) -> String {
     let page = |offset: usize, limit: usize, default: usize| {
         let mut said = Vec::new();
         if offset != 0 {

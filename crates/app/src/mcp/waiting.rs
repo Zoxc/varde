@@ -245,8 +245,8 @@ impl ClientHistory {
             start: from.start,
             session: from.session.clone(),
             after,
-            label: label(call),
-            shown: super::text::tool(call).with(&super::text::plain(&super::text::args(call))),
+            label: super::text::label(call),
+            shown: super::text::shown(call),
             told_done: true,
             undone: false,
             feature,
@@ -544,15 +544,6 @@ fn with_pending_edit(reply: ToolReply, pending: String) -> ToolReply {
     reply.with_fields(vec![("pending_edit", json!(pending))])
 }
 
-/// `call`'s tool and arguments: "rename feature Extrude 1 to Base".
-pub(crate) fn label(call: &Call) -> String {
-    let args = super::text::plain(&super::text::args(call));
-    match args.is_empty() {
-        true => call.tool().to_owned(),
-        false => format!("{} {args}", call.tool()),
-    }
-}
-
 /// A call done, its reply still to send.
 #[derive(Debug)]
 pub(crate) struct Done {
@@ -693,7 +684,7 @@ impl Waiting {
             kept.push('…');
             kept
         };
-        let edit = short(&label(&waiter.call), PENDING_BYTES / 2);
+        let edit = short(&super::text::label(&waiter.call), PENDING_BYTES / 2);
         let editing = short(editing, PENDING_BYTES / 2 - 64);
         Some(format!(
             "{edit}: waiting for the user to let it apply, as they are {editing}"

@@ -49,7 +49,7 @@ use varde_view::{McpCallState, McpPanel, McpTool};
 use crate::doc::Doc;
 use crate::io::Io;
 use crate::message::{ForDoc, Message};
-use text::{args, plain, summary, told_line, tool, undid_row, user_rows};
+use text::{plain, shown_args, summary, told_line, tool, undid_row, user_rows};
 
 /// The MCP server's state, the app's.
 #[derive(Debug, Default)]
@@ -404,7 +404,7 @@ impl Mcp {
         let logged = Logged {
             serial,
             tool: tool(call),
-            args: plain(&args(call)),
+            args: shown_args(call),
             came: crate::when::now(),
             state: McpCallState::Waiting,
             result: None,

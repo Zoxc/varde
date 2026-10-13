@@ -156,7 +156,7 @@ impl Doc {
                 tag,
                 editing: editing.clone(),
                 tool: super::text::tool(&call),
-                args: super::text::plain(&super::text::args(&call)),
+                args: super::text::shown_args(&call),
                 refused: None,
                 cancelled: false,
             });

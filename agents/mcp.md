@@ -1680,7 +1680,7 @@ edit's row counts as not told.
   query it again"}` alone.
 - the session's own edits the user undid or redid since it was told
   (`undid_your_edits`, `redid_your_edits`, by tool name and arguments,
-  `waiting::label`; the panel's line says the edit as its row does,
+  `text::label`; the panel's line says the edit as its row does,
   `McpTool::with`: "undid its edit: renamed feature Extrude 1 to Base"): `ClientHistory::steps`, a `ClientStep` per client edit
   applied (`ClientHistory::applied` from `client_apply`, its `after` moved by
   the links' amend in `Waiting::amended`, at most 200), each with
