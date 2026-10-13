@@ -1,7 +1,4 @@
 //! Several regions as one: [`Profiles::merge`].
-
-use std::cmp::Ordering;
-
 use super::{Piece, Profiles, pinches};
 
 /// Why regions couldn't be merged.
@@ -68,33 +65,26 @@ impl Profiles {
 /// Which of `pieces` are left once each piece run one way cancels one of
 /// the same edge run the other.
 fn cancel(pieces: &[Piece]) -> Vec<bool> {
-    // The edge a piece runs along: its curve and its parameters, lowest
-    // first, to the bit.
-    let edge = |piece: &Piece| {
-        let (low, high) = if piece.from.total_cmp(&piece.to).is_le() {
-            (piece.from, piece.to)
-        } else {
-            (piece.to, piece.from)
-        };
-        (piece.curve, low, high)
-    };
-    let compare = |a: &usize, b: &usize| {
-        let (ca, la, ha) = edge(&pieces[*a]);
-        let (cb, lb, hb) = edge(&pieces[*b]);
-        ca.cmp(&cb)
-            .then(la.total_cmp(&lb))
-            .then(ha.total_cmp(&hb))
-            .then(a.cmp(b))
+    // The edge each piece runs along: its curve and its parameters,
+    // lowest first, to the bit.
+    let edges: Vec<_> = (pieces.iter())
+        .map(|piece| {
+            let (low, high) = if piece.from.total_cmp(&piece.to).is_le() {
+                (piece.from, piece.to)
+            } else {
+                (piece.to, piece.from)
+            };
+            (piece.curve, low, high)
+        })
+        .collect();
+    let edge_cmp = |a: usize, b: usize| {
+        let ((ca, la, ha), (cb, lb, hb)) = (edges[a], edges[b]);
+        ca.cmp(&cb).then(la.total_cmp(&lb)).then(ha.total_cmp(&hb))
     };
     let mut order: Vec<usize> = (0..pieces.len()).collect();
-    order.sort_by(compare);
+    order.sort_by(|&a, &b| edge_cmp(a, b).then(a.cmp(&b)));
     let mut alive = vec![true; pieces.len()];
-    let same = |a: &usize, b: &usize| {
-        let (ca, la, ha) = edge(&pieces[*a]);
-        let (cb, lb, hb) = edge(&pieces[*b]);
-        ca == cb && la.total_cmp(&lb) == Ordering::Equal && ha.total_cmp(&hb) == Ordering::Equal
-    };
-    for group in order.chunk_by(same) {
+    for group in order.chunk_by(|&a, &b| edge_cmp(a, b).is_eq()) {
         // A piece going round (from 0 to a full turn) runs forwards one
         // way and backwards the other, as any other does.
         let forwards = |&i: &usize| pieces[i].from.total_cmp(&pieces[i].to).is_lt();
