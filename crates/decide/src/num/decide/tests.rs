@@ -24,6 +24,11 @@ fn key() -> TieKey {
     }
 }
 
+/// A curved band, its values valid.
+fn curved(tau: f64, tau_sign: f64) -> Band {
+    Band::curved(tau, tau_sign).expect("a valid band")
+}
+
 fn exact(v: f64) -> Bounded {
     Bounded::exact(v)
 }
@@ -45,7 +50,7 @@ fn unread<C>() -> impl Iterator<Item = C> {
 
 #[test]
 fn a_value_beyond_its_error_and_band_is_decided_by_it() {
-    let curved = Band::curved(0.5, 1e-3);
+    let curved = curved(0.5, 1e-3);
     assert_eq!(
         decide(approx(-1.0, 0.1), unread(), curved, key()),
         Ok(Sign::Neg)
@@ -82,7 +87,7 @@ fn a_geometric_value_within_its_error_escalates() {
 /// even when its error alone would decide it.
 #[test]
 fn a_curved_value_is_a_tie_only_at_the_target() {
-    let band = Band::curved(0.0, 1e-3);
+    let band = curved(0.0, 1e-3);
     assert_eq!(
         decide(approx(1e-3, 2e-3), unread(), band, key()),
         Err(Fail::Escalate { order: 0 })
@@ -98,7 +103,7 @@ fn a_curved_value_is_a_tie_only_at_the_target() {
         Ok(Sign::Pos)
     );
     // In the τ band: |v| > err, but |v| ≤ err + τ.
-    let wide = Band::curved(0.5, 1e-3);
+    let wide = curved(0.5, 1e-3);
     let ord = [approx(-0.5, 0.0)];
     assert_eq!(
         decide(
@@ -127,7 +132,7 @@ fn a_curved_value_is_a_tie_only_at_the_target() {
 /// passed over: exact zeros, then the first certified non-zero.
 #[test]
 fn the_first_certified_order_decides_a_tie() {
-    for band in [Band::FLAT, Band::curved(0.0, 1e-3)] {
+    for band in [Band::FLAT, curved(0.0, 1e-3)] {
         for k in 0..ORDERS {
             let mut ord = zeros();
             ord[k] = approx(-0.25, 0.125);
@@ -149,7 +154,7 @@ fn curved_orders_pass_over_ties_within_the_rung_target_only() {
     for k in 0..4 {
         let target = rung_target(tau_sign, k);
         assert_eq!(target, tau_sign / f64::from(4u32.pow(k)));
-        let band = Band::curved(0.0, target);
+        let band = curved(0.0, target);
         for order in 1..=ORDERS {
             let mut ord = zeros();
             ord[order - 1] = approx(5e-5, 1e-4);
@@ -193,7 +198,7 @@ fn flat_orders_pass_over_exact_zeros_only() {
 /// decides instead.
 #[test]
 fn the_guard_fires_only_when_every_order_is_passed_over() {
-    for band in [Band::FLAT, Band::curved(0.0, 1e-3), Band::curved(0.5, 1e-3)] {
+    for band in [Band::FLAT, curved(0.0, 1e-3), curved(0.5, 1e-3)] {
         assert_eq!(
             decide(exact(0.0), zeros(), band, key()),
             Err(Fail::Internal { key: key() })
@@ -263,7 +268,7 @@ fn a_flat_value_that_is_not_exact_escalates() {
 /// escalates, at order 0 and at an order alike, even at a zero error.
 #[test]
 fn a_value_that_is_not_finite_escalates() {
-    let band = Band::curved(0.0, 1e-3);
+    let band = curved(0.0, 1e-3);
     for x in [f64::NAN, f64::INFINITY] {
         let x = approx(x, 0.0);
         assert_eq!(
@@ -285,22 +290,17 @@ type Case = (Bounded, [Bounded; ORDERS], Band, Result<Sign, Fail>);
 fn every_level_decides_alike() {
     let w = Width::from_bits(212).expect("a width");
     let cases: [Case; 5] = [
-        (
-            approx(-1.0, 0.1),
-            zeros(),
-            Band::curved(0.5, 1e-3),
-            Ok(Sign::Neg),
-        ),
+        (approx(-1.0, 0.1), zeros(), curved(0.5, 1e-3), Ok(Sign::Neg)),
         (
             approx(0.3, 1e-4),
             [approx(-0.5, 0.0); ORDERS],
-            Band::curved(0.5, 1e-3),
+            curved(0.5, 1e-3),
             Ok(Sign::Neg),
         ),
         (
             approx(0.0, 1e-2),
             zeros(),
-            Band::curved(0.0, 1e-3),
+            curved(0.0, 1e-3),
             Err(Fail::Escalate { order: 0 }),
         ),
         (
@@ -311,7 +311,7 @@ fn every_level_decides_alike() {
                 exact(0.0),
                 exact(0.0),
             ],
-            Band::curved(0.0, 1e-3),
+            curved(0.0, 1e-3),
             Err(Fail::Escalate { order: 2 }),
         ),
         (
@@ -343,11 +343,11 @@ fn every_level_decides_alike() {
 /// target escalates instead.
 #[test]
 fn passed_over_curved_ties_can_give_a_cyclic_crossing_order() {
-    let band = Band::curved(0.0, 1e-3);
+    let band = curved(0.0, 1e-3);
     let a = decide(exact(0.0), [approx(0.0, 1e-4), exact(-1.0)], band, key());
     let c = decide(exact(0.0), [approx(-2e-4, 1e-5), exact(2.0)], band, key());
     assert_eq!((a, a, c), (Ok(Sign::Neg), Ok(Sign::Neg), Ok(Sign::Neg)));
-    let fine = Band::curved(0.0, rung_target(1e-3, 2));
+    let fine = curved(0.0, rung_target(1e-3, 2));
     assert_eq!(
         decide(exact(0.0), [approx(0.0, 1e-4), exact(-1.0)], fine, key()),
         Err(Fail::Escalate { order: 1 })
@@ -370,7 +370,7 @@ fn signs_convert() {
 /// a lazy iterator would answer by working out an order that isn't one.
 #[test]
 fn the_guard_pulls_no_fifth_order() {
-    for band in [Band::FLAT, Band::curved(0.0, 1e-3)] {
+    for band in [Band::FLAT, curved(0.0, 1e-3)] {
         let ord = zeros().into_iter().chain(unread());
         assert_eq!(
             decide(exact(0.0), ord, band, key()),
@@ -599,12 +599,12 @@ fn decide_agrees_with_the_model() {
         for _ in 0..4000 {
             let kind = d.kind();
             let (tau, tau_sign) = (d.band(), d.band());
-            let b = Band {
-                kind,
-                tau,
-                tau_sign,
+            let b = match kind {
+                BandKind::Geometric => Band::GEOMETRIC,
+                BandKind::Flat => Band::FLAT,
+                BandKind::Curved => curved(tau, tau_sign),
             };
-            let band = if kind == BandKind::Curved { tau } else { 0.0 };
+            let (band, tau_sign) = (b.tau(), b.tau_sign());
             // Order 0 a tie half the time, so the orders are reached.
             let mut raw = [(0.0, 0.0, 0.0); ORDERS + 1];
             for (i, r) in raw.iter_mut().enumerate() {
@@ -651,7 +651,7 @@ fn decide_agrees_with_the_model() {
 fn a_value_just_past_its_error_and_band_is_decided_by_it() {
     let w = Width::MIN;
     let ord = || [exact(-1.0)];
-    let wide = |tau| Band::curved(tau, f64::MAX);
+    let wide = |tau| curved(tau, f64::MAX);
     // f64: `1 + 2⁻⁵³` is a tie, rounded to 1 (rest `+2⁻⁵³`);
     // `1 + 3·2⁻⁵³` rounds to `1 + 2⁻⁵¹` (rest `−2⁻⁵³`).
     let h = p2(-53);
@@ -691,11 +691,11 @@ fn a_value_just_past_its_error_and_band_is_decided_by_it() {
     assert_eq!(decide(huge, ord, wide(f64::MAX), key()), Ok(Sign::Pos));
 }
 
-/// An uncertified value escalates even at an unbounded target: its error
+/// An uncertified value escalates even at the largest target: its error
 /// is no error at the target, so it is never a tie.
 #[test]
 fn an_uncertified_value_escalates_at_an_unbounded_target() {
-    let band = Band::curved(0.0, f64::INFINITY);
+    let band = curved(0.0, f64::MAX);
     for x in [
         approx(f64::NAN, 0.0),
         approx(f64::INFINITY, 0.0),
@@ -711,6 +711,32 @@ fn an_uncertified_value_escalates_at_an_unbounded_target() {
             decide(exact(0.0), ord, band, key()),
             Err(Fail::Escalate { order: 1 })
         );
+    }
+}
+
+/// A curved band is made only with a finite, non-negative tie band and
+/// target: a negative band would answer a sign whose error covers zero,
+/// an infinite target would pass over any finite error as a tie.
+#[test]
+fn a_curved_band_refuses_negative_or_infinite_values() {
+    for (tau, tau_sign) in [
+        (-1.0, 1e-3),
+        (0.0, -1e-3),
+        (f64::INFINITY, 1e-3),
+        (0.0, f64::INFINITY),
+        (f64::NAN, 1e-3),
+        (0.0, f64::NAN),
+    ] {
+        assert_eq!(Band::curved(tau, tau_sign), None, "{tau} {tau_sign}");
+    }
+    let b = curved(0.5, 1e-3);
+    assert_eq!(
+        (b.kind(), b.tau(), b.tau_sign()),
+        (BandKind::Curved, 0.5, 1e-3)
+    );
+    assert_eq!(curved(-0.0, 0.0).kind(), BandKind::Curved);
+    for b in [Band::GEOMETRIC, Band::FLAT] {
+        assert_eq!((b.tau(), b.tau_sign()), (0.0, 0.0));
     }
 }
 

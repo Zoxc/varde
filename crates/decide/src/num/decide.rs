@@ -90,20 +90,15 @@ impl Sign {
 
 /// How a record's value is decided: its kind and, for a curved one, its
 /// tie band and error target at the current rung of the escalation
-/// ladder.
+/// ladder. Made by [`Band::GEOMETRIC`], [`Band::FLAT`] and
+/// [`Band::curved`] only, so a curved band's values are checked: a
+/// negative or infinite band, or a target that isn't finite, would make
+/// [`decide`] answer signs its errors don't certify.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Band {
-    /// The record's kind.
-    pub kind: BandKind,
-    /// `τ_k`, the tie band of curved values at rung `k`: a value within
-    /// `τ_k` plus its error is a tie once its error is at the target. Zero
-    /// at rungs 0 and 1, and for the other kinds.
-    pub tau: f64,
-    /// The rung's error target, `TAU_SIGN/4^k` ([`rung_target`]): a curved
-    /// value, of any order, is a tie only once its error is at most this;
-    /// before, it escalates. Zero for the other kinds (an inexact value
-    /// handed to a flat or geometric record escalates).
-    pub tau_sign: f64,
+    kind: BandKind,
+    tau: f64,
+    tau_sign: f64,
 }
 
 /// The kinds of records, by how their values are decided.
@@ -136,15 +131,35 @@ impl Band {
     };
 
     /// A curved record's band at a rung with tie band `tau` (`τ_k`) and
-    /// error target `tau_sign` (`TAU_SIGN/4^k`, [`rung_target`]), both
-    /// `≥ 0` (debug builds check).
-    pub fn curved(tau: f64, tau_sign: f64) -> Band {
-        debug_assert!(tau >= 0.0 && tau_sign >= 0.0, "a band is non-negative");
-        Band {
+    /// error target `tau_sign` (`TAU_SIGN/4^k`, [`rung_target`]); `None`
+    /// unless both are finite and `≥ 0` (a NaN refused too).
+    pub fn curved(tau: f64, tau_sign: f64) -> Option<Band> {
+        let fine = |x: f64| x.is_finite() && x >= 0.0;
+        (fine(tau) && fine(tau_sign)).then_some(Band {
             kind: BandKind::Curved,
             tau,
             tau_sign,
-        }
+        })
+    }
+
+    /// The record's kind.
+    pub fn kind(&self) -> BandKind {
+        self.kind
+    }
+
+    /// `τ_k`, the tie band of curved values at rung `k`: a value within
+    /// `τ_k` plus its error is a tie once its error is at the target. Zero
+    /// at rungs 0 and 1, and for the other kinds.
+    pub fn tau(&self) -> f64 {
+        self.tau
+    }
+
+    /// The rung's error target, `TAU_SIGN/4^k` ([`rung_target`]): a curved
+    /// value, of any order, is a tie only once its error is at most this;
+    /// before, it escalates. Zero for the other kinds (an inexact value
+    /// handed to a flat or geometric record escalates).
+    pub fn tau_sign(&self) -> f64 {
+        self.tau_sign
     }
 }
 

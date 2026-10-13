@@ -178,18 +178,24 @@ pub fn sign<P: Pred>(pred: &P) -> Signs {
             work,
         };
     }
+    let first = (1..)
+        .zip(order_signs(pred, &mut work))
+        .find(|&(_, s)| s != Ordering::Equal);
+    Signs { first, work }
+}
+
+/// The signs of `g₁, …, g₄` alone, `pred`'s derivatives along the
+/// motions, each worked out through the stages when pulled, its work
+/// added to `work`: for a record whose value comes from elsewhere (a
+/// height shared by every record of its key) while its orders are its
+/// own.
+pub fn order_signs<'a, P: Pred>(
+    pred: &'a P,
+    work: &'a mut Work,
+) -> impl Iterator<Item = Ordering> + 'a {
     let orders: [fn(&P, &mut Work) -> Ordering; ORDERS] =
         [order::<P, 1>, order::<P, 2>, order::<P, 3>, order::<P, 4>];
-    for (k, order) in orders.iter().enumerate() {
-        let s = order(pred, &mut work);
-        if s != Ordering::Equal {
-            return Signs {
-                first: Some((k + 1, s)),
-                work,
-            };
-        }
-    }
-    Signs { first: None, work }
+    orders.into_iter().map(move |order| order(pred, work))
 }
 
 /// The sign of `gₖ`, `pred`'s derivative along motion `K`, through the
@@ -201,6 +207,19 @@ fn order<P: Pred, const K: usize>(pred: &P, work: &mut Work) -> Ordering {
         || pred.eval::<Dual<Exact, K>>().d,
         || pred.eval::<Dual<Rat, K>>().d,
     )
+}
+
+/// `gₖ` itself, exactly, for tests comparing it with derivatives worked
+/// out otherwise.
+#[cfg(test)]
+pub(crate) fn order_value<P: Pred, const K: usize>(pred: &P) -> Rational {
+    pred.eval::<Dual<Rat, K>>().d.0
+}
+
+/// `g` itself, exactly, for tests.
+#[cfg(test)]
+pub(crate) fn value(pred: &impl Pred) -> Rational {
+    pred.eval::<Rat>().0
 }
 
 /// One value's sign through the stages: the filter, then expansions,
