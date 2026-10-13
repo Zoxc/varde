@@ -13,7 +13,7 @@ use crate::{Curve, Id, Sketch};
 
 use super::equation::{PointSlots, Slot};
 use super::jacobian::Jacobian;
-use super::system::{Fixing, System};
+use super::system::{Component, Fixing, System};
 use super::{TOLERANCE, scale, within};
 
 /// A diagonal entry of the factored Jacobian this small, relative to the
@@ -195,6 +195,19 @@ pub(crate) struct Dependencies {
     /// equations, an orthonormal basis of them as columns, a row per
     /// column of the Jacobian.
     pub null: Mat<f64>,
+}
+
+impl Component {
+    /// The [`counted_dependencies`] of the component's
+    /// equations, from their `jacobian` at the system's values.
+    pub(super) fn dependencies(&self, system: &System, jacobian: &Jacobian) -> Dependencies {
+        let implied: Vec<bool> = self
+            .equations
+            .iter()
+            .map(|&index| system.equations[index].implied)
+            .collect();
+        counted_dependencies(&jacobian.dense(self.vars.len()), &implied)
+    }
 }
 
 /// The [`dependencies`] of the rows of `jacobian` but those `implied`

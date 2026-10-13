@@ -260,6 +260,15 @@ pub(crate) struct Component {
     pub equations: Vec<usize>,
 }
 
+impl Component {
+    /// The position of `var`, one of the component's variables.
+    pub(super) fn column(&self, var: usize) -> usize {
+        self.vars
+            .binary_search(&var)
+            .expect("a variable of the component")
+    }
+}
+
 impl System {
     /// The system of `sketch`, which is to have passed
     /// [`Sketch::check`]. A constraint naming something missing or of

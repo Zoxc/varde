@@ -1,9 +1,7 @@
-//! A component's Jacobian, kept sparse, and what the solver and the
-//! analysis ask of a component through it.
+//! A component's Jacobian, kept sparse.
 
 use faer::Mat;
 
-use super::analysis::{Dependencies, counted_dependencies};
 use super::system::{Component, System};
 
 /// A component's Jacobian, a row per equation, each row's entries by
@@ -58,25 +56,5 @@ impl Jacobian {
             }
         }
         matrix
-    }
-}
-
-impl Component {
-    /// The position of `var`, one of the component's variables.
-    pub(super) fn column(&self, var: usize) -> usize {
-        self.vars
-            .binary_search(&var)
-            .expect("a variable of the component")
-    }
-
-    /// The [`counted_dependencies`] of the component's
-    /// equations, from their `jacobian` at the system's values.
-    pub(super) fn dependencies(&self, system: &System, jacobian: &Jacobian) -> Dependencies {
-        let implied: Vec<bool> = self
-            .equations
-            .iter()
-            .map(|&index| system.equations[index].implied)
-            .collect();
-        counted_dependencies(&jacobian.dense(self.vars.len()), &implied)
     }
 }
