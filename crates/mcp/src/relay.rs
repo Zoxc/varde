@@ -52,8 +52,9 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const READ_TIMEOUT: Duration = Duration::from_secs(60);
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The JSON-RPC error code for the relay's own failures.
-pub const ERROR_CODE: i64 = Code::Unreachable.number();
+/// The most characters of the server's own text (an HTTP reason) that
+/// the relay quotes in an error.
+const SERVER_TEXT: usize = 64;
 
 /// The answer to a request when nothing listens on the port.
 pub const NOT_RUNNING: &str =
@@ -647,7 +648,7 @@ fn is_error_reply(body: &[u8]) -> bool {
 fn http_text(text: &str) -> String {
     text.chars()
         .filter(|c| c.is_ascii_graphic() || *c == ' ')
-        .take(64)
+        .take(SERVER_TEXT)
         .collect()
 }
 

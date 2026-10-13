@@ -50,7 +50,7 @@ fn lines(out: &[u8]) -> Vec<Value> {
 /// The -32000 error's message in `reply`, which answers `id`.
 fn error_message(reply: &Value, id: Value) -> String {
     assert_eq!(reply["id"], id);
-    assert_eq!(reply["error"]["code"], ERROR_CODE);
+    assert_eq!(reply["error"]["code"], Code::Unreachable.number());
     reply["error"]["message"].as_str().unwrap().to_owned()
 }
 
