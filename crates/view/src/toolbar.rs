@@ -2,7 +2,9 @@
 
 use std::borrow::Cow;
 
-use iced::widget::{Space, button, column, container, mouse_area, row, space, text, tooltip};
+use iced::widget::{
+    Button, Space, button, column, container, mouse_area, row, space, text, tooltip,
+};
 use iced::{Alignment, Element, Length, Padding};
 use varde_document::{Axis3, EXTENSION, FeatureId, FeatureKind, OriginPlane};
 use varde_regen::Summary;
@@ -430,22 +432,17 @@ fn close_op(close: bool, binding: Binding) -> Element<'static, Message> {
 /// Remove point, taking the spline points selected out of their splines,
 /// or disabled saying `why` it can't.
 fn remove_op(why: Option<String>, binding: Binding) -> Element<'static, Message> {
-    let Some(why) = why else {
-        return tipped_op(Icon::RemovePoint, "Remove point", binding, false);
-    };
-    let button = button(
-        row![
-            icons::icon(Icon::RemovePoint, icons::INLINE),
-            text("Remove point")
-        ]
-        .spacing(6)
-        .height(Length::Fill)
-        .align_y(Alignment::Center),
-    )
-    .height(28)
-    .padding([0, 7])
-    .style(theme::flat_button(false, theme::Tone::Text));
-    crate::chrome::tip(button, text(format!("Remove point: {why}")))
+    match why {
+        None => tipped_op(Icon::RemovePoint, "Remove point", binding, false),
+        // The binding is disabled here, so the button is too.
+        Some(why) => tipped_op_with(
+            Icon::RemovePoint,
+            "Remove point",
+            binding,
+            false,
+            format!("Remove point: {why}"),
+        ),
+    }
 }
 
 /// The operations for what's going on: modelling, picking the plane for a
@@ -869,17 +866,19 @@ fn tipped_op(
     on: bool,
 ) -> Element<'static, Message> {
     let tip = binding.tip(label);
-    let button = button(
-        row![icons::icon(icon, icons::INLINE), text(label)]
-            .spacing(6)
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
-    )
-    .height(28)
+    tipped_op_with(icon, label, binding, on, tip)
+}
+
+/// [`tipped_op`] with `tip` for its tooltip.
+fn tipped_op_with(
+    icon: Icon,
+    label: &'static str,
+    binding: Binding,
+    on: bool,
+    tip: String,
+) -> Element<'static, Message> {
     // As the mock's narrower buttons, without their keys beside them.
-    .padding([0, 7])
-    .style(theme::flat_button(on, theme::Tone::Text))
-    .on_press_maybe(binding.sends());
+    let button = op_body(icon, label, None, on, binding.sends(), 7);
     crate::chrome::tip(button, text(tip))
 }
 
@@ -890,6 +889,18 @@ fn op_button(
     on: bool,
     message: Option<Message>,
 ) -> Element<'static, Message> {
+    op_body(icon, label, key, on, message, 8).into()
+}
+
+/// A toolbar button: `icon`, `label` and `key` in a row, `padding` either side.
+fn op_body(
+    icon: Icon,
+    label: &'static str,
+    key: Option<Shortcut>,
+    on: bool,
+    message: Option<Message>,
+    padding: u16,
+) -> Button<'static, Message> {
     button(
         row![
             icons::icon(icon, icons::INLINE),
@@ -901,10 +912,9 @@ fn op_button(
         .align_y(Alignment::Center),
     )
     .height(28)
-    .padding([0, 8])
+    .padding([0, padding])
     .style(theme::flat_button(on, theme::Tone::Text))
     .on_press_maybe(message)
-    .into()
 }
 
 /// Undo's or Redo's button, telling its `label` and key while hovered.
