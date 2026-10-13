@@ -7,7 +7,7 @@ use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::widget::{Button, container, mouse_area, opaque, row};
 use iced::{Alignment, Element, Event, Length, Padding, Rectangle, Size, Vector};
-use varde_render::{Projection, Shading};
+use varde_render::Projection;
 
 use crate::chrome::{Hint, icon_button, key_hint};
 use crate::icons::Icon;
@@ -15,7 +15,7 @@ use crate::menu::{MENU_ITEM_HEIGHT, choice_item, menu_item, menu_separator, subm
 use crate::shortcut::Shortcut;
 use crate::theme::{self, Tone};
 use crate::view_choices::{Choice, Pictured};
-use crate::{Edges, Look, Message, ViewOptions, ViewSubmenu};
+use crate::{Look, Message, ViewOptions, ViewSubmenu};
 
 /// How tall the status bar is, its border included, in pixels.
 pub const STATUS_BAR_HEIGHT: f32 = 30.0;
@@ -85,8 +85,7 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
     let hints = (!hints.is_empty()).then(|| {
         Part::new(
             row(hints).spacing(14).align_y(Alignment::Center),
-            KEPT,
-            true,
+            Rank::Kept,
         )
     });
     let menu = view_menu.map(|open| {
@@ -96,11 +95,11 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
             Some(Message::Look(Look::ToggleViewMenu)),
         )
         .style(theme::flat_button(open, theme::Tone::Text));
-        Part::new(button, KEPT, true)
+        Part::new(button, Rank::Kept)
     });
-    let chip = chip.map(|chip| Part::new(chip, KEPT, true));
+    let chip = chip.map(|chip| Part::new(chip, Rank::Kept));
     let menu_only = info.is_none() && hints.is_none() && chip.is_none();
-    let info = info.map(|info| Part::new(clipped(info), STATUS, false));
+    let info = info.map(|info| Part::new(clipped(info), Rank::Status));
     let bar = Boxed {
         left: if menu_only { BUTTON_PADDING } else { PADDING },
         right: if view_menu.is_some() {
@@ -114,8 +113,8 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
         left: PADDING,
         right: PADDING,
         parts: vec![
-            Part::new(clipped(selection), SELECTION, false),
-            Part::new(key_hint(Shortcut::SPACE, "Clear").element, KEPT, true),
+            Part::new(clipped(selection), Rank::Selection),
+            Part::new(key_hint(Shortcut::SPACE, "Clear").element, Rank::Kept),
         ],
     });
     let boxes: Vec<_> = selection
@@ -132,9 +131,16 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
 
 /// How soon a part of the bar gives way where it doesn't fit: the lowest
 /// first.
-const STATUS: u8 = 0;
-const SELECTION: u8 = 1;
-const KEPT: u8 = 2;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Rank {
+    /// The status text.
+    Status,
+    /// What's selected.
+    Selection,
+    /// The hints, buttons and chips, kept whole and divided by a line
+    /// from the part before them.
+    Kept,
+}
 
 /// `content` cut where it doesn't fit, on one line.
 fn clipped<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
@@ -204,8 +210,8 @@ pub fn view_menu<'a>(
     // `MENU_ITEM_HEIGHT` tall, from the top of both menus' padding.
     let submenu = submenu.map(|which| {
         let (items, at) = match which {
-            ViewSubmenu::Shading => (shading_choices(options.shading), 0),
-            ViewSubmenu::Edges => (edges_choices(options.edges), 1),
+            ViewSubmenu::Shading => (choices(options.shading, Message::SetShading), 0),
+            ViewSubmenu::Edges => (choices(options.edges, Message::SetEdges), 1),
         };
         let list = container(iced::widget::column(items).width(180))
             .padding(4)
@@ -229,24 +235,12 @@ pub fn view_menu<'a>(
     .into()
 }
 
-/// The shadings, in the Shading submenu, `chosen` ticked.
-fn shading_choices<'a>(chosen: Shading) -> Vec<Element<'a, Message>> {
-    (Shading::ALL.iter().copied())
-        .map(|shading| {
-            let message = Message::SetShading(shading);
-            let label = shading.said();
-            choice_item(shading.icon(), label, shading == chosen, message).into()
-        })
-        .collect()
-}
-
-/// The edges drawn, in the Edges submenu, `chosen` ticked.
-fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
-    (Edges::ALL.iter().copied())
-        .map(|edges| {
-            let message = Message::SetEdges(edges);
-            let label = edges.said();
-            choice_item(edges.icon(), label, edges == chosen, message).into()
+/// The values of a View submenu, the shadings or the edges drawn,
+/// `chosen` ticked, each sending `message` of it.
+fn choices<'a, T: Pictured>(chosen: T, message: fn(T) -> Message) -> Vec<Element<'a, Message>> {
+    (T::ALL.iter().copied())
+        .map(|value| {
+            choice_item(value.icon(), value.said(), value == chosen, message(value)).into()
         })
         .collect()
 }
@@ -254,19 +248,22 @@ fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
 /// A part of one of the bar's boxes.
 struct Part<'a> {
     element: Element<'a, Message>,
-    /// How soon it gives way: see [`STATUS`].
-    rank: u8,
-    /// Whether a line divides it from the part before it, if one shows.
-    divided: bool,
+    /// How soon it gives way.
+    rank: Rank,
 }
 
 impl<'a> Part<'a> {
-    fn new(element: impl Into<Element<'a, Message>>, rank: u8, divided: bool) -> Self {
+    fn new(element: impl Into<Element<'a, Message>>, rank: Rank) -> Self {
         Self {
             element: element.into(),
             rank,
-            divided,
         }
+    }
+
+    /// Whether a line divides it from the part before it, if one shows:
+    /// a [`Rank::Kept`] part's.
+    fn divided(&self) -> bool {
+        self.rank == Rank::Kept
     }
 }
 
@@ -347,7 +344,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Bar<'_> {
             .iter()
             .map(|boxed| {
                 let between = boxed.parts.iter().skip(1).map(|part| {
-                    if part.divided {
+                    if part.divided() {
                         2.0 * SPACING + 1.0
                     } else {
                         SPACING
@@ -387,7 +384,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Bar<'_> {
                 let size = node.size();
                 if size.width > 0.0 && shown {
                     x += SPACING;
-                    if part.divided {
+                    if part.divided() {
                         dividers.push(x - start);
                         x += 1.0 + SPACING;
                     }
