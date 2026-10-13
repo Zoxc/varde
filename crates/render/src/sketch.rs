@@ -201,10 +201,9 @@ impl SketchLayer {
     }
 
     /// Adds the polyline through `points` in `space`. A point repeating
-    /// the one before it is dropped, and a polyline through three points or
-    /// more ending where it starts is closed: its first and last segments
-    /// join like the rest. Nothing
-    /// is added for a polyline with a point that isn't finite, or of fewer
+    /// the one before it is dropped, and a polyline through three distinct
+    /// points or more ending where it starts is closed: its first and last
+    /// segments join like the rest. Nothing is added for a polyline with a point that isn't finite, or of fewer
     /// than two distinct points.
     pub fn polyline(&mut self, space: Space, points: &[DVec2], style: LineStyle) {
         self.polyline_flagged(space, 0, points, style);
@@ -223,7 +222,7 @@ impl SketchLayer {
     fn polyline_flagged(&mut self, space: Space, flags: u32, points: &[DVec2], style: LineStyle) {
         let place = |p: DVec2| p.is_finite().then(|| space.place(p)).flatten();
         let length = |a: DVec2, b: DVec2| a.distance(b);
-        self.push_polyline(space.flags() | flags, points, place, length, style);
+        self.push_polyline(space.flags() | flags, points, place, length, None, style);
     }
 
     /// Adds the polyline through the world `points`, as [`Self::polyline`]
@@ -232,37 +231,50 @@ impl SketchLayer {
     pub fn world_polyline(&mut self, points: &[Vec3], style: LineStyle) {
         let place = |p: Vec3| p.is_finite().then(|| (p.truncate().as_dvec2(), p.z));
         let length = |a: Vec3, b: Vec3| f64::from(a.distance(b));
-        self.push_polyline(WORLD, points, place, length, style);
+        self.push_polyline(WORLD, points, place, length, None, style);
     }
 
     /// Adds the polyline through `points`, flagged `flags`, each placed
-    /// for the GPU by `place` and each segment as long as `length` says:
-    /// nothing if the line isn't visible or a point can't be placed
-    /// (`place` gives `None`), a point repeating the one before it
-    /// dropped, closed if it has more than three points and ends where it
-    /// starts.
+    /// for the GPU by `place` and each segment as long as `length` says,
+    /// the `i`th segment as opaque as `style`'s colour times `alpha[i]`
+    /// if given (opaque past its end): nothing if the line isn't visible or
+    /// a point can't be placed (`place` gives `None`), a point repeating
+    /// the one before it dropped with the segment it ends, closed if it has
+    /// no `alpha` and runs through three distinct points or more and ends
+    /// where it starts.
     fn push_polyline<P: Copy + PartialEq>(
         &mut self,
         flags: u32,
         points: &[P],
         place: impl Fn(P) -> Option<(DVec2, f32)>,
         length: impl Fn(P, P) -> f64,
+        alpha: Option<&[f32]>,
         style: LineStyle,
     ) {
         if !visible(style.width) {
             return;
         }
-        let mut points = points.to_vec();
-        points.dedup();
-        if points.len() < 2 {
+        let mut kept = Vec::with_capacity(points.len());
+        let mut shares = Vec::with_capacity(points.len());
+        for (i, &p) in points.iter().enumerate() {
+            if kept.last() == Some(&p) {
+                continue;
+            }
+            if i > 0 {
+                shares.push(alpha.and_then(|a| a.get(i - 1)).copied().unwrap_or(1.0));
+            }
+            kept.push(p);
+        }
+        if kept.len() < 2 {
             return;
         }
-        let Some(placed) = points.iter().map(|&p| place(p)).collect::<Option<Vec<_>>>() else {
+        let Some(placed) = kept.iter().map(|&p| place(p)).collect::<Option<Vec<_>>>() else {
             return;
         };
-        let closed = points.len() > 3 && points.first() == points.last();
-        let lengths = points.windows(2).map(|pair| length(pair[0], pair[1]));
-        self.push_lines(flags, &placed, lengths, closed, style, |_| 1.0);
+        let closed = alpha.is_none() && kept.len() > 3 && kept.first() == kept.last();
+        let lengths = kept.windows(2).map(|pair| length(pair[0], pair[1]));
+        let share = |i: usize| shares.get(i).copied().unwrap_or(1.0);
+        self.push_lines(flags, &placed, lengths, closed, style, share);
     }
 
     /// Adds the polyline through `points` in `space`, as
@@ -279,33 +291,9 @@ impl SketchLayer {
         alpha: &[f32],
         style: LineStyle,
     ) {
-        if !(visible(style.width) && points.iter().all(|p| p.is_finite())) {
-            return;
-        }
-        let mut kept = Vec::with_capacity(points.len());
-        let mut shares = Vec::with_capacity(alpha.len());
-        for (i, &p) in points.iter().enumerate() {
-            if kept.last() == Some(&p) {
-                continue;
-            }
-            if i > 0 {
-                shares.push(alpha.get(i - 1).copied().unwrap_or(1.0));
-            }
-            kept.push(p);
-        }
-        if kept.len() < 2 {
-            return;
-        }
-        let Some(placed) = kept
-            .iter()
-            .map(|&p| space.place(p))
-            .collect::<Option<Vec<_>>>()
-        else {
-            return;
-        };
-        let lengths = kept.windows(2).map(|pair| pair[0].distance(pair[1]));
-        let share = |i: usize| shares.get(i).copied().unwrap_or(1.0);
-        self.push_lines(space.flags(), &placed, lengths, false, style, share);
+        let place = |p: DVec2| p.is_finite().then(|| space.place(p)).flatten();
+        let length = |a: DVec2, b: DVec2| a.distance(b);
+        self.push_polyline(space.flags(), points, place, length, Some(alpha), style);
     }
 
     /// Adds the segments between the `placed` points, as the GPU takes
