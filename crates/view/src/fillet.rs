@@ -3,7 +3,7 @@
 
 use varde_document::{Fillet, LengthUnit};
 
-use crate::feature_text::length_note;
+use crate::feature_text::{blend_count, chain_note, length_note};
 
 /// A fillet's Timeline note, as the UI mock's row: its radius, "R2" (a
 /// number of the design's units).
@@ -17,12 +17,8 @@ pub(crate) fn fillet_note(fillet: &Fillet, units: LengthUnit) -> String {
 /// What the status bar says of a selected fillet, as the UI mock's row:
 /// "2 edges · R2 mm · Tangent chain".
 pub fn fillet_info(fillet: &Fillet, units: LengthUnit) -> String {
-    let edges = crate::chamfer::blend_count(&fillet.edges, &fillet.faces);
-    let chain = if fillet.chains {
-        " · Tangent chain"
-    } else {
-        ""
-    };
+    let edges = blend_count(&fillet.edges, &fillet.faces);
+    let chain = chain_note(fillet.chains);
     format!("{edges} · R{}{chain}", length_note(&fillet.radius, units))
 }
 

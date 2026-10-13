@@ -9,29 +9,40 @@ use crate::operation_panel::OperationKind;
 /// What the Timeline notes of a sweep, as the plan's rows: "along Sketch
 /// 3", "along Body 1", "along 3 parts", "helix · 10 turns".
 pub(crate) fn sweep_note(document: &Document, sweep: &Sweep) -> String {
+    path_text(document, sweep, false)
+}
+
+/// The words for a sweep's path, "along Sketch 3" or "helix · 10
+/// turns", their first capital if `capital`.
+fn path_text(document: &Document, sweep: &Sweep, capital: bool) -> String {
+    let (along, coil) = if capital {
+        ("Along", "Helix")
+    } else {
+        ("along", "helix")
+    };
     match &sweep.path {
         PathRef::Chain(parts) => match parts.as_slice() {
             [PathPart::Curves(chain)] => {
                 let name = document
                     .feature(chain.sketch)
                     .map_or("a sketch", |feature| feature.name.as_str());
-                format!("along {name}")
+                format!("{along} {name}")
             }
             [PathPart::Edges { edges, .. }] => {
                 let name = (edges.first())
                     .and_then(|edge| document.body(edge.body))
                     .map_or("a body", |body| body.name.as_str());
-                format!("along {name}")
+                format!("{along} {name}")
             }
-            parts => format!("along {} parts", parts.len()),
+            parts => format!("{along} {} parts", parts.len()),
         },
         PathRef::Helix(helix) => {
             let turns = helix.turns.value;
             let count = varde_expr::format(turns, None);
             if turns == 1.0 {
-                "helix · 1 turn".to_owned()
+                format!("{coil} · 1 turn")
             } else {
-                format!("helix · {count} turns")
+                format!("{coil} · {count} turns")
             }
         }
     }
@@ -41,13 +52,7 @@ pub(crate) fn sweep_note(document: &Document, sweep: &Sweep) -> String {
 /// Follow path · New body", "Along 2 parts · Keep orientation · Twist
 /// 90° · Join", "Helix · 10 turns · Cut".
 pub fn sweep_info(document: &Document, sweep: &Sweep) -> String {
-    let note = sweep_note(document, sweep);
-    let mut note_chars = note.chars();
-    let path = match note_chars.next() {
-        Some(first) => first.to_uppercase().chain(note_chars).collect(),
-        None => note.clone(),
-    };
-    let mut parts = vec![path];
+    let mut parts = vec![path_text(document, sweep, true)];
     if !matches!(sweep.path, PathRef::Helix(_)) {
         parts.push(
             match sweep.orientation {

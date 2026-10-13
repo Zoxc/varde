@@ -3,11 +3,12 @@
 //! off to the kind's own module, and the angle and length notes those
 //! modules share.
 
-use varde_document::{Document, Feature, FeatureKind};
+use varde_document::{Document, EdgeRef, FaceRef, Feature, FeatureKind, blend_excludes};
 use varde_expr::LengthUnit;
 
 use crate::document::sketch_summary;
 use crate::icons::Icon;
+use crate::words::counted;
 
 /// An angle of `radians`, as angles are shown: "90°".
 pub(crate) fn angle_note(radians: f64) -> String {
@@ -98,4 +99,31 @@ pub(crate) fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::Sweep(sweep) => crate::sweep::sweep_info(document, sweep),
         FeatureKind::Loft(loft) => crate::loft::loft_info(loft),
     }
+}
+
+/// How many faces and edges a chamfer or fillet names, for the status
+/// bar: "2 edges", "1 face · 1 edge", and those it leaves out, "1 face ·
+/// 2 left out".
+pub(crate) fn blend_count(edges: &[EdgeRef], faces: &[FaceRef]) -> String {
+    let out = (edges.iter())
+        .filter(|edge| blend_excludes(edge, faces))
+        .count();
+    let taken = edges.len() - out;
+    let mut parts = Vec::new();
+    if !faces.is_empty() {
+        parts.push(counted(faces.len(), "face", "faces"));
+    }
+    if taken > 0 || faces.is_empty() {
+        parts.push(counted(taken, "edge", "edges"));
+    }
+    if out > 0 {
+        parts.push(format!("{out} left out"));
+    }
+    parts.join(" · ")
+}
+
+/// A chamfer's or fillet's status bar words for its Tangent chain tick:
+/// " · Tangent chain" while on.
+pub(crate) fn chain_note(chains: bool) -> &'static str {
+    if chains { " · Tangent chain" } else { "" }
 }
