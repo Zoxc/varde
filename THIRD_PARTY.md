@@ -26,6 +26,6 @@ crates' direct dependencies:
 | `glam` | 0.30 | MIT OR Apache-2.0 | vectors and matrices |
 | `libm` | 0.2.16 (pinned) | MIT | the trigonometry, the same bits on every platform |
 | `rayon` | 1 | MIT OR Apache-2.0 | parallel maps (native builds) |
-| `malachite` | 0.12.0 (pinned) | LGPL-3.0 | the big-float precision levels; exact rationals in tests |
+| `malachite` | 0.12.0 (pinned) | LGPL-3.0 | the big-float precision levels; the exact rounding of form keys and lattice control points; exact rationals in tests |
 | `smallvec` | 1.16.2 (pinned) | MIT OR Apache-2.0 | the components of exact expansions |
 | `geogram_predicates` | 0.4.0 (tests only) | LGPL-3.0 OR MIT, used under MIT | the expansion tests' oracle |

@@ -1,8 +1,9 @@
 //! The Varde geometry kernel, replacing the old kernel now in
 //! `varde-kernel-compat`. So far its infrastructure: the [`Budget`] and
 //! the charging of work against it, the errors ([`KernelError`]), the
-//! parallel map and quadrature; and the first of its geometry, the tile
-//! ([`geom::tile`]).
+//! parallel map and quadrature; and the first of its geometry: the tile
+//! ([`geom::tile`]), the forms' keys ([`geom::form`]: plane, cylinder,
+//! sphere) and their lattices of tiles ([`geom::lattice`]).
 //! The quadrature rules are public ([`measure::quadrature`]): the facade
 //! measures profiles' areas with them.
 

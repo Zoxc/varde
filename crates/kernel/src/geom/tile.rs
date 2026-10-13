@@ -31,7 +31,8 @@
 //! defined this way (the base tile after its splits), and as the same
 //! net always splits into the same bits, every surface using that level
 //! gets the same tiles. Splits in `u` and in `v` don't commute to the
-//! bit, so whoever derives a level fixes their order.
+//! bit, so whoever derives a level fixes their order (the lattices,
+//! [`super::lattice`]: every `u` split first, then the `v` splits).
 //!
 //! **Cached per tile** (computed once, on first use, from the net alone,
 //! so every copy of a tile has the same bits): the first-level patch, the

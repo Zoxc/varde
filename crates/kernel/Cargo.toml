@@ -14,12 +14,12 @@ staging = []
 [dependencies]
 varde-decide.workspace = true
 glam.workspace = true
+malachite.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon.workspace = true
 
 [dev-dependencies]
-malachite.workspace = true
 varde-testing.workspace = true
 varde-testkit.workspace = true
 # For tests/ban_probe.rs only, until the kernel depends on them itself.
