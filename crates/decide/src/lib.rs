@@ -14,9 +14,11 @@
 //! canonical keys, the table each kind is stored in, decided once, and the
 //! flat shadow records (point against vertex, a point's ray against a
 //! straight edge), and [`order`], the geometric order on vertices, points
-//! on edges and edges that choices read in place of ids.
+//! on edges and edges that choices read in place of ids, and [`count`],
+//! the counting the records feed: so far the dyadic boxes of a face.
 
 pub mod bezier;
+pub mod count;
 pub mod ids;
 pub mod num;
 pub mod order;
