@@ -8,10 +8,7 @@ use glam::{DVec2, DVec3, Mat4, Vec3};
 use varde_kernel_compat::Aabb;
 
 use crate::Camera;
-
-/// How many view heights from the target the grid fades out within. The
-/// renderer passes it to `fs_grid` as a pipeline constant.
-pub const GRID_FADE_HEIGHTS: f32 = 6.0;
+use crate::style::GRID_FADE_HEIGHTS;
 
 /// A plane in the world with axes in it, which the grid is drawn on: the
 /// XY plane, or the plane of the sketch being edited. The grid's lines

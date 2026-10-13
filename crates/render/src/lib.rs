@@ -15,6 +15,7 @@ mod preview;
 mod renderer;
 mod scene;
 mod sketch;
+pub mod style;
 
 pub use camera::{Camera, Projection, Rotation, View};
 pub use highlight::{Highlights, Vertex};
@@ -22,13 +23,10 @@ pub use preview::{
     PreviewError, PreviewImage, PreviewSelection, PreviewShot, frame, render_preview,
 };
 pub use renderer::{
-    BodyTint, CREASE_ALPHA, CREASE_WIDTH, ClipRect, Colors, EDGE_WIDTH, ERROR_EDGE_WIDTH,
-    ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM,
-    HOVER_THROUGH_ALPHA, HOVERED_EDGE_WIDTH, LINE_WIDTH, OriginPart, OriginShown, PLANE_GAP,
-    PLANE_REACH, PLANE_SIDES, PatternStyle, Pivot, PrepareError, Renderer, SELECTED_EDGE_WIDTH,
-    SELECTED_RIM, Shading, Slot, Srgb, Upload, VERTEX_RADIUS, Viewport,
+    BodyTint, ClipRect, Colors, ErrorParts, Frame, OriginPart, OriginShown, PatternStyle, Pivot,
+    PrepareError, Renderer, Shading, Slot, Srgb, Upload, Viewport,
 };
-pub use scene::{GRID_FADE_HEIGHTS, GridPlane};
+pub use scene::GridPlane;
 pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space, Srgba};
 
 pub use wgpu;

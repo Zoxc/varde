@@ -6,7 +6,8 @@
 use glam::{DVec2, DVec3, Vec3};
 use varde_document::{OriginPlane, Placement};
 use varde_kernel_compat::RenderMesh;
-use varde_render::{Camera, GRID_FADE_HEIGHTS, Projection};
+use varde_render::style::GRID_FADE_HEIGHTS;
+use varde_render::{Camera, Projection};
 
 use crate::pick::{aabb, ray_hits, through_box};
 use crate::projection::Projector;

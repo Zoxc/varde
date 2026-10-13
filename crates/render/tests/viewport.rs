@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use glam::{DVec3, Vec3};
 use varde_kernel_compat::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
+use varde_render::style::*;
 use varde_render::{
-    CREASE_ALPHA, CREASE_WIDTH, Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane,
-    HIDDEN_DASH, HOVER_RIM, HOVERED_EDGE_WIDTH, Highlights, LINE_WIDTH, LineStyle, Pivot,
-    PointStyle, Projection, Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba,
-    VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, Highlights, LineStyle, Pivot, PointStyle,
+    Projection, Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View,
+    Viewport, wgpu,
 };
 use varde_render::{OriginPart, OriginShown};
 

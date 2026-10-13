@@ -18,27 +18,27 @@ use varde_kernel_compat::{EdgePoint, EdgeStream};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Highlights {
     /// The edges outlined, as hovered: drawn again
-    /// [`HOVERED_EDGE_WIDTH`](crate::HOVERED_EDGE_WIDTH) wide in the edges'
-    /// colour, with a rim [`HOVER_RIM`](crate::HOVER_RIM) wide outside
+    /// [`HOVERED_EDGE_WIDTH`](crate::style::HOVERED_EDGE_WIDTH) wide in the edges'
+    /// colour, with a rim [`HOVER_RIM`](crate::style::HOVER_RIM) wide outside
     /// them in [`Colors::hover_outline`](crate::Colors::hover_outline).
     pub outlined: Vec<u32>,
     /// The edges selected: drawn again in
     /// [`Colors::selected`](crate::Colors::selected),
-    /// [`SELECTED_EDGE_WIDTH`](crate::SELECTED_EDGE_WIDTH) wide, over the
+    /// [`SELECTED_EDGE_WIDTH`](crate::style::SELECTED_EDGE_WIDTH) wide, over the
     /// outline.
     pub selected_edges: Vec<u32>,
     /// The edges in the second colour (the measure tool's B): drawn as
     /// the selected are, in [`Colors::second`](crate::Colors::second).
     pub second_edges: Vec<u32>,
     /// The vertices, drawn as discs of radius
-    /// [`VERTEX_RADIUS`](crate::VERTEX_RADIUS) within a rim if hovered or
+    /// [`VERTEX_RADIUS`](crate::style::VERTEX_RADIUS) within a rim if hovered or
     /// selected.
     pub vertices: Vec<Vertex>,
 }
 
 /// A vertex of [`Highlights::vertices`]: its corner, and whether it's
 /// hovered and selected. Hovered, it's in the edges' colour within a rim
-/// [`HOVER_RIM`](crate::HOVER_RIM) wide in
+/// [`HOVER_RIM`](crate::style::HOVER_RIM) wide in
 /// [`Colors::hover_outline`](crate::Colors::hover_outline); selected, it's
 /// filled with [`Colors::selected`](crate::Colors::selected), within a
 /// pixel's rim in the edges' colour unless it's hovered too.

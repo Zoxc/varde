@@ -17,8 +17,9 @@ use wgpu::util::DeviceExt;
 
 use crate::Camera;
 use crate::highlight::{Highlights, VertexInstance};
-use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
+use crate::scene::{self, GridPlane};
 use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene, Srgba};
+use crate::style::*;
 
 mod color;
 mod draw;
