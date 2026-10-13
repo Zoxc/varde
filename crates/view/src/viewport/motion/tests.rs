@@ -883,7 +883,8 @@ fn an_arc_knob_turns_and_a_slider_scales() {
 /// (-20, 0) to (20, 0): seen from the top, a click in the disc picks its
 /// region while the profile is picked, a click on the line its chain
 /// while the path is, the model not hovered over it; off the line, the
-/// model's edges are left to the model's picking.
+/// model's edges are left to the model's picking. Its twist knob, off
+/// them, doesn't keep them from being picked, and is grabbed itself.
 #[test]
 fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
     use crate::motion::{BlendEdges, SweepPath, SweepView};
@@ -941,6 +942,21 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
             targets: Vec::new(),
             info: None,
         }));
+        state.knobs = vec![crate::OpKnob {
+            field: MotionField::Twist,
+            path: crate::KnobPath::Arc {
+                centre: DVec3::new(-10.0, -10.0, 0.0),
+                axis: DVec3::Z,
+                radial: DVec3::X,
+                radius: crate::KnobRadius::World(5.0),
+            },
+            value: 0.0,
+            scale: crate::KnobScale::Times(1.0),
+            snap: crate::KnobSnap::Angle,
+            out: DVec3::Y,
+            shaft: None,
+            tone: crate::KnobTone::Count,
+        }];
         let program = viewport(state, &camera, Some(&index));
         let mut input = Interaction::default();
         let (on, wanted) = match picking {
@@ -990,6 +1006,20 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
             looks(&messages).iter().all(Option::is_none),
             "{picking:?}: {messages:?}"
         );
+        feed(&program, &mut input, &[release(top(off))]);
+        let knob = top(DVec3::new(-5.0, -10.0, 0.0));
+        let turned = top(DVec3::new(-10.0, -5.0, 0.0));
+        let (messages, captured) = feed(
+            &program,
+            &mut input,
+            &[moved(knob), press(knob), moved(turned)],
+        );
+        assert!(captured, "{picking:?}");
+        assert!(
+            (looks(&messages).iter()).any(|l| matches!(l, Some(MotionLook::DragKnob { .. }))),
+            "{picking:?}: the knob's dragged: {messages:?}"
+        );
+        feed(&program, &mut input, &[release(turned)]);
     }
 }
 

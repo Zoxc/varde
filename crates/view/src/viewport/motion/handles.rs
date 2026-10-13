@@ -19,7 +19,6 @@ use crate::motion::{MotionField, MotionKind, MotionLook, MotionPick};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
 use crate::viewport::handle::{self, Puck, angle_step, wrapped};
-use crate::viewport::knobs;
 use crate::viewport::style::line;
 use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
@@ -663,12 +662,8 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         hovered: bool,
     ) -> Option<Action<Message>> {
-        if input.drag.is_some() || input.knobs.dragging() {
+        if input.drag.is_some() {
             return None;
-        }
-        if !self.state.knobs.is_empty() {
-            let knobs = &self.state.knobs;
-            return knobs::redraw(knobs, &mut input.knobs, bounds, cursor, camera, hovered);
         }
         let at = local_cursor(bounds, cursor);
         let grip = (self.handles(input, camera, bounds)).and_then(|handles| handles.grip_at(at?));

@@ -63,7 +63,7 @@ use super::knobs;
 use super::sketch_pick::HIT_PIXELS;
 use crate::Message;
 use crate::anchors::Anchors;
-use crate::motion::{MotionField, MotionKind, MotionState, SplitMode};
+use crate::motion::{MotionField, MotionKind, MotionPick, MotionState, SplitMode};
 use crate::operation_panel::PanelHover;
 use crate::theme::{self, SketchColors};
 use crate::viewport::local_cursor;
@@ -331,6 +331,25 @@ impl<'a> Moving<'a> {
         self.state.fields[field.index()].value
     }
 
+    /// What has the cursor, in the one order [`Moving::mouse`],
+    /// [`Moving::redraw`] and [`Moving::mouse_interaction`] share: a split
+    /// or sweep picking in its sketches (a sweep's knobs, if any, over
+    /// what it picks), a loft (its seam knobs over what it picks), the
+    /// operation's knobs, else a move's handles.
+    fn mode(&self) -> Mode {
+        if let Some(mode) = self.split_picking() {
+            Mode::Split(mode)
+        } else if let Some(picking) = self.sweep_picking() {
+            Mode::Sweep(picking)
+        } else if self.state.loft().is_some() {
+            Mode::Loft(self.loft_picking())
+        } else if !self.state.knobs.is_empty() {
+            Mode::Knobs
+        } else {
+            Mode::Handles
+        }
+    }
+
     /// Takes the mouse `event` with the `cursor` over `bounds` seen by
     /// `camera`: hovering and dragging the handles. `None` for what's left
     /// to picking the model and the camera: anything off the handles.
@@ -347,12 +366,9 @@ impl<'a> Moving<'a> {
     ) -> Option<Action<Message>> {
         input.settle(self.state.kind, !self.state.knobs.is_empty());
         self.leave_unpicked(input);
-        if let Some(mode) = self.split_picking() {
-            return self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera);
-        }
-        if !self.state.knobs.is_empty() {
+        let knobs_mouse = |input: &mut Input| {
             let state = &self.state;
-            return knobs::mouse(
+            knobs::mouse(
                 &state.knobs,
                 state.editable,
                 state.units,
@@ -362,18 +378,36 @@ impl<'a> Moving<'a> {
                 cursor,
                 camera,
                 hovered,
-            );
-        }
-        if let Some(picking) = self.sweep_picking() {
-            return self.sweep_mouse(picking, input, event, bounds, cursor, camera);
-        }
-        if let Some(action) = self.seams_mouse(&mut input.seams, event, bounds, cursor, camera) {
-            return Some(action);
-        }
-        let Some(picking) = self.loft_picking() else {
-            return self.handles_mouse(input, event, bounds, cursor, camera, hovered);
+            )
         };
-        self.loft_mouse(picking, &mut input.loft, event, bounds, cursor, camera)
+        match self.mode() {
+            Mode::Split(mode) => {
+                self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera)
+            }
+            Mode::Sweep(picking) => {
+                let knob = knobs_mouse(input);
+                if input.knobs.holds() {
+                    let left = input.sweep.leave();
+                    return knob.or_else(|| left.then(Action::request_redraw));
+                }
+                (self.sweep_mouse(picking, input, event, bounds, cursor, camera)).or(knob)
+            }
+            Mode::Loft(picking) => {
+                if let Some(action) =
+                    self.seams_mouse(&mut input.seams, event, bounds, cursor, camera)
+                {
+                    return Some(action);
+                }
+                match picking {
+                    Some(picking) => {
+                        self.loft_mouse(picking, &mut input.loft, event, bounds, cursor, camera)
+                    }
+                    None => self.handles_mouse(input, event, bounds, cursor, camera, hovered),
+                }
+            }
+            Mode::Knobs => knobs_mouse(input),
+            Mode::Handles => self.handles_mouse(input, event, bounds, cursor, camera, hovered),
+        }
     }
 
     /// Works out again which handle is under the `cursor` as a frame is
@@ -397,58 +431,83 @@ impl<'a> Moving<'a> {
         input.settle(self.state.kind, !self.state.knobs.is_empty());
         self.leave_unpicked(input);
         let at = local_cursor(bounds, cursor);
-        if let Some(mode) = self.split_picking() {
-            return (self.split_hover(mode, &mut input.split, at, camera, bounds))
-                .then(Action::request_redraw);
-        }
-        if let Some(loft) = self.state.loft()
-            && input.seams.drag.is_none()
-        {
-            let over = at.and_then(|at| self.seam_under(loft, at, camera, bounds));
-            if std::mem::replace(&mut input.seams.hover, over) != over {
-                return Some(Action::request_redraw());
-            }
-        }
-        if let Some(picking) = self.loft_picking()
-            && let Some(loft) = self.state.loft()
-        {
-            let under = at.map_or_else(LoftInput::default, |at| {
-                self.loft_under(loft, picking, at, camera, bounds)
-            });
-            return (std::mem::replace(&mut input.loft, under) != under)
-                .then(Action::request_redraw);
-        }
-        let Some(picking) = self.sweep_picking() else {
-            return self.handles_redraw(input, bounds, cursor, camera, hovered);
+        let knobs_redraw = |input: &mut Input| {
+            knobs::redraw(
+                &self.state.knobs,
+                &mut input.knobs,
+                bounds,
+                cursor,
+                camera,
+                hovered,
+            )
         };
-        self.sweep_redraw(picking, input, at, camera, bounds, hovered)
+        match self.mode() {
+            Mode::Split(mode) => (self.split_hover(mode, &mut input.split, at, camera, bounds))
+                .then(Action::request_redraw),
+            Mode::Sweep(picking) => {
+                let knob = knobs_redraw(input);
+                if input.knobs.holds() {
+                    let left = input.sweep.leave();
+                    return knob.or_else(|| left.then(Action::request_redraw));
+                }
+                self.sweep_redraw(picking, input, at, camera, bounds, hovered)
+            }
+            Mode::Loft(picking) => {
+                let loft = self.state.loft()?;
+                if input.seams.drag.is_none() {
+                    let over = at.and_then(|at| self.seam_under(loft, at, camera, bounds));
+                    if std::mem::replace(&mut input.seams.hover, over) != over {
+                        return Some(Action::request_redraw());
+                    }
+                }
+                let Some(picking) = picking else {
+                    return self.handles_redraw(input, bounds, cursor, camera, hovered);
+                };
+                let under = at.map_or_else(LoftInput::default, |at| {
+                    self.loft_under(loft, picking, at, camera, bounds)
+                });
+                (std::mem::replace(&mut input.loft, under) != under).then(Action::request_redraw)
+            }
+            Mode::Knobs => knobs_redraw(input),
+            Mode::Handles => self.handles_redraw(input, bounds, cursor, camera, hovered),
+        }
     }
 
-    /// The cursor over a handle, or dragging one; over a region or curve
-    /// a split's tool picks.
+    /// The cursor over a handle or knob, or dragging one; over a region
+    /// or curve a split, sweep or loft picks.
     pub(crate) fn mouse_interaction(&self, input: &Input) -> Option<mouse::Interaction> {
-        if self.split_picking().is_some() {
-            return input.split.over().then_some(mouse::Interaction::Pointer);
-        }
-        if self.sweep_picking().is_some() {
+        let pointer = |over: bool| over.then_some(mouse::Interaction::Pointer);
+        let knobs = || {
+            if input.knobs.dragging() {
+                Some(mouse::Interaction::Grabbing)
+            } else {
+                input.knobs.holds().then_some(mouse::Interaction::Grab)
+            }
+        };
+        let handles = || {
+            if input.drag.is_some() {
+                Some(mouse::Interaction::Grabbing)
+            } else {
+                input.hover.map(|_| mouse::Interaction::Grab)
+            }
+        };
+        match self.mode() {
+            Mode::Split(_) => pointer(input.split.over()),
             // Off the curves, the model's edges as the model picks them.
-            return input.sweep.over().then_some(mouse::Interaction::Pointer);
-        }
-        if input.seams.drag.is_some() {
-            return Some(mouse::Interaction::Grabbing);
-        }
-        if input.seams.hover.is_some() {
-            return Some(mouse::Interaction::Grab);
-        }
-        if self.loft_picking().is_some() {
-            return input.loft.over().then_some(mouse::Interaction::Pointer);
-        }
-        if input.drag.is_some() || input.knobs.dragging() {
-            Some(mouse::Interaction::Grabbing)
-        } else if input.knobs.holds() {
-            Some(mouse::Interaction::Grab)
-        } else {
-            input.hover.map(|_| mouse::Interaction::Grab)
+            Mode::Sweep(_) => knobs().or_else(|| pointer(input.sweep.over())),
+            Mode::Loft(picking) => {
+                if input.seams.drag.is_some() {
+                    Some(mouse::Interaction::Grabbing)
+                } else if input.seams.hover.is_some() {
+                    Some(mouse::Interaction::Grab)
+                } else if picking.is_some() {
+                    pointer(input.loft.over())
+                } else {
+                    handles()
+                }
+            }
+            Mode::Knobs => knobs(),
+            Mode::Handles => handles(),
         }
     }
 
@@ -464,6 +523,22 @@ impl<'a> Moving<'a> {
             .filter(|split| split.mode == SplitMode::Regions)
             .map_or(GridPlane::XY, |split| split_regions(split).plane())
     }
+}
+
+/// What has the cursor in a session: see [`Moving::mode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// A split picking its tool's regions or curves.
+    Split(SplitMode),
+    /// A sweep picking in its sketches, under its knobs.
+    Sweep(MotionPick),
+    /// A loft: its seam knobs, then what it picks in its sketches, if it
+    /// picks.
+    Loft(Option<MotionPick>),
+    /// The operation's knobs.
+    Knobs,
+    /// A move's handles.
+    Handles,
 }
 
 #[cfg(test)]
