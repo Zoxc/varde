@@ -20,6 +20,7 @@ mod ask;
 mod asked;
 mod blend;
 mod changes;
+mod design;
 mod draw;
 mod edit;
 pub(crate) mod history;

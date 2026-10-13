@@ -722,7 +722,8 @@ so). The call is turned into the `Command`s a panel's OK would make
 (`commands`) and what it's to make (`Made`), or fails (a name not found
 or arguments the design's forms don't take: row failed; a refusal the
 UI makes before the editor: row not applied); none (as it is already)
-answers `NOTHING_TO_CHANGE` at once. Per tool:
+answers `NOTHING_TO_CHANGE` at once. Per tool (the design-level ones
+here in `mcp/design.rs`):
 
 - `rename`: `Document::rename`, as the rename field commits it, which
   numbers a name taken (its `taken` goes in the result's note).
@@ -731,7 +732,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   opacity menus commit them, the values rounded as the sliders round
   them (`Tint::clamped`, `Opacity::clamped`, on values already in
   range). The editor adds no step for one as it is.
-- `remove_feature`, `remove_body` (`edit::removal`): what
+- `remove_feature`, `remove_body` (`design::removal`): what
   `Document::breaking_removal` takes, as `Command::RemoveOnly` (the
   delete prompt's Delete only); refused if `Document::removal` (the
   cascade) takes more, naming those features in Timeline order. The
@@ -746,7 +747,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   not a word, a value that would leave a feature's in error are the
   editor's refusals.
 - `set_units`: `Command::SetUnits`. `set_tolerance`
-  (`edit::tolerance`): micrometres (`"1 µm"`, `"um"` too, as
+  (`design::tolerance`): micrometres (`"1 µm"`, `"um"` too, as
   `design_summary` shows it) or a length read by `expr` (bare numbers in
   the design's units) with an `Ask` from `Tolerance::MIN_FIT` to
   `MAX_FIT`, then `Tolerance::new`: any fit in its range, not only the

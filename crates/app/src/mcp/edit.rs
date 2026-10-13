@@ -23,18 +23,17 @@
 
 use serde_json::{Value, json};
 use varde_document::{
-    Body, BodyId, Command, Document, Feature, FeatureId, Generation, Named, Opacity, Removable,
-    Revision, Tint, Tolerance,
+    Body, BodyId, Command, Document, Feature, FeatureId, Generation, Named, Revision,
 };
-use varde_expr::{Ask, LengthUnit, Value as ExprValue};
-use varde_mcp::tools::{Call, Rename, Target, ToolReply, Units};
+use varde_mcp::tools::{Call, Rename, ToolReply};
 use varde_sketch::Id;
 use varde_view::{McpCallState, ParamField};
 
-use super::names::{body_id, feature_by_name, feature_id, not_named};
+use super::design;
+use super::names::feature_by_name;
 use super::query;
 use super::waiting::{Caller, Wait, Waiter};
-use crate::doc::{Doc, params};
+use crate::doc::Doc;
 
 /// The answer to an edit that would change nothing.
 pub(crate) const NOTHING_TO_CHANGE: &str = "Nothing to change: the design already is so";
@@ -48,7 +47,7 @@ pub(crate) const UNDONE: &str = "applied, then undone by the user";
 
 /// The most names a result's listings give (failures, features not
 /// built); the rest are counted.
-const LISTED: usize = 50;
+pub(super) const LISTED: usize = 50;
 
 /// A feature tool's result for the feature `feature`: its name, id and
 /// the bodies it made.
@@ -351,95 +350,24 @@ fn commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused> {
 /// default.
 fn made_commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused> {
     let document = doc.editor.document();
-    let one = |command: Command, made: Made| Ok((vec![command], made));
     match call {
-        Call::Rename(Rename { target, to }) => {
-            let target = match target {
-                Target::Feature(name) => Named::Feature(feature_id(document, name)?),
-                Target::Body(name) => Named::Body(body_id(document, name)?),
-            };
-            // As the rename field commits it; none for the name it has:
-            // nothing to change.
-            let (commands, taken) = match document.rename(target, to) {
-                Some(rename) => (vec![rename.command], rename.taken),
-                None => (vec![], None),
-            };
-            Ok((commands, Made::Renamed { target, taken }))
+        Call::Rename(Rename { target, to }) => design::rename(document, target, to),
+        Call::SetVisible { body, visible } => design::set_visible(document, body, *visible),
+        Call::SetColor { body, color } => design::set_color(document, body, *color),
+        Call::SetOpacity { body, opacity } => design::set_opacity(document, body, *opacity),
+        Call::RemoveFeature { feature } => design::remove_feature(document, feature),
+        Call::RemoveBody { body } => design::remove_body(document, body),
+        Call::AddParameter { name, value } => design::add_parameter(document, name, value),
+        Call::SetParameter { name, value } => {
+            design::set_parameter(document, name, ParamField::Expression, value)
         }
-        // As the Objects panel makes them; one as it is changes nothing,
-        // so the editor adds no step and the call says so.
-        Call::SetVisible { body, visible } => {
-            let id = body_id(document, body)?;
-            one(Command::SetVisible(id, *visible), Made::Body(id))
+        Call::RenameParameter { name, to } => {
+            design::set_parameter(document, name, ParamField::Name, to)
         }
-        Call::SetColor { body, color } => {
-            let id = body_id(document, body)?;
-            // In range (the tools' check), so as the sliders round it.
-            let tint = color
-                .map(|color| Tint::clamped(color.hue as f32, (color.saturation * 100.0) as f32));
-            one(Command::SetColor(id, tint), Made::Body(id))
-        }
-        Call::SetOpacity { body, opacity } => {
-            let id = body_id(document, body)?;
-            let opacity = Opacity::clamped((opacity * 100.0) as f32);
-            one(Command::SetOpacity(id, opacity), Made::Body(id))
-        }
-        Call::RemoveFeature { feature } => {
-            let id = feature_id(document, feature)?;
-            removal(document, Removable::Feature(id))
-        }
-        Call::RemoveBody { body } => {
-            let id = body_id(document, body)?;
-            removal(document, Removable::Body(id))
-        }
-        Call::AddParameter { name, value } => {
-            let index = document.params().len();
-            let command = Command::AddParam {
-                name: name.trim().to_owned(),
-                text: value.trim().to_owned(),
-            };
-            one(command, Made::Parameter(index))
-        }
-        // As the popup commits a field: none for what it is already.
-        Call::SetParameter { name, value: text } | Call::RenameParameter { name, to: text } => {
-            let index = param_named(document, name)?;
-            let field = match call {
-                Call::SetParameter { .. } => ParamField::Expression,
-                _ => ParamField::Name,
-            };
-            let commands = params::param_command(document, index, field, text);
-            Ok((commands.into_iter().collect(), Made::Parameter(index)))
-        }
-        Call::RemoveParameter { name } => {
-            let index = param_named(document, name)?;
-            // As the popup refuses it, before the editor would.
-            let uses = params::uses(document, &document.params()[index].name);
-            if !uses.is_empty() {
-                let why = format!("it's used by {}: change those first", names(&uses));
-                return Err(Refused::NotApplied(why));
-            }
-            let made = Made::ParameterRemoved(document.params()[index].name.clone());
-            one(Command::RemoveParam(index), made)
-        }
-        Call::SetUnits(units) => {
-            let units = match units {
-                Units::Mm => LengthUnit::Mm,
-                Units::In => LengthUnit::In,
-            };
-            one(Command::SetUnits(units), Made::Design)
-        }
-        Call::SetTolerance { tolerance: text } => {
-            let tolerance = tolerance(text, document.units())
-                .map_err(|why| Refused::failed(format!("set_tolerance: {why}")))?;
-            one(Command::SetTolerance(tolerance), Made::Design)
-        }
-        Call::SetRollback { before } => {
-            let until = match before {
-                Some(name) => Some(feature_id(document, name)?),
-                None => None,
-            };
-            one(Command::SetRollback(until), Made::Design)
-        }
+        Call::RemoveParameter { name } => design::remove_parameter(document, name),
+        Call::SetUnits(units) => design::set_units(*units),
+        Call::SetTolerance { tolerance } => design::set_tolerance(document, tolerance),
+        Call::SetRollback { before } => design::set_rollback(document, before.as_deref()),
         Call::AddSketch { plane, name } => super::sketches::add_sketch(doc, plane, name.as_deref()),
         Call::SetSketchPlane { sketch, plane } => {
             super::sketches::set_sketch_plane(doc, sketch, plane)
@@ -474,91 +402,6 @@ fn made_commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused
         | Call::Measure(_)
         | Call::Render(_) => Err(Refused::failed("internal error: not an edit")),
     }
-}
-
-/// Removing `target` without the user's cascade
-/// ([`Document::breaking_removal`], as Delete only applies it): refused,
-/// naming them, if later features use it, which the cascade would take
-/// ([`Document::removal`]).
-fn removal(document: &Document, target: Removable) -> Result<(Vec<Command>, Made), Refused> {
-    let only = document.breaking_removal(&[target]);
-    let all = document.removal(target);
-    // By name in the Timeline's order, as the delete prompt lists them,
-    // `ids` sorted (a `Removal`'s are).
-    let in_order = |ids: &[FeatureId]| -> Vec<String> {
-        (document.features().iter())
-            .filter(|feature| ids.binary_search(&feature.id).is_ok())
-            .map(|feature| feature.name.clone())
-            .collect()
-    };
-    let dependents: Vec<FeatureId> = (all.features.iter())
-        .filter(|id| only.features.binary_search(id).is_err())
-        .copied()
-        .collect();
-    if !dependents.is_empty() {
-        let why = format!(
-            "later features use it: {}. Remove those first, the last first, or change them",
-            names(&in_order(&dependents))
-        );
-        return Err(Refused::NotApplied(why));
-    }
-    let bodies = (document.bodies().iter())
-        .filter(|body| only.bodies.binary_search(&body.id).is_ok())
-        .map(|body| body.name.clone())
-        .collect();
-    let made = Made::Removed {
-        features: in_order(&only.features),
-        bodies,
-    };
-    Ok((vec![Command::RemoveOnly(only.features)], made))
-}
-
-/// The fit tolerance `text` asks for, in the design's `units`: a length
-/// as a field reads it, or micrometres (`"1 µm"`, as `design_summary`
-/// shows it), within [`Tolerance`]'s range.
-fn tolerance(text: &str, units: LengthUnit) -> Result<Tolerance, String> {
-    let text = text.trim();
-    let micrometres = (text.strip_suffix("µm")).or_else(|| text.strip_suffix("um"));
-    let fit = match micrometres {
-        Some(number) => {
-            let ask = Ask::number(units, Tolerance::MAX_FIT * 1000.0)
-                .positive()
-                .at_least(Tolerance::MIN_FIT * 1000.0);
-            ExprValue::new(number, &ask)
-                .map_err(|why| why.to_string())?
-                .value
-                / 1000.0
-        }
-        None => {
-            let ask = Ask::length(units, Tolerance::MAX_FIT)
-                .positive()
-                .at_least(Tolerance::MIN_FIT);
-            ExprValue::new(text, &ask)
-                .map_err(|why| why.to_string())?
-                .value
-        }
-    };
-    Tolerance::new(fit).ok_or_else(|| "the tolerance is from 0.01 µm to 0.1 mm".to_owned())
-}
-
-/// The index of the parameter named `name`.
-fn param_named(document: &Document, name: &str) -> Result<usize, Refused> {
-    (document.params().iter())
-        .position(|param| param.name == name.trim())
-        .ok_or_else(|| Refused::failed(not_named("parameter", name)))
-}
-
-/// `names` for a sentence, at most [`LISTED`] of them, then how many
-/// more.
-fn names(names: &[String]) -> String {
-    let mut said = (names.iter().take(LISTED))
-        .map(|name| format!("\"{name}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if let Some(more) = names.len().checked_sub(LISTED).filter(|more| *more > 0) {
-        said.push_str(&format!(" and {more} more"));
-    }
-    said
 }
 
 /// The answer to an edit refused, `why`, the design unchanged.
