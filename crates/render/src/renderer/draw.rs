@@ -114,6 +114,47 @@ pub(super) fn axis_index(axis: Vec3) -> f32 {
         .map_or(3.0, |i| i as f32)
 }
 
+/// The colour target a pass draws into ([`Renderer::begin`]): its label,
+/// its view and what that resolves to, and how it's loaded and stored.
+pub(super) struct ColorPass<'v> {
+    pub(super) label: &'static str,
+    pub(super) target: (&'v wgpu::TextureView, Option<&'v wgpu::TextureView>),
+    pub(super) load: wgpu::LoadOp<wgpu::Color>,
+    pub(super) store: wgpu::StoreOp,
+}
+
+impl<'v> ColorPass<'v> {
+    /// Into `target`, cleared to transparent, kept.
+    pub(super) fn clear(
+        label: &'static str,
+        target: (&'v wgpu::TextureView, Option<&'v wgpu::TextureView>),
+    ) -> ColorPass<'v> {
+        ColorPass {
+            label,
+            target,
+            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            store: wgpu::StoreOp::Store,
+        }
+    }
+
+    /// Over what `target` holds, kept.
+    pub(super) fn load(
+        label: &'static str,
+        target: (&'v wgpu::TextureView, Option<&'v wgpu::TextureView>),
+    ) -> ColorPass<'v> {
+        ColorPass {
+            load: wgpu::LoadOp::Load,
+            ..ColorPass::clear(label, target)
+        }
+    }
+}
+
+/// The depth a pass draws against, loaded and kept.
+const KEEP_DEPTH: wgpu::Operations<f32> = wgpu::Operations {
+    load: wgpu::LoadOp::Load,
+    store: wgpu::StoreOp::Store,
+};
+
 impl Renderer {
     /// Binds `slot`'s group 0 with `part`'s colour, the model's if it's
     /// none of the mesh's parts.
@@ -208,27 +249,25 @@ impl Renderer {
         // The scene is drawn over transparent, into a target of its own
         // (multisampled, see `sample_count`), and composited over `target`
         // last, premultiplied: blending over transparent leaves it so.
-        let clear = wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT);
-        let mut pass = self.begin(
-            slot,
-            encoder,
-            ("varde scene", depth.color(), clear, depth_store),
-            depth,
-            (wgpu::LoadOp::Clear(1.0), depth_store),
-            clip,
-        );
+        let color = ColorPass {
+            store: depth_store,
+            ..ColorPass::clear("varde scene", depth.color())
+        };
+        let depth_ops = wgpu::Operations {
+            load: wgpu::LoadOp::Clear(1.0),
+            store: depth_store,
+        };
+        let mut pass = self.begin(slot, encoder, color, depth, depth_ops, clip);
         self.draw_scene(&mut pass, slot, backdrop);
         if let Some(target) = pattern {
             drop(pass);
             self.draw_pattern(slot, encoder, depth, target, clip);
-            let load = (wgpu::LoadOp::Load, depth_store);
-            let color = (
-                "varde scene",
-                depth.color(),
-                wgpu::LoadOp::Load,
-                wgpu::StoreOp::Store,
-            );
-            pass = self.begin(slot, encoder, color, depth, load, clip);
+            let color = ColorPass::load("varde scene", depth.color());
+            let depth_ops = wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: depth_store,
+            };
+            pass = self.begin(slot, encoder, color, depth, depth_ops, clip);
         }
         self.draw_scene_top(&mut pass, slot, backdrop, pattern);
         if let Some(errors) = errors {
@@ -241,38 +280,33 @@ impl Renderer {
     }
 
     /// Begins a pass of `slot`'s frame drawing into the colour target
-    /// `target` (its label, view and what that resolves to, load and
-    /// store) and `depth`, its depth loaded
-    /// and stored as `depth_ops` say (the stencil cleared, never kept),
-    /// within `clip`, with the uniforms bound and parts drawn opaque.
+    /// `color` and `depth`, its depth loaded and stored as `depth_ops`
+    /// say (the stencil cleared, never kept), within `clip`, with the
+    /// uniforms bound and parts drawn opaque.
     pub(super) fn begin<'p>(
         &self,
         slot: &Slot,
         encoder: &'p mut wgpu::CommandEncoder,
-        (label, (target, resolve), load, store): (
-            &str,
-            (&wgpu::TextureView, Option<&wgpu::TextureView>),
-            wgpu::LoadOp<wgpu::Color>,
-            wgpu::StoreOp,
-        ),
+        color: ColorPass<'_>,
         depth: &DepthTarget,
-        (depth_load, depth_store): (wgpu::LoadOp<f32>, wgpu::StoreOp),
+        depth_ops: wgpu::Operations<f32>,
         clip: ClipRect,
     ) -> wgpu::RenderPass<'p> {
+        let (view, resolve_target) = color.target;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
+            label: Some(color.label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
+                view,
                 depth_slice: None,
-                resolve_target: resolve,
-                ops: wgpu::Operations { load, store },
+                resolve_target,
+                ops: wgpu::Operations {
+                    load: color.load,
+                    store: color.store,
+                },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: depth_load,
-                    store: depth_store,
-                }),
+                depth_ops: Some(depth_ops),
                 stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
                     store: wgpu::StoreOp::Discard,
@@ -302,14 +336,8 @@ impl Renderer {
         clip: ClipRect,
     ) {
         let Some(mesh) = &slot.mesh else { return };
-        let target = (
-            "varde selected pattern",
-            pattern.color(),
-            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-            wgpu::StoreOp::Store,
-        );
-        let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Store);
-        let mut pass = self.begin(slot, encoder, target, depth, load, clip);
+        let color = ColorPass::clear("varde selected pattern", pattern.color());
+        let mut pass = self.begin(slot, encoder, color, depth, KEEP_DEPTH, clip);
         bind_faces(&mut pass, mesh);
         for pick in self.picks(slot) {
             let both = &self.hovered_selected_face_pattern;
@@ -380,31 +408,17 @@ impl Renderer {
     ) {
         let steps = [self.alphas.opaque, self.alphas.step(Some(ERROR_HIDDEN))];
         let errors = &slot.errors;
-        let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Store);
-        let mut pass = self.begin(
-            slot,
-            encoder,
-            (
-                "varde error halo",
-                error_target.color(),
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                wgpu::StoreOp::Store,
-            ),
-            depth,
-            load,
-            clip,
-        );
+        let color = ColorPass::clear("varde error halo", error_target.color());
+        let mut pass = self.begin(slot, encoder, color, depth, KEEP_DEPTH, clip);
         self.draw_error_layers(&mut pass, &self.errors.halo, steps, errors, None);
         drop(pass);
 
-        let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Discard);
-        let target = (
-            "varde errors",
-            depth.color(),
-            wgpu::LoadOp::Load,
-            wgpu::StoreOp::Store,
-        );
-        let mut pass = self.begin(slot, encoder, target, depth, load, clip);
+        let color = ColorPass::load("varde errors", depth.color());
+        let depth_ops = wgpu::Operations {
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Discard,
+        };
+        let mut pass = self.begin(slot, encoder, color, depth, depth_ops, clip);
         pass.set_pipeline(&self.errors.composite);
         pass.set_bind_group(0, &error_target.group, &[]);
         pass.draw(0..3, 0..1);
