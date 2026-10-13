@@ -26,6 +26,7 @@ macro_rules! mirror {
     )*};
 }
 
+mod answers;
 mod doc;
 mod files;
 mod io;
@@ -33,6 +34,7 @@ mod keys;
 #[cfg_attr(target_arch = "wasm32", path = "mcp_web.rs")]
 mod mcp;
 mod message;
+mod page;
 mod platform;
 mod recent;
 mod samples;
@@ -48,16 +50,16 @@ use iced::keyboard::{self, key};
 use iced::{Element, Subscription, Task, window};
 
 use varde_document::APP_NAME;
-use varde_document::Revision;
-use varde_io::{Chosen, Picked, Request as IoRequest, Response as IoResponse, SaveError};
+use varde_io::{Picked, Request as IoRequest};
 use varde_view::{File, Look, Message as Ui, Mode, ViewOptions};
 
 use crate::doc::{Doc, DocId, Downloader, Leave};
-use crate::files::{Files, ThumbnailHandles};
+use crate::files::Files;
 use crate::keys::{
-    PageEscape, command_key, document_key, escape_key, peek_key, reset_key, unfocused, welcome_key,
+    command_key, document_key, escape_key, peek_key, reset_key, unfocused, welcome_key,
 };
 use crate::message::{ForDoc, Message};
+use crate::page::{Page, settings_shown};
 use crate::settings::Settings;
 use crate::tasks::{
     ask_writable, focus_field, focus_name, focus_param, focus_rename, pick_export, pick_open,
@@ -100,35 +102,6 @@ pub(crate) struct Varde {
     /// The MCP server's state, see `mcp.rs` (a no-op stand-in on the web,
     /// `mcp_web.rs`).
     mcp: mcp::Mcp,
-}
-
-/// The settings page's own state: the app's, not a document's, but
-/// closed by any move to another view (see [`Varde::show`]).
-#[derive(Debug, Default)]
-struct Page {
-    open: bool,
-    tab: varde_view::SettingsTab,
-    /// Whether Reset to defaults is asking first.
-    resetting: bool,
-    /// The interface scale the slider is dragged to, set once let go.
-    scale_dragged: Option<u16>,
-    /// The MCP port as typed, while it isn't the port set.
-    port_typed: Option<String>,
-    /// Whether the MCP token shows.
-    token_shown: bool,
-}
-
-impl Page {
-    /// Closes the page, with what it was asking or being dragged to.
-    fn close(&mut self) {
-        self.open = false;
-        self.resetting = false;
-        // A drag not let go on the page sets nothing.
-        self.scale_dragged = None;
-        // Nor a port typed out of range; the token is hidden again.
-        self.port_typed = None;
-        self.token_shown = false;
-    }
 }
 
 /// What the app is to do after a step of either screen, which the screen
@@ -425,92 +398,6 @@ impl Varde {
         Task::none()
     }
 
-    /// Sets `setting`, if it's a value the page offers (others are
-    /// ignored), closing the view options menu, and stores it.
-    fn set(&mut self, setting: Setting) {
-        if !setting.offered() {
-            return;
-        }
-        setting.apply(&mut self.options);
-        self.with_doc(|doc, _| doc.view_menu = false);
-        self.options_changed();
-        self.files
-            .io
-            .send_all(self.settings.chose(setting, self.options));
-    }
-
-    /// Has the open document take the options as they are now: their
-    /// projection, its camera's, and how it's turned; the values shown
-    /// as they say; and the recent files kept as many as they say.
-    fn options_changed(&mut self) {
-        let options = self.options;
-        options.shown().set();
-        self.with_doc(|doc, _| doc.take_options(&options));
-        self.files
-            .io
-            .send_all(self.files.recent.keep(usize::from(options.recent_designs)));
-        self.mcp.configure(options.mcp, options.mcp_port);
-    }
-
-    /// Takes `message`, from the settings page itself.
-    fn settings_page(&mut self, message: varde_view::SettingsPage) {
-        use varde_view::SettingsPage;
-        match message {
-            SettingsPage::Tab(tab) => {
-                self.page.tab = tab;
-                self.page.scale_dragged = None;
-            }
-            // Only the slider's label follows a drag, so the page doesn't
-            // rescale under the pointer: the scale is set once let go.
-            SettingsPage::DragScale(percent) => {
-                self.page.scale_dragged =
-                    varde_view::interface_scale_offered(percent).then_some(percent);
-            }
-            SettingsPage::ReleaseScale => {
-                if let Some(percent) = self.page.scale_dragged.take() {
-                    self.set(Setting::InterfaceScale(percent));
-                }
-            }
-            SettingsPage::Set(setting) => {
-                // A reset or a value chosen replaces what's typed.
-                if matches!(setting, Setting::McpPort(_)) {
-                    self.page.port_typed = None;
-                }
-                self.set(setting);
-            }
-            // Set once it's a port the field takes; kept as typed while
-            // it isn't the port set, as an error out of range.
-            SettingsPage::TypeMcpPort(typed) => {
-                if let Some(port) = varde_view::mcp_port_of(&typed)
-                    && port != self.options.mcp_port
-                {
-                    self.set(Setting::McpPort(port));
-                }
-                self.page.port_typed =
-                    (typed != self.options.mcp_port.to_string()).then_some(typed);
-            }
-            SettingsPage::ShowMcpToken(shown) => self.page.token_shown = shown,
-            SettingsPage::DisconnectMcp => self.mcp.disconnect(),
-            // With nothing to reset, the button is off.
-            SettingsPage::AskReset => {
-                self.page.resetting = !varde_view::changed_settings(self.options).is_empty();
-            }
-            SettingsPage::CancelReset => self.page.resetting = false,
-            SettingsPage::RegenerateMcpToken => self.mcp.regenerate_token(&mut self.files.io),
-            SettingsPage::Reset => {
-                // Only as asked: a stray Enter resets nothing.
-                if std::mem::take(&mut self.page.resetting) {
-                    self.page.port_typed = None;
-                    self.options = ViewOptions::default();
-                    self.options_changed();
-                    self.files
-                        .io
-                        .send_all(self.settings.chose_all(self.options));
-                }
-            }
-        }
-    }
-
     /// Takes `message`, about the open document's file.
     fn file(&mut self, message: File) -> Task<Message> {
         match message {
@@ -627,171 +514,6 @@ impl Varde {
         Task::none()
     }
 
-    fn io_response(&mut self, response: IoResponse) -> Task<Message> {
-        match response {
-            IoResponse::Opened { id, path, result } => {
-                return self.welcome(|welcome, files| welcome.opened(files, id, path, result));
-            }
-            // One not the open document's was given up on, and the lane
-            // closes it, see `Io::abandon`.
-            IoResponse::Created { id, result } => {
-                if let Some(doc) = self.screen.doc_mut() {
-                    doc.created(&mut self.files, id, &result);
-                }
-            }
-            IoResponse::AutoSaved { file, result, .. } => {
-                self.with_doc(|doc, _| doc.auto_saved(file, result))
-            }
-            IoResponse::RecoveryDiscarded { result, .. } => {
-                report_failure("discard what was auto-saved", result);
-            }
-            IoResponse::RecoveredListed { designs } => self.files.recovered = designs,
-            IoResponse::BrowserListed { designs } => self.files.browser_listed(designs),
-            IoResponse::DeletedFromBrowser { name, result } => {
-                self.files.list_browser();
-                if let Err(error) = result {
-                    return self.welcome(|welcome, _| {
-                        welcome.failed(&format!("Couldn't delete {name}: {error}"))
-                    });
-                }
-            }
-            IoResponse::DownloadedFromBrowser {
-                name,
-                result,
-                not_recorded,
-            } => {
-                let error = match result {
-                    Ok(bytes) => self.files.download(&name, &bytes, not_recorded),
-                    Err(error) => Some(format!("Couldn't download {name}: {error}")),
-                };
-                if let Some(error) = error {
-                    return self.welcome(|welcome, _| welcome.failed(&error));
-                }
-            }
-            IoResponse::Renamed { file, name, result } => {
-                // Another name taken, or another freed.
-                self.files.list_browser();
-                self.with_doc(|doc, _| doc.renamed(file, name, result));
-            }
-            IoResponse::DownloadRecorded { file, result } => {
-                self.with_doc(|doc, _| doc.download_recorded(file, result));
-            }
-            IoResponse::RecoveredDiscarded { result, .. } => {
-                // The lane lists what's left after it either way.
-                if let Err(error) = result {
-                    return self.welcome(|welcome, _| welcome.discard_failed(&error));
-                }
-            }
-            IoResponse::Closed { result, .. } | IoResponse::Abandoned { result, .. } => {
-                report_failure("close a file", result);
-            }
-            IoResponse::RecentLoaded { entries, home } => {
-                self.files
-                    .io
-                    .send_all(self.files.recent.loaded(entries, home));
-                // The home directory as `~`, now it's known.
-                self.settings_shown = settings_shown(Some(&self.files));
-                self.files.load_thumbnails();
-            }
-            IoResponse::ThumbnailsLoaded { thumbnails } => {
-                self.files.thumbnails = (thumbnails.into_iter())
-                    .map(|(path, thumbnail)| (path, ThumbnailHandles::new(thumbnail)))
-                    .collect();
-            }
-            IoResponse::RecentWritten { result } => {
-                report_failure("save the recent files", result);
-            }
-            IoResponse::SettingsLoaded { settings } => {
-                self.files
-                    .io
-                    .send_all(self.settings.loaded(settings, &mut self.options));
-                self.options_changed();
-            }
-            IoResponse::SettingsWritten { result } => {
-                report_failure("save the settings", result);
-            }
-            IoResponse::PanicLoaded { panic } => self.files.panic = panic,
-            #[cfg(not(target_arch = "wasm32"))]
-            IoResponse::PngEncoded { owner, tag, result } => {
-                if let Some(doc) = self.screen.doc_mut()
-                    && doc.id.number() == owner
-                {
-                    doc.mcp_encoded(tag, result);
-                }
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            IoResponse::McpToken {
-                regenerated,
-                result,
-            } => match result {
-                Ok(token) => {
-                    let (on, port) = (self.options.mcp, self.options.mcp_port);
-                    let doc = self.screen.doc_mut();
-                    self.mcp.token_loaded(token, regenerated, on, port, doc);
-                }
-                Err(error) => {
-                    let what = if regenerated {
-                        "make a new MCP token"
-                    } else {
-                        "read the MCP token"
-                    };
-                    report_failure(what, Err(error));
-                }
-            },
-            IoResponse::PanicDiscarded { result } => {
-                report_failure("discard the internal error", result);
-            }
-            IoResponse::Saved {
-                file,
-                revision,
-                result,
-            } => {
-                return self.step(|doc, cx| doc.saved_to(cx, file, revision, result));
-            }
-            IoResponse::SavedAs {
-                to,
-                revision,
-                result,
-                ..
-            } => {
-                // A name taken, or replaced: what the Save As dialog asks
-                // about replacing follows.
-                if matches!(to, Chosen::Browser(_)) {
-                    self.files.list_browser();
-                }
-                return self.saved_as(to, revision, result);
-            }
-            IoResponse::Exported { to, result } => match self.screen.doc_mut() {
-                Some(doc) => doc.export_written(&to, result),
-                // Closed while it was written: the file is written or not
-                // all the same.
-                None => report_failure("export", result),
-            },
-            IoResponse::Flushed => {
-                if let Some(window) = self.quitting {
-                    return window::close(window);
-                }
-            }
-        }
-        Task::none()
-    }
-
-    /// Takes the answer to a Save As to the file the user `chose`, see
-    /// [`Doc::saved_as`]. Leaving waits for saves, so the document that
-    /// asked is the one open, if any.
-    fn saved_as(
-        &mut self,
-        chose: Chosen,
-        revision: Revision,
-        result: Result<varde_io::SavedAs, SaveError>,
-    ) -> Task<Message> {
-        if self.screen.doc().is_none() {
-            self.files.settle_saved_as(result);
-            return Task::none();
-        }
-        self.step(|doc, cx| doc.saved_as(cx, chose, revision, result))
-    }
-
     pub(crate) fn view(&self) -> Element<'_, Message> {
         // The view's functions show values as the settings say.
         self.options.shown().set();
@@ -866,16 +588,6 @@ impl Varde {
             settings: self.page.open,
             ..keys
         })
-    }
-
-    /// What `Esc` does on the settings page, if it's open: cancels Reset
-    /// to defaults while it asks, else closes the page.
-    fn page_escape(&self) -> Option<PageEscape> {
-        match (self.page.open, self.page.resetting) {
-            (false, _) => None,
-            (true, true) => Some(PageEscape::CancelReset),
-            (true, false) => Some(PageEscape::Close),
-        }
     }
 
     pub(crate) fn subscription(&self) -> Subscription<Message> {
@@ -1129,14 +841,6 @@ fn while_quitting(message: &Message) -> bool {
     )
 }
 
-/// Reports `result` if it failed to do `what`, for the IO lane's answers
-/// that are only reported, not shown.
-fn report_failure(what: &str, result: Result<(), String>) {
-    if let Err(error) = result {
-        log::error!("Couldn't {what}: {error}");
-    }
-}
-
 /// `subscription` while `on`, and none otherwise.
 fn only_if(
     on: bool,
@@ -1147,17 +851,6 @@ fn only_if(
     } else {
         Subscription::none()
     }
-}
-
-/// Where the settings are kept, as the settings page's foot says it:
-/// with the home directory as `~` once the recent `files` say where it
-/// is. `None` without a config directory.
-fn settings_shown(files: Option<&Files>) -> Option<String> {
-    let store = varde_io::settings::store()?;
-    Some(match files {
-        Some(files) => files.shown_path(&store),
-        None => store.display().to_string(),
-    })
 }
 
 /// What [`run`] ends with, so the executables need not name iced. The

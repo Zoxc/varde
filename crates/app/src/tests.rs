@@ -15,7 +15,8 @@ use varde_document::{
     Command, Document, Editor, FeatureId, Generation, LengthUnit, OriginPlane, Plane, Revision,
 };
 use varde_io::{
-    Access, Closing, FileId, Offer, OpenId, Opened, PickedFrom, ReadOnly, SaveError, SaveTo,
+    Access, Chosen, Closing, FileId, Offer, OpenId, Opened, PickedFrom, ReadOnly,
+    Response as IoResponse, SaveError, SaveTo,
 };
 use varde_regen::{Regenerated, Request, Response, Transport, handle, lane};
 use varde_render::Camera;

@@ -1797,7 +1797,7 @@ fn shots_27_thumbnail() {
         let _ = files.recent.loaded(entries.into(), None);
         files.thumbnails = vec![(
             path("plate"),
-            crate::ThumbnailHandles::new(thumbnail.clone()),
+            crate::files::ThumbnailHandles::new(thumbnail.clone()),
         )];
         let welcome = Welcome::default();
         let view = |mode| welcome.view(&files, mode, None);
