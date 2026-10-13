@@ -109,15 +109,11 @@ fn listed(labels: Vec<String>) -> serde_json::Value {
 }
 
 impl Doc {
-    /// Takes back the steps the client's `undo` `call` under `tag`, from
+    /// Takes back the `steps` the client's `undo` `call` under `tag`, from
     /// `from`, asks for, checked again on the design as it is now (what
     /// the user had open was closed first): all of them, then waiting
     /// for regeneration as an applied edit does, or none, refused.
-    pub(super) fn client_undo(&mut self, tag: u64, from: Caller, call: Call) {
-        let Call::Undo { steps } = call else {
-            let refused = Refused::failed("internal error: not an undo");
-            return self.edit_not_applied(tag, from, call, refused);
-        };
+    pub(super) fn client_undo(&mut self, tag: u64, from: Caller, call: Call, steps: usize) {
         let undoing = match plan(self, steps, &from) {
             Ok(undoing) => undoing,
             Err(refused) => return self.edit_not_applied(tag, from, call, refused),

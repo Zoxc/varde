@@ -301,7 +301,9 @@ pub(super) enum Plan {
     Propose(super::sketches::Proposed),
     /// `undo`: the session's own newest steps taken back (`undo.rs`),
     /// checked again as it applies, once what the user had open closed.
-    Undo,
+    Undo {
+        steps: usize,
+    },
 }
 
 impl Plan {
@@ -317,7 +319,9 @@ impl Plan {
 /// edit then checked on its sketch with theirs applied.
 fn plan(doc: &Doc, call: &Call, from: &Caller, queued: bool) -> Result<Plan, Refused> {
     match call {
-        Call::Undo { steps } => super::undo::plan(doc, *steps, from).map(|_| Plan::Undo),
+        Call::Undo { steps } => {
+            super::undo::plan(doc, *steps, from).map(|_| Plan::Undo { steps: *steps })
+        }
         Call::AddLink(args) => super::sketches::add_link(doc, args).map(Plan::Propose),
         Call::EditSketch(args) => super::draw::edit_sketch(doc, args, queued).map(Plan::Propose),
         _ => commands(doc, call).map(|(commands, made)| Plan::Apply(commands, made)),
@@ -698,7 +702,7 @@ impl Doc {
         match plan {
             Plan::Apply(commands, made) => self.client_apply(tag, from, call, made, commands),
             Plan::Propose(proposed) => self.client_propose(tag, from, call, proposed),
-            Plan::Undo => self.client_undo(tag, from, call),
+            Plan::Undo { steps } => self.client_undo(tag, from, call, steps),
         }
     }
 
