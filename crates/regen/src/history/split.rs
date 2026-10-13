@@ -239,7 +239,7 @@ impl Building<'_> {
                         self.tolerance.resolution(),
                         self.tolerance.fit(),
                     )
-                    .map_err(why::split_line)?;
+                    .map_err(|error| why::chain(why::ChainOf::SplitLine, error))?;
                     varde_kernel_compat::chain_tool(
                         &segments,
                         &frame,

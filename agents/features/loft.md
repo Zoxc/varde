@@ -86,7 +86,7 @@ before it in `Run::sketches`), in history order:
 - **Rails**: each sketch chain ordered by `profile::chain` (as a
   split's line: lines, arcs of at most 90°, splines' fitted conics; the
   joints to the bit), mapped into the world by its sketch's placement
-  as `Rail { conics }`; "rail 1 not found", "rail 1 is closed: a rail
+  as `Rail { conics }`; "rail 1's curves weren't found", "rail 1 is closed: a rail
   runs from the first section to the last", "rail 1's curves don't join
   end to end into one line", "rail 1 can't be used: ...", "rail 1's
   sketch isn't placed".

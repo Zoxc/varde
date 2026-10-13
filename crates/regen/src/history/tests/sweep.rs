@@ -532,7 +532,7 @@ fn paths_that_cant_be_swept_are_refused_first() {
             polyline(vec![(20.0, 10.0), (30.0, 10.0)])(sketch);
         })])
         .message,
-        why::PATH_CURVES_BRANCH
+        "its path's curves don't join end to end into one line"
     );
 }
 

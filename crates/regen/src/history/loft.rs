@@ -153,7 +153,7 @@ impl Run<'_> {
                     resolution,
                     self.tolerance.fit(),
                 )
-                .map_err(|error| why::rail_chain(index, error))?;
+                .map_err(|error| why::chain(why::ChainOf::Rail(index), error))?;
                 let conics = (segments.iter())
                     .map(|segment| super::world_conic(&placement, segment))
                     .collect();

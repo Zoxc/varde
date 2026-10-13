@@ -708,7 +708,7 @@ fn a_point_on_its_neighbour_s_plane_is_refused_as_that() {
 }
 
 /// A rail's curves ordered into one chain and placed in the world; gone,
-/// "rail 1 not found"; a closed one refused.
+/// "rail 1's curves weren't found"; a closed one refused.
 #[test]
 fn rails_are_placed() {
     with_recording(None);
@@ -777,7 +777,10 @@ fn rails_are_placed() {
         circle = Some(sketch.add_curve(curve, false).unwrap());
     });
     let evaluation = evaluated(editor.document());
-    assert_eq!(evaluation.failed, [(id, "rail 1 not found".to_owned())]);
+    assert_eq!(
+        evaluation.failed,
+        [(id, "rail 1's curves weren't found".to_owned())]
+    );
     // The circle as the rail: closed.
     let FeatureKind::Loft(made) = &editor.document().feature(id).unwrap().kind else {
         unreachable!()

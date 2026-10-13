@@ -79,7 +79,7 @@ use super::{Evaluation, Failed, Run, motion};
 use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
 use crate::inspect;
-use crate::profile::{ChainError, path_chain};
+use crate::profile::path_chain;
 use crate::why::{self, SweepRefusal};
 
 /// How far apart two tangents at a joint may be, or the path's start
@@ -232,12 +232,7 @@ impl Run<'_> {
             self.tolerance.resolution(),
             self.tolerance.fit(),
         )
-        .map_err(|error| match error {
-            ChainError::Missing => why::PATH_NOT_FOUND.to_owned(),
-            ChainError::Closed => why::PATH_CLOSED_NOT_ALONE.to_owned(),
-            ChainError::Branches => why::PATH_CURVES_BRANCH.to_owned(),
-            ChainError::Profile(error) => why::path_curves(error),
-        })?;
+        .map_err(|error| why::chain(why::ChainOf::Path, error))?;
         let conic = |segment| super::world_conic(&placement, segment);
         let mut pieces: Vec<Piece> = Vec::new();
         // Each curve's segments, one after another along the chain.

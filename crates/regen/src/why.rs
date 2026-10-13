@@ -341,20 +341,6 @@ pub(crate) const SPLIT_CANT_EXTEND: &str = "its face can't be extended to split 
 /// there (not of a checked document).
 pub(crate) const SPLIT_SKETCH_GONE: &str = "its sketch isn't there";
 
-/// Why a split by a sketch's line fails, `error` saying how its curves
-/// don't make one.
-pub(crate) fn split_line(error: crate::profile::ChainError) -> String {
-    use crate::profile::ChainError;
-    match error {
-        ChainError::Missing => "its line's curves weren't found".to_owned(),
-        ChainError::Closed => {
-            "its line is closed: split with the region it encloses instead".to_owned()
-        }
-        ChainError::Branches => "its line's curves don't join end to end into one line".to_owned(),
-        ChainError::Profile(error) => format!("its line can't be used: {error}"),
-    }
-}
-
 /// Why making the tool a split cuts the body named `body` with failed.
 pub(crate) fn split_tool(body: &str, error: KernelError) -> String {
     match error {
@@ -850,21 +836,6 @@ pub(crate) fn rail_not_placed(index: usize) -> String {
     format!("rail {}'s sketch isn't placed", nth(index))
 }
 
-/// Why a loft fails: its rail `index`'s curves don't make one open
-/// chain, `error` saying how.
-pub(crate) fn rail_chain(index: usize, error: crate::profile::ChainError) -> String {
-    use crate::profile::ChainError;
-    let n = nth(index);
-    match error {
-        ChainError::Missing => format!("rail {n} not found"),
-        ChainError::Closed => {
-            format!("rail {n} is closed: a rail runs from the first section to the last")
-        }
-        ChainError::Branches => format!("rail {n}'s curves don't join end to end into one line"),
-        ChainError::Profile(error) => format!("rail {n} can't be used: {error}"),
-    }
-}
-
 /// What the kernel refuses to loft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LoftRefusal {
@@ -1207,13 +1178,42 @@ pub(crate) const PATH_SKETCH_NOT_PLACED: &str = "its path's sketch isn't placed"
 /// Why a sweep fails: a part's curves aren't all in its sketch any more.
 pub(crate) const PATH_NOT_FOUND: &str = "path not found";
 
-/// Why a sweep fails: a part's curves don't make one chain.
-pub(crate) const PATH_CURVES_BRANCH: &str = "its path's curves don't join end to end into one line";
+/// Whose curves [`chain`] words the failure of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChainOf {
+    /// A split's sketch line.
+    SplitLine,
+    /// A loft's rail at this index (from 0).
+    Rail(usize),
+    /// A part of a sweep's path.
+    Path,
+}
 
-/// Why a sweep fails: a part's sketch is too complex to make its
-/// profiles, or a spline of it couldn't be fitted.
-pub(crate) fn path_curves(error: impl std::fmt::Display) -> String {
-    format!("its path's curves can't be followed: {error}")
+/// Why `of`'s curves don't make one open chain, `error` saying how.
+pub(crate) fn chain(of: ChainOf, error: crate::profile::ChainError) -> String {
+    use crate::profile::ChainError;
+    let subject = match of {
+        ChainOf::SplitLine => "its line".to_owned(),
+        ChainOf::Rail(index) => format!("rail {}", nth(index)),
+        ChainOf::Path => "its path".to_owned(),
+    };
+    match error {
+        ChainError::Missing => match of {
+            ChainOf::Path => PATH_NOT_FOUND.to_owned(),
+            ChainOf::SplitLine | ChainOf::Rail(_) => format!("{subject}'s curves weren't found"),
+        },
+        ChainError::Closed => match of {
+            ChainOf::SplitLine => {
+                format!("{subject} is closed: split with the region it encloses instead")
+            }
+            ChainOf::Rail(_) => {
+                format!("{subject} is closed: a rail runs from the first section to the last")
+            }
+            ChainOf::Path => PATH_CLOSED_NOT_ALONE.to_owned(),
+        },
+        ChainError::Branches => format!("{subject}'s curves don't join end to end into one line"),
+        ChainError::Profile(error) => format!("{subject} can't be used: {error}"),
+    }
 }
 
 /// Why a sweep fails: an edge part's body has no solid when the history
