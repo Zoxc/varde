@@ -126,6 +126,27 @@ impl Kind {
     }
 }
 
+/// What an item is called, and so which numbering it takes part in: its
+/// kind, or a fillet or a chamfer, which number apart from other arcs and
+/// lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Noun {
+    Item(Kind),
+    Fillet,
+    Chamfer,
+}
+
+impl Noun {
+    /// The noun as the user sees it, e.g. in "Fillet 2".
+    pub fn name(self) -> &'static str {
+        match self {
+            Noun::Item(kind) => kind.name(),
+            Noun::Fillet => "Fillet",
+            Noun::Chamfer => "Chamfer",
+        }
+    }
+}
+
 /// A point of a sketch: a curve's end or centre, or a lone one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point {
@@ -302,16 +323,16 @@ pub struct CurveEntry {
 
 impl CurveEntry {
     /// What it's called: its kind's name, or a fillet's or chamfer's.
-    pub fn noun(&self) -> &'static str {
+    pub fn noun(&self) -> Noun {
         match self.corner {
             Some(_) => Corner::noun(&self.curve),
-            None => self.curve.kind().name(),
+            None => Noun::Item(self.curve.kind()),
         }
     }
 
     /// "Line 3", "Arc 1", "Fillet 2".
     pub fn name(&self) -> String {
-        format!("{} {}", self.noun(), self.number)
+        format!("{} {}", self.noun().name(), self.number)
     }
 }
 
@@ -451,12 +472,12 @@ impl Sketch {
         Ok(id)
     }
 
-    /// One past the highest number of the items called `noun` (a
-    /// [`Kind::name`], or a [`CurveEntry::noun`]), so names stay unique
+    /// One past the highest number of the items called `noun`
+    /// ([`CurveEntry::noun`] for curves), so names stay unique
     /// across undo and sessions. A file could hold the highest number
     /// there is, which is then reused: a repeated name is harmless.
-    fn next_number(&self, noun: &str) -> u32 {
-        let points = (noun == Kind::Point.name()).then_some(&self.points);
+    fn next_number(&self, noun: Noun) -> u32 {
+        let points = (noun == Noun::Item(Kind::Point)).then_some(&self.points);
         let points = points.into_iter().flatten().map(|point| point.number);
         let curves = self
             .curves
@@ -482,7 +503,7 @@ impl Sketch {
     /// Adds a point `id` at `at`, numbered as [`add_point`](Sketch::add_point)
     /// does, by `numbers`; the id is the caller's to choose and keep sorted.
     pub(crate) fn push_point(&mut self, id: Id, at: DVec2, numbers: &mut Numbers) {
-        let number = numbers.take(self, Kind::Point.name());
+        let number = numbers.take(self, Noun::Item(Kind::Point));
         self.points.push(Point { id, number, at });
     }
 
@@ -503,7 +524,7 @@ impl Sketch {
         construction: bool,
         numbers: &mut Numbers,
     ) {
-        let number = numbers.take(self, curve.kind().name());
+        let number = numbers.take(self, Noun::Item(curve.kind()));
         self.curves.push(CurveEntry {
             id,
             number,
@@ -697,12 +718,12 @@ impl Annotation<'_> {
 /// through the sketch again for every item.
 #[derive(Debug, Default)]
 pub(crate) struct Numbers {
-    next: Vec<(&'static str, u32)>,
+    next: Vec<(Noun, u32)>,
 }
 
 impl Numbers {
     /// The number for a new item called `noun` in `sketch`.
-    fn take(&mut self, sketch: &Sketch, noun: &'static str) -> u32 {
+    fn take(&mut self, sketch: &Sketch, noun: Noun) -> u32 {
         let slot = match self.next.iter().position(|&(of, _)| of == noun) {
             Some(slot) => slot,
             None => {

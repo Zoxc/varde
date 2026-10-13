@@ -18,7 +18,7 @@ use varde_expr::Value;
 use crate::angle;
 use crate::geometry::line_param;
 use crate::{
-    ArcPoints, Curve, CurveEntry, Dimension, EditError, Id, Measure, OutOfIds, Side, Sketch,
+    ArcPoints, Curve, CurveEntry, Dimension, EditError, Id, Measure, Noun, OutOfIds, Side, Sketch,
 };
 
 /// Legs nearer parallel than this, the sine of the angle between them,
@@ -69,10 +69,10 @@ pub enum Setback<V = Value> {
 impl Corner {
     /// What the curve with a corner is called: a fillet if it's an arc, a
     /// chamfer if it's a line.
-    pub(crate) fn noun(curve: &Curve) -> &'static str {
+    pub(crate) fn noun(curve: &Curve) -> Noun {
         match curve {
-            Curve::Arc { .. } => "Fillet",
-            _ => "Chamfer",
+            Curve::Arc { .. } => Noun::Fillet,
+            _ => Noun::Chamfer,
         }
     }
 }

@@ -73,7 +73,7 @@ pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
             let mut row = json!({
                 "id": entry.id.get(),
                 "name": entry.name(),
-                "kind": entry.noun().to_lowercase(),
+                "kind": entry.noun().name().to_lowercase(),
                 "construction": entry.construction,
             });
             match &entry.curve {

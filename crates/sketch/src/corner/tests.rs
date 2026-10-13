@@ -11,7 +11,7 @@ use super::*;
 use crate::testing::{
     DESIGN, at, circle, constrain, dimension, line, near, point, propose_it, value,
 };
-use crate::{Budget, Constraint, Kind, SketchEdit, SketchError, analyse};
+use crate::{Budget, Constraint, Kind, Noun, SketchEdit, SketchError, analyse};
 
 /// An L: the corner at the origin, a line along x to (20, 0) from it and
 /// one down y from (0, 10) to it: the corner, and the lines.
@@ -254,7 +254,7 @@ fn a_new_fillet_or_chamfer_replaces_the_one_on_its_corner() {
     let third = propose_it(&second, &cut).unwrap().sketch;
     let corners: Vec<_> = third.curves.iter().filter(|e| e.corner.is_some()).collect();
     assert_eq!(corners.len(), 1);
-    assert_eq!(corners[0].noun(), "Chamfer");
+    assert_eq!(corners[0].noun(), Noun::Chamfer);
     assert_eq!(third.points.len(), 5);
 }
 
@@ -394,13 +394,13 @@ fn profiles_take_the_fillet_for_the_corner() {
     let fillet = chamfered
         .curves
         .iter()
-        .find(|e| e.noun() == "Fillet")
+        .find(|e| e.noun() == Noun::Fillet)
         .unwrap()
         .id;
     let chamfer = chamfered
         .curves
         .iter()
-        .find(|e| e.noun() == "Chamfer")
+        .find(|e| e.noun() == Noun::Chamfer)
         .unwrap()
         .id;
     let used: Vec<Id> = region.outer.iter().map(|piece| piece.curve).collect();

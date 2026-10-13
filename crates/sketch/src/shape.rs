@@ -19,8 +19,8 @@ use glam::DVec2;
 
 use crate::intersect::{Geom, meet};
 use crate::{
-    BSpline, Constraint, Corner, Curve, EditError, Id, Kind, Measure, OutOfIds, Sketch, SplineKind,
-    control_knots, foot,
+    BSpline, Constraint, Corner, Curve, EditError, Id, Kind, Measure, Noun, OutOfIds, Sketch,
+    SplineKind, control_knots, foot,
 };
 
 /// Where other curves cut a curve, trimming or extending it.
@@ -353,7 +353,7 @@ impl Sketch {
                 // `from`: an arc, keeping the circle's id.
                 let start = self.cut_point(&geom, &to, &own, &mut ties)?;
                 let end = self.cut_point(&geom, &from, &own, &mut ties)?;
-                let number = self.next_number(Kind::Arc.name());
+                let number = self.next_number(Noun::Item(Kind::Arc));
                 let entry = self.curve_mut(curve).ok_or(EditError::Target(curve))?;
                 entry.curve = Curve::Arc { center, start, end };
                 entry.number = number;
