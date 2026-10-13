@@ -1,25 +1,26 @@
 //! What the document screen's status bar says: its hints, what's going
 //! on, and what's selected. The bar itself is `crate::status`.
 
-use glam::DVec2;
 use iced::widget::text::Wrapping;
 use iced::widget::{row, text};
 use iced::{Alignment, Element};
 use varde_document::{BodyId, FeatureKind};
-use varde_sketch::{Id, Kind, Measure, Selectable, Sketch, TooComplex};
+use varde_sketch::{Id, Selectable, TooComplex};
 
-use crate::chrome::{self, Hint, chord_hint, double_hint, key_hint, mouse_hint, step_hint};
+use crate::chrome::{self, Hint, chord_hint, key_hint, mouse_hint, step_hint};
 use crate::feature_text::{feature_icon, feature_info};
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{Held, Shortcut};
 use crate::status::Status;
 use crate::words::{counted, counts};
-use crate::{ConstraintKind, Message, SketchItem, Tool, theme, viewport};
+use crate::{Message, SketchItem, theme, viewport};
+
+mod sketch;
+
+use sketch::sketch_hints;
 
 use super::prompts::{edit_refused, name_action};
-use super::{
-    ActiveTool, DocumentState, MeshStatus, OperationState, Overlay, SketchState, ValueTarget,
-};
+use super::{DocumentState, MeshStatus, OperationState, Overlay, SketchState};
 
 /// The status bar's text: small and on one line.
 fn bar_text<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
@@ -49,18 +50,20 @@ pub(super) fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
     }
 }
 
+/// The hints of `hints` there are, in order.
+fn hint_list<'a>(hints: impl IntoIterator<Item = Option<Hint<'a>>>) -> Vec<Hint<'a>> {
+    hints.into_iter().flatten().collect()
+}
+
 /// An operation's hints: its pick step, if any, then the keys every
 /// operation shares (held, the key shows the model before it).
 fn operation_hints<'a>(pick: Option<&'a str>, ready: bool) -> Vec<Hint<'a>> {
-    [
+    hint_list([
         pick.map(|what| step_hint(MouseButton::Left, what)),
         Some(key_hint(Held::BEFORE, "Hide preview")),
         ready.then(|| key_hint(Shortcut::ENTER, "OK")),
         Some(key_hint(Shortcut::ESCAPE, "Cancel")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    ])
 }
 
 /// An operation's status: its bold title, then the muted detail and the
@@ -97,9 +100,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     {
         let (action, blocked) = name_action(prompt);
         let enter = (!blocked).then(|| key_hint(Shortcut::ENTER, action));
-        return (enter.into_iter())
-            .chain([key_hint(Shortcut::ESCAPE, "Cancel")])
-            .collect();
+        return hint_list([enter, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]);
     }
     let sketching = !left_orbits(state.sketch.as_ref());
     let keys: Vec<_> = if state.picking_plane.is_some() {
@@ -117,10 +118,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         let delete = state
             .editable()
             .then(|| key_hint(Shortcut::DELETE, "Delete"));
-        [Some(key_hint(Shortcut::ENTER, "Edit")), delete]
-            .into_iter()
-            .flatten()
-            .collect()
+        hint_list([Some(key_hint(Shortcut::ENTER, "Edit")), delete])
     } else if state.picking.is_some() {
         selecting_hints(state.model_selection)
     } else {
@@ -133,7 +131,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
 
 /// Whether the left button orbits the camera, as outside a sketch: not
 /// in `sketch`, where it's the sketch's, but while its tool picks outside
-/// it ([`Tool::picks_outside`]).
+/// it ([`Tool::picks_outside`](crate::Tool::picks_outside)).
 fn left_orbits(sketch: Option<&SketchState<'_>>) -> bool {
     sketch.is_none_or(|sketch| (sketch.tool).is_some_and(|tool| tool.tool.picks_outside()))
 }
@@ -168,216 +166,7 @@ fn selecting_hints<'a>(selection: &crate::Selection) -> Vec<Hint<'a>> {
     };
     let body = (selection.mode() == SelectionMode::Any)
         .then(|| chrome::double_hint(MouseButton::Left, "Body"));
-    [Some(click), body].into_iter().flatten().collect()
-}
-
-/// The status bar's hints for the left button and the keys in `sketch`,
-/// which can be changed if `editable`: what the tool asks for, placing
-/// without snapping (or with it, if tools don't otherwise `snap`), typing values and how to stop it, or selecting, what
-/// can be done with the selection and how to leave.
-fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool, snap: bool) -> Vec<Hint<'a>> {
-    if let Some(field) = sketch.value {
-        let enter = match field.target {
-            ValueTarget::New { .. } | ValueTarget::Field(_) => "Place",
-            ValueTarget::Dimension(_) => "Set",
-        };
-        let next = matches!(field.target, ValueTarget::Field(_))
-            .then(|| key_hint(Shortcut::NEXT_FIELD, "Next value"));
-        return [Some(key_hint(Shortcut::ENTER, enter)), next]
-            .into_iter()
-            .flatten()
-            .chain([key_hint(Shortcut::ESCAPE, "Cancel")])
-            .collect();
-    }
-    if let Some(tool) = sketch.tool
-        && tool.tool == Tool::Dimension
-    {
-        return dimension_hints(sketch.sketch, &tool);
-    }
-    if let Some(tool) = sketch.tool
-        && !tool.tool.draws()
-    {
-        let picked = !tool.picked.is_empty();
-        let done = match tool.tool {
-            Tool::Mirror => (picked && !tool.about).then_some((Shortcut::ENTER, "Pick the line")),
-            Tool::Offset | Tool::Fillet | Tool::Chamfer if !tool.typed.is_empty() => {
-                Some((Shortcut::ENTER, "Place"))
-            }
-            Tool::Offset => picked.then_some((Shortcut::NEXT_FIELD, "Type distance")),
-            Tool::Fillet => picked.then_some((Shortcut::NEXT_FIELD, "Type radius")),
-            Tool::Chamfer => picked.then_some((Shortcut::NEXT_FIELD, "Type distances")),
-            _ => None,
-        };
-        let escape = if picked { "Cancel" } else { "Stop tool" };
-        return [
-            Some(step_hint(MouseButton::Left, tool.step(sketch.sketch))),
-            done.map(|(key, label)| key_hint(key, label)),
-            Some(key_hint(Shortcut::ESCAPE, escape)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-    }
-    if let Some(tool) = sketch.tool {
-        let escape = match (tool.tool, tool.placed.is_empty()) {
-            (_, true) => "Stop tool",
-            (Tool::Line, false) => "End line",
-            (_, false) => "Cancel",
-        };
-        let end = tool
-            .spline_ends()
-            .then(|| key_hint(Shortcut::ENTER, "End spline"));
-        let close = tool.can_close().then(|| key_hint(Shortcut::CLOSE, "Close"));
-        let kind = (tool.tool == Tool::Spline).then(|| {
-            let label = if tool.control {
-                "Through points"
-            } else {
-                "Control points"
-            };
-            key_hint(Shortcut::SPLINE_KIND, label)
-        });
-        let fields = !tool.fields().is_empty();
-        let values = fields.then(|| key_hint(Shortcut::NEXT_FIELD, "Type values"));
-        let place = (fields && !tool.typed.is_empty()).then(|| key_hint(Shortcut::ENTER, "Place"));
-        let centered = (tool.tool == Tool::Rectangle).then(|| {
-            let label = if tool.centered {
-                "From corner"
-            } else {
-                "From center"
-            };
-            key_hint(Shortcut::CENTERED, label)
-        });
-        return [
-            Some(step_hint(MouseButton::Left, tool.step(sketch.sketch))),
-            Some(chord_hint(
-                Held::FREE,
-                MouseButton::Left,
-                if snap { "Don't snap" } else { "Snap" },
-            )),
-            values,
-            place,
-            centered,
-            end,
-            close,
-            kind,
-            Some(key_hint(Shortcut::CONSTRUCTION, "Construction")),
-            Some(key_hint(Shortcut::ESCAPE, escape)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-    }
-    if sketch.constraining {
-        let most_likely = ConstraintKind::fitting(sketch.sketch, sketch.selection)
-            .first()
-            .and_then(|kind| Some(key_hint(kind.shortcut()?, kind.label())));
-        let select = if sketch.selection.is_empty() {
-            "Select geometry to constrain"
-        } else {
-            "Select"
-        };
-        return [
-            Some(step_hint(MouseButton::Left, select)),
-            most_likely,
-            Some(key_hint(Shortcut::ESCAPE, "Stop tool")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-    }
-    if sketch.inserting && editable {
-        return vec![
-            step_hint(MouseButton::Left, "Click a spline to add a point"),
-            key_hint(Shortcut::ESCAPE, "Stop adding points"),
-        ];
-    }
-    // Adding a point by a double-click, while there's a spline to add to.
-    let insert = (editable
-        && (sketch.sketch.curves.iter()).any(|entry| entry.curve.kind() == Kind::Spline))
-    .then(|| double_hint(MouseButton::Left, "Add point on spline"));
-    let selection = (!sketch.selection.is_empty()).then(|| {
-        let edits = editable.then(|| {
-            [
-                key_hint(Shortcut::DELETE, "Delete"),
-                key_hint(Shortcut::CONSTRUCTION, "Construction"),
-            ]
-        });
-        let reference = editable
-            .then(|| reference_hint(sketch))
-            .flatten()
-            .map(|label| key_hint(Shortcut::REFERENCE, label));
-        // Splines switched, given handles, and their curvature shown.
-        let splines = crate::spline::any_selected(sketch.sketch, sketch.selection);
-        let convert = (editable && splines).then(|| key_hint(Shortcut::SPLINE_KIND, "Convert"));
-        let handles = crate::spline::handles(sketch.sketch, sketch.selection)
-            .filter(|_| editable)
-            .map(|edit| {
-                let label = match edit {
-                    varde_sketch::SketchEdit::Delete(_) => "No handles",
-                    _ => "Handles",
-                };
-                key_hint(Shortcut::HANDLES, label)
-            });
-        let comb = splines.then(|| {
-            let label = if sketch.comb { "Hide comb" } else { "Comb" };
-            key_hint(Shortcut::COMB, label)
-        });
-        edits
-            .into_iter()
-            .flatten()
-            .chain(reference)
-            .chain(convert)
-            .chain(handles)
-            .chain(comb)
-    });
-    std::iter::once(mouse_hint(MouseButton::Left, "Select"))
-        .chain(insert)
-        .chain(selection.into_iter().flatten())
-        .chain([key_hint(Shortcut::ESCAPE, "Finish")])
-        .collect()
-}
-
-/// The status bar's hints in the Dimension tool: what it asks for, the
-/// radius or diameter to switch to, placing a reference and stopping.
-fn dimension_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Hint<'a>> {
-    let placing = crate::dimension::measure(sketch, tool.picked, DVec2::ZERO, tool.switched);
-    let switch = match placing {
-        Some((Measure::Radius(_), _)) => Some("Diameter"),
-        Some((Measure::Diameter(_), _)) => Some("Radius"),
-        _ => None,
-    };
-    let escape = if tool.picked.is_empty() {
-        "Stop tool"
-    } else {
-        "Cancel"
-    };
-    [
-        Some(step_hint(MouseButton::Left, tool.step(sketch))),
-        switch.map(|label| key_hint(Shortcut::SWITCH_ROUND, label)),
-        placing
-            .is_some()
-            .then(|| chord_hint(Held::REFERENCE, MouseButton::Left, "Reference")),
-        Some(key_hint(Shortcut::ESCAPE, escape)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
-}
-
-/// What the reference key makes of the dimensions selected, if any are:
-/// references, unless they all are, then driving.
-fn reference_hint(sketch: &SketchState<'_>) -> Option<&'static str> {
-    let mut selected = sketch
-        .selection
-        .iter()
-        .filter_map(|&target| sketch.sketch.dimension(target.item()?))
-        .peekable();
-    selected.peek()?;
-    Some(if selected.any(|entry| entry.dimension.driving) {
-        "Reference"
-    } else {
-        "Driving"
-    })
+    hint_list([Some(click), body])
 }
 
 /// What the status bar says while picking the plane for a new sketch
