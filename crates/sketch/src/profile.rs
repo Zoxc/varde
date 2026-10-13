@@ -21,8 +21,6 @@
 //! sketch; near misses, which do (the gap is a few pixels), are paired
 //! from the open ends as asked ([`Profiles::near_misses`]).
 
-use std::fmt;
-
 use glam::DVec2;
 
 use crate::intersect::{Geom, meet, tolerance};
@@ -146,16 +144,9 @@ pub struct Profiles {
 
 /// The sketch's curves cross too often, or too many are close together,
 /// for profiles to be found in bounded time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("too complex to find profiles")]
 pub struct TooComplex;
-
-impl fmt::Display for TooComplex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("too complex to find profiles")
-    }
-}
-
-impl std::error::Error for TooComplex {}
 
 impl Profiles {
     /// Pairs of open ends within `gap` of each other (in sketch units: a

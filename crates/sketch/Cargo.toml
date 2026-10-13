@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+thiserror.workspace = true
 faer.workspace = true
 varde-expr = { workspace = true, features = ["serde"] }
 glam.workspace = true

@@ -4344,6 +4344,7 @@ dependencies = [
  "libm",
  "postcard",
  "serde",
+ "thiserror 2.0.21",
  "varde-expr",
  "varde-testing",
 ]

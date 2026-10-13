@@ -38,25 +38,29 @@ pub struct Accepted {
 /// Why an edit was refused. The ids it names are those of the sketch the
 /// edit made, so new constraints have the ids applying it gives them
 /// ([`Add::resolve`](crate::Add::resolve)).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 pub enum Rejected {
     /// The edit can't be applied, or its solution fails [`Sketch::check`],
     /// such as a point pulled past the coordinate limit.
-    Edit(EditError),
+    #[error("{0}")]
+    Edit(#[source] EditError),
     /// Solved, but these constraints (and arcs, for the equation each
     /// implies, and driving dimensions) are in a dependency: one of them
     /// follows from the others.
+    #[error("it would over-constrain the sketch")]
     Redundant { involved: BTreeSet<Id> },
     /// Driving `dimensions` the edit adds or makes driving over-constrain
     /// the sketch: they're `involved` in a dependency, as for `Redundant`,
     /// solved or not, or in what doesn't solve. As reference dimensions,
     /// which the UI can suggest, they'd add no equation.
+    #[error("the dimension would over-constrain the sketch, but could be a reference")]
     Driving {
         dimensions: BTreeSet<Id>,
         involved: BTreeSet<Id>,
     },
     /// It can't be solved: constraints in conflict, a place they can't
     /// reach, or out of time.
+    #[error(fmt = unsolved)]
     Unsolved(Failure),
 }
 
@@ -78,26 +82,14 @@ impl Rejected {
     }
 }
 
-impl fmt::Display for Rejected {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Rejected::Edit(why) => why.fmt(f),
-            Rejected::Redundant { .. } => f.write_str("it would over-constrain the sketch"),
-            Rejected::Driving { .. } => f.write_str(
-                "the dimension would over-constrain the sketch, but could be a reference",
-            ),
-            Rejected::Unsolved(Failure::NotConverged { .. }) => {
-                f.write_str("the sketch can't be solved with it")
-            }
-            Rejected::Unsolved(Failure::Degenerate { .. }) => {
-                f.write_str("it would collapse the sketch")
-            }
-            Rejected::Unsolved(Failure::OutOfTime) => f.write_str("solving it took too long"),
-        }
-    }
+/// [`Rejected::Unsolved`]'s message.
+fn unsolved(failure: &Failure, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(match failure {
+        Failure::NotConverged { .. } => "the sketch can't be solved with it",
+        Failure::Degenerate { .. } => "it would collapse the sketch",
+        Failure::OutOfTime => "solving it took too long",
+    })
 }
-
-impl std::error::Error for Rejected {}
 
 /// Applies `edit` to `sketch`, which is to have passed [`Sketch::check`]
 /// against `max`, solves the result warm started from where it is, and
@@ -300,25 +292,16 @@ fn steps(measure: &Measure, old: f64, new: f64) -> u32 {
 
 /// Why [`revalue`] couldn't keep a sketch in step with its design's
 /// parameters.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Unrevalued {
     /// This dimension's expression is in error with them, such as a name
     /// no parameter has, or a value out of range.
-    Value(Id, varde_expr::Error),
+    #[error("a dimension would be in error: {1}")]
+    Value(Id, #[source] varde_expr::Error),
     /// The sketch with the new values doesn't solve, see [`Rejected`].
-    Rejected(Rejected),
+    #[error("the sketch wouldn't solve: {0}")]
+    Rejected(#[source] Rejected),
 }
-
-impl fmt::Display for Unrevalued {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Unrevalued::Value(_, why) => write!(f, "a dimension would be in error: {why}"),
-            Unrevalued::Rejected(why) => write!(f, "the sketch wouldn't solve: {why}"),
-        }
-    }
-}
-
-impl std::error::Error for Unrevalued {}
 
 /// `sketch` with each dimension whose expression names a parameter
 /// evaluated again in `design`, as its parameters have changed, and

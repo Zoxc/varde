@@ -519,28 +519,34 @@ impl Add {
 }
 
 /// Why [`SketchEdit::apply`] can't make the sketch an edit asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, thiserror::Error)]
 pub enum EditError {
     /// Every id of the sketch has been used.
+    #[error("{}", OutOfIds)]
     OutOfIds,
     /// The edit changes the item `id` names, which is missing or can't be
     /// changed so: a point moved, a circle's radius, a curve made
     /// construction, a dimension changed, or made driving where it
     /// measures nothing. Or an [`Add`] names as the sketch's an id the sketch
     /// hasn't given out, one an edit before it made that wasn't applied.
+    #[error("sketch item {0} can't be changed so, or is gone")]
     Target(Id),
     /// An [`Add`]'s placeholder is below its first, repeated, out of
     /// order, or names none of its new items.
+    #[error("the sketch edit's new item {0} is misnumbered")]
     Placeholder(Id),
     /// The sketch made fails [`Sketch::check`], such as a point past the
     /// coordinate limit.
-    Sketch(SketchError),
+    #[error("{0}")]
+    Sketch(#[from] SketchError),
     /// A driving dimension, added or made so, of the distance between
     /// points at one place ([`Sketch::same_place`]).
+    #[error("the points are at the same place; move them apart first")]
     SamePlace,
     /// A dimension would hold what it measures now, `measured`
     /// (millimetres, or radians if an `angle`), which is past what one can
     /// be: more than `max`, less than `min`, or no angle.
+    #[error(fmt = out_of_range)]
     OutOfRange {
         measured: f64,
         min: f64,
@@ -549,35 +555,48 @@ pub enum EditError {
     },
     /// An end extended ([`SketchEdit::Extend`]) meets nothing ahead of
     /// it.
+    #[error("there's nothing ahead of that end to reach")]
     NothingAhead,
     /// A [`SketchEdit::Mirror`] names no point or curve to mirror, off the
     /// line or of its own.
+    #[error("there's nothing to mirror but the line")]
     NothingToMirror,
     /// A [`SketchEdit::Offset`]'s curves aren't a chain: lines and arcs
     /// joined end to end, no more than two at a point, or a circle or a
     /// spline alone.
+    #[error(
+        "only a chain of lines and arcs joined end to end, or a circle or a spline alone, offsets"
+    )]
     NotAChain,
     /// A [`SketchEdit::Offset`] of a spline would fold over itself: the
     /// spline turns towards the copy tighter than the distance.
+    #[error("offset that far, the copy would fold where the spline curves tighter")]
     TooTight,
     /// A [`SketchEdit::Offset`] leaves nothing: every piece of the copy is
     /// within the distance of the chain, such as a loop offset inwards
     /// past its middle.
+    #[error("offset that far, nothing is left of it")]
     NothingLeft,
     /// A [`SketchEdit::Offset`] would take more steps than
     /// [`MAX_OFFSET_WORK`](crate::MAX_OFFSET_WORK) working out what's
     /// left, or it or a [`SketchEdit::Extend`] meets a spline lying along
     /// another so closely that where they cross can't all be found.
+    #[error("that's too complex to work out")]
     TooComplex,
     /// A [`SketchEdit::Fillet`]'s or [`SketchEdit::Chamfer`]'s lines make
     /// no corner at its point: two lines ending there, not chamfers, not
     /// parallel.
+    #[error("only two lines ending at a point make a corner")]
     NoCorner,
     /// A fillet or chamfer doesn't fit on its corner: it would reach past
     /// the end of a line, or a chamfer's angle wouldn't reach across.
+    #[error("that's too large for the corner's lines")]
     NoRoom,
     /// The edit would change a link's point or curve (`id`), or the link
     /// itself, which only follows what it comes from: it's removed whole.
+    #[error(
+        "projected and intersected geometry follows what it comes from: remove its link instead"
+    )]
     Linked(Id),
 }
 
@@ -587,76 +606,31 @@ impl From<OutOfIds> for EditError {
     }
 }
 
-impl From<SketchError> for EditError {
-    fn from(why: SketchError) -> Self {
-        EditError::Sketch(why)
-    }
-}
-
-impl fmt::Display for EditError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EditError::OutOfIds => OutOfIds.fmt(f),
-            EditError::Target(id) => {
-                write!(f, "sketch item {id} can't be changed so, or is gone")
-            }
-            EditError::Placeholder(id) => {
-                write!(f, "the sketch edit's new item {id} is misnumbered")
-            }
-            EditError::Sketch(why) => why.fmt(f),
-            EditError::SamePlace => {
-                f.write_str("the points are at the same place; move them apart first")
-            }
-            EditError::NothingAhead => f.write_str("there's nothing ahead of that end to reach"),
-            EditError::NothingToMirror => f.write_str("there's nothing to mirror but the line"),
-            EditError::NotAChain => f.write_str(
-                "only a chain of lines and arcs joined end to end, or a circle or a spline alone, offsets",
-            ),
-            EditError::TooTight => {
-                f.write_str("offset that far, the copy would fold where the spline curves tighter")
-            }
-            EditError::NothingLeft => f.write_str("offset that far, nothing is left of it"),
-            EditError::TooComplex => f.write_str("that's too complex to work out"),
-            EditError::NoCorner => f.write_str("only two lines ending at a point make a corner"),
-            EditError::NoRoom => f.write_str("that's too large for the corner's lines"),
-            EditError::Linked(_) => f.write_str(
-                "projected and intersected geometry follows what it comes from: remove its link instead",
-            ),
-            &EditError::OutOfRange {
-                measured,
-                min,
-                max,
-                angle,
-            } => {
-                let unit = Some(if angle {
-                    Unit::Angle(AngleUnit::Deg)
-                } else {
-                    Unit::Length(LengthUnit::Mm)
-                });
-                if measured > max {
-                    let (measured, max) = (format(measured, unit), format(max, unit));
-                    write!(
-                        f,
-                        "it measures {measured}, more than a dimension can be, {max}"
-                    )
-                } else if measured < min {
-                    let min = format(min, unit);
-                    write!(f, "it measures less than a dimension can be, {min}")
-                } else {
-                    let measured = format(measured, unit);
-                    write!(f, "it measures {measured}, which a dimension can't be")
-                }
-            }
-        }
-    }
-}
-
-impl std::error::Error for EditError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            EditError::Sketch(why) => Some(why),
-            _ => None,
-        }
+/// [`EditError::OutOfRange`]'s message.
+fn out_of_range(
+    &measured: &f64,
+    &min: &f64,
+    &max: &f64,
+    &angle: &bool,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    let unit = Some(if angle {
+        Unit::Angle(AngleUnit::Deg)
+    } else {
+        Unit::Length(LengthUnit::Mm)
+    });
+    if measured > max {
+        let (measured, max) = (format(measured, unit), format(max, unit));
+        write!(
+            f,
+            "it measures {measured}, more than a dimension can be, {max}"
+        )
+    } else if measured < min {
+        let min = format(min, unit);
+        write!(f, "it measures less than a dimension can be, {min}")
+    } else {
+        let measured = format(measured, unit);
+        write!(f, "it measures {measured}, which a dimension can't be")
     }
 }
 

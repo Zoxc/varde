@@ -311,16 +311,9 @@ pub struct Sketch {
 }
 
 /// Every id of a sketch has been used, so nothing more can be added to it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the sketch has no ids left")]
 pub struct OutOfIds;
-
-impl fmt::Display for OutOfIds {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the sketch has no ids left")
-    }
-}
-
-impl std::error::Error for OutOfIds {}
 
 impl Sketch {
     /// The point `id`, the origin included.

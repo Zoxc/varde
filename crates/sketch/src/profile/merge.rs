@@ -1,34 +1,24 @@
 //! Several regions as one: [`Profiles::merge`].
 
 use std::cmp::Ordering;
-use std::fmt;
 
 use super::{Piece, Profiles, pinches};
 
 /// Why regions couldn't be merged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MergeError {
     /// No regions were given.
+    #[error("no regions to merge")]
     Empty,
     /// There's no region by this index.
+    #[error("there is no region {0}")]
     NoRegion(usize),
     /// The pieces left don't join up into loops, or name vertices the
     /// profiles don't have: profiles that weren't found by
     /// [`Sketch::profiles`](crate::Sketch::profiles).
+    #[error("the regions' pieces don't join up")]
     Open,
 }
-
-impl fmt::Display for MergeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MergeError::Empty => f.write_str("no regions to merge"),
-            MergeError::NoRegion(index) => write!(f, "there is no region {index}"),
-            MergeError::Open => f.write_str("the regions' pieces don't join up"),
-        }
-    }
-}
-
-impl std::error::Error for MergeError {}
 
 impl Profiles {
     /// The regions `picked` (indices into [`Profiles::regions`], in any

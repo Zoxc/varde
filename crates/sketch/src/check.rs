@@ -1,7 +1,5 @@
 //! [`Sketch::check`]: what a file could get wrong about a sketch.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
 use varde_expr::{LengthUnit, Params};
@@ -274,9 +272,10 @@ fn check_ids(mut ids: impl Iterator<Item = Id>, next_id: u32) -> Result<(), Sket
 
 /// Why a [`Sketch`] fails [`Sketch::check`], against the limit `max` it
 /// was checked with where it applies.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, thiserror::Error)]
 pub enum SketchError {
     /// More items in the list than `limit`.
+    #[error("the sketch has {count} {}, over the limit of {limit}", list.name())]
     TooMany {
         list: List,
         count: usize,
@@ -284,47 +283,61 @@ pub enum SketchError {
     },
     /// The first id doesn't come after the second, the one before it in
     /// the same list.
+    #[error("sketch item {id} doesn't come after {before}")]
     Order { id: Id, before: Id },
     /// The highest id of a list isn't below the sketch's next id.
+    #[error("sketch item {0} is not below the sketch's next id")]
     NextId(Id),
     /// The id names items in two lists.
+    #[error("sketch id {0} names two items")]
     Shared(Id),
     /// The sketch's next id is past the ids it can give out, which end
     /// well short of the origin's and axes'.
+    #[error("the sketch's next id {0} runs into its origin's and axes'")]
     NextIdReserved(u32),
     /// The item names the origin or an axis as it can't be: a curve made
     /// from the origin, a constraint or dimension on them alone, or one
     /// taking an axis as a segment, see
     /// [`Constraint::fits_builtins`](crate::Constraint::fits_builtins).
+    #[error("sketch item {0} uses the origin or an axis in a way it can't")]
     Builtin(Id),
     /// A point coordinate farther than `max` from zero, or not a number.
+    #[error("sketch point {id} has a coordinate of {value}, outside the limit of {max}")]
     Coordinate { id: Id, value: f64, max: f64 },
     /// A circle's radius not above zero, or past `max`.
+    #[error("sketch circle {id} has a radius of {radius}, not above zero and within {max}")]
     Radius { id: Id, radius: f64, max: f64 },
     /// `from` names `to`, which can't play the role `expected`.
+    #[error("sketch item {from} refers to {to}, which is no {}", expected.name())]
     Reference { from: Id, to: Id, expected: Role },
     /// `from` names `to` more than once.
+    #[error("sketch item {from} refers to {to} more than once")]
     Repeated { from: Id, to: Id },
     /// The constraint names items whose kinds don't go together, such as
     /// a tangent between two lines, or the constraint or dimension names
     /// what's no offset pair.
+    #[error("sketch item {0} ties together items that don't go together")]
     Unfit(Id),
     /// The constraint or dimension `from` names `curve` and `point`, one
     /// of the points `curve` is made from.
+    #[error("sketch item {from} refers to {curve} and to its own point {point}")]
     OwnPoint { from: Id, curve: Id, point: Id },
     /// The spline has too few or too many points
     /// ([`SplineKind::least`](crate::SplineKind::least),
     /// [`MAX_SPLINE_POINTS`](crate::MAX_SPLINE_POINTS)), a handle on none
     /// of its fit points, two on one, or by control points, or knots not
     /// as its kind and count take them.
+    #[error("sketch spline {0} has points, handles or knots it can't have")]
     Spline(Id),
     /// The fillet or chamfer isn't on a corner (see
     /// [`Corner`](crate::Corner)): a circle, or an arc that's `equal`, or
     /// its lines chamfers, not ending at its point, or its own points
     /// theirs; or another is on the same corner of the same lines.
+    #[error("sketch curve {0} is a fillet or chamfer on no corner of its own")]
     Corner(Id),
     /// The dimension's label is farther than the limit from its anchor, or
     /// not a number.
+    #[error("sketch dimension {0} has its label out of bounds")]
     Label(Id),
     /// The link names what isn't a point or curve of its own: one that
     /// isn't there or is another link's, a curve made of points not its
@@ -332,86 +345,14 @@ pub enum SketchError {
     /// for profiles as the link doesn't say (or the other way), its ids
     /// out of order or too many; or a curve not the link's is made of its
     /// points.
+    #[error("sketch link {0} names geometry that isn't its own, or shares it")]
     Link(Id),
     /// The dimension's expression doesn't evaluate to its stored value in
     /// the design's units, or not to what its measure asks for: not a
     /// length or an angle, not above zero, past the limit.
+    #[error("sketch dimension {0} has a value its expression doesn't give, or out of bounds")]
     Value(Id),
 }
-
-impl fmt::Display for SketchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            SketchError::TooMany { list, count, limit } => write!(
-                f,
-                "the sketch has {count} {}, over the limit of {limit}",
-                list.name()
-            ),
-            SketchError::Order { id, before } => {
-                write!(f, "sketch item {id} doesn't come after {before}")
-            }
-            SketchError::NextId(id) => {
-                write!(f, "sketch item {id} is not below the sketch's next id")
-            }
-            SketchError::Shared(id) => write!(f, "sketch id {id} names two items"),
-            SketchError::NextIdReserved(next_id) => write!(
-                f,
-                "the sketch's next id {next_id} runs into its origin's and axes'"
-            ),
-            SketchError::Builtin(id) => write!(
-                f,
-                "sketch item {id} uses the origin or an axis in a way it can't"
-            ),
-            SketchError::Coordinate { id, value, max } => write!(
-                f,
-                "sketch point {id} has a coordinate of {value}, outside the limit of {max}"
-            ),
-            SketchError::Radius { id, radius, max } => write!(
-                f,
-                "sketch circle {id} has a radius of {radius}, not above zero and within {max}"
-            ),
-            SketchError::Reference { from, to, expected } => write!(
-                f,
-                "sketch item {from} refers to {to}, which is no {}",
-                expected.name()
-            ),
-            SketchError::Repeated { from, to } => {
-                write!(f, "sketch item {from} refers to {to} more than once")
-            }
-            SketchError::Unfit(id) => {
-                write!(
-                    f,
-                    "sketch item {id} ties together items that don't go together"
-                )
-            }
-            SketchError::OwnPoint { from, curve, point } => write!(
-                f,
-                "sketch item {from} refers to {curve} and to its own point {point}"
-            ),
-            SketchError::Spline(id) => write!(
-                f,
-                "sketch spline {id} has points, handles or knots it can't have"
-            ),
-            SketchError::Corner(id) => write!(
-                f,
-                "sketch curve {id} is a fillet or chamfer on no corner of its own"
-            ),
-            SketchError::Label(id) => {
-                write!(f, "sketch dimension {id} has its label out of bounds")
-            }
-            SketchError::Link(id) => write!(
-                f,
-                "sketch link {id} names geometry that isn't its own, or shares it"
-            ),
-            SketchError::Value(id) => write!(
-                f,
-                "sketch dimension {id} has a value its expression doesn't give, or out of bounds"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for SketchError {}
 
 #[cfg(test)]
 mod tests;

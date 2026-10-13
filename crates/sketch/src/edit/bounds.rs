@@ -2,8 +2,6 @@
 //! counts no more than a sketch may hold and every number finite and
 //! within a limit, before it's applied.
 
-use std::fmt;
-
 use glam::DVec2;
 use varde_expr::Value;
 
@@ -19,49 +17,25 @@ const MAX_DELETE: usize = MAX_POINTS + MAX_CURVES + MAX_CONSTRAINTS;
 const MAX_MIRROR: usize = MAX_POINTS + MAX_CURVES;
 
 /// Why an edit or a drag's targets fail their bounds.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum BoundsError {
     /// More of something than an edit may name: `what` names it, as a
     /// plural ("points", "bytes of a dimension's expression").
+    #[error("{count} {what}, over the limit of {limit}")]
     TooMany {
         what: &'static str,
         count: usize,
         limit: usize,
     },
     /// A place or radius past `max`, or not a number.
+    #[error("a sketch value of {value}, outside the limit of {max}")]
     Value { value: f64, max: f64 },
     /// A dimension's value (or an offset's, a fillet's, ...) not a number.
+    #[error("a dimension value of {0}, not a number")]
     NotFinite(f64),
     /// A new spline or a link's shape that doesn't fit.
-    Sketch(SketchError),
-}
-
-impl fmt::Display for BoundsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BoundsError::TooMany { what, count, limit } => {
-                write!(f, "{count} {what}, over the limit of {limit}")
-            }
-            BoundsError::Value { value, max } => {
-                write!(f, "a sketch value of {value}, outside the limit of {max}")
-            }
-            BoundsError::NotFinite(value) => {
-                write!(f, "a dimension value of {value}, not a number")
-            }
-            BoundsError::Sketch(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for BoundsError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            BoundsError::Sketch(e) => Some(e),
-            BoundsError::TooMany { .. } | BoundsError::Value { .. } | BoundsError::NotFinite(_) => {
-                None
-            }
-        }
-    }
+    #[error("{0}")]
+    Sketch(#[source] SketchError),
 }
 
 impl SketchEdit {

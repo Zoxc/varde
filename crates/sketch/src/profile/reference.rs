@@ -1,8 +1,6 @@
 //! Naming a region so it's found again after its sketch changes:
 //! [`RegionRef`].
 
-use std::fmt;
-
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
@@ -31,34 +29,20 @@ pub struct RegionRef {
 }
 
 /// What's wrong with a [`RegionRef`] read from a file.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum RegionRefError {
     /// More than [`MAX_REGION_CURVES`] ids.
+    #[error("a region names {0} curves, more than {MAX_REGION_CURVES}")]
     TooManyCurves(usize),
     /// A list of ids is empty, or not sorted without repeats, or the
     /// holes' lists aren't sorted.
+    #[error("a region's curves are missing, repeated or out of order")]
     Unsorted,
     /// The point inside isn't finite, or is further from zero than the
     /// limit.
+    #[error("a region's point {0} is out of bounds")]
     Inside(DVec2),
 }
-
-impl fmt::Display for RegionRefError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RegionRefError::TooManyCurves(count) => write!(
-                f,
-                "a region names {count} curves, more than {MAX_REGION_CURVES}"
-            ),
-            RegionRefError::Unsorted => {
-                f.write_str("a region's curves are missing, repeated or out of order")
-            }
-            RegionRefError::Inside(at) => write!(f, "a region's point {at} is out of bounds"),
-        }
-    }
-}
-
-impl std::error::Error for RegionRefError {}
 
 impl RegionRef {
     /// Checks what a file could get wrong: at most [`MAX_REGION_CURVES`]
