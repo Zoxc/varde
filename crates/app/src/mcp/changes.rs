@@ -719,10 +719,7 @@ impl Said {
     fn done(self) -> Changes {
         let mut value = Map::new();
         if self.replaced {
-            value.insert(
-                "replaced".to_owned(),
-                json!("the design was replaced: query it again"),
-            );
+            value.insert("replaced".to_owned(), json!(REPLACED));
         }
         if self.undid {
             value.insert(
@@ -765,55 +762,7 @@ impl Said {
         let brief = briefest(self.replaced);
         let value = match bytes(&full) <= CHANGES_BYTES {
             true => full,
-            false => {
-                // Named only: the client queries them. As many as fit,
-                // the rest counted.
-                let mut names = self.feature_names;
-                let total = names.len();
-                names.truncate(NAMES);
-                value.insert(
-                    "bounded".to_owned(),
-                    json!(
-                        "too many changes to list: only the features added, removed or \
-                         changed are named; query them, and design_summary for the rest"
-                    ),
-                );
-                let mut labels_left_out = 0usize;
-                loop {
-                    value.insert(
-                        "features_changed".to_owned(),
-                        json!({ "names": names, "left_out": total.saturating_sub(names.len()) }),
-                    );
-                    if labels_left_out > 0 {
-                        value.insert("your_edits_left_out".to_owned(), json!(labels_left_out));
-                    }
-                    let bounded = Value::Object(value.clone());
-                    if bytes(&bounded) <= CHANGES_BYTES {
-                        break bounded;
-                    }
-                    if names.pop().is_some() {
-                        continue;
-                    }
-                    // The labels of the client's edits undone or redone,
-                    // the longer list's last first.
-                    let longest = ["undid_your_edits", "redid_your_edits"]
-                        .into_iter()
-                        .max_by_key(|key| {
-                            value
-                                .get(*key)
-                                .and_then(Value::as_array)
-                                .map_or(0, Vec::len)
-                        });
-                    match longest
-                        .and_then(|key| value.get_mut(key))
-                        .and_then(Value::as_array_mut)
-                        .and_then(Vec::pop)
-                    {
-                        Some(_) => labels_left_out = labels_left_out.saturating_add(1),
-                        None => break brief.clone(),
-                    }
-                }
-            }
+            false => bounded(value, self.feature_names, &brief),
         };
         Changes {
             value: Some(value),
@@ -824,6 +773,63 @@ impl Said {
     }
 }
 
+/// `head`, the changes but for what they're of, with the features
+/// `names` changed named in it and as many of them as fit in
+/// [`CHANGES_BYTES`] (the rest counted), then as few of the labels of
+/// the client's edits undone or redone as it takes; `brief` if even
+/// none of either fit.
+fn bounded(mut value: Map<String, Value>, mut names: Vec<String>, brief: &Value) -> Value {
+    // Named only: the client queries them. As many as fit, the rest
+    // counted.
+    let total = names.len();
+    names.truncate(NAMES);
+    value.insert(
+        "bounded".to_owned(),
+        json!(
+            "too many changes to list: only the features added, removed or \
+             changed are named; query them, and design_summary for the rest"
+        ),
+    );
+    let mut labels_left_out = 0usize;
+    loop {
+        value.insert(
+            "features_changed".to_owned(),
+            json!({ "names": names, "left_out": total.saturating_sub(names.len()) }),
+        );
+        if labels_left_out > 0 {
+            value.insert("your_edits_left_out".to_owned(), json!(labels_left_out));
+        }
+        let bounded = Value::Object(value.clone());
+        if bytes(&bounded) <= CHANGES_BYTES {
+            return bounded;
+        }
+        if names.pop().is_some() {
+            continue;
+        }
+        // The labels of the client's edits undone or redone, the longer
+        // list's last first.
+        let longest = ["undid_your_edits", "redid_your_edits"]
+            .into_iter()
+            .max_by_key(|key| {
+                value
+                    .get(*key)
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len)
+            });
+        match longest
+            .and_then(|key| value.get_mut(key))
+            .and_then(Value::as_array_mut)
+            .and_then(Vec::pop)
+        {
+            Some(_) => labels_left_out = labels_left_out.saturating_add(1),
+            None => return brief.clone(),
+        }
+    }
+}
+
+/// What `user_changes` says of a design replaced.
+const REPLACED: &str = "the design was replaced: query it again";
+
 /// The bytes of `value`'s JSON.
 fn bytes(value: &Value) -> usize {
     serde_json::to_string(value).map_or(usize::MAX, |text| text.len())
@@ -833,7 +839,7 @@ fn bytes(value: &Value) -> usize {
 /// reply: that there are some, for the client to query.
 pub(super) fn briefest(replaced: bool) -> Value {
     let said = match replaced {
-        true => "the design was replaced: query it again",
+        true => REPLACED,
         false => {
             "the user changed the design: too much to list with this result; call \
                   design_summary, and query what you need"
