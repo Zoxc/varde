@@ -16,7 +16,7 @@
 //! it. A proposal answered for a revision no longer the document's
 //! (something else was committed meanwhile) is proposed again.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::mem;
 use std::sync::Arc;
 
@@ -1232,14 +1232,8 @@ impl Doc {
                 .peekable();
             edits.peek()?;
             let (sketch, sources) = applied(committed, edits, revision, &design);
-            let ids = sketch.points.iter().map(|point| point.id);
-            let ids = ids
-                .chain(sketch.curves.iter().map(|entry| entry.id))
-                .chain(sketch.constraints.iter().map(|entry| entry.id))
-                .chain(sketch.dimensions.iter().map(|entry| entry.id));
-            let added = ids
-                .filter(|&id: &Id| committed.kind(id).is_none())
-                .collect();
+            let had: BTreeSet<Id> = committed.ids().collect();
+            let added = sketch.ids().filter(|id| !had.contains(id)).collect();
             Some(Waiting {
                 sketch,
                 added,

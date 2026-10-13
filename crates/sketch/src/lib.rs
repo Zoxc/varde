@@ -407,6 +407,22 @@ impl Sketch {
         self.curves.binary_search_by_key(&id, |curve| curve.id).ok()
     }
 
+    /// The ids of every item the sketch holds: its points, curves,
+    /// constraints, dimensions and links, in that order. The origin and
+    /// axes, which every sketch has, aren't among them.
+    pub fn ids(&self) -> impl Iterator<Item = Id> + '_ {
+        let points = self.points.iter().map(|point| point.id);
+        let curves = self.curves.iter().map(|entry| entry.id);
+        let constraints = self.constraints.iter().map(|entry| entry.id);
+        let dimensions = self.dimensions.iter().map(|entry| entry.id);
+        let links = self.links.iter().map(|link| link.id);
+        points
+            .chain(curves)
+            .chain(constraints)
+            .chain(dimensions)
+            .chain(links)
+    }
+
     /// What `id` names, if anything: the origin is a point and the axes
     /// lines.
     pub fn kind(&self, id: Id) -> Option<Kind> {

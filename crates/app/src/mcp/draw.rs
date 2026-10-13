@@ -200,17 +200,7 @@ pub(super) fn drawn_made(
 /// The item of `sketch` numbered `number`: a point, curve, constraint,
 /// dimension or link.
 fn id_in(sketch: &Sketch, number: u32) -> Option<Id> {
-    let points = sketch.points.iter().map(|point| point.id);
-    let curves = sketch.curves.iter().map(|entry| entry.id);
-    let constraints = sketch.constraints.iter().map(|entry| entry.id);
-    let dimensions = sketch.dimensions.iter().map(|entry| entry.id);
-    let links = sketch.links.iter().map(|link| link.id);
-    (points
-        .chain(curves)
-        .chain(constraints)
-        .chain(dimensions)
-        .chain(links))
-    .find(|id| id.get() == number)
+    sketch.ids().find(|id| id.get() == number)
 }
 
 /// What `kind` is, in a word for a sentence.
