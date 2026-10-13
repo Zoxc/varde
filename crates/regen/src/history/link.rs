@@ -35,7 +35,10 @@ use glam::{DAffine2, DMat2, DVec2, DVec3};
 use varde_document::{
     BodyId, Document, FeatureId, LinkSource, OutsideRef, Placement, PointRef, Sketch, Tolerance,
 };
+use varde_kernel_compat::mesh::Mesh;
+use varde_kernel_compat::patch::Conic3;
 use varde_kernel_compat::section::{self, Plane as CutPlane, SectionError};
+use varde_kernel_compat::topology::Chain;
 use varde_sketch::{Budget, Id, LinkKind, LinkShape, SampledChain, SketchEdit};
 
 use super::{BodySolid, Evaluation, SketchOutput};
@@ -201,21 +204,10 @@ fn one(
                 let chain = (topology.edge(solid, edge.faces, edge.near))
                     .map_err(|_| Broken::missing(EDGE_NOT_FOUND))?;
                 let chain = &topology.chains()[chain as usize];
-                let mesh = solid.mesh();
-                let tris = mesh.tris().len();
-                if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
-                    return Err(Broken::missing(EDGE_NOT_FOUND));
-                }
-                let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
+                let curves = chain_curves(solid.mesh(), chain, EDGE_NOT_FOUND)?;
                 match kind {
                     LinkKind::Project => {
-                        let places = section::sample(&curves, PER_CONIC, chain.closed)
-                            .map_err(|_| TOO_COMPLEX)?;
-                        let places = places.iter().map(|&p| placement.to_sketch(p)).collect();
-                        let chain = SampledChain {
-                            places,
-                            closed: chain.closed,
-                        };
+                        let chain = sample(&curves, chain.closed, placement)?;
                         LinkShape::fit(&[chain], exact, fit).map_err(|why| why.to_string().into())
                     }
                     LinkKind::Intersect => {
@@ -339,7 +331,7 @@ fn on_body<T>(
 }
 
 /// The boundary of the region `region` of `made`'s solid, its outer
-/// loop and holes, each edge ([`Chain`](varde_kernel_compat::topology::Chain))
+/// loop and holes, each edge ([`Chain`])
 /// with another region beside it sampled along its conics and projected
 /// square onto the plane of the sketch at `placement`, in that sketch.
 fn outline(
@@ -349,22 +341,14 @@ fn outline(
     placement: &Placement,
 ) -> Result<Vec<SampledChain>, Broken> {
     let mesh = made.solid.mesh();
-    let tris = mesh.tris().len();
     let mut out = Vec::new();
     for chain in topology.chains() {
         let [a, b] = chain.regions;
         if a == b || (a != region && b != region) {
             continue;
         }
-        if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
-            return Err(Broken::missing(FACE_NOT_FOUND));
-        }
-        let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
-        let places = section::sample(&curves, PER_CONIC, chain.closed).map_err(|_| TOO_COMPLEX)?;
-        out.push(SampledChain {
-            places: places.iter().map(|&p| placement.to_sketch(p)).collect(),
-            closed: chain.closed,
-        });
+        let curves = chain_curves(mesh, chain, FACE_NOT_FOUND)?;
+        out.push(sample(&curves, chain.closed, placement)?);
     }
     if out.is_empty() {
         return Err(Broken::missing(FACE_NOT_FOUND));
@@ -375,15 +359,34 @@ fn outline(
 /// The places of `sections` in the sketch at `placement`.
 fn chains(placement: &Placement, sections: Vec<section::Section>) -> Vec<SampledChain> {
     (sections.into_iter())
-        .map(|section| SampledChain {
-            places: section
-                .places
-                .iter()
-                .map(|&p| placement.to_sketch(p))
-                .collect(),
-            closed: section.closed,
-        })
+        .map(|section| in_sketch(&section.places, section.closed, placement))
         .collect()
+}
+
+/// The conics of `chain`'s halfedges in `mesh`, or `missing` (as
+/// [`Broken::missing`](Broken)) where one is past the mesh, a topology
+/// stale beside it.
+fn chain_curves(mesh: &Mesh, chain: &Chain, missing: &str) -> Result<Vec<Conic3>, Broken> {
+    let tris = mesh.tris().len();
+    if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
+        return Err(Broken::missing(missing));
+    }
+    Ok(chain.halfedges.iter().map(|&h| mesh.curve(h)).collect())
+}
+
+/// The chain of `curves` sampled along its conics and projected square
+/// onto the plane of the sketch at `placement`, in that sketch.
+fn sample(curves: &[Conic3], closed: bool, placement: &Placement) -> Result<SampledChain, Broken> {
+    let places = section::sample(curves, PER_CONIC, closed).map_err(|_| TOO_COMPLEX)?;
+    Ok(in_sketch(&places, closed, placement))
+}
+
+/// `places` in the sketch at `placement`.
+fn in_sketch(places: &[DVec3], closed: bool, placement: &Placement) -> SampledChain {
+    SampledChain {
+        places: places.iter().map(|&p| placement.to_sketch(p)).collect(),
+        closed,
+    }
 }
 
 /// The sketch `sketch`, feature `feature`, with the links `found` that
