@@ -25,14 +25,16 @@ use glam::DVec3;
 use varde_document::{
     Align, AlignRefs, AxisRef, BodyId, DirRef, Document, EdgeRef, FaceRef, PointRef,
 };
-use varde_regen::{AlignDatums, Summary};
+use varde_regen::AlignDatums;
 use varde_view::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionPick,
     Naming, NamingPicks, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name,
     point_name,
 };
 
-use super::{Doc, Merges, MotionSession, merged_in, unnamed};
+use super::{
+    Doc, EdgeShape, FaceShape, Merges, MotionSession, edge_shape, face_shape, merged_in, unnamed,
+};
 
 /// Why a pick can't be an align's point or direction, in the words the
 /// status bar shows.
@@ -881,10 +883,9 @@ pub(super) fn point_of(
         (Some(Snapped::EdgePoint(edge)), _) | (None, Picked::Edge(edge)) => edge,
         _ => return Err(NOT_A_POINT.into()),
     };
-    let keys = index.chain_keys(edge).ok_or(NOT_A_POINT)?;
-    let straight = index.edge_ends(edge, &keys).is_some();
-    let round = !straight && index.snap_point(Snapped::EdgePoint(edge)).is_some();
-    if !(straight || round) {
+    let shape = edge_shape(index, edge).ok_or(NOT_A_POINT)?;
+    let straight = shape == EdgeShape::Straight;
+    if !(straight || shape.centred()) {
         return Err(NOT_A_POINT.into());
     }
     let near = index.chain_point(edge).unwrap_or(pick.at);
@@ -918,10 +919,9 @@ fn direction_of(
 ) -> Result<DirRef, Cow<'static, str>> {
     match pick.target {
         Picked::Face(face) => {
-            let summary = (index.picking().faces().get(face as usize)).map(|face| face.summary);
-            let flat = matches!(summary, Some(Summary::Plane { .. }));
-            let round = summary.is_some_and(|s| s.has_axis());
-            if !(flat || round) {
+            let shape = face_shape(index, face);
+            let flat = shape == FaceShape::Flat;
+            if shape == FaceShape::Other {
                 return Err(NOT_A_DIRECTION.into());
             }
             let named = naming
@@ -934,10 +934,8 @@ fn direction_of(
             })
         }
         Picked::Edge(edge) => {
-            let keys = index.chain_keys(edge).ok_or(NOT_A_DIRECTION)?;
-            let straight = index.edge_ends(edge, &keys).is_some();
-            let round = index.snap_point(Snapped::EdgePoint(edge)).is_some();
-            if !(straight || round) {
+            let shape = edge_shape(index, edge).ok_or(NOT_A_DIRECTION)?;
+            if !(shape == EdgeShape::Straight || shape.centred()) {
                 return Err(NOT_A_DIRECTION.into());
             }
             // Named at the point on it a point on it is named at

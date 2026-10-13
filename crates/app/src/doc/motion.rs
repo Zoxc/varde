@@ -2132,8 +2132,6 @@ impl Doc {
         let (target, at) = (pick.target, pick.at);
         let naming = self.naming_in(session.feature, self.feed.marks_of(index));
         let refused = |why: Unnamed, what: &str| unnamed(why, what, session.kind);
-        let summary =
-            |face: u32| (index.picking().faces().get(face as usize)).map(|face| face.summary);
         let not_an_axis = match session.kind {
             MotionKind::LinearPattern => NOT_A_DIRECTION,
             _ => NOT_AN_AXIS,
@@ -2144,10 +2142,8 @@ impl Doc {
         };
         match (session.kind.takes_axis(), target) {
             (true, Picked::Edge(edge)) => {
-                let keys = index.chain_keys(edge).ok_or(not_an_axis)?;
-                let straight = index.edge_ends(edge, &keys).is_some();
-                let round = round_edge(index, edge);
-                if !(straight || round) {
+                let shape = edge_shape(index, edge).ok_or(not_an_axis)?;
+                if !matches!(shape, EdgeShape::Straight | EdgeShape::Round) {
                     return Err(not_an_axis.into());
                 }
                 let edge = naming
@@ -2156,8 +2152,7 @@ impl Doc {
                 Ok(Reference::Axis(AxisRef::Edge(edge)))
             }
             (true, Picked::Face(face)) => {
-                let round = summary(face).is_some_and(|s| s.has_axis());
-                if !round {
+                if face_shape(index, face) != FaceShape::Round {
                     return Err(not_an_axis.into());
                 }
                 let face = naming
@@ -2166,7 +2161,7 @@ impl Doc {
                 Ok(Reference::Axis(AxisRef::Face(face)))
             }
             (false, Picked::Face(face)) => {
-                if !matches!(summary(face), Some(Summary::Plane { .. })) {
+                if face_shape(index, face) != FaceShape::Flat {
                     return Err(not_a_plane.into());
                 }
                 let face = naming
@@ -2786,18 +2781,76 @@ fn undo_motion(moved: &Move, line: Option<[DVec3; 2]>, p: DVec3) -> Option<DVec3
     at.is_finite().then_some(at)
 }
 
-/// Whether `edge` of `index`'s model is round as the mesh draws it: a
-/// circle or an arc of one, every point of its polyline as far from its
-/// snap point (a round edge's centre) within the rounding of the mesh's
-/// `f32` points and a millionth of its radius; not an ellipse, which
-/// regenerating refuses as an axis. Regenerating decides from the exact
-/// curves.
-fn round_edge(index: &varde_view::PickIndex, edge: u32) -> bool {
-    edge_radius(index, edge).is_some()
+/// What a picked edge is as the mesh draws it ([`edge_shape`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum EdgeShape {
+    /// A straight line between two ends.
+    Straight,
+    /// A circle or an arc of one ([`edge_radius`]).
+    Round,
+    /// Curved with a centre, a snap point, but not a circle: an ellipse,
+    /// which regenerating refuses as an axis but an align takes the
+    /// centre and axis of.
+    Centred,
+    /// None of these.
+    Other,
 }
 
-/// The radius of `edge` of `index`'s model if it's round as
-/// [`round_edge`] tells: its largest distance from its centre.
+impl EdgeShape {
+    /// Whether it has a centre: [`Round`](Self::Round) or
+    /// [`Centred`](Self::Centred).
+    fn centred(self) -> bool {
+        matches!(self, Self::Round | Self::Centred)
+    }
+}
+
+/// What `edge` of `index`'s model is, or `None` if it isn't on a chain
+/// the naming can key. Regenerating decides from the exact curves.
+fn edge_shape(index: &varde_view::PickIndex, edge: u32) -> Option<EdgeShape> {
+    let keys = index.chain_keys(edge)?;
+    Some(if index.edge_ends(edge, &keys).is_some() {
+        EdgeShape::Straight
+    } else if edge_radius(index, edge).is_some() {
+        EdgeShape::Round
+    } else if index
+        .snap_point(varde_view::Snapped::EdgePoint(edge))
+        .is_some()
+    {
+        EdgeShape::Centred
+    } else {
+        EdgeShape::Other
+    })
+}
+
+/// What a picked face is ([`face_shape`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FaceShape {
+    Flat,
+    /// Round about an axis ([`Summary::has_axis`]).
+    Round,
+    Other,
+}
+
+/// What `face` of `index`'s model is, by its summary.
+fn face_shape(index: &varde_view::PickIndex, face: u32) -> FaceShape {
+    match index
+        .picking()
+        .faces()
+        .get(face as usize)
+        .map(|face| face.summary)
+    {
+        Some(Summary::Plane { .. }) => FaceShape::Flat,
+        Some(summary) if summary.has_axis() => FaceShape::Round,
+        _ => FaceShape::Other,
+    }
+}
+
+/// The radius of `edge` of `index`'s model if it's round as the mesh
+/// draws it: its largest distance from its centre. Round is a circle or
+/// an arc of one, every point of its polyline as far from its snap point
+/// (a round edge's centre) within the rounding of the mesh's `f32` points
+/// and a millionth of its radius; not an ellipse, which regenerating
+/// refuses as an axis.
 fn edge_radius(index: &varde_view::PickIndex, edge: u32) -> Option<f64> {
     let Some(Some(centre)) = index.picking().snaps().get(edge as usize) else {
         return None;

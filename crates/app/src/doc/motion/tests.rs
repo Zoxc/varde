@@ -535,7 +535,7 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
     let rim = |body: BodyId| {
         (0..index.mesh().edge_count() as u32)
             .filter(|&edge| index.body(Picked::Edge(edge)) == Some(body))
-            .find(|&edge| super::round_edge(index, edge))
+            .find(|&edge| super::edge_shape(index, edge) == Some(super::EdgeShape::Round))
             .expect("a rim")
     };
     let right_rim = rim(right);
@@ -846,7 +846,7 @@ fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
     let index = plates.doc.feed.pick_index();
     let rim = (0..index.mesh().edge_count() as u32)
         .filter(|&edge| index.body(Picked::Edge(edge)) == Some(right))
-        .find(|&edge| super::round_edge(index, edge))
+        .find(|&edge| super::edge_shape(index, edge) == Some(super::EdgeShape::Round))
         .expect("a rim");
     plates.click_at(right, Picked::Edge(rim), DVec3::new(25.0, 0.0, 15.0));
     assert!(matches!(
