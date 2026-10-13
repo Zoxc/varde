@@ -491,83 +491,6 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
 /// `set_feature` patch doesn't take: renaming is `rename`'s.
 const RENAMES: &[&str] = &["body_name", "body_names"];
 
-/// The arguments of each feature tool, which `set_feature` patches a
-/// feature of its kind with.
-const EXTRUDE_FIELDS: &[&str] = &[
-    "sketch",
-    "profiles",
-    "extent",
-    "distance",
-    "second_distance",
-    "flip",
-    "taper",
-    "operation",
-    "exclude",
-];
-const REVOLVE_FIELDS: &[&str] = &[
-    "sketch",
-    "profiles",
-    "axis",
-    "extent",
-    "angle",
-    "second_angle",
-    "flip",
-    "operation",
-    "exclude",
-];
-const COMBINE_FIELDS: &[&str] = &["target", "tools", "operation", "keep_tools"];
-const MOVE_BODY_FIELDS: &[&str] = &["bodies", "x", "y", "z", "angle", "axis"];
-const MIRROR_FIELDS: &[&str] = &["bodies", "plane", "keep_original"];
-const PATTERN_FIELDS: &[&str] = &[
-    "kind", "bodies", "axis", "count", "mode", "spread", "flip", "join",
-];
-const ALIGN_FIELDS: &[&str] = &["body", "from", "to", "flip", "distance", "angle"];
-const SCALE_FIELDS: &[&str] = &[
-    "bodies",
-    "point",
-    "mode",
-    "factor",
-    "x",
-    "y",
-    "z",
-    "edge",
-    "length",
-    "axis_only",
-];
-const SPLIT_FIELDS: &[&str] = &["body", "tool", "original", "keep"];
-const SHELL_FIELDS: &[&str] = &["body", "faces", "thickness", "direction"];
-const OFFSET_FACE_FIELDS: &[&str] = &["faces", "distance", "inward", "tangent"];
-const DRAFT_FIELDS: &[&str] = &["faces", "neutral", "angle", "flip", "tangent"];
-const CHAMFER_FIELDS: &[&str] = &[
-    "edges",
-    "faces",
-    "type",
-    "distance",
-    "second_distance",
-    "angle",
-    "flip",
-    "tangent",
-];
-const FILLET_FIELDS: &[&str] = &["edges", "faces", "radius", "tangent"];
-const SWEEP_FIELDS: &[&str] = &[
-    "sketch",
-    "profiles",
-    "path",
-    "helix",
-    "keep_orientation",
-    "twist",
-    "operation",
-    "exclude",
-];
-const LOFT_FIELDS: &[&str] = &[
-    "sections",
-    "mode",
-    "closed",
-    "rails",
-    "operation",
-    "exclude",
-];
-
 /// A feature tool: one of the tools that add a feature, whose
 /// arguments are the fields `feature` shows a feature of its kind by
 /// and `set_feature` patches.
@@ -627,33 +550,48 @@ impl FeatureTool {
     /// Its arguments, the fields `feature` shows a feature of its kind
     /// by and `set_feature` patches.
     pub fn fields(self) -> &'static [&'static str] {
-        self.spec().1
+        static FIELDS: std::sync::OnceLock<[Vec<&'static str>; 16]> = std::sync::OnceLock::new();
+        let fields = FIELDS.get_or_init(|| {
+            FeatureTool::ALL.map(|tool| {
+                // Its schema's properties, but for the names of what it
+                // makes, which a patch doesn't take.
+                let schema = (schema::list()["tools"].as_array().into_iter().flatten())
+                    .find(|listed| listed["name"] == tool.name())
+                    .and_then(|listed| listed["inputSchema"]["properties"].as_object());
+                let naming = |key: &str| key == "name" || Some(key) == tool.new_bodies().key();
+                (schema.into_iter().flatten())
+                    .map(|(key, _)| key.as_str())
+                    .filter(|key| !naming(key))
+                    .collect()
+            })
+        });
+        &fields[self as usize]
     }
 
     /// The names of new bodies it takes.
     fn new_bodies(self) -> NewBodies {
-        self.spec().2
+        self.spec().1
     }
 
-    /// Its name, fields and names of new bodies.
-    fn spec(self) -> (&'static str, &'static [&'static str], NewBodies) {
+    /// Its name and names of new bodies.
+    fn spec(self) -> (&'static str, NewBodies) {
         match self {
-            FeatureTool::Extrude => ("extrude", EXTRUDE_FIELDS, NewBodies::One),
-            FeatureTool::Revolve => ("revolve", REVOLVE_FIELDS, NewBodies::One),
-            FeatureTool::Combine => ("combine", COMBINE_FIELDS, NewBodies::None),
-            FeatureTool::MoveBody => ("move_body", MOVE_BODY_FIELDS, NewBodies::None),
-            FeatureTool::Mirror => ("mirror", MIRROR_FIELDS, NewBodies::None),
-            FeatureTool::Pattern => ("pattern", PATTERN_FIELDS, NewBodies::Many),
-            FeatureTool::Align => ("align", ALIGN_FIELDS, NewBodies::None),
-            FeatureTool::Scale => ("scale", SCALE_FIELDS, NewBodies::None),
-            FeatureTool::Split => ("split", SPLIT_FIELDS, NewBodies::One),
-            FeatureTool::Shell => ("shell", SHELL_FIELDS, NewBodies::None),
-            FeatureTool::OffsetFace => ("offset_face", OFFSET_FACE_FIELDS, NewBodies::None),
-            FeatureTool::Draft => ("draft", DRAFT_FIELDS, NewBodies::None),
-            FeatureTool::Chamfer => ("chamfer", CHAMFER_FIELDS, NewBodies::None),
-            FeatureTool::Fillet => ("fillet", FILLET_FIELDS, NewBodies::None),
-            FeatureTool::Sweep => ("sweep", SWEEP_FIELDS, NewBodies::One),
-            FeatureTool::Loft => ("loft", LOFT_FIELDS, NewBodies::One),
+            FeatureTool::Extrude => ("extrude", NewBodies::One),
+            FeatureTool::Revolve => ("revolve", NewBodies::One),
+            FeatureTool::Combine => ("combine", NewBodies::None),
+            FeatureTool::MoveBody => ("move_body", NewBodies::None),
+            FeatureTool::Mirror => ("mirror", NewBodies::None),
+            FeatureTool::Pattern => ("pattern", NewBodies::Many),
+            FeatureTool::Align => ("align", NewBodies::None),
+            FeatureTool::Scale => ("scale", NewBodies::None),
+            FeatureTool::Split => ("split", NewBodies::One),
+            FeatureTool::Shell => ("shell", NewBodies::None),
+            FeatureTool::OffsetFace => ("offset_face", NewBodies::None),
+            FeatureTool::Draft => ("draft", NewBodies::None),
+            FeatureTool::Chamfer => ("chamfer", NewBodies::None),
+            FeatureTool::Fillet => ("fillet", NewBodies::None),
+            FeatureTool::Sweep => ("sweep", NewBodies::One),
+            FeatureTool::Loft => ("loft", NewBodies::One),
         }
     }
 }

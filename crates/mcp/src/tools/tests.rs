@@ -1432,7 +1432,7 @@ fn set_feature_keeps_the_patch_for_the_app() {
     assert_eq!(FeatureTool::named("set_feature"), None);
     assert_eq!(
         FeatureTool::named("combine").map(FeatureTool::fields),
-        Some(&["target", "tools", "operation", "keep_tools"][..])
+        Some(&["keep_tools", "operation", "target", "tools"][..])
     );
     let mut extrude = set.patch;
     extrude.insert("sketch".to_owned(), json!("Sketch 1"));
@@ -1441,11 +1441,11 @@ fn set_feature_keeps_the_patch_for_the_app() {
     assert!(matches!(read, Ok(Call::Extrude(_))), "{read:?}");
 }
 
-/// Each feature tool's fields are its schema's properties, and an empty
-/// patch of its kind reads: every argument it requires has a
-/// placeholder.
+/// Each feature tool lists the names of what it makes beside its
+/// fields, and an empty patch of its kind reads: every argument it
+/// requires has a placeholder.
 #[test]
-fn feature_tools_fields_match_their_schemas_and_patches_read() {
+fn feature_tools_list_their_names_and_patches_read() {
     let list = list();
     let mut kinds = 0;
     for tool in list["tools"].as_array().unwrap() {
@@ -1453,26 +1453,15 @@ fn feature_tools_fields_match_their_schemas_and_patches_read() {
         let Some(feature) = FeatureTool::named(name) else {
             continue;
         };
-        let fields = feature.fields();
         kinds += 1;
-        let mut properties: Vec<&str> = (tool["inputSchema"]["properties"].as_object())
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect();
-        let mut fields = fields.to_vec();
-        // Beside its fields, the names of what it makes, never patched.
+        let properties = tool["inputSchema"]["properties"].as_object().unwrap();
         let bodies = feature.new_bodies().key();
-        let naming = |key: &str| key == "name" || Some(key) == bodies;
-        assert!(properties.contains(&"name"), "{name}");
-        assert_eq!(
-            bodies.is_some_and(|key| properties.contains(&key)),
-            bodies.is_some()
+        assert!(properties.contains_key("name"), "{name}");
+        assert!(
+            bodies.is_none_or(|key| properties.contains_key(key)),
+            "{name}"
         );
-        properties.retain(|key| !naming(key));
-        properties.sort_unstable();
-        fields.sort_unstable();
-        assert_eq!(fields, properties, "{name}");
+        assert!(!feature.fields().is_empty(), "{name}");
         let read = parse_patch(feature, &Map::new());
         assert!(read.is_ok(), "{name}: {read:?}");
         // A patch takes no names: they're rename's.
