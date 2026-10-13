@@ -183,7 +183,7 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
 }
 
 /// What a Jacobian's factorization says, by row and column.
-pub(crate) struct Dependencies {
+pub(super) struct Dependencies {
     /// The number of independent rows.
     pub rank: usize,
     /// Per column: no motion keeping the rows' linearized equations moves
@@ -214,7 +214,7 @@ impl Component {
 /// (see [`Equation::implied`](super::equation::Equation::implied)) that
 /// depend on the rest, each taken, in order, only where it adds to the
 /// rank of those taken before it. Those left out are in no dependency.
-pub(crate) fn counted_dependencies(jacobian: &Mat<f64>, implied: &[bool]) -> Dependencies {
+pub(super) fn counted_dependencies(jacobian: &Mat<f64>, implied: &[bool]) -> Dependencies {
     if !implied.contains(&true) {
         return dependencies(jacobian);
     }
@@ -272,7 +272,7 @@ fn rank_of_r(r: MatRef<'_, f64>) -> usize {
 /// columns of `Q` past the rank span `J`'s null space, which a fixed
 /// variable has no part in; and each dependent row is a combination of the independent
 /// ones, `R₁₁⁻¹ R₁₂`, whose rows with a weight in it are involved too.
-pub(crate) fn dependencies(jacobian: &Mat<f64>) -> Dependencies {
+fn dependencies(jacobian: &Mat<f64>) -> Dependencies {
     let (rows, columns) = jacobian.shape();
     let mut involved = vec![false; rows];
     if rows == 0 {

@@ -18,7 +18,7 @@ use super::real::{Dual, MAX_INPUTS, Real, Vector};
 /// Where an equation reads a number: a variable of the solver, by index,
 /// or a constant (a coordinate of something fixed).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Slot {
+pub(super) enum Slot {
     Var(usize),
     Const(f64),
 }
@@ -34,11 +34,11 @@ impl Slot {
 }
 
 /// A point's coordinates.
-pub(crate) type PointSlots = [Slot; 2];
+pub(super) type PointSlots = [Slot; 2];
 
 /// A line by its ends.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct LineSlots {
+pub(super) struct LineSlots {
     pub start: PointSlots,
     pub end: PointSlots,
 }
@@ -46,7 +46,7 @@ pub(crate) struct LineSlots {
 /// A circle, or an arc, whose radius is its start's distance from its
 /// centre.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RoundSlots {
+pub(super) enum RoundSlots {
     Circle {
         center: PointSlots,
         radius: Slot,
@@ -67,7 +67,7 @@ impl RoundSlots {
 
 /// What an edge's gap ([`Residual::EdgeGap`]) runs to.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum EdgeTo {
+pub(super) enum EdgeTo {
     Point(PointSlots),
     Line(LineSlots),
     Round(RoundSlots),
@@ -76,7 +76,7 @@ pub(crate) enum EdgeTo {
 /// An offset pair (see [`Sketch::offset_pair`](crate::Sketch::offset_pair)):
 /// how far the second of it lies from the first.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum PairSlots {
+pub(super) enum PairSlots {
     /// The signed distance of the second line's midpoint from the line
     /// through the first, positive on its left.
     Lines { line: LineSlots, copy: LineSlots },
@@ -92,7 +92,7 @@ pub(crate) enum PairSlots {
 /// where the point's offset is its distance, left of the way the spline
 /// runs positive.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum PairRead {
+pub(super) enum PairRead {
     Slots(PairSlots),
     Spline { point: PointSlots, at: SplineAt },
 }
@@ -103,7 +103,7 @@ pub(crate) enum PairRead {
 /// linear in them for the parameters their places give, which it holds
 /// through a step and finds anew after each ([`SplineSlots::refit`]).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SplineSlots {
+pub(super) struct SplineSlots {
     pub map: RefCell<SplineMap>,
     pub inputs: Vec<PointSlots>,
     /// About how long it is, at least a micrometre: its parameter, which
@@ -118,7 +118,7 @@ pub(crate) struct SplineSlots {
 /// of its [`SplineSlots::inputs`], open or `closed`, with handles at the
 /// fit points `handles` (see [`Interpolation`]).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Refit {
+pub(super) struct Refit {
     pub fit: usize,
     pub closed: bool,
     pub handles: Vec<usize>,
@@ -205,7 +205,7 @@ const PROJECTION_STEPS: usize = 4;
 /// along it (see [`SplineSlots::length`]): a variable for a point on it,
 /// or a constant at an end.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SplineAt {
+pub(super) struct SplineAt {
     pub spline: Rc<SplineSlots>,
     pub t: Slot,
 }
@@ -230,7 +230,7 @@ impl SplineAt {
 /// a tangent or a smooth join with a spline (see
 /// [`Joint`](crate::Joint)).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Heading {
+pub(super) enum Heading {
     /// Along a line, from its start to its end, straight.
     Line(LineSlots),
     /// Round a circle or an arc counter-clockwise, across the direction
@@ -242,7 +242,7 @@ pub(crate) enum Heading {
 
 /// What an equation says, as a residual that's zero when it holds.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Residual {
+pub(super) enum Residual {
     /// `a - b`: two coordinates equal (coincident, horizontal, vertical).
     Equal(Slot, Slot),
     /// `point - (a + b) / 2`: a coordinate halfway between two others.
@@ -408,7 +408,7 @@ pub(crate) enum Residual {
 /// One equation, from the constraint (or the arc, for the equation it
 /// implies) named by `source`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Equation {
+pub(super) struct Equation {
     pub residual: Residual,
     pub source: Id,
     /// Whether it restates what may be held otherwise, so that it counts

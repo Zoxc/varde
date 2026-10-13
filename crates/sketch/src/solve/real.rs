@@ -9,11 +9,11 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 /// two numbers per derivative, ten at most with its own (a smooth join of
 /// a spline and an arc), and is differentiated through the spline's map
 /// by the chain rule (see `Residual::gradient`), so it stays sixteen.
-pub(crate) const MAX_INPUTS: usize = 16;
+pub(super) const MAX_INPUTS: usize = 16;
 
 /// What an equation is computed with, so it's written once and evaluated
 /// both for its value and for its derivatives.
-pub(crate) trait Real:
+pub(super) trait Real:
     Copy
     + Add<Output = Self>
     + Sub<Output = Self>
@@ -37,7 +37,7 @@ impl Real for f64 {
 
 /// A value with its derivatives by up to [`MAX_INPUTS`] variables.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Dual {
+pub(super) struct Dual {
     pub value: f64,
     pub gradient: [f64; MAX_INPUTS],
 }
@@ -127,7 +127,7 @@ impl Neg for Dual {
 
 /// A 2D vector of [`Real`]s, for writing equations as geometry.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Vector<R> {
+pub(super) struct Vector<R> {
     pub x: R,
     pub y: R,
 }

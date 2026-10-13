@@ -23,7 +23,7 @@ use super::equation::{
 
 /// How [`Constraint::Fix`] is modelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Fixing {
+pub(super) enum Fixing {
     /// What's fixed is constants, not variables: the solver can't move
     /// it, and it cuts the sketch into smaller components.
     Constants,
@@ -34,14 +34,14 @@ pub(crate) enum Fixing {
 
 /// A variable kept within bounds: its least and most.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Bound {
+pub(super) struct Bound {
     pub var: usize,
     pub least: f64,
     pub most: f64,
 }
 
 /// The variables of a sketch and the equations over them.
-pub(crate) struct System {
+pub(super) struct System {
     /// Each variable's value.
     pub values: Vec<f64>,
     pub equations: Vec<Equation>,
@@ -255,7 +255,7 @@ fn constants(at: DVec2) -> PointSlots {
 /// A set of variables the equations tie together, with those equations,
 /// by index, both in increasing order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Component {
+pub(super) struct Component {
     pub vars: Vec<usize>,
     pub equations: Vec<usize>,
 }
