@@ -1369,6 +1369,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2c81fb5260e37854d09d5c87183309fd8c555b75289427884b25660bc87a85e"
 
 [[package]]
+name = "geogram_predicates"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f5312ba42f1ca10e47fcb45b6274e421a7861305195a9878c23717903d4d63b"
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4294,9 +4300,11 @@ dependencies = [
 name = "varde-decide"
 version = "0.1.0"
 dependencies = [
+ "geogram_predicates",
  "glam 0.30.10",
  "libm",
  "malachite",
+ "smallvec",
  "varde-testing",
  "varde-testkit",
 ]

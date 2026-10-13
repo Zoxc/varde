@@ -82,6 +82,14 @@ libm = "=0.2.16"
 # but a pinned one is what the tests have checked (deny.toml holds the
 # malachite crates there too). LGPL-3.0 (deny.toml's exceptions).
 malachite = { version = "=0.12.0", default-features = false, features = ["floats"] }
+# The components of the decision layer's exact expansions
+# (crates/decide/src/num/expansion.rs), kept inline while few. The version
+# the lock already holds, pinned exactly as the kernel's other numerics
+# dependencies.
+smallvec = "=1.16.2"
+# The oracle of the expansion tests: Geogram's exact predicates, ported to
+# pure Rust (dev-dependency only; LGPL-3.0 OR MIT, taken under MIT).
+geogram_predicates = "=0.4.0"
 # O_NONBLOCK and O_NOFOLLOW for opening the MCP token (crates/io), Unix
 # only. The version the lock already holds.
 libc = "0.2"

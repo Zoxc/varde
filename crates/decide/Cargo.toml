@@ -10,7 +10,9 @@ publish = false
 glam.workspace = true
 libm.workspace = true
 malachite.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
+geogram_predicates.workspace = true
 varde-testing.workspace = true
 varde-testkit.workspace = true

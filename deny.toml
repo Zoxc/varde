@@ -33,10 +33,6 @@ exceptions = [
     { name = "malachite-nz", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
     { name = "malachite-q", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
     { name = "malachite-float", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
-    # Test-only oracles, never in a release build.
-    { name = "rug", allow = ["LGPL-3.0-or-later"] },
-    { name = "gmp-mpfr-sys", allow = ["LGPL-3.0-or-later"] },
-    { name = "geogram_predicates", allow = ["LGPL-3.0-only", "LGPL-3.0-or-later"] },
 ]
 
 [licenses.private]
