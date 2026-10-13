@@ -177,7 +177,7 @@ pub fn measure(
             Curve::Arc { .. } => Measure::Radius(one),
             Curve::Spline(_) => return None,
         },
-        [a, b] if edge_distance(sketch, a, b).is_some() => edge_distance(sketch, a, b)?,
+        [a, b] if let Some(edge) = edge_distance(sketch, a, b) => edge,
         [a, b] => match (point(a), point(b)) {
             (Some(p), Some(q)) => along(extent(p, q, at), a, b, Measure::Distance(a, b)),
             (None, None) => {
@@ -386,16 +386,21 @@ pub fn rectangle(sketch: &Sketch, selected: &[Id]) -> Option<(f64, f64)> {
 /// `measure` and its `value`, in model units, as the status bar shows it
 /// in a design in `units`: "Length 40 mm", "Diameter 10 mm".
 pub fn shown_measure(measure: &Measure, value: f64, units: LengthUnit) -> String {
-    let shown = Shown::current();
-    let value = shown.format(value, shown.unit(measure.quantity(), units));
+    let value = formatted(measure, value, units);
     format!("{} {value}", name(measure))
+}
+
+/// `value`, in model units, in the unit `measure`'s quantity shows in a
+/// design in `units`: "40 mm", "90°".
+fn formatted(measure: &Measure, value: f64, units: LengthUnit) -> String {
+    let shown = Shown::current();
+    shown.format(value, shown.unit(measure.quantity(), units))
 }
 
 /// `value`, in model units, as a dimension of `measure` shows it in a
 /// design in `units`: "40 mm", "90°", "R 5 mm", "Ø 10 mm".
 fn shown_value(measure: &Measure, value: f64, units: LengthUnit) -> String {
-    let shown = Shown::current();
-    let value = shown.format(value, shown.unit(measure.quantity(), units));
+    let value = formatted(measure, value, units);
     match measure {
         Measure::Radius(_) => format!("R {value}"),
         Measure::Diameter(_) => format!("Ø {value}"),
