@@ -21,7 +21,6 @@
 //! check. Each chamfer the model shows working takes material off its
 //! body.
 
-use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, Command, Operation, Targets};
 use varde_expr::LengthUnit;
 use varde_view::{MotionField, PanelHover};

@@ -20,7 +20,6 @@
 //! takes it over, asking about that edit, its buttons back (or, with
 //! nothing unfinished any more, just applies).
 
-use crate::doc::OperationSlot;
 use varde_mcp::tools::Call;
 use varde_view::McpTool;
 

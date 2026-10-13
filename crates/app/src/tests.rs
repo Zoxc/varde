@@ -1,4 +1,4 @@
-use crate::doc::{Dialog, OperationSlot};
+use crate::doc::Dialog;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;

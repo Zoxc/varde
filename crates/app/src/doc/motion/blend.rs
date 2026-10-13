@@ -12,7 +12,6 @@
 //! themselves, so a body merged into another before the feature takes
 //! them with it on to the holder.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{Document, EdgeRef, FaceRef, blend_body, blend_excludes};
 use varde_expr::Unit;

@@ -5,7 +5,6 @@
 //! drawn), a torus's fitted faces noted, editing from the Timeline,
 //! cancelling and undo, a point an undo takes away said to be gone.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{
     AxisLine, BodyId, Command, Document, EdgeRef, Editor, FeatureKind, Operation, OriginPlane,

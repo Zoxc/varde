@@ -31,7 +31,6 @@
 //! document passes its check. At the end, each loft making a body that
 //! the model shows working is the box between its two sections.
 
-use crate::doc::OperationSlot;
 use glam::DVec2;
 use varde_document::{BodyOp, Combine, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, Operation, Targets};
 use varde_expr::LengthUnit;

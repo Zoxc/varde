@@ -15,7 +15,7 @@
 //! is in Body 2 now").
 
 use super::pick::CachedHighlight;
-use crate::doc::{OperationSession, OperationSlot};
+use crate::doc::OperationSession;
 use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document, FeatureId, FeatureKind};

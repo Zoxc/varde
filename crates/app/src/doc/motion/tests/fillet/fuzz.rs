@@ -25,7 +25,6 @@
 //! texts never panic; and the document passes its check. Each fillet the
 //! model shows working takes material off its body.
 
-use crate::doc::OperationSlot;
 use varde_document::{BodyId, BodyOp, Combine, Command, Editor, FeatureId, Operation, Targets};
 use varde_expr::LengthUnit;
 use varde_view::{OverlapItems, Overlaps, PanelHover, Pick};

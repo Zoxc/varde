@@ -8,7 +8,6 @@
 //! through zero turning inward, Tangent faces, OK as one undo step;
 //! editing from the Timeline; another body's faces refused.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{BodyId, Command, Document, Editor, FeatureKind, OffsetFace, Operation};
 use varde_regen::Summary;

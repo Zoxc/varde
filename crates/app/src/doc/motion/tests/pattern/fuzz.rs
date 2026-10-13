@@ -11,7 +11,6 @@
 //! away writes nothing, a session never outlives the pattern it edits or
 //! its kind, and the document passes its check.
 
-use crate::doc::OperationSlot;
 use std::f64::consts::TAU;
 
 use varde_document::{BodyId, Document};

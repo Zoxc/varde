@@ -3,7 +3,6 @@
 //! plate (60 × 40 × 10 about the Z axis from z 0 up), and a knob dragged
 //! typed into its field.
 
-use crate::doc::OperationSlot;
 use std::f64::consts::{FRAC_1_SQRT_2, SQRT_2};
 use varde_view::MotionKind;
 

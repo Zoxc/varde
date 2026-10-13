@@ -1,7 +1,6 @@
 //! Random sequences of what the user can do around the combine session,
 //! checking after each step what must always hold.
 
-use crate::doc::OperationSlot;
 use varde_document::{Command, Extent, Extrude, OriginPlane, Plane};
 use varde_view::{OperationKind, Pick};
 

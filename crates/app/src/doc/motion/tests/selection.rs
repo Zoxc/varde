@@ -2,7 +2,6 @@
 //! toolbar offering those that take it: edges, faces, both, vertices,
 //! bodies, or a sketch selected in the Timeline.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{AxisLine, AxisRef, BodyId, FeatureId, FeatureKind, Plane};
 use varde_regen::Summary;

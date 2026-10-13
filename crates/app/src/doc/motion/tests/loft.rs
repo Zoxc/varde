@@ -9,7 +9,6 @@
 //! editing from the Timeline, Cancel and undo; a section's region an
 //! edit takes away said to be gone.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     BodyId, Command, CurveChain, Document, Editor, FaceKey, FaceRef, FeatureId, FeatureKind, Loft,

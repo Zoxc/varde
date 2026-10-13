@@ -357,28 +357,32 @@ pub(crate) enum DocMode {
     Measure(MeasureSession),
 }
 
-/// `$get` and `$get_mut` read the mode's `$variant` if it's the one in,
-/// `$take` leaves it, handing it back, and leaves any other as it is.
+/// `$get` and `$get_mut` read the mode's `$variant` if it's the one in
+/// (or, with `($kind)`, that operation kind's session in it), `$take`
+/// leaves it, handing it back, and leaves any other as it is.
 macro_rules! mode_accessors {
-    ($($variant:ident: $state:ty => $get:ident, $get_mut:ident, $take:ident;)*) => {
+    ($($variant:ident $(($kind:ident))?: $state:ty => $get:ident, $get_mut:ident, $take:ident;)*) => {
         $(
+            #[allow(unused_parens, reason = "`(state)` is bare without a `$kind`")]
             pub(crate) fn $get(&self) -> Option<&$state> {
                 match self {
-                    Self::$variant(state) => Some(state),
+                    Self::$variant($(OperationSession::$kind)?(state)) => Some(state),
                     _ => None,
                 }
             }
 
+            #[allow(unused_parens, reason = "`(state)` is bare without a `$kind`")]
             pub(crate) fn $get_mut(&mut self) -> Option<&mut $state> {
                 match self {
-                    Self::$variant(state) => Some(state),
+                    Self::$variant($(OperationSession::$kind)?(state)) => Some(state),
                     _ => None,
                 }
             }
 
+            #[allow(unused_parens, reason = "`(state)` is bare without a `$kind`")]
             pub(crate) fn $take(&mut self) -> Option<$state> {
                 match std::mem::take(self) {
-                    Self::$variant(state) => Some(state),
+                    Self::$variant($(OperationSession::$kind)?(state)) => Some(state),
                     other => {
                         *self = other;
                         None
@@ -394,91 +398,11 @@ impl DocMode {
         PickingPlane: sketch::PickingPlane => picking_plane, picking_plane_mut, take_picking_plane;
         Sketch: SketchSession => sketch, sketch_mut, take_sketch;
         Measure: MeasureSession => measure, measure_mut, take_measure;
-    }
-
-    /// The operation being set up, if it's the mode.
-    pub(crate) fn operation(&self) -> Option<&OperationSession> {
-        match self {
-            Self::Operation(session) => Some(session),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn operation_mut(&mut self) -> Option<&mut OperationSession> {
-        match self {
-            Self::Operation(session) => Some(session),
-            _ => None,
-        }
-    }
-
-    /// Closes the operation being set up, if it's the mode, handing it
-    /// back.
-    pub(crate) fn take_operation(&mut self) -> Option<OperationSession> {
-        match std::mem::take(self) {
-            Self::Operation(session) => Some(session),
-            other => {
-                *self = other;
-                None
-            }
-        }
-    }
-}
-
-/// Each kind's session in the operation slot, if it's the one being set
-/// up: `$kind` and `$kind_mut` read it, `take_$kind` closes it, handing
-/// it back. On the field rather than [`Doc`], so it borrows the slot
-/// alone.
-pub(crate) trait OperationSlot {
-    fn extrude(&self) -> Option<&ExtrudeSession>;
-    fn extrude_mut(&mut self) -> Option<&mut ExtrudeSession>;
-    fn take_extrude(&mut self) -> Option<ExtrudeSession>;
-    fn revolve(&self) -> Option<&RevolveSession>;
-    fn revolve_mut(&mut self) -> Option<&mut RevolveSession>;
-    fn take_revolve(&mut self) -> Option<RevolveSession>;
-    fn combine(&self) -> Option<&CombineSession>;
-    fn combine_mut(&mut self) -> Option<&mut CombineSession>;
-    fn take_combine(&mut self) -> Option<CombineSession>;
-    fn motion(&self) -> Option<&MotionSession>;
-    fn motion_mut(&mut self) -> Option<&mut MotionSession>;
-    fn take_motion(&mut self) -> Option<MotionSession>;
-}
-
-macro_rules! slot_accessors {
-    ($($variant:ident: $session:ty => $get:ident, $get_mut:ident, $take:ident;)*) => {
-        $(
-            fn $get(&self) -> Option<&$session> {
-                match self {
-                    DocMode::Operation(OperationSession::$variant(session)) => Some(session),
-                    _ => None,
-                }
-            }
-
-            fn $get_mut(&mut self) -> Option<&mut $session> {
-                match self {
-                    DocMode::Operation(OperationSession::$variant(session)) => Some(session),
-                    _ => None,
-                }
-            }
-
-            fn $take(&mut self) -> Option<$session> {
-                match std::mem::take(self) {
-                    DocMode::Operation(OperationSession::$variant(session)) => Some(session),
-                    other => {
-                        *self = other;
-                        None
-                    }
-                }
-            }
-        )*
-    };
-}
-
-impl OperationSlot for DocMode {
-    slot_accessors! {
-        Extrude: ExtrudeSession => extrude, extrude_mut, take_extrude;
-        Revolve: RevolveSession => revolve, revolve_mut, take_revolve;
-        Combine: CombineSession => combine, combine_mut, take_combine;
-        Motion: MotionSession => motion, motion_mut, take_motion;
+        Operation: OperationSession => operation, operation_mut, take_operation;
+        Operation(Extrude): ExtrudeSession => extrude, extrude_mut, take_extrude;
+        Operation(Revolve): RevolveSession => revolve, revolve_mut, take_revolve;
+        Operation(Combine): CombineSession => combine, combine_mut, take_combine;
+        Operation(Motion): MotionSession => motion, motion_mut, take_motion;
     }
 }
 

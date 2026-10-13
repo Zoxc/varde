@@ -3,7 +3,6 @@
 //! found and clicked in the model shown, what the screen says, and what
 //! the session picks.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     BodyId, Command, Document, Editor, Extent, Extrude, FaceRef, Operation, OriginPlane, Plane,

@@ -1,7 +1,6 @@
 //! The pattern sessions: `P` and the circular pattern, their modes, the
 //! mock's errors, editing from the Timeline, long texts, what's gone.
 
-use crate::doc::OperationSlot;
 use std::f64::consts::TAU;
 
 use glam::DVec3;

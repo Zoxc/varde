@@ -11,7 +11,6 @@
 //! is, and in a sketch with Project or Intersect picked as that tool
 //! picks.
 
-use crate::doc::OperationSlot;
 use varde_view::{
     Look, OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps, Pick, PickIndex, Picked,
     Selected,

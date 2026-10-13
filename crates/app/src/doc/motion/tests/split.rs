@@ -9,7 +9,6 @@
 //! held; a tool an undo takes away said to be gone; faces of an edited
 //! split's new body named on the body split.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{
     BodyId, BodyOp, Combine, Command, Document, Editor, FeatureId, FeatureKind, Keep, Move,

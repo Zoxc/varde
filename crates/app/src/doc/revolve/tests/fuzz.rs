@@ -1,7 +1,6 @@
 //! Random sequences of what the user can do around the extrude and
 //! revolve sessions, checking after each step what must always hold.
 
-use crate::doc::OperationSlot;
 use varde_document::{Document, FeatureKind, OriginPlane, Plane};
 use varde_regen::Request;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, Mode};

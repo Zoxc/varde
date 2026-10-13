@@ -10,7 +10,6 @@
 //! merged into another before the draft mid-session; the neutral face
 //! among the faces drafted; units changed mid-session.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{Document, Editor, FaceDraft, FeatureKind, OriginPlane, Plane};
 use varde_regen::Summary;

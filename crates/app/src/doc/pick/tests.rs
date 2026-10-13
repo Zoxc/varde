@@ -1,4 +1,3 @@
-use crate::doc::OperationSlot;
 use glam::{DVec2, Vec3};
 use iced::mouse::{Cursor, Event};
 use varde_render::{Camera, View};

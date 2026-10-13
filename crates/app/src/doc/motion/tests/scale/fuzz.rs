@@ -18,7 +18,6 @@
 //! session never outlives the scale it edits; the panel's texts never
 //! panic; and the document passes its check.
 
-use crate::doc::OperationSlot;
 use varde_document::{Axis3, BodyOp, Combine, FeatureId, Operation, Targets};
 use varde_expr::LengthUnit;
 use varde_view::PickIndex;

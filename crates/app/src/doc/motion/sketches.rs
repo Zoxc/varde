@@ -8,7 +8,6 @@ use varde_sketch::{Id, Sketch};
 use varde_view::{Candidate, MotionKind, MotionPick, SketchLines, SplitMode};
 
 use super::{Doc, MotionSession};
-use crate::doc::OperationSlot;
 use crate::doc::regions::{BodyTargets, RegionPick};
 use crate::doc::sketch_of;
 

@@ -7,7 +7,7 @@
 //! Bodies list and the typed fields are the extrude's
 //! ([`super::regions`]).
 
-use crate::doc::{DocMode, OperationSession, OperationSlot};
+use crate::doc::{DocMode, OperationSession};
 use std::borrow::Cow;
 use std::f64::consts::PI;
 

@@ -35,7 +35,7 @@
 //! taken only on the model answering what was asked last.
 
 use super::pick::CachedHighlight;
-use crate::doc::{DocMode, OperationSession, OperationSlot};
+use crate::doc::{DocMode, OperationSession};
 use std::borrow::Cow;
 use std::sync::Arc;
 

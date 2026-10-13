@@ -7,7 +7,6 @@
 //! `agents/viewport.md`. Pixels differ by GPU and driver, so nothing is
 //! compared: the one check is that the viewport was drawn.
 
-use crate::doc::OperationSlot;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use varde_view::MotionKind;

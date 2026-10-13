@@ -11,7 +11,6 @@
 //! operation and bodies as an extrude's. What the document no longer
 //! takes is kept and said to be gone.
 
-use crate::doc::OperationSlot;
 use crate::doc::regions::Found;
 use std::borrow::Cow;
 

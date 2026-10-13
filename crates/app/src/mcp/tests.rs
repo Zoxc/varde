@@ -1,4 +1,3 @@
-use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::sync::mpsc;
 use varde_view::MotionKind;

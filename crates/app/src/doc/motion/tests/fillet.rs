@@ -9,7 +9,6 @@
 //! rail's Fillet; the edges selected taken in, `F` again backing out; a
 //! slot's rim lit whole.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{FeatureKind, Fillet};
 use varde_regen::Summary;

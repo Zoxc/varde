@@ -22,7 +22,6 @@
 //! check. Each split the model shows working cut its body in two: its
 //! pieces' volumes add up to the body's before it.
 
-use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, FeatureId, Operation, OriginPlane, Targets};
 use varde_view::PickIndex;
 

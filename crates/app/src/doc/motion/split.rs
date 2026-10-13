@@ -11,7 +11,6 @@
 //! longer takes is kept and said to be gone; the preview's pieces are
 //! tinted apart and labelled.
 
-use crate::doc::OperationSlot;
 use std::borrow::Cow;
 
 use glam::DVec3;

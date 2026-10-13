@@ -31,7 +31,6 @@
 //! working was of a box and gives the volume its box, faces and signed
 //! distance give.
 
-use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, FeatureId, Targets};
 use varde_expr::LengthUnit;
 use varde_view::{OverlapItems, Overlaps, PanelHover};

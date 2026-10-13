@@ -8,7 +8,6 @@
 //! OK adds it as one undo step. Editing a tapered extrude shows its
 //! taper; units changed mid-session keep it.
 
-use crate::doc::OperationSlot;
 use varde_document::{Command, Document, Editor, Extrude, FeatureKind, OriginPlane, Plane};
 use varde_view::{Edit, ExtrudeLook, Look, Message as Ui};
 

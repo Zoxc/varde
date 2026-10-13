@@ -18,7 +18,6 @@
 //! lit and drawn on the model shown, found again by its names when that
 //! changes.
 
-use crate::doc::OperationSlot;
 use std::borrow::Cow;
 
 use glam::DVec3;

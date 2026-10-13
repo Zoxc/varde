@@ -9,7 +9,6 @@
 //! merged into another before the feature takes them with it on to the
 //! holder.
 
-use crate::doc::OperationSlot;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 

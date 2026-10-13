@@ -33,7 +33,6 @@
 //! sweep making a body that the model shows working is its profile
 //! extruded along the profile's normal from its plane.
 
-use crate::doc::OperationSlot;
 use glam::DVec2;
 use varde_document::{
     Axis3, BodyOp, Combine, Document, Editor, FeatureId, MAX_PATH_CURVES, MAX_PATH_PARTS,

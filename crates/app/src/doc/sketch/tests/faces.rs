@@ -2,7 +2,6 @@
 //! the face's frame, extruding from it, its placement following the
 //! history before it, and one whose placement failed.
 
-use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::rc::Rc;
 

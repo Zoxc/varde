@@ -3,7 +3,6 @@
 //! click on it would leave or take out), never as the model's selection,
 //! which the session doesn't change.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_regen::Summary;
 use varde_view::MotionKind;

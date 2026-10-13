@@ -1,4 +1,3 @@
-use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::rc::Rc;
 use varde_sketch::Selectable;

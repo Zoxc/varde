@@ -9,7 +9,6 @@
 //! preview and OK as one undo step; editing from the Timeline, Cancel and
 //! undo; a path an edit takes away said to be gone.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     Axis3, AxisRef, BodyId, Command, Document, Editor, FeatureId, FeatureKind, Orientation,

@@ -10,7 +10,6 @@
 //! first one's); faces and the body following a merge before the shell;
 //! the toolbar fitting at 1280 px.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{BodyId, Command, Document, Editor, FeatureId, FeatureKind, Operation, Shell};
 use varde_regen::Summary;

@@ -17,7 +17,6 @@
 //! body merged into another before the feature takes the faces with it
 //! on to the holder.
 
-use crate::doc::OperationSlot;
 use varde_document::{Document, FaceRef, MAX_DRAFT_FACES, MAX_OFFSET_FACES, MAX_SHELL_FACES};
 use varde_view::{MotionKind, Picked, PickedFace, PickedFaces};
 

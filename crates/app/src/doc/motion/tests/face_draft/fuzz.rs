@@ -32,7 +32,6 @@
 //! of a box, its pull along a world axis, and gives the volume its
 //! box's cross-sections give.
 
-use crate::doc::OperationSlot;
 use glam::DVec2;
 use varde_document::{BodyId, BodyOp, Combine, Command, FeatureId, Operation, Targets};
 use varde_expr::LengthUnit;

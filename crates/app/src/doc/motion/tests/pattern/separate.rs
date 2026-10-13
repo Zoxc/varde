@@ -2,7 +2,6 @@
 //! copy committed and listed in Objects, editing the tick, and an edit
 //! held back by a later feature naming a copy body.
 
-use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, Copies};
 use varde_view::Picked;
 

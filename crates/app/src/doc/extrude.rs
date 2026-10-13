@@ -4,7 +4,7 @@
 //! and committing it as one undo step or cancelling it, which leaves no
 //! trace.
 
-use crate::doc::{DocMode, OperationSession, OperationSlot};
+use crate::doc::{DocMode, OperationSession};
 use varde_document::{
     Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
 };

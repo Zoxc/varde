@@ -8,7 +8,7 @@
 //! the sketches shown are hovered and selected with the model
 //! ([`Doc::selectable_sketches`]).
 
-use crate::doc::{OperationSession, OperationSlot};
+use crate::doc::OperationSession;
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FeatureId, FeatureKind};

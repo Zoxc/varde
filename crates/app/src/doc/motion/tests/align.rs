@@ -3,7 +3,6 @@
 //! with an offset; picks refused and said why; editing from the Timeline
 //! and undo.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{
     Align, AlignRefs, AxisRef, BodyId, Command, DirRef, Document, Editor, Extent, FeatureKind,

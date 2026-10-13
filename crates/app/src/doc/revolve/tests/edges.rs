@@ -3,7 +3,6 @@
 //! previewed, committed and edited; the edges that can't be refused,
 //! saying why.
 
-use crate::doc::OperationSlot;
 use glam::{DVec2, DVec3};
 use varde_document::{
     AxisLine, Command, EdgeRef, FaceKey, FeatureId, FeatureKind, PartKey, Placement, Plane,

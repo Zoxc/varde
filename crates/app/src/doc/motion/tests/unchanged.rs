@@ -1,7 +1,6 @@
 //! OK on a feature opened for editing and left as it was writes nothing,
 //! for every kind of feature, as each kind's session made it.
 
-use crate::doc::OperationSlot;
 use varde_document::{AxisLine, BodyOp, Combine, FeatureId, FeatureKind, OriginPlane};
 use varde_view::MotionKind;
 use varde_view::{Angle, Edit, Look, MotionField, MotionLook, MotionPick, RevolveLook, TurnKind};

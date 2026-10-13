@@ -8,7 +8,6 @@
 //! to be gone; the rail's and the toolbar's Chamfer; the edges selected
 //! taken in.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{BodyId, Chamfer, ChamferSize, Document, Editor, FeatureId, FeatureKind};
 use varde_regen::Summary;

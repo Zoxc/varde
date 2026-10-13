@@ -23,7 +23,6 @@
 //! and gives the volume its box, open sides, thickness and direction
 //! give.
 
-use crate::doc::OperationSlot;
 use varde_document::{BodyOp, Combine, Targets};
 use varde_expr::LengthUnit;
 

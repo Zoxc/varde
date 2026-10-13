@@ -9,7 +9,6 @@
 //! first face and the document stay as they were, so the handle doesn't
 //! move with the face it moves (its knob does).
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{Design, FaceRef, FeatureKind, Generation, OffsetFace};
 use varde_render::Camera;

@@ -45,7 +45,6 @@
 //! found then, for a new feature, and kept while the first face or edge
 //! and the document stay. An edited one has no knob.
 
-use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{EdgeRef, FaceRef, Generation, Plane};
 use varde_expr::{AngleUnit, Ask, Unit};
