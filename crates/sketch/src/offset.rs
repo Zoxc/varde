@@ -308,37 +308,34 @@ impl Sketch {
             Some((next, start == point))
         };
         let [first_start, first_end] = ends_of(first).ok_or(EditError::NotAChain)?;
-        let (mut ahead, mut closed) = (Vec::new(), false);
-        let (mut at, mut from) = (first_end, first);
-        while let Some((next, away)) = beyond(from, at) {
-            if next == first {
-                closed = true;
-                break;
-            }
-            // Joined up otherwise, it's been round already: can't be, as
-            // no point ends more than two.
-            if ahead.len() > ids.len() {
-                return Err(EditError::NotAChain);
-            }
-            ahead.push(link(next, away));
-            let [start, end] = ends_of(next).ok_or(EditError::NotAChain)?;
-            at = if away { end } else { start };
-            from = next;
-        }
-        let mut behind = Vec::new();
-        if !closed {
-            let (mut at, mut from) = (first_start, first);
+        // The links met walking on from `first` through `at`, each run the
+        // way of the walk if `onward`, else against it, and whether the
+        // walk came back to `first`.
+        let walk = |mut at: Id, onward: bool| {
+            let (mut links, mut from) = (Vec::new(), first);
             while let Some((next, away)) = beyond(from, at) {
-                if behind.len() > ids.len() {
+                if next == first {
+                    return Ok((links, true));
+                }
+                // Joined up otherwise, it's been round already: can't be,
+                // as no point ends more than two.
+                if links.len() > ids.len() {
                     return Err(EditError::NotAChain);
                 }
-                // Run towards `at`: forward if it ends there.
-                behind.push(link(next, !away));
+                links.push(link(next, away == onward));
                 let [start, end] = ends_of(next).ok_or(EditError::NotAChain)?;
                 at = if away { end } else { start };
                 from = next;
             }
-        }
+            Ok((links, false))
+        };
+        let (ahead, closed) = walk(first_end, true)?;
+        // Behind, run towards `first`.
+        let behind = if closed {
+            Vec::new()
+        } else {
+            walk(first_start, false)?.0
+        };
         let links: Vec<Link> = behind
             .into_iter()
             .rev()
