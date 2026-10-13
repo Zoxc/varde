@@ -342,7 +342,6 @@ pub(crate) fn viewport<'a>(
     let knobs = operating.as_ref().map(|operating| {
         (operating.labels(camera)).unwrap_or_else(|| iced::widget::Space::new().into())
     });
-    let sketching = sketching.map(|sketching| sketching.snapping(scene.options.mouse.sketch_snap));
     let program = Program::new(scene, picking, palette, sketching, operating, aspect);
     let scene = iced::widget::shader(program)
         .width(Length::Fill)

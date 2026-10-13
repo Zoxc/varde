@@ -200,8 +200,9 @@ pub(crate) struct Input {
 
 impl<'a> Sketching<'a> {
     /// `sketch` as the viewport shows it. Its tool and dragging work only
-    /// if it's `editable`.
-    pub(crate) fn new(sketch: SketchState<'a>, editable: bool) -> Self {
+    /// if it's `editable`; its tools snap without [`Held::FREE`] held if
+    /// `snaps`, else only with it.
+    pub(crate) fn new(sketch: SketchState<'a>, editable: bool, snaps: bool) -> Self {
         let states = States {
             fixed: sketch
                 .analysis
@@ -232,7 +233,7 @@ impl<'a> Sketching<'a> {
             profiles: sketch.profiles.and_then(|found| found.as_ref().ok()),
             comb: sketch.comb,
             inserting: sketch.inserting && editable && sketch.tool.is_none(),
-            snaps: true,
+            snaps,
         }
     }
 
@@ -243,12 +244,6 @@ impl<'a> Sketching<'a> {
     /// The projector onto the sketch's plane for `camera` in `bounds`.
     fn projector(&self, camera: &Camera, bounds: Rectangle) -> Option<Projector> {
         Projector::new(camera, self.placement, bounds.width, bounds.height)
-    }
-
-    /// The same, its tools snapping without [`Held::FREE`] held if
-    /// `snaps`, else only with it.
-    pub(crate) fn snapping(self, snaps: bool) -> Self {
-        Sketching { snaps, ..self }
     }
 
     /// Whether tools snap with `modifiers` held: unless [`Held::FREE`]

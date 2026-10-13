@@ -488,7 +488,7 @@ fn handle_with(
         &Camera::default(),
         None,
         crate::theme::Mode::Light.palette(),
-        sketching.then(|| Sketching::new(state_of_sketch, true)),
+        sketching.then(|| Sketching::new(state_of_sketch, true, true)),
         None,
     );
     let program = Program { mouse, ..program };
@@ -564,7 +564,11 @@ fn the_sketch_being_edited_is_drawn_with_the_scene() {
     let selection = Default::default();
     let state = Interaction::default();
     let primitive = |sketch| {
-        let sketching = Sketching::new(crate::SketchState::plain(sketch, &selection, None), true);
+        let sketching = Sketching::new(
+            crate::SketchState::plain(sketch, &selection, None),
+            true,
+            true,
+        );
         program(
             &Arc::default(),
             &Arc::default(),
@@ -625,7 +629,7 @@ fn a_region_with_a_hole_is_shaded_around_it() {
             &camera,
             None,
             crate::theme::Mode::Light.palette(),
-            Some(Sketching::new(state, true)),
+            Some(Sketching::new(state, true, true)),
             None,
         );
         let mut interaction = Interaction::default();
@@ -1333,6 +1337,7 @@ fn project_picks_outside_the_sketch_and_through_the_faded_model() {
     program.sketching = Some(Sketching::new(
         crate::SketchState::plain(&own, &selection, Some(tool)),
         true,
+        true,
     ));
     let picking = program.picking.as_mut().unwrap();
     picking.sketches = vec![SketchLines {
@@ -1388,6 +1393,7 @@ fn a_left_drag_started_picking_outside_ends_once_the_tool_is_gone() {
         let tool = tool.map(|tool| crate::testing::tool(tool, &[], &[]));
         program.sketching = Some(Sketching::new(
             crate::SketchState::plain(&sketch, &selection, tool),
+            true,
             true,
         ));
         // The cursor picks the model only while the tool picks outside.
@@ -1522,6 +1528,7 @@ fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
     let mut program = plate.program(&camera, None);
     program.sketching = Some(Sketching::new(
         crate::SketchState::plain(&own, &selection, Some(tool)),
+        true,
         true,
     ));
     program.picking.as_mut().unwrap().sketches = vec![SketchLines {

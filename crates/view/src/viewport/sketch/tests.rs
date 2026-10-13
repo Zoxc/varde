@@ -68,7 +68,7 @@ fn sketching<'a>(
     editable: bool,
 ) -> Sketching<'a> {
     let state = SketchState::plain(sketch, selection, tool);
-    Sketching::new(state, editable)
+    Sketching::new(state, editable, true)
 }
 
 /// The viewport's program showing [`sketching`] through [`top_camera`].
@@ -437,7 +437,10 @@ fn snapping_off_snaps_only_with_shift() {
     let (sketch, [a, _, _]) = drawn();
     let selection = BTreeSet::new();
     let tool = testing::tool(Tool::Line, &[], &[]);
-    let viewport = shown(sketching(&sketch, &selection, Some(tool), true).snapping(false));
+    let viewport = shown(Sketching {
+        snaps: false,
+        ..sketching(&sketch, &selection, Some(tool), true)
+    });
     let mut state = Interaction::default();
     let clicks = |messages: Vec<Message>| match messages.as_slice() {
         [Message::Edit(Edit::ToolClick(click))]
@@ -468,7 +471,10 @@ fn snapping_off_snaps_only_with_shift() {
     // On by default, as it always was.
     let default = sketching(&sketch, &selection, Some(tool), true);
     assert!(default.snaps(Modifiers::empty()) && !default.snaps(Modifiers::SHIFT));
-    let off = default.snapping(false);
+    let off = Sketching {
+        snaps: false,
+        ..default
+    };
     assert!(!off.snaps(Modifiers::empty()) && off.snaps(Modifiers::SHIFT));
 }
 
@@ -744,7 +750,7 @@ fn geometry_is_coloured_by_its_state() {
         pending: &pending,
         ..SketchState::plain(&sketch, &none, None)
     };
-    let (base, _) = layers(&Sketching::new(state, true), &Interaction::default());
+    let (base, _) = layers(&Sketching::new(state, true, true), &Interaction::default());
 
     let colors = Mode::Light.palette().sketching;
     let at = |id| sketch.point(id).unwrap().at;
@@ -786,7 +792,7 @@ fn a_failing_curve_is_red_within_the_errors_halo() {
         failing: &failing,
         ..SketchState::plain(&sketch, &none, None)
     };
-    let sketching = Sketching::new(state, true);
+    let sketching = Sketching::new(state, true, true);
     let interaction = Interaction::default();
     let (base, _) = layers(&sketching, &interaction);
 
@@ -820,7 +826,7 @@ fn a_failing_curve_is_red_within_the_errors_halo() {
     assert!(Arc::ptr_eq(&halo, &again));
 
     // Nothing failing, no halo.
-    let plain = Sketching::new(SketchState::plain(&sketch, &none, None), true);
+    let plain = Sketching::new(SketchState::plain(&sketch, &none, None), true, true);
     let _ = layers(&plain, &interaction);
     assert!(plain.failing(&interaction.sketch).is_none());
 }
@@ -839,11 +845,11 @@ fn each_constraint_has_its_glyph_unless_they_are_hidden() {
         glyphs: true,
         ..SketchState::plain(&sketch, &none, None)
     };
-    let glyphs = Sketching::new(shown, true).glyphs();
+    let glyphs = Sketching::new(shown, true, true).glyphs();
     let anchors: Vec<_> = glyphs.iter().map(|(at, _)| *at).collect();
     assert_eq!(anchors, [DVec2::ZERO, DVec2::ZERO]);
     let hidden = SketchState::plain(&sketch, &none, None);
-    assert!(Sketching::new(hidden, true).glyphs().is_empty());
+    assert!(Sketching::new(hidden, true, true).glyphs().is_empty());
 }
 
 #[test]
@@ -857,7 +863,7 @@ fn what_a_hovered_constraint_ties_together_is_highlighted() {
         hovered: Some(Selectable::Item(level)),
         ..SketchState::plain(&sketch, &none, None)
     };
-    let (_, live) = layers(&Sketching::new(state, true), &Interaction::default());
+    let (_, live) = layers(&Sketching::new(state, true, true), &Interaction::default());
     let colors = Mode::Light.palette().sketching;
     let hovered = dot(HOVERED_POINT_RADIUS, colors.hovered, colors.hovered);
     let mut expected = SketchLayer::default();
@@ -869,7 +875,7 @@ fn what_a_hovered_constraint_ties_together_is_highlighted() {
         hovered: Some(Selectable::Item(line)),
         ..SketchState::plain(&sketch, &none, None)
     };
-    let (_, live) = layers(&Sketching::new(state, true), &Interaction::default());
+    let (_, live) = layers(&Sketching::new(state, true, true), &Interaction::default());
     assert!(!live.is_empty());
 }
 
@@ -917,7 +923,7 @@ fn a_grabbed_label_follows_the_cursor_until_let_go() {
         &top_camera(),
         None,
         Mode::Light.palette(),
-        Some(Sketching::new(grabbed, true)),
+        Some(Sketching::new(grabbed, true, true)),
         None,
     );
     let mut state = Interaction::default();
@@ -961,7 +967,7 @@ fn dimensions_have_lines_arrows_labels_and_the_value_field_in_place() {
     let (sketch, [.., line, id]) = dimensioned();
     let none = BTreeSet::new();
     let plain = || SketchState::plain(&sketch, &none, None);
-    let sketching = Sketching::new(plain(), true);
+    let sketching = Sketching::new(plain(), true, true);
     let labels = sketching.labels();
     assert_eq!(labels.len(), 1);
     assert_eq!(labels[0].0, DVec2::new(0.0, 3.0));
@@ -980,7 +986,7 @@ fn dimensions_have_lines_arrows_labels_and_the_value_field_in_place() {
         label_drag: Some((id, DVec2::new(1.0, 1.0))),
         ..plain()
     };
-    let dragged = Sketching::new(dragged, true);
+    let dragged = Sketching::new(dragged, true, true);
     assert_eq!(dragged.labels()[0].0, DVec2::new(1.0, 4.0));
     let (moved, _) = layers(&dragged, &Interaction::default());
     assert!(*moved != *base);
@@ -997,11 +1003,11 @@ fn dimensions_have_lines_arrows_labels_and_the_value_field_in_place() {
         }),
         ..plain()
     };
-    let edited = Sketching::new(field(&editing, false), true);
+    let edited = Sketching::new(field(&editing, false), true, true);
     assert!(edited.labels().is_empty());
     assert_eq!(edited.field().unwrap().0, DVec2::new(0.0, 3.0));
     // In the list, the list has it.
-    let listed = Sketching::new(field(&editing, true), true);
+    let listed = Sketching::new(field(&editing, true), true, true);
     assert_eq!(listed.labels().len(), 1);
     assert!(listed.field().is_none());
     // One being placed is drawn from what it measures.
@@ -1010,7 +1016,7 @@ fn dimensions_have_lines_arrows_labels_and_the_value_field_in_place() {
         side: Side::Positive,
         label: DVec2::new(0.0, -4.0),
     };
-    let placed = Sketching::new(field(&placing, false), true);
+    let placed = Sketching::new(field(&placing, false), true, true);
     assert_eq!(placed.field().unwrap().0, DVec2::new(0.0, -4.0));
     let (_, preview) = layers(&placed, &Interaction::default());
     assert!(preview != live);
@@ -1024,7 +1030,7 @@ fn a_hovered_dimension_s_arrows_are_in_the_hover_colour_too() {
         hovered: Some(Selectable::Item(id)),
         ..SketchState::plain(&sketch, &none, None)
     };
-    let sketching = Sketching::new(state, true);
+    let sketching = Sketching::new(state, true, true);
     let (_, live) = layers(&sketching, &Interaction::default());
     let colors = Mode::Light.palette().sketching;
     let projector = Projector::new(&top_camera(), OriginPlane::XY.placement(), SIZE, SIZE).unwrap();
@@ -1167,23 +1173,23 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
         ..SketchState::plain(&sketch, &none, tool)
     };
     let line = testing::tool(Tool::Line, &placed, &[None]);
-    let shown = Sketching::new(with(Some(line), Some(aim)), true);
+    let shown = Sketching::new(with(Some(line), Some(aim)), true, true);
     assert_eq!(shown.fields().map(|(at, _)| at), Some(aim));
     // Not before the cursor's been anywhere, nor for a shape with none.
     assert!(
-        Sketching::new(with(Some(line), None), true)
+        Sketching::new(with(Some(line), None), true, true)
             .fields()
             .is_none()
     );
     let point = testing::tool(Tool::Point, &[], &[]);
     assert!(
-        Sketching::new(with(Some(point), Some(aim)), true)
+        Sketching::new(with(Some(point), Some(aim)), true, true)
             .fields()
             .is_none()
     );
     // Nor in a sketch that can't be changed, which has no tool.
     assert!(
-        Sketching::new(with(Some(line), Some(aim)), false)
+        Sketching::new(with(Some(line), Some(aim)), false, true)
             .fields()
             .is_none()
     );
@@ -1199,7 +1205,7 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
         }),
         ..with(Some(line), Some(aim))
     };
-    let open = Sketching::new(open, true);
+    let open = Sketching::new(open, true, true);
     assert!(open.field().is_none());
     assert!(open.fields().is_some());
 
@@ -1213,13 +1219,21 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
         snap,
         ..with(Some(tool), Some(aim))
     };
-    assert!(Sketching::new(snapped(line), true).snap_glyph().is_some());
+    assert!(
+        Sketching::new(snapped(line), true, true)
+            .snap_glyph()
+            .is_some()
+    );
     let length = [testing::typed(Field::Length, "5")];
     let typed = ActiveTool {
         typed: &length,
         ..line
     };
-    assert!(Sketching::new(snapped(typed), true).snap_glyph().is_none());
+    assert!(
+        Sketching::new(snapped(typed), true, true)
+            .snap_glyph()
+            .is_none()
+    );
 }
 
 #[test]
@@ -1242,7 +1256,7 @@ fn a_shape_with_fields_stays_aimed_where_the_cursor_left_it() {
             snap: Some(aim.snap()),
             ..SketchState::plain(&sketch, &selection, Some(tool))
         };
-        layers(&Sketching::new(shown, true), state).1
+        layers(&Sketching::new(shown, true, true), state).1
     };
     let before = there(&state);
 
@@ -1284,7 +1298,7 @@ fn profiled<'a>(
         profiles,
         ..SketchState::plain(sketch, selection, tool)
     };
-    Sketching::new(state, true)
+    Sketching::new(state, true, true)
 }
 
 #[test]
@@ -1576,7 +1590,7 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
         aim: Some(DVec2::new(0.0, 6.0)),
         ..SketchState::plain(&sketch, &selection, Some(offsetting))
     };
-    assert!(Sketching::new(aimed, true).fields().is_some());
+    assert!(Sketching::new(aimed, true, true).fields().is_some());
 
     // Placed where the button's let go, dragged from the chain or not.
     let on_side = screen_at(0.0, 4.0);
@@ -1763,7 +1777,7 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
         aim: Some(DVec2::new(1.0, 1.0)),
         ..SketchState::plain(&sketch, &selection, Some(chamfering))
     };
-    assert!(Sketching::new(aimed, true).fields().is_some());
+    assert!(Sketching::new(aimed, true, true).fields().is_some());
 }
 
 /// A spline through (-6, 0), (0, 4) and (6, 0), of `kind`, with a handle
@@ -1923,7 +1937,7 @@ fn the_curvature_comb_of_a_spline_selected_shows_scaled_to_the_view() {
     let live = |comb: bool, camera: &Camera| {
         let mut state = SketchState::plain(&sketch, &selection, None);
         state.comb = comb;
-        let sketching = Sketching::new(state, true);
+        let sketching = Sketching::new(state, true, true);
         sketching
             .layers(
                 &Interaction::default().sketch,

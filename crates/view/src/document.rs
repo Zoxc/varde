@@ -1099,9 +1099,11 @@ fn viewport_stack<'a>(
             },
             state.picking.clone(),
             state.mode.palette(),
-            state
-                .sketch
-                .map(|sketch| viewport::Sketching::new(sketch, editable)),
+            state.sketch.map(|sketch| viewport::Sketching::new(
+                sketch,
+                editable,
+                state.options.mouse.sketch_snap
+            )),
             operating(state),
             viewport::Overlays {
                 panel,
