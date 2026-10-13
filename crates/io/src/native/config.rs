@@ -7,20 +7,21 @@ use std::path::Path;
 
 use super::atomic::{self, Mode};
 
-/// The text of `store`, if it can be read, is UTF-8 and holds no more than
-/// `max` bytes.
+/// The text of `store`, if it can be read and holds no more than `max`
+/// bytes. Decoded lossily, as the web reads these files: a stray invalid
+/// byte in a value costs only that value.
 pub(crate) fn read(store: &Path, max: u64) -> Option<String> {
     read_from(File::open(store).ok()?, max)
 }
 
 /// The text of `file`, as [`read`] reads it, for a file already open.
 pub(crate) fn read_from(file: File, max: u64) -> Option<String> {
-    let mut text = String::new();
+    let mut bytes = Vec::new();
     // One byte more, to tell a file of `max` from a larger one.
     file.take(max.saturating_add(1))
-        .read_to_string(&mut text)
+        .read_to_end(&mut bytes)
         .ok()?;
-    (u64::try_from(text.len()).ok()? <= max).then_some(text)
+    (u64::try_from(bytes.len()).ok()? <= max).then(|| String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Replaces `store` with `text`, see [`atomic::replace`]: a failed write

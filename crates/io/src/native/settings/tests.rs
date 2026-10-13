@@ -30,3 +30,12 @@ fn a_huge_file_gives_the_defaults() {
     std::fs::write(&store, "theme = \"dark\"\n").unwrap();
     assert_eq!(load(&store).theme, Theme::Dark);
 }
+
+/// A stray invalid byte in a value costs only that setting, as on the web.
+#[test]
+fn an_invalid_byte_keeps_the_other_settings() {
+    let dir = TempDir::new("settings-invalid-byte");
+    let store = dir.0.join("settings.toml");
+    std::fs::write(&store, b"theme = \"dark\"\nprojection = \"\xff\"\n").unwrap();
+    assert_eq!(load(&store).theme, Theme::Dark);
+}
