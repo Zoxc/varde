@@ -26,29 +26,31 @@ use crate::{Regenerator, Request, Response};
 /// back either way, and the lane goes on.
 pub fn spawn() -> (Lane, Responses) {
     let mut regenerator = Regenerator::default();
-    thread::spawn(
-        "regenerate",
-        Newest::default(),
-        OnClose::Stop,
-        move |request, send| {
-            let answer = regenerator.handle_reporting(request, &mut |progress| {
-                send(Response::Progress(progress));
-            });
-            send(answer);
-        },
-        Request::failure,
-    )
+    spawn_with(move |request, send| {
+        let answer = regenerator.handle_reporting(request, &mut |progress| {
+            send(Response::Progress(progress));
+        });
+        send(answer);
+    })
 }
 
 /// Starts a lane doing its work with `handle`, which tests swap for one
 /// that fails, without progress.
 #[cfg(test)]
 fn spawn_on(handle: impl FnMut(Request) -> Response + Send + 'static) -> (Lane, Responses) {
+    spawn_with(thread::one(handle))
+}
+
+/// The lane [`spawn`] and the tests' `spawn_on` share, doing its work
+/// with `handle`.
+fn spawn_with(
+    handle: impl FnMut(Request, &mut dyn FnMut(Response)) + Send + 'static,
+) -> (Lane, Responses) {
     thread::spawn(
         "regenerate",
         Newest::default(),
         OnClose::Stop,
-        thread::one(handle),
+        handle,
         Request::failure,
     )
 }
