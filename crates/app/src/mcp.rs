@@ -339,7 +339,7 @@ impl Mcp {
             ask: (doc.and_then(|doc| doc.mcp.ask.as_ref())).map(|ask| ask.shown(client)),
             on,
             open: self.open,
-            status: self.shown(now).status,
+            status: self.status(),
             port,
             client: (self.session.as_ref()).map(|session| session.client.as_deref()),
             gone: self.gone.as_ref().map(Option::as_deref),
@@ -499,19 +499,24 @@ impl Mcp {
         }
     }
 
-    /// What the settings' MCP tab shows of the server at `now`: stopped
-    /// unless [`Mcp::running`], else starting until the server says how
-    /// it went.
+    /// The server's status: stopped unless [`Mcp::running`], else
+    /// starting until the server says how it went.
+    fn status(&self) -> varde_view::McpStatus<'_> {
+        use varde_view::McpStatus;
+        match (&self.status, self.running) {
+            (_, false) => McpStatus::Off,
+            (Status::Listening(address), true) => McpStatus::Listening(address.port()),
+            (Status::BindFailed(why), true) => McpStatus::BindFailed(why),
+            (Status::Off, true) => McpStatus::Starting,
+        }
+    }
+
+    /// What the settings' MCP tab shows of the server at `now`, its
+    /// [`Mcp::status`] among it.
     pub(crate) fn shown(&self, now: varde_io::UnixSeconds) -> varde_view::McpState<'_> {
-        use varde_view::{McpClient, McpStatus};
         varde_view::McpState {
-            status: match (&self.status, self.running) {
-                (_, false) => McpStatus::Off,
-                (Status::Listening(address), true) => McpStatus::Listening(address.port()),
-                (Status::BindFailed(why), true) => McpStatus::BindFailed(why),
-                (Status::Off, true) => McpStatus::Starting,
-            },
-            client: (self.session.as_ref()).map(|session| McpClient {
+            status: self.status(),
+            client: (self.session.as_ref()).map(|session| varde_view::McpClient {
                 name: session.client.as_deref(),
                 since: crate::when::ago_in_sentence(session.since, now),
             }),
