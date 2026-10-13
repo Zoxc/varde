@@ -22,12 +22,6 @@ const MARK_ARROW_LENGTH: f64 = 11.0;
 const MARK_ARROW_HALF_WIDTH: f64 = 4.5;
 /// How wide a handle's shaft is, in pixels.
 pub(crate) const SHAFT_WIDTH: f32 = 2.0;
-/// How far apart a ring's snapping steps are at least, in pixels along
-/// it: the extrude handle's steps' least.
-const SNAP_PIXELS: f64 = 6.0;
-/// The steps, in degrees, a ring's angle snaps to: the first at least
-/// [`SNAP_PIXELS`] along the ring.
-const ANGLE_STEPS: [f64; 8] = [1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 45.0, 90.0];
 /// A knob's puck, in pixels: a ring square to the way the knob drags,
 /// filled faintly, with a dot at its middle, and an arrow out of the end
 /// it's on with an open head, the same size on the screen wherever it is.
@@ -273,16 +267,6 @@ fn shown_runs(projector: &Projector, points: &[DVec3]) -> Vec<Vec<DVec2>> {
         open = b == pair[1];
     }
     runs
-}
-
-/// The step, in degrees, a ring `radius` pixels across snaps its angle
-/// to: the first of [`ANGLE_STEPS`] at least [`SNAP_PIXELS`] along it,
-/// or the last.
-pub(crate) fn angle_step(radius: f64) -> f64 {
-    let least = (SNAP_PIXELS / radius).to_degrees();
-    (ANGLE_STEPS.into_iter())
-        .find(|&step| step >= least)
-        .unwrap_or(ANGLE_STEPS[ANGLE_STEPS.len() - 1])
 }
 
 /// `turn` brought within half a turn either way.

@@ -28,11 +28,12 @@ use varde_document::{AxisLine, FeatureId};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::{Curve, Sketch};
 
+use super::handle::wrapped;
 use super::handle::{self, Puck};
-use super::handle::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch_pick::{HIT_PIXELS, HOVERED_WIDTH};
 use super::style::line;
+use crate::handle_snap::angle_step;
 use crate::hit;
 use crate::motion::KnobTone;
 use crate::operation_panel::{Candidate, PanelHover};

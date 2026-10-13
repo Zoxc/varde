@@ -11,13 +11,13 @@ use varde_sketch::angle;
 use super::handles::{ORB_PIXELS, turned_about};
 use super::*;
 use crate::Look;
+use crate::handle_snap::angle_step;
 use crate::motion::PatternMode;
 use crate::motion::{MotionLook, MotionParts, MotionPick, SplitView};
 use crate::operation_panel::{TypedField, Verdict};
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
 use crate::theme::Mode;
-use crate::viewport::handle::angle_step;
 use crate::viewport::{Interaction, ModelPicking, Operating, Program, program};
 
 fn field(value: f64) -> TypedField<'static> {

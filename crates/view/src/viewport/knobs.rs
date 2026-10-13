@@ -21,9 +21,10 @@ use varde_expr::LengthUnit;
 use varde_render::{Camera, SketchLayer};
 use varde_sketch::angle;
 
+use super::handle::wrapped;
 use super::handle::{self, Puck};
-use super::handle::{angle_step, wrapped};
-use crate::extrude::{SNAP_PIXELS, round_step, snap_step};
+use crate::handle_snap::angle_step;
+use crate::handle_snap::{SNAP_PIXELS, round_step, snap_step};
 use crate::motion::{KnobPath, KnobRadius, KnobSnap, MotionLook, OpKnob};
 use crate::projection::Projector;
 use crate::theme::SketchColors;

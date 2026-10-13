@@ -16,7 +16,8 @@ use varde_render::{Camera, GridPlane, SketchLayer};
 
 use super::handle::{self, Puck};
 use super::regions::{self, Regions};
-use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
+use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle};
+use crate::handle_snap::snap_step;
 use crate::motion::KnobTone;
 use crate::projection::Projector;
 use crate::theme::SketchColors;

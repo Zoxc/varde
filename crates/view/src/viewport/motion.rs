@@ -18,11 +18,11 @@
 //! ring not seen edge on, on a stretch of its ring. They take the mouse
 //! ahead of picking the model. Dragging an
 //! arrow sets that axis's offset, where the cursor's ray passes nearest
-//! the arrow's line, snapped as the extrude's handle ([`snap_step`](crate::extrude::snap_step) of a
+//! the arrow's line, snapped as the extrude's handle ([`snap_step`](crate::handle_snap::snap_step) of a
 //! pixel's size at the camera's target);
 //! dragging a ring turns the bodies about that world axis by the angle
 //! the cursor sweeps about the centre on the ring's plane, snapped to
-//! round degrees ([`angle_step`](super::handle::angle_step)), shifting them so they turn about the
+//! round degrees ([`angle_step`](crate::handle_snap::angle_step)), shifting them so they turn about the
 //! centre ([`MotionLook::Turn`](crate::motion::MotionLook::Turn)). While the move turns about another
 //! axis, only that axis's ring is shown, if it's a world axis. The texts
 //! go to the panel's fields, so the preview and OK follow as for typed

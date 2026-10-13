@@ -52,7 +52,7 @@ reference, or to build inputs, allow it in their module.
 The module is public (`varde_sketch::angle`, with `log10` and `pow` too)
 because `varde-view` makes saved values of its own: a line's end from a
 typed angle and the polygon's corners (`typed.rs`), tangent points
-(`snap.rs`), the length an extrude drag snaps to (`extrude::snap_step`:
+(`snap.rs`), the length an extrude drag snaps to (`handle_snap::snap_step`:
 its decade by `log10`, the step itself read from its decimal text, as
 `pow(10, k)` can be an ulp off for negative `k`), and
 `dimension::sector_holds`, which picks the side a dimension is placed on

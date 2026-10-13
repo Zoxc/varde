@@ -21,6 +21,7 @@ mod errors;
 mod escape;
 mod extrude;
 mod feature_text;
+mod handle_snap;
 mod file_menu;
 mod hit;
 mod icons;
@@ -86,7 +87,8 @@ pub use document::{
     Rollback, SketchState, ValueField, ValueTarget, body_tint, document, part_opacity, part_tints,
 };
 pub use errors::{ShownError, ShownErrors};
-pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
+pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle};
+pub use handle_snap::snap_step;
 pub use feature_text::{
     align_info, chamfer_info, draft_info, fillet_info, loft_info, offset_info, scale_info,
     shell_info, split_info, sweep_info,
