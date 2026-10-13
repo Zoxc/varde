@@ -17,11 +17,66 @@
 
 use std::fs::File;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use varde_mcp::guard::Token;
 
 use super::config;
+
+/// The MCP token, kept in its store, or in memory without one.
+#[derive(Debug, Default)]
+pub(crate) struct Tokens {
+    store: Option<PathBuf>,
+    memory: Option<Token>,
+}
+
+impl Tokens {
+    /// Tokens kept in `store`, or in memory if `None`.
+    pub(crate) fn new(store: Option<PathBuf>) -> Self {
+        Self {
+            store,
+            memory: None,
+        }
+    }
+
+    /// The token stored, or a new one stored in its place if there's
+    /// none to trust. One that can't be stored is still given, for this
+    /// session. Without a store, the one kept in memory, made the first
+    /// time.
+    pub(crate) fn load(&mut self) -> Result<Token, String> {
+        let Some(store) = &self.store else {
+            let token = match self.memory.take() {
+                Some(token) => token,
+                None => generate()?,
+            };
+            self.memory = Some(token.clone());
+            return Ok(token);
+        };
+        if let Some(token) = load(store) {
+            return Ok(token);
+        }
+        let token = generate()?;
+        if let Err(error) = write(store, &token) {
+            log::warn!(
+                "Couldn't store the MCP token in {}: {error}",
+                store.display()
+            );
+        }
+        Ok(token)
+    }
+
+    /// A new token, stored in place of the old, or kept in memory
+    /// without a store. One that can't be stored is an error, the old one
+    /// staying.
+    pub(crate) fn regenerate(&mut self) -> Result<Token, String> {
+        let token = generate()?;
+        match &self.store {
+            Some(store) => write(store, &token).map_err(|e| e.to_string())?,
+            None => self.memory = Some(token.clone()),
+        }
+        Ok(token)
+    }
+}
 
 /// The most bytes of the file read: a larger one is taken as gone bad.
 const MAX_BYTES: u64 = 1024;

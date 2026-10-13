@@ -33,8 +33,8 @@ pub(crate) struct Files {
     /// Where the recent files list, the settings and new designs are kept,
     /// if anywhere.
     stores: Stores,
-    /// The MCP token, kept here when there's no store for it.
-    mcp_token: Option<varde_mcp::guard::Token>,
+    /// The MCP token, in its store or memory.
+    mcp_token: mcp_token::Tokens,
 }
 
 /// What an open document is.
@@ -123,8 +123,8 @@ impl Files {
     pub(crate) fn new(stores: Stores) -> Self {
         Self {
             open: OpenFiles::new(),
+            mcp_token: mcp_token::Tokens::new(stores.mcp_token.clone()),
             stores,
-            mcp_token: None,
         }
     }
 
@@ -300,11 +300,11 @@ impl Files {
             },
             Request::LoadMcpToken => Response::McpToken {
                 regenerated: false,
-                result: self.load_mcp_token(),
+                result: self.mcp_token.load(),
             },
             Request::RegenerateMcpToken => Response::McpToken {
                 regenerated: true,
-                result: self.regenerate_mcp_token(),
+                result: self.mcp_token.regenerate(),
             },
             Request::EncodePng { owner, tag, image } => Response::PngEncoded {
                 owner,
@@ -313,44 +313,6 @@ impl Files {
             },
             Request::Flush => Response::Flushed,
         }
-    }
-
-    /// The MCP token stored, or a new one stored in its place if there's
-    /// none to trust. One that can't be stored is still given, for this
-    /// session. Without a store, the one kept in memory, made the first
-    /// time.
-    fn load_mcp_token(&mut self) -> Result<varde_mcp::guard::Token, String> {
-        let Some(store) = &self.stores.mcp_token else {
-            let token = match self.mcp_token.take() {
-                Some(token) => token,
-                None => mcp_token::generate()?,
-            };
-            self.mcp_token = Some(token.clone());
-            return Ok(token);
-        };
-        if let Some(token) = mcp_token::load(store) {
-            return Ok(token);
-        }
-        let token = mcp_token::generate()?;
-        if let Err(error) = mcp_token::write(store, &token) {
-            log::warn!(
-                "Couldn't store the MCP token in {}: {error}",
-                store.display()
-            );
-        }
-        Ok(token)
-    }
-
-    /// A new MCP token, stored in place of the old, or kept in memory
-    /// without a store. One that can't be stored is an error, the old one
-    /// staying.
-    fn regenerate_mcp_token(&mut self) -> Result<varde_mcp::guard::Token, String> {
-        let token = mcp_token::generate()?;
-        match &self.stores.mcp_token {
-            Some(store) => mcp_token::write(store, &token).map_err(|e| e.to_string())?,
-            None => self.mcp_token = Some(token.clone()),
-        }
-        Ok(token)
     }
 
     /// Opens the design at `path`, an absolute path.
