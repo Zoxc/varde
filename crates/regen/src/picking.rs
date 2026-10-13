@@ -354,10 +354,7 @@ impl Picking {
         let mut part_start = 0;
         let mut part_ends = mesh.part_ends().iter();
         let mut part_end = part_ends.next().map_or(0, |&[_, edges, _, _]| edges);
-        let chain = |e: u32| {
-            let [a, b] = mesh.edge_faces()[e as usize];
-            a != b
-        };
+        let chain = |e: u32| mesh.chain_faces(e as usize).is_some();
         for (e, &first) in tangents.iter().enumerate() {
             let e = e as u32;
             while e >= part_end {

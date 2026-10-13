@@ -256,7 +256,7 @@ impl Probed {
                 At::Face(f) => (f as usize) < picking.faces().len(),
                 // An edge of the mesh between two faces: a chain, not a
                 // crease.
-                At::Edge(e) => (mesh.edge_faces().get(e as usize)).is_some_and(|[a, b]| a != b),
+                At::Edge(e) => mesh.chain_faces(e as usize).is_some(),
             },
         };
         // What's found there is what was measured: a face a face, a

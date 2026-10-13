@@ -77,9 +77,8 @@ impl PickTables {
         let corners = |triangle: &[u32; 3]| triangle.map(|i| position(mesh, i));
         let triangles = mesh.indices().as_chunks::<3>().0;
         let boxes = triangles.iter().map(|t| bounds(&corners(t)));
-        let chain = |edge: usize| matches!(mesh.edge_faces()[edge], [a, b] if a != b);
         let segments: Vec<u32> = (0..mesh.edge_count())
-            .filter(|&edge| chain(edge))
+            .filter(|&edge| mesh.chain_faces(edge).is_some())
             .flat_map(|edge| {
                 let range = mesh.polyline_range(edge).unwrap_or_default();
                 range.start..range.end.saturating_sub(1)
@@ -91,9 +90,8 @@ impl PickTables {
             bounds(&ends)
         });
         let mut corner_faces: Vec<(u32, u32)> = (0..mesh.edge_count())
-            .filter(|&edge| chain(edge))
-            .flat_map(|edge| {
-                let faces = mesh.edge_faces()[edge];
+            .filter_map(|edge| Some((edge, mesh.chain_faces(edge)?)))
+            .flat_map(|(edge, faces)| {
                 (mesh.edge_corners()[edge].into_iter())
                     .flat_map(move |corner| faces.map(|face| (corner, face)))
             })
@@ -107,7 +105,13 @@ impl PickTables {
         });
         // A crease is in no tangent chain.
         let tangents: Vec<u32> = (picking.tangents().iter().enumerate())
-            .map(|(edge, &first)| if chain(edge) { first } else { u32::MAX })
+            .map(|(edge, &first)| {
+                if mesh.chain_faces(edge).is_some() {
+                    first
+                } else {
+                    u32::MAX
+                }
+            })
             .collect();
         PickTables {
             triangles: Bvh::new(boxes.collect()),

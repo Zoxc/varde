@@ -267,8 +267,7 @@ impl PickIndex {
     /// The faces either side of `edge`, if it's an edge between two
     /// faces, not a crease.
     pub fn edge_faces(&self, edge: u32) -> Option<[u32; 2]> {
-        let [a, b] = *self.mesh.edge_faces().get(edge as usize)?;
-        (a != b).then_some([a, b])
+        self.mesh.chain_faces(edge as usize)
     }
 
     /// What's under the screen position `at`, in logical pixels from the

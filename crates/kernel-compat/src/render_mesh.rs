@@ -312,6 +312,13 @@ impl RenderMesh {
         &self.edge_faces
     }
 
+    /// Edge `edge`'s faces, if it's between two different faces (a chain),
+    /// not a crease; `None` too if the mesh has no such edge.
+    pub fn chain_faces(&self, edge: usize) -> Option<[u32; 2]> {
+        let [a, b] = *self.edge_faces.get(edge)?;
+        (a != b).then_some([a, b])
+    }
+
     /// Where the edges end: the model's vertices. Each is at an end of one
     /// edge or more, to the bit.
     pub fn corners(&self) -> &[[f32; 3]] {
