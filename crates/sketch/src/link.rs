@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use glam::{DAffine2, DVec2};
 use serde::{Deserialize, Serialize};
 
-use crate::{Curve, EditError, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, Spline, angle};
+use crate::{Curve, EditError, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, Spline, SplineKind, angle};
 
 /// The most links a sketch may hold.
 pub const MAX_LINKS: usize = 1000;
@@ -595,20 +595,21 @@ impl Sketch {
             }
             Curve::Spline(spline) => {
                 let shape = self.spline_shape(spline).ok_or(ProjectError::Missing)?;
-                let control = shape.control();
-                if control.len() <= MAX_SPLINE_POINTS {
-                    let mut points = Vec::with_capacity(control.len());
-                    for &p in control {
-                        points.push(own.point(map.transform_point2(p)));
-                    }
-                    let projected = Spline::control(points, shape.knots().to_vec(), spline.closed);
-                    let sound =
-                        crate::BSpline::new(&projected.knots, own.points.clone(), projected.closed)
-                            .is_some_and(|mapped| mapped.path().is_sound());
-                    if projected.fits() && sound {
-                        own.curve(Curve::Spline(projected));
-                        return Ok(own);
-                    }
+                // An affine map keeps a B-spline exact, as long as its
+                // path stays sound.
+                let mapped: Vec<DVec2> = shape
+                    .control()
+                    .iter()
+                    .map(|&p| map.transform_point2(p))
+                    .collect();
+                if SplineKind::Control.admits(mapped.len(), spline.closed)
+                    && crate::BSpline::new(shape.knots(), mapped.clone(), spline.closed)
+                        .is_some_and(|mapped| mapped.path().is_sound())
+                {
+                    let points = mapped.into_iter().map(|p| own.point(p)).collect();
+                    let knots = shape.knots().to_vec();
+                    own.curve(Curve::Spline(Spline::control(points, knots, spline.closed)));
+                    return Ok(own);
                 }
                 let mut places = self.flatten(&entry.curve).ok_or(ProjectError::Missing)?;
                 if spline.closed {
