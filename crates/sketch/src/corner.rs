@@ -344,9 +344,9 @@ impl Sketch {
     }
 
     /// Where each fillet or chamfer meets a line it cuts back: the line,
-    /// which of its ends (0 its start, 1 its end) the corner is at, `None`
-    /// if neither, and the parameter along it of the meeting.
-    fn cuts_into(&self) -> impl Iterator<Item = (Id, Option<usize>, f64)> + '_ {
+    /// which of its ends the corner is at, `None` if neither, and the
+    /// parameter along it of the meeting.
+    fn cuts_into(&self) -> impl Iterator<Item = (Id, Option<LineEnd>, f64)> + '_ {
         self.curves.iter().flat_map(move |entry| {
             let meetings = entry.corner.zip(entry.curve.ends()).map(|(corner, ends)| {
                 [(corner.a, ends[0]), (corner.b, ends[1])]
@@ -363,7 +363,13 @@ impl Sketch {
                     if !u.is_finite() {
                         return None;
                     }
-                    let side = [start, end].iter().position(|&id| id == corner.at);
+                    let side = if corner.at == start {
+                        Some(LineEnd::Start)
+                    } else if corner.at == end {
+                        Some(LineEnd::End)
+                    } else {
+                        None
+                    };
                     Some((line, side, u.clamp(0.0, 1.0)))
                 })
         })
@@ -620,13 +626,20 @@ pub fn cut_line(
 }
 
 /// Narrows `kept`, what's left of a line, by a fillet or chamfer meeting
-/// it at `u` from its end `end` (0 its start, 1 its end; `None` neither).
-fn keep(kept: &mut [f64; 2], end: Option<usize>, u: f64) {
+/// it at `u` from its end `end` (`None` neither).
+fn keep(kept: &mut [f64; 2], end: Option<LineEnd>, u: f64) {
     match end {
-        Some(0) => kept[0] = kept[0].max(u),
-        Some(_) => kept[1] = kept[1].min(u),
+        Some(LineEnd::Start) => kept[0] = kept[0].max(u),
+        Some(LineEnd::End) => kept[1] = kept[1].min(u),
         None => {}
     }
+}
+
+/// Which end of a line a corner is at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineEnd {
+    Start,
+    End,
 }
 
 #[cfg(test)]
