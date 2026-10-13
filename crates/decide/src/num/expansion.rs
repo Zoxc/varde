@@ -97,7 +97,11 @@
 //! product is finite, and the exponents satisfy `e_a + e_b ≥ −970` (`a =
 //! m·2^e_a`, `1 ≤ |m| < 2`), as `ulp(a)·ulp(b) ≥ 2⁻¹⁰⁷⁴` then and every
 //! partial product and error term is a representable multiple of it; `|a·b|
-//! ≥ 2⁻⁹⁶⁸` is enough. Scaling forms the product of every component with
+//! ≥ 2⁻⁹⁶⁸` is enough. The same argument holds with each factor's lowest
+//! set bit for its ulp (every value the split and the partial products
+//! form from `a` is a multiple of `a`'s lowest set bit): the product of the
+//! lowest set bits at least `2⁻¹⁰⁷⁴` is enough, which is what the exact
+//! predicates check (`super::exact`). Scaling forms the product of every component with
 //! `b` and sums them, and a product of expansions sums its scalings: those
 //! products must be below `2¹⁰²¹` too. The callers keep their inputs in
 //! such a range (stored coordinates are bounded): a caller's guarantee, not
@@ -367,7 +371,7 @@ fn is_expansion(c: &[f64]) -> bool {
 
 /// The exponents of the lowest and highest set bits of a finite nonzero
 /// `x`.
-fn bit_span(x: f64) -> (i32, i32) {
+pub(super) fn bit_span(x: f64) -> (i32, i32) {
     let bits = x.to_bits();
     let field = ((bits >> 52) & 0x7ff) as i32;
     let frac = bits & ((1 << 52) - 1);

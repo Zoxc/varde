@@ -90,6 +90,9 @@ smallvec = "=1.16.2"
 # The oracle of the expansion tests: Geogram's exact predicates, ported to
 # pure Rust (dev-dependency only; LGPL-3.0 OR MIT, taken under MIT).
 geogram_predicates = "=0.4.0"
+# The oracle of the exact predicates' tests: Shewchuk's orientations, the
+# version the lock already holds (dev-dependency only; MIT OR Apache-2.0).
+robust = "=1.2.0"
 # O_NONBLOCK and O_NOFOLLOW for opening the MCP token (crates/io), Unix
 # only. The version the lock already holds.
 libc = "0.2"

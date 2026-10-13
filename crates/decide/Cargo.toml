@@ -14,5 +14,6 @@ smallvec.workspace = true
 
 [dev-dependencies]
 geogram_predicates.workspace = true
+robust.workspace = true
 varde-testing.workspace = true
 varde-testkit.workspace = true

@@ -4304,6 +4304,7 @@ dependencies = [
  "glam 0.30.10",
  "libm",
  "malachite",
+ "robust",
  "smallvec",
  "varde-testing",
  "varde-testkit",
