@@ -3,9 +3,8 @@
 //! that commits it, never by the keys or the wheel, which would change it
 //! with no release to follow.
 
-use iced::advanced::widget::Tree;
-use iced::advanced::{Clipboard, Layout, Shell, Widget, mouse, renderer};
-use iced::{Element, Event, Rectangle};
+use iced::advanced::{Widget, mouse, renderer};
+use iced::{Element, Event};
 
 /// `content`, given every event but the keys (so it sees no modifiers
 /// held either) and the wheel.
@@ -40,31 +39,7 @@ where
         size, size_hint, children, diff, layout, operate, mouse_interaction, draw
     );
 
-    fn update(
-        &mut self,
-        tree: &mut Tree,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) {
-        if !passed(event) {
-            return;
-        }
-        self.content.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        );
-    }
+    crate::wrap::pass_to!(@update_if passed; content, Theme, Renderer);
 }
 
 impl<'a, Message, Theme, Renderer> From<MouseOnly<'a, Message, Theme, Renderer>>

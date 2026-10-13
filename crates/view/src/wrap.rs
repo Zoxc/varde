@@ -8,7 +8,37 @@
 /// the widget's tree's children: `size`, `size_hint`, `children` and
 /// `diff` (`$field` its only child), `layout`, `operate`, `update`,
 /// `mouse_interaction` and `draw`.
+///
+/// `pass_to!(@update_if $passed; $field, $theme, $renderer)` writes an
+/// `update` passing on only the events for which `$passed(event)` holds.
 macro_rules! pass_to {
+    (@update_if $passed:expr; $field:ident, $theme:ty, $renderer:ty) => {
+        fn update(
+            &mut self,
+            tree: &mut iced::advanced::widget::Tree,
+            event: &iced::Event,
+            layout: iced::advanced::Layout<'_>,
+            cursor: iced::advanced::mouse::Cursor,
+            renderer: &$renderer,
+            clipboard: &mut dyn iced::advanced::Clipboard,
+            shell: &mut iced::advanced::Shell<'_, Message>,
+            viewport: &iced::Rectangle,
+        ) {
+            if !$passed(event) {
+                return;
+            }
+            self.$field.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
+    };
     ($field:ident, $theme:ty, $renderer:ty; $($method:ident),* $(,)?) => {
         $($crate::wrap::pass_to!(@$method $field $theme, $renderer);)*
     };
@@ -55,28 +85,7 @@ macro_rules! pass_to {
         }
     };
     (@update $field:ident $theme:ty, $renderer:ty) => {
-        fn update(
-            &mut self,
-            tree: &mut iced::advanced::widget::Tree,
-            event: &iced::Event,
-            layout: iced::advanced::Layout<'_>,
-            cursor: iced::advanced::mouse::Cursor,
-            renderer: &$renderer,
-            clipboard: &mut dyn iced::advanced::Clipboard,
-            shell: &mut iced::advanced::Shell<'_, Message>,
-            viewport: &iced::Rectangle,
-        ) {
-            self.$field.as_widget_mut().update(
-                &mut tree.children[0],
-                event,
-                layout,
-                cursor,
-                renderer,
-                clipboard,
-                shell,
-                viewport,
-            );
-        }
+        $crate::wrap::pass_to!(@update_if |_| true; $field, $theme, $renderer);
     };
     (@mouse_interaction $field:ident $theme:ty, $renderer:ty) => {
         fn mouse_interaction(
