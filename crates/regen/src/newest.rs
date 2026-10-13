@@ -25,11 +25,11 @@ pub struct Newest {
     /// Exports and queries, in the order sent: each is answered, so
     /// none replaces another, and no regeneration replaces one. The user
     /// (or a client) waits on them, so they go first.
-    exports: VecDeque<Request>,
+    ordered: VecDeque<Request>,
 }
 
 impl Pending<Request> for Newest {
-    /// Queues an export or edge facts. Replaces the regeneration waiting with a newer
+    /// Queues an export or a query. Replaces the regeneration waiting with a newer
     /// one. Refuses one older than a regeneration sent before it, even one
     /// already taken: clones sending at once can get here out of order, and
     /// the newest must be neither lost nor followed by an older one.
@@ -39,7 +39,7 @@ impl Pending<Request> for Newest {
         let generation = match &request {
             Request::Regenerate { generation, .. } => *generation,
             Request::Export { .. } | Request::Query { .. } => {
-                self.exports.push_back(request);
+                self.ordered.push_back(request);
                 return None;
             }
         };
@@ -50,14 +50,14 @@ impl Pending<Request> for Newest {
         self.request.replace(request)
     }
 
-    /// Takes the request to start: the oldest export or edge facts, else the
+    /// Takes the request to start: the oldest export or query, else the
     /// regeneration waiting.
     fn pop(&mut self) -> Option<Request> {
-        self.exports.pop_front().or_else(|| self.request.take())
+        self.ordered.pop_front().or_else(|| self.request.take())
     }
 
     fn is_empty(&self) -> bool {
-        self.request.is_none() && self.exports.is_empty()
+        self.request.is_none() && self.ordered.is_empty()
     }
 }
 

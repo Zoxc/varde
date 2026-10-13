@@ -19,7 +19,7 @@ use crate::{
 pub enum Request {
     /// Builds the mesh and the sketch lines of the committed document as
     /// of `generation`, with `draft` applied if there is one. Supersedes
-    /// any earlier regeneration still waiting, never an export.
+    /// any earlier regeneration still waiting, never an export or a query.
     Regenerate {
         generation: Generation,
         #[serde(with = "varde_document::codec::snapshot")]
