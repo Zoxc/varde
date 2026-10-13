@@ -325,7 +325,7 @@ impl Camera {
     /// Non-finite angles are ignored, and so is a trackball turn too large
     /// to tell its axis.
     pub fn turn(&mut self, rotation: Rotation, delta_yaw: f32, delta_pitch: f32) {
-        use std::f32::consts::{PI, TAU};
+        use std::f32::consts::TAU;
         if !(delta_yaw.is_finite() && delta_pitch.is_finite()) {
             return;
         }
@@ -344,8 +344,7 @@ impl Camera {
                     delta_yaw
                 };
                 self.yaw = (self.yaw + delta_yaw).rem_euclid(TAU);
-                // Within a half turn either way. Finite angles stay finite.
-                self.pitch = (self.pitch + delta_pitch + PI).rem_euclid(TAU) - PI;
+                self.pitch = wrap_half_turn(self.pitch + delta_pitch);
             }
             Rotation::Trackball => {
                 if let Some(turn) = self.trackball_turn(delta_yaw, delta_pitch) {
@@ -375,12 +374,10 @@ impl Camera {
     /// [`Self::roll`]) the right way up, the world's Z up on screen: the
     /// eye where it is, the view rolled back. Otherwise does nothing.
     pub fn upright(&mut self) {
-        use std::f32::consts::{PI, TAU};
         self.roll = 0.0;
         if self.upside_down() {
-            self.pitch =
-                (PI.copysign(self.pitch) - self.pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
-            self.yaw = (self.yaw + PI).rem_euclid(TAU);
+            self.flip_over_pole();
+            self.pitch = self.pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
         }
     }
 
@@ -389,17 +386,25 @@ impl Camera {
     /// the top ([`Rotation::OverTheTop`]), the eye where it is either
     /// way. Otherwise does nothing.
     pub fn unroll(&mut self) {
-        use std::f32::consts::{FRAC_PI_2, PI, TAU};
+        use std::f32::consts::FRAC_PI_2;
         if self.roll == 0.0 {
             return;
         }
         if self.roll.abs() > FRAC_PI_2 {
             // The inverse of `upright`'s turn: the same flip.
-            let sign = if self.pitch < 0.0 { -1.0 } else { 1.0 };
-            self.pitch = PI * sign - self.pitch;
-            self.yaw = (self.yaw + PI).rem_euclid(TAU);
+            self.flip_over_pole();
         }
         self.roll = 0.0;
+    }
+
+    /// Flips the view over the pole the pitch leans to, the eye where it
+    /// is: the pitch mirrored about straight up or down, the yaw turned a
+    /// half turn.
+    fn flip_over_pole(&mut self) {
+        use std::f32::consts::{PI, TAU};
+        let sign = if self.pitch < 0.0 { -1.0 } else { 1.0 };
+        self.pitch = PI * sign - self.pitch;
+        self.yaw = (self.yaw + PI).rem_euclid(TAU);
     }
 
     /// Rotates the camera around `pivot` by the given angles in radians,
@@ -508,7 +513,6 @@ impl Camera {
     /// rolled ([`Rotation::Trackball`]), the view turns the shortest way
     /// from one to the other about a single axis (a slerp).
     pub fn lerp(&self, to: &Camera, t: f32) -> Camera {
-        use std::f32::consts::{PI, TAU};
         if self.roll != 0.0 || to.roll != 0.0 {
             // Target, distance and the rest as unrolled, then the turn.
             let unrolled = |camera: &Camera| Camera {
@@ -520,19 +524,19 @@ impl Camera {
             camera.set_orientation(self.orientation().slerp(to.orientation(), t));
             return camera;
         }
-        let yaw = (to.yaw - self.yaw + PI).rem_euclid(TAU) - PI;
+        let yaw = wrap_half_turn(to.yaw - self.yaw);
         // Upside down at either end, the pitch too turns the short way
         // round, over the top if that's shorter; upright at both, it
         // turns through the side between them, never over the top.
         let over = self.upside_down() || to.upside_down();
         let pitch = if over {
-            (to.pitch - self.pitch + PI).rem_euclid(TAU) - PI
+            wrap_half_turn(to.pitch - self.pitch)
         } else {
             to.pitch - self.pitch
         };
         let pitch = self.pitch + pitch * t;
         let pitch = if over {
-            (pitch + PI).rem_euclid(TAU) - PI
+            wrap_half_turn(pitch)
         } else {
             pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT)
         };
@@ -630,6 +634,12 @@ fn up(yaw: f32, pitch: f32) -> Vec3 {
     let (sy, cy) = yaw.sin_cos();
     let (sp, cp) = pitch.sin_cos();
     Vec3::new(-sp * cy, -sp * sy, cp)
+}
+
+/// `angle` within a half turn either way. Finite angles stay finite.
+fn wrap_half_turn(angle: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    (angle + PI).rem_euclid(TAU) - PI
 }
 
 #[cfg(test)]
