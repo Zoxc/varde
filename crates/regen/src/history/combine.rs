@@ -6,9 +6,11 @@ use std::sync::Arc;
 use varde_document::{BodyId, BodyOp, Combine, Document};
 use varde_kernel_compat::{KernelError, Op, Solid, Tolerance};
 
-use super::{BodySolid, Evaluation, Failed, boolean_key, cached_boolean, note_merge, own_solids};
+use super::{
+    BodySolid, BooleanStep, Evaluation, Failed, boolean_key, cached_boolean, note_merge, own_solids,
+};
 use crate::cache::{Cache, Key};
-use crate::why::{self, Doing};
+use crate::why;
 
 /// Changes the bodies of `evaluation` (those the features before the
 /// combine made) as `combine` says, or says why it fails, changing
@@ -47,34 +49,30 @@ pub(super) fn evaluate(
     let tools: Vec<&BodySolid> = (evaluation.bodies.iter())
         .filter(|made| combine.tools.binary_search(&made.body).is_ok())
         .collect();
-    let (op, doing) = match combine.op {
-        BodyOp::Union => (Op::Union, Doing::Merging),
-        BodyOp::Subtract => (Op::Difference, Doing::Cutting),
-        BodyOp::Intersect => (Op::Intersection, Doing::Intersecting),
+    let (op, step) = match combine.op {
+        BodyOp::Union => (Op::Union, BooleanStep::Merge),
+        BodyOp::Subtract => (Op::Difference, BooleanStep::Cut),
+        BodyOp::Intersect => (Op::Intersection, BooleanStep::Intersect),
     };
     let target_name = name(target.body);
     // A step on the running solid: on success it holds the tool too; on
     // failure it stays as it was. A failure names faces of the running
     // solid on every body it holds.
     let mut step = |running: &mut Running, tool: &BodySolid| {
-        let next = boolean_key(doing, running.key, tool.key);
+        let next = boolean_key(step, running.key, tool.key);
         let result = cached_boolean(cache, next, (&running.solid, &tool.solid), op, tolerance);
-        let words = match doing {
-            // The messages say "joining" for a union.
-            Doing::Merging => Doing::Joining,
-            _ => doing,
-        };
         let tool_name = name(tool.body);
         let solid = result.map_err(|failure| {
             let pieces = match failure.error {
                 KernelError::TooComplex => shells(&tool.solid),
                 _ => 1,
             };
-            let message = why::combining(words, target_name, tool_name, pieces, failure.error);
+            let message =
+                why::combining(step.doing(), target_name, tool_name, pieces, failure.error);
             Failed::kernel(message, &failure, [&running.held, &[tool.body]])
         })?;
         if solid.is_empty() {
-            return Err(why::combine_emptied(words, target_name, tool_name).into());
+            return Err(why::combine_emptied(step.doing(), target_name, tool_name).into());
         }
         running.solid = solid;
         running.key = next;

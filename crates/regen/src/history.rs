@@ -164,7 +164,7 @@ mod taper;
 pub(crate) use evidence::{add_chain, add_region, chain_curves, corners, face_geometry};
 pub(crate) use revolve::chain_runs_with;
 pub(crate) use run::through_all;
-use run::{Run, Shape, boolean_key, cached_boolean};
+use run::{BooleanStep, Run, Shape, boolean_key, cached_boolean};
 
 /// The kernel operations tests may run stand-ins in place of
 /// ([`crate::testing`]): each one's type.

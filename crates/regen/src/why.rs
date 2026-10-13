@@ -900,23 +900,9 @@ pub(crate) enum Doing {
     Joining,
     Cutting,
     Intersecting,
-    /// Uniting a body a join touches with the others it touches (for the
-    /// key only: [`merging`] words its errors).
-    Merging,
 }
 
 impl Doing {
-    /// What keys what it works out, apart from its name's wording.
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            Doing::Touching => "touch",
-            Doing::Joining => "join",
-            Doing::Cutting => "cut",
-            Doing::Intersecting => "intersect",
-            Doing::Merging => "merge",
-        }
-    }
-
     /// Its name, in a message.
     pub(crate) fn name(self) -> &'static str {
         match self {
@@ -924,7 +910,6 @@ impl Doing {
             Doing::Joining => "joining it to",
             Doing::Cutting => "cutting it from",
             Doing::Intersecting => "intersecting it with",
-            Doing::Merging => "merging",
         }
     }
 }
@@ -1113,7 +1098,7 @@ fn combine_step(doing: Doing, target: &str, tool: &str) -> String {
     match doing {
         Doing::Cutting => format!("cutting {tool} from {target}"),
         Doing::Intersecting => format!("intersecting {target} with {tool}"),
-        Doing::Joining | Doing::Merging | Doing::Touching => format!("joining {tool} to {target}"),
+        Doing::Joining | Doing::Touching => format!("joining {tool} to {target}"),
     }
 }
 
@@ -1131,7 +1116,7 @@ pub(crate) fn combine_emptied(doing: Doing, target: &str, tool: &str) -> String 
             format!("{step} would leave nothing of {target}: they don't overlap")
         }
         // A union of solids that aren't empty isn't.
-        Doing::Joining | Doing::Merging | Doing::Touching => {
+        Doing::Joining | Doing::Touching => {
             format!("{step} would leave nothing of {target}")
         }
     }
@@ -1181,7 +1166,7 @@ pub(crate) fn emptied(doing: Doing, body: &str) -> String {
         ),
         // A union of two solids that aren't empty isn't empty, and
         // finding where they meet makes no solid.
-        Doing::Joining | Doing::Touching | Doing::Merging => {
+        Doing::Joining | Doing::Touching => {
             format!("{name} {body} would leave nothing of it")
         }
     }

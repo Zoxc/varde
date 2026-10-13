@@ -554,8 +554,11 @@ fn a_tool_put_aside_is_filed_after_the_steps_that_worked() {
     let [united] = &evaluation.bodies[..] else {
         panic!("one body: {:?}", made(&evaluation));
     };
-    let bridged = boolean_key(Doing::Merging, key(a), key(bridge));
-    assert_eq!(united.key, boolean_key(Doing::Merging, bridged, key(edge)));
+    let bridged = boolean_key(BooleanStep::Merge, key(a), key(bridge));
+    assert_eq!(
+        united.key,
+        boolean_key(BooleanStep::Merge, bridged, key(edge))
+    );
 }
 
 /// A tool that fails again when tried a second time fails the union

@@ -113,7 +113,7 @@ impl Run<'_> {
             Shape::Sweep(sweep) => self.swept(sweep, evaluation, cache)?,
             Shape::Loft(loft) => self.lofted(loft, cache)?,
         };
-        let (op, doing) = match self.operation {
+        let (op, step) = match self.operation {
             Operation::NewBody(body) => {
                 evaluation.bodies.push(BodySolid {
                     body: *body,
@@ -122,9 +122,9 @@ impl Run<'_> {
                 });
                 return Ok(());
             }
-            Operation::Join(_) => (Op::Union, Doing::Joining),
-            Operation::Cut(_) => (Op::Difference, Doing::Cutting),
-            Operation::Intersect(_) => (Op::Intersection, Doing::Intersecting),
+            Operation::Join(_) => (Op::Union, BooleanStep::Join),
+            Operation::Cut(_) => (Op::Difference, BooleanStep::Cut),
+            Operation::Intersect(_) => (Op::Intersection, BooleanStep::Intersect),
         };
         let excluded = self.operation.excluded();
         let touched = self.touched(&evaluation.bodies, excluded, (&tool, tool_key), cache);
@@ -136,10 +136,10 @@ impl Run<'_> {
             // What the request before worked out, kept for putting it
             // back.
             cache.keep(touches_key(made.key, tool_key));
-            cache.keep(boolean_key(doing, made.key, tool_key));
+            cache.keep(boolean_key(step, made.key, tool_key));
             taken_out = true;
         }
-        if taken_out && doing == Doing::Joining {
+        if taken_out && step == BooleanStep::Join {
             // The merge with every body taken out put back: putting back
             // the one taken out finds it.
             let bodies = (evaluation.bodies.iter())
@@ -156,7 +156,7 @@ impl Run<'_> {
             }
             .into());
         }
-        if doing == Doing::Joining && targets.len() > 1 {
+        if step == BooleanStep::Join && targets.len() > 1 {
             return self.merge_into_first(evaluation, &targets, (&tool, tool_key), cache);
         }
         // Worked out for every target before any body changes. Where
@@ -173,24 +173,24 @@ impl Run<'_> {
                 1 => message,
                 _ => why::leave_out(message, name),
             };
-            let key = boolean_key(doing, made.key, tool_key);
+            let key = boolean_key(step, made.key, tool_key);
             let solid = cached_boolean(cache, key, (&made.solid, &tool), op, &self.tolerance)
                 .map_err(|failure| {
-                    let words = fails(why::boolean(doing, name, failure.error));
+                    let words = fails(why::boolean(step.doing(), name, failure.error));
                     Failed::kernel(words, &failure, [&[made.body], &[]])
                 })?;
             // The cached empty result stays: its key is right, and the
             // check is cheap to make again. A cut's message says to
             // untick it already.
             if solid.is_empty() {
-                let emptied = why::emptied(doing, name);
-                return Err(match doing {
-                    Doing::Cutting => emptied,
+                let emptied = why::emptied(step.doing(), name);
+                return Err(match step {
+                    BooleanStep::Cut => emptied,
                     _ => fails(emptied),
                 }
                 .into());
             }
-            if doing == Doing::Cutting && self.cuts_nothing(made, &solid, (&tool, tool_key), cache)
+            if step == BooleanStep::Cut && self.cuts_nothing(made, &solid, (&tool, tool_key), cache)
             {
                 uncut.push(made.body);
             }
@@ -200,7 +200,7 @@ impl Run<'_> {
                 key,
             });
         }
-        if doing == Doing::Cutting {
+        if step == BooleanStep::Cut {
             evaluation.uncut.push((self.feature.id, uncut));
         }
         for change in changed {
@@ -228,7 +228,7 @@ impl Run<'_> {
         if taken.abs().partial_cmp(&(UNCUT_SHARE * before.abs())) != Some(Ordering::Less) {
             return false;
         }
-        let key = boolean_key(Doing::Intersecting, made.key, tool_key);
+        let key = boolean_key(BooleanStep::Intersect, made.key, tool_key);
         let common = cached_boolean(
             cache,
             key,
@@ -306,21 +306,21 @@ impl Run<'_> {
         for made in rest {
             bodies_first = bodies_first.and_then(|(solid, key)| {
                 unite(
-                    boolean_key(Doing::Merging, key, made.key),
+                    boolean_key(BooleanStep::Merge, key, made.key),
                     &solid,
                     &made.solid,
                 )
             });
         }
         let bodies_first = bodies_first.and_then(|(solid, key)| {
-            unite(boolean_key(Doing::Joining, key, tool_key), &solid, tool)
+            unite(boolean_key(BooleanStep::Join, key, tool_key), &solid, tool)
         });
         if let Ok(merged) = bodies_first {
             return Ok(merged);
         }
         // The tool joined to the first body, then the others.
         let mut merged = unite(
-            boolean_key(Doing::Joining, first.key, tool_key),
+            boolean_key(BooleanStep::Join, first.key, tool_key),
             &first.solid,
             tool,
         )
@@ -335,7 +335,7 @@ impl Run<'_> {
         let order: Vec<BodyId> = bodies.iter().map(|made| made.body).collect();
         for (held, made) in (1..).map(|i| &order[..i]).zip(rest) {
             merged = unite(
-                boolean_key(Doing::Merging, merged.1, made.key),
+                boolean_key(BooleanStep::Merge, merged.1, made.key),
                 &merged.0,
                 &made.solid,
             )
@@ -492,11 +492,44 @@ pub(super) fn touches_key(body: Key, tool: Key) -> Key {
 /// volumes are integrated, accurate to rounding but not exact.
 pub(super) const UNCUT_SHARE: f64 = 1e-6;
 
-/// The key of `doing` the tool filed under `tool` to the body's solid
+/// A boolean step a body's solid is keyed by, apart from how a message
+/// words it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BooleanStep {
+    Join,
+    Cut,
+    Intersect,
+    /// Uniting a body a join touches with the others it touches, or a
+    /// combine's union.
+    Merge,
+}
+
+impl BooleanStep {
+    /// What keys what it works out.
+    fn key(self) -> &'static str {
+        match self {
+            BooleanStep::Join => "join",
+            BooleanStep::Cut => "cut",
+            BooleanStep::Intersect => "intersect",
+            BooleanStep::Merge => "merge",
+        }
+    }
+
+    /// What its messages say it was doing: a merge is a join.
+    pub(super) fn doing(self) -> Doing {
+        match self {
+            BooleanStep::Join | BooleanStep::Merge => Doing::Joining,
+            BooleanStep::Cut => Doing::Cutting,
+            BooleanStep::Intersect => Doing::Intersecting,
+        }
+    }
+}
+
+/// The key of `step` with the tool filed under `tool` on the body's solid
 /// filed under `body`: the body's new solid's.
-pub(super) fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
+pub(super) fn boolean_key(step: BooleanStep, body: Key, tool: Key) -> Key {
     Keyer::new("boolean")
-        .bytes(doing.key().as_bytes())
+        .bytes(step.key().as_bytes())
         .key(body)
         .key(tool)
         .finish()
@@ -526,14 +559,14 @@ pub(super) fn merge_keys(bodies: Vec<&BodySolid>, tool: Key) -> Vec<Key> {
     let mut keys = Vec::with_capacity(2 * bodies.len());
     let mut key = first.key;
     for made in rest {
-        key = boolean_key(Doing::Merging, key, made.key);
+        key = boolean_key(BooleanStep::Merge, key, made.key);
         keys.push(key);
     }
-    keys.push(boolean_key(Doing::Joining, key, tool));
-    let mut key = boolean_key(Doing::Joining, first.key, tool);
+    keys.push(boolean_key(BooleanStep::Join, key, tool));
+    let mut key = boolean_key(BooleanStep::Join, first.key, tool);
     keys.push(key);
     for made in rest {
-        key = boolean_key(Doing::Merging, key, made.key);
+        key = boolean_key(BooleanStep::Merge, key, made.key);
         keys.push(key);
     }
     keys
