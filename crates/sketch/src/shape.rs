@@ -499,20 +499,23 @@ impl Sketch {
             let u = if u < low { u + last } else { u };
             u >= low && u <= high
         };
+        let mut gone = BTreeSet::new();
         for (id, u) in on {
             match rest {
                 Some((rest, b)) if u >= b => {
-                    let held = self.constraints.iter_mut().find(|held| held.id == id);
-                    if let Some(held) = held
+                    if let Some(held) = self.constraint_mut(id)
                         && let Constraint::PointOnCurve { curve: on, .. } = &mut held.constraint
                     {
                         *on = rest;
                     }
                 }
                 _ if within(u) => {}
-                _ => self.constraints.retain(|held| held.id != id),
+                _ => {
+                    gone.insert(id);
+                }
             }
         }
+        self.constraints.retain(|held| !gone.contains(&held.id));
         Ok(())
     }
 

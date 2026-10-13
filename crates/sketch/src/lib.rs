@@ -368,10 +368,19 @@ impl Sketch {
     }
 
     pub fn constraint(&self, id: Id) -> Option<&ConstraintEntry> {
+        self.constraint_index(id)
+            .map(|index| &self.constraints[index])
+    }
+
+    pub(crate) fn constraint_mut(&mut self, id: Id) -> Option<&mut ConstraintEntry> {
+        self.constraint_index(id)
+            .map(|index| &mut self.constraints[index])
+    }
+
+    fn constraint_index(&self, id: Id) -> Option<usize> {
         self.constraints
             .binary_search_by_key(&id, |entry| entry.id)
             .ok()
-            .map(|index| &self.constraints[index])
     }
 
     pub fn dimension(&self, id: Id) -> Option<&DimensionEntry> {

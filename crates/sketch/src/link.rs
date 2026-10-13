@@ -276,12 +276,15 @@ fn arc_places(center: DVec2, radius: f64, from: f64, sweep: f64, closed: bool) -
 impl Sketch {
     /// The link `id`.
     pub fn link(&self, id: Id) -> Option<&Link> {
-        (self.links.binary_search_by_key(&id, |link| link.id).ok()).map(|index| &self.links[index])
+        self.link_index(id).map(|index| &self.links[index])
     }
 
     fn link_mut(&mut self, id: Id) -> Option<&mut Link> {
-        (self.links.binary_search_by_key(&id, |link| link.id).ok())
-            .map(|index| &mut self.links[index])
+        self.link_index(id).map(|index| &mut self.links[index])
+    }
+
+    fn link_index(&self, id: Id) -> Option<usize> {
+        self.links.binary_search_by_key(&id, |link| link.id).ok()
     }
 
     /// The link that made the point or curve `item`, if one did: each
