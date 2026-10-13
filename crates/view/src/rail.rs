@@ -16,7 +16,7 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::widget::{button, column, container, mouse_area, responsive, row, space, text};
 use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size, Vector};
 
-use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
+use crate::chrome::{ChipSize, key_chip, over_viewport, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, DocumentKeys, Operating, OperationKeys, Shortcut, combine_binding, constrain_binding,
@@ -574,19 +574,15 @@ fn card<'a>(
                 .style(theme::rail_strip),
         )
         .style(theme::rail_strip_backing(open, held));
-        // Its gaps don't reach the scene.
-        mouse_area(strip).interaction(mouse::Interaction::Idle)
+        over_viewport(strip)
     });
     let content = column![head, strip].width(Length::Fill);
-    // Clicks on the card's border don't reach the scene either.
-    mouse_area(
+    over_viewport(
         container(content)
             .width(CARD_WIDTH)
             .padding(1)
             .style(theme::rail_card),
     )
-    .interaction(mouse::Interaction::Idle)
-    .into()
 }
 
 /// A tool on a card: its icon, with its name and key beside it while
@@ -649,9 +645,7 @@ fn list<'a>(
     )
     .padding(Padding::ZERO.top(theme::RAIL_LIST_BAND))
     .style(theme::rail_list_band(category));
-    mouse_area(list)
-        .interaction(mouse::Interaction::Idle)
-        .into()
+    over_viewport(list)
 }
 
 /// A row of a set's list: `entry`'s icon and label, and the `letter`

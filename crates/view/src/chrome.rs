@@ -8,10 +8,10 @@ use std::borrow::Cow;
 
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    Button, Column, Container, Rule, Scrollable, Text, button, column, container, opaque,
-    rich_text, row, rule, scrollable, span, text, tooltip,
+    Button, Column, Container, Rule, Scrollable, Text, button, column, container, mouse_area,
+    opaque, rich_text, row, rule, scrollable, span, text, tooltip,
 };
-use iced::{Alignment, Element, Font, Length, Padding};
+use iced::{Alignment, Element, Font, Length, Padding, mouse};
 
 use crate::Message;
 use crate::icons::{self, Icon, MouseButton};
@@ -132,6 +132,14 @@ pub fn edged<'a>(content: Container<'a, Message>, edge: Edge, total: f32) -> Ele
         Edge::Bottom => column![content.height(inner), hrule()].into(),
         Edge::Right => row![content.width(inner), vrule()].into(),
     }
+}
+
+/// `content` over the viewport, blocking it: clicks and drags on it, its
+/// gaps and its border don't reach the scene, so don't orbit the camera.
+pub(crate) fn over_viewport<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    mouse_area(content)
+        .interaction(mouse::Interaction::Idle)
+        .into()
 }
 
 /// An icon-only button. Enabled, it is `tone` at rest and turns to the text
