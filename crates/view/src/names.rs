@@ -349,21 +349,12 @@ impl Names<'_> {
         let shows = |p: glam::DVec3, picked: bool| self.shows(projector, size, p, picked);
         let normals = mesh.normals();
         let normal = |i: u32| glam::Vec3::from(normals[i as usize]).as_dvec3();
-        let (eye, backward) = projector.eye();
-        // Whether a surface at `p` with normal `n` turns towards the eye.
-        let faces_eye = |p: glam::DVec3, n: glam::DVec3| {
-            let towards = if projector.perspective() {
-                eye - p
-            } else {
-                backward
-            };
-            n.dot(towards) > 0.0
-        };
         // Whether face `face` turns towards the eye near `p`: its
         // triangle nearest there does, by its normals.
         let triangle_normal = |t: [u32; 3]| normal(t[0]) + normal(t[1]) + normal(t[2]);
         let facing = |face: u32, p: glam::DVec3| {
-            (self.nearest_triangle(face, p)).is_some_and(|t| faces_eye(p, triangle_normal(t)))
+            (self.nearest_triangle(face, p))
+                .is_some_and(|t| projector.faces_eye(p, triangle_normal(t)))
         };
         // The unit normal of face `face` near `p`, by its nearest
         // triangle's normals.
@@ -420,11 +411,7 @@ impl Names<'_> {
             // from behind is hidden.
             let mut centres: Vec<_> = (triangles.iter().zip(tris))
                 .filter(|&([a, b, c], t)| {
-                    picked
-                        || faces_eye(
-                            (*a + *b + *c) / 3.0,
-                            normal(t[0]) + normal(t[1]) + normal(t[2]),
-                        )
+                    picked || projector.faces_eye((*a + *b + *c) / 3.0, triangle_normal(*t))
                 })
                 .map(|([a, b, c], _)| (*a + *b + *c) / 3.0)
                 .collect();
@@ -635,9 +622,8 @@ impl Names<'_> {
                     near.push(entry.id);
                 }
             }
-            let sketch_name = (self.document.features().iter())
-                .find(|f| f.id == lines.feature)
-                .map_or_else(String::new, |f| f.name.clone());
+            let sketch_name =
+                (self.document.feature(lines.feature)).map_or_else(String::new, |f| f.name.clone());
             let world = |p: glam::DVec2| lines.placement.to_world(p);
             for entry in &lines.sketch.curves {
                 let picked = picked(entry.id);
@@ -725,14 +711,6 @@ impl Names<'_> {
             let s = projector.show(p);
             Point::new(s.x as f32, s.y as f32)
         };
-        let (eye, backward) = projector.eye();
-        let towards = |p: DVec3| {
-            if projector.perspective() {
-                eye - p
-            } else {
-                backward
-            }
-        };
         let faint = |a: f32| Color { a, ..colour };
         let polyline = |b: &mut canvas::path::Builder, line: &[u32]| {
             trace(b, line.iter().map(|&i| projector.show(at(i))));
@@ -756,7 +734,7 @@ impl Names<'_> {
                     for t in mesh.indices()[range].as_chunks::<3>().0 {
                         let centre = (at(t[0]) + at(t[1]) + at(t[2])) / 3.0;
                         let n = normal(t[0]) + normal(t[1]) + normal(t[2]);
-                        if n.dot(towards(centre)) <= 0.0 {
+                        if !projector.faces_eye(centre, n) {
                             continue;
                         }
                         b.move_to(screen(at(t[0])));

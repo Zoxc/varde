@@ -192,6 +192,16 @@ impl Projector {
         (self.eye, self.backward)
     }
 
+    /// Whether a surface at `p` with normal `n` turns towards the eye.
+    pub(crate) fn faces_eye(&self, p: DVec3, n: DVec3) -> bool {
+        let towards = if self.perspective {
+            self.eye - p
+        } else {
+            self.backward
+        };
+        n.dot(towards) > 0.0
+    }
+
     /// The sketch point under the screen position `pixel`, and a pixel's
     /// size there. `None` where the cursor's ray misses the plane, runs
     /// along it, or meets it behind the eye or past [`MAX_COORD`].
