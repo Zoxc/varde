@@ -159,12 +159,7 @@ fn decompose(x: Vec2, y: Vec2) -> (f32, Vec2, f32) {
 fn fill(palette: &Palette, basis: &Basis, normal: Vec3) -> Color {
     let light = (-0.45 * basis.right + 0.7 * basis.up + 0.6 * basis.backward).normalize();
     let i = normal.dot(light).max(0.0);
-    let (a, b) = (palette.cube_shade, palette.cube_lit);
-    Color::from_rgb(
-        a.r + (b.r - a.r) * i,
-        a.g + (b.g - a.g) * i,
-        a.b + (b.b - a.b) * i,
-    )
+    crate::theme::mix(palette.cube_lit, palette.cube_shade, i)
 }
 
 /// The world's X, Y and Z directions.

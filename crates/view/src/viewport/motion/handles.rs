@@ -523,9 +523,7 @@ pub(super) fn draw_handles(
         let [r, g, b] = scene.axes[axis_index(axis)].0;
         let color = iced::Color::from_rgb(r, g, b);
         if active == Some(grip) {
-            let lighter = |c: f32| c * 0.72 + 0.28;
-            let lit = iced::Color::from_rgb(lighter(r), lighter(g), lighter(b));
-            (lit, colors.handle_accent_hovered)
+            (crate::theme::hovered(color), colors.handle_accent_hovered)
         } else {
             (color, colors.handle_accent)
         }

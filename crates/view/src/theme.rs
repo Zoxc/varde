@@ -293,7 +293,7 @@ impl IconColors {
 
 /// `a` mixed with `share` of it into `b`, opaque, as CSS `color-mix` in
 /// sRGB does.
-const fn mix(a: Color, b: Color, share: f32) -> Color {
+pub(crate) const fn mix(a: Color, b: Color, share: f32) -> Color {
     Color {
         r: a.r * share + b.r * (1.0 - share),
         g: a.g * share + b.g * (1.0 - share),
@@ -373,6 +373,11 @@ const DARK_ICONS: IconColors = {
 /// How much of a handle's colours is kept, mixed into white, while it's
 /// hovered or dragged.
 const HANDLE_HOVERED: f32 = 0.72;
+
+/// A handle's colour `color` as it shows while hovered or dragged.
+pub(crate) const fn hovered(color: Color) -> Color {
+    mix(color, Color::WHITE, HANDLE_HOVERED)
+}
 /// A pattern's count's knob's teal, beside the handles' magenta.
 const LIGHT_COUNT: Color = color!(0x0b8a91);
 const DARK_COUNT: Color = color!(0x3fc9d3);
@@ -467,14 +472,14 @@ const LIGHT: Palette = Palette {
         spline_handle: color!(0x8a6d3b),
         handle: LIGHT_ICONS.solid.line,
         handle_accent: LIGHT_ICONS.solid.accent,
-        handle_hovered: mix(LIGHT_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
-        handle_accent_hovered: mix(LIGHT_ICONS.solid.accent, Color::WHITE, HANDLE_HOVERED),
+        handle_hovered: hovered(LIGHT_ICONS.solid.line),
+        handle_accent_hovered: hovered(LIGHT_ICONS.solid.accent),
         modify_handle: LIGHT_ICONS.modify.line,
         modify_handle_accent: LIGHT_ICONS.modify.accent,
-        modify_handle_hovered: mix(LIGHT_ICONS.modify.line, Color::WHITE, HANDLE_HOVERED),
-        modify_handle_accent_hovered: mix(LIGHT_ICONS.modify.accent, Color::WHITE, HANDLE_HOVERED),
+        modify_handle_hovered: hovered(LIGHT_ICONS.modify.line),
+        modify_handle_accent_hovered: hovered(LIGHT_ICONS.modify.accent),
         count_handle: LIGHT_COUNT,
-        count_handle_hovered: mix(LIGHT_COUNT, Color::WHITE, HANDLE_HOVERED),
+        count_handle_hovered: hovered(LIGHT_COUNT),
         rail: mix(LIGHT_TEXT, LIGHT_PANEL, 0.8),
         link: color!(0x8e44c9),
     },
@@ -564,14 +569,14 @@ const DARK: Palette = Palette {
         spline_handle: color!(0xc9a66b),
         handle: DARK_ICONS.solid.line,
         handle_accent: DARK_ICONS.solid.accent,
-        handle_hovered: mix(DARK_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
-        handle_accent_hovered: mix(DARK_ICONS.solid.accent, Color::WHITE, HANDLE_HOVERED),
+        handle_hovered: hovered(DARK_ICONS.solid.line),
+        handle_accent_hovered: hovered(DARK_ICONS.solid.accent),
         modify_handle: DARK_ICONS.modify.line,
         modify_handle_accent: DARK_ICONS.modify.accent,
-        modify_handle_hovered: mix(DARK_ICONS.modify.line, Color::WHITE, HANDLE_HOVERED),
-        modify_handle_accent_hovered: mix(DARK_ICONS.modify.accent, Color::WHITE, HANDLE_HOVERED),
+        modify_handle_hovered: hovered(DARK_ICONS.modify.line),
+        modify_handle_accent_hovered: hovered(DARK_ICONS.modify.accent),
         count_handle: DARK_COUNT,
-        count_handle_hovered: mix(DARK_COUNT, Color::WHITE, HANDLE_HOVERED),
+        count_handle_hovered: hovered(DARK_COUNT),
         rail: mix(DARK_TEXT, DARK_PANEL, 0.8),
         link: color!(0xc08cf2),
     },
