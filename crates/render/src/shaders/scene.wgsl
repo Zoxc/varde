@@ -1,4 +1,4 @@
-// See `Uniforms` in renderer.rs for what each field holds.
+// See `Uniforms` in renderer/prepare.rs for what each field holds.
 struct Uniforms {
     view_proj: mat4x4<f32>,
     eye: vec4<f32>,
@@ -31,17 +31,17 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
-// See `PartUniforms` in renderer.rs: how opaque the part of the model being
-// drawn is, bound at its step's offset for each part's draws.
+// See `PartUniforms` in renderer/prepare.rs: how opaque the part of the
+// model being drawn is, bound at its step's offset for each part's draws.
 struct Part {
     alpha: vec4<f32>,
 };
 
 @group(1) @binding(0) var<uniform> part: Part;
 
-// See `Slot::tints` in renderer.rs: the linear colour of the part of the
-// model being drawn, the model's or its body's own, bound at its entry's
-// offset. Binding 3, as the errors' group 0 has 1 and 2.
+// See `Slot::tints` in renderer/prepare.rs: the linear colour of the part
+// of the model being drawn, the model's or its body's own, bound at its
+// entry's offset. Binding 3, as the errors' group 0 has 1 and 2.
 struct Tint {
     color: vec4<f32>,
 };
@@ -216,7 +216,7 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
 
     // The axis lines over the grid, not faded: its own, the y axis over
     // the x axis, then the world's Z axis, those shown (see
-    // `OriginShown::mask` in renderer.rs).
+    // `OriginShown::mask` in renderer/frame.rs).
     let pixel_at = fragment_pixels(in.position);
     let mask = origin_shown();
     let width = vec3<f32>(
@@ -235,7 +235,7 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
         u.axes[2].rgb,
     );
     var color = u.grid.rgb;
-    // The axis lines alone, see `AXES_ONLY` in renderer.rs.
+    // The axis lines alone, see `AXES_ONLY` in renderer/frame.rs.
     var alpha = select(lines * fade * valid, 0.0, (mask & AXES_ONLY) != 0u);
     var out_depth = clamp(depth, 0.0, 1.0);
     for (var i = 0u; i < 3u; i++) {
@@ -268,7 +268,7 @@ fn origin_shown() -> u32 {
 }
 
 // The colour of a grid's axis line along the world axis `index` names, 0
-// to 2, or the grid's for 3: see `Uniforms::grid_x` in renderer.rs.
+// to 2, or the grid's for 3: see `Uniforms::grid_x` in renderer/prepare.rs.
 fn axis_color(index: f32) -> vec3<f32> {
     let i = u32(index);
     if i < 3u {
@@ -369,7 +369,7 @@ fn vs_mesh(in: MeshIn) -> MeshOut {
     return out;
 }
 
-// How the faces are lit, `Shading` in renderer.rs, kept in the viewport
+// How the faces are lit, `Shading` in renderer/frame.rs, kept in the viewport
 // origin's unused z. Set from frame.rs's constants.
 override SHADING_FLAT: f32;
 override SHADING_METAL: f32;
@@ -470,7 +470,7 @@ fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @locatio
 // the face is shown, within an edge in the stripes' colour where it ends
 // (`fs_pattern_edge`). How opaque the wash is is `u.backward.w`, the
 // stripes and the edge `u.viewport.w`, and how wide the edge is, in
-// logical pixels, `u.hover_outline.w` (`PatternStyle` in renderer.rs).
+// logical pixels, `u.hover_outline.w` (`PatternStyle` in renderer/color.rs).
 const SELECTED_STRIPE: f32 = 8.0;
 
 // A selected face where something hides it (depth tested Greater), over
@@ -953,12 +953,12 @@ struct EdgeIn {
 };
 
 // A segment of a feature edge, from the stream of the edges' points (see
-// `EdgePoint` in renderer.rs): drawn if its start and end are of the same
-// edge, and joined to the points either side that are of it too, marked
-// NEIGHBOUR_ONLY or not. The quad reaches `quad` pixels either side, the
-// same for the visible and hidden passes, so they split the same pixels
-// between them; `half`, `color`, `dash` and `along` are as in
-// `line_vertex`.
+// `EdgePoint` in varde-kernel-compat's mesh_upload.rs): drawn if its start
+// and end are of the same edge, and joined to the points either side that
+// are of it too, marked NEIGHBOUR_ONLY or not. The quad reaches `quad`
+// pixels either side, the same for the visible and hidden passes, so they
+// split the same pixels between them; `half`, `color`, `dash` and `along`
+// are as in `line_vertex`.
 fn edge_segment(
     in: EdgeIn,
     quad: f32,
@@ -1781,10 +1781,10 @@ fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
 // (`highlight_slope`), patches as the edges are (`pulled`).
 
 // The errors' colours, linear: the core's, and the halo's with its alpha.
-// `ErrorUniforms` in renderer.rs. In group 0 beside the scene's uniforms
-// (iced's device has two bind groups), bound for the halo's composite and
-// the core, not for the halo's coverage, which is drawn into the texture
-// bound beside it.
+// `ErrorUniforms` in renderer/prepare.rs. In group 0 beside the scene's
+// uniforms (iced's device has two bind groups), bound for the halo's
+// composite and the core, not for the halo's coverage, which is drawn into
+// the texture bound beside it.
 struct ErrorColors {
     core: vec4<f32>,
     halo: vec4<f32>,
