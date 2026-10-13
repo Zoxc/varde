@@ -657,7 +657,7 @@ impl Interpolation {
         let n = params.len();
         let fits = handles.windows(2).all(|pair| pair[0] < pair[1])
             && handles.last().is_none_or(|&last| last < n);
-        let least = if closed { 3 } else { 2 };
+        let least = super::SplineKind::Through.least(closed);
         if n < least || !fits {
             return None;
         }

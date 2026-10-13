@@ -9,7 +9,7 @@ use std::fmt;
 use glam::DVec2;
 
 use super::LinkShape;
-use crate::{BSpline, Curve, MAX_SPLINE_POINTS, Spline};
+use crate::{BSpline, Curve, MAX_SPLINE_POINTS, Spline, SplineKind};
 
 /// Places along one curve, in order, exact: the curve passes through
 /// each. A closed one runs from its last back round to its first, which
@@ -169,7 +169,7 @@ fn circle_through(places: &[DVec2]) -> Option<(DVec2, f64)> {
 /// most [`MAX_SPLINE_POINTS`]. An open one keeps its first and last.
 fn spline_through(places: &[DVec2], closed: bool, fit: f64) -> Option<Vec<DVec2>> {
     let n = places.len();
-    let least = if closed { 3 } else { 2 };
+    let least = SplineKind::Through.least(closed);
     if n < least {
         return None;
     }
