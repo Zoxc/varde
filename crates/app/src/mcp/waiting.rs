@@ -152,6 +152,10 @@ pub(crate) const QUEUED_EDITS: usize = 8;
 pub(crate) const TOO_MANY_QUEUED: &str = "8 edits of this session already wait behind the \
     one in flight; wait for their answers first";
 
+// The answers above spell out `BOUND` ("30 s") and `QUEUED_EDITS` ("8"):
+// changing either means rewording them.
+const _: () = assert!(BOUND.as_secs() == 30 && QUEUED_EDITS == 8);
+
 /// The calls waiting, keyed by an app-side tag.
 #[derive(Debug, Default)]
 pub(crate) struct Waiting {
