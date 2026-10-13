@@ -1,6 +1,6 @@
-//! The app's side of the MCP server (`varde-mcp`, see `notes/AgentSupport.md`):
-//! the server's subscription, its state on `Varde`, and the tool calls
-//! answered from the open design. Native only.
+//! The app's side of the MCP server (`varde-mcp`, see `agents/mcp.md`, "The
+//! app's side"): the server's subscription, its state on `Varde`, and the
+//! tool calls answered from the open design. Native only.
 //!
 //! The settings' switch turns the feature on (the panel and its toolbar
 //! toggle); the server runs once the panel's Start sets [`Mcp::running`]

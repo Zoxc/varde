@@ -1,7 +1,8 @@
-//! The MCP server's pieces (see `notes/AgentSupport.md`): MCP's Streamable
-//! HTTP on `127.0.0.1`, by hand, the JSON-RPC on it, and the tools an
-//! agent edits the open design with. No UI code: `varde-app` starts the
-//! server, runs the tools and owns the session's state.
+//! The MCP server's pieces (see `agents/mcp.md`; the plan behind it is
+//! `notes/AgentSupport.md`): MCP's Streamable HTTP on `127.0.0.1`, by
+//! hand, the JSON-RPC on it, and the tools an agent edits the open design
+//! with. No UI code: `varde-app` starts the server, runs the tools and
+//! owns the session's state.
 //!
 //! Builds on every target, so the wasm check compiles it; only the
 //! sockets are native.

@@ -27,8 +27,8 @@ pub(crate) use topology::{Asked, body_topology, listed};
 /// The answer to every call while no design is open.
 pub(crate) const NO_DESIGN: &str = "no design is open";
 
-/// `design_summary`: see `notes/AgentSupport.md`. Its bodies, Timeline and
-/// parameters are each paged alone by `page`.
+/// `design_summary`: see `agents/mcp.md`, "The queries". Its bodies,
+/// Timeline and parameters are each paged alone by `page`.
 pub(crate) fn design_summary(doc: &Doc, page: Page) -> ToolReply {
     let document = doc.editor.document();
     let committed = doc.feed.committed();
