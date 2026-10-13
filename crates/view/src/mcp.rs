@@ -421,22 +421,19 @@ pub(crate) fn ask_popup<'a>(mcp: &McpShown<'a>) -> Option<Element<'a, Message>> 
     let refused = ask
         .refused
         .map(|why| text(why.to_owned()).style(theme::warning_text));
-    let button = |label, style, message| {
-        chrome::dialog_button(label, style, Some(Message::McpPanel(message)))
-    };
     let buttons = match ask.cancelled {
         true => row![
             Space::new().width(Length::Fill),
-            button("Close", theme::primary_button, McpPanel::KeepEditing),
+            panel_button("Close", theme::primary_button, McpPanel::KeepEditing),
         ],
         false => row![
             Space::new().width(Length::Fill),
-            button(
+            panel_button(
                 "Keep editing",
                 theme::secondary_button,
                 McpPanel::KeepEditing
             ),
-            button("Apply yours", theme::primary_button, McpPanel::ApplyYours),
+            panel_button("Apply yours", theme::primary_button, McpPanel::ApplyYours),
         ],
     };
     Some(chrome::dialog(
@@ -449,6 +446,15 @@ pub(crate) fn ask_popup<'a>(mcp: &McpShown<'a>) -> Option<Element<'a, Message>> 
         ]
         .spacing(8),
     ))
+}
+
+/// A dialog's button, `style`d, sending the panel `message`.
+fn panel_button<'a>(
+    label: &'a str,
+    style: fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style,
+    message: McpPanel,
+) -> iced::widget::Button<'a, Message> {
+    chrome::dialog_button(label, style, Some(Message::McpPanel(message)))
 }
 
 /// The most differences the revert dialog lists; the rest counted.
@@ -465,9 +471,6 @@ fn revert_popup<'a>(ask: &McpRevertAsk<'a>) -> Element<'a, Message> {
                 .style(theme::faint_text)
                 .into()
         }));
-    let button = |label, style, message| {
-        chrome::dialog_button(label, style, Some(Message::McpPanel(message)))
-    };
     chrome::dialog(
         column![
             text(format!("Revert to {}?", ask.to))
@@ -480,8 +483,8 @@ fn revert_popup<'a>(ask: &McpRevertAsk<'a>) -> Element<'a, Message> {
             Space::new().height(4),
             row![
                 Space::new().width(Length::Fill),
-                button("Cancel", theme::secondary_button, McpPanel::CancelRevert),
-                button("Revert", theme::primary_button, McpPanel::ConfirmRevert),
+                panel_button("Cancel", theme::secondary_button, McpPanel::CancelRevert),
+                panel_button("Revert", theme::primary_button, McpPanel::ConfirmRevert),
             ]
             .spacing(8),
         ]
@@ -878,10 +881,7 @@ fn call_line<'a>(call: &McpCall<'a>) -> Element<'a, Message> {
         )
         .width(Length::Fill)
         .clip(true),
-        text(call.ago.clone())
-            .size(11.5)
-            .style(theme::faint_text)
-            .wrapping(text::Wrapping::None),
+        small_text(call.ago.clone(), theme::faint_text),
         state,
     ]
     .spacing(8)
