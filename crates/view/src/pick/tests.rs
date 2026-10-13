@@ -1,6 +1,6 @@
 use varde_document::{Document, OriginPlane, Plane};
 use varde_regen::{Cache, Summary, evaluate, tessellate_picking};
-use varde_render::{Projection, View};
+use varde_render::{Projection, Vertex, View};
 
 use super::*;
 

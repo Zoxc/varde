@@ -20,14 +20,21 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_document::{BodyId, EdgeRef, FaceRef, Placement};
+use varde_document::{BodyId, Placement};
 use varde_kernel_compat::RenderMesh;
-use varde_kernel_compat::mesh::FaceKey;
-use varde_regen::{Bvh, BvhNode, PickTables, Picking, Summary, vertex_runs};
-use varde_render::{Camera, Highlights, Vertex};
+use varde_regen::{PickTables, Picking, Summary};
+use varde_render::Camera;
 
-use crate::hit::{segment_distance_3d, segment_nearest};
+use crate::hit::segment_nearest;
 use crate::projection::Projector;
+
+mod highlight;
+mod resolve;
+mod walk;
+
+pub use highlight::ModelHighlight;
+use walk::{Ray, Walk};
+pub(crate) use walk::{aabb, ray_hits, through_box};
 
 /// How near the cursor an edge must show to be picked, in pixels.
 pub const EDGE_REACH: f64 = 6.0;
@@ -152,43 +159,6 @@ pub struct Pick {
     pub snap: Option<Snapped>,
 }
 
-/// What the viewport draws of what's hovered and selected over the model
-/// it was built for, by the mesh's ids (see
-/// [`varde_render::Frame::hovered_faces`]): the faces hovered, drawn
-/// brighter, and selected, tinted; the hovered edges outlined, the
-/// selected edges, and the hovered and selected vertices.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ModelHighlight {
-    pub hovered_faces: Vec<u32>,
-    pub selected_faces: Vec<u32>,
-    /// The faces in the second colour: the measure tool's B, where A is
-    /// drawn as selected.
-    pub second_faces: Vec<u32>,
-    pub highlights: Arc<Highlights>,
-    /// Whether the second colour is the exclusions' purple, for the
-    /// edges a blend leaves out, rather than the measure tool's B.
-    pub second_excluded: bool,
-}
-
-impl ModelHighlight {
-    /// Whether it draws nothing.
-    pub fn is_empty(&self) -> bool {
-        let Highlights {
-            outlined,
-            selected_edges,
-            second_edges,
-            vertices,
-        } = &*self.highlights;
-        self.hovered_faces.is_empty()
-            && self.selected_faces.is_empty()
-            && self.second_faces.is_empty()
-            && outlined.is_empty()
-            && selected_edges.is_empty()
-            && second_edges.is_empty()
-            && vertices.is_empty()
-    }
-}
-
 /// The model shown, made ready for picking: its mesh, its tables, and
 /// hierarchies over the mesh's triangles, the segments of its edges
 /// between two faces and its vertices.
@@ -276,16 +246,6 @@ impl PickIndex {
             Summary::Plane { n, d } => Placement::on_plane(DVec3::from(n), d),
             _ => None,
         }
-    }
-
-    /// The reference to face `face` picked at `near`, as a sketch plane
-    /// stores it, if there's such a face.
-    pub fn face_ref(&self, face: u32, near: DVec3) -> Option<FaceRef> {
-        Some(FaceRef {
-            body: self.face_body(face)?,
-            key: self.face_key(face)?,
-            near,
-        })
     }
 
     /// The faces either side of `edge`, if it's an edge between two
@@ -586,312 +546,6 @@ impl PickIndex {
             .flat_map(|(_, (start, &[end, _, _, _]))| start..end)
     }
 
-    /// The faces of the body `face` is on keyed as it is, ascending, it
-    /// among them: the pieces a face named once is left in.
-    pub fn faces_keyed_as(&self, face: u32) -> Vec<u32> {
-        let (Some(body), Some(key)) = (self.face_body(face), self.face_key(face)) else {
-            return Vec::new();
-        };
-        (self.body_faces(body))
-            .filter(|&other| self.face_key(other) == Some(key))
-            .collect()
-    }
-
-    /// The key that names mesh face `face`, if there's such a face.
-    pub fn face_key(&self, face: u32) -> Option<FaceKey> {
-        Some(self.picking.faces().get(face as usize)?.key)
-    }
-
-    /// The keys of the faces either side of `chain`, sorted, as an edge
-    /// reference keeps them, if it's an edge between two faces.
-    pub fn chain_keys(&self, chain: u32) -> Option<[FaceKey; 2]> {
-        let faces = self.edge_faces(chain)?;
-        let [a, b] = faces.map(|face| self.face_key(face));
-        let (a, b) = (a?, b?);
-        Some([a.min(b), a.max(b)])
-    }
-
-    /// The keys that name `corner`, a vertex: the lowest three of those of
-    /// the faces meeting there, sorted, if three faces or more do.
-    pub fn vertex_keys(&self, corner: u32) -> Option<[FaceKey; 3]> {
-        let mut keys: Vec<FaceKey> = (self.corner_faces(corner).iter())
-            .filter_map(|&(_, face)| self.face_key(face))
-            .collect();
-        keys.sort_unstable();
-        keys.dedup();
-        match keys[..] {
-            [a, b, c, ..] => Some([a, b, c]),
-            _ => None,
-        }
-    }
-
-    /// Where `corner` is, if the mesh has it.
-    pub fn corner_point(&self, corner: u32) -> Option<DVec3> {
-        Some(corner_position(&self.mesh, corner)?.as_dvec3())
-    }
-
-    /// A point on `chain`: the middle of its first segment.
-    pub fn chain_point(&self, chain: u32) -> Option<DVec3> {
-        let start = self.mesh.polyline_range(chain as usize)?.start;
-        let [a, b] = segment(&self.mesh, u32::try_from(start).ok()?)?;
-        Some(((a + b) / 2.0).as_dvec3())
-    }
-
-    /// The ends of `chain`, if it's a straight edge between two faces, in
-    /// the order an edge reference with the keys `faces` runs: with the
-    /// face its first key names on its left seen from outside, as
-    /// regenerating directs it ([`EdgeRef::runs_with`]); the mesh's edge
-    /// runs with its first face on its left. None if the keys don't tell
-    /// which face is which. Straight as the mesh draws it: not closed, its
-    /// snap point (a straight edge's middle, a round one's centre) at
-    /// the middle of its ends, and every point of its polyline on the
-    /// line through them, within the rounding of the mesh's `f32`
-    /// points and a millionth of its length. Regenerating decides from
-    /// the exact curves.
-    pub fn edge_ends(&self, chain: u32, faces: &[FaceKey; 2]) -> Option<[DVec3; 2]> {
-        let [left, right] = self.edge_faces(chain)?.map(|face| {
-            let face = self.picking.faces().get(face as usize)?;
-            Some((&face.key, &face.aliases[..]))
-        });
-        if *self.picking.closed().get(chain as usize)? {
-            return None;
-        }
-        let snap = DVec3::from((*self.picking.snaps().get(chain as usize)?)?);
-        let points: Vec<DVec3> = (self.mesh.polyline(chain as usize)?.iter())
-            .map(|&i| position(&self.mesh, i).as_dvec3())
-            .collect();
-        let (&from, &to) = (points.first()?, points.last()?);
-        let chord = to - from;
-        let along = chord.try_normalize()?;
-        let scale = (points.iter())
-            .map(|p| p.abs().max_element())
-            .fold(snap.abs().max_element(), f64::max);
-        let slack = 1e-6 * chord.length() + 8.0 * f64::from(f32::EPSILON) * scale;
-        let off = |p: DVec3| {
-            let d = p - from;
-            (d - along * d.dot(along)).length()
-        };
-        if snap.distance((from + to) / 2.0) > slack || points.iter().any(|&p| off(p) > slack) {
-            return None;
-        }
-        Some(if EdgeRef::runs_with(faces, left?, right?)? {
-            [from, to]
-        } else {
-            [to, from]
-        })
-    }
-
-    /// The face of `body` that `key` names (its key or an alias), the
-    /// nearest to `near` among several, as the kernel resolves a face
-    /// reference: one is taken wherever `near` is; of several, a later
-    /// one only where it comes nearer by more than a billionth of the
-    /// model's size, so ties go to the lowest. Measured to the mesh as
-    /// drawn, which is all the view has.
-    pub fn find_face(&self, body: BodyId, key: &FaceKey, near: DVec3) -> Option<u32> {
-        let found = (self.body_faces(body)).filter(|&face| self.named(face, key));
-        self.nearest(found, near, |face| self.face_distance(face, near))
-    }
-
-    /// How far `point` is from face `face`'s triangles in the mesh:
-    /// infinite if it has none.
-    pub fn face_distance(&self, face: u32, point: DVec3) -> f64 {
-        (self.face_triangles(face))
-            .filter_map(|triangle| self.triangle_points(triangle))
-            .map(|points| triangle_distance(point, points))
-            .fold(f64::INFINITY, f64::min)
-    }
-
-    /// Where face `face` is nearest `near` as drawn, and its outward
-    /// normal there (unit): `near` taken onto the plane of the face's
-    /// triangle nearest it, the normal that triangle's corners' (the
-    /// mesh's analytic ones), or its own where those cancel. A flat
-    /// face's is its plane's, exactly as its summary has it, not as the
-    /// mesh's single precision draws it (far out, that's micrometres
-    /// off). `None` for no such face, or one with no triangle that isn't
-    /// degenerate.
-    pub fn face_point(&self, face: u32, near: DVec3) -> Option<(DVec3, DVec3)> {
-        if let Some(Summary::Plane { n, d }) =
-            (self.picking.faces().get(face as usize)).map(|face| &face.summary)
-            && let Some(n) = DVec3::from(*n).try_normalize()
-            && self.face_triangles(face).next().is_some()
-        {
-            let point = near - n * (n.dot(near) - d);
-            return point.is_finite().then_some((point, n));
-        }
-        let mut best: Option<(f64, [u32; 3], [DVec3; 3])> = None;
-        for triangle in self.face_triangles(face) {
-            let Some(corners) = self.corners(triangle) else {
-                continue;
-            };
-            let points = self.points(corners);
-            let distance = triangle_distance(near, points);
-            if distance.is_finite() && best.is_none_or(|(nearest, ..)| distance < nearest) {
-                best = Some((distance, corners, points));
-            }
-        }
-        let (_, corners, [a, b, c]) = best?;
-        let own = (b - a).cross(c - a).try_normalize()?;
-        let normals = self.mesh.normals();
-        let summed = (corners.iter())
-            .filter_map(|&i| normals.get(i as usize))
-            .map(|&n| Vec3::from(n).as_dvec3())
-            .fold(DVec3::ZERO, |sum, n| sum + n);
-        let normal = summed
-            .try_normalize()
-            .filter(|n| n.dot(own) > 0.0)
-            .unwrap_or(own);
-        let point = near - own * (near - a).dot(own);
-        point.is_finite().then_some((point, normal))
-    }
-
-    /// The edge of `body` between faces that `faces` name (either way
-    /// round, by key or alias), the nearest to `near` among several, as
-    /// [`PickIndex::find_face`] finds faces.
-    pub fn find_edge(&self, body: BodyId, faces: [FaceKey; 2], near: DVec3) -> Option<u32> {
-        let named =
-            |face: u32, key: &FaceKey| self.face_body(face) == Some(body) && self.named(face, key);
-        let found = (0..self.mesh.edge_count())
-            .filter_map(|edge| u32::try_from(edge).ok())
-            .filter(|&edge| {
-                self.edge_faces(edge).is_some_and(|[a, b]| {
-                    (named(a, &faces[0]) && named(b, &faces[1]))
-                        || (named(a, &faces[1]) && named(b, &faces[0]))
-                })
-            });
-        self.nearest(found, near, |chain| self.edge_distance(chain, near))
-    }
-
-    /// How far `point` is from the edge chain `chain`'s polyline in the
-    /// mesh: infinite if it has none.
-    pub fn edge_distance(&self, chain: u32, point: DVec3) -> f64 {
-        (self.edge_segments(chain))
-            .filter_map(|start| segment(&self.mesh, start))
-            .map(|[a, b]| segment_distance_3d(point, a.as_dvec3(), b.as_dvec3()))
-            .fold(f64::INFINITY, f64::min)
-    }
-
-    /// The vertex of `body` where faces that `keys` name meet (each by key
-    /// or alias, among the faces there), the nearest to `near` among
-    /// several, as [`PickIndex::find_face`] finds faces.
-    pub fn find_vertex(&self, body: BodyId, keys: [FaceKey; 3], near: DVec3) -> Option<u32> {
-        let found = vertex_runs(self.tables.corner_faces())
-            .filter(|run| self.face_body(run[0].1) == Some(body))
-            .filter(|run| {
-                (keys.iter()).all(|key| run.iter().any(|&(_, face)| self.named(face, key)))
-            })
-            .map(|run| run[0].0);
-        self.nearest(found, near, |corner| {
-            self.corner_point(corner)
-                .map_or(f64::INFINITY, |at| at.distance(near))
-        })
-    }
-
-    /// Whether `key` names face `face`, as its key or an alias.
-    fn named(&self, face: u32, key: &FaceKey) -> bool {
-        (self.picking.faces().get(face as usize)).is_some_and(|face| face.named(key))
-    }
-
-    /// Of `found`, ascending, the only one, or the one at the least
-    /// `distance` from `near`, a later one counting only where it comes
-    /// nearer by more than a billionth of the mesh's size; the first where
-    /// `near` isn't finite.
-    fn nearest(
-        &self,
-        found: impl Iterator<Item = u32>,
-        near: DVec3,
-        distance: impl Fn(u32) -> f64,
-    ) -> Option<u32> {
-        let found: Vec<u32> = found.collect();
-        if found.len() <= 1 || !near.is_finite() {
-            return found.first().copied();
-        }
-        let size = self
-            .bounds
-            .map_or(0.0, |bounds| f64::from((bounds.max - bounds.min).length()));
-        let slack = 1e-9 * size;
-        let mut best: Option<(f64, u32)> = None;
-        for item in found {
-            let d = distance(item);
-            if best.is_none_or(|(b, _)| d < b - slack) {
-                best = Some((d, item));
-            }
-        }
-        best.map(|(_, item)| item)
-    }
-
-    /// What's drawn of `hovered` and `selected`: the faces hovered
-    /// brighter (their edges as they are), and those selected tinted; an
-    /// edge hovered outlined, one selected drawn in the selection's
-    /// colour; a vertex hovered or selected as a disc, the hovered one
-    /// last. What the mesh hasn't is left out.
-    pub fn highlight(&self, hovered: &[Picked], selected: &[Picked]) -> ModelHighlight {
-        self.highlight_with(hovered, selected, &[])
-    }
-
-    /// [`PickIndex::highlight`], with the faces and edges of `second` in
-    /// the second colour, as the measure tool draws its B (its A as
-    /// selected). A vertex there is left out: the measure tool draws its
-    /// points itself.
-    pub fn highlight_with(
-        &self,
-        hovered: &[Picked],
-        selected: &[Picked],
-        second: &[Picked],
-    ) -> ModelHighlight {
-        let has = |target: &&Picked| {
-            let (id, count) = match **target {
-                Picked::Face(face) => (face, self.mesh.face_count()),
-                Picked::Edge(edge) => (edge, self.mesh.edge_count()),
-                Picked::Vertex(corner) => (corner, self.mesh.corners().len()),
-            };
-            (id as usize) < count
-        };
-        let hovered: Vec<Picked> = hovered.iter().filter(has).copied().collect();
-        let selected: Vec<Picked> = selected.iter().filter(has).copied().collect();
-        let second = second.iter().filter(has).copied();
-        let mut highlight = ModelHighlight::default();
-        let mut highlights = Highlights::default();
-        for &target in &hovered {
-            match target {
-                Picked::Face(face) => highlight.hovered_faces.push(face),
-                Picked::Edge(edge) => highlights.outlined.push(edge),
-                Picked::Vertex(_) => {}
-            }
-        }
-        for &target in &selected {
-            match target {
-                Picked::Face(face) => highlight.selected_faces.push(face),
-                Picked::Edge(edge) => highlights.selected_edges.push(edge),
-                Picked::Vertex(corner) => highlights.vertices.push(Vertex {
-                    corner,
-                    hovered: hovered.contains(&target),
-                    selected: true,
-                }),
-            }
-        }
-        for target in second {
-            match target {
-                Picked::Face(face) => highlight.second_faces.push(face),
-                Picked::Edge(edge) => highlights.second_edges.push(edge),
-                Picked::Vertex(_) => {}
-            }
-        }
-        // The hovered vertices last, over the others.
-        for &target in &hovered {
-            if let Picked::Vertex(corner) = target
-                && !selected.contains(&target)
-            {
-                highlights.vertices.push(Vertex {
-                    corner,
-                    hovered: true,
-                    selected: false,
-                });
-            }
-        }
-        highlight.highlights = Arc::new(highlights);
-        highlight
-    }
-
     /// The face triangle `triangle` is of, if there's such a triangle.
     fn triangle_face(&self, triangle: u32) -> Option<u32> {
         let start = u64::from(triangle) * 3;
@@ -1172,21 +826,6 @@ enum Hidden {
     Searched,
 }
 
-/// A ray: the points `origin + direction * t`, those with `t` at least
-/// `from` showing.
-#[derive(Debug, Clone, Copy)]
-struct Ray {
-    origin: DVec3,
-    direction: DVec3,
-    from: f64,
-}
-
-impl Ray {
-    fn at(&self, t: f64) -> DVec3 {
-        self.origin + self.direction * t
-    }
-}
-
 /// An item showing near the cursor: how far from it it shows, in pixels,
 /// how deep, which and where.
 #[derive(Debug, Clone, Copy)]
@@ -1258,26 +897,6 @@ fn segment(mesh: &RenderMesh, start: u32) -> Option<[Vec3; 2]> {
     Some([position(mesh, ends[0]), position(mesh, ends[1])])
 }
 
-/// How far `p` is from the triangle `[a, b, c]`: from the plane it's
-/// in, where `p` is over it, otherwise from its nearest side.
-fn triangle_distance(p: DVec3, [a, b, c]: [DVec3; 3]) -> f64 {
-    let normal = (b - a).cross(c - a);
-    let area = normal.length_squared();
-    if area > 0.0 {
-        // `p` over the triangle: each side has it on the inside.
-        let inside = [(a, b), (b, c), (c, a)]
-            .iter()
-            .all(|&(u, v)| (v - u).cross(p - u).dot(normal) >= 0.0);
-        if inside {
-            return (p - a).dot(normal).abs() / area.sqrt();
-        }
-    }
-    [(a, b), (b, c), (c, a)]
-        .iter()
-        .map(|&(u, v)| segment_distance_3d(p, u, v))
-        .fold(f64::INFINITY, f64::min)
-}
-
 /// How far from `at` the world segment from `a` to `b` shows, the part of
 /// it in front of the eye, and its point showing nearest `at`, if it shows
 /// within `reach` pixels.
@@ -1308,160 +927,6 @@ fn shown_near(
         s
     };
     Some((distance, a + (b - a) * u.clamp(0.0, 1.0)))
-}
-
-/// How far along the ray from `origin` along `direction` it meets the
-/// triangle `corners`, either side of it, if it does (Möller–Trumbore).
-pub(crate) fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -> Option<f64> {
-    let (ab, ac) = (b - a, c - a);
-    let p = direction.cross(ac);
-    let determinant = ab.dot(p);
-    if determinant.abs() <= f64::EPSILON * ab.length() * ac.length() * direction.length() {
-        return None;
-    }
-    let s = origin - a;
-    let u = s.dot(p) / determinant;
-    let q = s.cross(ab);
-    let v = direction.dot(q) / determinant;
-    let inside = (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0;
-    let t = ac.dot(q) / determinant;
-    (inside && t.is_finite()).then_some(t)
-}
-
-/// The corners of `bounds`, as [`through_box`] takes them.
-pub(crate) fn aabb(bounds: varde_kernel_compat::Aabb) -> [DVec3; 2] {
-    [bounds.min.as_dvec3(), bounds.max.as_dvec3()]
-}
-
-/// Where the ray from `origin` along `direction` is inside the box `min`
-/// to `max`, as how far along it it goes in and comes out, within `from`
-/// and `to`, if it is.
-pub(crate) fn through_box(
-    origin: DVec3,
-    direction: DVec3,
-    [min, max]: [DVec3; 2],
-    from: f64,
-    to: f64,
-) -> Option<(f64, f64)> {
-    let (mut near, mut far) = (from, to);
-    for axis in 0..3 {
-        let (o, d) = (origin[axis], direction[axis]);
-        if d == 0.0 {
-            if o < min[axis] || o > max[axis] {
-                return None;
-            }
-            continue;
-        }
-        let (t0, t1) = ((min[axis] - o) / d, (max[axis] - o) / d);
-        near = near.max(t0.min(t1));
-        far = far.min(t0.max(t1));
-    }
-    (near <= far).then_some((near, far))
-}
-
-/// The walks of a [`Bvh`] a ray picks with.
-trait Walk {
-    /// The item `hit` says the ray meets first between `from` and `to`,
-    /// and where: `hit` gives where along the ray an item is met, if it
-    /// is.
-    fn nearest(
-        &self,
-        ray: &Ray,
-        from: f64,
-        to: f64,
-        hit: impl FnMut(u32) -> Option<f64>,
-    ) -> Option<(f64, u32)>;
-
-    /// Visits each item whose box, grown by `reach` of the box, the ray
-    /// passes through from its `from` on: `visit` says nothing back that
-    /// matters.
-    fn near(
-        &self,
-        ray: &Ray,
-        reach: impl Fn(DVec3, DVec3) -> f64,
-        visit: impl FnMut(u32) -> Option<()>,
-    );
-}
-
-impl Walk for Bvh {
-    fn nearest(
-        &self,
-        ray: &Ray,
-        from: f64,
-        to: f64,
-        mut hit: impl FnMut(u32) -> Option<f64>,
-    ) -> Option<(f64, u32)> {
-        let nodes = self.nodes();
-        let mut best: Option<(f64, u32)> = None;
-        let mut stack = Vec::new();
-        if !nodes.is_empty() {
-            stack.push(0usize);
-        }
-        while let Some(index) = stack.pop() {
-            let node = &nodes[index];
-            let limit = best.map_or(to, |(t, _)| t);
-            let Some(_) = through_box(ray.origin, ray.direction, node_box(node), from, limit)
-            else {
-                continue;
-            };
-            if node.count > 0 {
-                for &item in self.leaf(node) {
-                    if let Some(t) = hit(item).filter(|&t| t >= from && t <= to)
-                        && best.is_none_or(|(b, i)| (t, item) < (b, i))
-                    {
-                        best = Some((t, item));
-                    }
-                }
-                continue;
-            }
-            // The nearer child first, so the further is more often cut.
-            let (first, second) = (index + 1, node.start as usize);
-            let enter = |child: usize| {
-                let bounds = node_box(&nodes[child]);
-                through_box(ray.origin, ray.direction, bounds, from, limit).map(|(t, _)| t)
-            };
-            let (a, b) = (enter(first), enter(second));
-            match (a, b) {
-                (Some(a), Some(b)) if b < a => stack.extend([first, second]),
-                _ => stack.extend([second, first]),
-            }
-        }
-        best
-    }
-
-    fn near(
-        &self,
-        ray: &Ray,
-        reach: impl Fn(DVec3, DVec3) -> f64,
-        mut visit: impl FnMut(u32) -> Option<()>,
-    ) {
-        let nodes = self.nodes();
-        let mut stack = Vec::new();
-        if !nodes.is_empty() {
-            stack.push(0usize);
-        }
-        while let Some(index) = stack.pop() {
-            let node = &nodes[index];
-            let [min, max] = node_box(node);
-            let grow = DVec3::splat(reach(min, max));
-            let grown = [min - grow, max + grow];
-            if through_box(ray.origin, ray.direction, grown, ray.from, f64::INFINITY).is_none() {
-                continue;
-            }
-            if node.count > 0 {
-                for &item in self.leaf(node) {
-                    let _ = visit(item);
-                }
-            } else {
-                stack.extend([node.start as usize, index + 1]);
-            }
-        }
-    }
-}
-
-/// A node's box, as [`through_box`] takes it.
-fn node_box(node: &BvhNode) -> [DVec3; 2] {
-    aabb(node.aabb())
 }
 
 #[cfg(test)]
