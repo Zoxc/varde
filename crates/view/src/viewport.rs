@@ -596,14 +596,42 @@ pub(super) fn local_cursor(bounds: Rectangle, cursor: mouse::Cursor) -> Option<D
     cursor.position_over(bounds).map(|p| local(bounds, p))
 }
 
+/// `message`, if there is one, with the event captured.
+pub(super) fn capture(message: Option<Message>) -> Action<Message> {
+    match message {
+        Some(message) => Action::publish(message).and_capture(),
+        None => Action::capture(),
+    }
+}
+
 /// What a step of a handle's or a knob's drag does: sends `look`, the
 /// value it moved to, if there's a new one; the cursor is captured
 /// either way, so the camera doesn't take the drag.
 pub(super) fn drag_step(look: Option<MotionLook>) -> Action<Message> {
-    match look {
-        Some(look) => Action::publish(Message::Look(Look::Motion(look))).and_capture(),
-        None => Action::capture(),
+    capture(look.map(|look| Message::Look(Look::Motion(look))))
+}
+
+/// How soon a second click has to follow the first, near where it was, to
+/// make a double-click.
+const DOUBLE_CLICK: iced::time::Duration = iced::time::Duration::from_millis(400);
+
+/// How near the first a second click has to be to make a double-click, in
+/// pixels.
+const DOUBLE_CLICK_DISTANCE: f64 = 4.0;
+
+/// Whether a click at `at`, in the viewport's pixels, ends a double-click:
+/// soon after the click `last` holds and near it. `last` then holds this
+/// click, unless it ended one.
+pub(super) fn double_click(last: &mut Option<(iced::time::Instant, DVec2)>, at: DVec2) -> bool {
+    let now = iced::time::Instant::now();
+    let double = last.take().is_some_and(|(time, from)| {
+        now.saturating_duration_since(time) < DOUBLE_CLICK
+            && from.distance(at) < DOUBLE_CLICK_DISTANCE
+    });
+    if !double {
+        *last = Some((now, at));
     }
+    double
 }
 
 /// What the cursor moving does to a tool's handles: over one it's
@@ -1199,7 +1227,7 @@ impl Program<'_> {
             };
         }
         let local = local(bounds, at);
-        let double = sketch::double_click(&mut state.last_click, local);
+        let double = double_click(&mut state.last_click, local);
         let add = Held::TOGGLE.is_held(state.modifiers);
         let message = match self.sketch_point(picking, bounds, at, pick) {
             Some(item) => Look::ClickSketch { item, add },
@@ -1221,7 +1249,7 @@ impl Program<'_> {
         let local = local(bounds, at);
         let sets = match self.mouse.pivot_click {
             PivotClick::Middle => true,
-            PivotClick::MiddleDouble => sketch::double_click(&mut state.last_middle, local),
+            PivotClick::MiddleDouble => double_click(&mut state.last_middle, local),
             PivotClick::ShiftMiddle => Held::FREE.is_held(state.modifiers),
         };
         if !sets {

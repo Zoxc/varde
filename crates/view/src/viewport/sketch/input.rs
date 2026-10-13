@@ -12,7 +12,7 @@ use iced::{Event, Rectangle, mouse};
 use varde_render::Camera;
 use varde_sketch::{Id, Kind, NearMiss, Selectable};
 
-use iced::time::{Duration, Instant};
+use iced::time::Instant;
 
 use super::{DRAG_DISTANCE, Input, LabelPress, NEAR_MISS_GAP, Near, Press, Sketching};
 use crate::hit::{self, BoxMode};
@@ -21,15 +21,12 @@ use crate::projection::{Cursor, Projector};
 use crate::shortcut::Held;
 use crate::snap::{self, Snap};
 use crate::viewport::sketch_pick::HIT_PIXELS;
-use crate::viewport::{local, local_cursor};
+use crate::viewport::{capture, double_click, local, local_cursor};
 use crate::{Edit, Look, Message, Tool, ToolClick};
 
 /// How near the cursor a corner has to be for Fillet and Chamfer to take
 /// it, in pixels: a point, but all they look for.
 const CORNER_TOLERANCE: f64 = 12.0;
-/// How soon a second press of a tool has to follow the first, near where
-/// it was, to make a double-click.
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 impl<'a> Sketching<'a> {
     /// Takes `event`, with the `cursor` over the viewport's `bounds` seen
@@ -545,27 +542,5 @@ impl<'a> Sketching<'a> {
         } else {
             None
         }
-    }
-}
-
-/// Whether a click at `at`, in the viewport's pixels, ends a double-click:
-/// soon after the click `last` holds and near it. `last` then holds this
-/// click, unless it ended one.
-pub(in crate::viewport) fn double_click(last: &mut Option<(Instant, DVec2)>, at: DVec2) -> bool {
-    let now = Instant::now();
-    let double = last.take().is_some_and(|(time, from)| {
-        now.saturating_duration_since(time) < DOUBLE_CLICK && from.distance(at) < DRAG_DISTANCE
-    });
-    if !double {
-        *last = Some((now, at));
-    }
-    double
-}
-
-/// `message`, if there is one, with the event captured.
-fn capture(message: Option<Message>) -> Action<Message> {
-    match message {
-        Some(message) => Action::publish(message).and_capture(),
-        None => Action::capture(),
     }
 }

@@ -12,7 +12,6 @@ mod glyphs;
 mod input;
 
 use draw::Drawn;
-pub(super) use input::double_click;
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
