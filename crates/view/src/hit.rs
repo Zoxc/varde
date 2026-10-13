@@ -84,11 +84,12 @@ pub(crate) fn hit_axis(sketch: &Sketch, at: DVec2, tolerance: f64, reach: f64) -
     if !at.is_finite() {
         return None;
     }
-    let lines = sketch.curves.iter().filter_map(|entry| match entry.curve {
-        Curve::Line { start, end } if sketch.point(start)?.at != sketch.point(end)?.at => {
-            Some((entry.id, curve_distance(sketch, &entry.curve, at)?))
+    let lines = curves(sketch, at, |curve| match *curve {
+        Curve::Line { start, end } => {
+            let at = |id| sketch.point(id).map(|point| point.at);
+            matches!((at(start), at(end)), (Some(a), Some(b)) if a != b)
         }
-        _ => None,
+        _ => false,
     });
     let axes = [(Id::X_AXIS, DVec2::X), (Id::Y_AXIS, DVec2::Y)]
         .map(|(id, along)| (id, segment_distance(at, -along * reach, along * reach)));
@@ -134,11 +135,11 @@ fn points(sketch: &Sketch, at: DVec2) -> impl Iterator<Item = (Selectable, f64)>
 
 /// The sketch's curves that `keep` keeps, and how far `at` is from each
 /// as drawn ([`curve_distance`]).
-fn curves(
-    sketch: &Sketch,
+fn curves<'a>(
+    sketch: &'a Sketch,
     at: DVec2,
-    keep: fn(&Curve) -> bool,
-) -> impl Iterator<Item = (Id, f64)> + '_ {
+    keep: impl Fn(&Curve) -> bool + 'a,
+) -> impl Iterator<Item = (Id, f64)> + 'a {
     (sketch.curves.iter())
         .filter(move |entry| keep(&entry.curve))
         .filter_map(move |entry| Some((entry.id, curve_distance(sketch, &entry.curve, at)?)))
