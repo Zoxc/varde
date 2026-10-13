@@ -426,16 +426,10 @@ impl<'a> Sketching<'a> {
         dimensions::lines(self.sketch, &dimension.measure, dimension.side, label)
     }
 
-    /// What changes as the cursor moves: the box being dragged, what's
-    /// under the cursor (with a drawing tool, what it snaps to; else an
-    /// item, or failing one the region), the dimensions' arrowheads
-    /// (`dimension_arrows`, a hovered dimension's in the hover colour), the
-    /// rings marking near misses, which depend on the zoom, and the shape
-    /// the tool is drawing to where the cursor snaps, with `modifiers`
-    /// held, and the snap's guide, and the dimension being placed (in the
-    /// driven colour while the reference modifier is held), seen through
-    /// `projector` if the viewport shows anything, and where what's
-    /// dragged snaps, `dragged` ([`Sketching::dragged`]).
+    /// What changes as the cursor moves, seen through `projector` if the
+    /// viewport shows anything, with `modifiers` held, and where what's
+    /// dragged snaps, `dragged` ([`Sketching::dragged`]): each overlay
+    /// below, in order, the later over the earlier.
     fn live_layer(
         &self,
         input: &Input,
@@ -446,16 +440,28 @@ impl<'a> Sketching<'a> {
         dragged: Option<Snap>,
     ) -> SketchLayer {
         let mut layer = SketchLayer::default();
-        if let Some(press) = input.press
-            && let Some(area) = press.area()
-        {
-            let touching = BoxMode::dragged(press.from, press.to) == BoxMode::Touching;
-            let corners = area.corners();
-            layer.fill(Space::Screen, [&corners[..]], srgba(colors.box_fill));
-            let outline = [corners.as_slice(), &corners[..1]].concat();
-            let style = line(colors.box_line, BOX_LINE_WIDTH, touching);
-            layer.polyline(Space::Screen, &outline, style);
+        draw_box(&mut layer, input, colors);
+        let aim = self.aim_of(input, projector, modifiers);
+        self.draw_hover(&mut layer, &aim, colors);
+        let drawing = self.tool.is_some_and(|tool| tool.tool.draws());
+        // Where a drawing tool's click, or a point or rim dragged, snaps is
+        // marked round the cursor, whatever it snapped to.
+        let spot = aim
+            .snap
+            .filter(|_| drawing)
+            .or(dragged)
+            .filter(Snap::snapped);
+        if let Some(spot) = spot {
+            layer.point(spot.at, snap_disc(colors.point));
         }
+        self.draw_dimension_marks(&mut layer, input, projector, colors, dimension_arrows);
+        self.draw_tool(&mut layer, input, &aim, colors);
+        self.draw_placing(&mut layer, aim.at, projector, colors, modifiers);
+        layer
+    }
+
+    /// Where the cursor is and what it's on, see [`Aim`].
+    fn aim_of(&self, input: &Input, projector: Option<&Projector>, modifiers: Modifiers) -> Aim {
         let cursor = input
             .cursor
             .zip(projector)
@@ -467,18 +473,29 @@ impl<'a> Sketching<'a> {
             None if self.aiming() => (self.snap, self.aim),
             None => (None, None),
         };
-        // A drawing tool shows what it snaps to.
-        let drawing = self.tool.is_some_and(|tool| tool.tool.draws());
         // Not while the button held down drags.
         let still = input.press.is_none_or(|press| !press.moved);
-        let hover = if drawing {
+        // A drawing tool shows what it snaps to.
+        let hover = if self.tool.is_some_and(|tool| tool.tool.draws()) {
             snap.and_then(|snap| snap.highlighted())
                 .map(Selectable::Item)
         } else {
             input.hover.filter(|_| still)
         };
-        // What a list's row, a glyph or a label hovered stands for: a
-        // constraint or a dimension by what it ties together, and a
+        Aim {
+            cursor,
+            snap,
+            at,
+            still,
+            hover,
+        }
+    }
+
+    /// What's hovered, in the hover colour: under the cursor, and what a
+    /// list's row, a glyph or a label hovered stands for; and where a
+    /// point added to the spline hovered would go.
+    fn draw_hover(&self, layer: &mut SketchLayer, aim: &Aim, colors: SketchColors) {
+        // A constraint or a dimension by what it ties together, and a
         // dimension itself.
         let listed = self.hovered.into_iter().flat_map(|target| match target {
             Selectable::Item(id) => tied_items(self.sketch, id)
@@ -487,29 +504,35 @@ impl<'a> Sketching<'a> {
                 .collect(),
             _ => vec![target],
         });
-        for id in hover.into_iter().chain(listed) {
-            self.highlight(&mut layer, id, colors.hovered);
+        for id in aim.hover.into_iter().chain(listed) {
+            self.highlight(layer, id, colors.hovered);
         }
-        // Where a point added to the spline hovered would go, without a
-        // tool: a double-click, or a click while adding points.
+        // Without a tool: a double-click, or a click while adding points.
         let ghost = (self.tool.is_none())
-            .then(|| self.spline_hovered(hover))
+            .then(|| self.spline_hovered(aim.hover))
             .flatten()
-            .zip(cursor)
+            .zip(aim.cursor)
             .and_then(|(spline, cursor)| self.sketch.nearest_on(spline, cursor.at));
         if let Some(ghost) = ghost {
             layer.point(ghost, ring(colors.hovered));
         }
-        // Where a drawing tool's click, or a point or rim dragged, snaps is
-        // marked round the cursor, whatever it snapped to.
-        let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::snapped);
-        if let Some(spot) = spot {
-            layer.point(spot.at, snap_disc(colors.point));
-        }
+    }
+
+    /// The hovered dimension's lines, the dimensions' arrowheads
+    /// (`dimension_arrows`, a hovered dimension's in the hover colour) and
+    /// the rings marking near misses, the last two depending on the zoom.
+    fn draw_dimension_marks(
+        &self,
+        layer: &mut SketchLayer,
+        input: &Input,
+        projector: Option<&Projector>,
+        colors: SketchColors,
+        dimension_arrows: &[Arrows],
+    ) {
         let hovered =
             (self.hovered.and_then(Selectable::item)).and_then(|id| self.sketch.dimension(id));
         if let Some(lines) = hovered.and_then(|entry| self.dimension_lines(entry)) {
-            draw_lines(&mut layer, &lines, colors.hovered);
+            draw_lines(layer, &lines, colors.hovered);
         }
         if let Some(projector) = projector {
             for dimension in dimension_arrows {
@@ -518,54 +541,71 @@ impl<'a> Sketching<'a> {
                 } else {
                     dimension.color
                 };
-                arrows(&mut layer, projector, &dimension.arrows, color);
+                arrows(layer, projector, &dimension.arrows, color);
             }
             let ring = ring(colors.near_miss);
             for miss in self.near_misses(input, projector) {
                 layer.point((miss.a + miss.b) / 2.0, ring);
             }
         }
+    }
+
+    /// The tool's overlay: Dimension's picks, a shape tool's preview, or a
+    /// drawing tool's shape to where the cursor snaps, and the snap's
+    /// guide.
+    fn draw_tool(&self, layer: &mut SketchLayer, input: &Input, aim: &Aim, colors: SketchColors) {
         let under = (input.hover.and_then(Selectable::item))
-            .filter(|_| still)
-            .zip(cursor);
+            .filter(|_| aim.still)
+            .zip(aim.cursor);
         match self.tool {
             Some(tool) if tool.tool == Tool::Dimension => {
                 for &id in tool.picked {
-                    self.highlight(&mut layer, id, colors.selected);
+                    self.highlight(layer, id, colors.selected);
                 }
             }
             Some(tool) if !tool.tool.draws() => {
-                self.shape_preview(&mut layer, &tool, under, at, colors);
+                self.shape_preview(layer, &tool, under, aim.at, colors);
             }
             Some(tool) => {
-                if let Some((snap, cursor)) = snap.zip(cursor)
+                if let Some((snap, cursor)) = aim.snap.zip(aim.cursor)
                     && let Some(guide) = snap.guide(self.sketch, &tool, cursor.pixel)
                 {
                     layer.polyline(Space::Sketch, &guide, line(colors.guide, GUIDE_WIDTH, true));
                 }
-                let at = snap.map(|snap| snap.at).or(at);
-                preview(&mut layer, &tool, at, colors);
+                let at = aim.snap.map(|snap| snap.at).or(aim.at);
+                preview(layer, &tool, at, colors);
             }
             None => {}
         }
-        if let Some((measure, side, label)) = self.placing(at) {
-            // With the reference modifier held, a click places a reference:
-            // it shows in their colour until then.
-            let reference = self.value.is_none() && Held::REFERENCE.is_held(modifiers);
-            let color = if reference {
-                colors.driven
-            } else {
-                colors.preview
-            };
-            let lines = dimensions::lines(self.sketch, &measure, side, label);
-            if let Some(lines) = lines {
-                draw_lines(&mut layer, &lines, color);
-                if let Some(projector) = projector {
-                    arrows(&mut layer, projector, &lines.arrows, color);
-                }
+    }
+
+    /// The dimension being placed, with the cursor `at` a place, in the
+    /// driven colour while the reference modifier is held.
+    fn draw_placing(
+        &self,
+        layer: &mut SketchLayer,
+        at: Option<DVec2>,
+        projector: Option<&Projector>,
+        colors: SketchColors,
+        modifiers: Modifiers,
+    ) {
+        let Some((measure, side, label)) = self.placing(at) else {
+            return;
+        };
+        // With the reference modifier held, a click places a reference:
+        // it shows in their colour until then.
+        let reference = self.value.is_none() && Held::REFERENCE.is_held(modifiers);
+        let color = if reference {
+            colors.driven
+        } else {
+            colors.preview
+        };
+        if let Some(lines) = dimensions::lines(self.sketch, &measure, side, label) {
+            draw_lines(layer, &lines, color);
+            if let Some(projector) = projector {
+                arrows(layer, projector, &lines.arrows, color);
             }
         }
-        layer
     }
 
     /// What a shape tool, `tool`, would do with the item `under` the
@@ -705,6 +745,34 @@ impl<'a> Sketching<'a> {
             let style = line(color, HOVERED_WIDTH, entry.construction);
             layer.polyline(Space::Sketch, &polyline, style);
         }
+    }
+}
+
+/// Where the cursor is and what it's on, for [`Sketching::live_layer`].
+struct Aim {
+    /// The cursor, on the sketch's plane.
+    cursor: Option<Cursor>,
+    /// Where it snaps, or with it off the sketch, where it was last aimed.
+    snap: Option<Snap>,
+    /// Where it is, or was last aimed.
+    at: Option<DVec2>,
+    /// Whether the button held down, if any, hasn't dragged.
+    still: bool,
+    /// What's under it: with a drawing tool, what it snaps to.
+    hover: Option<Selectable>,
+}
+
+/// The box being dragged, if one is.
+fn draw_box(layer: &mut SketchLayer, input: &Input, colors: SketchColors) {
+    if let Some(press) = input.press
+        && let Some(area) = press.area()
+    {
+        let touching = BoxMode::dragged(press.from, press.to) == BoxMode::Touching;
+        let corners = area.corners();
+        layer.fill(Space::Screen, [&corners[..]], srgba(colors.box_fill));
+        let outline = [corners.as_slice(), &corners[..1]].concat();
+        let style = line(colors.box_line, BOX_LINE_WIDTH, touching);
+        layer.polyline(Space::Screen, &outline, style);
     }
 }
 
