@@ -92,7 +92,8 @@ fn a_refused_edit_changes_nothing_and_shows_what_it_ran_into() {
     assert_eq!(t.editor.revision(), revision);
     assert_eq!(*sketch(&t), committed);
     let state = t.sketch_state().unwrap();
-    let Some(refused @ Rejected::Redundant { .. }) = state.refusal else {
+    let Some(varde_view::Refusal::Rejected(refused @ Rejected::Redundant { .. })) = state.refusal
+    else {
         panic!("{:?}", state.refusal);
     };
     assert!(refused.involved().contains(&horizontal));
@@ -679,8 +680,10 @@ fn an_edit_refused_after_the_sketch_was_left_shows_a_banner_until_dismissed() {
     assert_eq!(*sketch, committed);
     let refused = t.refused_edit().expect("a banner says so");
     assert_eq!(refused.name, "Sketch 1");
-    assert!(matches!(refused.why, Some(Rejected::Redundant { .. })));
-    assert_eq!(refused.error, None);
+    assert!(matches!(
+        refused.refusal,
+        varde_view::Refusal::Rejected(Rejected::Redundant { .. })
+    ));
     let texts = crate::tests::screen_texts(&t);
     assert!(
         texts.contains(&"An edit of Sketch 1 wasn't kept".to_owned()),
@@ -747,8 +750,10 @@ fn the_banner_goes_back_into_the_sketch_or_with_it() {
         error: "worker stopped".to_owned(),
     });
     let refused = t.refused_edit().expect("a banner says so");
-    assert!(refused.why.is_none());
-    assert_eq!(refused.error, Some("worker stopped"));
+    assert_eq!(
+        refused.refusal,
+        varde_view::Refusal::Failed("worker stopped")
+    );
     let texts = crate::tests::screen_texts(&t);
     assert!(
         texts.contains(&"— Couldn't check the edit: worker stopped".to_owned()),

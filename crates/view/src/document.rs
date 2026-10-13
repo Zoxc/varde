@@ -425,12 +425,9 @@ pub struct SketchState<'a> {
     /// What the constraints do to the sketch as committed, once the solver
     /// has said.
     pub analysis: Option<&'a Analysis>,
-    /// Why the last edit was refused by the solver, shown until the next
-    /// action, with the constraints involved in red.
-    pub refusal: Option<&'a Rejected>,
-    /// Why the solver couldn't answer about the last edit, if it couldn't:
-    /// it panicked, or its worker stopped.
-    pub solver_error: Option<&'a str>,
+    /// Why the solver refused the last edit, shown until the next action,
+    /// with the constraints involved in red.
+    pub refusal: Option<Refusal<'a>>,
     /// The item hovered in a list or by its glyph, if any.
     pub hovered: Option<Selectable>,
     /// Whether the constraints' glyphs are shown.
@@ -566,7 +563,6 @@ impl<'a> SketchState<'a> {
             constraint_scroll: 0.0,
             analysis: None,
             refusal: None,
-            solver_error: None,
             hovered: None,
             glyphs: false,
             unsolved: false,
@@ -597,7 +593,10 @@ impl SketchState<'_> {
     /// and those a refused edit ran into, which the sketch holds.
     pub(crate) fn conflicts(&self) -> BTreeSet<Id> {
         let analysed = self.analysis.map(|analysis| &analysis.redundant);
-        let refused = self.refusal.map(Rejected::involved);
+        let refused = match self.refusal {
+            Some(Refusal::Rejected(why)) => Some(why.involved()),
+            _ => None,
+        };
         analysed
             .into_iter()
             .chain(refused)
@@ -805,10 +804,17 @@ pub struct RefusedEdit<'a> {
     pub name: &'a str,
     /// The sketch as committed, without the edit.
     pub sketch: &'a Sketch,
-    /// Why the solver refused it, or else
-    pub why: Option<&'a Rejected>,
-    /// how it failed to answer.
-    pub error: Option<&'a str>,
+    /// Why the solver refused it.
+    pub refusal: Refusal<'a>,
+}
+
+/// Why the solver refused a sketch edit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Refusal<'a> {
+    /// The edit doesn't hold together, see [`Rejected`].
+    Rejected(&'a Rejected),
+    /// The solver couldn't answer: it panicked, or its worker stopped.
+    Failed(&'a str),
 }
 
 /// A layer over the whole document screen.

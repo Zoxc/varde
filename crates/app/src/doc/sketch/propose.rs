@@ -1120,12 +1120,10 @@ impl Doc {
         let (feature, refusal) = self.refused_edit.as_ref()?;
         let name = &self.editor.document().feature(*feature)?.name;
         let sketch = sketch_of(self.editor.document(), *feature)?;
-        let (why, error) = refusal.parts();
         Some(RefusedEdit {
             name,
             sketch,
-            why,
-            error,
+            refusal: refusal.shown(),
         })
     }
 

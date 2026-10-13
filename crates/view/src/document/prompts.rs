@@ -7,7 +7,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{Space, column, container, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{APP_NAME, EXTENSION};
-use varde_sketch::{Rejected, Sketch};
+use varde_sketch::Sketch;
 
 use crate::chrome::{self, dialog, dialog_button, small_button};
 use crate::feature_text::feature_icon;
@@ -16,7 +16,9 @@ use crate::theme::Emphasis;
 use crate::{Edit, File, Look, Message, SavePlace, Unsaved, panels, theme};
 
 use super::status_text::refusal_text;
-use super::{Damage, DamagedFile, DeletePrompt, NamePrompt, RecoveredChanges, RefusedEdit};
+use super::{
+    Damage, DamagedFile, DeletePrompt, NamePrompt, RecoveredChanges, Refusal, RefusedEdit,
+};
 use crate::words::{counts, listed};
 
 /// The banner over the viewport saying a sketch edit was refused after
@@ -30,28 +32,18 @@ pub(super) fn refused_banner(refused: RefusedEdit<'_>) -> Element<'_, Message> {
             .font(theme::SEMIBOLD)
             .wrapping(Wrapping::None)
             .style(theme::warning_text),
-        &refused_detail(&refused),
+        &edit_refused(refused.refusal, refused.sketch),
         Some(dismiss.into()),
     )
 }
 
-/// Why the solver refused the edit `refused` is of, as its banner says,
-/// as the status bar would have in the sketch.
-fn refused_detail(refused: &RefusedEdit<'_>) -> String {
-    edit_refused(refused.why, refused.error, refused.sketch)
-        .map_or_else(|| "The solver refused it".to_owned(), Cow::into_owned)
-}
-
-/// Why the solver refused an edit of `sketch`, `why` or else how it
-/// failed to answer (`error`), as the status bar and the banner over the
-/// viewport say it.
-pub(super) fn edit_refused(
-    why: Option<&Rejected>,
-    error: Option<&str>,
-    sketch: &Sketch,
-) -> Option<Cow<'static, str>> {
-    why.map(|why| refusal_text(why, sketch))
-        .or_else(|| error.map(|error| format!("Couldn't check the edit: {error}").into()))
+/// Why the solver refused an edit of `sketch`, as the status bar and the
+/// banner over the viewport say it.
+pub(super) fn edit_refused(refusal: Refusal<'_>, sketch: &Sketch) -> Cow<'static, str> {
+    match refusal {
+        Refusal::Rejected(why) => refusal_text(why, sketch),
+        Refusal::Failed(error) => format!("Couldn't check the edit: {error}").into(),
+    }
 }
 
 /// A strip under the toolbar, or over the viewport, telling something

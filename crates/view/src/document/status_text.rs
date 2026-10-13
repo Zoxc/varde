@@ -455,7 +455,8 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                     .map(|note| piece(note, theme::muted_text)),
             )
             .chain(
-                edit_refused(sketch.refusal, sketch.solver_error, sketch.sketch)
+                (sketch.refusal)
+                    .map(|refusal| edit_refused(refusal, sketch.sketch))
                     .map(|why| piece(why.into_owned(), theme::danger_text)),
             )
             .chain(

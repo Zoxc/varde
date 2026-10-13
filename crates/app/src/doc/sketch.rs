@@ -280,12 +280,11 @@ pub(crate) enum Refusal {
 }
 
 impl Refusal {
-    /// As the view takes it: what the edit ran into, or the solver's
-    /// error.
-    pub(crate) fn parts(&self) -> (Option<&Rejected>, Option<&str>) {
+    /// As the view takes it.
+    pub(crate) fn shown(&self) -> varde_view::Refusal<'_> {
         match self {
-            Refusal::Rejected(why) => (Some(why), None),
-            Refusal::Failed(error) => (None, Some(error)),
+            Refusal::Rejected(why) => varde_view::Refusal::Rejected(why),
+            Refusal::Failed(error) => varde_view::Refusal::Failed(error),
         }
     }
 }
@@ -1235,8 +1234,7 @@ impl Doc {
             ..
         } = self.edited_feature()?;
         let waiting = session.waiting.as_ref();
-        let (refusal, solver_error) =
-            (session.refusal.as_ref()).map_or((None, None), Refusal::parts);
+        let refusal = session.refusal.as_ref().map(Refusal::shown);
         Some(SketchState {
             name: &feature.name,
             modified: *sketch != session.entered,
@@ -1258,7 +1256,6 @@ impl Doc {
             constraint_scroll: session.constraint_scroll,
             analysis: session.analysis(self.editor.revision()).map(|a| &**a),
             refusal,
-            solver_error,
             hovered: session.hovered,
             glyphs: session.glyphs,
             unsolved: self.feed.unsolved().contains(&session.feature),
