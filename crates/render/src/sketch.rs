@@ -63,7 +63,7 @@ impl Space {
     /// Where `at` goes in the GPU's coordinates: as it is, but for
     /// [`Space::On`] the world point, its z apart. `None` if that isn't
     /// finite in `f32`.
-    fn place(self, at: DVec2) -> Option<(DVec2, f32)> {
+    fn place(self, at: DVec2) -> Option<Vec3> {
         let (xy, z) = match self {
             Space::Sketch | Space::Screen => (at, 0.0),
             Space::On(plane) => {
@@ -72,7 +72,7 @@ impl Space {
             }
         };
         let gpu = xy.as_vec2().extend(z as f32);
-        gpu.is_finite().then_some((xy, z as f32))
+        gpu.is_finite().then_some(gpu)
     }
 }
 
@@ -174,12 +174,12 @@ impl FillVertex {
     /// A corner at `at` in `space`, in the linear `color`, unless it isn't
     /// finite there.
     fn new(space: Space, at: DVec2, color: [f32; 4]) -> Option<FillVertex> {
-        let (xy, z) = space.place(at)?;
+        let gpu = space.place(at)?;
         Some(FillVertex {
-            at: xy.as_vec2().to_array(),
+            at: gpu.truncate().to_array(),
             flags: space.flags(),
             color,
-            z,
+            z: gpu.z,
         })
     }
 }
@@ -229,7 +229,7 @@ impl SketchLayer {
     /// adds one in [`Space::On`]: for what's drawn on the model in
     /// the world, such as a measured distance.
     pub fn world_polyline(&mut self, points: &[Vec3], style: LineStyle) {
-        let place = |p: Vec3| p.is_finite().then(|| (p.truncate().as_dvec2(), p.z));
+        let place = |p: Vec3| p.is_finite().then_some(p);
         let length = |a: Vec3, b: Vec3| f64::from(a.distance(b));
         self.push_polyline(WORLD, points, place, length, None, style);
     }
@@ -246,7 +246,7 @@ impl SketchLayer {
         &mut self,
         flags: u32,
         points: &[P],
-        place: impl Fn(P) -> Option<(DVec2, f32)>,
+        place: impl Fn(P) -> Option<Vec3>,
         length: impl Fn(P, P) -> f64,
         alpha: Option<&[f32]>,
         style: LineStyle,
@@ -304,7 +304,7 @@ impl SketchLayer {
     fn push_lines(
         &mut self,
         space: u32,
-        placed: &[(DVec2, f32)],
+        placed: &[Vec3],
         lengths: impl Iterator<Item = f64>,
         closed: bool,
         style: LineStyle,
@@ -335,11 +335,11 @@ impl SketchLayer {
             let flags = space | flag(prev, HAS_PREV) | flag(next, HAS_NEXT);
             let [a, b] = [i, i + 1].map(|i| placed[i]);
             let [p, n] = [prev.map_or(a, |i| placed[i]), next.map_or(b, |i| placed[i])];
-            let pair = |a: DVec2, b: DVec2| [a.x as f32, a.y as f32, b.x as f32, b.y as f32];
+            let pair = |a: Vec3, b: Vec3| [a.x, a.y, b.x, b.y];
             self.lines.push(LineInstance {
-                ends: pair(a.0, b.0),
-                neighbours: pair(p.0, n.0),
-                z: [a.1, b.1, p.1, n.1],
+                ends: pair(a, b),
+                neighbours: pair(p, n),
+                z: [a.z, b.z, p.z, n.z],
                 color: [red, green, blue, opacity * alpha(i)],
                 style: [style.width, dash[0], dash[1], 0.0],
                 along: [along as f32, (along + length) as f32],
