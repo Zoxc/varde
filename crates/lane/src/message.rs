@@ -17,6 +17,15 @@ pub struct Message {
 }
 
 impl Message {
+    /// The bytes of a message that is one part of at most `max` bytes and
+    /// no objects, the shape of a lane whose messages are one buffer.
+    pub fn single(&self, max: usize) -> Result<Vec<u8>, Refused> {
+        let ([part], []) = (&self.parts[..], &self.objects[..]) else {
+            return Err(Refused::Else);
+        };
+        Ok(crate::bytes::copy(part, max)?)
+    }
+
     /// The message `data` holds, or `None` if it isn't one.
     pub(crate) fn from_js(data: &JsValue) -> Option<Self> {
         let mut items = data.dyn_ref::<Array>()?.iter().peekable();

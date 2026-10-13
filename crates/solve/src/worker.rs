@@ -101,10 +101,7 @@ impl Wire for Solve {
 pub fn serve() {
     let mut solver = Solver::default();
     worker::serve(&crate::WORKER, move |message| {
-        let ([part], []) = (&message.parts[..], &message.objects[..]) else {
-            return Err(Refused::Else);
-        };
-        let bytes = bytes::copy(part, wire::MAX_MESSAGE_BYTES)?;
+        let bytes = message.single(wire::MAX_MESSAGE_BYTES)?;
         let posted = wire::decode_request(&bytes)?;
         let tag = posted.tag();
         let response = solver.answer(posted.job());

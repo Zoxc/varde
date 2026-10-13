@@ -23,7 +23,7 @@
 use js_sys::Uint8Array;
 use varde_lane::mailbox::{self, Wire};
 use varde_lane::page::{Host, Refused};
-use varde_lane::{bytes, worker};
+use varde_lane::worker;
 
 use crate::lane::{Lane, Responses};
 use crate::newest::Newest;
@@ -84,10 +84,7 @@ fn post(response: &Response) {
 pub fn serve() {
     let mut regenerator = Regenerator::default();
     worker::serve(&crate::WORKER, move |message| {
-        let ([part], []) = (&message.parts[..], &message.objects[..]) else {
-            return Err(Refused::Else);
-        };
-        let bytes = bytes::copy(part, wire::MAX_REQUEST_BYTES)?;
+        let bytes = message.single(wire::MAX_REQUEST_BYTES)?;
         let request = wire::decode_request(&bytes)?;
         let response = regenerator.handle_reporting(request, &mut |progress| {
             post(&Response::Progress(progress));
