@@ -6,9 +6,10 @@ use glam::Vec3;
 use iced::time::Instant;
 use varde_document::Placement;
 use varde_kernel_compat::Aabb;
-use varde_render::{Camera, GridPlane};
+use varde_render::{Camera, GridPlane, Projection};
 
 use varde_expr::LengthUnit;
+use varde_view::ViewOptions;
 
 use super::{Doc, home_camera};
 
@@ -146,6 +147,48 @@ pub(super) fn frame(camera: &mut Camera, bounds: Aabb) {
 }
 
 impl Doc {
+    /// Takes the settings in `options` the camera follows: the projection,
+    /// how dragging turns it (a turntable rights the view, should it be
+    /// upside down or rolled, and over the top unrolls it, should a
+    /// trackball have rolled it) and the point it orbits (forgotten unless
+    /// picked by a click).
+    pub(crate) fn take_options(&mut self, options: &ViewOptions) {
+        use varde_render::Rotation;
+        self.set_projection(options.projection);
+        self.rotation = options.mouse.rotation;
+        let right: Option<fn(&mut Camera)> = match self.rotation {
+            Rotation::Turntable => Some(Camera::upright),
+            Rotation::OverTheTop => Some(Camera::unroll),
+            Rotation::Trackball => None,
+        };
+        if let Some(right) = right {
+            right(&mut self.camera);
+            if let Some(animation) = &mut self.animation {
+                right(&mut animation.from);
+                right(&mut animation.to);
+            }
+            // As are the views gone back to.
+            let kept = (self.before_sketch.iter_mut())
+                .chain(self.before_show.iter_mut().map(|(camera, _)| camera));
+            kept.for_each(right);
+        }
+        if options.mouse.rotation_point != varde_view::RotationPoint::Clicked {
+            self.pivot = None;
+            if let Some((_, pivot)) = &mut self.before_show {
+                *pivot = None;
+            }
+        }
+    }
+
+    /// Views the model in `projection`, the camera turning to come in
+    /// it too if it is: the app's setting, which every document takes.
+    pub(crate) fn set_projection(&mut self, projection: Projection) {
+        self.camera.set_projection(projection);
+        if let Some(animation) = &mut self.animation {
+            animation.to.set_projection(projection);
+        }
+    }
+
     /// The camera as it is once the turn under way, if any, ends.
     pub(super) fn camera_goal(&self) -> Camera {
         self.animation
