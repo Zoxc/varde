@@ -23,7 +23,7 @@ use varde_sketch::angle;
 
 use super::handle::{self, Puck};
 use super::handle::{angle_step, wrapped};
-use crate::extrude::snap_step;
+use crate::extrude::{SNAP_PIXELS, round_step, snap_step};
 use crate::motion::{KnobPath, KnobRadius, KnobSnap, MotionLook, OpKnob};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
@@ -333,8 +333,8 @@ fn dragged(
     })
 }
 
-/// `value` of `knob` snapped to its steps ([`KnobSnap`]) at least 6
-/// pixels apart along its path as `drag` grabbed it, and the step.
+/// `value` of `knob` snapped to its steps ([`KnobSnap`]) at least
+/// [`SNAP_PIXELS`] apart along its path as `drag` grabbed it, and the step.
 fn snapped(knob: &OpKnob, value: f64, drag: &Drag, units: LengthUnit) -> Option<(f64, f64)> {
     // How many pixels a unit of the value is along the path.
     let unit = knob.along(1.0, drag.pixel).abs()
@@ -348,28 +348,10 @@ fn snapped(knob: &OpKnob, value: f64, drag: &Drag, units: LengthUnit) -> Option<
     }
     let step = match knob.snap {
         KnobSnap::Length => snap_step(1.0 / unit, units)?,
-        KnobSnap::Factor => round_step(1.0 / unit),
+        KnobSnap::Factor => round_step(SNAP_PIXELS / unit)?,
         KnobSnap::Count => 1.0,
         // A unit of an angle is a radian: `unit` is the arc's radius.
         KnobSnap::Angle => angle_step(unit).to_radians(),
     };
     Some(((value / step).round() * step + 0.0, step))
-}
-
-/// The roundest step, 1, 2 or 5 × 10ⁿ, at least 6 pixels long, a pixel
-/// being `pixel` of the value.
-fn round_step(pixel: f64) -> f64 {
-    let least = 6.0 * pixel;
-    if !(least > 0.0 && least.is_finite()) {
-        return 1.0;
-    }
-    let mut power = 1e-12;
-    while power * 10.0 <= least && power < 1e12 {
-        power *= 10.0;
-    }
-    [1.0, 2.0, 5.0, 10.0]
-        .into_iter()
-        .map(|m| m * power)
-        .find(|&step| step >= least)
-        .unwrap_or(10.0 * power)
 }

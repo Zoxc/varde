@@ -32,7 +32,7 @@ const TAPER_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-taper");
 /// How far the handle's snapping steps are apart at least, in pixels at
 /// the target: a step is the roundest length in the design's units at
 /// least this many pixels long.
-const SNAP_PIXELS: f64 = 6.0;
+pub(crate) const SNAP_PIXELS: f64 = 6.0;
 
 /// How an extrude's extent is given, see `varde_document::Extent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -285,18 +285,26 @@ fn loop_moment(polyline: &[DVec2]) -> (f64, DVec2) {
 /// the nearest double to its decimal, read from its text (exact and
 /// portable, where `pow(10, k)` can be an ulp off for negative `k`).
 pub fn snap_step(pixel: f64, units: LengthUnit) -> Option<f64> {
-    let least = pixel * SNAP_PIXELS / units.mm();
+    let step = round_step(pixel * SNAP_PIXELS / units.mm())?;
+    Some(step * units.mm()).filter(|step| step.is_finite())
+}
+
+/// The roundest step, 1, 2 or 5 times a power of ten, at least `least`
+/// long, as the nearest double to its decimal (see [`snap_step`]).
+/// `None` for a `least` that isn't finite and above zero, or a step past
+/// the largest double.
+pub(crate) fn round_step(least: f64) -> Option<f64> {
     if !(least > 0.0 && least.is_finite()) {
         return None;
     }
     // Within ±324 for any positive finite `least`. Should the logarithm
     // round down across a power of ten, the 10 still finds that power.
     let decade = angle::log10(least).floor() as i32;
-    let step = [(1, 0), (2, 0), (5, 0), (1, 1)]
+    [(1, 0), (2, 0), (5, 0), (1, 1)]
         .into_iter()
         .filter_map(|(m, up)| format!("{m}e{}", decade + up).parse::<f64>().ok())
-        .find(|&step| step >= least)?;
-    Some(step * units.mm()).filter(|step| step.is_finite())
+        .find(|&step| step >= least)
+        .filter(|step| step.is_finite())
 }
 
 /// The floating panel of the extrude being set up.
