@@ -6,7 +6,8 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use varde_document::{
-    BodyId, Document, Extrude, Feature, Loft, MAX_COORD, Operation, Placement, Revolve, Sweep,
+    BodyId, Document, Extrude, Feature, FeatureId, FeatureKind, Loft, MAX_COORD, Operation,
+    Placement, Revolve, Section, Sweep,
 };
 use varde_kernel_compat::{Budget, Failure, Frame, Op, Profile, Solid, Tolerance};
 use varde_sketch::RegionRef;
@@ -34,6 +35,29 @@ pub(super) enum Shape<'a> {
 }
 
 impl<'a> Shape<'a> {
+    /// The tool `feature` makes, with its sketch and operation; `None`
+    /// for a kind making none.
+    pub(super) fn of(feature: &'a Feature) -> Option<(FeatureId, Shape<'a>, &'a Operation)> {
+        Some(match &feature.kind {
+            FeatureKind::Extrude(extrude) => {
+                (extrude.sketch, Shape::Extrude(extrude), &extrude.operation)
+            }
+            FeatureKind::Revolve(revolve) => {
+                (revolve.sketch, Shape::Revolve(revolve), &revolve.operation)
+            }
+            FeatureKind::Sweep(sweep) => (sweep.sketch, Shape::Sweep(sweep), &sweep.operation),
+            // Its first section's sketch stands as its own (a checked
+            // loft has sections): the others are found among the
+            // sketches before it.
+            FeatureKind::Loft(loft) => (
+                loft.sections.first().map_or(feature.id, Section::sketch),
+                Shape::Loft(loft),
+                &loft.operation,
+            ),
+            _ => return None,
+        })
+    }
+
     /// Its regions: none of its sketch's for a loft, whose sections
     /// name their own.
     pub(super) fn regions(self) -> &'a [RegionRef] {

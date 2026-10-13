@@ -112,7 +112,7 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use varde_document::{
-    BodyId, Document, FaceRef, Feature, FeatureId, FeatureKind, Placement, Plane, Section, Sketch,
+    BodyId, Document, FaceRef, Feature, FeatureId, FeatureKind, Placement, Plane, Sketch,
 };
 use varde_kernel_compat::mesh::Form;
 use varde_kernel_compat::patch::Conic3;
@@ -631,37 +631,8 @@ pub(crate) fn evaluate_with(
             | FeatureKind::Revolve(_)
             | FeatureKind::Sweep(_)
             | FeatureKind::Loft(_) => {
-                let (sketch, shape, operation) = match &feature.kind {
-                    FeatureKind::Extrude(extrude) => {
-                        (extrude.sketch, Shape::Extrude(extrude), &extrude.operation)
-                    }
-                    FeatureKind::Revolve(revolve) => {
-                        (revolve.sketch, Shape::Revolve(revolve), &revolve.operation)
-                    }
-                    FeatureKind::Sweep(sweep) => {
-                        (sweep.sketch, Shape::Sweep(sweep), &sweep.operation)
-                    }
-                    // Its first section's sketch stands as its own (a
-                    // checked loft has sections): the others are found
-                    // among `sketches`.
-                    FeatureKind::Loft(loft) => (
-                        loft.sections.first().map_or(feature.id, Section::sketch),
-                        Shape::Loft(loft),
-                        &loft.operation,
-                    ),
-                    FeatureKind::Sketch { .. }
-                    | FeatureKind::Combine(_)
-                    | FeatureKind::Move(_)
-                    | FeatureKind::Mirror(_)
-                    | FeatureKind::Pattern(_)
-                    | FeatureKind::Align(_)
-                    | FeatureKind::Scale(_)
-                    | FeatureKind::Split(_)
-                    | FeatureKind::Chamfer(_)
-                    | FeatureKind::Shell(_)
-                    | FeatureKind::Fillet(_)
-                    | FeatureKind::OffsetFace(_)
-                    | FeatureKind::FaceDraft(_) => unreachable!("matched apart"),
+                let Some((sketch, shape, operation)) = Shape::of(feature) else {
+                    unreachable!("matched apart")
                 };
                 // A checked document's extrude, revolve, sweep or loft names a
                 // sketch before it.
