@@ -211,7 +211,7 @@ impl Rng {
     }
 
     /// A polynomial of degree `n` and its true coefficients.
-    fn poly<S: Level>(&mut self, n: usize, with_errs: bool) -> (Poly<S>, Vec<Q>) {
+    pub(super) fn poly<S: Level>(&mut self, n: usize, with_errs: bool) -> (Poly<S>, Vec<Q>) {
         let scale = self.scale();
         let mut c = Vec::new();
         let mut truth = Vec::new();

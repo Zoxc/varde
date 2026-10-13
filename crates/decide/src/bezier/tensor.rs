@@ -144,7 +144,7 @@ impl<S: Scalar> Tensor<S> {
     }
 
     /// Every line in `dir` through `f`, which keeps one length.
-    fn map_lines(&self, dir: Dir, f: impl Fn(Poly<S>) -> Coefs<S>) -> Self {
+    pub(super) fn map_lines(&self, dir: Dir, f: impl Fn(Poly<S>) -> Coefs<S>) -> Self {
         let lines: SmallVec<[Coefs<S>; 3]> = (0..self.lines(dir))
             .map(|k| f(Poly::from_coefs(self.line(dir, k))))
             .collect();

@@ -8,13 +8,26 @@
 //! [`tensor`], the same on `[0, 1]²` for tensor-product forms
 //! ([`Tensor`]) and rational patches in homogeneous coordinates
 //! ([`HomPatch`]), with partial derivatives and a certified hull box.
+//! In [`curve`], rational spans in homogeneous coordinates
+//! ([`HomCurve`]). In [`product`], products, sums and elevation of both
+//! kinds of form with certified binomial weights, the vector products of
+//! forms, and the tangent and normal numerators; in [`compose`], spans
+//! and patches put into line and plane equations, and the shadow of a
+//! span. Every operation commutes with reversal to the bit (the
+//! tangent and normal numerators change sign with it, exactly but for
+//! the signs of zeros).
 
+pub mod compose;
+pub mod curve;
 pub mod poly;
+pub mod product;
 pub mod scalar;
 pub mod split;
 pub mod tensor;
 
+pub use curve::HomCurve;
 pub use poly::{Hull, MAX_DEGREE, Poly};
+pub use product::{Form, cross, dot};
 pub use scalar::Scalar;
 pub use tensor::{Dir, HomPatch, HullBox, Partials, Tensor};
 

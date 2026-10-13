@@ -10,8 +10,9 @@ use crate::num::bounded::Bounded;
 /// The largest degree a [`Poly`] takes, 64: far above any certificate's
 /// (a seam numerator of degree 10, an implicit composed with a span of
 /// degree 16), small enough that every elevation weight is a small exact
-/// integer (binomial weights, as of a product, pass `2⁵³` above degree
-/// 56).
+/// integer and every binomial a `u64` (a product's weights pass `2⁵³`
+/// above degree 56, where the first level rounds and certifies them,
+/// [`Scalar::int_u64`]).
 pub const MAX_DEGREE: usize = 64;
 
 /// Coefficients stored inline up to this many (degree 10, a seam

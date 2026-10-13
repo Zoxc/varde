@@ -26,6 +26,13 @@ pub trait Scalar: Clone + fmt::Debug + PartialEq {
     /// The integer `k` exactly, at `like`'s level (and width).
     fn int(k: u32, like: &Self) -> Self;
 
+    /// The integer `k` at `like`'s level (and width), certified: exact
+    /// at every level but the first, and there for `k` up to `2⁵³` (or
+    /// with at most 53 significant bits); else rounded to nearest, the
+    /// rounding (at most `2¹⁰`) its error. Binomial weights pass `2⁵³`
+    /// from degree 57 on (`C(57, 28)`).
+    fn int_u64(k: u64, like: &Self) -> Self;
+
     /// `self + o`.
     fn add(&self, o: &Self) -> Self;
 
@@ -102,12 +109,27 @@ fn widen_by(lo: f64, hi: f64, e: f64) -> [f64; 2] {
     }
 }
 
+/// `k = hi + lo` exactly: `hi` the nearest `f64`, `lo` the rest, at
+/// most half an ulp of `hi` (`2¹⁰`), so itself exact.
+fn split_u64(k: u64) -> (f64, f64) {
+    // Rounds to nearest; `hi ≤ 2⁶⁴`, which `u128` holds.
+    let hi = k as f64;
+    let rest = i128::from(k) - hi as u128 as i128;
+    // `|rest| ≤ 2¹⁰`: exact.
+    (hi, rest as f64)
+}
+
 const UNBOUNDED: [f64; 2] = [f64::NEG_INFINITY, f64::INFINITY];
 
 impl Scalar for Bounded<f64> {
     #[inline]
     fn int(k: u32, _: &Self) -> Self {
         Bounded::exact(f64::from(k))
+    }
+
+    fn int_u64(k: u64, _: &Self) -> Self {
+        let (hi, lo) = split_u64(k);
+        Bounded::new(hi, 0.0, lo.abs())
     }
 
     #[inline]
@@ -209,6 +231,11 @@ impl Scalar for Bounded<Dd> {
         Bounded::exact(Dd::from_f64(f64::from(k)))
     }
 
+    fn int_u64(k: u64, _: &Self) -> Self {
+        let (hi, lo) = split_u64(k);
+        Bounded::exact(Dd::sum(hi, lo))
+    }
+
     #[inline]
     fn add(&self, o: &Self) -> Self {
         *self + *o
@@ -265,6 +292,11 @@ impl<B: BigF> Scalar for Bounded<B> {
     #[inline]
     fn int(k: u32, like: &Self) -> Self {
         Bounded::exact(B::from_f64(f64::from(k), like.v.width()))
+    }
+
+    fn int_u64(k: u64, like: &Self) -> Self {
+        let (hi, lo) = split_u64(k);
+        Bounded::exact(B::from_dd(Dd::sum(hi, lo), like.v.width()))
     }
 
     #[inline]
@@ -327,6 +359,11 @@ impl<B: BigF> Scalar for Bounded<B> {
 impl Scalar for Rational {
     #[inline]
     fn int(k: u32, _: &Self) -> Self {
+        Rational::from(k)
+    }
+
+    #[inline]
+    fn int_u64(k: u64, _: &Self) -> Self {
         Rational::from(k)
     }
 
