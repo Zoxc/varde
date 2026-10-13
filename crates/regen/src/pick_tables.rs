@@ -47,31 +47,22 @@ pub struct PickTablesParts {
 }
 
 /// Why parts don't make [`PickTables`] of a mesh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PickTablesError {
     /// A hierarchy's nodes aren't a tree from the first one, each inner
     /// node's first child right after it, or a leaf's items aren't within
     /// its items, or its items name what the mesh hasn't.
+    #[error("a picking hierarchy isn't a tree of the mesh")]
     Tree,
     /// The corners' faces aren't sorted, each once, or name corners or
     /// faces the mesh hasn't.
+    #[error("the corners' faces don't go with the mesh")]
     CornerFaces,
     /// The tangent chains' starts aren't one per edge and the end, in
     /// order to the end of the items, or an item isn't an edge.
+    #[error("the tangent chains don't go with the mesh")]
     Chains,
 }
-
-impl std::fmt::Display for PickTablesError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            PickTablesError::Tree => "a picking hierarchy isn't a tree of the mesh",
-            PickTablesError::CornerFaces => "the corners' faces don't go with the mesh",
-            PickTablesError::Chains => "the tangent chains don't go with the mesh",
-        })
-    }
-}
-
-impl std::error::Error for PickTablesError {}
 
 impl PickTables {
     /// The tables of `mesh` and its `picking`, which came with it; none

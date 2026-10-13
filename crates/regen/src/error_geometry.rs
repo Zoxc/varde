@@ -28,7 +28,6 @@
 //! (a patch or curve the kernel's checks refuse, a point past
 //! [`ErrorGeometry::MAX_POSITION`]) is left out the same way.
 
-use std::fmt;
 use std::sync::Arc;
 
 use glam::{DVec3, Vec3};
@@ -631,34 +630,25 @@ mod bounded {
 }
 
 /// Why parts don't make an [`ErrorGeometry`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum GeometryError {
     /// A count is past its bound.
+    #[error("a failure's geometry is too large")]
     TooLarge,
     /// A coordinate isn't finite or is past
     /// [`ErrorGeometry::MAX_POSITION`].
+    #[error("a failure's geometry is out of bounds")]
     Position,
     /// The triangles don't make a mesh.
-    Mesh(MeshError),
+    #[error("a failure's geometry: {0}")]
+    Mesh(#[source] MeshError),
     /// The lines' points and ends don't make lines.
-    Lines(LinesError),
+    #[error("a failure's geometry: {0}")]
+    Lines(#[source] LinesError),
     /// A face isn't one of the answer's mesh, or not of the body named.
+    #[error("a failure's face isn't one of the model")]
     Face,
 }
-
-impl fmt::Display for GeometryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            GeometryError::TooLarge => f.write_str("a failure's geometry is too large"),
-            GeometryError::Position => f.write_str("a failure's geometry is out of bounds"),
-            GeometryError::Mesh(e) => write!(f, "a failure's geometry: {e}"),
-            GeometryError::Lines(e) => write!(f, "a failure's geometry: {e}"),
-            GeometryError::Face => f.write_str("a failure's face isn't one of the model"),
-        }
-    }
-}
-
-impl std::error::Error for GeometryError {}
 
 /// The mesh of these triangles: one part of one face, or none without
 /// triangles.

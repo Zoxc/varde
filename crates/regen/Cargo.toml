@@ -13,6 +13,7 @@ license.workspace = true
 testing = []
 
 [dependencies]
+thiserror.workspace = true
 varde-document.workspace = true
 varde-lane.workspace = true
 varde-kernel-compat.workspace = true

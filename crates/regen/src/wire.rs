@@ -1170,106 +1170,72 @@ impl fmt::Display for Part {
 }
 
 /// Why bytes from the other side were refused.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {
     /// A request, or the document in it, couldn't be decoded.
-    Request(DecodeError),
+    #[error("couldn't decode the request: {0}")]
+    Request(#[source] DecodeError),
     /// The head of a reply couldn't be decoded.
-    Head(DecodeError),
+    #[error("couldn't decode the reply: {0}")]
+    Head(#[source] DecodeError),
     /// A model came in this many parts instead of [`MODEL_PARTS`].
+    #[error("model in {0} parts instead of {MODEL_PARTS}")]
     Parts(usize),
     /// The head or a model part is larger than its bound.
+    #[error("reply {part} too large: {len} bytes")]
     TooLarge { part: Part, len: usize },
     /// The part's length isn't a whole number of its elements.
+    #[error("reply {part} of {len} bytes aren't whole elements")]
     Partial { part: Part, len: usize },
     /// The parts don't make a mesh.
-    RenderMesh(MeshError),
+    #[error("{0}")]
+    RenderMesh(#[source] MeshError),
     /// The parts don't make lines.
-    RenderLines(LinesError),
+    #[error("{0}")]
+    RenderLines(#[source] LinesError),
     /// The parts don't make the mesh's upload.
-    Upload(UploadError),
+    #[error("{0}")]
+    Upload(#[source] UploadError),
     /// The parts don't make the mesh's picking hierarchies.
-    PickTables(PickTablesError),
+    #[error("{0}")]
+    PickTables(#[source] PickTablesError),
     /// A body's box isn't finite, or its corners are out of order.
+    #[error("a body's box isn't one")]
     Bounds,
     /// A consumed body is listed twice, or as a holder.
+    #[error("a merged body is listed twice or holds another")]
     Merged,
     /// A sketch's placement isn't [`Placement::valid`], or a sketch is
     /// listed twice.
+    #[error("a sketch's placement isn't one")]
     Placement,
     /// The picking tables don't go with the mesh.
-    Picking(PickingError),
+    #[error("{0}")]
+    Picking(#[source] PickingError),
     /// A part's body isn't one the head lists.
+    #[error("a part's body isn't one the answer lists")]
     UnlistedBody,
     /// The draft's or the measure's revision isn't the one asked.
+    #[error("the answer's revisions aren't the ones asked")]
     Revisions,
     /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
-    Geometry(GeometryError),
+    #[error("{0}")]
+    Geometry(#[source] GeometryError),
     /// A draft's axis or plane, an align draft's points and directions,
     /// or what a scale's draft found, aren't ones, see
     /// [`MAX_REFERENCE`](crate::MAX_REFERENCE).
+    #[error("a draft's axis or plane isn't one")]
     Reference,
     /// A body's edge facts aren't [`EdgeFacts::valid`].
+    #[error("a body's edge facts aren't valid")]
     EdgeFacts,
     /// An export's bodies came in this many parts instead of one.
+    #[error("exported bodies in {0} parts instead of 1")]
     ExportParts(usize),
     /// An export's bodies couldn't be decoded, or a mesh among them
     /// isn't a manifold.
-    Export(DecodeError),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Request(e) => write!(f, "couldn't decode the request: {e}"),
-            Error::Head(e) => write!(f, "couldn't decode the reply: {e}"),
-            Error::Parts(n) => write!(f, "model in {n} parts instead of {MODEL_PARTS}"),
-            Error::TooLarge { part, len } => write!(f, "reply {part} too large: {len} bytes"),
-            Error::Partial { part, len } => {
-                write!(f, "reply {part} of {len} bytes aren't whole elements")
-            }
-            Error::RenderMesh(e) => e.fmt(f),
-            Error::RenderLines(e) => e.fmt(f),
-            Error::Upload(e) => e.fmt(f),
-            Error::PickTables(e) => e.fmt(f),
-            Error::Bounds => f.write_str("a body's box isn't one"),
-            Error::Merged => f.write_str("a merged body is listed twice or holds another"),
-            Error::Placement => f.write_str("a sketch's placement isn't one"),
-            Error::Picking(e) => e.fmt(f),
-            Error::UnlistedBody => f.write_str("a part's body isn't one the answer lists"),
-            Error::Revisions => f.write_str("the answer's revisions aren't the ones asked"),
-            Error::Geometry(e) => e.fmt(f),
-            Error::Reference => f.write_str("a draft's axis or plane isn't one"),
-            Error::EdgeFacts => f.write_str("a body's edge facts aren't valid"),
-            Error::ExportParts(n) => write!(f, "exported bodies in {n} parts instead of 1"),
-            Error::Export(e) => write!(f, "couldn't decode the exported bodies: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Request(e) | Error::Head(e) | Error::Export(e) => Some(e),
-            Error::Parts(_)
-            | Error::TooLarge { .. }
-            | Error::Partial { .. }
-            | Error::RenderMesh(_)
-            | Error::RenderLines(_)
-            | Error::Upload(_)
-            | Error::PickTables(_)
-            | Error::Bounds
-            | Error::Merged
-            | Error::Placement
-            | Error::Picking(_)
-            | Error::UnlistedBody
-            | Error::Revisions
-            | Error::Geometry(_)
-            | Error::Reference
-            | Error::EdgeFacts
-            | Error::ExportParts(_) => None,
-        }
-    }
+    #[error("couldn't decode the exported bodies: {0}")]
+    Export(#[source] DecodeError),
 }
 
 #[cfg(test)]

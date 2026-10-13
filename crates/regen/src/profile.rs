@@ -21,7 +21,6 @@
 //! `cos` or `sin`, so no platform's maths library decides a bit.
 
 use std::f64::consts::{FRAC_PI_2, PI};
-use std::fmt;
 
 use glam::DVec2;
 use varde_kernel_compat::patch::{Conic2, PatchError};
@@ -31,38 +30,24 @@ use varde_sketch::{Curve, Id, Piece, Profiles, Sketch};
 mod fit;
 
 /// Why a region's pieces couldn't be turned into a profile.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum ProfileError {
     /// A piece names a curve or a vertex the sketch doesn't have, or a
     /// spline without a shape: profiles not found from this sketch.
+    #[error("the region's curves aren't in the sketch")]
     Missing,
     /// More segments than a profile may have
     /// ([`MAX_PROFILE_SEGMENTS`]).
+    #[error("the region needs more than {MAX_PROFILE_SEGMENTS} segments")]
     TooManySegments,
     /// A spline couldn't be fitted within the tolerance: it stops or
     /// turns back on itself somewhere.
+    #[error("a spline couldn't be fitted: it stops or turns back on itself")]
     Fit,
     /// A segment came out outside the patch bounds.
-    Patch(PatchError),
+    #[error("a curve is out of bounds: {0}")]
+    Patch(#[source] PatchError),
 }
-
-impl fmt::Display for ProfileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProfileError::Missing => f.write_str("the region's curves aren't in the sketch"),
-            ProfileError::TooManySegments => write!(
-                f,
-                "the region needs more than {MAX_PROFILE_SEGMENTS} segments"
-            ),
-            ProfileError::Fit => {
-                f.write_str("a spline couldn't be fitted: it stops or turns back on itself")
-            }
-            ProfileError::Patch(e) => write!(f, "a curve is out of bounds: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for ProfileError {}
 
 impl From<PatchError> for ProfileError {
     fn from(e: PatchError) -> Self {

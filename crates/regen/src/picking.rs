@@ -17,7 +17,6 @@
 //!
 //! What a [`Picking`] guarantees is on it.
 
-use std::fmt;
 use std::mem::size_of_val;
 use std::sync::Arc;
 
@@ -660,43 +659,34 @@ impl Scene {
 }
 
 /// Why parts don't make a [`Picking`] of a mesh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PickingError {
     /// There isn't one body per part, one face per face and one flag and
     /// tangent chain per edge of the mesh.
+    #[error("the picking tables don't match the mesh")]
     Lengths,
     /// A face's summary isn't valid, or its aliases aren't sorted apart
     /// from its key.
+    #[error("a picked face's summary or aliases aren't valid")]
     Face,
     /// An edge said to close is a crease, or doesn't start and end at one
     /// corner.
+    #[error("a closed edge isn't one")]
     Closed,
     /// An edge's tangent chain's first isn't an edge of its part between
     /// two faces, no later than it and its own first, or a crease's isn't
     /// itself.
+    #[error("a picked edge's tangent chain isn't one")]
     Tangent,
     /// An edge's snap point is past the bound, or a crease has one.
+    #[error("a picked edge's snap point isn't valid")]
     Snap,
     /// A corner's faces are past the table, out of order, or of two
     /// parts, or its point is past the bound, or there are more corners
     /// than vertices.
+    #[error("a picked corner's faces or point aren't valid")]
     Corner,
 }
-
-impl fmt::Display for PickingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            PickingError::Lengths => "the picking tables don't match the mesh",
-            PickingError::Face => "a picked face's summary or aliases aren't valid",
-            PickingError::Closed => "a closed edge isn't one",
-            PickingError::Tangent => "a picked edge's tangent chain isn't one",
-            PickingError::Snap => "a picked edge's snap point isn't valid",
-            PickingError::Corner => "a picked corner's faces or point aren't valid",
-        })
-    }
-}
-
-impl std::error::Error for PickingError {}
 
 impl HeapSize for FaceEdgeTables {
     /// Its lists, the faces' aliases too.

@@ -119,21 +119,14 @@ pub struct ExportedBody {
 
 /// Why the visible bodies can't be exported: the first body, in the
 /// order the history made them, whose solid gives no [`ManifoldMesh`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{name} can't be exported: {error}")]
 pub struct ExportError {
     pub body: BodyId,
     pub name: String,
     /// What [`ManifoldError`] the mesh failed with, in words.
     pub error: String,
 }
-
-impl std::fmt::Display for ExportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} can't be exported: {}", self.name, self.error)
-    }
-}
-
-impl std::error::Error for ExportError {}
 
 /// The solids of the visible bodies of `document` in `evaluation`, in the
 /// order the history made them, each welded into a closed, oriented
