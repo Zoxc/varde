@@ -2023,7 +2023,10 @@ fn timeline_a_b_a_lists_only_the_extrude_edited() {
     assert_eq!(listed(&doc), []);
     // B's answer is dropped; A's lists the body.
     let b_request = requests.borrow_mut().remove(0);
-    doc.computed(varde_regen::handle(b_request));
+    doc.computed(
+        &mut crate::files::Files::new(None),
+        varde_regen::handle(b_request),
+    );
     assert_eq!(listed(&doc), []);
     answer(&mut doc, &requests);
     assert_eq!(listed(&doc), [body]);

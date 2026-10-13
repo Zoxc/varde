@@ -60,7 +60,9 @@ fn transformed(regen: &mut varde_regen::Regenerator) -> Plates {
 /// cache, as the document's lane does.
 fn answer(plates: &mut Plates, regen: &mut varde_regen::Regenerator) {
     for request in plates.requests.take() {
-        plates.doc.computed(regen.handle(request));
+        plates
+            .doc
+            .computed(&mut crate::files::Files::new(None), regen.handle(request));
     }
 }
 

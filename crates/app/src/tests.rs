@@ -497,7 +497,7 @@ pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
     loop {
         let detail = doc.feed.sight().map(|sight| sight.revision);
         for request in requests.take() {
-            doc.computed(handle(request));
+            doc.computed(&mut crate::files::Files::new(None), handle(request));
         }
         if doc.feed.sight().map(|sight| sight.revision) == detail || requests.borrow().is_empty() {
             return;
@@ -513,7 +513,7 @@ pub(crate) fn answer_newest(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
         (waiting.iter()).rposition(|request| matches!(request, Request::Regenerate { .. }));
     for (at, request) in waiting.into_iter().enumerate() {
         if !matches!(request, Request::Regenerate { .. }) || Some(at) == newest {
-            doc.computed(handle(request));
+            doc.computed(&mut crate::files::Files::new(None), handle(request));
         }
     }
 }
@@ -672,7 +672,7 @@ fn computed_message_shows_a_late_model() {
     let request = requests.borrow_mut().pop().unwrap();
     assert!(requests.borrow().is_empty());
 
-    doc.computed(handle(request));
+    doc.computed(&mut crate::files::Files::new(None), handle(request));
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
     assert_eq!(doc.feed.sketches().segment_count(), 1);
 }
@@ -691,7 +691,10 @@ fn nothing_is_requested_until_the_lane_is_ready() {
     // of the generation asked.
     let mut answered = |doc: &mut Doc| {
         while doc.feed.generation() != Some(doc.editor.generation()) {
-            doc.computed(block_on(responses.next()).unwrap());
+            doc.computed(
+                &mut crate::files::Files::new(None),
+                block_on(responses.next()).unwrap(),
+            );
         }
     };
     answered(&mut doc);
@@ -2995,7 +2998,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                 }),
                 failed => failed,
             };
-            doc.computed(response);
+            doc.computed(&mut crate::files::Files::new(None), response);
         }
     };
     let add_sketch = |doc: &mut Doc| {
@@ -5994,12 +5997,15 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
         varde_document::Tolerance::new(1e-2).unwrap(),
     ));
     for request in requests.take() {
-        doc.computed(Response::Failed {
-            asked: request.asked().unwrap(),
-            error: "the kernel ran out of room splitting the faces of a body with very \
+        doc.computed(
+            &mut crate::files::Files::new(None),
+            Response::Failed {
+                asked: request.asked().unwrap(),
+                error: "the kernel ran out of room splitting the faces of a body with very \
                     many curved faces; try a coarser tolerance"
-                .to_owned(),
-        });
+                    .to_owned(),
+            },
+        );
     }
     let size = iced::Size::new(1024.0, 600.0);
     let mut renderer = varde_view::probe::renderer();

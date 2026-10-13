@@ -149,7 +149,7 @@ fn an_unchanged_failure_keeps_its_arc_and_what_is_drawn_of_it() {
     let mut regen = Regenerator::default();
     let mut answer = |doc: &mut Doc| {
         for request in requests.take() {
-            doc.computed(regen.handle(request));
+            doc.computed(&mut crate::files::Files::new(None), regen.handle(request));
         }
     };
     let body = doc.editor.document().bodies()[0].id;

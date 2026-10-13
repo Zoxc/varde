@@ -987,7 +987,7 @@ fn a_slow_regeneration_shows_with_its_progress_until_answered() {
         steps: 2,
         stage: varde_regen::Stage::Feature("Sketch 1".to_owned()),
     };
-    feed.apply(Response::Progress(progress.clone()));
+    feed.progress(progress.clone());
     assert_eq!(feed.slow(&editor), Some(Some(&progress)));
     assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
 

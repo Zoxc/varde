@@ -2048,8 +2048,9 @@ on both lanes), goes ahead of the regeneration waiting, and is never
 replaced or dropped by one, so an edit right after Export 3MF… still
 gets its export answered. An export doesn't begin a cache request of its
 own (that would let go of the meshes the regeneration before used and it
-doesn't). Its answer has no generation, so `MeshFeed::apply` ignores it
-and the document takes it (`Doc::export_welded`). The feed keeps the
+doesn't). Its answer has no generation: `Doc::computed`, which routes
+every regeneration response, hands it to `Doc::export_welded`, not the
+feed. The feed keeps the
 bodies that have a solid in the model shown, for the File menu's Export
 3MF… to go only while one is shown and regenerating hasn't failed.
 
@@ -2060,8 +2061,8 @@ of their own. The lane evaluates the committed document as of
 `generation`, rolled back before `until` as a regeneration is, and
 answers `Response::Answered { tag, generation, until, answer }`, the
 `Answer` matching the `Query`; `Request::failure` fails the answer of
-the kind asked. `Response::generation` is `None` for it, so
-`MeshFeed::apply` ignores it. On the web a lone `Head::Answered` carries
+the kind asked. `Doc::computed` hands it to the MCP call
+waiting, not the feed. On the web a lone `Head::Answered` carries
 it (its `HeadAnswer` the answer as it crosses), checked on receipt as
 each kind says below; a head that would be over `MAX_HEAD_BYTES` is
 sent as the answer's error.

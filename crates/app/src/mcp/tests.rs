@@ -47,7 +47,7 @@ fn answer_failing(doc: &mut Doc, requests: &RefCell<Vec<Request>>, failing: Feat
                     geometry: None,
                 });
             }
-            doc.computed(response);
+            doc.computed(&mut crate::files::Files::new(None), response);
         }
     }
 }

@@ -317,7 +317,10 @@ fn answer_all_but_the_last(plates: &mut Plates) {
     let mut requests = plates.requests.take();
     let last = requests.pop();
     for request in requests {
-        plates.doc.computed(varde_regen::handle(request));
+        plates.doc.computed(
+            &mut crate::files::Files::new(None),
+            varde_regen::handle(request),
+        );
     }
     plates.requests.borrow_mut().extend(last);
 }

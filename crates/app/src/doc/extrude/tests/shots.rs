@@ -912,12 +912,15 @@ fn shots_13_status_bar() {
         doc.look(Look::SelectFeature(extrude));
         doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
         for request in requests.take() {
-            doc.computed(varde_regen::Response::Failed {
-                asked: request.asked().unwrap(),
-                error: "the kernel ran out of room splitting the faces of a body with \
+            doc.computed(
+                &mut crate::files::Files::new(None),
+                varde_regen::Response::Failed {
+                    asked: request.asked().unwrap(),
+                    error: "the kernel ran out of room splitting the faces of a body with \
                         very many curved faces; try a coarser tolerance"
-                    .to_owned(),
-            });
+                        .to_owned(),
+                },
+            );
         }
         camera.take(&doc, "13-status-failed", Shot::new());
         camera.take(

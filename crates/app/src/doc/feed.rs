@@ -518,15 +518,18 @@ impl MeshFeed {
         Some((generation, until))
     }
 
+    /// Shows `progress`, news of the regeneration running.
+    pub(crate) fn progress(&mut self, progress: Progress) {
+        self.progress = Some(progress);
+    }
+
     /// Shows the model in `response`, or its error next to the last one,
     /// unless a response as new was applied already. Responses arriving out
-    /// of order or superseded are dropped, and so are exports' answers,
-    /// which are the document's to take (see `Doc::computed`).
+    /// of order or superseded are dropped. Only a [`Response::Regenerated`]
+    /// or [`Response::Failed`] comes here; `Doc::computed` routes the rest.
     pub(crate) fn apply(&mut self, response: Response) {
         let Some(asked) = response.asked() else {
-            if let Response::Progress(progress) = response {
-                self.progress = Some(progress);
-            }
+            debug_assert!(false, "not a model response");
             return;
         };
         // The regeneration the progress was of is done, wanted or not.
@@ -620,7 +623,9 @@ impl MeshFeed {
                 self.failed = None;
             }
             Response::Failed { error, .. } => self.failed = Some((asked, error)),
-            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => {}
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => {
+                unreachable!("answered above")
+            }
         }
     }
 

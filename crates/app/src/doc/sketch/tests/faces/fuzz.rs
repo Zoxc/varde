@@ -568,7 +568,10 @@ fn run(seed: u64, steps: usize) {
                 let mut taken = requests.take();
                 taken.reverse();
                 for request in taken {
-                    doc.computed(varde_regen::handle(request));
+                    doc.computed(
+                        &mut crate::files::Files::new(None),
+                        varde_regen::handle(request),
+                    );
                 }
             }
             38 => {
@@ -576,7 +579,10 @@ fn run(seed: u64, steps: usize) {
                 let oldest = (!waiting.is_empty()).then(|| waiting.remove(0));
                 drop(waiting);
                 if let Some(request) = oldest {
-                    doc.computed(varde_regen::handle(request));
+                    doc.computed(
+                        &mut crate::files::Files::new(None),
+                        varde_regen::handle(request),
+                    );
                 }
             }
             39 => {

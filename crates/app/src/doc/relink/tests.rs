@@ -234,7 +234,7 @@ fn a_relinked_sketch_refused_shows_its_links_broken_and_asks_no_more() {
                 refused = true;
             }
         }
-        doc.computed(response);
+        doc.computed(&mut crate::files::Files::new(None), response);
     }
     assert!(refused);
     assert_eq!(sketch_of(&doc, feature), &held);

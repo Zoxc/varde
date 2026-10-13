@@ -338,9 +338,15 @@ fn new_picks_ask_again_and_only_the_newest_answer_is_taken() {
 
     // The newer answer first, then the older: the older is dropped.
     let handle = varde_regen::handle;
-    doc.computed(handle(second[0].clone()));
+    doc.computed(
+        &mut crate::files::Files::new(None),
+        handle(second[0].clone()),
+    );
     assert!(doc.feed.inspected().unwrap().between.is_some());
-    doc.computed(handle(first[0].clone()));
+    doc.computed(
+        &mut crate::files::Files::new(None),
+        handle(first[0].clone()),
+    );
     let inspected = doc.feed.inspected().unwrap();
     assert_eq!(inspected.revision, revision + 1);
     assert!(inspected.between.is_some());
@@ -350,12 +356,18 @@ fn new_picks_ask_again_and_only_the_newest_answer_is_taken() {
     let third = requests.take();
     click(&mut doc, top, true);
     let fourth = requests.take();
-    doc.computed(handle(third[0].clone()));
+    doc.computed(
+        &mut crate::files::Files::new(None),
+        handle(third[0].clone()),
+    );
     assert_eq!(doc.feed.inspected(), None);
     assert_eq!(doc.highlight(), None);
     let texts = screen_texts(&doc);
     assert!(texts.contains(&"Measuring…".to_owned()), "{texts:?}");
-    doc.computed(handle(fourth[0].clone()));
+    doc.computed(
+        &mut crate::files::Files::new(None),
+        handle(fourth[0].clone()),
+    );
     assert_eq!(
         doc.feed.inspected().unwrap().revision,
         fourth[0].asked().and_then(|asked| asked.inspect).unwrap()

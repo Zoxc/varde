@@ -75,10 +75,13 @@ fn export_goes_while_a_body_is_shown_and_regenerating_works() {
         varde_document::Tolerance::new(1e-2).unwrap(),
     ));
     let request = regen.take().pop().unwrap();
-    doc.computed(Response::Failed {
-        asked: request.asked().unwrap(),
-        error: "the kernel gave up".to_owned(),
-    });
+    doc.computed(
+        &mut crate::files::Files::new(None),
+        Response::Failed {
+            asked: request.asked().unwrap(),
+            error: "the kernel gave up".to_owned(),
+        },
+    );
     assert!(matches!(
         doc.feed.status(&doc.editor),
         MeshStatus::Failed(_)

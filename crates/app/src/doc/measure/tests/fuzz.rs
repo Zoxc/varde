@@ -106,20 +106,20 @@ fn deliver(
     match rng.below(4) {
         0 => {
             for request in waiting.drain(..) {
-                doc.computed(regen.handle(request));
+                doc.computed(&mut crate::files::Files::new(None), regen.handle(request));
             }
         }
         1 => {
             let newest = waiting.pop().unwrap();
-            doc.computed(regen.handle(newest));
+            doc.computed(&mut crate::files::Files::new(None), regen.handle(newest));
         }
         2 => {
             let one = waiting.remove(rng.below(waiting.len()));
-            doc.computed(regen.handle(one));
+            doc.computed(&mut crate::files::Files::new(None), regen.handle(one));
         }
         _ => {
             for request in waiting.drain(..).rev() {
-                doc.computed(regen.handle(request));
+                doc.computed(&mut crate::files::Files::new(None), regen.handle(request));
             }
         }
     }
@@ -578,7 +578,7 @@ fn run(seed: u64, steps: usize) -> usize {
     }
     // Everything answered, the panel and its copies hold.
     for request in requests.take() {
-        doc.computed(regen.handle(request));
+        doc.computed(&mut crate::files::Files::new(None), regen.handle(request));
     }
     if doc.mode.measure().is_some()
         && let Some(inspected) = doc.feed.inspected()

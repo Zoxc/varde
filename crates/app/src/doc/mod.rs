@@ -1623,16 +1623,28 @@ impl Doc {
         self.rendering_thumbnail()
     }
 
-    /// Shows `response`, computed for the document. An export's answer
-    /// goes to [`Doc::export_welded`] instead, and an MCP call's edge
-    /// facts or measure to the call waiting on them.
-    pub(crate) fn computed(&mut self, response: varde_regen::Response) {
-        // An MCP call's edge facts or measure: nothing shown changes.
-        if let varde_regen::Response::Answered { .. } = response {
+    /// Takes `response`, from the document's regeneration lane: an
+    /// export's answer goes to [`Doc::export_welded`], progress to the
+    /// feed, an MCP call's edge facts or measure to the call waiting on
+    /// them, and a model or its error is shown.
+    pub(crate) fn computed(&mut self, cx: &mut Files, response: varde_regen::Response) {
+        use varde_regen::Response;
+        match response {
+            Response::Exported { export, result } => self.export_welded(cx, export, result),
+            // Only news: nothing shown changes but the progress.
+            Response::Progress(progress) => self.feed.progress(progress),
+            // An MCP call's edge facts or measure: nothing shown changes.
             #[cfg(not(target_arch = "wasm32"))]
-            self.query_answered(response);
-            return;
+            Response::Answered { .. } => self.query_answered(response),
+            #[cfg(target_arch = "wasm32")]
+            Response::Answered { .. } => {}
+            Response::Regenerated(_) | Response::Failed { .. } => self.model_computed(response),
         }
+    }
+
+    /// Shows the model in `response`, or its error, and follows what
+    /// depends on it.
+    fn model_computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
         #[cfg(not(target_arch = "wasm32"))]
         let before = self.editor.revision();
@@ -1751,17 +1763,8 @@ impl Doc {
                 self.lane_ready(lane);
                 Next::Stay
             }
-            ForDoc::Computed(varde_regen::Response::Exported { export, result }) => {
-                self.export_welded(cx, export, result);
-                Next::Stay
-            }
-            // Only news: nothing shown changes but the progress.
-            ForDoc::Computed(response @ varde_regen::Response::Progress(_)) => {
-                self.feed.apply(response);
-                Next::Stay
-            }
             ForDoc::Computed(response) => {
-                self.computed(response);
+                self.computed(cx, response);
                 Next::Stay
             }
             ForDoc::ExportPicked(chosen) => {
