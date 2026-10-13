@@ -11,7 +11,7 @@ use varde_expr::{Ask, Value};
 use crate::bodies::check_bodies;
 use crate::motion::Referred;
 use crate::revolve::TURN_ROUNDING;
-use crate::{AxisRef, BodyId, Design, MAX_COORD, MotionError};
+use crate::{AxisRef, BodyId, Design, MotionError};
 
 /// The most copies one pattern makes of each body, the original among
 /// them. Every copy is as many patches as the body, so the regeneration
@@ -74,7 +74,7 @@ pub enum Copies {
 pub enum PatternKind {
     /// Copy `k` moved `k · spacing` along the axis's direction (its point
     /// doesn't matter). The spacing is a length within
-    /// [`MAX_COORD`] of zero but not zero ([`Pattern::spacing_ask`]); a
+    /// [`MAX_COORD`](crate::MAX_COORD) of zero but not zero ([`Pattern::spacing_ask`]); a
     /// negative one runs the other way.
     Linear {
         along: AxisRef,
@@ -146,16 +146,16 @@ impl Pattern {
     }
 
     /// What a linear pattern's spacing is checked against in `design`: a
-    /// length within [`MAX_COORD`] of zero, bare numbers in its units
+    /// length as a move's offset ([`Move::offset_ask`](crate::Move::offset_ask))
     /// (zero is refused apart, see [`Pattern::check_own`]).
     pub fn spacing_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        design.length(f64::from(MAX_COORD))
+        crate::Move::offset_ask(design)
     }
 
-    /// What a circular pattern's angle is checked against in `design`:
-    /// above zero and at most a turn, bare numbers in degrees.
+    /// What a circular pattern's angle is checked against in `design`: an
+    /// angle as a revolve's ([`Turn::ask`](crate::Turn::ask)).
     pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        design.angle(TAU).positive()
+        crate::Turn::ask(design)
     }
 
     /// How many copies it makes of each body, the original among them, if

@@ -3,8 +3,6 @@
 //! mould pulled along the plane's normal; the faces around them extended
 //! or trimmed to meet them.
 
-use std::f64::consts::FRAC_PI_2;
-
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
@@ -45,10 +43,10 @@ pub struct FaceDraft {
 }
 
 impl FaceDraft {
-    /// What its angle is checked against in `design`: above zero and
-    /// under a right angle, bare numbers in degrees.
+    /// What its angle is checked against in `design`: an angle as a
+    /// chamfer's ([`Chamfer::angle_ask`](crate::Chamfer::angle_ask)).
     pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        design.angle(FRAC_PI_2).positive().under_max()
+        crate::Chamfer::angle_ask(design)
     }
 
     /// The body its faces are on: the first face's (all are on one).
