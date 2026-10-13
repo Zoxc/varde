@@ -22,7 +22,7 @@ use crate::shortcut::{
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
     ActiveTool, AlignRole, AlignSide, ConstraintKind, DocumentState, Edit, Location, Look, Message,
-    MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Picked, SplitMode, Tool,
+    MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Picked, SketchState, SplitMode, Tool,
 };
 
 /// Includes the 1 px border.
@@ -431,112 +431,187 @@ fn ops<'a>(
     keys: DocumentKeys,
     operation: Option<&Operation<'a>>,
 ) -> Vec<Element<'a, Message>> {
-    let editable = state.editable();
     if let Some(sketch) = &state.sketch {
-        let constrain = tipped_op(
-            Icon::Constrain,
-            "Constrain",
-            constrain_binding(keys),
-            sketch.constraining,
+        return sketch_ops(sketch, keys);
+    }
+    if state.picking_plane.is_some() {
+        return plane_pick_ops(state, keys);
+    }
+    // While an operation is set up, the bar is Cancel and what the
+    // operation picks, as the mock's: the operations would leave no room
+    // for the origins at 1280 px wide, and their keys still work.
+    if let Some(operation) = operation {
+        let cancel = op_button(
+            Icon::Close,
+            "Cancel",
+            Some(Shortcut::ESCAPE),
+            false,
+            Some(operation.cancel.clone()),
         );
-        // The Constrain tool offers the constraints that fit the
-        // selection, the most likely first, in place of the drawing
-        // tools: as the mock's model bar changes with what's selected,
-        // and there's no room for both at 1280 px wide. The tools are on
-        // the rail, their keys still work.
-        let fitting = || {
-            let fitting = ConstraintKind::fitting(sketch.sketch, sketch.selection);
-            fitting.into_iter().filter_map(move |kind| {
-                let binding = constraint_binding(kind, keys)?;
-                Some(tipped_op(kind.icon(), kind.label(), binding, false))
-            })
-        };
-        if sketch.constraining {
-            return std::iter::once(constrain)
-                .chain(std::iter::once(separator()))
-                .chain(fitting())
-                .collect();
-        }
-        // With anything selected, and no drawing tool, likewise the
-        // constraints that fit it, and with splines among it switching
-        // them, handles, the curvature comb and adding points before
-        // them; while adding points, Add point stays, to stop it.
-        if (keys.geometry_selected || keys.inserting) && !keys.drawing {
-            let insert = || {
-                let binding = insert_point_binding(keys);
-                tipped_op(Icon::InsertPoint, "Add point", binding, keys.inserting)
-            };
-            let splines = keys.splines_selected.then(|| {
-                [
-                    tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
-                    tipped_op(Icon::Handles, "Handles", handles_binding(keys), false),
-                    tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
-                ]
-            });
-            let insert = (keys.splines_selected || keys.inserting).then(insert);
-            // Spline points selected: taking them out, or why it can't.
-            let remove = (keys.removing)
-                .zip(crate::spline::removals(sketch.sketch, sketch.selection))
-                .map(|(_, found)| remove_op(found.err(), remove_point_binding(keys)));
-            // Closing or opening, for arcs as for splines.
-            let close = keys
-                .closing
-                .map(|close| close_op(close, close_binding(keys)));
-            let curves = (splines.into_iter().flatten())
-                .chain(insert)
-                .chain(remove)
-                .chain(close)
-                .collect::<Vec<_>>();
-            let gap = (!curves.is_empty()).then(separator);
-            return curves
-                .into_iter()
-                .chain(gap)
-                .chain([constrain, separator()])
-                .chain(fitting())
-                .collect();
-        }
-        // The tools the mock's sketch bar has, in its order; the rest are
-        // on the rail (all of them, with their keys), which left no room
-        // at 1280 px wide. Their keys are in their tooltips, as the
-        // mock's bar has them at that width, not beside them: with a
-        // tool's tag beside the sketch's name they'd run past the bar.
-        let active = sketch.tool.map(|tool| tool.tool);
-        let tools = Tool::BAR.map(|tool| {
-            tipped_op(
-                tool.icon(),
-                tool.label(),
-                tool_binding(tool, keys),
-                active == Some(tool),
-            )
-        });
-        // Constrain last, as the mock's bar has it, and Close after it
-        // while the Spline or Line tool's shape can close.
-        let close = keys
-            .tool_closes
-            .then(|| [separator(), close_op(true, close_binding(keys))]);
-        return (tools.into_iter().chain([constrain]))
-            .chain(close.into_iter().flatten())
+        return std::iter::once(cancel)
+            .chain(motion_origins(state))
             .collect();
     }
-    let sketch = bar_op(state, keys, Entry::Sketch);
-    if state.picking_plane.is_some() {
-        // Picking a plane in the viewport comes with picking, so the
-        // origin planes are offered here.
-        let planes = OriginPlane::ALL.map(|plane| {
-            bound_op(
-                icons::plane_icon(plane),
-                plane_label(plane),
-                plane_binding(plane, keys),
-                false,
-            )
-        });
-        // Only Sketch, which backs out: Extrude and Revolve take no plane.
-        return [sketch, separator()].into_iter().chain(planes).collect();
+    // Measure after a separator, as the mock has it.
+    let measure = bar_op(state, keys, Entry::Measure);
+    // What's selected decides the operations offered, each starting
+    // with it ([`selection_bar`]).
+    if let Some(bar) = selection_bar(state) {
+        return (bar.into_iter())
+            .map(|item| match item {
+                BarItem::Op(entry) => bar_op(state, keys, entry),
+                BarItem::EditSketch(sketch) => op(
+                    Icon::Sketch,
+                    "Edit sketch",
+                    (state.editable()).then_some(Message::Look(Look::EditFeature(sketch))),
+                ),
+            })
+            .chain([separator(), measure])
+            .collect();
     }
-    // Picking a move's or pattern's axis or a mirror's plane offers the
-    // origin ones here, as picking a sketch's plane does: the viewport
-    // picks the model's edges and faces.
-    let origins: Vec<Element<'a, Message>> = match state.motion() {
+    // The model bar: Chamfer after the solids, before Combine, as the
+    // mock's model bar orders them (its Hole isn't built). The mock's
+    // Fillet, before Chamfer, and Shell, after it, would each leave the
+    // bar too wide at 1280 px (Fillet to 1210 px of 1160): the rail's
+    // Modify set has them, and Offset face too, and Fillet has its key.
+    // Move after Combine, as the mock's model bar orders them. Mirror
+    // isn't on it (the mock's model bar has none: its body bar does),
+    // which left no room at 1280 px wide: the rail's Transform set has
+    // it. The linear pattern after Move, with its key, as the mock's
+    // model bar has it: the circular one is on the rail (the mock's
+    // model bar has none either). Then, by Measure, the design's
+    // parameters, lit while their popup is open: as the rail's tool, it
+    // opens and closes it.
+    let model = [
+        Entry::Extrude,
+        Entry::Revolve,
+        Entry::Motion(MotionKind::Chamfer),
+        Entry::Combine,
+        Entry::Motion(MotionKind::Move),
+        Entry::Motion(MotionKind::LinearPattern),
+    ];
+    std::iter::once(bar_op(state, keys, Entry::Sketch))
+        .chain(model.map(|entry| bar_op(state, keys, entry)))
+        .chain([separator(), measure, bar_op(state, keys, Entry::Params)])
+        .chain(motion_origins(state))
+        .collect()
+}
+
+/// The sketch's bar: the constraints fitting the selection while
+/// constraining, or with something selected and no drawing tool, those
+/// and the curves' edits; else the drawing tools.
+fn sketch_ops<'a>(sketch: &SketchState<'a>, keys: DocumentKeys) -> Vec<Element<'a, Message>> {
+    let constrain = tipped_op(
+        Icon::Constrain,
+        "Constrain",
+        constrain_binding(keys),
+        sketch.constraining,
+    );
+    // The Constrain tool offers the constraints that fit the
+    // selection, the most likely first, in place of the drawing
+    // tools: as the mock's model bar changes with what's selected,
+    // and there's no room for both at 1280 px wide. The tools are on
+    // the rail, their keys still work.
+    let fitting = || {
+        let fitting = ConstraintKind::fitting(sketch.sketch, sketch.selection);
+        fitting.into_iter().filter_map(move |kind| {
+            let binding = constraint_binding(kind, keys)?;
+            Some(tipped_op(kind.icon(), kind.label(), binding, false))
+        })
+    };
+    if sketch.constraining {
+        return std::iter::once(constrain)
+            .chain(std::iter::once(separator()))
+            .chain(fitting())
+            .collect();
+    }
+    // With anything selected, and no drawing tool, likewise the
+    // constraints that fit it, and with splines among it switching
+    // them, handles, the curvature comb and adding points before
+    // them; while adding points, Add point stays, to stop it.
+    if (keys.geometry_selected || keys.inserting) && !keys.drawing {
+        let insert = || {
+            let binding = insert_point_binding(keys);
+            tipped_op(Icon::InsertPoint, "Add point", binding, keys.inserting)
+        };
+        let splines = keys.splines_selected.then(|| {
+            [
+                tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
+                tipped_op(Icon::Handles, "Handles", handles_binding(keys), false),
+                tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
+            ]
+        });
+        let insert = (keys.splines_selected || keys.inserting).then(insert);
+        // Spline points selected: taking them out, or why it can't.
+        let remove = (keys.removing)
+            .zip(crate::spline::removals(sketch.sketch, sketch.selection))
+            .map(|(_, found)| remove_op(found.err(), remove_point_binding(keys)));
+        // Closing or opening, for arcs as for splines.
+        let close = keys
+            .closing
+            .map(|close| close_op(close, close_binding(keys)));
+        let curves = (splines.into_iter().flatten())
+            .chain(insert)
+            .chain(remove)
+            .chain(close)
+            .collect::<Vec<_>>();
+        let gap = (!curves.is_empty()).then(separator);
+        return curves
+            .into_iter()
+            .chain(gap)
+            .chain([constrain, separator()])
+            .chain(fitting())
+            .collect();
+    }
+    // The tools the mock's sketch bar has, in its order; the rest are
+    // on the rail (all of them, with their keys), which left no room
+    // at 1280 px wide. Their keys are in their tooltips, as the
+    // mock's bar has them at that width, not beside them: with a
+    // tool's tag beside the sketch's name they'd run past the bar.
+    let active = sketch.tool.map(|tool| tool.tool);
+    let tools = Tool::BAR.map(|tool| {
+        tipped_op(
+            tool.icon(),
+            tool.label(),
+            tool_binding(tool, keys),
+            active == Some(tool),
+        )
+    });
+    // Constrain last, as the mock's bar has it, and Close after it
+    // while the Spline or Line tool's shape can close.
+    let close = keys
+        .tool_closes
+        .then(|| [separator(), close_op(true, close_binding(keys))]);
+    (tools.into_iter().chain([constrain]))
+        .chain(close.into_iter().flatten())
+        .collect()
+}
+
+/// The bar while picking a new sketch's plane: Sketch, which backs out,
+/// and the origin planes.
+fn plane_pick_ops<'a>(state: &DocumentState<'a>, keys: DocumentKeys) -> Vec<Element<'a, Message>> {
+    let sketch = bar_op(state, keys, Entry::Sketch);
+    // Picking a plane in the viewport comes with picking, so the
+    // origin planes are offered here.
+    let planes = OriginPlane::ALL.map(|plane| {
+        bound_op(
+            icons::plane_icon(plane),
+            plane_label(plane),
+            plane_binding(plane, keys),
+            false,
+        )
+    });
+    // Only Sketch, which backs out: Extrude and Revolve take no plane.
+    [sketch, separator()].into_iter().chain(planes).collect()
+}
+
+/// The origin buttons while picking a move's or pattern's axis or a
+/// mirror's plane, after a separator: the viewport picks the model's
+/// edges and faces, so the origin ones are offered here, as picking a
+/// sketch's plane does.
+fn motion_origins<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
+    let editable = state.editable();
+    match state.motion() {
         Some(motion) => {
             let send = |look: MotionLook| {
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
@@ -590,63 +665,7 @@ fn ops<'a>(
             }
         }
         None => Vec::new(),
-    };
-    // Measure after a separator, as the mock has it.
-    let measure = bar_op(state, keys, Entry::Measure);
-    // While an operation is set up, the bar is Cancel and what the
-    // operation picks, as the mock's: the operations would leave no room
-    // for the origins at 1280 px wide, and their keys still work.
-    if let Some(operation) = operation {
-        let cancel = op_button(
-            Icon::Close,
-            "Cancel",
-            Some(Shortcut::ESCAPE),
-            false,
-            Some(operation.cancel.clone()),
-        );
-        return std::iter::once(cancel).chain(origins).collect();
     }
-    // What's selected decides the operations offered, each starting
-    // with it ([`selection_bar`]).
-    if let Some(bar) = selection_bar(state) {
-        return (bar.into_iter())
-            .map(|item| match item {
-                BarItem::Op(entry) => bar_op(state, keys, entry),
-                BarItem::EditSketch(sketch) => op(
-                    Icon::Sketch,
-                    "Edit sketch",
-                    (state.editable()).then_some(Message::Look(Look::EditFeature(sketch))),
-                ),
-            })
-            .chain([separator(), measure])
-            .collect();
-    }
-    // The model bar: Chamfer after the solids, before Combine, as the
-    // mock's model bar orders them (its Hole isn't built). The mock's
-    // Fillet, before Chamfer, and Shell, after it, would each leave the
-    // bar too wide at 1280 px (Fillet to 1210 px of 1160): the rail's
-    // Modify set has them, and Offset face too, and Fillet has its key.
-    // Move after Combine, as the mock's model bar orders them. Mirror
-    // isn't on it (the mock's model bar has none: its body bar does),
-    // which left no room at 1280 px wide: the rail's Transform set has
-    // it. The linear pattern after Move, with its key, as the mock's
-    // model bar has it: the circular one is on the rail (the mock's
-    // model bar has none either). Then, by Measure, the design's
-    // parameters, lit while their popup is open: as the rail's tool, it
-    // opens and closes it.
-    let model = [
-        Entry::Extrude,
-        Entry::Revolve,
-        Entry::Motion(MotionKind::Chamfer),
-        Entry::Combine,
-        Entry::Motion(MotionKind::Move),
-        Entry::Motion(MotionKind::LinearPattern),
-    ];
-    std::iter::once(sketch)
-        .chain(model.map(|entry| bar_op(state, keys, entry)))
-        .chain([separator(), measure, bar_op(state, keys, Entry::Params)])
-        .chain(origins)
-        .collect()
 }
 
 /// The operations of [`BarItem`] by short names, for the lists of
