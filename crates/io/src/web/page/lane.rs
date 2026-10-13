@@ -58,6 +58,19 @@ enum Phase {
     Stopped(String),
 }
 
+impl Phase {
+    /// Moves to `next`, returning the requests that waited for the worker:
+    /// none unless it was starting. The one worker says it's ready once,
+    /// and never after it stopped; stopping again replaces the error with
+    /// the newer one.
+    fn advance(&mut self, next: Phase) -> Vec<Request> {
+        match std::mem::replace(self, next) {
+            Phase::Starting(waiting) => waiting,
+            Phase::Ready | Phase::Stopped(_) => Vec::new(),
+        }
+    }
+}
+
 impl Page<Request> for Shared {
     fn host(&self) -> &Host {
         &self.host
@@ -89,12 +102,7 @@ impl Page<Request> for Shared {
 
     /// The worker listens now: posts the requests that waited for it.
     fn ready(&self) {
-        let waiting = match std::mem::replace(&mut self.state.borrow_mut().phase, Phase::Ready) {
-            Phase::Starting(waiting) => waiting,
-            // The one worker says it's ready once, and never after it
-            // stopped.
-            Phase::Ready | Phase::Stopped(_) => Vec::new(),
-        };
+        let waiting = self.state.borrow_mut().phase.advance(Phase::Ready);
         for request in waiting {
             // Answered with the error once a post stops the worker.
             self.send(request);
@@ -125,10 +133,7 @@ impl Page<Request> for Shared {
     fn fail(&self, error: String) {
         let owed = {
             let mut state = self.state.borrow_mut();
-            let waiting = match std::mem::replace(&mut state.phase, Phase::Stopped(error.clone())) {
-                Phase::Starting(waiting) => waiting,
-                Phase::Ready | Phase::Stopped(_) => Vec::new(),
-            };
+            let waiting = state.phase.advance(Phase::Stopped(error.clone()));
             // A save the worker had queued behind another it would have
             // replaced is never answered, as if it had gone on.
             let mut owed = Queue::default();
