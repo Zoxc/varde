@@ -284,22 +284,20 @@ pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64)
             })
             .collect()
     };
-    let on = |ids: &mut dyn Iterator<Item = Id>| {
+    let on = |feet: Vec<(Id, DVec2)>| {
         near(
-            ids.filter_map(|id| Some(Snap::on(foot(sketch, id, cursor)?, Target::On(id))))
+            (feet.into_iter())
+                .map(|(id, at)| Snap::on(at, Target::On(id)))
                 .collect(),
         )
     };
+    let curves = (sketch.curves.iter())
+        .map(|entry| entry.id)
+        .filter(|id| !own.contains(id));
     near(points)
         .or_else(|| near(special()))
-        .or_else(|| {
-            on(&mut sketch
-                .curves
-                .iter()
-                .map(|entry| entry.id)
-                .filter(|id| !own.contains(id)))
-        })
-        .or_else(|| on(&mut [Id::X_AXIS, Id::Y_AXIS].into_iter()))
+        .or_else(|| on(feet(sketch, cursor, curves).collect()))
+        .or_else(|| on(feet(sketch, cursor, AXES).collect()))
         .unwrap_or(Snap::free(cursor))
 }
 
@@ -323,12 +321,10 @@ fn nearest(
     cursor: DVec2,
     tolerance: f64,
 ) -> Option<Snap> {
-    (candidates.into_iter())
+    let candidates = (candidates.into_iter())
         .filter(|snap| snap.at.is_finite())
-        .map(|snap| (snap.at.distance(cursor), snap))
-        .filter(|&(distance, _)| distance <= tolerance)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, snap)| snap)
+        .map(|snap| (snap, snap.at.distance(cursor)));
+    hit::nearest(candidates, tolerance)
 }
 
 /// The points of `sketch`, then the origin, to snap to: those `keep`
@@ -493,13 +489,12 @@ fn own_foot(tool: &ActiveTool, cursor: DVec2) -> Option<DVec2> {
     let line = flatten_spline(tool.placed, tool.spline_kind(), false)
         .unwrap_or_else(|| tool.placed.to_vec());
     (line.windows(2))
-        .filter_map(|pair| {
-            let along = pair[1] - pair[0];
-            let t = ((cursor - pair[0]).dot(along) / along.length_squared()).clamp(0.0, 1.0);
-            let at = pair[0] + along * t;
-            at.is_finite().then_some(at)
+        .map(|pair| {
+            let (distance, s) = hit::segment_nearest(cursor, pair[0], pair[1]);
+            (distance, pair[0].lerp(pair[1], s))
         })
-        .min_by(|a, b| a.distance(cursor).total_cmp(&b.distance(cursor)))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, at)| at)
 }
 
 /// Lines' midpoints and circles' and arcs' quadrants.
@@ -675,12 +670,23 @@ fn directions(sketch: &Sketch, tool: &ActiveTool, start: DVec2) -> Vec<(Inferenc
 /// The curve of `sketch` nearest `cursor` within `tolerance`, or failing
 /// one the axis.
 fn on_curve(sketch: &Sketch, cursor: DVec2, tolerance: f64) -> Option<Id> {
-    let distances = |ids: &mut dyn Iterator<Item = Id>| {
-        let distances = ids.filter_map(|id| Some((id, foot(sketch, id, cursor)?.distance(cursor))));
-        hit::nearest(distances, tolerance)
-    };
-    distances(&mut sketch.curves.iter().map(|entry| entry.id))
-        .or_else(|| distances(&mut [Id::X_AXIS, Id::Y_AXIS].into_iter()))
+    let distance = |(id, at): (Id, DVec2)| (id, at.distance(cursor));
+    let curves = sketch.curves.iter().map(|entry| entry.id);
+    hit::nearest(feet(sketch, cursor, curves).map(distance), tolerance)
+        .or_else(|| hit::nearest(feet(sketch, cursor, AXES).map(distance), tolerance))
+}
+
+/// The two axes, which the cursor snaps on after the curves.
+const AXES: [Id; 2] = [Id::X_AXIS, Id::Y_AXIS];
+
+/// The curves (or axes) `ids` of `sketch` with their places nearest
+/// `cursor` ([`foot`]), those with none left out.
+fn feet(
+    sketch: &Sketch,
+    cursor: DVec2,
+    ids: impl IntoIterator<Item = Id>,
+) -> impl Iterator<Item = (Id, DVec2)> {
+    (ids.into_iter()).filter_map(move |id| Some((id, foot(sketch, id, cursor)?)))
 }
 
 /// The place on the curve (or axis) `id` of `sketch` nearest `cursor`: on
