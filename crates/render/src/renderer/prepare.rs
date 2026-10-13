@@ -859,7 +859,7 @@ impl Renderer {
             p.changed = true;
             slot.pattern_target = Some(CoverageTarget::new(
                 device,
-                &self.errors.layout,
+                (&self.pattern_layout, false),
                 &slot.uniforms,
                 ("varde selected pattern", self.format),
                 size,
@@ -873,19 +873,19 @@ impl Renderer {
             p.changed = true;
             slot.error_target = Some(CoverageTarget::new(
                 device,
-                &self.errors.layout,
+                (&self.errors.layout, true),
                 &slot.uniforms,
                 ("varde error halo", HALO_FORMAT),
                 size,
                 self.samples,
             ));
         }
-        if let Some(target) = &slot.error_target {
-            let uniforms = ErrorUniforms {
+        if let Some(buffer) = slot.error_target.as_ref().and_then(|t| t.uniforms.as_ref()) {
+            let colors = ErrorUniforms {
                 core: p.colors.error.linear(),
                 halo: p.colors.error_halo.linear(),
             };
-            p.write(&target.uniforms, bytemuck::bytes_of(&uniforms));
+            p.write(buffer, bytemuck::bytes_of(&colors));
         }
     }
 }

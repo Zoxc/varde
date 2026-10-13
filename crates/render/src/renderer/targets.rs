@@ -125,22 +125,25 @@ impl SlotTargets {
 
 /// A target of the frame's size drawn into beside the scene and read
 /// back over it: the errors' halo's (see [`HALO_FORMAT`]), with their
-/// colours, or the selected faces' pattern's mask (the colours unused).
+/// colours, or the selected faces' pattern's mask, without.
 /// Multisampled as the scene's colour.
 pub(super) struct CoverageTarget {
     target: ColorTarget,
-    /// [`ErrorUniforms`], written each frame there are errors.
-    pub(super) uniforms: wgpu::Buffer,
-    /// Group 0 of the composite and the core: the scene's uniforms, the
-    /// colours and the halo.
+    /// The errors' halo's [`ErrorUniforms`], written each frame there
+    /// are errors; `None` for the pattern's mask.
+    pub(super) uniforms: Option<wgpu::Buffer>,
+    /// Group 0 of what reads it back: the scene's uniforms, the colours
+    /// if any and the coverage.
     pub(super) group: wgpu::BindGroup,
     pub(super) size: [u32; 2],
 }
 
 impl CoverageTarget {
+    /// A target and its group by `layout`, which has the colours at
+    /// binding 1 if `colors`.
     pub(super) fn new(
         device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
+        (layout, colors): (&wgpu::BindGroupLayout, bool),
         scene: &wgpu::Buffer,
         (label, format): (&str, wgpu::TextureFormat),
         size: [u32; 2],
@@ -148,29 +151,32 @@ impl CoverageTarget {
     ) -> CoverageTarget {
         let samples_label = format!("{label} samples");
         let target = ColorTarget::new(device, [label, &samples_label], format, size, samples);
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("varde error colours"),
-            size: size_of::<ErrorUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let uniforms = colors.then(|| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("varde error colours"),
+                size: size_of::<ErrorUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        let mut entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: scene.as_entire_binding(),
+        }];
+        if let Some(uniforms) = &uniforms {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 1,
+                resource: uniforms.as_entire_binding(),
+            });
+        }
+        entries.push(wgpu::BindGroupEntry {
+            binding: 2,
+            resource: wgpu::BindingResource::TextureView(&target.resolved),
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: scene.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniforms.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&target.resolved),
-                },
-            ],
+            entries: &entries,
         });
         CoverageTarget {
             target,

@@ -531,37 +531,49 @@ impl Renderer {
             bind_group_layouts: &[&bind_group_layout, &part_layout],
             push_constant_ranges: &[],
         });
-        // Group 0 of the halo's composite and the errors' core: the scene's
-        // uniforms as everywhere, their colours (`ErrorUniforms`), and the
-        // halo's coverage, read texel by texel (`textureLoad`, no sampler)
-        // by the composite. In group 0 rather than a group of their own:
-        // iced asks the device for two bind groups only.
+        // Group 0 of what reads a `CoverageTarget` back: the scene's
+        // uniforms as everywhere, the errors' colours (`ErrorUniforms`)
+        // for the halo's composite and the errors' core, and the coverage,
+        // read texel by texel (`textureLoad`, no sampler). In group 0
+        // rather than a group of their own: iced asks the device for two
+        // bind groups only.
+        let scene_entry = uniform_entry(
+            0,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
+            false,
+            size_of::<Uniforms>() as u64,
+        );
+        let coverage_entry = wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let errors_group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde errors"),
             entries: &[
-                uniform_entry(
-                    0,
-                    wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    false,
-                    size_of::<Uniforms>() as u64,
-                ),
+                scene_entry,
                 uniform_entry(
                     1,
                     wgpu::ShaderStages::VERTEX_FRAGMENT,
                     false,
                     size_of::<ErrorUniforms>() as u64,
                 ),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                coverage_entry,
             ],
+        });
+        let pattern_group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("varde selected pattern"),
+            entries: &[scene_entry, coverage_entry],
+        });
+        let pattern_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("varde selected pattern"),
+            bind_group_layouts: &[&pattern_group, &part_layout],
+            push_constant_ranges: &[],
         });
         let errors_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("varde errors"),
@@ -814,7 +826,7 @@ impl Renderer {
             selection_pick,
             pattern_edge: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Always,
-                layout: Some(&errors_layout),
+                layout: Some(&pattern_layout),
                 ..Pass::overlay(
                     "varde selected pattern edge",
                     "vs_fullscreen",
@@ -1051,6 +1063,7 @@ impl Renderer {
                 }),
                 layout: errors_group,
             },
+            pattern_layout: pattern_group,
             bind_group_layout,
             samples,
             composite,

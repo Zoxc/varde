@@ -96,6 +96,9 @@ pub struct Renderer {
     hovered_selected_face_pattern: wgpu::RenderPipeline,
     /// The pattern's edge, from [`Slot::pattern_target`], over the frame.
     pattern_edge: wgpu::RenderPipeline,
+    /// Group 0 of [`Self::pattern_edge`]: the pattern's
+    /// [`CoverageTarget::group`].
+    pattern_layout: wgpu::BindGroupLayout,
     lines: wgpu::RenderPipeline,
     /// The finished sketches' lines again where glass is the nearest of
     /// the model (the stencil isn't 0), so what's in front of it isn't
