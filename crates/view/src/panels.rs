@@ -300,13 +300,7 @@ fn timeline<'a>(view: TimelineView<'a>) -> Element<'a, Message> {
             let on = RowMenu::Feature(feature.id);
             let menu =
                 (selected && menu == Some(on)).then(|| feature_menu(feature, editable, roll));
-            ContextMenu::new(
-                row,
-                menu,
-                Message::Look(Look::OpenMenu(on)),
-                Message::Look(Look::CloseMenu),
-            )
-            .into()
+            row_context(row, on, menu)
         })
         .collect();
     rows.insert(kept, marker);
@@ -416,13 +410,11 @@ fn feature_menu<'a>(
     );
     let sketch = matches!(feature.kind, FeatureKind::Sketch { .. });
     let toggle = sketch.then(|| {
-        let (eye, label) = if feature.visible {
-            (Icon::EyeOff, "Hide")
-        } else {
-            (Icon::Eye, "Show")
-        };
-        let toggle = Message::Edit(Edit::ToggleFeatureVisible(id));
-        menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
+        visibility_item(
+            feature.visible,
+            editable,
+            Message::Edit(Edit::ToggleFeatureVisible(id)),
+        )
     });
     let change_plane = sketch.then(|| {
         menu_item(
@@ -482,6 +474,33 @@ const ROW_MENU_WIDTH: f32 = 180.0;
 
 /// The width of a body's context menu, wider for its sliders.
 const BODY_MENU_WIDTH: f32 = 256.0;
+
+/// `row` with the context menu `on` it: `menu` while it's open, which
+/// right-clicking the row asks for.
+fn row_context<'a>(
+    row: impl Into<Element<'a, Message>>,
+    on: RowMenu,
+    menu: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    ContextMenu::new(
+        row,
+        menu,
+        Message::Look(Look::OpenMenu(on)),
+        Message::Look(Look::CloseMenu),
+    )
+    .into()
+}
+
+/// A context menu's Hide or Show item for something `visible` or not,
+/// sending `toggle` if `editable`.
+fn visibility_item<'a>(visible: bool, editable: bool, toggle: Message) -> Element<'a, Message> {
+    let (eye, label) = if visible {
+        (Icon::EyeOff, "Hide")
+    } else {
+        (Icon::Eye, "Show")
+    };
+    menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
+}
 
 /// A row's context menu of `items`, `width` wide.
 fn sized_row_menu<'a>(items: Vec<Element<'a, Message>>, width: f32) -> Element<'a, Message> {
@@ -897,14 +916,7 @@ impl ObjectMenu {
             None,
             editable.then_some(self.rename),
         );
-        let toggle = toggle.map(|toggle| {
-            let (eye, label) = if visible {
-                (Icon::EyeOff, "Hide")
-            } else {
-                (Icon::Eye, "Show")
-            };
-            menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
-        });
+        let toggle = toggle.map(|toggle| visibility_item(visible, editable, toggle));
         let parts: Vec<Element<'a, Message>> = (self.opacity)
             .map(|(body, opacity)| opacity_rows(body, opacity, editable))
             .into_iter()
@@ -1257,13 +1269,7 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         None => row,
     };
     match on {
-        Some(on) => ContextMenu::new(
-            row,
-            menu,
-            Message::Look(Look::OpenMenu(on)),
-            Message::Look(Look::CloseMenu),
-        )
-        .into(),
+        Some(on) => row_context(row, on, menu),
         None => row,
     }
 }
@@ -1805,13 +1811,7 @@ fn geometry_item<'a>(
                 .collect(),
         )
     });
-    ContextMenu::new(
-        row,
-        menu,
-        Message::Look(Look::OpenMenu(RowMenu::Item(id))),
-        Message::Look(Look::CloseMenu),
-    )
-    .into()
+    row_context(row, RowMenu::Item(id), menu)
 }
 
 /// A group's header as a row of a list: as [`group`], within the list's
@@ -1902,13 +1902,7 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
         row_menu(items)
     });
     let on = RowMenu::Link(id);
-    ContextMenu::new(
-        row,
-        menu,
-        Message::Look(Look::OpenMenu(on)),
-        Message::Look(Look::CloseMenu),
-    )
-    .into()
+    row_context(row, on, menu)
 }
 
 /// A list of `count` rows [`ROW_HEIGHT`] tall, `height` tall and scrolled
