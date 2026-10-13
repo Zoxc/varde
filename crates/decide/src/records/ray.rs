@@ -3,7 +3,7 @@
 //! canonical key and read by every consumer.
 //!
 //! **The frame** is the flat records' ([`super::shadow`]): shadows along
-//! [`UP`], the ray of a point of `A` going `−r̂`, of a
+//! [`UP`](crate::perturb::UP), the ray of a point of `A` going `−r̂`, of a
 //! point of `B` `+r̂` ([`R_HAT`]), [`NU`] the normal of the `r̂` line, to
 //! its left seen from above.
 //!
@@ -139,11 +139,23 @@
 //! [`Fail::Escalate`] stands. The curved band is the caller's, the
 //! current rung's.
 //!
-//! **Decided once.** The records live in two [`Table`]s owned by
+//! **The whole edge.** A point's ray record against a curved edge
+//! ([`ChainRec`], keyed by its [`RayKey`]) lists the crossings of every
+//! span, span by span along the stored direction, each with its span: the
+//! span records read in order, nothing decided again. Its count is the
+//! sum of theirs, and each crossing at a vertex or knot is in it once, by
+//! the half-open ends above (the knot's record read by the spans on both
+//! sides). A closed chain's count is its winding number about the point.
+//! The feet of the same record ([`super::feet`]) are decided apart, in
+//! their own table under the same key.
+//!
+//! **Decided once.** The records live in three [`Table`]s owned by
 //! [`CurvedRays`]; their deciding functions run only inside
 //! [`CurvedRays::fill`]: one charged [`Pass`] for the edge ends'
 //! point–vertex records ([`Shadows::fill_vv`]), one for the knot records,
-//! one for the spans, reading those.
+//! one for the spans, reading those; and [`CurvedRays::fill_chains`],
+//! which fills the span records of every span of its edges so, then
+//! gathers them in one more pass.
 
 use smallvec::SmallVec;
 
@@ -159,7 +171,7 @@ use crate::perturb::{
     Curved, LineShadow, Moving, MovingAt, NU, R_HAT, Rate, Seg, ShadowAxis, VvShadow, curve_point,
     curve_shadow, decide_flat,
 };
-use crate::records::keys::{KnotKey, Operand, Point, RecordKey, SpanKey, VvKey};
+use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
     Cost, Decided, LEVELS, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, neg, ray_ahead,
     read_vv, replay, shadow_error, table_error,
@@ -207,6 +219,34 @@ impl SpanRec {
         self.crossings
             .iter()
             .map(|c| i32::from(c.sign.as_i8()))
+            .sum()
+    }
+}
+
+/// One crossing of a curved edge's shadow by a point's ray: the span it
+/// is on, and the crossing there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChainCrossing {
+    /// The span, from 0 at the edge's lower-id end.
+    pub span: u32,
+    /// The crossing on that span.
+    pub crossing: Crossing,
+}
+
+/// A point's ray against a whole curved edge of the other operand
+/// (module docs, "The whole edge").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChainRec {
+    /// The crossings, along the edge's stored direction.
+    pub crossings: SmallVec<[ChainCrossing; 2]>,
+}
+
+impl ChainRec {
+    /// The crossings summed as `±1`s.
+    pub fn count(&self) -> i32 {
+        self.crossings
+            .iter()
+            .map(|c| i32::from(c.crossing.sign.as_i8()))
             .sum()
     }
 }
@@ -279,6 +319,7 @@ impl<B: BigF> RayLevel for Bounded<B> {
 pub struct CurvedRays {
     span: Table<SpanKey, SpanRec>,
     knot: Table<KnotKey, KnotRec>,
+    chain: Table<RayKey, ChainRec>,
 }
 
 impl CurvedRays {
@@ -351,6 +392,66 @@ impl CurvedRays {
             .map_err(|e| ShadowError::Table(table_error(e, RecordKey::RaySpan)))
     }
 
+    /// Decides the whole-edge records of `wanted` not yet stored (module
+    /// docs, "The whole edge"): first the span records of every span of
+    /// their edges ([`fill`](Self::fill), its three passes), then the
+    /// whole-edge records from those, in one more pass. Every key's edge
+    /// must be curved; one without spans fails its pass
+    /// ([`Fail::Internal`]).
+    pub fn fill_chains<G, P>(
+        &mut self,
+        wanted: impl IntoIterator<Item = RayKey>,
+        shadows: &mut Shadows,
+        geom: &G,
+        band: Band,
+        pass: &mut P,
+    ) -> Result<(), ShadowError<P::Error>>
+    where
+        G: CurveGeometry + Sync,
+        P: Pass,
+    {
+        let batch = self.chain.missing(wanted);
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let spans: Vec<SpanKey> = batch
+            .keys()
+            .iter()
+            .flat_map(|k| {
+                let k = *k.key();
+                let n = geom.spans(k.q.operand.other(), k.g).len();
+                // More spans than ids: none asked, the record fails.
+                let n = u32::try_from(n).unwrap_or(0);
+                (0..n).map(move |span| SpanKey {
+                    q: k.q,
+                    g: k.g,
+                    span,
+                })
+            })
+            .collect();
+        self.fill(spans, shadows, geom, band, pass)?;
+        let span = &self.span;
+        let values = pass
+            .run(batch.keys(), &|k: &Fresh<RayKey>| {
+                decide_chain(k, span, geom)
+            })
+            .map_err(ShadowError::Pass)?;
+        self.chain
+            .insert(batch, values)
+            .map_err(|e| ShadowError::Table(table_error(e, RecordKey::Ray)))
+    }
+
+    /// Point `q`'s ray record against the whole of curved edge `g` of the
+    /// other operand; `None` if it isn't decided.
+    pub fn chain(&self, q: Point, g: EdgeId) -> Option<&ChainRec> {
+        self.chain.get(&RayKey { q, g })
+    }
+
+    /// The whole-edge table, for its reads and keys.
+    pub fn chain_table(&self) -> &Table<RayKey, ChainRec> {
+        &self.chain
+    }
+
     /// The record of point `q`'s ray against span `span` of curved edge
     /// `g` of the other operand; `None` if it isn't decided.
     pub fn span(&self, q: Point, g: EdgeId, span: u32) -> Option<&SpanRec> {
@@ -374,9 +475,10 @@ impl CurvedRays {
     }
 
     /// Decides every stored record again, on `geom` at `band`, and gives
-    /// the key of the first whose answer differs (knot records first,
-    /// each table in key order), reading the end records from `shadows`:
-    /// a check that the answers are functions of their keys.
+    /// the key of the first whose answer differs (knot records first, then
+    /// spans, then whole edges, each table in key order), reading the end
+    /// records from `shadows`: a check that the answers are functions of
+    /// their keys.
     pub fn replay<G: CurveGeometry>(
         &self,
         shadows: &Shadows,
@@ -389,8 +491,52 @@ impl CurvedRays {
             &self.span,
             |k| decide_span(k, vv, &self.knot, geom, band),
             RecordKey::RaySpan,
+        )?;
+        replay(
+            &self.chain,
+            |k| decide_chain(k, &self.span, geom),
+            RecordKey::Ray,
         )
     }
+}
+
+/// Gathers a whole-edge record from its spans' stored records.
+fn decide_chain<G: CurveGeometry>(
+    k: &Fresh<RayKey>,
+    span: &Table<SpanKey, SpanRec>,
+    geom: &G,
+) -> Decided<ChainRec> {
+    let key = *k.key();
+    let internal = Fail::Internal {
+        key: TieKey {
+            row: Row::VertexCurveShadow,
+            record: RecordKey::Ray(key),
+        },
+    };
+    let n = geom.spans(key.q.operand.other(), key.g).len();
+    let Ok(n) = u32::try_from(n) else {
+        return (Err(internal), Cost::default());
+    };
+    if n == 0 {
+        return (Err(internal), Cost::default());
+    }
+    let mut rec = ChainRec::default();
+    for i in 0..n {
+        let Some(r) = span.get(&SpanKey {
+            q: key.q,
+            g: key.g,
+            span: i,
+        }) else {
+            // The batch's spans are filled first: a missing one is a bug.
+            return (Err(internal), Cost::default());
+        };
+        rec.crossings.extend(
+            r.crossings
+                .iter()
+                .map(|&crossing| ChainCrossing { span: i, crossing }),
+        );
+    }
+    (Ok(rec), Cost::default())
 }
 
 /// A control point's point, exactly.

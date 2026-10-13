@@ -1,11 +1,11 @@
 //! Feet: the stretches of an edge near a point of the other operand. A
 //! foot of point `q` on edge `g` is a 3D component of
-//! `{s : ‖C_g(s) − q‖ ≤ r}`, `r` the edge's near radius (the caller's:
-//! three times the edge's band). Feet are part of the point's ray record
+//! `{s : ‖C_g(s) − q‖ ≤ r}`, `r` the edge's near radius `r_g`, three
+//! times its band ([`super::near`]). Feet are part of the point's ray record
 //! against the edge; they name the point–curve height key (a foot whose
 //! edge ends are not near the point reads its own height), a face layer's
 //! feature, and the end the height key shares when an edge end lies in
-//! the foot ([`Foot::ends`]). They are functions of the operands alone,
+//! the foot ([`Foot::ends`], [`Foot::end_vertices`]). They are functions of the operands alone,
 //! decided once per record.
 //!
 //! **The polynomial.** On a span with homogeneous point `(P, W)`, `W > 0`
@@ -66,6 +66,15 @@
 //! ([`EndKind::OnSphere`]) in place of a bracket. Only where the last
 //! level leaves a cluster does a foot's extent read the cluster's
 //! interval, below what any level resolves.
+//!
+//! **The record.** The feet are part of the point's ray record against
+//! the edge, keyed by its [`RayKey`], for straight and curved edges
+//! alike, and stored in their own table ([`NearFeet`]), filled only in one
+//! charged [`Pass`] per batch of keys not yet stored, at each edge's near
+//! radius `r_g = 3·β_g` ([`OpBands`](super::near::OpBands), which the
+//! geometry gives: [`FeetGeometry::near_radius_of`]). They read nothing but
+//! the point's position and the edge's stored curve, so the crossings and
+//! the feet of one ray record are decided apart and read together.
 
 use std::cmp::Ordering;
 
@@ -75,15 +84,20 @@ use smallvec::SmallVec;
 
 use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
 use crate::bezier::{HomCurve, Poly, Scalar};
+use crate::ids::{EdgeId, VertId};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact;
 use crate::order::Along;
-use crate::records::keys::{FootId, RayKey, RecordKey};
+use crate::records::keys::{FootId, Operand, Point, RayKey, RecordKey};
 use crate::records::ray::{Span, bracket};
-use crate::records::shadow::{Cost, Decided, LEVELS, LevelWork, NearGap};
+use crate::records::shadow::{
+    Cost, Decided, LEVELS, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, replay,
+    shadow_error,
+};
+use crate::records::table::{Fresh, Table};
 
 #[cfg(doc)]
 use crate::bezier::roots::Root;
@@ -169,6 +183,25 @@ impl Foot {
             self.hi.kind == EndKind::Vertex,
         ]
     }
+
+    /// The edge's end vertices lying in the foot, in geometric order: the
+    /// edge's ends `ends` (stored start first), its parameter running
+    /// `along` from its geometrically lesser end. A closed edge's one
+    /// vertex is listed once.
+    pub fn end_vertices(&self, ends: [VertId; 2], along: Along) -> SmallVec<[VertId; 2]> {
+        let held = self.ends();
+        let order = match along {
+            Along::Stored => [0, 1],
+            Along::Reversed => [1, 0],
+        };
+        let mut out = SmallVec::new();
+        for i in order {
+            if held[i] && !out.contains(&ends[i]) {
+                out.push(ends[i]);
+            }
+        }
+        out
+    }
 }
 
 /// A point's feet on an edge of the other operand, in [`FootId`] order
@@ -199,6 +232,83 @@ impl Feet {
         ix.into_iter()
             .map(|i| FootId(u32::try_from(i).expect("few feet")))
     }
+}
+
+/// The geometry the feet read, beyond the shadow records'.
+pub trait FeetGeometry: ShadowGeometry {
+    /// Edge `g` of `operand`'s curve, along its stored direction: its two
+    /// vertices' points for a straight edge, its spans for a curved one
+    /// (closed where its two ends are one vertex).
+    fn curve(&self, operand: Operand, g: EdgeId) -> EdgeCurve<'_>;
+
+    /// Edge `g` of `operand`'s near radius `r_g = 3·β_g` (finite, `≥ 0`):
+    /// [`OpBands::near_radius`](super::near::OpBands::near_radius) of its
+    /// tolerance.
+    fn near_radius_of(&self, operand: Operand, g: EdgeId) -> f64;
+}
+
+/// The feet of the ray records of a run, decided once per [`RayKey`]
+/// (module docs).
+#[derive(Debug, Default)]
+pub struct NearFeet {
+    feet: Table<RayKey, Feet>,
+}
+
+impl NearFeet {
+    /// No records.
+    pub fn new() -> NearFeet {
+        NearFeet::default()
+    }
+
+    /// Decides the feet of `wanted` not yet stored, in one pass. A key
+    /// whose geometry a caller must not give (module docs of
+    /// [`decide_feet`]) fails its pass.
+    pub fn fill<G, P>(
+        &mut self,
+        wanted: impl IntoIterator<Item = RayKey>,
+        geom: &G,
+        pass: &mut P,
+    ) -> Result<(), ShadowError<P::Error>>
+    where
+        G: FeetGeometry + Sync,
+        P: Pass,
+    {
+        self.feet
+            .fill(wanted, |keys| {
+                pass.run(keys, &|k: &Fresh<RayKey>| decide(k, geom))
+            })
+            .map_err(|e| shadow_error(e, RecordKey::Ray))
+    }
+
+    /// Point `q`'s feet on edge `g` of the other operand; `None` if they
+    /// aren't decided.
+    pub fn get(&self, q: Point, g: EdgeId) -> Option<&Feet> {
+        self.feet.get(&RayKey { q, g })
+    }
+
+    /// The table, for its reads and keys.
+    pub fn table(&self) -> &Table<RayKey, Feet> {
+        &self.feet
+    }
+
+    /// Decides every stored record again, on `geom`, and gives the key of
+    /// the first whose answer differs, in key order: a check that the
+    /// answers are functions of their keys.
+    pub fn replay<G: FeetGeometry>(&self, geom: &G) -> Result<(), RecordKey> {
+        replay(&self.feet, |k| decide(k, geom), RecordKey::Ray)
+    }
+}
+
+/// Decides the feet of a ray record's key.
+fn decide<G: FeetGeometry>(k: &Fresh<RayKey>, geom: &G) -> Decided<Feet> {
+    let key = *k.key();
+    let op = key.q.operand.other();
+    decide_feet(
+        key,
+        geom.point(key.q).at,
+        geom.curve(op, key.g),
+        geom.near_radius_of(op, key.g),
+    )
 }
 
 /// What happens to the set along a span, in increasing parameter.

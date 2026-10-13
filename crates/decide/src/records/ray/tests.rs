@@ -21,6 +21,7 @@ use malachite::base::num::arithmetic::traits::PowerOf2;
 use super::*;
 use crate::ids::VertId;
 use crate::perturb::{Seg, T, UP, rates_a};
+use crate::records::feet::{EdgeCurve, FeetGeometry};
 
 use Operand::{A, B};
 
@@ -32,6 +33,8 @@ struct Geom {
     /// `A`'s direction field: one vector, so `A` moves as a translation.
     d: DVec3,
     sigma: Option<Sign>,
+    /// Every edge's near radius, and every point's.
+    r_g: f64,
 }
 
 impl Geom {
@@ -133,7 +136,7 @@ impl ShadowGeometry for Geom {
     }
 
     fn near_radius(&self, _: Point) -> f64 {
-        0.0
+        self.r_g
     }
 
     fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
@@ -166,6 +169,20 @@ impl CurveGeometry for Geom {
             }
             B => std::array::from_fn(|_| lit(DVec3::ZERO)),
         }
+    }
+}
+
+impl FeetGeometry for Geom {
+    fn curve(&self, operand: Operand, g: EdgeId) -> EdgeCurve<'_> {
+        let (ends, spans) = &self.edges[&(operand, g)];
+        EdgeCurve::Spans {
+            spans,
+            closed: ends[0] == ends[1],
+        }
+    }
+
+    fn near_radius_of(&self, _: Operand, _: EdgeId) -> f64 {
+        self.r_g
     }
 }
 
@@ -1150,3 +1167,5 @@ fn a_span_end_off_its_vertex_or_knot_is_refused() {
         );
     }
 }
+
+mod chains;

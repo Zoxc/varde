@@ -57,10 +57,12 @@
 //! tests them on the stored body.
 
 use crate::geom::certify::{SeamError, seam_bound};
-use crate::geom::curve::{Curve3D, PCurve};
+use crate::geom::curve::{Curve3D, PCurve, Span3};
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Pass, Work};
 use crate::infra::error::KernelError;
+
+use varde_decide::records::near::OpBands;
 
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
 
@@ -534,6 +536,61 @@ impl Brep {
     /// An edge's vertices, `[v_start, v_end]`.
     pub fn ends(&self, e: EdgeId) -> [VertId; 2] {
         [self.edges.v_start[e.index()], self.edges.v_end[e.index()]]
+    }
+
+    /// The spans of an edge's curve inside its `t_range`, in the curve's
+    /// (the edge's stored) direction: the first starts at `v_start`'s
+    /// point, the last ends at `v_end`'s, where (a) holds
+    /// ([`check_ribbons`](Self::check_ribbons)). Empty if a `t_range` end
+    /// isn't a knot (which [`add_edge`](Self::add_edge) refuses).
+    pub fn edge_spans(&self, e: EdgeId) -> &[Span3] {
+        let c = self.curve(e);
+        let [t0, t1] = self.t_range(e);
+        let at = |t: f64| c.knots().iter().position(|k| k.to_bits() == t.to_bits());
+        match (at(t0), at(t1)) {
+            (Some(i), Some(j)) if i < j => &c.spans()[i..j],
+            _ => &[],
+        }
+    }
+
+    /// The largest coordinate magnitude of the stored geometry: vertex
+    /// positions and the control points of the edges' curves (weights
+    /// aside). Its operands' greatest is an operation's magnitude, which
+    /// fixes its rounding bound
+    /// ([`OpBands`]).
+    pub fn max_coord(&self) -> f64 {
+        let verts = self.verts.pos.iter().flatten();
+        let curves = self
+            .curves
+            .iter()
+            .flat_map(|c| c.spans().iter().flatten().flat_map(|p| &p[..3]));
+        verts
+            .chain(curves)
+            .map(|x| x.abs())
+            .fold(0.0, |m, x| if x > m { x } else { m })
+    }
+
+    /// An edge's near radius `r_g = 3·(tol + ρ_op)` under the operation's
+    /// bands; `None` if the bands refuse its tolerance.
+    pub fn edge_near_radius(&self, e: EdgeId, bands: &OpBands) -> Option<f64> {
+        bands.near_radius(self.edge_tol(e))
+    }
+
+    /// Every vertex's near radius, by id: the greatest of its edges'
+    /// ([`edge_near_radius`](Self::edge_near_radius)), 0 at a vertex
+    /// without edges; `None` if the bands refuse an edge's tolerance.
+    pub fn vert_near_radii(&self, bands: &OpBands) -> Option<Vec<f64>> {
+        let mut out = vec![0.0; self.verts.pos.len()];
+        for e in 0..self.edges.curve.len() {
+            let r = self.edge_near_radius(EdgeId(e as u32), bands)?;
+            for v in [self.edges.v_start[e], self.edges.v_end[e]] {
+                let m = &mut out[v.index()];
+                if r > *m {
+                    *m = r;
+                }
+            }
+        }
+        Some(out)
     }
 
     /// An edge's tolerance: the greatest seam bound of its coedges.

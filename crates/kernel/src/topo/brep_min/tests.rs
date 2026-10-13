@@ -1021,3 +1021,58 @@ fn add_loop_is_atomic_on_every_error() {
         assert_eq!(format!("{b:?}"), before, "case {k}");
     }
 }
+
+/// An edge's spans are its curve's inside its `t_range`, ending at its
+/// vertices; the store's magnitude is its largest coordinate; each
+/// vertex's near radius is the greatest of its edges'.
+#[test]
+fn edge_spans_magnitude_and_near_radii() {
+    let f = half_cylinder(cylinder_pcurves());
+    let b = &f.brep;
+    for e in f.edges {
+        let spans = b.edge_spans(e);
+        assert_eq!(spans, b.curve(e).spans());
+        let [v0, v1] = b.ends(e);
+        assert_eq!(pt(b.pos(v0), 1.0), spans[0][0]);
+        assert_eq!(pt(b.pos(v1), 1.0), spans[spans.len() - 1][2]);
+    }
+    // The quarters' middle control points reach `R` on both axes.
+    assert_eq!(b.max_coord(), R);
+    let bands = OpBands::new(b.max_coord()).unwrap();
+    let radii = b.vert_near_radii(&bands).unwrap();
+    for (i, v) in f.verts.iter().enumerate() {
+        let want = f
+            .edges
+            .iter()
+            .filter(|&&e| b.ends(e).contains(v))
+            .map(|&e| b.edge_near_radius(e, &bands).unwrap())
+            .fold(0.0, most);
+        assert_eq!(radii[i], want);
+        assert!(want >= 3.0 * bands.rho_op());
+    }
+
+    // An edge on the middle two spans of a three-span curve.
+    let mut b = Brep::new();
+    let s = |x: f64| line([x, 0.0, 0.0], [x + 1.0, -70.0, 0.0]);
+    let joined = [
+        s(0.0),
+        [
+            [1.0, -70.0, 0.0, 1.0],
+            [1.5, 0.0, 0.0, 2.0],
+            [2.0, 0.0, 0.0, 1.0],
+        ],
+        {
+            let mut l = s(2.0);
+            l[2] = [3.0, 0.0, 0.0, 1.0];
+            l
+        },
+    ];
+    let c = Curve3D::new(joined.to_vec(), vec![0.0, 1.0, 2.0, 3.0]).unwrap();
+    let id = b.add_curve(c).unwrap();
+    let v0 = b.add_vert([1.0, -70.0, 0.0]).unwrap();
+    let v1 = b.add_vert([3.0, 0.0, 0.0]).unwrap();
+    let e = b.add_edge(id, [1.0, 3.0], v0, v1).unwrap();
+    assert_eq!(b.edge_spans(e), &joined[1..]);
+    assert_eq!(b.check_ribbons(), Ok(()));
+    assert_eq!(b.max_coord(), 70.0);
+}
