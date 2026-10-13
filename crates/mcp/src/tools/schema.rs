@@ -61,7 +61,7 @@ fn build_list() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "The feature's name, as the Timeline shows it" },
+                    "name": feature_name(),
                     "offset": offset("How many to skip in each list"),
                     "limit": limit("How many to give at most of each")
                 },
@@ -82,7 +82,7 @@ fn build_list() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "body": { "type": "string", "description": "The body's name, as Objects shows it" },
+                    "body": body(),
                     "faces": {
                         "type": "object",
                         "description": "List only the flat faces facing this way",
@@ -221,8 +221,8 @@ fn build_list() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "feature": { "type": "string", "description": "The feature's name, as the Timeline shows it" },
-                    "body": { "type": "string", "description": "The body's name, as Objects shows it" },
+                    "feature": feature_name(),
+                    "body": body(),
                     "to": { "type": "string", "description": "The new name" }
                 },
                 "required": ["to"],
@@ -298,7 +298,7 @@ fn build_list() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "feature": { "type": "string", "description": "The feature's name, as the Timeline shows it" }
+                    "feature": feature_name()
                 },
                 "required": ["feature"],
                 "additionalProperties": false
@@ -577,8 +577,15 @@ fn build_list() -> Value {
 
 /// A sketch's plane's schema.
 pub(super) fn sketch_plane() -> Value {
+    plane(
+        "\"xy\", \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face by its body_topology key",
+    )
+}
+
+/// An origin plane or a face by key, described as `description`.
+fn plane(description: &str) -> Value {
     json!({
-        "description": "\"xy\", \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face by its body_topology key",
+        "description": description,
         "oneOf": [
             { "enum": words(WORLD_PLANES) },
             item(&[ItemKind::Face])
@@ -685,7 +692,7 @@ fn set_feature_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": { "type": "string", "description": "The feature's name, as the Timeline shows it" }
+                "name": feature_name()
             },
             "required": ["name"],
             "additionalProperties": true
@@ -738,13 +745,7 @@ fn mirror_tool() -> Value {
             "type": "object",
             "properties": {
                 "bodies": bodies(),
-                "plane": {
-                    "description": "\"xy\", \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face by its body_topology key",
-                    "oneOf": [
-                        { "enum": words(WORLD_PLANES) },
-                        item(&[ItemKind::Face])
-                    ]
-                },
+                "plane": sketch_plane(),
                 "keep_original": { "type": "boolean", "description": "The panel's Create copy: keep each body and its image together; default true" }
             },
             "required": ["bodies", "plane"],
@@ -929,7 +930,7 @@ fn shell_tool() -> Value {
             "type": "object",
             "properties": {
                 "body": { "type": "string", "description": "The body hollowed closed, by its Objects name: only with no faces" },
-                "faces": faces("The faces removed, opening the shell, all on one body", 0),
+                "faces": keys("The faces removed, opening the shell, all on one body", 0),
                 "thickness": typed("The walls' thickness, a positive length: default 2 mm"),
                 "direction": { "enum": words(SHELL_DIRECTIONS), "description": "inward (default), the walls inside the body's faces; or outward, outside them" }
             },
@@ -952,7 +953,7 @@ fn offset_face_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "faces": faces("The faces moved, all on one body", 1),
+                "faces": keys("The faces moved, all on one body", 1),
                 "distance": typed("How far, a positive length: default 1 mm"),
                 "inward": { "type": "boolean", "description": "Into the body, shrinking it; default false" },
                 "tangent": { "type": "boolean", "description": "Take in faces that run on smoothly; default true" }
@@ -977,14 +978,8 @@ fn draft_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "faces": faces("The faces drafted, all on one body", 1),
-                "neutral": {
-                    "description": "The neutral plane: \"xy\" (default), \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face not drafted, by its body_topology key",
-                    "oneOf": [
-                        { "enum": words(WORLD_PLANES) },
-                        item(&[ItemKind::Face])
-                    ]
-                },
+                "faces": keys("The faces drafted, all on one body", 1),
+                "neutral": plane("The neutral plane: \"xy\" (default), \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face not drafted, by its body_topology key"),
                 "angle": typed("The draft angle, above 0 and under 90 deg: default 3 deg"),
                 "flip": { "type": "boolean", "description": "Pull against the neutral plane's normal; default false" },
                 "tangent": { "type": "boolean", "description": "Take in faces that run on smoothly; default true" }
@@ -1014,8 +1009,8 @@ fn chamfer_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "edges": faces("The edges cut off, all on one body", 0),
-                "faces": faces("Faces whose edges are cut off, on the edges' body", 0),
+                "edges": keys("The edges cut off, all on one body", 0),
+                "faces": keys("Faces whose edges are cut off, on the edges' body", 0),
                 "type": { "enum": words(CHAMFER_TYPES), "description": "How it's sized: default equal" },
                 "distance": typed("A positive length: default 1 mm"),
                 "second_distance": typed("With two_distances, the length along the other face: default 2 mm"),
@@ -1043,8 +1038,8 @@ fn fillet_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "edges": faces("The edges rounded, all on one body", 0),
-                "faces": faces("Faces whose edges are rounded, on the edges' body", 0),
+                "edges": keys("The edges rounded, all on one body", 0),
+                "faces": keys("Faces whose edges are rounded, on the edges' body", 0),
                 "radius": typed("A positive length: default 2 mm"),
                 "tangent": tangent()
             },
@@ -1076,7 +1071,7 @@ fn sweep_tool() -> Value {
                     "description": "Along a path: give this or helix",
                     "properties": {
                         "curves": curves_in("Chains of sketch curves, each the chain the curve named is in"),
-                        "edges": faces("Model edges, all on one body", 0),
+                        "edges": keys("Model edges, all on one body", 0),
                         "tangent": tangent()
                     },
                     "additionalProperties": false
@@ -1132,10 +1127,7 @@ fn loft_tool() -> Value {
                             "sketch": sketch(),
                             "region": {
                                 "description": "A region of the sketch: its index (as sketch lists them) or a point [x, y] inside it",
-                                "oneOf": [
-                                    { "type": "integer", "minimum": 0 },
-                                    { "type": "array", "items": { "type": ["string", "number"] }, "minItems": 2, "maxItems": 2 }
-                                ]
+                                "oneOf": region()
                             },
                             "point": { "type": "integer", "minimum": 0, "description": "A point of the sketch on its own, by id: the first or last section only" },
                             "start": { "type": "integer", "minimum": 0, "description": "A region's start: a point of the sketch at one of its corners, by id" }
@@ -1226,6 +1218,11 @@ fn edit_hints(destructive: bool, idempotent: bool) -> Value {
     })
 }
 
+/// A feature's schema, by name.
+fn feature_name() -> Value {
+    json!({ "type": "string", "description": "The feature's name, as the Timeline shows it" })
+}
+
 /// A body's schema, by name.
 fn body() -> Value {
     json!({ "type": "string", "description": "The body's name, as Objects shows it" })
@@ -1249,18 +1246,18 @@ pub(super) fn profiles() -> Value {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": MAX_ITEMS,
-                "items": { "oneOf": [
-                    { "type": "integer", "minimum": 0 },
-                    {
-                        "type": "array",
-                        "items": { "type": ["string", "number"] },
-                        "minItems": 2,
-                        "maxItems": 2
-                    }
-                ]}
+                "items": { "oneOf": region() }
             }
         ]
     })
+}
+
+/// A sketch's region's ways: its index, or a point [x, y] inside it.
+fn region() -> Value {
+    json!([
+        { "type": "integer", "minimum": 0 },
+        { "type": "array", "items": { "type": ["string", "number"] }, "minItems": 2, "maxItems": 2 }
+    ])
 }
 
 /// A feature's operation's schema.
@@ -1311,7 +1308,7 @@ pub(super) fn curves_in(description: &str) -> Value {
         "items": {
             "type": "object",
             "properties": {
-                "sketch": { "type": "string", "description": "The sketch, by its Timeline name" },
+                "sketch": sketch(),
                 "curve": { "type": "integer", "minimum": 0, "description": "A curve of the chain, by its id in the sketch" }
             },
             "required": ["sketch", "curve"],
@@ -1321,8 +1318,8 @@ pub(super) fn curves_in(description: &str) -> Value {
     })
 }
 
-/// A face feature's faces' schema, at least `least` keys.
-pub(super) fn faces(description: &str, least: usize) -> Value {
+/// A list of faces or edges by their body_topology keys, at least `least`.
+pub(super) fn keys(description: &str, least: usize) -> Value {
     json!({
         "type": "array",
         "items": { "type": "string" },
@@ -1337,16 +1334,16 @@ pub(super) fn faces(description: &str, least: usize) -> Value {
 fn measured_schema(description: &str) -> Value {
     let body = json!({
         "type": "object",
-        "properties": { "body": { "type": "string", "description": "The body's name, as Objects shows it" } },
+        "properties": { "body": body() },
         "required": ["body"],
         "additionalProperties": false
     });
     let mut one_of = vec![body];
-    if let Value::Object(items) = item(&[ItemKind::Face, ItemKind::Edge, ItemKind::Corner])
-        && let Some(Value::Array(items)) = items.get("oneOf")
-    {
-        one_of.extend(items.iter().cloned());
-    }
+    one_of.extend(item_variants(&[
+        ItemKind::Face,
+        ItemKind::Edge,
+        ItemKind::Corner,
+    ]));
     json!({
         "description": format!("{description}: {{\"face\": key}}, {{\"edge\": key}} or \
                                 {{\"corner\": key}} by body_topology key, or {{\"body\": name}}"),
@@ -1356,18 +1353,25 @@ fn measured_schema(description: &str) -> Value {
 
 /// A schema for a model item by key, of one of `kinds`.
 fn item(kinds: &[ItemKind]) -> Value {
-    let one = |kind: &ItemKind| {
-        json!({
-            "type": "object",
-            "properties": { kind.word(): { "type": "string" } },
-            "required": [kind.word()],
-            "additionalProperties": false
-        })
-    };
-    match kinds {
-        [kind] => one(kind),
-        _ => json!({ "oneOf": kinds.iter().map(one).collect::<Vec<_>>() }),
+    match item_variants(kinds).as_slice() {
+        [one] => one.clone(),
+        variants => json!({ "oneOf": variants }),
     }
+}
+
+/// The schema of a model item by key of each of `kinds`, in turn.
+fn item_variants(kinds: &[ItemKind]) -> Vec<Value> {
+    kinds
+        .iter()
+        .map(|kind| {
+            json!({
+                "type": "object",
+                "properties": { kind.word(): { "type": "string" } },
+                "required": [kind.word()],
+                "additionalProperties": false
+            })
+        })
+        .collect()
 }
 
 /// A move's or pattern's axis's schema, `description` saying what it's
