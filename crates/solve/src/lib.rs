@@ -222,7 +222,7 @@ impl Request {
 }
 
 /// The work a request asks for, borrowed from a [`Request`] or from one
-/// decoded on the worker ([`Decoded`](wire::Decoded)): what
+/// decoded on the worker (`wire::Decoded`): what
 /// [`Solver::answer`] does, so both lanes answer alike.
 #[derive(Debug, Clone, Copy)]
 pub enum Job<'a> {

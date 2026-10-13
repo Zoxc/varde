@@ -258,7 +258,7 @@ pub struct PickingParts {
 
 /// The tables by the mesh's face and edge ids, and its corners: a
 /// [`Picking`]'s besides its bodies, and one body's drawing's
-/// ([`Drawn`]). See their accessors on [`Picking`].
+/// (`Drawn`). See their accessors on [`Picking`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FaceEdgeTables {
     /// Per face (region): its key, aliases and summary.

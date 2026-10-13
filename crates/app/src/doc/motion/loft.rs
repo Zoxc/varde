@@ -1,4 +1,4 @@
-//! A loft in the move's session ([`MotionKind::Loft`]): its sections
+//! A loft in the move's session ([`MotionKind::Loft`](varde_view::MotionKind::Loft)): its sections
 //! picked in order in the viewport, each a region of a visible sketch
 //! before the loft (or of a section's own sketch, shown or not) or, first
 //! or last, a sketch point on its own; a region's start, a sketch point

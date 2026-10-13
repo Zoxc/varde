@@ -21,8 +21,8 @@ mod errors;
 mod escape;
 mod extrude;
 mod feature_text;
-mod handle_snap;
 mod file_menu;
+mod handle_snap;
 mod hit;
 mod icons;
 mod mcp;
@@ -88,11 +88,11 @@ pub use document::{
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle};
-pub use handle_snap::snap_step;
 pub use feature_text::{
     align_info, chamfer_info, draft_info, fillet_info, loft_info, offset_info, scale_info,
     shell_info, split_info, sweep_info,
 };
+pub use handle_snap::snap_step;
 pub use icons::LOGO_SVG;
 pub use mcp::{
     MCP_PANEL_WIDTH, McpAsk, McpCall, McpCallState, McpEdit, McpPanel, McpRevert, McpRevertAsk,
@@ -541,9 +541,7 @@ pub enum Look {
     Combine(CombineLook),
     /// Starts setting up a new operation of the kind, its bodies, edges
     /// or faces from what's selected in the model if anything is, or
-    /// backs out of the one being set up (see [`motion_binding`]).
-    ///
-    /// [`motion_binding`]: crate::shortcut::motion_binding
+    /// backs out of the one being set up (see `motion_binding`).
     StartMotion(MotionKind),
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].

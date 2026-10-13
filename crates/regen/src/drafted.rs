@@ -119,7 +119,7 @@ impl Drafted {
     }
 
     /// Whether what the draft found is fit to draw, as the wire checks
-    /// it: its axis or plane ([`reference_fits`]), an align's datums
+    /// it: its axis or plane (`reference_fits`), an align's datums
     /// ([`AlignDatums::fits`]), a scale's ([`ScaleFound::fits`]) and a
     /// sweep's ([`SweepFound::fits`]), each where it has one.
     pub fn fits(&self) -> bool {

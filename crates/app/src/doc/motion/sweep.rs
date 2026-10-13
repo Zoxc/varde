@@ -1,4 +1,4 @@
-//! A sweep in the move's session ([`MotionKind::Sweep`]): its profile's
+//! A sweep in the move's session ([`MotionKind::Sweep`](varde_view::MotionKind::Sweep)): its profile's
 //! regions picked as an extrude's ([`RegionPick`], on its sketches in the
 //! viewport), then its path, by its Path and Helix tiles. A path's parts
 //! are each a chain of a sketch's curves, one added per click on a curve
@@ -92,7 +92,7 @@ impl Default for SweepSetup {
 const PITCH_SHARE: f64 = 0.1;
 
 /// The fields a new sweep opens with, seen by `camera`: a helix's pitch
-/// of [`PITCH_SHARE`] of the view's height made nice ([`fitting_length`])
+/// of [`PITCH_SHARE`] of the view's height made nice ([`fitting_length`](crate::doc::camera::fitting_length))
 /// and 5 turns, and no twist.
 pub(super) fn sweep_fields(design: &Design, camera: &Camera) -> [TypedText; 3] {
     let twist = Sweep::twist_ask(design);

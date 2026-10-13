@@ -33,7 +33,7 @@ impl Detail {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sight {
     /// Tells this sight from the app's others: an answer carries it back
-    /// ([`Response::sight`](crate::Response::sight)).
+    /// ([`Asked::sight`](crate::Asked::sight)).
     pub revision: u32,
     /// The level of a body not in `bodies`, one the app hasn't seen: from
     /// the view's height at the camera's target.

@@ -277,7 +277,7 @@ mod bounded {
 
     /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' entries: their
     /// closed flags, tangent chains or snap points, or a body's
-    /// [`EdgeFacts`].
+    /// [`EdgeFacts`](crate::EdgeFacts).
     pub(super) fn edges<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
         d: D,
     ) -> Result<Vec<T>, D::Error> {

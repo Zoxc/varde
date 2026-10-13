@@ -126,7 +126,7 @@ use crate::profile::profile;
 use crate::why;
 
 /// The kernel operation `$name` gives: `$kernel`, or the stand-in a
-/// test set in the [`crate::testing`] overrides' `$field`.
+/// test set in the `crate::testing` overrides' `$field`.
 macro_rules! kernel_op {
     ($(#[$doc:meta])* $vis:vis fn $name:ident() -> $ty:ty = $kernel:path, $field:ident;) => {
         $(#[$doc])*
