@@ -374,6 +374,28 @@ impl Tool {
     }
 }
 
+impl MotionKind {
+    /// The key starting a new operation of the kind, if it has one.
+    pub fn shortcut(self) -> Option<Shortcut> {
+        Some(match self {
+            MotionKind::Move => Shortcut::MOVE,
+            MotionKind::LinearPattern => Shortcut::PATTERN,
+            MotionKind::Chamfer => Shortcut::CHAMFER,
+            MotionKind::Fillet => Shortcut::FILLET,
+            MotionKind::Mirror
+            | MotionKind::CircularPattern
+            | MotionKind::Align
+            | MotionKind::Scale
+            | MotionKind::Split
+            | MotionKind::Shell
+            | MotionKind::OffsetFace
+            | MotionKind::Draft
+            | MotionKind::Sweep
+            | MotionKind::Loft => return None,
+        })
+    }
+}
+
 impl ConstraintKind {
     /// The key applying the constraint to the selection: its initial, or
     /// a letter of its name, or with Shift where a tool or the rail's sets
@@ -779,25 +801,9 @@ pub fn combine_binding(keys: DocumentKeys) -> Binding {
 /// it. Move (`M`), the linear pattern (`P`), Chamfer (`C`) and Fillet
 /// (`F`) have the UI mock's keys; the rest none, as the mocks have them.
 pub fn motion_binding(kind: MotionKind, keys: DocumentKeys) -> Binding {
-    let shortcut = match kind {
-        MotionKind::Move => Some(Shortcut::MOVE),
-        MotionKind::LinearPattern => Some(Shortcut::PATTERN),
-        MotionKind::Chamfer => Some(Shortcut::CHAMFER),
-        MotionKind::Fillet => Some(Shortcut::FILLET),
-        MotionKind::Mirror
-        | MotionKind::CircularPattern
-        | MotionKind::Align
-        | MotionKind::Scale
-        | MotionKind::Split
-        | MotionKind::Shell
-        | MotionKind::OffsetFace
-        | MotionKind::Draft
-        | MotionKind::Sweep
-        | MotionKind::Loft => None,
-    };
     let needs_body = !matches!(kind, MotionKind::Sweep | MotionKind::Loft);
     Binding::new(
-        shortcut,
+        kind.shortcut(),
         Message::Look(Look::StartMotion(kind)),
         keys.editable && !keys.sketching && (!needs_body || keys.bodies || keys.motion().is_some()),
     )
@@ -1087,12 +1093,15 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             extrude_binding(keys),
             revolve_binding(keys),
             combine_binding(keys),
-            motion_binding(MotionKind::Move, keys),
-            motion_binding(MotionKind::LinearPattern, keys),
-            motion_binding(MotionKind::Fillet, keys),
-            motion_binding(MotionKind::Chamfer, keys),
-            measure_binding(keys),
         ]
+        .into_iter()
+        .chain(
+            MotionKind::ALL
+                .into_iter()
+                .filter(|kind| kind.shortcut().is_some())
+                .map(move |kind| motion_binding(kind, keys)),
+        )
+        .chain([measure_binding(keys)])
     });
     let planes = keys
         .picking_plane

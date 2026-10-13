@@ -55,6 +55,24 @@ pub enum MotionKind {
 }
 
 impl MotionKind {
+    /// Every kind, in the enum's order.
+    pub const ALL: [MotionKind; 14] = [
+        MotionKind::Move,
+        MotionKind::Mirror,
+        MotionKind::LinearPattern,
+        MotionKind::CircularPattern,
+        MotionKind::Align,
+        MotionKind::Scale,
+        MotionKind::Split,
+        MotionKind::Chamfer,
+        MotionKind::Shell,
+        MotionKind::Fillet,
+        MotionKind::OffsetFace,
+        MotionKind::Draft,
+        MotionKind::Sweep,
+        MotionKind::Loft,
+    ];
+
     /// Whether an operation of this kind picking `picking` takes an origin
     /// plane, offered on the toolbar and clicked in the viewport: a split's
     /// tool by face (`split_face`), or a reference that may be a plane.
