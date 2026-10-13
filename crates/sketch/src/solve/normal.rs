@@ -8,7 +8,7 @@ use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
 use faer::sparse::{SparseColMatRef, SymbolicSparseColMat};
 use faer::{Mat, Side};
 
-use super::jacobian::Jacobian;
+use super::jacobian::{Jacobian, Pattern};
 
 /// `A Aᵀ` for Jacobians of one sparsity pattern: its lower triangle,
 /// column by column, with the pattern's symbolic factorization made once.
@@ -21,10 +21,8 @@ pub(super) struct Normal {
     /// The index of each diagonal entry among the values.
     diagonal: Vec<usize>,
     values: Vec<f64>,
-    /// The Jacobian's pattern it was made for: where each row's entries
-    /// start, and each entry's column.
-    starts: Vec<usize>,
-    columns: Vec<usize>,
+    /// The Jacobian's pattern it was made for.
+    made_for: Pattern,
 }
 
 impl Normal {
@@ -35,8 +33,8 @@ impl Normal {
         let rows = jacobian.rows();
         let mut by_column: Vec<Vec<(usize, usize)>> = vec![Vec::new(); columns];
         for row in 0..rows {
-            for index in jacobian.starts[row]..jacobian.starts[row + 1] {
-                by_column[jacobian.entries[index].0].push((row, index));
+            for (index, column) in jacobian.indexed_row(row) {
+                by_column[column].push((row, index));
             }
         }
         let mut col_ptr = vec![0];
@@ -74,8 +72,7 @@ impl Normal {
             by_column,
             diagonal,
             values,
-            starts: jacobian.starts.clone(),
-            columns: jacobian.entries.iter().map(|&(column, _)| column).collect(),
+            made_for: jacobian.pattern(),
         };
         normal.fill(jacobian);
         Some(normal)
@@ -86,12 +83,7 @@ impl Normal {
     /// variable parameter is reads other points of it once the parameter
     /// passes a knot.
     pub fn fits(&self, jacobian: &Jacobian) -> bool {
-        self.starts == jacobian.starts
-            && self
-                .columns
-                .iter()
-                .zip(&jacobian.entries)
-                .all(|(&column, &(other, _))| column == other)
+        jacobian.has_pattern(&self.made_for)
     }
 
     /// Recomputes the values from `jacobian`, shaped like the one it was
@@ -107,7 +99,7 @@ impl Normal {
                     if other >= row
                         && let Ok(position) = rows.binary_search(&other)
                     {
-                        self.values[col_ptr[row] + position] += a * jacobian.entries[index].1;
+                        self.values[col_ptr[row] + position] += a * jacobian.value(index);
                     }
                 }
             }

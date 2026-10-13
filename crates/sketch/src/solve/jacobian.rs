@@ -7,8 +7,15 @@ use super::system::{Component, System};
 /// A component's Jacobian, a row per equation, each row's entries by
 /// the variable's position in the component.
 pub(super) struct Jacobian {
-    pub(super) starts: Vec<usize>,
-    pub(super) entries: Vec<(usize, f64)>,
+    starts: Vec<usize>,
+    entries: Vec<(usize, f64)>,
+}
+
+/// A [`Jacobian`]'s sparsity pattern: where each row's entries start, and
+/// each entry's column.
+pub(super) struct Pattern {
+    starts: Vec<usize>,
+    columns: Vec<usize>,
 }
 
 impl Jacobian {
@@ -38,6 +45,34 @@ impl Jacobian {
 
     pub(super) fn row(&self, row: usize) -> &[(usize, f64)] {
         &self.entries[self.starts[row]..self.starts[row + 1]]
+    }
+
+    /// Each entry of `row` as its index among all the entries, which
+    /// [`Jacobian::value`] takes, and its column.
+    pub(super) fn indexed_row(&self, row: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
+        (self.starts[row]..self.starts[row + 1]).map(|index| (index, self.entries[index].0))
+    }
+
+    /// The value of the entry at `index` among all the entries.
+    pub(super) fn value(&self, index: usize) -> f64 {
+        self.entries[index].1
+    }
+
+    pub(super) fn pattern(&self) -> Pattern {
+        Pattern {
+            starts: self.starts.clone(),
+            columns: self.entries.iter().map(|&(column, _)| column).collect(),
+        }
+    }
+
+    /// Whether the Jacobian has `pattern`.
+    pub(super) fn has_pattern(&self, pattern: &Pattern) -> bool {
+        self.starts == pattern.starts
+            && pattern
+                .columns
+                .iter()
+                .zip(&self.entries)
+                .all(|(&column, &(other, _))| column == other)
     }
 
     pub(super) fn rows(&self) -> usize {
