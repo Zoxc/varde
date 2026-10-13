@@ -30,13 +30,15 @@
 
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, FaceRef, FeatureId, Plane, Side, Split, SplitTool};
+use varde_document::{BodyId, FaceRef, FeatureId, Plane, Side, Split, SplitTool};
 use varde_kernel_compat::patch::Bounds3;
 use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
 use super::motion::{SPLIT_PLANE, face_plane};
 use super::run::tool_failed;
-use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solid, through_all};
+use super::{
+    BodySolid, Evaluation, Failed, SketchOutput, Step, face_geometry, own_solid, through_all,
+};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
 use crate::picking::region_form;
@@ -67,14 +69,17 @@ const RIM: u64 = 1 << 32;
 /// body holding it). Then the tool, the split and the pieces, as the
 /// module's docs say.
 pub(super) fn evaluate_split(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     split: &Split,
-    sketches: &[SketchOutput],
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        sketches,
+    } = *step;
     let made = own_solid(document, split.body, evaluation)?;
     if let SplitTool::Body(tool) = split.tool {
         own_solid(document, tool, evaluation)?;

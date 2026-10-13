@@ -20,11 +20,11 @@
 //! reaches the user as "shelling Body 1 is too complex to work out", and
 //! the rest of the history goes on.
 
-use varde_document::{Document, FeatureId, Shell};
+use varde_document::Shell;
 use varde_kernel_compat::{Budget, ShellError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
-use super::{Evaluation, Failed};
+use super::{Evaluation, Failed, Step};
 use crate::cache::Cache;
 use crate::why;
 
@@ -44,13 +44,17 @@ kernel_op! {
 /// Its body must have a solid of its own ([`InPlace::of`]). Then the
 /// faces and the kernel's shell, as the module's docs say.
 pub(super) fn evaluate_shell(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     shell: &Shell,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     let place = InPlace::of(document, shell.body, evaluation, cache)?;
     let open = place.regions(&shell.open, why::shell_face_not_found)?;
     let thickness = shell.thickness.value;

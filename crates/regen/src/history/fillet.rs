@@ -16,11 +16,11 @@
 //! reaches the user as "filleting Body 1 is too complex to work out",
 //! and the rest of the history goes on.
 
-use varde_document::{Document, FeatureId, Fillet};
+use varde_document::Fillet;
 use varde_kernel_compat::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
 use super::blend::prepare;
-use super::{Evaluation, Failed};
+use super::{Evaluation, Failed, Step};
 use crate::cache::Cache;
 use crate::why::{self, Blend};
 
@@ -48,13 +48,17 @@ kernel_op! {
 /// fails it, naming the body holding it). Then the edges, the chains and
 /// the kernel's fillet, as the module's docs say.
 pub(super) fn evaluate_fillet(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     fillet: &Fillet,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     let prepared = prepare(
         document,
         fillet.body(),

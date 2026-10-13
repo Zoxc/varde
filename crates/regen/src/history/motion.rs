@@ -13,7 +13,7 @@ use varde_kernel_compat::topology::Unresolved;
 use varde_kernel_compat::{Budget, Instance, Motion, Solid, Tolerance, assemble};
 
 use super::{
-    BodySolid, Evaluation, Failed, chain_curves, chain_runs_with, face_geometry, own_solids,
+    BodySolid, Evaluation, Failed, Step, chain_curves, chain_runs_with, face_geometry, own_solids,
 };
 use crate::cache::{Cache, Key, Keyer};
 use crate::picking::region_form;
@@ -32,13 +32,17 @@ use crate::why::{self, Moving};
 /// exact. Each body is then moved ([`moved`]), its faces keeping their
 /// names.
 pub(super) fn evaluate_move(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     moved: &Move,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     own_solids(document, moved.bodies.iter().copied(), evaluation)?;
     let turn = match &moved.turn {
         Some((axis, angle)) => {
@@ -79,13 +83,17 @@ pub(super) fn evaluate_move(
 /// they're apart, united where they meet (a body mirrored in its own
 /// face).
 pub(super) fn evaluate_mirror(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     mirror: &Mirror,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     own_solids(document, mirror.bodies.iter().copied(), evaluation)?;
     let [point, normal] =
         resolve_plane(&mirror.plane, &MIRROR_PLANE, evaluation, tolerance, cache)?;

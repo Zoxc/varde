@@ -489,6 +489,16 @@ pub struct BodySolid {
     pub(crate) key: Key,
 }
 
+/// What every feature after the sketches is evaluated with: the
+/// document, the feature, its tolerance and the sketches before it.
+#[derive(Clone, Copy)]
+struct Step<'a> {
+    document: &'a Document,
+    feature: FeatureId,
+    tolerance: &'a Tolerance,
+    sketches: &'a [SketchOutput<'a>],
+}
+
 /// A sketch evaluated: the sketch, its profiles, where it is (`None` for
 /// one that isn't placed: on a face that wasn't found, isn't flat or
 /// whose body is gone), and its key, which is of the sketch alone.
@@ -573,6 +583,12 @@ pub(crate) fn evaluate_with(
     let mut evaluation = Evaluation::default();
     for (index, feature) in document.features().iter().enumerate() {
         starting(index, feature);
+        let step = Step {
+            document,
+            feature: feature.id,
+            tolerance: &tolerance,
+            sketches: &sketches,
+        };
         let result = match &feature.kind {
             FeatureKind::Sketch {
                 plane,
@@ -652,97 +668,39 @@ pub(crate) fn evaluate_with(
                 }
             }
             FeatureKind::Combine(combine) => {
-                combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
+                combine::evaluate(&step, combine, &mut evaluation, cache)
             }
-            FeatureKind::Move(moved) => motion::evaluate_move(
-                document,
-                feature.id,
-                moved,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Mirror(mirror) => motion::evaluate_mirror(
-                document,
-                feature.id,
-                mirror,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Pattern(pattern) => pattern::evaluate_pattern(
-                document,
-                feature.id,
-                pattern,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Align(align) => align::evaluate_align(
-                document,
-                feature.id,
-                align,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Scale(scale) => scale::evaluate_scale(
-                document,
-                feature.id,
-                scale,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Chamfer(chamfer) => chamfer::evaluate_chamfer(
-                document,
-                feature.id,
-                chamfer,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Shell(shell) => shell::evaluate_shell(
-                document,
-                feature.id,
-                shell,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Fillet(fillet) => fillet::evaluate_fillet(
-                document,
-                feature.id,
-                fillet,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::OffsetFace(offset) => offset_face::evaluate_offset_face(
-                document,
-                feature.id,
-                offset,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::FaceDraft(draft) => face_draft::evaluate_face_draft(
-                document,
-                feature.id,
-                draft,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
-            FeatureKind::Split(split) => split::evaluate_split(
-                document,
-                feature.id,
-                split,
-                &sketches,
-                &tolerance,
-                &mut evaluation,
-                cache,
-            ),
+            FeatureKind::Move(moved) => motion::evaluate_move(&step, moved, &mut evaluation, cache),
+            FeatureKind::Mirror(mirror) => {
+                motion::evaluate_mirror(&step, mirror, &mut evaluation, cache)
+            }
+            FeatureKind::Pattern(pattern) => {
+                pattern::evaluate_pattern(&step, pattern, &mut evaluation, cache)
+            }
+            FeatureKind::Align(align) => {
+                align::evaluate_align(&step, align, &mut evaluation, cache)
+            }
+            FeatureKind::Scale(scale) => {
+                scale::evaluate_scale(&step, scale, &mut evaluation, cache)
+            }
+            FeatureKind::Chamfer(chamfer) => {
+                chamfer::evaluate_chamfer(&step, chamfer, &mut evaluation, cache)
+            }
+            FeatureKind::Shell(shell) => {
+                shell::evaluate_shell(&step, shell, &mut evaluation, cache)
+            }
+            FeatureKind::Fillet(fillet) => {
+                fillet::evaluate_fillet(&step, fillet, &mut evaluation, cache)
+            }
+            FeatureKind::OffsetFace(offset) => {
+                offset_face::evaluate_offset_face(&step, offset, &mut evaluation, cache)
+            }
+            FeatureKind::FaceDraft(draft) => {
+                face_draft::evaluate_face_draft(&step, draft, &mut evaluation, cache)
+            }
+            FeatureKind::Split(split) => {
+                split::evaluate_split(&step, split, &mut evaluation, cache)
+            }
         };
         // A sketch records its own failures, and answers `Ok`.
         if let Err(failed) = result {

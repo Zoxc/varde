@@ -23,14 +23,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::DVec3;
-use varde_document::{BodyId, Document, EdgeRef, FeatureId, MAX_SCALE_FACTOR, Scale, ScaleFactor};
+use varde_document::{BodyId, EdgeRef, FeatureId, MAX_SCALE_FACTOR, Scale, ScaleFactor};
 use varde_kernel_compat::measure::{EdgeShape, Measured, Pick, Target, measure};
 use varde_kernel_compat::mesh::Surface;
 use varde_kernel_compat::{Budget, Motion, Tolerance};
 
 use super::align::Found;
 use super::motion::{How, place, reference_key};
-use super::{Evaluation, Failed, own_solids};
+use super::{Evaluation, Failed, Step, own_solids};
 use crate::cache::{Cache, EdgeLength};
 use crate::why::{self, Moving, Whose};
 use crate::{ErrorGeometry, ScaleFound, inspect};
@@ -52,13 +52,17 @@ pub const AXIS_SINE: f64 = 1e-9;
 /// (see the module's docs); what's found is noted, and the first failure
 /// of those, in that order, is the scale's.
 pub(super) fn evaluate_scale(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     scale: &Scale,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     own_solids(document, scale.bodies.iter().copied(), evaluation)?;
     let found = Found {
         moved: None,

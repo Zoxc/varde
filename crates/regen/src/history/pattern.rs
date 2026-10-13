@@ -2,11 +2,11 @@
 //! before it leave it, with copies of itself placed along a line or about
 //! an axis, put together in the body, or each copy a body of its own.
 
-use varde_document::{Document, FeatureId, Pattern, PatternKind};
+use varde_document::{FeatureId, Pattern, PatternKind};
 use varde_kernel_compat::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
 
 use super::motion::{note_reference, resolve_axis, within};
-use super::{BodySolid, Evaluation, Failed, own_solids};
+use super::{BodySolid, Evaluation, Failed, Step, own_solids};
 use crate::cache::{Cache, Key, Keyer};
 use crate::why::{self, Moving};
 
@@ -34,13 +34,17 @@ use crate::why::{self, Moving};
 /// instance and the fit tolerance ([`copy_key`]); the new bodies go
 /// after the others, in the order of their ids.
 pub(super) fn evaluate_pattern(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     pattern: &Pattern,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     own_solids(document, pattern.bodies.iter().copied(), evaluation)?;
     let count = pattern.count().ok_or(why::PATTERN_COUNT)?;
     let [point, direction] = resolve_axis(pattern.kind.axis(), evaluation, tolerance, cache)?;

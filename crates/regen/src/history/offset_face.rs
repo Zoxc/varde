@@ -23,11 +23,11 @@
 //! which reaches the user as "offsetting faces of Body 1 is too complex
 //! to work out", and the rest of the history goes on.
 
-use varde_document::{Document, FeatureId, OffsetFace};
+use varde_document::OffsetFace;
 use varde_kernel_compat::{Budget, OffsetError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
-use super::{Evaluation, Failed};
+use super::{Evaluation, Failed, Step};
 use crate::cache::Cache;
 use crate::why;
 
@@ -56,13 +56,17 @@ kernel_op! {
 /// Its body must have a solid of its own ([`InPlace::of`]). Then the
 /// faces and the kernel's offset, as the module's docs say.
 pub(super) fn evaluate_offset_face(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     offset: &OffsetFace,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     let body = offset.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let faces = place.regions(&offset.faces, why::face_not_found)?;

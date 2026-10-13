@@ -3,11 +3,12 @@
 
 use std::sync::Arc;
 
-use varde_document::{BodyId, BodyOp, Combine, Document};
-use varde_kernel_compat::{KernelError, Op, Solid, Tolerance};
+use varde_document::{BodyId, BodyOp, Combine};
+use varde_kernel_compat::{KernelError, Op, Solid};
 
 use super::{
-    BodySolid, BooleanStep, Evaluation, Failed, boolean_key, cached_boolean, note_merge, own_solids,
+    BodySolid, BooleanStep, Evaluation, Failed, Step, boolean_key, cached_boolean, note_merge,
+    own_solids,
 };
 use crate::cache::{Cache, Key};
 use crate::why;
@@ -36,12 +37,16 @@ use crate::why;
 /// it names of the running solid looked for on the target and the tools
 /// combined into it so far, and those of the tool on the tool.
 pub(super) fn evaluate(
-    document: &Document,
+    step: &Step,
     combine: &Combine,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        tolerance,
+        ..
+    } = *step;
     let name = |body: BodyId| super::body_name(document, body);
     // The target is named first.
     let target = own_solids(document, combine.bodies(), evaluation)?[0];

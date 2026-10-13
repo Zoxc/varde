@@ -32,12 +32,12 @@
 //! out", and the rest of the history goes on.
 
 use glam::DVec3;
-use varde_document::{Document, FaceDraft, FeatureId};
+use varde_document::FaceDraft;
 use varde_kernel_compat::{Budget, DraftError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
 use super::motion::{NEUTRAL_PLANE, resolve_plane};
-use super::{Evaluation, Failed};
+use super::{Evaluation, Failed, Step};
 use crate::cache::Cache;
 use crate::why::{self, DraftRefusal};
 
@@ -68,13 +68,17 @@ kernel_op! {
 /// faces, the neutral plane and the kernel's draft, as the module's docs
 /// say.
 pub(super) fn evaluate_face_draft(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     draft: &FaceDraft,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     let body = draft.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
     let faces = place.regions(&draft.faces, why::face_not_found);

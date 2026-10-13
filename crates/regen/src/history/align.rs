@@ -25,15 +25,14 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use varde_document::{
-    Align, AlignRefs, AxisRef, BodyId, DirRef, Document, EdgeRef, FaceRef, FeatureId, MAX_COORD,
-    PointRef,
+    Align, AlignRefs, AxisRef, BodyId, DirRef, EdgeRef, FaceRef, FeatureId, MAX_COORD, PointRef,
 };
 use varde_kernel_compat::measure::{EdgeShape, edge_shape};
 use varde_kernel_compat::topology::Unresolved;
 use varde_kernel_compat::{AlignError, AlignOptions, Evidence, Motion, Solid, Tolerance, Topology};
 
 use super::motion::{How, place, reference_key};
-use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_solid};
+use super::{BodySolid, Evaluation, Failed, Step, chain_curves, face_geometry, own_solid};
 use crate::cache::{Cache, Datum};
 use crate::error_geometry::ErrorGeometry;
 use crate::why::{self, AlignRef, Moving, Side, Whose};
@@ -52,13 +51,17 @@ use crate::{AlignDatums, AlignFound};
 /// ([`place`]: refused past the coordinate limit, cached by the motion's
 /// bits), its faces keeping their names.
 pub(super) fn evaluate_align(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     align: &Align,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     own_solid(document, align.body, evaluation)?;
     let found = Found {
         moved: Some(align.body),

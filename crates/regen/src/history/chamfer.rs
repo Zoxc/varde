@@ -15,13 +15,13 @@
 //! reaches the user as "chamfering Body 1 is too complex to work out",
 //! and the rest of the history goes on.
 
-use varde_document::{Chamfer, ChamferSize, Document, FeatureId};
+use varde_document::{Chamfer, ChamferSize};
 use varde_kernel_compat::{
     BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology,
 };
 
 use super::blend::prepare;
-use super::{Evaluation, Failed};
+use super::{Evaluation, Failed, Step};
 use crate::cache::Cache;
 use crate::why::{self, Blend};
 
@@ -43,13 +43,17 @@ kernel_op! {
 /// a combine consumed fails it, naming the body holding it). Then the
 /// edges, the chains and the kernel's chamfer, as the module's docs say.
 pub(super) fn evaluate_chamfer(
-    document: &Document,
-    feature: FeatureId,
+    step: &Step,
     chamfer: &Chamfer,
-    tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
+    let Step {
+        document,
+        feature,
+        tolerance,
+        ..
+    } = *step;
     let prepared = prepare(
         document,
         chamfer.body(),
