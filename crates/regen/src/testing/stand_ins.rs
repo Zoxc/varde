@@ -46,3 +46,67 @@ pub(super) fn box_sides(solid: &Solid, topology: &Topology) -> Option<BoxSides> 
     }
     Some((min, max, sides))
 }
+
+/// A straight, open, convex edge between two planar faces
+/// ([`convex_edge`]).
+pub(super) struct ConvexEdge {
+    /// The edge's start and end.
+    pub(super) a: DVec3,
+    pub(super) b: DVec3,
+    /// The unit direction from `a` to `b`, and the edge's length.
+    pub(super) t: DVec3,
+    pub(super) length: f64,
+    /// Into each face from the edge, square to it.
+    pub(super) into: [DVec3; 2],
+    /// Each face's unit outward normal.
+    pub(super) normal: [DVec3; 2],
+    /// Each face's region.
+    pub(super) regions: [u32; 2],
+}
+
+/// Chain `chain` of `topology` as the edge a chamfer or fillet stand-in
+/// takes: open, of nonzero length, between two planar faces, convex
+/// (each face behind the other's plane). Its ends are its first and
+/// last curves' ends, so a straight chain is assumed. `None` for
+/// anything else.
+pub(super) fn convex_edge(solid: &Solid, topology: &Topology, chain: u32) -> Option<ConvexEdge> {
+    let mesh = solid.mesh();
+    let chain = topology.chains().get(chain as usize)?;
+    if chain.closed {
+        return None;
+    }
+    let a = mesh.curve(*chain.halfedges.first()?).p0;
+    let b = mesh.curve(*chain.halfedges.last()?).p1;
+    let length = (b - a).length();
+    if !(length.is_finite() && length > 0.0) {
+        return None;
+    }
+    let t = (b - a) / length;
+    let mut into = [DVec3::ZERO; 2];
+    let mut normal = [DVec3::ZERO; 2];
+    for (side, &region) in chain.regions.iter().enumerate() {
+        let region = &topology.regions()[region as usize];
+        let Form::Plane { n, .. } = *crate::picking::region_form(solid, region) else {
+            return None;
+        };
+        let inside = mesh
+            .patch(region.tris[0] as usize)
+            .eval(DVec3::splat(1.0 / 3.0));
+        let across = (inside - a) - t * (inside - a).dot(t);
+        into[side] = across.normalize();
+        normal[side] = n.normalize();
+    }
+    // Convex: each face lies behind the other's plane.
+    if into[0].dot(normal[1]) >= 0.0 || into[1].dot(normal[0]) >= 0.0 {
+        return None;
+    }
+    Some(ConvexEdge {
+        a,
+        b,
+        t,
+        length,
+        into,
+        normal,
+        regions: chain.regions,
+    })
+}

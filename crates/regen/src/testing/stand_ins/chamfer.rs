@@ -1,8 +1,10 @@
 //! The stand-in for the kernel's chamfer that tests run in its place
 //! until the kernel's is built (see [`crate::testing`]).
 
+use glam::DVec3;
 use varde_kernel_compat::{
-    BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology,
+    BlendError, Budget, ChamferChain, ChamferCut, Frame, KernelError, Loop, Op, Profile, Segment,
+    Solid, Tolerance, Topology,
 };
 
 /// A stand-in for the kernel's chamfer, for tests: each chain must be a
@@ -23,46 +25,13 @@ pub(crate) fn by_wedges(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, BlendError> {
-    use glam::DVec3;
-    use varde_kernel_compat::mesh::Form;
-    use varde_kernel_compat::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || BlendError::Failed(KernelError::TooComplex.into());
-    let mesh = solid.mesh();
     let mut result = solid.clone();
     for chamfered in chains {
-        let chain = (topology.chains())
-            .get(chamfered.chain as usize)
-            .ok_or_else(too_complex)?;
-        let (Some(&first), Some(&last)) = (chain.halfedges.first(), chain.halfedges.last()) else {
-            return Err(too_complex());
-        };
-        if chain.closed {
-            return Err(too_complex());
-        }
-        let a = mesh.curve(first).p0;
-        let b = mesh.curve(last).p1;
-        let length = (b - a).length();
-        let t = (b - a) / length;
-        // Into each face from the edge, square to it, and each face's
-        // normal.
-        let mut into = [DVec3::ZERO; 2];
-        let mut normal = [DVec3::ZERO; 2];
-        for (side, &region) in chain.regions.iter().enumerate() {
-            let region = &topology.regions()[region as usize];
-            let Form::Plane { n, .. } = *crate::picking::region_form(solid, region) else {
-                return Err(too_complex());
-            };
-            let inside = mesh
-                .patch(region.tris[0] as usize)
-                .eval(DVec3::splat(1.0 / 3.0));
-            let across = (inside - a) - t * (inside - a).dot(t);
-            into[side] = across.normalize();
-            normal[side] = n.normalize();
-        }
-        // Convex: each face lies behind the other's plane.
-        if into[0].dot(normal[1]) >= 0.0 || into[1].dot(normal[0]) >= 0.0 {
-            return Err(too_complex());
-        }
+        let edge = super::convex_edge(solid, topology, chamfered.chain).ok_or_else(too_complex)?;
+        let super::ConvexEdge {
+            a, t, length, into, ..
+        } = edge;
         let [d0, d1] = match chamfered.cut {
             ChamferCut::Distances(distances) => distances,
             ChamferCut::Angle {

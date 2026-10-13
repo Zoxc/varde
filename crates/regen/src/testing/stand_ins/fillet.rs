@@ -1,7 +1,12 @@
 //! The stand-in for the kernel's fillet that tests run in its place
 //! until the kernel's is built (see [`crate::testing`]).
 
-use varde_kernel_compat::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
+use glam::{DVec2, DVec3};
+use varde_kernel_compat::patch::Conic2;
+use varde_kernel_compat::{
+    BlendError, Budget, FilletChain, Frame, KernelError, Loop, Op, Profile, Segment, Solid,
+    Tolerance, Topology,
+};
 
 /// A stand-in for the kernel's fillet, for tests: each chain must be a
 /// straight, open, convex edge between two planar faces, and is rounded
@@ -34,10 +39,6 @@ pub(crate) fn by_arcs(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, BlendError> {
-    use glam::{DVec2, DVec3};
-    use varde_kernel_compat::mesh::Form;
-    use varde_kernel_compat::patch::Conic2;
-    use varde_kernel_compat::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || BlendError::Failed(KernelError::TooComplex.into());
     let mesh = solid.mesh();
     let mut result = solid.clone();
@@ -45,47 +46,27 @@ pub(crate) fn by_arcs(
     // start, along it, into the face and how far the rail is.
     let mut strips: Vec<(u32, DVec3, DVec3, DVec3)> = Vec::new();
     for filleted in chains {
-        let chain = (topology.chains())
-            .get(filleted.chain as usize)
-            .ok_or_else(too_complex)?;
-        let (Some(&first), Some(&last)) = (chain.halfedges.first(), chain.halfedges.last()) else {
-            return Err(too_complex());
-        };
-        if chain.closed {
-            return Err(too_complex());
-        }
-        let a = mesh.curve(first).p0;
-        let b = mesh.curve(last).p1;
-        let length = (b - a).length();
-        let t = (b - a) / length;
-        // Into each face from the edge, square to it, each face's
-        // outward normal, and how far the face reaches across.
-        let mut into = [DVec3::ZERO; 2];
-        let mut normal = [DVec3::ZERO; 2];
-        let mut reach = [0.0f64; 2];
-        for (side, &region) in chain.regions.iter().enumerate() {
-            let region = &topology.regions()[region as usize];
-            let Form::Plane { n, .. } = *crate::picking::region_form(solid, region) else {
-                return Err(too_complex());
-            };
-            let inside = mesh
-                .patch(region.tris[0] as usize)
-                .eval(DVec3::splat(1.0 / 3.0));
-            let across = (inside - a) - t * (inside - a).dot(t);
-            into[side] = across.normalize();
-            normal[side] = n.normalize();
-            reach[side] = (region.tris.iter())
+        let edge = super::convex_edge(solid, topology, filleted.chain).ok_or_else(too_complex)?;
+        let super::ConvexEdge {
+            a,
+            b,
+            t,
+            length,
+            into,
+            normal,
+            regions,
+        } = edge;
+        // How far each face reaches across from the edge.
+        let reach = [0, 1].map(|side| {
+            let region = &topology.regions()[regions[side] as usize];
+            (region.tris.iter())
                 .flat_map(|&tri| {
                     let patch = mesh.patch(tri as usize);
                     [DVec3::X, DVec3::Y, DVec3::Z]
                         .map(|corner| (patch.eval(corner) - a).dot(into[side]))
                 })
-                .fold(0.0, f64::max);
-        }
-        // Convex: each face lies behind the other's plane.
-        if into[0].dot(normal[1]) >= 0.0 || into[1].dot(normal[0]) >= 0.0 {
-            return Err(too_complex());
-        }
+                .fold(0.0, f64::max)
+        });
         // The angle between the faces, inside the material, and the
         // rails' distance from the edge: `r / tan(θ/2)`.
         let cos = into[0].dot(into[1]).clamp(-1.0, 1.0);
@@ -99,7 +80,7 @@ pub(crate) fn by_arcs(
                 chain: filleted.chain,
             });
         }
-        for (side, &region) in chain.regions.iter().enumerate() {
+        for (side, &region) in regions.iter().enumerate() {
             let strip = (region, a, b - a, into[side] * back);
             for &(other, oa, along, across) in &strips {
                 if other != region {
@@ -192,19 +173,15 @@ pub(crate) fn by_arcs(
 /// point `p`, along `along` and across `across`, the parallelogram
 /// `p + s·along + u·across` for `s`, `u` in `0..=1`. By separating
 /// axes, the strips' sides' directions.
-fn strips_meet(
-    a: (glam::DVec3, glam::DVec3, glam::DVec3),
-    b: (glam::DVec3, glam::DVec3, glam::DVec3),
-) -> bool {
-    let corners = |(p, along, across): (glam::DVec3, glam::DVec3, glam::DVec3)| {
-        [p, p + along, p + along + across, p + across]
-    };
+fn strips_meet(a: (DVec3, DVec3, DVec3), b: (DVec3, DVec3, DVec3)) -> bool {
+    let corners =
+        |(p, along, across): (DVec3, DVec3, DVec3)| [p, p + along, p + along + across, p + across];
     let (ca, cb) = (corners(a), corners(b));
     // In the plane, square to each side.
     let normal = a.1.cross(a.2);
     [a.1, a.2, b.1, b.2].iter().all(|side| {
         let axis = normal.cross(*side);
-        let span = |points: &[glam::DVec3; 4]| {
+        let span = |points: &[DVec3; 4]| {
             (points.iter()).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
                 let x = p.dot(axis);
                 (lo.min(x), hi.max(x))
