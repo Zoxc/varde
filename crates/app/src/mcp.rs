@@ -713,32 +713,35 @@ impl Mcp {
             if let Some(told) = told {
                 logged.told = told.lines.iter().map(|line| plain(line)).collect();
                 logged.told_rows = told.panel.iter().map(|line| plain(line)).collect();
-                logged.told_at = Some(match &done.edit {
-                    Some((before, _)) => before.revision(),
+                logged.told_at = Some(match &done.applied {
+                    Some(applied) => applied.before.revision(),
                     None => doc.editor.revision(),
                 });
             }
             let not_told = !sent || !session_open || cancelled;
-            if let Some(undid) = done.undid {
+            let Some(applied) = done.applied else {
+                continue;
+            };
+            if let Some(undid) = applied.undid {
                 // An undo's row says what it took back, and offers no
                 // Revert: it made no state of its own.
                 let (args, result) = undid_row(&undid, &done.call, logged.result.as_deref());
                 logged.args = args;
                 logged.result = Some(result);
-                logged.edit = done.edit.map(|(_, after)| revert::Edited {
+                logged.edit = Some(revert::Edited {
                     before: None,
                     after: None,
-                    after_revision: after,
+                    after_revision: applied.after,
                     feature: undid.feature,
                     not_told,
                     undid: undid.afters,
                 });
-            } else if let Some((before, after)) = done.edit {
+            } else {
                 logged.edit = Some(revert::Edited {
-                    before: Some(before),
-                    after: doc.editor.state_of(after),
-                    after_revision: after,
-                    feature: done.feature,
+                    before: Some(applied.before),
+                    after: doc.editor.state_of(applied.after),
+                    after_revision: applied.after,
+                    feature: applied.feature,
                     not_told,
                     undid: Vec::new(),
                 });

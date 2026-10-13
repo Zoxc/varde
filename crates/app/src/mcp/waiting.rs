@@ -255,14 +255,28 @@ impl ClientHistory {
     }
 }
 
-/// The design before a client's edit, kept with it while it waits on
-/// regeneration; compared by revision.
+/// What a client's edit applied leaves for its row: kept with it while
+/// it waits on regeneration, then with its answer; the design before it
+/// compared by revision.
 #[derive(Debug, Clone)]
-pub(crate) struct Before(pub(crate) EditorState);
+pub(crate) struct Applied {
+    /// The design before it, for the panel's Revert.
+    pub(crate) before: EditorState,
+    /// The revision it made.
+    pub(crate) after: Revision,
+    /// An `undo`'s: what it took back.
+    pub(crate) undid: Option<Undid>,
+    /// The number of the feature it made or changed, if it names one:
+    /// its row's Show in Timeline.
+    pub(crate) feature: Option<u64>,
+}
 
-impl PartialEq for Before {
-    fn eq(&self, other: &Before) -> bool {
-        self.0.revision() == other.0.revision()
+impl PartialEq for Applied {
+    fn eq(&self, other: &Applied) -> bool {
+        self.before.revision() == other.before.revision()
+            && self.after == other.after
+            && self.undid == other.undid
+            && self.feature == other.feature
     }
 }
 
@@ -374,22 +388,15 @@ pub(crate) enum Wait {
     /// it's to make (`Made::Drawn`), the solver's answer completing it.
     Solving(Option<Made>),
     /// An edit applied, waiting for the first regeneration answer at
-    /// `generation` or past it. `after` is the revision it made, `made`
-    /// what its result says it made; `again`, if any, what's made of it
-    /// again once regeneration answered, over `made`: a link's points and
-    /// curves come with its relinking.
+    /// `generation` or past it. `made` is what its result says it made;
+    /// `again`, if any, what's made of it again once regeneration
+    /// answered, over `made`: a link's points and curves come with its
+    /// relinking. `applied` is what it leaves for its row.
     Regen {
         generation: Generation,
-        after: Revision,
         made: Value,
         again: Option<Made>,
-        /// The design before it, for the panel's Revert.
-        before: Before,
-        /// An `undo`'s: what it took back.
-        undid: Option<Undid>,
-        /// The number of the feature it made or changed, if it names
-        /// one: its row's Show in Timeline.
-        feature: Option<u64>,
+        applied: Applied,
     },
 }
 
@@ -441,8 +448,7 @@ impl Wait {
             }),
             Wait::Regen {
                 mut made,
-                after,
-                undid,
+                applied: Applied { after, undid, .. },
                 ..
             } => {
                 made["result"] = match undid {
@@ -552,14 +558,8 @@ pub(crate) struct Done {
     pub(crate) reply: ToolReply,
     /// What its row is to say.
     pub(crate) state: McpCallState,
-    /// An edit applied: the design before it and the revision it made,
-    /// for the panel's Revert.
-    pub(crate) edit: Option<(EditorState, Revision)>,
-    /// An `undo` applied: what it took back, for its row.
-    pub(crate) undid: Option<Undid>,
-    /// The number of the feature an edit applied made or changed, if it
-    /// names one, for its row.
-    pub(crate) feature: Option<u64>,
+    /// An edit applied: what it leaves for its row.
+    pub(crate) applied: Option<Applied>,
 }
 
 impl Waiting {
@@ -618,33 +618,25 @@ impl Waiting {
             call,
             reply,
             state,
-            edit: None,
-            undid: None,
-            feature: None,
+            applied: None,
         });
     }
 
     /// Puts the edit `call`, from `from`, by as done and applied,
-    /// answered `reply`, with the design `before` it and the revision it
-    /// made, `after`; an `undo`'s with what it took back, `undid`; the
-    /// number of the feature it made or changed, `feature`.
+    /// answered `reply`, with what it leaves for its row, `applied`.
     pub(crate) fn answer_applied(
         &mut self,
         from: Caller,
         call: Call,
         reply: ToolReply,
-        (before, after): (EditorState, Revision),
-        undid: Option<Undid>,
-        feature: Option<u64>,
+        applied: Applied,
     ) {
         self.finished.push(Done {
             from,
             call,
             reply,
             state: McpCallState::Applied,
-            edit: Some((before, after)),
-            undid,
-            feature,
+            applied: Some(applied),
         });
     }
 
@@ -804,28 +796,20 @@ impl Waiting {
         } = waiter;
         let edits = call.edits();
         let mut waits = waits;
-        let edit = match &mut waits {
-            Wait::Regen {
-                before,
-                after,
-                undid,
-                feature,
-                ..
-            } => {
+        let applied = match &mut waits {
+            Wait::Regen { applied, .. } => {
                 // What an undo took back, through the links' amends since
                 // (a Redo brings back the state they amended).
-                for undone in undid.iter_mut().flat_map(|undid| &mut undid.afters) {
+                for undone in (applied.undid.iter_mut()).flat_map(|undid| &mut undid.afters) {
                     *undone = self.history.amended_to(*undone);
                 }
-                Some(((before.0.clone(), *after), undid.clone(), *feature))
+                Some(applied.clone())
             }
             _ => None,
         };
         match waits.ended(edits, why, done) {
-            Ok(reply) => match edit {
-                Some((edit, undid, feature)) => {
-                    self.answer_applied(from, call, reply, edit, undid, feature)
-                }
+            Ok(reply) => match applied {
+                Some(applied) => self.answer_applied(from, call, reply, applied),
                 None => self.answer_as(from, call, reply, McpCallState::Applied),
             },
             Err(refused) if edits => self.not_applied(tag, from, call, refused),
@@ -923,10 +907,10 @@ impl Waiting {
         }
         self.history.amended(before, now);
         for waiter in &mut self.calls {
-            if let Wait::Regen { after, .. } = &mut waiter.waits
-                && *after == before
+            if let Wait::Regen { applied, .. } = &mut waiter.waits
+                && applied.after == before
             {
-                *after = now;
+                applied.after = now;
             }
         }
     }
@@ -1110,7 +1094,11 @@ impl Doc {
     ) -> std::collections::HashMap<Revision, bool> {
         let mut known = std::collections::HashMap::new();
         for waiter in waiters {
-            if let Wait::Regen { after, undid, .. } = &waiter.waits {
+            if let Wait::Regen {
+                applied: Applied { after, undid, .. },
+                ..
+            } = &waiter.waits
+            {
                 known.insert(*after, self.in_effect(*after));
                 for undone in undid.iter().flat_map(|undid| &undid.afters) {
                     let undone = self.mcp.history.amended_to(*undone);

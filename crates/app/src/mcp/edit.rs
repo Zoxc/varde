@@ -749,12 +749,14 @@ impl Doc {
                     call,
                     waits: Wait::Regen {
                         generation: self.editor.generation(),
-                        after: self.editor.revision(),
                         made,
                         again,
-                        before: super::waiting::Before(state),
-                        undid: None,
-                        feature,
+                        applied: super::waiting::Applied {
+                            before: state,
+                            after: self.editor.revision(),
+                            undid: None,
+                            feature,
+                        },
                     },
                 });
             }
@@ -771,12 +773,9 @@ impl Doc {
         for waiter in self.mcp.regenerated(answered) {
             let Wait::Regen {
                 generation,
-                after,
                 mut made,
                 again,
-                before,
-                undid,
-                feature,
+                applied,
             } = waiter.waits
             else {
                 continue;
@@ -787,9 +786,10 @@ impl Doc {
             {
                 made.extend(now);
             }
-            let mut reply = self.edit_result(made, generation, after, undid.is_some());
+            let mut reply =
+                self.edit_result(made, generation, applied.after, applied.undid.is_some());
             // An undo the user redid meanwhile, wholly or in part.
-            let redone = undid.as_ref().is_some_and(|undid| {
+            let redone = applied.undid.as_ref().is_some_and(|undid| {
                 (undid.afters.iter())
                     .any(|after| self.editor.is_done(self.mcp.history.amended_to(*after)))
             });
@@ -797,8 +797,7 @@ impl Doc {
                 data["result"] = json!(super::undo::REDONE);
                 reply = ToolReply::data(data.take());
             }
-            let edit = (before.0, after);
-            (self.mcp).answer_applied(waiter.from, waiter.call, reply, edit, undid, feature);
+            (self.mcp).answer_applied(waiter.from, waiter.call, reply, applied);
         }
     }
 
