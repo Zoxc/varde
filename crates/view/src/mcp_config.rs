@@ -2,10 +2,10 @@
 //! opencode), with the program's path quoted for the shell it's pasted
 //! into, and the port typed for it: no UI here.
 
-use crate::{MCP_PORT_MAX, MCP_PORT_MIN};
+use crate::mcp_port_offered;
 
 /// The port typed into the MCP tab's field, if it's one it takes: digits
-/// alone, from [`MCP_PORT_MIN`] to [`MCP_PORT_MAX`].
+/// alone, one [`mcp_port_offered`] takes.
 pub fn mcp_port_of(typed: &str) -> Option<u16> {
     let typed = typed.trim();
     if typed.is_empty() || typed.len() > 5 || !typed.bytes().all(|b| b.is_ascii_digit()) {
@@ -14,7 +14,7 @@ pub fn mcp_port_of(typed: &str) -> Option<u16> {
     typed
         .parse::<u16>()
         .ok()
-        .filter(|port| (MCP_PORT_MIN..=MCP_PORT_MAX).contains(port))
+        .filter(|&port| mcp_port_offered(port))
 }
 
 /// The lines adding the server at `port` to a client, carrying `token`:

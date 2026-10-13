@@ -121,7 +121,7 @@ pub use operation_panel::{
 pub use options::{
     AUTO_SAVE_MINUTES, Edges, INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, INTERFACE_SCALE_STEP,
     MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, RECENT_DESIGNS, ViewOptions,
-    interface_scale_offered,
+    interface_scale_offered, mcp_port_offered,
 };
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use panels::TIMELINE_LIST;

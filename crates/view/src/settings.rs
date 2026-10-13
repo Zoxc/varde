@@ -312,7 +312,7 @@ impl Setting {
             }
             Setting::AutoSave(minutes) => AUTO_SAVE_MINUTES.contains(&minutes),
             Setting::RecentDesigns(count) => RECENT_DESIGNS.contains(&count),
-            Setting::McpPort(port) => (MCP_PORT_MIN..=MCP_PORT_MAX).contains(&port),
+            Setting::McpPort(port) => crate::mcp_port_offered(port),
             _ => true,
         }
     }

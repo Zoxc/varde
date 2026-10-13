@@ -65,6 +65,11 @@ pub const MCP_PORT_MAX: u16 = u16::MAX;
 /// The port the MCP server listens on unless another is chosen.
 pub const MCP_PORT_DEFAULT: u16 = 7311;
 
+/// Whether `port` is one the MCP server may listen on.
+pub fn mcp_port_offered(port: u16) -> bool {
+    (MCP_PORT_MIN..=MCP_PORT_MAX).contains(&port)
+}
+
 /// The smallest interface scale the settings offer, in percent.
 pub const INTERFACE_SCALE_MIN: u16 = 75;
 /// The largest interface scale the settings offer, in percent.
