@@ -114,13 +114,39 @@ impl Prepared<'_> {
 /// The chains of `own`'s topology `edges` are found as, in their order:
 /// one not found fails ("its edge 2 of 3 wasn't found").
 fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
+    find_chains(&own.solid, &own.topology, edges, why::blend_edge_not_found)
+}
+
+/// The chains of `topology` (of `solid`) `edges` are found as, in their
+/// order: one not found fails, worded by `not_found` from its index and
+/// the count.
+pub(super) fn find_chains(
+    solid: &Solid,
+    topology: &Topology,
+    edges: &[EdgeRef],
+    not_found: fn(usize, usize) -> String,
+) -> Result<Vec<u32>, Failed> {
     let count = edges.len();
     (edges.iter().enumerate())
         .map(|(i, edge)| {
-            (own.topology.edge(&own.solid, edge.faces, edge.near))
-                .map_err(|_| why::blend_edge_not_found(i, count).into())
+            (topology.edge(solid, edge.faces, edge.near)).map_err(|_| not_found(i, count).into())
         })
         .collect()
+}
+
+/// The chains of each tangent chain of `topology` (of `solid`), by its
+/// root ([`Topology::tangent_chains`]), in index order, and the root of
+/// each chain.
+pub(super) fn tangent_members(
+    solid: &Solid,
+    topology: &Topology,
+) -> (Vec<u32>, BTreeMap<u32, Vec<u32>>) {
+    let roots = topology.tangent_chains(solid);
+    let mut members: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for (chain, &root) in roots.iter().enumerate() {
+        members.entry(root).or_default().push(chain as u32);
+    }
+    (roots, members)
 }
 
 /// The regions of `own`'s topology `faces` are found as, in their order:
@@ -241,12 +267,7 @@ fn plan(
         );
     }
     if chains {
-        let roots = topology.tangent_chains(solid);
-        // The chains of each tangent chain, by its root, in index order.
-        let mut members: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
-        for (chain, &root) in roots.iter().enumerate() {
-            members.entry(root).or_default().push(chain as u32);
-        }
+        let (roots, members) = tangent_members(solid, topology);
         let mut grown: Vec<bool> = vec![false; all.len()];
         for seed in &seeds {
             let root = roots[seed.chain as usize];

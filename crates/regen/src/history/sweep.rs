@@ -76,6 +76,7 @@ use varde_kernel_compat::sweep::{self as path_sweep, Path, Piece, SweepError};
 use varde_kernel_compat::{Budget, Evidence, Frame, Profile, Solid, Tolerance, Topology};
 use varde_sketch::Curve;
 
+use super::blend::{find_chains, tangent_members};
 use super::{Evaluation, Failed, Run, motion};
 use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
@@ -418,18 +419,15 @@ fn edge_part(
         .ok_or(why::Picked::PathEdge.body_gone())?;
     let solid = Arc::clone(&made.solid);
     let topology = inspect::topology(made, cache);
-    let count = edges.len();
-    let mut chains = Vec::with_capacity(count);
-    for (i, edge) in edges.iter().enumerate() {
-        let chain = (topology.edge(&solid, edge.faces, edge.near))
-            .map_err(|_| why::path_edge_not_found(i, count))?;
-        chains.push(chain);
-    }
+    let mut chains = find_chains(&solid, &topology, edges, why::path_edge_not_found)?;
     if tangent {
-        let roots = topology.tangent_chains(&solid);
-        let picked: Vec<u32> = chains.iter().map(|&c| roots[c as usize]).collect();
-        chains = (0..roots.len() as u32)
-            .filter(|&c| picked.contains(&roots[c as usize]))
+        let (roots, members) = tangent_members(&solid, &topology);
+        let mut picked: Vec<u32> = chains.iter().map(|&c| roots[c as usize]).collect();
+        picked.sort_unstable();
+        picked.dedup();
+        chains = (picked.iter())
+            .flat_map(|root| &members[root])
+            .copied()
             .collect();
     }
     chains.sort_unstable();
