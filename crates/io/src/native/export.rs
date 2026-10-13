@@ -8,7 +8,7 @@ use std::io;
 use std::path::Path;
 
 use super::atomic::{self, Mode};
-use super::files::{display_name, resolved};
+use super::path::{display_name, resolved};
 use crate::three_mf::{self, Body};
 
 /// Writes `bodies` as a 3MF package titled `title` to `path`, replacing a

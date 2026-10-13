@@ -2,8 +2,8 @@
 //! with each request (`files`), the lock files (`sidecar`), the store of
 //! new designs, the recent files list and the settings at their paths
 //! (`store`, `recent`, `settings`, the last two through `config`),
-//! exported files (`export`), the panic recorded (`panicked`), and the
-//! platform's file dialogs (`pick`).
+//! exported files (`export`), the paths both take (`path`), the panic
+//! recorded (`panicked`), and the platform's file dialogs (`pick`).
 
 mod atomic;
 mod config;
@@ -11,6 +11,7 @@ mod export;
 pub(crate) mod files;
 pub(crate) mod mcp_token;
 pub(crate) mod panicked;
+mod path;
 pub(crate) mod pick;
 mod recent;
 pub(crate) mod settings;
