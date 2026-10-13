@@ -3,8 +3,6 @@
 //! so a broken message mustn't allocate without end. Plain Rust, so it's
 //! tested natively.
 
-use std::fmt;
-
 /// Bytes received from the other side, copied once into the vector they
 /// end up in: a JS `Uint8Array` on the web, a slice in tests.
 pub trait Buffer {
@@ -56,19 +54,12 @@ pub fn copy(buffer: &(impl Buffer + ?Sized), max: usize) -> Result<Vec<u8>, TooL
 }
 
 /// Bytes refused for being more than their bound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("message too large: {len} bytes")]
 pub struct TooLarge {
     /// How many bytes there were.
     pub len: usize,
 }
-
-impl fmt::Display for TooLarge {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "message too large: {} bytes", self.len)
-    }
-}
-
-impl std::error::Error for TooLarge {}
 
 #[cfg(test)]
 mod tests {

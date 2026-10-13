@@ -406,167 +406,133 @@ impl Span {
 }
 
 /// Why an expression was refused, and the part of its text it's about.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("{kind}")]
 pub struct Error {
     pub kind: ErrorKind,
     pub span: Span,
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)
-    }
-}
-
-impl std::error::Error for Error {}
-
 /// Why an expression was refused.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ErrorKind {
     /// Nothing but whitespace.
+    #[error("enter a value")]
     Empty,
     /// Over [`MAX_LEN`] bytes.
+    #[error("too long, at most {MAX_LEN} characters")]
     TooLong,
     /// Brackets or signs nested over [`MAX_DEPTH`] deep.
+    #[error("nested too deeply")]
     TooDeep,
     /// Something that isn't part of an expression, or not where it is.
+    #[error("unexpected '{0}'")]
     Unexpected(String),
     /// A comma, as a decimal point in some locales.
+    #[error("use '.' for decimals")]
     Comma,
     /// A word that isn't a unit, after a number or a bracket.
+    #[error("unknown unit '{0}'")]
     UnknownUnit(String),
     /// The end, or an operator or `)`, where a number was expected.
+    #[error("expected a number")]
     ExpectedNumber,
     /// A `(` without its `)`.
+    #[error("missing ')'")]
     Unclosed,
     /// A number too large to hold.
+    #[error("number too large")]
     BadNumber,
     /// A unit after something that already has units: `(1 in) mm`.
+    #[error("that already has a unit")]
     UnitOnUnit,
     /// A unit after a parameter's name, `count mm`: a parameter's units
     /// are its own.
+    #[error("a parameter takes no unit after it: multiply by one, as '{0} * 1 mm'")]
     UnitOnParam(String),
     /// Adding or subtracting values of different kinds.
-    Mismatch {
-        add: bool,
-        left: Kind,
-        right: Kind,
-    },
+    #[error(fmt = mismatch)]
+    Mismatch { add: bool, left: Kind, right: Kind },
     /// A step's result is too large to hold.
+    #[error("too large")]
     Overflow,
+    #[error("division by zero")]
     DivideByZero,
     /// The result isn't the quantity asked for.
-    Wrong {
-        want: Quantity,
-        got: Kind,
-    },
+    #[error("that's {}, not {}", got.name(), want.name())]
+    Wrong { want: Quantity, got: Kind },
     /// Farther from zero than `max` (model units), shown in `unit`, or
     /// not `under` it where it must be.
+    #[error("must be {} {}", if *under { "under" } else { "at most" }, format(*max, *unit))]
     TooLarge {
         max: f64,
         unit: Option<Unit>,
         under: bool,
     },
     /// Zero or below where it must be above zero.
+    #[error("must be above zero")]
     NotPositive,
     /// Less than `min` (model units), shown in `unit`: a length in
     /// millimetres, whatever the design's units, as coarser ones may show
     /// it as zero.
-    TooSmall {
-        min: f64,
-        unit: Option<Unit>,
-    },
+    #[error("must be at least {}", format(*min, *unit))]
+    TooSmall { min: f64, unit: Option<Unit> },
     /// Not a whole number where a count is asked for.
+    #[error("must be a whole number")]
     NotWhole,
     /// A stored [`Value`] whose text evaluates to something else.
-    Disagrees {
-        stored: f64,
-        evaluated: f64,
-    },
+    #[error("the stored value {stored} doesn't match its expression, {evaluated}")]
+    Disagrees { stored: f64, evaluated: f64 },
     /// A name no parameter has, and the one it may be a misspelling of.
+    #[error(fmt = unknown_name)]
     UnknownName {
         name: String,
         suggestion: Option<String>,
     },
     /// A use of a parameter that's in error itself.
+    #[error("the parameter '{0}' has an error")]
     BrokenParam(String),
     /// A parameter that uses itself, through others or not: the span is
     /// the use that leads round.
+    #[error("a parameter can't use itself, even through others")]
     Cycle,
     /// A parameter that comes to an area or a mix of units: a parameter
     /// is a length, an angle or a number.
+    #[error("that's {}: a parameter is a length, an angle or a number", .0.name())]
     ParamKind(Kind),
     /// A parameter's name that can't be one.
+    #[error("{0}")]
     BadName(NameError),
     /// A parameter named as an earlier one is.
+    #[error("there's already a parameter '{0}'")]
     Duplicate(String),
     /// A parameter past [`MAX_PARAMS`].
+    #[error("too many parameters, at most {MAX_PARAMS}")]
     TooManyParams,
 }
 
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorKind::Empty => write!(f, "enter a value"),
-            ErrorKind::TooLong => write!(f, "too long, at most {MAX_LEN} characters"),
-            ErrorKind::TooDeep => write!(f, "nested too deeply"),
-            ErrorKind::Unexpected(what) => write!(f, "unexpected '{what}'"),
-            ErrorKind::Comma => write!(f, "use '.' for decimals"),
-            ErrorKind::UnknownUnit(word) => write!(f, "unknown unit '{word}'"),
-            ErrorKind::ExpectedNumber => write!(f, "expected a number"),
-            ErrorKind::Unclosed => write!(f, "missing ')'"),
-            ErrorKind::BadNumber => write!(f, "number too large"),
-            ErrorKind::UnitOnUnit => write!(f, "that already has a unit"),
-            ErrorKind::UnitOnParam(name) => write!(
-                f,
-                "a parameter takes no unit after it: multiply by one, as '{name} * 1 mm'"
-            ),
-            ErrorKind::Mismatch { add, left, right } => {
-                let verb = if *add { "add" } else { "subtract" };
-                if left == right {
-                    // Only a mixed kind or an area on both sides can get
-                    // here: equal kinds that differ in powers.
-                    write!(f, "can't {verb} values of different units")
-                } else {
-                    write!(f, "can't {verb} {} and {}", left.name(), right.name())
-                }
-            }
-            ErrorKind::Overflow => write!(f, "too large"),
-            ErrorKind::DivideByZero => write!(f, "division by zero"),
-            ErrorKind::Wrong { want, got } => {
-                write!(f, "that's {}, not {}", got.name(), want.name())
-            }
-            ErrorKind::TooLarge { max, unit, under } => {
-                let bound = if *under { "under" } else { "at most" };
-                write!(f, "must be {bound} {}", format(*max, *unit))
-            }
-            ErrorKind::NotPositive => write!(f, "must be above zero"),
-            ErrorKind::NotWhole => write!(f, "must be a whole number"),
-            ErrorKind::TooSmall { min, unit } => {
-                write!(f, "must be at least {}", format(*min, *unit))
-            }
-            ErrorKind::Disagrees { stored, evaluated } => write!(
-                f,
-                "the stored value {stored} doesn't match its expression, {evaluated}"
-            ),
-            ErrorKind::UnknownName { name, suggestion } => {
-                write!(f, "unknown parameter '{name}'")?;
-                match suggestion {
-                    Some(suggestion) => write!(f, ", did you mean '{suggestion}'?"),
-                    None => Ok(()),
-                }
-            }
-            ErrorKind::BrokenParam(name) => write!(f, "the parameter '{name}' has an error"),
-            ErrorKind::Cycle => write!(f, "a parameter can't use itself, even through others"),
-            ErrorKind::ParamKind(kind) => write!(
-                f,
-                "that's {}: a parameter is a length, an angle or a number",
-                kind.name()
-            ),
-            ErrorKind::BadName(error) => error.fmt(f),
-            ErrorKind::Duplicate(name) => write!(f, "there's already a parameter '{name}'"),
-            ErrorKind::TooManyParams => write!(f, "too many parameters, at most {MAX_PARAMS}"),
-        }
+/// [`ErrorKind::Mismatch`]'s message.
+fn mismatch(add: &bool, left: &Kind, right: &Kind, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let verb = if *add { "add" } else { "subtract" };
+    if left == right {
+        // Only a mixed kind or an area on both sides can get here: equal
+        // kinds that differ in powers.
+        write!(f, "can't {verb} values of different units")
+    } else {
+        write!(f, "can't {verb} {} and {}", left.name(), right.name())
+    }
+}
+
+/// [`ErrorKind::UnknownName`]'s message.
+fn unknown_name(
+    name: &str,
+    suggestion: &Option<String>,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    write!(f, "unknown parameter '{name}'")?;
+    match suggestion {
+        Some(suggestion) => write!(f, ", did you mean '{suggestion}'?"),
+        None => Ok(()),
     }
 }
 

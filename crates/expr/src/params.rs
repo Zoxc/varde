@@ -15,7 +15,6 @@
 //! the design's.
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use crate::eval::{Quant, evaluate_param, pin_param_units};
 use crate::parse::{name_spans, unit, word_char};
@@ -345,32 +344,20 @@ fn edits_within(a: &str, b: &str, most: usize) -> Option<usize> {
 }
 
 /// Why a parameter's name was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum NameError {
+    #[error("enter a name")]
     Empty,
     /// Over [`MAX_NAME_LEN`] bytes.
+    #[error("too long, at most {MAX_NAME_LEN} characters")]
     TooLong,
     /// Not a letter or `_` and then letters, digits and `_`.
+    #[error("use letters, digits and '_', starting with a letter or '_'")]
     NotAWord,
     /// A unit's name, such as `mm` or `deg`, in any case.
+    #[error("that's the name of a unit")]
     Unit,
 }
-
-impl fmt::Display for NameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            NameError::Empty => write!(f, "enter a name"),
-            NameError::TooLong => write!(f, "too long, at most {MAX_NAME_LEN} characters"),
-            NameError::NotAWord => write!(
-                f,
-                "use letters, digits and '_', starting with a letter or '_'"
-            ),
-            NameError::Unit => write!(f, "that's the name of a unit"),
-        }
-    }
-}
-
-impl std::error::Error for NameError {}
 
 /// Checks `name` can name a parameter: a word of ASCII letters, digits
 /// and `_`, not starting with a digit, at most [`MAX_NAME_LEN`] bytes, and

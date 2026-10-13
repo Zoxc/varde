@@ -4223,6 +4223,7 @@ name = "varde-expr"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "thiserror 2.0.21",
  "varde-testing",
 ]
 
@@ -4281,6 +4282,7 @@ dependencies = [
  "futures",
  "js-sys",
  "log",
+ "thiserror 2.0.21",
  "wasm-bindgen",
  "web-sys",
 ]

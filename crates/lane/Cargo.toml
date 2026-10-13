@@ -11,6 +11,7 @@ testing = []
 
 [dependencies]
 futures.workspace = true
+thiserror.workspace = true
 
 # The page's and the worker's sides of a Web Worker.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
