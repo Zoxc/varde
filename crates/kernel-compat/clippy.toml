@@ -4,6 +4,8 @@
 # them from `crate::trig` (the `libm` crate) instead, the same bits natively
 # and on wasm. Tests using std as an independent reference allow
 # `clippy::disallowed_methods` in their module.
+# The list is the same in the sketch, kernel-compat and view crates;
+# `crates/sketch/tests/clippy_lists.rs` checks that it stays so.
 disallowed-methods = [
     { path = "f64::sin", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::cos", reason = "platform maths library; use libm / crate::trig" },

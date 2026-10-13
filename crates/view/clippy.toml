@@ -7,6 +7,8 @@
 # types are listed: the view's `f32` maths (the view cube, zooming) is
 # display only. Display-only `f64` code, and tests using std to build
 # inputs, allow `clippy::disallowed_methods` where they use it.
+# The list is the same in the sketch, kernel-compat and view crates;
+# `crates/sketch/tests/clippy_lists.rs` checks that it stays so.
 disallowed-methods = [
     { path = "f64::sin", reason = "platform maths library; use varde_sketch::angle" },
     { path = "f64::cos", reason = "platform maths library; use varde_sketch::angle" },
