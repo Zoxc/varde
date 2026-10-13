@@ -108,15 +108,15 @@ impl ColorTarget {
 /// scene is drawn into, multisampled when [`Renderer::samples`] is above
 /// 1, and what that resolves to, single sampled, which is composited over
 /// the frame's target last.
-pub(super) struct DepthTarget {
-    pub(super) view: wgpu::TextureView,
+pub(super) struct SlotTargets {
+    pub(super) depth: wgpu::TextureView,
     color: ColorTarget,
     /// Group 0 of [`Renderer::composite`]: the colour, resolved.
     pub(super) composite: wgpu::BindGroup,
     pub(super) size: [u32; 2],
 }
 
-impl DepthTarget {
+impl SlotTargets {
     /// The colour target drawn into and what it resolves to, if anything.
     pub(super) fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
         self.color.color()
@@ -146,7 +146,8 @@ impl CoverageTarget {
         size: [u32; 2],
         samples: u32,
     ) -> CoverageTarget {
-        let target = ColorTarget::new(device, [label, label], format, size, samples);
+        let samples_label = format!("{label} samples");
+        let target = ColorTarget::new(device, [label, &samples_label], format, size, samples);
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("varde error colours"),
             size: size_of::<ErrorUniforms>() as u64,
@@ -154,7 +155,7 @@ impl CoverageTarget {
             mapped_at_creation: false,
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("varde errors"),
+            label: Some(label),
             layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -186,10 +187,10 @@ impl CoverageTarget {
 }
 
 impl Renderer {
-    /// A slot's targets of `size`: see [`DepthTarget`].
-    pub(super) fn create_targets(&self, device: &wgpu::Device, size: [u32; 2]) -> DepthTarget {
+    /// A slot's targets of `size`: see [`SlotTargets`].
+    pub(super) fn create_targets(&self, device: &wgpu::Device, size: [u32; 2]) -> SlotTargets {
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let view = texture_view(
+        let depth = texture_view(
             device,
             "varde depth",
             size,
@@ -207,8 +208,8 @@ impl Renderer {
                 resource: wgpu::BindingResource::TextureView(&color.resolved),
             }],
         });
-        DepthTarget {
-            view,
+        SlotTargets {
+            depth,
             color,
             composite,
             size,

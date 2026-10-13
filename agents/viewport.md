@@ -17,7 +17,7 @@ back to 1 where the target's, depth's or halo's format isn't sure to take
 4; WebGL2 takes 4 for all three): faces have no anti-aliasing of their
 own, and their silhouette, where no edge line is drawn over it (a
 cylinder's side, a hidden edge, a faded model), would show stairs. A
-slot's `DepthTarget`, the frame's size, holds the multisampled depth and
+slot's `SlotTargets`, the frame's size, holds the multisampled depth and
 colour and a single sampled colour they resolve to. Each pass clears the
 colour to transparent and resolves (the scene's, the errors'), and a last
 pass (`composite.wgsl`, a full-screen triangle reading its own texel,

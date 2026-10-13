@@ -351,7 +351,7 @@ pub struct Slot {
     pub(super) sketch_base: SketchBuffers,
     pub(super) sketch_source: Source<SketchLayer>,
     pub(super) sketch_live: SketchBuffers,
-    pub(super) depth: Option<DepthTarget>,
+    pub(super) targets: Option<SlotTargets>,
     /// What the draws do, set afresh each prepare.
     pub(super) state: SlotState,
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
@@ -567,7 +567,7 @@ impl Renderer {
             sketch_base: SketchBuffers::default(),
             sketch_source: Source::default(),
             sketch_live: SketchBuffers::default(),
-            depth: None,
+            targets: None,
             state: SlotState {
                 grid_steps: (self.alphas.opaque, None),
                 ..SlotState::default()
@@ -851,9 +851,9 @@ impl Renderer {
     fn ensure_targets(&self, slot: &mut Slot, p: &mut Prepare<'_, '_>) {
         let device = p.device;
         let size = p.frame.target_size.map(|s| s.max(1));
-        if slot.depth.as_ref().map(|d| d.size) != Some(size) {
+        if slot.targets.as_ref().map(|t| t.size) != Some(size) {
             p.changed = true;
-            slot.depth = Some(self.create_targets(device, size));
+            slot.targets = Some(self.create_targets(device, size));
         }
         if patterned(slot) && slot.pattern_target.as_ref().map(|t| t.size) != Some(size) {
             p.changed = true;

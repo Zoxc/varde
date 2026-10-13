@@ -206,7 +206,7 @@ impl Renderer {
         clip: ClipRect,
         backdrop: bool,
     ) {
-        let Some(depth) = &slot.depth else { return };
+        let Some(targets) = &slot.targets else { return };
         if clip.width == 0 || clip.height == 0 {
             return;
         }
@@ -217,7 +217,7 @@ impl Renderer {
         *drawn = backdrop.then_some(clip);
         drop(drawn);
         if fresh {
-            self.record_scene(slot, encoder, depth, clip, backdrop);
+            self.record_scene(slot, encoder, targets, clip, backdrop);
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -237,17 +237,17 @@ impl Renderer {
         });
         pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
         pass.set_pipeline(&self.composite);
-        pass.set_bind_group(0, &depth.composite, &[]);
+        pass.set_bind_group(0, &targets.composite, &[]);
         pass.draw(0..3, 0..1);
     }
 
-    /// Records drawing `slot`'s scene into `depth`'s resolved colour, as
+    /// Records drawing `slot`'s scene into `targets`' resolved colour, as
     /// [`Self::record`] says.
     pub(super) fn record_scene(
         &self,
         slot: &Slot,
         encoder: &mut wgpu::CommandEncoder,
-        depth: &DepthTarget,
+        targets: &SlotTargets,
         clip: ClipRect,
         backdrop: bool,
     ) {
@@ -268,28 +268,28 @@ impl Renderer {
         // last, premultiplied: blending over transparent leaves it so.
         let color = ColorPass {
             store: depth_store,
-            ..ColorPass::clear("varde scene", depth.color())
+            ..ColorPass::clear("varde scene", targets.color())
         };
         let depth_ops = wgpu::Operations {
             load: wgpu::LoadOp::Clear(1.0),
             store: depth_store,
         };
-        let mut pass = self.begin(slot, encoder, color, depth, depth_ops, clip);
+        let mut pass = self.begin(slot, encoder, color, targets, depth_ops, clip);
         self.draw_scene(&mut pass, slot, backdrop);
         if let Some(target) = pattern {
             drop(pass);
-            self.draw_pattern(slot, encoder, depth, target, clip);
-            let color = ColorPass::load("varde scene", depth.color());
+            self.draw_pattern(slot, encoder, targets, target, clip);
+            let color = ColorPass::load("varde scene", targets.color());
             let depth_ops = wgpu::Operations {
                 load: wgpu::LoadOp::Load,
                 store: depth_store,
             };
-            pass = self.begin(slot, encoder, color, depth, depth_ops, clip);
+            pass = self.begin(slot, encoder, color, targets, depth_ops, clip);
         }
         self.draw_scene_top(&mut pass, slot, backdrop, pattern);
         if let Some(errors) = errors {
             drop(pass);
-            self.draw_errors(slot, encoder, depth, errors, clip);
+            self.draw_errors(slot, encoder, targets, errors, clip);
         } else {
             self.draw_sketch(&mut pass, slot);
             drop(pass);
@@ -297,7 +297,7 @@ impl Renderer {
     }
 
     /// Begins a pass of `slot`'s frame drawing into the colour target
-    /// `color` and `depth`, its depth loaded and stored as `depth_ops`
+    /// `color` and `targets`' depth, the depth loaded and stored as `depth_ops`
     /// say (the stencil cleared, never kept), within `clip`, with the
     /// uniforms bound and parts drawn opaque.
     pub(super) fn begin<'p>(
@@ -305,7 +305,7 @@ impl Renderer {
         slot: &Slot,
         encoder: &'p mut wgpu::CommandEncoder,
         color: ColorPass<'_>,
-        depth: &DepthTarget,
+        targets: &SlotTargets,
         depth_ops: wgpu::Operations<f32>,
         clip: ClipRect,
     ) -> wgpu::RenderPass<'p> {
@@ -322,7 +322,7 @@ impl Renderer {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth.view,
+                view: &targets.depth,
                 depth_ops: Some(depth_ops),
                 stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
@@ -343,18 +343,18 @@ impl Renderer {
 
     /// Records drawing `slot`'s hovered and selected faces' pattern where
     /// the model hides them into `pattern`'s mask, as [`Self::draw_hidden_picks`]
-    /// draws it, with `depth` holding the model's depth.
+    /// draws it, with `targets` holding the model's depth.
     pub(super) fn draw_pattern(
         &self,
         slot: &Slot,
         encoder: &mut wgpu::CommandEncoder,
-        depth: &DepthTarget,
+        targets: &SlotTargets,
         pattern: &CoverageTarget,
         clip: ClipRect,
     ) {
         let Some(mesh) = &slot.mesh else { return };
         let color = ColorPass::clear("varde selected pattern", pattern.color());
-        let mut pass = self.begin(slot, encoder, color, depth, KEEP_DEPTH, clip);
+        let mut pass = self.begin(slot, encoder, color, targets, KEEP_DEPTH, clip);
         bind_faces(&mut pass, mesh);
         for pick in self.picks(slot) {
             let both = &self.hovered_selected_face_pattern;
@@ -408,8 +408,8 @@ impl Renderer {
         }
     }
 
-    /// Records drawing `slot`'s errors over the scene in `depth`'s colour, with
-    /// `depth` holding the model's depth: their halo's coverage into
+    /// Records drawing `slot`'s errors over the scene in `targets`' colour, with
+    /// `targets` holding the model's depth: their halo's coverage into
     /// `error_target`'s, seen and hidden, then composited over the target
     /// once, then the errors themselves, a kind at a time, hidden then
     /// seen; and last the sketch being edited.
@@ -417,23 +417,23 @@ impl Renderer {
         &self,
         slot: &Slot,
         encoder: &mut wgpu::CommandEncoder,
-        depth: &DepthTarget,
+        targets: &SlotTargets,
         error_target: &CoverageTarget,
         clip: ClipRect,
     ) {
         let steps = [self.alphas.opaque, self.alphas.step(Some(ERROR_HIDDEN))];
         let errors = &slot.errors;
         let color = ColorPass::clear("varde error halo", error_target.color());
-        let mut pass = self.begin(slot, encoder, color, depth, KEEP_DEPTH, clip);
+        let mut pass = self.begin(slot, encoder, color, targets, KEEP_DEPTH, clip);
         self.draw_error_layers(&mut pass, &self.errors.halo, steps, errors, None);
         drop(pass);
 
-        let color = ColorPass::load("varde errors", depth.color());
+        let color = ColorPass::load("varde errors", targets.color());
         let depth_ops = wgpu::Operations {
             load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Discard,
         };
-        let mut pass = self.begin(slot, encoder, color, depth, depth_ops, clip);
+        let mut pass = self.begin(slot, encoder, color, targets, depth_ops, clip);
         pass.set_pipeline(&self.errors.composite);
         pass.set_bind_group(0, &error_target.group, &[]);
         pass.draw(0..3, 0..1);
