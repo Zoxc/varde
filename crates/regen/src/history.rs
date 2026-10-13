@@ -354,30 +354,33 @@ pub fn note_merge(merged: &mut Vec<(BodyId, BodyId)>, bodies: &[BodyId]) {
     merged.extend(consumed.iter().map(|&body| (body, holder)));
 }
 
-/// Whether each of `bodies` has a solid of its own in `evaluation` (the
-/// bodies the features before a combine, move or mirror made), or why
-/// the feature naming them fails: one a join or a combine consumed
-/// fails it, naming the body holding it (the user meant that body as it
-/// was, not the one it went into), and so does one whose maker failed,
-/// or one that isn't there (its maker deleted, the feature kept).
-pub(crate) fn own_solids(
+/// The solid of each of `bodies` in `evaluation`, in the order named,
+/// if each has one of its own (the bodies the features before a combine,
+/// move or mirror made), or why the feature naming them fails: one a
+/// join or a combine consumed fails it, naming the body holding it (the
+/// user meant that body as it was, not the one it went into), and so
+/// does one whose maker failed, or one that isn't there (its maker
+/// deleted, the feature kept).
+pub(crate) fn own_solids<'e>(
     document: &Document,
-    mut bodies: impl Iterator<Item = BodyId>,
-    evaluation: &Evaluation,
-) -> Result<(), Failed> {
+    bodies: impl Iterator<Item = BodyId>,
+    evaluation: &'e Evaluation,
+) -> Result<Vec<&'e BodySolid>, Failed> {
     let name = |body: BodyId| body_name(document, body);
-    let Some(body) = bodies.find(|&body| evaluation.solid(body).is_none()) else {
-        return Ok(());
-    };
-    if document.body(body).is_none() {
-        return Err(why::BODY_GONE.into());
-    }
-    let consumed = (evaluation.merged.iter()).find(|(consumed, _)| *consumed == body);
-    Err(match consumed {
-        Some(&(_, holder)) => why::consumed(name(body), name(holder)),
-        None => why::no_solid(name(body)),
-    }
-    .into())
+    bodies
+        .map(|body| {
+            evaluation.solid(body).ok_or_else(|| {
+                if document.body(body).is_none() {
+                    return why::BODY_GONE.into();
+                }
+                match merged_into(&evaluation.merged, body) {
+                    Some(holder) => why::consumed(name(body), name(holder)),
+                    None => why::no_solid(name(body)),
+                }
+                .into()
+            })
+        })
+        .collect()
 }
 
 /// [`own_solids`] for one body, giving its solid.
@@ -386,8 +389,7 @@ pub(crate) fn own_solid<'e>(
     body: BodyId,
     evaluation: &'e Evaluation,
 ) -> Result<&'e BodySolid, Failed> {
-    own_solids(document, std::iter::once(body), evaluation)?;
-    Ok(evaluation.solid(body).expect("own_solids found it"))
+    Ok(own_solids(document, std::iter::once(body), evaluation)?[0])
 }
 
 /// Why a feature fails, as the history carries it: in words, and what

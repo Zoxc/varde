@@ -41,8 +41,8 @@ pub(super) fn evaluate(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     let name = |body: BodyId| super::body_name(document, body);
-    own_solids(document, combine.bodies(), evaluation)?;
-    let target = (evaluation.solid(combine.target)).expect("every body named has a solid");
+    // The target is named first.
+    let target = own_solids(document, combine.bodies(), evaluation)?[0];
     // In the order they were made, as the bodies are.
     let tools: Vec<&BodySolid> = (evaluation.bodies.iter())
         .filter(|made| combine.tools.binary_search(&made.body).is_ok())
