@@ -21,7 +21,8 @@ use varde_document::Revision;
 use varde_mcp::tools::Call;
 
 use super::edit::Refused;
-use super::waiting::{Applied, Caller, ClientStep, Undid, Wait, Waiter};
+use super::history::{Applied, ClientStep, Undid};
+use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::Doc;
 
 /// Why an undo is refused when the design isn't as the session's last

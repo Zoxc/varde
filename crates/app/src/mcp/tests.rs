@@ -68,7 +68,7 @@ fn answer(doc: Option<&Doc>, call: &Call) -> ToolReply {
         Call::Sketch(args) => return waits(query::sketch(doc, args).err()),
         Call::Measure(args) => return waits(query::measure(doc, args).err()),
         Call::Render(args) => return waits(query::render(doc, args).err()),
-        _ => return waiting::answer_now(doc, call),
+        _ => return asked::answer_now(doc, call),
     };
     let asked = match query::body_topology(doc, args) {
         Ok(asked) => asked,

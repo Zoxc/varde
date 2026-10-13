@@ -412,8 +412,8 @@ fn a_feature_changed_in_two_runs_is_listed_once() {
     doc.mcp
         .history
         .steps
-        .push_back(super::super::waiting::ClientStep {
-            session: super::super::waiting::ClientSession {
+        .push_back(super::super::history::ClientStep {
+            session: super::super::history::ClientSession {
                 start: 0,
                 id: SessionId::for_tests("a session"),
             },
@@ -444,8 +444,8 @@ fn client_step(varde: &mut Varde) {
     doc.mcp
         .history
         .steps
-        .push_back(super::super::waiting::ClientStep {
-            session: super::super::waiting::ClientSession {
+        .push_back(super::super::history::ClientStep {
+            session: super::super::history::ClientSession {
                 start: 0,
                 id: SessionId::for_tests("a session"),
             },

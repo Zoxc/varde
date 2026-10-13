@@ -317,7 +317,7 @@ impl Mcp {
         };
         push_bounded(
             &mut doc.mcp.history.reverted,
-            super::waiting::STEPS,
+            super::history::STEPS,
             made_revert,
         );
         let serial = self.next_serial();

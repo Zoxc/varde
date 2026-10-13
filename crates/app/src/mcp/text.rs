@@ -8,7 +8,7 @@ use varde_mcp::tools::{
 };
 use varde_view::McpTool;
 
-use super::waiting::Undid;
+use super::history::Undid;
 use super::{RESULT_BYTES, changes, edit};
 use crate::words::{counted, lowercase_first, with_article};
 /// The panel's rows of the user's own edits, `lines`, at most

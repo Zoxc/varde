@@ -751,7 +751,7 @@ impl Doc {
                         generation: self.editor.generation(),
                         made,
                         again,
-                        applied: super::waiting::Applied {
+                        applied: super::history::Applied {
                             before: state,
                             after: self.editor.revision(),
                             undid: None,

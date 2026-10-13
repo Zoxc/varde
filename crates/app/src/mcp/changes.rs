@@ -18,7 +18,7 @@
 //! not changed. The panel's rows leave the reverts made from it out:
 //! each is a step of its own there, as the client's are.
 //!
-//! [`ClientHistory::steps`]: super::waiting::ClientHistory::steps
+//! [`ClientHistory::steps`]: super::history::ClientHistory::steps
 
 use std::collections::BTreeMap;
 
@@ -27,8 +27,8 @@ use serde_json::{Map, Value, json};
 use varde_document::{Body, BodyId, Document, Feature, FeatureId, FeatureKind, Revision, Snapshot};
 
 use super::edit::{color, opacity};
+use super::history::{ClientSession, ClientStep};
 use super::query::{self, Shape};
-use super::waiting::{ClientSession, ClientStep};
 use crate::doc::{Doc, DocId};
 
 /// The most bytes of JSON `user_changes` takes before it names only
@@ -193,7 +193,7 @@ fn said(doc: &Doc, seen: &Seen, session: &ClientSession, panel: bool) -> Said {
 /// a session that last saw it is told the user's changes from.
 fn followed(doc: &Doc, mut revision: Revision) -> Revision {
     // Each step goes to another state; bounded all the same.
-    for _ in 0..2 * super::waiting::STEPS + 1 {
+    for _ in 0..2 * super::history::STEPS + 1 {
         revision = doc.mcp.history.amended_to(revision);
         if doc.editor.is_done(revision) {
             break;

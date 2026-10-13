@@ -602,14 +602,15 @@ session. `Started` and `Ended` track the session; an end
 or a cancel answers the waiting calls of that session or id with an
 error. Every query waits for the model to catch up with the design
 (`Wait::Model`) and is then taken up by `Doc::mcp_query`
-(`mcp/waiting.rs`): `design_summary` and `feature` are answered at
+(`mcp/asked.rs`, with the lane asks and the handlers of their answers): `design_summary` and `feature` are answered at
 once, by `answer_now`; `body_topology`, `measure`, `sketch` and
 `render` are checked and then wait on more (below). With no design open
 every call answers "no design is open".
 
 ### Waiting calls
 
-`mcp/waiting.rs`: a call goes to the open `Doc` (`Doc::mcp_call`),
+`mcp/waiting.rs` (the client's history, `ClientHistory`, is in
+`mcp/history.rs`): a call goes to the open `Doc` (`Doc::mcp_call`),
 which answers it at once or puts it in its table, `Doc::mcp`
 (`waiting::Waiting`), so it's the design's and goes with it. A
 `Waiter` is keyed by an app-side tag (`Waiting::next_tag`, what a

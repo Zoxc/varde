@@ -17,10 +17,12 @@
 
 mod args;
 mod ask;
+mod asked;
 mod blend;
 mod changes;
 mod draw;
 mod edit;
+pub(crate) mod history;
 pub(crate) mod key;
 mod make;
 mod modify;
@@ -485,7 +487,7 @@ impl Mcp {
         if self.live.as_ref().is_some_and(|(at, _)| at.is_now(doc)) {
             return;
         }
-        let session = waiting::ClientSession {
+        let session = history::ClientSession {
             start,
             id: session.clone(),
         };
@@ -570,7 +572,7 @@ impl Mcp {
                 };
                 let from = waiting::Caller {
                     serial,
-                    session: waiting::ClientSession { start, id: session },
+                    session: history::ClientSession { start, id: session },
                     id,
                     came: reply.came(),
                     reply,
