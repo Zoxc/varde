@@ -270,6 +270,60 @@ pub(crate) struct Settled {
 }
 
 impl Proposals {
+    /// Puts `proposal` first in the queue, to be sent next.
+    fn requeue(&mut self, proposal: Proposal) {
+        self.queued.push_front(Pending::Proposal(proposal));
+    }
+
+    /// Takes the proposal an answer from the lane is to, and the revision
+    /// it was proposed on: none for the answer to one dropped (counted
+    /// off) or with nothing in flight.
+    fn take_answered(&mut self) -> Option<(Revision, Proposal)> {
+        if self.dropped > 0 {
+            self.dropped -= 1;
+            return None;
+        }
+        self.in_flight.take()
+    }
+
+    /// Stops asking the user about a change from the queue: whether it
+    /// was.
+    fn cancel_asking(&mut self) -> bool {
+        mem::take(&mut self.asking)
+    }
+
+    /// Drops all that waits, the proposal with the lane (answered still,
+    /// and ignored) and what's queued: whether the user was being asked.
+    fn clear(&mut self) -> bool {
+        self.drop_in_flight();
+        self.queued.clear();
+        self.cancel_asking()
+    }
+
+    /// Takes a new lane in place of one that went: the proposal it had is
+    /// sent again, and no answers to dropped ones or its analysis come.
+    fn lane_replaced(&mut self) {
+        if let Some((_, proposal)) = self.in_flight.take() {
+            self.requeue(proposal);
+        }
+        self.dropped = 0;
+        self.analysing = None;
+    }
+
+    /// Notes the time `now`: slow once those waiting waited [`SLOW`].
+    fn tick(&mut self, now: Instant) {
+        if (self.since).is_some_and(|since| now.saturating_duration_since(since) >= SLOW) {
+            self.slow = true;
+        }
+    }
+
+    /// A new drag session's id.
+    fn next_drag(&mut self) -> u64 {
+        let session = self.next_drag;
+        self.next_drag = session.wrapping_add(1);
+        session
+    }
+
     /// Drops the proposal with the lane, if there's one: its answer,
     /// still to come, is ignored.
     fn drop_in_flight(&mut self) {
@@ -714,7 +768,7 @@ impl Doc {
                     // An edit waiting for the model keeps its place, and
                     // what's behind it waits.
                     if self.client_queued_turn(tag) {
-                        self.proposals.queued.push_front(Pending::Client { tag });
+                        self.proposals.wait_client_first(tag);
                         break;
                     }
                     continue;
@@ -765,9 +819,7 @@ impl Doc {
                 remeasured(&mut proposal.edit, measured, &sketch, &design);
             }
             let Some(solver) = &mut self.solver else {
-                self.proposals
-                    .queued
-                    .push_front(Pending::Proposal(proposal));
+                self.proposals.requeue(proposal);
                 break;
             };
             solver.send(Request::Propose {
@@ -784,6 +836,12 @@ impl Doc {
         self.proposals.settle();
     }
 
+    /// Puts `proposal` first in the queue and sends what's next.
+    fn requeue_and_send(&mut self, proposal: Proposal) {
+        self.proposals.requeue(proposal);
+        self.send_proposal();
+    }
+
     /// Takes back the newest of the user's own that waits, as undo does:
     /// the last change or proposal of theirs queued, or else the question
     /// a change from the queue asks (cancelling it), or else the proposal
@@ -795,7 +853,7 @@ impl Doc {
         let proposals = &mut self.proposals;
         let newest = proposals.queued.iter().rposition(Pending::users);
         if newest.and_then(|at| proposals.queued.remove(at)).is_none() {
-            if mem::take(&mut proposals.asking) {
+            if proposals.cancel_asking() {
                 self.deleting = None;
             } else if proposals.users_in_flight() {
                 proposals.drop_in_flight();
@@ -809,10 +867,7 @@ impl Doc {
     /// behind it, as restoring recovered changes does: the proposal with
     /// the lane is answered still, and ignored.
     pub(crate) fn drop_proposals(&mut self) {
-        let proposals = &mut self.proposals;
-        proposals.drop_in_flight();
-        proposals.queued.clear();
-        if mem::take(&mut proposals.asking) {
+        if self.proposals.clear() {
             self.deleting = None;
         }
         self.proposals.settle();
@@ -891,19 +946,13 @@ impl Doc {
     /// Takes the `answer` to the proposal on `base` with the lane, unless
     /// it was dropped: commits it, or says why not, and sends the next.
     fn proposal_answered(&mut self, base: Revision, answer: Answer) {
-        let proposals = &mut self.proposals;
-        if proposals.dropped > 0 {
-            proposals.dropped -= 1;
-            return;
-        }
-        let Some((sent, proposal)) = proposals.in_flight.take() else {
+        let Some((sent, proposal)) = self.proposals.take_answered() else {
             return;
         };
         if base != sent || base != self.editor.revision() {
             // Something else was committed since it was proposed: it's
             // proposed again on what's committed now.
-            proposals.queued.push_front(Pending::Proposal(proposal));
-            self.send_proposal();
+            self.requeue_and_send(proposal);
             return;
         }
         let feature = proposal.feature;
@@ -942,10 +991,7 @@ impl Doc {
                 let (first, last) = steps.ops;
                 steps.referenced.extend(first..=last);
             }
-            self.proposals
-                .queued
-                .push_front(Pending::Proposal(reference));
-            self.send_proposal();
+            self.requeue_and_send(reference);
             return;
         }
         // The next step of a client's edit in steps goes on from this
@@ -953,8 +999,7 @@ impl Doc {
         if let Answer::Accepted(sketch, _) = &answer
             && let Some(next) = next_step(&proposal, base, sketch)
         {
-            self.proposals.queued.push_front(Pending::Proposal(next));
-            self.send_proposal();
+            self.requeue_and_send(next);
             return;
         }
         // The client's commits through its apply path, or answers its call
@@ -1174,13 +1219,7 @@ impl Doc {
     /// Notes the time `now`, telling whether edits have waited on the
     /// solver long enough to say so.
     pub(crate) fn tick(&mut self, now: Instant) {
-        let proposals = &mut self.proposals;
-        if proposals
-            .since
-            .is_some_and(|since| now.saturating_duration_since(since) >= SLOW)
-        {
-            proposals.slow = true;
-        }
+        self.proposals.tick(now);
     }
 
     /// Whether frames are wanted to tell when edits have waited long
@@ -1194,12 +1233,7 @@ impl Doc {
     /// so they're asked of the new one, and no answers to dropped ones
     /// are to come.
     pub(crate) fn lane_replaced(&mut self) {
-        let proposals = &mut self.proposals;
-        if let Some((_, proposal)) = proposals.in_flight.take() {
-            proposals.queued.push_front(Pending::Proposal(proposal));
-        }
-        proposals.dropped = 0;
-        proposals.analysing = None;
+        self.proposals.lane_replaced();
         // The client's analyses went with the old lane: their calls say so.
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp_end_analyses();
@@ -1207,9 +1241,7 @@ impl Doc {
 
     /// A new drag session's id.
     pub(super) fn next_drag(&mut self) -> u64 {
-        let session = self.proposals.next_drag;
-        self.proposals.next_drag = session.wrapping_add(1);
-        session
+        self.proposals.next_drag()
     }
 
     /// Makes the sketch being edited as it's worked on: as committed, with
