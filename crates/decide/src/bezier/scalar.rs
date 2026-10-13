@@ -19,7 +19,10 @@ use crate::num::dd::Dd;
 /// [`mid`](Scalar::mid) must be symmetric to the bit,
 /// `a.mid(&b) == b.mid(&a)`, error parts included: the split at ½ relies
 /// on it for the same bits under reversal.
-pub trait Scalar: Clone + fmt::Debug {
+///
+/// Equality is of the representation, error parts included: a value
+/// equal to [`int(k)`](Scalar::int) is exactly `k`.
+pub trait Scalar: Clone + fmt::Debug + PartialEq {
     /// The integer `k` exactly, at `like`'s level (and width).
     fn int(k: u32, like: &Self) -> Self;
 
@@ -52,6 +55,14 @@ pub trait Scalar: Clone + fmt::Debug {
     fn eval_fast(c: &[Self], t: &Self) -> Option<Self> {
         let _ = (c, t);
         None
+    }
+
+    /// Whether this is the integer `k` exactly, with no error (as a
+    /// parameter, a certain end of `[0, 1]` for `k` 0 or 1). A zero of
+    /// either sign is the integer 0.
+    #[inline]
+    fn is_int(&self, k: u32) -> bool {
+        *self == Self::int(k, self)
     }
 }
 
@@ -279,6 +290,18 @@ impl<B: BigF> Scalar for Bounded<B> {
     #[inline]
     fn neg(&self) -> Self {
         -self
+    }
+
+    /// As the other levels': exactly `k` with no error, `−0` the integer
+    /// 0 (the representation's equality tells the zeros apart).
+    fn is_int(&self, k: u32) -> bool {
+        self.err_trunc == 0.0
+            && self.err_round == 0.0
+            && if k == 0 {
+                self.v.is_zero()
+            } else {
+                self.v == B::from_f64(f64::from(k), self.v.width())
+            }
     }
 
     /// The sum times an exact ½ (exact itself unless it leaves the

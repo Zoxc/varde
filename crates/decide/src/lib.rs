@@ -5,7 +5,7 @@
 //! [`num::expansion`], the exact floating-point expansions,
 //! [`num::exact`], the exact flat predicates over them,
 //! [`num::trig`], the deterministic trigonometry, and [`bezier`], the
-//! Bernstein forms over those numbers.
+//! Bernstein forms over those numbers, in one and two parameters.
 
 pub mod bezier;
 pub mod num;

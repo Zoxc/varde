@@ -178,9 +178,15 @@ pub struct Bounded<T = f64> {
 }
 
 impl<T> Bounded<T> {
-    /// A value with the given error bounds (both `≥ 0`, possibly `+∞`).
+    /// A value with the given error bounds (both `≥ 0`, possibly `+∞`; a
+    /// NaN part leaves the value uncertified). A negative part would
+    /// certify a value no bound covers, so debug builds reject it.
     #[inline]
     pub const fn new(v: T, err_trunc: f64, err_round: f64) -> Self {
+        debug_assert!(
+            (err_trunc >= 0.0 || err_trunc.is_nan()) && (err_round >= 0.0 || err_round.is_nan()),
+            "Bounded error parts must be non-negative"
+        );
         Bounded {
             v,
             err_trunc,
@@ -210,9 +216,15 @@ impl<T> Bounded<T> {
     }
 
     /// The same value with a further truncation error `t ≥ 0` (a remainder
-    /// the method leaves out).
+    /// the method leaves out; a NaN leaves the value uncertified). A
+    /// negative `t` would shrink the bound below the error, so debug
+    /// builds reject it, as [`new`](Self::new) does.
     #[inline]
     pub fn with_trunc(self, t: f64) -> Self {
+        debug_assert!(
+            t >= 0.0 || t.is_nan(),
+            "Bounded error parts must be non-negative"
+        );
         Bounded {
             err_trunc: add_up(self.err_trunc, t),
             ..self

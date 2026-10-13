@@ -567,3 +567,13 @@ fn hand_built_non_finite_values_are_uncertified() {
         }
     }
 }
+
+/// A negative error part would certify a value no bound covers (here an
+/// enclosure `[1.5, 0.5]` missing the value 1 itself): debug builds
+/// reject it, as a further truncation error too.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "non-negative")]
+fn negative_truncation_is_rejected() {
+    let _ = Bounded::exact(1.0).with_trunc(-0.5);
+}

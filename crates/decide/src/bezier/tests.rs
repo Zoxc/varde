@@ -15,16 +15,16 @@ use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::{Bounded, ETA, U};
 use crate::num::dd::Dd;
 
-fn q(x: f64) -> Q {
+pub(super) fn q(x: f64) -> Q {
     Q::try_from(x).expect("finite")
 }
 
-fn qabs(x: Q) -> Q {
+pub(super) fn qabs(x: Q) -> Q {
     if x < 0u32 { -x } else { x }
 }
 
 /// A precision level's scalar, as the tests see it.
-trait Level: Scalar {
+pub(super) trait Level: Scalar {
     const NAME: &'static str;
 
     /// The value `hi + lo` exactly, with no error (`lo` dropped at the
@@ -128,19 +128,19 @@ impl Level for Bounded<Big> {
     }
 }
 
-struct Rng(varde_testkit::rng::Rng);
+pub(super) struct Rng(pub(super) varde_testkit::rng::Rng);
 
 impl Rng {
-    fn new(seed: u64) -> Rng {
+    pub(super) fn new(seed: u64) -> Rng {
         Rng(varde_testkit::rng::Rng::new(seed))
     }
 
-    fn below(&mut self, n: u64) -> u64 {
+    pub(super) fn below(&mut self, n: u64) -> u64 {
         self.0.next_u64() % n
     }
 
     /// `±m·2ᵉ`, `m` in `[1, 2)` with a random mantissa, `e` in `lo..=hi`.
-    fn pow(&mut self, lo: i32, hi: i32) -> f64 {
+    pub(super) fn pow(&mut self, lo: i32, hi: i32) -> f64 {
         let span = u64::try_from(hi - lo + 1).expect("lo ≤ hi");
         let e = lo + i32::try_from(self.below(span)).expect("small");
         let m = f64::from_bits(0x3FF0_0000_0000_0000 | self.0.next_u64() >> 12);
@@ -151,7 +151,7 @@ impl Rng {
     /// The scale of one polynomial's coefficients: moderate mostly, near
     /// the bottom of the range (subnormal products) or in it (subnormal
     /// coefficients) sometimes.
-    fn scale(&mut self) -> i32 {
+    pub(super) fn scale(&mut self) -> i32 {
         match self.below(16) {
             0 | 1 => -1000,
             2 => -1060,
@@ -162,7 +162,7 @@ impl Rng {
 
     /// A coefficient about `2^scale`: zero sometimes, else spread over a
     /// few binades below it, with a double-double low part.
-    fn coef(&mut self, scale: i32) -> (f64, f64) {
+    pub(super) fn coef(&mut self, scale: i32) -> (f64, f64) {
         if self.below(10) == 0 {
             return (0.0, 0.0);
         }
@@ -176,7 +176,7 @@ impl Rng {
     }
 
     /// Error parts for a value of magnitude about `m`.
-    fn errs(&mut self, m: f64) -> (f64, f64) {
+    pub(super) fn errs(&mut self, m: f64) -> (f64, f64) {
         let part = |rng: &mut Rng| match rng.below(3) {
             0 => 0.0,
             1 => m.abs() * rng.pow(-55, -30).abs(),
@@ -187,7 +187,7 @@ impl Rng {
     }
 
     /// A point in `[−1, 1]`: an end, the middle, or a dyadic between.
-    fn lambda(&mut self) -> Q {
+    pub(super) fn lambda(&mut self) -> Q {
         match self.below(4) {
             0 => q(-1.0),
             1 => q(1.0),
@@ -199,7 +199,7 @@ impl Rng {
     /// A parameter in `[0, 1]`: ½ or an end sometimes, a dyadic, a
     /// multiple of `2⁻⁵³` (`1 − t` exact), or a float below ½ with a full
     /// mantissa (`1 − t` mostly rounds).
-    fn t(&mut self) -> f64 {
+    pub(super) fn t(&mut self) -> f64 {
         match self.below(8) {
             0 => 0.5,
             1 => 0.0,
@@ -232,7 +232,7 @@ impl Rng {
 }
 
 /// `2ᵉ`, exactly for `e` in the `f64` range.
-fn pow2(e: i32) -> f64 {
+pub(super) fn pow2(e: i32) -> f64 {
     let mut x = 1.0;
     let step = if e < 0 { 0.5 } else { 2.0 };
     for _ in 0..e.unsigned_abs() {
@@ -282,7 +282,7 @@ fn elevate_q(c: &[Q]) -> Vec<Q> {
 
 /// Checks a certified result against its exact value; returns whether it
 /// was certified.
-fn holds<S: Level>(what: &str, r: &S, exact: &Q) -> bool {
+pub(super) fn holds<S: Level>(what: &str, r: &S, exact: &Q) -> bool {
     if !r.certified() {
         return false;
     }
@@ -297,7 +297,7 @@ fn holds<S: Level>(what: &str, r: &S, exact: &Q) -> bool {
 }
 
 /// A rational rounded to an `f64`, for messages.
-fn approx(x: &Q) -> f64 {
+pub(super) fn approx(x: &Q) -> f64 {
     f64::rounding_from(x, Nearest).0
 }
 

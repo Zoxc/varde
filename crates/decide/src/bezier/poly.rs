@@ -1,5 +1,6 @@
 //! A polynomial in Bernstein form on `[0, 1]`: evaluation by de
-//! Casteljau, reversal, degree elevation and the coefficient hull.
+//! Casteljau, reversal, degree elevation, the derivative and the
+//! coefficient hull.
 
 use smallvec::SmallVec;
 
@@ -76,11 +77,16 @@ impl<S: Scalar> Poly<S> {
         self.c.len() - 1
     }
 
-    /// `p(t)`: the level's own method where it has one
-    /// ([`Scalar::eval_fast`]: at the first level, for an exact `t` in
-    /// `[0, 1]`), else de Casteljau in the scalar's operations,
-    /// `bᵢ ← (1 − t)·bᵢ + t·bᵢ₊₁`, which holds for any `t`.
+    /// `p(t)`: at an exact end, `t` exactly 0 or 1, the end coefficient
+    /// itself (`p(0) = b₀`, `p(1) = bₙ`, error parts and all); else the
+    /// level's own method where it has one ([`Scalar::eval_fast`]: at the
+    /// first level, for an exact `t` in `[0, 1]`), else de Casteljau in
+    /// the scalar's operations, `bᵢ ← (1 − t)·bᵢ + t·bᵢ₊₁`, which holds
+    /// for any `t`.
     pub fn eval(&self, t: &S) -> S {
+        if let Some(b) = self.end(t) {
+            return b.clone();
+        }
         if let Some(v) = S::eval_fast(&self.c, t) {
             return v;
         }
@@ -93,6 +99,17 @@ impl<S: Scalar> Poly<S> {
             }
         }
         w.swap_remove(0)
+    }
+
+    /// The end coefficient at `t` when `t` is exactly 0 or 1.
+    fn end(&self, t: &S) -> Option<&S> {
+        if t.is_int(0) {
+            self.c.first()
+        } else if t.is_int(1) {
+            self.c.last()
+        } else {
+            None
+        }
     }
 
     /// `p(1 − t)`: the coefficients in reverse order, exactly.
@@ -119,23 +136,46 @@ impl<S: Scalar> Poly<S> {
         Some(Poly { c })
     }
 
+    /// The derivative `p'`, of degree `n − 1`: `n·(bᵢ₊₁ − bᵢ)` (the
+    /// hodograph). A constant's is the zero polynomial of degree 0.
+    pub fn derivative(&self) -> Self {
+        Poly { c: derive(&self.c) }
+    }
+
     /// The coefficient hull: a certified enclosure of `p` on `[0, 1]`.
     pub fn hull(&self) -> Hull {
-        let mut h = Hull {
-            lo: f64::INFINITY,
-            hi: f64::NEG_INFINITY,
-        };
-        for b in &self.c {
-            let [lo, hi] = b.enclose();
-            if lo < h.lo {
-                h.lo = lo;
-            }
-            if hi > h.hi {
-                h.hi = hi;
-            }
-        }
-        h
+        hull_of(&self.c)
     }
+}
+
+/// The coefficients of the derivative of the polynomial with Bernstein
+/// coefficients `c` (non-empty, at most [`MAX_DEGREE`] + 1 of them).
+pub(super) fn derive<S: Scalar>(c: &[S]) -> Coefs<S> {
+    let n = u32::try_from(c.len() - 1).expect("degree at most MAX_DEGREE");
+    if n == 0 {
+        return smallvec::smallvec![S::int(0, &c[0])];
+    }
+    c.windows(2)
+        .map(|w| S::int(n, &w[1]).mul(&w[1].sub(&w[0])))
+        .collect()
+}
+
+/// The least and greatest of the coefficients' enclosures.
+pub(super) fn hull_of<S: Scalar>(c: &[S]) -> Hull {
+    let mut h = Hull {
+        lo: f64::INFINITY,
+        hi: f64::NEG_INFINITY,
+    };
+    for b in c {
+        let [lo, hi] = b.enclose();
+        if lo < h.lo {
+            h.lo = lo;
+        }
+        if hi > h.hi {
+            h.hi = hi;
+        }
+    }
+    h
 }
 
 /// One degree up (degree `n` from `c.len() = n + 1`, at most
