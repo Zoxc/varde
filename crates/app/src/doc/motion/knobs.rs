@@ -114,6 +114,26 @@ impl KnobAnchor {
     }
 }
 
+/// Whether a knob of the handle of a `kind` operation can type into
+/// `field`: one [`Doc::motion_knobs`] could give it.
+fn knob_field(kind: MotionKind, field: MotionField) -> bool {
+    use MotionField as F;
+    match kind {
+        MotionKind::OffsetFace => field == F::Distance,
+        MotionKind::Shell => field == F::Thickness,
+        MotionKind::Draft => field == F::Angle,
+        MotionKind::Chamfer => matches!(field, F::ChamferDistance | F::ChamferSecond),
+        MotionKind::Fillet => field == F::Radius,
+        MotionKind::Scale => matches!(field, F::Factor | F::AxisFactor(_)),
+        MotionKind::Align => matches!(field, F::Distance | F::Angle),
+        MotionKind::LinearPattern | MotionKind::CircularPattern => {
+            matches!(field, F::Count | F::Spread)
+        }
+        MotionKind::Sweep => matches!(field, F::Pitch | F::Turns | F::Twist),
+        _ => false,
+    }
+}
+
 impl Doc {
     /// The knobs of the handle of the operation set up in `session`, with
     /// the bodies' box in the model shown `bounds`: none in a document
@@ -154,26 +174,22 @@ impl Doc {
         knobs.into_iter().filter(finite).collect()
     }
 
-    /// Types where knob `index` of the handle was dragged to, `value` in
-    /// its field's own units snapped to steps of `step`, into its field,
-    /// as the knob says. Past what the field takes, it stands as near as
+    /// Types where a knob of the handle was dragged to, `value` in
+    /// `field`'s own units snapped to steps of `step` as `snap` says,
+    /// into `field`, if the session's knobs could have it. Past what the field takes, it stands as near as
     /// the snap goes ([`clamped`]), but a chamfer's or fillet's size
     /// dragged to zero or past it reads zero, which its field refuses, so
     /// the model shows without it. An offset face's sign is its side.
-    pub(super) fn drag_knob(&mut self, index: usize, value: f64, step: f64) {
+    pub(super) fn drag_knob(&mut self, field: MotionField, snap: KnobSnap, value: f64, step: f64) {
         let Some(session) = self.mode.motion() else {
             return;
         };
-        let bounds = self.motion_bounds(session);
-        let Some(knob) = self.motion_knobs(session, bounds).get(index).copied() else {
-            return;
-        };
         let kind = session.kind;
-        if !value.is_finite() {
+        if !self.editable() || !knob_field(kind, field) || !value.is_finite() {
             return;
         }
         let document = self.editor.document();
-        let ask = field_ask(kind, knob.field, &document.design());
+        let ask = field_ask(kind, field, &document.design());
         let dropped = kind.blends() && value <= 0.0;
         // Dragged past what the field takes, as near it as the snap goes.
         let value = if dropped {
@@ -187,7 +203,7 @@ impl Doc {
         } else {
             clamped(value, &ask, step)
         };
-        let units = match knob.snap {
+        let units = match snap {
             KnobSnap::Length => Some(Unit::Length(document.units())),
             KnobSnap::Angle => Some(Unit::Angle(AngleUnit::Deg)),
             KnobSnap::Factor | KnobSnap::Count => None,
@@ -206,12 +222,12 @@ impl Doc {
         let Some(session) = self.mode.motion_mut() else {
             return;
         };
-        let mut field = session.fields[knob.field.index()].clone();
-        field.input(text, &ask);
-        if field.error.is_some() && !dropped {
+        let mut typed = session.fields[field.index()].clone();
+        typed.input(text, &ask);
+        if typed.error.is_some() && !dropped {
             return;
         }
-        session.fields[knob.field.index()] = field;
+        session.fields[field.index()] = typed;
         if kind == MotionKind::OffsetFace {
             session.flip = value < 0.0;
         }

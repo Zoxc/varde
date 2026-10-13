@@ -327,7 +327,8 @@ fn dragged(
     }
     drag.sent = value;
     Some(MotionLook::DragKnob {
-        knob: drag.index,
+        field: knob.field,
+        snap: knob.snap,
         value,
         step,
     })

@@ -624,11 +624,16 @@ pub enum MotionLook {
     /// An offset face's or a draft's Tangent faces: its faces take in
     /// those running on smoothly from them, or not.
     TangentFaces,
-    /// A knob of the operation's handle ([`MotionState::knobs`], by its
-    /// place there) dragged to `value`, in its field's own units
-    /// (millimetres, radians or a factor), snapped to steps of `step`:
-    /// typed into its field.
-    DragKnob { knob: usize, value: f64, step: f64 },
+    /// A knob of the operation's handle ([`MotionState::knobs`]) dragged
+    /// to `value`, in its `field`'s own units (millimetres, radians or a
+    /// factor), snapped to steps of `step` as its `snap` says: typed into
+    /// its field.
+    DragKnob {
+        field: MotionField,
+        snap: KnobSnap,
+        value: f64,
+        step: f64,
+    },
     /// Drops the move or mirror being set up, changing nothing: Cancel,
     /// or `Esc`.
     Cancel,

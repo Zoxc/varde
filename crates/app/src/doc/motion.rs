@@ -1907,7 +1907,12 @@ impl Doc {
                 session.bodies.retain(|&picked| picked != body);
             }
             MotionLook::Input { field, text } => session.input(field, text, document),
-            MotionLook::DragKnob { knob, value, step } => self.drag_knob(knob, value, step),
+            MotionLook::DragKnob {
+                field,
+                snap,
+                value,
+                step,
+            } => self.drag_knob(field, snap, value, step),
             // Only as the handles offer it: a move's, while its bodies
             // are picked, turning by nothing yet or about that world
             // axis already (the offsets are worked out as turning on

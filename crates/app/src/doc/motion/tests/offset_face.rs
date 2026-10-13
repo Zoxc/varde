@@ -171,7 +171,8 @@ fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
 
     // The handle dragged below the face: 2 mm inward.
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Distance,
+        snap: varde_view::KnobSnap::Length,
         value: -2.0,
         step: 0.0,
     });
@@ -358,7 +359,8 @@ fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
         assert!(!drafted(&plates).unwrap().inward);
         plates.answer();
         plates.motion(MotionLook::DragKnob {
-            knob: 0,
+            field: MotionField::Distance,
+            snap: varde_view::KnobSnap::Length,
             value: -dragged,
             step: 0.0,
         });
@@ -401,12 +403,14 @@ fn a_drag_while_the_preview_is_on_its_way_and_the_first_face_changed() {
     ));
     // Dragged up, then down through zero, nothing answered.
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Distance,
+        snap: varde_view::KnobSnap::Length,
         value: 3.0,
         step: 0.0,
     });
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Distance,
+        snap: varde_view::KnobSnap::Length,
         value: -2.0,
         step: 0.0,
     });

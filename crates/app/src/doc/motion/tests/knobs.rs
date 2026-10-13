@@ -40,8 +40,10 @@ fn drafted(plates: &Plates) -> FeatureKind {
 
 /// Knob `knob` dragged to `value`, snapped to steps of a half.
 fn drag(plates: &mut Plates, knob: usize, value: f64) {
+    let knob = knobs(plates)[knob];
     plates.motion(MotionLook::DragKnob {
-        knob,
+        field: knob.field,
+        snap: knob.snap,
         value,
         step: 0.5,
     });

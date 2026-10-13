@@ -18,9 +18,10 @@ along the path, counts whole), its arrow's way (the way the value
 grows), where its shaft starts if it has one (a value, zero but for a
 pattern's count's, from the original), and its colours (Create's,
 Modify's, or a count's teal beside another knob: a pattern's count, a
-sweep's twist or turns). Dragged, the viewport sends `MotionLook::DragKnob { knob,
-value }`, the value snapped; the app (`Doc::drag_knob`) types it into
-the field as the design's units (or degrees, or a bare factor) write
+sweep's twist or turns). Dragged, the viewport sends `MotionLook::DragKnob { field,
+snap, value, step }`, the knob's field and snap with the value snapped; the
+app (`Doc::drag_knob`), without rebuilding the knobs, checks the field is
+one the session's knobs could have and types the value into it as the design's units (or degrees, or a bare factor) write
 it, where the field takes it: none at or below zero but an offset
 face's (its sign its side, zero nothing), an align's and a sweep's
 twist, no draft of a quarter turn or more. None in a document that can't be changed.

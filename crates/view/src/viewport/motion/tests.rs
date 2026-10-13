@@ -714,7 +714,8 @@ fn a_line_knob_drags_through_zero() {
         messages
     };
     let sent = |value: f64| MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Distance,
+        snap: crate::KnobSnap::Length,
         value,
         step: 2.0,
     };
@@ -843,7 +844,7 @@ fn an_arc_knob_turns_and_a_slider_scales() {
         ))
     };
     let (messages, _) = feed(&viewport_arc, &mut input, &[moved(turned(37.0))]);
-    let [Some(MotionLook::DragKnob { knob: 0, value, .. })] = looks(&messages)[..] else {
+    let [Some(MotionLook::DragKnob { value, .. })] = looks(&messages)[..] else {
         panic!("{messages:?}");
     };
     assert!(
@@ -871,7 +872,7 @@ fn an_arc_knob_turns_and_a_slider_scales() {
         &mut input,
         &[moved(at(DVec3::new(30.4, 0.0, 0.0)))],
     );
-    let [Some(MotionLook::DragKnob { knob: 0, value, .. })] = looks(&messages)[..] else {
+    let [Some(MotionLook::DragKnob { value, .. })] = looks(&messages)[..] else {
         panic!("{messages:?}");
     };
     assert!((value - 1.5).abs() < 1e-12, "{value}");

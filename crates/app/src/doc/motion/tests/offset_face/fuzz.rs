@@ -410,7 +410,8 @@ fn check_volumes(plates: &Plates, what: &str) {
 /// The handle dragged to `signed` millimetres, as the viewport sends it.
 fn drag_to(plates: &mut Plates, signed: f64) {
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Distance,
+        snap: varde_view::KnobSnap::Length,
         value: signed,
         step: 0.0,
     });

@@ -935,12 +935,14 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
     assert!(knob.out.distance(DVec3::Y) < 1e-9, "{}", knob.out);
     let twist = |plates: &Plates| drafted(plates).unwrap().twist.map(|twist| twist.value);
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Twist,
+        snap: varde_view::KnobSnap::Angle,
         value: -30f64.to_radians(),
         step: 1.0,
     });
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Twist,
+        snap: varde_view::KnobSnap::Angle,
         value: 3000f64.to_radians(),
         step: 1.0,
     });
@@ -948,7 +950,8 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
     let most = varde_document::MAX_TWIST_TURNS * std::f64::consts::TAU;
     assert!((twist(plates).unwrap() - most).abs() < 1e-9);
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Twist,
+        snap: varde_view::KnobSnap::Angle,
         value: -30f64.to_radians(),
         step: 1.0,
     });
@@ -958,7 +961,8 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
     assert!((knob.value + 30f64.to_radians()).abs() < 1e-12);
     assert!(knob.out.dot(DVec3::Y) < 0.0, "turning back: {}", knob.out);
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Twist,
+        snap: varde_view::KnobSnap::Angle,
         value: 0.0,
         step: 1.0,
     });
@@ -999,12 +1003,14 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
         }
     );
     plates.motion(MotionLook::DragKnob {
-        knob: 1,
+        field: MotionField::Turns,
+        snap: varde_view::KnobSnap::Count,
         value: 2.5,
         step: 1.0,
     });
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Pitch,
+        snap: varde_view::KnobSnap::Length,
         value: 6.0,
         step: 1.0,
     });

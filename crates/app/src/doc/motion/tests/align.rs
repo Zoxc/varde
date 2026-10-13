@@ -1059,12 +1059,14 @@ fn an_align_s_knobs_offset_and_turn_it() {
     ));
     assert!(matches!(turn.path, varde_view::KnobPath::Arc { axis, .. } if near(axis, DVec3::Z)));
     plates.motion(MotionLook::DragKnob {
-        knob: 0,
+        field: MotionField::Distance,
+        snap: varde_view::KnobSnap::Length,
         value: 5.0,
         step: 1.0,
     });
     plates.motion(MotionLook::DragKnob {
-        knob: 1,
+        field: MotionField::Angle,
+        snap: varde_view::KnobSnap::Angle,
         value: 90f64.to_radians(),
         step: 1.0,
     });
