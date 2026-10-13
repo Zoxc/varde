@@ -57,7 +57,6 @@ use varde_document::Design;
 /// The most bytes a request or a reply may have. A sketch at its limits
 /// is far smaller; the bound keeps a broken message from being copied
 /// without end.
-#[cfg(target_arch = "wasm32")]
 pub const MAX_MESSAGE_BYTES: usize = 1 << 28;
 
 /// A [`Request`] as it crosses to the worker: `S` is the sketch, `E` the
@@ -344,7 +343,16 @@ impl<S, A> Reply<S, A> {
 
 /// Encodes the reply to the request `tag` names: `response`, or, for a
 /// drag step that didn't converge, none. The mirror of [`decode_reply`].
+/// A reply larger than [`MAX_MESSAGE_BYTES`], which the page would refuse
+/// and restart the worker for, is sent as [`Reply::Failed`] instead: only
+/// that request is lost.
 pub fn encode_reply(tag: Tag, response: Option<&Response>) -> Vec<u8> {
+    encode_reply_within(tag, response, MAX_MESSAGE_BYTES)
+}
+
+/// [`encode_reply`], sending a reply larger than `max` bytes as
+/// [`Reply::Failed`]: tests bound it tighter.
+fn encode_reply_within(tag: Tag, response: Option<&Response>, max: usize) -> Vec<u8> {
     let reply: Reply<&Sketch, &Analysis> = match (tag, response) {
         (_, Some(response)) => match response {
             Response::Accepted {
@@ -384,7 +392,15 @@ pub fn encode_reply(tag: Tag, response: Option<&Response>) -> Vec<u8> {
             unreachable!("only a drag step goes unanswered")
         }
     };
-    postcard::to_stdvec(&reply).expect("replies always serialize")
+    let bytes = postcard::to_stdvec(&reply).expect("replies always serialize");
+    if bytes.len() <= max {
+        return bytes;
+    }
+    let failed: Reply<&Sketch, &Analysis> = Reply::Failed {
+        tag,
+        error: format!("reply too large: {} bytes", bytes.len()),
+    };
+    postcard::to_stdvec(&failed).expect("replies always serialize")
 }
 
 /// The radius of a circle, the curves a drag solution gives radii for.

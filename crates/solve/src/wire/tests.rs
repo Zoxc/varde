@@ -218,6 +218,21 @@ fn an_unmoved_drag_step_is_no_response() {
 }
 
 #[test]
+fn an_oversized_reply_fails_its_request() {
+    let drawn = drawn();
+    let mut solver = Solver::default();
+    let asked = analyse_at(3, &drawn.sketch);
+    let response = solver.answer(asked.job());
+    let full = encode_reply(asked.tag(), response.as_ref());
+    let bytes = encode_reply_within(asked.tag(), response.as_ref(), full.len() - 1);
+    let decoded = decode_reply(&bytes, &asked).unwrap();
+    assert!(matches!(
+        decoded,
+        Some(Response::Failed { tag, error }) if tag == asked.tag() && error.contains("too large")
+    ));
+}
+
+#[test]
 fn a_failure_round_trips() {
     let drawn = drawn();
     let asked = analyse_at(3, &drawn.sketch);
