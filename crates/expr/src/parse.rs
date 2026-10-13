@@ -51,19 +51,12 @@ pub(crate) enum Op {
 
 /// Parses `text`: at most [`MAX_LEN`] bytes, not blank.
 pub(crate) fn parse(text: &str) -> Result<Expr, Error> {
-    let all = Span::new(0, text.len());
     if text.len() > MAX_LEN {
-        return Err(Error {
-            kind: ErrorKind::TooLong,
-            span: all,
-        });
+        return Err(ErrorKind::TooLong.over(text));
     }
     let tokens = lex(text)?;
     if tokens.is_empty() {
-        return Err(Error {
-            kind: ErrorKind::Empty,
-            span: all,
-        });
+        return Err(ErrorKind::Empty.over(text));
     }
     let mut parser = Parser {
         text,
@@ -149,10 +142,7 @@ fn lex_into(text: &str, past_errors: bool, emit: &mut dyn FnMut(Token)) -> Resul
             '"' => Tok::Unit(LengthUnit::In.into()),
             '°' => Tok::Unit(AngleUnit::Deg.into()),
             ',' => {
-                fail!(Error {
-                    kind: ErrorKind::Comma,
-                    span: Span::new(start, end),
-                })
+                fail!(ErrorKind::Comma.at(Span::new(start, end)))
             }
             '0'..='9' | '.' => {
                 end = number_end(bytes, start);
@@ -161,16 +151,10 @@ fn lex_into(text: &str, past_errors: bool, emit: &mut dyn FnMut(Token)) -> Resul
                 while chars.next_if(|&(i, _)| i < end).is_some() {}
                 let span = Span::new(start, end);
                 let Ok(value) = text[start..end].parse::<f64>() else {
-                    fail!(Error {
-                        kind: ErrorKind::Unexpected(text[start..end].to_owned()),
-                        span,
-                    })
+                    fail!(ErrorKind::Unexpected(text[start..end].to_owned()).at(span))
                 };
                 if !value.is_finite() {
-                    fail!(Error {
-                        kind: ErrorKind::BadNumber,
-                        span,
-                    })
+                    fail!(ErrorKind::BadNumber.at(span))
                 }
                 Tok::Number(value)
             }
@@ -181,17 +165,13 @@ fn lex_into(text: &str, past_errors: bool, emit: &mut dyn FnMut(Token)) -> Resul
                 let after_value = matches!(last, Some(Tok::Number(_) | Tok::Close));
                 match unit(word) {
                     Some(unit) => Tok::Unit(unit),
-                    None if after_value => fail!(Error {
-                        kind: ErrorKind::UnknownUnit(word.to_owned()),
-                        span: Span::new(start, end),
-                    }),
+                    None if after_value => {
+                        fail!(ErrorKind::UnknownUnit(word.to_owned()).at(Span::new(start, end)))
+                    }
                     None => Tok::Name,
                 }
             }
-            c => fail!(Error {
-                kind: ErrorKind::Unexpected(c.to_string()),
-                span: Span::new(start, end),
-            }),
+            c => fail!(ErrorKind::Unexpected(c.to_string()).at(Span::new(start, end))),
         };
         last = Some(tok);
         emit(Token {
@@ -319,10 +299,7 @@ impl Parser<'_> {
             span,
         }) = self.tokens.get(self.at)
         {
-            return Err(Error {
-                kind: ErrorKind::UnitOnUnit,
-                span: *span,
-            });
+            return Err(ErrorKind::UnitOnUnit.at(*span));
         }
         Ok(Expr {
             span: inner.span.to(token.span),
@@ -354,10 +331,7 @@ impl Parser<'_> {
                         span: token.span.to(span),
                     }),
                     Some(other) => Err(self.unexpected(other.span)),
-                    None => Err(Error {
-                        kind: ErrorKind::Unclosed,
-                        span: token.span,
-                    }),
+                    None => Err(ErrorKind::Unclosed.at(token.span)),
                 }
             }
             _ => {
@@ -375,10 +349,7 @@ impl Parser<'_> {
         inner: fn(&mut Self) -> Result<Expr, Error>,
     ) -> Result<Expr, Error> {
         if self.depth >= MAX_DEPTH {
-            return Err(Error {
-                kind: ErrorKind::TooDeep,
-                span,
-            });
+            return Err(ErrorKind::TooDeep.at(span));
         }
         self.depth += 1;
         let expr = inner(self);
@@ -392,17 +363,11 @@ impl Parser<'_> {
             Some(token) => token.span,
             None => Span::new(self.text.len(), self.text.len()),
         };
-        Error {
-            kind: ErrorKind::ExpectedNumber,
-            span,
-        }
+        ErrorKind::ExpectedNumber.at(span)
     }
 
     fn unexpected(&self, span: Span) -> Error {
-        Error {
-            kind: ErrorKind::Unexpected(self.text[span.range()].to_owned()),
-            span,
-        }
+        ErrorKind::Unexpected(self.text[span.range()].to_owned()).at(span)
     }
 }
 

@@ -192,10 +192,7 @@ impl<'a> Evaluator<'a> {
             }
         }
         if pinned.len() > MAX_LEN {
-            return Err(Error {
-                kind: ErrorKind::TooLong,
-                span: Span::new(0, text.len()),
-            });
+            return Err(ErrorKind::TooLong.over(text));
         }
         Ok(pinned)
     }
@@ -205,10 +202,7 @@ impl<'a> Evaluator<'a> {
     fn free(&mut self, expr: &Expr) -> Result<Resolved, Error> {
         let quant = self.eval(expr)?;
         let Some(quantity) = quant.dim.quantity() else {
-            return Err(Error {
-                kind: ErrorKind::ParamKind(quant.dim.kind()),
-                span: expr.span,
-            });
+            return Err(ErrorKind::ParamKind(quant.dim.kind()).at(expr.span));
         };
         Ok(Resolved {
             value: quant.value,
@@ -225,13 +219,11 @@ impl<'a> Evaluator<'a> {
         } else if quant.bare {
             self.adopt(quant, want, expr)?
         } else {
-            return Err(Error {
-                kind: ErrorKind::Wrong {
-                    want: ask.quantity,
-                    got: quant.dim.kind(),
-                },
-                span: expr.span,
-            });
+            return Err(ErrorKind::Wrong {
+                want: ask.quantity,
+                got: quant.dim.kind(),
+            }
+            .at(expr.span));
         };
         let value = quant.value;
         // Not `!(abs <= max)`, so a NaN `max` refuses everything.
@@ -241,20 +233,15 @@ impl<'a> Evaluator<'a> {
             value.abs() > ask.max
         };
         if over || ask.max.is_nan() {
-            return Err(Error {
-                kind: ErrorKind::TooLarge {
-                    max: ask.max,
-                    unit: ask.unit(),
-                    under: ask.under,
-                },
-                span: expr.span,
-            });
+            return Err(ErrorKind::TooLarge {
+                max: ask.max,
+                unit: ask.unit(),
+                under: ask.under,
+            }
+            .at(expr.span));
         }
         if ask.positive && value <= 0.0 {
-            return Err(Error {
-                kind: ErrorKind::NotPositive,
-                span: expr.span,
-            });
+            return Err(ErrorKind::NotPositive.at(expr.span));
         }
         // Not `value < min`, so a NaN `min` refuses everything.
         if let Some(min) = ask.min
@@ -266,16 +253,10 @@ impl<'a> Evaluator<'a> {
                 Some(Unit::Length(_)) => Some(LengthUnit::Mm.into()),
                 unit => unit,
             };
-            return Err(Error {
-                kind: ErrorKind::TooSmall { min, unit },
-                span: expr.span,
-            });
+            return Err(ErrorKind::TooSmall { min, unit }.at(expr.span));
         }
         if ask.whole && value.fract() != 0.0 {
-            return Err(Error {
-                kind: ErrorKind::NotWhole,
-                span: expr.span,
-            });
+            return Err(ErrorKind::NotWhole.at(expr.span));
         }
         Ok(value)
     }
@@ -297,7 +278,7 @@ impl<'a> Evaluator<'a> {
                         Node::Name(name) => ErrorKind::UnitOnParam(name.clone()),
                         _ => ErrorKind::UnitOnUnit,
                     };
-                    return Err(Error { kind, span });
+                    return Err(kind.at(span));
                 }
                 Ok(Quant {
                     value: finite(quant.value * unit.factor(), span)?,
@@ -323,14 +304,12 @@ impl<'a> Evaluator<'a> {
                             } else if right.bare && adoptable(left.dim) {
                                 right = self.adopt(right, left.dim, right_expr)?;
                             } else {
-                                return Err(Error {
-                                    kind: ErrorKind::Mismatch {
-                                        add: op == Op::Add,
-                                        left: left.dim.kind(),
-                                        right: right.dim.kind(),
-                                    },
-                                    span,
-                                });
+                                return Err(ErrorKind::Mismatch {
+                                    add: op == Op::Add,
+                                    left: left.dim.kind(),
+                                    right: right.dim.kind(),
+                                }
+                                .at(span));
                             }
                         }
                         Some(left.dim)
@@ -338,18 +317,12 @@ impl<'a> Evaluator<'a> {
                     Op::Mul => left.dim.combine(right.dim, 1),
                     Op::Div => {
                         if right.value == 0.0 {
-                            return Err(Error {
-                                kind: ErrorKind::DivideByZero,
-                                span: right_expr.span,
-                            });
+                            return Err(ErrorKind::DivideByZero.at(right_expr.span));
                         }
                         left.dim.combine(right.dim, -1)
                     }
                 };
-                let dim = dim.ok_or(Error {
-                    kind: ErrorKind::Overflow,
-                    span,
-                })?;
+                let dim = dim.ok_or(ErrorKind::Overflow.at(span))?;
                 let value = match op {
                     Op::Add => left.value + right.value,
                     Op::Sub => left.value - right.value,
@@ -405,10 +378,7 @@ fn finite(value: f64, span: Span) -> Result<f64, Error> {
     if value.is_finite() {
         Ok(value)
     } else {
-        Err(Error {
-            kind: ErrorKind::Overflow,
-            span,
-        })
+        Err(ErrorKind::Overflow.at(span))
     }
 }
 

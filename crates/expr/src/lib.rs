@@ -358,13 +358,11 @@ impl Value {
         if value == self.value {
             Ok(())
         } else {
-            Err(Error {
-                kind: ErrorKind::Disagrees {
-                    stored: self.value,
-                    evaluated: value,
-                },
-                span: Span::new(0, self.text.len()),
-            })
+            Err(ErrorKind::Disagrees {
+                stored: self.value,
+                evaluated: value,
+            }
+            .over(&self.text))
         }
     }
 
@@ -509,6 +507,18 @@ pub enum ErrorKind {
     /// A parameter past [`MAX_PARAMS`].
     #[error("too many parameters, at most {MAX_PARAMS}")]
     TooManyParams,
+}
+
+impl ErrorKind {
+    /// This error about `span` of the text.
+    pub(crate) fn at(self, span: Span) -> Error {
+        Error { kind: self, span }
+    }
+
+    /// This error about all of `text`.
+    pub(crate) fn over(self, text: &str) -> Error {
+        self.at(Span::new(0, text.len()))
+    }
 }
 
 /// [`ErrorKind::Mismatch`]'s message.

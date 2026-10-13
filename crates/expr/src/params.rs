@@ -92,12 +92,7 @@ impl Params {
             .iter()
             .enumerate()
             .map(|(index, &(name, text))| {
-                name_error(index, name, &by_name).map(|kind| {
-                    Err(Error {
-                        kind,
-                        span: Span::new(0, text.len()),
-                    })
-                })
+                name_error(index, name, &by_name).map(|kind| Err(kind.over(text)))
             })
             .collect();
         let uses: Vec<Vec<(usize, Span)>> = list
@@ -115,10 +110,7 @@ impl Params {
             .collect();
         let (order, cycles) = resolve_order(&uses);
         for (member, span) in cycles {
-            results[member].get_or_insert(Err(Error {
-                kind: ErrorKind::Cycle,
-                span,
-            }));
+            results[member].get_or_insert(Err(ErrorKind::Cycle.at(span)));
         }
 
         // The rest are evaluated in `order`, which puts everything a
@@ -133,10 +125,7 @@ impl Params {
                     text: text.to_owned(),
                     // A stand-in for those in `todo`, replaced below
                     // before anything reads it.
-                    result: result.unwrap_or(Err(Error {
-                        kind: ErrorKind::Cycle,
-                        span: Span::new(0, 0),
-                    })),
+                    result: result.unwrap_or(Err(ErrorKind::Cycle.at(Span::new(0, 0)))),
                 })
                 .collect(),
             by_name,
@@ -230,13 +219,11 @@ impl Params {
         let (pinned, before) = pin_param_units(text, units, self)?;
         match evaluate_param(&pinned, units, self, true)? {
             after if after == before => Ok(pinned),
-            after => Err(Error {
-                kind: ErrorKind::Disagrees {
-                    stored: before.value,
-                    evaluated: after.value,
-                },
-                span: Span::new(0, text.len()),
-            }),
+            after => Err(ErrorKind::Disagrees {
+                stored: before.value,
+                evaluated: after.value,
+            }
+            .over(text)),
         }
     }
 
@@ -244,25 +231,20 @@ impl Params {
     /// unknown, with a near one as a suggestion if `suggest`.
     pub(crate) fn quant(&self, name: &str, span: Span, suggest: bool) -> Result<Quant, Error> {
         let Some(result) = self.get(name) else {
-            return Err(Error {
-                kind: ErrorKind::UnknownName {
-                    name: name.to_owned(),
-                    suggestion: if suggest {
-                        // One name: all of them may be compared.
-                        self.nearest(name, &mut self.entries.len())
-                    } else {
-                        None
-                    },
+            return Err(ErrorKind::UnknownName {
+                name: name.to_owned(),
+                suggestion: if suggest {
+                    // One name: all of them may be compared.
+                    self.nearest(name, &mut self.entries.len())
+                } else {
+                    None
                 },
-                span,
-            });
+            }
+            .at(span));
         };
         match result {
             Ok(resolved) => Ok((*resolved).into()),
-            Err(_) => Err(Error {
-                kind: ErrorKind::BrokenParam(name.to_owned()),
-                span,
-            }),
+            Err(_) => Err(ErrorKind::BrokenParam(name.to_owned()).at(span)),
         }
     }
 
@@ -410,10 +392,7 @@ pub fn rename(text: &str, old: &str, new: &str) -> Result<String, Error> {
     }
     renamed.push_str(&text[from..]);
     if renamed.len() > MAX_LEN {
-        return Err(Error {
-            kind: ErrorKind::TooLong,
-            span: Span::new(0, text.len()),
-        });
+        return Err(ErrorKind::TooLong.over(text));
     }
     Ok(renamed)
 }
