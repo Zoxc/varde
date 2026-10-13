@@ -1,6 +1,36 @@
 //! A frame's per-slot state and [`Renderer::prepare`], which uploads it.
 
-use super::*;
+use std::any::Any;
+use std::ops::Range;
+use std::sync::{Arc, Mutex, Weak};
+
+use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
+use varde_kernel_compat::{Aabb, RenderLines, RenderMesh};
+use wgpu::util::DeviceExt;
+
+use crate::highlight::Highlights;
+use crate::scene::GridPlane;
+use crate::sketch::SketchLayer;
+use crate::style::PLANE_REACH;
+use crate::{Camera, scene};
+
+use super::Renderer;
+use super::color::{Colors, Srgb};
+use super::draw::patterned;
+use super::frame::{AXES_ONLY, ClipRect, Frame, HOVERED_SHIFT, OriginShown, Viewport, WORLD_Z};
+use super::targets::{CoverageTarget, HALO_FORMAT, SlotTargets};
+use super::upload::{
+    ErrorBuffers, GpuLines, GpuMesh, GpuPart, HighlightBuffers, SketchBuffers, Triangles,
+    triangle_edges, upload_lines, upload_mesh,
+};
+// For the docs' links.
+#[cfg(doc)]
+use super::color::PatternStyle;
+#[cfg(doc)]
+use super::frame::Shading;
+#[cfg(doc)]
+use crate::sketch::SketchScene;
 
 /// The scene shader's uniforms. `Uniforms` in `scene.wgsl` mirrors this
 /// field for field, and the bind group layout's `min_binding_size` makes wgpu

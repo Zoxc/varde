@@ -1,6 +1,7 @@
 //! The depth, multisample and halo coverage targets a frame draws into.
 
-use super::*;
+use super::Renderer;
+use super::prepare::ErrorUniforms;
 
 /// The depth buffer's format on `device`, with a stencil: 32 bit float
 /// depth if it has that, else 24 bits. The stencil marks which part less

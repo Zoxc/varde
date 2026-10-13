@@ -1,7 +1,26 @@
 //! What a frame shows: the origin, the viewport and clip, shading, the
 //! [`Frame`] description and the public line widths and alphas.
 
-use super::*;
+use std::any::Any;
+use std::sync::{Arc, Weak};
+
+use glam::Vec3;
+use varde_kernel_compat::{RenderLines, RenderMesh};
+
+use crate::Camera;
+use crate::highlight::Highlights;
+use crate::scene::GridPlane;
+use crate::sketch::SketchScene;
+
+use super::color::{BodyTint, Colors};
+// For the docs' links.
+#[cfg(doc)]
+use super::color::Srgb;
+#[cfg(doc)]
+use crate::style::{
+    CREASE_ALPHA, CREASE_WIDTH, ERROR_EDGE_WIDTH, ERROR_HALO, ERROR_POINT_RADIUS, HIDDEN_DASH,
+    HIDDEN_EDGE_WIDTH, HOVER_THROUGH_ALPHA, LINE_WIDTH,
+};
 
 /// Which of the world's origin objects a [`Frame`] draws: the origin
 /// marker, the X, Y and Z axis lines, and the XY, XZ and YZ planes.

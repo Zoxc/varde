@@ -1,8 +1,37 @@
 //! Building the render pipelines: the pass shapes, blends and stencils.
 
-use super::*;
+use varde_kernel_compat::{CREASE, EdgePoint};
+
+use crate::highlight::VertexInstance;
+use crate::sketch::{FillVertex, LineInstance, PointInstance};
+use crate::style::{
+    CREASE_ALPHA, CREASE_WIDTH, EDGE_WIDTH, ERROR_EDGE_WIDTH, ERROR_HALO, ERROR_POINT_RADIUS,
+    GRID_FADE_HEIGHTS, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM, HOVER_THROUGH_ALPHA,
+    HOVERED_EDGE_WIDTH, LINE_WIDTH, PLANE_GAP, PLANE_REACH, PLANE_SIDES, SELECTED_EDGE_WIDTH,
+    SELECTED_RIM, VERTEX_RADIUS,
+};
+
+use super::Renderer;
+use super::frame::{AXES_ONLY, HOVERED_SHIFT, ORIGIN_MARKER, Shading};
+use super::prepare::{Alphas, ErrorUniforms, PartUniforms, TINT_SIZE, Tint, Uniforms};
+use super::targets::{HALO_FORMAT, depth_format, sample_count};
+use super::upload::{EDGE_SLOTS, Segment};
+
 use crate::{highlight, sketch};
 use varde_kernel_compat::NEIGHBOUR_ONLY;
+// For the docs' links.
+#[cfg(doc)]
+use super::color::Colors;
+#[cfg(doc)]
+use super::frame::Frame;
+#[cfg(doc)]
+use super::prepare::Slot;
+#[cfg(doc)]
+use super::targets::CoverageTarget;
+#[cfg(doc)]
+use crate::sketch::SketchScene;
+#[cfg(doc)]
+use crate::style::ERROR_HIDDEN;
 
 /// A pipeline's stencil state when it neither tests nor writes it.
 pub(super) const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {

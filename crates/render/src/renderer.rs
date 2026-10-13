@@ -4,22 +4,8 @@
 //! the per-slot state and its preparation ([`prepare`]) and recording
 //! ([`draw`]).
 
-use std::any::Any;
-use std::ops::Range;
-use std::sync::{Arc, Mutex, Weak};
-
-use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
-use varde_kernel_compat::{
-    Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines, RenderMesh,
-};
-use wgpu::util::DeviceExt;
-
-use crate::Camera;
-use crate::highlight::{Highlights, VertexInstance};
-use crate::scene::{self, GridPlane};
-use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene};
-use crate::style::*;
+use pipelines::{ErrorPipelines, PickPipelines, SketchPipelines};
+use prepare::Alphas;
 
 mod color;
 mod draw;
@@ -29,13 +15,15 @@ mod prepare;
 mod targets;
 mod upload;
 
-pub use color::*;
-use draw::*;
-pub use frame::*;
-use pipelines::*;
-pub use prepare::*;
-use targets::*;
-use upload::*;
+pub use color::{BodyTint, Colors, PatternStyle, Srgb, Srgba};
+pub(crate) use color::{linear_to_srgb, srgb_to_linear};
+pub use frame::{ClipRect, ErrorParts, Frame, OriginPart, OriginShown, Pivot, Shading, Viewport};
+pub use prepare::{PrepareError, Slot, Upload};
+// For the docs' links.
+#[cfg(doc)]
+use crate::sketch::SketchScene;
+#[cfg(doc)]
+use targets::{CoverageTarget, sample_count};
 
 /// Renders a scene into a caller-provided color target.
 ///

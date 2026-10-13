@@ -1,13 +1,17 @@
 //! Colours: sRGB with and without alpha, body tints, the pattern style and
 //! the frame's palette.
-// For the docs' links.
-#[cfg(doc)]
-use super::*;
 
 /// An opaque sRGB-encoded colour, like CSS and UI colours. The renderer
 /// converts it for its target.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Srgb(pub [f32; 3]);
+// For the docs' links.
+#[cfg(doc)]
+use super::frame::{Frame, Shading};
+#[cfg(doc)]
+use crate::highlight::Highlights;
+#[cfg(doc)]
+use crate::style::{EDGE_WIDTH, HOVER_RIM, SELECTED_RIM};
 
 /// An sRGB-encoded colour with straight alpha, like CSS and UI colours.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

@@ -1,6 +1,25 @@
 //! Recording a prepared slot's draw commands.
 
-use super::*;
+use std::ops::Range;
+
+use varde_kernel_compat::EdgePoint;
+
+use crate::style::ERROR_HIDDEN;
+
+use super::Renderer;
+use super::frame::{
+    ClipRect, LINE_VERTICES, MARKERS, ORIGIN_VERTICES, OriginPart, PLANE_VERTICES, POINT_VERTICES,
+};
+use super::pipelines::{ErrorLayer, PickPipelines, SketchPipelines};
+use super::prepare::{FaceDraw, PartDraws, Slot, Tint};
+use super::targets::{CoverageTarget, SlotTargets};
+use super::upload::{
+    Cores, EDGE_SLOTS, ErrorBuffers, GpuLines, GpuMesh, GpuPart, Instances, SketchBuffers,
+    Triangles,
+};
+// For the docs' links.
+#[cfg(doc)]
+use super::frame::Frame;
 
 /// The step of a table of alphas whose last step, `opaque`, is opaque,
 /// nearest the product of steps `a`'s and `b`'s alphas.

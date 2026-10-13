@@ -1,6 +1,22 @@
 //! Uploading meshes, lines and instance buffers to the GPU.
 
-use super::*;
+use std::ops::Range;
+
+use bytemuck::Pod;
+use glam::Vec3;
+use varde_kernel_compat::{
+    Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines, RenderMesh,
+};
+use wgpu::util::DeviceExt;
+
+use crate::highlight::{Highlights, VertexInstance};
+use crate::sketch::SketchLayer;
+
+use super::frame::ErrorParts;
+use super::prepare::{PrepareError, Upload};
+// For the docs' links.
+#[cfg(doc)]
+use super::frame::Frame;
 
 /// The largest buffer the renderer relies on, in bytes: WebGPU's default
 /// `maxBufferSize`, which the devices iced asks for have natively and on

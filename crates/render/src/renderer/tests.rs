@@ -1,4 +1,14 @@
-use super::*;
+use std::any::Any;
+use std::sync::{Arc, Weak};
+
+use glam::Vec3;
+use varde_kernel_compat::{RenderLines, RenderMesh};
+
+use super::draw::product_step;
+use super::frame::ErrorParts;
+use super::prepare::alpha_step;
+use super::upload::{BuiltErrors, Cores, ErrorBuffers};
+
 use varde_kernel_compat::NO_EDGE;
 
 #[test]
