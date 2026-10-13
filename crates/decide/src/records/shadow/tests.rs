@@ -164,7 +164,7 @@ impl ShadowGeometry for Geom {
 #[derive(Default)]
 struct Seq {
     decided: usize,
-    work: Work,
+    work: Cost,
 }
 
 impl Pass for Seq {
@@ -792,7 +792,7 @@ fn records_are_decided_once_and_read_by_every_ray() {
 struct Par {
     threads: usize,
     decided: usize,
-    work: Work,
+    work: Cost,
 }
 
 impl Pass for Par {
@@ -1022,7 +1022,7 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
             let mut par = Par {
                 threads,
                 decided: 0,
-                work: Work::default(),
+                work: Cost::default(),
             };
             let mut s2 = Shadows::new();
             s2.fill_rays(wanted, &g, &mut par).expect("decided");

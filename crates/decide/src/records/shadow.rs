@@ -81,12 +81,13 @@
 //! either side of the ray line (only possible when the ends move apart,
 //! on `A`) and step 2 doesn't settle the crossing, the row is zero at
 //! every order and [`decide`]'s guard is reached, [`Fail::Internal`].
-//! Curved edges have their own ray records.
+//! Curved edges have their own ray records ([`super::ray`]).
 //!
 //! [`decide`]: crate::num::decide::decide
 
 use malachite::Rational;
 
+use crate::bezier::roots::Work as RootWork;
 use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact::{self, Num, Pred, Work, dot, point, sub};
@@ -165,10 +166,62 @@ pub trait ShadowGeometry {
 }
 
 /// A record decided, and what deciding it ran, for the pass to charge.
-pub type Decided<V> = (Result<V, Fail>, Work);
+pub type Decided<V> = (Result<V, Fail>, Cost);
+
+/// The precision levels a curved record is decided at, in order: the
+/// first (`f64`), double-double, then the big-float widths
+/// ([`Width::ALL`](crate::num::bigf::Width::ALL)).
+pub const LEVELS: usize = 7;
+
+/// What deciding one record ran, for the pass to charge: its exact
+/// predicates' work, and per precision level the curved work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cost {
+    /// The exact predicates' runs.
+    pub exact: Work,
+    /// The curved work at each level ([`LEVELS`]), first level first.
+    pub levels: [LevelWork; LEVELS],
+}
+
+/// The curved work at one precision level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LevelWork {
+    /// Root isolations' splits, tests and narrowing steps.
+    pub roots: RootWork,
+    /// Rows and polynomial pieces evaluated.
+    pub evals: u32,
+}
+
+impl LevelWork {
+    /// This work and `o`'s together.
+    pub fn and(self, o: LevelWork) -> LevelWork {
+        LevelWork {
+            roots: self.roots.and(o.roots),
+            evals: self.evals.saturating_add(o.evals),
+        }
+    }
+}
+
+impl Cost {
+    /// Exact work alone.
+    pub fn exact(work: Work) -> Cost {
+        Cost {
+            exact: work,
+            ..Cost::default()
+        }
+    }
+
+    /// This cost and `o`'s together.
+    pub fn and(self, o: Cost) -> Cost {
+        Cost {
+            exact: self.exact.and(o.exact),
+            levels: std::array::from_fn(|i| self.levels[i].and(o.levels[i])),
+        }
+    }
+}
 
 /// One charged pass over a batch of keys, the kernel's: it decides each
-/// key with the function it is handed, charges each key's [`Work`],
+/// key with the function it is handed, charges each key's [`Cost`],
 /// and gives the answers in the keys' order, or fails (a [`Fail`], or
 /// running out), in which case nothing of the batch is stored.
 pub trait Pass {
@@ -261,9 +314,7 @@ impl Shadows {
     /// other operand, oriented from `q` (side and ahead negated for a `B`
     /// point); `None` if it isn't decided.
     pub fn vv(&self, q: Point, w: VertId) -> Option<VvRec> {
-        let o = VvKey::of(q, w);
-        let r = *self.vv.get(&o.key)?;
-        Some(if o.swapped { r.swapped() } else { r })
+        read_vv(&self.vv, q, w)
     }
 
     /// The ray record of point `q` against straight edge `g` of the other
@@ -295,7 +346,7 @@ impl Shadows {
 
 /// [`Table::replay`] with a deciding function that can fail: the key of
 /// the first record, in key order, deciding again fails or differs at.
-fn replay<K: Ord + Clone, V: PartialEq + Clone>(
+pub(super) fn replay<K: Ord + Clone, V: PartialEq + Clone>(
     t: &Table<K, V>,
     decide: impl Fn(&Fresh<K>) -> Decided<V>,
     wrap: impl Fn(K) -> RecordKey,
@@ -317,29 +368,42 @@ fn replay<K: Ord + Clone, V: PartialEq + Clone>(
     again.map_err(|m| wrap(m.key))
 }
 
+/// The point–vertex record of `q` against `w` in `vv`, oriented from `q`.
+pub(super) fn read_vv(vv: &Table<VvKey, VvRec>, q: Point, w: VertId) -> Option<VvRec> {
+    let o = VvKey::of(q, w);
+    let r = *vv.get(&o.key)?;
+    Some(if o.swapped { r.swapped() } else { r })
+}
+
 /// `A`'s rays go `−r̂`, `B`'s `+r̂`: the sign of `r̂·ρ`.
-fn ray_ahead(of: Operand) -> Sign {
+pub(super) fn ray_ahead(of: Operand) -> Sign {
     match of {
         Operand::A => Sign::Neg,
         Operand::B => Sign::Pos,
     }
 }
 
-fn neg(s: Sign) -> Sign {
+pub(super) fn neg(s: Sign) -> Sign {
     match s {
         Sign::Neg => Sign::Pos,
         Sign::Pos => Sign::Neg,
     }
 }
 
-fn table_error<K>(e: TableError<K>, wrap: impl Fn(K) -> RecordKey) -> TableError<RecordKey> {
+pub(super) fn table_error<K>(
+    e: TableError<K>,
+    wrap: impl Fn(K) -> RecordKey,
+) -> TableError<RecordKey> {
     match e {
         TableError::Count { keys, values } => TableError::Count { keys, values },
         TableError::Twice(k) => TableError::Twice(wrap(k)),
     }
 }
 
-fn shadow_error<K, E>(e: FillError<K, E>, wrap: impl Fn(K) -> RecordKey) -> ShadowError<E> {
+pub(super) fn shadow_error<K, E>(
+    e: FillError<K, E>,
+    wrap: impl Fn(K) -> RecordKey,
+) -> ShadowError<E> {
     match e {
         FillError::Decide(e) => ShadowError::Pass(e),
         FillError::Table(e) => ShadowError::Table(table_error(e, wrap)),
@@ -406,7 +470,7 @@ fn decide_vv<G: ShadowGeometry>(k: &Fresh<VvKey>, geom: &G) -> Decided<VvRec> {
     } else {
         (Err(Fail::Internal { key: tie }), Work::default())
     };
-    let work = w1.and(w2).and(w3);
+    let work = Cost::exact(w1.and(w2).and(w3));
     let rec = side.and_then(|side| {
         Ok(VvRec {
             side,
@@ -431,20 +495,16 @@ fn decide_ray<G: ShadowGeometry>(
         record: RecordKey::Ray(key),
     };
     let ends = geom.ends(q.operand.other(), key.g);
-    let read = |w: VertId| {
-        let o = VvKey::of(q, w);
-        let r = *vv.get(&o.key)?;
-        Some(if o.swapped { r.swapped() } else { r })
-    };
+    let read = |w: VertId| read_vv(vv, q, w);
     let (Some(r0), Some(r1)) = (read(ends[0]), read(ends[1])) else {
         // The batch's ends are filled first: a missing one is a bug.
         let fail = Fail::Internal {
             key: tie(Row::VertexVertexShadow),
         };
-        return (Err(fail), Work::default());
+        return (Err(fail), Cost::default());
     };
     if r0.side == r1.side {
-        return (Ok(RayRec { crossing: None }), Work::default());
+        return (Ok(RayRec { crossing: None }), Cost::default());
     }
     // `ρ × T_g` seen from above: `ν·T_g` along `+r̂`, which has the sign
     // of `s1` once the ends are on either side.
@@ -455,7 +515,7 @@ fn decide_ray<G: ShadowGeometry>(
     let (on0, on1) = (r0.on_ray(q.operand), r1.on_ray(q.operand));
     if on0 == on1 {
         let crossing = on0.then_some(sign);
-        return (Ok(RayRec { crossing }), Work::default());
+        return (Ok(RayRec { crossing }), Cost::default());
     }
     let line = geom.line(q, key.g);
     debug_assert!(
@@ -471,7 +531,7 @@ fn decide_ray<G: ShadowGeometry>(
     let rec = left.map(|left| RayRec {
         crossing: (left == sign).then_some(sign),
     });
-    (rec, work)
+    (rec, Cost::exact(work))
 }
 
 #[cfg(test)]

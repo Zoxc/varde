@@ -4,8 +4,10 @@
 //! (which entities, of which operand, by id), [`table`] the sorted store
 //! a stage's charged passes fill, [`shadow`] the flat shadow records (a
 //! point against a vertex of the other operand, a point's ray against a
-//! straight edge).
+//! straight edge), [`ray`] the curved ones (a point's ray against a span
+//! of a curved edge).
 
 pub mod keys;
+pub mod ray;
 pub mod shadow;
 pub mod table;

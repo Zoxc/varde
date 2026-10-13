@@ -180,6 +180,36 @@ pub struct RayKey {
     pub g: EdgeId,
 }
 
+/// A point's ray against one span of a curved edge `g` of the other
+/// operand: the curved ray record's key (the signed crossings of the
+/// span's shadow). Spans are numbered along the edge's stored direction,
+/// from its lower-id end, so the record is the same whichever coedge of
+/// `g` reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SpanKey {
+    /// The point whose ray it is.
+    pub q: Point,
+    /// The edge, of `q`'s other operand.
+    pub g: EdgeId,
+    /// The span, from 0 at the edge's lower-id end.
+    pub span: u32,
+}
+
+/// A point against an inner knot of a curved edge `g` of the other
+/// operand, the point where span `knot − 1` ends and span `knot` starts:
+/// the knot record's key (the side of the knot against the point's `r̂`
+/// line, ahead or behind along it), read by the ray records of both
+/// spans. Keyed by the asking point: a knot asks no ray of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct KnotKey {
+    /// The asking point.
+    pub q: Point,
+    /// The edge, of `q`'s other operand.
+    pub g: EdgeId,
+    /// The knot, `1 ≤ knot <` the edge's span count.
+    pub knot: u32,
+}
+
 /// An edge of `A` against an edge of `B` where their shadows cross: the
 /// crossing record's key (its clusters).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -292,8 +322,12 @@ pub struct HeightKey {
 pub enum RecordKey {
     /// A point–point shadow record.
     Vv(VvKey),
-    /// A ray record.
+    /// A ray record against a straight edge.
     Ray(RayKey),
+    /// A ray record against a span of a curved edge.
+    RaySpan(SpanKey),
+    /// A point against an inner knot of a curved edge.
+    Knot(KnotKey),
     /// A height key's own value (order 0, shared by its anchors).
     Height(HKey),
     /// A height record at an anchor.

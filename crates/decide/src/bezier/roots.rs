@@ -223,6 +223,17 @@ pub struct Work {
     pub steps: u32,
 }
 
+impl Work {
+    /// This work and `o`'s together.
+    pub fn and(self, o: Work) -> Work {
+        Work {
+            splits: self.splits.saturating_add(o.splits),
+            tests: self.tests.saturating_add(o.tests),
+            steps: self.steps.saturating_add(o.steps),
+        }
+    }
+}
+
 /// The limits of one isolation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
