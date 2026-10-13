@@ -24,9 +24,10 @@ fn previews_of(file: &(impl ReadAt + ?Sized)) -> Vec<Preview> {
 }
 
 fn read_png(file: &(impl ReadAt + ?Sized)) -> Option<Preview> {
-    read_previews(file, |preview| preview.is("image/png"))
+    preview::previews(file)
+        .ok()?
         .into_iter()
-        .next()
+        .find(|preview| preview.is("image/png"))
 }
 
 /// Saves `document` and `previews` to the design file `file`, as a writer
@@ -90,14 +91,6 @@ fn previews_round_trip() {
         let (bytes, tail) = to_bytes(&edited(1), &previews).unwrap();
         assert_eq!(previews_of(bytes.as_slice()), previews);
         assert_eq!(read_png(bytes.as_slice()), Some(png()));
-        assert_eq!(
-            read_previews(bytes.as_slice(), |preview| preview.is("image/jpeg")),
-            previews
-                .iter()
-                .filter(|preview| preview.is("image/jpeg"))
-                .cloned()
-                .collect::<Vec<_>>()
-        );
 
         let (document, at, report) = opened(&bytes);
         assert_eq!((document, at), (edited(1), tail));

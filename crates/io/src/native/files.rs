@@ -669,7 +669,7 @@ fn write(
 
 /// The thumbnail of the design at `path`, if it has one that decodes.
 fn thumbnail(path: &Path) -> Option<Thumbnail> {
-    let previews = DocumentFile::read_previews(path, |preview| preview.is(thumbnail::MEDIA_TYPE));
+    let previews = DocumentFile::read_previews(path);
     thumbnail::decode(&previews)
 }
 

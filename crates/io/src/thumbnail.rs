@@ -222,15 +222,12 @@ pub(crate) fn decode(previews: &[Preview]) -> Option<Thumbnail> {
     })
 }
 
-/// The pixels of the PNG `preview`, or `None` if it isn't one this
-/// decodes: a PNG of any colour type and depth within [`MAX_SIDE`], made
-/// 8 bit RGBA. A side past it is refused before its pixels are
+/// The pixels of the PNG `preview`, whose media type `theme` has
+/// checked, or `None` if it isn't one this decodes: a PNG of any colour
+/// type and depth within [`MAX_SIDE`], made 8 bit RGBA. A side past it is refused before its pixels are
 /// allocated, and the decoder allocates at most a little more than they
 /// take.
 fn decode_png(preview: &Preview) -> Option<Image> {
-    if !preview.is(MEDIA_TYPE) {
-        return None;
-    }
     // The pixels at 16 bits a channel, and a row to filter with.
     let limit = (MAX_SIDE as usize).pow(2) * 8 + (MAX_SIDE as usize) * 16;
     let mut decoder = png::Decoder::new_with_limits(preview.data(), png::Limits { bytes: limit });

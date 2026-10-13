@@ -158,7 +158,7 @@ fn other_colour_types_are_made_rgba() {
 fn what_isnt_a_thumbnail_decodes_to_nothing() {
     let sent = encode(&image(4, 4), MEDIA_TYPE).unwrap();
     let jpeg = Preview::new("image/jpeg", sent.data().to_vec()).unwrap();
-    assert_eq!(decode_png(&jpeg), None);
+    assert_eq!(decode(std::slice::from_ref(&jpeg)), None);
     let cut = Preview::new(MEDIA_TYPE, sent.data()[..sent.data().len() / 2].to_vec()).unwrap();
     assert_eq!(decode_png(&cut), None);
     let junk = Preview::new(MEDIA_TYPE, vec![0x89, b'P', b'N', b'G', 1, 2, 3]).unwrap();

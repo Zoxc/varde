@@ -140,7 +140,7 @@ which couldn't be read: the block at it has a header, intact or not,
 holding its `sum`.
 
 **Previews** are read from the end, reading no record's payload
-(`read_previews`): the header must be a design file's; from the end,
+(`previews`): the header must be a design file's; from the end,
 blocks are walked back over by their trailing `len` while their two
 lengths agree within bounds, at most `MAX_PREVIEWS` (8) of them of any
 kind, to a block whose kind is `RECORD`, of which only the header is
