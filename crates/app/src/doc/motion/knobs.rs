@@ -5,7 +5,7 @@
 //! typed into its field.
 //!
 //! - An offset face's: along the first face's outward normal from where
-//!   it is before the offset ([`super::offset_face::Anchor`]), at the
+//!   it is before the offset ([`super::Anchor::Face`]), at the
 //!   distance, negative inward.
 //! - A shell's: along the first face removed, from it into the body (out
 //!   of it for Outward walls), at the thickness.
@@ -41,12 +41,12 @@
 //!
 //! A shell's, draft's, chamfer's and fillet's knobs stand where their
 //! first face or edge is before the feature changes it, which the model
-//! shown tells only before it shows a preview: their [`KnobAnchor`] is
+//! shown tells only before it shows a preview: their [`super::Anchor`] is
 //! found then, for a new feature, and kept while the first face or edge
 //! and the document stay. An edited one has no knob.
 
 use glam::DVec3;
-use varde_document::{EdgeRef, FaceRef, Generation, Plane};
+use varde_document::Plane;
 use varde_expr::{AngleUnit, Ask, Unit};
 use varde_regen::SweepFound;
 use varde_view::{
@@ -54,7 +54,7 @@ use varde_view::{
     OpKnob, PatternMode, ScaleMode, ShellDirection, SweepPath,
 };
 
-use super::{Doc, MotionSession, field_ask};
+use super::{Anchor, Doc, Found, MotionSession, field_ask};
 
 /// How many pixels a scale's slider is for a factor of 1.
 const SCALE_PIXELS: f64 = 100.0;
@@ -63,54 +63,12 @@ const TURN_PIXELS: f64 = 60.0;
 /// How many pixels a circular pattern's count's slider runs a copy.
 const COUNT_PIXELS: f64 = 8.0;
 
-/// Where a shell's, draft's, chamfer's or fillet's knobs stand, as the
-/// first face or edge is before the feature: found on the model shown at
-/// `generation`, the document's alone.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum KnobAnchor {
-    /// A point of the first face, and its outward normal there.
-    Face {
-        face: FaceRef,
-        generation: Generation,
-        at: DVec3,
-        normal: DVec3,
-    },
-    /// A point of the first edge, and its faces' outward normals there:
-    /// the first's (as a chamfer's sizes take them, flipped or not) and
-    /// the second's.
-    Edge {
-        edge: EdgeRef,
-        generation: Generation,
-        at: DVec3,
-        normals: [DVec3; 2],
-    },
-}
-
 /// The tangent of the arc round the unit `axis` from the unit `radial`
 /// (square to it), right-handed about `axis`, `angle` radians round:
 /// the way a knob there moves as its value grows.
 fn arc_tangent(axis: DVec3, radial: DVec3, angle: f64) -> DVec3 {
     let (sin, cos) = angle.sin_cos();
     axis.cross(radial) * cos - radial * sin
-}
-
-impl KnobAnchor {
-    /// Whether it's where `session`'s knobs stand: for its first face or
-    /// edge as it is, in the document at `generation`.
-    fn current(&self, session: &MotionSession, generation: Generation) -> bool {
-        match self {
-            KnobAnchor::Face {
-                face,
-                generation: at,
-                ..
-            } => session.faces.refs.first() == Some(face) && *at == generation,
-            KnobAnchor::Edge {
-                edge,
-                generation: at,
-                ..
-            } => session.blend.edges.refs.first() == Some(edge) && *at == generation,
-        }
-    }
 }
 
 /// Whether a knob of the handle of a `kind` operation can type into
@@ -239,7 +197,7 @@ impl Doc {
     }
 
     /// Finds where a shell's, draft's, chamfer's or fillet's knobs stand
-    /// ([`KnobAnchor`]) if it isn't known for its first face or edge and
+    /// ([`Anchor::Face`], [`Anchor::Edge`]) if it isn't known for its first face or edge and
     /// the document as they are: only while the model shown is the
     /// document's alone, of a new feature (an edited one's is changed by
     /// the feature itself).
@@ -252,8 +210,8 @@ impl Doc {
         let edges = matches!(session.kind, MotionKind::Chamfer | MotionKind::Fillet);
         if !(faces || edges)
             || session.feature.is_some()
-            || (session.knob_anchor.as_ref())
-                .is_some_and(|anchor| anchor.current(session, generation))
+            || session.face_anchor(generation).is_some()
+            || session.edge_anchor(generation).is_some()
             || self.feed.generation() != Some(generation)
             || self.feed.predates_replacement()
             || self.feed.shows_draft()
@@ -271,12 +229,11 @@ impl Doc {
             let Some((at, normal)) = index.face_point(found, face.near) else {
                 return;
             };
-            KnobAnchor::Face {
-                face,
+            Anchor::Face(Found {
+                key: face,
                 generation,
-                at,
-                normal,
-            }
+                value: (at, normal),
+            })
         } else {
             let Some(edge) = session.blend.edges.refs.first().cloned() else {
                 return;
@@ -305,15 +262,14 @@ impl Doc {
                     normals[k] = normal;
                 }
             }
-            KnobAnchor::Edge {
-                edge,
+            Anchor::Edge(Found {
+                key: edge,
                 generation,
-                at,
-                normals,
-            }
+                value: (at, normals),
+            })
         };
         if let Some(session) = self.mode.motion_mut() {
-            session.knob_anchor = Some(anchor);
+            session.anchor = Some(anchor);
         }
     }
 
@@ -332,28 +288,14 @@ impl Doc {
     /// The face anchor of a shell's or draft's first face, if it's known
     /// for it and the document as they are.
     fn face_anchor(&self, session: &MotionSession) -> Option<(DVec3, DVec3)> {
-        let generation = self.editor.generation();
-        match session.knob_anchor.as_ref()? {
-            anchor @ KnobAnchor::Face { at, normal, .. } if anchor.current(session, generation) => {
-                Some((*at, *normal))
-            }
-            _ => None,
-        }
+        session.face_anchor(self.editor.generation())
     }
 
     /// The edge anchor of a chamfer's or fillet's first edge, if it's
     /// known for it and the document as they are: its point, and the
     /// ways into its first face and its second, square to it.
     fn edge_anchor(&self, session: &MotionSession) -> Option<(DVec3, [DVec3; 2])> {
-        let generation = self.editor.generation();
-        let (at, [first, second]) = match session.knob_anchor.as_ref()? {
-            anchor @ KnobAnchor::Edge { at, normals, .. }
-                if anchor.current(session, generation) =>
-            {
-                (*at, *normals)
-            }
-            _ => return None,
-        };
+        let (at, [first, second]) = session.edge_anchor(self.editor.generation())?;
         // Into each face, away from the edge: against the other's normal,
         // taken into its plane.
         let into = |own: DVec3, other: DVec3| (own * own.dot(other) - other).try_normalize();

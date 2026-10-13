@@ -265,7 +265,7 @@ fields and handles): at a pivot of the bodies (`MotionState::centre`):
 the centre of their box in the model shown (`MotionState::bounds`,
 merged bodies as their holders) found once, taken back through the move
 that model shows to a point of the bodies before the move
-(`Doc::follow_motion_pivot`, `Pivot`, once the model answers what was
+(`Doc::follow_motion_pivot`, `Anchor::Pivot`, once the model answers what was
 asked last and its preview didn't fail; kept while the bodies and the
 document stay), and shown where the move as set up takes that point. A
 box's centre isn't where a turn takes it, so handles at the box centre

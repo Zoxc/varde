@@ -10,33 +10,14 @@
 //! move with the face it moves (its knob does).
 
 use glam::DVec3;
-use varde_document::{FaceRef, FeatureKind, Generation, OffsetFace};
+use varde_document::{FeatureKind, OffsetFace};
 use varde_view::{MotionField, MotionKind, OffsetFaceView};
 
 use super::refs::Refs;
-use super::{Doc, MotionSession};
+use super::{Anchor, Doc, Found, MotionSession};
 use crate::doc::regions::TypedText;
 
-/// Where an offset face's handle stands: `at`, on the first face `face`
-/// as it is before the offset, and the face's outward `normal` there,
-/// found on the model of the document at `generation`.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Anchor {
-    face: FaceRef,
-    generation: Generation,
-    at: DVec3,
-    normal: DVec3,
-}
-
 impl MotionSession {
-    /// The handle's [`Anchor`] if it still holds: found on the session's
-    /// first face as it is, in the document generation given.
-    fn current_anchor(&self, generation: Generation) -> Option<&Anchor> {
-        (self.anchor.as_ref()).filter(|anchor| {
-            anchor.generation == generation && self.faces.refs.first() == Some(&anchor.face)
-        })
-    }
-
     /// The offset face as set up, if it's whole: its faces (at least
     /// one), its distance as it last read, Inward and Tangent faces.
     pub(super) fn offset_face(&self) -> Option<OffsetFace> {
@@ -101,15 +82,15 @@ impl Doc {
     /// model shown.
     pub(super) fn offset_face_handle(&self, session: &MotionSession) -> Option<FaceHandle> {
         let generation = self.editor.generation();
-        (session.current_anchor(generation)).map(|anchor| FaceHandle {
-            origin: anchor.at,
-            normal: anchor.normal,
+        (session.face_anchor(generation)).map(|(origin, normal)| FaceHandle {
+            origin,
+            normal,
             at: session.signed_distance(),
         })
     }
 
     /// Finds where the handle of the offset face being set up stands
-    /// ([`Anchor`]) if it isn't known for its first face and the
+    /// ([`Anchor::Face`]) if it isn't known for its first face and the
     /// document as they are: once the model shown answers what was asked
     /// last, on the first face found there, taken back by the distance
     /// the preview moved it where the model shows a working preview of
@@ -123,7 +104,7 @@ impl Doc {
             return;
         };
         if session.kind != MotionKind::OffsetFace
-            || session.current_anchor(generation).is_some()
+            || session.face_anchor(generation).is_some()
             || !self.feed.answers_request()
             || self.feed.predates_replacement()
         {
@@ -149,12 +130,11 @@ impl Doc {
             return;
         }
         if let Some(session) = self.mode.motion_mut() {
-            session.anchor = Some(Anchor {
-                face: first,
+            session.anchor = Some(Anchor::Face(Found {
+                key: first,
                 generation,
-                at,
-                normal,
-            });
+                value: (at, normal),
+            }));
         }
     }
 }

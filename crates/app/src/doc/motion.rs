@@ -135,12 +135,9 @@ pub(crate) struct MotionSession {
     /// An offset face's or a draft's Tangent faces: on to begin with, as
     /// the plan has it.
     pub(crate) tangent: bool,
-    /// Where an offset face's handle stands, once the model shown has
-    /// told: [`offset_face::Anchor`].
-    anchor: Option<offset_face::Anchor>,
-    /// Where a shell's, draft's, chamfer's or fillet's knobs stand, once
-    /// the model shown has told: [`knobs::KnobAnchor`].
-    knob_anchor: Option<knobs::KnobAnchor>,
+    /// Where the handle or knobs stand, once the model shown has told:
+    /// [`Anchor`].
+    anchor: Option<Anchor>,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -160,30 +157,75 @@ pub(crate) struct MotionSession {
     /// lengths in them are in.
     read_in: ReadIn,
     highlight: CachedHighlight<Built>,
-    /// Where a move's handles stand, as a point of its bodies before the
-    /// move, once the model shown has told: [`Pivot`].
-    pivot: Option<Pivot>,
 }
 
-/// Where a move's handles stand: `at`, a point of `bodies` as they are
-/// before the move, which the move takes where the handles show
-/// ([`MotionSession::centre`]). Found once from the centre of their box
-/// in the model shown, taken back through the move it shows, and kept
-/// while the bodies and the document stay as they were: the box of
-/// turned bodies has another centre, so the handles would jump as a
-/// ring is let go of, and a second turn would be about another point.
+/// A `value` found on the model shown for `key` (bodies, a face, an
+/// edge) in the document at `generation`, holding while both stay.
 #[derive(Debug, Clone, PartialEq)]
-struct Pivot {
-    bodies: Vec<BodyId>,
+struct Found<K, V> {
+    key: K,
     generation: Generation,
-    at: DVec3,
+    value: V,
 }
 
-impl Pivot {
-    /// Whether it's still the centre of `bodies` in the model of
-    /// `generation`: worked out for them, on it.
-    fn current(&self, bodies: &[BodyId], generation: Generation) -> bool {
-        self.bodies == bodies && self.generation == generation
+impl<K, V> Found<K, V> {
+    /// The value, if it was found for `key` in the document at
+    /// `generation`.
+    fn get<Q>(&self, key: &Q, generation: Generation) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: PartialEq + ?Sized,
+    {
+        (self.key.borrow() == key && self.generation == generation).then_some(&self.value)
+    }
+}
+
+/// Where a session's handle or knobs stand, found once on the model
+/// shown and kept while what it's found for and the document stay.
+#[derive(Debug, Clone, PartialEq)]
+enum Anchor {
+    /// A move's: a point of its bodies as they are before the move,
+    /// which the move takes where the handles show
+    /// ([`MotionSession::centre`]). Found from the centre of their box,
+    /// taken back through the move shown: the box of turned bodies has
+    /// another centre, so the handles would jump as a ring is let go
+    /// of, and a second turn would be about another point.
+    Pivot(Found<Vec<BodyId>, DVec3>),
+    /// An offset face's, shell's or draft's: a point of the first face
+    /// as it is before the feature, and its outward normal there.
+    Face(Found<FaceRef, (DVec3, DVec3)>),
+    /// A chamfer's or fillet's: a point of the first edge, and its
+    /// faces' outward normals there: the first's (as a chamfer's sizes
+    /// take them, flipped or not) and the second's.
+    Edge(Found<EdgeRef, (DVec3, [DVec3; 2])>),
+}
+
+impl MotionSession {
+    /// A move's pivot ([`Anchor::Pivot`]), if it holds for its bodies in
+    /// the document at `generation`.
+    fn pivot(&self, generation: Generation) -> Option<DVec3> {
+        match self.anchor.as_ref()? {
+            Anchor::Pivot(found) => found.get(&self.bodies[..], generation).copied(),
+            _ => None,
+        }
+    }
+
+    /// The first face's point and normal ([`Anchor::Face`]), if they
+    /// hold for it in the document at `generation`.
+    fn face_anchor(&self, generation: Generation) -> Option<(DVec3, DVec3)> {
+        match self.anchor.as_ref()? {
+            Anchor::Face(found) => found.get(self.faces.refs.first()?, generation).copied(),
+            _ => None,
+        }
+    }
+
+    /// The first edge's point and normals ([`Anchor::Edge`]), if they
+    /// hold for it in the document at `generation`.
+    fn edge_anchor(&self, generation: Generation) -> Option<(DVec3, [DVec3; 2])> {
+        match self.anchor.as_ref()? {
+            Anchor::Edge(found) => (found.get(self.blend.edges.refs.first()?, generation)).copied(),
+            _ => None,
+        }
     }
 }
 
@@ -492,7 +534,6 @@ impl MotionSession {
             direction: ShellDirection::Inward,
             tangent: true,
             anchor: None,
-            knob_anchor: None,
             join: true,
             opened: None,
             mode,
@@ -500,7 +541,6 @@ impl MotionSession {
             edited_bodies: Vec::new(),
             read_in: ReadIn::of(document),
             highlight: CachedHighlight::default(),
-            pivot: None,
         }
     }
 
@@ -2263,15 +2303,22 @@ impl Doc {
         (self.mode.motion_mut()).is_some_and(|session| session.follow(&merges))
     }
 
+    /// Finds where the handle or knobs of the operation being set up
+    /// stand ([`Anchor`]) by its kind: an offset face's, a shell's, ...,
+    /// or a move's.
+    pub(crate) fn follow_motion_anchor(&mut self) {
+        self.follow_offset_anchor();
+        self.follow_knob_anchor();
+        self.follow_motion_pivot();
+    }
+
     /// Finds where the handles of the move being set up stand
-    /// ([`Pivot`]) if it isn't known for its bodies and the document as
+    /// ([`Anchor::Pivot`]) if it isn't known for its bodies and the document as
     /// they are: once the model shown answers what was asked last, from
     /// its bodies' box centre, through the move it was asked with (none
     /// for a new one not previewed yet); not while that preview failed,
     /// when the model shows the bodies where the document has them.
-    pub(crate) fn follow_motion_pivot(&mut self) {
-        self.follow_offset_anchor();
-        self.follow_knob_anchor();
+    fn follow_motion_pivot(&mut self) {
         let generation = self.editor.generation();
         let Some(session) = self.mode.motion() else {
             return;
@@ -2279,8 +2326,7 @@ impl Doc {
         if session.kind != MotionKind::Move
             || session.picking != MotionPick::Bodies
             || session.bodies.is_empty()
-            || (session.pivot.as_ref())
-                .is_some_and(|pivot| pivot.current(&session.bodies, generation))
+            || session.pivot(generation).is_some()
             || !self.feed.answers_request()
             || self.feed.predates_replacement()
         {
@@ -2302,11 +2348,11 @@ impl Doc {
             return;
         };
         if let Some(session) = self.mode.motion_mut() {
-            session.pivot = Some(Pivot {
-                bodies: session.bodies.clone(),
+            session.anchor = Some(Anchor::Pivot(Found {
+                key: session.bodies.clone(),
                 generation,
-                at,
-            });
+                value: at,
+            }));
         }
     }
 
@@ -2615,15 +2661,13 @@ impl Doc {
             _ => line,
         };
         let generation = self.editor.generation();
-        let centre = (session.pivot.as_ref())
-            .filter(|pivot| pivot.current(&session.bodies, generation))
-            .and_then(|pivot| {
-                let line = match session.axis {
-                    Some(AxisRef::Origin(_)) | None => None,
-                    Some(_) => self.feed.draft_reference(),
-                };
-                session.centre(pivot.at, line)
-            });
+        let centre = session.pivot(generation).and_then(|pivot| {
+            let line = match session.axis {
+                Some(AxisRef::Origin(_)) | None => None,
+                Some(_) => self.feed.draft_reference(),
+            };
+            session.centre(pivot, line)
+        });
         let fields = MotionField::ALL.map(|field| session.field(field).field(self.params_in()));
         let warning = (self.motion_warning(session))
             .or_else(|| self.scale_note(session))

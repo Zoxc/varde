@@ -1112,7 +1112,7 @@ impl Doc {
         // The extrude being set up is previewed as it changes, and what's
         // selected measured.
         self.request_model();
-        self.follow_motion_pivot();
+        self.follow_motion_anchor();
         self.refresh_errors();
         self.prune_preview();
     }
@@ -1669,7 +1669,7 @@ impl Doc {
         self.follow_merges();
         self.follow_motion_merges();
         self.request_model();
-        self.follow_motion_pivot();
+        self.follow_motion_anchor();
         self.follow_edge_axis();
         self.refresh_errors();
         self.follow_placement();

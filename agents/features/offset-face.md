@@ -130,7 +130,7 @@ menu), so the panel is built in the style of the mock's shell panel.
   along its outward normal, its knob at the distance (negative
   inward): one of the operations' knobs (see Operation knobs below),
   drawn as the extrude's puck in the Modify colours. Where it stands
-  (`offset_face::Anchor`) is found once on the model shown, once it
+  (`Anchor::Face` in `doc/motion.rs`) is found once on the model shown, once it
   answers what was asked last: the first face found there, the point
   nearest its stored point on the face's nearest triangle and the
   outward normal there (`PickIndex::face_point`: the mesh's corner

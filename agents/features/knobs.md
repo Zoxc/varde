@@ -78,7 +78,7 @@ twist, no draft of a quarter turn or more. None in a document that can't be chan
   turn, so at the helix's end, snapping as a factor.
 
 A shell's, draft's, chamfer's and fillet's knobs stand where their
-first face or edge is before the feature changes it (`KnobAnchor`):
+first face or edge is before the feature changes it (`Anchor::Face` or `Anchor::Edge` in `doc/motion.rs`):
 found on the model shown while it's the document's alone (no draft
 shown, of the document as it is), so for a new feature only, kept
 while the first face or edge and the document stay; the point and
