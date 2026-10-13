@@ -170,29 +170,74 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
         Goal::Settle => HashMap::new(),
     };
     let mut system = System::toward(sketch, Fixing::Constants, &starts);
-    let mut weights = vec![1.0; system.values.len()];
-    // The variables the drag sets, which pick the components solved.
-    let mut dragged = vec![false; system.values.len()];
-    let dragging = matches!(goal, Goal::Drag { .. });
-    let mut scale = scale(sketch);
-    if let Goal::Drag { points, radii } = goal {
-        let targets = points
-            .iter()
-            .filter_map(|&(id, target)| {
-                let slots = system.point(sketch, id)?;
-                Some(
-                    slots
-                        .into_iter()
-                        .zip(target.to_array())
-                        .map(move |t| (id, t)),
-                )
-            })
-            .flatten();
-        let radii = radii.iter().filter_map(|&(id, target)| {
-            let slot = (*system.radii.get(sketch.curve_index(id)?)?)?;
-            Some((id, (slot, target)))
-        });
-        for (id, (slot, target)) in targets.chain(radii).collect::<Vec<_>>() {
+    let drag = Drag::new(&mut system, sketch, goal, scale(sketch))?;
+    let tolerance = TOLERANCE * drag.scale;
+    let (components, constant) = system.components();
+    if drag.dragged.is_none() {
+        constants_hold(&system, &constant, tolerance)?;
+    }
+    let mut spent = 0;
+    for component in &components {
+        if let Some(dragged) = &drag.dragged
+            && !component.vars.iter().any(|&var| dragged[var])
+        {
+            continue;
+        }
+        let mut solver = Solver {
+            system: &mut system,
+            component,
+            weights: &drag.weights,
+            scale: drag.scale,
+            budget,
+            spent: &mut spent,
+        };
+        solver.settle()?;
+    }
+    Ok(Solution {
+        sketch: written(&system, sketch)?,
+        iterations: spent,
+    })
+}
+
+/// What a goal drags, its targets set in the system's values.
+struct Drag {
+    /// Each variable's weight: [`DRAG_WEIGHT`] for one dragged.
+    weights: Vec<f64>,
+    /// Per variable, whether the drag sets it, which picks the components
+    /// solved. `None` settling.
+    dragged: Option<Vec<bool>>,
+    /// The size tolerances are relative to, the targets' too.
+    scale: f64,
+}
+
+impl Drag {
+    /// Sets the targets of `goal` on `sketch` in `system`'s values, `scale`
+    /// the sketch's size. `Degenerate` for a target that isn't finite.
+    fn new(system: &mut System, sketch: &Sketch, goal: &Goal, scale: f64) -> Result<Self, Failure> {
+        let mut drag = Drag {
+            weights: vec![1.0; system.values.len()],
+            dragged: None,
+            scale,
+        };
+        let Goal::Drag { points, radii } = goal else {
+            return Ok(drag);
+        };
+        let mut dragged = vec![false; system.values.len()];
+        let mut targets = Vec::new();
+        for &(id, target) in points {
+            if let Some(slots) = system.point(sketch, id) {
+                targets.extend(slots.into_iter().zip(target.to_array()).map(|t| (id, t)));
+            }
+        }
+        for &(id, target) in radii {
+            let slot = sketch
+                .curve_index(id)
+                .and_then(|index| *system.radii.get(index)?);
+            if let Some(slot) = slot {
+                targets.push((id, (slot, target)));
+            }
+        }
+        for (id, (slot, target)) in targets {
             if !target.is_finite() {
                 return Err(Failure::Degenerate {
                     involved: BTreeSet::from([id]),
@@ -200,43 +245,35 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
             }
             if let Slot::Var(var) = slot {
                 system.values[var] = target;
-                weights[var] = DRAG_WEIGHT;
+                drag.weights[var] = DRAG_WEIGHT;
                 dragged[var] = true;
-                scale = scale.max(target.abs());
+                drag.scale = drag.scale.max(target.abs());
             }
         }
+        drag.dragged = Some(dragged);
+        Ok(drag)
     }
+}
 
-    let tolerance = TOLERANCE * scale;
-    let (components, constant) = system.components();
-    if !dragging {
-        // Equations between fixed things alone: no step changes them.
-        let broken: BTreeSet<Id> = constant
-            .iter()
-            .map(|&index| &system.equations[index])
-            .filter(|equation| !within(equation.residual.value(&system.values), tolerance))
-            .map(|equation| equation.source)
-            .collect();
-        if !broken.is_empty() {
-            return Err(Failure::NotConverged { involved: broken });
-        }
+/// Fails unless the equations between fixed things alone, `constant` by
+/// index, hold within `tolerance`: no step changes them.
+fn constants_hold(system: &System, constant: &[usize], tolerance: f64) -> Result<(), Failure> {
+    let broken: BTreeSet<Id> = constant
+        .iter()
+        .map(|&index| &system.equations[index])
+        .filter(|equation| !within(equation.residual.value(&system.values), tolerance))
+        .map(|equation| equation.source)
+        .collect();
+    if broken.is_empty() {
+        Ok(())
+    } else {
+        Err(Failure::NotConverged { involved: broken })
     }
-    let mut spent = 0;
-    for component in &components {
-        if dragging && !component.vars.iter().any(|&var| dragged[var]) {
-            continue;
-        }
-        let mut solver = Solver {
-            system: &mut system,
-            component,
-            weights: &weights,
-            scale,
-            budget,
-            spent: &mut spent,
-        };
-        solver.settle()?;
-    }
+}
 
+/// `sketch` with `system`'s values written in. `Degenerate` for a point
+/// that isn't finite or a circle's radius not above zero.
+fn written(system: &System, sketch: &Sketch) -> Result<Sketch, Failure> {
     let mut solved = sketch.clone();
     system.write(&mut solved);
     let finite = solved.points.iter().all(|point| point.at.is_finite());
@@ -249,10 +286,7 @@ pub fn solve(sketch: &Sketch, goal: &Goal, budget: &Budget) -> Result<Solution, 
             involved: bad_radius.map(|entry| entry.id).into_iter().collect(),
         });
     }
-    Ok(Solution {
-        sketch: solved,
-        iterations: spent,
-    })
+    Ok(solved)
 }
 
 /// Solving one component, in place in the system's values.
