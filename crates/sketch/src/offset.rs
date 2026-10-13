@@ -536,12 +536,7 @@ impl Sketch {
                 };
                 if count > 1 && rounded.insert(corner) {
                     raws.push(Raw {
-                        geom: Geom::Round {
-                            center: at,
-                            radius: distance,
-                            begin: 0.0,
-                            sweep: TAU,
-                        },
+                        geom: Geom::circle(at, distance),
                         forward: true,
                         source: Source::Join {
                             corner,
@@ -1130,12 +1125,7 @@ impl Link {
     /// and circles round its ends. A copy with no radius left, within
     /// `tol` of its centre, is left out.
     fn band(&self, distance: f64, tol: f64) -> Vec<Geom> {
-        let cap = |center| Geom::Round {
-            center,
-            radius: distance,
-            begin: 0.0,
-            sweep: TAU,
-        };
+        let cap = |center| Geom::circle(center, distance);
         match self.geom {
             Geom::Spline(_) => Vec::new(),
             Geom::Segment { start, end } => {

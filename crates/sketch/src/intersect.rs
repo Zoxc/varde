@@ -99,6 +99,16 @@ pub(crate) enum Geom {
 }
 
 impl Geom {
+    /// The whole circle round `center`, a turn begun at angle 0.
+    pub(crate) fn circle(center: DVec2, radius: f64) -> Geom {
+        Geom::Round {
+            center,
+            radius,
+            begin: 0.0,
+            sweep: TAU,
+        }
+    }
+
     /// The shape of `curve` in `sketch`: an arc's radius is its start's
     /// distance from its centre, and it ends in its end's direction. `None`
     /// if it names a point the sketch doesn't have, isn't finite, or has no
@@ -111,12 +121,7 @@ impl Geom {
                 start: at(start)?,
                 end: at(end)?,
             },
-            &Curve::Circle { center, radius } => Geom::Round {
-                center: at(center)?,
-                radius,
-                begin: 0.0,
-                sweep: TAU,
-            },
+            &Curve::Circle { center, radius } => Geom::circle(at(center)?, radius),
             &Curve::Arc { center, start, end } => {
                 let center = at(center)?;
                 let (from, to) = (at(start)? - center, at(end)? - center);
