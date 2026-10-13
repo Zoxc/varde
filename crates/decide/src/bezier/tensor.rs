@@ -476,7 +476,7 @@ impl HomPatch<Bounded<f64>> {
 /// `wl > 0`: the least quotient is `xl/wh` for `xl ≥ 0` and `xl/wl`
 /// otherwise, the greatest `xh/wl` for `xh ≥ 0` and `xh/wh` otherwise,
 /// each rounded outwards ([`down`]; a NaN, as `∞/∞`, gives `∓∞`).
-fn quotient([xl, xh]: [f64; 2], [wl, wh]: [f64; 2]) -> [f64; 2] {
+pub(super) fn quotient([xl, xh]: [f64; 2], [wl, wh]: [f64; 2]) -> [f64; 2] {
     let lo = down(xl / if xl >= 0.0 { wh } else { wl });
     let hi = -down(-(xh / if xh >= 0.0 { wl } else { wh }));
     [lo, hi]

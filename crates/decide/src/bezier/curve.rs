@@ -6,6 +6,7 @@
 
 use super::poly::{MAX_DEGREE, Poly};
 use super::scalar::Scalar;
+use super::tensor::quotient;
 
 /// A rational span in `N` dimensions: the polynomials `P = (w·x₁, …,
 /// w·x_N)` and `W`, of one degree. The point at `t` is `P(t) / W(t)`;
@@ -159,5 +160,30 @@ impl<S: Scalar, const N: usize> HomCurve<S, N> {
     /// control points.
     pub fn weights_positive(&self) -> bool {
         self.w.coefs().iter().all(|w| w.enclose()[0] > 0.0)
+    }
+
+    /// A certified box `[lo, hi]` per coordinate holding every point of
+    /// the span on `[0, 1]`: the projected control points `(w·x) / w`
+    /// bounded outwards from the enclosures of `w·x` and `w` (as
+    /// [`HomPatch::hull_box`](super::HomPatch::hull_box)). `None` unless
+    /// every weight is certified positive.
+    pub fn control_box(&self) -> Option<[[f64; 2]; N]> {
+        let mut b = [[f64::INFINITY, f64::NEG_INFINITY]; N];
+        for (idx, w) in self.w.coefs().iter().enumerate() {
+            let [wl, wh] = w.enclose();
+            if wl <= 0.0 || wl.is_nan() {
+                return None;
+            }
+            for (k, side) in b.iter_mut().enumerate() {
+                let [lo, hi] = quotient(self.p[k].coefs()[idx].enclose(), [wl, wh]);
+                if lo < side[0] {
+                    side[0] = lo;
+                }
+                if hi > side[1] {
+                    side[1] = hi;
+                }
+            }
+        }
+        Some(b)
     }
 }

@@ -97,6 +97,22 @@
 //! (or [`WIND_PIECES`]), the level can't decide ([`BoxError::Unsettled`]:
 //! escalate the level).
 //!
+//! **Children test their parent's spans** ([`classify_among`]). A box's
+//! classification lists the spans it isn't separated from
+//! ([`Classified::met`], by coedge and span index, so the list doesn't
+//! depend on the trims' order); a box inside it need test only those for
+//! meeting. The winding of a clear box still reads every span.
+//!
+//! **Sub-patches** ([`sub_patch`]). The part of a tile's patch over a box
+//! is cut from the tile's patch at the box's sides, so a box's 3D hull
+//! ([`box_hull`]) is a function of the box alone.
+//!
+//! **Roles** ([`role`], in `roles`). A mixed box is a strip box of one
+//! trimming curve (or of a slit's coedges), a corner box of a vertex
+//! (inside the vertex's corner component, which takes an acute or cusp
+//! corner's spike), or thin; the tubes round the trimming curves in
+//! space ([`in_tube`]) and the corners' runs ([`Corners`]) are there.
+//!
 //! **Levels.** Classification and splits run at the level of the value
 //! (or patch) passed, every hull certified there: a mixed box at one
 //! level may separate at a higher one, never the other way round in
@@ -110,7 +126,7 @@ use malachite::Rational;
 use smallvec::SmallVec;
 
 use crate::bezier::{Dir, Dyadic, HomCurve, HomPatch, Scalar};
-use crate::ids::{CoedgeId, FaceId};
+use crate::ids::{CoedgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::perturb::{NU, R_HAT};
 use crate::records::keys::Operand;
@@ -360,6 +376,28 @@ pub struct Trim<'a> {
     pub reversed: bool,
     /// The p-curve's spans along the edge's parameter.
     pub spans: &'a [UvSpan],
+    /// The edge's vertices at the first span's start and the last span's
+    /// end (the edge's start and end, whatever the coedge's direction).
+    pub ends: [VertId; 2],
+    /// Whether the edge has length zero (joining coincident vertices,
+    /// a vertex contact's member): it belongs to the corner at its
+    /// vertices ([`role`]).
+    pub zero_length: bool,
+    /// The edge's counting band `β_g`
+    /// ([`OpBands::band`](crate::records::near::OpBands::band)), finite
+    /// and `≥ 0`.
+    pub band: f64,
+}
+
+/// A span of a face's trims: the coedge and the span's index along its
+/// edge. Ordered by coedge, then span, so a set of them doesn't depend on
+/// the order the trims are given in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SpanRef {
+    /// The coedge.
+    pub coedge: CoedgeId,
+    /// The span's index in its trim.
+    pub span: u32,
 }
 
 /// Why a face or a box is refused, or a box can't be split or classified.
@@ -381,6 +419,13 @@ pub enum BoxError {
     /// The trims wind this many times round a box clear of them: neither
     /// 0 nor the face's inside winding, so they aren't a valid trim.
     Winding(i64),
+    /// `coedge`'s band isn't finite and `≥ 0`.
+    Band { coedge: CoedgeId },
+    /// Two trims of one coedge, or a span named that isn't one of the
+    /// face's.
+    Coedge { coedge: CoedgeId },
+    /// The patches given aren't one per tile of the face.
+    Patches,
 }
 
 /// A face as the counting reads it (module docs), validated.
@@ -392,6 +437,11 @@ pub struct FaceUv<'a> {
     scale: [f64; 2],
     trims: &'a [Trim<'a>],
     flipped: bool,
+    /// The trims' indices in coedge order.
+    by_coedge: Vec<u32>,
+    /// Per trim, the least index of a trim whose p-curve is bitwise the
+    /// same curve ([`role`]'s slits).
+    curve: Vec<u32>,
 }
 
 impl<'a> FaceUv<'a> {
@@ -400,7 +450,9 @@ impl<'a> FaceUv<'a> {
     /// splits compare (`scale`), its trims (every coedge of every loop)
     /// and whether it is flipped. Refused unless the ranges are non-empty
     /// within `(−2⁵², 2⁵²)`, the scales finite and positive, and every
-    /// span's values finite with positive weights.
+    /// span's values finite with positive weights, each band finite and
+    /// `≥ 0`, no two trims of one coedge, and the trims' and each trim's
+    /// spans' counts within `u32`.
     pub fn new(
         operand: Operand,
         face: FaceId,
@@ -414,17 +466,37 @@ impl<'a> FaceUv<'a> {
         if !tiles.iter().all(ok_range) || !scale.into_iter().all(ok_scale) {
             return Err(BoxError::Grid);
         }
+        if u32::try_from(trims.len()).is_err() {
+            return Err(BoxError::Coedge {
+                coedge: CoedgeId::NONE,
+            });
+        }
         for t in trims {
+            if u32::try_from(t.spans.len()).is_err() {
+                return Err(BoxError::Span {
+                    coedge: t.coedge,
+                    span: u32::MAX,
+                });
+            }
             for (k, s) in t.spans.iter().enumerate() {
                 let bad = s
                     .iter()
                     .any(|p| !p.iter().all(|x| x.is_finite()) || p[2] <= 0.0);
                 if bad {
-                    return Err(BoxError::Span {
-                        coedge: t.coedge,
-                        span: u32::try_from(k).unwrap_or(u32::MAX),
-                    });
+                    return Err(span_error(t, k));
                 }
+            }
+            if !(t.band.is_finite() && t.band >= 0.0) {
+                return Err(BoxError::Band { coedge: t.coedge });
+            }
+        }
+        // Fits: the count was checked above.
+        let mut by_coedge: Vec<u32> = (0..trims.len() as u32).collect();
+        by_coedge.sort_unstable_by_key(|&k| trims[k as usize].coedge);
+        for w in by_coedge.windows(2) {
+            let c = trims[w[0] as usize].coedge;
+            if c == trims[w[1] as usize].coedge {
+                return Err(BoxError::Coedge { coedge: c });
             }
         }
         Ok(FaceUv {
@@ -434,7 +506,52 @@ impl<'a> FaceUv<'a> {
             scale,
             trims,
             flipped,
+            by_coedge,
+            curve: same_curves(trims),
         })
+    }
+
+    /// The index of `coedge`'s trim.
+    pub(crate) fn trim_index(&self, coedge: CoedgeId) -> Option<usize> {
+        self.by_coedge
+            .binary_search_by_key(&coedge, |&k| self.trims[k as usize].coedge)
+            .ok()
+            .map(|i| self.by_coedge[i] as usize)
+    }
+
+    /// Whether the p-curves of trims `a` and `b` are bitwise one curve.
+    pub(crate) fn same_curve(&self, a: usize, b: usize) -> bool {
+        self.curve[a] == self.curve[b]
+    }
+
+    /// The patch of `tile` among `patches`, one per tile of the face in
+    /// [`tile_boxes`](Self::tile_boxes)' order (`u` index first); `None`
+    /// for a tile not the face's.
+    pub fn patch_of<'p, P>(&self, patches: &'p [P], tile: [i64; 2]) -> Option<&'p P> {
+        let [us, vs] = &self.tiles;
+        if !us.contains(&tile[0]) || !vs.contains(&tile[1]) {
+            return None;
+        }
+        // Within the checked ranges, below `2⁵³` each: no overflow in the
+        // differences; the product is checked.
+        let nv = usize::try_from(vs.end - vs.start).ok()?;
+        let (i, j) = (
+            usize::try_from(tile[0] - us.start).ok()?,
+            usize::try_from(tile[1] - vs.start).ok()?,
+        );
+        patches.get(i.checked_mul(nv)?.checked_add(j)?)
+    }
+
+    /// Whether `patches` hold one patch per tile.
+    pub(crate) fn patches_fit<P>(&self, patches: &[P]) -> bool {
+        let [us, vs] = &self.tiles;
+        let n = |r: &Range<i64>| usize::try_from(r.end - r.start).ok();
+        matches!((n(us), n(vs)), (Some(a), Some(b)) if a.checked_mul(b) == Some(patches.len()))
+    }
+
+    /// The tiles' index ranges, `u` then `v`.
+    pub(crate) fn tiles(&self) -> &[Range<i64>; 2] {
+        &self.tiles
     }
 
     /// The trims.
@@ -476,6 +593,38 @@ impl<'a> FaceUv<'a> {
     }
 }
 
+/// Per trim, the least index of a trim whose p-curve is bitwise the same
+/// curve: the same spans in the same order, or each reversed in the
+/// reverse order (a slit's two sides stored along one edge, or along two
+/// edges of opposite directions). The bits are compared, `0.0` and `−0.0`
+/// apart.
+fn same_curves(trims: &[Trim<'_>]) -> Vec<u32> {
+    let bits = |s: &UvSpan| s.map(|p| p.map(f64::to_bits));
+    let key = |t: &Trim<'_>| {
+        let fwd: Vec<_> = t.spans.iter().map(bits).collect();
+        let back: Vec<_> = t
+            .spans
+            .iter()
+            .rev()
+            .map(|s| bits(&[s[2], s[1], s[0]]))
+            .collect();
+        if back < fwd { back } else { fwd }
+    };
+    let keys: Vec<_> = trims.iter().map(key).collect();
+    // Fits: the face checked the count.
+    let mut order: Vec<u32> = (0..keys.len() as u32).collect();
+    order.sort_by(|&a, &b| keys[a as usize].cmp(&keys[b as usize]).then(a.cmp(&b)));
+    let mut out = vec![0u32; keys.len()];
+    let mut first = 0u32;
+    for (n, &k) in order.iter().enumerate() {
+        if n == 0 || keys[k as usize] != keys[order[n - 1] as usize] {
+            first = k;
+        }
+        out[k as usize] = first;
+    }
+    out
+}
+
 /// What a box is against the trims.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Class {
@@ -494,6 +643,10 @@ pub struct Classified {
     pub class: Class,
     /// The span pieces tested.
     pub pieces: u64,
+    /// The spans the box isn't separated from, ascending (empty unless
+    /// mixed): all a box inside this one need test
+    /// ([`classify_among`]).
+    pub met: SmallVec<[SpanRef; 8]>,
 }
 
 /// The box `b` of `face` against its trims at `like`'s level (module
@@ -503,6 +656,43 @@ pub fn classify<S: Scalar>(
     b: &BoxKey,
     like: &S,
 ) -> Result<Classified, BoxError> {
+    classify_in(face, b, like, None)
+}
+
+/// [`classify`] for a box `b` inside a box whose classification met only
+/// the spans `among` (its [`Classified::met`]): a span separated from the
+/// larger box is separated from `b`, so only `among` are tested for
+/// meeting `b`. The winding of a clear box still reads every span (whose
+/// crossings of the ray beyond the larger box no span among `among`
+/// tells), each settled first by its control points' box, so the cost of
+/// a box is about its own met spans plus the spans near its row. The
+/// caller keeps `b` inside the box `among` came from; a span not of the
+/// face is [`BoxError::Coedge`].
+pub fn classify_among<S: Scalar>(
+    face: &FaceUv<'_>,
+    b: &BoxKey,
+    like: &S,
+    among: &[SpanRef],
+) -> Result<Classified, BoxError> {
+    classify_in(face, b, like, Some(among))
+}
+
+/// The trim and span `r` names.
+fn span_of<'a>(face: &FaceUv<'a>, r: SpanRef) -> Result<(&'a Trim<'a>, usize), BoxError> {
+    let t = face
+        .trim_index(r.coedge)
+        .map(|k| &face.trims[k])
+        .filter(|t| (r.span as usize) < t.spans.len())
+        .ok_or(BoxError::Coedge { coedge: r.coedge })?;
+    Ok((t, r.span as usize))
+}
+
+fn classify_in<S: Scalar>(
+    face: &FaceUv<'_>,
+    b: &BoxKey,
+    like: &S,
+    among: Option<&[SpanRef]>,
+) -> Result<Classified, BoxError> {
     if !face.owns(b) {
         return Err(BoxError::Foreign);
     }
@@ -511,29 +701,51 @@ pub fn classify<S: Scalar>(
         .each_ref()
         .map(|[lo, hi]| [lo.enclose()[0], hi.enclose()[1]]);
     let mut pieces = 0u64;
-    let mut meets: SmallVec<[CoedgeId; 4]> = SmallVec::new();
-    for t in face.trims {
-        for (k, s) in t.spans.iter().enumerate() {
-            let hull = control_box(s);
-            // The control points beyond a side's certified enclosure: the
-            // span, in their hull, misses the box.
-            if (0..2).any(|k| hull[k][1] < outer[k][0] || hull[k][0] > outer[k][1]) {
-                continue;
+    let mut met: SmallVec<[SpanRef; 8]> = SmallVec::new();
+    let mut test = |t: &Trim<'_>, k: usize| -> Result<(), BoxError> {
+        let s = &t.spans[k];
+        let hull = control_box(s);
+        // The control points beyond a side's certified enclosure: the
+        // span, in their hull, misses the box.
+        if (0..2).any(|k| hull[k][1] < outer[k][0] || hull[k][0] > outer[k][1]) {
+            return Ok(());
+        }
+        let c = uv_curve(s, like).ok_or(span_error(t, k))?;
+        let mut budget = SEP_PIECES;
+        if !separated(&c, &sides, SEP_DEPTH, &mut budget) {
+            met.push(SpanRef {
+                coedge: t.coedge,
+                // Fits: the face checked the span's index.
+                span: k as u32,
+            });
+        }
+        pieces = pieces.saturating_add(u64::from(SEP_PIECES - budget));
+        Ok(())
+    };
+    match among {
+        None => {
+            for t in face.trims {
+                for k in 0..t.spans.len() {
+                    test(t, k)?;
+                }
             }
-            let c = uv_curve(s, like).ok_or(span_error(t, k))?;
-            let mut budget = SEP_PIECES;
-            if !separated(&c, &sides, SEP_DEPTH, &mut budget) {
-                meets.push(t.coedge);
+        }
+        Some(among) => {
+            for &r in among {
+                let (t, k) = span_of(face, r)?;
+                test(t, k)?;
             }
-            pieces = pieces.saturating_add(u64::from(SEP_PIECES - budget));
         }
     }
-    if !meets.is_empty() {
-        meets.sort_unstable();
+    if !met.is_empty() {
+        met.sort_unstable();
+        met.dedup();
+        let mut meets: SmallVec<[CoedgeId; 4]> = met.iter().map(|r| r.coedge).collect();
         meets.dedup();
         return Ok(Classified {
             class: Class::Mixed(meets),
             pieces,
+            met,
         });
     }
     let p = b.centre(like);
@@ -575,7 +787,7 @@ pub fn classify<S: Scalar>(
     } else {
         return Err(BoxError::Winding(w));
     };
-    Ok(Classified { class, pieces })
+    Ok(Classified { class, pieces, met })
 }
 
 impl BoxKey {
@@ -635,6 +847,32 @@ fn separated<S: Scalar>(
         return false;
     }
     *budget -= 1;
+    match verdict(c, sides) {
+        Verdict::Beyond => return true,
+        Verdict::In => return false,
+        Verdict::Open => {}
+    }
+    if depth == 0 || small(c, sides) {
+        return false;
+    }
+    let [l, r] = c.split_half();
+    separated(&l, sides, depth - 1, budget) && separated(&r, sides, depth - 1, budget)
+}
+
+/// A piece of a span against a closed box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verdict {
+    /// Certified beyond one of the box's side lines.
+    Beyond,
+    /// The piece, its start or its end certainly in the box.
+    In,
+    /// Neither.
+    Open,
+}
+
+/// Where the piece `c` lies against the closed box `sides` (module
+/// docs).
+fn verdict<S: Scalar>(c: &HomCurve<S, 2>, sides: &[[S; 2]; 2]) -> Verdict {
     let like = &c.weights().coefs()[0];
     // Certainly in the box: the whole piece, its start, its end.
     let mut inside = [true; 3];
@@ -643,12 +881,12 @@ fn separated<S: Scalar>(
         let below = c.compose_linear(&a, &lo.neg());
         let hb = below.hull();
         if hb.hi < 0.0 {
-            return true;
+            return Verdict::Beyond;
         }
         let above = c.compose_linear(&a, &hi.neg());
         let ha = above.hull();
         if ha.lo > 0.0 {
-            return true;
+            return Verdict::Beyond;
         }
         inside[0] &= hb.lo >= 0.0 && ha.hi <= 0.0;
         let (b, a) = (below.coefs(), above.coefs());
@@ -656,11 +894,84 @@ fn separated<S: Scalar>(
             inside[end] &= b[at].enclose()[0] >= 0.0 && a[at].enclose()[1] <= 0.0;
         }
     }
-    if inside.contains(&true) || depth == 0 || small(c, sides) {
+    if inside.contains(&true) {
+        Verdict::In
+    } else {
+        Verdict::Open
+    }
+}
+
+/// Whether every piece of span `c` that the closed box `sides` isn't
+/// separated from by the test of [`classify`] is `held`: `c` is the
+/// piece `[k/2^d, (k + 1)/2^d]` of the span, `(k, d)`, and `held` says
+/// whether a whole piece `(k, d)` is. A held piece is not tested further;
+/// any other goes on halving where the box isn't separated from it, until
+/// it is under a sixteenth of the box's width (or [`SEP_DEPTH`] deep):
+/// then it answers `false`, as does running out of the budget. So the
+/// budget goes to the pieces outside `held`, not to those deep inside it
+/// next to the box.
+pub(crate) fn met_within<S: Scalar>(
+    c: &HomCurve<S, 2>,
+    sides: &[[S; 2]; 2],
+    (k, d): (u64, u32),
+    budget: &mut u32,
+    held: &impl Fn((u64, u32)) -> bool,
+) -> bool {
+    if held((k, d)) {
+        return true;
+    }
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    if verdict(c, sides) == Verdict::Beyond {
+        return true;
+    }
+    if d >= SEP_DEPTH || small(c, sides) {
         return false;
     }
     let [l, r] = c.split_half();
-    separated(&l, sides, depth - 1, budget) && separated(&r, sides, depth - 1, budget)
+    // `d < SEP_DEPTH < 63`: `2k + 1 < 2^(d + 1)` fits.
+    met_within(&l, sides, (2 * k, d + 1), budget, held)
+        && met_within(&r, sides, (2 * k + 1, d + 1), budget, held)
+}
+
+/// The part of `patch` (a tile's) over the box `b`'s extents: the patch
+/// cut at each side's local coordinate (an exact dyadic) in turn, `u`
+/// first, the upper end of each cut relative to the part left, `(hi −
+/// lo)/(1 − lo)`, formed at the level (certified at every level, exact
+/// for the [`Rational`] oracle). A function of the patch and the box
+/// alone, whichever route reached the box, so a box's 3D hull
+/// ([`HomPatch::hull_box`]) is the same from every route.
+pub fn sub_patch<S: Scalar>(patch: &HomPatch<S>, b: &BoxKey) -> HomPatch<S> {
+    let mut p = patch.clone();
+    for dir in [Dir::U, Dir::V] {
+        let e = b.extent(dir);
+        p = cut(&p, dir, dy(e.lo), dy(e.hi));
+    }
+    p
+}
+
+/// The part of `p` over `[a, b] ⊆ [0, 1]` in `dir`, `a ≤ b` exact
+/// parameters ([`sub_patch`]).
+pub(crate) fn cut<S: Scalar>(p: &HomPatch<S>, dir: Dir, a: f64, b: f64) -> HomPatch<S> {
+    debug_assert!(0.0 <= a && a <= b && b <= 1.0);
+    let like = p.weights().coefs()[0].clone();
+    let fa = S::from_f64(a, &like);
+    let p = if a > 0.0 {
+        let [_, r] = p.split_at(dir, &fa);
+        r
+    } else {
+        p.clone()
+    };
+    if b < 1.0 {
+        let one = S::int(1, &like);
+        let s = S::from_f64(b, &like).sub(&fa).div(&one.sub(&fa));
+        let [l, _] = p.split_at(dir, &s);
+        l
+    } else {
+        p
+    }
 }
 
 /// Whether the piece's control points spread less than a sixteenth of the
@@ -1033,6 +1344,13 @@ fn off<S: Scalar>(
     let [l, r] = c.split_half();
     off(&l, axes, ends, depth - 1, pieces) && off(&r, axes, ends, depth - 1, pieces)
 }
+
+mod roles;
+
+pub use roles::{
+    Corner, Corners, HULL_TILES, NEAR_DEPTH, NEAR_PIECES, RUN_DEPTH, RUN_PIECES, Role, Roled, Run,
+    Tube, box_hull, in_tube, role, within_band,
+};
 
 #[cfg(test)]
 mod tests;

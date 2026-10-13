@@ -5,7 +5,9 @@
 //! stored spans and lies inside or outside the shape as its class says;
 //! every box stays in one tile and the boxes of a tile cover it once;
 //! splits move off a query point's shadow; the same boxes and classes
-//! come from every route, trim order and level; bad input is refused.
+//! come from every route, trim order and level; bad input is refused;
+//! boxes refined by role, and tubes round curved spans, on the weighted
+//! curved surface.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -33,26 +35,37 @@ fn height(x: f64, y: f64) -> f64 {
     0.1 * x * y - 0.05 * x * x + 0.2 * y
 }
 
-/// Tile `(i, j)`'s net: a graph over the tile, weights from `weights`.
-fn net(i: i64, j: i64, weights: &mut impl FnMut() -> f64) -> Vec<[f64; 4]> {
+/// Tile `(i, j)`'s net: a graph over the tile, the weight of each control
+/// point `weight` of its global position in half tiles.
+fn net(i: i64, j: i64, weight: &impl Fn(usize, usize) -> f64) -> Vec<[f64; 4]> {
     let mut n = Vec::new();
     for a in 0..3 {
         for b in 0..3 {
             let (x, y) = (i as f64 + a as f64 * 0.5, j as f64 + b as f64 * 0.5);
-            n.push([x, y, height(x, y), weights()]);
+            let at = |t: i64, r: &Range<i64>, k: usize| (2 * (t - r.start)) as usize + k;
+            let w = weight(at(i, &TILES[0], a), at(j, &TILES[1], b));
+            n.push([x, y, height(x, y), w]);
         }
     }
     n
 }
 
-/// The tiles' patches, row-major in `u`, at the first level.
+/// The tiles' patches, row-major in `u`, at the first level: unit weights,
+/// or weights drawn per control point of the whole grid, so that
+/// neighbouring tiles share their boundary rows, points and weights, and
+/// the surface is one continuous surface across tile lines.
 fn patches(rng: Option<&mut Rng>) -> Vec<Patch> {
-    let mut rng = rng;
-    let mut w = || rng.as_mut().map_or(1.0, |r| r.range(0.5, 2.0));
+    let n = |r: &Range<i64>| (2 * (r.end - r.start) + 1) as usize;
+    let (nu, nv) = (n(&TILES[0]), n(&TILES[1]));
+    let grid: Vec<f64> = match rng {
+        Some(r) => (0..nu * nv).map(|_| r.range(0.5, 2.0)).collect(),
+        None => vec![1.0; nu * nv],
+    };
+    let weight = |u: usize, v: usize| grid[u * nv + v];
     let mut out = Vec::new();
     for i in TILES[0].clone() {
         for j in TILES[1].clone() {
-            out.push(Patch::from_affine(2, 2, net(i, j, &mut w), &first()).unwrap());
+            out.push(Patch::from_affine(2, 2, net(i, j, &weight), &first()).unwrap());
         }
     }
     out
@@ -128,6 +141,19 @@ impl Shape {
     }
 }
 
+/// A trim of a coedge whose edge runs between two vertices of its own, of
+/// positive length, band 0.
+fn trim(coedge: CoedgeId, reversed: bool, spans: &[UvSpan]) -> Trim<'_> {
+    Trim {
+        coedge,
+        reversed,
+        spans,
+        ends: [VertId(2 * coedge.0), VertId(2 * coedge.0 + 1)],
+        zero_length: false,
+        band: 0.0,
+    }
+}
+
 /// A coedge's spans run the other way.
 fn backwards(spans: &[UvSpan]) -> Vec<UvSpan> {
     spans.iter().rev().map(|s| [s[2], s[1], s[0]]).collect()
@@ -140,6 +166,9 @@ struct TestFace {
     flipped: bool,
     /// Per coedge: whether reversed, and the stored spans.
     coedges: Vec<(bool, Vec<UvSpan>)>,
+    /// Per coedge, its edge's stored ends: the loops' vertices numbered
+    /// in loop order.
+    ends: Vec<[VertId; 2]>,
 }
 
 impl TestFace {
@@ -152,16 +181,22 @@ impl TestFace {
         against: &mut impl FnMut() -> bool,
     ) -> TestFace {
         let mut coedges = Vec::new();
+        let mut ends = Vec::new();
         let mut add = |shape: Shape, ccw: bool| {
             let mut loop_ = shape.ccw();
             if !ccw {
                 loop_ = loop_.iter().rev().map(|c| backwards(c)).collect();
             }
-            for c in loop_ {
+            let (base, m) = (ends.len() as u32, loop_.len() as u32);
+            for (p, c) in loop_.into_iter().enumerate() {
+                let p = p as u32;
+                let (from, to) = (VertId(base + p), VertId(base + (p + 1) % m));
                 if against() {
                     coedges.push((true, backwards(&c)));
+                    ends.push([to, from]);
                 } else {
                     coedges.push((false, c));
+                    ends.push([from, to]);
                 }
             }
         };
@@ -174,6 +209,7 @@ impl TestFace {
             holes,
             flipped,
             coedges,
+            ends,
         }
     }
 
@@ -181,10 +217,10 @@ impl TestFace {
         self.coedges
             .iter()
             .enumerate()
-            .map(|(k, (reversed, spans))| Trim {
-                coedge: CoedgeId(k as u32 * 3 + 1),
-                reversed: *reversed,
-                spans,
+            .zip(&self.ends)
+            .map(|((k, (reversed, spans)), ends)| Trim {
+                ends: *ends,
+                ..trim(CoedgeId(k as u32 * 3 + 1), *reversed, spans)
             })
             .collect()
     }
@@ -692,7 +728,7 @@ fn off_query_holds_exactly() {
     let exact: Vec<HomPatch<Q>> = TILES[0]
         .clone()
         .flat_map(|i| TILES[1].clone().map(move |j| (i, j)))
-        .map(|(i, j)| HomPatch::from_affine(2, 2, net(i, j, &mut || 1.0), &Q::from(0)).unwrap())
+        .map(|(i, j)| HomPatch::from_affine(2, 2, net(i, j, &|_, _| 1.0), &Q::from(0)).unwrap())
         .collect();
     let trims: [Trim<'_>; 0] = [];
     let face = face_uv(&trims, false);
@@ -729,7 +765,7 @@ fn off_query_holds_exactly() {
 fn boxes_and_classes_are_deterministic() {
     let ps = patches(None);
     // One box, two routes.
-    let tile = BoxKey::new(Operand::A, FaceId(0), [0, 0], Extent::WHOLE, Extent::WHOLE);
+    let tile = BoxKey::new(Operand::B, FaceId(7), [0, 0], Extent::WHOLE, Extent::WHOLE);
     let d = |n, e| Dyadic::new(n, e).unwrap();
     let a = tile.split_at(Dir::U, d(1, 1)).unwrap()[0]
         .split_at(Dir::U, d(1, 2))
@@ -803,11 +839,7 @@ fn refuses_bad_input() {
     );
     let bad = [[[0.0, 0.0, 1.0], [f64::NAN, 0.0, 1.0], [1.0, 0.0, 1.0]]];
     let mut with_bad = trims.clone();
-    with_bad.push(Trim {
-        coedge: CoedgeId(99),
-        reversed: false,
-        spans: &bad,
-    });
+    with_bad.push(trim(CoedgeId(99), false, &bad));
     assert_eq!(
         FaceUv::new(Operand::A, FaceId(0), TILES, [1.0, 1.0], &with_bad, false).err(),
         Some(BoxError::Span {
@@ -834,7 +866,10 @@ fn refuses_bad_input() {
         &mut || false,
     );
     let mut both = trims.clone();
-    both.extend(twice.trims());
+    both.extend(twice.trims().into_iter().map(|mut t| {
+        t.coedge = CoedgeId(t.coedge.0 + 1000);
+        t
+    }));
     let face = face_uv(&both, false);
     let mid = Extent::new(d(5, 3), d(7, 3)).unwrap();
     let b = BoxKey::new(Operand::B, FaceId(7), [0, 0], mid, mid);
@@ -977,11 +1012,7 @@ fn classes_match_the_exact_winding_of_polygons() {
         let trims: Vec<Trim<'_>> = coedges
             .iter()
             .enumerate()
-            .map(|(k, (reversed, spans))| Trim {
-                coedge: CoedgeId(k as u32),
-                reversed: *reversed,
-                spans,
-            })
+            .map(|(k, (reversed, spans))| trim(CoedgeId(k as u32), *reversed, spans))
             .collect();
         let flipped = rng.next_u64().is_multiple_of(3);
         let face = face_uv(&trims, flipped);
@@ -1087,11 +1118,7 @@ fn tiny_holes_resolve_deep_down() {
         let trims: Vec<Trim<'_>> = coedges
             .iter()
             .enumerate()
-            .map(|(k, (reversed, spans))| Trim {
-                coedge: CoedgeId(k as u32),
-                reversed: *reversed,
-                spans,
-            })
+            .map(|(k, (reversed, spans))| trim(CoedgeId(k as u32), *reversed, spans))
             .collect();
         // The hole's coedges: those whose spans come near it.
         let near = |s: &UvSpan| {
@@ -1244,11 +1271,7 @@ fn classes_match_the_exact_winding_of_arcs() {
         let trims: Vec<Trim<'_>> = coedges
             .iter()
             .enumerate()
-            .map(|(k, (reversed, spans))| Trim {
-                coedge: CoedgeId(k as u32),
-                reversed: *reversed,
-                spans,
-            })
+            .map(|(k, (reversed, spans))| trim(CoedgeId(k as u32), *reversed, spans))
             .collect();
         let flipped = rng.next_u64().is_multiple_of(3);
         let face = face_uv(&trims, flipped);
@@ -1300,11 +1323,7 @@ fn deep_boxes_beside_long_trims_classify() {
     let trims: Vec<Trim<'_>> = spans
         .chunks(1)
         .enumerate()
-        .map(|(k, s)| Trim {
-            coedge: CoedgeId(k as u32),
-            reversed: false,
-            spans: s,
-        })
+        .map(|(k, s)| trim(CoedgeId(k as u32), false, s))
         .collect();
     let face = face_uv(&trims, false);
     for depth in [20, 36, 44, MAX_BOX_DEPTH] {
@@ -1328,4 +1347,200 @@ fn deep_boxes_beside_long_trims_classify() {
             assert_eq!(got.map(|c| c.class), Ok(Class::Core), "depth {depth}");
         }
     }
+}
+
+/// Random faces on the curved surface refined by role, each box from its
+/// parent's spans: thin boxes split, strip and corner boxes until their
+/// hull is within the band. No box is left thin; a strip box is clear of
+/// every other coedge's spans, exactly; a corner box meets only its
+/// corner's coedges, near the corner's point; a box's role and met spans
+/// from its parent's spans are those from all spans.
+#[test]
+fn strips_and_corners_of_random_faces() {
+    let band = 1.0 / 64.0;
+    let (mut strips, mut corner_boxes) = (0, 0);
+    for seed in varde_testing::seeds(6, 48) {
+        let mut rng = Rng::new(seed);
+        let tf = random_face(&mut rng);
+        let trims: Vec<Trim<'_>> = tf.trims().into_iter().map(|t| Trim { band, ..t }).collect();
+        let face = face_uv(&trims, tf.flipped);
+        // Weights drawn over the whole grid: one surface across tile lines.
+        let ps = patches(Some(&mut rng));
+        let corners = Corners::new(&face, &ps).expect("corners");
+        let mut queue: VecDeque<(BoxKey, Option<SmallVec<[SpanRef; 8]>>)> =
+            face.tile_boxes().map(|b| (b, None)).collect();
+        let mut boxes = 0;
+        while let Some((b, among)) = queue.pop_front() {
+            boxes += 1;
+            assert!(boxes < 60_000, "refinement runs away");
+            let r = role(&face, &corners, &b, &first(), among.as_deref()).expect("role");
+            if among.is_some() {
+                let all = role(&face, &corners, &b, &first(), None).expect("role");
+                assert_eq!((&all.role, &all.met), (&r.role, &r.met), "box {b:?}");
+            }
+            let patch = patch_of(&ps, &b);
+            let more = match &r.role {
+                Role::Thin(c) => {
+                    assert!(b.depth() < 16, "box {b:?} left thin, meeting {c:?}");
+                    true
+                }
+                Role::Strip(_) | Role::Corner { .. } => {
+                    !within_band(&box_hull(patch, &b).expect("positive weights"), band)
+                }
+                Role::Core | Role::Outside => false,
+            };
+            if more {
+                let s = split(&face, &b, patch, None).expect("split");
+                for h in s.halves {
+                    queue.push_back((h, Some(r.met.clone())));
+                }
+                continue;
+            }
+            let bx = exact_box(&b);
+            match &r.role {
+                Role::Strip(set) => {
+                    strips += 1;
+                    for t in face.trims().iter().filter(|t| !set.contains(&t.coedge)) {
+                        for s in t.spans {
+                            assert!(!meets_exact(s, &bx), "strip {b:?} of {set:?} meets {t:?}");
+                        }
+                    }
+                }
+                Role::Corner { vertex, met } => {
+                    corner_boxes += 1;
+                    let corner = corners.corner(*vertex).expect("a corner");
+                    assert!(met.iter().all(|c| corner.curves.contains(c)), "box {b:?}");
+                    // The corner's point: the end of a curve there.
+                    let t = trims.iter().find(|t| t.coedge == corner.curves[0]).unwrap();
+                    let p = if corner.vertices.contains(&t.ends[0]) {
+                        t.spans[0][0]
+                    } else {
+                        t.spans[t.spans.len() - 1][2]
+                    };
+                    let c = centre(&b);
+                    let r = rect_size(&b);
+                    assert!(
+                        dist([p[0], p[1]], c) <= 4.0 * band + r,
+                        "corner box {b:?} far from {p:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(strips > 500 && corner_boxes > 20, "{strips} {corner_boxes}");
+}
+
+/// The box's UV diagonal.
+fn rect_size(b: &BoxKey) -> f64 {
+    let s = b
+        .sides(&first())
+        .map(|[lo, hi]| hi.enclose()[0] - lo.enclose()[0]);
+    (s[0] * s[0] + s[1] * s[1]).sqrt()
+}
+
+/// The surface's point at global `uv`, by its tile's patch.
+fn surface_at(ps: &[Patch], uv: [f64; 2]) -> [f64; 3] {
+    let tile = [
+        (uv[0].floor() as i64).clamp(TILES[0].start, TILES[0].end - 1),
+        (uv[1].floor() as i64).clamp(TILES[1].start, TILES[1].end - 1),
+    ];
+    let nv = (TILES[1].end - TILES[1].start) as usize;
+    let p = &ps[(tile[0] - TILES[0].start) as usize * nv + (tile[1] - TILES[1].start) as usize];
+    point_on(p, [uv[0] - tile[0] as f64, uv[1] - tile[1] as f64])
+}
+
+/// Tubes on the weighted curved surface, round curved spans crossing tile
+/// lines: a box certified in the tube has every sampled point within the
+/// band of the sampled curve (up to the samples' spacing).
+#[test]
+fn tubes_on_the_curved_surface_hold_by_samples() {
+    let mut certified = 0;
+    for seed in varde_testing::seeds(8, 32) {
+        let mut rng = Rng::new(seed);
+        let ps = patches(Some(&mut rng));
+        let pt = |rng: &mut Rng| [rng.range(0.1, 2.9), rng.range(0.1, 1.9)];
+        let (a, b, c) = (pt(&mut rng), pt(&mut rng), pt(&mut rng));
+        let span: UvSpan = [
+            [a[0], a[1], 1.0],
+            [c[0], c[1], rng.range(0.3, 3.0)],
+            [b[0], b[1], 1.0],
+        ];
+        let spans = [span];
+        let band = rng.log_range(0.003, 0.1);
+        let trims = [Trim {
+            band,
+            ..trim(CoedgeId(0), false, &spans)
+        }];
+        let face = face_uv(&trims, false);
+        let at = |t: f64| {
+            let bs = [(1.0 - t) * (1.0 - t), 2.0 * (1.0 - t) * t, t * t];
+            let w: f64 = (0..3).map(|i| bs[i] * span[i][2]).sum();
+            let p: [f64; 2] = std::array::from_fn(|k| {
+                (0..3).map(|i| bs[i] * span[i][2] * span[i][k]).sum::<f64>() / w
+            });
+            p
+        };
+        let curve: Vec<[f64; 3]> = (0..=10_000)
+            .map(|i| surface_at(&ps, at(i as f64 / 10_000.0)))
+            .collect();
+        let spacing = curve
+            .windows(2)
+            .map(|w| {
+                let d = [w[0][0] - w[1][0], w[0][1] - w[1][1], w[0][2] - w[1][2]];
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            })
+            .fold(0.0, |m: f64, x| if x > m { x } else { m });
+        for _ in 0..200 {
+            let p = at(rng.unit());
+            let p = [
+                p[0] + rng.range(-1.5, 1.5) * band,
+                p[1] + rng.range(-1.5, 1.5) * band,
+            ];
+            if !(0.0..3.0).contains(&p[0]) || !(0.0..2.0).contains(&p[1]) {
+                continue;
+            }
+            let size = band * rng.log_range(1.0 / 32.0, 1.0);
+            let mut d = 1;
+            while 1.0 / (1u64 << d) as f64 > size {
+                d += 1;
+            }
+            let tile = [p[0].floor() as i64, p[1].floor() as i64];
+            let ext = |x: f64| {
+                let k = (x * (1u64 << d) as f64).floor() as u64;
+                Extent::new(Dyadic::new(k, d).unwrap(), Dyadic::new(k + 1, d).unwrap()).unwrap()
+            };
+            let bx = BoxKey::new(
+                Operand::B,
+                FaceId(7),
+                tile,
+                ext(p[0] - tile[0] as f64),
+                ext(p[1] - tile[1] as f64),
+            );
+            if !in_tube(&face, &ps, &bx, CoedgeId(0)).unwrap().inside {
+                continue;
+            }
+            certified += 1;
+            let patch = patch_of(&ps, &bx);
+            let [eu, ev] = [bx.extent(Dir::U), bx.extent(Dir::V)];
+            for i in 0..=2 {
+                for j in 0..=2 {
+                    let st = [
+                        dy(eu.lo()) + (dy(eu.hi()) - dy(eu.lo())) * i as f64 / 2.0,
+                        dy(ev.lo()) + (dy(ev.hi()) - dy(ev.lo())) * j as f64 / 2.0,
+                    ];
+                    let x = point_on(patch, st);
+                    let m = curve
+                        .iter()
+                        .map(|y| {
+                            let d = [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+                            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+                        })
+                        .fold(f64::INFINITY, |m, x| if x < m { x } else { m });
+                    assert!(m <= band + spacing, "box {bx:?}: {m} > {band}");
+                }
+            }
+        }
+    }
+    assert!(certified > 200, "{certified}");
 }
