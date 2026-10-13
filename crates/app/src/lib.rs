@@ -410,9 +410,9 @@ impl Varde {
         setting.apply(&mut self.options);
         self.with_doc(|doc, _| doc.view_menu = false);
         self.options_changed();
-        if let Some(write) = self.settings.chose(setting, self.options) {
-            self.files.io.send(write);
-        }
+        self.files
+            .io
+            .send_all(self.settings.chose(setting, self.options));
     }
 
     /// Has the open document take the options as they are now: their
@@ -422,9 +422,9 @@ impl Varde {
         let options = self.options;
         options.shown().set();
         self.with_doc(|doc, _| doc.take_options(&options));
-        if let Some(write) = self.files.recent.keep(usize::from(options.recent_designs)) {
-            self.files.io.send(write);
-        }
+        self.files
+            .io
+            .send_all(self.files.recent.keep(usize::from(options.recent_designs)));
         self.mcp.configure(options.mcp, options.mcp_port);
     }
 
@@ -479,9 +479,9 @@ impl Varde {
                     self.page.port_typed = None;
                     self.options = ViewOptions::default();
                     self.options_changed();
-                    if let Some(write) = self.settings.chose_all(self.options) {
-                        self.files.io.send(write);
-                    }
+                    self.files
+                        .io
+                        .send_all(self.settings.chose_all(self.options));
                 }
             }
         }
@@ -662,9 +662,9 @@ impl Varde {
                 report_failure("close a file", result);
             }
             IoResponse::RecentLoaded { entries, home } => {
-                if let Some(write) = self.files.recent.loaded(entries, home) {
-                    self.files.io.send(write);
-                }
+                self.files
+                    .io
+                    .send_all(self.files.recent.loaded(entries, home));
                 // The home directory as `~`, now it's known.
                 self.settings_shown = settings_shown(Some(&self.files));
                 self.files.load_thumbnails();
@@ -678,9 +678,9 @@ impl Varde {
                 report_failure("save the recent files", result);
             }
             IoResponse::SettingsLoaded { settings } => {
-                if let Some(write) = self.settings.loaded(settings, &mut self.options) {
-                    self.files.io.send(write);
-                }
+                self.files
+                    .io
+                    .send_all(self.settings.loaded(settings, &mut self.options));
                 self.options_changed();
             }
             IoResponse::SettingsWritten { result } => {

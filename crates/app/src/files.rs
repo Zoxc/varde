@@ -268,9 +268,7 @@ impl Files {
     /// Records `path` as opened just now in the recent files list, and
     /// stores the list once it's complete.
     pub(crate) fn remember(&mut self, path: PathBuf) {
-        if let Some(write) = self.recent.opened(path, when::now()) {
-            self.io.send(write);
-        }
+        self.io.send_all(self.recent.opened(path, when::now()));
     }
 
     /// Asks the lane for the recent files' thumbnails, shown on the

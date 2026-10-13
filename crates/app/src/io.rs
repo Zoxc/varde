@@ -36,6 +36,11 @@ impl Io {
         }
     }
 
+    /// Sends each of `requests`: the `Option` from a store's `#[must_use]` write, say.
+    pub(crate) fn send_all(&mut self, requests: impl IntoIterator<Item = IoRequest>) {
+        requests.into_iter().for_each(|request| self.send(request));
+    }
+
     /// Starts sending to `lane`, first what was sent before it started.
     pub(crate) fn ready(&mut self, mut lane: Box<dyn Transport<IoRequest>>) {
         if let Lane::Starting(waiting) = mem::replace(&mut self.lane, Lane::Starting(Vec::new())) {
