@@ -423,7 +423,7 @@ pub(crate) fn blend_edge_not_found(index: usize, count: usize) -> String {
 /// That a chamfer's or fillet's face `index` (from 0) of `count` wasn't
 /// found: "its face wasn't found" with one.
 pub(crate) fn blend_face_not_found(index: usize, count: usize) -> String {
-    offset_face_not_found(index, count)
+    not_found("face", index, count)
 }
 
 /// That every edge a chamfer or fillet names is left out, around a face
@@ -598,16 +598,12 @@ pub(crate) fn offset_refused(why: OffsetRefusal, body: &str) -> String {
         OffsetRefusal::RoundTooSmall => {
             format!("a round face of {body} shrinks to nothing: try a smaller distance")
         }
-        OffsetRefusal::NoSurface => {
-            format!("a face of {body} next to it has no surface to extend")
-        }
-        OffsetRefusal::TangentNeighbour => format!(
-            "it is tangent to a face of {body} that isn't picked: pick it too, or turn on Tangent faces"
-        ),
+        OffsetRefusal::NoSurface => no_surface(body),
+        OffsetRefusal::TangentNeighbour => tangent_neighbour(body),
         OffsetRefusal::Corner => format!(
             "faces of {body} meeting at a corner can't be offset together: try another distance"
         ),
-        OffsetRefusal::OutOfRange => format!("it moves {body} out of range"),
+        OffsetRefusal::OutOfRange => moved_out_of_range(body),
     }
 }
 
@@ -626,7 +622,7 @@ pub(crate) fn offset_leaves_nothing(body: &str) -> String {
 /// found on its body as the features before it leave it (renamed or
 /// gone).
 pub(crate) fn draft_face_not_found(index: usize, count: usize) -> String {
-    offset_face_not_found(index, count)
+    not_found("face", index, count)
 }
 
 /// What the kernel refuses to draft.
@@ -670,17 +666,32 @@ pub(crate) fn draft_refused(why: DraftRefusal, body: &str) -> String {
         DraftRefusal::RoundTooSmall => {
             format!("a round face of {body} narrows to nothing: try a smaller angle")
         }
-        DraftRefusal::NoSurface => {
-            format!("a face of {body} next to it has no surface to extend")
-        }
-        DraftRefusal::TangentNeighbour => format!(
-            "it is tangent to a face of {body} that isn't picked: pick it too, or turn on Tangent faces"
-        ),
+        DraftRefusal::NoSurface => no_surface(body),
+        DraftRefusal::TangentNeighbour => tangent_neighbour(body),
         DraftRefusal::Corner => format!(
             "faces of {body} meeting at a corner can't be drafted together: try another angle"
         ),
-        DraftRefusal::OutOfRange => format!("it moves {body} out of range"),
+        DraftRefusal::OutOfRange => moved_out_of_range(body),
     }
+}
+
+/// That a face of `body` next to one an offset or draft moves has no
+/// surface to extend.
+fn no_surface(body: &str) -> String {
+    format!("a face of {body} next to it has no surface to extend")
+}
+
+/// That a face of `body` tangent to one an offset or draft moves isn't
+/// moved with it.
+fn tangent_neighbour(body: &str) -> String {
+    format!(
+        "it is tangent to a face of {body} that isn't picked: pick it too, or turn on Tangent faces"
+    )
+}
+
+/// That an offset or draft would move `body` out of range.
+fn moved_out_of_range(body: &str) -> String {
+    format!("it moves {body} out of range")
 }
 
 /// What the kernel refuses of a tapered extrude.
