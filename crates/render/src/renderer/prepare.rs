@@ -477,14 +477,8 @@ impl Renderer {
     /// Writes the colours `frame`'s parts are drawn in to `slot`'s tints,
     /// making room for them if they need it and the device has it; a
     /// part whose colour finds none is drawn in the model's.
-    pub(super) fn write_tints(
-        &self,
-        slot: &mut Slot,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frame: &Frame<'_>,
-        written: &mut Vec<u8>,
-    ) {
+    fn write_tints(&self, slot: &mut Slot, p: &mut Prepare<'_, '_>) {
+        let (device, frame) = (p.device, p.frame);
         let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
         let model = frame.colors.model;
         let mut colors = vec![model.linear()];
@@ -520,7 +514,7 @@ impl Renderer {
         for (color, entry) in colors.iter().zip(bytes.chunks_exact_mut(stride)) {
             entry[..TINT_SIZE as usize].copy_from_slice(bytemuck::bytes_of(color));
         }
-        write(queue, &slot.tints, &bytes, written);
+        p.write(&slot.tints, &bytes);
     }
 
     /// Creates a slot to draw a scene with, empty until it's prepared.
@@ -591,11 +585,14 @@ impl Renderer {
         frame: &Frame<'_>,
     ) -> Result<(), PrepareError> {
         let before = std::mem::take(&mut slot.state);
-        // Whether something was uploaded or made, which the comparisons
-        // below don't see.
-        let mut changed = false;
-        let mut written = Vec::with_capacity(slot.written.len());
-        let colors = frame.colors.sanitized();
+        let mut p = Prepare {
+            device,
+            queue,
+            frame,
+            colors: frame.colors.sanitized(),
+            written: Vec::with_capacity(slot.written.len()),
+            changed: false,
+        };
         slot.state.viewport = frame.viewport;
         let fade = if frame.fade.is_nan() {
             0.0
@@ -616,9 +613,9 @@ impl Renderer {
             frame.origin.with_hovered()
         };
 
-        let result = self.upload_sources(slot, device, queue, frame, &mut written, &mut changed);
-        let opacity = opacity(slot, frame, &colors, fade);
-        self.write_tints(slot, device, queue, frame, &mut written);
+        let result = self.upload_sources(slot, &mut p);
+        let opacity = opacity(slot, frame, &p.colors, fade);
+        self.write_tints(slot, &mut p);
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
         slot.state.draws = PartDraws::new(
             parts,
@@ -631,21 +628,13 @@ impl Renderer {
         slot.state.sketching = frame.sketch.is_some();
         slot.state.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
 
-        let uniforms = uniforms(slot, frame, &colors, fade);
-        self.write_grids(slot, queue, frame, &uniforms, fade, &mut written);
-        self.ensure_targets(
-            slot,
-            device,
-            queue,
-            frame,
-            &colors,
-            &mut written,
-            &mut changed,
-        );
-        if changed || written != slot.written || before != slot.state {
+        let uniforms = uniforms(slot, frame, &p.colors, fade);
+        self.write_grids(slot, &mut p, &uniforms, fade);
+        self.ensure_targets(slot, &mut p);
+        if p.changed || p.written != slot.written || before != slot.state {
             *slot.drawn.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         }
-        slot.written = written;
+        slot.written = p.written;
         result
     }
 
@@ -654,18 +643,11 @@ impl Renderer {
     /// the sketch being edited, noting in `changed` that it did, and the
     /// live sketch layer's bytes in `written`. Returns the first failure,
     /// as [`Renderer::prepare`] describes.
-    fn upload_sources(
-        &self,
-        slot: &mut Slot,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frame: &Frame<'_>,
-        written: &mut Vec<u8>,
-        changed: &mut bool,
-    ) -> Result<(), PrepareError> {
+    fn upload_sources(&self, slot: &mut Slot, p: &mut Prepare<'_, '_>) -> Result<(), PrepareError> {
+        let (device, queue, frame) = (p.device, p.queue, p.frame);
         let mut result = Ok(());
         if !std::ptr::eq(slot.lines_source.as_ptr(), Arc::as_ptr(frame.sketches)) {
-            *changed = true;
+            p.changed = true;
             slot.lines_source = Arc::downgrade(frame.sketches);
             slot.lines = upload_lines(device, frame.sketches).unwrap_or_else(|error| {
                 result = Err(error);
@@ -678,7 +660,7 @@ impl Renderer {
         // which the same mesh would hit again.
         let new_mesh = !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh));
         if new_mesh {
-            *changed = true;
+            p.changed = true;
             slot.source = Arc::downgrade(frame.mesh);
             slot.mesh = upload_mesh(device, frame.mesh).unwrap_or_else(|error| {
                 result = Err(error);
@@ -687,13 +669,13 @@ impl Renderer {
         }
         if let Some(mesh) = &mut slot.mesh {
             // Drawn otherwise, though nothing's uploaded.
-            *changed |=
+            p.changed |=
                 mesh.wireframe != frame.wireframe || mesh.tessellation != frame.tessellation;
             mesh.wireframe = frame.wireframe;
             mesh.tessellation = frame.tessellation;
             if frame.tessellation && matches!(mesh.triangles, Triangles::Unbuilt) {
                 // Like the mesh's, a failure isn't tried again.
-                *changed = true;
+                p.changed = true;
                 mesh.triangles = match triangle_edges(device, frame.mesh, &mesh.parts) {
                     Ok(triangles) => triangles,
                     Err(error) => {
@@ -712,7 +694,7 @@ impl Renderer {
                 Arc::as_ptr(frame.highlights),
             )
         {
-            *changed = true;
+            p.changed = true;
             slot.highlights_source = Arc::downgrade(frame.highlights);
             let written = slot
                 .highlights
@@ -725,7 +707,7 @@ impl Renderer {
                 .zip(frame.errors)
                 .all(|(kept, error)| Weak::ptr_eq(kept, &error.source));
         if !same_errors {
-            *changed = true;
+            p.changed = true;
             slot.error_sources = frame.errors.iter().map(|e| e.source.clone()).collect();
             let written = slot.errors.write(device, queue, frame.errors);
             result = result.and(written);
@@ -734,16 +716,19 @@ impl Renderer {
         if let Some(sketch) = &frame.sketch {
             let mut sketch_result = Ok(());
             if !std::ptr::eq(slot.sketch_source.as_ptr(), Arc::as_ptr(sketch.base)) {
-                *changed = true;
+                p.changed = true;
                 slot.sketch_source = Arc::downgrade(sketch.base);
                 if let Err(error) = slot.sketch_base.write(device, queue, sketch.base) {
                     sketch_result = Err(error);
                 }
             }
             let live = sketch.live;
-            written.extend_from_slice(bytemuck::cast_slice(&live.lines));
-            written.extend_from_slice(bytemuck::cast_slice(&live.points));
-            written.extend_from_slice(bytemuck::cast_slice(&live.fills));
+            p.written
+                .extend_from_slice(bytemuck::cast_slice(&live.lines));
+            p.written
+                .extend_from_slice(bytemuck::cast_slice(&live.points));
+            p.written
+                .extend_from_slice(bytemuck::cast_slice(&live.fills));
             if let Err(error) = slot.sketch_live.write(device, queue, sketch.live) {
                 sketch_result = sketch_result.and(Err(error));
             }
@@ -786,12 +771,11 @@ impl Renderer {
     fn write_grids(
         &self,
         slot: &mut Slot,
-        queue: &wgpu::Queue,
-        frame: &Frame<'_>,
+        p: &mut Prepare<'_, '_>,
         uniforms: &Uniforms,
         fade: f32,
-        written: &mut Vec<u8>,
     ) {
+        let frame = p.frame;
         let grid = &frame.grid;
         // Crossfading between the world's XY plane and a sketch's, each
         // drawn at its share, the one that isn't `grid` from the other
@@ -843,36 +827,24 @@ impl Renderer {
         };
         slot.state.grid_steps = steps;
         if let Some(other) = other {
-            write(queue, &slot.other_grid, bytemuck::bytes_of(&other), written);
+            p.write(&slot.other_grid, bytemuck::bytes_of(&other));
         }
-        write(queue, &slot.uniforms, bytemuck::bytes_of(&main), written);
+        p.write(&slot.uniforms, bytemuck::bytes_of(&main));
     }
 
     /// Makes `slot`'s depth target, and the selected faces' pattern's and
     /// the errors' when they're drawn, at `frame`'s target size if they
     /// aren't yet, noting in `changed` that it did; and writes the errors'
     /// colours.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "a step of prepare, given its state"
-    )]
-    fn ensure_targets(
-        &self,
-        slot: &mut Slot,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frame: &Frame<'_>,
-        colors: &Colors,
-        written: &mut Vec<u8>,
-        changed: &mut bool,
-    ) {
-        let size = frame.target_size.map(|s| s.max(1));
+    fn ensure_targets(&self, slot: &mut Slot, p: &mut Prepare<'_, '_>) {
+        let device = p.device;
+        let size = p.frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
-            *changed = true;
+            p.changed = true;
             slot.depth = Some(self.create_targets(device, size));
         }
         if patterned(slot) && slot.pattern_target.as_ref().map(|t| t.size) != Some(size) {
-            *changed = true;
+            p.changed = true;
             slot.pattern_target = Some(CoverageTarget::new(
                 device,
                 &self.errors.layout,
@@ -886,7 +858,7 @@ impl Renderer {
             return;
         }
         if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
-            *changed = true;
+            p.changed = true;
             slot.error_target = Some(CoverageTarget::new(
                 device,
                 &self.errors.layout,
@@ -898,16 +870,34 @@ impl Renderer {
         }
         if let Some(target) = &slot.error_target {
             let uniforms = ErrorUniforms {
-                core: colors.error.linear(),
-                halo: colors.error_halo.linear(),
+                core: p.colors.error.linear(),
+                halo: p.colors.error_halo.linear(),
             };
-            write(
-                queue,
-                &target.uniforms,
-                bytemuck::bytes_of(&uniforms),
-                written,
-            );
+            p.write(&target.uniforms, bytemuck::bytes_of(&uniforms));
         }
+    }
+}
+
+/// What the steps of [`Renderer::prepare`] share: the device, the
+/// frame and its colours sanitized, and what they did that the slot's
+/// state doesn't show, to tell whether its last drawing still holds.
+struct Prepare<'a, 'f> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    frame: &'a Frame<'f>,
+    colors: Colors,
+    /// The bytes written to the slot's small buffers, and the live
+    /// sketch layer's, to compare with [`Slot::written`].
+    written: Vec<u8>,
+    /// Whether something was uploaded or made.
+    changed: bool,
+}
+
+impl Prepare<'_, '_> {
+    /// Writes `bytes` to `buffer` and appends them to `written`.
+    fn write(&mut self, buffer: &wgpu::Buffer, bytes: &[u8]) {
+        self.queue.write_buffer(buffer, 0, bytes);
+        self.written.extend_from_slice(bytes);
     }
 }
 

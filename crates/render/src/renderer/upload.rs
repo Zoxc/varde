@@ -100,17 +100,6 @@ pub(super) struct GpuLines {
     pub(super) bounds: Option<Aabb>,
 }
 
-/// Writes `bytes` to `buffer` and appends them to `written`.
-pub(super) fn write(
-    queue: &wgpu::Queue,
-    buffer: &wgpu::Buffer,
-    bytes: &[u8],
-    written: &mut Vec<u8>,
-) {
-    queue.write_buffer(buffer, 0, bytes);
-    written.extend_from_slice(bytes);
-}
-
 /// Uploads `mesh`, or nothing if it is empty.
 pub(super) fn upload_mesh(
     device: &wgpu::Device,
