@@ -6,14 +6,14 @@ use super::*;
 use crate::testing::Laid;
 
 /// The labels and texts of `values`.
-fn shown(values: &[Value]) -> Vec<(&str, &str)> {
+fn shown(values: &[MeasureValue]) -> Vec<(&str, &str)> {
     (values.iter())
         .map(|value| (value.label, value.shown.as_str()))
         .collect()
 }
 
 /// The labels and copied texts of `values`.
-fn copied(values: &[Value]) -> Vec<(&str, &str)> {
+fn copied(values: &[MeasureValue]) -> Vec<(&str, &str)> {
     (values.iter())
         .map(|value| (value.label, value.copied.as_str()))
         .collect()
@@ -233,8 +233,8 @@ fn the_panel_names_the_picks_and_shows_their_values() {
     assert!(!texts.contains(&"OK".to_owned()), "{texts:?}");
 
     // One pick: its own values, unfolded.
-    state.picks[0] = Some(Picked {
-        kind: PickKind::Face,
+    state.picks[0] = Some(MeasuredPick {
+        kind: MeasuredPickKind::Face,
         body: "Body 1",
         outcome: Outcome::Measured(Ok(&face)),
     });
@@ -257,8 +257,8 @@ fn the_panel_names_the_picks_and_shows_their_values() {
         }),
         angle: Some(PI),
     };
-    state.picks[1] = Some(Picked {
-        kind: PickKind::Face,
+    state.picks[1] = Some(MeasuredPick {
+        kind: MeasuredPickKind::Face,
         body: "Body 1",
         outcome: Outcome::Measured(Ok(&face)),
     });
@@ -277,16 +277,16 @@ fn the_panel_names_the_picks_and_shows_their_values() {
     );
 
     // One the model doesn't have, and one waiting.
-    state.picks[1] = Some(Picked {
-        kind: PickKind::Edge,
+    state.picks[1] = Some(MeasuredPick {
+        kind: MeasuredPickKind::Edge,
         body: "Body 1",
         outcome: Outcome::Missing("edge not found"),
     });
     state.between = None;
     let texts = panel_texts(&state);
     assert!(texts.contains(&"Edge not found".to_owned()), "{texts:?}");
-    state.picks[1] = Some(Picked {
-        kind: PickKind::Edge,
+    state.picks[1] = Some(MeasuredPick {
+        kind: MeasuredPickKind::Edge,
         body: "Body 1",
         outcome: Outcome::Waiting,
     });

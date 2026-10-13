@@ -105,9 +105,8 @@ pub use mcp::{
 };
 pub use mcp_config::{mcp_client_lines, mcp_port_of, mcp_stdio_lines};
 pub use measure::{
-    MeasureLook, MeasureSlot, MeasureState, Outcome, PickKind as MeasuredPickKind,
-    Picked as MeasuredPick, Value as MeasureValue, between_values, edge_kind, face_kind,
-    values as measure_values,
+    MeasureLook, MeasureSlot, MeasureState, MeasureValue, MeasuredPick, MeasuredPickKind, Outcome,
+    between_values, edge_kind, face_kind, values as measure_values,
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, BlendFace,

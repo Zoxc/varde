@@ -73,9 +73,9 @@ pub enum Outcome<'a> {
 
 /// A pick, as the panel shows it.
 #[derive(Debug, Clone)]
-pub struct Picked<'a> {
+pub struct MeasuredPick<'a> {
     /// What it is.
-    pub kind: PickKind,
+    pub kind: MeasuredPickKind,
     /// The name of the body it is or is of.
     pub body: &'a str,
     pub outcome: Outcome<'a>,
@@ -83,7 +83,7 @@ pub struct Picked<'a> {
 
 /// What a pick is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickKind {
+pub enum MeasuredPickKind {
     Body,
     Face,
     Edge,
@@ -94,7 +94,7 @@ pub enum PickKind {
 #[derive(Debug, Clone)]
 pub struct MeasureState<'a> {
     /// A and B, as picked.
-    pub picks: [Option<Picked<'a>>; 2],
+    pub picks: [Option<MeasuredPick<'a>>; 2],
     /// What's between them, once both are measured in the newest answer.
     pub between: Option<&'a Between>,
     /// The design's units, which lengths, areas and volumes show in.
@@ -121,31 +121,31 @@ impl MeasureState<'_> {
 /// A value shown in the panel: its label, its text in the design's
 /// units, and what copying it gives, at full precision.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Value {
+pub struct MeasureValue {
     pub label: &'static str,
     pub shown: String,
     pub copied: String,
 }
 
-impl Value {
+impl MeasureValue {
     /// A length, an area or a volume, in model units.
-    fn size(label: &'static str, value: f64, units: LengthUnit, power: Power) -> Value {
-        Value {
+    fn size(label: &'static str, value: f64, units: LengthUnit, power: Power) -> MeasureValue {
+        MeasureValue {
             label,
             shown: varde_expr::Shown::current().format_power(value, units, power),
             copied: varde_expr::full_power(value, units, power),
         }
     }
 
-    fn length(label: &'static str, value: f64, units: LengthUnit) -> Value {
-        Value::size(label, value, units, Power::Length)
+    fn length(label: &'static str, value: f64, units: LengthUnit) -> MeasureValue {
+        MeasureValue::size(label, value, units, Power::Length)
     }
 
     /// An angle, in radians, shown and copied as angles are shown.
-    fn angle(label: &'static str, radians: f64) -> Value {
+    fn angle(label: &'static str, radians: f64) -> MeasureValue {
         let degrees = Some(Unit::Angle(AngleUnit::Deg));
         let shown = varde_expr::Shown::current();
-        Value {
+        MeasureValue {
             label,
             shown: shown.format(radians, degrees),
             copied: shown.full(radians, degrees),
@@ -154,7 +154,7 @@ impl Value {
 
     /// A point or a vector: its parts in `unit`, the unit's symbol once
     /// after them, or none for a direction.
-    fn triple(label: &'static str, parts: [f64; 3], unit: Option<LengthUnit>) -> Value {
+    fn triple(label: &'static str, parts: [f64; 3], unit: Option<LengthUnit>) -> MeasureValue {
         let unit = unit.map(Unit::Length);
         let join = |each: &dyn Fn(f64) -> String| {
             let numbers = parts.map(each).join(", ");
@@ -163,7 +163,7 @@ impl Value {
                 None => numbers,
             }
         };
-        Value {
+        MeasureValue {
             label,
             shown: join(&|x| varde_expr::Shown::current().format_number(x, unit)),
             copied: join(&|x| varde_expr::full_number(x, unit)),
@@ -195,9 +195,9 @@ pub fn edge_kind(form: &EdgeForm) -> &'static str {
 }
 
 /// The values `measure` shows in a design in `units`.
-pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
-    let length = |label, value| Value::length(label, value, units);
-    let point = |label, at| Value::triple(label, at, Some(units));
+pub fn values(measure: &Measure, units: LengthUnit) -> Vec<MeasureValue> {
+    let length = |label, value| MeasureValue::length(label, value, units);
+    let point = |label, at| MeasureValue::triple(label, at, Some(units));
     match *measure {
         Measure::Point(at) => {
             let [x, y, z] = at;
@@ -211,7 +211,7 @@ pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
                 EdgeForm::Line { from, to } => {
                     let along = DVec3::from(to) - DVec3::from(from);
                     if let Some(along) = along.try_normalize() {
-                        values.push(Value::triple("Direction", along.to_array(), None));
+                        values.push(MeasureValue::triple("Direction", along.to_array(), None));
                     }
                 }
                 EdgeForm::Circle { centre, radius, .. } => {
@@ -239,14 +239,14 @@ pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
             half_angle,
             rectangle,
         } => {
-            let mut values = vec![Value::size("Area", area, units, Power::Area)];
+            let mut values = vec![MeasureValue::size("Area", area, units, Power::Area)];
             if let Some(sides) = rectangle {
                 let (width, height) = width_height(sides);
                 values.push(length("Width", width));
                 values.push(length("Height", height));
             }
             match summary {
-                Summary::Plane { n, .. } => values.push(Value::triple("Normal", n, None)),
+                Summary::Plane { n, .. } => values.push(MeasureValue::triple("Normal", n, None)),
                 Summary::Cylinder { radius, .. } | Summary::Sphere { radius, .. } => {
                     values.push(length("Radius", radius));
                     values.push(length("Diameter", 2.0 * radius));
@@ -257,7 +257,7 @@ pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
                 }
                 _ => {}
             }
-            values.extend(half_angle.map(|angle| Value::angle("Half-angle", angle)));
+            values.extend(half_angle.map(|angle| MeasureValue::angle("Half-angle", angle)));
             values
         }
         Measure::Body {
@@ -267,8 +267,8 @@ pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
             bounds,
         } => {
             let mut values = vec![
-                Value::size("Volume", volume, units, Power::Volume),
-                Value::size("Area", area, units, Power::Area),
+                MeasureValue::size("Volume", volume, units, Power::Volume),
+                MeasureValue::size("Area", area, units, Power::Area),
             ];
             values.extend(centre.map(|centre| point("Centre", centre)));
             if let Some([min, max]) = bounds {
@@ -285,17 +285,21 @@ pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
 /// What's shown between two picks in a design in `units`: the minimum
 /// distance and its X, Y and Z parts (from A's point to B's), and the
 /// angle between their directions where both have one.
-pub fn between_values(between: &Between, units: LengthUnit) -> Vec<Value> {
+pub fn between_values(between: &Between, units: LengthUnit) -> Vec<MeasureValue> {
     let mut values = Vec::new();
     if let Ok(gap) = &between.distance {
         let [a, b] = gap.points.map(DVec3::from);
         let apart = b - a;
-        values.push(Value::length("Distance", gap.distance, units));
-        values.push(Value::length("ΔX", apart.x, units));
-        values.push(Value::length("ΔY", apart.y, units));
-        values.push(Value::length("ΔZ", apart.z, units));
+        values.push(MeasureValue::length("Distance", gap.distance, units));
+        values.push(MeasureValue::length("ΔX", apart.x, units));
+        values.push(MeasureValue::length("ΔY", apart.y, units));
+        values.push(MeasureValue::length("ΔZ", apart.z, units));
     }
-    values.extend(between.angle.map(|angle| Value::angle("Angle", angle)));
+    values.extend(
+        between
+            .angle
+            .map(|angle| MeasureValue::angle("Angle", angle)),
+    );
     values
 }
 
@@ -304,14 +308,16 @@ pub fn between_values(between: &Between, units: LengthUnit) -> Vec<Value> {
 /// distance between them and their angle; of one, a body's volume, a
 /// face's area and a round one's radius, an edge's length and a round
 /// one's radius, or a point's place. None for what wasn't found.
-pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
-    let length = |label, value| Value::length(label, value, units);
+pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<MeasureValue> {
+    let length = |label, value| MeasureValue::length(label, value, units);
     if inspected.second.is_some() {
         let Some(between) = &inspected.between else {
             return Vec::new();
         };
         let distance = (between.distance.as_ref().ok()).map(|gap| length("Distance", gap.distance));
-        let angle = between.angle.map(|angle| Value::angle("Angle", angle));
+        let angle = between
+            .angle
+            .map(|angle| MeasureValue::angle("Angle", angle));
         return distance.into_iter().chain(angle).collect();
     }
     let Ok(Probed {
@@ -322,7 +328,9 @@ pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
         return Vec::new();
     };
     match *measure {
-        Measure::Body { volume, .. } => vec![Value::size("Volume", volume, units, Power::Volume)],
+        Measure::Body { volume, .. } => {
+            vec![MeasureValue::size("Volume", volume, units, Power::Volume)]
+        }
         Measure::Face {
             rectangle: Some(sides),
             ..
@@ -331,7 +339,7 @@ pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
             vec![length("Width", width), length("Height", height)]
         }
         Measure::Face { area, summary, .. } => {
-            let mut values = vec![Value::size("Area", area, units, Power::Area)];
+            let mut values = vec![MeasureValue::size("Area", area, units, Power::Area)];
             if let Summary::Cylinder { radius, .. } | Summary::Sphere { radius, .. } = summary {
                 values.push(length("Radius", radius));
             }
@@ -370,14 +378,14 @@ pub fn width_height(sides: [[f64; 3]; 2]) -> (f64, f64) {
 /// The name a pick shows with in the panel: its kind, from its form once
 /// measured ("Planar face", "Circular edge"), with the body it's of, or
 /// the body's name for a body.
-fn shown_name(picked: &Picked<'_>) -> String {
+fn shown_name(picked: &MeasuredPick<'_>) -> String {
     let kind = match (picked.kind, picked.outcome) {
-        (PickKind::Body, _) => return picked.body.to_owned(),
+        (MeasuredPickKind::Body, _) => return picked.body.to_owned(),
         (_, Outcome::Measured(Ok(Measure::Face { summary, .. }))) => face_kind(summary),
         (_, Outcome::Measured(Ok(Measure::Edge { shape, .. }))) => edge_kind(shape),
-        (PickKind::Face, _) => "Face",
-        (PickKind::Edge, _) => "Edge",
-        (PickKind::Point, _) => "Point",
+        (MeasuredPickKind::Face, _) => "Face",
+        (MeasuredPickKind::Edge, _) => "Edge",
+        (MeasuredPickKind::Point, _) => "Point",
     };
     format!("{kind} of {}", picked.body)
 }
@@ -477,7 +485,7 @@ fn pick_row<'a>(state: &MeasureState<'a>, slot: MeasureSlot) -> Element<'a, Mess
 }
 
 /// A pick's own values, or why there are none.
-fn own_values<'a>(picked: &Picked<'a>, units: LengthUnit) -> Element<'a, Message> {
+fn own_values<'a>(picked: &MeasuredPick<'a>, units: LengthUnit) -> Element<'a, Message> {
     match picked.outcome {
         Outcome::Waiting => message_text("Measuring…", theme::muted_text),
         Outcome::Missing(_) => space::vertical().height(0).into(),
@@ -489,7 +497,11 @@ fn own_values<'a>(picked: &Picked<'a>, units: LengthUnit) -> Element<'a, Message
 }
 
 /// The header folding `slot`'s values away or showing them.
-fn fold_header<'a>(picked: &Picked<'a>, slot: MeasureSlot, folded: bool) -> Element<'a, Message> {
+fn fold_header<'a>(
+    picked: &MeasuredPick<'a>,
+    slot: MeasureSlot,
+    folded: bool,
+) -> Element<'a, Message> {
     let arrow = if folded { "▸" } else { "▾" };
     let label = format!("{arrow} {}  {}", slot.label(), shown_name(picked));
     button(
@@ -511,7 +523,7 @@ const LABEL_WIDTH: f32 = 68.0;
 
 /// A value's row: its label as wide as a typed value's, its text, and a
 /// button copying it with its unit at full precision.
-fn value_row<'a>(value: Value) -> Element<'a, Message> {
+fn value_row<'a>(value: MeasureValue) -> Element<'a, Message> {
     let label = text(value.label)
         .size(12)
         .style(theme::muted_text)
