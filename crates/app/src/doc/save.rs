@@ -233,15 +233,15 @@ pub(crate) type Downloader = Box<dyn Fn(&str, &[u8]) -> Result<(), String>>;
 #[derive(Debug, Default)]
 pub(crate) struct Saves {
     /// The revision of the newest Save.
-    pub(crate) save: Option<Revision>,
+    save: Option<Revision>,
     /// The revisions of the Save Ases, in the order sent.
-    pub(crate) save_as: Vec<Revision>,
+    save_as: Vec<Revision>,
     /// Saves the user asked for while edits waited on the solver, in the
     /// order asked: sent once the edits are answered, so what's on screen
     /// is saved, see [`Doc::proposals_settled`]. Then, or once there's
     /// nothing to wait for, they wait for their thumbnail, see
     /// `thumbnail.rs`.
-    pub(crate) waiting: Vec<Deferred>,
+    waiting: Vec<Deferred>,
 }
 
 /// A save waiting for the edits waiting on the solver, or its thumbnail.
@@ -340,9 +340,9 @@ pub(crate) struct AutoSave {
     /// The newest revision sent to be auto-saved, or known to be where it
     /// would be: the revision the document was loaded at, or saved at, or
     /// being saved at, see [`AutoSave::saving`].
-    pub(crate) sent: Option<Revision>,
+    sent: Option<Revision>,
     /// The tick the first change not auto-saved yet was seen.
-    pub(crate) since: Option<Instant>,
+    since: Option<Instant>,
 }
 
 impl AutoSave {
