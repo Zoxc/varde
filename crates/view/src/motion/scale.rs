@@ -14,10 +14,10 @@ use iced::widget::column;
 use super::{MotionField, MotionLook, MotionPick, MotionState};
 use varde_document::Axis3;
 
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{ListRow, PanelHover, field, pick_rows, tile, tiles, toggle};
 use crate::pick::{Pick, PickIndex};
-use crate::{Look, Message};
 
 /// How a scale scales, the panel's choices: by one factor along every
 /// axis, by one per world axis, or by the factor that gives an edge a
@@ -91,14 +91,12 @@ pub(super) fn body<'a>(
     body: Element<'a, Message>,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
     let Some(scale) = state.scale() else {
         return body;
     };
     let picked = |pick: MotionPick, icon: Icon, name: Option<String>, meta, place: &str| {
         let on = state.picking == pick;
-        let press = send(MotionLook::Picking(pick));
+        let press = state.send(MotionLook::Picking(pick));
         // No cross: picking another replaces it, as a move's axis.
         let row = name.map(|name| {
             ListRow::new(icon, name, PanelHover::Axis)
@@ -123,7 +121,7 @@ pub(super) fn body<'a>(
             mode.icon(),
             mode.label(),
             scale.mode == mode,
-            send(MotionLook::ScaleMode(mode)),
+            state.send(MotionLook::ScaleMode(mode)),
         )
     });
     let fields: Element<'a, Message> = match scale.mode {
@@ -148,7 +146,7 @@ pub(super) fn body<'a>(
                     Icon::SeAxis,
                     "Along its axis only",
                     scale.axis_only,
-                    send(MotionLook::AxisOnly),
+                    state.send(MotionLook::AxisOnly),
                     Some("Stretch the bodies along the axis the edge runs along only"),
                 )
             });

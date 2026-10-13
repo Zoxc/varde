@@ -11,9 +11,9 @@ use iced::widget::column;
 
 use super::faces::faces_field;
 use super::{MotionField, MotionLook, MotionState, PickedFaces};
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::toggle;
-use crate::{Look, Message};
 
 /// What the panel shows of an offset face being set up, beside what
 /// every move's session has.
@@ -39,20 +39,19 @@ pub(super) fn body<'a>(
     let Some(offset) = state.offset_face() else {
         return column![].into();
     };
-    let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));
     let faces = faces_field(state, &offset.faces, "Faces", "Click faces");
     let inward = toggle(
         Icon::TkFlip,
         "Inward",
         offset.inward,
-        send(MotionLook::Flip),
+        state.send(MotionLook::Flip),
         Some("Into the body, shrinking it"),
     );
     let tangent = toggle(
         Icon::TkChain,
         "Tangent faces",
         offset.tangent,
-        send(MotionLook::TangentFaces),
+        state.send(MotionLook::TangentFaces),
         Some("Take in faces that run on smoothly"),
     );
     column![

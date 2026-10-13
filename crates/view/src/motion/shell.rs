@@ -9,9 +9,9 @@ use iced::widget::column;
 
 use super::faces::faces_field;
 use super::{MotionField, MotionLook, MotionState, PickedFaces, section};
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{tile, tiles};
-use crate::{Look, Message};
 
 /// Which way a shell's walls grow from the body's faces, the mock's
 /// Direction tiles: inside them, the body hollowed, or outside them, the
@@ -79,14 +79,13 @@ pub(super) fn body<'a>(
     let Some(shell) = state.shell() else {
         return column![].into();
     };
-    let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));
     let faces = faces_field(state, &shell.faces, "Remove", "Click faces");
     let directions = ShellDirection::ALL.iter().map(|&direction| {
         tile(
             direction.icon(),
             direction.label(),
             shell.direction == direction,
-            send(MotionLook::ShellDirection(direction)),
+            state.send(MotionLook::ShellDirection(direction)),
         )
     });
     column![

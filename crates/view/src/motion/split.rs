@@ -18,13 +18,13 @@ use varde_document::{FeatureId, Keep, Placement, Side};
 use varde_sketch::{Id, Sketch};
 
 use super::{MotionLook, MotionPick, MotionState};
+use crate::Message;
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
     Candidate, ListRow, PanelHover, missing_rows, pick_field, tile, tiles,
 };
 use crate::theme::{self, BOLD};
-use crate::{Look, Message};
 
 /// What a split splits with, its "Split with" tiles: a plane or a face
 /// (an origin plane from the toolbar, or a face of the model, flat or
@@ -183,8 +183,6 @@ pub(super) fn body<'a>(
     state: &MotionState<'a>,
     body: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
     let Some(split) = state.split() else {
         return body;
     };
@@ -193,11 +191,11 @@ pub(super) fn body<'a>(
             mode.icon(),
             mode.label(),
             split.mode == mode,
-            send(MotionLook::SplitWith(mode)),
+            state.send(MotionLook::SplitWith(mode)),
         )
     });
     let on = state.picking == MotionPick::Tool;
-    let press = send(MotionLook::Picking(MotionPick::Tool));
+    let press = state.send(MotionLook::Picking(MotionPick::Tool));
     // No cross: picking another replaces it, as a mirror's plane; a
     // region or curve is taken out by clicking it again.
     let row = (split.tool.clone()).map(|(name, meta)| {
@@ -209,7 +207,7 @@ pub(super) fn body<'a>(
     let place = (row.is_none() || on).then(|| split.mode.place().to_owned());
     let missing = missing_rows(
         split.missing,
-        |index| send(MotionLook::DropMissingRegion(index)),
+        |index| state.send(MotionLook::DropMissingRegion(index)),
         press.clone(),
         state.hover,
     );
@@ -217,7 +215,7 @@ pub(super) fn body<'a>(
     let tool = pick_field(rows, place, on, press);
     let trim = split.keep != Keep::Both;
     let sides = [Side::Front, Side::Back].map(|side| {
-        let message = send(MotionLook::Original(side)).filter(|_| !trim);
+        let message = state.send(MotionLook::Original(side)).filter(|_| !trim);
         tile(side_icon(side), side.name(), split.kept() == side, message)
     });
     let keeps = text(format!("Keeps {}", split.body.unwrap_or("the body")))
@@ -237,7 +235,7 @@ pub(super) fn body<'a>(
             icon,
             label,
             split.keep == keep,
-            send(MotionLook::Keep(keep)),
+            state.send(MotionLook::Keep(keep)),
         )
     });
     column![

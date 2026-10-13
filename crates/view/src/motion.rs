@@ -674,7 +674,9 @@ pub struct MotionState<'a> {
     pub units: LengthUnit,
     /// A mirror's Create copy.
     pub keep_original: bool,
-    /// A linear pattern's Flip direction.
+    /// The Flip tick of a linear pattern (its direction), an align, a
+    /// chamfer and a sweep; a draft's and an offset face's are in their
+    /// own views ([`DraftView::flip`], [`OffsetFaceView::inward`]).
     pub flip: bool,
     /// A pattern's Join to original.
     pub join: bool,
@@ -744,6 +746,11 @@ impl<'a> MotionParts<'a> {
 }
 
 impl<'a> MotionState<'a> {
+    /// The message carrying `look`, while the panel is editable.
+    pub(crate) fn send(&self, look: MotionLook) -> Option<Message> {
+        self.editable.then_some(Message::Look(Look::Motion(look)))
+    }
+
     /// What the picking asks for, for the hint bar: `None` when it
     /// asks for nothing.
     pub(crate) fn pick_hint(&self) -> Option<&'static str> {
@@ -1123,14 +1130,13 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
 /// Join to original.
 pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
 
     let picking_bodies = state.picking == MotionPick::Bodies;
-    let pick_bodies = send(MotionLook::Picking(MotionPick::Bodies));
+    let pick_bodies = state.send(MotionLook::Picking(MotionPick::Bodies));
     let rows: Vec<_> = (state.bodies.iter())
         .map(|body| {
             ListRow::new(Icon::Body, body.name, PanelHover::Body(body.body))
-                .remove(send(MotionLook::Drop(body.body)))
+                .remove(state.send(MotionLook::Drop(body.body)))
                 .press(pick_bodies.clone())
                 .view(state.hover)
         })
@@ -1146,7 +1152,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     );
 
     let picking_reference = state.picking == MotionPick::Reference;
-    let pick_reference = send(MotionLook::Picking(MotionPick::Reference));
+    let pick_reference = state.send(MotionLook::Picking(MotionPick::Reference));
     let (reference_label, reference_icon, reference_place) = match state.kind {
         MotionKind::Move | MotionKind::CircularPattern | MotionKind::Sweep => {
             ("Axis", Icon::SeAxis, "Click an axis or edge")
@@ -1222,7 +1228,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                 Icon::TkCopy,
                 "Create copy",
                 state.keep_original,
-                send(MotionLook::Copy),
+                state.send(MotionLook::Copy),
                 Some("Keep the original too"),
             );
             column![bodies, reference, copy].spacing(10).into()
@@ -1233,7 +1239,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                     Icon::TkFlip,
                     "Flip direction",
                     state.flip,
-                    send(MotionLook::Flip),
+                    state.send(MotionLook::Flip),
                     None,
                 )
             });
@@ -1242,7 +1248,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                     mode.icon(state.kind),
                     mode.label(),
                     state.mode == mode,
-                    send(MotionLook::Mode(mode)),
+                    state.send(MotionLook::Mode(mode)),
                 )
             });
             let spread = (state.mode != PatternMode::Full).then(|| {
@@ -1266,7 +1272,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                 Icon::TkJoin,
                 "Join to original",
                 state.join,
-                send(MotionLook::Join),
+                state.send(MotionLook::Join),
                 Some("One body; otherwise each copy is its own"),
             );
             column![
@@ -1325,15 +1331,13 @@ fn picks_field<'a>(
     place: &str,
     rows: impl Iterator<Item = PickedRow>,
 ) -> Element<'a, Message> {
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
     let on = state.picking == pick;
-    let press = send(MotionLook::Picking(pick));
+    let press = state.send(MotionLook::Picking(pick));
     let rows: Vec<_> = rows
         .map(|row| {
             ListRow::new(row.icon, row.name, row.hover)
                 .meta(row.meta)
-                .remove(send(row.drop))
+                .remove(state.send(row.drop))
                 .press(press.clone())
                 .tone(row.tone)
                 .view(state.hover)

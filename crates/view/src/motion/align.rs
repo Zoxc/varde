@@ -11,11 +11,11 @@ use iced::widget::column;
 use super::{AlignRole, AlignSide, AlignSlot, MotionField, MotionLook, MotionPick, MotionState};
 use varde_document::{AxisRef, DirRef, Document, PointRef};
 
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{ListRow, PanelHover, field, pick_rows, toggle};
 use crate::pick::{Pick, PickIndex};
 use crate::plane_pick::face_name;
-use crate::{Look, Message};
 
 /// What the panel and the viewport show of an align being set up, beside
 /// what every move's session has.
@@ -93,8 +93,6 @@ pub(super) fn body<'a>(
     body: Element<'a, Message>,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
     let Some(align) = state.align() else {
         return body;
     };
@@ -102,7 +100,7 @@ pub(super) fn body<'a>(
         let fields = AlignRole::ALL.map(|role| {
             let slot = AlignSlot::new(side, role);
             let on = state.picking == MotionPick::Align(slot);
-            let pick = send(MotionLook::Picking(MotionPick::Align(slot)));
+            let pick = state.send(MotionLook::Picking(MotionPick::Align(slot)));
             let icon = match role {
                 AlignRole::Point => Icon::Point,
                 AlignRole::Primary | AlignRole::Secondary => Icon::SeAxis,
@@ -110,7 +108,7 @@ pub(super) fn body<'a>(
             let name = align.names[side.index()][role.index()].clone();
             let row = name.map(|name| {
                 ListRow::new(icon, name, PanelHover::Axis)
-                    .remove(send(MotionLook::Clear(slot)))
+                    .remove(state.send(MotionLook::Clear(slot)))
                     .press(pick.clone())
                     .view(state.hover)
             });
@@ -125,7 +123,7 @@ pub(super) fn body<'a>(
         Icon::TkFlip,
         "Flip",
         state.flip,
-        send(MotionLook::Flip),
+        state.send(MotionLook::Flip),
         Some("The directions meet the other way round"),
     );
     column![

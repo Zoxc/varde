@@ -17,12 +17,12 @@ use varde_sketch::{Id, Region};
 
 use super::sweep::SweepPart;
 use super::{MotionLook, MotionPick, MotionState, PickedRow, SketchLines, picks_field};
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, ListRow, OperationKind, PanelHover, RowTone, field, operation_section,
     pick_rows, tile, tiles, toggle,
 };
-use crate::{Look, Message};
 
 /// A loft's section as the panel lists it and the viewport draws it.
 #[derive(Debug, Clone)]
@@ -107,11 +107,9 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let Some(loft) = state.loft() else {
         return column![].into();
     };
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
 
     let picking = state.picking == MotionPick::Regions;
-    let press = send(MotionLook::Picking(MotionPick::Regions));
+    let press = state.send(MotionLook::Picking(MotionPick::Regions));
     let last = loft.sections.len().saturating_sub(1);
     let rows: Vec<_> = (loft.sections.iter().enumerate())
         .map(|(at, section)| {
@@ -124,14 +122,16 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             } else {
                 section.name.clone()
             };
-            let up = (at > 0).then(|| send(MotionLook::SectionUp(at))).flatten();
+            let up = (at > 0)
+                .then(|| state.send(MotionLook::SectionUp(at)))
+                .flatten();
             let down = (at < last)
-                .then(|| send(MotionLook::SectionUp(at + 1)))
+                .then(|| state.send(MotionLook::SectionUp(at + 1)))
                 .flatten();
             ListRow::new(icon, format!("Section {}", at + 1), PanelHover::Section(at))
                 .meta(Some(meta))
                 .moves([up, down])
-                .remove(send(MotionLook::DropSection(at)))
+                .remove(state.send(MotionLook::DropSection(at)))
                 .press(press.clone())
                 .view(state.hover)
         })
@@ -144,14 +144,14 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             icon,
             label,
             loft.mode == mode,
-            send(MotionLook::LoftMode(mode)),
+            state.send(MotionLook::LoftMode(mode)),
         )
     });
     let closed = toggle(
         Icon::CpFull,
         "Closed",
         loft.closed,
-        send(MotionLook::Closed),
+        state.send(MotionLook::Closed),
         Some("Loft the last section back to the first"),
     );
     let rails = (!loft.closed).then(|| {
@@ -174,8 +174,8 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let operation = operation_section(
         loft.operation,
         &loft.targets,
-        |kind| send(MotionLook::Operation(kind)),
-        |body| send(MotionLook::Target(body)),
+        |kind| state.send(MotionLook::Operation(kind)),
+        |body| state.send(MotionLook::Target(body)),
         state.hover,
     );
     column![

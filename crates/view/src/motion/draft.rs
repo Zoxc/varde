@@ -12,9 +12,9 @@ use iced::widget::column;
 
 use super::faces::faces_field;
 use super::{MotionField, MotionLook, MotionState, PickedFaces};
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::toggle;
-use crate::{Look, Message};
 
 /// What the panel shows of a draft being set up, beside what every
 /// move's session has.
@@ -41,20 +41,19 @@ pub(super) fn body<'a>(
     let Some(draft) = state.draft() else {
         return column![].into();
     };
-    let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));
     let faces = faces_field(state, &draft.faces, "Faces", "Click faces");
     let flip = toggle(
         Icon::TkFlip,
         "Flip",
         draft.flip,
-        send(MotionLook::Flip),
+        state.send(MotionLook::Flip),
         Some("Pull against the plane's normal"),
     );
     let tangent = toggle(
         Icon::TkChain,
         "Tangent faces",
         draft.tangent,
-        send(MotionLook::TangentFaces),
+        state.send(MotionLook::TangentFaces),
         Some("Take in faces that run on smoothly"),
     );
     column![

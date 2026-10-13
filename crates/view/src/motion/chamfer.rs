@@ -10,9 +10,9 @@ use iced::widget::column;
 
 use super::blend::{chain_toggle, edges_field};
 use super::{BlendEdges, MotionField, MotionLook, MotionState, section};
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{tile, tiles, toggle};
-use crate::{Look, Message};
 
 /// How a chamfer is sized, the mock's Type tiles: one distance along
 /// both faces, two distances, or a distance and the cut's angle.
@@ -77,14 +77,13 @@ pub(super) fn body<'a>(
     let Some(chamfer) = state.chamfer() else {
         return column![].into();
     };
-    let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));
     let edges = edges_field(state, &chamfer.edges, "Click edges or faces");
     let types = ChamferType::ALL.iter().map(|&kind| {
         tile(
             kind.icon(),
             kind.label(),
             chamfer.kind == kind,
-            send(MotionLook::ChamferType(kind)),
+            state.send(MotionLook::ChamferType(kind)),
         )
     });
     let first = match chamfer.kind {
@@ -102,7 +101,7 @@ pub(super) fn body<'a>(
             Icon::TkFlip,
             "Flip sides",
             state.flip,
-            send(MotionLook::Flip),
+            state.send(MotionLook::Flip),
             None,
         )
     });

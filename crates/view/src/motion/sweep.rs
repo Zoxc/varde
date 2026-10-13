@@ -21,12 +21,12 @@ use super::{
     BlendEdges, MotionField, MotionLook, MotionPick, MotionState, PickedRow, SketchLines,
     picks_field,
 };
+use crate::Message;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, OperationKind, PanelHover, RowTone, field, operation_section,
     region_name, tile, tiles, toggle,
 };
-use crate::{Look, Message};
 
 /// What a sweep's path is, its Path and Helix tiles: parts joined end
 /// to end (sketch chains and model edges), or a helix about an axis.
@@ -112,8 +112,6 @@ pub(super) fn body<'a>(
     let Some(sweep) = state.sweep() else {
         return column![].into();
     };
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
 
     let regions = (sweep.source.into_iter()).flat_map(|sketch| {
         sweep.picked.iter().map(move |&region| PickedRow {
@@ -146,7 +144,7 @@ pub(super) fn body<'a>(
             path.icon(),
             path.label(),
             sweep.path == path,
-            send(MotionLook::SweepPath(path)),
+            state.send(MotionLook::SweepPath(path)),
         )
     });
     let path: Element<'a, Message> = match sweep.path {
@@ -172,7 +170,7 @@ pub(super) fn body<'a>(
                 Icon::Move,
                 "Keep orientation",
                 sweep.keep_orientation,
-                send(MotionLook::KeepOrientation),
+                state.send(MotionLook::KeepOrientation),
                 Some("Move the profile along without turning it"),
             );
             column![
@@ -189,14 +187,14 @@ pub(super) fn body<'a>(
                 Icon::Revolve,
                 "Left-handed",
                 sweep.left_handed,
-                send(MotionLook::LeftHanded),
+                state.send(MotionLook::LeftHanded),
                 Some("Turn clockwise seen from the axis's tip"),
             );
             let flip = toggle(
                 Icon::TkFlip,
                 "Flip",
                 state.flip,
-                send(MotionLook::Flip),
+                state.send(MotionLook::Flip),
                 Some("Climb the other way along the axis"),
             );
             column![
@@ -213,8 +211,8 @@ pub(super) fn body<'a>(
     let operation = operation_section(
         sweep.operation,
         &sweep.targets,
-        |kind| send(MotionLook::Operation(kind)),
-        |body| send(MotionLook::Target(body)),
+        |kind| state.send(MotionLook::Operation(kind)),
+        |body| state.send(MotionLook::Target(body)),
         state.hover,
     );
     column![profile, field("Along", tiles(paths)), path, operation]
