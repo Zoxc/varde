@@ -39,7 +39,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   `Chamfer::check_own(design)` (cheap): its edges by
   `check_blend_edges_own(edges, faces)` (`Edges(BlendEdgesError)`: one
   edge or face at least and at most 256 of each, `Count`; each edge's
-  own check, `Edge(EdgeError)`, each face's, `Face(PlaneError)`; each
+  own check, `Edge(EdgeError)`, each face's, `Face(NearError)`; each
   list in order without repeats, `Order`; one body, `Bodies`), distances
   (`Distance`) and the angle (`Angle`) by their asks.
   `Document::check_blend_edges(index, edges, faces)` (public, for the

@@ -5,7 +5,7 @@ use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
     CheckError, Command, Document, EditError, Editor, FaceListError, FaceSetError, FeatureId,
-    FeatureKind, LengthUnit, PlaneError, Removable,
+    FeatureKind, LengthUnit, NearError, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -280,9 +280,7 @@ fn its_own_parts_are_checked() {
     ] {
         assert!(matches!(
             check(&|o| o.faces[0].near = far),
-            Err(OffsetFaceError::Faces(FaceListError::Face(
-                PlaneError::Near(_)
-            )))
+            Err(OffsetFaceError::Faces(FaceListError::Face(NearError(_))))
         ));
     }
     // The second face on another body: the list's order is by body

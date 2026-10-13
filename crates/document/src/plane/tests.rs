@@ -297,7 +297,7 @@ fn face_points_are_checked_in_bounds() {
         DVec3::new(0.0, 0.0, f64::NAN),
         DVec3::new(0.0, f64::NEG_INFINITY, 0.0),
     ] {
-        assert!(matches!(face(near).check_own(), Err(PlaneError::Near(_))));
+        assert!(matches!(face(near).check_own(), Err(NearError(_))));
     }
 }
 

@@ -234,9 +234,7 @@ fn its_own_parts_are_checked() {
     ] {
         assert!(matches!(
             check(&|d| d.faces[0].near = far),
-            Err(FaceDraftError::Faces(FaceListError::Face(
-                PlaneError::Near(_)
-            )))
+            Err(FaceDraftError::Faces(FaceListError::Face(NearError(_))))
         ));
         assert!(matches!(
             check(&|d| {
@@ -245,7 +243,7 @@ fn its_own_parts_are_checked() {
                 };
                 face.near = far;
             }),
-            Err(FaceDraftError::Neutral(PlaneError::Near(_)))
+            Err(FaceDraftError::Neutral(NearError(_)))
         ));
     }
     assert_eq!(

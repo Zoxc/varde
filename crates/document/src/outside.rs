@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use varde_sketch::{LinkKind, Sketch};
 
-use crate::{EdgeError, EdgeRef, FaceRef, FeatureId, Id, Plane, PlaneError, PointRef};
+use crate::{EdgeError, EdgeRef, FaceRef, FeatureId, Id, NearError, Plane, PointRef};
 
 /// Geometry outside a sketch that it projects or intersects: always of
 /// features before the sketch. New kinds are appended: a kind's place in
@@ -87,9 +87,9 @@ pub enum LinkError {
     /// The link's edge is wrong, see [`EdgeError`].
     #[error("sketch link {0}'s edge: {1}")]
     Edge(Id, EdgeError),
-    /// The link's face is wrong, see [`PlaneError`].
+    /// The link's face fails its own check ([`FaceRef::check_own`]).
     #[error("sketch link {0}'s face: {1}")]
-    Face(Id, PlaneError),
+    Face(Id, NearError),
     /// The link's corner isn't a corner, or its keys aren't sorted and
     /// different, or its point isn't finite within the limit.
     #[error("sketch link {0}'s corner is wrong")]

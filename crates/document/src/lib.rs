@@ -68,7 +68,9 @@ pub use param::{Param, ParamError, ParamUses};
 pub use pattern::{
     Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternError, PatternKind,
 };
-pub use plane::{FaceListError, FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
+pub use plane::{
+    FaceListError, FaceRef, FaceSetError, NearError, OriginPlane, Placement, Plane, PlaneError,
+};
 pub use removal::{Removable, Removal};
 pub use rename::{Named, NewName, Rename};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};

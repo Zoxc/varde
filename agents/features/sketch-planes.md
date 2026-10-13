@@ -38,7 +38,7 @@ pub struct FaceRef { pub body: BodyId, pub key: FaceKey, pub near: DVec3 }
     non-finite `d` or result.
 - **Checks** (`Document::check`, `CheckError::SketchPlane(id,
   PlaneError)`): the point finite and within `MAX_COORD`
-  (`FaceRef::check_own`, `PlaneError::Near`); the body, if it's there,
+  (`FaceRef::check_own`, `NearError`, taken in as `PlaneError::Near`); the body, if it's there,
   made by a feature before the sketch (`Body`); the key's feature, if
   it's there, before the sketch (`Maker`; the sketch itself isn't). A
   body or feature that isn't there is allowed (the reference fails to

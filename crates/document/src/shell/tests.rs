@@ -5,7 +5,7 @@ use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
     CheckError, Command, Document, EditError, Editor, FaceListError, FaceSetError, FeatureId,
-    FeatureKind, LengthUnit, PlaneError, Removable,
+    FeatureKind, LengthUnit, NearError, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -217,7 +217,7 @@ fn its_own_parts_are_checked() {
     ] {
         assert!(matches!(
             check(&|s| s.open[0].near = far),
-            Err(ShellError::Faces(FaceListError::Face(PlaneError::Near(_))))
+            Err(ShellError::Faces(FaceListError::Face(NearError(_))))
         ));
     }
     assert_eq!(
@@ -454,7 +454,7 @@ fn errors_say_what_is_wrong() {
         "a face it names was made by feature 7, which doesn't come before it"
     );
     assert_eq!(
-        ShellError::Faces(FaceListError::Face(PlaneError::Near(DVec3::new(
+        ShellError::Faces(FaceListError::Face(NearError(DVec3::new(
             f64::NAN,
             0.0,
             0.0

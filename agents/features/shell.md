@@ -29,7 +29,7 @@ pub struct Shell {
   `Shell::check_own(design)` (cheap): the faces by `check_face_list_own`
   (`plane.rs`, shared with the offset face and the draft; its
   `FaceListError` in `Faces`): at most 256 (`Count`), each face's own
-  check (`Face(PlaneError::Near)`: its point finite and within
+  check (`Face(NearError)`: its point finite and within
   `MAX_COORD`), in order without repeats (`Order`), all on the shell's
   body (`Bodies`); then the thickness by its ask (`Thickness`).
   `Document::check_face_set(index, body, faces)` (public, for the

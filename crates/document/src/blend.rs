@@ -5,7 +5,7 @@
 //! an edge named that is also around a face named is left out (an
 //! exclusion), any other edge named is taken.
 
-use crate::{BodyId, Document, EdgeError, EdgeRef, FaceRef, FeatureId, PlaneError};
+use crate::{BodyId, Document, EdgeError, EdgeRef, FaceRef, FeatureId, NearError};
 
 /// The most edges, and the most faces, a chamfer or a fillet may name.
 pub const MAX_BLEND_EDGES: usize = 256;
@@ -96,7 +96,7 @@ pub enum BlendEdgesError {
     Edge(#[source] EdgeError),
     /// A face fails its own check ([`FaceRef::check_own`]).
     #[error("{0}")]
-    Face(#[source] PlaneError),
+    Face(#[source] NearError),
     /// Its edges are on more than one body.
     #[error("its edges are on more than one body")]
     Bodies,

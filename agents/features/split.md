@@ -47,7 +47,7 @@ pub enum SplitTool {
   written before ids were held (a trim with `new_body` none).
 - **Checks** (`CheckError::Split(id, SplitError)`): `Split::check_own()`
   (cheap): the new body there when both are kept (`NoNewBody`), a tool body not the body (`ToolIsBody`), a face's
-  point in bounds (`Face(PlaneError)`), 1..=256 regions each checked
+  point in bounds (`Face(NearError)`), 1..=256 regions each checked
   (`Regions`, `Region`), 1..=256 curves sorted without repeats
   (`Curves`, `CurveOrder`). `Document::check` then wants the body made
   before (`Body`), a tool body there and made before (`ToolBody`), a

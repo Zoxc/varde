@@ -84,15 +84,21 @@ impl FaceRef {
     /// Checks what needs only the reference: its point is finite and
     /// within [`MAX_COORD`]. What it names is
     /// [`Document::check`](crate::Document::check)'s.
-    pub fn check_own(&self) -> Result<(), PlaneError> {
+    pub fn check_own(&self) -> Result<(), NearError> {
         let near = self.near;
         if crate::in_bounds(near) {
             Ok(())
         } else {
-            Err(PlaneError::Near(near))
+            Err(NearError(near))
         }
     }
 }
+
+/// A face reference's point isn't finite, or is further from zero than
+/// [`MAX_COORD`]: why [`FaceRef::check_own`] fails.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+#[error("its face's point {0} is out of bounds")]
+pub struct NearError(pub DVec3);
 
 /// What's wrong with a sketch's plane, see
 /// [`CheckError::SketchPlane`](crate::CheckError::SketchPlane).
@@ -110,8 +116,8 @@ pub enum PlaneError {
     Maker(FeatureId),
     /// Its face's point isn't finite, or is further from zero than
     /// [`MAX_COORD`].
-    #[error("its face's point {0} is out of bounds")]
-    Near(DVec3),
+    #[error("{0}")]
+    Near(#[from] NearError),
 }
 
 /// What's wrong with what a set of faces names
@@ -147,7 +153,7 @@ pub enum FaceListError {
     Order,
     /// A face fails its own check ([`FaceRef::check_own`]).
     #[error("one {0}")]
-    Face(#[source] PlaneError),
+    Face(#[source] NearError),
     /// Its faces aren't all on its body (the feature's, else one body).
     #[error("they aren't all on one body")]
     Bodies,

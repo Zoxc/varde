@@ -8,7 +8,7 @@ use varde_expr::{Ask, Value};
 
 use crate::plane::check_face_list_own;
 use crate::sorted_unique;
-use crate::{BodyId, Design, FaceListError, FaceRef, FaceSetError, FeatureId, Plane, PlaneError};
+use crate::{BodyId, Design, FaceListError, FaceRef, FaceSetError, FeatureId, NearError, Plane};
 
 /// The most faces a draft may turn.
 pub const MAX_DRAFT_FACES: usize = 256;
@@ -97,7 +97,7 @@ pub enum FaceDraftError {
     Faces(#[source] FaceListError),
     /// Its neutral plane's face fails its own check.
     #[error("its neutral plane's face: {0}")]
-    Neutral(#[source] PlaneError),
+    Neutral(#[source] NearError),
     /// Its angle's expression doesn't give its value, or the value isn't
     /// an angle [`FaceDraft::angle_ask`] takes.
     #[error("its angle's expression doesn't give its value, or it isn't an angle it takes")]

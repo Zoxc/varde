@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
 use crate::sorted_unique;
-use crate::{BodyId, FaceRef, FeatureId, MAX_EXTRUDE_REGIONS, Plane, PlaneError};
+use crate::{BodyId, FaceRef, FeatureId, MAX_EXTRUDE_REGIONS, NearError, Plane};
 
 /// The most curves a split's open chain may hold.
 pub const MAX_SPLIT_CURVES: usize = 256;
@@ -258,7 +258,7 @@ pub enum SplitError {
     ToolBody(BodyId),
     /// Its face's point isn't finite or within the coordinate limit.
     #[error("{0}")]
-    Face(#[source] PlaneError),
+    Face(#[source] NearError),
     /// Its face tool is on this body, which isn't there or which no
     /// feature before it makes.
     #[error("splits with a face of body {}, which isn't there or no earlier feature makes", .0.0)]

@@ -310,7 +310,7 @@ fn bodies_and_faces_are_checked() {
     refused(
         &mut editor,
         with(SplitTool::Plane(Plane::Face(far))),
-        SplitError::Face(PlaneError::Near(far.near)),
+        SplitError::Face(NearError(far.near)),
     );
     // A plane face's body made later.
     let next_body = BodyId(editor.document().next_id + 2);

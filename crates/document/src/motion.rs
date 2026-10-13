@@ -10,7 +10,8 @@ use varde_expr::{Ask, Value};
 
 use crate::bodies::check_bodies;
 use crate::{
-    BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, Plane,
+    BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, NearError,
+    Plane,
 };
 
 /// A move: the bodies it moves, each turned about `turn`'s axis by its
@@ -141,7 +142,9 @@ impl Referred<'_> {
     pub(crate) fn check_own(&self) -> Result<(), RefError> {
         match self {
             Referred::Edge(edge) => edge.check_own().map_err(RefError::Edge),
-            Referred::Face(face) => face.check_own().map_err(|_| RefError::Near(face.near)),
+            Referred::Face(face) => face
+                .check_own()
+                .map_err(|NearError(near)| RefError::Near(near)),
         }
     }
 
