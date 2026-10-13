@@ -39,7 +39,6 @@ use prompts::{
     unsaved_prompt,
 };
 pub use status_text::CURVED_FACE;
-pub(crate) use status_text::sketch_summary;
 use status_text::status;
 
 /// The operation being set up, or the measure tool in use: one at a

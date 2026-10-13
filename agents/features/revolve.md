@@ -422,7 +422,7 @@ for theirs.
 
 **The Timeline** shows a revolve with its own icon (`Icon::Revolve`,
 the icon mock's: an open circle with an arrowhead about a dashed axis)
-and, as its note, how far it turns in all (`revolve::turn_note`: "360°",
+and, as its note, how far it turns in all (`feature_text::revolve::turn_note`: "360°",
 "270°", "120°" for two sides of 100° and 20°). Selected, the status bar
 says its turn, operation and axis (`revolve_info`: "Full 360° · New
 body · about Y axis", "One side 90° · Cut · about Line 3", "Symmetric

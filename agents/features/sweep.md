@@ -288,7 +288,7 @@ Operation as tiles and the Bodies list.
 The Timeline shows a sweep with its icon (the icon mock's sweep: a path
 and a ring), the note "along Sketch 3", "along Body 1" (one edge part),
 "along 3 parts" or "helix · 10 turns", the status bar "Along Sketch 3 ·
-Follow path · Twist 90° · New body" (`view/src/sweep.rs`).
+Follow path · Twist 90° · New body" (`view/src/feature_text/sweep.rs`).
 
 Handles: the twist's on a ring about the path's end, a helix's pitch
 and turns along its axis (see Operation knobs).

@@ -204,7 +204,7 @@ panel.
   only while the bar has nothing else to say).
 
 The Timeline shows the model mock's shell icon (`Icon::Shell`) and note
-(`view/src/shell.rs`: the thickness, "2 mm"); selected, the status bar
+(`view/src/feature_text/shell.rs`: the thickness, "2 mm"); selected, the status bar
 says `shell_info`.
 
 Departures from the mock: no Shell on the toolbar (above); faces named

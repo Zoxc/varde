@@ -163,7 +163,7 @@ menu), so the panel is built in the style of the mock's shell panel.
   else what's next; the hint "Pick faces to move" (`chrome::step_hint`).
 
 The Timeline shows the mock's offset face icon (`Icon::OffsetFace`, the
-model mock's `offset`) and note (`view/src/offset_face.rs`: "2 mm · 3
+model mock's `offset`) and note (`view/src/feature_text/offset.rs`: "2 mm · 3
 faces", "0.5 mm in · 1 face"); selected, the status bar says
 `offset_info` ("2 faces · 2 mm outward").
 

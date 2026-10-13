@@ -9,7 +9,6 @@
 #![recursion_limit = "256"]
 
 mod anchors;
-mod chamfer;
 mod chrome;
 mod combine;
 mod constrain;
@@ -21,14 +20,10 @@ mod document;
 mod errors;
 mod escape;
 mod extrude;
-mod face_draft;
 mod feature_text;
 mod file_menu;
-mod fillet;
 mod hit;
 mod icons;
-mod loft;
-pub use loft::loft_info;
 mod mcp;
 mod mcp_config;
 mod measure;
@@ -38,7 +33,6 @@ mod mouse;
 mod mouse_only;
 mod names;
 mod naming;
-mod offset_face;
 mod operation_panel;
 mod options;
 mod overflow_tip;
@@ -56,19 +50,16 @@ mod revolve;
 mod rollback;
 mod select;
 mod settings;
-mod shell;
 mod shortcut;
 mod snap;
 pub mod spline;
 mod status;
 mod suggest;
-mod sweep;
-mod toast;
-pub use sweep::sweep_info;
 #[cfg(test)]
 mod testing;
 mod theme;
 mod thumbnail;
+mod toast;
 mod toolbar;
 pub use file_menu::tolerance_label;
 pub mod typed;
@@ -87,7 +78,6 @@ use varde_expr::LengthUnit;
 use varde_render::{Projection, Shading, View};
 use varde_sketch::{Id, Selectable, Sketch};
 
-pub use chamfer::chamfer_info;
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
@@ -97,8 +87,10 @@ pub use document::{
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
-pub use face_draft::draft_info;
-pub use fillet::fillet_info;
+pub use feature_text::{
+    align_info, chamfer_info, draft_info, fillet_info, loft_info, offset_info, scale_info,
+    shell_info, split_info, sweep_info,
+};
 pub use icons::LOGO_SVG;
 pub use mcp::{
     MCP_PANEL_WIDTH, McpAsk, McpCall, McpCallState, McpEdit, McpPanel, McpRevert, McpRevertAsk,
@@ -115,12 +107,11 @@ pub use motion::{
     KnobTone, LoftSection, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionParts,
     MotionPick, MotionState, OffsetFaceView, OpKnob, PatternMode, PickedFace, PickedFaces,
     ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView,
-    SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name, pattern_copies,
-    plane_name, point_name, scale_info, split_info,
+    SweepPart, SweepPath, SweepView, axis_name, direction_name, pattern_copies, plane_name,
+    point_name,
 };
 pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
 pub use naming::NamingPicks;
-pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, NO_REGIONS, OperationKind, PANEL_BODY, PanelHover, Side, Sides,
     TypedField, Verdict,
@@ -147,7 +138,6 @@ pub use settings::{
     KeptIn, McpClient, McpState, McpStatus, Setting, SettingChange, SettingsPage, SettingsState,
     SettingsTab, changed_settings,
 };
-pub use shell::shell_info;
 pub use shortcut::{
     Binding, DocumentKeys, Held, KeysInput, Operating, OperationKeys, claimed, document_bindings,
     escapes, pressed, settings_binding, welcome_bindings,

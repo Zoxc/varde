@@ -2191,7 +2191,7 @@ pub(crate) fn value_field<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extrude::{extent_note, extrude_note};
+    use crate::feature_text::extrude::{extent_note, extrude_note};
     use varde_document::Extent;
 
     #[test]

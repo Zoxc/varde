@@ -1,14 +1,36 @@
 //! The view's per-kind texts of a feature: its icon, its Timeline note
 //! and its status bar info, each one match over [`FeatureKind`] handing
-//! off to the kind's own module, and the angle and length notes those
+//! off to the kind's own submodule, and the angle and length notes those
 //! modules share.
 
 use varde_document::{Document, EdgeRef, FaceRef, Feature, FeatureKind, blend_excludes};
 use varde_expr::LengthUnit;
 
-use crate::document::sketch_summary;
 use crate::icons::Icon;
 use crate::words::counted;
+
+mod chamfer;
+mod combine;
+mod draft;
+pub(crate) mod extrude;
+mod fillet;
+mod loft;
+mod motion;
+mod offset;
+pub(crate) mod revolve;
+mod shell;
+mod sketch;
+mod sweep;
+
+pub use chamfer::chamfer_info;
+pub use draft::draft_info;
+pub use fillet::fillet_info;
+pub use loft::loft_info;
+pub use motion::{align_info, scale_info, split_info};
+pub use offset::offset_info;
+pub use shell::shell_info;
+pub(crate) use sketch::sketch_summary;
+pub use sweep::sweep_info;
 
 /// An angle of `radians`, as angles are shown: "90°".
 pub(crate) fn angle_note(radians: f64) -> String {
@@ -49,22 +71,22 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
 pub(crate) fn feature_note(document: &Document, feature: &Feature, units: LengthUnit) -> String {
     match &feature.kind {
         FeatureKind::Sketch { plane, .. } => crate::plane_note(document, plane),
-        FeatureKind::Extrude(extrude) => crate::extrude::extrude_note(extrude, units),
-        FeatureKind::Revolve(revolve) => crate::revolve::turn_note(&revolve.extent),
+        FeatureKind::Extrude(extrude) => extrude::extrude_note(extrude, units),
+        FeatureKind::Revolve(revolve) => revolve::turn_note(&revolve.extent),
         FeatureKind::Combine(combine) => combine.op.label().into(),
-        FeatureKind::Move(moved) => crate::motion::move_note(moved, units),
+        FeatureKind::Move(moved) => motion::move_note(moved, units),
         FeatureKind::Mirror(mirror) => crate::motion::plane_short(document, &mirror.plane),
-        FeatureKind::Pattern(pattern) => crate::motion::pattern_note(pattern),
-        FeatureKind::Align(align) => crate::motion::align_note(document, align),
-        FeatureKind::Scale(scale) => crate::motion::scale_note(scale, units),
-        FeatureKind::Split(split) => crate::motion::split_note(document, split),
-        FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_note(chamfer, units),
-        FeatureKind::Shell(shell) => crate::shell::shell_note(shell, units),
-        FeatureKind::Fillet(fillet) => crate::fillet::fillet_note(fillet, units),
-        FeatureKind::OffsetFace(offset) => crate::offset_face::offset_note(offset, units),
-        FeatureKind::FaceDraft(draft) => crate::face_draft::draft_note(draft),
-        FeatureKind::Sweep(sweep) => crate::sweep::sweep_note(document, sweep),
-        FeatureKind::Loft(loft) => crate::loft::loft_note(loft),
+        FeatureKind::Pattern(pattern) => motion::pattern_note(pattern),
+        FeatureKind::Align(align) => motion::align_note(document, align),
+        FeatureKind::Scale(scale) => motion::scale_note(scale, units),
+        FeatureKind::Split(split) => motion::split_note(document, split),
+        FeatureKind::Chamfer(chamfer) => chamfer::chamfer_note(chamfer, units),
+        FeatureKind::Shell(shell) => shell::shell_note(shell, units),
+        FeatureKind::Fillet(fillet) => fillet::fillet_note(fillet, units),
+        FeatureKind::OffsetFace(offset) => offset::offset_note(offset, units),
+        FeatureKind::FaceDraft(draft) => draft::draft_note(draft),
+        FeatureKind::Sweep(sweep) => sweep::sweep_note(document, sweep),
+        FeatureKind::Loft(loft) => loft::loft_note(loft),
     }
 }
 
@@ -82,22 +104,22 @@ pub(crate) fn feature_info(feature: &Feature, document: &Document) -> String {
             let on = crate::plane_pick::on_plane(document, plane);
             format!("{} · {on}", sketch_summary(sketch))
         }
-        FeatureKind::Extrude(extrude) => crate::extrude::extrude_info(extrude, units),
-        FeatureKind::Revolve(revolve) => crate::revolve::revolve_info(document, revolve),
-        FeatureKind::Combine(combine) => crate::combine::combine_info(document, combine),
-        FeatureKind::Move(moved) => crate::motion::move_info(document, moved),
-        FeatureKind::Mirror(mirror) => crate::motion::mirror_info(document, mirror),
-        FeatureKind::Pattern(pattern) => crate::motion::pattern_info(document, pattern),
-        FeatureKind::Align(align) => crate::motion::align_info(document, align),
-        FeatureKind::Scale(scale) => crate::motion::scale_info(document, scale, units),
-        FeatureKind::Split(split) => crate::motion::split_info(document, split),
-        FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_info(chamfer, units),
-        FeatureKind::Shell(shell) => crate::shell::shell_info(shell, units),
-        FeatureKind::Fillet(fillet) => crate::fillet::fillet_info(fillet, units),
-        FeatureKind::OffsetFace(offset) => crate::offset_face::offset_info(offset, units),
-        FeatureKind::FaceDraft(draft) => crate::face_draft::draft_info(document, draft),
-        FeatureKind::Sweep(sweep) => crate::sweep::sweep_info(document, sweep),
-        FeatureKind::Loft(loft) => crate::loft::loft_info(loft),
+        FeatureKind::Extrude(extrude) => extrude::extrude_info(extrude, units),
+        FeatureKind::Revolve(revolve) => revolve::revolve_info(document, revolve),
+        FeatureKind::Combine(combine) => combine::combine_info(document, combine),
+        FeatureKind::Move(moved) => motion::move_info(document, moved),
+        FeatureKind::Mirror(mirror) => motion::mirror_info(document, mirror),
+        FeatureKind::Pattern(pattern) => motion::pattern_info(document, pattern),
+        FeatureKind::Align(align) => motion::align_info(document, align),
+        FeatureKind::Scale(scale) => motion::scale_info(document, scale, units),
+        FeatureKind::Split(split) => motion::split_info(document, split),
+        FeatureKind::Chamfer(chamfer) => chamfer::chamfer_info(chamfer, units),
+        FeatureKind::Shell(shell) => shell::shell_info(shell, units),
+        FeatureKind::Fillet(fillet) => fillet::fillet_info(fillet, units),
+        FeatureKind::OffsetFace(offset) => offset::offset_info(offset, units),
+        FeatureKind::FaceDraft(draft) => draft::draft_info(document, draft),
+        FeatureKind::Sweep(sweep) => sweep::sweep_info(document, sweep),
+        FeatureKind::Loft(loft) => loft::loft_info(loft),
     }
 }
 

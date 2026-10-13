@@ -203,7 +203,7 @@ typed.
 
 **The Timeline** (`view/src/panels.rs`) shows an extrude with the extrude
 icon and its distances as the note, in the design's units
-(`extrude::extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
+(`feature_text::extrude::extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
 all"), a taper after it (`extrude_note`: "10 mm · 2°"; the status bar
 "Distance 10 mm · Taper 2° · New body"). A tapered extrude's preview
 fails until the kernel's taper is built ("a tapered extrude isn't

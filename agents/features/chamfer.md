@@ -279,7 +279,7 @@ panel.
   (`chamfer_info`), else what's next, with the hint "Pick edges".
 
 The Timeline shows the model mock's chamfer icon (`Icon::BChamfer`;
-`Icon::Chamfer` is the sketch tool's) and note (`view/src/chamfer.rs`:
+`Icon::Chamfer` is the sketch tool's) and note (`view/src/feature_text/chamfer.rs`:
 "1 mm", "1 × 2" along the face of the edges' first key first, so Flip
 sides swaps them, "3 mm 30°", as the mock's rows), the status bar's
 info "2 edges · Equal · 1 mm · Tangent chain" (with faces "1 face ·

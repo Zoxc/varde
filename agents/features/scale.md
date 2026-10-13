@@ -218,7 +218,7 @@ built in the style of the mock's nearest one, Move's.
 The Timeline shows the mock's `scale` icon (the tool icons' set), the
 note "×2", "×1 · 1 · 2" or "edge → 50 mm" (written as a pattern's "×4",
 where the plan had "× 2") and "Body 1 ×2" as the status info
-(`view/src/motion.rs`: `scale_note`, `scale_info`).
+(`view/src/feature_text/motion.rs`: `scale_note`, `scale_info`).
 
 Departures from the mock (which has no Scale panel): the Move panel's
 style with this session's own fields; the rail only, not the toolbar;

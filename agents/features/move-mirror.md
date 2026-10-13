@@ -338,7 +338,7 @@ with the hints "Pick bodies", "Pick the axis" or "Pick the plane",
 `Enter` OK and `Esc` Cancel; the toolbar's pill with OK.
 
 **The Timeline**: the mock's icons and notes. A move's note is how far
-it shifts in all and its angle, "82.462 mm 30°" (`motion::move_note`,
+it shifts in all and its angle, "82.462 mm 30°" (`feature_text::motion::move_note`,
 either left out when it's none, "0 mm" for a move doing nothing); a
 mirror's is its plane, "XY" or "Extrude 1's end" (`plane_short`).
 Selected, the status bar's info is the mock's: "Body 1 by -20, -80, 0

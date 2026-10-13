@@ -501,7 +501,7 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         }
         Some(OperationState::Combine(combine)) => {
             let title = combine.verdict.editing.unwrap_or("New combine");
-            return operation_status(title, &combine_info(combine), state);
+            return operation_status(title, &combine_session_info(combine), state);
         }
         Some(OperationState::Motion(motion)) => {
             let detail = crate::motion::status_info(motion);
@@ -515,7 +515,7 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
 
 /// What the status bar says of the combine being set up: "Body 1 with 2
 /// tools · Union", or what's still to pick.
-fn combine_info(combine: &crate::CombineState<'_>) -> String {
+fn combine_session_info(combine: &crate::CombineState<'_>) -> String {
     let Some(target) = combine.target else {
         return "pick the target body".to_owned();
     };
@@ -781,34 +781,6 @@ pub(super) fn refusal_text(why: &Rejected, sketch: &Sketch) -> Cow<'static, str>
     }
 }
 
-/// What a sketch holds, for the status bar: "Empty", or how many of each
-/// kind of curve, fillets and chamfers apart, and the points, "2 lines ·
-/// 1 circle · 5 points".
-pub(crate) fn sketch_summary(sketch: &Sketch) -> String {
-    // Fillets are arcs and chamfers lines, with corners.
-    let count = |kind: Kind, corner: bool| {
-        sketch
-            .curves
-            .iter()
-            .filter(|entry| entry.curve.kind() == kind && entry.corner.is_some() == corner)
-            .count()
-    };
-    let parts = counts([
-        (count(Kind::Line, false), "line", "lines"),
-        (count(Kind::Circle, false), "circle", "circles"),
-        (count(Kind::Arc, false), "arc", "arcs"),
-        (count(Kind::Arc, true), "fillet", "fillets"),
-        (count(Kind::Line, true), "chamfer", "chamfers"),
-        (count(Kind::Spline, false), "spline", "splines"),
-        (sketch.points.len(), "point", "points"),
-    ]);
-    if parts.is_empty() {
-        "Empty".to_owned()
-    } else {
-        parts.join(" · ")
-    }
-}
-
 /// How many profiles `sketch` has, for the status bar, once the app has
 /// looked: "2 profiles", or that it's too complex to say. Nothing for a
 /// sketch without curves.
@@ -860,9 +832,10 @@ mod tests {
     use varde_document::{Document, Feature};
     use varde_sketch::{Analysis, Curve, Measure, Profiles, Rejected, Sketch, TooComplex};
 
-    use super::{left_orbits, profile_count, refusal_text, sketch_summary, standing};
+    use super::{left_orbits, profile_count, refusal_text, standing};
     use crate::Tool;
     use crate::document::SketchState;
+    use crate::feature_text::sketch_summary;
     use crate::feature_text::{feature_icon, feature_info};
     use crate::icons::Icon;
     use crate::shortcut::Held;
@@ -1137,7 +1110,7 @@ mod tests {
             ),
         ];
         for (extent, note, info) in cases {
-            assert_eq!(crate::revolve::turn_note(&extent), note);
+            assert_eq!(crate::feature_text::revolve::turn_note(&extent), note);
             assert_eq!(feature_info(&revolve(extent, x), &document), info);
         }
         // The Y axis, and a line of the sketch, by their names.

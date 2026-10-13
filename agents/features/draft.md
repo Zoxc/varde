@@ -144,7 +144,7 @@ there, angles of 0 and 90° refused as read), `view/src/face_draft/tests.rs`
 (the notes).
 
 The Timeline shows the icon mock's draft icon (`Icon::Draft`) and note
-(`view/src/face_draft.rs`: "3° · 4 faces"); selected, the status bar
+(`view/src/feature_text/draft.rs`: "3° · 4 faces"); selected, the status bar
 says `draft_info` ("4 faces · 3° from XY", ", flipped").
 
 ## UI

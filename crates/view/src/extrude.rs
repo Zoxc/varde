@@ -9,12 +9,11 @@ use std::collections::BTreeSet;
 use glam::{DVec2, DVec3};
 use iced::Element;
 use iced::widget::{column, text};
-use varde_document::{BodyId, Extent, FeatureId, Placement};
+use varde_document::{BodyId, FeatureId, Placement};
 use varde_expr::LengthUnit;
 use varde_sketch::{Region, angle};
 
 use crate::chrome::tip;
-use crate::feature_text::{angle_note, length_note};
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, OperationKind, PanelHover, Parts, Side, Sides, TypedField, Verdict,
@@ -395,48 +394,6 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
         close: false,
     })
-}
-
-/// How far an extrude goes, for its Timeline row, in `units`: "10 mm",
-/// "10 mm symmetric", "10 mm + 5 mm", "Through all".
-pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
-    let length = |value| length_note(value, units);
-    match extent {
-        Extent::OneSide(d) => length(d),
-        Extent::Symmetric(d) => format!("{} symmetric", length(d)),
-        Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
-        Extent::ThroughAll => "Through all".to_owned(),
-    }
-}
-
-/// An extrude's Timeline note: its extent, and its taper if it has
-/// one, "10 mm · 2°".
-pub(crate) fn extrude_note(extrude: &varde_document::Extrude, units: LengthUnit) -> String {
-    let extent = extent_note(&extrude.extent, units);
-    match extrude.tapered() {
-        Some(taper) => format!("{extent} · {}", angle_note(taper.value)),
-        None => extent,
-    }
-}
-
-/// An extrude's status bar info, in `units`: its extent and operation,
-/// "Distance 10 mm · New body", with its taper if it has one.
-pub(crate) fn extrude_info(extrude: &varde_document::Extrude, units: LengthUnit) -> String {
-    let note = extent_note(&extrude.extent, units);
-    let extent = match &extrude.extent {
-        Extent::OneSide(d) => format!("Distance {}", length_note(d, units)),
-        Extent::Symmetric(d) => format!("Symmetric {}", length_note(d, units)),
-        Extent::TwoSides(..) => format!("Two sides {note}"),
-        Extent::ThroughAll => note,
-    };
-    let operation = OperationKind::of(&extrude.operation).label();
-    match extrude.tapered() {
-        Some(taper) => {
-            let taper = angle_note(taper.value);
-            format!("{extent} · Taper {taper} · {operation}")
-        }
-        None => format!("{extent} · {operation}"),
-    }
 }
 
 #[cfg(test)]

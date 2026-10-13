@@ -237,7 +237,7 @@ and the Bodies list.
 
 The Timeline shows a loft's row with the model mock's `loft` icon
 (`Icon::Loft`, a slab and a disc joined by two rulings) and its note, "3
-sections" (`view/src/loft.rs`, `loft_note`); the status bar says "3
+sections" (`view/src/feature_text/loft.rs`, `loft_note`); the status bar says "3
 sections · Smooth · Closed · 2 rails · New body" (`loft_info`).
 
 Known gaps: no seam knob for a region with no start (a circle's);

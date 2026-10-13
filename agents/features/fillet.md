@@ -146,7 +146,7 @@ mock's fillet panel: Edges, Radius, Tangent chain.
   next isn't on this branch yet).
 
 The Timeline shows the model mock's fillet icon (`Icon::BFillet`;
-`Icon::Fillet` is the sketch tool's) and note ("R2", `view/src/fillet.rs`);
+`Icon::Fillet` is the sketch tool's) and note ("R2", `view/src/feature_text/fillet.rs`);
 selected, the status bar says `fillet_info`.
 
 Departures from the mock: no Fillet on the toolbar (above); edges named
