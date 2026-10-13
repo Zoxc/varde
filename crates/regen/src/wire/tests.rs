@@ -2101,7 +2101,7 @@ fn cut_short_parts_the_tables_go_by_are_refused() {
 /// either.
 #[test]
 fn bounded_sequences_are_refused_past_their_bounds() {
-    use crate::picking::bounded::seq;
+    use crate::bounded_seq::seq;
     let decode = |value: &Vec<Vec<u8>>, max: usize, budget: usize| {
         let bytes = postcard::to_stdvec(value).unwrap();
         let mut de = postcard::Deserializer::from_bytes(&bytes);

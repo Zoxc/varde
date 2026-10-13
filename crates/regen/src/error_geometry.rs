@@ -42,7 +42,6 @@ use varde_kernel_compat::{
 
 use crate::Picking;
 use crate::cache::size::{HeapSize, total};
-use crate::picking::bounded::seq;
 
 /// A feature that failed: which, why in words for the Timeline, and what
 /// to draw of where.
@@ -580,14 +579,8 @@ pub struct GeometryParts {
 mod bounded {
     use serde::{Deserialize, Deserializer};
 
-    use super::{ErrorGeometry, seq};
-
-    fn at_most<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-        d: D,
-        max: usize,
-    ) -> Result<Vec<T>, D::Error> {
-        seq(d, max, |_| 0, 0)
-    }
+    use super::ErrorGeometry;
+    use crate::bounded_seq::at_most;
 
     pub(super) fn vertices<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<[f32; 3]>, D::Error> {
         at_most(d, ErrorGeometry::MAX_VERTICES)

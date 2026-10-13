@@ -160,7 +160,7 @@ mod bounded {
     };
 
     use super::{MAX_BROKEN, MAX_CORNERS, MAX_FACES, MAX_RELINKED_ITEMS};
-    use crate::picking::bounded::seq;
+    use crate::bounded_seq::{at_most, seq};
     use crate::{PickCorner, PickFace, Picking};
 
     /// A [`Sketch`] as it's encoded, each list within what
@@ -199,23 +199,23 @@ mod bounded {
     }
 
     fn points<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Point>, D::Error> {
-        seq(d, MAX_POINTS, |_| 0, 0)
+        at_most(d, MAX_POINTS)
     }
 
     fn curves<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<CurveEntry>, D::Error> {
-        seq(d, MAX_CURVES, |_| 0, 0)
+        at_most(d, MAX_CURVES)
     }
 
     fn constraints<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<ConstraintEntry>, D::Error> {
-        seq(d, MAX_CONSTRAINTS, |_| 0, 0)
+        at_most(d, MAX_CONSTRAINTS)
     }
 
     fn dimensions<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<DimensionEntry>, D::Error> {
-        seq(d, MAX_DIMENSIONS, |_| 0, 0)
+        at_most(d, MAX_DIMENSIONS)
     }
 
     fn links<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Link>, D::Error> {
-        seq(d, MAX_LINKS, |_| 0, 0)
+        at_most(d, MAX_LINKS)
     }
 
     /// Sketches weighing at most [`MAX_RELINKED_ITEMS`] together, each
@@ -256,7 +256,7 @@ mod bounded {
     pub(super) fn broken<'de, D: Deserializer<'de>>(
         d: D,
     ) -> Result<Vec<(FeatureId, Id, String)>, D::Error> {
-        seq(d, MAX_BROKEN, |_| 0, 0)
+        at_most(d, MAX_BROKEN)
     }
 
     /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`]
@@ -272,7 +272,7 @@ mod bounded {
 
     /// At most [`RenderMesh::MAX_PARTS`] parts' bodies.
     pub(super) fn parts<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<BodyId>, D::Error> {
-        seq(d, RenderMesh::MAX_PARTS, |_| 0, 0)
+        at_most(d, RenderMesh::MAX_PARTS)
     }
 
     /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' entries: their
@@ -281,12 +281,12 @@ mod bounded {
     pub(super) fn edges<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
         d: D,
     ) -> Result<Vec<T>, D::Error> {
-        seq(d, RenderMesh::MAX_EDGE_POLYLINES, |_| 0, 0)
+        at_most(d, RenderMesh::MAX_EDGE_POLYLINES)
     }
 
     /// At most [`MAX_CORNERS`] corners.
     pub(super) fn corners<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PickCorner>, D::Error> {
-        seq(d, MAX_CORNERS, |_| 0, 0)
+        at_most(d, MAX_CORNERS)
     }
 }
 

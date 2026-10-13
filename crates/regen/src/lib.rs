@@ -19,6 +19,7 @@
 //!
 //! [`Editor::generation`]: varde_document::Editor::generation
 
+mod bounded_seq;
 mod bounds;
 mod cache;
 mod drafted;
