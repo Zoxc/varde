@@ -11,8 +11,9 @@
 
 use serde_json::{Map, Value, json};
 
+use super::call::worded;
 use super::schema::{edit_once, sketch};
-use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, id, words};
+use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, Worded, coordinate, id, words};
 
 /// The most operations one `edit_sketch` takes: a sketch of a few
 /// shapes, their constraints and dimensions in one call, each
@@ -95,63 +96,43 @@ pub enum PolygonSize {
     Diameter(String),
 }
 
-/// A constraint's kind, as the sketch's Constrain list names them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConstraintWord {
-    Coincident,
-    Horizontal,
-    Vertical,
-    Parallel,
-    Perpendicular,
-    Tangent,
-    Smooth,
-    Equal,
-    Concentric,
-    Midpoint,
-    Symmetric,
-    Fix,
+worded! {
+    /// The words a constraint's `kind` takes.
+    CONSTRAINT_WORDS;
+    /// A constraint's kind, as the sketch's Constrain list names them.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum ConstraintWord {
+        Coincident = "coincident",
+        Horizontal = "horizontal",
+        Vertical = "vertical",
+        Parallel = "parallel",
+        Perpendicular = "perpendicular",
+        Tangent = "tangent",
+        Smooth = "smooth",
+        Equal = "equal",
+        Concentric = "concentric",
+        Midpoint = "midpoint",
+        Symmetric = "symmetric",
+        Fix = "fix",
+    }
 }
 
-/// The words a constraint's `kind` takes.
-const CONSTRAINT_WORDS: &[(&str, ConstraintWord)] = &[
-    ("coincident", ConstraintWord::Coincident),
-    ("horizontal", ConstraintWord::Horizontal),
-    ("vertical", ConstraintWord::Vertical),
-    ("parallel", ConstraintWord::Parallel),
-    ("perpendicular", ConstraintWord::Perpendicular),
-    ("tangent", ConstraintWord::Tangent),
-    ("smooth", ConstraintWord::Smooth),
-    ("equal", ConstraintWord::Equal),
-    ("concentric", ConstraintWord::Concentric),
-    ("midpoint", ConstraintWord::Midpoint),
-    ("symmetric", ConstraintWord::Symmetric),
-    ("fix", ConstraintWord::Fix),
-];
-
-/// What a dimension measures, as `sketch` names it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MeasureWord {
-    Distance,
-    HorizontalDistance,
-    VerticalDistance,
-    Length,
-    Angle,
-    Radius,
-    Diameter,
-    EdgeDistance,
+worded! {
+    /// The words a dimension's `kind` takes.
+    MEASURE_WORDS;
+    /// What a dimension measures, as `sketch` names it.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum MeasureWord {
+        Distance = "distance",
+        HorizontalDistance = "horizontal_distance",
+        VerticalDistance = "vertical_distance",
+        Length = "length",
+        Angle = "angle",
+        Radius = "radius",
+        Diameter = "diameter",
+        EdgeDistance = "edge_distance",
+    }
 }
-
-/// The words a dimension's `kind` takes.
-const MEASURE_WORDS: &[(&str, MeasureWord)] = &[
-    ("distance", MeasureWord::Distance),
-    ("horizontal_distance", MeasureWord::HorizontalDistance),
-    ("vertical_distance", MeasureWord::VerticalDistance),
-    ("length", MeasureWord::Length),
-    ("angle", MeasureWord::Angle),
-    ("radius", MeasureWord::Radius),
-    ("diameter", MeasureWord::Diameter),
-    ("edge_distance", MeasureWord::EdgeDistance),
-];
 
 /// The words a spline's `kind` takes: through fit points (the default)
 /// or by control points.
@@ -275,43 +256,28 @@ const OPS: &[OpSpec] = &[
 
 /// The operations' words, for errors: "point, line, ... or move".
 fn op_words() -> String {
-    let (last, rest) = OPS.split_last().expect("there are operations");
-    let rest: Vec<&str> = rest.iter().map(|spec| spec.kind.word()).collect();
-    format!("{} or {}", rest.join(", "), last.kind.word())
+    let (last, rest) = OP_WORDS.split_last().expect("there are operations");
+    let rest: Vec<&str> = rest.iter().map(|(word, _)| *word).collect();
+    format!("{} or {}", rest.join(", "), last.0)
 }
 
-/// An [`Op`]'s kind, which [`OPS`] lists with what it takes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum OpKind {
-    Point,
-    Line,
-    Arc,
-    Circle,
-    Spline,
-    Rectangle,
-    Polygon,
-    Constraint,
-    Dimension,
-    Delete,
-    Move,
-}
-
-impl OpKind {
-    /// Its name, as `op` gives it.
-    fn word(self) -> &'static str {
-        match self {
-            OpKind::Point => "point",
-            OpKind::Line => "line",
-            OpKind::Arc => "arc",
-            OpKind::Circle => "circle",
-            OpKind::Spline => "spline",
-            OpKind::Rectangle => "rectangle",
-            OpKind::Polygon => "polygon",
-            OpKind::Constraint => "constraint",
-            OpKind::Dimension => "dimension",
-            OpKind::Delete => "delete",
-            OpKind::Move => "move",
-        }
+worded! {
+    /// The words `op` takes, in [`OPS`]'s order.
+    OP_WORDS;
+    /// An [`Op`]'s kind, which [`OPS`] lists with what it takes.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(super) enum OpKind {
+        Point = "point",
+        Line = "line",
+        Arc = "arc",
+        Circle = "circle",
+        Spline = "spline",
+        Rectangle = "rectangle",
+        Polygon = "polygon",
+        Constraint = "constraint",
+        Dimension = "dimension",
+        Delete = "delete",
+        Move = "move",
     }
 }
 

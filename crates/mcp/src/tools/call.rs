@@ -34,6 +34,7 @@ macro_rules! worded {
         }
     };
 }
+pub(super) use worded;
 
 /// A `tools/call`, checked. The largest arguments, an align's, a
 /// scale's and a sweep's, are boxed to keep every call small.
