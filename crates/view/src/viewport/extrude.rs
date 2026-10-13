@@ -18,7 +18,6 @@ use super::handle::{self, Puck};
 use super::regions::{self, Regions};
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
 use crate::motion::KnobTone;
-use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
 use crate::viewport::{hover_action, local, local_cursor};
@@ -48,12 +47,12 @@ impl<'a> Extruding<'a> {
 
     /// Its sketches and the regions picked.
     fn regions(&self) -> Regions<'_, 'a> {
-        Regions {
-            candidates: &self.state.candidates,
-            source: self.state.source,
-            picked: self.state.picked,
-            panel: self.state.hover.and_then(PanelHover::region),
-        }
+        Regions::new(
+            &self.state.candidates,
+            self.state.source,
+            self.state.picked,
+            self.state.hover,
+        )
     }
 
     /// Where its layers are drawn: see [`Regions::plane`].

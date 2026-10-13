@@ -25,12 +25,7 @@ pub(super) fn sweep_regions<'s, 'a>(
     sweep: &'s SweepView<'a>,
     hover: Option<PanelHover>,
 ) -> Regions<'s, 'a> {
-    Regions {
-        candidates: &sweep.candidates,
-        source: sweep.source,
-        picked: sweep.picked,
-        panel: hover.and_then(PanelHover::region),
-    }
+    Regions::new(&sweep.candidates, sweep.source, sweep.picked, hover)
 }
 
 /// Draws a sweep's path (or a loft's rails, or a split's line) on

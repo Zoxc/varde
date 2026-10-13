@@ -45,14 +45,10 @@ impl std::fmt::Debug for SplitInput {
     }
 }
 
-/// A split's sketches whose regions show, and those picked.
+/// A split's sketches whose regions show, and those picked. The panel's
+/// region rows don't light their region here.
 pub(super) fn split_regions<'s, 'a>(split: &'s SplitView<'a>) -> Regions<'s, 'a> {
-    Regions {
-        candidates: &split.candidates,
-        source: split.source,
-        picked: split.picked,
-        panel: None,
-    }
+    Regions::new(&split.candidates, split.source, split.picked, None)
 }
 
 impl<'a> Moving<'a> {

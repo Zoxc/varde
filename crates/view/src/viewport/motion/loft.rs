@@ -67,12 +67,7 @@ impl LoftInput {
 /// source: its sections are drawn apart), and the one hovered in the
 /// panel (`hover`).
 fn loft_regions<'s, 'a>(loft: &'s LoftView<'a>, hover: Option<PanelHover>) -> Regions<'s, 'a> {
-    Regions {
-        candidates: &loft.candidates,
-        source: None,
-        picked: &crate::NO_REGIONS,
-        panel: hover.and_then(PanelHover::region),
-    }
+    Regions::new(&loft.candidates, None, &crate::NO_REGIONS, hover)
 }
 
 /// The corner of a loft's section under the screen position `at`, by the

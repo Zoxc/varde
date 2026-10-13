@@ -87,12 +87,12 @@ impl<'a> Revolving<'a> {
 
     /// Its sketches and the regions picked.
     fn regions(&self) -> Regions<'_, 'a> {
-        Regions {
-            candidates: &self.state.candidates,
-            source: self.state.source,
-            picked: self.state.picked,
-            panel: self.state.hover.and_then(PanelHover::region),
-        }
+        Regions::new(
+            &self.state.candidates,
+            self.state.source,
+            self.state.picked,
+            self.state.hover,
+        )
     }
 
     /// Where its layers are drawn: see [`Regions::plane`].

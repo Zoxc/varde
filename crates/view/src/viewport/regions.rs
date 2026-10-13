@@ -17,7 +17,7 @@ use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::Profiles;
 
 use super::style::{fill_region, fill_region_in, line, srgba};
-use crate::operation_panel::Candidate;
+use crate::operation_panel::{Candidate, PanelHover};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
 
@@ -62,6 +62,22 @@ struct Base {
 }
 
 impl<'s, 'a> Regions<'s, 'a> {
+    /// An operation's sketches, its source and the regions picked, with
+    /// the region of the panel's row `hover` names, if any.
+    pub(crate) fn new(
+        candidates: &'s [Candidate<'a>],
+        source: Option<FeatureId>,
+        picked: &'a BTreeSet<usize>,
+        hover: Option<PanelHover>,
+    ) -> Self {
+        Regions {
+            candidates,
+            source,
+            picked,
+            panel: hover.and_then(PanelHover::region),
+        }
+    }
+
     /// The source sketch, if it's chosen.
     pub(crate) fn source(&self) -> Option<&'s Candidate<'a>> {
         Candidate::find(self.candidates, self.source)
