@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use varde_document::{Command, Document, Editor, FeatureId};
 
+use crate::drafted::of_feature;
 use crate::{
     Answer, Asked, COARSER_STEPS, Cache, Draft, Drafted, ErrorGeometry, Evaluation, Inspect,
     Progress, Query, Regenerated, Request, Response, Sight, evaluate, flatten_sketches,
@@ -128,55 +129,27 @@ impl Regenerator {
         let Some(draft) = draft else {
             return self.model(document, asked, None, (inspect, sight), report);
         };
-        let mut drafted = Drafted {
-            revision: draft.revision,
-            error: None,
-            geometry: None,
-            touched: None,
-            uncut: Vec::new(),
-            reference: None,
-            datums: None,
-            scale: None,
-            sweep: None,
-        };
-        match applied(document, draft) {
+        let drafted = match applied(document, draft) {
             Ok((with_draft, feature)) => {
                 let mut evaluation = self.evaluate(&with_draft, report);
-                let of = |id: &FeatureId| *id == feature;
-                drafted.touched = (evaluation.touched.iter())
-                    .find(|(id, _)| of(id))
-                    .map(|(_, touched)| touched.clone());
-                drafted.reference = (evaluation.references.iter())
-                    .find(|(id, _)| of(id))
-                    .map(|(_, [point, along])| Box::new([point.to_array(), along.to_array()]));
-                drafted.datums = (evaluation.aligned.iter())
-                    .find(|(id, _)| of(id))
-                    .map(|(_, datums)| Box::new(*datums));
-                drafted.scale = (evaluation.scaled.iter())
-                    .find(|(id, _)| of(id))
-                    .map(|(_, found)| Box::new(*found));
-                drafted.sweep = (evaluation.swept.iter())
-                    .find(|(id, _)| of(id))
-                    .map(|(_, found)| Box::new(*found));
+                let mut drafted = Drafted::found(draft.revision, &evaluation, feature);
                 match (evaluation.failed.iter()).position(|failed| failed.feature == feature) {
                     Some(at) => {
                         let failed = evaluation.failed.swap_remove(at);
                         drafted.error = Some(failed.message);
                         drafted.geometry = failed.geometry;
+                        drafted
                     }
                     None => {
-                        drafted.uncut = (evaluation.uncut.iter())
-                            .find(|(id, _)| *id == feature)
-                            .map(|(_, uncut)| uncut.clone())
-                            .unwrap_or_default();
+                        drafted.uncut = of_feature(&evaluation.uncut, feature).unwrap_or_default();
                         report(Progress::drawing(with_draft.features().len()));
                         let payloads = (inspect, sight);
                         return self.draw(&with_draft, evaluation, asked, Some(drafted), payloads);
                     }
                 }
             }
-            Err(error) => drafted.error = Some(error),
-        }
+            Err(error) => Drafted::refused(draft.revision, error),
+        };
         self.model(document, asked, Some(drafted), (inspect, sight), report)
     }
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, FeatureId, FeatureKind};
 
-use crate::ErrorGeometry;
+use crate::{ErrorGeometry, Evaluation};
 
 /// A feature being set up, new or edited, that isn't committed (an
 /// extrude, a revolve): a request answers with it applied, as
@@ -78,6 +78,46 @@ pub struct Drafted {
 }
 
 impl Drafted {
+    /// The draft of `revision` refused before it was regenerated, for
+    /// `error`.
+    pub(crate) fn refused(revision: u64, error: String) -> Drafted {
+        Drafted {
+            error: Some(error),
+            ..Drafted::empty(revision)
+        }
+    }
+
+    /// What `evaluation` found of the draft, `feature`: what it touched
+    /// and its references, an align's datums, a scale's and a sweep's,
+    /// each where it has one. Its error and uncut bodies are the
+    /// caller's to fill in.
+    pub(crate) fn found(revision: u64, evaluation: &Evaluation, feature: FeatureId) -> Drafted {
+        Drafted {
+            touched: of_feature(&evaluation.touched, feature),
+            reference: of_feature(&evaluation.references, feature)
+                .map(|[point, along]| Box::new([point.to_array(), along.to_array()])),
+            datums: of_feature(&evaluation.aligned, feature).map(Box::new),
+            scale: of_feature(&evaluation.scaled, feature).map(Box::new),
+            sweep: of_feature(&evaluation.swept, feature).map(Box::new),
+            ..Drafted::empty(revision)
+        }
+    }
+
+    /// The draft of `revision`, nothing found.
+    fn empty(revision: u64) -> Drafted {
+        Drafted {
+            revision,
+            error: None,
+            geometry: None,
+            touched: None,
+            uncut: Vec::new(),
+            reference: None,
+            datums: None,
+            scale: None,
+            sweep: None,
+        }
+    }
+
     /// Whether what the draft found is fit to draw, as the wire checks
     /// it: its axis or plane ([`reference_fits`]), an align's datums
     /// ([`AlignDatums::fits`]), a scale's ([`ScaleFound::fits`]) and a
@@ -88,6 +128,14 @@ impl Drafted {
             && self.scale.as_deref().is_none_or(ScaleFound::fits)
             && self.sweep.as_deref().is_none_or(SweepFound::fits)
     }
+}
+
+/// What `list`, one of an [`Evaluation`]'s tables by feature, holds of
+/// `feature`.
+pub(crate) fn of_feature<T: Clone>(list: &[(FeatureId, T)], feature: FeatureId) -> Option<T> {
+    list.iter()
+        .find(|(id, _)| *id == feature)
+        .map(|(_, found)| found.clone())
 }
 
 /// Where a sweep's handles stand, found from its path as built, before
