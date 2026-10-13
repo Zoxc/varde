@@ -21,6 +21,15 @@ pub(crate) fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<
     }
 }
 
+/// What a regeneration is asked to do beside drawing the model: the
+/// measure to take on it and the sight to draw it by, each if there is
+/// one.
+#[derive(Clone, Copy)]
+struct Payloads<'a> {
+    inspect: Option<&'a Inspect>,
+    sight: Option<&'a Sight>,
+}
+
 /// Answers requests, keeping what it worked out for the next ones (see
 /// [`Cache`]): what a lane runs.
 #[derive(Default)]
@@ -60,8 +69,11 @@ impl Regenerator {
                 let asked = request.asked().expect("a regeneration asks");
                 self.cache.begin();
                 let document = rolled_back(document, asked.until);
-                let payloads = (draft.as_deref(), inspect.as_deref());
-                match self.regenerate(&document, asked, payloads, sight.as_deref(), report) {
+                let payloads = Payloads {
+                    inspect: inspect.as_deref(),
+                    sight: sight.as_deref(),
+                };
+                match self.regenerate(&document, asked, draft.as_deref(), payloads, report) {
                     Ok(model) => Response::Regenerated(model),
                     Err(error) => Response::Failed { asked, error },
                 }
@@ -116,18 +128,18 @@ impl Regenerator {
     }
 
     /// The model of `document` with `draft` applied, or without it if it
-    /// fails, leaving out the lines of the sketch `exclude`, with
-    /// `inspect` measured on it, telling `report` how far it has got.
+    /// fails, as `asked` and with `payloads`, telling `report` how far it
+    /// has got.
     fn regenerate(
         &mut self,
         document: &Document,
         asked: Asked,
-        (draft, inspect): (Option<&Draft>, Option<&Inspect>),
-        sight: Option<&Sight>,
+        draft: Option<&Draft>,
+        payloads: Payloads<'_>,
         report: &mut dyn FnMut(Progress),
     ) -> Result<Regenerated, String> {
         let Some(draft) = draft else {
-            return self.model(document, asked, None, (inspect, sight), report);
+            return self.model(document, asked, None, payloads, report);
         };
         let drafted = match applied(document, draft) {
             Ok((with_draft, feature)) => {
@@ -143,14 +155,13 @@ impl Regenerator {
                     None => {
                         drafted.uncut = of_feature(&evaluation.uncut, feature).unwrap_or_default();
                         report(Progress::drawing(with_draft.features().len()));
-                        let payloads = (inspect, sight);
                         return self.draw(&with_draft, evaluation, asked, Some(drafted), payloads);
                     }
                 }
             }
             Err(error) => Drafted::refused(draft.revision, error),
         };
-        self.model(document, asked, Some(drafted), (inspect, sight), report)
+        self.model(document, asked, Some(drafted), payloads, report)
     }
 
     /// The model of `document`, telling `report` how far it has got.
@@ -159,7 +170,7 @@ impl Regenerator {
         document: &Document,
         asked: Asked,
         draft: Option<Drafted>,
-        payloads: (Option<&Inspect>, Option<&Sight>),
+        payloads: Payloads<'_>,
         report: &mut dyn FnMut(Progress),
     ) -> Result<Regenerated, String> {
         let evaluation = self.evaluate(document, report);
@@ -177,14 +188,14 @@ impl Regenerator {
     }
 
     /// The model of `document`, whose history gave `evaluation`, with
-    /// `inspect` measured on it, drawn by `sight`.
+    /// `payloads`' measure taken on it, drawn by its sight.
     fn draw(
         &mut self,
         document: &Document,
         mut evaluation: Evaluation,
         asked: Asked,
         mut draft: Option<Drafted>,
-        (inspect, sight): (Option<&Inspect>, Option<&Sight>),
+        Payloads { inspect, sight }: Payloads<'_>,
     ) -> Result<Regenerated, String> {
         // Only a draft that worked is drawn: one that failed is answered
         // with the committed model.
