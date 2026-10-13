@@ -82,6 +82,25 @@ impl Axis3 {
         }
     }
 
+    /// Its place in [`Axis3::ALL`], for arrays kept per axis.
+    pub fn index(self) -> usize {
+        match self {
+            Axis3::X => 0,
+            Axis3::Y => 1,
+            Axis3::Z => 2,
+        }
+    }
+
+    /// Two world axes spanning the plane square to it, right-handed: the
+    /// first crossed with the second is [`Axis3::direction`].
+    pub fn plane_axes(self) -> (DVec3, DVec3) {
+        match self {
+            Axis3::X => (DVec3::Y, DVec3::Z),
+            Axis3::Y => (DVec3::Z, DVec3::X),
+            Axis3::Z => (DVec3::X, DVec3::Y),
+        }
+    }
+
     /// The axis as the user sees it: "X".
     pub fn name(self) -> &'static str {
         match self {

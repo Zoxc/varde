@@ -18,13 +18,11 @@ use crate::hit::segment_distance;
 use crate::motion::{MotionField, MotionKind, MotionLook, MotionPick};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
-use crate::viewport::handle::{self, Puck};
+use crate::viewport::handle::{self, Puck, angle_step, wrapped};
 use crate::viewport::knobs;
 use crate::viewport::style::line;
 use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
-
-use crate::viewport::handle::{angle_step, wrapped};
 
 /// How long the handles' arrows are on the screen, in pixels, and how
 /// far out of their centre the rings' knobs are, on an orb drawn faintly
@@ -200,7 +198,7 @@ impl Handles {
         let axes: Vec<Axis3> = Axis3::ALL
             .into_iter()
             .filter(|&axis| {
-                self.rings[axis_index(axis)] && axis.direction().dot(to_eye).abs() >= RING_EDGE_ON
+                self.rings[axis.index()] && axis.direction().dot(to_eye).abs() >= RING_EDGE_ON
             })
             .collect();
         let slots = slots(rays, ORB_PIXELS, KNOB_CLEAR, KNOB_SEPARATION);
@@ -259,7 +257,7 @@ impl Handles {
             return None;
         }
         let radius = ORB_PIXELS / scale;
-        let (u, v) = plane_axes(axis);
+        let (u, v) = axis.plane_axes();
         let point =
             |turn: f64| self.centre + (u * angle::cos(turn) + v * angle::sin(turn)) * radius;
         let fits = |turn: f64| {
@@ -349,10 +347,10 @@ impl Handles {
     /// The angle about `centre`, in radians, of where the cursor's ray at
     /// the screen position `at` meets the plane through it square to
     /// `axis`, from the plane's first axis towards its second
-    /// ([`plane_axes`]): right-handed about `axis`. `None` with the plane
+    /// ([`Axis3::plane_axes`]): right-handed about `axis`. `None` with the plane
     /// edge on, or the ray meeting it behind the eye or at the centre.
     fn angle_at(&self, centre: DVec3, axis: Axis3, at: DVec2) -> Option<f64> {
-        let (u, _) = plane_axes(axis);
+        let (u, _) = axis.plane_axes();
         (self.projector).angle_on_plane(centre, axis.direction(), u, at)
     }
 }
@@ -417,7 +415,7 @@ fn slots(rays: &[f64], radius: f64, clear: f64, separation: f64) -> Vec<Slot> {
 
 /// Where the ring of `axis` about `centre` (showing at `origin`) runs the
 /// way `angle` on the screen: the angle round it, from its plane's first
-/// axis towards its second ([`plane_axes`]), and how many pixels a
+/// axis towards its second ([`Axis3::plane_axes`]), and how many pixels a
 /// millimetre of its radius makes there.
 fn ring_toward(
     projector: &Projector,
@@ -426,7 +424,7 @@ fn ring_toward(
     axis: Axis3,
     angle: f64,
 ) -> (f64, f64) {
-    let (u, v) = plane_axes(axis);
+    let (u, v) = axis.plane_axes();
     let p = projector.show(centre + u) - origin;
     let q = projector.show(centre + v) - origin;
     let way = DVec2::new(angle::cos(angle), angle::sin(angle));
@@ -446,25 +444,6 @@ fn nearest(grips: impl Iterator<Item = (Grip, f64)>) -> Option<Grip> {
         .filter(|&(_, distance)| distance <= HIT_PIXELS)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(grip, _)| grip)
-}
-
-/// Where `axis` is kept in an array of the three.
-fn axis_index(axis: Axis3) -> usize {
-    match axis {
-        Axis3::X => 0,
-        Axis3::Y => 1,
-        Axis3::Z => 2,
-    }
-}
-
-/// Two world axes spanning the plane square to `axis`, the first crossed
-/// with the second giving it.
-fn plane_axes(axis: Axis3) -> (DVec3, DVec3) {
-    match axis {
-        Axis3::X => (DVec3::Y, DVec3::Z),
-        Axis3::Y => (DVec3::Z, DVec3::X),
-        Axis3::Z => (DVec3::X, DVec3::Y),
-    }
 }
 
 /// `offset` turned by `degrees` about the line through `centre` along
@@ -520,7 +499,7 @@ pub(super) fn draw_handles(
     // An axis's colour, lighter while its handle is hovered or dragged,
     // with the handles' accent.
     let tone = |grip: Grip, axis: Axis3| {
-        let [r, g, b] = scene.axes[axis_index(axis)].0;
+        let [r, g, b] = scene.axes[axis.index()].0;
         let color = iced::Color::from_rgb(r, g, b);
         if active == Some(grip) {
             (crate::theme::hovered(color), colors.handle_accent_hovered)
@@ -533,7 +512,7 @@ pub(super) fn draw_handles(
         let (color, accent) = tone(grip, knob.axis);
         handle::draw_shaft(live, projector, &knob.arc, color);
         if active == Some(grip) {
-            let (u, v) = plane_axes(knob.axis);
+            let (u, v) = knob.axis.plane_axes();
             let per_pixel = handle::arc_per_pixel(knob.puck.pixel, knob.radius);
             let path = |px: f64| {
                 let turn = knob.at + px * per_pixel;
@@ -679,7 +658,7 @@ impl<'a> Moving<'a> {
         let offset = self.offset();
         let angle = degrees(self.field(MotionField::Angle).unwrap_or(0.0));
         let (from, sent) = match grip {
-            Grip::Arrow(axis) => (handles.along(centre, axis, at)?, offset[axis_index(axis)]),
+            Grip::Arrow(axis) => (handles.along(centre, axis, at)?, offset[axis.index()]),
             Grip::Ring(axis) => (handles.angle_at(centre, axis, at)?, angle),
         };
         Some(Drag {
@@ -703,7 +682,7 @@ impl<'a> Moving<'a> {
             Grip::Arrow(axis) => {
                 let along = handles.along(drag.centre, axis, at)?;
                 let step = snap_step(drag.pixel, self.state.units)?;
-                let to = drag.offset[axis_index(axis)] + (along - drag.at);
+                let to = drag.offset[axis.index()] + (along - drag.at);
                 // Past what a move takes, the last step within it.
                 let limit = (f64::from(MAX_COORD) / step).floor() * step;
                 let to = ((to / step).round() * step).clamp(-limit, limit) + 0.0;
