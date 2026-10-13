@@ -197,7 +197,7 @@ impl Progress {
     }
 }
 
-pub(crate) fn saturating_u32(n: usize) -> u32 {
+fn saturating_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 

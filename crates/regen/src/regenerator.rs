@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// `document` rolled back to before `until`, if it's given.
-pub(crate) fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Document> {
+fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Document> {
     match until {
         Some(until) => Cow::Owned(document.before(until)),
         None => Cow::Borrowed(document),
@@ -282,7 +282,7 @@ impl Regenerator {
 
 /// `document` with `draft` applied, and the draft's feature, or why it
 /// can't be applied.
-pub(crate) fn applied(document: &Document, draft: &Draft) -> Result<(Document, FeatureId), String> {
+fn applied(document: &Document, draft: &Draft) -> Result<(Document, FeatureId), String> {
     let kind = draft.kind.clone();
     let command = match draft.feature {
         None => document.add_feature(kind),

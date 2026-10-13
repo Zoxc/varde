@@ -729,7 +729,7 @@ pub fn decode_reply(
 }
 
 /// Decodes and checks the bodies following a [`Head::Exported`] that went.
-pub fn decode_export(parts: &[impl Buffer]) -> Result<Vec<ExportedBody>, Error> {
+fn decode_export(parts: &[impl Buffer]) -> Result<Vec<ExportedBody>, Error> {
     let [bodies] = parts else {
         return Err(Error::ExportParts(parts.len()));
     };
@@ -967,7 +967,7 @@ fn tables_parts(tables: &PickTables) -> [Cow<'_, [u8]>; TABLES_PARTS] {
 /// Decodes and checks the model's parts following a [`Head::Regenerated`]:
 /// the mesh, given its upload, the sketches' lines and the mesh's
 /// picking hierarchies.
-pub fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines, PickTables), Error> {
+fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines, PickTables), Error> {
     let Ok(parts) = <&[_; MODEL_PARTS]>::try_from(parts) else {
         return Err(Error::Parts(parts.len()));
     };
