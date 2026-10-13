@@ -88,20 +88,6 @@ pub enum Query {
     Measure(Box<Inspect>),
 }
 
-impl Query {
-    /// The answer to this query should working it out fail, its error
-    /// to be filled in ([`Answer::fail`]).
-    fn failed(&self) -> Answer {
-        match self {
-            Query::Topology(body) => Answer::Topology {
-                body: *body,
-                result: Err(String::new()),
-            },
-            Query::Measure(_) => Answer::Measured(Err(String::new())),
-        }
-    }
-}
-
 /// What a [`Response::Answered`] answers, of the [`Query`] asked.
 #[derive(Debug, Clone)]
 pub enum Answer {
@@ -116,16 +102,6 @@ pub enum Answer {
     /// as for the user's measure), or why nothing was (the work failed),
     /// in words to follow a colon. Checked by [`Inspected::checked`] with no scene.
     Measured(Result<Box<Inspected>, String>),
-}
-
-impl Answer {
-    /// Makes this answer say working it out failed with `why`.
-    fn fail(&mut self, why: String) {
-        match self {
-            Answer::Topology { result, .. } => *result = Err(why),
-            Answer::Measured(result) => *result = Err(why),
-        }
-    }
 }
 
 /// How far a [`Request::Regenerate`] has got, sent ahead of its answer
@@ -247,37 +223,62 @@ impl Request {
     /// e.g. by a panic: every request has one. Keeps only what the
     /// answer needs, not the document.
     pub fn failure(&self) -> impl FnOnce(String) -> Response + Send + use<> {
-        // The answer with an empty error, filled in once there is one.
-        let mut failed = match self {
-            Request::Regenerate { .. } => Response::Failed {
-                asked: self.asked().expect("a regeneration asks"),
-                error: String::new(),
+        /// What the answer needs of the request.
+        enum Of {
+            Regenerate(Asked),
+            Export(u64),
+            /// A query, with the body if it asks for a topology.
+            Query {
+                tag: u64,
+                generation: Generation,
+                until: Option<FeatureId>,
+                topology: Option<BodyId>,
             },
-            Request::Export { export, .. } => Response::Exported {
-                export: *export,
-                result: Err(String::new()),
-            },
+        }
+        let of = match self {
+            Request::Regenerate { .. } => {
+                Of::Regenerate(self.asked().expect("a regeneration asks"))
+            }
+            Request::Export { export, .. } => Of::Export(*export),
             Request::Query {
                 tag,
                 generation,
                 until,
                 query,
                 ..
-            } => Response::Answered {
+            } => Of::Query {
                 tag: *tag,
                 generation: *generation,
                 until: *until,
-                answer: query.failed(),
+                topology: match query {
+                    Query::Topology(body) => Some(*body),
+                    Query::Measure(_) => None,
+                },
             },
         };
-        move |why| {
-            match &mut failed {
-                Response::Failed { error, .. } => *error = why,
-                Response::Exported { result, .. } => *result = Err(why),
-                Response::Answered { answer, .. } => answer.fail(why),
-                Response::Regenerated { .. } | Response::Progress(_) => {}
-            }
-            failed
+        move |why| match of {
+            Of::Regenerate(asked) => Response::Failed { asked, error: why },
+            Of::Export(export) => Response::Exported {
+                export,
+                result: Err(why),
+            },
+            Of::Query {
+                tag,
+                generation,
+                until,
+                topology,
+            } => Response::Answered {
+                tag,
+                generation,
+                until,
+                answer: match topology {
+                    Some(body) => Answer::Topology {
+                        body,
+                        result: Err(why),
+                    },
+                    None => Answer::Measured(Err(why)),
+                },
+            },
         }
     }
 }
