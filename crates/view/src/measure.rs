@@ -309,16 +309,17 @@ pub fn between_values(between: &Between, units: LengthUnit) -> Vec<MeasureValue>
 /// face's area and a round one's radius, an edge's length and a round
 /// one's radius, or a point's place. None for what wasn't found.
 pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<MeasureValue> {
-    let length = |label, value| MeasureValue::length(label, value, units);
+    // The panel's values, of those the status bar shows.
+    let only = |values: Vec<MeasureValue>, labels: &[&str]| {
+        (values.into_iter())
+            .filter(|value| labels.contains(&value.label))
+            .collect()
+    };
     if inspected.second.is_some() {
-        let Some(between) = &inspected.between else {
-            return Vec::new();
+        return match &inspected.between {
+            Some(between) => only(between_values(between, units), &["Distance", "Angle"]),
+            None => Vec::new(),
         };
-        let distance = (between.distance.as_ref().ok()).map(|gap| length("Distance", gap.distance));
-        let angle = between
-            .angle
-            .map(|angle| MeasureValue::angle("Angle", angle));
-        return distance.into_iter().chain(angle).collect();
     }
     let Ok(Probed {
         measure: Ok(measure),
@@ -327,35 +328,16 @@ pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<MeasureValue> {
     else {
         return Vec::new();
     };
-    match *measure {
-        Measure::Body { volume, .. } => {
-            vec![MeasureValue::size("Volume", volume, units, Power::Volume)]
-        }
+    let labels: &[&str] = match measure {
+        Measure::Body { .. } => &["Volume"],
         Measure::Face {
-            rectangle: Some(sides),
-            ..
-        } => {
-            let (width, height) = width_height(sides);
-            vec![length("Width", width), length("Height", height)]
-        }
-        Measure::Face { area, summary, .. } => {
-            let mut values = vec![MeasureValue::size("Area", area, units, Power::Area)];
-            if let Summary::Cylinder { radius, .. } | Summary::Sphere { radius, .. } = summary {
-                values.push(length("Radius", radius));
-            }
-            values
-        }
-        Measure::Edge {
-            length: l, shape, ..
-        } => {
-            let mut values = vec![length("Length", l)];
-            if let EdgeForm::Circle { radius, .. } = shape {
-                values.push(length("Radius", radius));
-            }
-            values
-        }
-        Measure::Point([x, y, z]) => vec![length("X", x), length("Y", y), length("Z", z)],
-    }
+            rectangle: Some(_), ..
+        } => &["Width", "Height"],
+        Measure::Face { .. } => &["Area", "Radius"],
+        Measure::Edge { .. } => &["Length", "Radius"],
+        Measure::Point(_) => &["X", "Y", "Z"],
+    };
+    only(values(measure, units), labels)
 }
 
 /// The width and height of a rectangle by two of its `sides` from one
