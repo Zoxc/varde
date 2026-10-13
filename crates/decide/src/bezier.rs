@@ -13,13 +13,15 @@
 //! kinds of form with certified binomial weights, the vector products of
 //! forms, and the tangent and normal numerators; in [`compose`], spans
 //! and patches put into line and plane equations, and the shadow of a
-//! span. In [`roots`], root isolation on `[0, 1]`: certified simple
-//! roots, and clusters for the rest. Every operation commutes with
+//! span. In [`cone`], the certified normal cone of a vector form's
+//! coefficients ([`NormalCone`]). In [`roots`], root isolation on
+//! `[0, 1]`: certified simple roots, and clusters for the rest. Every operation commutes with
 //! reversal to the bit (the tangent and normal numerators change sign
 //! with it, exactly but for the signs of zeros; the roots of the reversed
 //! form are the mirrored roots).
 
 pub mod compose;
+pub mod cone;
 pub mod curve;
 pub mod poly;
 pub mod product;
@@ -28,6 +30,7 @@ pub mod scalar;
 pub mod split;
 pub mod tensor;
 
+pub use cone::NormalCone;
 pub use curve::HomCurve;
 pub use poly::{Hull, MAX_DEGREE, Poly};
 pub use product::{Form, cross, dot};

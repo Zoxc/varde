@@ -4373,9 +4373,12 @@ name = "varde-kernel"
 version = "0.1.0"
 dependencies = [
  "glam 0.30.10",
+ "malachite",
  "rayon",
  "spade",
  "varde-decide",
+ "varde-testing",
+ "varde-testkit",
 ]
 
 [[package]]

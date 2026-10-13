@@ -19,6 +19,9 @@ glam.workspace = true
 rayon.workspace = true
 
 [dev-dependencies]
+malachite.workspace = true
+varde-testing.workspace = true
+varde-testkit.workspace = true
 # For tests/ban_probe.rs only, until the kernel depends on them itself.
 rayon.workspace = true
 spade.workspace = true
