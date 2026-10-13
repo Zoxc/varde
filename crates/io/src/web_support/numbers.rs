@@ -1,6 +1,6 @@
 //! Glue between Rust and the JS the web build calls: the conversions of the
 //! numbers JS hands over, which are `f64`s, and of its exceptions to IO errors.
-//! Used by the Origin Private File System's store (`src/web_support/names.rs`)
+//! Used by the Origin Private File System's store (`src/web/worker/opfs.rs`)
 //! and by files of the user's (`src/pick.rs`).
 //!
 //! Plain Rust, tested natively; waiting for JS promises and turning its
@@ -68,6 +68,17 @@ pub(crate) fn file_len(size: f64) -> io::Result<usize> {
         io::Error::new(
             io::ErrorKind::FileTooLarge,
             format!("the file is too large to open: {size} bytes"),
+        )
+    })
+}
+
+/// How many bytes a read or write that asked for `wanted` did, as JS gave
+/// it: never more than asked for.
+pub(crate) fn done(value: f64, wanted: usize) -> io::Result<usize> {
+    len(value, wanted, |_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("the browser did {value} bytes of {wanted}"),
         )
     })
 }

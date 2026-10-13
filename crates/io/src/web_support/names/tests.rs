@@ -31,12 +31,3 @@ fn new_names_are_entries_whatever_the_numbers() {
         assert_eq!(entry_in(Path::new("designs"), &path), Some(name.as_str()));
     }
 }
-
-#[test]
-fn a_read_or_write_never_does_more_than_asked() {
-    assert_eq!(done(0.0, 10).unwrap(), 0);
-    assert_eq!(done(10.0, 10).unwrap(), 10);
-    assert!(done(11.0, 10).is_err());
-    assert!(done(-1.0, 10).is_err());
-    assert!(done(f64::NAN, 10).is_err());
-}

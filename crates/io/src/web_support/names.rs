@@ -31,16 +31,12 @@
 //! `src/settings.rs`). The recent files list has no place on the web, and
 //! files at a path neither.
 //!
-//! What's here is plain Rust: the checks on paths and names,
-//! and on the numbers reads and writes hand JS and get back, which are
-//! `f64`s there (see `src/web_support/numbers.rs`). It is tested natively.
+//! What's here is plain Rust: the checks on paths and names. It is tested
+//! natively.
 
-use std::io;
 use std::path::{Component, Path};
 
 use varde_document::EXTENSION;
-
-use crate::web_support::numbers;
 
 /// The names of the directories, from the root of the Origin Private File
 /// System, that `dir` is made of. `None` unless it's all plain names.
@@ -63,17 +59,6 @@ pub(crate) fn new_name(millis: f64, random: f64, n: u64) -> String {
     let millis = millis as u64;
     let random = (random * f64::from(u32::MAX)) as u32;
     format!("{millis:x}-{random:08x}-{n:x}.{EXTENSION}")
-}
-
-/// How many bytes a read or write that asked for `wanted` did, as JS gave
-/// it: never more than asked for.
-pub(crate) fn done(value: f64, wanted: usize) -> io::Result<usize> {
-    numbers::len(value, wanted, |_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("the browser did {value} bytes of {wanted}"),
-        )
-    })
 }
 
 #[cfg(test)]
