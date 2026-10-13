@@ -2,6 +2,7 @@ use glam::DVec2;
 
 use super::*;
 use crate::testing::{self, at, line, point};
+use crate::Tool;
 
 /// A sketch with a spline through three fit points and one by control
 /// points, and a line: the sketch, the two splines and the line.

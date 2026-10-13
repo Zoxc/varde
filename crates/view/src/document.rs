@@ -16,7 +16,8 @@ use varde_expr::LengthUnit;
 use varde_kernel_compat::{RenderLines, RenderMesh};
 use varde_render::{BodyTint, Camera};
 use varde_sketch::{
-    Analysis, Id, LinkKind, Measure, Profiles, Rejected, Selectable, Side, Sketch, TooComplex,
+    Analysis, Id, LinkKind, Measure, Profiles, Rejected, Selectable, Side, Sketch, SplineKind,
+    TooComplex,
 };
 
 use crate::chrome::small_button;
@@ -27,7 +28,7 @@ use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
     Downloads, Edit, ExtrudeState, File, Location, Message, Panel, PlanePick, RevolveState,
-    RowMenu, SavePlace, Snap, Target, Tool, panels, theme, toolbar, viewport,
+    RowMenu, SNAP_TOLERANCE, SavePlace, Snap, Target, Tool, panels, theme, toolbar, viewport,
 };
 
 mod prompts;
@@ -716,6 +717,54 @@ impl ActiveTool<'_> {
             (Tool::Project, _) => "Click edges, corners or other sketches' geometry to project",
             (Tool::Intersect, _) => "Click faces or edges to cut with the sketch's plane",
         }
+    }
+
+    /// The kind of spline the Spline tool draws.
+    pub fn spline_kind(&self) -> SplineKind {
+        if self.control {
+            SplineKind::Control
+        } else {
+            SplineKind::Through
+        }
+    }
+
+    /// Whether the Spline tool has placed enough points to end its
+    /// spline open: two through fit points, four control points.
+    pub fn spline_ends(&self) -> bool {
+        self.tool == Tool::Spline && self.placed.len() >= self.spline_kind().least(false)
+    }
+
+    /// Whether the tool can close what it's drawing without a click on
+    /// its first point (the Close key or button): the Spline tool once it
+    /// has enough points to close, the Line tool once its chain has two
+    /// lines.
+    pub fn can_close(&self) -> bool {
+        match self.tool {
+            Tool::Spline => self.placed.len() >= self.spline_kind().least(true),
+            Tool::Line => self.chained >= 2,
+            _ => false,
+        }
+    }
+
+    /// Whether the Spline tool's click at `at`, a pixel being `pixel`
+    /// sketch units there, closes its spline: on its first point (within
+    /// [`SNAP_TOLERANCE`] pixels of it), once there are enough to close
+    /// it, three.
+    pub fn closes(&self, at: DVec2, pixel: f64) -> bool {
+        self.placed.len() >= self.spline_kind().least(true) && self.on_first(at, pixel)
+    }
+
+    /// Whether the Spline tool's click at `at`, a pixel being `pixel`
+    /// sketch units there, is on its first point (within
+    /// [`SNAP_TOLERANCE`] pixels of it): closing its spline if it has
+    /// enough points, else placing nothing, as a point there would close
+    /// it on itself.
+    pub fn on_first(&self, at: DVec2, pixel: f64) -> bool {
+        self.tool == Tool::Spline
+            && self
+                .placed
+                .first()
+                .is_some_and(|&first| first.distance(at) <= SNAP_TOLERANCE * pixel)
     }
 }
 

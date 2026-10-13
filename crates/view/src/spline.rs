@@ -1,66 +1,16 @@
 //! What the spline commands do to what's selected: switching splines
 //! between their kinds ([`conversions`]) and giving fit points handles or
-//! taking them away ([`handles`]), and when the Spline tool's spline can
-//! end or closes, and closing curves selected or opening them
-//! ([`closings`]), and taking spline points selected out of their
-//! splines ([`removals`]). Pure, shared by the keys, the toolbar and the app.
+//! taking them away ([`handles`]), closing curves selected or opening
+//! them ([`closings`]), and taking spline points selected out of their
+//! splines ([`removals`]). Pure, shared by the keys, the toolbar and the
+//! app. When the Spline tool's spline can end or closes is
+//! [`ActiveTool`](crate::ActiveTool)'s to say.
 
 use std::collections::BTreeSet;
 
-use glam::DVec2;
 use varde_sketch::{Curve, Id, Selectable, Sketch, SketchEdit, Spline, SplineKind};
 
-use crate::{ActiveTool, SNAP_TOLERANCE, Target, Tool};
-
-impl ActiveTool<'_> {
-    /// The kind of spline the Spline tool draws.
-    pub fn spline_kind(&self) -> SplineKind {
-        if self.control {
-            SplineKind::Control
-        } else {
-            SplineKind::Through
-        }
-    }
-
-    /// Whether the Spline tool has placed enough points to end its
-    /// spline open: two through fit points, four control points.
-    pub fn spline_ends(&self) -> bool {
-        self.tool == Tool::Spline && self.placed.len() >= self.spline_kind().least(false)
-    }
-
-    /// Whether the tool can close what it's drawing without a click on
-    /// its first point (the Close key or button): the Spline tool once it
-    /// has enough points to close, the Line tool once its chain has two
-    /// lines.
-    pub fn can_close(&self) -> bool {
-        match self.tool {
-            Tool::Spline => self.placed.len() >= self.spline_kind().least(true),
-            Tool::Line => self.chained >= 2,
-            _ => false,
-        }
-    }
-
-    /// Whether the Spline tool's click at `at`, a pixel being `pixel`
-    /// sketch units there, closes its spline: on its first point (within
-    /// [`SNAP_TOLERANCE`] pixels of it), once there are enough to close
-    /// it, three.
-    pub fn closes(&self, at: DVec2, pixel: f64) -> bool {
-        self.placed.len() >= self.spline_kind().least(true) && self.on_first(at, pixel)
-    }
-
-    /// Whether the Spline tool's click at `at`, a pixel being `pixel`
-    /// sketch units there, is on its first point (within
-    /// [`SNAP_TOLERANCE`] pixels of it): closing its spline if it has
-    /// enough points, else placing nothing, as a point there would close
-    /// it on itself.
-    pub fn on_first(&self, at: DVec2, pixel: f64) -> bool {
-        self.tool == Tool::Spline
-            && self
-                .placed
-                .first()
-                .is_some_and(|&first| first.distance(at) <= SNAP_TOLERANCE * pixel)
-    }
-}
+use crate::Target;
 
 /// The splines among `selection` in `sketch`, and what they are.
 fn selected_splines<'a>(
