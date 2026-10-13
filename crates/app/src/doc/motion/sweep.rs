@@ -281,8 +281,8 @@ impl MotionSession {
         if !self.takes_sketch(document, sketch) {
             return;
         }
-        self.sweep.regions.toggle(sketch, region, false, document);
-        self.sweep.stale_regions.picked(&self.sweep.regions);
+        let setup = &mut self.sweep;
+        (setup.stale_regions).toggle(&mut setup.regions, sketch, region, document);
         if self.picking == MotionPick::Regions
             && !self.sweep.regions.picked.is_empty()
             && self.sweep_path().is_none()

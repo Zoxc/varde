@@ -307,8 +307,8 @@ impl MotionSession {
         {
             return;
         }
-        self.split.regions.toggle(sketch, region, false, document);
-        self.split.stale_regions.picked(&self.split.regions);
+        let setup = &mut self.split;
+        (setup.stale_regions).toggle(&mut setup.regions, sketch, region, document);
         if self.split.regions.source.is_some() {
             self.split.gone = false;
         }

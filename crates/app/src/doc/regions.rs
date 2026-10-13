@@ -143,9 +143,17 @@ impl GoneRegions {
         }
     }
 
-    /// Lets go of those put by once `pick` has a source again: other
-    /// regions picked.
-    pub(crate) fn picked(&mut self, pick: &RegionPick) {
+    /// Picks the region `region` of `sketch` in `pick`, or takes it out
+    /// ([`RegionPick::toggle`]), letting go of those put by once `pick`
+    /// has a source again: other regions picked.
+    pub(crate) fn toggle(
+        &mut self,
+        pick: &mut RegionPick,
+        sketch: FeatureId,
+        region: usize,
+        document: &Document,
+    ) {
+        pick.toggle(sketch, region, false, document);
         if pick.source.is_some() {
             self.0 = None;
         }
