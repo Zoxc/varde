@@ -12,6 +12,7 @@ use varde_view::MeasureValue;
 
 use crate::doc::Doc;
 use crate::mcp::key::{self, Ref};
+use crate::mcp::names::body_by_name;
 
 /// What a measure says of its model: the design moved on while it was
 /// measured, so what's out of date is the values, not (as a summary's
@@ -65,7 +66,7 @@ fn resolve(doc: &Doc, item: &Measured) -> Result<InspectPick, String> {
     let item = match item {
         Measured::Body(name) => {
             let document = doc.editor.document();
-            let body = super::super::names::body_by_name(document, name)?;
+            let body = body_by_name(document, name)?;
             return Ok(InspectPick {
                 body: body.id,
                 entity: Entity::Body,

@@ -84,19 +84,13 @@ struct Found<'a> {
 
 fn locate<'a>(doc: &'a Doc, args: &Topology) -> Result<Found<'a>, ToolReply> {
     let body = super::super::names::body_reply(doc, &args.body)?;
-    let Some(model) = doc.feed.committed() else {
-        return Err(ToolReply::error(super::NOT_BUILT));
-    };
+    let model = super::committed(doc).map_err(ToolReply::error)?;
     let Some(at) = model.parts.iter().position(|&id| id == body.id) else {
-        return Err(ToolReply::error(if super::rebuilding(&model) {
-            super::REBUILDING.to_owned()
-        } else {
-            format!(
-                "\"{}\" isn't in the model: it's hidden, or wasn't built \
-                 (design_summary says what failed)",
-                body.name
-            )
-        }));
+        return Err(ToolReply::error(format!(
+            "\"{}\" isn't in the model: it's hidden, or wasn't built \
+             (design_summary says what failed)",
+            body.name
+        )));
     };
     let Some(part) = model.mesh.parts().nth(at) else {
         return Err(ToolReply::error(super::REBUILDING));

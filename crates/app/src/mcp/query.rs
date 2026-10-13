@@ -286,7 +286,7 @@ pub(super) const REBUILDING: &str = "the model is being rebuilt: ask again short
 
 /// Whether the committed `model` is being rebuilt: its mesh is of a
 /// design since replaced, so it names no bodies yet.
-pub(super) fn rebuilding(model: &Shown) -> bool {
+fn rebuilding(model: &Shown) -> bool {
     model.parts.is_empty() && !model.mesh.part_ends().is_empty()
 }
 
