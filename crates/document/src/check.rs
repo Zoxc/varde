@@ -6,14 +6,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use varde_kernel_compat::Tolerance;
 use varde_sketch::{Design, Sketch, SketchError};
 
+use crate::refs::{OnBody, Referred};
 use crate::{
     Align, AlignError, AlignRefs, AxisLine, AxisRef, BodyId, ChamferError, Combine, CombineError,
     Copies, Document, EdgeRef, Extrude, ExtrudeError, FaceDraftError, FaceRef, FaceSetError,
     FeatureId, FeatureKind, FilletError, LinkError, LinkSource, Loft, LoftError, MAX_NAME_LEN,
     MotionError, OffsetFaceError, Opacity, Operation, OperationError, OutsideRef, ParamError,
     PathPart, PathRef, Pattern, PatternError, Plane, PlaneError, PointRef, Revolve, RevolveError,
-    Scale, ScaleError, ShellError, Split, SplitError, SplitTool, Sweep, SweepError, Tint, motion,
-    param,
+    Scale, ScaleError, ShellError, Split, SplitError, SplitTool, Sweep, SweepError, Tint, param,
 };
 
 impl Document {
@@ -477,7 +477,7 @@ impl Document {
         &self,
         index: usize,
         bodies: &[BodyId],
-        referred: Option<motion::Referred<'_>>,
+        referred: Option<Referred<'_>>,
     ) -> Result<(), MotionError> {
         if let Some(&body) = bodies.iter().find(|&&body| !self.body_before(index, body)) {
             return Err(MotionError::Body(body));
@@ -789,13 +789,6 @@ impl Document {
         }
         Ok(())
     }
-}
-
-/// What a reference names on a body: the body and the features its keys
-/// name as its faces' makers, for [`Document::refers_before`].
-pub(crate) struct OnBody {
-    pub(crate) body: BodyId,
-    pub(crate) makers: Vec<FeatureId>,
 }
 
 /// What of a reference comes after the feature naming it, see

@@ -1,6 +1,6 @@
 //! The move and mirror features: bodies already made moved (turned about
 //! an axis, then shifted) or mirrored in a plane, as steps of the history,
-//! and the axes and planes they name.
+//! naming their axes and planes as `refs` has them.
 
 use std::f64::consts::TAU;
 
@@ -9,11 +9,8 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
 use crate::bodies::check_bodies;
-use crate::check::OnBody;
-use crate::{
-    BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, NearError,
-    Plane,
-};
+use crate::refs::Referred;
+use crate::{AxisRef, BodiesError, BodyId, Design, FeatureId, MAX_COORD, Plane, RefError};
 
 /// A move: the bodies it moves, each turned about `turn`'s axis by its
 /// angle (if it has one), then shifted by `offset`. Each body keeps its
@@ -46,137 +43,6 @@ pub struct Mirror {
     pub bodies: Vec<BodyId>,
     pub plane: Plane,
     pub keep_original: bool,
-}
-
-/// A line in the world, for a move's turn: an origin axis, a straight
-/// model edge (the line through it, directed as [`EdgeRef`] says) or a
-/// round one (its circle's axis through its centre, turning the way the
-/// edge runs), or a round face's axis (a cylinder's, cone's, torus's or
-/// other surface of revolution's, directed as the face's form has it).
-/// Edges and faces are found on their bodies as the features before the
-/// one naming them leave them. New kinds are appended: a kind's place in
-/// the list is how the workers' bytes store it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum AxisRef {
-    Origin(Axis3),
-    Edge(EdgeRef),
-    Face(FaceRef),
-}
-
-/// One of the world's axes through the origin, directed along its
-/// positive side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Axis3 {
-    X,
-    Y,
-    Z,
-}
-
-impl Axis3 {
-    pub const ALL: [Axis3; 3] = [Axis3::X, Axis3::Y, Axis3::Z];
-
-    /// Its unit direction.
-    pub fn direction(self) -> DVec3 {
-        match self {
-            Axis3::X => DVec3::X,
-            Axis3::Y => DVec3::Y,
-            Axis3::Z => DVec3::Z,
-        }
-    }
-
-    /// Its place in [`Axis3::ALL`], for arrays kept per axis.
-    pub fn index(self) -> usize {
-        match self {
-            Axis3::X => 0,
-            Axis3::Y => 1,
-            Axis3::Z => 2,
-        }
-    }
-
-    /// Two world axes spanning the plane square to it, right-handed: the
-    /// first crossed with the second is [`Axis3::direction`].
-    pub fn plane_axes(self) -> (DVec3, DVec3) {
-        match self {
-            Axis3::X => (DVec3::Y, DVec3::Z),
-            Axis3::Y => (DVec3::Z, DVec3::X),
-            Axis3::Z => (DVec3::X, DVec3::Y),
-        }
-    }
-
-    /// The axis as the user sees it: "X".
-    pub fn name(self) -> &'static str {
-        match self {
-            Axis3::X => "X",
-            Axis3::Y => "Y",
-            Axis3::Z => "Z",
-        }
-    }
-}
-
-impl AxisRef {
-    /// The edge or face it names on a body, if it names one.
-    pub(crate) fn refers(&self) -> Option<Referred<'_>> {
-        match self {
-            AxisRef::Origin(_) => None,
-            AxisRef::Edge(edge) => Some(Referred::Edge(edge)),
-            AxisRef::Face(face) => Some(Referred::Face(face)),
-        }
-    }
-}
-
-impl Plane {
-    /// The face it names on a body, if it names one.
-    pub(crate) fn refers(&self) -> Option<Referred<'_>> {
-        self.face().map(Referred::Face)
-    }
-}
-
-/// An edge or a face a move's axis or a mirror's plane names.
-pub(crate) enum Referred<'a> {
-    Edge(&'a EdgeRef),
-    Face(&'a FaceRef),
-}
-
-impl Referred<'_> {
-    /// Checks what needs only the reference: an edge's
-    /// [`EdgeRef::check_own`], a face's point in bounds.
-    pub(crate) fn check_own(&self) -> Result<(), RefError> {
-        match self {
-            Referred::Edge(edge) => edge.check_own().map_err(RefError::Edge),
-            Referred::Face(face) => face
-                .check_own()
-                .map_err(|NearError(near)| RefError::Near(near)),
-        }
-    }
-
-    /// The body it's on.
-    pub(crate) fn body(&self) -> BodyId {
-        match self {
-            Referred::Edge(edge) => edge.body,
-            Referred::Face(face) => face.body,
-        }
-    }
-
-    /// What it names on its body.
-    pub(crate) fn on_body(&self) -> OnBody {
-        match self {
-            Referred::Edge(edge) => edge.on_body(),
-            Referred::Face(face) => face.on_body(),
-        }
-    }
-}
-
-/// What's wrong with an axis's or plane's edge or face on its own, see
-/// `Referred::check_own`.
-#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
-pub enum RefError {
-    /// Its edge fails its own check ([`EdgeRef::check_own`]).
-    #[error("its axis: {0}")]
-    Edge(#[source] EdgeError),
-    /// Its face's point isn't finite, or is further from zero than
-    /// [`MAX_COORD`].
-    #[error("its face's point {0} is out of bounds")]
-    Near(DVec3),
 }
 
 impl Move {

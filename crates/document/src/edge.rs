@@ -7,7 +7,7 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_kernel_compat::mesh::FaceKey;
 
-use crate::check::OnBody;
+use crate::refs::OnBody;
 use crate::{BodyId, FeatureId};
 
 /// An edge of a body, as picked: the body, the keys of the faces either

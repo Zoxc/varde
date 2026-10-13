@@ -4,6 +4,7 @@ use varde_kernel_compat::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::testing::{extrude_again, with_body};
+use crate::{Axis3, EdgeError, EdgeRef, FaceRef};
 use crate::{
     BodiesError, CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit,
     MAX_FEATURE_BODIES, OriginPlane, Removable, Removal,

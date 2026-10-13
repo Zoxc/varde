@@ -28,6 +28,7 @@ mod outside;
 mod param;
 mod pattern;
 mod plane;
+mod refs;
 mod removal;
 mod rename;
 mod revolve;
@@ -39,7 +40,7 @@ mod sweep;
 mod testing;
 mod tint;
 
-pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef, PointRefError};
+pub use align::{Align, AlignError, AlignRefs};
 pub use blend::{
     BlendEdgesError, MAX_BLEND_EDGES, blend_body, blend_excludes, check_blend_edges_own,
 };
@@ -60,7 +61,7 @@ pub use fillet::{Fillet, FilletError};
 pub use loft::{
     Loft, LoftError, LoftMode, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
-pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, RefError};
+pub use motion::{Mirror, MotionError, Move};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};
@@ -71,6 +72,7 @@ pub use pattern::{
 pub use plane::{
     FaceListError, FaceRef, FaceSetError, NearError, OriginPlane, Placement, Plane, PlaneError,
 };
+pub use refs::{Axis3, AxisRef, DirRef, PointRef, PointRefError, RefError};
 pub use removal::{Removable, Removal};
 pub use rename::{Named, NewName, Rename};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};

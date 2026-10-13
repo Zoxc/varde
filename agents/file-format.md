@@ -298,7 +298,7 @@ symmetric or two sides, each angle a typed expression and its value in
 radians); or a combine, `crates/document/src/combine.rs`: the target
 body's id, the tool bodies' ids (sorted), the operation (union, subtract
 or intersect) and whether the tools are kept; or a move or a mirror,
-`crates/document/src/motion.rs`: the bodies' ids (sorted); a move's
+`crates/document/src/motion.rs`, its axes in `refs.rs`: the bodies' ids (sorted); a move's
 three offsets along X, Y and Z (typed expressions and their values in
 millimetres) and its turn, if any (an axis: a world axis X, Y or Z, an
 edge as a revolve's, or a face as a sketch's, and an angle as a
@@ -314,7 +314,7 @@ by copy then body by body. `copies` is `#[serde(default)]`: a record
 written before it (none had it) reads as `Joined`, and an older build
 skips it (reading a separate pattern's copy bodies as bodies made by a
 feature that doesn't make them, which its check refuses); or an align,
-`crates/document/src/align.rs`: the moved body's id, its two sides
+`crates/document/src/align.rs`, its points and directions in `refs.rs`: the moved body's id, its two sides
 (each a point: the origin, a corner by the keys of three faces, sorted,
 and a picked point, the middle of an edge or the centre of an edge as a
 revolve's; and an optional primary and secondary direction: an origin

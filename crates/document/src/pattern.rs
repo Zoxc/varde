@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
 use crate::bodies::check_bodies;
-use crate::motion::Referred;
+use crate::refs::Referred;
 use crate::revolve::TURN_ROUNDING;
 use crate::{AxisRef, BodyId, Design, MotionError};
 

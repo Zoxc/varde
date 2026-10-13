@@ -8,7 +8,7 @@ use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 use varde_kernel_compat::mesh::FaceKey;
 
-use crate::check::OnBody;
+use crate::refs::OnBody;
 use crate::{BodyId, FeatureId, MAX_COORD};
 
 /// A plane in the world: the one a sketch is drawn on, a mirror's, a

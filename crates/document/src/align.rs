@@ -1,17 +1,12 @@
 //! The align feature: one body moved rigidly, in place, so a point and
 //! directions picked on it meet a point and directions picked on other
-//! bodies or the origin, and the points and directions it names.
+//! bodies or the origin, as `refs` names them.
 
-use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
-use varde_kernel_compat::mesh::FaceKey;
 
-use crate::check::OnBody;
-use crate::motion::Referred;
-use crate::{
-    Axis3, AxisRef, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, Move, RefError,
-};
+use crate::refs::OnBody;
+use crate::{BodyId, Design, DirRef, FeatureId, Move, PointRef, PointRefError};
 
 /// An align: `body` moved so `from`, picked on it, meets `to`, picked on
 /// bodies features before it make (not `body`) or the origin. The point
@@ -53,124 +48,6 @@ pub struct AlignRefs {
     pub point: PointRef,
     pub primary: Option<DirRef>,
     pub secondary: Option<DirRef>,
-}
-
-/// A point on a body, as picked, or the origin. Found on its body as the
-/// features before the one naming it leave it. New kinds are appended:
-/// a kind's place in the list is how the workers' bytes store it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum PointRef {
-    Origin,
-    /// A vertex where faces of the three keys meet (by name or alias),
-    /// the nearest to `near` among several. The keys are sorted and
-    /// different: a vertex is named by its faces, never by which end of
-    /// an edge it is.
-    Corner {
-        body: BodyId,
-        faces: [FaceKey; 3],
-        /// Finite and within [`MAX_COORD`](crate::MAX_COORD).
-        near: DVec3,
-    },
-    /// The middle of a straight edge: the mean of its ends.
-    Middle(EdgeRef),
-    /// The centre of a round edge (a hole's or a boss's rim, whole or an
-    /// arc), from its conics.
-    Centre(EdgeRef),
-}
-
-/// A direction on a body, as picked, or an origin axis. Signs follow the
-/// faces' names: a flat face's normal points out of the body; a round
-/// face's axis runs as its form's (an extrude's walls along the extrude);
-/// a straight edge runs with the face of its first key on its left seen
-/// from outside ([`EdgeRef`]); a round edge's axis is the outward normal
-/// of a flat face beside it, else the axis of a round face beside it.
-/// New kinds are appended, as [`PointRef`]'s.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum DirRef {
-    Origin(Axis3),
-    /// A flat face's outward normal.
-    Normal(FaceRef),
-    /// A straight edge's direction, a round edge's axis or a round face's
-    /// axis; an origin axis as [`DirRef::Origin`].
-    Axis(AxisRef),
-}
-
-impl PointRef {
-    /// The body it's on, if it's on one.
-    pub fn body(&self) -> Option<BodyId> {
-        match self {
-            PointRef::Origin => None,
-            PointRef::Corner { body, .. } => Some(*body),
-            PointRef::Middle(edge) | PointRef::Centre(edge) => Some(edge.body),
-        }
-    }
-
-    /// Checks what needs only the reference: a corner's keys sorted and
-    /// different, an edge's as [`EdgeRef::check_own`], its point finite
-    /// and within [`MAX_COORD`](crate::MAX_COORD).
-    pub fn check_own(&self) -> Result<(), PointRefError> {
-        match self {
-            PointRef::Origin => Ok(()),
-            PointRef::Corner { faces, near, .. } => {
-                let [a, b, c] = faces;
-                if !(a < b && b < c) {
-                    return Err(PointRefError::Corner);
-                }
-                check_near(*near)
-            }
-            PointRef::Middle(edge) | PointRef::Centre(edge) => {
-                edge.check_own().map_err(PointRefError::Edge)
-            }
-        }
-    }
-
-    /// What it names on a body, if it's on one.
-    pub(crate) fn on_body(&self) -> Option<OnBody> {
-        match self {
-            PointRef::Origin => None,
-            PointRef::Corner { body, faces, .. } => Some(OnBody {
-                body: *body,
-                makers: faces.map(|key| FeatureId(key.feature)).to_vec(),
-            }),
-            PointRef::Middle(edge) | PointRef::Centre(edge) => Some(edge.on_body()),
-        }
-    }
-}
-
-impl DirRef {
-    /// The edge or face it names on a body, if it names one.
-    pub(crate) fn refers(&self) -> Option<Referred<'_>> {
-        match self {
-            DirRef::Origin(_) => None,
-            DirRef::Normal(face) => Some(Referred::Face(face)),
-            DirRef::Axis(axis) => axis.refers(),
-        }
-    }
-
-    /// The body it's on, if it's on one.
-    pub fn body(&self) -> Option<BodyId> {
-        self.refers().map(|referred| referred.body())
-    }
-
-    /// Checks what needs only the reference, as [`PointRef::check_own`].
-    pub fn check_own(&self) -> Result<(), PointRefError> {
-        let Some(referred) = self.refers() else {
-            return Ok(());
-        };
-        referred.check_own().map_err(|why| match why {
-            RefError::Edge(why) => PointRefError::Edge(why),
-            RefError::Near(near) => PointRefError::Near(near),
-        })
-    }
-}
-
-/// Checks a reference's point: finite and within [`MAX_COORD`](crate::MAX_COORD).
-fn check_near(near: DVec3) -> Result<(), PointRefError> {
-    if crate::in_bounds(near) {
-        Ok(())
-    } else {
-        Err(PointRefError::Near(near))
-    }
 }
 
 impl AlignRefs {
@@ -294,22 +171,6 @@ pub enum AlignError {
     /// feature made later could take.
     #[error("a reference is on a face made by feature {}, which doesn't come before it", .0.0)]
     RefMaker(FeatureId),
-}
-
-/// What's wrong with a point's or a direction's reference on its own,
-/// see [`PointRef::check_own`] and [`DirRef::check_own`].
-#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
-pub enum PointRefError {
-    /// A corner's keys aren't sorted, or two are the same.
-    #[error("a corner's faces are out of order or repeated")]
-    Corner,
-    /// An edge fails its own check ([`EdgeRef::check_own`]).
-    #[error("{0}")]
-    Edge(#[source] EdgeError),
-    /// A corner's or face's point isn't finite, or is further from zero
-    /// than [`MAX_COORD`](crate::MAX_COORD).
-    #[error("a reference's point {0} is out of bounds")]
-    Near(DVec3),
 }
 
 #[cfg(test)]

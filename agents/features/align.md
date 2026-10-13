@@ -1,6 +1,7 @@
 # Align
 
-`crates/document/src/align.rs`.
+`crates/document/src/align.rs`; the points and directions it names
+(`PointRef`, `DirRef`) are in `crates/document/src/refs.rs`.
 
 ```rust
 pub struct Align {

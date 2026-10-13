@@ -1,6 +1,7 @@
 # Move and mirror
 
-`crates/document/src/motion.rs`.
+`crates/document/src/motion.rs`; the axes it names (`AxisRef`, `Axis3`) are
+in `crates/document/src/refs.rs`.
 
 ```rust
 pub struct Move {
