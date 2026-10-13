@@ -1,4 +1,7 @@
 use super::*;
+use crate::mcp::TOKEN_HIDDEN;
+use crate::mcp_config::{mcp_client_lines, mcp_stdio_lines};
+use crate::{McpClient, McpStatus};
 
 #[test]
 fn nothing_changed_by_default() {

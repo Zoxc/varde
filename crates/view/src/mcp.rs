@@ -11,9 +11,67 @@ use iced::{Alignment, Element, Length, Padding, Theme, border};
 
 use crate::chrome::{self, hrule, icon_button, small_button, vrule};
 use crate::icons::{self, Icon};
-use crate::settings::McpStatus;
 use crate::theme::{self, Emphasis, SEMIBOLD, TAB_HEIGHT, Tone};
 use crate::{Message, SettingsPage};
+
+/// What the MCP tab shows of the server besides its settings. Its
+/// `Debug` doesn't show the token.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct McpState<'a> {
+    pub status: McpStatus<'a>,
+    /// The client connected, if one is.
+    pub client: Option<McpClient<'a>>,
+    /// The bearer token's text, once the IO lane has read or made it.
+    pub token: Option<String>,
+    /// Whether the token shows, rather than dots.
+    pub token_shown: bool,
+    /// The port as typed in its field, while that isn't the port set:
+    /// a number out of range, or one not yet set.
+    pub port_typed: Option<&'a str>,
+    /// The running program's path, for the lines starting it as
+    /// `varde mcp`, the stdio relay: none if it can't be told, or isn't
+    /// text.
+    pub exe: Option<&'a str>,
+}
+
+impl std::fmt::Debug for McpState<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpState")
+            .field("status", &self.status)
+            .field("client", &self.client)
+            .field("token", &self.token.as_ref().map(|_| TOKEN_HIDDEN))
+            .field("token_shown", &self.token_shown)
+            .field("port_typed", &self.port_typed)
+            .field("exe", &self.exe)
+            .finish()
+    }
+}
+
+/// How the MCP server is, as the tab's Server row and the panel say.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum McpStatus<'a> {
+    /// Stopped: not started from the panel, or the feature off.
+    #[default]
+    Off,
+    /// Started, waiting for the token or the port.
+    Starting,
+    /// Listening on the port.
+    Listening(u16),
+    /// The port couldn't be bound: why.
+    BindFailed(&'a str),
+}
+
+/// The client connected to the MCP server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpClient<'a> {
+    /// The name it gave, if any.
+    pub name: Option<&'a str>,
+    /// When it connected, as said: "just now", "5 min ago".
+    pub since: String,
+}
+
+/// A token hidden: dots in its place.
+pub(crate) const TOKEN_HIDDEN: &str = "••••••••••••••••";
 
 /// How wide the panel is, its rule included, in pixels: the mock's.
 pub const MCP_PANEL_WIDTH: f32 = 460.0;
@@ -492,8 +550,13 @@ fn revert_popup<'a>(ask: &McpRevertAsk<'a>) -> Element<'a, Message> {
     )
 }
 
+/// What's said of the server's port `port` failing to bind, `why`.
+pub(crate) fn bind_failed(port: u16, why: &str) -> String {
+    format!("Port {port} can't be used: {why}. Choose another")
+}
+
 /// A client's name as shown: the one it gave, or "A client".
-fn client_name(name: Option<&str>) -> &str {
+pub(crate) fn client_name(name: Option<&str>) -> &str {
     name.unwrap_or("A client")
 }
 
@@ -656,10 +719,7 @@ pub(crate) fn panel<'a>(mcp: &McpShown<'a>) -> Option<Element<'a, Message>> {
         McpStatus::Starting => empty("Starting…".into(), None),
         McpStatus::BindFailed(why) => empty(
             stopped(mcp.port),
-            Some(format!(
-                "Port {} can't be used: {why}. Choose another in the settings",
-                mcp.port
-            )),
+            Some(format!("{} in the settings", bind_failed(mcp.port, why))),
         ),
         McpStatus::Off => empty(stopped(mcp.port), None),
     };

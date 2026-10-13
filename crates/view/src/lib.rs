@@ -91,8 +91,8 @@ pub use feature_text::{
 pub use handle_snap::snap_step;
 pub use icons::LOGO_SVG;
 pub use mcp::{
-    MCP_PANEL_WIDTH, McpAsk, McpCall, McpCallState, McpEdit, McpPanel, McpRevert, McpRevertAsk,
-    McpRow, McpShown, McpTool,
+    MCP_PANEL_WIDTH, McpAsk, McpCall, McpCallState, McpClient, McpEdit, McpPanel, McpRevert,
+    McpRevertAsk, McpRow, McpShown, McpState, McpStatus, McpTool,
 };
 pub use mcp_config::{mcp_client_lines, mcp_port_of, mcp_stdio_lines};
 pub use measure::{
@@ -136,8 +136,7 @@ pub use revolve::{
 };
 pub use select::{Selected, Selection, SelectionMode, SketchItem};
 pub use settings::{
-    KeptIn, McpClient, McpState, McpStatus, Setting, SettingChange, SettingsPage, SettingsState,
-    SettingsTab, changed_settings,
+    KeptIn, Setting, SettingChange, SettingsPage, SettingsState, SettingsTab, changed_settings,
 };
 pub use shortcut::{
     Binding, DocumentKeys, Held, KeysInput, Operating, OperationKeys, claimed, document_bindings,

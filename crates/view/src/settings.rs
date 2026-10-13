@@ -7,16 +7,14 @@
 
 use std::borrow::Cow;
 
-use iced::widget::{
-    Space, button, column, container, row, slider, space, stack, text, text_input, toggler,
-};
+use iced::widget::{Space, button, column, container, row, slider, space, stack, text, toggler};
 use iced::{Alignment, Element, Font, Length, Padding};
 use varde_expr::{AngleUnit, LengthUnit, Shown};
 use varde_render::{Projection, Rotation, Shading};
 
+use crate::McpState;
 use crate::chrome::{self, Edge, dialog_button, dialog_of_width, edged, icon_button, scrolled};
 use crate::icons::{self, Icon};
-use crate::mcp_config::{mcp_client_lines, mcp_port_of, mcp_stdio_lines};
 use crate::mouse::{DragAction, PivotClick, RotationPoint};
 use crate::mouse_only::MouseOnly;
 use crate::shortcut::{KeyName, Shortcut};
@@ -24,9 +22,10 @@ use crate::theme::{self, Emphasis, TabLook, Tone};
 use crate::view_choices::{Choice, Pictured};
 use crate::{
     AUTO_SAVE_MINUTES, Edges, INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, INTERFACE_SCALE_STEP,
-    MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, Message, RECENT_DESIGNS, ThemeChoice,
-    ViewOptions,
+    Message, RECENT_DESIGNS, ThemeChoice, ViewOptions,
 };
+
+mod mcp;
 
 /// The settings page's state, as the app keeps it.
 #[derive(Debug, Clone)]
@@ -45,65 +44,6 @@ pub struct SettingsState<'a> {
     /// The MCP server, for its tab: natively only.
     pub mcp: McpState<'a>,
 }
-
-/// What the MCP tab shows of the server besides its settings. Its
-/// `Debug` doesn't show the token.
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct McpState<'a> {
-    pub status: McpStatus<'a>,
-    /// The client connected, if one is.
-    pub client: Option<McpClient<'a>>,
-    /// The bearer token's text, once the IO lane has read or made it.
-    pub token: Option<String>,
-    /// Whether the token shows, rather than dots.
-    pub token_shown: bool,
-    /// The port as typed in its field, while that isn't the port set:
-    /// a number out of range, or one not yet set.
-    pub port_typed: Option<&'a str>,
-    /// The running program's path, for the lines starting it as
-    /// `varde mcp`, the stdio relay: none if it can't be told, or isn't
-    /// text.
-    pub exe: Option<&'a str>,
-}
-
-impl std::fmt::Debug for McpState<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("McpState")
-            .field("status", &self.status)
-            .field("client", &self.client)
-            .field("token", &self.token.as_ref().map(|_| TOKEN_HIDDEN))
-            .field("token_shown", &self.token_shown)
-            .field("port_typed", &self.port_typed)
-            .field("exe", &self.exe)
-            .finish()
-    }
-}
-
-/// How the MCP server is, as the tab's Server row and the panel say.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum McpStatus<'a> {
-    /// Stopped: not started from the panel, or the feature off.
-    #[default]
-    Off,
-    /// Started, waiting for the token or the port.
-    Starting,
-    /// Listening on the port.
-    Listening(u16),
-    /// The port couldn't be bound: why.
-    BindFailed(&'a str),
-}
-
-/// The client connected to the MCP server.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpClient<'a> {
-    /// The name it gave, if any.
-    pub name: Option<&'a str>,
-    /// When it connected, as said: "just now", "5 min ago".
-    pub since: String,
-}
-
-/// A token hidden: dots in its place.
-const TOKEN_HIDDEN: &str = "••••••••••••••••";
 
 /// Where the settings are kept, as the page's foot says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,7 +123,7 @@ pub enum SettingsPage {
     /// natively only.
     RegenerateMcpToken,
     /// The MCP port's field holds this, as typed: set once it's a port
-    /// the field takes ([`mcp_port_of`]). Natively only.
+    /// the field takes ([`mcp_port_of`](crate::mcp_port_of)). Natively only.
     TypeMcpPort(String),
     /// Shows the MCP token, or hides it. Natively only.
     ShowMcpToken(bool),
@@ -666,191 +606,9 @@ fn section<'a>(
                 "Lets an outside agent (Claude Code, Codex, an IDE) read and edit the open design; its edits are undone with Undo, as yours are. Only this computer can connect."
                     .to_owned(),
             ),
-            mcp_rows(options, mcp),
+            mcp::rows(options, mcp),
         ),
     }
-}
-
-/// The MCP section's rows: the switch, the port, the client while
-/// serving, the token and the lines adding the server to a client.
-fn mcp_rows<'a>(options: ViewOptions, mcp: &McpState<'a>) -> Vec<SettingRow<'a>> {
-    let set = |setting| Message::Settings(SettingsPage::Set(setting));
-    let page = Message::Settings;
-    let d = ViewOptions::default();
-    let port = options.mcp_port;
-    let serving = match mcp.status {
-        McpStatus::Listening(bound) if options.mcp => Some(bound),
-        _ => None,
-    };
-    let status: Cow<'static, str> = match mcp.status {
-        McpStatus::Off => "Stopped: Start it in the MCP panel".into(),
-        McpStatus::Listening(bound) => {
-            format!("Listening at 127.0.0.1:{bound}, one client at a time").into()
-        }
-        McpStatus::BindFailed(_) => "Not started: see the port".into(),
-        McpStatus::Starting => "Starting".into(),
-    };
-    let typed_bad = mcp
-        .port_typed
-        .is_some_and(|typed| mcp_port_of(typed).is_none());
-    let (port_said, port_bad): (Cow<'static, str>, bool) = match mcp.status {
-        _ if typed_bad => (
-            format!("A number from {MCP_PORT_MIN} to {MCP_PORT_MAX}").into(),
-            true,
-        ),
-        McpStatus::BindFailed(why) if options.mcp => (
-            format!("Port {port} can't be used: {why}. Choose another").into(),
-            true,
-        ),
-        _ => ("Where it listens, on 127.0.0.1 only".into(), false),
-    };
-    let port_text = match mcp.port_typed {
-        Some(typed) => typed.to_owned(),
-        None => port.to_string(),
-    };
-    let port_field = text_input(&MCP_PORT_DEFAULT.to_string(), &port_text)
-        .on_input(|typed| Message::Settings(SettingsPage::TypeMcpPort(typed)))
-        .padding([3, 6])
-        .size(12.5)
-        .width(70)
-        .style(theme::field_input(port_bad));
-    let mut rows = vec![
-        on_off_row(
-            "MCP",
-            "Shows the MCP panel, where the server is started",
-            (options.mcp, d.mcp),
-            Setting::Mcp,
-        ),
-        SettingRow {
-            bad: port_bad,
-            ..setting(
-                "Port",
-                port_said,
-                port_field.into(),
-                reset(
-                    port,
-                    MCP_PORT_DEFAULT,
-                    |port| port.to_string(),
-                    |port| set(Setting::McpPort(port)),
-                ),
-            )
-        },
-    ];
-    if options.mcp {
-        rows.insert(1, setting("Server", status, Space::new().into(), None));
-    }
-    if serving.is_some() {
-        let client: Element<'a, Message> = match &mcp.client {
-            Some(client) => row![
-                text(client.name.unwrap_or("A client").to_owned()).font(theme::SEMIBOLD),
-                text(format!("since {}", client.since))
-                    .size(12)
-                    .style(theme::muted_text),
-                chrome::small_button("Disconnect", Emphasis::Secondary)
-                    .on_press(page(SettingsPage::DisconnectMcp)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-            None => text("None").size(12.5).style(theme::muted_text).into(),
-        };
-        rows.push(setting(
-            "Client",
-            "Connected now; Disconnect drops it",
-            client,
-            None,
-        ));
-    }
-    let copy = |what: String| tipped_button(Icon::Copy, "Copy", Message::Copy(what));
-    let token: Element<'a, Message> = match &mcp.token {
-        Some(token) => {
-            let shown = mcp.token_shown;
-            row![
-                text(if shown {
-                    token.clone()
-                } else {
-                    TOKEN_HIDDEN.to_owned()
-                })
-                .size(12)
-                .font(Font::MONOSPACE),
-                tipped_button(
-                    if shown { Icon::EyeOff } else { Icon::Eye },
-                    if shown { "Hide" } else { "Show" },
-                    page(SettingsPage::ShowMcpToken(!shown)),
-                ),
-                copy(token.clone()),
-                chrome::small_button("Regenerate", Emphasis::Secondary)
-                    .on_press(page(SettingsPage::RegenerateMcpToken)),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center)
-            .into()
-        }
-        None => text("Not read yet")
-            .size(12.5)
-            .style(theme::muted_text)
-            .into(),
-    };
-    rows.push(setting(
-        "Token",
-        "Clients send it with each request; a new one drops the client",
-        token,
-        None,
-    ));
-    // The stdio relay's lines first, holding no token; then, once the
-    // token is known, the HTTP ones, shown with it as the Token row shows
-    // it and copied with it.
-    let stdio = mcp
-        .exe
-        .and_then(mcp_stdio_lines)
-        .map(|lines| lines.clone().into_iter().zip(lines));
-    let http = mcp.token.as_ref().map(|token| {
-        let shown = if mcp.token_shown {
-            token.as_str()
-        } else {
-            TOKEN_HIDDEN
-        };
-        mcp_client_lines(port, shown)
-            .into_iter()
-            .zip(mcp_client_lines(port, token))
-    });
-    if stdio.is_some() || http.is_some() {
-        let carried = match (stdio.is_some(), http.is_some()) {
-            (true, true) => {
-                "The first three run this Varde as a relay and hold no token; the last three carry it"
-            }
-            (true, false) => "Each runs this Varde as a relay, which reads the token",
-            _ => "Each carries the token",
-        };
-        // A path the lines can't hold safely is said, not offered.
-        let refused = if mcp.exe.is_some() && stdio.is_none() {
-            ". This Varde's path has characters a terminal would read differently, so there are no lines running it as a relay"
-        } else {
-            ""
-        };
-        let said = format!(
-            "Claude Code: paste into a terminal. Codex: add to ~/.codex/config.toml. opencode: add to opencode.json under \"mcp\". {carried}{refused}"
-        );
-        let lines = (stdio.into_iter().flatten())
-            .chain(http.into_iter().flatten())
-            .map(|(shown, copied)| {
-                row![
-                    container(text(shown).size(11.5).font(Font::MONOSPACE))
-                        .width(Length::Fill)
-                        .padding([4, 8])
-                        .style(theme::reset_row),
-                    copy(copied),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .into()
-            });
-        rows.push(SettingRow {
-            below: Some(column(lines).spacing(6).into()),
-            ..setting("Add to a client", said, Space::new().into(), None)
-        });
-    }
-    rows
 }
 
 /// The Units section's note: what its settings are for, and a length and
