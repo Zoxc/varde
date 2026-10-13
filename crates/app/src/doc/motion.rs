@@ -482,6 +482,7 @@ impl MotionSession {
 
     /// The session with each of `lengths`' fields set to its length, in
     /// millimetres, written in `document`'s units.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn with_lengths(
         mut self,
         lengths: &[(MotionField, f64)],

@@ -65,7 +65,6 @@ pub(crate) use motion::MotionSession;
 pub(crate) use motion::PatternShape;
 use pick::ModelPick;
 use rail::Rail;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use regions::pickable;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use regions::{BodyTargets, RegionPick};
