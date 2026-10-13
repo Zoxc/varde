@@ -517,6 +517,138 @@ fn relinked_weight(relinked: &[(FeatureId, Arc<Sketch>)]) -> usize {
         .fold(0, usize::saturating_add)
 }
 
+/// The reply carrying `model`, see [`encode_reply`]: answered as failed
+/// where its picking tables are past their limits ([`fits_tables`]) or
+/// its head is over [`MAX_HEAD_BYTES`] even without its extras
+/// ([`RegeneratedHead::without_extras`]).
+fn encode_regenerated(model: &Regenerated) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
+    let too_large = || {
+        let failed = Head::Failed {
+            asked: model.asked,
+            error: "the model has more faces than can be sent".to_owned(),
+        };
+        (failed.encode(), Vec::new())
+    };
+    if !fits_tables(&model.picking) {
+        return too_large();
+    }
+    let mut head = Head::Regenerated(RegeneratedHead::of(model));
+    let mut encoded = head.encode();
+    // Too large with the failures' geometry: the model without it,
+    // rather than none.
+    if encoded.len() > MAX_HEAD_BYTES
+        && let Head::Regenerated(regenerated) = &mut head
+    {
+        regenerated.without_extras();
+        encoded = head.encode();
+    }
+    if encoded.len() > MAX_HEAD_BYTES {
+        return too_large();
+    }
+    let Regenerated {
+        mesh,
+        tables,
+        sketches,
+        ..
+    } = model;
+    (
+        encoded,
+        (mesh_parts(mesh).into_iter())
+            .chain(lines_parts(sketches))
+            .map(Cow::Borrowed)
+            .chain(upload_parts(mesh))
+            .chain(tables_parts(tables))
+            .collect(),
+    )
+}
+
+/// Whether `picking`'s tables are within [`MAX_FACES`], [`MAX_CORNERS`]
+/// and [`Picking::MAX_ALIASES`], as the page checks them.
+fn fits_tables(picking: &Picking) -> bool {
+    let aliases =
+        (picking.faces().iter()).fold(0usize, |sum, face| sum.saturating_add(face.aliases.len()));
+    picking.faces().len() <= MAX_FACES
+        && picking.corners().len() <= MAX_CORNERS
+        && aliases <= Picking::MAX_ALIASES
+}
+
+impl RegeneratedHead {
+    /// The head of `model`: all of it but its mesh, sketches' lines and
+    /// tables, which follow as parts. Relinked sketches past
+    /// [`MAX_RELINKED_ITEMS`] are left out, and broken links past
+    /// [`MAX_BROKEN`].
+    fn of(model: &Regenerated) -> Self {
+        let Regenerated {
+            asked,
+            draft,
+            mesh: _,
+            picking,
+            tables: _,
+            sketches: _,
+            unsolved,
+            failed,
+            touched,
+            merged,
+            placements,
+            bodies,
+            inspected,
+            relinked,
+            broken,
+        } = model;
+        let geometry = |geometry: &Option<Arc<ErrorGeometry>>| {
+            geometry.as_deref().map(ErrorGeometry::to_parts)
+        };
+        RegeneratedHead {
+            asked: *asked,
+            draft: draft.as_deref().cloned(),
+            draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
+            unsolved: unsolved.clone(),
+            failed: (failed.iter())
+                .map(|f| (f.feature, f.message.clone(), geometry(&f.geometry)))
+                .collect(),
+            touched: touched.clone(),
+            merged: merged.clone(),
+            placements: (placements.iter())
+                .map(|(feature, p)| {
+                    (
+                        *feature,
+                        [p.origin, p.x, p.y, p.normal].map(|v| v.to_array()),
+                    )
+                })
+                .collect(),
+            bodies: bodies
+                .iter()
+                .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
+                .collect(),
+            parts: picking.bodies().to_vec(),
+            faces: picking.faces().to_vec(),
+            closed: picking.closed().to_vec(),
+            tangents: picking.tangents().to_vec(),
+            snaps: picking.snaps().to_vec(),
+            corners: picking.corners().to_vec(),
+            inspected: inspected.clone(),
+            relinked: if relinked_weight(relinked) <= MAX_RELINKED_ITEMS {
+                (relinked.iter())
+                    .map(|(feature, sketch)| (*feature, Sketch::clone(sketch)))
+                    .collect()
+            } else {
+                // Relinking waits for a model small enough to send.
+                Vec::new()
+            },
+            broken: broken.iter().take(MAX_BROKEN).cloned().collect(),
+        }
+    }
+
+    /// Drops what the model can go without where its head is too large:
+    /// the relinked sketches (relinking waits for a model small enough
+    /// to send) and the draft's and failures' geometry.
+    fn without_extras(&mut self) {
+        self.relinked.clear();
+        self.draft_geometry = None;
+        (self.failed.iter_mut()).for_each(|(_, _, geometry)| *geometry = None);
+    }
+}
+
 /// The reply answering `response`, the mirror of [`decode_reply`]: its
 /// encoded head, and the parts following it: its model's as bytes if it
 /// has one, see [`MODEL_PARTS`], or an export's bodies. A model whose
@@ -527,109 +659,7 @@ fn relinked_weight(relinked: &[(FeatureId, Arc<Sketch>)]) -> usize {
 /// links past [`MAX_BROKEN`].
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
-        Response::Regenerated(model) => {
-            let Regenerated {
-                asked,
-                draft,
-                mesh,
-                picking,
-                tables,
-                sketches,
-                unsolved,
-                failed,
-                touched,
-                merged,
-                placements,
-                bodies,
-                inspected,
-                relinked,
-                broken,
-            } = model;
-            let geometry = |geometry: &Option<Arc<ErrorGeometry>>| {
-                geometry.as_deref().map(ErrorGeometry::to_parts)
-            };
-            let mut head = Head::Regenerated(RegeneratedHead {
-                asked: *asked,
-                draft: draft.as_deref().cloned(),
-                draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
-                unsolved: unsolved.clone(),
-                failed: (failed.iter())
-                    .map(|f| (f.feature, f.message.clone(), geometry(&f.geometry)))
-                    .collect(),
-                touched: touched.clone(),
-                merged: merged.clone(),
-                placements: (placements.iter())
-                    .map(|(feature, p)| {
-                        (
-                            *feature,
-                            [p.origin, p.x, p.y, p.normal].map(|v| v.to_array()),
-                        )
-                    })
-                    .collect(),
-                bodies: bodies
-                    .iter()
-                    .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
-                    .collect(),
-                parts: picking.bodies().to_vec(),
-                faces: picking.faces().to_vec(),
-                closed: picking.closed().to_vec(),
-                tangents: picking.tangents().to_vec(),
-                snaps: picking.snaps().to_vec(),
-                corners: picking.corners().to_vec(),
-                inspected: inspected.clone(),
-                relinked: if relinked_weight(relinked) <= MAX_RELINKED_ITEMS {
-                    (relinked.iter())
-                        .map(|(feature, sketch)| (*feature, Sketch::clone(sketch)))
-                        .collect()
-                } else {
-                    // Relinking waits for a model small enough to send.
-                    Vec::new()
-                },
-                broken: broken.iter().take(MAX_BROKEN).cloned().collect(),
-            });
-            let mut encoded = head.encode();
-            // Too large with the failures' geometry: the model without
-            // it, rather than none.
-            if encoded.len() > MAX_HEAD_BYTES
-                && let Head::Regenerated(RegeneratedHead {
-                    draft_geometry,
-                    failed,
-                    relinked,
-                    ..
-                }) = &mut head
-            {
-                // Relinking waits for a model small enough to send.
-                relinked.clear();
-                *draft_geometry = None;
-                failed
-                    .iter_mut()
-                    .for_each(|(_, _, geometry)| *geometry = None);
-                encoded = head.encode();
-            }
-            let head = encoded;
-            let aliases = (picking.faces().iter())
-                .fold(0usize, |sum, face| sum.saturating_add(face.aliases.len()));
-            if head.len() > MAX_HEAD_BYTES
-                || picking.faces().len() > MAX_FACES
-                || picking.corners().len() > MAX_CORNERS
-                || aliases > Picking::MAX_ALIASES
-            {
-                let failed = Head::Failed {
-                    asked: *asked,
-                    error: "the model has more faces than can be sent".to_owned(),
-                };
-                return (failed.encode(), Vec::new());
-            }
-            (
-                head,
-                (mesh_parts(mesh).into_iter())
-                    .chain(lines_parts(sketches))
-                    .map(Cow::Borrowed)
-                    .chain(upload_parts(mesh))
-                    .chain(tables_parts(tables))
-                    .collect(),
-            )
-        }
+        Response::Regenerated(model) => encode_regenerated(model),
         Response::Failed { asked, error } => (
             Head::Failed {
                 asked: *asked,
