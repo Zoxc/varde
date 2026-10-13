@@ -133,12 +133,12 @@ pub(super) fn set_feature(
     let kind: FeatureKind = match (&call, &feature.kind) {
         (Call::Extrude(args), FeatureKind::Extrude(extrude)) => {
             let mut session = ExtrudeSession::editing_for_client(document, id, extrude);
-            make::set_extrude(doc, &mut session, args, given)?;
+            make::set_extrude(doc, &mut session, args, given).map_err(|wrong| wrong.of(TOOL))?;
             (session.extrude().map(Into::into)).ok_or_else(|| none_picked(&noun))?
         }
         (Call::Revolve(args), FeatureKind::Revolve(revolve)) => {
             let mut session = RevolveSession::editing(document, id, revolve);
-            make::set_revolve(doc, &mut session, args, given)?;
+            make::set_revolve(doc, &mut session, args, given).map_err(|wrong| wrong.of(TOOL))?;
             (session.revolve(document).map(Into::into)).ok_or_else(|| none_picked(&noun))?
         }
         (Call::Combine(args), FeatureKind::Combine(combine)) => {
@@ -146,7 +146,7 @@ pub(super) fn set_feature(
             // As the panel opens it: bodies gone since let go of, to be
             // given again.
             session.prune(document);
-            make::set_combine(doc, &mut session, args, given)?;
+            make::set_combine(doc, &mut session, args, given).map_err(|wrong| wrong.of(TOOL))?;
             let combine = session.combine();
             combine
                 .map(Into::into)
