@@ -1,4 +1,4 @@
-//! A draft in the move's session ([`MotionKind::Draft`]): its faces
+//! A draft in the move's session ([`MotionKind::Draft`](varde_view::MotionKind::Draft)): its faces
 //! picked as a face session's (see `faces`), its neutral plane picked as
 //! a mirror's plane (an origin plane from the toolbar, XY to begin
 //! with, or a flat face clicked while its row picks), its angle typed,
@@ -6,7 +6,7 @@
 
 use glam::DVec3;
 use varde_document::{Design, FaceDraft, OriginPlane, Plane};
-use varde_view::{DraftView, MotionField, MotionKind};
+use varde_view::{DraftView, MotionField};
 
 use super::refs::Refs;
 use super::{Doc, MotionSession};
@@ -57,9 +57,7 @@ impl Doc {
             faces: self.picked_faces(session),
             flip: session.flip,
             tangent: session.tangent,
-            info: (session.face_draft())
-                .filter(|_| session.kind == MotionKind::Draft)
-                .map(|draft| varde_view::draft_info(document, &draft)),
+            info: (session.face_draft()).map(|draft| varde_view::draft_info(document, &draft)),
         }
     }
 }

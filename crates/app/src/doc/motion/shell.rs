@@ -54,9 +54,7 @@ impl Doc {
         ShellView {
             faces: self.picked_faces(session),
             direction: session.direction,
-            info: (session.shell())
-                .filter(|_| session.kind == MotionKind::Shell)
-                .map(|shell| varde_view::shell_info(&shell, units)),
+            info: (session.shell()).map(|shell| varde_view::shell_info(&shell, units)),
         }
     }
 }

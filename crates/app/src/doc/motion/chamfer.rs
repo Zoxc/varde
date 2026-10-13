@@ -1,4 +1,4 @@
-//! A chamfer in the move's session ([`MotionKind::Chamfer`]): its edges
+//! A chamfer in the move's session ([`MotionKind::Chamfer`](varde_view::MotionKind::Chamfer)): its edges
 //! picked as a blend's (see `blend`), how it's sized (the model mock's
 //! Type tiles: Equal, Two distances, Distance and angle), its fields,
 //! Flip sides and Tangent chain.
@@ -6,7 +6,7 @@
 use varde_document::{Chamfer, ChamferSize, Design};
 use varde_expr::Value;
 use varde_render::Camera;
-use varde_view::{ChamferType, ChamferView, MotionField, MotionKind};
+use varde_view::{ChamferType, ChamferView, MotionField};
 
 use super::blend::BlendSetup;
 use super::refs::Refs;
@@ -111,12 +111,10 @@ impl Doc {
         ChamferView {
             edges: self.blend_edges(session),
             kind: session.chamfer_type,
-            info: (session.chamfer())
-                .filter(|_| session.kind == MotionKind::Chamfer)
-                .map(|chamfer| {
-                    let chains = session.blend.shown_chains();
-                    varde_view::chamfer_info(&Chamfer { chains, ..chamfer }, units)
-                }),
+            info: (session.chamfer()).map(|chamfer| {
+                let chains = session.blend.shown_chains();
+                varde_view::chamfer_info(&Chamfer { chains, ..chamfer }, units)
+            }),
         }
     }
 }

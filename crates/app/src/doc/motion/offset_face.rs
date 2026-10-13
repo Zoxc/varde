@@ -93,9 +93,7 @@ impl Doc {
             faces: self.picked_faces(session),
             inward: session.flip,
             tangent: session.tangent,
-            info: (session.offset_face())
-                .filter(|_| session.kind == MotionKind::OffsetFace)
-                .map(|offset| varde_view::offset_info(&offset, units)),
+            info: (session.offset_face()).map(|offset| varde_view::offset_info(&offset, units)),
         }
     }
 

@@ -1,9 +1,9 @@
-//! A fillet in the move's session ([`MotionKind::Fillet`]): its edges
+//! A fillet in the move's session ([`MotionKind::Fillet`](varde_view::MotionKind::Fillet)): its edges
 //! picked as a blend's (see `blend`), its radius and the Tangent chain
 //! tick, the model mock's fillet panel.
 
 use varde_document::Fillet;
-use varde_view::{FilletView, MotionField, MotionKind};
+use varde_view::{FilletView, MotionField};
 
 use super::blend::BlendSetup;
 use super::refs::Refs;
@@ -43,12 +43,10 @@ impl Doc {
         let units = self.editor.document().units();
         FilletView {
             edges: self.blend_edges(session),
-            info: (session.fillet())
-                .filter(|_| session.kind == MotionKind::Fillet)
-                .map(|fillet| {
-                    let chains = session.blend.shown_chains();
-                    varde_view::fillet_info(&Fillet { chains, ..fillet }, units)
-                }),
+            info: (session.fillet()).map(|fillet| {
+                let chains = session.blend.shown_chains();
+                varde_view::fillet_info(&Fillet { chains, ..fillet }, units)
+            }),
         }
     }
 }
