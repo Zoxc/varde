@@ -1,38 +1,44 @@
 //! A tile: one rational biquadratic patch of a tiled surface, stored as
-//! its homogeneous net in `f64`, with certified evaluation, partial
+//! its affine net in `f64`, with certified evaluation, partial
 //! derivatives, splits at ½, the hull box, the normal cone and the
 //! regularity flag.
 //!
-//! **Storage and validation.** A tile is the net `Pᵢⱼ = (w·x, w·y, w·z,
-//! w)`, `i, j ∈ 0..=2`, row-major in `u` (`Pᵢⱼ` at `3·i + j`, `i` along
-//! `u`), exactly as stored: neighbouring tiles share a boundary row of
-//! these values bit for bit, weights included, and every evaluation on a
-//! boundary line reads that row alone (`varde_decide::bezier`'s end rule),
-//! so neighbours agree there to the bit. [`Tile::new`] takes the net only
-//! when every value is finite and every weight lies in
-//! `[MIN_WEIGHT, MAX_WEIGHT]` = `[1/64, 64]`. Coordinates are not range
-//! tested: a form's lattice tiles may reach past the largest coordinate
-//! of a body (a plane's single tile covers the whole coordinate box), so
-//! their magnitude costs precision, never validity.
+//! **Storage and validation.** A tile is the net of its control points
+//! with their weights, `(x, y, z, w)`, `i, j ∈ 0..=2`, row-major in `u`
+//! (`(i, j)` at `3·i + j`, `i` along `u`): a point and its weight, never
+//! `w·x`, so a corner of the tile is its corner control point exactly,
+//! and a boundary row is a span through its end points for any weights.
+//! Neighbouring tiles share a boundary row of these values bit for bit,
+//! weights included, and every evaluation on a boundary line reads that
+//! row alone (`varde_decide::bezier`'s end rule), so neighbours agree
+//! there to the bit. [`Tile::new`] takes the net only when every value
+//! is finite and every weight lies in `[MIN_WEIGHT, MAX_WEIGHT]` =
+//! `[1/64, 64]`. Coordinates are not range tested: a form's lattice
+//! tiles may reach past the largest coordinate of a body (a plane's
+//! single tile covers the whole coordinate box), so their magnitude
+//! costs precision, never validity.
 //!
 //! **Levels.** Every operation is certified: its result carries an error
-//! bound against the same operation on the stored net. The first level
-//! (`Bounded<f64>`) is the default and is cached; a caller who needs more
-//! precision lifts the net exactly to any level with
-//! [`Tile::patch_at`] (double-double, big-float at a width, or exact
-//! rationals: the level and width are those of the value passed) and uses
-//! the patch's operations there, or asks for the cone at that level with
+//! bound against the same operation on the stored net. The homogeneous
+//! coefficients `w·x` are formed at the level they are used at
+//! ([`HomPatch::from_affine`]: rounded once each, the rounding carried,
+//! at the first level; exact from double-double up). The first level
+//! (`Bounded<f64>`) is the default and is cached; a caller who needs
+//! more precision forms the patch at any level with [`Tile::patch_at`]
+//! (double-double, big-float at a width, or exact rationals: the level
+//! and width are those of the value passed) and uses the patch's
+//! operations there, or asks for the cone at that level with
 //! [`Tile::normal_cone_at`].
 //!
-//! **Splits.** [`Tile::split_half`] stores the first level's halves at ½
-//! as new tiles: the halves' values are rounded once, at storage, so a
-//! half is a tile of its own, within the split's error bound of the
-//! parent's half, not exactly that half. A finer lattice level is
-//! defined this way (the base tile after its splits), and as the same
-//! net always splits into the same bits, every surface using that level
-//! gets the same tiles. Splits in `u` and in `v` don't commute to the
-//! bit, so whoever derives a level fixes their order (the lattices,
-//! [`super::lattice`]: every `u` split first, then the `v` splits).
+//! **Splits.** [`Tile::split_half`] runs de Casteljau at ½ on the exact
+//! homogeneous net and stores each new control point and weight as its
+//! exact value rounded once to the nearest `f64`, ties to even; the kept
+//! corners and boundary points round to themselves, so they are copied.
+//! A half is a tile of its own, within half an ulp per value of the
+//! parent's exact half. As a split is a function of the stored net alone
+//! and each of its values depends only on the line it lies on, halves
+//! share their middle row, and neighbours sharing a boundary row and
+//! split in the same direction share the halves of that row.
 //!
 //! **Cached per tile** (computed once, on first use, from the net alone,
 //! so every copy of a tile has the same bits): the first-level patch, the
@@ -56,19 +62,21 @@
 //! is one whose normals spread over more than a half-space (it must be
 //! split) or one the first level can't settle (escalate with
 //! [`Tile::normal_cone_at`] or split). The numerator is translation
-//! invariant, so it is computed in a frame centred on the tile's hull box,
-//! each translated value `x − c·w` rounded once from its double-double
-//! value: its rounding scales with the tile's size, not its distance from
-//! the origin (rounding `c·w` alone would cost `u·|c·w|`, which swamps a
-//! small or nearly flat tile far out).
+//! invariant, so at every level it is computed in a frame centred on the
+//! tile's hull box: each homogeneous coefficient `w·(x − c)`, the affine
+//! point translated first, so its rounding scales with the tile's size,
+//! not its distance from the origin (rounding `w·x` and `c·w` alone would
+//! cost `u·|c·w|`, which swamps a small or nearly flat tile far out).
 
 use std::fmt;
 use std::sync::OnceLock;
 
+use malachite::Rational;
 pub use varde_decide::bezier::NormalCone;
 use varde_decide::bezier::{Dir, HomPatch, HullBox, Partials, Scalar, Tensor};
-use varde_decide::num::bounded::{Bounded, add_up};
-use varde_decide::num::dd::Dd;
+use varde_decide::num::bounded::Bounded;
+
+use super::round::nearest;
 
 /// The degree of a tile in each direction.
 pub const DEGREE: usize = 2;
@@ -79,8 +87,8 @@ pub const MIN_WEIGHT: f64 = 1.0 / 64.0;
 /// The greatest weight a tile may hold, `64`.
 pub const MAX_WEIGHT: f64 = 64.0;
 
-/// A tile's homogeneous net, `(w·x, w·y, w·z, w)` row-major in `u`:
-/// `Pᵢⱼ` at `3·i + j`, `i` along `u`.
+/// A tile's affine net, `(x, y, z, w)` row-major in `u`: control point
+/// `(i, j)` at `3·i + j`, `i` along `u`.
 pub type Net = [[f64; 4]; 9];
 
 /// A tile's patch at the first precision level.
@@ -96,8 +104,8 @@ pub enum TileError {
     Weight { index: usize },
 }
 
-/// A rational biquadratic patch on `[0, 1]²` stored as its homogeneous
-/// `f64` net, validated, with certified operations (module docs).
+/// A rational biquadratic patch on `[0, 1]²` stored as its affine `f64`
+/// net, validated, with certified operations (module docs).
 #[derive(Clone)]
 pub struct Tile {
     net: Net,
@@ -110,7 +118,7 @@ pub struct Tile {
 }
 
 impl Tile {
-    /// The tile with the homogeneous net `net` ([`Net`]'s order): every
+    /// The tile with the affine net `net` ([`Net`]'s order): every
     /// value finite and every weight in `[MIN_WEIGHT, MAX_WEIGHT]`, else
     /// the first offence (non-finite values checked first).
     pub fn new(net: Net) -> Result<Tile, TileError> {
@@ -123,16 +131,34 @@ impl Tile {
         {
             return Err(TileError::Weight { index });
         }
-        let patch = HomPatch::from_f64(DEGREE, DEGREE, &net).expect("a biquadratic net");
-        let hull = patch.hull_box().expect("every weight is positive");
+        let patch = HomPatch::from_affine(DEGREE, DEGREE, net, &Bounded::exact(0.0))
+            .expect("a biquadratic net");
         Ok(Tile {
             net,
             patch,
-            hull,
+            hull: hull_of(&net),
             partials: OnceLock::new(),
             numerator: OnceLock::new(),
             cone: OnceLock::new(),
         })
+    }
+
+    /// The tile whose net is the exact homogeneous `patch`'s rounded:
+    /// each control point `(X/W, Y/W, Z/W)` and weight `W` rounded once
+    /// to the nearest `f64`, ties to even. Errors as [`new`](Self::new),
+    /// where a value rounds past the range or a weight lies out of it
+    /// (one not positive refused before dividing by it); panics unless
+    /// the degrees are `(2, 2)`.
+    pub fn rounded(patch: &HomPatch<Rational>) -> Result<Tile, TileError> {
+        assert_eq!(patch.degrees(), (DEGREE, DEGREE), "a biquadratic patch");
+        let [x, y, z, w] = patch.tensors().each_ref().map(Tensor::coefs);
+        if let Some(index) = w.iter().position(|w| *w <= 0u32) {
+            return Err(TileError::Weight { index });
+        }
+        Tile::new(std::array::from_fn(|i| {
+            let at = |c: &[Rational]| nearest(&(&c[i] / &w[i]));
+            [at(x), at(y), at(z), nearest(&w[i])]
+        }))
     }
 
     /// The stored net.
@@ -141,32 +167,44 @@ impl Tile {
         &self.net
     }
 
-    /// The patch at the first level, the stored values exact.
+    /// The control point `(i, j)` (`i` along `u`) without its weight;
+    /// panics past 2. A corner is the tile's point there exactly.
+    #[inline]
+    pub fn point(&self, i: usize, j: usize) -> [f64; 3] {
+        assert!(i <= DEGREE && j <= DEGREE, "index past the degrees");
+        let [x, y, z, _] = self.net[3 * i + j];
+        [x, y, z]
+    }
+
+    /// The patch at the first level, its coefficients `w·x` rounded once
+    /// with the rounding carried ([`HomPatch::from_affine`]).
     #[inline]
     pub fn patch(&self) -> &Patch {
         &self.patch
     }
 
-    /// The patch at `like`'s level (and width), the stored values exact:
+    /// The patch at `like`'s level (and width), its coefficients formed
+    /// there ([`HomPatch::from_affine`]: exact from double-double up):
     /// for operations at a higher level than the first.
     pub fn patch_at<S: Scalar>(&self, like: &S) -> HomPatch<S> {
-        HomPatch::new(
-            DEGREE,
-            DEGREE,
-            self.net.iter().map(|p| p.map(|x| S::from_f64(x, like))),
-        )
-        .expect("a biquadratic net")
+        HomPatch::from_affine(DEGREE, DEGREE, self.net, like).expect("a biquadratic net")
     }
 
-    /// A certified box holding the whole tile.
+    /// A certified box holding the whole tile: the box of its control
+    /// points, exactly (positive weights keep the tile in their convex
+    /// hull).
     #[inline]
     pub fn hull_box(&self) -> HullBox {
         self.hull
     }
 
-    /// The point at `(u, v)`, certified ([`HomPatch::eval`]).
+    /// The point at `(u, v)`, certified ([`HomPatch::eval`]); at a corner
+    /// its control point exactly.
     pub fn eval(&self, u: f64, v: f64) -> [Bounded<f64>; 3] {
-        self.patch.eval(&Bounded::exact(u), &Bounded::exact(v))
+        match corner(u, v) {
+            Some((i, j)) => self.point(i, j).map(Bounded::exact),
+            None => self.patch.eval(&Bounded::exact(u), &Bounded::exact(v)),
+        }
     }
 
     /// The homogeneous partial derivative in `dir`, of degree 1 in it.
@@ -180,10 +218,12 @@ impl Tile {
         }
     }
 
-    /// The point and its partials at `(u, v)`, certified: the same values
-    /// as [`HomPatch::eval_partials`] (the quotient rule
-    /// `x_u = (X_u − x·W_u) / W`), from the cached derivatives.
+    /// The point and its partials at `(u, v)`, certified: the values of
+    /// [`HomPatch::eval_partials`] (the quotient rule
+    /// `x_u = (X_u − x·W_u) / W`), from the cached derivatives, except
+    /// that the point at a corner is its control point exactly.
     pub fn eval_partials(&self, u: f64, v: f64) -> Partials<Bounded<f64>> {
+        let at = corner(u, v);
         let (u, v) = (Bounded::exact(u), Bounded::exact(v));
         let [x, y, z, w] = self.patch.eval_hom(&u, &v);
         let p = [x / w, y / w, z / w];
@@ -193,20 +233,29 @@ impl Tile {
         };
         let du = partial(Dir::U);
         let dv = partial(Dir::V);
+        let p = match at {
+            Some((i, j)) => self.point(i, j).map(Bounded::exact),
+            None => p,
+        };
         Partials { p, du, dv }
     }
 
-    /// The tiles on the halves `[0, ½]` and `[½, 1]` in `dir`: the first
-    /// level's split at ½ ([`HomPatch::split_half`]) stored to its values.
-    /// Its rounding makes each half a tile of its own, within the split's
-    /// error bound of the parent's half, and the same bits wherever the
-    /// same net is split: halves share their middle row, and neighbours
-    /// sharing a boundary row and split in the same direction share the
-    /// halves of that row. Weights stay in range; an error only where a
-    /// sum overflows.
+    /// The tiles on the halves `[0, ½]` and `[½, 1]` in `dir`: the exact
+    /// split at ½ of the homogeneous net, each new control point and
+    /// weight rounded once to the nearest `f64` ([`rounded`](Self::rounded);
+    /// the kept corners and boundary points round to themselves). The same
+    /// bits wherever the same net is split: halves share their middle
+    /// row, and neighbours sharing a boundary row and split in the same
+    /// direction share the halves of that row. Weights stay in range; an
+    /// error only where a value rounds past the range.
     pub fn split_half(&self, dir: Dir) -> Result<[Tile; 2], TileError> {
-        let [a, b] = self.patch.split_half(dir);
-        Ok([Tile::new(values(&a))?, Tile::new(values(&b))?])
+        let [a, b] = self.exact().split_half(dir);
+        Ok([Tile::rounded(&a)?, Tile::rounded(&b)?])
+    }
+
+    /// The exact homogeneous patch of the stored net.
+    pub fn exact(&self) -> HomPatch<Rational> {
+        self.patch_at(&Rational::from(0u32))
     }
 
     /// The origin of the frame the normal numerator is computed in: the
@@ -225,7 +274,7 @@ impl Tile {
     /// module docs).
     pub fn normal_numerator(&self) -> &[Tensor<Bounded<f64>>; 3] {
         self.numerator
-            .get_or_init(|| numerator(&self.framed_first()))
+            .get_or_init(|| numerator(&self.framed(&Bounded::exact(0.0))))
     }
 
     /// The certified normal cone at the first level, `None` where it
@@ -237,7 +286,9 @@ impl Tile {
     }
 
     /// The certified normal cone with the numerator computed at `like`'s
-    /// level (and width): for a tile the first level leaves uncertified.
+    /// level (and width), in the same frame: for a tile the first level
+    /// leaves uncertified. At the first level it is
+    /// [`normal_cone`](Self::normal_cone).
     pub fn normal_cone_at<S: Scalar>(&self, like: &S) -> Option<NormalCone> {
         NormalCone::of_form(&numerator(&self.framed(like)))
     }
@@ -249,40 +300,23 @@ impl Tile {
         self.normal_cone().is_some()
     }
 
-    /// The first level's patch translated by `−frame`: each `x − c·w`
-    /// computed in double-double and rounded once, so its error is
-    /// relative to the translated value, not to `c·w`.
-    fn framed_first(&self) -> Patch {
-        let c = self.frame();
-        let net = self.net.iter().map(|p| {
-            let w = p[3];
-            let at = |k: usize| {
-                if c[k] == 0.0 {
-                    Bounded::exact(p[k])
-                } else {
-                    shifted(p[k], c[k], w)
-                }
-            };
-            [at(0), at(1), at(2), Bounded::exact(w)]
-        });
-        HomPatch::new(DEGREE, DEGREE, net).expect("a biquadratic net")
-    }
-
-    /// The patch at `like`'s level translated by `−frame`: the points
-    /// `P − c·W`, the weights unchanged.
+    /// The patch at `like`'s level translated by `−frame`: the
+    /// coefficients `w·(x − c)`, the point translated before the product,
+    /// and the weights `w`.
     fn framed<S: Scalar>(&self, like: &S) -> HomPatch<S> {
         let c = self.frame();
         let net = self.net.iter().map(|p| {
             let w = S::from_f64(p[3], like);
             let at = |k: usize| {
-                let x = S::from_f64(p[k], like);
                 if c[k] == 0.0 {
-                    x
+                    S::product(p[k], p[3], like)
                 } else {
-                    x.sub(&S::from_f64(c[k], like).mul(&w))
+                    S::from_f64(p[k], like)
+                        .sub(&S::from_f64(c[k], like))
+                        .mul(&w)
                 }
             };
-            [at(0), at(1), at(2), w]
+            [at(0), at(1), at(2), w.clone()]
         });
         HomPatch::new(DEGREE, DEGREE, net).expect("a biquadratic net")
     }
@@ -309,23 +343,38 @@ impl PartialEq for Tile {
 
 impl Eq for Tile {}
 
-/// `x − c·w` at the first level: its double-double value rounded to the
-/// nearest `f64`, that rounding (the low part) and the double-double's
-/// own error bound its error.
-fn shifted(x: f64, c: f64, w: f64) -> Bounded<f64> {
-    let dd = |v: f64| Bounded::exact(Dd::from_f64(v));
-    let d = dd(x) - dd(c) * dd(w);
-    let v = d.v.hi();
-    if !d.is_certified() {
-        return Bounded::new(v, f64::INFINITY, f64::INFINITY);
+/// The box of the net's points, exactly.
+fn hull_of(net: &Net) -> HullBox {
+    let mut b = HullBox {
+        lo: [f64::INFINITY; 3],
+        hi: [f64::NEG_INFINITY; 3],
+    };
+    for p in net {
+        for k in 0..3 {
+            if p[k] < b.lo[k] {
+                b.lo[k] = p[k];
+            }
+            if p[k] > b.hi[k] {
+                b.hi[k] = p[k];
+            }
+        }
     }
-    Bounded::new(v, 0.0, add_up(d.v.lo().abs(), d.err()))
+    b
 }
 
-/// The values of a first-level biquadratic patch's net.
-fn values(p: &Patch) -> Net {
-    let h = p.tensors();
-    std::array::from_fn(|i| [0, 1, 2, 3].map(|k| h[k].coefs()[i].v))
+/// The corner `(i, j)` at `(u, v)` if both are exactly 0 or 1 (either
+/// zero).
+fn corner(u: f64, v: f64) -> Option<(usize, usize)> {
+    let end = |t: f64| {
+        if t == 0.0 {
+            Some(0)
+        } else if t == 1.0 {
+            Some(DEGREE)
+        } else {
+            None
+        }
+    };
+    Some((end(u)?, end(v)?))
 }
 
 fn numerator<S: Scalar>(p: &HomPatch<S>) -> [Tensor<S>; 3] {

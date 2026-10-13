@@ -14,7 +14,9 @@
 //! the boundary line alone.
 //!
 //! **Rational patches.** A [`HomPatch`] holds the net `(w·x, w·y, w·z, w)`
-//! as four tensors of the same degrees. Its point is `(X, Y, Z) / W`; its
+//! as four tensors of the same degrees, given homogeneous or formed at
+//! the level from affine control points and their weights
+//! ([`HomPatch::from_affine`]). Its point is `(X, Y, Z) / W`; its
 //! homogeneous partials are tensors one degree lower in their direction,
 //! and the partials of the point follow by the quotient rule,
 //! `x_u = (X_u − x·W_u) / W`. With every weight certified positive the
@@ -300,6 +302,33 @@ impl<S: Scalar> HomPatch<S> {
                 Tensor::new(m, n, w)?,
             ],
         })
+    }
+
+    /// The patch of degrees `(m, n)` with the affine control points
+    /// `(x, y, z, w)` (a point and its weight, as stored) row-major in
+    /// `u`: the homogeneous coefficients `w·x` formed at `like`'s level by
+    /// [`Scalar::product`], so exact from double-double up, and at the
+    /// first level rounded once per coefficient with the rounding carried
+    /// (none where the product is a float: a weight of 1, a zero
+    /// coordinate). Limits as for [`new`](Self::new).
+    pub fn from_affine(
+        m: usize,
+        n: usize,
+        net: impl IntoIterator<Item = [f64; 4]>,
+        like: &S,
+    ) -> Option<Self> {
+        Self::new(
+            m,
+            n,
+            net.into_iter().map(|[x, y, z, w]| {
+                [
+                    S::product(x, w, like),
+                    S::product(y, w, like),
+                    S::product(z, w, like),
+                    S::from_f64(w, like),
+                ]
+            }),
+        )
     }
 
     /// The patch with the coordinate tensors `[X, Y, Z, W]`, `None` unless

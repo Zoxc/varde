@@ -8,7 +8,7 @@
 use malachite::Rational as Q;
 
 use super::*;
-use crate::bezier::tests::{Level, Rng, approx, holds, q};
+use crate::bezier::tests::{Level, Rng, approx, holds, q, qabs};
 use crate::num::bigf::Big;
 use crate::num::dd::Dd;
 
@@ -614,4 +614,49 @@ fn degrees_are_limited() {
     let w = Tensor::from_f64(1, 0, &[1.0, 1.0]).expect("linear");
     assert!(HomPatch::from_tensors([a.clone(), a.clone(), b, w.clone()]).is_none());
     assert!(HomPatch::from_tensors([a.clone(), a.clone(), a, w]).is_some());
+}
+
+/// A patch from affine control points `(x, y, z, w)` at level `S`: each
+/// coefficient holds the true `w·x` (exactly from double-double up) and
+/// the weights are the stored ones; the exact patch's corners are the
+/// corner control points.
+fn affine_corners<S: Level>(exact_level: bool) {
+    let like = S::of(0.0, 0.0);
+    let mut rng = Rng::new(11);
+    for _ in 0..100 {
+        let net: Vec<[f64; 4]> = (0..9)
+            .map(|_| {
+                let [x, y, z] = [(); 3].map(|_| rng.pow(-20, 20));
+                [x, y, z, rng.pow(-6, 6).abs()]
+            })
+            .collect();
+        let h = HomPatch::<S>::from_affine(2, 2, net.iter().copied(), &like).unwrap();
+        let e = HomPatch::<Q>::from_affine(2, 2, net.iter().copied(), &Q::from(0u32)).unwrap();
+        for (i, p) in net.iter().enumerate() {
+            assert_eq!(h.weights().coefs()[i].val(), q(p[3]));
+            assert_eq!(h.weights().coefs()[i].errs(), (0.0, 0.0));
+            for k in 0..3 {
+                let c = &h.tensors()[k].coefs()[i];
+                let (t, r) = c.errs();
+                let truth = q(p[k]) * q(p[3]);
+                assert!(qabs(c.val() - &truth) <= q(t) + q(r));
+                if exact_level {
+                    assert_eq!(c.val(), truth);
+                    assert_eq!((t, r), (0.0, 0.0));
+                }
+            }
+        }
+        for (i, j) in [(0, 0), (0, 2), (2, 0), (2, 2)] {
+            let (u, v) = (Q::from(i / 2), Q::from(j / 2));
+            let p = net[3 * i + j];
+            assert_eq!(e.eval(&u, &v), [p[0], p[1], p[2]].map(q));
+        }
+    }
+}
+
+#[test]
+fn affine_patches_hold_their_products() {
+    affine_corners::<Bounded<f64>>(false);
+    affine_corners::<Bounded<Dd>>(true);
+    affine_corners::<Bounded<Big>>(true);
 }

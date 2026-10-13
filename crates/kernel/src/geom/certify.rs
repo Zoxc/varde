@@ -16,8 +16,9 @@
 //! **The bound on a piece.** The spans' homogeneous coefficients are
 //! formed at the first level from their affine control points, each
 //! product `w·x` rounded once with its rounding carried
-//! ([`Curve3D::span`]). With the span's local homogeneous
-//! coordinates `U' = U − i·W`, `V' = V − j·W`, the tile's net `Pₖₗ`
+//! ([`Curve3D::span`]), and so are the tile's. With the span's local
+//! homogeneous coordinates `U' = U − i·W`, `V' = V − j·W`, the tile's
+//! homogeneous net `Pₖₗ`
 //! composed with it is `H = Σₖₗ Pₖₗ·Bₖ(U', W)·Bₗ(V', W)`, `Bₖ` the
 //! homogeneous quadratic Bernstein basis (`(W − U')²`, `2U'(W − U')`,
 //! `U'²`): degree 8, the tile's point `(H₀, H₁, H₂) / H₃`. The difference
@@ -197,14 +198,20 @@ fn direct(tile: &Tile, i: i64, j: i64, p: &HomCurve<B, 2>, c: &HomCurve<B, 3>) -
     };
     let (bu, bv) = (basis(&u), basis(&v));
     let net = tile.net();
+    // The tile's homogeneous coefficient `m` of an affine control point:
+    // `w·x` rounded once with its rounding carried, or the weight.
+    let coef = |p: [f64; 4], m: usize| {
+        if m == 3 {
+            B::exact(p[3])
+        } else {
+            B::product(p[m], p[3], &B::exact(0.0))
+        }
+    };
     let h: [Poly<B>; 4] = std::array::from_fn(|m| {
         let mut sum: Option<Poly<B>> = None;
         for (k, a) in bu.iter().enumerate() {
             for (l, b) in bv.iter().enumerate() {
-                let term = a
-                    .mul(b)
-                    .expect("degree 8")
-                    .scale(&B::exact(net[3 * k + l][m]));
+                let term = a.mul(b).expect("degree 8").scale(&coef(net[3 * k + l], m));
                 sum = Some(match sum {
                     Some(s) => s.add(&term),
                     None => term,

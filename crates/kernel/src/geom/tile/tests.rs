@@ -24,12 +24,12 @@ fn holds<S: Scalar>(what: &str, b: &S, t: &Q) {
     assert!(
         q(lo) <= *t && *t <= q(hi),
         "{what}: {b:?} misses {}",
-        approx(t)
+        rounded(t)
     );
 }
 
-/// `t` rounded to the nearest `f64`, for messages.
-fn approx(t: &Q) -> f64 {
+/// `t` rounded to the nearest `f64`, ties to even.
+fn rounded(t: &Q) -> f64 {
     use malachite::base::num::conversion::traits::RoundingFrom;
     use malachite::base::rounding_modes::RoundingMode::Nearest;
     f64::rounding_from(t, Nearest).0
@@ -39,8 +39,8 @@ fn exact(t: &Tile) -> HomPatch<Q> {
     t.patch_at(&Q::from(0u32))
 }
 
-fn hom(p: DVec3, w: f64) -> [f64; 4] {
-    [w * p.x, w * p.y, w * p.z, w]
+fn affine(p: DVec3, w: f64) -> [f64; 4] {
+    [p.x, p.y, p.z, w]
 }
 
 /// A random tile: a parallelogram grid at a random place, scale and
@@ -64,7 +64,7 @@ fn random(rng: &mut Rng, bump: f64, wr: f64) -> Tile {
         let shift = rng.range(-0.1, 0.1);
         let p =
             origin + (e1 * (0.5 * i + shift) + e2 * (0.5 * j) + n * rng.range(-bump, bump)) * size;
-        hom(p, rng.log_range(1.0 / wr, wr))
+        affine(p, rng.log_range(1.0 / wr, wr))
     });
     Tile::new(net).expect("a valid tile")
 }
@@ -141,10 +141,19 @@ fn eval_and_partials_hold_the_exact_values() {
                         holds("x_u", &got.du[k], &truth.du[k]);
                         holds("x_v", &got.dv[k], &truth.dv[k]);
                     }
-                    // The cached derivatives give the patch's own bits.
+                    // The cached derivatives give the patch's own bits;
+                    // a corner is its control point exactly.
                     let (bu, bv) = (Bounded::exact(u), Bounded::exact(v));
-                    assert_eq!(got, tile.patch().eval_partials(&bu, &bv));
-                    assert_eq!(tile.eval(u, v), tile.patch().eval(&bu, &bv));
+                    let want = tile.patch().eval_partials(&bu, &bv);
+                    assert_eq!((&got.du, &got.dv), (&want.du, &want.dv));
+                    if let Some((i, j)) = corner(u, v) {
+                        let c = tile.point(i, j).map(Bounded::exact);
+                        assert_eq!((got.p, tile.eval(u, v)), (c, c));
+                        assert_eq!(truth.p, c.map(|x| q(x.v)));
+                    } else {
+                        assert_eq!(got.p, want.p);
+                        assert_eq!(tile.eval(u, v), tile.patch().eval(&bu, &bv));
+                    }
                 }
             }
         }
@@ -205,6 +214,8 @@ fn normal_cone_holds_every_normal() {
         for (tile, flat) in tiles(seed) {
             let cones = [tile.normal_cone(), tile.normal_cone_at(&Q::from(0u32))];
             assert_eq!(tile.is_regular(), cones[0].is_some());
+            // At the first level, the cone at a level is the cached one.
+            assert_eq!(tile.normal_cone_at(&Bounded::exact(0.0)), cones[0]);
             if flat {
                 assert!(tile.is_regular(), "{tile:?}");
             } else {
@@ -235,7 +246,7 @@ fn a_plane_tile_has_the_plane_normal() {
     let mut rng = Rng::new(7);
     let net = std::array::from_fn(|k| {
         let (i, j) = ((k / 3) as f64, (k % 3) as f64);
-        hom(
+        affine(
             DVec3::new(3.0 * i + rng.range(-0.2, 0.2), 2.0 * j, 5.0),
             rng.log_range(0.25, 4.0),
         )
@@ -257,7 +268,7 @@ fn a_cylinder_tile_is_regular() {
     ];
     let net = std::array::from_fn(|k| {
         let (p, w) = arc[k / 3];
-        hom(p + DVec3::Z * (2.0 * (k % 3) as f64), w)
+        affine(p + DVec3::Z * (2.0 * (k % 3) as f64), w)
     });
     let tile = Tile::new(net).unwrap();
     let c = tile.normal_cone().expect("regular");
@@ -288,7 +299,7 @@ fn a_singular_side_is_not_regular() {
         let ((cu, su, wu), (cv, sv, wv)) = (around[k / 3], meridian[k % 3]);
         // Pole at z = 1 (v = 0), equator at v = 1.
         let p = DVec3::new(sv * cu, sv * su, cv);
-        hom(p, wu * wv)
+        affine(p, wu * wv)
     });
     let tile = Tile::new(net).unwrap();
     assert!(!tile.is_regular());
@@ -302,7 +313,7 @@ fn a_singular_side_is_not_regular() {
 fn a_fold_is_not_regular() {
     // In u the points 0, 2, 1 along x: x(u) turns back at u = 2/3.
     let xs = [0.0, 2.0, 1.0];
-    let net = std::array::from_fn(|k| hom(DVec3::new(xs[k / 3], (k % 3) as f64, 0.0), 1.0));
+    let net = std::array::from_fn(|k| affine(DVec3::new(xs[k / 3], (k % 3) as f64, 0.0), 1.0));
     let tile = Tile::new(net).unwrap();
     assert!(!tile.is_regular());
     assert_eq!(tile.normal_cone_at(&Q::from(0u32)), None);
@@ -359,18 +370,21 @@ fn splits_keep_shared_lines() {
         for (tile, _) in tiles(seed) {
             for dir in [Dir::U, Dir::V] {
                 let halves = tile.split_half(dir).unwrap();
-                let pieces = tile.patch().split_half(dir);
                 let pe = exact(&tile).split_half(dir);
-                for (h, (p, t)) in halves.iter().zip(pieces.iter().zip(&pe)) {
-                    // The stored values of the first level's split, which
-                    // hold the exact halves.
-                    assert_eq!(*h.net(), values(p));
-                    for k in 0..4 {
-                        for (b, x) in p.tensors()[k].coefs().iter().zip(t.tensors()[k].coefs()) {
-                            holds("split", b, x);
+                for (h, t) in halves.iter().zip(&pe) {
+                    // Each value the exact half's, rounded once.
+                    let [x, y, z, w] = t.tensors().each_ref().map(Tensor::coefs);
+                    for (n, p) in h.net().iter().enumerate() {
+                        for (k, c) in [x, y, z].into_iter().enumerate() {
+                            assert_eq!(p[k], rounded(&(&c[n] / &w[n])), "{n} {k}");
                         }
+                        assert_eq!(p[3], rounded(&w[n]), "{n}");
                     }
                 }
+                // The kept end lines are copied.
+                let (a, b) = (line(tile.net(), dir, 0), line(tile.net(), dir, 2));
+                assert_eq!(line(halves[0].net(), dir, 0), a);
+                assert_eq!(line(halves[1].net(), dir, 2), b);
                 assert_eq!(line(halves[0].net(), dir, 2), line(halves[1].net(), dir, 0));
             }
             // A neighbour past u = 1, sharing that row, splits it into the
@@ -414,8 +428,9 @@ fn caches_match_the_patch() {
 
 /// A near-flat tile far from the origin, small or large and with weights
 /// `1/64` and `64` mixed, gets its normal cone at the first level as at
-/// the exact one: the translation to the frame rounds relative to the
-/// tile's size, not to its distance from the origin.
+/// the exact one and at double-double, through `normal_cone` and
+/// `normal_cone_at` alike: the translation to the frame rounds relative
+/// to the tile's size, not to its distance from the origin.
 #[test]
 fn far_tiles_are_regular_at_the_first_level() {
     for seed in varde_testing::seeds(40, 400) {
@@ -432,10 +447,31 @@ fn far_tiles_are_regular_at_the_first_level() {
                     + e2 * (0.5 * j)
                     + n * rng.range(-1e-3, 1e-3))
                     * size;
-            hom(p, [MIN_WEIGHT, MAX_WEIGHT][(rng.next_u64() % 2) as usize])
+            affine(p, [MIN_WEIGHT, MAX_WEIGHT][(rng.next_u64() % 2) as usize])
         });
         let tile = Tile::new(net).unwrap();
         let exact = tile.normal_cone_at(&Q::from(0u32));
-        assert_eq!(tile.normal_cone().is_some(), exact.is_some(), "{tile:?}");
+        let first = tile.normal_cone();
+        assert_eq!(first.is_some(), exact.is_some(), "{tile:?}");
+        assert_eq!(tile.normal_cone_at(&Bounded::exact(0.0)), first);
+        let dd = tile.normal_cone_at(&Bounded::exact(Dd::from_f64(0.0)));
+        assert_eq!(dd.is_some(), exact.is_some(), "{tile:?}");
     }
+}
+
+#[test]
+fn rounding_an_exact_net() {
+    let (tile, _) = tiles(5).swap_remove(1);
+    assert_eq!(Tile::rounded(&tile.exact()).unwrap(), tile);
+    let one = || Q::from(1u32);
+    let net = |w: Q| {
+        (0..9).map(move |n| {
+            let w = if n == 4 { w.clone() } else { one() };
+            [one(), one(), one(), w]
+        })
+    };
+    let zero = HomPatch::new(2, 2, net(Q::from(0u32))).unwrap();
+    assert_eq!(Tile::rounded(&zero), Err(TileError::Weight { index: 4 }));
+    let tiny = HomPatch::new(2, 2, net(Q::from_signeds(1, 128))).unwrap();
+    assert_eq!(Tile::rounded(&tiny), Err(TileError::Weight { index: 4 }));
 }

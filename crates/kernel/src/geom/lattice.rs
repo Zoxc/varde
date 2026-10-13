@@ -37,23 +37,29 @@
 //! cylinder or sphere. Angle cells `k` and `k + 4` are the same tile.
 //!
 //! **Control points** are exact functions of the frame's stored values
-//! and the cell, each homogeneous coordinate `w·x` and each weight
-//! rounded once to the nearest `f64`, ties to even. A boundary row is
-//! the same exact values in both cells beside it, so neighbours share it
-//! bit for bit, weights included, and every cell of one key is the same
-//! bits on every surface.
+//! and the cell, stored affine with their weights: each coordinate of
+//! the point and each weight rounded once to the nearest `f64`, ties to
+//! even (a weight `√½` rounded, `½` and 1 exact). So a corner of a
+//! cylinder's or sphere's tile is its rounded point, and a sphere's pole
+//! row is one point to the bit. A boundary row is the same exact values
+//! in both cells beside it, so neighbours share it bit for bit, weights
+//! included, and every cell of one key is the same bits on every surface.
 //!
 //! **Levels.** A surface may use a finer level `(L_u, L_v)`: each base
 //! cell split `L_u` times at ½ in `u` and `L_v` times in `v`, tile
-//! `(i, j)` lying in base cell `(i >> L_u, j >> L_v)`. Splits are
-//! rounded at storage ([`Tile::split_half`]) and splits in `u` and `v`
-//! don't commute to the bit, so a level's tile has one route: **its base
-//! tile, split first in `u` (`L_u` times, the higher halves where `i`'s
-//! bits from the top say 1), then in `v`**. Then neighbours at one level
-//! share their boundary rows bit for bit: a row a split in its own
-//! direction leaves at an end of the parent is copied, and one it creates
-//! is the same values in both halves; a split across a row reads that row
-//! alone, so equal rows split into equal halves.
+//! `(i, j)` lying in base cell `(i >> L_u, j >> L_v)`. A level's tile is
+//! **its stored base tile's exact sub-patch, each control point and
+//! weight rounded once** to the nearest `f64`, ties to even: the exact
+//! splits ([`Tile::split_half`] without its rounding) on the base tile's
+//! exact homogeneous net, the higher halves where `i`'s (and `j`'s) bits
+//! from the top say 1, rounded at the end. Exact splits in `u` and `v`
+//! commute, so the tile has no route to fix, and its precision is that of
+//! its own coordinates, not of the base tile's: a fine tile near a
+//! cylinder's foot point keeps its shape though its base cell reaches
+//! `CELL/2` along the axis. Neighbours at one level share their boundary
+//! rows bit for bit: the exact sub-patches of one base net, or of two
+//! sharing a row, have the same exact control points on a shared line,
+//! which round alike.
 //!
 //! **Surfaces** are integer rectangles of one level ([`Rect`]); a 180°
 //! surface (the canonical constructors' choice, [`Lattice::half`]) is two
@@ -65,11 +71,14 @@ use std::ops::Range;
 
 use malachite::Rational;
 use malachite::base::num::basic::traits::One;
-use varde_decide::bezier::Dir;
+use varde_decide::bezier::{Dir, HomPatch};
 
 use super::form::{FormKey, dot};
 use super::round::{nearest, nearest_root, nearest_sqrt, q};
 use super::tile::{Net, Tile, TileError};
+
+/// A tile's exact homogeneous patch.
+type Exact = HomPatch<Rational>;
 
 /// The largest coordinate magnitude of a body's bounded positions (mm).
 pub const MAX_COORD: f64 = 1e6;
@@ -138,7 +147,7 @@ pub struct Lattice {
     axes: [[f64; 3]; 3],
 }
 
-/// A homogeneous weight of the lattices' tiles: `1`, `√½` or `½`.
+/// A weight of the lattices' tiles: `1`, `√½` or `½`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Weight {
     One,
@@ -218,7 +227,7 @@ impl Lattice {
                     let s = Rational::from(h[n / 3]) * &half;
                     let t = Rational::from(g[n % 3]) * &half;
                     let p = [0, 1, 2].map(|c| &o[c] + &s * &a0[c] + &t * &a1[c]);
-                    hom(&p, Weight::One)
+                    affine(&p, Weight::One)
                 })
             }
             FormKey::Cylinder(c) => {
@@ -230,7 +239,7 @@ impl Lattice {
                     let (dir, w) = &around[n / 3];
                     let t = Rational::from(g[n % 3]) * &half;
                     let p = [0, 1, 2].map(|c| &o[c] + &rho * &dir[c] + &t * &a2[c]);
-                    hom(&p, *w)
+                    affine(&p, *w)
                 })
             }
             FormKey::Sphere(s) => {
@@ -247,22 +256,25 @@ impl Lattice {
                     let (rho, z) = meridian[n % 3];
                     let (rho, z) = (Rational::from(rho), Rational::from(z));
                     let p = [0, 1, 2].map(|c| &o[c] + &r * (&rho * &dir[c] + &z * &a2[c]));
-                    hom(&p, wu.times(ARC[n % 3]))
+                    affine(&p, wu.times(ARC[n % 3]))
                 })
             }
         };
         Ok(Tile::new(net)?)
     }
 
-    /// The tile `(i, j)` of `level`: its base tile split first in `u`,
-    /// then in `v` (module docs).
+    /// The tile `(i, j)` of `level`: its base tile's exact sub-patch,
+    /// rounded once (module docs).
     pub fn tile(&self, level: Level, i: i64, j: i64) -> Result<Tile, LatticeError> {
         if level.u > MAX_LEVEL || level.v > MAX_LEVEL {
             return Err(LatticeError::Level);
         }
         let base = self.base_tile(i >> level.u, j >> level.v)?;
-        let t = descend(base, Dir::U, level.u, i)?;
-        descend(t, Dir::V, level.v, j)
+        if level == Level::BASE {
+            return Ok(base);
+        }
+        let t = descend(base.exact(), Dir::U, level.u, i);
+        Ok(Tile::rounded(&descend(t, Dir::V, level.v, j))?)
     }
 
     /// The tiles of `rect`, row-major in `u` (tile `(i, j)` at
@@ -288,12 +300,18 @@ impl Lattice {
         for k in (rect.u.start >> lu)..=((rect.u.end - 1) >> lu) {
             for l in (rect.v.start >> lv)..=((rect.v.end - 1) >> lv) {
                 let base = self.base_tile(k, l)?;
-                for (i, column) in split_all(base, Dir::U, lu, k << lu, &rect.u)? {
-                    for (j, t) in split_all(column, Dir::V, lv, l << lv, &rect.v)? {
+                if rect.level == Level::BASE {
+                    // Within the rectangle, as below.
+                    let at = k.abs_diff(rect.u.start) * nv + l.abs_diff(rect.v.start);
+                    out[at as usize] = Some(base);
+                    continue;
+                }
+                for (i, column) in split_all(base.exact(), Dir::U, lu, k << lu, &rect.u) {
+                    for (j, t) in split_all(column, Dir::V, lv, l << lv, &rect.v) {
                         // Below `count` by construction: i and j lie in
                         // the rectangle.
                         let at = i.abs_diff(rect.u.start) * nv + j.abs_diff(rect.v.start);
-                        out[at as usize] = Some(t);
+                        out[at as usize] = Some(Tile::rounded(&t)?);
                     }
                 }
             }
@@ -355,23 +373,15 @@ fn arc(e1: &[Rational; 3], e2: &[Rational; 3], k: i64) -> [([Rational; 3], Weigh
     ]
 }
 
-/// The homogeneous point `(w·p, w)`, each value rounded once.
-fn hom(p: &[Rational; 3], w: Weight) -> [f64; 4] {
-    match w {
-        Weight::One => {
-            let [x, y, z] = p.each_ref().map(nearest);
-            [x, y, z, 1.0]
-        }
-        Weight::Root => {
-            let half = Rational::from_signeds(1, 2);
-            let [x, y, z] = p.each_ref().map(|c| nearest_root(c, &half));
-            [x, y, z, nearest_sqrt(&half)]
-        }
-        Weight::Half => {
-            let [x, y, z] = p.each_ref().map(|c| nearest(&(c / Rational::from(2u32))));
-            [x, y, z, 0.5]
-        }
-    }
+/// The affine control point `(p, w)`, each value rounded once.
+fn affine(p: &[Rational; 3], w: Weight) -> [f64; 4] {
+    let [x, y, z] = p.each_ref().map(nearest);
+    let w = match w {
+        Weight::One => 1.0,
+        Weight::Root => nearest_sqrt(&Rational::from_signeds(1, 2)),
+        Weight::Half => 0.5,
+    };
+    [x, y, z, w]
 }
 
 /// The reference direction of the unit `n` (module docs).
@@ -412,27 +422,22 @@ fn span(r: &Range<i64>) -> Result<u64, LatticeError> {
     Ok(r.end.abs_diff(r.start))
 }
 
-/// `t` split `levels` times in `dir` towards index `i`'s sub-cell: the
-/// higher half where `i`'s low `levels` bits, from the top, are 1.
-fn descend(mut t: Tile, dir: Dir, levels: u32, i: i64) -> Result<Tile, LatticeError> {
+/// `t` split exactly `levels` times in `dir` towards index `i`'s
+/// sub-cell: the higher half where `i`'s low `levels` bits, from the
+/// top, are 1.
+fn descend(mut t: Exact, dir: Dir, levels: u32, i: i64) -> Exact {
     for s in (0..levels).rev() {
-        let [lo, hi] = t.split_half(dir)?;
+        let [lo, hi] = t.split_half(dir);
         t = if (i >> s) & 1 == 1 { hi } else { lo };
     }
-    Ok(t)
+    t
 }
 
-/// The sub-tiles of `t` (whose first index at `levels` below is
+/// The exact sub-patches of `t` (whose first index at `levels` below is
 /// `first`) after `levels` splits in `dir`, those with indices in
-/// `want`, in order, each with its index: the same bits as
-/// [`descend`] gives each.
-fn split_all(
-    t: Tile,
-    dir: Dir,
-    levels: u32,
-    first: i64,
-    want: &Range<i64>,
-) -> Result<Vec<(i64, Tile)>, LatticeError> {
+/// `want`, in order, each with its index: the values [`descend`] gives
+/// each.
+fn split_all(t: Exact, dir: Dir, levels: u32, first: i64, want: &Range<i64>) -> Vec<(i64, Exact)> {
     let mut out = Vec::new();
     // (tile, its first index, its width in indices)
     let mut stack = vec![(t, first, 1i64 << levels)];
@@ -445,13 +450,13 @@ fn split_all(
             out.push((at, t));
             continue;
         }
-        let [lo, hi] = t.split_half(dir)?;
+        let [lo, hi] = t.split_half(dir);
         let w = width / 2;
         // The lower half last, so it is popped first.
         stack.push((hi, at + w, w));
         stack.push((lo, at, w));
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
