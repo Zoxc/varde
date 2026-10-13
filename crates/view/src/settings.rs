@@ -377,10 +377,10 @@ pub fn page<'a>(state: SettingsState<'a>) -> Element<'a, Message> {
         44.0,
     );
 
-    let (title, note, rows) = section(state.tab, state.options, state.scale_dragged, &state.mcp);
+    let (note, rows) = section(state.tab, state.options, state.scale_dragged, &state.mcp);
     let mut section = column![
         container(
-            text(title.to_uppercase())
+            text(state.tab.label().to_uppercase())
                 .size(11)
                 .font(theme::BOLD)
                 .style(theme::faint_text)
@@ -473,127 +473,111 @@ fn tabs<'a>(open: SettingsTab) -> Element<'a, Message> {
     .into()
 }
 
-/// The open section's title, the note under it, if it has one, and its
-/// rows.
+/// The open section's note, if it has one, and its rows.
 fn section<'a>(
     tab: SettingsTab,
     options: ViewOptions,
     scale_dragged: Option<u16>,
     mcp: &McpState<'a>,
-) -> (&'static str, Option<String>, Vec<SettingRow<'a>>) {
-    let set = |setting| Message::Settings(SettingsPage::Set(setting));
-    let d = ViewOptions::default();
+) -> (Option<String>, Vec<SettingRow<'a>>) {
     match tab {
         SettingsTab::Appearance => (
-            "Appearance",
             None,
             vec![
                 pictured(
-                    "Theme",
                     "Light or dark, or as the system is set",
-                    (options.theme, d.theme),
+                    options.theme,
                     Setting::Theme,
                 ),
                 setting(
                     "Interface scale",
                     "The size of everything but the model",
                     scale_slider(scale_dragged.unwrap_or(options.interface_scale)),
-                    reset(options.interface_scale, d.interface_scale, scale_said, |percent| {
-                        set(Setting::InterfaceScale(percent))
-                    }),
+                    reset(Setting::InterfaceScale(options.interface_scale)),
                 ),
             ],
         ),
         SettingsTab::View => (
-            "View",
             Some(
                 "How the viewport draws the model. The status bar's menu changes the same settings."
                     .to_owned(),
             ),
             vec![
                 pictured(
-                    "Projection",
                     "Perspective shrinks what is farther away",
-                    (options.projection, d.projection),
+                    options.projection,
                     Setting::Projection,
                 ),
                 pictured(
-                    "Shading",
                     "How the faces are lit",
-                    (options.shading, d.shading),
+                    options.shading,
                     Setting::Shading,
                 ),
                 pictured(
-                    "Edges",
                     "Which edges show besides the feature edges",
-                    (options.edges, d.edges),
+                    options.edges,
                     Setting::Edges,
                 ),
                 on_off_row(
-                    "Hidden edges",
                     "Edges behind the model, dashed",
-                    (options.hidden_edges, d.hidden_edges),
+                    options.hidden_edges,
                     Setting::HiddenEdges,
                 ),
                 on_off_row(
-                    "Names",
                     "The names of bodies, sketches and planes over the view",
-                    (options.names, d.names),
+                    options.names,
                     Setting::Names,
                 ),
                 on_off_row(
-                    "Mouse hints",
                     "What the mouse buttons do, in the status bar",
-                    (options.mouse_hints, d.mouse_hints),
+                    options.mouse_hints,
                     Setting::MouseHints,
                 ),
             ],
         ),
         SettingsTab::Units => (
-            "Units",
             Some(units_note(options)),
             vec![
-                chosen(
-                    "Length",
-                    "For new designs: sizes typed without a unit, and shown",
-                    (options.length_unit, d.length_unit),
-                    Setting::LengthUnit,
-                ),
-                chosen(
-                    "Angle",
-                    "How angles are shown; typed without a unit, they're degrees",
-                    (options.angle_unit, d.angle_unit),
-                    Setting::AngleUnit,
-                ),
+                SettingRow {
+                    name: "Length",
+                    ..chosen(
+                        "For new designs: sizes typed without a unit, and shown",
+                        options.length_unit,
+                        Setting::LengthUnit,
+                    )
+                },
+                SettingRow {
+                    name: "Angle",
+                    ..chosen(
+                        "How angles are shown; typed without a unit, they're degrees",
+                        options.angle_unit,
+                        Setting::AngleUnit,
+                    )
+                },
                 setting(
                     "Decimal places",
                     "At most, after the point; trailing zeros are left out",
                     decimals_stepper(options),
-                    reset(options.decimals, d.decimals, decimals_said, |decimals| {
-                        set(Setting::Decimals(decimals))
-                    }),
+                    reset(Setting::Decimals(options.decimals)),
                 ),
             ],
         ),
-        SettingsTab::Mouse => ("Mouse", None, mouse_rows(options)),
+        SettingsTab::Mouse => (None, mouse_rows(options)),
         SettingsTab::Files => (
-            "Files",
             None,
             vec![
                 choice(
-                    "Auto-save",
                     "Changes go to the recovery file this long after the first",
                     AUTO_SAVE_MINUTES,
-                    (options.auto_save, d.auto_save),
+                    options.auto_save,
                     Setting::AutoSave,
                     auto_save_said,
                     |_| None,
                 ),
                 choice(
-                    "Recent designs",
                     "How many the welcome screen keeps",
                     RECENT_DESIGNS,
-                    (options.recent_designs, d.recent_designs),
+                    options.recent_designs,
                     Setting::RecentDesigns,
                     recent_said,
                     |_| None,
@@ -601,7 +585,6 @@ fn section<'a>(
             ],
         ),
         SettingsTab::Mcp => (
-            "MCP",
             Some(
                 "Lets an outside agent (Claude Code, Codex, an IDE) read and edit the open design; its edits are undone with Undo, as yours are. Only this computer can connect."
                     .to_owned(),
@@ -626,32 +609,27 @@ fn units_note(options: ViewOptions) -> String {
 /// about what, the wheel's zoom and the sketch tools' snapping.
 fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
     let mouse = options.mouse;
-    let d = crate::MouseOptions::default();
     let mut rows = vec![
         chosen(
-            "Left drag",
             "Outside a sketch; a click always selects",
-            (mouse.left, d.left),
+            mouse.left,
             Setting::LeftDrag,
         ),
         chosen(
-            "Middle drag",
             "Turning, panning or zooming the view",
-            (mouse.middle, d.middle),
+            mouse.middle,
             Setting::MiddleDrag,
         ),
         chosen(
-            "Right drag",
             "With Shift held, it orbits",
-            (mouse.right, d.right),
+            mouse.right,
             Setting::RightDrag,
         ),
         // The segments' labels are short: the row's name says the rest.
         choice(
-            "Rotation",
             "How a drag turns the view",
             Rotation::ALL.iter().copied(),
-            (mouse.rotation, d.rotation),
+            mouse.rotation,
             Setting::Rotation,
             |rotation| match rotation {
                 Rotation::Turntable => "Turntable",
@@ -661,40 +639,35 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
             |_| None,
         ),
         chosen(
-            "Rotation point",
             "What the view orbits about",
-            (mouse.rotation_point, d.rotation_point),
+            mouse.rotation_point,
             Setting::RotationPoint,
         ),
     ];
     if mouse.rotation_point == RotationPoint::Clicked {
         rows.push(chosen(
-            "Set rotation point with",
             "On the model or grid; elsewhere, the centre again",
-            (mouse.pivot_click, d.pivot_click),
+            mouse.pivot_click,
             Setting::PivotClick,
         ));
     }
     rows.extend([
         choice(
-            "Zoom direction",
             "Which way the wheel zooms in",
             [false, true],
-            (mouse.wheel_down_zooms_in, d.wheel_down_zooms_in),
+            mouse.wheel_down_zooms_in,
             Setting::WheelDownZoomsIn,
             zoom_said,
             |_| None,
         ),
         on_off_row(
-            "Zoom to pointer",
             "Zoom about the point under the pointer, else the middle",
-            (mouse.zoom_to_pointer, d.zoom_to_pointer),
+            mouse.zoom_to_pointer,
             Setting::ZoomToPointer,
         ),
         on_off_row(
-            "Snapping",
             "Sketch tools snap to points, curves and directions unless Shift is held; off, only while it is",
-            (mouse.sketch_snap, d.sketch_snap),
+            mouse.sketch_snap,
             Setting::SketchSnap,
         ),
     ]);
@@ -785,15 +758,14 @@ fn setting<'a>(
     }
 }
 
-/// The row of setting `name`, saying what it `does`: a choice among
-/// `all`, each its `icon`, if it has them, and its `label`, the one chosen
-/// the first of `(value, default)`. Each is chosen, and reset, as `to`
-/// it, the default said as [`Setting::said`] says it.
+/// The row of setting `to(value)`, under its name, saying what it
+/// `does`: a choice among `all`, each its `icon`, if it has them, and its
+/// `label`, the one chosen `value`. Each is chosen as `to` it; see
+/// [`reset`] for the reset.
 fn choice<'a, T: Copy + PartialEq, L: Into<Cow<'static, str>>>(
-    name: &'static str,
     does: &'static str,
     all: impl IntoIterator<Item = T>,
-    (value, default): (T, T),
+    value: T,
     to: fn(T) -> Setting,
     label: fn(T) -> L,
     icon: fn(T) -> Option<Icon>,
@@ -803,70 +775,38 @@ fn choice<'a, T: Copy + PartialEq, L: Into<Cow<'static, str>>>(
         all.into_iter()
             .map(|each| (icon(each), label(each).into(), each == value, set(each))),
     );
-    setting(
-        name,
-        does,
-        control,
-        reset(value, default, |each| to(each).said(), set),
-    )
+    setting(to(value).name(), does, control, reset(to(value)))
 }
 
-/// The row of setting `name`, saying what it `does`, as [`choice`], of
-/// the values a [`Choice`] offers, named and drawn as it has them.
-fn chosen<'a, T: Choice>(
-    name: &'static str,
-    does: &'static str,
-    value: (T, T),
-    to: fn(T) -> Setting,
-) -> SettingRow<'a> {
-    choice(
-        name,
-        does,
-        T::ALL.iter().copied(),
-        value,
-        to,
-        T::said,
-        |_| None,
-    )
+/// The row of setting `to(value)`, saying what it `does`, as [`choice`],
+/// of the values a [`Choice`] offers, named and drawn as it has them.
+fn chosen<'a, T: Choice>(does: &'static str, value: T, to: fn(T) -> Setting) -> SettingRow<'a> {
+    choice(does, T::ALL.iter().copied(), value, to, T::said, |_| None)
 }
 
 /// As [`chosen`], each value drawn beside its name.
-fn pictured<'a, T: Pictured>(
-    name: &'static str,
-    does: &'static str,
-    value: (T, T),
-    to: fn(T) -> Setting,
-) -> SettingRow<'a> {
+fn pictured<'a, T: Pictured>(does: &'static str, value: T, to: fn(T) -> Setting) -> SettingRow<'a> {
     let icon = |each: T| Some(each.icon());
-    choice(name, does, T::ALL.iter().copied(), value, to, T::said, icon)
+    choice(does, T::ALL.iter().copied(), value, to, T::said, icon)
 }
 
-/// The row of setting `name`, saying what it `does`: a switch, on as the
-/// first of `(on, default)`, set, and reset, as `to` it.
-fn on_off_row<'a>(
-    name: &'static str,
-    does: &'static str,
-    (on, default): (bool, bool),
-    to: fn(bool) -> Setting,
-) -> SettingRow<'a> {
-    let set = |on| Message::Settings(SettingsPage::Set(to(on)));
-    setting(
-        name,
-        does,
-        switch(on, set(!on)),
-        reset(on, default, on_off, set),
-    )
+/// The row of setting `to(on)`, under its name, saying what it `does`:
+/// a switch, on as `on`, set as `to` it; see [`reset`] for the reset.
+fn on_off_row<'a>(does: &'static str, on: bool, to: fn(bool) -> Setting) -> SettingRow<'a> {
+    let toggle = Message::Settings(SettingsPage::Set(to(!on)));
+    setting(to(on).name(), does, switch(on, toggle), reset(to(on)))
 }
 
-/// With `value` not `default`: the default as `said`, and what sets it
-/// back, as choosing it on the page does.
-fn reset<T: Copy + PartialEq, S: Into<Cow<'static, str>>>(
-    value: T,
-    default: T,
-    said: impl Fn(T) -> S,
-    message: impl FnOnce(T) -> Message,
-) -> Option<(Cow<'static, str>, Message)> {
-    (value != default).then(|| (said(default).into(), message(default)))
+/// With `current` not its default: the default, as [`Setting::said`]
+/// says it, and what sets it back, as choosing it on the page does.
+fn reset(current: Setting) -> Option<(Cow<'static, str>, Message)> {
+    let default = Setting::of(&ViewOptions::default())[current.index()];
+    (current != default).then(|| {
+        (
+            default.said(),
+            Message::Settings(SettingsPage::Set(default)),
+        )
+    })
 }
 
 /// A muted icon button with a `tip` saying what it does.

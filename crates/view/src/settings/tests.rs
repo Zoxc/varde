@@ -308,7 +308,7 @@ fn the_scale_slider_sets_only_when_let_go() {
 fn resets(options: ViewOptions) -> Vec<(&'static str, Option<(String, String)>)> {
     SettingsTab::ALL
         .into_iter()
-        .flat_map(|tab| section(tab, options, None, &McpState::default()).2)
+        .flat_map(|tab| section(tab, options, None, &McpState::default()).1)
         .map(|row| {
             let reset = row
                 .reset

@@ -19,9 +19,7 @@ use crate::{
 /// The MCP section's rows: the switch, the port, the client while
 /// serving, the token and the lines adding the server to a client.
 pub(super) fn rows<'a>(options: ViewOptions, mcp: &McpState<'a>) -> Vec<SettingRow<'a>> {
-    let set = |setting| Message::Settings(SettingsPage::Set(setting));
     let page = Message::Settings;
-    let d = ViewOptions::default();
     let port = options.mcp_port;
     let serving = match mcp.status {
         McpStatus::Listening(bound) if options.mcp => Some(bound),
@@ -58,9 +56,8 @@ pub(super) fn rows<'a>(options: ViewOptions, mcp: &McpState<'a>) -> Vec<SettingR
         .style(theme::field_input(port_bad));
     let mut rows = vec![
         on_off_row(
-            "MCP",
             "Shows the MCP panel, where the server is started",
-            (options.mcp, d.mcp),
+            options.mcp,
             Setting::Mcp,
         ),
         SettingRow {
@@ -69,12 +66,7 @@ pub(super) fn rows<'a>(options: ViewOptions, mcp: &McpState<'a>) -> Vec<SettingR
                 "Port",
                 port_said,
                 port_field.into(),
-                reset(
-                    port,
-                    MCP_PORT_DEFAULT,
-                    |port| port.to_string(),
-                    |port| set(Setting::McpPort(port)),
-                ),
+                reset(Setting::McpPort(port)),
             )
         },
     ];
