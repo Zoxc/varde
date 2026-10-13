@@ -20,17 +20,17 @@ use super::settings;
 use crate::autosave::{Ending, Held, to_open};
 use crate::browser::folder::{self, Design};
 use crate::browser::{self, BrowserDesign, LastDownload};
-use crate::dir::{Dir, Make, end_held, remove_if_free};
+use crate::dir::{Dir, Make, end_held, remove_if_free, take_new};
 use crate::downloads::{self, Downloads};
 use crate::open::{NOT_FOUND, OpenFiles};
-use crate::opfs::{lost_to_another_tab, new_name};
+use crate::opfs::new_name;
 use crate::store::{
-    ATTEMPTS, Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
+    Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
 };
 use crate::three_mf;
 use crate::thumbnail::previews;
 use crate::vrdp::{
-    self, Error as FileError, Known, Preview, ReadAt, Tail, check_unchanged, from_bytes_with_found,
+    self, Error as FileError, Known, Preview, Tail, check_unchanged, from_bytes_with_found,
     whole_file,
 };
 use crate::{
@@ -396,25 +396,15 @@ impl Files {
     async fn entry(&mut self) -> Result<Entry, String> {
         let error = |e: io::Error| format!("couldn't make a place to auto-save the design: {e}");
         let dir = self.dirs.store().await.map_err(error)?;
-        for _ in 0..ATTEMPTS {
-            let name = entry_name(&mut self.named);
-            let handle = match dir.take(&name, Make::IfMissing).await {
-                Ok(handle) => handle,
-                // Someone else's, which a name like it is unlikely to be,
-                // or deleted by another tab listing entries just now.
-                Err(e) if lost_to_another_tab(e.kind()) => continue,
-                Err(e) => return Err(error(e)),
-            };
-            // Someone else's too, left behind: let go of it.
-            if !handle.is_empty().map_err(error)? {
-                continue;
-            }
-            return Ok(Entry {
-                name,
-                held: Held::new(handle),
-            });
-        }
-        Err("couldn't find a free name to auto-save the design under".to_owned())
+        let named = &mut self.named;
+        let Some((name, handle)) = take_new(&dir, || entry_name(named)).await.map_err(error)?
+        else {
+            return Err("couldn't find a free name to auto-save the design under".to_owned());
+        };
+        Ok(Entry {
+            name,
+            held: Held::new(handle),
+        })
     }
 
     /// Appends `document` to `file`'s sidecar, or its entry.

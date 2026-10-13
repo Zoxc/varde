@@ -40,14 +40,3 @@ fn a_read_or_write_never_does_more_than_asked() {
     assert!(done(-1.0, 10).is_err());
     assert!(done(f64::NAN, 10).is_err());
 }
-
-#[test]
-fn a_new_entry_lost_to_another_tab_is_a_name_to_skip() {
-    // Another tab holds it, or listed it as empty and deleted it between
-    // its making and its taking.
-    assert!(lost_to_another_tab(io::ErrorKind::ResourceBusy));
-    assert!(lost_to_another_tab(io::ErrorKind::NotFound));
-    assert!(!lost_to_another_tab(io::ErrorKind::StorageFull));
-    assert!(!lost_to_another_tab(io::ErrorKind::PermissionDenied));
-    assert!(!lost_to_another_tab(io::ErrorKind::Other));
-}

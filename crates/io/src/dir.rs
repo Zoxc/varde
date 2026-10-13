@@ -130,6 +130,37 @@ pub(crate) async fn remove_if_free(dir: &impl Dir, name: &str) -> io::Result<()>
     }
 }
 
+/// Whether taking a file just named, with [`Make::New`], failed with
+/// `kind` because someone else got to the name first: it's there already,
+/// another tab holds it, or another tab listed it as empty and deleted it
+/// between its making and its taking (the handle of a deleted file can't
+/// be taken). Either way it's another name's turn.
+pub(crate) fn lost_race(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::AlreadyExists | io::ErrorKind::ResourceBusy | io::ErrorKind::NotFound
+    )
+}
+
+/// Takes a new, empty file in `dir` under the first of `name`'s names
+/// nobody got to first (see [`lost_race`]), trying
+/// [`crate::store::ATTEMPTS`] of them: the name and the file, or `None`
+/// if all were taken.
+pub(crate) async fn take_new<D: Dir>(
+    dir: &D,
+    mut name: impl FnMut() -> String,
+) -> io::Result<Option<(String, D::File)>> {
+    for _ in 0..crate::store::ATTEMPTS {
+        let name = name();
+        match dir.take(&name, Make::New).await {
+            Ok(file) => return Ok(Some((name, file))),
+            Err(e) if lost_race(e.kind()) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(None)
+}
+
 /// Lets go of `held`, the file `name` in `dir`, as `ending` says,
 /// deleting it unless that keeps what's in it.
 pub(crate) async fn end_held<D: Dir>(

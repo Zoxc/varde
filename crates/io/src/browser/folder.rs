@@ -15,7 +15,7 @@ use varde_document::Document;
 
 use super::{BrowserDesign, DownloadStatus, is_design_name, within};
 use crate::autosave::{AutoSaved, Ending, Held, Origin};
-use crate::dir::{Dir, Make, end_held, remove_if_free, take_waiting};
+use crate::dir::{Dir, Make, end_held, lost_race, remove_if_free, take_new, take_waiting};
 use crate::downloads::Downloads;
 use crate::lock::{Left, Lock, READ_ONLY};
 use crate::vrdp::{
@@ -567,14 +567,7 @@ pub(crate) async fn copy_in<D: Dir>(
         };
         let sidecar = match dir.take(&sidecar_name(&name), Make::New).await {
             Ok(sidecar) => Held::new(sidecar),
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::AlreadyExists
-                        | io::ErrorKind::ResourceBusy
-                        | io::ErrorKind::NotFound
-                ) =>
-            {
+            Err(e) if lost_race(e.kind()) => {
                 tried.push(name);
                 continue;
             }
@@ -774,29 +767,16 @@ async fn rescue<F: Storage, S: Dir>(
         document: newest.document,
         origin: Origin::Edited,
     };
-    for _ in 0..crate::store::ATTEMPTS {
-        let name = entry_name();
-        let file = match store.take(&name, Make::New).await {
-            Ok(file) => file,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::AlreadyExists | io::ErrorKind::ResourceBusy
-                ) =>
-            {
-                continue;
-            }
-            Err(_) => return false,
-        };
-        let mut entry = Held::new(file);
-        let written = entry.append_saved(&saved).is_ok();
-        drop(entry);
-        if !written {
-            let _ = store.remove(&name).await;
-        }
-        return written;
+    let Ok(Some((name, file))) = take_new(store, entry_name).await else {
+        return false;
+    };
+    let mut entry = Held::new(file);
+    let written = entry.append_saved(&saved).is_ok();
+    drop(entry);
+    if !written {
+        let _ = store.remove(&name).await;
     }
-    false
+    written
 }
 
 /// The design `name` as listed, see [`list`]; `held` if this tab holds it.

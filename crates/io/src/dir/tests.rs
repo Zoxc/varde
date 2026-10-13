@@ -60,6 +60,41 @@ fn taking_makes_the_file_as_asked() {
     assert_eq!(block_on(dir.names()).unwrap(), ["a"]);
 }
 
+/// A new file goes under the first name nobody got to first, held or
+/// there already; with every name taken there's none.
+#[test]
+fn taking_a_new_file_skips_names_taken() {
+    let (_temp, dir) = dir("dir-take-new");
+    drop(block_on(dir.take("a", Make::IfMissing)).unwrap());
+    let held = block_on(dir.take("b", Make::IfMissing)).unwrap();
+    let mut names = ["a", "b", "c"].into_iter().map(str::to_owned);
+    let (name, _file) = block_on(take_new(&dir, || names.next().unwrap()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(name, "c");
+    let taken = block_on(take_new(&dir, || "a".to_owned())).unwrap();
+    assert!(taken.is_none());
+    drop(held);
+}
+
+#[test]
+fn a_new_file_lost_to_someone_else_is_a_name_to_skip() {
+    for kind in [
+        ErrorKind::AlreadyExists,
+        ErrorKind::ResourceBusy,
+        ErrorKind::NotFound,
+    ] {
+        assert!(lost_race(kind), "{kind:?}");
+    }
+    for kind in [
+        ErrorKind::StorageFull,
+        ErrorKind::PermissionDenied,
+        ErrorKind::Other,
+    ] {
+        assert!(!lost_race(kind), "{kind:?}");
+    }
+}
+
 /// Reading is bounded, deleting and renaming say what's missing or there.
 #[test]
 fn reading_deleting_and_renaming() {

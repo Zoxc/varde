@@ -64,15 +64,6 @@ pub(crate) fn new_name(millis: f64, random: f64, n: u64) -> String {
     format!("{millis:x}-{random:08x}-{n:x}.{EXTENSION}")
 }
 
-/// Whether taking the handle of an entry just made failed with `kind`
-/// because another tab got to it first: it holds it, or it listed it as
-/// empty and deleted it in between, which a listing does to an entry
-/// nobody holds (the handle of a deleted entry can't be taken). Either way
-/// it's another name's turn.
-pub(crate) fn lost_to_another_tab(kind: io::ErrorKind) -> bool {
-    matches!(kind, io::ErrorKind::ResourceBusy | io::ErrorKind::NotFound)
-}
-
 /// How many bytes a read or write that asked for `wanted` did, as JS gave
 /// it: never more than asked for.
 pub(crate) fn done(value: f64, wanted: usize) -> io::Result<usize> {
