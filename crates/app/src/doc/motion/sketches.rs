@@ -24,9 +24,7 @@ impl MotionSession {
     /// place (a split's, a sweep's, a loft's) can take: before the
     /// feature edited.
     pub(super) fn takes_sketch(&self, document: &Document, sketch: FeatureId) -> bool {
-        let index = self.index_in(document);
-        (document.features()[..index].iter())
-            .any(|feature| feature.id == sketch && sketch_of(document, feature.id).is_some())
+        sketch_before(document, self.index_in(document), sketch)
     }
 
     /// Whether a split's tool is picked in the viewport in its sketches, where
@@ -112,18 +110,26 @@ pub(super) fn chain_through(drawn: &Sketch, sketch: FeatureId, curve: Id) -> Cur
     CurveChain { sketch, curves }
 }
 
+/// Whether `sketch` is a sketch of `document` before feature `index`.
+pub(super) fn sketch_before(document: &Document, index: usize, sketch: FeatureId) -> bool {
+    let features = document.features();
+    (features[..index.min(features.len())].iter()).any(|feature| feature.id == sketch)
+        && sketch_of(document, sketch).is_some()
+}
+
+/// Whether `sketch` is a sketch of `document` that still has every
+/// curve of `curves`.
+pub(super) fn curves_held(document: &Document, sketch: FeatureId, curves: &[Id]) -> bool {
+    sketch_of(document, sketch)
+        .is_some_and(|drawn| curves.iter().all(|&curve| drawn.curve(curve).is_some()))
+}
+
 /// Whether a chain of `chains` names what `document` no longer takes at
 /// feature `index`: a sketch not before it, or a curve its sketch hasn't.
 pub(super) fn chains_gone(document: &Document, index: usize, chains: &[CurveChain]) -> bool {
-    let features = document.features();
-    let before = |sketch: FeatureId| {
-        (features[..index.min(features.len())].iter()).any(|feature| feature.id == sketch)
-    };
     (chains.iter()).any(|chain| {
-        !before(chain.sketch)
-            || sketch_of(document, chain.sketch).is_none_or(|sketch| {
-                (chain.curves.iter()).any(|&curve| sketch.curve(curve).is_none())
-            })
+        !sketch_before(document, index, chain.sketch)
+            || !curves_held(document, chain.sketch, &chain.curves)
     })
 }
 

@@ -25,7 +25,7 @@ use varde_view::{
     SplitPiece, SplitView, Unnamed, plane_name, split_info,
 };
 
-use super::sketches::{count, sketch_name};
+use super::sketches::{count, curves_held, sketch_name};
 use super::{Doc, MotionSession, unnamed};
 use crate::doc::feed::Merges;
 use crate::doc::pickable;
@@ -141,11 +141,7 @@ impl SplitSetup {
                 _ => None,
             };
             let curves = match &tool {
-                SplitTool::Chain { sketch, curves } => {
-                    sketch_of(document, *sketch).is_some_and(|sketch| {
-                        curves.iter().all(|&curve| sketch.curve(curve).is_some())
-                    })
-                }
+                SplitTool::Chain { sketch, curves } => curves_held(document, *sketch, curves),
                 _ => true,
             };
             document.check_split_tool(index, &tool).is_err()
