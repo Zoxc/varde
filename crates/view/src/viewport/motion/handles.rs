@@ -58,26 +58,52 @@ pub(crate) enum Grip {
 /// A handle being dragged, as it was grabbed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Drag {
-    grip: Grip,
     /// The handles' centre, which the drag keeps where it was.
     centre: DVec3,
-    /// A pixel's size at the camera's target, in millimetres, which an
-    /// arrow's offset snaps by, as the extrude's handle's length does:
-    /// the steps are the same wherever the bodies are (the handles' size
-    /// is a pixel's at their centre).
-    pixel: f64,
     /// The offsets, in millimetres, and the angle, in degrees, as the
     /// fields had them (none read as zero).
     offset: DVec3,
     angle: f64,
-    /// An arrow's: how far along its line the cursor was. A ring's: the
-    /// angle of the cursor about the centre on its plane, as last seen.
-    at: f64,
-    /// A ring's: how far the cursor has turned about the centre since
-    /// it was grabbed, in radians, all the way round as often as it went.
-    turned: f64,
-    /// The value last sent: the offset, or the angle in degrees.
-    sent: f64,
+    /// What the grip dragged keeps of the drag.
+    along: Along,
+}
+
+/// What dragging an arrow or a ring keeps, by grip.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Along {
+    Arrow {
+        axis: Axis3,
+        /// A pixel's size at the camera's target, in millimetres, which
+        /// the offset snaps by, as the extrude's handle's length does:
+        /// the steps are the same wherever the bodies are (the handles'
+        /// size is a pixel's at their centre).
+        pixel: f64,
+        /// How far along its line the cursor was when grabbed.
+        from: f64,
+        /// The offset last sent, in millimetres.
+        sent: f64,
+    },
+    Ring {
+        axis: Axis3,
+        /// The angle of the cursor about the centre on its plane, as
+        /// last seen.
+        last: f64,
+        /// How far the cursor has turned about the centre since it was
+        /// grabbed, in radians, all the way round as often as it went.
+        turned: f64,
+        /// The angle last sent, in degrees.
+        sent: f64,
+    },
+}
+
+impl Drag {
+    /// The grip being dragged.
+    fn grip(&self) -> Grip {
+        match self.along {
+            Along::Arrow { axis, .. } => Grip::Arrow(axis),
+            Along::Ring { axis, .. } => Grip::Ring(axis),
+        }
+    }
 }
 
 /// An arrow of the handles as it's laid out: along its axis's direction
@@ -481,7 +507,7 @@ pub(super) fn draw_handles(
     scene: &Colors,
     colors: SketchColors,
 ) {
-    let active = input.drag.map(|drag| drag.grip).or(input.hover);
+    let active = input.drag.map(|drag| drag.grip()).or(input.hover);
     let projector = &handles.projector;
     // The orb, faintly, on the screen.
     let origin = projector.show(handles.centre);
@@ -563,7 +589,7 @@ impl<'a> Moving<'a> {
         let centre = match input.drag {
             Some(
                 drag @ Drag {
-                    grip: Grip::Arrow(_),
+                    along: Along::Arrow { .. },
                     ..
                 },
             ) => drag.centre + (self.offset() - drag.offset),
@@ -657,19 +683,25 @@ impl<'a> Moving<'a> {
         let centre = handles.centre;
         let offset = self.offset();
         let angle = degrees(self.field(MotionField::Angle).unwrap_or(0.0));
-        let (from, sent) = match grip {
-            Grip::Arrow(axis) => (handles.along(centre, axis, at)?, offset[axis.index()]),
-            Grip::Ring(axis) => (handles.angle_at(centre, axis, at)?, angle),
+        let along = match grip {
+            Grip::Arrow(axis) => Along::Arrow {
+                axis,
+                pixel: handles.projector.pixel(),
+                from: handles.along(centre, axis, at)?,
+                sent: offset[axis.index()],
+            },
+            Grip::Ring(axis) => Along::Ring {
+                axis,
+                last: handles.angle_at(centre, axis, at)?,
+                turned: 0.0,
+                sent: angle,
+            },
         };
         Some(Drag {
-            grip,
             centre,
-            pixel: handles.projector.pixel(),
             offset,
             angle,
-            at: from,
-            turned: 0.0,
-            sent,
+            along,
         })
     }
 
@@ -678,33 +710,44 @@ impl<'a> Moving<'a> {
     /// last sent: an arrow's offset brought within what a move takes, a
     /// ring's turn only where it keeps the offset within it.
     fn drag(&self, drag: &mut Drag, handles: &Handles, at: DVec2) -> Option<MotionLook> {
-        match drag.grip {
-            Grip::Arrow(axis) => {
+        match &mut drag.along {
+            &mut Along::Arrow {
+                axis,
+                pixel,
+                from,
+                ref mut sent,
+            } => {
                 let along = handles.along(drag.centre, axis, at)?;
-                let step = snap_step(drag.pixel, self.state.units)?;
-                let to = drag.offset[axis.index()] + (along - drag.at);
+                let step = snap_step(pixel, self.state.units)?;
+                let to = drag.offset[axis.index()] + (along - from);
                 // Past what a move takes, the last step within it.
                 let limit = (f64::from(MAX_COORD) / step).floor() * step;
                 let to = ((to / step).round() * step).clamp(-limit, limit) + 0.0;
-                if !to.is_finite() || to == drag.sent {
+                if !to.is_finite() || to == *sent {
                     return None;
                 }
-                drag.sent = to;
+                *sent = to;
                 let units = Unit::Length(self.state.units);
                 Some(MotionLook::Input {
                     field: MotionField::Offset(axis),
                     text: varde_expr::format(to, Some(units)),
                 })
             }
-            Grip::Ring(axis) => {
+            Along::Ring {
+                axis,
+                last,
+                turned,
+                sent,
+            } => {
+                let axis = *axis;
                 let now = handles.angle_at(drag.centre, axis, at)?;
-                drag.turned += wrapped(now - drag.at);
-                drag.at = now;
+                *turned += wrapped(now - *last);
+                *last = now;
                 let step = angle_step(ORB_PIXELS);
-                let to = drag.angle + degrees(drag.turned);
+                let to = drag.angle + degrees(*turned);
                 // Within a turn either way, as a move takes.
                 let to = ((to / step).round() * step % 360.0) + 0.0;
-                if !to.is_finite() || to == drag.sent {
+                if !to.is_finite() || to == *sent {
                     return None;
                 }
                 let shift = turned_about(drag.offset, drag.centre, axis, to - drag.angle)?;
@@ -712,7 +755,7 @@ impl<'a> Moving<'a> {
                 if !(shift.is_finite() && shift.abs().max_element() <= limit) {
                     return None;
                 }
-                drag.sent = to;
+                *sent = to;
                 let units = Some(Unit::Length(self.state.units));
                 Some(MotionLook::Turn {
                     axis,
