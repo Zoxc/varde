@@ -34,7 +34,7 @@ use varde_document::{BodyId, FaceRef, FeatureId, Plane, Side, Split, SplitTool};
 use varde_kernel_compat::patch::Bounds3;
 use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
-use super::motion::{SPLIT_PLANE, face_plane};
+use super::reference::{SPLIT_PLANE, face_plane};
 use super::run::tool_failed;
 use super::{
     BodySolid, Evaluation, Failed, SketchOutput, Step, face_geometry, own_solid, through_all,

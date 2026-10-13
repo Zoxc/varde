@@ -153,6 +153,7 @@ mod loft;
 mod motion;
 mod offset_face;
 mod pattern;
+mod reference;
 mod revolve;
 mod run;
 pub(crate) mod scale;

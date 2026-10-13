@@ -31,7 +31,8 @@ use varde_kernel_compat::measure::{EdgeShape, edge_shape};
 use varde_kernel_compat::topology::Unresolved;
 use varde_kernel_compat::{AlignError, AlignOptions, Evidence, Motion, Solid, Tolerance, Topology};
 
-use super::motion::{How, place, reference_key};
+use super::motion::{How, place};
+use super::reference::reference_key;
 use super::{BodySolid, Evaluation, Failed, Step, chain_curves, face_geometry, own_solid};
 use crate::cache::{Cache, Datum};
 use crate::error_geometry::ErrorGeometry;

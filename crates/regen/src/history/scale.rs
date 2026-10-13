@@ -29,7 +29,8 @@ use varde_kernel_compat::mesh::Surface;
 use varde_kernel_compat::{Budget, Motion, Tolerance};
 
 use super::align::Found;
-use super::motion::{How, place, reference_key};
+use super::motion::{How, place};
+use super::reference::reference_key;
 use super::{Evaluation, Failed, Step, own_solids};
 use crate::cache::{Cache, EdgeLength};
 use crate::why::{self, Moving, Whose};

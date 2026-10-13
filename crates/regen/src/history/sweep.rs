@@ -43,7 +43,7 @@
 //!   path's start, where the profile's plane crosses it, is the kernel's
 //!   to find.
 //! - **A helix**: its axis resolved as a move's turn's
-//!   ([`motion::resolve_axis`]), reversed with `flip`, noted for the
+//!   ([`reference::resolve_axis`]), reversed with `flip`, noted for the
 //!   draft's reply ([`Evaluation::references`]), its pitch times its
 //!   turns within the coordinate limit.
 //!
@@ -76,7 +76,7 @@ use varde_kernel_compat::{Budget, Frame, Profile, Solid, Tolerance};
 use varde_sketch::Curve;
 
 use super::blend::{find_chains, tangent_members};
-use super::{Evaluation, Failed, Run, motion};
+use super::{Evaluation, Failed, Run, reference};
 use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
 use crate::inspect;
@@ -264,9 +264,9 @@ impl Run<'_> {
         cache: &mut Cache,
     ) -> Result<Path, Failed> {
         let [point, direction] =
-            motion::resolve_axis(&helix.axis, evaluation, &self.tolerance, cache)?;
+            reference::resolve_axis(&helix.axis, evaluation, &self.tolerance, cache)?;
         let direction = if helix.flip { -direction } else { direction };
-        motion::note_reference(evaluation, self.feature.id, [point, direction]);
+        reference::note_reference(evaluation, self.feature.id, [point, direction]);
         let axis = direction.try_normalize().ok_or(why::HELIX_NO_DIRECTION)?;
         let (pitch, turns) = (helix.pitch.value, helix.turns.value);
         // Both checked, at most `MAX_COORD` and `MAX_HELIX_TURNS`: the

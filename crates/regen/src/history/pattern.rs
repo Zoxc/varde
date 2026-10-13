@@ -5,7 +5,8 @@
 use varde_document::{FeatureId, Pattern, PatternKind};
 use varde_kernel_compat::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
 
-use super::motion::{note_reference, resolve_axis, within};
+use super::motion::within;
+use super::reference::{note_reference, resolve_axis};
 use super::{BodySolid, Evaluation, Failed, Step, own_solids};
 use crate::cache::{Cache, Key, Keyer};
 use crate::why::{self, Moving};

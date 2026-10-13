@@ -36,7 +36,7 @@ use varde_document::FaceDraft;
 use varde_kernel_compat::{Budget, DraftError, Solid, Tolerance, Topology};
 
 use super::in_place::{Drawn, InPlace};
-use super::motion::{NEUTRAL_PLANE, resolve_plane};
+use super::reference::{NEUTRAL_PLANE, resolve_plane};
 use super::{Evaluation, Failed, Step};
 use crate::cache::Cache;
 use crate::why::{self, DraftRefusal};
@@ -86,7 +86,7 @@ pub(super) fn evaluate_face_draft(
     // The plane, as a mirror's is, for the session to draw: also while a
     // face isn't found, whose failure comes first.
     if let Ok(&plane) = plane.as_ref() {
-        super::motion::note_reference(evaluation, feature, plane);
+        super::reference::note_reference(evaluation, feature, plane);
     }
     let faces = faces?;
     let [neutral, normal] = plane?;

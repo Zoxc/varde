@@ -14,7 +14,7 @@ use varde_sketch::{Curve, Id};
 use crate::cache::{Cache, Key, Keyer};
 use crate::why::{self};
 
-use super::{Evaluation, Failed, Run, chain_curves, motion};
+use super::{Evaluation, Failed, Run, chain_curves, reference};
 
 impl Run<'_> {
     /// A revolve's tool solid and the key it's filed under: the regions
@@ -198,7 +198,7 @@ pub(crate) fn edge_axis(
     let made = evaluation
         .holding(edge.body)
         .ok_or(why::Picked::AxisEdge.body_gone())?;
-    let key = motion::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
+    let key = reference::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
     let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
     let local = |p: DVec3| {
         let height = (p - placement.origin).dot(placement.normal);
