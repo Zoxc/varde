@@ -7,8 +7,10 @@ reached by following the chain is current. Auto-save sidecars and store
 entries are a second file type, each record an auto-save. Reading steps
 over damage where it can and says how it found the file; saving refuses
 to go over someone else's change or over damage it didn't expect.
-`crates/io/src/vrdp.rs` and its modules `chain` (reading), `check` (the
-check before a save) and `preview` hold the code. How the lane and the
+`crates/io/src/vrdp.rs` and its modules `block` (the block framing),
+`record` (the payload codec), `storage` (`ReadAt`, `Storage`), `held`
+(`HeldFile`), `chain` (reading), `check` (the check before a save) and
+`preview` hold the code. How the lane and the
 app use it is in `files.md` and `web-files.md`.
 
 ## Container

@@ -7,12 +7,16 @@ use std::collections::{HashMap, HashSet};
 use serde::de::IgnoredAny;
 use xxhash_rust::xxh3::xxh3_128;
 
+use super::block::{
+    BACK_LEN, BLOCK_OVERHEAD, Block, TAG_LEN_AT, back_is, intact, len_fits, stored_at,
+    stored_before, tag_len_of, u64_at,
+};
 use super::check::{Found, block_at};
+use super::record::{Payload, decode_record, decompress, unchecked_record};
+use super::storage::{ReadAt, check_file_header};
 use super::{
-    BACK_LEN, BLOCK_OVERHEAD, Block, DamagedRecord, Error, FILE_HEADER_LEN, FileType, FoundRecord,
-    Opened, Outcome, Payload, ReadAt, Report, Result, TAG_LEN_AT, back_is, check_file_header,
-    decode_record, decompress, header_id, intact, len_fits, stored_at, stored_before, tag_len_of,
-    u64_at, unchecked_record,
+    DamagedRecord, Error, FILE_HEADER_LEN, FileType, FoundRecord, Opened, Outcome, Report, Result,
+    header_id,
 };
 use crate::UnixSeconds;
 
@@ -563,7 +567,7 @@ impl Search<'_> {
 
 /// The block at `at` in `bytes` by its first `len`, if it passes the
 /// checks that come before hashing it: both its lengths agree, within
-/// [`MAX_BLOCK`](super::MAX_BLOCK) (the bound for every kind so far), and
+/// [`MAX_BLOCK`](super::block::MAX_BLOCK) (the bound for every kind so far), and
 /// long enough for its `tag_len`.
 fn candidate(bytes: &[u8], at: usize) -> Option<&[u8]> {
     let front = bytes.get(at..at.checked_add(TAG_LEN_AT + 2)?)?;

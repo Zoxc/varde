@@ -3,8 +3,20 @@ use std::path::{Path, PathBuf};
 
 use varde_document::{Body, Command, Editor, Opacity, OriginPlane, Plane, Tint};
 
+use super::block::{
+    AUTOSAVE, BACK_LEN, BLOCK_OVERHEAD, Block, MAX_BLOCK, MAX_TAG, PREV_AT, PREVIEW, RECORD,
+    SUM_AT, TAG_LEN_AT, block_sum, frame, u64_at, u128_at,
+};
 use super::check::{Append, Found, block_at};
+use super::held::Held;
+use super::record::{
+    MAX_DECOMPRESSED, MAX_EXPANSION, Record, decode, encode, from_msgpack, record_at, writer,
+};
+use super::storage::{WholeRead, check_file_header};
 use super::*;
+use std::fs::File;
+use std::io::Write;
+use varde_document::{CheckError, Unchecked};
 
 impl Tail {
     /// Where its record is in the file.

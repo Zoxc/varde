@@ -4,11 +4,12 @@
 
 use std::io;
 
-use super::{
-    BLOCK_OVERHEAD, BlockHasher, Error, FILE_HEADER_LEN, Kind, PREVIEW, RECORD, ReadAt, Result,
-    Stored, TAG_LEN_AT, Tail, design_header, frame, header_id, intact, read_pieces, stored_before,
-    tag_len_of, zeroed,
+use super::block::{
+    BLOCK_OVERHEAD, BlockHasher, Kind, PREVIEW, RECORD, Stored, TAG_LEN_AT, frame, intact,
+    read_pieces, stored_before, tag_len_of,
 };
+use super::storage::{ReadAt, zeroed};
+use super::{Error, FILE_HEADER_LEN, Result, Tail, design_header, header_id};
 
 /// The longest media type a preview may have, in bytes.
 pub const MAX_MEDIA_TYPE: usize = 127;

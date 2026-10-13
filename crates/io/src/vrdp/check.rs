@@ -5,12 +5,12 @@ use std::io;
 
 use xxhash_rust::xxh3::xxh3_128;
 
-use super::chain::{bridge, framed_from};
-use super::{
-    After, BLOCK_OVERHEAD, Block, Error, FILE_HEADER_LEN, FileType, Known, MAX_BLOCK, RECORD,
-    ReadAt, Result, buffer_len, design_header, header_id, intact, read_pieces, stored_at,
-    stored_before, zeroed,
+use super::block::{
+    BLOCK_OVERHEAD, Block, MAX_BLOCK, RECORD, intact, read_pieces, stored_at, stored_before,
 };
+use super::chain::{bridge, framed_from};
+use super::storage::{ReadAt, buffer_len, zeroed};
+use super::{After, Error, FILE_HEADER_LEN, FileType, Known, Result, design_header, header_id};
 
 /// Where a save appends, once [`check_unchanged`] passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
