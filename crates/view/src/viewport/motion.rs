@@ -55,6 +55,7 @@ use varde_render::{Camera, Colors, GridPlane, SketchLayer};
 mod handles;
 mod loft;
 mod marks;
+mod sketch_input;
 mod split;
 mod sweep;
 
@@ -69,7 +70,8 @@ use crate::viewport::local_cursor;
 use handles::{Drag, Grip, draw_handles};
 use loft::{LoftInput, SeamInput, loft_labels};
 use marks::scale_marks;
-use split::{SplitInput, split_regions};
+use sketch_input::SketchInput;
+use split::split_regions;
 use sweep::{sweep_lines, sweep_regions};
 
 /// How wide a split's sketches' curves are drawn, in pixels: a
@@ -85,11 +87,11 @@ pub(crate) struct Input {
     hover: Option<Grip>,
     drag: Option<Drag>,
     /// A split's sketches' regions or curves.
-    split: SplitInput,
+    split: SketchInput,
     /// The knobs of an operation's handle ([`MotionState::knobs`]).
     knobs: knobs::Input,
     /// A sweep's profile's regions and its path sketches' curves.
-    sweep: SplitInput,
+    sweep: SketchInput,
     /// A loft's sections and rails picked in their sketches.
     loft: LoftInput,
     /// A loft's seam knobs, its sections' starts.
@@ -146,10 +148,10 @@ impl Input {
             self.knobs.clear();
         }
         if kind != MotionKind::Split {
-            self.split = SplitInput::default();
+            self.split = SketchInput::default();
         }
         if kind != MotionKind::Sweep {
-            self.sweep = SplitInput::default();
+            self.sweep = SketchInput::default();
         }
         if kind != MotionKind::Loft {
             self.loft = LoftInput::default();

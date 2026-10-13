@@ -9,13 +9,14 @@ use varde_document::FeatureId;
 use varde_render::{Camera, SketchLayer, Space as LayerSpace};
 use varde_sketch::Id;
 
-use super::{CURVE_WIDTH, Input, Moving, SplitInput};
+use super::sketch_input::{SketchInput, SketchPick, SketchPicker};
+use super::{CURVE_WIDTH, Input, Moving};
 use crate::motion::{MotionLook, MotionPick, SketchLines, SweepView};
 use crate::operation_panel::PanelHover;
 use crate::theme::SketchColors;
 use crate::viewport::local_cursor;
 use crate::viewport::regions::{Regions, grid_plane};
-use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH, SketchHit, curve_under};
+use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH};
 use crate::viewport::style::line;
 use crate::{Look, Message};
 
@@ -26,6 +27,14 @@ pub(super) fn sweep_regions<'s, 'a>(
     hover: Option<PanelHover>,
 ) -> Regions<'s, 'a> {
     Regions::new(&sweep.candidates, sweep.source, sweep.picked, hover)
+}
+
+/// A sweep's profile regions and path curves, as it picks them.
+fn sweep_picker<'s, 'a>(sweep: &'s SweepView<'a>) -> SketchPicker<'s, 'a> {
+    SketchPicker {
+        regions: sweep_regions(sweep, None),
+        lines: &sweep.lines,
+    }
 }
 
 /// Draws a sweep's path (or a loft's rails, or a split's line) on
@@ -109,7 +118,6 @@ impl<'a> Moving<'a> {
         camera: &Camera,
     ) -> Option<Action<Message>> {
         let sweep = self.state.sweep()?;
-        let regions = sweep_regions(sweep, None);
         let (redraw, input) = (&mut input.redraw, &mut input.sweep);
         match event {
             mouse::Event::CursorMoved { .. } => {
@@ -135,16 +143,12 @@ impl<'a> Moving<'a> {
             mouse::Event::CursorLeft => input.leave().then(Action::request_redraw),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let at = local_cursor(bounds, cursor)?;
-                let look = match picking {
-                    MotionPick::Regions => {
-                        let (sketch, region) = regions.region_under(at, camera, bounds)?;
+                let regions = picking == MotionPick::Regions;
+                let look = match sweep_picker(sweep).under(regions, at, camera, bounds)? {
+                    SketchPick::Region { sketch, region } => {
                         MotionLook::SweepRegion { sketch, region }
                     }
-                    _ => {
-                        let (sketch, curve) = curve_under(&sweep.lines, at, camera, bounds, None)
-                            .map(SketchHit::of)?;
-                        MotionLook::SweepCurve { sketch, curve }
-                    }
+                    SketchPick::Curve { sketch, curve } => MotionLook::SweepCurve { sketch, curve },
                 };
                 Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
             }
@@ -231,27 +235,13 @@ impl<'a> Moving<'a> {
     fn sweep_hover(
         &self,
         picking: MotionPick,
-        input: &mut SplitInput,
+        input: &mut SketchInput,
         at: Option<DVec2>,
         camera: &Camera,
         bounds: Rectangle,
     ) -> bool {
-        let Some(sweep) = self.state.sweep() else {
-            return false;
-        };
-        let (region, curve) = match picking {
-            MotionPick::Regions => (
-                at.and_then(|at| sweep_regions(sweep, None).region_under(at, camera, bounds)),
-                None,
-            ),
-            _ => (
-                None,
-                at.and_then(|at| {
-                    curve_under(&sweep.lines, at, camera, bounds, None).map(SketchHit::of)
-                }),
-            ),
-        };
-        std::mem::replace(&mut input.regions.hover, region) != region
-            || std::mem::replace(&mut input.curve, curve) != curve
+        self.state.sweep().is_some_and(|sweep| {
+            sweep_picker(sweep).hover(picking == MotionPick::Regions, input, at, camera, bounds)
+        })
     }
 }

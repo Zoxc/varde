@@ -3,52 +3,27 @@
 use glam::DVec2;
 use iced::widget::shader::Action;
 use iced::{Rectangle, mouse};
-use varde_document::FeatureId;
 use varde_render::Camera;
-use varde_sketch::Id;
 
 use super::Moving;
+use super::sketch_input::{SketchInput, SketchPick, SketchPicker};
 use crate::motion::{MotionLook, MotionPick, SplitMode, SplitView};
 use crate::viewport::local_cursor;
-use crate::viewport::regions::{self, Regions};
-use crate::viewport::sketch_pick::{SketchHit, curve_under};
+use crate::viewport::regions::Regions;
 use crate::{Look, Message};
-
-/// What the viewport keeps of a split's tool picked in its sketches: the
-/// region under the cursor and the base layer of the source's regions,
-/// and the curve under the cursor, with its sketch.
-#[derive(Default)]
-pub(super) struct SplitInput {
-    pub(super) regions: regions::Input,
-    pub(super) curve: Option<(FeatureId, Id)>,
-}
-
-impl SplitInput {
-    /// Whether a region or curve is under the cursor.
-    pub(super) fn over(&self) -> bool {
-        self.regions.hover.is_some() || self.curve.is_some()
-    }
-
-    /// Lets go of the region or curve under the cursor: whether there
-    /// was one.
-    pub(super) fn leave(&mut self) -> bool {
-        self.regions.hover.take().is_some() | self.curve.take().is_some()
-    }
-}
-
-impl std::fmt::Debug for SplitInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SplitInput")
-            .field("region", &self.regions.hover)
-            .field("curve", &self.curve)
-            .finish()
-    }
-}
 
 /// A split's sketches whose regions show, and those picked. The panel's
 /// region rows don't light their region here.
 pub(super) fn split_regions<'s, 'a>(split: &'s SplitView<'a>) -> Regions<'s, 'a> {
     Regions::new(&split.candidates, split.source, split.picked, None)
+}
+
+/// A split's regions and curves, as its tool picks them.
+fn split_picker<'s, 'a>(split: &'s SplitView<'a>) -> SketchPicker<'s, 'a> {
+    SketchPicker {
+        regions: split_regions(split),
+        lines: &split.lines,
+    }
 }
 
 impl<'a> Moving<'a> {
@@ -61,44 +36,20 @@ impl<'a> Moving<'a> {
             .then_some(split.mode)
     }
 
-    /// The curve of a split's sketches under the screen position `at`, and
-    /// its sketch: see [`curve_under`].
-    fn curve_under(
-        &self,
-        split: &SplitView<'_>,
-        at: DVec2,
-        camera: &Camera,
-        bounds: Rectangle,
-    ) -> Option<(FeatureId, Id)> {
-        curve_under(&split.lines, at, camera, bounds, None).map(SketchHit::of)
-    }
-
     /// Works out the region or curve of a split picking in `mode` under
     /// the screen position `at` (none off the viewport) into `input`:
     /// whether it changed.
     pub(super) fn split_hover(
         &self,
         mode: SplitMode,
-        input: &mut SplitInput,
+        input: &mut SketchInput,
         at: Option<DVec2>,
         camera: &Camera,
         bounds: Rectangle,
     ) -> bool {
-        let Some(split) = self.state.split() else {
-            return false;
-        };
-        let (region, curve) = match mode {
-            SplitMode::Regions => (
-                at.and_then(|at| split_regions(split).region_under(at, camera, bounds)),
-                None,
-            ),
-            _ => (
-                None,
-                at.and_then(|at| self.curve_under(split, at, camera, bounds)),
-            ),
-        };
-        std::mem::replace(&mut input.regions.hover, region) != region
-            || std::mem::replace(&mut input.curve, curve) != curve
+        self.state.split().is_some_and(|split| {
+            split_picker(split).hover(mode == SplitMode::Regions, input, at, camera, bounds)
+        })
     }
 
     /// Takes the mouse `event` while a split's tool is picked in its
@@ -108,14 +59,13 @@ impl<'a> Moving<'a> {
     pub(super) fn split_mouse(
         &self,
         mode: SplitMode,
-        input: &mut SplitInput,
+        input: &mut SketchInput,
         event: mouse::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
         camera: &Camera,
     ) -> Option<Action<Message>> {
         let split = self.state.split()?;
-        let regions = split_regions(split);
         match event {
             mouse::Event::CursorMoved { .. } => {
                 let over = local_cursor(bounds, cursor);
@@ -125,15 +75,12 @@ impl<'a> Moving<'a> {
             mouse::Event::CursorLeft => input.leave().then(Action::request_redraw),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let at = local_cursor(bounds, cursor)?;
-                let look = match mode {
-                    SplitMode::Regions => {
-                        let (sketch, region) = regions.region_under(at, camera, bounds)?;
+                let regions = mode == SplitMode::Regions;
+                let look = match split_picker(split).under(regions, at, camera, bounds)? {
+                    SketchPick::Region { sketch, region } => {
                         MotionLook::SplitRegion { sketch, region }
                     }
-                    _ => {
-                        let (sketch, curve) = self.curve_under(split, at, camera, bounds)?;
-                        MotionLook::SplitCurve { sketch, curve }
-                    }
+                    SketchPick::Curve { sketch, curve } => MotionLook::SplitCurve { sketch, curve },
                 };
                 Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
             }
