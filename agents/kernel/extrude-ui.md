@@ -201,7 +201,7 @@ than disagreeing with the document, and OK, checked against the
 document's design, isn't blocked by the change; a refused text stays as
 typed.
 
-**The Timeline** (`view/src/panels.rs`) shows an extrude with the extrude
+**The Timeline** (`view/src/panels/timeline.rs`) shows an extrude with the extrude
 icon and its distances as the note, in the design's units
 (`feature_text::extrude::extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
 all"), a taper after it (`extrude_note`: "10 mm · 2°"; the status bar

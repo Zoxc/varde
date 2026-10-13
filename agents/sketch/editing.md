@@ -678,7 +678,7 @@ bar says why (`EditError::Sketch`).
   is still the one hovered: moving up a list, the row entered tells
   before the one left (links likewise, `Look::LeaveLink`). The
   selection and hover may name items still waiting on the solver.
-- **The Geometry list** (upper half of the Sketch tab, `panels.rs`,
+- **The Geometry list** (upper half of the Sketch tab, `panels/sketch_tab.rs`,
   `geometry_rows`) is a tree of groups, a header row each, in one
   virtual list (only the rows in view laid out). A header click folds
   its group (`Look::ToggleGroup`, `SketchSession::folded`). Geometry

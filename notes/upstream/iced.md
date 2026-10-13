@@ -16,7 +16,7 @@ and silently dropped. Solid quads are unaffected.
 **Why it's not ours.** The gate is in iced's source, and the same style draws
 natively.
 
-**Cost here.** On the web, `color_line` in `crates/view/src/panels.rs` draws
+**Cost here.** On the web, `color_line` in `crates/view/src/panels/body_look.rs` draws
 the rail as `theme::COLOR_RAIL_STRIPS` solid strips (`theme::color_rail_strip`)
 under the rail's border, and `theme::color_rail` leaves its gradient out
 there. `theme::tab` draws its accent line with a nested button rather than a

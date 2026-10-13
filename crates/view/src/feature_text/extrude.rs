@@ -48,3 +48,6 @@ pub(crate) fn extrude_info(extrude: &varde_document::Extrude, units: LengthUnit)
         None => format!("{extent} · {operation}"),
     }
 }
+
+#[cfg(test)]
+mod tests;
