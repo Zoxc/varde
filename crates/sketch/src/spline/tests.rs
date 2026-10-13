@@ -8,7 +8,8 @@ use std::f64::consts::{PI, TAU};
 use glam::DVec2;
 
 use super::basis::handle_scale;
-use super::bezier::{self, Path};
+use super::bezier::Path;
+use super::meet;
 use super::*;
 use crate::intersect::{Geom, meet};
 use crate::testing::{self, DESIGN, arc, circle, geom, line, point};
@@ -404,8 +405,8 @@ fn a_straight_spline_meets_a_curved_one_in_a_few_steps() {
     let (ga, gb) = (geom(&sketch, a), geom(&sketch, b));
     for (a, b) in [(&ga, &gb), (&gb, &ga)] {
         let mut found = Vec::new();
-        let work = bezier::crossings(a, b, 1e-9, &mut found);
-        assert!(work < bezier::MAX_MEET_STEPS, "{work}");
+        let work = meet::crossings(a, b, 1e-9, &mut found);
+        assert!(work < meet::MAX_MEET_STEPS, "{work}");
     }
     // Crossing the wave three times, where the dense polylines do.
     let found = places(&ga, &gb);
@@ -439,7 +440,7 @@ fn a_figure_of_eight_crosses_itself_once() {
         v(-2.0, -2.0),
     ];
     let mut found = Vec::new();
-    bezier::self_crossings(&path_of(&through(&eight, true, &[])), 1e-9, &mut found);
+    meet::self_crossings(&path_of(&through(&eight, true, &[])), 1e-9, &mut found);
     let path = path_of(&through(&eight, true, &[]));
     let mut places: Vec<DVec2> = Vec::new();
     for (u, w) in found {
@@ -452,7 +453,7 @@ fn a_figure_of_eight_crosses_itself_once() {
     assert!(places[0].length() < 1e-6);
     // A simple loop doesn't.
     let mut none = Vec::new();
-    bezier::self_crossings(&path_of(&through(&fit, true, &[])), 1e-9, &mut none);
+    meet::self_crossings(&path_of(&through(&fit, true, &[])), 1e-9, &mut none);
     assert!(none.is_empty(), "{none:?}");
 }
 

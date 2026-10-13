@@ -21,7 +21,7 @@ details and the timings.
   quadrature, winding by halving parts until the place is outside their
   control points' box, and the closest place by Newton's method kept
   within a bracket from samples (`Sketch::nearest_on` for the view). It
-  meets a line or a circle by the roots of the other's implicit function
+  meets (`spline/meet.rs`) a line or a circle by the roots of the other's implicit function
   along each segment in Bernstein form, another spline (and itself, for
   profiles, its segments halved) by halving pairs of pieces whose boxes
   overlap until both are within the tolerance of their chords (the

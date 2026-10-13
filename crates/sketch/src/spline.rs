@@ -6,6 +6,7 @@
 
 mod basis;
 pub(crate) mod bezier;
+pub(crate) mod meet;
 
 pub use basis::{BSpline, Interpolation, MIN_KNOT_GAP, MIN_SPAN, chord_params, control_knots};
 pub(crate) use basis::{Basis, SplineMap, curvature, handle_tip_for};

@@ -12,7 +12,8 @@ use crate::angle;
 use crate::bounds;
 use crate::flatten::arc_segments;
 use crate::geometry::line_param;
-use crate::spline::bezier::{self, Path};
+use crate::spline::bezier::Path;
+use crate::spline::meet as spline_meet;
 use crate::{Curve, Id, Sketch, arc_sweep, crossing, foot};
 
 /// Places within this much of the sketch's size of each other are one.
@@ -25,7 +26,7 @@ const MIN_SIZE: f64 = 1e-3;
 
 /// What [`meet`] gives for two lines, circles or arcs, in the work a
 /// caller counts, whose unit is about a box compared to another, a
-/// nanosecond or two (see [`bezier::STEP_COST`]): their crossings, and
+/// nanosecond or two (see [`spline_meet::STEP_COST`]): their crossings, and
 /// each end's nearest place on the other, with their parameters, an
 /// arc's each a sine and cosine or an arctangent: 60 to 260 ns.
 pub(crate) const MEET_COST: usize = 128;
@@ -446,14 +447,14 @@ impl Geom {
 /// lines on one line, or arcs on one circle, start and stop overlapping,
 /// so that both are cut alike where they overlap. Places may repeat; the
 /// caller merges them. A spline meets the rest by subdivision, bounded
-/// ([`bezier::MAX_MEET_STEPS`]). The work done is returned, for a caller
+/// ([`spline_meet::MAX_MEET_STEPS`]). The work done is returned, for a caller
 /// that counts it: [`MEET_COST`] for lines, circles and arcs
 /// ([`APART_COST`] where they're far apart), and for a
-/// spline what [`bezier::crossings`] gives (`usize::MAX` where it ran out
+/// spline what [`spline_meet::crossings`] gives (`usize::MAX` where it ran out
 /// of steps) and the search for the ends' nearest places on it.
 pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
     let steps = if let (Geom::Spline(_), _) | (_, Geom::Spline(_)) = (a, b) {
-        bezier::crossings(a, b, tolerance, out)
+        spline_meet::crossings(a, b, tolerance, out)
     } else if apart(a, b, tolerance) {
         return APART_COST;
     } else {

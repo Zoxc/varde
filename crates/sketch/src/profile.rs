@@ -25,7 +25,6 @@ use glam::DVec2;
 
 use crate::intersect::{Geom, meet, tolerance};
 use crate::sets::Sets;
-use crate::spline::bezier;
 use crate::{Curve, Id, Sketch};
 
 mod graph;
@@ -365,7 +364,9 @@ fn splits(
         }
         if let Geom::Spline(path) = geom {
             let mut found = Vec::new();
-            work.spend(bezier::self_crossings(path, tolerance, &mut found))?;
+            work.spend(crate::spline::meet::self_crossings(
+                path, tolerance, &mut found,
+            ))?;
             for (u, v) in found {
                 for u in [u, v] {
                     push(&mut splits, index, u, false)?;
