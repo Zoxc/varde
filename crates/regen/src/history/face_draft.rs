@@ -77,7 +77,7 @@ pub(super) fn evaluate_face_draft(
 ) -> Result<(), Failed> {
     let body = draft.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
-    let faces = place.regions(&draft.faces, why::draft_face_not_found);
+    let faces = place.regions(&draft.faces, why::face_not_found);
     let plane = resolve_plane(&draft.neutral, &NEUTRAL_PLANE, evaluation, tolerance, cache);
     // The plane, as a mirror's is, for the session to draw: also while a
     // face isn't found, whose failure comes first.

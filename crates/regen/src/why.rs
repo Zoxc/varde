@@ -406,9 +406,11 @@ pub(crate) fn blend_edge_not_found(index: usize, count: usize) -> String {
     not_found("edge", index, count)
 }
 
-/// That a chamfer's or fillet's face `index` (from 0) of `count` wasn't
-/// found: "its face wasn't found" with one.
-pub(crate) fn blend_face_not_found(index: usize, count: usize) -> String {
+/// That a feature's face `index` (from 0) of its `count` wasn't found on
+/// its body as the features before it leave it (renamed or gone): "its
+/// face wasn't found" with one. Chamfers, fillets, offsets and drafts
+/// word it so.
+pub(crate) fn face_not_found(index: usize, count: usize) -> String {
     not_found("face", index, count)
 }
 
@@ -546,13 +548,6 @@ pub(crate) fn shell_leaves_nothing(body: &str) -> String {
     format!("shelling {body} leaves nothing of it")
 }
 
-/// Why an offset face fails: its face `index` (from 0) of its `count`
-/// isn't found on its body as the features before it leave it (renamed
-/// or gone).
-pub(crate) fn offset_face_not_found(index: usize, count: usize) -> String {
-    not_found("face", index, count)
-}
-
 /// What the kernel refuses to offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OffsetRefusal {
@@ -602,13 +597,6 @@ pub(crate) fn offsetting(body: &str, error: KernelError) -> String {
 /// named `body`: nothing of it is left.
 pub(crate) fn offset_leaves_nothing(body: &str) -> String {
     format!("offsetting faces of {body} leaves nothing of it")
-}
-
-/// Why a draft fails: its face `index` (from 0) of its `count` isn't
-/// found on its body as the features before it leave it (renamed or
-/// gone).
-pub(crate) fn draft_face_not_found(index: usize, count: usize) -> String {
-    not_found("face", index, count)
 }
 
 /// What the kernel refuses to draft.

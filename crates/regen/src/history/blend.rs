@@ -62,7 +62,7 @@ pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, F
 /// The regions of `own`'s topology `faces` are found as, in their order:
 /// one not found fails ("its face 2 of 3 wasn't found").
 pub(super) fn find_faces(own: &InPlace, faces: &[FaceRef]) -> Result<Vec<u32>, Failed> {
-    own.find_regions(faces, why::blend_face_not_found)
+    own.find_regions(faces, why::face_not_found)
 }
 
 /// One chain to blend as it's worked out: which, its faces' name and

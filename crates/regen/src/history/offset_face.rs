@@ -65,7 +65,7 @@ pub(super) fn evaluate_offset_face(
 ) -> Result<(), Failed> {
     let body = offset.body().ok_or(why::NOTHING_PICKED)?;
     let place = InPlace::of(document, body, evaluation, cache)?;
-    let faces = place.regions(&offset.faces, why::offset_face_not_found)?;
+    let faces = place.regions(&offset.faces, why::face_not_found)?;
     let distance = offset.signed_distance();
     let mut keyer = place.keyer("offset face", feature, tolerance);
     keyer
