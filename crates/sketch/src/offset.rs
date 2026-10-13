@@ -995,7 +995,7 @@ impl Chain {
             .iter()
             .enumerate()
             .map(|(index, link)| {
-                let (u, found) = nearest(&link.geom, point);
+                let (u, found) = link.geom.closest_with_distance(point);
                 (index, u, found)
             })
             .min_by(|a, b| a.2.total_cmp(&b.2))?;
@@ -1459,7 +1459,7 @@ fn cross(raws: &mut [Raw], [i, j]: [usize; 2], past: [&[Link]; 2], distance: f64
     };
     let within = |raw: &Raw, u: f64, at: f64, links: &[Link]| {
         let middle = raw.geom.at((u + at) / 2.0);
-        let nearest = links.iter().map(|link| self::distance(&link.geom, middle));
+        let nearest = links.iter().map(|link| link.geom.distance_to(middle));
         nearest.fold(f64::INFINITY, f64::min) <= distance + tol
     };
     if within(&raws[i], u, raws[i].params().1, past[0])
@@ -1468,17 +1468,6 @@ fn cross(raws: &mut [Raw], [i, j]: [usize; 2], past: [&[Link]; 2], distance: f64
         raws[i].trim_end(u);
         raws[j].trim_start(v);
     }
-}
-
-/// How far `point` is from `geom`, see [`nearest`].
-fn distance(geom: &Geom, point: DVec2) -> f64 {
-    nearest(geom, point).1
-}
-
-/// Where on `geom` is nearest `point` ([`Geom::closest`]), and how far.
-fn nearest(geom: &Geom, point: DVec2) -> (f64, f64) {
-    let u = geom.closest(point);
-    (u, geom.at(u).distance(point))
 }
 
 /// How far `point` is from `geom` from `from` to `to` (increasing): from

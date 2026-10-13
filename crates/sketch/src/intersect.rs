@@ -337,6 +337,18 @@ impl Geom {
         }
     }
 
+    /// The parameter of the place on the curve nearest `point`
+    /// ([`Geom::closest`]), and how far that is from it.
+    pub(crate) fn closest_with_distance(&self, point: DVec2) -> (f64, f64) {
+        let u = self.closest(point);
+        (u, self.at(u).distance(point))
+    }
+
+    /// How far `point` is from the curve, see [`Geom::closest`].
+    pub(crate) fn distance_to(&self, point: DVec2) -> f64 {
+        self.closest_with_distance(point).1
+    }
+
     /// The curve from `u0` to `u1` (either way) as a polyline through
     /// both ends: a line's two, a circle's or an arc's its share of
     /// [`CIRCLE_SEGMENTS`](crate::CIRCLE_SEGMENTS), a spline's as
@@ -356,7 +368,7 @@ impl Geom {
 
     /// The place nearest `point` on the endless line or the whole circle,
     /// or on a spline.
-    fn nearest(&self, point: DVec2) -> DVec2 {
+    fn nearest_on_carrier(&self, point: DVec2) -> DVec2 {
         match *self {
             Geom::Segment { start, end } => foot(point, start, end),
             Geom::Round { center, radius, .. } => {
@@ -472,7 +484,7 @@ pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>
                     (path.at(v).distance(near) <= tolerance).then_some(v)
                 }
                 None => {
-                    let near = to.nearest(end);
+                    let near = to.nearest_on_carrier(end);
                     if near.distance(end) > tolerance {
                         continue;
                     }
