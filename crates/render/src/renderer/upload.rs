@@ -287,20 +287,52 @@ impl SketchBuffers {
         queue: &wgpu::Queue,
         layer: &SketchLayer,
     ) -> Result<(), PrepareError> {
-        let (d, q) = (device, queue);
-        let written = (self.lines)
-            .write(d, q, "varde sketch lines", &layer.lines, Upload::Sketch)
-            .and_then(|()| {
-                (self.points).write(d, q, "varde sketch points", &layer.points, Upload::Sketch)
-            })
-            .and_then(|()| {
-                (self.fills).write(d, q, "varde sketch fills", &layer.fills, Upload::Sketch)
-            });
-        if written.is_err() {
-            *self = SketchBuffers::default();
-        }
-        written
+        let w = Writer::new(device, queue, Upload::Sketch);
+        let written = (|| {
+            w.put(&mut self.lines, "varde sketch lines", &layer.lines)?;
+            w.put(&mut self.points, "varde sketch points", &layer.points)?;
+            w.put(&mut self.fills, "varde sketch fills", &layer.fills)
+        })();
+        reset_on_err(self, written)
     }
+}
+
+/// Writes [`Instances`] for one kind of [`Upload`].
+struct Writer<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    upload: Upload,
+}
+
+impl<'a> Writer<'a> {
+    fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, upload: Upload) -> Self {
+        Self {
+            device,
+            queue,
+            upload,
+        }
+    }
+
+    /// Replaces what `into` holds with `items`, see [`Instances::write`].
+    fn put<T: Pod>(
+        &self,
+        into: &mut Instances,
+        label: &str,
+        items: &[T],
+    ) -> Result<(), PrepareError> {
+        into.write(self.device, self.queue, label, items, self.upload)
+    }
+}
+
+/// Passes `written` on, leaving `buffers` holding nothing if it failed.
+fn reset_on_err<T: Default>(
+    buffers: &mut T,
+    written: Result<(), PrepareError>,
+) -> Result<(), PrepareError> {
+    if written.is_err() {
+        *buffers = T::default();
+    }
+    written
 }
 
 /// A vertex buffer written again and again, kept while what's written fits
@@ -394,28 +426,15 @@ impl HighlightBuffers {
         highlights: &Highlights,
     ) -> Result<(), PrepareError> {
         let built = highlights.build(mesh);
-        let (d, q) = (device, queue);
-        let written = (self.edges)
-            .write(
-                d,
-                q,
-                "varde highlighted edges",
-                &built.edges,
-                Upload::Highlights,
-            )
-            .and_then(|()| {
-                (self.vertices).write(d, q, "varde vertices", &built.vertices, Upload::Highlights)
-            });
-        *self = match written {
-            Ok(()) => HighlightBuffers {
-                outlined: built.outlined,
-                selected: built.selected,
-                second: built.second,
-                ..std::mem::take(self)
-            },
-            Err(_) => HighlightBuffers::default(),
-        };
-        written
+        let w = Writer::new(device, queue, Upload::Highlights);
+        let written = (|| {
+            w.put(&mut self.edges, "varde highlighted edges", &built.edges)?;
+            w.put(&mut self.vertices, "varde vertices", &built.vertices)
+        })();
+        self.outlined = built.outlined;
+        self.selected = built.selected;
+        self.second = built.second;
+        reset_on_err(self, written)
     }
 }
 
@@ -446,27 +465,16 @@ impl ErrorBuffers {
         errors: &[ErrorParts<'_>],
     ) -> Result<(), PrepareError> {
         let built = BuiltErrors::new(errors);
-        let (d, q) = (device, queue);
-        let written = (self.positions)
-            .write(d, q, "varde error faces", &built.positions, Upload::Errors)
-            .and_then(|()| {
-                (self.normals).write(d, q, "varde error normals", &built.normals, Upload::Errors)
-            })
-            .and_then(|()| {
-                (self.edges).write(d, q, "varde error lines", &built.edges, Upload::Errors)
-            })
-            .and_then(|()| {
-                (self.points).write(d, q, "varde error points", &built.points, Upload::Errors)
-            });
-        *self = match written {
-            Ok(()) => ErrorBuffers {
-                bounds: built.bounds,
-                cores: built.cores,
-                ..std::mem::take(self)
-            },
-            Err(_) => ErrorBuffers::default(),
-        };
-        written
+        let w = Writer::new(device, queue, Upload::Errors);
+        let written = (|| {
+            w.put(&mut self.positions, "varde error faces", &built.positions)?;
+            w.put(&mut self.normals, "varde error normals", &built.normals)?;
+            w.put(&mut self.edges, "varde error lines", &built.edges)?;
+            w.put(&mut self.points, "varde error points", &built.points)
+        })();
+        self.bounds = built.bounds;
+        self.cores = built.cores;
+        reset_on_err(self, written)
     }
 
     /// Whether there's anything to draw.
