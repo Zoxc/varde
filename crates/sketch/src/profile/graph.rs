@@ -328,11 +328,6 @@ impl<'c> Graph<'c> {
     /// and each hole's inside a region of its own, as is an island in one.
     /// Slivers (no wider than the tolerance) are left out.
     fn nest(&self, walks: Vec<Walk>, work: &mut Work) -> Result<Vec<Region>, TooComplex> {
-        // Which connected part each vertex is in.
-        let mut part = Sets::new(self.vertices.len());
-        for edge in &self.edges {
-            part.join(edge.start, edge.end);
-        }
         // Faces' loops, slivers too, and below the boundaries that are
         // holes in them, all join up (see [`Graph::joined`]), or regions
         // made of them would be wrong, a sliver among them left out
@@ -347,25 +342,51 @@ impl<'c> Graph<'c> {
         }
         // Faces (no slivers, which `faces` left without an outer loop),
         // by their outer loop, as a polyline and the box it's in.
-        let solid: Vec<Option<(usize, Vec<DVec2>, Bounds)>> = walks
+        let solid: Vec<Option<Solid>> = walks
             .iter()
             .map(|walk| {
-                let index = walk.outer?;
-                let outer = &walk.loops[index];
+                let outer = walk.outer?;
+                let found = &walk.loops[outer];
                 // The loop's box, not its polyline's, which an arc's
                 // segments cut inside, so that what's between them and
                 // the arc is inside it too.
-                Some((index, self.flatten(outer), self.bounds(outer)))
+                Some(Solid {
+                    outer,
+                    polyline: self.flatten(found),
+                    bounds: self.bounds(found),
+                })
             })
             .collect();
+        let holes_in = self.holes_in(&walks, &solid, work)?;
+        let mut regions = Vec::new();
+        for ((walk, solid), holes_in) in walks.iter().zip(solid).zip(&holes_in) {
+            if let Some(solid) = solid {
+                regions.push(self.region(walk, solid, holes_in)?);
+            }
+        }
+        Ok(regions)
+    }
+
+    /// The boundaries of `walks` seen from outside, by the face each is a
+    /// hole in, `solid` each walk's face, if it's one.
+    fn holes_in<'w>(
+        &self,
+        walks: &'w [Walk],
+        solid: &[Option<Solid>],
+        work: &mut Work,
+    ) -> Result<Vec<Vec<&'w [usize]>>, TooComplex> {
+        // Which connected part each vertex is in.
+        let mut part = Sets::new(self.vertices.len());
+        for edge in &self.edges {
+            part.join(edge.start, edge.end);
+        }
         let grid = Grid::new(
             solid
                 .iter()
                 .enumerate()
-                .filter_map(|(f, solid)| Some((f, solid.as_ref()?.2))),
+                .filter_map(|(f, solid)| Some((f, solid.as_ref()?.bounds))),
             work,
         )?;
-        // The boundaries seen from outside, by the face each is a hole in.
         let mut holes_in: Vec<Vec<&[usize]>> = vec![Vec::new(); walks.len()];
         for boundary in walks
             .iter()
@@ -384,7 +405,11 @@ impl<'c> Graph<'c> {
             work.spend(cell.len())?;
             let near: Vec<Reverse<Smallest>> = (cell.iter())
                 .filter_map(|&f| {
-                    let &(outer, _, (min, max)) = solid[f].as_ref()?;
+                    let Solid {
+                        outer,
+                        bounds: (min, max),
+                        ..
+                    } = *solid[f].as_ref()?;
                     let inside = point.cmpge(min).all() && point.cmple(max).all();
                     inside.then_some(Reverse(Smallest(walks[f].areas[outer], f, outer)))
                 })
@@ -399,50 +424,61 @@ impl<'c> Graph<'c> {
                     continue;
                 }
                 if self.winding(outer, point, work)? != 0 {
-                    holes_in[f].push(boundary);
+                    holes_in[f].push(&boundary[..]);
                     break;
                 }
             }
         }
-        let mut regions = Vec::new();
-        for (w, (walk, solid)) in walks.iter().zip(solid).enumerate() {
-            let Some((outer, polyline, bounds)) = solid else {
-                continue;
-            };
-            let area = walk.areas[outer];
-            let mut holes: Vec<&[usize]> = (0..walk.loops.len())
-                .filter(|&l| l != outer)
-                .map(|l| &walk.loops[l][..])
-                .collect();
-            if !holes_in[w].iter().all(|found| self.joined(found)) {
-                return Err(TooComplex);
-            }
-            holes.extend(&holes_in[w]);
-            // As faces are, holes no wider than the tolerance are slivers.
-            holes.retain(|hole| self.area(hole).abs() > self.tolerance * self.perimeter(hole));
-            let holes_area: f64 = holes.iter().map(|hole| self.area(hole).abs()).sum();
-            // Holes run clockwise, inside the outer loop. Where curves
-            // touch at a place found as several a hair over the tolerance
-            // apart, or lie along each other, the pieces at those vertices
-            // can be sorted in ways that don't agree from one to the
-            // next, and walks take wrong turns there: refused, as a region
-            // with a hole the wrong way round or outside it is wrong.
-            let backwards = holes.iter().any(|hole| self.area(hole) >= 0.0);
-            if backwards || holes_area >= area {
-                return Err(TooComplex);
-            }
-            let outer = &walk.loops[outer];
-            let mut outline = vec![polyline];
-            outline.extend(holes.iter().map(|hole| self.flatten(hole)));
-            regions.push(Region {
-                outer: self.pieces(outer),
-                holes: holes.iter().map(|hole| self.pieces(hole)).collect(),
-                outline,
-                area: area - holes_area,
-                bounds,
-            });
+        Ok(holes_in)
+    }
+
+    /// The region of the face `walk`, `solid` its outer loop: its own
+    /// inner loops and `holes_in` (the boundaries in it) its holes, less
+    /// slivers.
+    fn region(
+        &self,
+        walk: &Walk,
+        solid: Solid,
+        holes_in: &[&[usize]],
+    ) -> Result<Region, TooComplex> {
+        let Solid {
+            outer,
+            polyline,
+            bounds,
+        } = solid;
+        let area = walk.areas[outer];
+        if !holes_in.iter().all(|found| self.joined(found)) {
+            return Err(TooComplex);
         }
-        Ok(regions)
+        // Each hole and its area. As faces are, holes no wider than the
+        // tolerance are slivers.
+        let holes: Vec<(&[usize], f64)> = (0..walk.loops.len())
+            .filter(|&l| l != outer)
+            .map(|l| &walk.loops[l][..])
+            .chain(holes_in.iter().copied())
+            .map(|hole| (hole, self.area(hole)))
+            .filter(|&(hole, area)| area.abs() > self.tolerance * self.perimeter(hole))
+            .collect();
+        let holes_area: f64 = holes.iter().map(|(_, area)| area.abs()).sum();
+        // Holes run clockwise, inside the outer loop. Where curves
+        // touch at a place found as several a hair over the tolerance
+        // apart, or lie along each other, the pieces at those vertices
+        // can be sorted in ways that don't agree from one to the
+        // next, and walks take wrong turns there: refused, as a region
+        // with a hole the wrong way round or outside it is wrong.
+        let backwards = holes.iter().any(|&(_, area)| area >= 0.0);
+        if backwards || holes_area >= area {
+            return Err(TooComplex);
+        }
+        let mut outline = vec![polyline];
+        outline.extend(holes.iter().map(|&(hole, _)| self.flatten(hole)));
+        Ok(Region {
+            outer: self.pieces(&walk.loops[outer]),
+            holes: holes.iter().map(|&(hole, _)| self.pieces(hole)).collect(),
+            outline,
+            area: area - holes_area,
+            bounds,
+        })
     }
 
     /// The half-edges `found` as exact pieces.
@@ -583,6 +619,14 @@ struct Walk {
     loops: Vec<Vec<usize>>,
     areas: Vec<f64>,
     outer: Option<usize>,
+}
+
+/// A face's outer loop: its index among the walk's loops, as a polyline,
+/// and the box the loop is in.
+struct Solid {
+    outer: usize,
+    polyline: Vec<DVec2>,
+    bounds: Bounds,
 }
 
 /// A half-edge leaving a vertex, for [`sort_around`].
