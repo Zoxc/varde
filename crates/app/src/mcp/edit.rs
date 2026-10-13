@@ -702,17 +702,6 @@ impl Doc {
         }
     }
 
-    /// Has `call`, from `from`, wait under `tag` behind the popup asking
-    /// about the edit `editing`.
-    fn wait_on_ask(&mut self, tag: u64, from: Caller, call: Call, editing: String) {
-        self.mcp.add(Waiter {
-            tag,
-            from,
-            call,
-            waits: Wait::Asking { editing },
-        });
-    }
-
     /// Answers `call`, from `from`, that it changes nothing.
     fn answer_unchanged(&mut self, from: Caller, call: Call) {
         self.mcp

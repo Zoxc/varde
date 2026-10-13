@@ -143,12 +143,7 @@ impl Doc {
     ) -> Option<(Caller, Call)> {
         if let Some(ask) = &self.mcp.ask {
             let editing = ask.editing.clone();
-            self.mcp.add(Waiter {
-                tag,
-                from,
-                call,
-                waits: Wait::Asking { editing },
-            });
+            self.wait_on_ask(tag, from, call, editing);
             return None;
         }
         if let Some(editing) = self.unfinished() {
@@ -160,16 +155,22 @@ impl Doc {
                 refused: None,
                 cancelled: false,
             });
-            self.mcp.add(Waiter {
-                tag,
-                from,
-                call,
-                waits: Wait::Asking { editing },
-            });
+            self.wait_on_ask(tag, from, call, editing);
             return None;
         }
         self.close_for_client();
         Some((from, call))
+    }
+
+    /// Has `call`, from `from`, wait under `tag` behind the popup asking
+    /// about the edit `editing`.
+    pub(super) fn wait_on_ask(&mut self, tag: u64, from: Caller, call: Call, editing: String) {
+        self.mcp.add(Waiter {
+            tag,
+            from,
+            call,
+            waits: Wait::Asking { editing },
+        });
     }
 
     /// Takes down the popup if its call was cancelled, for an edit at
