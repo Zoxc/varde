@@ -80,11 +80,11 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
         .map(|equation| equation.source)
         .collect();
     let mut freedom = system.values.len();
-    let mut fixed = vec![false; system.values.len()];
-    // Each variable's component and column in it, and the components'
-    // null spaces, the motions their equations allow, a row per column.
-    let mut place = vec![None; system.values.len()];
-    let mut nulls = Vec::with_capacity(components.len());
+    let mut motions = Motions {
+        place: vec![None; system.values.len()],
+        nulls: Vec::with_capacity(components.len()),
+        fixed: vec![false; system.values.len()],
+    };
     for (number, component) in components.iter().enumerate() {
         // Where a derivative isn't a number, it's taken as zero rather
         // than analysing nothing.
@@ -94,33 +94,77 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
         for (column, (&var, &is_fixed)) in
             component.vars.iter().zip(&dependencies.fixed).enumerate()
         {
-            fixed[var] = is_fixed;
-            place[var] = Some((number, column));
+            motions.fixed[var] = is_fixed;
+            motions.place[var] = Some((number, column));
         }
         for (&index, &involved) in component.equations.iter().zip(&dependencies.involved) {
             if involved {
                 redundant.insert(system.equations[index].source);
             }
         }
-        nulls.push(dependencies.null);
+        motions.nulls.push(dependencies.null);
     }
 
-    // A size is set where its gradient has no part in the motions
-    // allowed: none of it on a variable no equation reads, and in each
-    // component, its projection on the null space next to nothing.
-    let sized_by = |gradient: &[(Slot, f64)]| {
-        let mut parts: Vec<Vec<(usize, f64)>> = vec![Vec::new(); nulls.len()];
+    let mut fixed = BTreeSet::new();
+    let mut sized = BTreeSet::new();
+    for (point, &slots) in sketch.points.iter().zip(&system.points) {
+        if motions.point_fixed(slots) {
+            fixed.insert(point.id);
+        }
+    }
+    for (entry, &radius) in sketch.curves.iter().zip(&system.radii) {
+        let points = entry.curve.points().all(|id| {
+            system
+                .point(sketch, id)
+                .is_some_and(|p| motions.point_fixed(p))
+        });
+        if points && radius.is_none_or(|slot| motions.slot_fixed(slot)) {
+            fixed.insert(entry.id);
+        }
+        if size_gradient(&system, sketch, &entry.curve, radius)
+            .is_some_and(|gradient| motions.keeps(&gradient))
+        {
+            sized.insert(entry.id);
+        }
+    }
+    Analysis {
+        freedom,
+        fixed,
+        sized,
+        redundant,
+        solved,
+    }
+}
+
+/// The motions a sketch's equations allow, by component.
+struct Motions {
+    /// Each variable's component and column in it, if an equation reads
+    /// it.
+    place: Vec<Option<(usize, usize)>>,
+    /// The components' null spaces, the motions their equations allow, a
+    /// row per column.
+    nulls: Vec<Mat<f64>>,
+    /// Per variable: no motion allowed moves it.
+    fixed: Vec<bool>,
+}
+
+impl Motions {
+    /// Whether no motion allowed changes a quantity of this gradient, as a
+    /// size set: none of it on a variable no equation reads, and in each
+    /// component, its projection on the null space next to nothing.
+    fn keeps(&self, gradient: &[(Slot, f64)]) -> bool {
+        let mut parts: Vec<Vec<(usize, f64)>> = vec![Vec::new(); self.nulls.len()];
         let mut length = 0.0;
         for &(slot, weight) in gradient {
             let Slot::Var(var) = slot else { continue };
             length += weight * weight;
-            match place[var] {
+            match self.place[var] {
                 Some((number, column)) => parts[number].push((column, weight)),
                 None => return false,
             }
         }
         let mut part = 0.0;
-        for (null, entries) in nulls.iter().zip(&parts) {
+        for (null, entries) in self.nulls.iter().zip(&parts) {
             for k in 0..null.ncols() {
                 let along: f64 = entries
                     .iter()
@@ -130,55 +174,46 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
             }
         }
         part.sqrt() <= FIXED_TOLERANCE * length.sqrt().max(1.0)
-    };
-    let value = |slot: Slot| system.value(slot);
+    }
+
+    /// Whether no motion allowed moves `slot`: a constant, or a fixed
+    /// variable.
+    fn slot_fixed(&self, slot: Slot) -> bool {
+        match slot {
+            Slot::Var(var) => self.fixed[var],
+            Slot::Const(_) => true,
+        }
+    }
+
+    /// Whether no motion allowed moves the point of `slots`.
+    fn point_fixed(&self, slots: PointSlots) -> bool {
+        slots.into_iter().all(|slot| self.slot_fixed(slot))
+    }
+}
+
+/// The gradient of the size of `curve` (with `radius`, a circle's): a
+/// line's length, a circle's or an arc's radius. `None` for a spline, or
+/// a line or an arc whose points meet.
+fn size_gradient(
+    system: &System,
+    sketch: &Sketch,
+    curve: &Curve,
+    radius: Option<Slot>,
+) -> Option<Vec<(Slot, f64)>> {
     // A distance's gradient: along the unit from `b` to `a` on `a`,
     // against it on `b`; none where they meet.
-    let distance = |a: PointSlots, b: PointSlots| {
+    let distance = |a: Id, b: Id| {
+        let (a, b) = (system.point(sketch, a)?, system.point(sketch, b)?);
+        let value = |slot: Slot| system.value(slot);
         let d = DVec2::new(value(a[0]) - value(b[0]), value(a[1]) - value(b[1]));
         d.try_normalize()
             .map(|u| vec![(a[0], u.x), (a[1], u.y), (b[0], -u.x), (b[1], -u.y)])
     };
-
-    let slot_fixed = |slot: Slot| match slot {
-        Slot::Var(var) => fixed[var],
-        Slot::Const(_) => true,
-    };
-    let point_fixed = |slots: [Slot; 2]| slots.into_iter().all(slot_fixed);
-    let mut fixed_items = BTreeSet::new();
-    let mut sized = BTreeSet::new();
-    for (point, &slots) in sketch.points.iter().zip(&system.points) {
-        if point_fixed(slots) {
-            fixed_items.insert(point.id);
-        }
-    }
-    for (entry, radius) in sketch.curves.iter().zip(&system.radii) {
-        let points = entry
-            .curve
-            .points()
-            .all(|id| system.point(sketch, id).is_some_and(point_fixed));
-        if points && radius.is_none_or(slot_fixed) {
-            fixed_items.insert(entry.id);
-        }
-        let ends = |a, b| Some((system.point(sketch, a)?, system.point(sketch, b)?));
-        let gradient = match entry.curve {
-            Curve::Line { start, end } => ends(start, end).and_then(|(a, b)| distance(a, b)),
-            Curve::Circle { .. } => radius.map(|slot| vec![(slot, 1.0)]),
-            Curve::Arc { center, start, .. } => {
-                ends(start, center).and_then(|(a, b)| distance(a, b))
-            }
-            Curve::Spline(_) => None,
-        };
-        if gradient.is_some_and(|gradient| sized_by(&gradient)) {
-            sized.insert(entry.id);
-        }
-    }
-    Analysis {
-        freedom,
-        fixed: fixed_items,
-        sized,
-        redundant,
-        solved,
+    match *curve {
+        Curve::Line { start, end } => distance(start, end),
+        Curve::Circle { .. } => radius.map(|slot| vec![(slot, 1.0)]),
+        Curve::Arc { center, start, .. } => distance(start, center),
+        Curve::Spline(_) => None,
     }
 }
 
