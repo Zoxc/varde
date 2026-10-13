@@ -207,9 +207,8 @@ impl Mcp {
             McpPanel::CloseMenu => self.menu = None,
             McpPanel::ShowInTimeline(serial) => {
                 self.menu = None;
-                let feature = (self.log.iter())
-                    .find(|logged| logged.serial == serial)
-                    .and_then(|logged| logged.edit.as_ref()?.feature);
+                let feature =
+                    (self.logged(serial)).and_then(|logged| logged.edit.as_ref()?.feature);
                 if let Some(number) = feature {
                     doc.mcp_show_feature(number);
                 }
@@ -250,7 +249,7 @@ impl Mcp {
     /// changes, else made.
     fn revert(&mut self, doc: &mut Doc, serial: u64, to_before: bool) {
         self.menu = None;
-        let Some(logged) = self.log.iter().find(|logged| logged.serial == serial) else {
+        let Some(logged) = self.logged(serial) else {
             return;
         };
         let Some(edit) = &logged.edit else {

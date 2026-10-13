@@ -163,6 +163,60 @@ pub(crate) struct Logged {
     pub(crate) edit: Option<revert::Edited>,
 }
 
+impl Logged {
+    /// Records on the row what came of its call, `call`, once answered:
+    /// the user's changes its result `told` the client of, if it did,
+    /// and an `applied` edit's states for its menu, `not_told` if the
+    /// client never had its result. Whether it kept a design's states,
+    /// for the caller to bound them ([`Mcp::bound_snapshots`]).
+    fn record(
+        &mut self,
+        doc: &Doc,
+        call: &Call,
+        told: Option<changes::Changes>,
+        applied: Option<history::Applied>,
+        not_told: bool,
+    ) -> bool {
+        if let Some(told) = told {
+            self.told = told.lines.iter().map(|line| plain(line)).collect();
+            self.told_rows = told.panel.iter().map(|line| plain(line)).collect();
+            self.told_at = Some(match &applied {
+                Some(applied) => applied.before.revision(),
+                None => doc.editor.revision(),
+            });
+        }
+        let Some(applied) = applied else {
+            return false;
+        };
+        if let Some(undid) = applied.undid {
+            // An undo's row says what it took back, and offers no
+            // Revert: it made no state of its own.
+            let (args, result) = undid_row(&undid, call, self.result.as_deref());
+            self.args = args;
+            self.result = Some(result);
+            self.edit = Some(revert::Edited {
+                before: None,
+                after: None,
+                after_revision: applied.after,
+                feature: undid.feature,
+                not_told,
+                undid: undid.afters,
+            });
+            false
+        } else {
+            self.edit = Some(revert::Edited {
+                before: Some(applied.before),
+                after: doc.editor.state_of(applied.after),
+                after_revision: applied.after,
+                feature: applied.feature,
+                not_told,
+                undid: Vec::new(),
+            });
+            true
+        }
+    }
+}
+
 /// The port and token the server listens with; the subscription is keyed
 /// by both, so a new one restarts the server. `start` tells this server's
 /// events from those of one stopped, still queued as it stopped.
@@ -429,10 +483,20 @@ impl Mcp {
         serial
     }
 
+    /// The call logged as `serial`, if it's still in the log.
+    fn logged(&self, serial: u64) -> Option<&Logged> {
+        self.log.iter().find(|logged| logged.serial == serial)
+    }
+
+    /// [`Mcp::logged`], to change.
+    fn logged_mut(&mut self, serial: u64) -> Option<&mut Logged> {
+        self.log.iter_mut().find(|logged| logged.serial == serial)
+    }
+
     /// Marks the call logged as `serial` answered with `reply`, saying
     /// `state`, if it's still in the log.
     fn log_answer(&mut self, serial: u64, call: &Call, reply: &ToolReply, state: McpCallState) {
-        if let Some(logged) = self.log.iter_mut().find(|logged| logged.serial == serial) {
+        if let Some(logged) = self.logged_mut(serial) {
             logged.state = state;
             logged.result = Some(summary(call, reply));
         }
@@ -712,45 +776,11 @@ impl Mcp {
             if told.is_some() {
                 self.told(doc, &done.from);
             }
-            let serial = done.from.serial;
-            let Some(logged) = self.log.iter_mut().find(|logged| logged.serial == serial) else {
-                continue;
-            };
-            if let Some(told) = told {
-                logged.told = told.lines.iter().map(|line| plain(line)).collect();
-                logged.told_rows = told.panel.iter().map(|line| plain(line)).collect();
-                logged.told_at = Some(match &done.applied {
-                    Some(applied) => applied.before.revision(),
-                    None => doc.editor.revision(),
-                });
-            }
             let not_told = !sent || !session_open || cancelled;
-            let Some(applied) = done.applied else {
+            let Some(logged) = self.logged_mut(done.from.serial) else {
                 continue;
             };
-            if let Some(undid) = applied.undid {
-                // An undo's row says what it took back, and offers no
-                // Revert: it made no state of its own.
-                let (args, result) = undid_row(&undid, &done.call, logged.result.as_deref());
-                logged.args = args;
-                logged.result = Some(result);
-                logged.edit = Some(revert::Edited {
-                    before: None,
-                    after: None,
-                    after_revision: applied.after,
-                    feature: undid.feature,
-                    not_told,
-                    undid: undid.afters,
-                });
-            } else {
-                logged.edit = Some(revert::Edited {
-                    before: Some(applied.before),
-                    after: doc.editor.state_of(applied.after),
-                    after_revision: applied.after,
-                    feature: applied.feature,
-                    not_told,
-                    undid: Vec::new(),
-                });
+            if logged.record(doc, &done.call, told, done.applied, not_told) {
                 self.bound_snapshots();
             }
         }
