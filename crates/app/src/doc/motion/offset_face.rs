@@ -29,6 +29,14 @@ pub(crate) struct Anchor {
 }
 
 impl MotionSession {
+    /// The handle's [`Anchor`] if it still holds: found on the session's
+    /// first face as it is, in the document generation given.
+    fn current_anchor(&self, generation: Generation) -> Option<&Anchor> {
+        (self.anchor.as_ref()).filter(|anchor| {
+            anchor.generation == generation && self.faces.refs.first() == Some(&anchor.face)
+        })
+    }
+
     /// The offset face as set up, if it's whole: its faces (at least
     /// one), its distance as it last read, Inward and Tangent faces.
     pub(super) fn offset_face(&self) -> Option<OffsetFace> {
@@ -95,15 +103,11 @@ impl Doc {
     /// model shown.
     pub(super) fn offset_face_handle(&self, session: &MotionSession) -> Option<FaceHandle> {
         let generation = self.editor.generation();
-        (session.anchor.as_ref())
-            .filter(|anchor| {
-                anchor.generation == generation && session.faces.refs.first() == Some(&anchor.face)
-            })
-            .map(|anchor| FaceHandle {
-                origin: anchor.at,
-                normal: anchor.normal,
-                at: session.signed_distance(),
-            })
+        (session.current_anchor(generation)).map(|anchor| FaceHandle {
+            origin: anchor.at,
+            normal: anchor.normal,
+            at: session.signed_distance(),
+        })
     }
 
     /// Finds where the handle of the offset face being set up stands
@@ -120,9 +124,8 @@ impl Doc {
         let Some(&first) = session.faces.refs.first() else {
             return;
         };
-        let current = |anchor: &Anchor| anchor.face == first && anchor.generation == generation;
         if session.kind != MotionKind::OffsetFace
-            || session.anchor.as_ref().is_some_and(current)
+            || session.current_anchor(generation).is_some()
             || !self.feed.answers_request()
             || self.feed.predates_replacement()
         {
