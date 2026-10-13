@@ -337,13 +337,22 @@ const LIGHT_TEXT: Color = color!(0x2b3036);
 const LIGHT_PANEL: Color = color!(0xfafafb);
 const DARK_TEXT: Color = color!(0xe4e7ea);
 const DARK_PANEL: Color = color!(0x212228);
+const LIGHT_ACCENT: Color = color!(0x0a95ad);
+const DARK_ACCENT: Color = color!(0x39b9cf);
+/// The light palette's green: what went well, and what's hovered.
+const LIGHT_OK: Color = color!(0x3d9b35);
+/// The dark palette's highlight green, also what's hovered.
+const DARK_HIGHLIGHT: Color = color!(0x76cc60);
+/// The strong red: a failed step's text, and a near miss.
+const LIGHT_DANGER_STRONG: Color = color!(0xad2a19);
+const DARK_DANGER_STRONG: Color = color!(0xf58a7a);
 
 const LIGHT_ICONS: IconColors = {
     const fn tone(color: Color, darken: f32, accent: Color) -> IconTone {
         icon_tone(color, darken, accent, LIGHT_TEXT, LIGHT_PANEL)
     }
     IconColors {
-        sketch: tone(color!(0x0a95ad), 0.0, LIGHT_ORANGE),
+        sketch: tone(LIGHT_ACCENT, 0.0, LIGHT_ORANGE),
         modify: tone(color!(0xcf3f30), 0.1, LIGHT_BLUE),
         constraint: tone(color!(0x8a3fd0), 0.12, LIGHT_ORANGE),
         dimension: tone(color!(0x5f6b80), 0.15, LIGHT_ORANGE),
@@ -384,15 +393,15 @@ const DARK_COUNT: Color = color!(0x3fc9d3);
 
 // The mock's colours for sketches and for construction, used by the
 // renderer and the sketch being edited alike.
-const LIGHT_SKETCH: Color = color!(0x0a95ad);
+const LIGHT_SKETCH: Color = LIGHT_ACCENT;
 const LIGHT_CONSTRUCTION: Color = color!(0xe0861a);
-const DARK_SKETCH: Color = color!(0x39b9cf);
+const DARK_SKETCH: Color = DARK_ACCENT;
 const DARK_CONSTRUCTION: Color = color!(0xf0a24a);
 
 const LIGHT: Palette = Palette {
-    accent: color!(0x0a95ad),
-    accent_soft: color!(0x0a95ad, 0.13),
-    fill: color!(0x0a95ad),
+    accent: LIGHT_ACCENT,
+    accent_soft: alpha(LIGHT_ACCENT, 0.13),
+    fill: LIGHT_ACCENT,
     hl: color!(0xe3f5da),
     hl_line: color!(0x9dd488),
     text: LIGHT_TEXT,
@@ -402,10 +411,10 @@ const LIGHT: Palette = Palette {
     edge: color!(0x1f2126),
     thumbnail: color!(0xeef0f3),
     chip: color!(0x141e28, 0.07),
-    ok: color!(0x3d9b35),
-    danger: color!(0xe0564b),
-    danger_fill: color!(0xe0564b),
-    danger_strong: color!(0xad2a19),
+    ok: LIGHT_OK,
+    danger: ERROR,
+    danger_fill: ERROR,
+    danger_strong: LIGHT_DANGER_STRONG,
     warning: LIGHT_CONSTRUCTION,
     scrim: color!(0x000000, 0.25),
 
@@ -423,7 +432,7 @@ const LIGHT: Palette = Palette {
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
         // The accent.
-        pivot: srgb(color!(0x0a95ad)),
+        pivot: srgb(LIGHT_ACCENT),
         sketch: srgb(LIGHT_SKETCH),
         faded_alpha: FADED_ALPHA,
         hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
@@ -433,7 +442,7 @@ const LIGHT: Palette = Palette {
         // it shows on the light background too.
         hover_outline: srgb(color!(0xffffff)),
         // The accent.
-        selected: srgb(color!(0x0a95ad)),
+        selected: srgb(LIGHT_ACCENT),
         // A light tint, so the selected edges, the accent a little
         // darker, show on it and apart from the near black edges.
         selected_tint: 0.3,
@@ -457,7 +466,7 @@ const LIGHT: Palette = Palette {
         dimension: LIGHT_ICONS.dimension.line,
         driven: color!(0x3a9a5b),
         selected: color!(0x2f5fd8),
-        hovered: color!(0x3d9b35),
+        hovered: LIGHT_OK,
         point_fill: color!(0xf4f4f7),
         point: LIGHT_ORANGE,
         preview: alpha(LIGHT_SKETCH, 0.75),
@@ -466,9 +475,9 @@ const LIGHT: Palette = Palette {
         axis: color!(0x8a939e),
         guide: color!(0xc2701d),
         region: alpha(LIGHT_SKETCH, 0.1),
-        region_hovered: color!(0x3d9b35, 0.18),
+        region_hovered: alpha(LIGHT_OK, 0.18),
         profile: color!(0xc0368c),
-        near_miss: color!(0xad2a19),
+        near_miss: LIGHT_DANGER_STRONG,
         spline_handle: color!(0x8a6d3b),
         handle: LIGHT_ICONS.solid.line,
         handle_accent: LIGHT_ICONS.solid.accent,
@@ -486,11 +495,11 @@ const LIGHT: Palette = Palette {
 };
 
 const DARK: Palette = Palette {
-    accent: color!(0x39b9cf),
-    accent_soft: color!(0x39b9cf, 0.16),
+    accent: DARK_ACCENT,
+    accent_soft: alpha(DARK_ACCENT, 0.16),
     fill: color!(0x116d7e),
-    hl: color!(0x76cc60, 0.15),
-    hl_line: color!(0x76cc60, 0.5),
+    hl: alpha(DARK_HIGHLIGHT, 0.15),
+    hl_line: alpha(DARK_HIGHLIGHT, 0.5),
     text: DARK_TEXT,
     muted: color!(0x9aa3ac),
     faint: color!(0x69727c),
@@ -501,8 +510,8 @@ const DARK: Palette = Palette {
     ok: color!(0x5cc052),
     // Lighter than the light palette's, to read on the dark panel.
     danger: color!(0xf07563),
-    danger_fill: color!(0xe0564b),
-    danger_strong: color!(0xf58a7a),
+    danger_fill: ERROR,
+    danger_strong: DARK_DANGER_STRONG,
     warning: DARK_CONSTRUCTION,
     scrim: color!(0x000000, 0.45),
 
@@ -522,7 +531,7 @@ const DARK: Palette = Palette {
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
         // The accent.
-        pivot: srgb(color!(0x39b9cf)),
+        pivot: srgb(DARK_ACCENT),
         sketch: srgb(DARK_SKETCH),
         faded_alpha: FADED_ALPHA,
         hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
@@ -532,7 +541,7 @@ const DARK: Palette = Palette {
         // light palette's dark ones.
         hover_outline: srgb(color!(0x0e0d12)),
         // The accent.
-        selected: srgb(color!(0x39b9cf)),
+        selected: srgb(DARK_ACCENT),
         selected_tint: 0.6,
         // A deep teal, darker than a selected face's tint to show on it,
         // and apart from the light edges.
@@ -554,18 +563,18 @@ const DARK: Palette = Palette {
         dimension: DARK_ICONS.dimension.line,
         driven: color!(0x4fb06e),
         selected: color!(0x7ea2ff),
-        hovered: color!(0x76cc60),
+        hovered: DARK_HIGHLIGHT,
         point_fill: color!(0x24252b),
         point: DARK_ORANGE,
         preview: alpha(DARK_SKETCH, 0.75),
         box_fill: alpha(DARK_SKETCH, 0.1),
         box_line: alpha(DARK_SKETCH, 0.7),
         axis: color!(0x6b737d),
-        guide: color!(0xf0a24a),
+        guide: DARK_CONSTRUCTION,
         region: alpha(DARK_SKETCH, 0.12),
-        region_hovered: color!(0x76cc60, 0.2),
+        region_hovered: alpha(DARK_HIGHLIGHT, 0.2),
         profile: color!(0xef7ac4),
-        near_miss: color!(0xf58a7a),
+        near_miss: DARK_DANGER_STRONG,
         spline_handle: color!(0xc9a66b),
         handle: DARK_ICONS.solid.line,
         handle_accent: DARK_ICONS.solid.accent,
