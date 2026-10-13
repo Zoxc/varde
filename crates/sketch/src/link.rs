@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use glam::{DAffine2, DVec2};
 use serde::{Deserialize, Serialize};
 
-use crate::{Curve, EditError, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, Spline, SplineKind, angle};
+use crate::{Curve, EditError, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, Spline, angle};
 
 /// The most links a sketch may hold.
 pub const MAX_LINKS: usize = 1000;
@@ -601,13 +601,7 @@ impl Sketch {
                     for &p in control {
                         points.push(own.point(map.transform_point2(p)));
                     }
-                    let projected = Spline {
-                        kind: SplineKind::Control,
-                        points,
-                        closed: spline.closed,
-                        handles: Vec::new(),
-                        knots: shape.knots().to_vec(),
-                    };
+                    let projected = Spline::control(points, shape.knots().to_vec(), spline.closed);
                     let sound =
                         crate::BSpline::new(&projected.knots, own.points.clone(), projected.closed)
                             .is_some_and(|mapped| mapped.path().is_sound());

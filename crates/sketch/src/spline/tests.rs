@@ -548,13 +548,7 @@ fn converting_by_control_points_to_through_strays_a_little() {
         .iter()
         .map(|p| point(&mut sketch, p.x, p.y))
         .collect();
-    let spline = Spline {
-        kind: SplineKind::Control,
-        knots: control_knots(&places, false),
-        points,
-        closed: false,
-        handles: Vec::new(),
-    };
+    let spline = Spline::control(points, control_knots(&places, false), false);
     let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
     assert_eq!(sketch.check(&DESIGN), Ok(()));
     let before = geom(&sketch, id);

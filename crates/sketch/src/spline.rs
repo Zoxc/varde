@@ -115,6 +115,18 @@ impl Spline {
         }
     }
 
+    /// The spline by the control points `points` and `knots`, as
+    /// [`Spline::knots`] holds them.
+    pub fn control(points: Vec<Id>, knots: Vec<f64>, closed: bool) -> Spline {
+        Spline {
+            kind: SplineKind::Control,
+            points,
+            closed,
+            handles: Vec::new(),
+            knots,
+        }
+    }
+
     /// Its fit or control points, then its handles' tips and ends.
     pub fn all_points(&self) -> impl Iterator<Item = Id> + Clone + '_ {
         let arms = self.handles.iter().flat_map(Handle::arms);
@@ -599,13 +611,7 @@ impl Sketch {
             let mut points = vec![start];
             points.extend(self.reuse_points(&spline.points, inner)?);
             points.push(end);
-            return Ok(Spline {
-                kind: SplineKind::Control,
-                points,
-                closed: false,
-                handles: Vec::new(),
-                knots: piece.knots().to_vec(),
-            });
+            return Ok(Spline::control(points, piece.knots().to_vec(), false));
         }
         let places = self.places(&spline.points).ok_or(target)?;
         let params = chord_params(&places, spline.closed);

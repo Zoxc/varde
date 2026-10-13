@@ -2,7 +2,7 @@ use glam::{DAffine2, DMat2, DVec2};
 
 use super::*;
 use crate::testing::{DESIGN, at, line, point, propose_it};
-use crate::{Constraint, Rejected, SketchEdit, SketchError};
+use crate::{Constraint, Rejected, SketchEdit, SketchError, SplineKind};
 
 /// A line from (0, 0) to (10, 0) as a shape.
 fn segment(from: DVec2, to: DVec2) -> LinkShape {
