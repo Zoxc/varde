@@ -106,7 +106,7 @@ naming the tip: `Sketch::handle` finds a handle by its tip,
 along).
 
 Splines are shaped by edits of their own (`spline.rs`):
-`SketchEdit::Convert` (`Sketch::convert_spline`: to control points
+`SketchEdit::Convert` (`Sketch::convert_spline`, `spline/convert.rs`: to control points
 exactly; to fit points through its places at its knots (or, where the
 knots are those of a spline with a handle at every fit point, two per
 point, at those fit points: `handled_params`, so converting round and
