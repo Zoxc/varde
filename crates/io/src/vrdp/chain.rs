@@ -190,7 +190,11 @@ impl Chain {
         // `usize` is at most 64 bits wide, so exact.
         self.damage.get_or_insert(at as u64);
         let prev = *sums.last().unwrap();
-        if let Some(header) = header_at(bytes, at, prev)
+        // `usize` is at most 64 bits wide, so exact. A slice fails to read
+        // only past its end, which `stored_at` checks.
+        if let Some(header) = header_at(bytes, at as u64, bytes.len() as u64, prev)
+            .ok()
+            .flatten()
             && framed_record(bytes, &header, ty)
             // Within `bytes`, so exact.
             && !framed_from(bytes, header.end as usize, ty)
@@ -312,21 +316,25 @@ impl From<Header> for DamagedRecord {
     }
 }
 
-/// The block at `at` in `bytes`, if its header is intact, whether or not
-/// the block is: its first `len` within bounds, see [`stored_at`], the
-/// block within `bytes`, and its `prev` equal to `prev`, the `sum` of the
-/// block before.
-fn header_at(bytes: &[u8], at: usize, prev: u128) -> Option<Header> {
-    // `usize` is at most 64 bits wide, so exact.
-    let (start, len) = (at as u64, bytes.len() as u64);
-    // A slice fails to read only past its end, which `stored_at` checks.
-    let stored = stored_at(bytes, start, len).ok()??;
-    let end = stored.end.filter(|&end| end <= len)?;
-    (stored.prev == prev).then_some(Header {
-        start,
+/// The block at `at` in `file`, a file `len` bytes long, if its header is
+/// intact, whether or not the block is: its first `len` within bounds, see
+/// [`stored_at`], the block within the file, and its `prev` equal to
+/// `prev`, the `sum` of the block before.
+fn header_at(
+    file: &(impl ReadAt + ?Sized),
+    at: u64,
+    len: u64,
+    prev: u128,
+) -> Result<Option<Header>> {
+    let Some(stored) = stored_at(file, at, len)? else {
+        return Ok(None);
+    };
+    let end = stored.end.filter(|&end| end <= len && stored.prev == prev);
+    Ok(end.map(|end| Header {
+        start: at,
         end,
         sum: stored.sum,
-    })
+    }))
 }
 
 /// Damaged blocks stepped over by their headers, as [`Chain::scan`]
@@ -362,26 +370,18 @@ pub(super) fn bridge(
     prev: u128,
     ty: FileType,
 ) -> Result<Option<Bridge>> {
-    let Some(stored) = stored_at(file, at, len)? else {
+    let Some(header) = header_at(file, at, len, prev)? else {
         return Ok(None);
     };
-    let Some(end) = stored.end.filter(|&end| end <= len && stored.prev == prev) else {
-        return Ok(None);
-    };
-    let header = Header {
-        start: at,
-        end,
-        sum: stored.sum,
-    };
-    let next = match block_at(file, end, len, id)? {
+    let next = match block_at(file, header.end, len, id)? {
         Found::Intact(next) if next.prev == header.sum => next,
         _ => return Ok(None),
     };
     let mut back = [0; BACK_LEN];
     // The block is within the file, and longer than this.
-    file.read_at(&mut back, end - BACK_LEN as u64)?;
+    file.read_at(&mut back, header.end - BACK_LEN as u64)?;
     // Its `len` is within bounds, so exact.
-    let record = back_is(&back, end - at - BLOCK_OVERHEAD, &ty.record());
+    let record = back_is(&back, header.end - at - BLOCK_OVERHEAD, &ty.record());
     Ok(Some(Bridge {
         header,
         next,
