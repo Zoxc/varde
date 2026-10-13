@@ -68,7 +68,7 @@ command to regenerate it.
 Natively text uses the system's fonts. The web has none, so `crates/web`
 loads Fira Sans SemiBold and Fira Mono from `crates/web/fonts` (OFL, its
 license beside them) beside iced's Fira Sans Regular, and maps the generic
-sans-serif and monospace families to them (`main.rs`, `load_fonts`).
+sans-serif and monospace families to them (`src/lib.rs`, `load_fonts`).
 
 The tools' icons (`crates/view/src/icons.rs`) are the default set of
 `notes/ui-mock-icons.html`: its "outline with accents, line only" drawings
