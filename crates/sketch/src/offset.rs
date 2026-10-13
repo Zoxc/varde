@@ -198,16 +198,13 @@ impl Sketch {
     /// The way from its centre to the middle of the arc `id`, or to a
     /// circle's upper right.
     fn round_middle(&self, id: Id) -> Option<DVec2> {
-        match self.curve(id)?.curve {
-            Curve::Arc { center, start, end } => {
-                let at = |id| self.point(id).map(|point| point.at);
-                let center = at(center)?;
-                let from = at(start)? - center;
-                let sweep = arc_sweep(from, at(end)? - center);
-                angle::from_angle(sweep / 2.0).rotate(from).try_normalize()
+        let curve = &self.curve(id)?.curve;
+        match (curve, Geom::of(self, curve)?) {
+            (Curve::Arc { .. }, Geom::Round { begin, sweep, .. }) => {
+                Some(angle::from_angle(begin + sweep / 2.0))
             }
-            Curve::Circle { .. } => Some(DVec2::splat(std::f64::consts::FRAC_1_SQRT_2)),
-            Curve::Line { .. } | Curve::Spline(_) => None,
+            (Curve::Circle { .. }, _) => Some(DVec2::splat(std::f64::consts::FRAC_1_SQRT_2)),
+            _ => None,
         }
     }
 
