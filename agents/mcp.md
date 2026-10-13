@@ -1589,8 +1589,10 @@ the feature number its result names (`id`, for Show in Timeline) and
 `not_told`: its reply wasn't taken (`Reply::send` now says whether) or
 its session wasn't the open one, shown *Applied (client not told)*.
 Bounded by `revert::SNAPSHOTS` (50) distinct documents (`Arc::as_ptr`)
-over the whole log, the oldest rows letting their before, then their
-after, go first (`Mcp::bound_snapshots`): each is a whole document,
+over the whole log: one pass from the newest row keeps the first 50 it
+meets, so older rows let theirs go (a row's before ahead of its after),
+unless a newer row's state holds the same one
+(`Mcp::bound_snapshots`): each is a whole document,
 free while the undo history holds it but the row's alone once the
 history let go of it, and as an edit's after is the next one's before
 50 is about the last 50 edits.

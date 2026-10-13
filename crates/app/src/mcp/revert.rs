@@ -12,6 +12,7 @@
 //!
 //! [`Editor::restore`]: varde_document::Editor::restore
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use varde_document::{Document, EditorState, RestoreError, Revision};
@@ -160,30 +161,21 @@ fn to(shown: &str, to_before: bool) -> String {
 }
 
 impl Mcp {
-    /// Lets the oldest rows' documents go until the log keeps at most
-    /// [`SNAPSHOTS`] distinct ones.
+    /// Keeps the newest rows' documents, at most [`SNAPSHOTS`] distinct
+    /// ones: older rows let theirs go, each row's before ahead of its
+    /// after, unless a newer row's state keeps the same document.
     pub(super) fn bound_snapshots(&mut self) {
-        loop {
-            let mut kept: Vec<*const Document> = Vec::new();
-            for edit in self.log.iter().filter_map(|logged| logged.edit.as_ref()) {
-                for state in [&edit.before, &edit.after].into_iter().flatten() {
-                    let at = Arc::as_ptr(state.document());
-                    if !kept.contains(&at) {
-                        kept.push(at);
-                    }
+        let mut kept: HashSet<*const Document> = HashSet::new();
+        for edit in (self.log.iter_mut().rev()).filter_map(|logged| logged.edit.as_mut()) {
+            for state in [&mut edit.after, &mut edit.before] {
+                let Some(at) = state.as_ref().map(|state| Arc::as_ptr(state.document())) else {
+                    continue;
+                };
+                if kept.contains(&at) || kept.len() < SNAPSHOTS {
+                    kept.insert(at);
+                } else {
+                    *state = None;
                 }
-            }
-            if kept.len() <= SNAPSHOTS {
-                return;
-            }
-            let Some(edit) = (self.log.iter_mut())
-                .filter_map(|logged| logged.edit.as_mut())
-                .find(|edit| edit.before.is_some() || edit.after.is_some())
-            else {
-                return;
-            };
-            if edit.before.take().is_none() {
-                edit.after = None;
             }
         }
     }
