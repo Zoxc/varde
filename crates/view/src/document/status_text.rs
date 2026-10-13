@@ -23,6 +23,21 @@ use super::{
     ActiveTool, DocumentState, MeshStatus, OperationState, Overlay, SketchState, ValueTarget,
 };
 
+/// The status bar's text: small and on one line.
+fn bar_text<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+    text(content).size(12).wrapping(Wrapping::None)
+}
+
+/// A title in the status bar, e.g. what's selected.
+fn bar_title<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+    bar_text(content).font(theme::SEMIBOLD)
+}
+
+/// A muted detail in the status bar.
+fn bar_note<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+    bar_text(content).style(theme::muted_text)
+}
+
 /// What the status bar shows: the feature selected, what's going on, the
 /// hints, and the view options menu's button.
 pub(super) fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
@@ -59,14 +74,8 @@ fn operation_status<'a>(
 ) -> Option<Element<'a, Message>> {
     Some(
         row![
-            text(title)
-                .size(12)
-                .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD),
-            text(format!("· {detail}{}", status_suffix(state)))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text),
+            bar_title(title),
+            bar_note(format!("· {detail}{}", status_suffix(state))),
         ]
         .spacing(4)
         .into(),
@@ -416,22 +425,14 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
             Some(why) => (why.into_owned(), theme::danger_text),
             None => (pick.asking(), theme::accent_text),
         };
-        return Some(
-            text(line)
-                .size(12)
-                .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD)
-                .style(style)
-                .into(),
-        );
+        return Some(bar_title(line).style(style).into());
     }
     if let Some(sketch) = &state.sketch {
         // A selection has the bar's box of its own: the sketch's standing
         // and profiles make way for it.
         let selected = !sketch.selection.is_empty();
-        let piece = |line: String, style: fn(&iced::Theme) -> text::Style| {
-            text(line).size(12).wrapping(Wrapping::None).style(style)
-        };
+        let piece =
+            |line: String, style: fn(&iced::Theme) -> text::Style| bar_text(line).style(style);
         let standing = (!selected).then(|| standing(sketch)).flatten();
         let mut pieces: Vec<_> = (standing.into_iter())
             .map(|(standing, trouble)| {
@@ -508,13 +509,7 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         Some(OperationState::Measure(_)) | None => {}
     }
     let notes = status_notes(state);
-    (!notes.is_empty()).then(|| {
-        text(notes.join(" · "))
-            .size(12)
-            .wrapping(Wrapping::None)
-            .style(theme::muted_text)
-            .into()
-    })
+    (!notes.is_empty()).then(|| bar_note(notes.join(" · ")).into())
 }
 
 /// What the status bar says of the combine being set up: "Body 1 with 2
@@ -556,14 +551,8 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         return Some(
             row![
                 icons::tinted(Icon::Alert, 14.0, |p| p.danger),
-                text(feature.name.as_str())
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .font(theme::SEMIBOLD),
-                text(crate::chrome::sentence(&failed.message))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .style(theme::muted_text),
+                bar_title(feature.name.as_str()),
+                bar_note(crate::chrome::sentence(&failed.message)),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -573,14 +562,8 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     Some(
         row![
             icons::icon(feature_icon(feature), icons::INLINE),
-            text(feature.name.as_str())
-                .size(12)
-                .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD),
-            text(feature_info(feature, document))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text),
+            bar_title(feature.name.as_str()),
+            bar_note(feature_info(feature, document)),
         ]
         .spacing(6)
         .align_y(Alignment::Center)
@@ -618,14 +601,11 @@ fn sketch_selection<'a>(sketch: &SketchState<'a>) -> Option<Element<'a, Message>
         None => crate::dimension::selected(sketch.sketch, &ids)
             .map(|(measure, value)| crate::dimension::shown_measure(&measure, value, sketch.units)),
     };
-    let measured = measured.map(|measured| text(measured).size(12).wrapping(Wrapping::None));
+    let measured = measured.map(bar_text);
     Some(
         row![
             icons::icon(Icon::Sketch, icons::INLINE),
-            text(title)
-                .size(12)
-                .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD),
+            bar_title(title),
             measured,
         ]
         .spacing(6)
@@ -715,7 +695,7 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
             (format!("{} selected", items.len()), parts.join(" · "), "")
         }
     };
-    let info = (!info.is_empty()).then(|| text(info).size(12).wrapping(Wrapping::None));
+    let info = (!info.is_empty()).then(|| bar_text(info));
     let measured = (state.selection_measured)
         .map(|inspected| crate::measure::brief(inspected, document.units()))
         .filter(|values| !values.is_empty())
@@ -723,21 +703,13 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
             let values: Vec<String> = (values.into_iter())
                 .map(|value| format!("{} {}", value.label, value.shown))
                 .collect();
-            text(values.join(" · ")).size(12).wrapping(Wrapping::None)
+            bar_text(values.join(" · "))
         });
-    let note = (!note.is_empty()).then(|| {
-        text(note)
-            .size(12)
-            .wrapping(Wrapping::None)
-            .style(theme::muted_text)
-    });
+    let note = (!note.is_empty()).then(|| bar_note(note));
     Some(
         row![
             icons::icon(Icon::Body, icons::INLINE),
-            text(title)
-                .size(12)
-                .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD),
+            bar_title(title),
             info,
             measured,
             note,
