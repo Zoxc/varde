@@ -604,11 +604,9 @@ pub fn store() -> Option<PathBuf> {
 /// [`Request::LoadSettings`]: crate::Request::LoadSettings
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_now() -> Settings {
-    crate::Stores {
-        settings: store(),
-        ..crate::Stores::default()
-    }
-    .read_settings_now()
+    (store().as_deref())
+        .map(crate::native::settings::load)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
