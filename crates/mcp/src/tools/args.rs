@@ -42,8 +42,8 @@ pub(super) fn topology(args: &mut Arguments) -> Result<Topology, CallError> {
 
 /// `render`'s arguments, all optional.
 pub(super) fn render(args: &Arguments) -> Result<Render, CallError> {
-    let from = match args.map.get("from") {
-        None | Some(Value::Null) => RenderFrom::View(NamedView::Iso),
+    let from = match args.sent("from") {
+        None => RenderFrom::View(NamedView::Iso),
         Some(Value::String(word)) => lookup(NAMED_VIEWS, word)
             .map(RenderFrom::View)
             .ok_or_else(|| args.error(render_from()))?,
@@ -63,16 +63,16 @@ pub(super) fn render(args: &Arguments) -> Result<Render, CallError> {
         Some(_) => return Err(args.error(render_from())),
     };
     let projection = args.choice("projection", PROJECTIONS)?;
-    let zoom = match args.map.get("zoom") {
-        None | Some(Value::Null) => 1.0,
+    let zoom = match args.sent("zoom") {
+        None => 1.0,
         Some(_) => args.number_in(
             "zoom",
             MIN_ZOOM..=MAX_ZOOM,
             format_args!("from {MIN_ZOOM} to {MAX_ZOOM}"),
         )?,
     };
-    let size = match args.map.get("size") {
-        None | Some(Value::Null) => RENDER_SIZE,
+    let size = match args.sent("size") {
+        None => RENDER_SIZE,
         Some(value) => (value.as_u64())
             .and_then(|size| u32::try_from(size).ok())
             .filter(|size| (MIN_RENDER_SIZE..=MAX_RENDER_SIZE).contains(size))
@@ -213,12 +213,21 @@ impl<'a> Arguments<'a> {
         self.name(key)
     }
 
+    /// `key`'s value if sent and not null: null is "not sent" to every
+    /// reader but [`Arguments::nullable`].
+    pub(super) fn sent(&self, key: &str) -> Option<&'a Value> {
+        self.map.get(key).filter(|value| !value.is_null())
+    }
+
+    /// `key`'s value, required: [`Arguments::sent`].
+    pub(super) fn required(&self, key: &str) -> Result<&'a Value, CallError> {
+        self.sent(key)
+            .ok_or_else(|| self.error(format_args!("{key} is required")))
+    }
+
     /// A name: a string, not empty, at most [`NAME_BYTES`].
     pub(super) fn name(&self, key: &str) -> Result<String, CallError> {
-        match self.map.get(key) {
-            None => Err(self.error(format_args!("{key} is required"))),
-            Some(value) => self.check_name(key, value),
-        }
+        self.check_name(key, self.required(key)?)
     }
 
     /// [`Arguments::name`] of `value`, sent as `key`.
@@ -248,12 +257,9 @@ impl<'a> Arguments<'a> {
     /// A number, required: finite (JSON has no others, but checked all
     /// the same).
     fn number(&self, key: &str) -> Result<f64, CallError> {
-        match self.map.get(key) {
-            None => Err(self.error(format_args!("{key} is required"))),
-            Some(value) => (value.as_f64())
-                .filter(|v| v.is_finite())
-                .ok_or_else(|| self.error(format_args!("{key} is a number"))),
-        }
+        (self.required(key)?.as_f64())
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| self.error(format_args!("{key} is a number")))
     }
 
     /// A number, required, within `range`, which `said` says.
@@ -300,10 +306,7 @@ impl<'a> Arguments<'a> {
 
     /// A name, if sent: as [`Arguments::name`].
     pub(super) fn optional_name(&self, key: &str) -> Result<Option<String>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(_) => self.name(key).map(Some),
-        }
+        self.sent(key).map(|_| self.name(key)).transpose()
     }
 
     /// One of `choices` by its word, if sent: as [`Arguments::choice`].
@@ -312,10 +315,9 @@ impl<'a> Arguments<'a> {
         key: &str,
         choices: &[(&str, T)],
     ) -> Result<Option<T>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(_) => self.choice(key, choices).map(Some),
-        }
+        self.sent(key)
+            .map(|_| self.choice(key, choices))
+            .transpose()
     }
 
     pub(super) fn required_boolean(&self, key: &str) -> Result<bool, CallError> {
@@ -324,16 +326,16 @@ impl<'a> Arguments<'a> {
     }
 
     fn object(&self, key: &'a str) -> Result<Option<Arguments<'a>>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
+        match self.sent(key) {
+            None => Ok(None),
             Some(Value::Object(map)) => Ok(Some(self.nested(map))),
             Some(_) => Err(self.error(format_args!("{key} is an object"))),
         }
     }
 
     fn boolean(&self, key: &str) -> Result<Option<bool>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
+        match self.sent(key) {
+            None => Ok(None),
             Some(Value::Bool(b)) => Ok(Some(*b)),
             Some(_) => Err(self.error(format_args!("{key} is true or false"))),
         }
@@ -341,9 +343,8 @@ impl<'a> Arguments<'a> {
 
     /// A whole number, 0 or more, that fits a `usize`.
     pub(super) fn count(&self, key: &str) -> Result<Option<usize>, CallError> {
-        let value = match self.map.get(key) {
-            None | Some(Value::Null) => return Ok(None),
-            Some(value) => value,
+        let Some(value) = self.sent(key) else {
+            return Ok(None);
         };
         value
             .as_u64()
@@ -358,16 +359,14 @@ impl<'a> Arguments<'a> {
         key: &str,
         choices: &[(&str, T)],
     ) -> Result<T, CallError> {
-        if matches!(self.map.get(key), None | Some(Value::Null)) {
-            return Err(self.error(format_args!("{key} is required")));
-        }
+        self.required(key)?;
         self.choice(key, choices)
     }
 
     /// One of `choices` by its word, the first if not sent.
     pub(super) fn choice<T: Copy>(&self, key: &str, choices: &[(&str, T)]) -> Result<T, CallError> {
-        let word = match self.map.get(key) {
-            None | Some(Value::Null) => return Ok(choices[0].1),
+        let word = match self.sent(key) {
+            None => return Ok(choices[0].1),
             Some(Value::String(word)) => Some(word.as_str()),
             Some(_) => None,
         };
@@ -377,10 +376,7 @@ impl<'a> Arguments<'a> {
 
     /// An expression, if sent: as [`Arguments::text`].
     pub(super) fn optional_text(&self, key: &str) -> Result<Option<String>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(_) => self.text(key).map(Some),
-        }
+        self.sent(key).map(|_| self.text(key)).transpose()
     }
 
     /// A list of names, at most [`MAX_ITEMS`]; none if not sent.
@@ -400,8 +396,8 @@ impl<'a> Arguments<'a> {
         most: usize,
         what: &str,
     ) -> Result<Option<&'a [Value]>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
+        match self.sent(key) {
+            None => Ok(None),
             Some(Value::Array(items)) if (least..=most).contains(&items.len()) => Ok(Some(items)),
             Some(_) if least == 0 => {
                 Err(self.error(format_args!("{key} is a list of at most {most} {what}")))
@@ -557,8 +553,8 @@ impl<'a> Arguments<'a> {
                     }
                     _ => return Err(said()),
                 };
-                let start = match map.get("start") {
-                    None | Some(Value::Null) => None,
+                let start = match one.sent("start") {
+                    None => None,
                     Some(start) => Some(id(start).ok_or_else(said)?),
                 };
                 Ok(Section {
@@ -592,15 +588,14 @@ impl<'a> Arguments<'a> {
                 quoted_words(WORLD_PLANES)
             ))
         };
-        let map = match self.map.get("tool") {
-            None | Some(Value::Null) => return Err(self.error("tool is required")),
-            Some(Value::String(word)) => {
+        let map = match self.required("tool")? {
+            Value::String(word) => {
                 return lookup(WORLD_PLANES, word)
                     .map(|plane| SplitWith::Surface(Reference::World(plane)))
                     .ok_or_else(said);
             }
-            Some(Value::Object(map)) => map,
-            Some(_) => return Err(said()),
+            Value::Object(map) => map,
+            _ => return Err(said()),
         };
         let tool = self.nested(map);
         let has = |key: &str| map.contains_key(key);
@@ -690,8 +685,8 @@ impl<'a> Arguments<'a> {
                 or_list(choices)
             ))
         };
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
+        match self.sent(key) {
+            None => Ok(None),
             Some(Value::String(word)) => lookup(worlds, word)
                 .map(|world| Some(Reference::World(world)))
                 .ok_or_else(said),
@@ -721,8 +716,8 @@ impl<'a> Arguments<'a> {
     /// face, edge or corner by key.
     pub(super) fn measured(&self, key: &'a str) -> Result<Option<Measured>, CallError> {
         let said = || self.error(format_args!("{key} is {MEASURED}"));
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
+        match self.sent(key) {
+            None => Ok(None),
             Some(Value::Object(map)) if map.len() == 1 && map.contains_key("body") => {
                 Ok(Some(Measured::Body(self.nested(map).name("body")?)))
             }
@@ -802,8 +797,8 @@ impl<'a> Arguments<'a> {
     }
 
     fn direction(&self, key: &str) -> Result<Option<Direction>, CallError> {
-        match self.map.get(key) {
-            None | Some(Value::Null) => Ok(None),
+        match self.sent(key) {
+            None => Ok(None),
             Some(value) => direction(value).map(Some).ok_or_else(|| {
                 self.error(format_args!(
                     "{key} is an axis such as \"+z\", \"-x\" or \"y\", or three numbers \

@@ -307,18 +307,17 @@ impl Arguments<'_> {
     /// `edit_sketch`'s `operations`, required: 1 to [`MAX_OPERATIONS`],
     /// labels unique.
     pub(super) fn operations(&self) -> Result<Vec<SketchOp>, CallError> {
-        let items = match self.map.get("operations") {
-            None | Some(Value::Null) => return Err(self.error("operations is required")),
-            Some(Value::Array(items)) if items.is_empty() => {
+        let items = match self.required("operations")? {
+            Value::Array(items) if items.is_empty() => {
                 return Err(self.error("operations is empty: give at least one"));
             }
-            Some(Value::Array(items)) if items.len() > MAX_OPERATIONS => {
+            Value::Array(items) if items.len() > MAX_OPERATIONS => {
                 return Err(self.error(format_args!(
                     "operations has more than {MAX_OPERATIONS}: split the edit into several calls"
                 )));
             }
-            Some(Value::Array(items)) => items,
-            Some(_) => return Err(self.error("operations is a list of operations")),
+            Value::Array(items) => items,
+            _ => return Err(self.error("operations is a list of operations")),
         };
         let mut operations: Vec<SketchOp> = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
@@ -365,8 +364,8 @@ impl Arguments<'_> {
                 || (spec.labelled && key == "label")
                 || (spec.construction && key == "construction")
         })?;
-        let label = match self.map.get("label") {
-            None | Some(Value::Null) => None,
+        let label = match self.sent("label") {
+            None => None,
             Some(Value::String(label)) => Some(self.label(label)?),
             Some(_) => return Err(self.error("label is a string")),
         };
