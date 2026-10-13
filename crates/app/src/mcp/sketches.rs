@@ -26,10 +26,11 @@ use varde_mcp::tools::{self, AddLink, Call, ItemKind, LinkFrom, Reference, Worde
 use varde_sketch::{Id, LinkKind, SketchEdit};
 use varde_view::{Picked, PlanePick, SketchItem, Tool};
 
-use super::args::{committed_marks, failed, origin_plane, said};
+use super::args::{committed_marks, failed, said};
 use super::edit::{Made, Refused};
 use super::names::sketch_id;
 use super::waiting::{Caller, Wait, Waiter};
+use super::words::origin_plane;
 use crate::doc::{
     Doc, Settled, Step, face_placement_in, outside_model_in, outside_sketch_item_at,
     outside_target_in, sketch_of,

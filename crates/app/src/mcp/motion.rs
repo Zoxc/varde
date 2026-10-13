@@ -24,10 +24,11 @@ use varde_view::{
 };
 
 use super::args::{
-    Given, SET_FEATURE, Wrong, by_key, gated, goes_with, keyed, made, origin_plane, picked_bodies,
-    said, typed_given, world_axis,
+    Given, SET_FEATURE, Wrong, by_key, gated, goes_with, keyed, made, picked_bodies, said,
+    typed_given,
 };
 use super::edit::{Made, Refused};
+use super::words::{origin_plane, pattern_mode, world_axis};
 use crate::doc::{Doc, MotionSession};
 
 /// The commands `move_body` makes on `doc`'s design, and what it's to
@@ -142,15 +143,10 @@ pub(super) fn set_pattern(
     if let Some(axis) = args.axis.as_ref().filter(|_| given.has("axis")) {
         motion_axis(doc, session, axis)?;
     }
-    if let Some(mode) = args.mode.filter(|_| given.has("mode")) {
-        let mode = match mode {
-            tools::PatternMode::Spacing => PatternMode::Spacing,
-            tools::PatternMode::Total => PatternMode::Total,
-            tools::PatternMode::Full => PatternMode::Full,
-        };
-        if !session.set_mode(mode) {
-            return Err(goes_with("mode full", "kind circular only"));
-        }
+    if let Some(mode) = args.mode.filter(|_| given.has("mode"))
+        && !session.set_mode(pattern_mode(mode))
+    {
+        return Err(goes_with("mode full", "kind circular only"));
     }
     if given.sent("flip", args.flip) && kind == MotionKind::CircularPattern {
         return Err(goes_with("flip", "kind linear only"));

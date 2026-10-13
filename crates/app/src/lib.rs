@@ -2,6 +2,30 @@
 //!
 //! Frontends (`binary`, `web`) only call [`run`].
 
+/// Declares each pair of twin enums once, as
+/// `fn of(One) -> Other / fn back { OneVariant = OtherVariant, .. }`
+/// (each `fn` optionally with a visibility), and makes both directions'
+/// functions from it, so the two can't disagree: a stored setting and
+/// its options twin (`settings.rs`), an MCP tools word and the
+/// document's or panel's (`mcp/words.rs`).
+macro_rules! mirror {
+    ($($vis:vis fn $of:ident($stored:ident) -> $shown:ident / $back_vis:vis fn $back:ident {
+        $($a:ident = $b:ident),+ $(,)?
+    })*) => {$(
+        $vis fn $of(stored: $stored) -> $shown {
+            match stored {
+                $($stored::$a => $shown::$b,)+
+            }
+        }
+
+        $back_vis fn $back(shown: $shown) -> $stored {
+            match shown {
+                $($shown::$b => $stored::$a,)+
+            }
+        }
+    )*};
+}
+
 mod doc;
 mod files;
 mod io;

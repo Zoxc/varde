@@ -18,10 +18,11 @@ use varde_mcp::tools::{self, Axis, ExtrudeExtent, FeatureTool, RevolveExtent};
 use varde_view::{Angle, Distance, ExtentKind, OperationKind, TurnKind};
 
 use super::args::{
-    Given, added, curve_in, excluded, failed, gone_sketch, operation, picked_bodies, read, regions,
+    Given, added, curve_in, excluded, failed, gone_sketch, picked_bodies, read, regions,
     sketch_before, tool_for,
 };
 use super::edit::{Made, Refused};
+use super::words::{body_op, operation};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, RevolveSession, sketch_of};
 
 /// Refuses, editing an extrude or revolve, a value given that its
@@ -321,13 +322,4 @@ fn axis(
         return Err("that line has no length".to_owned());
     }
     Ok(())
-}
-
-/// The document's body operation for the tools' `op`.
-fn body_op(op: tools::BodyOp) -> varde_document::BodyOp {
-    match op {
-        tools::BodyOp::Union => varde_document::BodyOp::Union,
-        tools::BodyOp::Subtract => varde_document::BodyOp::Subtract,
-        tools::BodyOp::Intersect => varde_document::BodyOp::Intersect,
-    }
 }

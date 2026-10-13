@@ -11,16 +11,17 @@
 //! choice it doesn't offer) the call refuses, saying why; what it leaves
 //! to the document the editor refuses.
 
-use varde_document::{Command, Keep, MAX_EXTRUDE_REGIONS, Side};
+use varde_document::{Command, Keep, MAX_EXTRUDE_REGIONS};
 use varde_mcp::tools::{self, FeatureTool, Reference, SplitWith};
 use varde_view::{MotionField, MotionKind, MotionPick, ShellDirection, SplitMode};
 
 use super::args::{
     Given, SET_FEATURE, Wrong, by_key, committed_marks, curve_in, faces, faces_given, failed,
-    goes_with, keyed, made, made_of, origin_plane, pick, picked_bodies, said, sketch_before,
-    tool_for, typed_given,
+    goes_with, keyed, made, made_of, pick, picked_bodies, said, sketch_before, tool_for,
+    typed_given,
 };
 use super::edit::{Made, Refused};
+use super::words::{origin_plane, split_keep, split_side};
 use crate::doc::{Doc, MotionSession, RegionPick};
 
 /// The commands `split` makes on `doc`'s design, and what it's to make:
@@ -116,10 +117,7 @@ pub(super) fn set_split(
                 "keep both: a trim's kept side keeps the body",
             ));
         }
-        session.split.original = match original {
-            tools::SplitSide::Front => Side::Front,
-            tools::SplitSide::Back => Side::Back,
-        };
+        session.split.original = split_side(original);
     }
     session.split.keep = keep;
     Ok(())
@@ -277,13 +275,4 @@ pub(super) fn set_draft(
     given.set("flip", &mut session.flip, args.flip);
     given.set("tangent", &mut session.tangent, args.tangent);
     Ok(())
-}
-
-/// The panel's side to keep for the tools' `keep`.
-fn split_keep(keep: tools::SplitKeep) -> Keep {
-    match keep {
-        tools::SplitKeep::Both => Keep::Both,
-        tools::SplitKeep::Front => Keep::Front,
-        tools::SplitKeep::Back => Keep::Back,
-    }
 }

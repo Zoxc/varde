@@ -36,6 +36,7 @@ mod sweep;
 mod text;
 mod undo;
 pub(crate) mod waiting;
+mod words;
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;

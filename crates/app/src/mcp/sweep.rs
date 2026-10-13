@@ -14,15 +14,16 @@
 //! show) the call refuses, saying why; what it leaves to the document
 //! the editor refuses.
 
-use varde_document::{Command, Document, FeatureId, LoftMode, MAX_SWEEP_REGIONS, Section};
+use varde_document::{Command, Document, FeatureId, MAX_SWEEP_REGIONS, Section};
 use varde_mcp::tools::{self, FeatureTool, Profiles, Reference, SectionShape, SweepAlong};
 use varde_view::{MotionField, MotionKind, SweepPath};
 
 use super::args::{
-    Given, Wrong, curve_in, edges, excluded, goes_with, keyed, made_of, operation, pick, point_in,
-    regions, said, sketch_before, tool_for, typed, typed_given, world_axis,
+    Given, Wrong, curve_in, edges, excluded, goes_with, keyed, made_of, pick, point_in, regions,
+    said, sketch_before, tool_for, typed, typed_given,
 };
 use super::edit::{Made, Refused};
+use super::words::{loft_mode, operation, world_axis};
 use crate::doc::{Doc, MotionSession, RegionPick};
 
 /// The commands `sweep` makes on `doc`'s design, and what it's to make:
@@ -260,10 +261,7 @@ pub(super) fn set_loft(
         }
     }
     if given.has("mode") {
-        session.loft.mode = match args.mode {
-            tools::LoftMode::Smooth => LoftMode::Smooth,
-            tools::LoftMode::Ruled => LoftMode::Ruled,
-        };
+        session.loft.mode = loft_mode(args.mode);
     }
     if given.has("closed") && session.loft.closed != args.closed {
         session.loft_closed();

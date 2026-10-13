@@ -87,27 +87,6 @@ impl Settings {
     }
 }
 
-/// Declares each pair of a stored enum and its options twin once, as
-/// `fn of(Stored) -> Options / fn stored { Stored = Options, .. }`, and
-/// makes both directions' functions from it, so the two can't disagree.
-macro_rules! mirror {
-    ($(fn $of:ident($stored:ident) -> $shown:ident / fn $back:ident {
-        $($a:ident = $b:ident),+ $(,)?
-    })*) => {$(
-        fn $of(stored: $stored) -> $shown {
-            match stored {
-                $($stored::$a => $shown::$b,)+
-            }
-        }
-
-        fn $back(shown: $shown) -> $stored {
-            match shown {
-                $($shown::$b => $stored::$a,)+
-            }
-        }
-    )*};
-}
-
 mirror! {
     fn theme_of(Theme) -> ThemeChoice / fn stored_theme {
         Auto = Auto, Light = Light, Dark = Dark,

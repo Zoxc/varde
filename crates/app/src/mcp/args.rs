@@ -11,14 +11,9 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use glam::DVec2;
-use varde_document::{
-    Axis3, BodyId, Command, Document, FeatureId, FeatureKind, MAX_COORD, Named, OriginPlane,
-};
+use varde_document::{BodyId, Command, Document, FeatureId, FeatureKind, MAX_COORD, Named};
 use varde_expr::{Ask, Value as ExprValue};
-use varde_mcp::tools::{
-    FeatureTool, Item, ItemKind, Naming, Operation, Profile, Profiles, Worded, WorldAxis,
-    WorldPlane,
-};
+use varde_mcp::tools::{FeatureTool, Item, ItemKind, Naming, Profile, Profiles, Worded};
 use varde_render::Camera;
 use varde_view::{MotionField, MotionKind, OperationKind, Pick, PickIndex};
 
@@ -411,16 +406,6 @@ pub(super) fn read(error: Option<&impl std::fmt::Display>, said: &str) -> Result
     }
 }
 
-/// The panel's operation for the tools'.
-pub(super) fn operation(operation: Operation) -> OperationKind {
-    match operation {
-        Operation::NewBody => OperationKind::NewBody,
-        Operation::Join => OperationKind::Join,
-        Operation::Cut => OperationKind::Cut,
-        Operation::Intersect => OperationKind::Intersect,
-    }
-}
-
 /// Sets `targets` to the bodies `names` a join, cut or intersect leaves
 /// out, if `exclude` is `given`, as the panel's Bodies list unticks
 /// them, for the feature `edited` or a new one, read against its
@@ -671,24 +656,6 @@ pub(super) fn by_key<T>(
     let found = key::found(doc, text, kind).map_err(|why| self::said(said, why))?;
     let taken = take(&found.index, found.pick).map_err(|why| self::said(said, why))?;
     Ok((found, taken))
-}
-
-/// The origin plane for the tools'.
-pub(super) fn origin_plane(plane: WorldPlane) -> OriginPlane {
-    match plane {
-        WorldPlane::Xy => OriginPlane::XY,
-        WorldPlane::Xz => OriginPlane::XZ,
-        WorldPlane::Yz => OriginPlane::YZ,
-    }
-}
-
-/// The world's axis for the tools'.
-pub(super) fn world_axis(axis: WorldAxis) -> Axis3 {
-    match axis {
-        WorldAxis::X => Axis3::X,
-        WorldAxis::Y => Axis3::Y,
-        WorldAxis::Z => Axis3::Z,
-    }
 }
 
 /// Takes the face or edge `item` names as `session`'s axis or plane

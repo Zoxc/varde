@@ -27,15 +27,13 @@ use varde_document::{
     Feature, FeatureId, FeatureKind, Operation, OriginPlane, PathPart, PatternKind, Plane,
     PointRef, RegionRef, ScaleFactor, Section, SplitTool,
 };
-use varde_mcp::tools::{
-    self, FeatureTool, ItemKind, Page, ToolReply, Worded, WorldAxis, WorldPlane,
-};
-use varde_view::MotionField;
+use varde_mcp::tools::{self, FeatureTool, ItemKind, Page, ToolReply, Worded};
+use varde_view::{MotionField, OperationKind};
 
 use super::{ListAt, failure};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, MotionSession, RevolveSession, sketch_of};
-use crate::mcp::args;
 use crate::mcp::key::{self, Key, Ref};
+use crate::mcp::{args, words};
 
 /// `feature {name, offset?, limit?}`: see the module's docs.
 pub(crate) fn feature(doc: &Doc, name: &str, page: Page) -> ToolReply {
@@ -130,33 +128,17 @@ pub(crate) fn tool_of(kind: &FeatureKind) -> Option<FeatureTool> {
 
 /// The word an origin plane is named by.
 fn plane_word(plane: OriginPlane) -> &'static str {
-    match plane {
-        OriginPlane::XY => WorldPlane::Xy,
-        OriginPlane::XZ => WorldPlane::Xz,
-        OriginPlane::YZ => WorldPlane::Yz,
-    }
-    .word()
+    words::plane_word(plane).word()
 }
 
 /// The word a world axis is named by.
 fn axis_word(axis: varde_document::Axis3) -> &'static str {
-    match axis {
-        varde_document::Axis3::X => WorldAxis::X,
-        varde_document::Axis3::Y => WorldAxis::Y,
-        varde_document::Axis3::Z => WorldAxis::Z,
-    }
-    .word()
+    words::axis_word(axis).word()
 }
 
 /// The word an extrude's, revolve's, sweep's or loft's operation is.
 fn operation_word(operation: &Operation) -> &'static str {
-    match operation {
-        Operation::NewBody(_) => tools::Operation::NewBody,
-        Operation::Join(_) => tools::Operation::Join,
-        Operation::Cut(_) => tools::Operation::Cut,
-        Operation::Intersect(_) => tools::Operation::Intersect,
-    }
-    .word()
+    words::operation_word(OperationKind::of(operation)).word()
 }
 
 /// What's said in place of a reference that can't be named.
@@ -304,12 +286,7 @@ impl<'a> Shape<'a> {
         let session = CombineSession::editing(id, combine);
         said.put("target", self.body(combine.target));
         said.put("tools", self.bodies(&combine.tools));
-        let op = match session.op {
-            varde_document::BodyOp::Union => tools::BodyOp::Union,
-            varde_document::BodyOp::Subtract => tools::BodyOp::Subtract,
-            varde_document::BodyOp::Intersect => tools::BodyOp::Intersect,
-        };
-        said.put("operation", json!(op.word()));
+        said.put("operation", json!(words::body_op_word(session.op).word()));
         said.put("keep_tools", json!(session.keep_tools));
     }
 
@@ -341,12 +318,7 @@ impl<'a> Shape<'a> {
         said.put("bodies", self.bodies(&pattern.bodies));
         said.put("axis", self.axis(pattern.kind.axis()));
         said.put("count", text(session, MotionField::Count));
-        let mode = match session.mode {
-            varde_view::PatternMode::Spacing => tools::PatternMode::Spacing,
-            varde_view::PatternMode::Total => tools::PatternMode::Total,
-            varde_view::PatternMode::Full => tools::PatternMode::Full,
-        };
-        said.put("mode", json!(mode.word()));
+        said.put("mode", json!(words::pattern_mode_word(session.mode).word()));
         if session.mode != varde_view::PatternMode::Full {
             said.put("spread", text(session, MotionField::Spread));
         }
@@ -406,16 +378,8 @@ impl<'a> Shape<'a> {
             }),
         };
         said.put("tool", tool);
-        let side = |side: varde_document::Side| match side {
-            varde_document::Side::Front => tools::SplitSide::Front.word(),
-            varde_document::Side::Back => tools::SplitSide::Back.word(),
-        };
-        let keep = match split.keep {
-            varde_document::Keep::Both => tools::SplitKeep::Both,
-            varde_document::Keep::Front => tools::SplitKeep::Front,
-            varde_document::Keep::Back => tools::SplitKeep::Back,
-        }
-        .word();
+        let side = |side| words::split_side_word(side).word();
+        let keep = words::split_keep_word(split.keep).word();
         if split.keep == varde_document::Keep::Both {
             said.put("original", json!(side(split.original)));
         }
@@ -542,11 +506,7 @@ impl<'a> Shape<'a> {
     fn loft(&self, said: &mut Said, loft: &varde_document::Loft) {
         let sections: Vec<Value> = loft.sections.iter().map(|s| self.loft_section(s)).collect();
         said.put("sections", json!(sections));
-        let mode = match loft.mode {
-            varde_document::LoftMode::Smooth => tools::LoftMode::Smooth,
-            varde_document::LoftMode::Ruled => tools::LoftMode::Ruled,
-        };
-        said.put("mode", json!(mode.word()));
+        said.put("mode", json!(words::loft_mode_word(loft.mode).word()));
         said.put("closed", json!(loft.closed));
         let rails: Vec<Value> = loft.rails.iter().map(|c| self.chain_start(c)).collect();
         said.put("rails", json!(rails));
