@@ -2,8 +2,6 @@
 //! their normals by a distance, the faces around them extended or
 //! trimmed to meet them.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
@@ -85,37 +83,18 @@ impl OffsetFace {
 
 /// What's wrong with an offset face, see
 /// [`CheckError::OffsetFace`](crate::CheckError::OffsetFace).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum OffsetFaceError {
     /// Its faces fail their own check ([`FaceListError`]).
-    Faces(FaceListError),
+    #[error("the faces it moves: {0}")]
+    Faces(#[source] FaceListError),
     /// Its distance's expression doesn't give its value, or the value
     /// isn't a length [`OffsetFace::distance_ask`] takes.
+    #[error("its distance's expression doesn't give its value, or it isn't a length it takes")]
     Distance,
     /// What its faces name ([`Document::check_face_set`](crate::Document::check_face_set)).
-    Set(FaceSetError),
-}
-
-impl fmt::Display for OffsetFaceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OffsetFaceError::Faces(why) => write!(f, "the faces it moves: {why}"),
-            OffsetFaceError::Distance => f.write_str(
-                "its distance's expression doesn't give its value, or it isn't a length it takes",
-            ),
-            OffsetFaceError::Set(why) => why.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for OffsetFaceError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            OffsetFaceError::Faces(why) => Some(why),
-            OffsetFaceError::Set(why) => Some(why),
-            _ => None,
-        }
-    }
+    #[error("{0}")]
+    Set(#[source] FaceSetError),
 }
 
 #[cfg(test)]

@@ -5,7 +5,6 @@
 //! helix.
 
 use std::f64::consts::TAU;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -320,162 +319,100 @@ fn check_parts(parts: &[PathPart]) -> Result<(), SweepError> {
 
 /// What's wrong with a sweep, see
 /// [`CheckError::Sweep`](crate::CheckError::Sweep).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum SweepError {
     /// Its profile's sketch, this feature, isn't a sketch feature before
     /// it.
+    #[error("sweeps feature {}, which isn't a sketch before it", .0.0)]
     Sketch(FeatureId),
     /// It takes this many regions: none, or over [`MAX_SWEEP_REGIONS`].
+    #[error("sweeps {0} regions, not 1 to {MAX_SWEEP_REGIONS}")]
     Regions(usize),
     /// A region reference fails its check.
-    Region(RegionRefError),
+    #[error("{0}")]
+    Region(#[source] RegionRefError),
     /// Its path has this many parts: none, or over [`MAX_PATH_PARTS`].
+    #[error("its path has {0} parts, not 1 to {MAX_PATH_PARTS}")]
     Parts(usize),
     /// A part of its path names no curve or edge.
+    #[error("a part of its path names no curve or edge")]
     EmptyPart,
     /// Its path names at least this many curves and edges, over
     /// [`MAX_PATH_CURVES`].
+    #[error("its path names {0} curves and edges, more than {MAX_PATH_CURVES}")]
     PathCurves(usize),
     /// A part's curves aren't sorted, or one is repeated.
+    #[error("a part of its path has its curves out of order or repeated")]
     CurveOrder,
     /// A part's edges aren't in [`EdgeRef::order`], or one is repeated.
+    #[error("a part of its path has its edges out of order or repeated")]
     EdgeOrder,
     /// An edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
+    #[error("its path: {0}")]
+    Edge(#[source] EdgeError),
     /// A part's edges are on more than one body.
+    #[error("a part of its path has edges on several bodies")]
     EdgeBodies,
     /// A part's sketch, this feature, isn't a sketch feature before it.
+    #[error("its path runs along feature {}, which isn't a sketch before it", .0.0)]
     PathSketch(FeatureId),
     /// A part is a chain of the profile's own sketch: a path in the
     /// profile's plane can't be square to it.
+    #[error("its path runs along curves of its profile's own sketch")]
     OwnSketch,
     /// A part's curve, this one, isn't a curve of its sketch (when added
     /// or set, see [`Sweep::check_curves`]).
+    #[error("its path's curve {0} isn't a curve of its sketch")]
     Curve(Id),
     /// An edge part's body, this one, isn't there or no feature before it
     /// makes it.
+    #[error("its path runs along edges of body {}, which isn't there or no earlier \
+                 feature makes", .0.0)]
     EdgeBody(BodyId),
     /// A key of an edge's faces names this feature, which is the sweep or
     /// comes after it, or isn't there and has an id a feature made later
     /// could take.
+    #[error("its path runs along an edge of a face made by feature {}, which doesn't \
+                 come before it", .0.0)]
     EdgeMaker(FeatureId),
     /// A helix sweep keeps its orientation or has a twist.
+    #[error("a helix sweep follows its path and has no twist")]
     HelixOptions,
     /// Its helix's axis fails its own check, as a move's would.
-    Axis(RefError),
+    #[error("its helix: {0}")]
+    Axis(#[source] RefError),
     /// Its helix's axis's body, this one, isn't there or no feature
     /// before it makes it.
+    #[error("its helix's axis is on body {}, which isn't there or no earlier feature \
+                 makes", .0.0)]
     AxisBody(BodyId),
     /// A key of its helix's axis's faces names this feature, which is the
     /// sweep or comes after it, or isn't there and has an id a feature
     /// made later could take.
+    #[error("its helix's axis is on a face made by feature {}, which doesn't come \
+                 before it", .0.0)]
     AxisMaker(FeatureId),
     /// Its helix's pitch's expression doesn't give its value, or the
     /// value isn't a length [`Sweep::pitch_ask`] takes.
+    #[error("its pitch's expression doesn't give its value, or it isn't a length it takes")]
     Pitch,
     /// Its helix's turns' expression doesn't give its value, or the value
     /// isn't one [`Sweep::turns_ask`] takes.
+    #[error(
+        "its turns' expression doesn't give its value, or it isn't from \
+                 {MIN_HELIX_TURNS} to {MAX_HELIX_TURNS}"
+    )]
     Turns,
     /// Its twist's expression doesn't give its value, or the value isn't
     /// an angle [`Sweep::twist_ask`] takes.
+    #[error(
+        "its twist's expression doesn't give its value, or it isn't an angle within \
+                 {MAX_TWIST_TURNS} turns"
+    )]
     Twist,
     /// Its operation's new or excluded bodies are wrong.
-    Operation(OperationError),
-}
-
-impl fmt::Display for SweepError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SweepError::Sketch(sketch) => write!(
-                f,
-                "sweeps feature {}, which isn't a sketch before it",
-                sketch.0
-            ),
-            SweepError::Regions(count) => {
-                write!(f, "sweeps {count} regions, not 1 to {MAX_SWEEP_REGIONS}")
-            }
-            SweepError::Region(why) => why.fmt(f),
-            SweepError::Parts(count) => {
-                write!(f, "its path has {count} parts, not 1 to {MAX_PATH_PARTS}")
-            }
-            SweepError::EmptyPart => f.write_str("a part of its path names no curve or edge"),
-            SweepError::PathCurves(count) => write!(
-                f,
-                "its path names {count} curves and edges, more than {MAX_PATH_CURVES}"
-            ),
-            SweepError::CurveOrder => {
-                f.write_str("a part of its path has its curves out of order or repeated")
-            }
-            SweepError::EdgeOrder => {
-                f.write_str("a part of its path has its edges out of order or repeated")
-            }
-            SweepError::Edge(why) => write!(f, "its path: {why}"),
-            SweepError::EdgeBodies => f.write_str("a part of its path has edges on several bodies"),
-            SweepError::PathSketch(sketch) => write!(
-                f,
-                "its path runs along feature {}, which isn't a sketch before it",
-                sketch.0
-            ),
-            SweepError::OwnSketch => {
-                f.write_str("its path runs along curves of its profile's own sketch")
-            }
-            SweepError::Curve(id) => {
-                write!(f, "its path's curve {id} isn't a curve of its sketch")
-            }
-            SweepError::EdgeBody(body) => write!(
-                f,
-                "its path runs along edges of body {}, which isn't there or no earlier \
-                 feature makes",
-                body.0
-            ),
-            SweepError::EdgeMaker(feature) => write!(
-                f,
-                "its path runs along an edge of a face made by feature {}, which doesn't \
-                 come before it",
-                feature.0
-            ),
-            SweepError::HelixOptions => {
-                f.write_str("a helix sweep follows its path and has no twist")
-            }
-            SweepError::Axis(why) => write!(f, "its helix: {why}"),
-            SweepError::AxisBody(body) => write!(
-                f,
-                "its helix's axis is on body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            SweepError::AxisMaker(feature) => write!(
-                f,
-                "its helix's axis is on a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-            SweepError::Pitch => f.write_str(
-                "its pitch's expression doesn't give its value, or it isn't a length it takes",
-            ),
-            SweepError::Turns => write!(
-                f,
-                "its turns' expression doesn't give its value, or it isn't from \
-                 {MIN_HELIX_TURNS} to {MAX_HELIX_TURNS}"
-            ),
-            SweepError::Twist => write!(
-                f,
-                "its twist's expression doesn't give its value, or it isn't an angle within \
-                 {MAX_TWIST_TURNS} turns"
-            ),
-            SweepError::Operation(why) => why.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for SweepError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SweepError::Region(why) => Some(why),
-            SweepError::Operation(why) => Some(why),
-            SweepError::Edge(why) => Some(why),
-            SweepError::Axis(why) => Some(why),
-            _ => None,
-        }
-    }
+    #[error("{0}")]
+    Operation(#[source] OperationError),
 }
 
 #[cfg(test)]

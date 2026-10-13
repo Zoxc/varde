@@ -4,7 +4,6 @@
 //! body of its own.
 
 use std::f64::consts::TAU;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -315,58 +314,29 @@ impl Pattern {
 
 /// What's wrong with a pattern, see
 /// [`CheckError::Pattern`](crate::CheckError::Pattern).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum PatternError {
     /// What it shares with a move: its bodies, its angle or its axis.
-    Motion(MotionError),
+    #[error("{0}")]
+    Motion(#[from] MotionError),
     /// Its count's expression doesn't give its value, or the value isn't
     /// a count [`Pattern::count_ask`] takes.
+    #[error("its count isn't a whole number from 2 to 1024")]
     Count,
     /// A linear pattern's spacing's expression doesn't give its value, or
     /// the value isn't a length [`Pattern::spacing_ask`] takes, or is
     /// zero.
+    #[error("its spacing's expression doesn't give its value, or it's zero")]
     Spacing,
     /// Its copies aren't joined to their originals and make this many new
     /// bodies, over [`MAX_PATTERN_BODIES`].
+    #[error("makes {0} bodies of its copies, over {MAX_PATTERN_BODIES}")]
     Separate(usize),
     /// Its copy bodies aren't as [`Copies`] lays them out: not one per
     /// copy, repeated, not the pattern's own, or a body it makes isn't
     /// listed (or a joined one makes bodies).
+    #[error("its copy bodies aren't one of its own per copy")]
     CopyBodies,
-}
-
-impl From<MotionError> for PatternError {
-    fn from(why: MotionError) -> Self {
-        PatternError::Motion(why)
-    }
-}
-
-impl fmt::Display for PatternError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PatternError::Motion(why) => why.fmt(f),
-            PatternError::Count => f.write_str("its count isn't a whole number from 2 to 1024"),
-            PatternError::Spacing => {
-                f.write_str("its spacing's expression doesn't give its value, or it's zero")
-            }
-            PatternError::Separate(count) => write!(
-                f,
-                "makes {count} bodies of its copies, over {MAX_PATTERN_BODIES}"
-            ),
-            PatternError::CopyBodies => {
-                f.write_str("its copy bodies aren't one of its own per copy")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PatternError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            PatternError::Motion(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

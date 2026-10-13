@@ -956,36 +956,52 @@ impl Document {
 }
 
 /// Why an edit was refused. The document is left as it was.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum EditError {
     /// Every id for a body or a feature has been used.
+    #[error("the document has no ids left")]
     OutOfIds,
     /// The edit would leave the document failing [`Document::check`], for
     /// the reason given.
-    Invalid(CheckError),
+    #[error("{0}")]
+    Invalid(#[source] CheckError),
     /// An edit of the sketch of this feature can't be made, see
     /// [`SketchEdit::apply`](varde_sketch::SketchEdit::apply).
-    Sketch(FeatureId, varde_sketch::EditError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Sketch(FeatureId, #[source] varde_sketch::EditError),
     /// [`Command::AddFeature`] or [`Command::SetFeature`] was given a
     /// sketch, or asked to set one: sketches are added by
     /// [`Command::AddSketch`] and set by [`Command::SetSketch`].
+    #[error("sketches are added and set by their own commands")]
     SketchKind,
     /// [`Command::SetSketch`] or [`Command::AddLink`] would take away the
     /// sketch face ([`sketch_face`]) of this sketch feature, which stays
     /// while the sketch is on its face.
+    #[error("the sketch face can't be removed")]
     SketchFace(FeatureId),
     /// A parameter command would leave this value in error: a feature's
     /// that uses the parameter (directly or through others) or, renaming
     /// one, a parameter's text the new name takes over
     /// [`MAX_LEN`](varde_expr::MAX_LEN).
-    Value(ValueOf, varde_expr::Error),
+    #[error(fmt = value_message)]
+    Value(ValueOf, #[source] varde_expr::Error),
     /// [`Command::RemoveParam`] was asked to remove this parameter, which
     /// a feature value or another parameter uses.
+    #[error("the parameter '{0}' is in use")]
     ParamUsed(String),
     /// A parameter command changes dimensions of this sketch feature's
     /// sketch, which then doesn't solve, see
     /// [`varde_sketch::revalue`].
-    Unsolved(FeatureId, varde_sketch::Rejected),
+    #[error("feature {}: the sketch wouldn't solve: {}", .0.0, .1)]
+    Unsolved(FeatureId, #[source] varde_sketch::Rejected),
+}
+
+/// [`EditError::Value`]: whose value, and why.
+fn value_message(of: &ValueOf, why: &varde_expr::Error, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match of {
+        ValueOf::Feature(id) => write!(f, "feature {}: a value would be in error: {why}", id.0),
+        ValueOf::Param(index) => write!(f, "parameter {}: {why}", index + 1),
+    }
 }
 
 /// Whose value an [`EditError::Value`] is about.
@@ -995,43 +1011,4 @@ pub enum ValueOf {
     Feature(FeatureId),
     /// The text of the parameter at this index.
     Param(usize),
-}
-
-impl fmt::Display for EditError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EditError::OutOfIds => f.write_str("the document has no ids left"),
-            EditError::Invalid(why) => why.fmt(f),
-            EditError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
-            EditError::SketchKind => {
-                f.write_str("sketches are added and set by their own commands")
-            }
-            EditError::SketchFace(_) => f.write_str("the sketch face can't be removed"),
-            EditError::Value(ValueOf::Feature(id), why) => {
-                write!(f, "feature {}: a value would be in error: {why}", id.0)
-            }
-            EditError::Value(ValueOf::Param(index), why) => {
-                write!(f, "parameter {}: {why}", index + 1)
-            }
-            EditError::ParamUsed(name) => write!(f, "the parameter '{name}' is in use"),
-            EditError::Unsolved(id, why) => {
-                write!(f, "feature {}: the sketch wouldn't solve: {why}", id.0)
-            }
-        }
-    }
-}
-
-impl std::error::Error for EditError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            EditError::OutOfIds
-            | EditError::SketchKind
-            | EditError::SketchFace(_)
-            | EditError::ParamUsed(_) => None,
-            EditError::Invalid(why) => Some(why),
-            EditError::Value(_, why) => Some(why),
-            EditError::Sketch(_, why) => Some(why),
-            EditError::Unsolved(_, why) => Some(why),
-        }
-    }
 }

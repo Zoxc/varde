@@ -2,7 +2,6 @@
 //! get wrong, its per-reference helpers, and [`CheckError`].
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 
 use varde_kernel_compat::Tolerance;
 use varde_sketch::{Design, Sketch, SketchError};
@@ -818,208 +817,125 @@ impl Late {
 }
 
 /// Why a [`Document`] fails [`Document::check`], and where.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum CheckError {
     /// A body's name is this many bytes, over [`MAX_NAME_LEN`].
+    #[error("body {} has a name of {} bytes, over the limit of {MAX_NAME_LEN}", .0.0, .1)]
     NameLength(BodyId, usize),
     /// A body's opacity is this percent, out of [`Opacity::MIN`] to
     /// [`Opacity::MAX`].
+    #[error(
+        "body {} has an opacity of {} %, not from {} to {}",
+        .0.0, .1, Opacity::MIN, Opacity::MAX
+    )]
     Opacity(BodyId, u8),
     /// A body's colour is this hue and saturation, out of what
     /// [`Tint::new`] takes.
+    #[error(
+        "body {} has a colour of hue {}° and saturation {} %, not below 360° \
+         and at most {} %",
+        .0.0, .1, .2, Tint::MAX_SATURATION
+    )]
     Tint(BodyId, u16, u8),
     /// A body's maker isn't an extrude, revolve, sweep, loft or split the document
     /// holds that makes it as its new body, or a pattern (whose own check
     /// holds it to the copy bodies it lists).
+    #[error("body {} is made by feature {}, which doesn't make it", .0.0, .1.0)]
     Creator(BodyId, FeatureId),
     /// The first body's id doesn't come after the second's, the one
     /// before it.
+    #[error("body id {} doesn't come after {}", .0.0, .1.0)]
     Order(BodyId, BodyId),
     /// The last body's id isn't below the document's next id.
+    #[error("body id {} is not below the next id", .0.0)]
     NextId(BodyId),
     /// A feature holds this id for a body it made before
     /// ([`FeatureKind::held_body`]), but it's a body's, another feature
     /// holds it too, or it isn't below the document's next id.
+    #[error("feature {} holds body id {} for a body it made, which is taken or not given out \
+                 yet", .0.0, .1.0)]
     Held(FeatureId, BodyId),
     /// A feature's name is this many bytes, over [`MAX_NAME_LEN`].
+    #[error("feature {} has a name of {} bytes, over the limit of {MAX_NAME_LEN}", .0.0, .1)]
     FeatureNameLength(FeatureId, usize),
     /// A sketch feature's sketch fails [`Sketch::check`].
-    Sketch(FeatureId, SketchError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Sketch(FeatureId, #[source] SketchError),
     /// A sketch feature's plane is wrong, see [`PlaneError`].
-    SketchPlane(FeatureId, PlaneError),
+    #[error("feature {}: {}", .0.0, .1)]
+    SketchPlane(FeatureId, #[source] PlaneError),
     /// A sketch feature's links' sources are wrong, see [`LinkError`].
-    SketchLink(FeatureId, LinkError),
+    #[error("feature {}: {}", .0.0, .1)]
+    SketchLink(FeatureId, #[source] LinkError),
     /// An extrude feature is wrong, see [`ExtrudeError`].
-    Extrude(FeatureId, ExtrudeError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Extrude(FeatureId, #[source] ExtrudeError),
     /// A revolve feature is wrong, see [`RevolveError`].
-    Revolve(FeatureId, RevolveError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Revolve(FeatureId, #[source] RevolveError),
     /// A combine feature is wrong, see [`CombineError`].
-    Combine(FeatureId, CombineError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Combine(FeatureId, #[source] CombineError),
     /// A move feature is wrong, see [`MotionError`].
-    Move(FeatureId, MotionError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Move(FeatureId, #[source] MotionError),
     /// A mirror feature is wrong, see [`MotionError`].
-    Mirror(FeatureId, MotionError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Mirror(FeatureId, #[source] MotionError),
     /// A pattern feature is wrong, see [`PatternError`].
-    Pattern(FeatureId, PatternError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Pattern(FeatureId, #[source] PatternError),
     /// An align feature is wrong, see [`AlignError`].
-    Align(FeatureId, AlignError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Align(FeatureId, #[source] AlignError),
     /// A scale feature is wrong, see [`ScaleError`].
-    Scale(FeatureId, ScaleError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Scale(FeatureId, #[source] ScaleError),
     /// A split feature is wrong, see [`SplitError`].
-    Split(FeatureId, SplitError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Split(FeatureId, #[source] SplitError),
     /// A chamfer feature is wrong, see [`ChamferError`].
-    Chamfer(FeatureId, ChamferError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Chamfer(FeatureId, #[source] ChamferError),
     /// A shell feature is wrong, see [`ShellError`].
-    Shell(FeatureId, ShellError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Shell(FeatureId, #[source] ShellError),
     /// A fillet feature is wrong, see [`FilletError`].
-    Fillet(FeatureId, FilletError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Fillet(FeatureId, #[source] FilletError),
     /// An offset face feature is wrong, see [`OffsetFaceError`].
-    OffsetFace(FeatureId, OffsetFaceError),
+    #[error("feature {}: {}", .0.0, .1)]
+    OffsetFace(FeatureId, #[source] OffsetFaceError),
     /// A draft feature is wrong, see [`FaceDraftError`].
-    FaceDraft(FeatureId, FaceDraftError),
+    #[error("feature {}: {}", .0.0, .1)]
+    FaceDraft(FeatureId, #[source] FaceDraftError),
     /// A sweep feature is wrong, see [`SweepError`].
-    Sweep(FeatureId, SweepError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Sweep(FeatureId, #[source] SweepError),
     /// A loft feature is wrong, see [`LoftError`].
-    Loft(FeatureId, LoftError),
+    #[error("feature {}: {}", .0.0, .1)]
+    Loft(FeatureId, #[source] LoftError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
+    #[error(
+        "the tolerance {} mm isn't from {} to {} mm",
+        .0, Tolerance::MIN_FIT, Tolerance::MAX_FIT
+    )]
     Tolerance(f64),
     /// Two features have this id.
+    #[error("two features have id {}", .0.0)]
     FeatureTwice(FeatureId),
     /// The last feature's id isn't below the document's next id.
+    #[error("feature id {} is not below the next id", .0.0)]
     FeatureNextId(FeatureId),
     /// The Timeline is rolled back to before a feature that isn't there.
+    #[error("the timeline is rolled back to feature id {}, which isn't there", .0.0)]
     Rollback(FeatureId),
     /// The parameter at this index is wrong, see [`ParamError`].
-    Param(usize, ParamError),
+    #[error("parameter {}: {}", .0.saturating_add(1), .1)]
+    Param(usize, #[source] ParamError),
     /// There are this many parameters, over
     /// [`MAX_PARAMS`](varde_expr::MAX_PARAMS).
+    #[error("there are {} parameters, over the limit of {}", .0, varde_expr::MAX_PARAMS)]
     Params(usize),
-}
-
-impl fmt::Display for CheckError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CheckError::NameLength(id, len) => write!(
-                f,
-                "body {} has a name of {len} bytes, over the limit of {MAX_NAME_LEN}",
-                id.0
-            ),
-            CheckError::Opacity(id, percent) => write!(
-                f,
-                "body {} has an opacity of {percent} %, not from {} to {}",
-                id.0,
-                Opacity::MIN,
-                Opacity::MAX
-            ),
-            CheckError::Tint(id, hue, saturation) => write!(
-                f,
-                "body {} has a colour of hue {hue}° and saturation {saturation} %, not below 360° \
-                 and at most {} %",
-                id.0,
-                Tint::MAX_SATURATION
-            ),
-            CheckError::Creator(id, feature) => write!(
-                f,
-                "body {} is made by feature {}, which doesn't make it",
-                id.0, feature.0
-            ),
-            CheckError::Order(id, before) => {
-                write!(f, "body id {} doesn't come after {}", id.0, before.0)
-            }
-            CheckError::NextId(id) => write!(f, "body id {} is not below the next id", id.0),
-            CheckError::Held(feature, id) => write!(
-                f,
-                "feature {} holds body id {} for a body it made, which is taken or not given out yet",
-                feature.0, id.0
-            ),
-            CheckError::FeatureNameLength(id, len) => write!(
-                f,
-                "feature {} has a name of {len} bytes, over the limit of {MAX_NAME_LEN}",
-                id.0
-            ),
-            CheckError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::SketchPlane(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::SketchLink(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Combine(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Move(id, why) | CheckError::Mirror(id, why) => {
-                write!(f, "feature {}: {why}", id.0)
-            }
-            CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Align(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Scale(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Split(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Chamfer(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Shell(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Fillet(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::OffsetFace(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::FaceDraft(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Sweep(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Loft(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Tolerance(fit) => write!(
-                f,
-                "the tolerance {fit} mm isn't from {} to {} mm",
-                Tolerance::MIN_FIT,
-                Tolerance::MAX_FIT
-            ),
-            CheckError::FeatureTwice(id) => write!(f, "two features have id {}", id.0),
-            CheckError::FeatureNextId(id) => {
-                write!(f, "feature id {} is not below the next id", id.0)
-            }
-            CheckError::Rollback(id) => {
-                write!(
-                    f,
-                    "the timeline is rolled back to feature id {}, which isn't there",
-                    id.0
-                )
-            }
-            CheckError::Param(index, why) => write!(f, "parameter {}: {why}", index + 1),
-            CheckError::Params(count) => write!(
-                f,
-                "there are {count} parameters, over the limit of {}",
-                varde_expr::MAX_PARAMS
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CheckError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            CheckError::Sketch(_, why) => Some(why),
-            CheckError::SketchPlane(_, why) => Some(why),
-            CheckError::SketchLink(_, why) => Some(why),
-            CheckError::Extrude(_, why) => Some(why),
-            CheckError::Revolve(_, why) => Some(why),
-            CheckError::Combine(_, why) => Some(why),
-            CheckError::Move(_, why) | CheckError::Mirror(_, why) => Some(why),
-            CheckError::Pattern(_, why) => Some(why),
-            CheckError::Align(_, why) => Some(why),
-            CheckError::Scale(_, why) => Some(why),
-            CheckError::Split(_, why) => Some(why),
-            CheckError::Chamfer(_, why) => Some(why),
-            CheckError::Shell(_, why) => Some(why),
-            CheckError::Fillet(_, why) => Some(why),
-            CheckError::OffsetFace(_, why) => Some(why),
-            CheckError::FaceDraft(_, why) => Some(why),
-            CheckError::Sweep(_, why) => Some(why),
-            CheckError::Loft(_, why) => Some(why),
-            CheckError::Param(_, why) => Some(why),
-            CheckError::NameLength(..)
-            | CheckError::Opacity(..)
-            | CheckError::Tint(..)
-            | CheckError::Creator(..)
-            | CheckError::Order(..)
-            | CheckError::NextId(..)
-            | CheckError::Held(..)
-            | CheckError::FeatureNameLength(..)
-            | CheckError::Tolerance(..)
-            | CheckError::FeatureTwice(..)
-            | CheckError::FeatureNextId(..)
-            | CheckError::Rollback(..)
-            | CheckError::Params(..) => None,
-        }
-    }
 }

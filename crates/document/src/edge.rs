@@ -2,7 +2,6 @@
 //! edge store them.
 
 use std::cmp::Ordering;
-use std::fmt;
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
@@ -88,25 +87,16 @@ impl EdgeRef {
 }
 
 /// What's wrong with an [`EdgeRef`] on its own ([`EdgeRef::check_own`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum EdgeError {
     /// Its faces' keys aren't sorted, or are the same.
+    #[error("its edge's faces are out of order or the same")]
     Faces,
     /// Its point isn't finite, or is further from zero than
     /// [`MAX_COORD`](crate::MAX_COORD).
+    #[error("its edge's point {0} is out of bounds")]
     Near(DVec3),
 }
-
-impl fmt::Display for EdgeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EdgeError::Faces => f.write_str("its edge's faces are out of order or the same"),
-            EdgeError::Near(at) => write!(f, "its edge's point {at} is out of bounds"),
-        }
-    }
-}
-
-impl std::error::Error for EdgeError {}
 
 /// Points in the order references keep them in: their coordinates in
 /// turn ([`f64::total_cmp`]), `Equal` only for the same point to the

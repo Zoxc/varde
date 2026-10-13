@@ -4,7 +4,6 @@
 //! or trimmed to meet them.
 
 use std::f64::consts::FRAC_PI_2;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -96,58 +95,32 @@ impl FaceDraft {
 
 /// What's wrong with a draft, see
 /// [`CheckError::FaceDraft`](crate::CheckError::FaceDraft).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum FaceDraftError {
     /// Its faces fail their own check ([`FaceListError`]).
-    Faces(FaceListError),
+    #[error("the faces it drafts: {0}")]
+    Faces(#[source] FaceListError),
     /// Its neutral plane's face fails its own check.
-    Neutral(PlaneError),
+    #[error("its neutral plane's face: {0}")]
+    Neutral(#[source] PlaneError),
     /// Its angle's expression doesn't give its value, or the value isn't
     /// an angle [`FaceDraft::angle_ask`] takes.
+    #[error("its angle's expression doesn't give its value, or it isn't an angle it takes")]
     Angle,
     /// What its faces name ([`Document::check_face_set`](crate::Document::check_face_set)).
-    Set(FaceSetError),
+    #[error("{0}")]
+    Set(#[source] FaceSetError),
     /// Its neutral face's body, this one, isn't there or no feature
     /// before it makes it.
+    #[error("its neutral plane is a face of body {}, which isn't there or no earlier \
+                 feature makes", .0.0)]
     NeutralBody(BodyId),
     /// Its neutral face's key names this feature, which is the draft
     /// itself or comes after it, or isn't there and has an id a feature
     /// made later could take.
+    #[error("its neutral plane's face was made by feature {}, which doesn't come \
+                 before it", .0.0)]
     NeutralMaker(FeatureId),
-}
-
-impl fmt::Display for FaceDraftError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FaceDraftError::Faces(why) => write!(f, "the faces it drafts: {why}"),
-            FaceDraftError::Neutral(why) => write!(f, "its neutral plane's face: {why}"),
-            FaceDraftError::Angle => f.write_str(
-                "its angle's expression doesn't give its value, or it isn't an angle it takes",
-            ),
-            FaceDraftError::Set(why) => why.fmt(f),
-            FaceDraftError::NeutralBody(body) => write!(
-                f,
-                "its neutral plane is a face of body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            FaceDraftError::NeutralMaker(feature) => write!(
-                f,
-                "its neutral plane's face was made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for FaceDraftError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            FaceDraftError::Faces(why) => Some(why),
-            FaceDraftError::Set(why) => Some(why),
-            FaceDraftError::Neutral(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

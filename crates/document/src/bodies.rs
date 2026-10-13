@@ -1,8 +1,6 @@
 //! The bodies a feature names: a combine's tools, a move's, a mirror's,
 //! a pattern's or a scale's bodies, and the checks they share.
 
-use std::fmt;
-
 use crate::BodyId;
 
 /// The most bodies one feature may name (a combine's tools, a move's,
@@ -24,23 +22,12 @@ pub(crate) fn check_bodies(bodies: &[BodyId]) -> Result<(), BodiesError> {
 }
 
 /// What's wrong with a feature's body list, see `check_bodies`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum BodiesError {
     /// It names this many bodies: none, or over [`MAX_FEATURE_BODIES`].
+    #[error("names {0} bodies, not 1 to {MAX_FEATURE_BODIES}")]
     Count(usize),
     /// Its bodies aren't sorted, or one is repeated.
+    #[error("its bodies are out of order or repeated")]
     Order,
 }
-
-impl fmt::Display for BodiesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BodiesError::Count(count) => {
-                write!(f, "names {count} bodies, not 1 to {MAX_FEATURE_BODIES}")
-            }
-            BodiesError::Order => f.write_str("its bodies are out of order or repeated"),
-        }
-    }
-}
-
-impl std::error::Error for BodiesError {}

@@ -3,7 +3,6 @@
 //! intersects bodies already there, as an extrude's does.
 
 use std::f64::consts::TAU;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -194,78 +193,45 @@ impl Revolve {
 
 /// What's wrong with a revolve, see
 /// [`CheckError::Revolve`](crate::CheckError::Revolve).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum RevolveError {
     /// Its sketch, this feature, isn't a sketch feature before it.
+    #[error("revolves feature {}, which isn't a sketch before it", .0.0)]
     Sketch(FeatureId),
     /// It takes this many regions: none, or over [`MAX_REVOLVE_REGIONS`].
+    #[error("revolves {0} regions, not 1 to {MAX_REVOLVE_REGIONS}")]
     Regions(usize),
     /// A region reference fails its check.
-    Region(RegionRefError),
+    #[error("{0}")]
+    Region(#[source] RegionRefError),
     /// An angle's expression doesn't give its value, or the value isn't
     /// an angle [`Turn::ask`] takes.
+    #[error("an angle's expression doesn't give its value")]
     Angle,
     /// Its two sides come to more than a turn.
+    #[error("its two sides come to over a turn")]
     Turn,
     /// Its axis, this curve, isn't a line of its sketch (when added or
     /// set, see [`Revolve::check_axis`]).
+    #[error("its axis, curve {0}, isn't a line of its sketch")]
     Axis(Id),
     /// Its operation's new or excluded bodies are wrong.
-    Operation(OperationError),
+    #[error("{0}")]
+    Operation(#[source] OperationError),
     /// Its axis edge's reference fails its own check
     /// ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
+    #[error("its axis: {0}")]
+    Edge(#[source] EdgeError),
     /// Its axis edge's body, this one, is made by the revolve or a
     /// feature after it, or isn't there and has an id a body made later
     /// could take.
+    #[error("its axis is an edge of body {}, which isn't made before it", .0.0)]
     EdgeBody(BodyId),
     /// A key of its axis edge's faces names this feature, which is the
     /// revolve or comes after it, or isn't there and has an id a feature
     /// made later could take.
+    #[error("its axis is an edge of a face made by feature {}, which doesn't come before it", .0.0)]
     EdgeMaker(FeatureId),
-}
-
-impl fmt::Display for RevolveError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RevolveError::Sketch(sketch) => write!(
-                f,
-                "revolves feature {}, which isn't a sketch before it",
-                sketch.0
-            ),
-            RevolveError::Regions(count) => write!(
-                f,
-                "revolves {count} regions, not 1 to {MAX_REVOLVE_REGIONS}"
-            ),
-            RevolveError::Region(why) => why.fmt(f),
-            RevolveError::Angle => f.write_str("an angle's expression doesn't give its value"),
-            RevolveError::Turn => f.write_str("its two sides come to over a turn"),
-            RevolveError::Axis(id) => write!(f, "its axis, curve {id}, isn't a line of its sketch"),
-            RevolveError::Operation(why) => why.fmt(f),
-            RevolveError::Edge(why) => write!(f, "its axis: {why}"),
-            RevolveError::EdgeBody(body) => write!(
-                f,
-                "its axis is an edge of body {}, which isn't made before it",
-                body.0
-            ),
-            RevolveError::EdgeMaker(feature) => write!(
-                f,
-                "its axis is an edge of a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for RevolveError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            RevolveError::Region(why) => Some(why),
-            RevolveError::Operation(why) => Some(why),
-            RevolveError::Edge(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,6 @@
 //! The design's parameters: named values, such as `height = 40 mm`, that
 //! features' values use by name (`height / 2`), see [`Param`].
 
-use std::fmt;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -29,30 +28,18 @@ pub struct Param {
 /// What's wrong with the design's parameters, see
 /// [`CheckError::Param`](crate::CheckError::Param) and
 /// [`CheckError::Params`](crate::CheckError::Params).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ParamError {
     /// Its name can't be one, see [`NameError`].
+    #[error("its name is wrong: {0}")]
     Name(NameError),
     /// A parameter before it has its name.
+    #[error("a parameter before it has its name")]
     Duplicate,
     /// Its expression is this many bytes, over [`varde_expr::MAX_LEN`].
+    #[error("its expression is {0} bytes, over the limit of {MAX_LEN}")]
     TextLength(usize),
 }
-
-impl fmt::Display for ParamError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParamError::Name(why) => write!(f, "its name is wrong: {why}"),
-            ParamError::Duplicate => f.write_str("a parameter before it has its name"),
-            ParamError::TextLength(len) => write!(
-                f,
-                "its expression is {len} bytes, over the limit of {MAX_LEN}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ParamError {}
 
 /// Checks `params` on their own: at most [`MAX_PARAMS`], each named as
 /// [`check_name`] takes, no name twice, each text at most [`MAX_LEN`]

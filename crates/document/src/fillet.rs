@@ -1,8 +1,6 @@
 //! The fillet feature: edges of a body already made rounded off by a
 //! face of one radius, tangent to the two faces beside each edge.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
@@ -72,33 +70,15 @@ impl Fillet {
 
 /// What's wrong with a fillet, see
 /// [`CheckError::Fillet`](crate::CheckError::Fillet).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum FilletError {
     /// Its edges are wrong, see [`BlendEdgesError`].
-    Edges(BlendEdgesError),
+    #[error("{0}")]
+    Edges(#[source] BlendEdgesError),
     /// Its radius's expression doesn't give its value, or the value
     /// isn't a length [`Fillet::radius_ask`] takes.
+    #[error("its radius's expression doesn't give its value, or it isn't a length it takes")]
     Radius,
-}
-
-impl fmt::Display for FilletError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FilletError::Edges(why) => why.fmt(f),
-            FilletError::Radius => f.write_str(
-                "its radius's expression doesn't give its value, or it isn't a length it takes",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for FilletError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            FilletError::Edges(why) => Some(why),
-            FilletError::Radius => None,
-        }
-    }
 }
 
 #[cfg(test)]

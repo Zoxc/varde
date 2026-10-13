@@ -2,8 +2,6 @@
 //! factor, a factor per world axis, or the factor that gives a picked
 //! edge a typed length.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
@@ -133,80 +131,45 @@ impl Scale {
 
 /// What's wrong with a scale, see
 /// [`CheckError::Scale`](crate::CheckError::Scale).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum ScaleError {
     /// Its body list is wrong, as a move's would be.
+    #[error("{0}")]
     Bodies(BodiesError),
     /// It scales this body, which isn't there or which no feature before
     /// it makes.
+    #[error("scales body {}, which isn't there or no earlier feature makes", .0.0)]
     Body(BodyId),
     /// A factor's expression doesn't give its value, or the value isn't
     /// a factor [`Scale::factor_ask`] takes.
+    #[error("a factor's expression doesn't give its value, or it isn't from {} to {MAX_SCALE_FACTOR}", 1.0 / MAX_SCALE_FACTOR)]
     Factor,
     /// Its edge length's expression doesn't give its value, or the value
     /// isn't a length [`Scale::length_ask`] takes.
+    #[error("its edge length's expression doesn't give its value")]
     Length,
     /// Its point fails its own check ([`PointRef::check_own`]).
-    About(PointRefError),
+    #[error("its point: {0}")]
+    About(#[source] PointRefError),
     /// Its edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
+    #[error("{0}")]
+    Edge(#[source] EdgeError),
     /// Its edge is on this body, which isn't one it scales.
+    #[error("its edge is on body {}, which it doesn't scale", .0.0)]
     EdgeBody(BodyId),
     /// Its point or edge is on this body, which is made by the feature
     /// or one after it, or isn't there and has an id a body made later
     /// could take.
+    #[error("its point or edge is on body {}, which isn't made before it", .0.0)]
     RefBody(BodyId),
     /// A key of its point's or edge's faces names this feature, which is
     /// the feature itself or comes after it, or isn't there and has an
     /// id a feature made later could take.
+    #[error(
+        "its point or edge is on a face made by feature {}, which doesn't come before it",
+        .0.0
+    )]
     RefMaker(FeatureId),
-}
-
-impl fmt::Display for ScaleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScaleError::Bodies(why) => why.fmt(f),
-            ScaleError::Body(body) => write!(
-                f,
-                "scales body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            ScaleError::Factor => write!(
-                f,
-                "a factor's expression doesn't give its value, or it isn't from {} to \
-                 {MAX_SCALE_FACTOR}",
-                1.0 / MAX_SCALE_FACTOR
-            ),
-            ScaleError::Length => {
-                f.write_str("its edge length's expression doesn't give its value")
-            }
-            ScaleError::About(why) => write!(f, "its point: {why}"),
-            ScaleError::Edge(why) => why.fmt(f),
-            ScaleError::EdgeBody(body) => {
-                write!(f, "its edge is on body {}, which it doesn't scale", body.0)
-            }
-            ScaleError::RefBody(body) => write!(
-                f,
-                "its point or edge is on body {}, which isn't made before it",
-                body.0
-            ),
-            ScaleError::RefMaker(feature) => write!(
-                f,
-                "its point or edge is on a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ScaleError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ScaleError::About(why) => Some(why),
-            ScaleError::Edge(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

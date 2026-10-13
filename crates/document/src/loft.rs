@@ -4,8 +4,6 @@
 //! rails; it makes a new body or joins, cuts or intersects bodies as an
 //! extrude does.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
@@ -196,118 +194,64 @@ impl Loft {
 
 /// What's wrong with a loft, see
 /// [`CheckError::Loft`](crate::CheckError::Loft).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum LoftError {
     /// It has this many sections: fewer than 2, or over
     /// [`MAX_LOFT_SECTIONS`].
+    #[error("lofts {0} sections, not 2 to {MAX_LOFT_SECTIONS}")]
     Sections(usize),
     /// A section's region reference fails its check.
-    Region(RegionRefError),
+    #[error("{0}")]
+    Region(#[source] RegionRefError),
     /// Section `index` (from 0) is a region with holes.
+    #[error("its section {} has holes, but a section is one loop", .0.saturating_add(1))]
     Holes(usize),
     /// Section `index` (from 0), neither the first nor the last, is a
     /// point.
+    #[error("its section {} is a point, which only the first or last may be", .0.saturating_add(1))]
     PointInside(usize),
     /// Every section is a point.
+    #[error("all its sections are points")]
     Points,
     /// It's closed with this many sections, fewer than 3.
+    #[error("it's closed with {0} sections, fewer than 3")]
     ClosedSections(usize),
     /// It's closed, and a section is a point.
+    #[error("it's closed, but a section is a point")]
     ClosedPoint,
     /// It's closed, and has rails.
+    #[error("it's closed, but has rails")]
     ClosedRails,
     /// It has this many rails, over [`MAX_LOFT_RAILS`].
+    #[error("it has {0} rails, more than {MAX_LOFT_RAILS}")]
     Rails(usize),
     /// A rail has this many curves: none, or over [`MAX_RAIL_CURVES`].
+    #[error("a rail has {0} curves, not 1 to {MAX_RAIL_CURVES}")]
     RailCurves(usize),
     /// A rail's curves aren't sorted, or one is repeated.
+    #[error("a rail's curves are out of order or repeated")]
     RailOrder,
     /// A rail is there twice.
+    #[error("a rail is there twice")]
     RailRepeated,
     /// A section is of this feature, which isn't a sketch before it.
+    #[error("lofts feature {}, which isn't a sketch before it", .0.0)]
     Sketch(FeatureId),
     /// A rail is of this feature, which isn't a sketch before it.
+    #[error("a rail is on feature {}, which isn't a sketch before it", .0.0)]
     RailSketch(FeatureId),
     /// A section starts at this point, which its sketch doesn't have.
+    #[error("a section starts at point {}, which its sketch doesn't have", .0.get())]
     Start(Id),
     /// A section is this point, which its sketch doesn't have.
+    #[error("a section is point {}, which its sketch doesn't have", .0.get())]
     Point(Id),
     /// A rail names this curve, which its sketch doesn't have.
+    #[error("a rail names curve {}, which its sketch doesn't have", .0.get())]
     RailCurve(Id),
     /// Its operation's new or excluded bodies are wrong.
-    Operation(OperationError),
-}
-
-impl fmt::Display for LoftError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ordinal = |index: &usize| index.saturating_add(1);
-        match self {
-            LoftError::Sections(count) => {
-                write!(f, "lofts {count} sections, not 2 to {MAX_LOFT_SECTIONS}")
-            }
-            LoftError::Region(why) => why.fmt(f),
-            LoftError::Holes(index) => write!(
-                f,
-                "its section {} has holes, but a section is one loop",
-                ordinal(index)
-            ),
-            LoftError::PointInside(index) => write!(
-                f,
-                "its section {} is a point, which only the first or last may be",
-                ordinal(index)
-            ),
-            LoftError::Points => f.write_str("all its sections are points"),
-            LoftError::ClosedSections(count) => {
-                write!(f, "it's closed with {count} sections, fewer than 3")
-            }
-            LoftError::ClosedPoint => f.write_str("it's closed, but a section is a point"),
-            LoftError::ClosedRails => f.write_str("it's closed, but has rails"),
-            LoftError::Rails(count) => {
-                write!(f, "it has {count} rails, more than {MAX_LOFT_RAILS}")
-            }
-            LoftError::RailCurves(count) => {
-                write!(f, "a rail has {count} curves, not 1 to {MAX_RAIL_CURVES}")
-            }
-            LoftError::RailOrder => f.write_str("a rail's curves are out of order or repeated"),
-            LoftError::RailRepeated => f.write_str("a rail is there twice"),
-            LoftError::Sketch(sketch) => write!(
-                f,
-                "lofts feature {}, which isn't a sketch before it",
-                sketch.0
-            ),
-            LoftError::RailSketch(sketch) => write!(
-                f,
-                "a rail is on feature {}, which isn't a sketch before it",
-                sketch.0
-            ),
-            LoftError::Start(id) => write!(
-                f,
-                "a section starts at point {}, which its sketch doesn't have",
-                id.get()
-            ),
-            LoftError::Point(id) => write!(
-                f,
-                "a section is point {}, which its sketch doesn't have",
-                id.get()
-            ),
-            LoftError::RailCurve(id) => write!(
-                f,
-                "a rail names curve {}, which its sketch doesn't have",
-                id.get()
-            ),
-            LoftError::Operation(why) => why.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for LoftError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            LoftError::Region(why) => Some(why),
-            LoftError::Operation(why) => Some(why),
-            _ => None,
-        }
-    }
+    #[error("{0}")]
+    Operation(#[source] OperationError),
 }
 
 #[cfg(test)]

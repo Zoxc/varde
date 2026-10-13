@@ -4212,6 +4212,7 @@ dependencies = [
  "glam 0.30.10",
  "postcard",
  "serde",
+ "thiserror 2.0.21",
  "varde-expr",
  "varde-kernel-compat",
  "varde-sketch",

@@ -45,6 +45,8 @@ bytemuck = { version = "1", features = ["derive"] }
 # Blocks on wgpu setup in headless render tests.
 pollster = "0.4"
 serde = { version = "1", features = ["derive"] }
+# Derives the error enums' `Display` and `Error` (crates/document).
+thiserror = "2"
 postcard = { version = "1", features = ["use-std"] }
 # The .vrdp payload (crates/io/src/vrdp.rs): MessagePack, fields by name.
 rmp-serde = "1"

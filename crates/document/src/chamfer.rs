@@ -4,7 +4,6 @@
 //! the cut's angle.
 
 use std::f64::consts::FRAC_PI_2;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -135,40 +134,19 @@ impl Chamfer {
 
 /// What's wrong with a chamfer, see
 /// [`CheckError::Chamfer`](crate::CheckError::Chamfer).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum ChamferError {
     /// Its edges are wrong, see [`BlendEdgesError`].
-    Edges(BlendEdgesError),
+    #[error("{0}")]
+    Edges(#[source] BlendEdgesError),
     /// A distance's expression doesn't give its value, or the value
     /// isn't a length [`Chamfer::distance_ask`] takes.
+    #[error("a distance's expression doesn't give its value, or it isn't a length it takes")]
     Distance,
     /// Its angle's expression doesn't give its value, or the value isn't
     /// an angle [`Chamfer::angle_ask`] takes.
+    #[error("its angle's expression doesn't give its value, or it isn't above 0° and under 90°")]
     Angle,
-}
-
-impl fmt::Display for ChamferError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ChamferError::Edges(why) => why.fmt(f),
-            ChamferError::Distance => f.write_str(
-                "a distance's expression doesn't give its value, or it isn't a length it takes",
-            ),
-            ChamferError::Angle => f.write_str(
-                "its angle's expression doesn't give its value, or it isn't above 0° and under \
-                 90°",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ChamferError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ChamferError::Edges(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

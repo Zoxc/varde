@@ -2,8 +2,6 @@
 //! directions picked on it meet a point and directions picked on other
 //! bodies or the origin, and the points and directions it names.
 
-use std::fmt;
-
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -263,123 +261,67 @@ impl Align {
 
 /// What's wrong with an align, see
 /// [`CheckError::Align`](crate::CheckError::Align).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum AlignError {
     /// It moves this body, which isn't there or which no feature before
     /// it makes.
+    #[error("moves body {}, which isn't there or no earlier feature makes", .0.0)]
     Body(BodyId),
     /// Its sides' directions don't pair up: a primary or a secondary on
     /// one side only, or a secondary without a primary.
+    #[error("its directions don't pair up")]
     Unpaired,
     /// It flips, offsets or turns without primary directions to do it
     /// along.
+    #[error("it flips, offsets or turns without directions to do it along")]
     Options,
     /// Its offset's expression doesn't give its value, or the value isn't
     /// a length [`Move::offset_ask`] takes.
+    #[error("its offset's expression doesn't give its value")]
     Offset,
     /// Its turn's expression doesn't give its value, or the value isn't
     /// an angle [`Move::angle_ask`] takes.
+    #[error("its turn's expression doesn't give its value")]
     Angle,
     /// A reference fails its own check ([`PointRef::check_own`],
     /// [`DirRef::check_own`]).
-    Ref(PointRefError),
+    #[error("{0}")]
+    Ref(#[from] PointRefError),
     /// A reference on the moved side is the origin's.
+    #[error("the moved side names the origin")]
     FromOrigin,
     /// A reference on the moved side is on this body, not the one moved.
+    #[error("the moved side names body {}, not the body moved", .0.0)]
     FromBody(BodyId),
     /// A reference on the target side is on the body moved.
+    #[error("the target side names the body moved")]
     OnMoved,
     /// A reference on the target side is on this body, which is made by
     /// the feature or one after it, or isn't there and has an id a body
     /// made later could take.
+    #[error("a reference is on body {}, which isn't made before it", .0.0)]
     RefBody(BodyId),
     /// A key of a reference's faces names this feature, which is the
     /// feature itself or comes after it, or isn't there and has an id a
     /// feature made later could take.
+    #[error("a reference is on a face made by feature {}, which doesn't come before it", .0.0)]
     RefMaker(FeatureId),
-}
-
-impl fmt::Display for AlignError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AlignError::Body(body) => write!(
-                f,
-                "moves body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            AlignError::Unpaired => f.write_str("its directions don't pair up"),
-            AlignError::Options => {
-                f.write_str("it flips, offsets or turns without directions to do it along")
-            }
-            AlignError::Offset => f.write_str("its offset's expression doesn't give its value"),
-            AlignError::Angle => f.write_str("its turn's expression doesn't give its value"),
-            AlignError::Ref(why) => why.fmt(f),
-            AlignError::FromOrigin => f.write_str("the moved side names the origin"),
-            AlignError::FromBody(body) => write!(
-                f,
-                "the moved side names body {}, not the body moved",
-                body.0
-            ),
-            AlignError::OnMoved => f.write_str("the target side names the body moved"),
-            AlignError::RefBody(body) => write!(
-                f,
-                "a reference is on body {}, which isn't made before it",
-                body.0
-            ),
-            AlignError::RefMaker(feature) => write!(
-                f,
-                "a reference is on a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for AlignError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            AlignError::Ref(why) => Some(why),
-            _ => None,
-        }
-    }
-}
-
-impl From<PointRefError> for AlignError {
-    fn from(why: PointRefError) -> Self {
-        AlignError::Ref(why)
-    }
 }
 
 /// What's wrong with a point's or a direction's reference on its own,
 /// see [`PointRef::check_own`] and [`DirRef::check_own`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum PointRefError {
     /// A corner's keys aren't sorted, or two are the same.
+    #[error("a corner's faces are out of order or repeated")]
     Corner,
     /// An edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
+    #[error("{0}")]
+    Edge(#[source] EdgeError),
     /// A corner's or face's point isn't finite, or is further from zero
     /// than [`MAX_COORD`](crate::MAX_COORD).
+    #[error("a reference's point {0} is out of bounds")]
     Near(DVec3),
-}
-
-impl fmt::Display for PointRefError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PointRefError::Corner => f.write_str("a corner's faces are out of order or repeated"),
-            PointRefError::Edge(why) => why.fmt(f),
-            PointRefError::Near(at) => write!(f, "a reference's point {at} is out of bounds"),
-        }
-    }
-}
-
-impl std::error::Error for PointRefError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            PointRefError::Edge(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

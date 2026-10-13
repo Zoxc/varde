@@ -17,3 +17,4 @@ varde-expr = { workspace = true, features = ["serde"] }
 glam.workspace = true
 serde.workspace = true
 postcard.workspace = true
+thiserror.workspace = true

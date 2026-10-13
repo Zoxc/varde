@@ -5,8 +5,6 @@
 //! an edge named that is also around a face named is left out (an
 //! exclusion), any other edge named is taken.
 
-use std::fmt;
-
 use crate::{BodyId, Document, EdgeError, EdgeRef, FaceRef, FeatureId, PlaneError};
 
 /// The most edges, and the most faces, a chamfer or a fillet may name.
@@ -83,64 +81,32 @@ impl Document {
 
 /// What's wrong with the edges of a chamfer or a fillet, see
 /// [`check_blend_edges_own`] and [`Document::check_blend_edges`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum BlendEdgesError {
     /// It names this many edges and faces: none, or over
     /// [`MAX_BLEND_EDGES`] edges or faces.
+    #[error("names {0} edges and faces, not 1 to {MAX_BLEND_EDGES} of each")]
     Count(usize),
     /// Its edges aren't in [`EdgeRef::order`], or its faces in
     /// [`FaceRef::order`], or one is repeated.
+    #[error("its edges or faces are out of order or repeated")]
     Order,
     /// An edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
+    #[error("{0}")]
+    Edge(#[source] EdgeError),
     /// A face fails its own check ([`FaceRef::check_own`]).
-    Face(PlaneError),
+    #[error("{0}")]
+    Face(#[source] PlaneError),
     /// Its edges are on more than one body.
+    #[error("its edges are on more than one body")]
     Bodies,
     /// Its edges are on this body, which isn't there or which no feature
     /// before it makes.
+    #[error("its edges are on body {}, which isn't there or no earlier feature makes", .0.0)]
     Body(BodyId),
     /// A key of an edge's faces names this feature, which is the feature
     /// itself or comes after it, or isn't there and has an id a feature
     /// made later could take.
+    #[error("an edge is on a face made by feature {}, which doesn't come before it", .0.0)]
     RefMaker(FeatureId),
-}
-
-impl fmt::Display for BlendEdgesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BlendEdgesError::Count(count) => {
-                write!(
-                    f,
-                    "names {count} edges and faces, not 1 to {MAX_BLEND_EDGES} of each"
-                )
-            }
-            BlendEdgesError::Order => {
-                f.write_str("its edges or faces are out of order or repeated")
-            }
-            BlendEdgesError::Edge(why) => why.fmt(f),
-            BlendEdgesError::Face(why) => why.fmt(f),
-            BlendEdgesError::Bodies => f.write_str("its edges are on more than one body"),
-            BlendEdgesError::Body(body) => write!(
-                f,
-                "its edges are on body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            BlendEdgesError::RefMaker(feature) => write!(
-                f,
-                "an edge is on a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for BlendEdgesError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            BlendEdgesError::Edge(why) => Some(why),
-            BlendEdgesError::Face(why) => Some(why),
-            _ => None,
-        }
-    }
 }

@@ -3,7 +3,6 @@
 //! come, joins, cuts or intersects bodies already there.
 
 use std::f64::consts::FRAC_PI_2;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
@@ -270,92 +269,49 @@ pub(crate) fn check_regions<E>(
 
 /// What's wrong with an extrude, see
 /// [`CheckError::Extrude`](crate::CheckError::Extrude).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum ExtrudeError {
     /// Its sketch, this feature, isn't a sketch feature before it.
+    #[error("extrudes feature {}, which isn't a sketch before it", .0.0)]
     Sketch(FeatureId),
     /// It takes this many regions: none, or over [`MAX_EXTRUDE_REGIONS`].
+    #[error("extrudes {0} regions, not 1 to {MAX_EXTRUDE_REGIONS}")]
     Regions(usize),
     /// A region reference fails its check.
-    Region(RegionRefError),
+    #[error("{0}")]
+    Region(#[source] RegionRefError),
     /// A distance's expression doesn't give its value in the design's
     /// units, or the value isn't a length [`Extent::ask`] takes.
+    #[error("a distance's expression doesn't give its value")]
     Distance,
     /// Its two sides come to more than [`MAX_COORD`].
+    #[error("its two sides come to over {MAX_COORD} mm")]
     Length,
     /// Its taper's expression doesn't give its value, or the value isn't
     /// an angle [`Extrude::taper_ask`] takes.
+    #[error("its taper isn't an angle under 90° either way")]
     Taper,
     /// It goes through all, but doesn't cut.
+    #[error("only a cut can go through all")]
     ThroughAll,
     /// Its operation's new or excluded bodies are wrong.
-    Operation(OperationError),
-}
-
-impl fmt::Display for ExtrudeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ExtrudeError::Sketch(sketch) => write!(
-                f,
-                "extrudes feature {}, which isn't a sketch before it",
-                sketch.0
-            ),
-            ExtrudeError::Regions(count) => write!(
-                f,
-                "extrudes {count} regions, not 1 to {MAX_EXTRUDE_REGIONS}"
-            ),
-            ExtrudeError::Region(why) => why.fmt(f),
-            ExtrudeError::Distance => f.write_str("a distance's expression doesn't give its value"),
-            ExtrudeError::Length => write!(f, "its two sides come to over {MAX_COORD} mm"),
-            ExtrudeError::Taper => f.write_str("its taper isn't an angle under 90° either way"),
-            ExtrudeError::ThroughAll => f.write_str("only a cut can go through all"),
-            ExtrudeError::Operation(why) => why.fmt(f),
-        }
-    }
+    #[error("{0}")]
+    Operation(#[source] OperationError),
 }
 
 /// What's wrong with the bodies an [`Operation`] names, which the
 /// kinds that take one (extrude, revolve, sweep, loft) share.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum OperationError {
     /// The body it makes, this one, isn't there, or names another maker.
+    #[error("makes body {}, which isn't there or has another maker", .0.0)]
     NewBody(BodyId),
     /// It excludes this body, which no feature before it makes.
+    #[error("excludes body {}, which no earlier feature makes", .0.0)]
     Excluded(BodyId),
     /// Its excluded bodies aren't sorted, or one is repeated.
+    #[error("its excluded bodies are out of order or repeated")]
     ExcludedOrder,
-}
-
-impl fmt::Display for OperationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OperationError::NewBody(body) => write!(
-                f,
-                "makes body {}, which isn't there or has another maker",
-                body.0
-            ),
-            OperationError::Excluded(body) => write!(
-                f,
-                "excludes body {}, which no earlier feature makes",
-                body.0
-            ),
-            OperationError::ExcludedOrder => {
-                f.write_str("its excluded bodies are out of order or repeated")
-            }
-        }
-    }
-}
-
-impl std::error::Error for OperationError {}
-
-impl std::error::Error for ExtrudeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ExtrudeError::Region(why) => Some(why),
-            ExtrudeError::Operation(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

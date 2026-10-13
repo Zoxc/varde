@@ -3,7 +3,6 @@
 //! and the axes and planes they name.
 
 use std::f64::consts::TAU;
-use std::fmt;
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
@@ -146,31 +145,15 @@ impl Referred<'_> {
 
 /// What's wrong with an axis's or plane's edge or face on its own, see
 /// `Referred::check_own`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum RefError {
     /// Its edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
+    #[error("its axis: {0}")]
+    Edge(#[source] EdgeError),
     /// Its face's point isn't finite, or is further from zero than
     /// [`MAX_COORD`].
+    #[error("its face's point {0} is out of bounds")]
     Near(DVec3),
-}
-
-impl fmt::Display for RefError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RefError::Edge(why) => write!(f, "its axis: {why}"),
-            RefError::Near(at) => write!(f, "its face's point {at} is out of bounds"),
-        }
-    }
-}
-
-impl std::error::Error for RefError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            RefError::Edge(why) => Some(why),
-            RefError::Near(_) => None,
-        }
-    }
 }
 
 impl Move {
@@ -253,66 +236,40 @@ impl Mirror {
 /// [`CheckError::Move`](crate::CheckError::Move),
 /// [`CheckError::Mirror`](crate::CheckError::Mirror) and
 /// [`CheckError::Pattern`](crate::CheckError::Pattern).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum MotionError {
     /// Its body list is wrong (`check_bodies`).
-    Bodies(BodiesError),
+    #[error("{0}")]
+    Bodies(#[source] BodiesError),
     /// It names this body, which isn't there or which no feature before
     /// it makes.
+    #[error("names body {}, which isn't there or no earlier feature makes", .0.0)]
     Body(BodyId),
     /// An offset's expression doesn't give its value, or the value isn't
     /// a length [`Move::offset_ask`] takes.
+    #[error("an offset's expression doesn't give its value")]
     Offset,
     /// Its turn's expression doesn't give its value, or the value isn't
     /// an angle [`Move::angle_ask`] takes; for a circular pattern, one
     /// [`Pattern::angle_ask`](crate::Pattern::angle_ask) takes.
+    #[error("its angle's expression doesn't give its value")]
     Angle,
     /// Its axis's edge or face, or its plane's face, fails its own check.
-    Ref(RefError),
+    #[error("{0}")]
+    Ref(#[source] RefError),
     /// Its axis's or plane's body, this one, is made by the feature or one
     /// after it, or isn't there and has an id a body made later could
     /// take.
+    #[error("its axis or plane is on body {}, which isn't made before it", .0.0)]
     RefBody(BodyId),
     /// A key of its axis's or plane's faces names this feature, which is
     /// the feature itself or comes after it, or isn't there and has an id
     /// a feature made later could take.
+    #[error(
+        "its axis or plane is on a face made by feature {}, which doesn't come before it",
+        .0.0
+    )]
     RefMaker(FeatureId),
-}
-
-impl fmt::Display for MotionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MotionError::Bodies(why) => why.fmt(f),
-            MotionError::Body(body) => write!(
-                f,
-                "names body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            MotionError::Offset => f.write_str("an offset's expression doesn't give its value"),
-            MotionError::Angle => f.write_str("its angle's expression doesn't give its value"),
-            MotionError::Ref(why) => why.fmt(f),
-            MotionError::RefBody(body) => write!(
-                f,
-                "its axis or plane is on body {}, which isn't made before it",
-                body.0
-            ),
-            MotionError::RefMaker(feature) => write!(
-                f,
-                "its axis or plane is on a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for MotionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            MotionError::Bodies(why) => Some(why),
-            MotionError::Ref(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

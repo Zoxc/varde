@@ -4,8 +4,6 @@
 //! id, the other becomes a new body the split makes, or only one side is
 //! kept (a trim).
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_sketch::{Id, RegionRef, RegionRefError, Sketch};
 
@@ -239,121 +237,61 @@ impl Split {
 
 /// What's wrong with a split, see
 /// [`CheckError::Split`](crate::CheckError::Split).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum SplitError {
     /// It splits this body, which isn't there or which no feature before
     /// it makes.
+    #[error("splits body {}, which isn't there or no earlier feature makes", .0.0)]
     Body(BodyId),
     /// It keeps both sides but has no new body.
+    #[error("keeps both sides but makes no new body")]
     NoNewBody,
     /// Its new body, this one, isn't a body it makes.
+    #[error("names body {} as its new body, which it doesn't make", .0.0)]
     NewBody(BodyId),
     /// Its tool body is the body it splits.
+    #[error("splits a body with itself")]
     ToolIsBody,
     /// Its tool body, this one, isn't there or no feature before it
     /// makes it.
+    #[error("splits with body {}, which isn't there or no earlier feature makes", .0.0)]
     ToolBody(BodyId),
     /// Its face's point isn't finite or within the coordinate limit.
-    Face(PlaneError),
+    #[error("{0}")]
+    Face(#[source] PlaneError),
     /// Its face tool is on this body, which isn't there or which no
     /// feature before it makes.
+    #[error("splits with a face of body {}, which isn't there or no earlier feature makes", .0.0)]
     FaceBody(BodyId),
     /// Its plane face is on this body, which is made by the split or a
     /// feature after it, or isn't there and has an id a body made later
     /// could take.
+    #[error("its plane is a face on body {}, which isn't made before it", .0.0)]
     RefBody(BodyId),
     /// Its face's key names this feature, which is the split itself or
     /// comes after it, or isn't there and has an id a feature made later
     /// could take.
+    #[error("its face is made by feature {}, which doesn't come before it", .0.0)]
     RefMaker(FeatureId),
     /// Its sketch, this feature, isn't a sketch feature before it.
+    #[error("its sketch, feature {}, isn't a sketch before it", .0.0)]
     Sketch(FeatureId),
     /// It takes this many regions: none, or over [`MAX_EXTRUDE_REGIONS`].
+    #[error("takes {0} regions, not 1 to {MAX_EXTRUDE_REGIONS}")]
     Regions(usize),
     /// A region reference fails its check.
-    Region(RegionRefError),
+    #[error("{0}")]
+    Region(#[source] RegionRefError),
     /// Its chain has this many curves: none, or over
     /// [`MAX_SPLIT_CURVES`].
+    #[error("its line has {0} curves, not 1 to {MAX_SPLIT_CURVES}")]
     Curves(usize),
     /// Its chain's curves aren't sorted, or one is repeated.
+    #[error("its line's curves are out of order or repeated")]
     CurveOrder,
     /// Its chain names this curve, which its sketch doesn't have.
+    #[error("its line names curve {}, which its sketch doesn't have", .0.get())]
     Curve(Id),
-}
-
-impl fmt::Display for SplitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SplitError::Body(body) => write!(
-                f,
-                "splits body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            SplitError::NoNewBody => f.write_str("keeps both sides but makes no new body"),
-            SplitError::NewBody(body) => {
-                write!(
-                    f,
-                    "names body {} as its new body, which it doesn't make",
-                    body.0
-                )
-            }
-            SplitError::ToolIsBody => f.write_str("splits a body with itself"),
-            SplitError::ToolBody(body) => write!(
-                f,
-                "splits with body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            SplitError::Face(why) => why.fmt(f),
-            SplitError::FaceBody(body) => write!(
-                f,
-                "splits with a face of body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            SplitError::RefBody(body) => write!(
-                f,
-                "its plane is a face on body {}, which isn't made before it",
-                body.0
-            ),
-            SplitError::RefMaker(feature) => write!(
-                f,
-                "its face is made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-            SplitError::Sketch(sketch) => write!(
-                f,
-                "its sketch, feature {}, isn't a sketch before it",
-                sketch.0
-            ),
-            SplitError::Regions(count) => {
-                write!(f, "takes {count} regions, not 1 to {MAX_EXTRUDE_REGIONS}")
-            }
-            SplitError::Region(why) => why.fmt(f),
-            SplitError::Curves(count) => {
-                write!(
-                    f,
-                    "its line has {count} curves, not 1 to {MAX_SPLIT_CURVES}"
-                )
-            }
-            SplitError::CurveOrder => f.write_str("its line's curves are out of order or repeated"),
-            SplitError::Curve(id) => {
-                write!(
-                    f,
-                    "its line names curve {}, which its sketch doesn't have",
-                    id.get()
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for SplitError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SplitError::Face(why) => Some(why),
-            SplitError::Region(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,6 @@
 //! body, and where in the world each is ([`Placement`]).
 
 use std::cmp::Ordering;
-use std::fmt;
 use std::ops::RangeInclusive;
 
 use glam::{DVec2, DVec3};
@@ -97,18 +96,21 @@ impl FaceRef {
 
 /// What's wrong with a sketch's plane, see
 /// [`CheckError::SketchPlane`](crate::CheckError::SketchPlane).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum PlaneError {
     /// Its face's body, this one, is made by the sketch or a feature
     /// after it, or isn't there and has an id a body made later could
     /// take.
+    #[error("is on a face of body {}, which isn't made before it", .0.0)]
     Body(BodyId),
     /// Its face's key names this feature, which is the sketch or comes
     /// after it, or isn't there and has an id a feature made later could
     /// take.
+    #[error("is on a face made by feature {}, which doesn't come before it", .0.0)]
     Maker(FeatureId),
     /// Its face's point isn't finite, or is further from zero than
     /// [`MAX_COORD`].
+    #[error("its face's point {0} is out of bounds")]
     Near(DVec3),
 }
 
@@ -116,74 +118,39 @@ pub enum PlaneError {
 /// ([`Document::check_face_set`](crate::Document::check_face_set)): a
 /// shell's open faces, an offset face's faces. Each feature's own error
 /// takes it in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FaceSetError {
     /// The faces' body, this one, isn't there or no feature before it
     /// makes it.
+    #[error("its faces' body {} isn't there or no earlier feature makes it", .0.0)]
     Body(BodyId),
     /// A face's key names this feature, which is the feature itself or
     /// comes after it, or isn't there and has an id a feature made later
     /// could take.
+    #[error("a face it names was made by feature {}, which doesn't come before it", .0.0)]
     RefMaker(FeatureId),
 }
-
-impl fmt::Display for FaceSetError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FaceSetError::Body(body) => write!(
-                f,
-                "its faces' body {} isn't there or no earlier feature makes it",
-                body.0
-            ),
-            FaceSetError::RefMaker(feature) => write!(
-                f,
-                "a face it names was made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for FaceSetError {}
 
 /// What's wrong with a list of faces a feature names on its own
 /// (`check_face_list_own`): a shell's open faces, an offset face's or
 /// a draft's faces. Each feature's own error takes it in.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum FaceListError {
     /// It names no face, and needs one.
+    #[error("there are none")]
     NoFaces,
     /// It names `count` faces, over `most`.
+    #[error("there are {count}, more than {most}")]
     Count { count: usize, most: usize },
     /// Its faces aren't in [`FaceRef::order`], or one is repeated.
+    #[error("they're out of order or repeated")]
     Order,
     /// A face fails its own check ([`FaceRef::check_own`]).
-    Face(PlaneError),
+    #[error("one {0}")]
+    Face(#[source] PlaneError),
     /// Its faces aren't all on its body (the feature's, else one body).
+    #[error("they aren't all on one body")]
     Bodies,
-}
-
-impl fmt::Display for FaceListError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FaceListError::NoFaces => f.write_str("there are none"),
-            FaceListError::Count { count, most } => {
-                write!(f, "there are {count}, more than {most}")
-            }
-            FaceListError::Order => f.write_str("they're out of order or repeated"),
-            FaceListError::Face(why) => write!(f, "one {why}"),
-            FaceListError::Bodies => f.write_str("they aren't all on one body"),
-        }
-    }
-}
-
-impl std::error::Error for FaceListError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            FaceListError::Face(why) => Some(why),
-            _ => None,
-        }
-    }
 }
 
 /// Checks the faces a feature names on their own: a count in `count`,
@@ -216,26 +183,6 @@ pub(crate) fn check_face_list_own(
     }
     Ok(())
 }
-
-impl fmt::Display for PlaneError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PlaneError::Body(body) => write!(
-                f,
-                "is on a face of body {}, which isn't made before it",
-                body.0
-            ),
-            PlaneError::Maker(feature) => write!(
-                f,
-                "is on a face made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-            PlaneError::Near(at) => write!(f, "its face's point {at} is out of bounds"),
-        }
-    }
-}
-
-impl std::error::Error for PlaneError {}
 
 /// One of the planes through the origin spanned by two world axes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

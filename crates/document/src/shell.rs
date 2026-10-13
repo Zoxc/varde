@@ -1,8 +1,6 @@
 //! The shell feature: a body already made hollowed out to walls of one
 //! thickness, opened through the faces picked to remove.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
@@ -66,37 +64,18 @@ impl Shell {
 
 /// What's wrong with a shell, see
 /// [`CheckError::Shell`](crate::CheckError::Shell).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum ShellError {
     /// Its faces fail their own check ([`FaceListError`]).
-    Faces(FaceListError),
+    #[error("the faces it opens: {0}")]
+    Faces(#[source] FaceListError),
     /// Its thickness's expression doesn't give its value, or the value
     /// isn't a length [`Shell::thickness_ask`] takes.
+    #[error("its thickness's expression doesn't give its value, or it isn't a length it takes")]
     Thickness,
     /// What its faces name ([`Document::check_face_set`](crate::Document::check_face_set)).
-    Set(FaceSetError),
-}
-
-impl fmt::Display for ShellError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ShellError::Faces(why) => write!(f, "the faces it opens: {why}"),
-            ShellError::Thickness => f.write_str(
-                "its thickness's expression doesn't give its value, or it isn't a length it takes",
-            ),
-            ShellError::Set(why) => why.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for ShellError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ShellError::Faces(why) => Some(why),
-            ShellError::Set(why) => Some(why),
-            _ => None,
-        }
-    }
+    #[error("{0}")]
+    Set(#[source] FaceSetError),
 }
 
 #[cfg(test)]

@@ -72,46 +72,29 @@ impl Combine {
 
 /// What's wrong with a combine, see
 /// [`CheckError::Combine`](crate::CheckError::Combine).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum CombineError {
     /// Its tools are none, over [`MAX_FEATURE_BODIES`], unsorted or
     /// repeated.
-    Tools(BodiesError),
+    #[error(fmt = tools_message)]
+    Tools(#[source] BodiesError),
     /// Its target, this body, is among its tools too.
+    #[error("its target, body {}, is one of its tools too", .0.0)]
     TargetIsTool(BodyId),
     /// It names this body, which isn't there or which no feature before
     /// it makes.
+    #[error("combines body {}, which isn't there or no earlier feature makes", .0.0)]
     Body(BodyId),
 }
 
-impl fmt::Display for CombineError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CombineError::Tools(BodiesError::Count(count)) => write!(
-                f,
-                "combines {count} tool bodies, not 1 to {MAX_FEATURE_BODIES}"
-            ),
-            CombineError::Tools(BodiesError::Order) => {
-                f.write_str("its tool bodies are out of order or repeated")
-            }
-            CombineError::TargetIsTool(body) => {
-                write!(f, "its target, body {}, is one of its tools too", body.0)
-            }
-            CombineError::Body(body) => write!(
-                f,
-                "combines body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CombineError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            CombineError::Tools(why) => Some(why),
-            _ => None,
-        }
+/// [`CombineError::Tools`]: a [`BodiesError`] in the tools' words.
+fn tools_message(why: &BodiesError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match why {
+        BodiesError::Count(count) => write!(
+            f,
+            "combines {count} tool bodies, not 1 to {MAX_FEATURE_BODIES}"
+        ),
+        BodiesError::Order => f.write_str("its tool bodies are out of order or repeated"),
     }
 }
 

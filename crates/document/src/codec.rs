@@ -26,16 +26,19 @@ impl Document {
 }
 
 /// Why bytes weren't taken for a document, or for what a file record holds.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error(transparent)]
 pub struct DecodeError(Why);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 enum Why {
     /// The bytes don't decode, or decode to something refused for another
     /// reason than a document's check.
+    #[error("{0}")]
     Malformed(String),
     /// A document decoded but fails [`Document::check`].
-    Invalid(CheckError),
+    #[error("{0}")]
+    Invalid(#[source] CheckError),
 }
 
 impl DecodeError {
@@ -49,24 +52,6 @@ impl DecodeError {
 impl From<CheckError> for DecodeError {
     fn from(why: CheckError) -> DecodeError {
         DecodeError(Why::Invalid(why))
-    }
-}
-
-impl fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0 {
-            Why::Malformed(why) => f.write_str(why),
-            Why::Invalid(why) => why.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for DecodeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.0 {
-            Why::Malformed(_) => None,
-            Why::Invalid(why) => Some(why),
-        }
     }
 }
 

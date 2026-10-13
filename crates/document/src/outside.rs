@@ -7,8 +7,6 @@
 //! from it), which regenerating finds again on the model as the features
 //! before the sketch leave it.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use varde_sketch::{LinkKind, Sketch};
 
@@ -72,44 +70,28 @@ pub struct LinkSource {
 }
 
 /// Why a sketch's links' sources fail [`Document::check`](crate::Document::check).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum LinkError {
     /// The sources aren't in increasing order of link, or two are of one
     /// link, or one is of no link of the sketch, or a link has none.
+    #[error("sketch link {0} has no source, or more than one")]
     Sources(Id),
     /// The link's kind can't take what it's from ([`OutsideRef::takes`]).
+    #[error("sketch link {0} can't take what it comes from")]
     Kind(Id),
     /// The link names a feature made at or after its sketch, or one
     /// that's no sketch: another sketch's item from the sketch itself, a
     /// later one, or a feature of another kind.
+    #[error("sketch link {0} comes from what's made at or after its sketch")]
     Later(Id),
     /// The link's edge is wrong, see [`EdgeError`].
+    #[error("sketch link {0}'s edge: {1}")]
     Edge(Id, EdgeError),
     /// The link's face is wrong, see [`PlaneError`].
+    #[error("sketch link {0}'s face: {1}")]
     Face(Id, PlaneError),
     /// The link's corner isn't a corner, or its keys aren't sorted and
     /// different, or its point isn't finite within the limit.
+    #[error("sketch link {0}'s corner is wrong")]
     Corner(Id),
 }
-
-impl fmt::Display for LinkError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LinkError::Sources(link) => {
-                write!(f, "sketch link {link} has no source, or more than one")
-            }
-            LinkError::Kind(link) => {
-                write!(f, "sketch link {link} can't take what it comes from")
-            }
-            LinkError::Later(link) => write!(
-                f,
-                "sketch link {link} comes from what's made at or after its sketch"
-            ),
-            LinkError::Edge(link, why) => write!(f, "sketch link {link}'s edge: {why}"),
-            LinkError::Face(link, why) => write!(f, "sketch link {link}'s face: {why}"),
-            LinkError::Corner(link) => write!(f, "sketch link {link}'s corner is wrong"),
-        }
-    }
-}
-
-impl std::error::Error for LinkError {}
