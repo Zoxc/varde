@@ -586,7 +586,6 @@ impl DragKind {
     }
 }
 
-/// What a drag of `action` does, as a status bar hint says it: "Orbit".
 /// `p`, a point in the window, as a pixel from the viewport's top left.
 pub(super) fn local(bounds: Rectangle, p: Point) -> DVec2 {
     DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into())
@@ -626,15 +625,6 @@ pub(super) fn hover_action(
     }
 }
 
-fn drag_said(action: DragAction) -> &'static str {
-    match action {
-        DragAction::Orbit => "Orbit",
-        DragAction::Pan => "Pan",
-        DragAction::Zoom => "Zoom",
-        DragAction::Nothing => "",
-    }
-}
-
 /// The status bar hints for the viewport's mouse bindings as `mouse` sets
 /// them, in a sketch if `sketching`, see [`DragKind::for_button`], and the
 /// click picking the point to orbit. Orbiting with the middle button isn't
@@ -646,22 +636,20 @@ pub fn hints<'a>(sketching: bool, mouse: &MouseOptions) -> Vec<Hint<'a>> {
         (mouse.right != DragAction::Orbit)
             .then(|| chord_hint(Held::ORBIT, MouseButton::Right, "Orbit"))
     } else {
-        let drag = match mouse.left {
-            DragAction::Orbit => Some("Drag to orbit"),
-            DragAction::Pan => Some("Drag to pan"),
-            DragAction::Zoom => Some("Drag to zoom"),
-            DragAction::Nothing => None,
-        };
-        drag.map(|label| mouse_hint(MouseButton::Left, label))
+        mouse
+            .left
+            .drag_said()
+            .map(|label| mouse_hint(MouseButton::Left, label))
     };
-    let right = (mouse.right != DragAction::Nothing)
-        .then(|| mouse_hint(MouseButton::Right, drag_said(mouse.right)));
-    let middle = match mouse.middle {
-        DragAction::Pan => Some("Drag to pan"),
-        DragAction::Zoom => Some("Drag to zoom"),
-        DragAction::Orbit | DragAction::Nothing => None,
-    }
-    .map(|label| mouse_hint(MouseButton::Wheel, label));
+    let right = mouse
+        .right
+        .said()
+        .map(|label| mouse_hint(MouseButton::Right, label));
+    let middle = mouse
+        .middle
+        .drag_said()
+        .filter(|_| mouse.middle != DragAction::Orbit)
+        .map(|label| mouse_hint(MouseButton::Wheel, label));
     let pivot = (mouse.rotation_point == RotationPoint::Clicked).then(|| match mouse.pivot_click {
         PivotClick::Middle => mouse_hint(MouseButton::Wheel, "Click to set pivot"),
         PivotClick::MiddleDouble => double_hint(MouseButton::Wheel, "Set pivot"),

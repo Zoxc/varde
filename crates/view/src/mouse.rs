@@ -19,6 +19,28 @@ impl DragAction {
         DragAction::Zoom,
         DragAction::Nothing,
     ];
+
+    /// What a drag of it does, as a status bar hint says it: "Orbit".
+    /// `None` for [`DragAction::Nothing`].
+    pub(crate) fn said(self) -> Option<&'static str> {
+        match self {
+            DragAction::Orbit => Some("Orbit"),
+            DragAction::Pan => Some("Pan"),
+            DragAction::Zoom => Some("Zoom"),
+            DragAction::Nothing => None,
+        }
+    }
+
+    /// The hint for a drag of it: "Drag to orbit". `None` for
+    /// [`DragAction::Nothing`].
+    pub(crate) fn drag_said(self) -> Option<&'static str> {
+        match self {
+            DragAction::Orbit => Some("Drag to orbit"),
+            DragAction::Pan => Some("Drag to pan"),
+            DragAction::Zoom => Some("Drag to zoom"),
+            DragAction::Nothing => None,
+        }
+    }
 }
 
 /// What the view orbits about.
