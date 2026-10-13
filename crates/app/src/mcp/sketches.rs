@@ -177,7 +177,7 @@ pub(super) fn add_link(doc: &Doc, args: &AddLink) -> Result<Proposed, Refused> {
     // Linked already, of this kind: by what it finds on the committed
     // model, as the tool tells a second click on it.
     let merged = committed_marks(doc).map_or(&[][..], |marks| marks.merged);
-    let holder = |body| varde_regen::merged_into(merged, body).unwrap_or(body);
+    let holder = |body| varde_regen::holding(merged, body);
     let linked = (sources.iter()).find(|from| {
         let same_kind = sketch.link(from.link).is_some_and(|link| link.kind == kind);
         let same = match &found_on {

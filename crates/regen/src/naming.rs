@@ -388,16 +388,16 @@ impl Naming {
             hopped
         };
         on.retain(|&body| {
-            let held = holder(&self.merged, body);
+            let held = crate::holding(&self.merged, body);
             held == shown || held == unsplit
         });
         let Some(&first) = on.first() else {
             return Some(unsplit);
         };
-        let there = holder(&self.merged_before, first);
+        let there = crate::holding(&self.merged_before, first);
         if on
             .iter()
-            .any(|&body| holder(&self.merged_before, body) != there)
+            .any(|&body| crate::holding(&self.merged_before, body) != there)
         {
             return None;
         }
@@ -468,10 +468,10 @@ impl Naming {
         let Some(&body) = bodies.first() else {
             return Err(Unnamed::Missing);
         };
-        let there = holder(&self.merged_before, body);
+        let there = crate::holding(&self.merged_before, body);
         if bodies
             .iter()
-            .any(|&b| holder(&self.merged_before, b) != there)
+            .any(|&b| crate::holding(&self.merged_before, b) != there)
         {
             return Err(Unnamed::Unclear);
         }
@@ -480,13 +480,6 @@ impl Naming {
         }
         Ok(body)
     }
-}
-
-/// The body holding `body` by `merged`, a list like
-/// [`Evaluation::merged`](crate::Evaluation::merged): the one it was merged into, or
-/// itself.
-fn holder(merged: &[(BodyId, BodyId)], body: BodyId) -> BodyId {
-    crate::merged_into(merged, body).unwrap_or(body)
 }
 
 #[cfg(test)]

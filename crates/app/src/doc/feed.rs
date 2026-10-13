@@ -1144,7 +1144,7 @@ impl MeshFeed {
     /// join merged it into another ([`MeshFeed::merged_bodies`]), else
     /// itself.
     pub(crate) fn shown_body(&self, body: BodyId) -> BodyId {
-        varde_regen::merged_into(self.merged_bodies(), body).unwrap_or(body)
+        varde_regen::holding(self.merged_bodies(), body)
     }
 
     /// The bodies the joins and combines of `document` before `until`
