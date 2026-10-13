@@ -1103,9 +1103,10 @@ fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
 }
 
 /// How opaque each part of the mesh is drawn, the parts being of `parts`'
-/// bodies in order: as its body in `document` is shown ([`shown_opacity`]),
-/// or opaque if it's of none there, as a draft's new body is.
-fn part_opacity(
+/// bodies in order: as its body in `document` is shown, with `preview`'s
+/// opacity if it's of that body, or opaque if it's of none there, as a
+/// draft's new body is. The viewport and the saved thumbnail draw them so.
+pub fn part_opacity(
     document: &Document,
     parts: &[BodyId],
     preview: Option<(BodyId, Opacity)>,
@@ -1126,9 +1127,10 @@ pub(crate) fn shown_opacity(body: &Body, preview: Option<(BodyId, Opacity)>) -> 
 }
 
 /// The colour each part of the mesh is drawn in, the parts being of
-/// `parts`' bodies in order: as its body in `document` is shown
-/// ([`shown_color`]), or the theme's if it's of none there.
-fn part_tints(
+/// `parts`' bodies in order: as its body in `document` is shown, with
+/// `preview`'s colour if it's of that body, or the theme's if it's of
+/// none there. The viewport and the saved thumbnail draw them so.
+pub fn part_tints(
     document: &Document,
     parts: &[BodyId],
     preview: Option<(BodyId, Tint)>,

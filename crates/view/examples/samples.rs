@@ -13,7 +13,6 @@
 //! colours. That needs a GPU adapter: without one nothing is written.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use glam::DVec2;
@@ -654,12 +653,8 @@ impl Gpu {
         else {
             panic!("the design doesn't regenerate");
         };
-        let opacity: Arc<[f32]> = (picking.bodies().iter())
-            .map(|&body| document.body(body).map_or(1.0, |body| body.opacity.alpha()))
-            .collect();
-        let tints: Arc<[_]> = (picking.bodies().iter())
-            .map(|&body| (document.body(body)?.color).map(varde_view::body_tint))
-            .collect();
+        let opacity = varde_view::part_opacity(document, picking.bodies(), None);
+        let tints = varde_view::part_tints(document, picking.bodies(), None);
         let shot = thumbnail_shot(&mesh, &sketches, &Camera::default()).expect("a model to frame");
         let (send, read) = std::sync::mpsc::channel();
         varde_render::render_preview(

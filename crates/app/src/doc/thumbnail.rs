@@ -101,11 +101,6 @@ impl Doc {
             ..
         } = self.feed.committed()?;
         let document = self.editor.document();
-        let opacity = parts
-            .iter()
-            .map(|&body| document.body(body).map_or(1.0, |body| body.opacity.alpha()));
-        let tints =
-            (parts.iter()).map(|&body| (document.body(body)?.color).map(varde_view::body_tint));
         let edited = self.mode.sketch().and_then(|session| {
             let feature = document.feature(session.feature)?;
             let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
@@ -128,8 +123,8 @@ impl Doc {
             model_sketches: sketches.clone(),
             edited,
             sketches: lines,
-            opacity: opacity.collect(),
-            tints: tints.collect(),
+            opacity: varde_view::part_opacity(document, parts, None),
+            tints: varde_view::part_tints(document, parts, None),
         })
     }
 
