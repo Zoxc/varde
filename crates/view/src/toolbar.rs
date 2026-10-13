@@ -347,10 +347,11 @@ fn file_cell<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
 /// Where a design is kept, on the web, under the file cell: its icon and
 /// the words, in the location's colour on the panel's.
 pub(crate) fn location_bar<'a>(location: Location) -> Element<'a, Message> {
-    let (icon, said) = match location {
-        Location::Browser => (Icon::Browser, "In browser storage"),
-        Location::Computer => (Icon::Computer, "On your computer"),
+    let icon = match location {
+        Location::Browser => Icon::Browser,
+        Location::Computer => Icon::Computer,
     };
+    let (said, _, _) = location_told(location);
     let color = move |p: &theme::Palette| theme::location_ink(p, location == Location::Computer);
     edged(
         container(
@@ -378,7 +379,7 @@ pub(crate) fn location_bar<'a>(location: Location) -> Element<'a, Message> {
 const LOCATION_BAR_HEIGHT: f32 = 26.0;
 
 /// What pointing at the file cell says of where a design is kept, on the
-/// web: where, how it's kept and what that means (a file picked on the
+/// web, the first as the location bar says it: where, how it's kept and what that means (a file picked on the
 /// computer gives no folder).
 fn location_told(location: Location) -> (&'static str, &'static str, &'static str) {
     match location {
