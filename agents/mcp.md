@@ -434,8 +434,8 @@ An HTTP/1.1 client on `std::net` (a private `Connect` trait, so tests
 plug in an in-memory fake): one request at a time on one kept
 connection, a new one if the server closed it (`Connection: close`, or
 the kept one found closed before an answer began, then tried once
-more). Connect within 5 s, an answer within 60 s (past the server's
-35 s `REPLY`), a write within 10 s. The answer's head is read with
+more). Connect within 5 s, an answer within 60 s (`ANSWER_TIMEOUT`, 25 s past the server's
+35 s `REPLY`), a write within 10 s (`SEND_TIMEOUT`). The answer's head is read with
 `http::read_head` (now `pub(crate)`) and `httparse` within
 `http::Limits`' head bytes and header count, its headers looked up
 with the server's own helpers (`http::owned_headers`, `named`, `once`,

@@ -33,6 +33,7 @@ use serde_json::Value;
 use crate::guard::{PATH, Token};
 use crate::http::{self, Limits, Status};
 use crate::rpc::{self, Code, Id};
+use crate::server;
 use crate::tools::ToolReply;
 
 /// The longest line read from stdin: the server's body cap.
@@ -46,11 +47,13 @@ pub const BODY_BYTES: u64 = (ToolReply::IMAGE_BYTES as u64).div_ceil(3) * 4 + 10
 const HEADER_VALUE: usize = 256;
 
 /// How long connecting may take; loopback answers at once or not at all.
-pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long an answer may take: past the server's own 35 s wait on the
-/// app.
-pub const READ_TIMEOUT: Duration = Duration::from_secs(60);
-pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long an answer may take: 25 s past the server's own wait on the
+/// app ([`server::REPLY`]), so the relay never gives up on a call the
+/// server still waits on.
+const ANSWER_TIMEOUT: Duration = server::REPLY.saturating_add(Duration::from_secs(25));
+/// How long sending a request may take.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The most characters of the server's own text (an HTTP reason) that
 /// the relay quotes in an error.
@@ -247,8 +250,8 @@ impl Connect for Tcp {
     fn connect(&mut self, port: u16) -> io::Result<TcpStream> {
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
         let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
-        stream.set_read_timeout(Some(READ_TIMEOUT))?;
-        stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+        stream.set_read_timeout(Some(ANSWER_TIMEOUT))?;
+        stream.set_write_timeout(Some(SEND_TIMEOUT))?;
         let _ = stream.set_nodelay(true);
         Ok(stream)
     }
