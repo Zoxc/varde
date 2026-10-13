@@ -239,13 +239,7 @@ impl Run<'_> {
             ChainError::Branches => why::PATH_CURVES_BRANCH.to_owned(),
             ChainError::Profile(error) => why::path_curves(error),
         })?;
-        let world = |p| placement.to_world(p);
-        let conic = |segment: &varde_kernel_compat::Segment| Conic3 {
-            p0: world(segment.conic.p0),
-            c: world(segment.conic.c),
-            w: segment.conic.w,
-            p1: world(segment.conic.p1),
-        };
+        let conic = |segment| super::world_conic(&placement, segment);
         let mut pieces: Vec<Piece> = Vec::new();
         // Each curve's segments, one after another along the chain.
         for run in segments.chunk_by(|a, b| a.curve == b.curve) {
@@ -275,7 +269,7 @@ impl Run<'_> {
                     };
                     Piece::Arc {
                         conics,
-                        centre: world(centre),
+                        centre: placement.to_world(centre),
                         axis,
                     }
                 }
@@ -545,10 +539,7 @@ fn chain_piece(solid: &Solid, topology: &Topology, chain: u32, backwards: bool) 
     let mesh = solid.mesh();
     let mut conics: Vec<Conic3> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
     if backwards {
-        conics.reverse();
-        for conic in &mut conics {
-            *conic = conic.reversed();
-        }
+        reverse_conics(&mut conics);
     }
     match edge_shape(solid, chain) {
         EdgeShape::Line { .. } => Piece::Line {

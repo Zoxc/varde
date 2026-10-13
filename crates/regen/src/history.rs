@@ -115,7 +115,8 @@ use varde_document::{
     BodyId, Document, FaceRef, Feature, FeatureId, FeatureKind, Placement, Plane, Section, Sketch,
 };
 use varde_kernel_compat::mesh::Form;
-use varde_kernel_compat::{Budget, Failure, Frame, Profile, Solid, Tolerance};
+use varde_kernel_compat::patch::Conic3;
+use varde_kernel_compat::{Budget, Failure, Frame, Profile, Segment, Solid, Tolerance};
 use varde_sketch::{Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
@@ -495,6 +496,17 @@ impl SketchOutput<'_> {
             .ok_or("region not found")?;
         let loops = profiles.merge(&found).map_err(|e| e.to_string())?;
         profile(self.sketch, profiles, &loops, fit).map_err(|e| e.to_string())
+    }
+}
+
+/// A sketch's `segment` in the world, as its `placement` puts it.
+fn world_conic(placement: &Placement, segment: &Segment) -> Conic3 {
+    let world = |p| placement.to_world(p);
+    Conic3 {
+        p0: world(segment.conic.p0),
+        c: world(segment.conic.c),
+        w: segment.conic.w,
+        p1: world(segment.conic.p1),
     }
 }
 

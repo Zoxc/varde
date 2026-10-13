@@ -54,7 +54,6 @@ use std::sync::Arc;
 
 use varde_document::{Loft, LoftMode, Placement, Section};
 use varde_kernel_compat::loft::{self as kernel_loft, LoftError, Rail};
-use varde_kernel_compat::patch::Conic3;
 use varde_kernel_compat::{Budget, Solid, Tolerance};
 
 use super::{Failed, Run, SketchOutput};
@@ -155,14 +154,8 @@ impl Run<'_> {
                     self.tolerance.fit(),
                 )
                 .map_err(|error| why::rail_chain(index, error))?;
-                let world = |p| placement.to_world(p);
                 let conics = (segments.iter())
-                    .map(|segment| Conic3 {
-                        p0: world(segment.conic.p0),
-                        c: world(segment.conic.c),
-                        w: segment.conic.w,
-                        p1: world(segment.conic.p1),
-                    })
+                    .map(|segment| super::world_conic(&placement, segment))
                     .collect();
                 rails.push(Rail { conics });
             }

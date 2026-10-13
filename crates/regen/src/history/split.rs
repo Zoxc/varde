@@ -30,7 +30,9 @@
 
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, FaceRef, FeatureId, Plane, Side, Split, SplitTool};
+use varde_document::{
+    BodyId, Document, FaceRef, FeatureId, Placement, Plane, Side, Split, SplitTool,
+};
 use varde_kernel_compat::patch::Bounds3;
 use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
@@ -194,10 +196,7 @@ impl Building<'_> {
                 Ok((Arc::clone(&made.solid), made.key))
             }
             SplitTool::Regions { sketch, regions } => {
-                let sketch = find_sketch(sketches, *sketch)?;
-                let placement = sketch
-                    .placement
-                    .ok_or_else(|| why::SKETCH_NOT_PLACED.to_owned())?;
+                let (sketch, placement) = placed_sketch(sketches, *sketch)?;
                 let frame = super::frame(&placement);
                 let (from, to) = through_all(&frame, [self.body])
                     .ok_or_else(|| why::split_one_side(self.body_name))?;
@@ -225,10 +224,7 @@ impl Building<'_> {
                 Ok((solid, key))
             }
             SplitTool::Chain { sketch, curves } => {
-                let sketch = find_sketch(sketches, *sketch)?;
-                let placement = sketch
-                    .placement
-                    .ok_or_else(|| why::SKETCH_NOT_PLACED.to_owned())?;
+                let (sketch, placement) = placed_sketch(sketches, *sketch)?;
                 let frame = super::frame(&placement);
                 let key = self
                     .keyer("split chain")
@@ -322,12 +318,15 @@ impl Building<'_> {
     }
 }
 
-/// The sketch `id` among those evaluated before the split.
-fn find_sketch<'s, 'a>(
+/// The sketch `id` among those evaluated before the split, and where
+/// it's placed.
+fn placed_sketch<'s, 'a>(
     sketches: &'s [SketchOutput<'a>],
     id: FeatureId,
-) -> Result<&'s SketchOutput<'a>, Failed> {
-    (sketches.iter())
+) -> Result<(&'s SketchOutput<'a>, Placement), Failed> {
+    let sketch = (sketches.iter())
         .find(|sketch| sketch.id == id)
-        .ok_or_else(|| why::SPLIT_SKETCH_GONE.into())
+        .ok_or(why::SPLIT_SKETCH_GONE)?;
+    let placement = sketch.placement.ok_or(why::SKETCH_NOT_PLACED)?;
+    Ok((sketch, placement))
 }
