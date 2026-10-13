@@ -341,24 +341,22 @@ pub struct Slot {
     /// The entry of `tints` each part of the mesh is drawn in.
     pub(super) part_tints: Vec<u32>,
     pub(super) mesh: Option<GpuMesh>,
-    /// The [`Frame::mesh`] `mesh` was uploaded from, or skipped for. Holding
-    /// it keeps the allocation from being reused for another mesh, and
-    /// `Arc::get_mut` from changing that mesh in place.
-    pub(super) source: Weak<RenderMesh>,
+    /// The [`Frame::mesh`] `mesh` was uploaded from, or skipped for.
+    pub(super) source: Source<RenderMesh>,
     pub(super) lines: Option<GpuLines>,
     /// The [`Frame::sketches`] `lines` were uploaded from, like `source`.
-    pub(super) lines_source: Weak<RenderLines>,
+    pub(super) lines_source: Source<RenderLines>,
     /// The layers of [`Frame::sketch`], and the base layer's `Arc` like
     /// `source`. The live layer's buffers are kept to be written again.
     pub(super) sketch_base: SketchBuffers,
-    pub(super) sketch_source: Weak<SketchLayer>,
+    pub(super) sketch_source: Source<SketchLayer>,
     pub(super) sketch_live: SketchBuffers,
     pub(super) depth: Option<DepthTarget>,
     /// What the draws do, set afresh each prepare.
     pub(super) state: SlotState,
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
     pub(super) highlights: HighlightBuffers,
-    pub(super) highlights_source: Weak<Highlights>,
+    pub(super) highlights_source: Source<Highlights>,
     /// [`Frame::errors`] as uploaded, and their sources like `source`.
     pub(super) errors: ErrorBuffers,
     pub(super) error_sources: Vec<Weak<dyn Any + Send + Sync>>,
@@ -386,6 +384,28 @@ impl Slot {
     /// one without.
     pub(super) fn has_glass(&self) -> bool {
         self.mesh.is_some() && !self.state.draws.transparent.is_empty()
+    }
+}
+
+/// The `Arc` something was uploaded from, held weakly: that keeps its
+/// allocation from being reused for another value, and `Arc::get_mut` from
+/// changing it in place, so comparing pointers tells a new value.
+pub(super) struct Source<T>(Weak<T>);
+
+impl<T> Default for Source<T> {
+    fn default() -> Self {
+        Self(Weak::new())
+    }
+}
+
+impl<T> Source<T> {
+    /// Whether `arc` is another allocation than the one held; holds it if so.
+    fn replace(&mut self, arc: &Arc<T>) -> bool {
+        let new = !std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(arc));
+        if new {
+            self.0 = Arc::downgrade(arc);
+        }
+        new
     }
 }
 
@@ -541,11 +561,11 @@ impl Renderer {
             tint_room: 1,
             part_tints: Vec::new(),
             mesh: None,
-            source: Weak::new(),
+            source: Source::default(),
             lines: None,
-            lines_source: Weak::new(),
+            lines_source: Source::default(),
             sketch_base: SketchBuffers::default(),
-            sketch_source: Weak::new(),
+            sketch_source: Source::default(),
             sketch_live: SketchBuffers::default(),
             depth: None,
             state: SlotState {
@@ -553,7 +573,7 @@ impl Renderer {
                 ..SlotState::default()
             },
             highlights: HighlightBuffers::default(),
-            highlights_source: Weak::new(),
+            highlights_source: Source::default(),
             errors: ErrorBuffers::default(),
             error_sources: Vec::new(),
             error_target: None,
@@ -646,9 +666,8 @@ impl Renderer {
     fn upload_sources(&self, slot: &mut Slot, p: &mut Prepare<'_, '_>) -> Result<(), PrepareError> {
         let (device, queue, frame) = (p.device, p.queue, p.frame);
         let mut result = Ok(());
-        if !std::ptr::eq(slot.lines_source.as_ptr(), Arc::as_ptr(frame.sketches)) {
+        if slot.lines_source.replace(frame.sketches) {
             p.changed = true;
-            slot.lines_source = Arc::downgrade(frame.sketches);
             slot.lines = upload_lines(device, frame.sketches).unwrap_or_else(|error| {
                 result = Err(error);
                 None
@@ -658,10 +677,9 @@ impl Renderer {
         // so this skips its upload. A failed upload isn't tried again for
         // the same `Arc`: it can only fail on the device's buffer limit,
         // which the same mesh would hit again.
-        let new_mesh = !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh));
+        let new_mesh = slot.source.replace(frame.mesh);
         if new_mesh {
             p.changed = true;
-            slot.source = Arc::downgrade(frame.mesh);
             slot.mesh = upload_mesh(device, frame.mesh).unwrap_or_else(|error| {
                 result = Err(error);
                 None
@@ -688,14 +706,9 @@ impl Renderer {
 
         // What's hovered and selected names the mesh's faces, edges and
         // vertices, so it's written again with the mesh too.
-        if new_mesh
-            || !std::ptr::eq(
-                slot.highlights_source.as_ptr(),
-                Arc::as_ptr(frame.highlights),
-            )
-        {
+        let new_highlights = slot.highlights_source.replace(frame.highlights);
+        if new_mesh || new_highlights {
             p.changed = true;
-            slot.highlights_source = Arc::downgrade(frame.highlights);
             let written = slot
                 .highlights
                 .write(device, queue, frame.mesh, frame.highlights);
@@ -715,9 +728,8 @@ impl Renderer {
 
         if let Some(sketch) = &frame.sketch {
             let mut sketch_result = Ok(());
-            if !std::ptr::eq(slot.sketch_source.as_ptr(), Arc::as_ptr(sketch.base)) {
+            if slot.sketch_source.replace(sketch.base) {
                 p.changed = true;
-                slot.sketch_source = Arc::downgrade(sketch.base);
                 if let Err(error) = slot.sketch_base.write(device, queue, sketch.base) {
                     sketch_result = Err(error);
                 }
