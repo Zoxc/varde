@@ -942,6 +942,25 @@ fn opacity<'a>(
         .collect()
 }
 
+/// The box the origin planes [`OriginShown`] has drawn take, seen with
+/// `camera`, if it has any: see [`PLANE_REACH`].
+pub(super) fn planes_bounds(camera: &Camera, origin: OriginShown) -> Option<Aabb> {
+    let reach = PLANE_REACH * camera.view_height();
+    (origin.planes.contains(&true) && reach.is_finite()).then(|| Aabb {
+        min: Vec3::splat(-reach),
+        max: Vec3::splat(reach),
+    })
+}
+
+/// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
+/// none, for its axis line's colour: of [`Colors::axes`], or the grid's.
+pub(super) fn axis_index(axis: Vec3) -> f32 {
+    let along = axis.abs();
+    (0..3)
+        .find(|&i| along[i] > 1.0 - 1e-6)
+        .map_or(3.0, |i| i as f32)
+}
+
 /// The scene shader's uniforms for `frame` drawn into `slot`, in
 /// `colors`, sanitized, `fade` of the way to the faded model.
 fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Uniforms {

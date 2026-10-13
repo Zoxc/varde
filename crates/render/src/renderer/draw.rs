@@ -95,23 +95,40 @@ pub(super) fn patterned(slot: &Slot) -> bool {
     slot.mesh.is_some() && (slot.state.faces.iter()).any(|f| drawn(f) && !f.indices.is_empty())
 }
 
-/// The box the origin planes [`OriginShown`] has drawn take, seen with
-/// `camera`, if it has any: see [`PLANE_REACH`].
-pub(super) fn planes_bounds(camera: &Camera, origin: OriginShown) -> Option<Aabb> {
-    let reach = PLANE_REACH * camera.view_height();
-    (origin.planes.contains(&true) && reach.is_finite()).then(|| Aabb {
-        min: Vec3::splat(-reach),
-        max: Vec3::splat(reach),
-    })
+/// Records drawing `lines`, a segment an instance, with `pipeline`.
+fn draw_lines(pass: &mut wgpu::RenderPass<'_>, pipeline: &wgpu::RenderPipeline, lines: &GpuLines) {
+    pass.set_pipeline(pipeline);
+    pass.set_vertex_buffer(0, lines.segments.slice(..));
+    pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
 }
 
-/// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
-/// none, for its axis line's colour: of [`Colors::axes`], or the grid's.
-pub(super) fn axis_index(axis: Vec3) -> f32 {
-    let along = axis.abs();
-    (0..3)
-        .find(|&i| along[i] > 1.0 - 1e-6)
-        .map_or(3.0, |i| i as f32)
+/// Records drawing `instances`, if it holds any, `vertices` vertices
+/// each, with `pipeline`.
+fn draw_instances(
+    pass: &mut wgpu::RenderPass<'_>,
+    pipeline: &wgpu::RenderPipeline,
+    instances: &Instances,
+    vertices: u32,
+) {
+    if let Some(buffer) = instances.drawn() {
+        pass.set_pipeline(pipeline);
+        pass.set_vertex_buffer(0, buffer);
+        pass.draw(0..vertices, 0..instances.count);
+    }
+}
+
+impl SketchPipelines {
+    /// Records drawing a layer of the sketch: its fills, then its lines,
+    /// then its points.
+    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, layer: &SketchBuffers) {
+        if let Some(buffer) = layer.fills.drawn() {
+            pass.set_pipeline(&self.fills);
+            pass.set_vertex_buffer(0, buffer);
+            pass.draw(0..layer.fills.count, 0..1);
+        }
+        draw_instances(pass, &self.lines, &layer.lines, LINE_VERTICES);
+        draw_instances(pass, &self.points, &layer.points, POINT_VERTICES);
+    }
 }
 
 /// The colour target a pass draws into ([`Renderer::begin`]): its label,
@@ -377,8 +394,7 @@ impl Renderer {
             || (slot.state.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
         pass.set_pipeline(marking);
         for face in tinted() {
-            self.alphas.set(pass, face.step);
-            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            self.draw_face(pass, face);
         }
         for face in tinted() {
             let pipeline = match (tint, face.hovered) {
@@ -388,8 +404,7 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             self.set_tint(pass, slot, face.part);
-            self.alphas.set(pass, face.step);
-            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            self.draw_face(pass, face);
         }
     }
 
@@ -551,9 +566,7 @@ impl Renderer {
         }
 
         if let Some(lines) = &slot.lines {
-            pass.set_pipeline(&self.lines);
-            pass.set_vertex_buffer(0, lines.segments.slice(..));
-            pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
+            draw_lines(pass, &self.lines, lines);
         }
 
         // Only the opaque parts have written depth so far, so the hidden
@@ -623,9 +636,7 @@ impl Renderer {
             pass.set_bind_group(0, &slot.bind_group, &[0]);
             self.alphas.set(pass, self.alphas.opaque);
             if let Some(lines) = &slot.lines {
-                pass.set_pipeline(&self.lines_over_glass);
-                pass.set_vertex_buffer(0, lines.segments.slice(..));
-                pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
+                draw_lines(pass, &self.lines_over_glass, lines);
             }
             if slot.state.sketching && slot.state.sketch_depth {
                 for layer in layers {
@@ -719,6 +730,13 @@ impl Renderer {
         }
     }
 
+    /// Records drawing `face`'s triangles at its step, with the pipeline
+    /// set and the mesh's buffers bound ([`bind_faces`]).
+    fn draw_face(&self, pass: &mut wgpu::RenderPass<'_>, face: &FaceDraw) {
+        self.alphas.set(pass, face.step);
+        pass.draw_indexed(face.indices.clone(), 0, 0..1);
+    }
+
     /// Records drawing `faces` again over themselves, hovered or selected,
     /// those of parts less than opaque if `transparent`, else the opaque
     /// ones', with the mesh's buffers bound ([`bind_faces`]).
@@ -738,8 +756,7 @@ impl Renderer {
                 Tint::Second => &self.second_face,
             };
             pass.set_pipeline(pipeline);
-            self.alphas.set(pass, face.step);
-            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            self.draw_face(pass, face);
         }
     }
 
@@ -786,11 +803,7 @@ impl Renderer {
             draw_stream(pass, &self.second_outline, edges, second.clone());
             draw_stream(pass, &self.second_edges, edges, second);
         }
-        if let Some(vertices) = highlights.vertices.drawn() {
-            pass.set_pipeline(&self.vertices);
-            pass.set_vertex_buffer(0, vertices);
-            pass.draw(0..POINT_VERTICES, 0..highlights.vertices.count);
-        }
+        draw_instances(pass, &self.vertices, &highlights.vertices, POINT_VERTICES);
     }
 
     /// Records drawing what the model hides of `slot`'s hovered and
@@ -852,8 +865,7 @@ impl Renderer {
         pass.set_pipeline(&self.hover_face_through);
         for face in &slot.state.faces {
             if face.tint == Tint::Hovered && !face.indices.is_empty() {
-                self.alphas.set(pass, face.step);
-                pass.draw_indexed(face.indices.clone(), 0, 0..1);
+                self.draw_face(pass, face);
             }
         }
         let highlights = &slot.highlights;
@@ -863,11 +875,12 @@ impl Renderer {
             draw_stream(pass, &self.outline_through, edges, outlined.clone());
             draw_stream(pass, &self.hovered_edges_through, edges, outlined);
         }
-        if let Some(vertices) = highlights.vertices.drawn() {
-            pass.set_pipeline(&self.vertices_through);
-            pass.set_vertex_buffer(0, vertices);
-            pass.draw(0..POINT_VERTICES, 0..highlights.vertices.count);
-        }
+        draw_instances(
+            pass,
+            &self.vertices_through,
+            &highlights.vertices,
+            POINT_VERTICES,
+        );
     }
 
     /// Records drawing the edges of `mesh`'s parts less than opaque, as

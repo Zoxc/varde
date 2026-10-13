@@ -164,28 +164,6 @@ pub(super) struct SketchPipelines {
     pub(super) points: wgpu::RenderPipeline,
 }
 
-impl SketchPipelines {
-    /// Records drawing a layer of the sketch: its fills, then its lines,
-    /// then its points.
-    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, layer: &SketchBuffers) {
-        if let Some(buffer) = layer.fills.drawn() {
-            pass.set_pipeline(&self.fills);
-            pass.set_vertex_buffer(0, buffer);
-            pass.draw(0..layer.fills.count, 0..1);
-        }
-        if let Some(buffer) = layer.lines.drawn() {
-            pass.set_pipeline(&self.lines);
-            pass.set_vertex_buffer(0, buffer);
-            pass.draw(0..LINE_VERTICES, 0..layer.lines.count);
-        }
-        if let Some(buffer) = layer.points.drawn() {
-            pass.set_pipeline(&self.points);
-            pass.set_vertex_buffer(0, buffer);
-            pass.draw(0..POINT_VERTICES, 0..layer.points.count);
-        }
-    }
-}
-
 /// The composite of a slot's resolved scene over the frame's target of
 /// `format`, premultiplied, and its group 0's layout: the scene.
 pub(super) fn composite_pipeline(
