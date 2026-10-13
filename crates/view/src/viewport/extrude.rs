@@ -182,14 +182,7 @@ impl<'a> Extruding<'a> {
         let t = projector.along_line(handle.origin, handle.normal, at)?;
         let step = snap_step(projector.pixel(), self.state.units)?;
         let limit = (f64::from(MAX_COORD) / step).floor() * step;
-        let snapped = ((t / step).round() * step).clamp(-limit, limit);
-        // On the plane, a step off it, the side the cursor is.
-        let t = if snapped == 0.0 {
-            step.copysign(t)
-        } else {
-            snapped
-        };
-        t.is_finite().then_some(t)
+        handle::snap_off_zero(t.clamp(-limit, limit), step)
     }
 
     /// What the renderer draws of the extrude with `input` as it is, all

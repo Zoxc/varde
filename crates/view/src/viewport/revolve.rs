@@ -257,14 +257,7 @@ impl<'a> Revolving<'a> {
         let to = from + wrapped(turn - from);
         let pixel = projector.pixel_at(projector.world_depth(handle.at(from)));
         let step = angle_step(handle.radius() / pixel).to_radians();
-        let snapped = (to / step).round() * step;
-        // On the plane, a step off it, the way the cursor is.
-        let to = if snapped == 0.0 {
-            step.copysign(to)
-        } else {
-            snapped
-        };
-        to.is_finite().then_some(to)
+        handle::snap_off_zero(to, step)
     }
 
     /// The sketches whose lines and axes a click picks: none unless the

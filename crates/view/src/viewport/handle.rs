@@ -54,6 +54,20 @@ const RAIL_STEPS: usize = 16;
 pub(crate) fn arc_per_pixel(pixel: f64, radius: f64) -> f64 {
     (pixel / radius).min(std::f64::consts::PI / RAIL_REACH)
 }
+
+/// `value` snapped to a multiple of `step`, but never onto zero, the
+/// plane a handle starts from: a step off it, the side `value` is.
+/// `None` if that isn't finite.
+pub(crate) fn snap_off_zero(value: f64, step: f64) -> Option<f64> {
+    let snapped = (value / step).round() * step;
+    let value = if snapped == 0.0 {
+        step.copysign(value)
+    } else {
+        snapped
+    };
+    value.is_finite().then_some(value)
+}
+
 /// How near the cursor a knob is grabbed, in pixels: within its ring or
 /// a little past it, or near its arrow (a sketch's hit tolerance).
 const RING_HIT: f64 = RING_RADIUS + 2.0;
