@@ -8,14 +8,17 @@
 //! its left seen from above.
 //!
 //! **Spans.** A curved edge is a chain of rational quadratic spans, each
-//! three homogeneous control points `(w·x, w·y, w·z, w)` with positive
-//! weights, numbered along the edge's stored direction (from its lower-id
+//! three affine control points with their weights `(x, y, z, w)`, weights
+//! positive, numbered along the edge's stored direction (from its lower-id
 //! end), so a record is the same for both coedges of the edge, which flip
 //! its sign as they need ([`SpanKey`]). The first span starts at the
 //! edge's lower-id vertex, the last ends at the other; consecutive spans
-//! share their joining control point, the edge's inner **knot**, whose
-//! point is that control point projected (`w·x / w` rounded per
-//! coordinate), as a vertex's position is its span end's.
+//! share their joining control point (the same point, their weights may
+//! differ), the edge's inner **knot**. A span passes exactly through its
+//! end control points, so its ends are its vertices' and knots' points,
+//! with nothing projected or rounded. Each level forms the span's
+//! homogeneous coefficients `(w·x, w)` itself
+//! ([`HomCurve::from_affine`]).
 //!
 //! **The record.** [`SpanRec`] lists the signed crossings of the span's
 //! shadow by the point `q`'s ray, in increasing parameter, each with the
@@ -37,31 +40,23 @@
 //! their points' own records, never from the span: the point–vertex
 //! record ([`VvRec`](super::shadow::VvRec)) of an edge end, the knot
 //! record ([`KnotRec`]) of an inner knot, which the spans on both sides
-//! read. A root at a span's end (a cluster reaching `t = 0` or `t = 1`,
-//! where the level can't certify `g`) takes that record's side there, so
-//! a ray through a vertex or knot is counted once along the chain, by the
-//! half-open rule of the flat records. Where the span's own end
-//! (`P₀ / W₀`, not rounded) is certified on the other side from its
-//! rounded point's record, the stretch between the two is crossed: a
-//! crossing at the end itself, counted by this span. Where the rounding
-//! moved the end at all, its side is needed even next to a root of the
-//! span (the stretch and the span then cross the line twice), so a level
-//! that can't certify it escalates, unless the end is exactly on the line:
-//! a tie no level certifies, decided as a vertex's by the exact rows of the
-//! end itself ([`HomShadow`], moving at its rounded point's rates), which
-//! a root of the span there reads in place of the rounded point's record;
-//! and a crossing of the stretch that the
-//! ends' signs along `r̂` don't settle is decided by the row of a straight
-//! edge through the rounded point (moving at its record's rates) along
-//! the stretch, not by the span's tangent.
+//! read. A span's end is that point exactly, so its record's side is the
+//! sign of `g` there wherever `g` is not 0, and where it is (the end on
+//! the ray line) the side of the end moved. A root at a span's end (a
+//! cluster reaching `t = 0` or `t = 1`, where the level can't certify `g`)
+//! takes that record's side there, so a ray through a vertex or knot is
+//! counted once along the chain, by the half-open rule of the flat
+//! records.
 //!
 //! **Pieces.** The span's parameter splits into pieces holding all of
 //! `g`'s roots: the isolation's results (between them `g` is certified
-//! non-zero) and the stretches at the ends. A cluster beside an end
-//! record with at most one root is narrowed towards that end, halving
-//! while `g` keeps its certified sign, so a ray through a vertex or knot
-//! reads `q` against the span right there. A piece whose two ends' sides
-//! differ is crossed once (a span is quadratic, so a piece with an odd
+//! non-zero). A cluster beside an end record with at most one root is
+//! narrowed towards that end, halving while `g` keeps its certified sign,
+//! so a ray through a vertex or knot reads `q` against the span right
+//! there; where `g` next to the end is certified of the side other than
+//! the end's record (the end on the ray line, moved off it), the span
+//! crosses at the end itself, a piece `[0, 0]` or `[1, 1]`. A piece whose
+//! two ends' sides differ is crossed once (a span is quadratic, so a piece with an odd
 //! sign change holds one root) with the sign that change names; one whose
 //! ends agree and that holds at most one root is not crossed. Its
 //! crossing is on the ray when `h` is certified of the ray's sign over
@@ -78,7 +73,8 @@
 //!
 //! - a piece crossed once, with sign `c`: the crossing is on the ray
 //!   exactly when `s = c` (to the left of the span for a `+` crossing, as
-//!   on a line);
+//!   on a line; at a tie beside an end, `s` from the row at that end,
+//!   below);
 //! - a cluster whose ends agree, on side `o` (two roots it can't
 //!   separate: a tangency of the span's shadow with the ray line at `q`):
 //!   in the moved configuration the line meets the span twice, one
@@ -95,6 +91,46 @@
 //! one). In the moved configuration the line then misses the span, which
 //! the tangency rule gives.
 //!
+//! **Beside an end.** An end's record is exact data decided as a flat row
+//! (only an exact zero is a tie, decided by the motions), the span's row a
+//! curved one (a value within the band is a tie once its error reaches
+//! the target). With `q` within the band of an end, beside but not on its
+//! column, the record reads where `q` really is while the row at a
+//! crossing next to the end, a tie, answers for `q` moved onto the span
+//! there: a span's crossing at a knot could then be counted on the ray
+//! where the knot's record puts it behind `q`, its neighbour's not. So a
+//! once-crossed piece whose row is a tie, with the span certified within
+//! the band of `q` (in both shadow directions) from one end to past the
+//! piece, and not from the other end too, takes `s` from the
+//! **row at that end** instead: `q` against the span's tangent line there,
+//! through the end and the middle control point (a rational quadratic
+//! with positive weights leaves its end along that line), all stored
+//! points, so decided as a flat row, the line moving at the end's rates
+//! (as in its record); where that row has no answer (the tangent's shadow
+//! 0), the crossing is on the ray as the end's record is.
+//!
+//! *Each crossing at a vertex or knot is then counted once along the
+//! chain, consistently with its record.* (1) The side at a shared end is
+//! one value, its record's, read by the spans on both sides: `g` there is
+//! `W·ν·(k − q)`, `W > 0`, of the record's sign wherever certified, and the
+//! record's side stands where it isn't. (2) In a span the pieces hold all
+//! of `g`'s roots and `g` is certified non-zero between them, of the sides
+//! the pieces' ends take, so the sides at the piece ends form one sequence
+//! from one end's record to the other's; joined at the shared ends, the
+//! chain's sequence has each change of side in exactly one piece of one
+//! span: at a vertex or knot, the change into its record's side in the
+//! span before it, the change out of it in the span after, each counted
+//! with the sign of that change. (3) Whether such a crossing is on the ray
+//! is decided once, for its piece: by `h` or the row by value, the truth;
+//! at a tie beside an end, by the row at that end, against the same exact
+//! point the record reads (by the motions at an exact zero, as the record
+//! is, the first-order answer of the moved configuration). The count is
+//! then that of the chain with each such span replaced, from the end to
+//! past the crossing, by its tangent line there, which passes through the
+//! end point as its record decides it: a change within the band, as the
+//! span is within the band of `q` there. A tie elsewhere is the moved
+//! configuration's, `q` on the span at the piece.
+//!
 //! **Precision.** A record is decided at the first level (`f64` with
 //! certified errors), then double-double, then big floats of growing
 //! width, each level from the stored data again, until no step asks to
@@ -109,9 +145,6 @@
 //! point–vertex records ([`Shadows::fill_vv`]), one for the knot records,
 //! one for the spans, reading those.
 
-use std::cell::OnceCell;
-use std::cmp::Ordering;
-
 use smallvec::SmallVec;
 
 use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
@@ -121,10 +154,9 @@ use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::{Bounded, add_up, down, mul_up};
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
-use crate::num::exact::{self, ORDERS, Work};
-use crate::num::expansion::two_product;
+use crate::num::exact::ORDERS;
 use crate::perturb::{
-    Curved, HomShadow, Moving, MovingAt, NU, R_HAT, Rate, ShadowAxis, UP, VvShadow, curve_point,
+    Curved, LineShadow, Moving, MovingAt, NU, R_HAT, Rate, Seg, ShadowAxis, VvShadow, curve_point,
     curve_shadow, decide_flat,
 };
 use crate::records::keys::{KnotKey, Operand, Point, RecordKey, SpanKey, VvKey};
@@ -134,9 +166,9 @@ use crate::records::shadow::{
 };
 use crate::records::table::{Fresh, Table};
 
-/// A span: three homogeneous control points `(w·x, w·y, w·z, w)`, weights
-/// positive.
-pub type HomSpan = [[f64; 4]; 3];
+/// A span: three affine control points with their weights `(x, y, z, w)`,
+/// weights positive; its point is `Σ Bᵢ·wᵢ·xᵢ / Σ Bᵢ·wᵢ`.
+pub type Span = [[f64; 4]; 3];
 
 const _: () = assert!(LEVELS == 2 + Width::ALL.len());
 
@@ -153,8 +185,8 @@ const SETTLE_SPLITS: u32 = 6;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Crossing {
     /// `[lo, hi]`, `f64`s with the crossing's parameter on the span's
-    /// `[0, 1]` between them (an end, `[0, 0]` or `[1, 1]`, for the
-    /// stretch between the span's end and its rounded point).
+    /// `[0, 1]` between them (an end, `[0, 0]` or `[1, 1]`, for a crossing
+    /// at the span's end itself).
     pub t: [f64; 2],
     /// `sign(ρ × T)` seen from above, `ρ` the ray's actual direction, `T`
     /// the span's tangent in its stored direction.
@@ -201,9 +233,10 @@ impl KnotRec {
 pub trait CurveGeometry: ShadowGeometry {
     /// The spans of curved edge `g` of `operand`, along its stored
     /// direction (module docs): the first starting at `ends(g)[0]`, the
-    /// last ending at `ends(g)[1]`, those end points projected being the
-    /// vertices' positions.
-    fn spans(&self, operand: Operand, g: EdgeId) -> &[HomSpan];
+    /// last ending at `ends(g)[1]`, those end control points being the
+    /// vertices' positions exactly, and each inner knot the control point
+    /// two spans share.
+    fn spans(&self, operand: Operand, g: EdgeId) -> &[Span];
 
     /// The rates of curved edge `g` (of the operand other than `q`'s) at
     /// its inner knot `k`, for `q`'s record: the direction field there on
@@ -258,7 +291,9 @@ impl CurvedRays {
     /// point–vertex records of the edge ends they reach, in one pass (into
     /// `shadows`), then the knot records they reach, in another, then the
     /// spans, in a third, at the curved band `band`. A key whose span the
-    /// edge doesn't have fails its pass ([`Fail::Internal`]).
+    /// edge doesn't have fails its pass ([`Fail::Internal`]), as does a
+    /// span whose end isn't exactly its vertex's point or the next span's
+    /// start ([`CurveGeometry::spans`]).
     pub fn fill<G, P>(
         &mut self,
         wanted: impl IntoIterator<Item = SpanKey>,
@@ -358,19 +393,9 @@ impl CurvedRays {
     }
 }
 
-/// The point at a homogeneous control point, `w·x / w` rounded per
-/// coordinate.
-fn project(p: &[f64; 4]) -> glam::DVec3 {
-    glam::DVec3::new(p[0] / p[3], p[1] / p[3], p[2] / p[3])
-}
-
-/// Whether [`project`] rounds `p`: its point differs from the control
-/// point's own, `w·x / w` exactly.
-fn rounds(p: &[f64; 4]) -> bool {
-    (0..3).any(|k| {
-        let (hi, lo) = two_product(p[k] / p[3], p[3]);
-        hi != p[k] || lo != 0.0
-    })
+/// A control point's point, exactly.
+fn point_of(p: &[f64; 4]) -> glam::DVec3 {
+    glam::DVec3::new(p[0], p[1], p[2])
 }
 
 /// Decides a knot record, by the flat vertex–vertex shadow row against
@@ -390,7 +415,7 @@ fn decide_knot<G: CurveGeometry>(k: &Fresh<KnotKey>, geom: &G) -> Decided<KnotRe
         return (Err(Fail::Internal { key: tie }), Cost::default());
     };
     let w = Moving {
-        at: project(&span[0]),
+        at: point_of(&span[0]),
         rates: geom.knot_rates(key.q, key.g, key.knot),
     };
     let q = geom.point(key.q);
@@ -413,26 +438,17 @@ fn decide_knot<G: CurveGeometry>(k: &Fresh<KnotKey>, geom: &G) -> Decided<KnotRe
 /// A span record's inputs, read once for every level.
 struct SpanCtx<'a, G> {
     key: SpanKey,
-    span: &'a HomSpan,
+    span: &'a Span,
     /// The side of each end and whether it is on the ray, from its record.
     ends: [(Sign, bool); 2],
-    /// Each end's rounded point (its record's), moving at its rates.
-    rounded: [Moving; 2],
-    /// Whether the span's own end differs from its rounded point.
-    rounds: [bool; 2],
-    /// For each of the span's own ends exactly on `q`'s `r̂` line, its
-    /// side and whether it is on the ray, checked once a level needs it
-    /// ([`SpanCtx::true_end`]), and the exact work that took.
-    true_ends: [OnceCell<(TrueEnd, Work)>; 2],
+    /// At each end `q` is within the band of (in both shadow directions,
+    /// or not certainly beyond), the row there ([`EndRow`]).
+    near: [Option<EndRow>; 2],
     q: Moving,
     geom: &'a G,
     band: Band,
     tie: TieKey,
 }
-
-/// A span's own end exactly on `q`'s `r̂` line: its side and whether it is
-/// on the ray; `None` off the line.
-type TrueEnd = Result<Option<(Sign, bool)>, Fail>;
 
 /// A stretch of the span holding some of `g`'s roots (module docs).
 struct Piece {
@@ -450,9 +466,30 @@ struct Piece {
     rec: [Option<bool>; 2],
     /// Whether it holds at most one root (else at most two: a cluster).
     one: bool,
-    /// The stretch between the span's end `0` or `1` and its rounded
-    /// point, if it is that.
-    gap: Option<usize>,
+}
+
+/// The vertex–curve shadow row at an end of the span `q` is near: `q`
+/// against the span's tangent line there, through the end and the middle
+/// control point, stored points, so decided as a flat row (module docs,
+/// "Beside an end").
+struct EndRow {
+    /// The side of `q` against the span there, `None` where the row has
+    /// no answer (the tangent's shadow 0: the guard).
+    side: Option<Sign>,
+    /// Whether the end is on the ray, from its record.
+    on: bool,
+}
+
+/// The vertex–curve shadow row at a piece ([`SpanCtx::row`]).
+struct RowAt {
+    /// The side of `q` against the span there, decided.
+    s: Sign,
+    /// `sign(r̂·T)` of the span's tangent there, `T` in the span's
+    /// direction, if certified.
+    along: Option<Sign>,
+    /// Whether the row's value is within the band, so `s` is the
+    /// perturbation's answer.
+    tie: bool,
 }
 
 /// Decides a span record, at each level in turn until one decides it.
@@ -476,6 +513,17 @@ fn decide_span<G: CurveGeometry>(
         return (internal, cost);
     };
     let edge_ends = geom.ends(op, key.g);
+    // Each end is the point its record reads: the vertex's, or the next
+    // span's start (the knot record's point); else the geometry breaks
+    // its contract.
+    let vertex_at = |v| geom.point(Point::vert(op, v)).at;
+    let start = (i == 0).then(|| vertex_at(edge_ends[0]));
+    let end_at = spans
+        .get(i + 1)
+        .map_or_else(|| vertex_at(edge_ends[1]), |s| point_of(&s[0]));
+    if start.is_some_and(|p| p != point_of(&spans[i][0])) || end_at != point_of(&spans[i][2]) {
+        return (internal, cost);
+    }
     let end = |at: usize, knot_ix: u32, vertex| {
         if at == 0 || at == spans.len() {
             read_vv(vv, key.q, vertex).map(|r| (r.side, r.on_ray(key.q.operand)))
@@ -496,26 +544,36 @@ fn decide_span<G: CurveGeometry>(
         return (internal, cost);
     };
     let span = &spans[i];
-    let rounded = [
-        (0, i, key.span, edge_ends[0]),
-        (2, i + 1, key.span + 1, edge_ends[1]),
-    ]
-    .map(|(c, at, knot_ix, vertex)| Moving {
-        at: project(&span[c]),
-        rates: if at == 0 || at == spans.len() {
-            geom.point(Point::vert(op, vertex)).rates
+    let q = geom.point(key.q);
+    // The rows at the ends `q` is near, decided once for every level.
+    let near = [0, 1].map(|j| {
+        let at = point_of(&span[2 * j]);
+        if !near_end(q.at, at, band) {
+            return None;
+        }
+        let rates = if (i + j == 0) || (i + j == spans.len()) {
+            geom.point(Point::vert(op, edge_ends[j])).rates
         } else {
-            geom.knot_rates(key.q, key.g, knot_ix)
-        },
+            geom.knot_rates(key.q, key.g, key.span + j as u32)
+        };
+        let line = Seg {
+            a: point_of(&span[j]),
+            b: point_of(&span[j + 1]),
+            rates,
+        };
+        let (side, w) = decide_flat(&LineShadow { q: q.clone(), line }, tie);
+        cost.exact = cost.exact.and(w);
+        Some(EndRow {
+            side: side.ok(),
+            on: [e0, e1][j].1,
+        })
     });
     let ctx = SpanCtx {
         key,
         span,
         ends: [e0, e1],
-        rounded,
-        rounds: [rounds(&span[0]), rounds(&span[2])],
-        true_ends: [OnceCell::new(), OnceCell::new()],
-        q: geom.point(key.q),
+        near,
+        q,
         geom,
         band,
         tie,
@@ -533,14 +591,7 @@ fn decide_span<G: CurveGeometry>(
         };
         match r {
             Err(Fail::Escalate { .. }) if level + 1 < LEVELS => {}
-            r => {
-                for e in &ctx.true_ends {
-                    if let Some((_, w)) = e.get() {
-                        cost.exact = cost.exact.and(*w);
-                    }
-                }
-                return (r, cost);
-            }
+            r => return (r, cost),
         }
     }
     unreachable!("the last level returns")
@@ -553,11 +604,8 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
     fn at<S: RayLevel>(&self, like: &S, work: &mut LevelWork, last: bool) -> Result<SpanRec, Fail> {
         let f = |x: f64| S::from_f64(x, like);
         let v3 = |v: glam::DVec3| [f(v.x), f(v.y), f(v.z)];
-        let pts = self
-            .span
-            .iter()
-            .map(|p| ([f(p[0]), f(p[1]), f(p[2])], f(p[3])));
-        let c = HomCurve::new(pts).expect("three control points");
+        let pts = self.span.iter().map(|p| ([p[0], p[1], p[2]], p[3]));
+        let c = HomCurve::from_affine(pts, like).expect("three control points");
         if !c.weights_positive() {
             return Err(Fail::Internal { key: self.tie });
         }
@@ -571,6 +619,7 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
         // The span and its polynomials run backwards, `u = 1 − t`, for
         // the pieces in its second half.
         let (cr, gr, hr) = (c.reversed(), g.reversed(), h.reversed());
+        let polys = [[&g, &h, c.weights()], [&gr, &hr, cr.weights()]];
         let limits = Limits {
             max_depth: MAX_ROOT_DEPTH,
             max_splits: MAX_SPLITS,
@@ -585,38 +634,7 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
         work.roots = work.roots.and(roots.work);
 
         let [(s0, on0), (s1, on1)] = self.ends;
-        let sign_at = |p: &S| p.sign().and_then(Sign::of);
-        let coefs = g.coefs();
-        let end_sides = [sign_at(&coefs[0]), sign_at(&coefs[coefs.len() - 1])];
-        // Where a span's end differs from its rounded point, the stretch
-        // between them may cross the ray line next to a root of the span:
-        // its end's side is needed, which a finer level certifies unless
-        // the end is on the ray line exactly. There it is a tie, decided as
-        // a vertex's, and a root at the end reads the end's own side, not
-        // its rounded point's record.
-        let mut end_sides = end_sides;
-        let mut own = self.ends;
-        for k in 0..2 {
-            if self.rounds[k] && end_sides[k].is_none() {
-                let (side, on) = self.true_end(k)?.ok_or(Fail::Escalate { order: 0 })?;
-                end_sides[k] = Some(side);
-                own[k] = (side, on);
-            }
-        }
-        let [(o0, own0), (o1, own1)] = own;
         let mut pieces: SmallVec<[Piece; 4]> = SmallVec::new();
-        if let Some(a) = end_sides[0]
-            && a != s0
-        {
-            pieces.push(Piece {
-                t: [0.0, 0.0],
-                rev: false,
-                sides: [s0, a],
-                rec: [Some(on0), None],
-                one: true,
-                gap: Some(0),
-            });
-        }
         for found in &roots.found {
             // A result in the span's second half (a root's narrowed
             // bounds there) on the span run backwards: its ends mirrored
@@ -644,7 +662,6 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
                         sides: [r.dir.reverse(), r.dir].map(|d| Sign::of(d).expect("a root's dir")),
                         rec: [None, None],
                         one: true,
-                        gap: None,
                     });
                 }
                 Found::Cluster(cl) => {
@@ -656,41 +673,25 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
                         (None, Some(e)) if cl.mult <= 1 => {
                             let b = [lo.bounds()[0], hi.bounds()[1]][1];
                             let (b, split) = narrow(&g, b, e, like, work);
-                            end_pieces(&mut pieces, b, split, (o0, own0), e, false);
+                            end_pieces(&mut pieces, b, split, (s0, on0), e, false);
                         }
                         (Some(e), None) if cl.mult <= 1 => {
                             let d = mirror(lo).bounds()[1];
                             let (b, split) = narrow(&gr, d, e, like, work);
                             let mut at_end = SmallVec::<[Piece; 2]>::new();
-                            end_pieces(&mut at_end, b, split, (o1, own1), e, true);
+                            end_pieces(&mut at_end, b, split, (s1, on1), e, true);
                             pieces.extend(at_end.into_iter().rev());
                         }
                         _ => pieces.push(Piece {
                             t,
                             rev,
-                            sides: [start.unwrap_or(o0), end.unwrap_or(o1)],
-                            rec: [
-                                start.is_none().then_some(own0),
-                                end.is_none().then_some(own1),
-                            ],
+                            sides: [start.unwrap_or(s0), end.unwrap_or(s1)],
+                            rec: [start.is_none().then_some(on0), end.is_none().then_some(on1)],
                             one: cl.mult <= 1,
-                            gap: None,
                         }),
                     }
                 }
             }
-        }
-        if let Some(a) = end_sides[1]
-            && a != s1
-        {
-            pieces.push(Piece {
-                t: [1.0, 1.0],
-                rev: false,
-                sides: [a, s1],
-                rec: [None, Some(on1)],
-                one: true,
-                gap: Some(1),
-            });
         }
 
         let ahead = ray_ahead(self.key.q.operand);
@@ -722,12 +723,10 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
                 t = bracket(pg, t, start, like, work);
                 settled = settle(t, work);
             }
-            let sign = match (settled, net, p.gap) {
-                (Some(on), Some(c), _) => on.then_some(c),
-                (Some(_), None, _) => None,
-                // A stretch's ends always differ in side.
-                (None, Some(c), Some(end)) => (self.gap_row(end, like, work)? == c).then_some(c),
-                (None, net, _) => {
+            let sign = match (settled, net) {
+                (Some(on), Some(c)) => on.then_some(c),
+                (Some(_), None) => None,
+                (None, net) => {
                     let pc = if p.rev { &cr } else { &c };
                     let mut row = self.row(pc, t, p.rev, like, work);
                     if last && net.is_none() && matches!(row, Err(Fail::Escalate { .. })) {
@@ -745,9 +744,14 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
                             t = mirrored(t);
                         }
                     }
-                    let (s, along) = row?;
+                    let RowAt { s, along, tie } = row?;
                     match net {
-                        Some(c) => (s == c).then_some(c),
+                        // A tie beside an end: the row at that end, flat
+                        // (module docs, "Beside an end").
+                        Some(c) => match tie.then(|| self.at_end(p, c, polys, like, work)) {
+                            Some(Some(on)) => on.then_some(c),
+                            _ => (s == c).then_some(c),
+                        },
                         None => {
                             let along = along.ok_or(Fail::Escalate { order: 0 })?;
                             (times(s, along) == p.sides[0]).then_some(s)
@@ -763,34 +767,39 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
         Ok(SpanRec { crossings })
     }
 
-    /// Where the span's own end `k` (`P/W`, not rounded) is exactly on
-    /// `q`'s `r̂` line, its side against it and whether it is on the ray,
-    /// decided by the homogeneous vertex rows, the end moving at its
-    /// rounded point's rates; `None` off the line. Once per record.
-    fn true_end(&self, k: usize) -> TrueEnd {
-        let (r, _) = self.true_ends[k].get_or_init(|| {
-            let tie = TieKey {
-                row: Row::VertexVertexShadow,
-                record: self.tie.record,
-            };
-            let row = |axis| HomShadow {
-                q: self.q.clone(),
-                p: self.span[2 * k],
-                rates: self.rounded[k].rates.clone(),
-                axis,
-            };
-            let (zero, w0) = exact::value_sign(&row(ShadowAxis::Side));
-            match zero {
-                Ok(Ordering::Equal) => {}
-                Ok(_) => return (Ok(None), w0),
-                Err(_) => return (Err(Fail::Internal { key: tie }), w0),
+    /// Whether the crossing of the piece `p`, of sign `c`, is on the ray,
+    /// by the row at the end the span is within the band of `q` from to
+    /// past the piece (module docs, "Beside an end"): `s = c` for
+    /// the row's side `s`, or as the end's record where that row has no
+    /// answer. `None` if there is no such end, or two. `polys` are `g`,
+    /// `h` and the weight `W` on the span and on the span run backwards.
+    fn at_end<S: RayLevel>(
+        &self,
+        p: &Piece,
+        c: Sign,
+        polys: [[&Poly<S>; 3]; 2],
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Option<bool> {
+        let [lo, hi] = if p.rev { mirrored(p.t) } else { p.t };
+        // From each end to past the piece, on the parameter that starts
+        // at that end.
+        let reach = [hi, one_minus(lo, true)];
+        let mut ends = (0..2).filter(|&j| {
+            self.near[j].is_some() && {
+                work.evals = work.evals.saturating_add(4);
+                within(polys[j], reach[j], self.band, like)
             }
-            let (side, w1) = decide_flat(&row(ShadowAxis::Side), tie);
-            let (ahead, w2) = decide_flat(&row(ShadowAxis::Along), tie);
-            let on = ahead.map(|a| a == ray_ahead(self.key.q.operand));
-            (side.and_then(|s| Ok(Some((s, on?)))), w0.and(w1).and(w2))
         });
-        *r
+        let j = ends.next()?;
+        if ends.next().is_some() {
+            return None;
+        }
+        let end = self.near[j].as_ref()?;
+        Some(match end.side {
+            Some(s) => s == c,
+            None => end.on,
+        })
     }
 
     /// The vertex–curve shadow row at the piece `t` (on `c`, the span, or
@@ -804,7 +813,7 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
         rev: bool,
         like: &S,
         work: &mut LevelWork,
-    ) -> Result<(Sign, Option<Sign>), Fail> {
+    ) -> Result<RowAt, Fail> {
         work.evals = work.evals.saturating_add(1);
         let f = |x: f64| S::from_f64(x, like);
         let ts = if t[0] == t[1] {
@@ -826,48 +835,47 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
         let foot = MovingAt { at, rates };
         let q = MovingAt::from_flat(&self.q, like);
         let row = curve_shadow(&q, &foot, &tangent);
+        // Within the band: a tie if `decide` answers (at its target).
+        let tie = row.g.beyond(self.band.tau()).is_none();
         let s = decide(row.g, row.ord, self.band, self.tie)?;
         let r = [f(R_HAT.x), f(R_HAT.y), f(R_HAT.z)];
         let along = dot3(&tangent, &r).sign().and_then(Sign::of);
-        Ok((s, along))
+        Ok(RowAt { s, along, tie })
     }
+}
 
-    /// The side of `q` against the stretch between end `end` of the span
-    /// and its rounded point `R`, directed as the span runs (from `R` at
-    /// its start, to it at its end): the vertex–curve shadow row of a
-    /// straight edge through `R`, which moves at its record's rates,
-    /// `ν̂·(q − R)` with `ν̂ = (UP × T)/|UP × T|`. The stretch `T` is as
-    /// short as a rounding, its direction known only relatively, so the
-    /// row is formed as `T·((q − R) × UP)/|UP × T|`, which stays small
-    /// where `q` is in `R`'s column.
-    fn gap_row<S: RayLevel>(
-        &self,
-        end: usize,
-        like: &S,
-        work: &mut LevelWork,
-    ) -> Result<Sign, Fail> {
-        work.evals = work.evals.saturating_add(1);
-        let f = |x: f64| S::from_f64(x, like);
-        let v3 = |v: glam::DVec3| [f(v.x), f(v.y), f(v.z)];
-        let p = &self.span[2 * end];
-        let w = f(p[3]);
-        let foot = MovingAt::from_flat(&self.rounded[end], like);
-        let q = MovingAt::from_flat(&self.q, like);
-        let tangent: [S; 3] = std::array::from_fn(|k| {
-            let d = f(p[k]).div(&w).sub(&foot.at[k]);
-            if end == 0 { d } else { d.neg() }
-        });
-        let up = v3(UP);
-        let n = cross3(&up, &tangent);
-        let len = dot3(&n, &n).sqrt();
-        let side = |a: &[S; 3], b: &[S; 3]| {
-            let d: [S; 3] = std::array::from_fn(|k| a[k].sub(&b[k]));
-            dot3(&tangent, &cross3(&d, &up)).div(&len)
-        };
-        let g = side(&q.at, &foot.at);
-        let ord = (0..ORDERS).map(|k| side(&q.rates[k], &foot.rates[k]));
-        decide(g, ord, self.band, self.tie)
-    }
+/// Whether the span is within the curved band (`τ + τ_sign`) of `q` in
+/// both shadow directions over `[0, to]`, certified: `R·W ± g` and
+/// `R'·W ± h` of one sign over it, for `g`, `h`, `W` (`[g, h, W]`), `R`,
+/// `R'` the band times the 1-norms of [`NU`], [`R_HAT`] (at least their
+/// lengths).
+fn within<S: Scalar>([g, h, w]: [&Poly<S>; 3], to: f64, band: Band, like: &S) -> bool {
+    let reach = add_up(band.tau(), band.tau_sign());
+    [(g, NU), (h, R_HAT)].iter().all(|(p, v)| {
+        let r = S::from_f64(mul_up(reach, v.x.abs() + v.y.abs() + v.z.abs()), like);
+        [false, true].iter().all(|&minus| {
+            let c = w.coefs().iter().zip(p.coefs()).map(|(w, p)| {
+                let rw = w.mul(&r);
+                if minus { rw.sub(p) } else { rw.add(p) }
+            });
+            Poly::new(c).and_then(|b| piece_sign(&b, [0.0, to], like)) == Some(Sign::Pos)
+        })
+    })
+}
+
+/// Whether `q` is within the curved band (`τ + τ_sign`) of the point `k`
+/// in both shadow directions, or not certainly beyond it: `|ν·(k − q)|`
+/// and `|r̂·(k − q)|` against the band times each axis's 1-norm (at least
+/// its length), at `f64` with certified errors.
+fn near_end(q: glam::DVec3, k: glam::DVec3, band: Band) -> bool {
+    let reach = add_up(band.tau(), band.tau_sign());
+    let b = |x: f64| Bounded::<f64>::from(x);
+    let d = [b(k.x) - b(q.x), b(k.y) - b(q.y), b(k.z) - b(q.z)];
+    [NU, R_HAT].iter().all(|v| {
+        let dot = b(v.x) * d[0] + b(v.y) * d[1] + b(v.z) * d[2];
+        let norm = v.x.abs() + v.y.abs() + v.z.abs();
+        dot.beyond(mul_up(reach, norm)).is_none()
+    })
 }
 
 /// The certified sign of `p` over `[lo, hi] ⊆ [0, 1]`, if one: at the
@@ -952,8 +960,9 @@ fn narrow<S: Scalar>(
 /// from that end, on the span, or at `t = 1` on the span run backwards
 /// (`flip`, each piece's sides and record then put in the span's order):
 /// with no root split off, the piece `[0, b]` from the record's side
-/// `rec.0` to `e`; else the stretch at the end crossed from `rec.0` to `x`
-/// where they differ, and the root on `[m, b]` from `x` to `e`.
+/// `rec.0` to `e`; else the end itself crossed from `rec.0` to `x` where
+/// they differ (the end on the ray line), and the root on `[m, b]` from
+/// `x` to `e`.
 fn end_pieces(
     out: &mut impl Extend<Piece>,
     b: f64,
@@ -974,7 +983,6 @@ fn end_pieces(
             sides,
             rec,
             one: true,
-            gap: (t == [0.0, 0.0]).then_some(usize::from(flip)),
         }
     };
     match split {
@@ -1097,30 +1105,24 @@ fn mirror(d: Dyadic) -> Dyadic {
     Dyadic::new((1u64 << d.exp()) - d.num(), d.exp()).expect("in [0, 1]")
 }
 
-/// `1 − x` for `x ∈ [0, 1]`, rounded up or down: `fl(1 − x)` is exact
-/// iff `1 − fl(1 − x)` gives `x` back.
+/// `1 − x` for `x ∈ [0, 1]`, rounded up or down, in `[0, 1]`: `fl(1 − x)`
+/// is exact iff `1 − fl(1 − x)` gives `x` back.
 fn one_minus(x: f64, up: bool) -> f64 {
     let r = 1.0 - x;
     if 1.0 - r == x {
         r
     } else if up {
-        r.next_up()
+        let u = r.next_up();
+        if u > 1.0 { 1.0 } else { u }
     } else {
-        r.next_down()
+        let d = r.next_down();
+        if d < 0.0 { 0.0 } else { d }
     }
 }
 
 /// The product of two signs.
 fn times(a: Sign, b: Sign) -> Sign {
     if a == b { Sign::Pos } else { Sign::Neg }
-}
-
-fn cross3<S: Scalar>(a: &[S; 3], b: &[S; 3]) -> [S; 3] {
-    [
-        a[1].mul(&b[2]).sub(&a[2].mul(&b[1])),
-        a[2].mul(&b[0]).sub(&a[0].mul(&b[2])),
-        a[0].mul(&b[1]).sub(&a[1].mul(&b[0])),
-    ]
 }
 
 fn dot3<S: Scalar>(a: &[S; 3], b: &[S; 3]) -> S {

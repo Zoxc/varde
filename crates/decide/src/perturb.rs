@@ -46,7 +46,7 @@
 //!
 //! | row (record) | `g` | `gₖ` |
 //! |---|---|---|
-//! | vertex–vertex shadow ([`VvShadow`], [`HomShadow`] for a point given homogeneously, [`vv_shadow`]) | `ν·(w − q)`, ahead/behind `r̂·(w − q)` | `ν·(Δw − Δq)`, likewise `r̂` |
+//! | vertex–vertex shadow ([`VvShadow`], [`vv_shadow`]) | `ν·(w − q)`, ahead/behind `r̂·(w − q)` | `ν·(Δw − Δq)`, likewise `r̂` |
 //! | vertex–curve shadow, box side ([`LineShadow`], [`curve_shadow`]) | `ν·(q − C(s*))`, `ν = ê × T` at the foot | `ν·(Δq − ΔC(s*))` |
 //! | layer height, anchor `f` ([`PlaneHeight`], [`layer_height`]) | from the record's height key | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
@@ -310,35 +310,6 @@ impl Pred for VvShadow {
     fn eval<N: Num>(&self) -> N {
         let l = point::<N>(self.axis.vector());
         dot(&l, &sub(&self.w.eval(), &self.q.eval()))
-    }
-}
-
-/// The vertex–vertex shadow row against a point given homogeneously,
-/// flat: `axis·(P − q·W)` for the point `P/W` (`W > 0`, so a positive
-/// multiple of `axis·(P/W − q)`, times the axis's length), the point
-/// moving at `rates` (its homogeneous `P` at `W` times them). For a
-/// span's end whose projection rounds: the end itself against `q`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct HomShadow {
-    /// The query vertex.
-    pub q: Moving,
-    /// The point, `(w·x, w·y, w·z, w)`.
-    pub p: [f64; 4],
-    /// The point's rates.
-    pub rates: [Rate; ORDERS],
-    /// The direction measured along.
-    pub axis: ShadowAxis,
-}
-
-impl Pred for HomShadow {
-    fn eval<N: Num>(&self) -> N {
-        let l = point::<N>(self.axis.vector());
-        let w = N::lit(self.p[3]);
-        let p: V3<N> = [0, 1, 2].map(|i| {
-            let rows = self.rates.each_ref().map(|r| r.coord::<N>(i).mul(&w));
-            N::lit(self.p[i]).moved_by(&rows)
-        });
-        dot(&l, &p).sub(&dot(&l, &self.q.eval()).mul(&w))
     }
 }
 

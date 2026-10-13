@@ -314,37 +314,6 @@ fn vertex_vertex_shadow_rows_are_the_derivatives() {
     }
 }
 
-/// A point given homogeneously, `(W·w, W)`: its row is the vertex row
-/// times `W` at every order, for weights from 1/64 to 64.
-#[test]
-fn homogeneous_shadow_rows_are_the_vertex_rows_times_the_weight() {
-    for seed in varde_testing::seeds(16, 256) {
-        let mut r = Rng::new(seed);
-        let (q, w) = (r.ints(16), r.ints(16));
-        let own = r.field();
-        let q_on_a = r.a_is_first();
-        let axis = [ShadowAxis::Side, ShadowAxis::Along][r.below(2) as usize];
-        let weight = p2(r.below(13) as i32 - 6);
-        let vv = VvShadow {
-            q: flat_moving(q, q_on_a, &own),
-            w: flat_moving(w, !q_on_a, &own),
-            axis,
-        };
-        let hom = HomShadow {
-            q: vv.q.clone(),
-            p: [w.x * weight, w.y * weight, w.z * weight, weight],
-            rates: vv.w.rates.clone(),
-            axis,
-        };
-        let wq = Q::try_from(weight).expect("finite");
-        assert_eq!(value(&hom), value(&vv) * &wq, "seed {seed}");
-        assert_eq!(order_value::<_, 1>(&hom), order_value::<_, 1>(&vv) * &wq);
-        assert_eq!(order_value::<_, 2>(&hom), order_value::<_, 2>(&vv) * &wq);
-        assert_eq!(order_value::<_, 3>(&hom), order_value::<_, 3>(&vv) * &wq);
-        assert_eq!(order_value::<_, 4>(&hom), order_value::<_, 4>(&vv) * &wq);
-    }
-}
-
 /// The shadow distance of `q` from a line through `a`, `b`, signed `+` to
 /// its left seen from above.
 fn line_distance(q: &[B; 3], a: &[B; 3], b: &[B; 3]) -> B {
