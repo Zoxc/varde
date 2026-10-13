@@ -562,7 +562,7 @@ pub fn button_content<'a, Message: 'a>(
     enabled: bool,
     color: impl Fn(&Palette, bool) -> Color + 'static,
 ) -> Element<'a, Message> {
-    if enabled && icon.category().is_some() {
+    if own_colours(icon, enabled) {
         iced::widget::container(self::icon(icon, INLINE))
             .center(BUTTON_SIZE)
             .into()
@@ -573,6 +573,26 @@ pub fn button_content<'a, Message: 'a>(
         )
         .into()
     }
+}
+
+/// An icon [`INLINE`] pixels square in its own colours (see [`icon`]) if
+/// `enabled` and it has a [`Icon::category`], else in `color`'s.
+pub fn inline_content<'a, Message: 'a>(
+    icon: Icon,
+    enabled: bool,
+    color: impl Fn(&Palette) -> Color + 'static,
+) -> Element<'a, Message> {
+    if own_colours(icon, enabled) {
+        self::icon(icon, INLINE)
+    } else {
+        tinted(icon, INLINE, color).into()
+    }
+}
+
+/// Whether `icon` is drawn in its own colours: enabled, with a
+/// [`Icon::category`]. A disabled one is drawn in one colour.
+fn own_colours(icon: Icon, enabled: bool) -> bool {
+    enabled && icon.category().is_some()
 }
 
 /// The content of an icon-only button [`BUTTON_SIZE`] square, with no

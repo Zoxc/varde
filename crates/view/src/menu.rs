@@ -73,14 +73,9 @@ fn menu_row(
         row![
             // In its own colours, or text-toned, so hovering doesn't change
             // it; faint while disabled.
-            if enabled && icon.category().is_some() {
-                icons::icon(icon, icons::INLINE)
-            } else {
-                icons::tinted(icon, icons::INLINE, move |p| {
-                    theme::flat_content(p, Tone::Text, enabled, false)
-                })
-                .into()
-            },
+            icons::inline_content(icon, enabled, move |p| {
+                theme::flat_content(p, Tone::Text, enabled, false)
+            }),
             text(label),
             key,
         ]
