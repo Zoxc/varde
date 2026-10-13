@@ -7,7 +7,7 @@ through `Sketch::delete`), `Move` (points and circles' radii, the end of a
 drag), `SetConstruction`, `SetDimension` (a new value), `SetDriving` (made
 driving, a dimension holds what it measures now) and `MoveLabel`.
 `SketchEdit::constrain` is an `Add` of constraints alone. The shape tools
-(`shape.rs`, `offset.rs`, `corner.rs`) add `Trim`, `Extend`, `Offset`,
+(`shape.rs`, `offset/`, `corner.rs`) add `Trim`, `Extend`, `Offset`,
 `Mirror`, `Fillet` and `Chamfer`, below.
 
 An `Add`'s new items name each other by placeholder ids: `Add::new`
@@ -110,7 +110,7 @@ to `propose` as it does an `Add`'s).
   constraints among what's mirrored aren't copied: the symmetry holds the
   copies already, so each would be redundant and the edit refused.
   Nothing to mirror is `EditError::NothingToMirror`.
-- `Offset { chain, distance, side }` (`offset.rs`): the curves of `chain`
+- `Offset { chain, distance, side }` (`offset/`): the curves of `chain`
   as a chain (`Sketch::chained`: joined end to end, no point the end of
   more than two, run so the first goes from its start, an arc
   counter-clockwise; or a circle alone; else `EditError::NotAChain`), each

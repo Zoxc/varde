@@ -261,7 +261,7 @@ and `Sketch::extension` (what extending would add), with
 `Sketch::nearer_end` picking a line's or an arc's end by a click
 (`shape.rs`), and Offset's `Sketch::chain_of` (the chain a curve is in),
 `Sketch::offset_side` (how far a place is from a chain, on which side)
-and `Sketch::offset_preview` (the copy as polylines) (`offset.rs`); see
+and `Sketch::offset_preview` (the copy as polylines) (`offset/`); see
 Edits and proposals.
 
 An **offset pair** (`Sketch::offset_pair`, `OffsetPair`) is a curve and

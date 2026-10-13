@@ -9,10 +9,13 @@ use std::f64::consts::{PI, TAU};
 use glam::DVec2;
 
 use super::*;
+use crate::intersect::meet;
 use crate::testing::{
     self, DESIGN, arc, circle, constrain, dimension, line, near, point, propose_it, value,
 };
-use crate::{CurveEntry, DimensionEntry, Rejected, SketchEdit, SketchError, analyse, arc_through};
+use crate::{
+    CurveEntry, DimensionEntry, Rejected, SketchEdit, SketchError, analyse, arc_sweep, arc_through,
+};
 
 fn offset(chain: Vec<Id>, distance: &str, side: Side) -> SketchEdit {
     SketchEdit::Offset {
