@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, column, container, row, space, text, text_input};
+use iced::widget::{Button, Space, column, container, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{APP_NAME, EXTENSION};
 use varde_sketch::Sketch;
@@ -17,7 +17,8 @@ use crate::{Edit, File, Look, Message, SavePlace, Unsaved, panels, theme};
 
 use super::status_text::refusal_text;
 use super::{
-    Damage, DamagedFile, DeletePrompt, NamePrompt, RecoveredChanges, Refusal, RefusedEdit,
+    Damage, DamagedFile, DeletePrompt, FileShown, NamePrompt, RecoveredChanges, Refusal,
+    RefusedEdit,
 };
 use crate::words::{counts, listed};
 
@@ -25,16 +26,91 @@ use crate::words::{counts, listed};
 /// its sketch was left, and why, with Dismiss: "An edit of Sketch 1
 /// wasn't kept — Would over-constrain the sketch".
 pub(super) fn refused_banner(refused: RefusedEdit<'_>) -> Element<'_, Message> {
-    let dismiss = small_button("Dismiss", Emphasis::Secondary)
-        .on_press(Message::Edit(Edit::DismissRefusedEdit));
     banner(
         text(format!("An edit of {} wasn't kept", refused.name))
             .font(theme::SEMIBOLD)
             .wrapping(Wrapping::None)
             .style(theme::warning_text),
         &edit_refused(refused.refusal, refused.sketch),
-        Some(dismiss.into()),
+        Some(dismiss(Edit::DismissRefusedEdit).into()),
     )
+}
+
+/// The banners under the toolbar about the open `file`, and that it's
+/// read-only, for `read_only`'s reason, if it is.
+pub(super) fn file_banners<'a>(
+    file: &FileShown<'a>,
+    read_only: Option<&'a str>,
+) -> Element<'a, Message> {
+    let read_only =
+        read_only.map(|reason| banner(text("Read-only").font(theme::SEMIBOLD), reason, None));
+    let save_error = file.save_error.as_deref().map(|error| {
+        let save_as =
+            small_button("Save As…", Emphasis::Primary).on_press(Message::File(File::SaveAs));
+        banner(
+            text("Couldn't save")
+                .font(theme::SEMIBOLD)
+                .style(theme::danger_text),
+            error,
+            Some(
+                row![save_as, dismiss(Edit::DismissSaveError)]
+                    .spacing(6)
+                    .into(),
+            ),
+        )
+    });
+
+    let export_error = file.export_error.map(|error| {
+        banner(
+            text("Couldn't export")
+                .font(theme::SEMIBOLD)
+                .style(theme::danger_text),
+            error,
+            Some(dismiss(Edit::DismissExportError).into()),
+        )
+    });
+
+    let recovered = file.recovered.as_ref().map(|recovered| {
+        // Nothing to restore of what can't be read.
+        let restore = (!recovered.unreadable).then(|| {
+            small_button("Restore", Emphasis::Primary).on_press(Message::File(File::RestoreChanges))
+        });
+        let discard = small_button("Discard", Emphasis::Secondary)
+            .on_press(Message::File(File::DiscardChanges));
+        banner(
+            text("Unsaved changes found").font(theme::SEMIBOLD),
+            &recovered_detail(recovered),
+            Some(row![restore, discard].spacing(6).into()),
+        )
+    });
+
+    let damage = file.damage.as_ref().map(|damaged| {
+        banner(
+            text("Damaged file")
+                .font(theme::SEMIBOLD)
+                .style(theme::warning_text),
+            &damage_detail(damaged),
+            Some(dismiss(Edit::DismissDamage).into()),
+        )
+    });
+
+    // On the panel's colour, the window's, rather than over whatever's
+    // behind: a banner's own is translucent.
+    container(column![
+        read_only,
+        damage,
+        recovered,
+        save_error,
+        export_error
+    ])
+    .width(Length::Fill)
+    .style(theme::toolbar)
+    .into()
+}
+
+/// A banner's Dismiss button, sending `edit`.
+fn dismiss(edit: Edit) -> Button<'static, Message> {
+    small_button("Dismiss", Emphasis::Secondary).on_press(Message::Edit(edit))
 }
 
 /// Why the solver refused an edit of `sketch`, as the status bar and the
@@ -49,7 +125,7 @@ pub(super) fn edit_refused(refusal: Refusal<'_>, sketch: &Sketch) -> Cow<'static
 /// A strip under the toolbar, or over the viewport, telling something
 /// about the whole document: `title`, then `detail`, then any `actions`
 /// at the right.
-pub(super) fn banner<'a>(
+fn banner<'a>(
     title: impl Into<Element<'a, Message>>,
     detail: &str,
     actions: Option<Element<'a, Message>>,
@@ -80,7 +156,7 @@ pub(super) fn banner<'a>(
 /// them: that there are some, and whether the design changed since, or
 /// they were made to a newer save of it than could be read, how damaged
 /// the file holding them is, or that they can't be read.
-pub(super) fn recovered_detail(recovered: &RecoveredChanges) -> String {
+fn recovered_detail(recovered: &RecoveredChanges) -> String {
     let found =
         format!("{APP_NAME} closed unexpectedly while this design had changes that weren't saved");
     if recovered.unreadable {
@@ -108,7 +184,7 @@ pub(super) fn recovered_detail(recovered: &RecoveredChanges) -> String {
 }
 
 /// What the banner about a damaged file says: which save is open.
-pub(super) fn damage_detail(damaged: &DamagedFile) -> String {
+fn damage_detail(damaged: &DamagedFile) -> String {
     let save = if damaged.auto_saves {
         "auto-save"
     } else {

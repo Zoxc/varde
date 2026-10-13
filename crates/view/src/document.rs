@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::DVec2;
-use iced::widget::{column, container, row, stack, text};
+use iced::widget::{column, container, row, stack};
 use iced::{Element, Length};
 use varde_document::{
     Body, BodyId, Document, EditError, Editor, Feature, FeatureId, Opacity, Placement, Plane, Tint,
@@ -20,25 +20,20 @@ use varde_sketch::{
     TooComplex,
 };
 
-use crate::chrome::small_button;
 use crate::file_menu;
 use crate::icons::Icon;
 use crate::shortcut::{DocumentKeys, KeysInput, OperationKeys};
 use crate::status::{self};
-use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    Downloads, Edit, ExtrudeState, File, Location, Message, Panel, PlanePick, RevolveState,
-    RowMenu, SNAP_TOLERANCE, SavePlace, Snap, Target, Tool, panels, theme, toolbar, viewport,
+    Downloads, ExtrudeState, Location, Message, Panel, PlanePick, RevolveState, RowMenu,
+    SNAP_TOLERANCE, SavePlace, Snap, Target, Tool, panels, theme, toolbar, viewport,
 };
 
 mod prompts;
 mod status_text;
 
-use prompts::{
-    banner, damage_detail, delete_prompt, name_prompt, recovered_detail, refused_banner,
-    unsaved_prompt,
-};
+use prompts::{delete_prompt, file_banners, name_prompt, refused_banner, unsaved_prompt};
 pub use status_text::CURVED_FACE;
 use status_text::status;
 
@@ -962,72 +957,7 @@ impl NamePrompt<'_> {
 pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     let editable = state.editable();
 
-    let read_only = state
-        .read_only
-        .map(|reason| banner(text("Read-only").font(theme::SEMIBOLD), reason, None));
-    let save_error = state.file.save_error.as_deref().map(|error| {
-        let save_as =
-            small_button("Save As…", Emphasis::Primary).on_press(Message::File(File::SaveAs));
-        let dismiss = small_button("Dismiss", Emphasis::Secondary)
-            .on_press(Message::Edit(Edit::DismissSaveError));
-        banner(
-            text("Couldn't save")
-                .font(theme::SEMIBOLD)
-                .style(theme::danger_text),
-            error,
-            Some(row![save_as, dismiss].spacing(6).into()),
-        )
-    });
-
-    let export_error = state.file.export_error.map(|error| {
-        let dismiss = small_button("Dismiss", Emphasis::Secondary)
-            .on_press(Message::Edit(Edit::DismissExportError));
-        banner(
-            text("Couldn't export")
-                .font(theme::SEMIBOLD)
-                .style(theme::danger_text),
-            error,
-            Some(dismiss.into()),
-        )
-    });
-
-    let recovered = state.file.recovered.as_ref().map(|recovered| {
-        // Nothing to restore of what can't be read.
-        let restore = (!recovered.unreadable).then(|| {
-            small_button("Restore", Emphasis::Primary).on_press(Message::File(File::RestoreChanges))
-        });
-        let discard = small_button("Discard", Emphasis::Secondary)
-            .on_press(Message::File(File::DiscardChanges));
-        banner(
-            text("Unsaved changes found").font(theme::SEMIBOLD),
-            &recovered_detail(recovered),
-            Some(row![restore, discard].spacing(6).into()),
-        )
-    });
-
-    let damage = state.file.damage.as_ref().map(|damaged| {
-        let dismiss = small_button("Dismiss", Emphasis::Secondary)
-            .on_press(Message::Edit(Edit::DismissDamage));
-        banner(
-            text("Damaged file")
-                .font(theme::SEMIBOLD)
-                .style(theme::warning_text),
-            &damage_detail(damaged),
-            Some(dismiss.into()),
-        )
-    });
-
-    // On the panel's colour, the window's, rather than over whatever's
-    // behind: a banner's own is translucent.
-    let banners = container(column![
-        read_only,
-        damage,
-        recovered,
-        save_error,
-        export_error
-    ])
-    .width(Length::Fill)
-    .style(theme::toolbar);
+    let banners = file_banners(&state.file, state.read_only);
     let refused = (state.refused_edit)
         .map(|refused| container(refused_banner(refused)).style(theme::toolbar));
 
