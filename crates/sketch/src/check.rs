@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
 use varde_expr::{Ask, LengthUnit, Params};
@@ -94,34 +95,26 @@ pub const MAX_CONSTRAINTS: usize = 4 * MAX_CURVES;
 pub const MAX_DIMENSIONS: usize = MAX_CONSTRAINTS;
 
 impl Sketch {
-    /// Checks what a file or an edit could get wrong: no more items than
-    /// [`MAX_POINTS`], [`MAX_CURVES`], [`MAX_CONSTRAINTS`] and
-    /// [`MAX_DIMENSIONS`], each list in increasing id order with every id
-    /// below `next_id` and naming one item only, every coordinate within
-    /// `design.max` of zero, every radius above zero and at most that, and
-    /// every reference naming an item of the kind it has to be, no item
-    /// naming the same one twice, every spline's counts, handles and knots
-    /// as they can be, and every fillet and chamfer on a corner
-    /// of two lines, a corner at most once. A constraint's items also have
-    /// to go together ([`Constraint::fits`](crate::Constraint::fits)), an
-    /// offset's being offset pairs ([`Sketch::offset_pair`]), and a
-    /// constraint or dimension naming a curve can't name one of that
-    /// curve's own points too, but for a round join's corner. A dimension's expression, read in
-    /// `design.units`, must evaluate to its stored value exactly and be
-    /// what its measure asks for ([`Measure::ask`](crate::Measure::ask)),
-    /// and its label must be within `design.max` of its anchor. The
-    /// origin and axes are named only as they can be
-    /// ([`Constraint::fits_builtins`](crate::Constraint::fits_builtins)),
-    /// never as a curve's point, and no id given out reaches theirs.
-    /// Links ([`Link`](crate::Link)) are in increasing id order, at most
-    /// [`MAX_LINKS`](crate::MAX_LINKS), each id below `next_id` and
-    /// naming no item, each listing points and curves of its own, in
-    /// increasing order, its curves made of its points alone, no fillet,
-    /// chamfer or spline with handles among them, construction unless
-    /// the link counts for profiles; no other curve is made of a link's
-    /// points.
+    /// Checks what a file or an edit could get wrong, list by list: the
+    /// counts and ids first, as each list is sorted before an id is looked
+    /// up in it, then points, curves, links, constraints and dimensions.
+    /// Coordinates and radii are bounded by `design.max`; a dimension's
+    /// expression is read in `design.units`.
     pub fn check(&self, design: &Design) -> Result<(), SketchError> {
-        let max = design.max;
+        self.check_counts()?;
+        self.check_order()?;
+        self.check_points(design.max)?;
+        self.check_curves(design.max)?;
+        self.check_links()?;
+        let tips = self.tips();
+        self.check_constraints(&tips)?;
+        self.check_dimensions(design, &tips)
+    }
+
+    /// No more items than [`MAX_POINTS`], [`MAX_CURVES`],
+    /// [`MAX_CONSTRAINTS`] and [`MAX_DIMENSIONS`], and no id given out
+    /// reaching the origin's and axes'.
+    fn check_counts(&self) -> Result<(), SketchError> {
         for (list, count, limit) in [
             (List::Points, self.points.len(), MAX_POINTS),
             (List::Curves, self.curves.len(), MAX_CURVES),
@@ -135,7 +128,12 @@ impl Sketch {
         if self.next_id > LAST_ID {
             return Err(SketchError::NextIdReserved(self.next_id));
         }
-        // Each list is sorted before an id is looked up in it.
+        Ok(())
+    }
+
+    /// Each list in increasing id order with every id below `next_id`,
+    /// and each id naming one item only.
+    fn check_order(&self) -> Result<(), SketchError> {
         check_ids(self.points.iter().map(|point| point.id), self.next_id)?;
         check_ids(self.curves.iter().map(|curve| curve.id), self.next_id)?;
         check_ids(
@@ -155,17 +153,16 @@ impl Sketch {
             .chain(constraint_ids.filter(|&id| geometry(id)))
             .chain(dimension_ids.filter(|&id| geometry(id) || self.constraint(id).is_some()))
             .next();
-        if let Some(id) = shared {
-            return Err(SketchError::Shared(id));
+        match shared {
+            Some(id) => Err(SketchError::Shared(id)),
+            None => Ok(()),
         }
+    }
 
+    /// Every point's coordinates within `max` of zero.
+    fn check_points(&self, max: f64) -> Result<(), SketchError> {
         for point in &self.points {
-            if let Some(value) = point
-                .at
-                .to_array()
-                .into_iter()
-                .find(|v| !(-max..=max).contains(v))
-            {
+            if let Some(value) = outside(point.at, max) {
                 return Err(SketchError::Coordinate {
                     id: point.id,
                     value,
@@ -173,6 +170,14 @@ impl Sketch {
                 });
             }
         }
+        Ok(())
+    }
+
+    /// Every radius above zero and at most `max`, every spline's counts,
+    /// handles and knots as they can be, every curve made of points
+    /// (never the origin), none twice, and every fillet and chamfer on a
+    /// corner of two lines, a corner at most once.
+    fn check_curves(&self, max: f64) -> Result<(), SketchError> {
         for entry in &self.curves {
             match &entry.curve {
                 &Curve::Circle { radius, .. } if !(radius > 0.0 && radius <= max) => {
@@ -202,11 +207,21 @@ impl Sketch {
                 }
             }
         }
-        if let Some(id) = self.repeated_corner() {
-            return Err(SketchError::Corner(id));
+        match self.repeated_corner() {
+            Some(id) => Err(SketchError::Corner(id)),
+            None => Ok(()),
         }
-        self.check_links()?;
-        let tips = self.tips();
+    }
+
+    /// Every constraint naming items of the kinds it has to, none twice,
+    /// and passing [`check_annotation`](Sketch::check_annotation): its
+    /// items go together ([`Constraint::fits`](crate::Constraint::fits)),
+    /// an offset's being offset pairs ([`Sketch::offset_pair`]), the
+    /// origin and axes named only as they can be
+    /// ([`Constraint::fits_builtins`](crate::Constraint::fits_builtins)),
+    /// and no curve named with one of its own points, but for a round
+    /// join's corner. `tips` are the sketch's handles' tips.
+    fn check_constraints(&self, tips: &HashSet<Id>) -> Result<(), SketchError> {
         for entry in &self.constraints {
             let from = entry.id;
             match entry.constraint {
@@ -222,14 +237,22 @@ impl Sketch {
                 }
                 _ => self.check_references(from, entry.constraint.items())?,
             }
-            self.check_annotation(from, Annotation::Constraint(&entry.constraint), &tips)?;
+            self.check_annotation(from, Annotation::Constraint(&entry.constraint), tips)?;
         }
+        Ok(())
+    }
+
+    /// Every dimension's measure checked as a constraint's items are
+    /// ([`check_constraints`](Sketch::check_constraints)), its label within
+    /// `design.max` of zero, and its expression, read in `design.units`,
+    /// evaluating to its stored value exactly and being what its measure
+    /// asks for ([`Measure::ask`](crate::Measure::ask)).
+    fn check_dimensions(&self, design: &Design, tips: &HashSet<Id>) -> Result<(), SketchError> {
         for entry in &self.dimensions {
             let (from, dimension) = (entry.id, &entry.dimension);
             self.check_references(from, dimension.measure.items())?;
-            self.check_annotation(from, Annotation::Dimension(&dimension.measure), &tips)?;
-            let within = |v: &f64| (-max..=max).contains(v);
-            if !dimension.label.to_array().iter().all(within) {
+            self.check_annotation(from, Annotation::Dimension(&dimension.measure), tips)?;
+            if outside(dimension.label, design.max).is_some() {
                 return Err(SketchError::Label(from));
             }
             if dimension
@@ -283,6 +306,13 @@ impl Sketch {
         }
         Ok(())
     }
+}
+
+/// The first of `at`'s coordinates past `max` from zero, if any.
+fn outside(at: DVec2, max: f64) -> Option<f64> {
+    at.to_array()
+        .into_iter()
+        .find(|v| !(-max..=max).contains(v))
 }
 
 /// That `ids` increase and are below `next_id`, so new items get new

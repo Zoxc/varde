@@ -627,7 +627,12 @@ impl Sketch {
 }
 
 impl Sketch {
-    /// That every link holds as [`Sketch::check`] wants it, see there.
+    /// That links are in increasing id order, at most [`MAX_LINKS`],
+    /// each id below `next_id` and naming no item, each listing points and
+    /// curves of its own, in increasing order, its curves made of its
+    /// points alone, no fillet, chamfer or spline with handles among them,
+    /// construction unless the link counts for profiles; and that no other
+    /// curve is made of a link's points. Part of [`Sketch::check`].
     pub(crate) fn check_links(&self) -> Result<(), crate::SketchError> {
         use crate::SketchError;
         if self.links.len() > MAX_LINKS {
