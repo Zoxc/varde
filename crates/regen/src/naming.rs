@@ -145,6 +145,104 @@ fn instances_before(document: &Document, before: usize) -> Option<Vec<Copied>> {
     instances.dedup_by_key(|copied| copied.instance);
     Some(instances)
 }
+/// Whether `feature` is a join.
+fn is_join(document: &Document, feature: FeatureId) -> bool {
+    document
+        .feature(feature)
+        .is_some_and(|feature| matches!(feature.kind.operation(), Some(Operation::Join(_))))
+}
+
+/// The first `before` features of `document` replayed in its order, as
+/// regenerating merges: a working join merges the bodies the model
+/// shown found it touch, a working combine using its tools up merges
+/// them into its target. Each body merged and the body holding it, and
+/// the patterns without joining among them, which see the merges before
+/// them.
+fn replay_before(
+    document: &Document,
+    before: usize,
+    shown: Shown,
+) -> (Vec<(BodyId, BodyId)>, Vec<Separated>) {
+    let worked = |feature: FeatureId| !(shown.failed.iter()).any(|f| f.feature == feature);
+    let mut merged_before = Vec::new();
+    let mut separated = Vec::new();
+    for feature in &document.features()[..before] {
+        if let FeatureKind::Pattern(pattern) = &feature.kind
+            && !pattern.joins()
+        {
+            // Its sources hold the faces of the bodies merged into
+            // them so far.
+            let mut holders: Vec<(BodyId, usize)> = (pattern.bodies.iter().enumerate())
+                .map(|(source, &body)| (body, source))
+                .collect();
+            for &(consumed, holder) in &merged_before {
+                if let Ok(source) = pattern.bodies.binary_search(&holder) {
+                    holders.push((consumed, source));
+                }
+            }
+            holders.sort_unstable();
+            holders.dedup_by_key(|(body, _)| *body);
+            let copies = pattern.copy_bodies().map(|(_, _, body)| body).collect();
+            separated.push(Separated {
+                feature: feature.id.get(),
+                sources: pattern.bodies.len(),
+                holders,
+                copies,
+            });
+        }
+        if !worked(feature.id) {
+            continue;
+        }
+        match &feature.kind {
+            FeatureKind::Combine(combine) if !combine.keep_tools => {
+                // The tools in the order they were made, as regen
+                // has them: only the target, first, holds.
+                let bodies: Vec<BodyId> = combine.bodies().collect();
+                crate::note_merge(&mut merged_before, &bodies);
+            }
+            _ if is_join(document, feature.id) => {
+                let touched = (shown.touched.iter()).find(|(id, _)| *id == feature.id);
+                if let Some((_, bodies)) = touched {
+                    crate::note_merge(&mut merged_before, bodies);
+                }
+            }
+            _ => {}
+        }
+    }
+    (merged_before, separated)
+}
+
+/// The bodies each feature the model shown found touching bodies holds
+/// faces of, by feature number: a join's first only (it merges the
+/// rest into it), every one for a cut or intersect.
+fn touched_on(document: &Document, shown: Shown) -> Vec<(u64, Vec<BodyId>)> {
+    let mut touched: Vec<(u64, Vec<BodyId>)> = (shown.touched.iter())
+        .map(|(feature, bodies)| {
+            let on = if is_join(document, *feature) {
+                bodies.iter().copied().take(1).collect()
+            } else {
+                bodies.clone()
+            };
+            (feature.get(), on)
+        })
+        .collect();
+    touched.sort_unstable();
+    touched
+}
+
+/// The body each feature making a new body made, by feature number.
+fn made_by(document: &Document) -> Vec<(u64, BodyId)> {
+    let made_new = |body: &&varde_document::Body| {
+        (document.feature(body.created_by))
+            .is_some_and(|maker| maker.kind.new_body() == Some(body.id))
+    };
+    let mut made: Vec<(u64, BodyId)> = (document.bodies().iter())
+        .filter(made_new)
+        .map(|body| (body.created_by.get(), body.id))
+        .collect();
+    made.sort_unstable();
+    made
+}
 
 /// Why a face or an edge of the model shown can't be named
 /// ([`Naming::edge_body`]).
@@ -188,81 +286,9 @@ impl Naming {
             .map(|body| body.id)
             .collect();
         bodies.sort_unstable();
-        let join = |feature: FeatureId| {
-            document
-                .feature(feature)
-                .is_some_and(|feature| matches!(feature.kind.operation(), Some(Operation::Join(_))))
-        };
-        let worked = |feature: FeatureId| !(shown.failed.iter()).any(|f| f.feature == feature);
-        // Replayed in the document's order, as regenerating merges: a
-        // working join merges the bodies the model shown found it touch,
-        // a working combine using its tools up merges them into its
-        // target.
-        let mut merged_before = Vec::new();
-        let mut separated = Vec::new();
-        for feature in &document.features()[..before] {
-            if let FeatureKind::Pattern(pattern) = &feature.kind
-                && !pattern.joins()
-            {
-                // Its sources hold the faces of the bodies merged into
-                // them so far.
-                let mut holders: Vec<(BodyId, usize)> = (pattern.bodies.iter().enumerate())
-                    .map(|(source, &body)| (body, source))
-                    .collect();
-                for &(consumed, holder) in &merged_before {
-                    if let Ok(source) = pattern.bodies.binary_search(&holder) {
-                        holders.push((consumed, source));
-                    }
-                }
-                holders.sort_unstable();
-                holders.dedup_by_key(|(body, _)| *body);
-                let copies = pattern.copy_bodies().map(|(_, _, body)| body).collect();
-                separated.push(Separated {
-                    feature: feature.id.get(),
-                    sources: pattern.bodies.len(),
-                    holders,
-                    copies,
-                });
-            }
-            if !worked(feature.id) {
-                continue;
-            }
-            match &feature.kind {
-                FeatureKind::Combine(combine) if !combine.keep_tools => {
-                    // The tools in the order they were made, as regen
-                    // has them: only the target, first, holds.
-                    let bodies: Vec<BodyId> = combine.bodies().collect();
-                    crate::note_merge(&mut merged_before, &bodies);
-                }
-                _ if join(feature.id) => {
-                    let touched = (shown.touched.iter()).find(|(id, _)| *id == feature.id);
-                    if let Some((_, bodies)) = touched {
-                        crate::note_merge(&mut merged_before, bodies);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut touched: Vec<(u64, Vec<BodyId>)> = (shown.touched.iter())
-            .map(|(feature, bodies)| {
-                let on = if join(*feature) {
-                    bodies.iter().copied().take(1).collect()
-                } else {
-                    bodies.clone()
-                };
-                (feature.get(), on)
-            })
-            .collect();
-        touched.sort_unstable();
-        let made_new = |body: &&varde_document::Body| {
-            (document.feature(body.created_by))
-                .is_some_and(|maker| maker.kind.new_body() == Some(body.id))
-        };
-        let mut made: Vec<(u64, BodyId)> = (document.bodies().iter())
-            .filter(made_new)
-            .map(|body| (body.created_by.get(), body.id))
-            .collect();
-        made.sort_unstable();
+        let (merged_before, separated) = replay_before(document, before, shown);
+        let touched = touched_on(document, shown);
+        let made = made_by(document);
         let split_from = (later.iter())
             .filter_map(|feature| match &feature.kind {
                 FeatureKind::Split(split) => Some((split.made_body()?, split.body)),
@@ -362,15 +388,7 @@ impl Naming {
         // the body shown or by the body that one was split from.
         let unsplit = self.unsplit(shown);
         let maker = key.feature;
-        let lookup = |list: &[(u64, BodyId)]| {
-            (list.binary_search_by_key(&maker, |(feature, _)| *feature)).map(|at| list[at].1)
-        };
-        let made: Vec<BodyId> = match lookup(&self.made) {
-            Ok(body) => vec![body],
-            Err(_) => (self.touched)
-                .binary_search_by_key(&maker, |(feature, _)| *feature)
-                .map_or_else(|_| Vec::new(), |at| self.touched[at].1.clone()),
-        };
+        let made = self.made_on(maker);
         // On to the copy bodies of patterns that copied it: a body such
         // a pattern doesn't copy can't hold this copy.
         let mut on: Vec<BodyId> = if made.is_empty() || key.instance == 0 {
@@ -402,6 +420,18 @@ impl Naming {
             return None;
         }
         Some(first)
+    }
+
+    /// The bodies faces the feature numbered `maker` named were first
+    /// on: the body it made, else the bodies it touched holding them.
+    fn made_on(&self, maker: u64) -> Vec<BodyId> {
+        if let Ok(at) = (self.made).binary_search_by_key(&maker, |(feature, _)| *feature) {
+            return vec![self.made[at].1];
+        }
+        (self
+            .touched
+            .binary_search_by_key(&maker, |(feature, _)| *feature))
+        .map_or_else(|_| Vec::new(), |at| self.touched[at].1.clone())
     }
 
     /// The body `body` is part of where the history stops: the body a
