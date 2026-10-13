@@ -11,6 +11,7 @@ use glam::DVec2;
 use crate::angle;
 use crate::bounds;
 use crate::flatten::arc_segments;
+use crate::geometry::line_param;
 use crate::spline::bezier::{self, Path};
 use crate::{Curve, Id, Sketch, arc_sweep, crossing, foot};
 
@@ -272,20 +273,14 @@ impl Geom {
     pub(crate) fn param(&self, point: DVec2, tolerance: f64) -> Option<f64> {
         match *self {
             Geom::Segment { start, end } => {
-                let along = end - start;
-                let slack = tolerance / along.length();
-                let u = along.dot(point - start) / along.length_squared();
+                let slack = tolerance / (end - start).length();
+                let u = self.carrier_param(point);
                 (-slack..=1.0 + slack)
                     .contains(&u)
                     .then(|| u.clamp(0.0, 1.0))
             }
-            Geom::Round {
-                center,
-                radius,
-                begin,
-                sweep,
-            } => {
-                let u = (angle::to_angle(point - center) - begin).rem_euclid(TAU);
+            Geom::Round { radius, sweep, .. } => {
+                let u = self.carrier_param(point);
                 if sweep >= TAU || u <= sweep {
                     return Some(u);
                 }
@@ -302,28 +297,35 @@ impl Geom {
         }
     }
 
+    /// The parameter of the place nearest `point` on the curve's endless
+    /// line or whole circle, unclamped (on a circle, in `[0, TAU)` from
+    /// its begin); on a spline, as [`Path::closest`] finds it.
+    pub(crate) fn carrier_param(&self, point: DVec2) -> f64 {
+        match *self {
+            Geom::Segment { start, end } => line_param(point, start, end),
+            Geom::Round { center, begin, .. } => {
+                (angle::to_angle(point - center) - begin).rem_euclid(TAU)
+            }
+            Geom::Spline(ref path) => path.closest(point),
+        }
+    }
+
     /// The parameter of the place on the curve nearest `point`: on a line
     /// or an arc, an end's where the place nearest on the endless line or
     /// the whole circle is past it; on a spline, found numerically (see
     /// [`Path::closest`]).
     pub(crate) fn closest(&self, point: DVec2) -> f64 {
         match *self {
-            Geom::Segment { start, end } => {
-                let along = end - start;
-                let u = along.dot(point - start) / along.length_squared();
+            Geom::Segment { .. } => {
+                let u = self.carrier_param(point);
                 if u.is_finite() {
                     u.clamp(0.0, 1.0)
                 } else {
                     0.0
                 }
             }
-            Geom::Round {
-                center,
-                begin,
-                sweep,
-                ..
-            } => {
-                let u = (angle::to_angle(point - center) - begin).rem_euclid(TAU);
+            Geom::Round { sweep, .. } => {
+                let u = self.carrier_param(point);
                 // Past an arc's end, whichever end is nearer round.
                 if u <= sweep || sweep >= TAU {
                     u

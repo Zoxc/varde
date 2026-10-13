@@ -1477,17 +1477,11 @@ fn span_distance(geom: &Geom, from: f64, to: f64, point: DVec2) -> f64 {
         .at(from)
         .distance(point)
         .min(geom.at(to).distance(point));
-    let u = match *geom {
-        Geom::Segment { start, end } => {
-            let along = end - start;
-            along.dot(point - start) / along.length_squared()
-        }
-        Geom::Round { center, begin, .. } => {
-            let u = (angle::to_angle(point - center) - begin).rem_euclid(TAU);
-            // A part round a circle may go on past a turn.
-            if u < from { u + TAU } else { u }
-        }
-        Geom::Spline(_) => geom.closest(point),
+    let u = geom.carrier_param(point);
+    // A part round a circle may go on past a turn.
+    let u = match geom {
+        Geom::Round { .. } if u < from => u + TAU,
+        _ => u,
     };
     if (from..=to).contains(&u) {
         geom.at(u).distance(point).min(ends)

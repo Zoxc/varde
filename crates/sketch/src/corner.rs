@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::Value;
 
 use crate::angle;
+use crate::geometry::line_param;
 use crate::{
     ArcPoints, Curve, CurveEntry, Dimension, EditError, Id, Measure, OutOfIds, Side, Sketch,
 };
@@ -358,8 +359,7 @@ impl Sketch {
                     let [start, end] = self.line_ends(line)?;
                     let meets = self.point(meets)?;
                     let (from, to) = (self.point(start)?, self.point(end)?);
-                    let along = to.at - from.at;
-                    let u = along.dot(meets.at - from.at) / along.length_squared();
+                    let u = line_param(meets.at, from.at, to.at);
                     if !u.is_finite() {
                         return None;
                     }

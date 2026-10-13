@@ -50,9 +50,15 @@ pub fn arc_sweep(from: DVec2, to: DVec2) -> f64 {
 /// Where `point` is nearest on the endless line through `start` and
 /// `end`. Not a number for a line of no length.
 pub fn foot(point: DVec2, start: DVec2, end: DVec2) -> DVec2 {
+    start + (end - start) * line_param(point, start, end)
+}
+
+/// Where `point` is nearest on the endless line through `start` and
+/// `end`, as a parameter: 0 at `start`, 1 at `end`. Not a number for a
+/// line of no length.
+pub(crate) fn line_param(point: DVec2, start: DVec2, end: DVec2) -> f64 {
     let along = end - start;
-    let t = along.dot(point - start) / along.length_squared();
-    start + along * t
+    along.dot(point - start) / along.length_squared()
 }
 
 /// The signed distance of `point` from the endless line through `start`
