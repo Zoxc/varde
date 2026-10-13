@@ -6,10 +6,10 @@
 //! toggle); the server runs once the panel's Start sets [`Mcp::running`]
 //! (never saved: each launch starts stopped), while the feature is on
 //! and the token has come from the IO lane ([`Mcp::configure`] sets
-//! [`Mcp::serve`], which tests may also set directly). Calls are
-//! answered at once, or wait in the open design for what they need
-//! (`waiting.rs`), at most [`waiting::BOUND`]; [`Mcp::sync`] sends the
-//! replies of the calls done after each message.
+//! [`Mcp::serve`]). Calls are answered at once, or wait in the open
+//! design for what they need (`waiting.rs`), at most
+//! [`waiting::BOUND`]; [`Mcp::sync`] sends the replies of the calls done
+//! after each message.
 //!
 //! The calls are kept in a log for the MCP panel ([`Mcp::log`]), bounded
 //! by [`LOG_CAP`]: the session's, cleared as the next session starts, the
@@ -56,7 +56,7 @@ use text::{plain, shown_args, summary, told_line, tool, undid_row, user_rows};
 pub(crate) struct Mcp {
     /// Where to serve, while the server is on: set by
     /// [`Mcp::configure`], from the settings and [`Mcp::token`].
-    pub(crate) serve: Option<Serve>,
+    serve: Option<Serve>,
     /// The bearer token, once the IO lane has read or made it.
     token: Option<Token>,
     /// How many servers were started: the next one's [`Serve::start`].
@@ -165,10 +165,10 @@ pub(crate) struct Logged {
 /// by both, so a new one restarts the server. `start` tells this server's
 /// events from those of one stopped, still queued as it stopped.
 #[derive(Debug, Clone, Hash)]
-pub(crate) struct Serve {
-    pub(crate) port: u16,
-    pub(crate) token: Token,
-    pub(crate) start: u64,
+struct Serve {
+    port: u16,
+    token: Token,
+    start: u64,
 }
 
 /// How the server is.
