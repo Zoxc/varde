@@ -16,7 +16,7 @@
 
 use varde_document::{Command, Document, FeatureId, LoftMode, MAX_SWEEP_REGIONS, Section};
 use varde_mcp::tools::{self, FeatureTool, Profiles, Reference, SectionShape, SweepAlong};
-use varde_view::{MotionField, MotionKind, OperationKind, SweepPath};
+use varde_view::{MotionField, MotionKind, SweepPath};
 
 use super::args::{
     Given, Wrong, curve_in, edges, excluded, goes_with, keyed, made_of, operation, pick, point_in,
@@ -153,10 +153,15 @@ pub(super) fn set_sweep(
         &mut session.sweep.operation,
         operation(args.operation),
     );
-    if given.has("exclude") {
-        let new_body = session.sweep.operation == OperationKind::NewBody;
-        session.sweep.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
-    }
+    excluded(
+        doc,
+        tool,
+        given,
+        &args.exclude,
+        session.sweep.operation,
+        edited,
+        &mut session.sweep.targets,
+    )?;
     Ok(())
 }
 
@@ -286,10 +291,15 @@ pub(super) fn set_loft(
         &mut session.loft.operation,
         operation(args.operation),
     );
-    if given.has("exclude") {
-        let new_body = session.loft.operation == OperationKind::NewBody;
-        session.loft.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
-    }
+    excluded(
+        doc,
+        tool,
+        given,
+        &args.exclude,
+        session.loft.operation,
+        edited,
+        &mut session.loft.targets,
+    )?;
     Ok(())
 }
 

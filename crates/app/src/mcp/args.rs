@@ -419,18 +419,24 @@ pub(super) fn operation(operation: Operation) -> OperationKind {
     }
 }
 
-/// The bodies `names` a join, cut or intersect leaves out, as the
-/// panel's Bodies list unticks them, for the feature `edited` or a new
-/// one, `new_body` whether it makes one (which has no such list): each
-/// one made before it. Refusals are `tool`'s.
+/// Sets `targets` to the bodies `names` a join, cut or intersect leaves
+/// out, if `exclude` is `given`, as the panel's Bodies list unticks
+/// them, for the feature `edited` or a new one, read against its
+/// `operation` as it ends up (a new body has no such list): each one
+/// made before it. Refusals are `tool`'s.
 pub(super) fn excluded(
     doc: &Doc,
     tool: &str,
+    given: Given,
     names: &[String],
-    new_body: bool,
+    operation: OperationKind,
     edited: Option<FeatureId>,
-) -> Result<BodyTargets, Refused> {
-    if new_body && !names.is_empty() {
+    targets: &mut BodyTargets,
+) -> Result<(), Refused> {
+    if !given.has("exclude") {
+        return Ok(());
+    }
+    if operation == OperationKind::NewBody && !names.is_empty() {
         let why = "exclude goes with operation join, cut or intersect".to_owned();
         return Err(failed(tool, why));
     }
@@ -441,7 +447,8 @@ pub(super) fn excluded(
     for name in names {
         excluded.insert(resolve_body(doc, &merged, tool, "feature", name, edited)?);
     }
-    Ok(BodyTargets::new(&Vec::from_iter(excluded)))
+    *targets = BodyTargets::new(&Vec::from_iter(excluded));
+    Ok(())
 }
 
 /// Picks `profiles` of `sketch` in `regions`, as the panel's clicks

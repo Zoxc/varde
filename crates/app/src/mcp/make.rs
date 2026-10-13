@@ -134,10 +134,15 @@ pub(super) fn set_extrude(
         read(session.taper.error.as_ref(), "taper").map_err(|why| failed(tool, why))?;
     }
     given.set("flip", &mut session.sides.flip, args.flip);
-    if given.has("exclude") {
-        let new_body = session.operation == OperationKind::NewBody;
-        session.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
-    }
+    excluded(
+        doc,
+        tool,
+        given,
+        &args.exclude,
+        session.operation,
+        edited,
+        &mut session.targets,
+    )?;
     Ok(())
 }
 
@@ -218,10 +223,15 @@ pub(super) fn set_revolve(
         &mut session.operation,
         operation(args.operation),
     );
-    if given.has("exclude") {
-        let new_body = session.operation == OperationKind::NewBody;
-        session.targets = excluded(doc, tool, &args.exclude, new_body, edited)?;
-    }
+    excluded(
+        doc,
+        tool,
+        given,
+        &args.exclude,
+        session.operation,
+        edited,
+        &mut session.targets,
+    )?;
     Ok(())
 }
 
