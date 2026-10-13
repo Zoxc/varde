@@ -2116,7 +2116,7 @@ fn dimension_row<'a>(
             row![
                 icons::icon(Icon::Dimension, icons::INLINE),
                 text(what),
-                value_field("", field.text, field.params),
+                dimension_value_field("", field.text, field.params),
                 after,
             ]
             .spacing(8)
@@ -2139,10 +2139,11 @@ fn dimension_row<'a>(
     }
 }
 
-/// The value field: `text` as typed, `placeholder` shown while there's
+/// A dimension's value field, in the Constraints list or on its chip in
+/// the viewport: `text` as typed, `placeholder` shown while there's
 /// none, sending what's typed, `Enter` taking it and `Esc` closing it,
 /// whatever has the focus.
-pub(crate) fn value_field<'a>(
+pub(crate) fn dimension_value_field<'a>(
     placeholder: &str,
     text: &'a str,
     params: crate::ParamsIn<'a>,

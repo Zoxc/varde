@@ -144,7 +144,7 @@ impl<'a> Sketching<'a> {
             ValueTarget::Field(_) => return None,
         };
         let content = column![
-            panels::value_field("", field.text, field.params),
+            panels::dimension_value_field("", field.text, field.params),
             field_error(field)
         ]
         .spacing(2);
@@ -186,7 +186,7 @@ impl<'a> Sketching<'a> {
             };
             let value: Element<'a, Message> = match open {
                 Some(open) if *open.target == ValueTarget::Field(field) => column![
-                    panels::value_field(&shown, open.text, open.params),
+                    panels::dimension_value_field(&shown, open.text, open.params),
                     field_error(open)
                 ]
                 .spacing(2)

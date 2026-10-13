@@ -131,7 +131,7 @@ parameters).
 - **Suggestions** (`crates/view/src/suggest.rs`), as the mock's
   (`suggestBox`, `.psug`). An operation panel's typed fields
   (`operation_panel::value_field`, `TypedField::params`) and the sketch's
-  value field (`panels::value_field`, `ValueField::params`) carry the
+  value field (`panels::dimension_value_field`, `ValueField::params`) carry the
   design's parameters and units (`ParamsIn`, `Doc::params_in`).
   `suggest(text, params)` offers the names starting with the word the
   text ends with (a word starting with a letter or `_`; "10mm" is a

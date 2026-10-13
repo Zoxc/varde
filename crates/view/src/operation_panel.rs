@@ -1286,7 +1286,7 @@ pub(crate) fn value_field<'a>(
     label_text: &'a str,
     id: iced::widget::Id,
     field_text: TypedField<'a>,
-    input: Option<impl Fn(String) -> Message + 'a>,
+    input: Option<impl Fn(String) -> Message + Copy + 'a>,
     submit: Message,
     cancel: Message,
 ) -> Element<'a, Message> {
@@ -1300,13 +1300,9 @@ pub(crate) fn value_field<'a>(
         .style(theme::field_input(field_text.error.is_some()));
     let field_input: Element<'a, Message> = match input {
         Some(on_input) => {
-            let on_input = std::rc::Rc::new(on_input);
-            let typing = std::rc::Rc::clone(&on_input);
-            let typed = field_input
-                .on_input(move |text| typing(text))
-                .on_submit(submit);
+            let typed = field_input.on_input(on_input).on_submit(submit);
             let params = field_text.params;
-            crate::suggest::suggesting(typed, field_text.text, params, Some(&*on_input))
+            crate::suggest::suggesting(typed, field_text.text, params, Some(&on_input))
         }
         None => field_input.into(),
     };
