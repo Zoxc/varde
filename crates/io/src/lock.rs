@@ -101,7 +101,7 @@ impl<H: AsHeld> Lock<H> {
                 Ok(Some(Offer {
                     design_changed: !recovered.based_on(tail),
                     document: Snapshot::unwrap_or_clone(recovered.document),
-                    damage: Damage::of(&read.report, None),
+                    damage: Damage::of(&read.report),
                     newer_base,
                 }))
             }

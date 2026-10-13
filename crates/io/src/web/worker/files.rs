@@ -705,7 +705,7 @@ impl Files {
             .found
             .take_if(|chosen| chosen.tail == found)
             .ok_or_else(|| NOT_FOUND.to_owned())?;
-        let damage = Damage::of(&chosen.report, None);
+        let damage = Damage::of(&chosen.report);
         match &mut open.place {
             Place::Browser(design) => {
                 let document = design.open_found(chosen);

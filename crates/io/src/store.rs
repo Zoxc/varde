@@ -117,7 +117,7 @@ pub(crate) fn listing(
 ) -> Listing {
     match read {
         Ok(Some(opened)) => {
-            let damage = Damage::of(&opened.report, None).map(|_| ListedDamage::Opens);
+            let damage = Damage::of(&opened.report).map(|_| ListedDamage::Opens);
             Listing::Listed(Recovered {
                 damage,
                 ..Recovered::new(path, modified, opened.payload)

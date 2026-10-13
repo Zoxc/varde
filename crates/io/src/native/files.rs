@@ -410,7 +410,7 @@ impl Files {
             .take_if(|chosen| chosen.tail == found)
             .ok_or_else(|| NOT_FOUND.to_owned())
             .map(|chosen| {
-                let damage = Damage::of(&chosen.report, None);
+                let damage = Damage::of(&chosen.report);
                 let document = design.file.open_found(chosen);
                 let recovered = offer(&mut design.lock, &design.file, &document);
                 Opened {

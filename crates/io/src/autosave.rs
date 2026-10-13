@@ -60,7 +60,7 @@ pub(crate) fn to_open(
 ) -> Result<(AutoSaved, Option<Damage>), String> {
     match read {
         Ok(Some(opened)) => {
-            let damage = Damage::of(&opened.report, None);
+            let damage = Damage::of(&opened.report);
             Ok((opened.payload, damage))
         }
         Ok(None) => Err("there's nothing in it".to_owned()),

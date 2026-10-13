@@ -937,14 +937,14 @@ pub struct FoundSave {
 }
 
 impl Damage {
-    /// The damage `report` says reading found, if any, with `found`, the
-    /// save a search found that [`Request::OpenFound`] can open.
-    pub(crate) fn of(report: &vrdp::Report, found: Option<FoundSave>) -> Option<Damage> {
+    /// The damage `report` says reading found, if any, naming no found
+    /// save (see [`Damage::of_design`] for one).
+    pub(crate) fn of(report: &vrdp::Report) -> Option<Damage> {
         let kind = match report.outcome {
             vrdp::Outcome::Intact | vrdp::Outcome::TornTail => return None,
             vrdp::Outcome::Bridged => DamageKind::Bridged,
             vrdp::Outcome::NewestDamaged(_) => DamageKind::NewestDamaged,
-            vrdp::Outcome::Damaged { .. } => DamageKind::Damaged { found },
+            vrdp::Outcome::Damaged { .. } => DamageKind::Damaged { found: None },
         };
         Some(Damage {
             kind,
@@ -953,14 +953,19 @@ impl Damage {
         })
     }
 
-    /// How reading a design's file found it, as [`Damage::of`], `found`
-    /// being the search's newest save, opened in case it's chosen.
+    /// How reading a design's file found it, as [`Damage::of`], naming
+    /// the search's newest save, opened in case it's chosen, as the save
+    /// [`Request::OpenFound`] can open.
     pub(crate) fn of_design(read: &vrdp::WithFound) -> Option<Damage> {
         let found = read.found.as_ref().map(|found| FoundSave {
             tail: found.tail,
             time: found.report.time,
         });
-        Damage::of(&read.opened.report, found)
+        let mut damage = Damage::of(&read.opened.report)?;
+        if let DamageKind::Damaged { found: slot } = &mut damage.kind {
+            *slot = found;
+        }
+        Some(damage)
     }
 }
 
