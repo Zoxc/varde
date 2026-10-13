@@ -216,15 +216,7 @@ impl Params {
     /// it wouldn't come to the same; the caller can write the value
     /// instead ([`exact`](crate::exact)).
     pub fn pin_units(&self, text: &str, units: LengthUnit) -> Result<String, Error> {
-        let (pinned, before) = pin_param_units(text, units, self)?;
-        match evaluate_param(&pinned, units, self, true)? {
-            after if after == before => Ok(pinned),
-            after => Err(ErrorKind::Disagrees {
-                stored: before.value,
-                evaluated: after.value,
-            }
-            .over(text)),
-        }
+        pin_param_units(text, units, self)
     }
 
     /// The value of `name`, used at `span` in an expression; if it's

@@ -36,16 +36,19 @@ pub(crate) fn evaluate_param(
 }
 
 /// [`pin_units`] for a parameter's `text`, as [`Params::pin_units`]
-/// gives it, with the value the pins came from.
+/// gives it.
 pub(crate) fn pin_param_units(
     text: &str,
     units: LengthUnit,
     params: &Params,
-) -> Result<(String, Resolved), Error> {
-    let expr = parse(text)?;
-    let mut evaluator = Evaluator::new(units, params);
-    let before = evaluator.free(&expr)?;
-    Ok((evaluator.pinned(text)?, before))
+) -> Result<String, Error> {
+    pin(
+        text,
+        units,
+        params,
+        |evaluator, expr| evaluator.free(expr),
+        |resolved| resolved.value,
+    )
 }
 
 /// `text` with the design's length unit written in after each bare number
@@ -53,13 +56,45 @@ pub(crate) fn pin_param_units(
 /// design units: `1 in + 3` in millimetres is `1 in + 3 mm`, `40 / 2` is
 /// `(40 / 2) mm`. Degrees, which bare numbers take in angles whatever the
 /// design, aren't written. Refused as [`ErrorKind::TooLong`] where the
-/// units take the text over [`MAX_LEN`]; the caller can show the value
-/// with [`format()`](crate::format()) instead.
+/// units take the text over [`MAX_LEN`], and as [`ErrorKind::Disagrees`]
+/// where the pinned text wouldn't come to the same; the caller can show
+/// the value with [`format()`](crate::format()) instead.
 pub fn pin_units(text: &str, ask: &Ask) -> Result<String, Error> {
-    let expr = parse(text)?;
-    let mut evaluator = Evaluator::new(ask.units, ask.params);
-    evaluator.result(&expr, ask)?;
-    evaluator.pinned(text)
+    pin(
+        text,
+        ask.units,
+        ask.params,
+        |evaluator, expr| evaluator.result(expr, ask),
+        |&value| value,
+    )
+}
+
+/// `text` pinned as `evaluate` takes it ([`pin_units`]), the pinned text
+/// evaluated the same way and refused as [`ErrorKind::Disagrees`] unless
+/// it comes to the same, `value` giving the number each came to.
+fn pin<T: PartialEq>(
+    text: &str,
+    units: LengthUnit,
+    params: &Params,
+    evaluate: impl for<'p> Fn(&mut Evaluator<'p>, &Expr) -> Result<T, Error>,
+    value: impl Fn(&T) -> f64,
+) -> Result<String, Error> {
+    let run = |text: &str| {
+        let expr = parse(text)?;
+        let mut evaluator = Evaluator::new(units, params);
+        let result = evaluate(&mut evaluator, &expr)?;
+        Ok::<_, Error>((evaluator, result))
+    };
+    let (evaluator, before) = run(text)?;
+    let pinned = evaluator.pinned(text)?;
+    match run(&pinned)? {
+        (_, after) if after == before => Ok(pinned),
+        (_, after) => Err(ErrorKind::Disagrees {
+            stored: value(&before),
+            evaluated: value(&after),
+        }
+        .over(text)),
+    }
 }
 
 /// Powers of length and angle: a length is `{ length: 1, angle: 0 }`.
