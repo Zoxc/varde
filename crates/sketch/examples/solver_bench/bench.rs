@@ -1,5 +1,5 @@
 //! The solver benchmark's sketches and cases, and finding profiles, apart
-//! from the clock, so the same cases can be timed natively and under wasm.
+//! from the clock and the printing in `main.rs`.
 
 use glam::DVec2;
 use varde_sketch::{
@@ -7,7 +7,7 @@ use varde_sketch::{
 };
 
 /// Drag steps per drag case.
-pub const DRAG_STEPS: usize = 30;
+const DRAG_STEPS: usize = 30;
 
 /// A small, fixed wobble, so a sketch starts off solved by a little.
 fn wobble(i: usize, j: usize) -> f64 {
@@ -195,16 +195,17 @@ pub fn spline_chain(splines: usize, fit: usize, on: usize) -> (Sketch, Id) {
 }
 
 /// Runs every case, timing each with `now` (milliseconds) and passing
-/// its name and the milliseconds one run of it took, on average, to
-/// `report`. Panics if a case fails to solve.
+/// its name and the milliseconds one operation of it took, on average
+/// (a drag case's operation is one drag step), to `report`. Panics if a case fails to solve.
 pub fn run(now: &dyn Fn() -> f64, report: &mut dyn FnMut(&str, f64)) {
     let budget = Budget::default();
-    let mut time = |name: &str, runs: usize, f: &mut dyn FnMut()| {
+    // Times `runs` runs of `f`, each `ops` operations.
+    let mut time = |name: &str, runs: usize, ops: usize, f: &mut dyn FnMut()| {
         let start = now();
         for _ in 0..runs {
             f();
         }
-        report(name, (now() - start) / runs as f64);
+        report(name, (now() - start) / (runs * ops) as f64);
     };
     let settled = |sketch: &Sketch| {
         solve(sketch, &Goal::Settle, &budget)
@@ -262,13 +263,13 @@ pub fn run(now: &dyn Fn() -> f64, report: &mut dyn FnMut(&str, f64)) {
         if let Some(freedom) = freedom {
             assert_eq!(analysis.freedom, freedom, "{name}");
         }
-        time(&format!("{name}: settle"), 5, &mut || {
+        time(&format!("{name}: settle"), 5, 1, &mut || {
             settled(&sketch);
         });
-        time(&format!("{name}: analyse"), 5, &mut || {
+        time(&format!("{name}: analyse"), 5, 1, &mut || {
             analyse(&solved);
         });
-        time(&format!("{name}: drag step"), 1, &mut || {
+        time(&format!("{name}: drag step"), 1, DRAG_STEPS, &mut || {
             drags(&solved, dragged, by);
         });
     }
@@ -295,7 +296,7 @@ pub fn run(now: &dyn Fn() -> f64, report: &mut dyn FnMut(&str, f64)) {
     ] {
         let found = sketch.profiles().expect("not too complex");
         assert_eq!(found.regions.len(), regions, "{name}");
-        time(name, 5, &mut || {
+        time(name, 5, 1, &mut || {
             sketch.profiles().unwrap();
         });
     }

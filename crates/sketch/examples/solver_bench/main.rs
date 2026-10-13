@@ -10,8 +10,8 @@
 //! cargo run --release -p varde-sketch --example solver_bench
 //! ```
 //!
-//! The cases are in `bench.rs`, apart from the clock, so they can be timed
-//! under wasm too; `notes/SketchImpl.md` has the numbers.
+//! The cases are in `bench.rs`, apart from the clock and the printing;
+//! `notes/SketchImpl.md` has the numbers.
 
 #![allow(
     clippy::disallowed_methods,
@@ -25,12 +25,5 @@ use std::time::Instant;
 fn main() {
     let start = Instant::now();
     let now = || start.elapsed().as_secs_f64() * 1000.0;
-    bench::run(&now, &mut |name, ms| {
-        let per = if name.ends_with("drag step") {
-            ms / bench::DRAG_STEPS as f64
-        } else {
-            ms
-        };
-        println!("{name:<24} {per:>9.3} ms");
-    });
+    bench::run(&now, &mut |name, ms| println!("{name:<24} {ms:>9.3} ms"));
 }
