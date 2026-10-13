@@ -95,10 +95,23 @@ pub struct LinkShape {
     pub curves: Vec<Curve>,
 }
 
+impl Id {
+    /// The placeholder for a [`LinkShape`]'s point `index`; `None` past
+    /// `u32`.
+    pub(crate) fn placeholder(index: usize) -> Option<Id> {
+        u32::try_from(index).ok().map(Id)
+    }
+
+    /// The index of the [`LinkShape`] point the placeholder numbers.
+    pub(crate) fn placeholder_index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 impl LinkShape {
     /// Adds a point at `at`, giving its placeholder.
     pub fn point(&mut self, at: DVec2) -> Id {
-        let id = Id(u32::try_from(self.points.len()).unwrap_or(u32::MAX));
+        let id = Id::placeholder(self.points.len()).unwrap_or(Id(u32::MAX));
         self.points.push(at);
         id
     }
@@ -128,7 +141,7 @@ impl LinkShape {
         }
         let count = self.points.len();
         self.curves.iter().all(|curve| {
-            let points = curve.points().all(|id| (id.0 as usize) < count);
+            let points = curve.points().all(|id| id.placeholder_index() < count);
             let own = match curve {
                 &Curve::Circle { radius, .. } => radius > 0.0 && within(radius),
                 Curve::Spline(spline) => spline.fits() && spline.handles.is_empty(),
@@ -293,7 +306,7 @@ impl Sketch {
     /// points in its order). `None` if it names what the sketch hasn't.
     pub fn link_shape(&self, link: &Link) -> Option<LinkShape> {
         let index: BTreeMap<Id, Id> = (link.points.iter().enumerate())
-            .map(|(i, &id)| Some((id, Id(u32::try_from(i).ok()?))))
+            .map(|(i, &id)| Some((id, Id::placeholder(i)?)))
             .collect::<Option<_>>()?;
         let points = (link.points.iter())
             .map(|&id| self.point(id).map(|point| point.at))
@@ -348,7 +361,12 @@ impl Sketch {
         let mut curves = Vec::with_capacity(followed.curves.len());
         for (&kept, curve) in followed.curves.iter().zip(&followed.shape.curves) {
             let curve = curve
-                .map_points(|placeholder| points.get(placeholder.0 as usize).copied().ok_or(()))
+                .map_points(|placeholder| {
+                    points
+                        .get(placeholder.placeholder_index())
+                        .copied()
+                        .ok_or(())
+                })
                 .map_err(|()| EditError::Target(id))?;
             match kept {
                 Some(kept) => {
@@ -414,7 +432,7 @@ impl Sketch {
             };
             curves[found] = Some(link.curves[index]);
             for (old, new) in held.curves[index].points().zip(curve.points()) {
-                let (old, new) = (old.0 as usize, new.0 as usize);
+                let (old, new) = (old.placeholder_index(), new.placeholder_index());
                 if points.get(new).is_some_and(Option::is_none) && taken.get(old) == Some(&false) {
                     points[new] = Some(link.points[old]);
                     taken[old] = true;
@@ -455,12 +473,12 @@ impl Sketch {
         let curve_order = order(&curves);
         let mut placeholder = vec![Id(0); shape.points.len()];
         for (to, &was) in point_order.iter().enumerate() {
-            placeholder[was] = Id(u32::try_from(to).ok()?);
+            placeholder[was] = Id::placeholder(to)?;
         }
         let curves_found = (curve_order.iter())
             .map(|&i| {
                 shape.curves[i]
-                    .map_points(|p| placeholder.get(p.0 as usize).copied().ok_or(()))
+                    .map_points(|p| placeholder.get(p.placeholder_index()).copied().ok_or(()))
                     .ok()
             })
             .collect::<Option<Vec<_>>>()?;
