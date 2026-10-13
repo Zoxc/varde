@@ -375,8 +375,7 @@ impl PickIndex {
         if picks != Picks::Edges {
             let grown = reach(&projector, pixels);
             self.tables.triangles().near(&ray, grown, |triangle| {
-                let corners = self.corners(triangle)?;
-                let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
+                let [a, b, c] = self.triangle_points(triangle)?;
                 // Under the cursor, else showing within reach of it.
                 let hit = ray_hits(ray.origin, ray.direction, [a, b, c])
                     .filter(|&t| t >= ray.from)
@@ -675,11 +674,8 @@ impl PickIndex {
     /// infinite if it has none.
     pub fn face_distance(&self, face: u32, point: DVec3) -> f64 {
         (self.face_triangles(face))
-            .filter_map(|triangle| self.corners(triangle))
-            .map(|corners| {
-                let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
-                triangle_distance(point, corners)
-            })
+            .filter_map(|triangle| self.triangle_points(triangle))
+            .map(|points| triangle_distance(point, points))
             .fold(f64::INFINITY, f64::min)
     }
 
@@ -705,7 +701,7 @@ impl PickIndex {
             let Some(corners) = self.corners(triangle) else {
                 continue;
             };
-            let points = corners.map(|i| position(&self.mesh, i).as_dvec3());
+            let points = self.points(corners);
             let distance = triangle_distance(near, points);
             if distance.is_finite() && best.is_none_or(|(nearest, ..)| distance < nearest) {
                 best = Some((distance, corners, points));
@@ -903,6 +899,16 @@ impl PickIndex {
         Some([corners[0], corners[1], corners[2]])
     }
 
+    /// Where the mesh's corners `corners` are, widened to `f64`.
+    fn points(&self, corners: [u32; 3]) -> [DVec3; 3] {
+        corners.map(|i| position(&self.mesh, i).as_dvec3())
+    }
+
+    /// Where the corners of the mesh's triangle `triangle` are, if it has one.
+    fn triangle_points(&self, triangle: u32) -> Option<[DVec3; 3]> {
+        Some(self.points(self.corners(triangle)?))
+    }
+
     /// The cursor's ray at `at`, from where the model may show along it.
     fn ray(&self, camera: &Camera, projector: &Projector, at: DVec2) -> Option<Ray> {
         let (origin, direction) = projector.ray(at)?;
@@ -946,8 +952,7 @@ impl PickIndex {
     /// Where along `ray` it meets the triangle `triangle`, front or back,
     /// if it does.
     fn triangle_hit(&self, ray: &Ray, triangle: u32) -> Option<f64> {
-        let corners = self.corners(triangle)?;
-        let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
+        let corners = self.triangle_points(triangle)?;
         ray_hits(ray.origin, ray.direction, corners)
     }
 
@@ -956,8 +961,7 @@ impl PickIndex {
     /// the triangles being culled.
     fn first_front(&self, ray: &Ray) -> Option<(f64, u32)> {
         (self.tables.triangles()).nearest(ray, ray.from, f64::INFINITY, |triangle| {
-            let corners = self.corners(triangle)?;
-            let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
+            let [a, b, c] = self.triangle_points(triangle)?;
             // Its corners run counterclockwise seen from its front.
             let facing = (b - a).cross(c - a).dot(ray.direction) < 0.0;
             facing.then(|| ray_hits(ray.origin, ray.direction, [a, b, c]))?
