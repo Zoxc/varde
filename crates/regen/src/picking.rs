@@ -381,10 +381,7 @@ impl Picking {
         if !snaps.iter().enumerate().all(snap_ok) {
             return Err(PickingError::Snap);
         }
-        let part = |f: u32| {
-            (f < faces.len() as u32)
-                .then(|| (mesh.part_ends()).partition_point(|&[faces, _, _, _]| faces <= f))
-        };
+        let part = |f: u32| mesh.part_of_face(f);
         let corner_ok = |corner: &PickCorner| {
             let [a, b, c] = corner.faces;
             a < b
@@ -452,8 +449,7 @@ impl Picking {
     /// The body face `face` of `mesh`, the mesh these tables came with,
     /// is of, if there's such a face.
     pub fn face_body(&self, mesh: &RenderMesh, face: u32) -> Option<BodyId> {
-        let part = (mesh.part_ends()).partition_point(|&[faces, _, _, _]| faces <= face);
-        self.bodies.get(part).copied()
+        self.bodies.get(mesh.part_of_face(face)?).copied()
     }
 
     /// The keys of the faces either side of edge `edge` of `mesh`, the

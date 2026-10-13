@@ -344,6 +344,12 @@ impl RenderMesh {
         &self.part_ends
     }
 
+    /// The part face `face` is of, if the mesh has it.
+    pub fn part_of_face(&self, face: u32) -> Option<usize> {
+        let part = (self.part_ends).partition_point(|&[faces, _, _, _]| faces <= face);
+        (part < self.part_ends.len()).then_some(part)
+    }
+
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }
