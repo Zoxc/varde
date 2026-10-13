@@ -13,10 +13,9 @@ use crate::tests::{Drawn, analyse_at, drag, drawn, propose_on, query_at};
 /// does, and the reply decoded as the page does.
 fn through(solver: &mut Solver, request: &Request, with_sketch: bool) -> Option<Response> {
     let posted = decode_request(&encode_request(request, with_sketch)).unwrap();
-    let tag = posted.tag();
-    assert_eq!(tag, request.tag());
-    let response = solver.answer(posted.job());
-    decode_reply(&encode_reply(tag, response.as_ref()), request).unwrap()
+    assert_eq!(posted.job().tag(), request.tag());
+    let answer = solver.answer(posted.job());
+    decode_reply(&encode_reply(&answer), request).unwrap()
 }
 
 /// `reply` encoded, as a worker could send it.
@@ -222,9 +221,9 @@ fn an_oversized_reply_fails_its_request() {
     let drawn = drawn();
     let mut solver = Solver::default();
     let asked = analyse_at(3, &drawn.sketch);
-    let response = solver.answer(asked.job());
-    let full = encode_reply(asked.tag(), response.as_ref());
-    let bytes = encode_reply_within(asked.tag(), response.as_ref(), full.len() - 1);
+    let answer = solver.answer(asked.job());
+    let full = encode_reply(&answer);
+    let bytes = encode_reply_within(&answer, full.len() - 1);
     let decoded = decode_reply(&bytes, &asked).unwrap();
     assert!(matches!(
         decoded,
@@ -240,7 +239,7 @@ fn a_failure_round_trips() {
         tag: asked.tag(),
         error: "internal error: on purpose".to_owned(),
     };
-    let decoded = decode_reply(&encode_reply(asked.tag(), Some(&failed)), &asked).unwrap();
+    let decoded = decode_reply(&encode_reply(&Answer::Response(failed)), &asked).unwrap();
     assert!(matches!(
         decoded,
         Some(Response::Failed { tag, error }) if tag == asked.tag() && error == "internal error: on purpose"
@@ -542,8 +541,8 @@ fn bytes_after_the_end_are_an_error() {
     assert!(matches!(decode_request(&bytes), Err(Error::Request(_))));
 
     let asked = analyse_at(1, &drawn.sketch);
-    let response = Solver::default().handle(asked.clone());
-    let mut bytes = encode_reply(asked.tag(), response.as_ref());
+    let answer = Solver::default().answer(asked.job());
+    let mut bytes = encode_reply(&answer);
     bytes.push(0);
     assert!(matches!(decode_reply(&bytes, &asked), Err(Error::Reply(_))));
 }
@@ -582,8 +581,7 @@ fn malformed_bytes_are_refused_never_a_panic() {
     let mut noise = Noise(7);
     for request in &requests {
         let posted = encode_request(request, true);
-        let response = solver.handle(request.clone());
-        let reply = encode_reply(request.tag(), response.as_ref());
+        let reply = encode_reply(&solver.answer(request.job()));
         for bytes in [&posted, &reply] {
             // Every prefix, and each byte changed in turn.
             for end in 0..bytes.len() {
@@ -675,12 +673,12 @@ fn dimensions_and_their_edits_cross() {
             panic!("not a proposal");
         };
         assert_eq!((&decoded, &sent), (&edit, &*sketch));
-        let response = solver.handle(request.clone());
+        let answer = solver.answer(request.job());
         assert!(
-            matches!(response, Some(Response::Accepted { .. })),
+            matches!(answer, Answer::Response(Response::Accepted { .. })),
             "{edit:?}"
         );
-        let reply = encode_reply(request.tag(), response.as_ref());
+        let reply = encode_reply(&answer);
         assert!(matches!(
             decode_reply(&reply, &request),
             Ok(Some(Response::Accepted { .. }))

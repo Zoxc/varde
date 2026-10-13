@@ -315,6 +315,26 @@ pub fn design(units: LengthUnit, params: &Params) -> Design<'_> {
     }
 }
 
+/// What [`Solver::answer`] makes of a job.
+#[derive(Debug)]
+pub enum Answer {
+    /// The job's response.
+    Response(Response),
+    /// A step of the drag `session` that didn't converge, which isn't
+    /// answered.
+    Unmoved { session: u64 },
+}
+
+impl Answer {
+    /// The request this answers.
+    pub fn tag(&self) -> Tag {
+        match self {
+            Answer::Response(response) => response.tag(),
+            Answer::Unmoved { session } => Tag::Drag(*session),
+        }
+    }
+}
+
 /// Answers requests, keeping the drag in progress between its steps: a
 /// lane has one, and so can a test standing in for a lane.
 #[derive(Debug, Default)]
@@ -327,31 +347,36 @@ impl Solver {
     /// Does the work of `request`: `None` for a drag step that didn't
     /// converge, which isn't answered.
     pub fn handle(&mut self, request: Request) -> Option<Response> {
-        self.answer(request.job())
+        match self.answer(request.job()) {
+            Answer::Response(response) => Some(response),
+            Answer::Unmoved { .. } => None,
+        }
     }
 
     /// Does `job`, the one dispatch both a [`Request`] and a request
-    /// decoded on the worker go through: `None` for a drag step that
-    /// didn't converge, which isn't answered.
-    pub fn answer(&mut self, job: Job) -> Option<Response> {
+    /// decoded on the worker go through.
+    pub fn answer(&mut self, job: Job) -> Answer {
         match job {
             Job::Propose {
                 base,
                 sketch,
                 edit,
                 design,
-            } => Some(propose(base, sketch, edit, &design)),
+            } => Answer::Response(propose(base, sketch, edit, &design)),
             Job::Drag {
                 session,
                 start,
                 points,
                 radii,
-            } => self.drag(session, start, points.to_vec(), radii.to_vec()),
+            } => match self.drag(session, start, points.to_vec(), radii.to_vec()) {
+                Some(dragged) => Answer::Response(dragged),
+                None => Answer::Unmoved { session },
+            },
             Job::Analyse {
                 query,
                 revision,
                 sketch,
-            } => Some(analyse(query, revision, sketch)),
+            } => Answer::Response(analyse(query, revision, sketch)),
         }
     }
 

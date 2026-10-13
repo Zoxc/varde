@@ -103,9 +103,8 @@ pub fn serve() {
     worker::serve(&crate::WORKER, move |message| {
         let bytes = message.single(wire::MAX_MESSAGE_BYTES)?;
         let posted = wire::decode_request(&bytes)?;
-        let tag = posted.tag();
-        let response = solver.answer(posted.job());
-        worker::post(&[&wire::encode_reply(tag, response.as_ref())]);
+        let answer = solver.answer(posted.job());
+        worker::post(&[&wire::encode_reply(&answer)]);
         Ok(())
     });
 }

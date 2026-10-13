@@ -51,7 +51,7 @@ use varde_sketch::{
     SketchEdit, SketchError, check_targets,
 };
 
-use crate::{Job, MAX, Request, Response, Tag, design};
+use crate::{Answer, Job, MAX, Request, Response, Tag, design};
 use varde_document::Design;
 
 /// The most bytes a request or a reply may have. A sketch at its limits
@@ -96,10 +96,6 @@ type Sources = Vec<(String, String)>;
 pub type Decoded = Posted<Sketch, SketchEdit, Params>;
 
 impl Decoded {
-    pub fn tag(&self) -> Tag {
-        self.job().tag()
-    }
-
     /// The work it asks for, as [`Request::job`] is a [`Request`]'s.
     pub fn job(&self) -> Job<'_> {
         match self {
@@ -341,20 +337,19 @@ impl<S, A> Reply<S, A> {
     }
 }
 
-/// Encodes the reply to the request `tag` names: `response`, or, for a
-/// drag step that didn't converge, none. The mirror of [`decode_reply`].
+/// Encodes the reply `answer`. The mirror of [`decode_reply`].
 /// A reply larger than [`MAX_MESSAGE_BYTES`], which the page would refuse
 /// and restart the worker for, is sent as [`Reply::Failed`] instead: only
 /// that request is lost.
-pub fn encode_reply(tag: Tag, response: Option<&Response>) -> Vec<u8> {
-    encode_reply_within(tag, response, MAX_MESSAGE_BYTES)
+pub fn encode_reply(answer: &Answer) -> Vec<u8> {
+    encode_reply_within(answer, MAX_MESSAGE_BYTES)
 }
 
 /// [`encode_reply`], sending a reply larger than `max` bytes as
 /// [`Reply::Failed`]: tests bound it tighter.
-fn encode_reply_within(tag: Tag, response: Option<&Response>, max: usize) -> Vec<u8> {
-    let reply: Reply<&Sketch, &Analysis> = match (tag, response) {
-        (_, Some(response)) => match response {
+fn encode_reply_within(answer: &Answer, max: usize) -> Vec<u8> {
+    let reply: Reply<&Sketch, &Analysis> = match answer {
+        Answer::Response(response) => match response {
             Response::Accepted {
                 base,
                 sketch,
@@ -387,17 +382,14 @@ fn encode_reply_within(tag: Tag, response: Option<&Response>, max: usize) -> Vec
                 error: error.clone(),
             },
         },
-        (Tag::Drag(session), None) => Reply::Unmoved { session },
-        (Tag::Propose(_) | Tag::Analyse(_) | Tag::Query(_), None) => {
-            unreachable!("only a drag step goes unanswered")
-        }
+        Answer::Unmoved { session } => Reply::Unmoved { session: *session },
     };
     let bytes = postcard::to_stdvec(&reply).expect("replies always serialize");
     if bytes.len() <= max {
         return bytes;
     }
     let failed: Reply<&Sketch, &Analysis> = Reply::Failed {
-        tag,
+        tag: answer.tag(),
         error: format!("reply too large: {} bytes", bytes.len()),
     };
     postcard::to_stdvec(&failed).expect("replies always serialize")
