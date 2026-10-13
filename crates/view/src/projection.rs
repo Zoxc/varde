@@ -37,6 +37,9 @@ pub(crate) struct Projector {
     up: DVec3,
     backward: DVec3,
     distance: f64,
+    /// How tall the view is at the target's depth, in world units, see
+    /// [`Camera::view_height`].
+    view_height: f64,
     /// How far in front of the eye a perspective view starts, see
     /// [`Camera::near`].
     near: f64,
@@ -102,6 +105,7 @@ impl Projector {
             up: camera.up().as_dvec3(),
             backward: camera.backward().as_dvec3(),
             distance: f64::from(camera.distance()),
+            view_height: f64::from(camera.view_height()),
             near: f64::from(camera.near()),
             scale,
             center: DVec2::new(f64::from(width), f64::from(height)) / 2.0,
@@ -189,6 +193,16 @@ impl Projector {
     /// Whether it's a perspective view.
     pub(crate) fn perspective(&self) -> bool {
         self.perspective
+    }
+
+    /// How far the eye is from the target.
+    pub(crate) fn distance(&self) -> f64 {
+        self.distance
+    }
+
+    /// How tall the view is at the target's depth, in world units.
+    pub(crate) fn view_height(&self) -> f64 {
+        self.view_height
     }
 
     /// How far in front of the eye a perspective view starts.

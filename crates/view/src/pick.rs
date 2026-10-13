@@ -302,18 +302,18 @@ impl PickIndex {
     /// `picks` takes.
     pub fn pick(&self, camera: &Camera, size: [f32; 2], at: DVec2, picks: Picks) -> Option<Pick> {
         let projector = Projector::world(camera, size[0], size[1])?;
-        let ray = self.ray(camera, &projector, at)?;
+        let ray = self.ray(&projector, at)?;
         let vertex = || {
             picks
                 .vertices()
-                .then(|| self.vertex_near(camera, &projector, &ray, at))
+                .then(|| self.vertex_near(&projector, &ray, at))
                 .flatten()
                 .map(|(corner, at)| (Picked::Vertex(corner), at))
         };
         let edge = || {
             picks
                 .edges()
-                .then(|| self.edge_near(camera, &projector, &ray, at))
+                .then(|| self.edge_near(&projector, &ray, at))
                 .flatten()
                 .map(|(chain, at)| (Picked::Edge(chain), at))
         };
@@ -347,8 +347,7 @@ impl PickIndex {
         let Some(projector) = Projector::world(camera, size[0], size[1]) else {
             return false;
         };
-        let view_height = f64::from(camera.view_height());
-        let hidden = self.hidden(&projector, point, view_height, &mut Vec::new());
+        let hidden = self.hidden(&projector, point, &mut Vec::new());
         hidden != Hidden::No
     }
 
@@ -371,7 +370,7 @@ impl PickIndex {
         let Some(projector) = Projector::world(camera, size[0], size[1]) else {
             return Vec::new();
         };
-        let Some(ray) = self.ray(camera, &projector, at) else {
+        let Some(ray) = self.ray(&projector, at) else {
             return Vec::new();
         };
         // Each item once, where it's nearest the cursor (to
@@ -933,16 +932,15 @@ impl PickIndex {
     }
 
     /// The cursor's ray at `at`, from where the model may show along it.
-    fn ray(&self, camera: &Camera, projector: &Projector, at: DVec2) -> Option<Ray> {
+    fn ray(&self, projector: &Projector, at: DVec2) -> Option<Ray> {
         let (origin, direction) = projector.ray(at)?;
         if projector.perspective() {
             // At the target's depth `t` is 1, so a depth `t` times the
             // camera's distance.
-            let distance = f64::from(camera.distance());
             return Some(Ray {
                 origin,
                 direction,
-                from: projector.near() / distance,
+                from: projector.near() / projector.distance(),
             });
         }
         // An orthographic view sees what's behind its eye too: from far
@@ -994,15 +992,9 @@ impl PickIndex {
     /// The vertex showing nearest `at` within [`VERTEX_REACH`] that
     /// nothing hides ([`PickIndex::nearest_shown`]): its corner and where
     /// it is.
-    fn vertex_near(
-        &self,
-        camera: &Camera,
-        projector: &Projector,
-        ray: &Ray,
-        at: DVec2,
-    ) -> Option<(u32, DVec3)> {
+    fn vertex_near(&self, projector: &Projector, ray: &Ray, at: DVec2) -> Option<(u32, DVec3)> {
         let near = self.vertices_near(projector, ray, at, VERTEX_REACH);
-        self.nearest_shown(camera, projector, near)
+        self.nearest_shown(projector, near)
     }
 
     /// The vertices showing within `pixels` of `at`, hidden or not, as
@@ -1036,15 +1028,9 @@ impl PickIndex {
     /// The edge showing nearest `at` within [`EDGE_REACH`] that nothing
     /// hides ([`PickIndex::nearest_shown`]), and its point showing
     /// nearest `at`: its chain and that point.
-    fn edge_near(
-        &self,
-        camera: &Camera,
-        projector: &Projector,
-        ray: &Ray,
-        at: DVec2,
-    ) -> Option<(u32, DVec3)> {
+    fn edge_near(&self, projector: &Projector, ray: &Ray, at: DVec2) -> Option<(u32, DVec3)> {
         let near = self.segments_near(projector, ray, at, EDGE_REACH);
-        let (start, point) = self.nearest_shown(camera, projector, near)?;
+        let (start, point) = self.nearest_shown(projector, near)?;
         Some((self.segment_edge(start), point))
     }
 
@@ -1097,16 +1083,14 @@ impl PickIndex {
     /// them.
     fn nearest_shown(
         &self,
-        camera: &Camera,
         projector: &Projector,
         mut near: Vec<Near<u32>>,
     ) -> Option<(u32, DVec3)> {
         near.sort_by(Near::order);
-        let view_height = f64::from(camera.view_height());
         let mut occluders = Vec::new();
         let mut searches = 0;
         for Near { item, point, .. } in near {
-            match self.hidden(projector, point, view_height, &mut occluders) {
+            match self.hidden(projector, point, &mut occluders) {
                 Hidden::No => return Some((item, point)),
                 Hidden::Known => {}
                 Hidden::Searched => {
@@ -1133,17 +1117,11 @@ impl PickIndex {
     /// and the mesh's `f32` rounding: one of `occluders` (triangles found
     /// hiding a point before), or one the mesh is searched for, which
     /// joins them (the latest [`MAX_OCCLUDERS`]).
-    fn hidden(
-        &self,
-        projector: &Projector,
-        point: DVec3,
-        view_height: f64,
-        occluders: &mut Vec<u32>,
-    ) -> Hidden {
+    fn hidden(&self, projector: &Projector, point: DVec3, occluders: &mut Vec<u32>) -> Hidden {
         let scale = self.bounds.map_or(0.0, |bounds| {
             f64::from(bounds.min.abs().max(bounds.max.abs()).max_element())
         });
-        let slack = HIDDEN_PULL * view_height + 8.0 * f64::from(f32::EPSILON) * scale;
+        let slack = HIDDEN_PULL * projector.view_height() + 8.0 * f64::from(f32::EPSILON) * scale;
         let (eye, backward) = projector.eye();
         let (ray, from, to) = if projector.perspective() {
             // At `point` `t` is 1, so a depth `t` times its depth.
