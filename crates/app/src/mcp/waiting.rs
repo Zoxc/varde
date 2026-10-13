@@ -242,7 +242,6 @@ impl ClientHistory {
         feature: Option<u64>,
     ) {
         let step = ClientStep {
-            start: from.start,
             session: from.session.clone(),
             after,
             label: super::text::label(call),
@@ -288,9 +287,8 @@ pub(crate) const STEPS: usize = 200;
 /// A client edit applied to the design.
 #[derive(Debug, Clone)]
 pub(crate) struct ClientStep {
-    /// The server and session it came in.
-    pub(crate) start: u64,
-    pub(crate) session: SessionId,
+    /// The session it came in.
+    pub(crate) session: ClientSession,
     /// The revision it made (the links' amend moving it along).
     pub(crate) after: Revision,
     /// Its tool and arguments, as the client named them: "rename
@@ -310,11 +308,13 @@ pub(crate) struct ClientStep {
     pub(crate) feature: Option<u64>,
 }
 
-impl ClientStep {
-    /// Whether it came in the session `session` of the server `start`.
-    pub(crate) fn of(&self, start: u64, session: &SessionId) -> bool {
-        (self.start, &self.session) == (start, session)
-    }
+/// A client's session: its id and the server it's of, as ids could
+/// repeat across the servers started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ClientSession {
+    /// The server ([`super::Serve::start`]).
+    pub(crate) start: u64,
+    pub(crate) id: SessionId,
 }
 
 /// What a client's `undo` took back, newest first: kept with it while it
@@ -482,9 +482,8 @@ impl PartialEq for Drawn {
 pub(crate) struct Caller {
     /// Its row in the MCP log, if it's still there.
     pub(crate) serial: u64,
-    /// The server it came from ([`super::Serve::start`]).
-    pub(crate) start: u64,
-    pub(crate) session: SessionId,
+    /// The session it came in.
+    pub(crate) session: ClientSession,
     pub(crate) id: Id,
     pub(crate) reply: Reply,
     /// When it came whole to the server ([`Reply::came`]): the [`BOUND`]
@@ -496,11 +495,6 @@ impl Caller {
     /// Whether the call has waited [`BOUND`] by `now`.
     pub(crate) fn late(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.came) >= BOUND
-    }
-
-    /// Whether `other` came in the same session as this.
-    fn same_session(&self, other: &Caller) -> bool {
-        (self.start, &self.session) == (other.start, &other.session)
     }
 }
 
@@ -534,7 +528,7 @@ impl Waiter {
     fn behind(&self, earlier: &Waiter) -> bool {
         earlier.tag < self.tag
             && earlier.holds()
-            && (self.call.edits() || earlier.from.same_session(&self.from))
+            && (self.call.edits() || earlier.from.session == self.from.session)
     }
 }
 
@@ -650,7 +644,7 @@ impl Waiting {
     /// if one does: its tool and arguments, and whom it waits on.
     fn pending_edit(&self, from: &Caller) -> Option<String> {
         let (waiter, editing) = (self.calls.iter())
-            .filter(|waiter| waiter.from.same_session(from))
+            .filter(|waiter| waiter.from.session == from.session)
             .find_map(|waiter| match &waiter.waits {
                 Wait::Asking { editing } => Some((waiter, editing)),
                 _ => None,
@@ -688,7 +682,7 @@ impl Waiting {
     /// ([`Waiter::unapplied`]) past the first.
     pub(crate) fn edits_full(&self, from: &Caller) -> bool {
         let unapplied = (self.calls.iter())
-            .filter(|waiter| waiter.from.same_session(from) && waiter.unapplied())
+            .filter(|waiter| waiter.from.session == from.session && waiter.unapplied())
             .count();
         unapplied > QUEUED_EDITS
     }
@@ -714,7 +708,7 @@ impl Waiting {
             std::mem::take(&mut self.calls)
                 .into_iter()
                 .partition(|waiter: &Waiter| {
-                    waiter.tag > tag && waiter.from.same_session(&from) && waiter.unapplied()
+                    waiter.tag > tag && waiter.from.session == from.session && waiter.unapplied()
                 });
         self.calls = kept;
         let (reply, state) = refused.answer();
@@ -879,7 +873,7 @@ impl Waiting {
         for waiter in &mut self.calls {
             if let Wait::Model { at } = &mut waiter.waits
                 && waiter.tag > tag
-                && waiter.from.same_session(from)
+                && waiter.from.session == from.session
             {
                 *at = (*at).max(generation);
             }

@@ -449,11 +449,11 @@ impl Mcp {
         from: &waiting::Caller,
         reply: ToolReply,
     ) -> (ToolReply, Option<changes::Changes>) {
-        if self.open_session() != Some(&from.session) {
+        if self.open_session() != Some(&from.session.id) {
             return (reply, None);
         }
         let changes = match &self.seen {
-            Some(seen) => changes::since(doc, seen, from.start, &from.session),
+            Some(seen) => changes::since(doc, seen, &from.session),
             None => changes::Changes::default(),
         };
         let (reply, told) = changes::fitted(reply, &changes, doc.editor.revision());
@@ -464,7 +464,7 @@ impl Mcp {
     /// reply carrying the user's changes ([`Mcp::tell`]) was taken.
     fn told(&mut self, doc: &mut Doc, from: &waiting::Caller) {
         for step in &mut doc.mcp.history.steps {
-            if step.of(from.start, &from.session) {
+            if step.session == from.session {
                 step.told_done = doc.editor.is_done(step.after);
             }
         }
@@ -485,7 +485,11 @@ impl Mcp {
         if self.live.as_ref().is_some_and(|(at, _)| at.is_now(doc)) {
             return;
         }
-        let lines = (changes::since(doc, seen, start, session).panel.iter())
+        let session = waiting::ClientSession {
+            start,
+            id: session.clone(),
+        };
+        let lines = (changes::since(doc, seen, &session).panel.iter())
             .map(|line| plain(line))
             .collect();
         self.live = Some((changes::Seen::of(doc), lines));
@@ -566,8 +570,7 @@ impl Mcp {
                 };
                 let from = waiting::Caller {
                     serial,
-                    start,
-                    session,
+                    session: waiting::ClientSession { start, id: session },
                     id,
                     came: reply.came(),
                     reply,
@@ -595,7 +598,8 @@ impl Mcp {
             // Its client ignores the reply: the user's changes aren't
             // told in it, but left for the next.
             Event::Session(session::Event::Cancelled { session, request }) => {
-                let which = |from: &waiting::Caller| from.session == session && from.id == request;
+                let which =
+                    |from: &waiting::Caller| from.session.id == session && from.id == request;
                 if let Some(doc) = doc {
                     doc.mcp_end(which, waiting::Ended::Cancelled);
                     self.sync_untold(Some(doc), which);
@@ -625,7 +629,7 @@ impl Mcp {
         }
         self.end(
             doc,
-            |from| from.session == *session,
+            |from| from.session.id == *session,
             waiting::Ended::Session,
         );
     }
@@ -689,12 +693,12 @@ impl Mcp {
         };
         let start = self.serving();
         doc.mcp_end(
-            |from| Some(from.start) != start,
+            |from| Some(from.session.start) != start,
             waiting::Ended::ServerStopped,
         );
         for done in doc.mcp.finished() {
             self.log_answer(done.from.serial, &done.call, &done.reply, done.state);
-            let session_open = self.open_session() == Some(&done.from.session);
+            let session_open = self.open_session() == Some(&done.from.session.id);
             let cancelled = untold(&done.from);
             let (reply, told) = match cancelled {
                 true => (done.reply, None),

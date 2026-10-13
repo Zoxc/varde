@@ -413,8 +413,10 @@ fn a_feature_changed_in_two_runs_is_listed_once() {
         .history
         .steps
         .push_back(super::super::waiting::ClientStep {
-            start: 0,
-            session: SessionId::for_tests("a session"),
+            session: super::super::waiting::ClientSession {
+                start: 0,
+                id: SessionId::for_tests("a session"),
+            },
             after: doc.editor.revision(),
             label: "set_units in".to_owned(),
             shown: "Set the units to in".to_owned(),
@@ -443,8 +445,10 @@ fn client_step(varde: &mut Varde) {
         .history
         .steps
         .push_back(super::super::waiting::ClientStep {
-            start: 0,
-            session: SessionId::for_tests("a session"),
+            session: super::super::waiting::ClientSession {
+                start: 0,
+                id: SessionId::for_tests("a session"),
+            },
             after: doc.editor.revision(),
             label: "an edit".to_owned(),
             shown: "An edit".to_owned(),

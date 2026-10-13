@@ -25,11 +25,10 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use varde_document::{Body, BodyId, Document, Feature, FeatureId, FeatureKind, Revision, Snapshot};
-use varde_mcp::session::SessionId;
 
 use super::edit::{color, opacity};
 use super::query::{self, Shape};
-use super::waiting::ClientStep;
+use super::waiting::{ClientSession, ClientStep};
 use crate::doc::{Doc, DocId};
 
 /// The most bytes of JSON `user_changes` takes before it names only
@@ -95,15 +94,15 @@ pub(crate) struct Changes {
 }
 
 /// The user's changes to `doc`'s design since `seen`, for the session
-/// `session` of the server `start` (whose own edits are told apart).
-pub(crate) fn since(doc: &Doc, seen: &Seen, start: u64, session: &SessionId) -> Changes {
-    let mut changes = said(doc, seen, start, session, false).done();
+/// `session` (whose own edits are told apart).
+pub(crate) fn since(doc: &Doc, seen: &Seen, session: &ClientSession) -> Changes {
+    let mut changes = said(doc, seen, session, false).done();
     let reverts = (doc.mcp.history.reverted.iter())
         .any(|made| doc.editor.is_done(made.after) && !seen.ancestors.contains(&made.after));
     changes.panel = match (&changes.value, reverts) {
         (None, _) => Vec::new(),
         (Some(_), false) => changes.lines.clone(),
-        (Some(_), true) => said(doc, seen, start, session, true).lines,
+        (Some(_), true) => said(doc, seen, session, true).lines,
     };
     changes
 }
@@ -111,7 +110,7 @@ pub(crate) fn since(doc: &Doc, seen: &Seen, start: u64, session: &SessionId) -> 
 /// The user's changes to `doc`'s design since `seen`, as [`since`]
 /// says them; for the `panel`'s rows, the reverts made from it left
 /// out, each a step of its own as the client's are.
-fn said(doc: &Doc, seen: &Seen, start: u64, session: &SessionId, panel: bool) -> Said {
+fn said(doc: &Doc, seen: &Seen, session: &ClientSession, panel: bool) -> Said {
     let mut said = Said::default();
     let editor = &doc.editor;
     let now = editor.snapshot();
@@ -120,7 +119,7 @@ fn said(doc: &Doc, seen: &Seen, start: u64, session: &SessionId, panel: bool) ->
         return said;
     }
     // The session's edits the user undid or redid.
-    for step in (doc.mcp.history.steps.iter()).filter(|step| step.of(start, session)) {
+    for step in (doc.mcp.history.steps.iter()).filter(|step| step.session == *session) {
         let done = editor.is_done(step.after);
         if done != step.told_done {
             said.step(step, done);

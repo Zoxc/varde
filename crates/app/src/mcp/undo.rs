@@ -51,7 +51,7 @@ pub(super) struct Undoing {
 /// undone, the newest of them its newest.
 pub(super) fn plan(doc: &Doc, steps: usize, from: &Caller) -> Result<Undoing, Refused> {
     let mcp = &doc.mcp;
-    let mine = |step: &ClientStep| step.of(from.start, &from.session) && !step.undone;
+    let mine = |step: &ClientStep| step.session == from.session && !step.undone;
     let newest = (mcp.history.steps.iter())
         .rposition(mine)
         .ok_or_else(|| Refused::not_applied(NOTHING_OF_YOURS))?;
