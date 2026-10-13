@@ -59,6 +59,14 @@ struct Copied {
     from: Option<(u64, u64, u64)>,
 }
 
+/// How a copy whose faces can be named is made, as [`Naming`] knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Instance<'a> {
+    /// Past [`MAX_INSTANCES`]: any copy is taken, how it's made unknown.
+    Unknown,
+    Known(&'a Copied),
+}
+
 /// A pattern whose copies are bodies of their own, as [`Naming`] follows
 /// faces on to them: the feature's number, the body each body whose
 /// faces it copies holds them in, by its index among the pattern's
@@ -283,13 +291,13 @@ impl Naming {
 
     /// How faces of copy `instance` are made, if they can be named: a
     /// copy made before the feature, or any past [`MAX_INSTANCES`]
-    /// (`Some(None)` then).
-    fn copied(&self, instance: u64) -> Option<Option<&Copied>> {
+    /// ([`Instance::Unknown`] then).
+    fn copied(&self, instance: u64) -> Option<Instance<'_>> {
         let Some(instances) = &self.instances else {
-            return Some(None);
+            return Some(Instance::Unknown);
         };
         let at = (instances.binary_search_by_key(&instance, |copied| copied.instance)).ok()?;
-        Some(Some(&instances[at]))
+        Some(Instance::Known(&instances[at]))
     }
 
     /// The body faces of copy `instance` first made on `body` are on,
@@ -306,7 +314,9 @@ impl Naming {
         let mut steps = Vec::new();
         let mut at = instance;
         while at != 0 {
-            let copied = self.copied(at)??;
+            let Instance::Known(copied) = self.copied(at)? else {
+                return None;
+            };
             let (parent, feature, index) = copied.from?;
             steps.push((feature, index));
             at = parent;
@@ -369,7 +379,7 @@ impl Naming {
             let hopped: Vec<BodyId> = (made.iter())
                 .filter_map(|&body| self.copy_body(body, key.instance))
                 .collect();
-            if hopped.is_empty() && self.copied(key.instance).is_some_and(|c| c.is_none()) {
+            if hopped.is_empty() && matches!(self.copied(key.instance), Some(Instance::Unknown)) {
                 // Past the cap: which copy body can't be told.
                 if !self.separated.is_empty() {
                     return None;
@@ -416,14 +426,7 @@ impl Naming {
     /// isn't ([`Unnamed::Later`]), or which body it's on there can't be
     /// told ([`Unnamed::Unclear`]).
     pub fn checked_face_body(&self, shown: BodyId, key: &FaceKey) -> Result<BodyId, Unnamed> {
-        if !self.takes_key(key) {
-            return Err(Unnamed::Later);
-        }
-        let body = self.face_body(shown, key).ok_or(Unnamed::Unclear)?;
-        if !self.takes_body(body) {
-            return Err(Unnamed::Later);
-        }
-        Ok(body)
+        self.common_body(shown, std::slice::from_ref(key))
     }
 
     /// The body an edge between faces keyed `keys`, the first shown on
@@ -434,20 +437,7 @@ impl Naming {
     /// different bodies there, which a later join merged
     /// ([`Unnamed::Unclear`]).
     pub fn edge_body(&self, shown: BodyId, keys: &[FaceKey; 2]) -> Result<BodyId, Unnamed> {
-        if !keys.iter().all(|key| self.takes_key(key)) {
-            return Err(Unnamed::Later);
-        }
-        let [a, b] = keys.each_ref().map(|key| self.face_body(shown, key));
-        let (Some(a), Some(b)) = (a, b) else {
-            return Err(Unnamed::Unclear);
-        };
-        if holder(&self.merged_before, a) != holder(&self.merged_before, b) {
-            return Err(Unnamed::Unclear);
-        }
-        if !self.takes_body(a) {
-            return Err(Unnamed::Later);
-        }
-        Ok(a)
+        self.common_body(shown, keys)
     }
 
     /// The body a corner where faces keyed `keys` meet, the first shown
@@ -459,15 +449,30 @@ impl Naming {
         if keys[0] == keys[1] || keys[1] == keys[2] {
             return Err(Unnamed::Missing);
         }
+        self.common_body(shown, keys)
+    }
+
+    /// The body faces keyed `keys`, the first shown on `shown`, are all
+    /// on where the history stops ([`Naming::face_body`]): refused if one
+    /// is named by a feature that isn't before the history's stop or the
+    /// body isn't ([`Unnamed::Later`]), or which body one is on there
+    /// can't be told, or they're on different bodies there
+    /// ([`Unnamed::Unclear`]).
+    fn common_body(&self, shown: BodyId, keys: &[FaceKey]) -> Result<BodyId, Unnamed> {
         if !keys.iter().all(|key| self.takes_key(key)) {
             return Err(Unnamed::Later);
         }
-        let bodies = keys.each_ref().map(|key| self.face_body(shown, key));
-        let [Some(body), Some(b), Some(c)] = bodies else {
-            return Err(Unnamed::Unclear);
+        let bodies = (keys.iter())
+            .map(|key| self.face_body(shown, key).ok_or(Unnamed::Unclear))
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(&body) = bodies.first() else {
+            return Err(Unnamed::Missing);
         };
         let there = holder(&self.merged_before, body);
-        if holder(&self.merged_before, b) != there || holder(&self.merged_before, c) != there {
+        if bodies
+            .iter()
+            .any(|&b| holder(&self.merged_before, b) != there)
+        {
             return Err(Unnamed::Unclear);
         }
         if !self.takes_body(body) {
