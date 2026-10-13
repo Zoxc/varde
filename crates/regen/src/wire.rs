@@ -107,6 +107,7 @@ use varde_kernel_compat::{
 };
 use varde_lane::bytes::Buffer;
 
+use crate::protocol::Asking;
 use crate::{
     Answer, Asked, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FaceEdgeTables,
     FeatureFailure, GeometryError, GeometryParts, Inspected, PickCorner, PickFace, PickTables,
@@ -438,6 +439,19 @@ pub enum HeadAnswer {
     Measured(Result<Box<Inspected>, String>),
 }
 
+impl From<&Answer> for HeadAnswer {
+    fn from(answer: &Answer) -> Self {
+        match answer {
+            Answer::Topology { body, result } => HeadAnswer::Topology {
+                body: *body,
+                edges: result.as_ref().map_or_else(|_| Vec::new(), Vec::clone),
+                error: result.as_ref().err().cloned(),
+            },
+            Answer::Measured(result) => HeadAnswer::Measured(result.clone()),
+        }
+    }
+}
+
 impl Head {
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("heads always serialize")
@@ -649,25 +663,14 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 }
                 .encode()
             };
-            let encoded = head(match answer {
-                Answer::Topology { body, result } => HeadAnswer::Topology {
-                    body: *body,
-                    edges: result.as_ref().map_or_else(|_| Vec::new(), Vec::clone),
-                    error: result.as_ref().err().cloned(),
-                },
-                Answer::Measured(result) => HeadAnswer::Measured(result.clone()),
-            });
+            let encoded = head(HeadAnswer::from(answer));
             if encoded.len() > MAX_HEAD_BYTES {
-                let failed = match answer {
-                    Answer::Topology { body, .. } => HeadAnswer::Topology {
-                        body: *body,
-                        edges: Vec::new(),
-                        error: Some(crate::edge_facts::TOO_MANY_EDGES.to_owned()),
-                    },
-                    Answer::Measured(_) => {
-                        HeadAnswer::Measured(Err("the measure is too large to send".to_owned()))
-                    }
+                let asking = answer.asking();
+                let why = match asking {
+                    Asking::Topology(_) => crate::edge_facts::TOO_MANY_EDGES,
+                    Asking::Measure => "the measure is too large to send",
                 };
+                let failed = HeadAnswer::from(&asking.failed(why.to_owned()));
                 return (head(failed), Vec::new());
             }
             (encoded, Vec::new())

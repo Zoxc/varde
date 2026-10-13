@@ -104,6 +104,47 @@ pub enum Answer {
     Measured(Result<Box<Inspected>, String>),
 }
 
+/// The kind of a [`Query`] or [`Answer`], with what a failed answer of
+/// it needs.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Asking {
+    Topology(BodyId),
+    Measure,
+}
+
+impl Asking {
+    /// The answer of this kind that failed with `why`.
+    pub(crate) fn failed(self, why: String) -> Answer {
+        match self {
+            Asking::Topology(body) => Answer::Topology {
+                body,
+                result: Err(why),
+            },
+            Asking::Measure => Answer::Measured(Err(why)),
+        }
+    }
+}
+
+impl Query {
+    pub(crate) fn asking(&self) -> Asking {
+        match self {
+            Query::Topology(body) => Asking::Topology(*body),
+            Query::Measure(_) => Asking::Measure,
+        }
+    }
+}
+
+// Only the wire format uses it.
+#[cfg(any(target_arch = "wasm32", test))]
+impl Answer {
+    pub(crate) fn asking(&self) -> Asking {
+        match self {
+            Answer::Topology { body, .. } => Asking::Topology(*body),
+            Answer::Measured(_) => Asking::Measure,
+        }
+    }
+}
+
 /// How far a [`Request::Regenerate`] has got, sent ahead of its answer
 /// as [`Response::Progress`] at the start of each of its steps: each
 /// feature of the history in turn, then drawing the model. A draft that
@@ -227,12 +268,11 @@ impl Request {
         enum Of {
             Regenerate(Asked),
             Export(u64),
-            /// A query, with the body if it asks for a topology.
             Query {
                 tag: u64,
                 generation: Generation,
                 until: Option<FeatureId>,
-                topology: Option<BodyId>,
+                asking: Asking,
             },
         }
         let of = match self {
@@ -250,10 +290,7 @@ impl Request {
                 tag: *tag,
                 generation: *generation,
                 until: *until,
-                topology: match query {
-                    Query::Topology(body) => Some(*body),
-                    Query::Measure(_) => None,
-                },
+                asking: query.asking(),
             },
         };
         move |why| match of {
@@ -266,18 +303,12 @@ impl Request {
                 tag,
                 generation,
                 until,
-                topology,
+                asking,
             } => Response::Answered {
                 tag,
                 generation,
                 until,
-                answer: match topology {
-                    Some(body) => Answer::Topology {
-                        body,
-                        result: Err(why),
-                    },
-                    None => Answer::Measured(Err(why)),
-                },
+                answer: asking.failed(why),
             },
         }
     }
