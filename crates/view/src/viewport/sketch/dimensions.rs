@@ -76,25 +76,11 @@ pub(crate) fn lines(sketch: &Sketch, measure: &Measure, side: Side, label: DVec2
         Measure::Angle(a, b) => angle(sketch, a, b, side, label)?,
         Measure::Radius(round) => {
             let (center, radius) = sketch.round(round)?;
-            let toward = outward(center, label);
-            let tip = center + toward * radius;
-            let mut lines = vec![vec![center, tip]];
-            lines.extend(reach(tip, center, radius, label));
-            Lines {
-                lines,
-                arrows: vec![[tip, center]],
-            }
+            radial(center, 0.0, radius, label, false)
         }
         Measure::Diameter(round) => {
             let (center, radius) = sketch.round(round)?;
-            let toward = outward(center, label);
-            let (near, far) = (center + toward * radius, center - toward * radius);
-            let mut lines = vec![vec![far, near]];
-            lines.extend(reach(near, center, radius, label));
-            Lines {
-                lines,
-                arrows: vec![[near, far], [far, near]],
-            }
+            radial(center, -radius, radius, label, true)
         }
         Measure::EdgeDistance(round, other) => {
             let (on_edge, on_other) = sketch.edge_ends(round, other, side)?;
@@ -115,24 +101,11 @@ pub(crate) fn lines(sketch: &Sketch, measure: &Measure, side: Side, label: DVec2
             }
             OffsetPair::Rounds => {
                 let ((center, from), (_, to)) = (sketch.round(a)?, sketch.round(b)?);
-                let toward = outward(center, label);
-                let (inner, outer) = (center + toward * from, center + toward * to);
-                let mut lines = vec![vec![inner, outer]];
-                lines.extend(reach(outer, center, from.max(to), label));
-                Lines {
-                    lines,
-                    arrows: vec![[outer, inner], [inner, outer]],
-                }
+                radial(center, from, to, label, true)
             }
             OffsetPair::Join => {
                 let (center, radius) = sketch.round(b)?;
-                let tip = center + outward(center, label) * radius;
-                let mut lines = vec![vec![center, tip]];
-                lines.extend(reach(tip, center, radius, label));
-                Lines {
-                    lines,
-                    arrows: vec![[tip, center]],
-                }
+                radial(center, 0.0, radius, label, false)
             }
             // From the place on the spline nearest the point.
             OffsetPair::Spline => {
@@ -176,6 +149,23 @@ fn param(point: DVec2, start: DVec2, end: DVec2) -> f64 {
 /// one place.
 fn outward(center: DVec2, label: DVec2) -> DVec2 {
     (label - center).try_normalize().unwrap_or(DVec2::X)
+}
+
+/// A radial dimension around `center`, along the ray towards `label`: a
+/// line from `inner` to `outer` along it (negative the far side of
+/// `center`), reaching on from `outer`'s end to the label if that's
+/// outside both, with an arrow at `outer`'s end, and at `inner`'s if
+/// `both`.
+fn radial(center: DVec2, inner: f64, outer: f64, label: DVec2, both: bool) -> Lines {
+    let toward = outward(center, label);
+    let (from, to) = (center + toward * inner, center + toward * outer);
+    let mut lines = vec![vec![from, to]];
+    lines.extend(reach(to, center, inner.abs().max(outer.abs()), label));
+    let mut arrows = vec![[to, from]];
+    if both {
+        arrows.push([from, to]);
+    }
+    Lines { lines, arrows }
 }
 
 /// From `tip`, on the circle around `center` of `radius`, out to `label`
