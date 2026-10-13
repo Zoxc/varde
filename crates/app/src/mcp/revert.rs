@@ -194,8 +194,9 @@ impl Mcp {
         at.is_some_and(|at| !doc.in_effect(at))
     }
 
-    /// The row menu's and the revert dialog's messages, about `doc`.
-    pub(crate) fn panel_message(&mut self, message: varde_view::McpPanel, doc: Option<&mut Doc>) {
+    /// The row menu's and the revert dialog's messages, about `doc`;
+    /// [`Mcp::panel_update`] handles the rest.
+    pub(super) fn panel_message(&mut self, message: varde_view::McpPanel, doc: Option<&mut Doc>) {
         use varde_view::McpPanel;
         let Some(doc) = doc else {
             self.menu = None;
@@ -234,7 +235,13 @@ impl Mcp {
                 self.restore(doc, &ask.state, ask.to);
             }
             McpPanel::CancelRevert => doc.mcp.revert_ask = None,
-            _ => {}
+            McpPanel::Toggle
+            | McpPanel::Start
+            | McpPanel::Stop
+            | McpPanel::ApplyYours
+            | McpPanel::KeepEditing => {
+                debug_assert!(false, "panel_update handles {message:?}");
+            }
         }
     }
 
