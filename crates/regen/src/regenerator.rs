@@ -183,9 +183,14 @@ impl Regenerator {
     /// feature as it starts on it.
     fn evaluate(&mut self, document: &Document, report: &mut dyn FnMut(Progress)) -> Evaluation {
         let count = document.features().len();
-        crate::history::evaluate_reporting(document, &mut self.cache, &mut |index, feature| {
-            report(Progress::feature(index, count, &feature.name));
-        })
+        crate::history::evaluate_with(
+            document,
+            &mut self.cache,
+            varde_kernel_compat::Budget::DEFAULT,
+            &mut |index, feature| {
+                report(Progress::feature(index, count, &feature.name));
+            },
+        )
     }
 
     /// The model of `document`, whose history gave `evaluation`, with

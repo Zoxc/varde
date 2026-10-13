@@ -555,32 +555,14 @@ fn frame(placement: &Placement) -> Frame {
 
 /// Evaluates the history of `document`, see the module's docs.
 pub fn evaluate(document: &Document, cache: &mut Cache) -> Evaluation {
-    evaluate_within(document, cache, Budget::DEFAULT)
+    evaluate_with(document, cache, Budget::DEFAULT, &mut |_, _| {})
 }
 
 /// [`evaluate`], with `touching` the budget of each
-/// [`varde_kernel_compat::touches`], which tests make small to see it fail.
-pub(crate) fn evaluate_within(
-    document: &Document,
-    cache: &mut Cache,
-    touching: Budget,
-) -> Evaluation {
-    walk(document, cache, touching, &mut |_, _| {})
-}
-
-/// [`evaluate`], telling `starting` of each feature, and its index in the
+/// [`varde_kernel_compat::touches`] (which tests make small to see it
+/// fail), telling `starting` of each feature, and its index in the
 /// document's order, as it starts on it: how far it has got.
-pub(crate) fn evaluate_reporting(
-    document: &Document,
-    cache: &mut Cache,
-    starting: &mut dyn FnMut(usize, &Feature),
-) -> Evaluation {
-    walk(document, cache, Budget::DEFAULT, starting)
-}
-
-/// [`evaluate_within`], telling `starting` of each feature as it starts
-/// on it.
-fn walk(
+pub(crate) fn evaluate_with(
     document: &Document,
     cache: &mut Cache,
     touching: Budget,

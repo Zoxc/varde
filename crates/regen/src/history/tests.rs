@@ -189,6 +189,12 @@ fn evaluated(document: &Document) -> Evaluation {
     evaluate(document, &mut Cache::default())
 }
 
+/// [`evaluate`], with `touching` the budget of each
+/// [`varde_kernel_compat::touches`], small to see it fail.
+fn evaluate_within(document: &Document, cache: &mut Cache, touching: Budget) -> Evaluation {
+    evaluate_with(document, cache, touching, &mut |_, _| {})
+}
+
 /// The volume of the example plate with a hole of `radius`, `height`
 /// thick.
 fn plate(radius: f64, height: f64) -> f64 {
