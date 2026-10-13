@@ -470,7 +470,7 @@ the draft's revision too, in its `Asked`.
 **The answer.** `Response::Regenerated` adds `failed`, `merged` (the
 evaluation's, (consumed, holder) pairs) and `bodies:
 Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
-`Solid::bounds`; a consumed body has none). `tessellate(document, evaluation, cache)` draws the
+`Solid::bounds`; a consumed body has none). `tessellate_scene` draws the
 visible bodies' solids at `Display::new(&document.tolerance())`, joined
 by `RenderMesh::append` into an `Arc<RenderMesh>`, a part per body in
 the order they were made; a mesh past `RenderMesh`'s limits fails the

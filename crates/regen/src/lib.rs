@@ -85,8 +85,8 @@ pub const WORKER: varde_lane::page::Role = varde_lane::page::Role {
 pub use cache::Cache;
 pub use drafted::{AlignDatums, AlignFound, Draft, Drafted, MAX_REFERENCE, ScaleFound, SweepFound};
 pub use draw::{
-    ExportError, ExportedBody, export, flatten_sketches, push_sketch_lines, tessellate,
-    tessellate_picking, unsolved,
+    ExportError, ExportedBody, export, flatten_sketches, push_sketch_lines, tessellate_picking,
+    unsolved,
 };
 pub use edge_facts::{Convexity, EdgeFacts};
 pub use error_geometry::{ErrorGeometry, FeatureFailure, GeometryError, GeometryParts};

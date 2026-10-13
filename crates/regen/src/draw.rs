@@ -25,16 +25,7 @@ use crate::{Cache, Evaluation, Picking, Sight};
 /// didn't change gives the same `Arc` without joining again (see
 /// [`Cache`]). Fails if it would have more vertices, indices or edges
 /// than a [`RenderMesh`] may hold, which a file with enough bodies in it
-/// can ask for.
-pub fn tessellate(
-    document: &Document,
-    evaluation: &Evaluation,
-    cache: &mut Cache,
-) -> Result<Arc<RenderMesh>, MeshError> {
-    tessellate_scene(document, evaluation, false, None, cache).map(|scene| scene.mesh)
-}
-
-/// [`tessellate`], with the scene's [`Picking`] tables.
+/// can ask for. The scene's [`Picking`] tables come with it.
 pub fn tessellate_picking(
     document: &Document,
     evaluation: &Evaluation,

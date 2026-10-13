@@ -171,7 +171,7 @@ fn shown_scene(
 ) -> Result<Shown, varde_kernel_compat::MeshError> {
     let (mesh, picking) = tessellate_picking(document, evaluation, cache)?;
     assert_eq!(picking.bodies().len(), mesh.part_ends().len());
-    assert_eq!(tessellate(document, evaluation, cache)?, mesh);
+    assert_eq!(tessellate_picking(document, evaluation, cache)?.0, mesh);
     Ok(Shown {
         mesh,
         bodies: picking.bodies().to_vec(),

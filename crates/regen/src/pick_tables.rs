@@ -34,8 +34,8 @@ pub struct PickTables {
     tangent_chains: Groups,
 }
 
-/// What [`PickTables`] are made of, as [`PickTables::to_parts`] gives them
-/// and [`PickTables::from_parts`] takes them.
+/// What [`PickTables`] are made of, as [`PickTables::from_parts`] takes
+/// them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PickTablesParts {
     pub triangles: (Vec<BvhNode>, Vec<u32>),
@@ -167,7 +167,8 @@ impl PickTables {
 
     /// The parts the tables are made of, as [`PickTables::from_parts`]
     /// takes them.
-    pub fn to_parts(&self) -> PickTablesParts {
+    #[cfg(test)]
+    pub(crate) fn to_parts(&self) -> PickTablesParts {
         let tree = |bvh: &Bvh| (bvh.nodes.clone(), bvh.items.clone());
         PickTablesParts {
             triangles: tree(&self.triangles),

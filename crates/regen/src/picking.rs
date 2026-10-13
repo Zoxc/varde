@@ -248,8 +248,8 @@ pub struct Picking {
     tables: FaceEdgeTables,
 }
 
-/// The parts of [`Picking`], as [`Picking::from_parts`] takes them and
-/// [`Picking::to_parts`] gives them: see their accessors on [`Picking`].
+/// The parts of [`Picking`], as [`Picking::from_parts`] takes them: see
+/// their accessors on [`Picking`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PickingParts {
     pub bodies: Vec<BodyId>,
@@ -395,7 +395,8 @@ impl Picking {
     }
 
     /// Its parts, copied, as [`Picking::from_parts`] takes them.
-    pub fn to_parts(&self) -> PickingParts {
+    #[cfg(test)]
+    pub(crate) fn to_parts(&self) -> PickingParts {
         PickingParts {
             bodies: self.bodies.clone(),
             tables: self.tables.clone(),
