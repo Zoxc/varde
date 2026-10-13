@@ -31,7 +31,7 @@ use varde_mcp::tools::{Call, Rename, Target, ToolReply, Units};
 use varde_sketch::Id;
 use varde_view::{McpCallState, ParamField};
 
-use super::names::{body_id, feature_id, not_named};
+use super::names::{body_id, feature_by_name, feature_id, not_named};
 use super::query;
 use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::{Doc, params};
@@ -138,12 +138,6 @@ impl Made {
     /// The feature the edit made or changed, applied to `doc`'s design,
     /// if it names one: the one its result gives the id of.
     fn feature(&self, doc: &Doc) -> Option<FeatureId> {
-        let named = |name: &str| {
-            let features = doc.editor.document().features();
-            (features.iter())
-                .find(|feature| feature.name == name)
-                .map(|feature| feature.id)
-        };
         match self {
             Made::Renamed {
                 target: Named::Feature(id),
@@ -153,7 +147,11 @@ impl Made {
             | Made::Sketch(id)
             | Made::Link { feature: id, .. }
             | Made::Drawn { feature: id, .. } => Some(*id),
-            Made::Added { name, .. } | Made::NewSketch { name, .. } => named(name),
+            Made::Added { name, .. } | Made::NewSketch { name, .. } => {
+                feature_by_name(doc.editor.document(), name)
+                    .ok()
+                    .map(|feature| feature.id)
+            }
             Made::Renamed { .. }
             | Made::Body(_)
             | Made::Removed { .. }
@@ -213,21 +211,18 @@ impl Made {
                 (document.feature(*id)).map_or(json!({}), |feature| feature_made(document, feature))
             }
             Made::Added { name, notes } => {
-                let mut made = (document.features().iter())
-                    .find(|feature| feature.name == *name)
-                    .map_or_else(
-                        || json!({ "feature": name }),
-                        |feature| feature_made(document, feature),
-                    );
+                let mut made = feature_by_name(document, name).map_or_else(
+                    |_| json!({ "feature": name }),
+                    |feature| feature_made(document, feature),
+                );
                 noted(&mut made, notes);
                 made
             }
             Made::NewSketch { name, notes } => {
-                let mut made =
-                    match (document.features().iter()).find(|feature| feature.name == *name) {
-                        Some(feature) => super::sketches::sketch_made(doc, feature.id),
-                        None => json!({ "sketch": name }),
-                    };
+                let mut made = match feature_by_name(document, name) {
+                    Ok(feature) => super::sketches::sketch_made(doc, feature.id),
+                    Err(_) => json!({ "sketch": name }),
+                };
                 noted(&mut made, notes);
                 made
             }
