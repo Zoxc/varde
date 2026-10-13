@@ -930,6 +930,15 @@ fn faded(style: button::Style) -> button::Style {
     }
 }
 
+/// `style`, [`faded`] if `status` is disabled.
+fn fade_if_disabled(status: button::Status, style: button::Style) -> button::Style {
+    if status == button::Status::Disabled {
+        faded(style)
+    } else {
+        style
+    }
+}
+
 /// A button filled with `fill`, with white text.
 fn filled_button(p: &Palette, fill: Color, status: button::Status) -> button::Style {
     let background = if is_hovered(status) {
@@ -943,11 +952,7 @@ fn filled_button(p: &Palette, fill: Color, status: button::Status) -> button::St
         border: border::rounded(BUTTON_RADIUS),
         ..button::Style::default()
     };
-    if status == button::Status::Disabled {
-        faded(style)
-    } else {
-        style
-    }
+    fade_if_disabled(status, style)
 }
 
 /// A button beside a [`primary_button`]: panel fill with a thin border.
@@ -960,11 +965,7 @@ pub fn secondary_button(theme: &Theme, status: button::Status) -> button::Style 
         border: outline(if hovered { p.hl_line } else { p.line }, BUTTON_RADIUS),
         ..button::Style::default()
     };
-    if status == button::Status::Disabled {
-        faded(style)
-    } else {
-        style
-    }
+    fade_if_disabled(status, style)
 }
 
 /// The colour of the operation panel's recessed well, which its fields
@@ -1020,7 +1021,7 @@ pub fn tile(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
             base
         } else if on {
             button::Style {
-                background: Some(Background::Color(mix(p.accent, p.panel, 0.13))),
+                background: Some(Background::Color(on_fill(p, false))),
                 border: outline(p.accent, CONTROL_RADIUS),
                 ..base
             }
@@ -1033,6 +1034,12 @@ pub fn tile(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
             base
         }
     }
+}
+
+/// The soft accent fill of a [`tile`] or [`toggle_square`] that's on,
+/// deeper while `hovered`.
+fn on_fill(p: &Palette, hovered: bool) -> Color {
+    mix(p.accent, p.panel, if hovered { 0.26 } else { 0.13 })
 }
 
 /// An option's toggle in the operation panel, its icon's button beside
@@ -1055,8 +1062,8 @@ pub fn toggle_square(on: bool, hovered: bool) -> impl Fn(&Theme) -> container::S
     move |theme| {
         let p = palette(theme);
         let (fill, edge) = match (on, hovered) {
-            (true, false) => (mix(p.accent, p.panel, 0.13), p.accent),
-            (true, true) => (mix(p.accent, p.panel, 0.26), p.accent),
+            (true, false) => (on_fill(p, false), p.accent),
+            (true, true) => (on_fill(p, true), p.accent),
             (false, true) => (p.panel, p.accent),
             (false, false) => (p.panel, p.line),
         };
@@ -1298,11 +1305,7 @@ pub fn fail_button(danger: bool) -> impl Fn(&Theme, button::Status) -> button::S
             border: outline(p.line, CONTROL_RADIUS),
             ..button::Style::default()
         };
-        if status == button::Status::Disabled {
-            faded(style)
-        } else {
-            style
-        }
+        fade_if_disabled(status, style)
     }
 }
 
@@ -1713,7 +1716,7 @@ pub fn file_cell(open: bool) -> impl Fn(&Theme, button::Status) -> button::Style
 pub fn name_pill(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
-        border: border::rounded(10),
+        border: border::rounded(PILL),
         ..filled(p.chip, p.muted)
     }
 }
@@ -1868,7 +1871,7 @@ pub fn rail_head(
                 // Hovered, the selection's tint deepens.
                 let soft = p.accent_soft;
                 let a = if is_hovered(status) {
-                    soft.a * 1.75
+                    soft.a * SELECTED_HOVER_DEEPEN
                 } else {
                     soft.a
                 };
@@ -2021,12 +2024,20 @@ pub fn hovered_row(theme: &Theme) -> container::Style {
     }
 }
 
+/// How many times deeper a selected row's tint (the soft accent's alpha)
+/// is while hovered.
+const SELECTED_HOVER_DEEPEN: f32 = 1.75;
+
 /// Halfway between the accent and a hovered selected row's tint (the soft
 /// accent deepened) made opaque over the panel, for marks that stand for
 /// a selection in a list.
 pub fn selection_mark(p: &Palette) -> Color {
     let soft = p.accent_soft;
-    let hovered = mix(Color { a: 1.0, ..soft }, p.panel, (soft.a * 1.75).min(1.0));
+    let hovered = mix(
+        Color { a: 1.0, ..soft },
+        p.panel,
+        (soft.a * SELECTED_HOVER_DEEPEN).min(1.0),
+    );
     mix(p.accent, hovered, 0.5)
 }
 
@@ -2266,7 +2277,7 @@ pub fn switch(theme: &Theme, status: toggler::Status) -> toggler::Style {
 pub fn reset_row(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
-        border: border::rounded(6),
+        border: border::rounded(CONTROL_RADIUS),
         ..filled(p.chip, p.faint)
     }
 }
