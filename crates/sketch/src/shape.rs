@@ -713,20 +713,7 @@ impl Sketch {
         }
         self.drop_broken_corners();
         self.delete_unused(gone);
-        let own: BTreeSet<Id> = self
-            .constraints
-            .iter()
-            .filter(|entry| entry.constraint.own_point(self).is_some())
-            .map(|entry| entry.id)
-            .chain(
-                self.dimensions
-                    .iter()
-                    .filter(|entry| entry.dimension.measure.own_point(self).is_some())
-                    .map(|entry| entry.id),
-            )
-            .collect();
-        self.constraints.retain(|entry| !own.contains(&entry.id));
-        self.dimensions.retain(|entry| !own.contains(&entry.id));
+        self.drop_annotations(|sketch, annotation| annotation.ties_own_point(sketch));
         let mut added = Vec::with_capacity(ties.len());
         for tie in ties {
             // A tie with a curve's own point, joining its end to itself,

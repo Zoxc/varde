@@ -38,16 +38,7 @@ impl Sketch {
     /// those that no longer fit (a tangent at an end that's no longer
     /// one, say).
     fn merge_into(&mut self, gone: Id, kept: Id) -> Result<(), EditError> {
-        let on_end: Vec<Id> = (self.constraints.iter())
-            .filter(|entry| entry.constraint.items().any(|(id, _)| id == gone))
-            .map(|entry| entry.id)
-            .chain(
-                (self.dimensions.iter())
-                    .filter(|entry| entry.dimension.measure.items().any(|(id, _)| id == gone))
-                    .map(|entry| entry.id),
-            )
-            .collect();
-        self.delete(&on_end);
+        self.drop_annotations(|_, annotation| annotation.on(gone));
         let swap = |id| Ok::<_, EditError>(if id == gone { kept } else { id });
         for entry in &mut self.curves {
             if entry.curve.points().any(|id| id == gone) {

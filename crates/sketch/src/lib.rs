@@ -573,21 +573,62 @@ impl Sketch {
     /// edit can leave them.
     pub(crate) fn drop_unfit(&mut self) {
         let tips = self.tips();
-        let unfit: HashSet<Id> = self
-            .constraints
-            .iter()
-            .filter(|entry| !entry.constraint.fits(self))
-            .map(|entry| entry.id)
-            .chain(
-                self.dimensions
-                    .iter()
-                    .filter(|entry| !entry.dimension.measure.fits(self, &tips))
-                    .map(|entry| entry.id),
-            )
-            .collect();
-        if !unfit.is_empty() {
-            self.constraints.retain(|entry| !unfit.contains(&entry.id));
-            self.dimensions.retain(|entry| !unfit.contains(&entry.id));
+        self.drop_annotations(|sketch, annotation| !annotation.fits(sketch, &tips));
+    }
+
+    /// Deletes the constraints and dimensions `drop` holds for, judged on
+    /// the sketch as it is before any goes. Nothing depends on them, so
+    /// nothing else goes with them.
+    pub(crate) fn drop_annotations(
+        &mut self,
+        mut drop: impl FnMut(&Sketch, Annotation<'_>) -> bool,
+    ) {
+        let constraints = (self.constraints.iter())
+            .filter(|entry| drop(self, Annotation::Constraint(&entry.constraint)))
+            .map(|entry| entry.id);
+        let gone: HashSet<Id> = constraints.collect();
+        let dimensions = (self.dimensions.iter())
+            .filter(|entry| drop(self, Annotation::Dimension(&entry.dimension.measure)))
+            .map(|entry| entry.id);
+        let gone: HashSet<Id> = gone.into_iter().chain(dimensions).collect();
+        if !gone.is_empty() {
+            self.constraints.retain(|entry| !gone.contains(&entry.id));
+            self.dimensions.retain(|entry| !gone.contains(&entry.id));
+        }
+    }
+}
+
+/// A constraint or a dimension's measure, for the rules that apply to
+/// both alike.
+#[derive(Clone, Copy)]
+pub(crate) enum Annotation<'a> {
+    Constraint(&'a Constraint),
+    Dimension(&'a Measure),
+}
+
+impl Annotation<'_> {
+    /// Whether it's on `id`.
+    pub(crate) fn on(self, id: Id) -> bool {
+        match self {
+            Annotation::Constraint(constraint) => constraint.items().any(|(item, _)| item == id),
+            Annotation::Dimension(measure) => measure.items().any(|(item, _)| item == id),
+        }
+    }
+
+    /// Whether it still fits `sketch`, whose handles' tips are `tips`.
+    pub(crate) fn fits(self, sketch: &Sketch, tips: &HashSet<Id>) -> bool {
+        match self {
+            Annotation::Constraint(constraint) => constraint.fits(sketch),
+            Annotation::Dimension(measure) => measure.fits(sketch, tips),
+        }
+    }
+
+    /// Whether it ties a curve to its own point, see
+    /// [`Constraint::own_point`].
+    pub(crate) fn ties_own_point(self, sketch: &Sketch) -> bool {
+        match self {
+            Annotation::Constraint(constraint) => constraint.own_point(sketch).is_some(),
+            Annotation::Dimension(measure) => measure.own_point(sketch).is_some(),
         }
     }
 }
