@@ -139,8 +139,15 @@ impl FeatureKind {
     /// Its typed values, as [`FeatureKind::values`], each with what it's
     /// checked against in `design`: for writing the units in, or
     /// evaluating them again as parameters change.
+    ///
+    /// Debug builds check it yields the very fields `values` does, in
+    /// the same order: the two lists are kept by hand, and a value one
+    /// misses would escape either the parameter checks or the units.
     pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
-        match self {
+        #[cfg(debug_assertions)]
+        let expected: Vec<*const Value> =
+            self.values().into_iter().map(|v| v as *const _).collect();
+        let values = match self {
             FeatureKind::Extrude(extrude) => extrude.values_mut(design),
             FeatureKind::Revolve(revolve) => revolve.values_mut(design),
             FeatureKind::Move(moved) => moved.values_mut(design),
@@ -158,7 +165,13 @@ impl FeatureKind {
             | FeatureKind::Mirror(_)
             | FeatureKind::Split(_)
             | FeatureKind::Loft(_) => Vec::new(),
+        };
+        #[cfg(debug_assertions)]
+        {
+            let found: Vec<*const Value> = values.iter().map(|(v, _)| &**v as *const _).collect();
+            debug_assert_eq!(found, expected, "values and values_mut disagree");
         }
+        values
     }
 }
 
