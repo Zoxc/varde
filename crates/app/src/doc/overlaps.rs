@@ -66,7 +66,7 @@ fn found(index: &PickIndex, named: &Selected, body: varde_document::BodyId) -> O
         Selected::Vertex { faces, near, .. } => {
             (Picked::Vertex(index.find_vertex(body, faces, near)?), near)
         }
-        Selected::Body(_) | Selected::SketchItem { .. } => return None,
+        Selected::Body(_) | Selected::SketchItem(_) => return None,
     };
     Some(Pick {
         model: index.model(),
@@ -157,8 +157,8 @@ impl Doc {
             .map(|item| {
                 let (named, held) = match item {
                     OverlapItem::Model(pick) => (name(index, &pick), self.motion_ref_at(pick)),
-                    OverlapItem::Sketch(varde_view::SketchItem { sketch, item }) => {
-                        (Some(Selected::SketchItem { sketch, item }), None)
+                    OverlapItem::Sketch(sketch_item) => {
+                        (Some(Selected::SketchItem(sketch_item)), None)
                     }
                     OverlapItem::Origin(_) => (None, None),
                 };

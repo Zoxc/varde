@@ -16,7 +16,7 @@ use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{Held, Shortcut};
 use crate::status::Status;
 use crate::words::{counted, counts};
-use crate::{ConstraintKind, Message, RevolvePick, Tool, theme, viewport};
+use crate::{ConstraintKind, Message, RevolvePick, SketchItem, Tool, theme, viewport};
 
 use super::prompts::{edit_refused, name_action};
 use super::{
@@ -669,7 +669,7 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
         [Selected::Vertex { body, .. }] => ("Vertex".into(), String::new(), drawn_in(*body)),
         [Selected::Body(body)] => (body_name(*body).into(), String::new(), "Body"),
         // "Line 3" of "Sketch 2".
-        [Selected::SketchItem { sketch, item }] => {
+        [Selected::SketchItem(SketchItem { sketch, item })] => {
             let feature = document.feature(*sketch);
             let name = feature.and_then(|feature| match &feature.kind {
                 FeatureKind::Sketch { sketch, .. } => sketch.name(*item),
@@ -685,7 +685,7 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
             let edges = count(|item| matches!(item, Selected::Edge { .. }));
             let vertices = count(|item| matches!(item, Selected::Vertex { .. }));
             let bodies = count(|item| matches!(item, Selected::Body(_)));
-            let sketch_items = count(|item| matches!(item, Selected::SketchItem { .. }));
+            let sketch_items = count(|item| matches!(item, Selected::SketchItem(_)));
             let parts = counts([
                 (faces, "face", "faces"),
                 (edges, "edge", "edges"),

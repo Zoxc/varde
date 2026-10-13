@@ -114,7 +114,7 @@ fn body(body: BodyId) -> InspectPick {
 fn selected_pick(item: &Selected) -> Option<InspectPick> {
     let (entity, near) = match *item {
         Selected::Body(body) => return Some(self::body(body)),
-        Selected::SketchItem { .. } => return None,
+        Selected::SketchItem(_) => return None,
         Selected::Face { key, near, .. } => (Entity::Face(key), near),
         Selected::Edge { faces, near, .. } => (Entity::Edge(faces), near),
         Selected::Vertex { faces, near, .. } => (Entity::Corner(faces), near),

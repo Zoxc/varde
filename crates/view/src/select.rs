@@ -108,11 +108,8 @@ pub enum Selected {
         near: DVec3,
     },
     Body(BodyId),
-    /// The curve or point `item` of the sketch `sketch`.
-    SketchItem {
-        sketch: FeatureId,
-        item: Id,
-    },
+    /// A curve or point of a sketch.
+    SketchItem(SketchItem),
 }
 
 impl Selected {
@@ -123,14 +120,14 @@ impl Selected {
             | Selected::Edge { body, .. }
             | Selected::Vertex { body, .. }
             | Selected::Body(body) => Some(body),
-            Selected::SketchItem { .. } => None,
+            Selected::SketchItem(_) => None,
         }
     }
 
     /// The sketch's item it is, if it's one.
     pub fn sketch_item(&self) -> Option<SketchItem> {
         match *self {
-            Selected::SketchItem { sketch, item } => Some(SketchItem { sketch, item }),
+            Selected::SketchItem(item) => Some(item),
             _ => None,
         }
     }
@@ -261,7 +258,7 @@ impl Selection {
                 Selected::Face { body, near, .. }
                 | Selected::Edge { body, near, .. }
                 | Selected::Vertex { body, near, .. } => (body, near),
-                Selected::Body(_) | Selected::SketchItem { .. } => return None,
+                Selected::Body(_) | Selected::SketchItem(_) => return None,
             };
             Some(Pick {
                 model: self.model?,
@@ -336,7 +333,7 @@ impl Selection {
             let found = match item {
                 Selected::Body(body) => (drawn(body) == Some(body)).then_some(None),
                 // Not the model's: kept as it is.
-                Selected::SketchItem { .. } => Some(None),
+                Selected::SketchItem(_) => Some(None),
                 _ if fresh && found => Some(target),
                 // Not found in this model before, so not now either.
                 _ if fresh => None,
@@ -452,9 +449,11 @@ impl Selection {
     /// they're selected ([`SelectionMode::takes_sketch_items`]). Whether
     /// anything changed.
     pub fn click_sketch(&mut self, item: SketchItem, add: bool) -> bool {
-        let SketchItem { sketch, item } = item;
-        let item = Selected::SketchItem { sketch, item };
-        self.click_one(self.mode.takes_sketch_items(), item, add)
+        self.click_one(
+            self.mode.takes_sketch_items(),
+            Selected::SketchItem(item),
+            add,
+        )
     }
 
     /// Finds what's selected in `index`'s model if it was last found in

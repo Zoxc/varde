@@ -912,7 +912,7 @@ fn a_sketch_s_curve_is_selected_in_the_model_until_its_sketch_goes() {
     assert_eq!(doc.pick.hover(), None, "one or the other is hovered");
     doc.look(Look::ClickSketch { item, add: false });
     let items = |doc: &Doc| doc.pick.selection.items().copied().collect::<Vec<_>>();
-    assert_eq!(items(&doc), [Selected::SketchItem { sketch, item: line }]);
+    assert_eq!(items(&doc), [Selected::SketchItem(item)]);
     assert_eq!(doc.model_picking().unwrap().marked, [item]);
     // A click on the model with Shift adds to it; alone, it's that.
     let face = on_top(&doc);
@@ -981,7 +981,7 @@ fn a_sketch_s_curve_listed_with_the_model_is_hovered_ticked_and_chosen() {
     doc.look(Look::ToggleOverlap(0));
     assert!(doc.overlaps.is_some());
     let items = |doc: &Doc| doc.pick.selection.items().copied().collect::<Vec<_>>();
-    assert_eq!(items(&doc), [Selected::SketchItem { sketch, item: line }]);
+    assert_eq!(items(&doc), [Selected::SketchItem(item)]);
     assert_eq!(doc.overlap_ticked(), Some(vec![true, false]));
     doc.look(Look::ChooseOverlap {
         index: 1,
