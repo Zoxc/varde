@@ -209,7 +209,7 @@ impl Extent {
     }
 
     /// The ends' numerators over `2^depth`.
-    fn nums(self) -> (u64, u64, u32) {
+    pub(crate) fn nums(self) -> (u64, u64, u32) {
         let e = self.depth();
         (
             self.lo.num() << (e - self.lo.exp()),
@@ -255,7 +255,7 @@ fn float(num: u64, exp: u32) -> f64 {
 
 /// A dyadic point of `[0, 1]` as an `f64`, exactly (a box's sides and
 /// centre have denominators at most `2⁵³`).
-fn dy(t: Dyadic) -> f64 {
+pub(crate) fn dy(t: Dyadic) -> f64 {
     float(t.num(), t.exp())
 }
 
@@ -1133,8 +1133,8 @@ fn crossings<S: Scalar>(
 /// (the shadow frame's axes).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QShadow {
-    r: [f64; 2],
-    n: [f64; 2],
+    pub(crate) r: [f64; 2],
+    pub(crate) n: [f64; 2],
 }
 
 impl QShadow {
@@ -1236,7 +1236,7 @@ pub fn split<S: Scalar>(
 }
 
 /// The other direction.
-fn other(d: Dir) -> Dir {
+pub(crate) fn other(d: Dir) -> Dir {
     match d {
         Dir::U => Dir::V,
         Dir::V => Dir::U,
@@ -1270,7 +1270,7 @@ pub fn iso_off<S: Scalar>(
 
 /// The iso line of `patch` where the coordinate in `dir` is `at`, running
 /// along the other coordinate, in space.
-fn iso_line<S: Scalar>(patch: &HomPatch<S>, dir: Dir, at: Dyadic) -> HomCurve<S, 3> {
+pub(crate) fn iso_line<S: Scalar>(patch: &HomPatch<S>, dir: Dir, at: Dyadic) -> HomCurve<S, 3> {
     let (m, n) = patch.degrees();
     let like = patch.weights().coefs()[0].clone();
     // The patch whose first row (in `dir`) is the line, and that row's index.
@@ -1296,7 +1296,7 @@ fn iso_line<S: Scalar>(patch: &HomPatch<S>, dir: Dir, at: Dyadic) -> HomCurve<S,
 /// `[k/2^d, (k + 1)/2^d]` of the line) that cover `[lo, hi]/2^e`
 /// exactly, each reached by halvings, left to right; `true` when `f` is
 /// for every one.
-fn cover<S: Scalar>(
+pub(crate) fn cover<S: Scalar>(
     c: &HomCurve<S, 3>,
     k: u64,
     d: u32,

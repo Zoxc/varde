@@ -3,6 +3,10 @@
 //! face's parameter domain is cut into, each certified outside the face's
 //! trim, inside it and clear of every trimming curve, or meeting trims:
 //! then a strip box of one trimming curve (or a slit's), a corner box of a
-//! vertex, or a thin box that refines.
+//! vertex, or a thin box that refines; and [`degree`], the winding of a
+//! box's shadow boundary about the query point's shadow, from certified
+//! angle increments of its sides, so the degrees of any partition of a
+//! face sum to its own.
 
 pub mod boxes;
+pub mod degree;
