@@ -7,11 +7,16 @@
 //!
 //! **Pieces.** The coedge is cut at every knot of `p` and of `C` inside
 //! it, so each piece lies in one span of each. A p-curve span lies in
-//! one tile, `(i, j)`, decided exactly (each control point's `u = w·u / w`
-//! within `[i, i + 1]`, compared in rationals; the lower candidate where
-//! a span runs on a tile line at the domain's far side).
+//! one tile, `(i, j)`, decided exactly: each stored control point's `u`
+//! within `[i, i + 1]` and `v` within `[j, j + 1]`, compared as floats
+//! (the span lies in its control points' hull, as its weights are
+//! positive); the lower candidate where a span runs on a tile line at
+//! the domain's far side.
 //!
-//! **The bound on a piece.** With the span's local homogeneous
+//! **The bound on a piece.** The spans' homogeneous coefficients are
+//! formed at the first level from their affine control points, each
+//! product `w·x` rounded once with its rounding carried
+//! ([`Curve3D::span`]). With the span's local homogeneous
 //! coordinates `U' = U − i·W`, `V' = V − j·W`, the tile's net `Pₖₗ`
 //! composed with it is `H = Σₖₗ Pₖₗ·Bₖ(U', W)·Bₗ(V', W)`, `Bₖ` the
 //! homogeneous quadratic Bernstein basis (`(W − U')²`, `2U'(W − U')`,
@@ -27,14 +32,16 @@
 //! (no subdivision to a target, no higher precision level), biquadratic
 //! tiles and Q spans only. Its rounding scales with the coordinates'
 //! magnitude: on a plane, whose one tile spans the coordinate box, about
-//! `1e-9` mm.
+//! `1e-9` mm for weights near 1. It grows with the spread of the weights
+//! along a span, as the bound divides the largest coefficients' rounding
+//! by the least denominator: on that tile a 90° arc with end weights 3
+//! and ⅓ gets about `2·10⁻⁴` mm, with end weights 64 and 1/64 about
+//! `3·10⁹` mm, though the arc lies exactly on the plane.
 
-use malachite::Rational;
 use varde_decide::bezier::{HomCurve, Poly, Scalar};
 use varde_decide::num::bounded::{Bounded, add_up, div_up};
 
 use super::curve::{Curve3D, PCurve, Span2, local};
-use super::round::q;
 use super::surface::Surface;
 use super::tile::Tile;
 
@@ -105,16 +112,17 @@ pub fn seam_bound(surface: &Surface, curve: &Curve3D, pcurve: &PCurve) -> Result
 }
 
 /// The tile holding span `s` and its indices: `(⌊u⌋, ⌊v⌋)` of the least
-/// projected control point, or the one below in either direction,
-/// whichever holds every control point exactly and lies in the domain.
+/// control point, or the one below in either direction, whichever holds
+/// every control point and lies in the domain.
 fn tile_of<'a>(surface: &'a Surface, s: &Span2) -> Option<(&'a Tile, i64, i64)> {
     let pick = |k: usize, range: &std::ops::Range<i64>| -> Option<i64> {
         let least = s
             .iter()
-            .map(|p| p[k] / p[2])
+            .map(|p| p[k])
             .fold(f64::INFINITY, |a, x| if x < a { x } else { a });
-        // Within ±2⁵³, so exact as an `i64` and back.
-        if least.is_nan() || least.abs() > 9_007_199_254_740_992.0 {
+        // Below 2⁵² in magnitude, so the candidates and the tile lines
+        // about them are exact as `i64`s and as `f64`s.
+        if least.is_nan() || least.abs() >= 4_503_599_627_370_496.0 {
             return None;
         }
         let c = least.floor() as i64;
@@ -122,11 +130,8 @@ fn tile_of<'a>(surface: &'a Surface, s: &Span2) -> Option<(&'a Tile, i64, i64)> 
             if !range.contains(&i) {
                 return false;
             }
-            let (lo, hi) = (Rational::from(i), Rational::from(i + 1));
-            s.iter().all(|p| {
-                let (x, w) = (q(p[k]), q(p[2]));
-                &lo * &w <= x && x <= &hi * &w
-            })
+            let (lo, hi) = (i as f64, (i + 1) as f64);
+            s.iter().all(|p| lo <= p[k] && p[k] <= hi)
         })
     };
     let rect = surface.rect();
@@ -178,7 +183,7 @@ fn piece_bound(
 fn direct(tile: &Tile, i: i64, j: i64, p: &HomCurve<B, 2>, c: &HomCurve<B, 3>) -> Option<f64> {
     let [pu, pv] = p.coords();
     let w = p.weights();
-    // Tile indices within ±2⁵³ (`tile_of`): exact in `f64`.
+    // Tile indices below 2⁵² in magnitude (`tile_of`): exact in `f64`.
     let shift = |x: &Poly<B>, k: i64| x.sub(&w.scale(&B::exact(k as f64)));
     let (u, v) = (shift(pu, i), shift(pv, j));
     let basis = |x: &Poly<B>| -> [Poly<B>; 3] {

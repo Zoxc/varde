@@ -9,9 +9,10 @@ use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor};
 use smallvec::SmallVec;
 
-use crate::num::bigf::BigF;
+use crate::num::bigf::{BigF, Rounding};
 use crate::num::bounded::{Bounded, ETA, U, add_up, down, gamma_bound, mul_up};
 use crate::num::dd::Dd;
+use crate::num::expansion::two_product;
 
 /// A coefficient of a Bernstein form: `+ − × ÷` and the midpoint, each
 /// carrying its error bound (a [`Bounded`] level) or exact
@@ -65,6 +66,17 @@ pub trait Scalar: Clone + fmt::Debug + PartialEq {
 
     /// The finite `x` exactly, at `like`'s level (and width).
     fn from_f64(x: f64, like: &Self) -> Self;
+
+    /// The product `a·b` of two finite floats at `like`'s level (and
+    /// width), certified: exact at every level but the first, and there
+    /// when the product is a float (a factor of 1 or 0 among others);
+    /// else rounded once, its exact rounding error the error. Outside
+    /// the range of [`two_product`] (a factor at `2⁹⁹⁶` or above, a
+    /// product below `2⁻⁹⁶⁸`) it is the level's own product of the two
+    /// exact factors, which carries its rounding as any product does.
+    /// For the homogeneous coefficients `w·x` of an affine control point
+    /// `(x, w)`.
+    fn product(a: f64, b: f64, like: &Self) -> Self;
 
     /// The polynomial with Bernstein coefficients `c` (non-empty) at `t`
     /// by a level's own faster method, if it has one for this `t`; `None`
@@ -127,6 +139,38 @@ fn split_u64(k: u64) -> (f64, f64) {
     let rest = i128::from(k) - hi as u128 as i128;
     // `|rest| ≤ 2¹⁰`: exact.
     (hi, rest as f64)
+}
+
+/// `a·b = x + y` exactly, `x = fl(a·b)`, where [`two_product`] is exact
+/// for the finite `a`, `b` (both below `2⁹⁹⁶` and the product finite and
+/// at least `2⁻⁹⁶⁸` in magnitude), or a factor is 0 or 1; else `None`.
+/// From `2¹⁰²³` up the split's partial product `a_hi·b_hi` can overflow
+/// although `a·b` doesn't (it exceeds `|a·b|` by up to a factor `1 +
+/// 2⁻²⁵`), so there the product is formed of `a/2` and doubled, both
+/// exact (`a ≥ 2²⁷` then, as `|b| < 2⁹⁹⁶`).
+fn exact_product(a: f64, b: f64) -> Option<(f64, f64)> {
+    // 2⁹⁹⁶, 2¹⁰²³ and 2⁻⁹⁶⁸.
+    const BIG: f64 = f64::from_bits(2019 << 52);
+    const TOP: f64 = f64::from_bits(2046 << 52);
+    const SMALL: f64 = f64::from_bits(55 << 52);
+    if !(a.is_finite() && b.is_finite()) {
+        return None;
+    }
+    if a == 0.0 || b == 0.0 || a == 1.0 || b == 1.0 {
+        return Some((a * b, 0.0));
+    }
+    if a.abs() >= BIG || b.abs() >= BIG {
+        return None;
+    }
+    let x = a * b;
+    if !x.is_finite() || x.abs() < SMALL {
+        return None;
+    }
+    if x.abs() < TOP {
+        return Some(two_product(a, b));
+    }
+    let (x, y) = two_product(0.5 * a, b);
+    Some((2.0 * x, 2.0 * y))
 }
 
 const UNBOUNDED: [f64; 2] = [f64::NEG_INFINITY, f64::INFINITY];
@@ -197,6 +241,16 @@ impl Scalar for Bounded<f64> {
     #[inline]
     fn from_f64(x: f64, _: &Self) -> Self {
         Bounded::exact(x)
+    }
+
+    /// `fl(a·b)` with the exact remainder's magnitude as its rounding
+    /// error (none when it is zero).
+    fn product(a: f64, b: f64, _: &Self) -> Self {
+        match exact_product(a, b) {
+            Some((x, 0.0)) => Bounded::exact(x),
+            Some((x, y)) => Bounded::new(x, 0.0, y.abs()),
+            None => Bounded::exact(a) * Bounded::exact(b),
+        }
     }
 
     /// For an exact `t` in `[0, 1]`: de Casteljau in plain floats with
@@ -316,6 +370,14 @@ impl Scalar for Bounded<Dd> {
     fn from_f64(x: f64, _: &Self) -> Self {
         Bounded::exact(Dd::from_f64(x))
     }
+
+    /// The exact pair of [`two_product`] as the value.
+    fn product(a: f64, b: f64, _: &Self) -> Self {
+        match exact_product(a, b) {
+            Some((x, y)) => Bounded::exact(Dd::sum(x, y)),
+            None => Bounded::exact(Dd::from_f64(a)) * Bounded::exact(Dd::from_f64(b)),
+        }
+    }
 }
 
 impl<B: BigF> Scalar for Bounded<B> {
@@ -395,6 +457,18 @@ impl<B: BigF> Scalar for Bounded<B> {
     fn from_f64(x: f64, like: &Self) -> Self {
         Bounded::exact(B::from_f64(x, like.v.width()))
     }
+
+    /// Exact: every width holds the 106 bits of a product of `f64`s (an
+    /// out-of-range result, which the exponent range makes unreachable
+    /// for finite factors, stays uncertified).
+    fn product(a: f64, b: f64, like: &Self) -> Self {
+        let w = like.v.width();
+        let r = B::from_f64(a, w).mul(&B::from_f64(b, w), w);
+        match r.rounding {
+            Rounding::Exact if r.v.is_finite() => Bounded::exact(r.v),
+            _ => &Bounded::exact(B::from_f64(a, w)) * &Bounded::exact(B::from_f64(b, w)),
+        }
+    }
 }
 
 impl Scalar for Rational {
@@ -456,5 +530,10 @@ impl Scalar for Rational {
     /// Panics for a value that isn't finite.
     fn from_f64(x: f64, _: &Self) -> Self {
         Rational::try_from(x).expect("a finite f64")
+    }
+
+    /// Panics for a factor that isn't finite.
+    fn product(a: f64, b: f64, like: &Self) -> Self {
+        Self::from_f64(a, like) * Self::from_f64(b, like)
     }
 }

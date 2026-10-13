@@ -1,7 +1,7 @@
 //! Seam bounds against exact rational deviations: random p-curves on
 //! planes, cylinders and spheres at several lattice levels (across and
-//! along tile lines, weights out to `1/64` and `64`, near the poles, at
-//! far cells), curves with their own knots (one ulp off the p-curve's,
+//! along tile lines, weights out to `1/64` and `64` at every control
+//! point, ends and knots included, near the poles, at far cells), curves with their own knots (one ulp off the p-curve's,
 //! or extra ones) and spans of one ulp, each bound checked against the
 //! deviation sampled densely and maximised locally.
 
@@ -51,14 +51,15 @@ fn span_at(knots: &[f64], t: &Q) -> (usize, Q) {
 fn deviation_sq(s: &Surface, c: &Curve3D, p: &PCurve, t: &Q) -> Q {
     let (kc, sc) = span_at(c.knots(), t);
     let (kp, sp) = span_at(p.knots(), t);
-    let cs = HomCurve::<Q, 3>::new(
-        c.spans()[kc]
-            .iter()
-            .map(|h| ([q(h[0]), q(h[1]), q(h[2])], q(h[3]))),
+    let zero = Q::from(0u32);
+    let cs = HomCurve::<Q, 3>::from_affine(
+        c.spans()[kc].iter().map(|h| ([h[0], h[1], h[2]], h[3])),
+        &zero,
     )
     .unwrap();
     let ps =
-        HomCurve::<Q, 2>::new(p.spans()[kp].iter().map(|h| ([q(h[0]), q(h[1])], q(h[2])))).unwrap();
+        HomCurve::<Q, 2>::from_affine(p.spans()[kp].iter().map(|h| ([h[0], h[1]], h[2])), &zero)
+            .unwrap();
     let x = cs.eval(&sc);
     let [u, v] = ps.eval(&sp);
     let rect = s.rect();
@@ -205,11 +206,10 @@ fn surface(rng: &mut Rng) -> Surface {
 
 /// A weight: 1, a power of two out to the range's ends, or any value in
 /// the range.
-fn weight(rng: &mut Rng, exact: bool) -> f64 {
+fn weight(rng: &mut Rng) -> f64 {
     match rng.next_u64() % 4 {
         0 => 1.0,
         1 => [1.0 / 64.0, 64.0, 0.5, 2.0][(rng.next_u64() % 4) as usize],
-        _ if exact => (0..rng.next_u64() % 13).fold(1.0 / 64.0, |w, _| w * 2.0),
         _ => rng.log_range(1.0 / 64.0, 64.0),
     }
 }
@@ -260,19 +260,13 @@ fn pcurve(rng: &mut Rng, s: &Surface) -> PCurve {
         .map(|k| {
             let (a, b) = (pts[k], pts[k + 1]);
             let (i, j) = tiles[k];
-            let (wa, wb) = (weight(rng, true), weight(rng, true));
-            let on_line = along.contains(&k);
-            let wm = weight(rng, on_line);
-            let m = if on_line {
+            let [wa, wm, wb] = [(); 3].map(|_| weight(rng));
+            let m = if along.contains(&k) {
                 [i as f64, j as f64 + rng.unit()]
             } else {
                 inside(rng, (i, j))
             };
-            [
-                [a[0] * wa, a[1] * wa, wa],
-                [m[0] * wm, m[1] * wm, wm],
-                [b[0] * wb, b[1] * wb, wb],
-            ]
+            [[a[0], a[1], wa], [m[0], m[1], wm], [b[0], b[1], wb]]
         })
         .collect();
     let mut knots = vec![rng.range(-2.0, 2.0)];
@@ -289,8 +283,8 @@ fn pcurve(rng: &mut Rng, s: &Surface) -> PCurve {
             last + step
         });
     }
-    // Inner end points with power-of-two weights project to the same
-    // values from both sides.
+    // Consecutive spans share their joining control point whatever its
+    // weights on either side.
     PCurve::new(spans, knots).unwrap()
 }
 
@@ -348,14 +342,14 @@ fn curve(rng: &mut Rng, s: &Surface, p: &PCurve, wiggle: f64) -> Curve3D {
         .map(|(k, w)| {
             let (a, b) = (ends[k], ends[k + 1]);
             let mid = at(0.5 * (w[0] + w[1]));
-            let wm = weight(rng, false);
+            let [wa, wm, wb] = [(); 3].map(|_| weight(rng));
             let m: [f64; 3] = std::array::from_fn(|c| {
                 2.0 * mid[c] - 0.5 * (a[c] + b[c]) + rng.range(-wiggle, wiggle)
             });
             [
-                [a[0], a[1], a[2], 1.0],
-                [m[0] * wm, m[1] * wm, m[2] * wm, wm],
-                [b[0], b[1], b[2], 1.0],
+                [a[0], a[1], a[2], wa],
+                [m[0], m[1], m[2], wm],
+                [b[0], b[1], b[2], wb],
             ]
         })
         .collect();

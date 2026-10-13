@@ -1,11 +1,17 @@
 //! The store on a half cylinder (a closed solid: the cylinder's 180°
 //! face, the plane through its axis and two half-disc caps), with exact
-//! and perturbed p-curves: the ribbon joins hold, each fault is found
-//! with its entity, and every seam bound holds against exact rational
-//! evaluation.
+//! and perturbed p-curves, and on a half disc whose arcs have weights
+//! other than 1 at their ends and knots: the ribbon joins hold, the
+//! curves end at their vertices exactly at every level, each fault is
+//! found with its entity, and every seam bound holds against exact
+//! rational evaluation.
 
 use malachite::Rational as Q;
-use varde_decide::bezier::HomCurve;
+use malachite::base::num::arithmetic::traits::Abs;
+use varde_decide::bezier::{HomCurve, Poly, Scalar};
+use varde_decide::num::bigf::{Big, BigF, Width};
+use varde_decide::num::bounded::Bounded;
+use varde_decide::num::dd::Dd;
 use varde_testkit::rng::Rng;
 
 use super::*;
@@ -35,14 +41,15 @@ fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
     a.map(|x| x * k)
 }
 
-fn hom(p: [f64; 3], w: f64) -> [f64; 4] {
-    [p[0] * w, p[1] * w, p[2] * w, w]
+/// The control point `p` with weight `w`, stored affine.
+fn pt(p: [f64; 3], w: f64) -> [f64; 4] {
+    [p[0], p[1], p[2], w]
 }
 
 /// A line span from `a` to `b`.
 fn line(a: [f64; 3], b: [f64; 3]) -> Span3 {
     let m = scale(add(a, b), 0.5);
-    [hom(a, 1.0), hom(m, 1.0), hom(b, 1.0)]
+    [pt(a, 1.0), pt(m, 1.0), pt(b, 1.0)]
 }
 
 /// The UV line span from `a` to `b`.
@@ -52,7 +59,8 @@ fn uv_line(a: [f64; 2], b: [f64; 2]) -> Span2 {
 }
 
 /// The p-curve on a plane of `c`'s spans: each control point mapped by
-/// the plane's frame, `(w·x − w·o)·axis / CELL + w/2`, its weight kept.
+/// the plane's frame, `(x − o)·axis / CELL + 1/2`, its weight kept (the
+/// same point maps to the same bits on every curve through it).
 fn on_plane(lat: &Lattice, c: &Curve3D) -> PCurve {
     let (o, [u, v, _]) = (lat.origin(), lat.axes());
     let spans = c
@@ -60,11 +68,9 @@ fn on_plane(lat: &Lattice, c: &Curve3D) -> PCurve {
         .iter()
         .map(|s| {
             s.map(|h| {
-                let w = h[3];
-                let d = [h[0] - w * o[0], h[1] - w * o[1], h[2] - w * o[2]];
-                let along =
-                    |a: [f64; 3]| (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) / CELL + w * 0.5;
-                [along(u), along(v), w]
+                let d = [h[0] - o[0], h[1] - o[1], h[2] - o[2]];
+                let along = |a: [f64; 3]| (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) / CELL + 0.5;
+                [along(u), along(v), h[3]]
             })
         })
         .collect();
@@ -115,9 +121,9 @@ fn half_cylinder(cyl: [PCurve; 4]) -> Fixture {
     let arc = |z: f64| {
         let quarter = |from: [f64; 3], to: [f64; 3]| -> Span3 {
             [
-                hom(at(from, z), 1.0),
-                hom(add(at(add(from, to), 0.0), scale(a, z)), ROOT_HALF),
-                hom(at(to, z), 1.0),
+                pt(at(from, z), 1.0),
+                pt(add(at(add(from, to), 0.0), scale(a, z)), ROOT_HALF),
+                pt(at(to, z), 1.0),
             ]
         };
         Curve3D::new(vec![quarter(e1, e2), quarter(e2, m1)], vec![0.0, 1.0, 2.0]).unwrap()
@@ -203,21 +209,22 @@ fn deviation_sq(b: &Brep, c: CoedgeId, t: &Q) -> Q {
     };
     let (kc, sc) = span_at(curve.knots());
     let (kp, sp) = span_at(p.knots());
-    let cs = HomCurve::<Q, 3>::new(
-        curve.spans()[kc]
-            .iter()
-            .map(|h| ([q(h[0]), q(h[1]), q(h[2])], q(h[3]))),
+    let zero = Q::from(0u32);
+    let cs = HomCurve::<Q, 3>::from_affine(
+        curve.spans()[kc].iter().map(|h| ([h[0], h[1], h[2]], h[3])),
+        &zero,
     )
     .unwrap();
     let ps =
-        HomCurve::<Q, 2>::new(p.spans()[kp].iter().map(|h| ([q(h[0]), q(h[1])], q(h[2])))).unwrap();
+        HomCurve::<Q, 2>::from_affine(p.spans()[kp].iter().map(|h| ([h[0], h[1]], h[2])), &zero)
+            .unwrap();
     let x = cs.eval(&sc);
     let [u, v] = ps.eval(&sp);
     // The span's tile, by its middle control point.
     let mid = p.spans()[kp][1];
     let rect = surface.rect();
-    let i = ((mid[0] / mid[2]).floor() as i64).clamp(rect.u.start, rect.u.end - 1);
-    let j = ((mid[1] / mid[2]).floor() as i64).clamp(rect.v.start, rect.v.end - 1);
+    let i = (mid[0].floor() as i64).clamp(rect.u.start, rect.u.end - 1);
+    let j = (mid[1].floor() as i64).clamp(rect.v.start, rect.v.end - 1);
     let tile = surface.tile(i, j).unwrap();
     let y = tile
         .patch_at(&Q::from(0u32))
@@ -524,8 +531,8 @@ fn add_loop_refuses_bad_coedges_and_adds_nothing() {
 #[test]
 fn chains_join_bit_for_bit() {
     let a = [[0.0, 0.0, 1.0], [0.5, 0.0, 1.0], [1.0, 0.0, 1.0]];
-    // The same end point with weight 2: (2, 0, 2) projects to (1, 0).
-    let b = [[2.0, 0.0, 2.0], [3.0, 1.0, 2.0], [2.0, 2.0, 1.0]];
+    // The same point at the knot with another weight, 3.
+    let b = [[1.0, 0.0, 3.0], [1.5, 0.5, 2.0], [2.0, 2.0, 1.0]];
     assert!(PCurve::new(vec![a, b], vec![0.0, 1.0, 2.0]).is_ok());
     let mut c = b;
     c[0][1] = -0.0;
@@ -592,33 +599,195 @@ fn evaluation_follows_the_chains_and_the_tiles() {
     assert!(s.eval([2.0, 1.0]).is_some());
 }
 
-#[test]
-fn chains_refuse_end_points_past_the_range() {
-    // Two different end points, `1e307 · 64` and `2e307 · 64`, both past
-    // the `f64` range: projected, both are `+∞`, the same bits, yet the
-    // spans don't meet.
-    let w = 1.0 / 64.0;
-    let a = [[0.0, 0.0, 1.0], [0.5, 0.0, 1.0], [1e307, 0.0, w]];
-    let b = [[2e307, 0.0, w], [1.0, 1.0, 1.0], [2.0, 2.0, 1.0]];
-    assert_eq!(
-        PCurve::new(vec![a, b], vec![0.0, 1.0, 2.0]),
-        Err(CurveError::NotFinite { span: 0 })
-    );
-    // One span whose end point is past the range has no point at its
-    // last knot.
-    assert_eq!(
-        PCurve::new(vec![a], vec![0.0, 1.0]),
-        Err(CurveError::NotFinite { span: 0 })
-    );
-    let s = [
-        [0.0, 0.0, 0.0, 1.0],
-        [1.0, 0.0, 0.0, 1.0],
-        [0.0, -1e307, 0.0, w],
+/// A half disc of radius `R` in the plane `z = 0`, both sides, its arc
+/// chains with weights other than 1 at their ends and knots: the first
+/// quarter as the two halves of its split at ½ (the split point's weight
+/// `½ + √2/4 ≈ 0.854`; the second half scaled by 3, so the knot's
+/// weights differ), the second quarter reparametrised to end weights 3
+/// and ⅓ (`W(0) ≠ W(1)`); and the diameter as two lines through the
+/// centre.
+fn weighted_half_disc() -> Brep {
+    let c = 0.5 + std::f64::consts::SQRT_2 / 4.0;
+    let tan = R * (std::f64::consts::SQRT_2 - 1.0);
+    let s = R * ROOT_HALF;
+    let (a, d, e, o) = ([R, 0.0, 0.0], [0.0, R, 0.0], [-R, 0.0, 0.0], [0.0; 3]);
+    let m = [s, s, 0.0];
+    let first = Curve3D::new(
+        vec![
+            [pt(a, 1.0), pt([R, tan, 0.0], c), pt(m, c)],
+            [pt(m, 3.0 * c), pt([tan, R, 0.0], 3.0 * c), pt(d, 3.0)],
+        ],
+        vec![0.0, 0.5, 1.0],
+    )
+    .unwrap();
+    let second = Curve3D::new(
+        vec![[pt(d, 3.0), pt([-R, R, 0.0], ROOT_HALF), pt(e, 1.0 / 3.0)]],
+        vec![1.0, 2.0],
+    )
+    .unwrap();
+    let mut b = Brep::new();
+    let lat = Lattice::new(PlaneKey::new([0.0, 0.0, 1.0], [0.0; 3]).unwrap().into()).unwrap();
+    let surf = b
+        .add_surface(Surface::new(lat.clone(), lat.half(0).unwrap()).unwrap())
+        .unwrap();
+    let v = [a, d, e, o].map(|p| b.add_vert(p).unwrap());
+    let curves = [
+        (first, [0.0, 1.0], (0, 1)),
+        (second, [1.0, 2.0], (1, 2)),
+        (
+            Curve3D::new(vec![line(e, o)], vec![0.0, 1.0]).unwrap(),
+            [0.0, 1.0],
+            (2, 3),
+        ),
+        (
+            Curve3D::new(vec![line(a, o)], vec![0.0, 1.0]).unwrap(),
+            [0.0, 1.0],
+            (0, 3),
+        ),
     ];
-    assert_eq!(
-        Curve3D::new(vec![s], vec![0.0, 1.0]),
-        Err(CurveError::NotFinite { span: 0 })
+    let mut edges = Vec::new();
+    for (curve, t, (s, e)) in curves {
+        let id = b.add_curve(curve).unwrap();
+        edges.push(b.add_edge(id, t, v[s], v[e]).unwrap());
+    }
+    // a → d → e → o → a, on top; the other way below.
+    let ways = [false, false, false, true];
+    for flipped in [false, true] {
+        let f = b.add_face(surf, flipped).unwrap();
+        let mut uses: Vec<_> = edges
+            .iter()
+            .zip(ways)
+            .map(|(&e, r)| (e, r != flipped, on_plane(&lat, b.curve(e))))
+            .collect();
+        if flipped {
+            uses.reverse();
+        }
+        b.add_loop(f, true, uses).unwrap();
+    }
+    b
+}
+
+/// Checks that each knot's point of `c` at `like`'s level is its control
+/// point, exactly, with no error.
+fn knots_exact<S: Scalar>(c: &Curve3D, like: &S, bits: impl Fn(&S) -> Option<f64>) {
+    for (k, &t) in c.knots().iter().enumerate() {
+        let x = c.eval_at(t, like).unwrap();
+        let p = c.knot_point(k).unwrap();
+        for m in 0..3 {
+            assert_eq!(
+                bits(&x[m]).map(f64::to_bits),
+                Some(p[m].to_bits()),
+                "knot {k}"
+            );
+        }
+    }
+}
+
+#[test]
+fn weighted_ends_are_their_vertices_bit_for_bit() {
+    let b = weighted_half_disc();
+    assert_eq!(b.check_ribbons(), Ok(()));
+    let zero = Q::from(0u32);
+    for e in 0..b.edge_count() {
+        let e = EdgeId(e as u32);
+        let c = b.curve(e);
+        let [v0, v1] = b.ends(e);
+        let [t0, t1] = b.t_range(e);
+        // The stored curve itself ends at its vertices, exactly: in
+        // rationals, the span's point at its ends.
+        for (t, v) in [(t0, v0), (t1, v1)] {
+            let k = c.knots().iter().position(|&k| k == t).unwrap();
+            let x = match c.span_at(k, &zero) {
+                Some(h) => h.eval(&Q::from(0u32)),
+                None => c.span_at(k - 1, &zero).unwrap().eval(&Q::from(1u32)),
+            };
+            assert_eq!(x, b.pos(v).map(q), "{e:?}");
+        }
+        // Inner knots too, from both spans.
+        for k in 1..c.spans().len() {
+            let p = c.knot_point(k).unwrap().map(q);
+            assert_eq!(c.span_at(k - 1, &zero).unwrap().eval(&Q::from(1u32)), p);
+            assert_eq!(c.span_at(k, &zero).unwrap().eval(&Q::from(0u32)), p);
+        }
+        // At every level the point at a knot is the control point, with
+        // no error.
+        let exact = |x: &Bounded<f64>| (x.err() == 0.0).then_some(x.v);
+        knots_exact(c, &Bounded::exact(0.0), exact);
+        let dd = |x: &Bounded<Dd>| (x.err() == 0.0 && x.v.lo() == 0.0).then_some(x.v.hi());
+        knots_exact(c, &Bounded::exact(Dd::from_f64(0.0)), dd);
+        let big = Bounded::exact(Big::from_f64(0.0, Width::MIN));
+        knots_exact(c, &big, |x: &Bounded<Big>| {
+            (x.err() == 0.0).then(|| x.v.to_f64())
+        });
+    }
+    // Weights other than powers of two at the ends: projecting the
+    // products `w·x`, as a homogeneous store would, misses the vertex.
+    let missed = (0..b.edge_count()).any(|e| {
+        let c = b.curve(EdgeId(e as u32));
+        c.spans().iter().any(|s| {
+            [s[0], s[2]]
+                .iter()
+                .any(|p| (0..3).any(|m| (p[m] * p[3]) / p[3] != p[m]))
+        })
+    });
+    assert!(missed);
+    assert_bounds_hold(&b, 8);
+    // Exact pairs: the bounds are the first level's rounding on the
+    // plane's one tile, 4 km across, scaled up by the spread of the
+    // weights (about 2·10⁻⁴ mm for the quarter with end weights 3 and ⅓,
+    // below 10⁻⁸ mm for the rest).
+    for c in 0..b.coedge_count() {
+        let c = CoedgeId(c as u32);
+        let most = if b.edge(c) == EdgeId(1) { 1e-3 } else { 1e-8 };
+        assert!(b.seam_bound(c) < most, "{c:?}: {}", b.seam_bound(c));
+    }
+}
+
+#[test]
+fn weight_one_spans_are_exact_at_every_level() {
+    let line = Curve3D::new(
+        vec![line([0.1, -0.2, 1e3 / 3.0], [7.0, 1.0 / 3.0, -2.5])],
+        vec![0.0, 1.0],
+    )
+    .unwrap();
+    let exact =
+        |c: &[Poly<Bounded<f64>>]| c.iter().all(|p| p.coefs().iter().all(|x| x.err() == 0.0));
+    let h = line.span(0).unwrap();
+    assert!(exact(h.coords()) && exact(std::slice::from_ref(h.weights())));
+    let h = line.span_at(0, &Bounded::exact(Dd::from_f64(0.0))).unwrap();
+    assert!(
+        h.coords()
+            .iter()
+            .chain([h.weights()])
+            .all(|p| p.coefs().iter().all(|x| x.err() == 0.0))
     );
+    let h = line
+        .span_at(0, &Bounded::exact(Big::from_f64(0.0, Width::MIN)))
+        .unwrap();
+    assert!(
+        h.coords()
+            .iter()
+            .chain([h.weights()])
+            .all(|p| p.coefs().iter().all(|x| x.err() == 0.0))
+    );
+    // A weight that isn't 1 rounds its products at the first level, with
+    // the rounding carried; from double-double up they are exact.
+    let w = 1.0 / 3.0;
+    let c = Curve3D::new(
+        vec![[pt([0.1, 0.0, 0.0], w), pt([0.0; 3], 1.0), pt([1.0; 3], 1.0)]],
+        vec![0.0, 1.0],
+    )
+    .unwrap();
+    let x = c.span(0).unwrap().coords()[0].coefs()[0];
+    assert!(x.err() > 0.0);
+    assert!((q(x.v) - q(0.1) * q(w)).abs() <= q(x.err()));
+    let x = c
+        .span_at(0, &Bounded::exact(Dd::from_f64(0.0)))
+        .unwrap()
+        .coords()[0]
+        .coefs()[0];
+    assert_eq!(x.err(), 0.0);
+    assert_eq!(q(x.v.hi()) + q(x.v.lo()), q(0.1) * q(w));
 }
 
 /// A full circle of radius `r` about the origin in the plane `z = 0`:
@@ -631,9 +800,9 @@ fn circle(r: f64) -> Curve3D {
         .map(|w| {
             let ((ax, ay), (bx, by)) = (w[0], w[1]);
             [
-                hom(p(ax, ay), 1.0),
-                hom(p(ax + bx, ay + by), ROOT_HALF),
-                hom(p(bx, by), 1.0),
+                pt(p(ax, ay), 1.0),
+                pt(p(ax + bx, ay + by), ROOT_HALF),
+                pt(p(bx, by), 1.0),
             ]
         })
         .collect();

@@ -28,16 +28,23 @@
 //! `t` on both, at most the seam bound wide. For the ribbons to close the
 //! face onto its edges' curves exactly, the joins must hold **bit for
 //! bit** ([`check_ribbons`](Brep::check_ribbons)):
-//! - (a) each edge's curve, at the ends of its `t_range`, is its
-//!   vertices' `pos`, and the edge is canonical;
+//! - (a) each edge's `t_range` ends are knots of its curve, and the
+//!   curve's control points there are its vertices' `pos`; the edge is
+//!   canonical;
 //! - (b) each coedge ends at the vertex its next coedge starts at, and
-//!   its p-curve ends where the next coedge's starts, in the loop's
-//!   direction (with the edges' ends this makes neighbouring ribbons share
-//!   their side at the corner);
-//! - (e) each coedge's p-curve runs over its edge's `t_range`.
+//!   its p-curve's end control point is the next coedge's p-curve's start
+//!   control point, in the loop's direction (with the edges' ends this
+//!   makes neighbouring ribbons share their side at the corner);
+//! - (e) each coedge's p-curve runs over its edge's `t_range`;
+//! - (f) consecutive spans of a curve or p-curve share their joining
+//!   control point: a chain holds it from its construction
+//!   ([`crate::geom::curve`]), so it isn't tested again.
 //!
-//! Points at knots are the projected end control points
-//! ([`crate::geom::curve`]), compared bit for bit (`+0` and `−0` differ).
+//! Control points are stored affine with their weights, and a span passes
+//! exactly through its end control points for any weights: so the
+//! compared points are the curves' true points at the ends, and the stored
+//! curve ends exactly at its vertices. They are compared bit for bit
+//! (`+0` and `−0` differ).
 //!
 //! **Building.** Surfaces, curves, vertices, edges and faces are added
 //! one by one, each refused if it names an entity not there; a loop is
@@ -89,12 +96,13 @@ pub enum CoedgeError {
 /// the coedges, ids ascending.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RibbonFault {
-    /// (a): the edge's curve doesn't end at its vertices, or the edge
-    /// isn't canonical.
+    /// (a): the edge's curve's control points at its `t_range` ends
+    /// aren't its vertices' positions, or the edge isn't canonical.
     EdgeEnds(EdgeId),
     /// (b): the coedge doesn't end at the vertex its next starts at.
     Corner(CoedgeId),
-    /// (b): the coedge's p-curve doesn't end where its next's starts.
+    /// (b): the coedge's p-curve's end control point isn't its next's
+    /// start control point.
     Join(CoedgeId),
     /// (e): the coedge's p-curve doesn't run over its edge's `t_range`.
     SameT(CoedgeId),
@@ -435,8 +443,8 @@ impl Brep {
     }
 
     /// The UV point where coedge `c` ends (`end`) or starts, in its own
-    /// direction: its p-curve's last or first knot point, swapped when
-    /// reversed.
+    /// direction: its p-curve's last or first control point (the true
+    /// p-curve's end point), swapped when reversed.
     pub fn coedge_uv(&self, c: CoedgeId, end: bool) -> Option<[f64; 2]> {
         let p = self.coedges.pcurve.get(c.index())?;
         let last = end != self.coedges.reversed[c.index()];

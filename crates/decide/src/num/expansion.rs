@@ -94,7 +94,9 @@
 //! sum can overflow although the result is finite: `[1.5·2¹⁰²³] − [2¹⁰²³ −
 //! 2⁹⁷⁰, 2¹⁰²³]` gives NaNs, not `−2¹⁰²² + 2⁹⁷⁰`. A product `a·b` is exact
 //! when `|a|, |b| < 2⁹⁹⁶` (so the Dekker split doesn't overflow), the
-//! product is finite, and the exponents satisfy `e_a + e_b ≥ −970` (`a =
+//! product is below `2¹⁰²³` in magnitude (the split's partial product
+//! `a_hi·b_hi` exceeds `|a·b|` by up to a factor `1 + 2⁻²⁵`, and overflows
+//! for some finite products above), and the exponents satisfy `e_a + e_b ≥ −970` (`a =
 //! m·2^e_a`, `1 ≤ |m| < 2`), as `ulp(a)·ulp(b) ≥ 2⁻¹⁰⁷⁴` then and every
 //! partial product and error term is a representable multiple of it; `|a·b|
 //! ≥ 2⁻⁹⁶⁸` is enough. The same argument holds with each factor's lowest

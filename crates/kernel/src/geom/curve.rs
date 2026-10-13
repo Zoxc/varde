@@ -2,29 +2,37 @@
 //! its face's global UV ([`PCurve`]), each a chain of rational quadratic
 //! spans over a parameter `t` that runs through the chain's knots.
 //!
-//! **Storage.** A span is its three homogeneous control points, `(w·x,
-//! w·y, w·z, w)` in space and `(w·u, w·v, w)` in UV, exactly as stored.
-//! Span `k` covers `[knots[k], knots[k + 1]]` of `t`, mapped linearly to
-//! its own `[0, 1]`. A chain is refused unless every value is finite,
-//! every weight lies in `[MIN_WEIGHT, MAX_WEIGHT]` = `[1/64, 64]`, each
-//! span's end points projected (below) are finite too, the knots (one
-//! more than the spans) increase strictly, and consecutive
-//! spans join **bit for bit**: the end point of span `k` and the start
-//! point of span `k + 1` are the same `f64`s.
+//! **Storage.** A span is its three control points **affine** with their
+//! weights, `(x, y, z, w)` in space and `(u, v, w)` in UV (a point and
+//! its weight, the NURBS layout), never the products `w·x`. The span is
+//! `Σ Bᵢ·wᵢ·xᵢ / Σ Bᵢ·wᵢ`. Span `k` covers `[knots[k], knots[k + 1]]` of
+//! `t`, mapped linearly to its own `[0, 1]`. A chain is refused unless
+//! every value is finite, every weight lies in `[MIN_WEIGHT, MAX_WEIGHT]`
+//! = `[1/64, 64]`, the knots (one more than the spans) increase strictly,
+//! and consecutive spans join **bit for bit**: the last control point of
+//! span `k` and the first of span `k + 1` are the same point, the same
+//! `f64`s (their weights may differ).
 //!
-//! **Points at knots.** The point of a span's end is its end control
-//! point projected, `w·x / w` rounded once per coordinate (exact for a
-//! weight of 1). Those values are the chain's points at its knots
-//! ([`Curve3D::knot_point`], [`PCurve::knot_point`]), which joins compare
-//! bit for bit: between spans here, between an edge's curve and its
-//! vertices, between consecutive coedges' p-curves. Certified evaluation
-//! at an end gives the same value, the projection's rounding its error.
+//! **Points at knots.** For any positive weights a span passes exactly
+//! through its first control point at its start and its last at its
+//! end. So the chain's point at a knot is a control point, exactly, with
+//! nothing projected or rounded ([`Curve3D::knot_point`],
+//! [`PCurve::knot_point`]): joins compare those bit for bit, between
+//! spans here, between an edge's curve and its vertices, between
+//! consecutive coedges' p-curves. Certified evaluation at a knot gives
+//! that point with no error.
+//!
+//! **Levels.** A computation forms a span's homogeneous coefficients
+//! `(w·x, w)` at its precision level ([`Curve3D::span_at`],
+//! [`HomCurve::from_affine`]): exact from double-double up; at the first
+//! level rounded once per coefficient, the rounding carried, and exact
+//! where the product is a float (a weight of 1, as on lines).
 //!
 //! A p-curve so far is Q spans only, rational quadratics in global UV;
 //! linear and iso spans are Q spans with their middle control point on
 //! the chord.
 
-use varde_decide::bezier::HomCurve;
+use varde_decide::bezier::{HomCurve, Scalar};
 use varde_decide::num::bounded::Bounded;
 
 /// The least weight of a span's control point.
@@ -33,10 +41,12 @@ pub const MIN_WEIGHT: f64 = 1.0 / 64.0;
 /// The greatest weight of a span's control point.
 pub const MAX_WEIGHT: f64 = 64.0;
 
-/// A space span: three homogeneous control points `(w·x, w·y, w·z, w)`.
+/// A space span: three affine control points with their weights,
+/// `(x, y, z, w)`.
 pub type Span3 = [[f64; 4]; 3];
 
-/// A UV span: three homogeneous control points `(w·u, w·v, w)`.
+/// A UV span: three affine control points with their weights,
+/// `(u, v, w)`.
 pub type Span2 = [[f64; 3]; 3];
 
 /// Why a chain can't be made.
@@ -44,14 +54,14 @@ pub type Span2 = [[f64; 3]; 3];
 pub enum CurveError {
     /// No spans, or not one knot more than spans.
     Shape,
-    /// A value of span `span`, or one of its end points projected, is
-    /// not finite.
+    /// A value of span `span` is not finite.
     NotFinite { span: usize },
     /// A weight of span `span` lies outside `[MIN_WEIGHT, MAX_WEIGHT]`.
     Weight { span: usize },
     /// A knot is not finite, or knot `knot` is not above the one before.
     Knots { knot: usize },
-    /// Span `span` doesn't start where span `span − 1` ends, bit for bit.
+    /// Span `span`'s first control point isn't span `span − 1`'s last,
+    /// bit for bit.
     Join { span: usize },
 }
 
@@ -91,24 +101,37 @@ impl Curve3D {
         &self.knots
     }
 
-    /// The point at knot `k` (module docs), `None` past the last knot.
+    /// The point at knot `k`: the control point there (module docs),
+    /// `None` past the last knot.
     pub fn knot_point(&self, k: usize) -> Option<[f64; 3]> {
-        let p = knot_hom(&self.spans, k)?;
-        Some([p[0] / p[3], p[1] / p[3], p[2] / p[3]])
+        let p = knot_control(&self.spans, k)?;
+        Some([p[0], p[1], p[2]])
     }
 
-    /// Span `k` at the first level, the stored values exact.
+    /// Span `k` at the first level ([`span_at`](Self::span_at)).
     pub fn span(&self, k: usize) -> Option<HomCurve<Bounded<f64>, 3>> {
-        self.spans.get(k).map(hom3)
+        self.span_at(k, &Bounded::exact(0.0))
     }
 
-    /// The point at `t`, certified, `None` outside the knots' range: on
-    /// the span holding `t` (the lower one at a knot), at the local
-    /// parameter `(t − knots[k]) / (knots[k + 1] − knots[k])`, exactly 0
-    /// or 1 at the span's ends.
+    /// Span `k` in homogeneous form at `like`'s level (and width), its
+    /// coefficients `(w·x, w)` formed there ([`HomCurve::from_affine`]).
+    pub fn span_at<S: Scalar>(&self, k: usize, like: &S) -> Option<HomCurve<S, 3>> {
+        self.spans.get(k).map(|s| hom(s, like))
+    }
+
+    /// The point at `t`, certified, at the first level
+    /// ([`eval_at`](Self::eval_at)).
     pub fn eval(&self, t: f64) -> Option<[Bounded<f64>; 3]> {
-        let (k, s) = locate(&self.knots, t)?;
-        Some(hom3(&self.spans[k]).eval(&s))
+        self.eval_at(t, &Bounded::exact(0.0))
+    }
+
+    /// The point at `t` at `like`'s level, certified, `None` outside the
+    /// knots' range: at a knot its control point exactly (the lower span's
+    /// end at an inner knot, the same point); else on the span holding
+    /// `t`, at the local parameter `(t − knots[k]) / (knots[k + 1] −
+    /// knots[k])`.
+    pub fn eval_at<S: Scalar>(&self, t: f64, like: &S) -> Option<[S; 3]> {
+        eval_chain(&self.spans, &self.knots, t, like)
     }
 }
 
@@ -121,8 +144,8 @@ impl PCurve {
     }
 
     /// This p-curve with each span's middle control point moved by its
-    /// `offsets` entry in UV, `(w·u + du·w, w·v + dv·w, w)` in `f64`, the
-    /// end control points kept: the curve moves off
+    /// `offsets` entry in UV, `(u + du, v + dv, w)` in `f64`, the end
+    /// control points kept: the curve moves off
     /// its image by up to about the offsets times the surface's speed,
     /// while its ends, and so its joins, stay to the bit. For tests that
     /// need ribbons of a given width. `Shape` unless there is one offset
@@ -137,9 +160,8 @@ impl PCurve {
             .zip(offsets)
             .map(|(s, [du, dv])| {
                 let mut s = *s;
-                let w = s[1][2];
-                s[1][0] += du * w;
-                s[1][1] += dv * w;
+                s[1][0] += du;
+                s[1][1] += dv;
                 s
             })
             .collect();
@@ -158,55 +180,81 @@ impl PCurve {
         &self.knots
     }
 
-    /// The UV point at knot `k` (module docs), `None` past the last knot.
+    /// The UV point at knot `k`: the control point there (module docs),
+    /// `None` past the last knot.
     pub fn knot_point(&self, k: usize) -> Option<[f64; 2]> {
-        let p = knot_hom(&self.spans, k)?;
-        Some([p[0] / p[2], p[1] / p[2]])
+        let p = knot_control(&self.spans, k)?;
+        Some([p[0], p[1]])
     }
 
-    /// Span `k` at the first level, the stored values exact.
+    /// Span `k` at the first level ([`span_at`](Self::span_at)).
     pub fn span(&self, k: usize) -> Option<HomCurve<Bounded<f64>, 2>> {
-        self.spans.get(k).map(hom2)
+        self.span_at(k, &Bounded::exact(0.0))
     }
 
-    /// The UV point at `t`, certified, `None` outside the knots' range
-    /// (as [`Curve3D::eval`]).
+    /// Span `k` in homogeneous form at `like`'s level (and width), its
+    /// coefficients `(w·u, w·v, w)` formed there
+    /// ([`HomCurve::from_affine`]).
+    pub fn span_at<S: Scalar>(&self, k: usize, like: &S) -> Option<HomCurve<S, 2>> {
+        self.spans.get(k).map(|s| hom(s, like))
+    }
+
+    /// The UV point at `t`, certified, at the first level (as
+    /// [`Curve3D::eval_at`]).
     pub fn eval(&self, t: f64) -> Option<[Bounded<f64>; 2]> {
-        let (k, s) = locate(&self.knots, t)?;
-        Some(hom2(&self.spans[k]).eval(&s))
+        self.eval_at(t, &Bounded::exact(0.0))
+    }
+
+    /// The UV point at `t` at `like`'s level, certified, `None` outside
+    /// the knots' range (as [`Curve3D::eval_at`]).
+    pub fn eval_at<S: Scalar>(&self, t: f64, like: &S) -> Option<[S; 2]> {
+        eval_chain(&self.spans, &self.knots, t, like)
     }
 }
 
-fn hom3(s: &Span3) -> HomCurve<Bounded<f64>, 3> {
-    HomCurve::new(
-        s.iter()
-            .map(|p| ([p[0], p[1], p[2]].map(Bounded::exact), Bounded::exact(p[3]))),
+/// The span of `D − 1` coordinates and a weight in homogeneous form at
+/// `like`'s level.
+fn hom<S: Scalar, const D: usize, const N: usize>(s: &[[f64; D]; 3], like: &S) -> HomCurve<S, N> {
+    debug_assert_eq!(N + 1, D);
+    HomCurve::from_affine(
+        s.iter().map(|p| (std::array::from_fn(|k| p[k]), p[D - 1])),
+        like,
     )
     .expect("three control points")
 }
 
-fn hom2(s: &Span2) -> HomCurve<Bounded<f64>, 2> {
-    HomCurve::new(
-        s.iter()
-            .map(|p| ([p[0], p[1]].map(Bounded::exact), Bounded::exact(p[2]))),
-    )
-    .expect("three control points")
+/// The point of a chain at `t` at `like`'s level (as
+/// [`Curve3D::eval_at`]).
+fn eval_chain<S: Scalar, const D: usize, const N: usize>(
+    spans: &[[[f64; D]; 3]],
+    knots: &[f64],
+    t: f64,
+    like: &S,
+) -> Option<[S; N]> {
+    let (k, at) = locate(knots, t)?;
+    let end = match at {
+        At::Start => Some(spans[k][0]),
+        At::End => Some(spans[k][2]),
+        At::Inside => None,
+    };
+    if let Some(p) = end {
+        return Some(std::array::from_fn(|c| S::from_f64(p[c], like)));
+    }
+    let (a, b) = (knots[k], knots[k + 1]);
+    let s = S::from_f64(t, like)
+        .sub(&S::from_f64(a, like))
+        .div(&S::from_f64(b, like).sub(&S::from_f64(a, like)));
+    Some(hom(&spans[k], like).eval(&s))
 }
 
-/// The homogeneous control point at knot `k`: span `k`'s first, or the
-/// last span's last.
-fn knot_hom<const D: usize>(spans: &[[[f64; D]; 3]], k: usize) -> Option<[f64; D]> {
+/// The control point at knot `k`: span `k`'s first, or the last span's
+/// last.
+fn knot_control<const D: usize>(spans: &[[[f64; D]; 3]], k: usize) -> Option<[f64; D]> {
     match spans.get(k) {
         Some(s) => Some(s[0]),
         None if k == spans.len() => spans.last().map(|s| s[2]),
         None => None,
     }
-}
-
-/// The projected point of a homogeneous control point, its weight last.
-fn project<const D: usize>(p: &[f64; D]) -> [f64; D] {
-    let w = p[D - 1];
-    std::array::from_fn(|k| if k + 1 == D { 1.0 } else { p[k] / w })
 }
 
 fn validate<const D: usize>(spans: &[[[f64; D]; 3]], knots: &[f64]) -> Result<(), CurveError> {
@@ -223,11 +271,6 @@ fn validate<const D: usize>(spans: &[[[f64; D]; 3]], knots: &[f64]) -> Result<()
         {
             return Err(CurveError::Weight { span });
         }
-        // An end point projected past the range would be `±∞`, and two
-        // different ones would compare equal.
-        if ![s[0], s[2]].iter().flat_map(project).all(f64::is_finite) {
-            return Err(CurveError::NotFinite { span });
-        }
     }
     if !knots[0].is_finite() {
         return Err(CurveError::Knots { knot: 0 });
@@ -239,19 +282,26 @@ fn validate<const D: usize>(spans: &[[[f64; D]; 3]], knots: &[f64]) -> Result<()
         }
     }
     for span in 1..spans.len() {
-        let a = project(&spans[span - 1][2]);
-        let b = project(&spans[span][0]);
-        if a.iter().zip(&b).any(|(x, y)| x.to_bits() != y.to_bits()) {
+        // The points, not their weights.
+        let a = &spans[span - 1][2][..D - 1];
+        let b = &spans[span][0][..D - 1];
+        if a.iter().zip(b).any(|(x, y)| x.to_bits() != y.to_bits()) {
             return Err(CurveError::Join { span });
         }
     }
     Ok(())
 }
 
-/// The span holding `t` (the lower one at an inner knot) and the local
-/// parameter, exactly 0 or 1 at the span's ends; `None` outside the
-/// knots' range.
-fn locate(knots: &[f64], t: f64) -> Option<(usize, Bounded<f64>)> {
+/// Where `t` lies on the span [`locate`] gives.
+enum At {
+    Start,
+    End,
+    Inside,
+}
+
+/// The span holding `t` (the lower one at an inner knot) and where on it;
+/// `None` outside the knots' range.
+fn locate(knots: &[f64], t: f64) -> Option<(usize, At)> {
     let (first, last) = (knots[0], knots[knots.len() - 1]);
     // False for a NaN.
     if !(first <= t && t <= last) {
@@ -259,7 +309,14 @@ fn locate(knots: &[f64], t: f64) -> Option<(usize, Bounded<f64>)> {
     }
     // The first knot at or above `t`, at least 1.
     let hi = knots.partition_point(|&k| k < t).max(1);
-    Some((hi - 1, local(t, knots[hi - 1], knots[hi])))
+    let at = if t == knots[hi - 1] {
+        At::Start
+    } else if t == knots[hi] {
+        At::End
+    } else {
+        At::Inside
+    };
+    Some((hi - 1, at))
 }
 
 /// The local parameter of `t` in `[a, b]`, exactly 0 or 1 at the ends,

@@ -10,6 +10,9 @@ use super::scalar::Scalar;
 /// A rational span in `N` dimensions: the polynomials `P = (w·x₁, …,
 /// w·x_N)` and `W`, of one degree. The point at `t` is `P(t) / W(t)`;
 /// `N = 3` for a space curve, `N = 2` for a curve in a plane (a shadow).
+/// Built from homogeneous control points ([`new`](Self::new)) or from
+/// affine ones with their weights, the products formed at the level
+/// ([`from_affine`](Self::from_affine)).
 ///
 /// Evaluating the point divides by `W`: certified at a
 /// [`Bounded`](crate::num::bounded::Bounded) level only where `W` is
@@ -40,6 +43,20 @@ impl<S: Scalar, const N: usize> HomCurve<S, N> {
             return None;
         }
         Self::from_polys(p.map(|c| c.expect("checked")), w)
+    }
+
+    /// The span with the affine control points `(x, w)` (a point and its
+    /// weight, as stored), `b₀` first: the homogeneous coefficients
+    /// `(w·x, w)` formed at `like`'s level by [`Scalar::product`], so
+    /// exact from double-double up, and at the first level rounded once
+    /// per coefficient with the rounding carried (none where the product
+    /// is a float: a weight of 1, a zero coordinate). `None` as for
+    /// [`new`](Self::new).
+    pub fn from_affine(pts: impl IntoIterator<Item = ([f64; N], f64)>, like: &S) -> Option<Self> {
+        Self::new(
+            pts.into_iter()
+                .map(|(x, w)| (x.map(|c| S::product(c, w, like)), S::from_f64(w, like))),
+        )
     }
 
     /// The span with the coordinate polynomials `P` and weights `W`,

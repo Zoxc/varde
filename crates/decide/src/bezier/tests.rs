@@ -648,3 +648,138 @@ fn bounds_hold_up_to_max_degree() {
     up_to_max_degree::<Bounded<Dd>>(varde_testing::seeds(1, 8));
     up_to_max_degree::<Bounded<Big>>(varde_testing::seeds(1, 4));
 }
+
+/// `a·b` at level `S` holds the exact product within its error; from
+/// double-double up, and at the first level where the product is a
+/// float, with no error.
+fn products_hold<S: Level>(exact_level: bool, seeds: std::ops::Range<u64>) {
+    let like = S::of(0.0, 0.0);
+    for seed in seeds {
+        let mut rng = Rng::new(seed);
+        for _ in 0..200 {
+            let a = match rng.below(6) {
+                0 => 0.0,
+                // Past the exact product's range, and near the bottom.
+                1 => rng.pow(990, 1000),
+                2 => rng.pow(-1074, -960),
+                _ => rng.pow(-40, 40),
+            };
+            let b = match rng.below(4) {
+                0 => 1.0,
+                1 => rng.pow(-6, 6).abs(),
+                _ => rng.pow(-30, 30),
+            };
+            let p = S::product(a, b, &like);
+            if !(a * b).is_finite() && S::NAME != "big" {
+                // Past the range of the first two levels: uncertified.
+                assert!(!p.certified(), "{} {a:e}·{b:e}", S::NAME);
+                continue;
+            }
+            let truth = q(a) * q(b);
+            assert!(p.certified(), "{} {a:e}·{b:e}", S::NAME);
+            let (t, r) = p.errs();
+            assert!(
+                qabs(p.val() - &truth) <= q(t) + q(r),
+                "{} {a:e}·{b:e}",
+                S::NAME
+            );
+            let float = (a * b).is_finite() && q(a * b) == truth;
+            let in_range = a == 0.0 || (a.abs() < pow2(990) && (a * b).abs() >= pow2(-968));
+            if (exact_level && in_range) || (float && (b == 1.0 || a == 0.0)) {
+                assert_eq!((t, r), (0.0, 0.0), "{} {a:e}·{b:e}", S::NAME);
+                assert_eq!(p.val(), truth);
+            }
+            if !exact_level && float && in_range {
+                assert_eq!((t, r), (0.0, 0.0), "{} {a:e}·{b:e}", S::NAME);
+            }
+        }
+    }
+}
+
+#[test]
+fn products_of_floats_hold_at_every_level() {
+    products_hold::<Bounded<f64>>(false, varde_testing::seeds(4, 40));
+    products_hold::<Bounded<Dd>>(true, varde_testing::seeds(4, 40));
+    products_hold::<Bounded<Big>>(true, varde_testing::seeds(2, 10));
+    let rational = <Q as Scalar>::product(0.1, 1.0 / 3.0, &Q::from(0u32));
+    assert_eq!(rational, q(0.1) * q(1.0 / 3.0));
+}
+
+/// A span from affine control points `(x, w)` at level `S` passes
+/// through its end control points: the true coefficients `w·x` (exact
+/// from double-double up) over `w`.
+fn affine_ends<S: Level>(exact_level: bool) {
+    let like = S::of(0.0, 0.0);
+    let mut rng = Rng::new(7);
+    for _ in 0..200 {
+        let pts: Vec<([f64; 3], f64)> = (0..3)
+            .map(|_| {
+                let x = [(); 3].map(|_| rng.pow(-20, 20));
+                let w = rng.pow(-6, 6).abs();
+                (x, w)
+            })
+            .collect();
+        let h = HomCurve::<S, 3>::from_affine(pts.iter().copied(), &like).unwrap();
+        let exact = HomCurve::<Q, 3>::from_affine(pts.iter().copied(), &Q::from(0u32)).unwrap();
+        for i in [0, 2] {
+            let (x, w) = pts[i];
+            assert_eq!(h.weights().coefs()[i].val(), q(w));
+            assert_eq!(h.weights().coefs()[i].errs(), (0.0, 0.0));
+            let at = Q::from(u32::from(i == 2));
+            assert_eq!(exact.eval(&at), x.map(q));
+            for (coord, &xk) in h.coords().iter().zip(&x) {
+                let c = &coord.coefs()[i];
+                let (t, r) = c.errs();
+                assert!(qabs(c.val() - q(xk) * q(w)) <= q(t) + q(r));
+                if exact_level {
+                    assert_eq!(c.val() / q(w), q(xk));
+                    assert_eq!((t, r), (0.0, 0.0));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn affine_spans_pass_through_their_end_points() {
+    affine_ends::<Bounded<f64>>(false);
+    affine_ends::<Bounded<Dd>>(true);
+    affine_ends::<Bounded<Big>>(true);
+}
+
+/// Products just below the top of the range, where a factor's Dekker
+/// split rounds up so far that its partial product overflows although
+/// the product itself is finite: still certified, and exact from
+/// double-double up.
+fn products_near_overflow_hold<S: Level>(exact_level: bool) {
+    let like = S::of(0.0, 0.0);
+    let pairs: [(f64, f64); 4] = [
+        (5.72778076741801e250, 3.138550857874527e57),
+        (1.3292279931859268e36, 1.3524339994387958e272),
+        (-4.809815174705521e111, 3.7375513433588545e196),
+        (3.717542262069695e283, -4.835703262969422e24),
+    ];
+    for (a, b) in pairs {
+        assert!((a * b).is_finite());
+        let p = S::product(a, b, &like);
+        let truth = q(a) * q(b);
+        assert!(p.certified(), "{} {a:e}·{b:e}", S::NAME);
+        let (t, r) = p.errs();
+        assert!(
+            qabs(p.val() - &truth) <= q(t) + q(r),
+            "{} {a:e}·{b:e}",
+            S::NAME
+        );
+        if exact_level {
+            assert_eq!((t, r), (0.0, 0.0), "{} {a:e}·{b:e}", S::NAME);
+            assert_eq!(p.val(), truth);
+        }
+    }
+}
+
+#[test]
+fn products_near_overflow_hold_at_every_level() {
+    products_near_overflow_hold::<Bounded<f64>>(false);
+    products_near_overflow_hold::<Bounded<Dd>>(true);
+    products_near_overflow_hold::<Bounded<Big>>(true);
+}
