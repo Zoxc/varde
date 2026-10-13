@@ -224,15 +224,20 @@ impl Welcome {
 
     /// Makes a new design.
     fn new_design(&mut self, files: &mut Files) -> Next {
-        // Not with one on its way as a document opened, which would
-        // replace it without closing it.
+        let document = Document::in_units(files.new_units);
+        self.new_doc(files, document, UNTITLED.to_owned())
+    }
+
+    /// Shows `document` as a new design known by `name`: never saved, its
+    /// auto-saves going to a store entry the lane makes for it. Gives up
+    /// on any open on its way first, which would replace it without
+    /// closing it.
+    fn new_doc(&mut self, files: &mut Files, document: Document, name: String) -> Next {
         self.give_up(files);
         let origin = Origin {
-            // Auto-saves go to a store entry the lane makes for it.
             creating: Some(files.io.create()),
-            ..Origin::new(Target::None, Access::Edit, UNTITLED.to_owned())
+            ..Origin::new(Target::None, Access::Edit, name)
         };
-        let document = Document::in_units(files.new_units);
         Next::Show(Box::new(Doc::new(document, origin)))
     }
 
@@ -252,12 +257,7 @@ impl Welcome {
             }
         };
         self.error = None;
-        self.give_up(files);
-        let origin = Origin {
-            creating: Some(files.io.create()),
-            ..Origin::new(Target::None, Access::Edit, sample.name.to_owned())
-        };
-        Next::Show(Box::new(Doc::new(document, origin)))
+        self.new_doc(files, document, sample.name.to_owned())
     }
 
     /// Opens `source`. Not a store entry listed as one nothing can be read
