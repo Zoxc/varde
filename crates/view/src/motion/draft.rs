@@ -35,12 +35,10 @@ pub struct DraftView {
 /// panel's reference field), Angle, Flip and Tangent faces.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    draft: &DraftView,
     neutral: Element<'a, Message>,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(draft) = state.draft() else {
-        return column![].into();
-    };
     let faces = faces_field(state, &draft.faces, "Faces", "Click faces");
     let flip = toggle(
         Icon::TkFlip,

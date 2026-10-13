@@ -88,12 +88,10 @@ pub struct ScaleView<'a> {
 /// then Scale's tiles and the fields of the mode picked.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    scale: &ScaleView<'a>,
     body: Element<'a, Message>,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(scale) = state.scale() else {
-        return body;
-    };
     let picked = |pick: MotionPick, icon: Icon, name: Option<String>, meta, place: &str| {
         let on = state.picking == pick;
         let press = state.send(MotionLook::Picking(pick));

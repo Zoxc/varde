@@ -834,46 +834,6 @@ impl<'a> MotionState<'a> {
         }
     }
 
-    /// A chamfer's own parts, for a chamfer.
-    pub fn chamfer(&self) -> Option<&ChamferView> {
-        match &self.parts {
-            MotionParts::Chamfer(parts) => Some(parts),
-            _ => None,
-        }
-    }
-
-    /// A shell's own parts, for a shell.
-    pub fn shell(&self) -> Option<&ShellView> {
-        match &self.parts {
-            MotionParts::Shell(parts) => Some(parts),
-            _ => None,
-        }
-    }
-
-    /// A fillet's own parts, for a fillet.
-    pub fn fillet(&self) -> Option<&FilletView> {
-        match &self.parts {
-            MotionParts::Fillet(parts) => Some(parts),
-            _ => None,
-        }
-    }
-
-    /// An offset face's own parts, for an offset face.
-    pub fn offset_face(&self) -> Option<&OffsetFaceView> {
-        match &self.parts {
-            MotionParts::OffsetFace(parts) => Some(parts),
-            _ => None,
-        }
-    }
-
-    /// A draft's own parts, for a draft.
-    pub fn draft(&self) -> Option<&DraftView> {
-        match &self.parts {
-            MotionParts::Draft(parts) => Some(parts),
-            _ => None,
-        }
-    }
-
     /// A sweep's own parts, for a sweep.
     pub fn sweep(&self) -> Option<&SweepView<'a>> {
         match &self.parts {
@@ -1088,95 +1048,99 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         )
     };
     let field_of = |which: MotionField| field_named(which, which.label());
-    let body: Element<'a, Message> = match state.kind {
-        MotionKind::Align => align::body(state, bodies, field_of),
-        MotionKind::Scale => scale::body(state, bodies, field_of),
-        MotionKind::Split => split::body(state, bodies),
-        MotionKind::Chamfer => chamfer::body(state, field_named),
-        MotionKind::Shell => shell::body(state, field_of),
-        MotionKind::Fillet => fillet::body(state, field_of),
-        MotionKind::OffsetFace => offset_face::body(state, field_of),
-        MotionKind::Draft => draft::body(state, reference, field_of),
-        MotionKind::Sweep => sweep::body(state, reference, field_of),
-        MotionKind::Loft => loft::body(state),
-        MotionKind::Move => {
-            let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
-            column![
-                bodies,
-                section("Translate"),
-                column(translate).spacing(8),
-                section("Rotate"),
-                reference,
-                field_of(MotionField::Angle),
-            ]
-            .spacing(10)
-            .into()
-        }
-        MotionKind::Mirror => {
-            let copy = toggle(
-                Icon::TkCopy,
-                "Create copy",
-                state.keep_original,
-                state.send(MotionLook::Copy),
-                Some("Keep the original too"),
-            );
-            column![bodies, reference, copy].spacing(10).into()
-        }
-        MotionKind::LinearPattern | MotionKind::CircularPattern => {
-            let flip = (state.kind == MotionKind::LinearPattern).then(|| {
-                toggle(
-                    Icon::TkFlip,
-                    "Flip direction",
-                    state.flip,
-                    state.send(MotionLook::Flip),
-                    None,
-                )
-            });
-            let modes = PatternMode::of(state.kind).iter().map(|&mode| {
-                tile(
-                    mode.icon(state.kind),
-                    mode.label(),
-                    state.mode == mode,
-                    state.send(MotionLook::Mode(mode)),
-                )
-            });
-            let spread = (state.mode != PatternMode::Full).then(|| {
-                let label = match state.mode {
-                    PatternMode::Total => "Total",
-                    _ => "Spacing",
-                };
-                // The mock's error for the spread as a whole, under its
-                // field, where its text has none of its own.
-                let note = (state.spread_error.clone())
-                    .filter(|_| state.fields[MotionField::Spread.index()].error.is_none())
-                    .map(|note| {
-                        text(sentence(&note).into_owned())
-                            .size(11.5)
-                            .wrapping(Wrapping::WordOrGlyph)
-                            .style(theme::danger_text)
-                    });
-                column![field_named(MotionField::Spread, label), note].spacing(3)
-            });
-            let join = toggle(
-                Icon::TkJoin,
-                "Join to original",
-                state.join,
-                state.send(MotionLook::Join),
-                Some("One body; otherwise each copy is its own"),
-            );
-            column![
-                bodies,
-                reference,
-                flip,
-                section("Copies"),
-                field_of(MotionField::Count),
-                tiles(modes),
-                spread,
-                join,
-            ]
-            .spacing(10)
-            .into()
-        }
+    let body: Element<'a, Message> = match &state.parts {
+        MotionParts::Align(align) => align::body(state, align, bodies, field_of),
+        MotionParts::Scale(scale) => scale::body(state, scale, bodies, field_of),
+        MotionParts::Split(split) => split::body(state, split, bodies),
+        MotionParts::Chamfer(chamfer) => chamfer::body(state, chamfer, field_named),
+        MotionParts::Shell(shell) => shell::body(state, shell, field_of),
+        MotionParts::Fillet(fillet) => fillet::body(state, fillet, field_of),
+        MotionParts::OffsetFace(offset) => offset_face::body(state, offset, field_of),
+        MotionParts::Draft(draft) => draft::body(state, draft, reference, field_of),
+        MotionParts::Sweep(sweep) => sweep::body(state, sweep, reference, field_of),
+        MotionParts::Loft(loft) => loft::body(state, loft),
+        MotionParts::None => match state.kind {
+            MotionKind::Move => {
+                let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
+                column![
+                    bodies,
+                    section("Translate"),
+                    column(translate).spacing(8),
+                    section("Rotate"),
+                    reference,
+                    field_of(MotionField::Angle),
+                ]
+                .spacing(10)
+                .into()
+            }
+            MotionKind::Mirror => {
+                let copy = toggle(
+                    Icon::TkCopy,
+                    "Create copy",
+                    state.keep_original,
+                    state.send(MotionLook::Copy),
+                    Some("Keep the original too"),
+                );
+                column![bodies, reference, copy].spacing(10).into()
+            }
+            MotionKind::LinearPattern | MotionKind::CircularPattern => {
+                let flip = (state.kind == MotionKind::LinearPattern).then(|| {
+                    toggle(
+                        Icon::TkFlip,
+                        "Flip direction",
+                        state.flip,
+                        state.send(MotionLook::Flip),
+                        None,
+                    )
+                });
+                let modes = PatternMode::of(state.kind).iter().map(|&mode| {
+                    tile(
+                        mode.icon(state.kind),
+                        mode.label(),
+                        state.mode == mode,
+                        state.send(MotionLook::Mode(mode)),
+                    )
+                });
+                let spread = (state.mode != PatternMode::Full).then(|| {
+                    let label = match state.mode {
+                        PatternMode::Total => "Total",
+                        _ => "Spacing",
+                    };
+                    // The mock's error for the spread as a whole, under its
+                    // field, where its text has none of its own.
+                    let note = (state.spread_error.clone())
+                        .filter(|_| state.fields[MotionField::Spread.index()].error.is_none())
+                        .map(|note| {
+                            text(sentence(&note).into_owned())
+                                .size(11.5)
+                                .wrapping(Wrapping::WordOrGlyph)
+                                .style(theme::danger_text)
+                        });
+                    column![field_named(MotionField::Spread, label), note].spacing(3)
+                });
+                let join = toggle(
+                    Icon::TkJoin,
+                    "Join to original",
+                    state.join,
+                    state.send(MotionLook::Join),
+                    Some("One body; otherwise each copy is its own"),
+                );
+                column![
+                    bodies,
+                    reference,
+                    flip,
+                    section("Copies"),
+                    field_of(MotionField::Count),
+                    tiles(modes),
+                    spread,
+                    join,
+                ]
+                .spacing(10)
+                .into()
+            }
+            // A kind with parts of its own, sent without them.
+            _ => bodies,
+        },
     };
     let message = state.verdict.footer(state.kind.noun());
     operation_panel(Parts {

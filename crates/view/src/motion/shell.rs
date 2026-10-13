@@ -74,11 +74,9 @@ pub struct ShellView {
 /// tiles.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    shell: &ShellView,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(shell) = state.shell() else {
-        return column![].into();
-    };
     let faces = faces_field(state, &shell.faces, "Remove", "Click faces");
     let directions = ShellDirection::ALL.iter().map(|&direction| {
         tile(

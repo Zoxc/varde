@@ -103,11 +103,7 @@ const MODES: [(LoftMode, Icon, &str); 2] = [
 
 /// The panel's body for a loft: Sections, the mode's tiles, Closed,
 /// Rails (not while closed), Operation and Bodies.
-pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
-    let Some(loft) = state.loft() else {
-        return column![].into();
-    };
-
+pub(super) fn body<'a>(state: &MotionState<'a>, loft: &LoftView<'a>) -> Element<'a, Message> {
     let picking = state.picking == MotionPick::Regions;
     let press = state.send(MotionLook::Picking(MotionPick::Regions));
     let last = loft.sections.len().saturating_sub(1);

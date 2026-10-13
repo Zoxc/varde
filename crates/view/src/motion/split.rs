@@ -181,11 +181,9 @@ fn keep_tile(keep: Keep) -> (Icon, &'static str) {
 /// Keep.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    split: &SplitView<'a>,
     body: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(split) = state.split() else {
-        return body;
-    };
     let modes = SplitMode::ALL.iter().map(|&mode| {
         tile(
             mode.icon(),

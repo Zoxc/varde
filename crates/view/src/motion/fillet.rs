@@ -23,11 +23,9 @@ pub struct FilletView {
 /// The panel's body for a fillet: Edges, Radius and Tangent chain.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    fillet: &FilletView,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(fillet) = state.fillet() else {
-        return column![].into();
-    };
     column![
         edges_field(state, &fillet.edges, "Click edges or faces"),
         value(MotionField::Radius),

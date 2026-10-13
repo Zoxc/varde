@@ -106,13 +106,10 @@ pub struct SweepView<'a> {
 /// pitch, turns and ticks), Operation and Bodies.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    sweep: &SweepView<'a>,
     reference: Element<'a, Message>,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(sweep) = state.sweep() else {
-        return column![].into();
-    };
-
     let regions = (sweep.source.into_iter()).flat_map(|sketch| {
         sweep.picked.iter().map(move |&region| PickedRow {
             icon: Icon::SeRegion,

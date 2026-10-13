@@ -72,11 +72,9 @@ pub struct ChamferView {
 /// fields, Flip sides and Tangent chain.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    chamfer: &ChamferView,
     value: impl Fn(MotionField, &'a str) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(chamfer) = state.chamfer() else {
-        return column![].into();
-    };
     let edges = edges_field(state, &chamfer.edges, "Click edges or faces");
     let types = ChamferType::ALL.iter().map(|&kind| {
         tile(

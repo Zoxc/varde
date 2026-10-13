@@ -90,12 +90,10 @@ fn place(slot: AlignSlot) -> &'static str {
 /// Offset (Distance and Angle).
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    align: &AlignView<'a>,
     body: Element<'a, Message>,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(align) = state.align() else {
-        return body;
-    };
     let side = |side: AlignSide| {
         let fields = AlignRole::ALL.map(|role| {
             let slot = AlignSlot::new(side, role);

@@ -34,11 +34,9 @@ pub struct OffsetFaceView {
 /// Tangent faces.
 pub(super) fn body<'a>(
     state: &MotionState<'a>,
+    offset: &OffsetFaceView,
     value: impl Fn(MotionField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(offset) = state.offset_face() else {
-        return column![].into();
-    };
     let faces = faces_field(state, &offset.faces, "Faces", "Click faces");
     let inward = toggle(
         Icon::TkFlip,
