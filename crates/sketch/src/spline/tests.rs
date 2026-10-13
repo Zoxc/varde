@@ -7,6 +7,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
 
+use super::basis::handle_scale;
 use super::bezier::{self, Path};
 use super::*;
 use crate::intersect::{Geom, meet};

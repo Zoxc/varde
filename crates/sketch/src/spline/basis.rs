@@ -973,9 +973,23 @@ fn spans_beside(params: &[f64], closed: bool, i: usize) -> (f64, f64) {
 /// What a handle's tip less its fit point is multiplied by to give the
 /// derivative there, see [`Interpolation`]: three over the mean of the
 /// parameter spans beside fit point `i`.
-pub fn handle_scale(params: &[f64], closed: bool, i: usize) -> f64 {
+pub(crate) fn handle_scale(params: &[f64], closed: bool, i: usize) -> f64 {
     let (before, after) = spans_beside(params, closed, i);
     6.0 / (before + after)
+}
+
+/// Where the tip of a handle at fit point `i`, at `place`, gives the
+/// spline `derivative` there: [`handle_scale`]'s rule turned round.
+/// `None` if that isn't finite.
+pub(crate) fn handle_tip_for(
+    params: &[f64],
+    closed: bool,
+    i: usize,
+    place: DVec2,
+    derivative: DVec2,
+) -> Option<DVec2> {
+    let tip = place + derivative / handle_scale(params, closed, i);
+    tip.is_finite().then_some(tip)
 }
 
 /// Solves `a x = b` for `x`, `a` an `m` by `m` matrix and `b` an `m` by

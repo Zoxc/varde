@@ -69,7 +69,7 @@ pub use selectable::Selectable;
 pub use solve::{Analysis, Budget, DEFAULT_ITERATIONS, Failure, Goal, Solution, analyse, solve};
 pub use spline::{
     BSpline, Handle, Interpolation, MAX_COMB_TEETH, MAX_SPLINE_POINTS, MIN_KNOT_GAP, MIN_SPAN,
-    Spline, SplineKind, chord_params, control_knots, flatten_spline, handle_scale, handle_tips,
+    Spline, SplineKind, chord_params, control_knots, flatten_spline, handle_tips,
 };
 
 use std::collections::HashSet;

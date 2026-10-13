@@ -7,10 +7,8 @@
 mod basis;
 pub(crate) mod bezier;
 
-pub use basis::{
-    BSpline, Interpolation, MIN_KNOT_GAP, MIN_SPAN, chord_params, control_knots, handle_scale,
-};
-pub(crate) use basis::{Basis, SplineMap, curvature};
+pub use basis::{BSpline, Interpolation, MIN_KNOT_GAP, MIN_SPAN, chord_params, control_knots};
+pub(crate) use basis::{Basis, SplineMap, curvature, handle_tip_for};
 
 use std::collections::HashSet;
 
@@ -453,8 +451,7 @@ impl Sketch {
         let places = self.places(&spline.points)?;
         let params = chord_params(&places, spline.closed);
         let derivative = self.spline_shape(spline)?.eval(params[index])[1];
-        let tip = places[index] + derivative / handle_scale(&params, spline.closed, index);
-        tip.is_finite().then_some(tip)
+        handle_tip_for(&params, spline.closed, index, places[index], derivative)
     }
 
     /// Gives each handle read without an end ([`Id::MISSING`], from
@@ -765,10 +762,7 @@ pub fn handle_tips(points: &[DVec2], closed: bool) -> Option<Vec<DVec2>> {
     points
         .iter()
         .enumerate()
-        .map(|(i, &at)| {
-            let tip = at + shape.eval(params[i])[1] / handle_scale(&params, closed, i);
-            tip.is_finite().then_some(tip)
-        })
+        .map(|(i, &at)| handle_tip_for(&params, closed, i, at, shape.eval(params[i])[1]))
         .collect()
 }
 
@@ -979,8 +973,7 @@ fn end_tips(shape: &BSpline, along: &[f64], places: &[DVec2]) -> [Option<DVec2>;
     [(0, 1), (last, last - 1)].map(|(i, next)| {
         let ratio = (along[next] - along[i]) / (params[next] - params[i]);
         let derivative = shape.eval(along[i])[1];
-        let tip = places[i] + derivative * ratio / handle_scale(&params, false, i);
-        tip.is_finite().then_some(tip)
+        handle_tip_for(&params, false, i, places[i], derivative * ratio)
     })
 }
 
