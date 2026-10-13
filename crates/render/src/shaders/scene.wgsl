@@ -623,8 +623,13 @@ const EDGE_DEPTH_BIAS: f32 = 1e-5;
 // pipeline's depth bias scales with the faces' slope instead). Only the
 // depth changes: in perspective the pulled point would show elsewhere.
 // Never before the near plane, which a pull from just behind it would clip.
+// How far `pulled` and `overlay_depth` pull towards the camera, in view
+// heights, so a face edges, lines and the sketch's depth tested layers lie
+// on doesn't hide them while one in front does.
+const PULL_HEIGHTS: f32 = 0.002;
+
 fn pulled(position: vec3<f32>) -> vec4<f32> {
-    let offset = u.backward.xyz * view_height() * 0.002;
+    let offset = u.backward.xyz * view_height() * PULL_HEIGHTS;
     let clip = u.view_proj * vec4<f32>(position + offset, 1.0);
     let unpulled = u.view_proj * vec4<f32>(position, 1.0);
     let depth = max(min(clip.z / clip.w, unpulled.z / unpulled.w - EDGE_DEPTH_BIAS), 0.0);
@@ -1009,15 +1014,21 @@ fn vs_edge(in: EdgeIn) -> LineOut {
 @vertex
 fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     let s = u.viewport.z;
-    let dash = vec2<f32>(HIDDEN_DASH, HIDDEN_GAP) * s;
+    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x * crease_alpha(in));
+    return dashed_segment(in, EDGE_WIDTH * 0.5 * s, HIDDEN_EDGE_WIDTH * 0.5 * s, color);
+}
+
+// `edge_segment` dashed as the hidden edges are, HIDDEN_DASH on and
+// HIDDEN_GAP off, its phase wrapped as `vs_hidden_edge` says, with the
+// highlights' depth slope.
+fn dashed_segment(in: EdgeIn, half: f32, hidden_half: f32, color: vec4<f32>) -> LineOut {
+    let dash = vec2<f32>(HIDDEN_DASH, HIDDEN_GAP) * u.viewport.z;
     let period = dash.x + dash.y;
     // Physical pixels per world unit at the target.
     let scale = u.viewport.y / view_height();
     let phase = wrapped(in.start_along * scale, period);
     let length = distance(in.start, in.end) * scale;
-    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x * crease_alpha(in));
-    var out = edge_segment(in, EDGE_WIDTH * 0.5 * s, HIDDEN_EDGE_WIDTH * 0.5 * s, color, dash,
-        vec2<f32>(phase, phase + length));
+    var out = edge_segment(in, half, hidden_half, color, dash, vec2<f32>(phase, phase + length));
     out.along -= vec2<f32>(floor(out.along.x / period) * period);
     out.slope = highlight_slope(mix(in.start, in.end, 0.5));
     return out;
@@ -1110,6 +1121,10 @@ const SELECTED_RIM_ALPHA: f32 = 0.5;
 // contrast with what's behind them; hollow, as the hover's is.
 @vertex
 fn vs_selected_outline(in: EdgeIn) -> LineOut {
+    return selected_outline(in);
+}
+
+fn selected_outline(in: EdgeIn) -> LineOut {
     let core = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
     let half = core + SELECTED_RIM * u.viewport.z;
     var out = highlight_segment(in, half, vec4<f32>(u.hover_outline.rgb, SELECTED_RIM_ALPHA));
@@ -1120,11 +1135,7 @@ fn vs_selected_outline(in: EdgeIn) -> LineOut {
 // The rim around the edges in the second colour, as the selected edges'.
 @vertex
 fn vs_second_outline(in: EdgeIn) -> LineOut {
-    let core = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
-    let half = core + SELECTED_RIM * u.viewport.z;
-    var out = highlight_segment(in, half, vec4<f32>(u.hover_outline.rgb, SELECTED_RIM_ALPHA));
-    out.style.w = core;
-    return out;
+    return selected_outline(in);
 }
 
 // The hovered edges, HOVERED_EDGE_WIDTH wide in the edges' colour, within
@@ -1199,14 +1210,7 @@ fn vs_hovered_edge_hidden(in: EdgeIn) -> LineOut {
 // the hidden edges are, hollow `hollow` either side if that's above 0.
 fn dashed_highlight(in: EdgeIn, half: f32, hollow: f32, color: vec4<f32>) -> LineOut {
     let s = u.viewport.z;
-    let dash = vec2<f32>(HIDDEN_DASH, HIDDEN_GAP) * s;
-    let period = dash.x + dash.y;
-    let scale = u.viewport.y / view_height();
-    let phase = wrapped(in.start_along * scale, period);
-    let length = distance(in.start, in.end) * scale;
-    var out = edge_segment(in, half * s, half * s, color, dash, vec2<f32>(phase, phase + length));
-    out.along -= vec2<f32>(floor(out.along.x / period) * period);
-    out.slope = highlight_slope(mix(in.start, in.end, 0.5));
+    var out = dashed_segment(in, half * s, half * s, color);
     out.style.w = hollow * s;
     return out;
 }
@@ -1250,18 +1254,13 @@ fn sketch_clip(at: vec2<f32>, z: f32, flags: u32) -> vec4<f32> {
     return u.view_proj * vec4<f32>(sketch_world(at, z, flags), 1.0);
 }
 
-// Pull of the sketch's depth tested layers towards the camera, in view
-// heights, like the edges' (`pulled`), so a face they lie on doesn't hide
-// them while one in front does.
-const OVERLAY_PULL: f32 = 0.002;
-
 // The normalized depth of the world point `world`, in front of the near
 // plane, for the sketch's depth tested layers: pulled towards the camera
-// by OVERLAY_PULL view heights and at least EDGE_DEPTH_BIAS, kept from 0
+// by PULL_HEIGHTS view heights and at least EDGE_DEPTH_BIAS, kept from 0
 // to 1 so nothing is cut at the far plane.
 fn overlay_depth(world: vec3<f32>) -> f32 {
     let clip = u.view_proj * vec4<f32>(world, 1.0);
-    let toward = u.view_proj * vec4<f32>(world + u.backward.xyz * view_height() * OVERLAY_PULL, 1.0);
+    let toward = u.view_proj * vec4<f32>(world + u.backward.xyz * view_height() * PULL_HEIGHTS, 1.0);
     // Pulled past the eye, it's as near as can be.
     let pulled = select(0.0, toward.z / toward.w, toward.w > 0.0);
     return clamp(min(pulled, clip.z / clip.w - EDGE_DEPTH_BIAS), 0.0, 1.0);
