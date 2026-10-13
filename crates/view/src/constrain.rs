@@ -122,14 +122,18 @@ impl ConstraintKind {
     /// they can't be ([`Constraint::fits_builtins`]), which
     /// [`Sketch::check`] refuses.
     pub fn make(self, sketch: &Sketch, selected: &BTreeSet<Selectable>) -> Option<Vec<Constraint>> {
-        let picked = Picked::of(sketch, selected);
-        let Picked {
+        self.make_from(sketch, &ByKind::of(sketch, selected))
+    }
+
+    /// [`make`](ConstraintKind::make) from the selection already split by kind.
+    fn make_from(self, sketch: &Sketch, picked: &ByKind) -> Option<Vec<Constraint>> {
+        let ByKind {
             points,
             lines,
             rounds,
             splines,
             handles,
-        } = &picked;
+        } = picked;
         let curves = picked.curves();
         let takes_splines = matches!(
             self,
@@ -244,7 +248,7 @@ impl ConstraintKind {
     /// or vertical, parallel or perpendicular, concentric or not).
     pub fn fitting(sketch: &Sketch, selected: &BTreeSet<Selectable>) -> Vec<ConstraintKind> {
         use ConstraintKind::*;
-        let picked = Picked::of(sketch, selected);
+        let picked = ByKind::of(sketch, selected);
         let mut order = vec![
             Coincident,
             Tangent,
@@ -283,7 +287,7 @@ impl ConstraintKind {
             let concentric = order.remove(at);
             order.insert(0, concentric);
         }
-        order.retain(|kind| kind.make(sketch, selected).is_some());
+        order.retain(|kind| kind.make_from(sketch, &picked).is_some());
         order
     }
 }
@@ -305,7 +309,7 @@ fn line_direction(sketch: &Sketch, line: Id) -> Option<DVec2> {
 
 /// The geometry selected, by kind, each in increasing order of id.
 #[derive(Debug, Default)]
-struct Picked {
+struct ByKind {
     points: Vec<Id>,
     lines: Vec<Id>,
     /// Circles and arcs.
@@ -315,9 +319,9 @@ struct Picked {
     handles: Vec<Id>,
 }
 
-impl Picked {
+impl ByKind {
     fn of(sketch: &Sketch, selected: &BTreeSet<Selectable>) -> Self {
-        let mut picked = Picked::default();
+        let mut picked = ByKind::default();
         for &target in selected {
             let Selectable::Item(id) = target else {
                 // A handle as a line: by its tip.
@@ -364,7 +368,7 @@ impl Picked {
             .then(|| self.lines.iter().chain(&self.handles).copied().collect())
     }
 
-    /// The lines picked, or the lines and handles ([`Picked::with_handles`]).
+    /// The lines picked, or the lines and handles ([`ByKind::with_handles`]).
     fn directions(&self) -> Option<Vec<Id>> {
         self.only_lines()
             .map(<[Id]>::to_vec)
