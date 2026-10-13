@@ -34,6 +34,7 @@ use varde_view::MotionField;
 
 use super::{ListAt, failure};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, MotionSession, RevolveSession, sketch_of};
+use crate::mcp::args;
 use crate::mcp::key::{self, Key, Ref};
 
 /// `feature {name, offset?, limit?}`: see the module's docs.
@@ -226,7 +227,7 @@ impl<'a> Shape<'a> {
             FeatureKind::Combine(combine) => self.combine(&mut said, id, combine),
             kind => {
                 let shape = self.doc.pattern_shapes.get(&id);
-                let session = MotionSession::editing_for_client(self.document, id, shape)?;
+                let session = args::editing_for_client(self.document, id, shape)?;
                 let session = &session;
                 match kind {
                     FeatureKind::Move(moved) => self.move_body(&mut said, session, moved),

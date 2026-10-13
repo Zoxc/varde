@@ -61,6 +61,8 @@ use feed::MeshFeed;
 pub(crate) use feed::{Marks, Merges, Shown, merged_in};
 pub(crate) use measure::MeasureSession;
 pub(crate) use motion::MotionSession;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use motion::PatternShape;
 use pick::ModelPick;
 use rail::Rail;
 #[cfg(not(target_arch = "wasm32"))]

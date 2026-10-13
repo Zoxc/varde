@@ -19,13 +19,15 @@ use varde_mcp::tools::{
     FeatureTool, Item, ItemKind, Naming, Operation, Profile, Profiles, Worded, WorldAxis,
     WorldPlane,
 };
+use varde_render::Camera;
 use varde_view::{MotionField, MotionKind, OperationKind, Pick, PickIndex};
 
 use super::edit::{Made, Refused};
 use super::key;
 use super::names::{body_id, sketch_id};
 use crate::doc::{
-    BodyTargets, Doc, Marks, Merges, MotionSession, RegionPick, merged_in, pickable, sketch_of,
+    BodyTargets, Doc, Marks, Merges, MotionSession, PatternShape, RegionPick, merged_in, pickable,
+    sketch_of,
 };
 
 /// Which of a tool's arguments to take: all of them, for a new
@@ -569,9 +571,54 @@ pub(super) fn made(
     made_of(doc, tool, kind, bodies, set)
 }
 
+/// The lengths a new `kind` the MCP client adds starts with where the
+/// panel's follow the view, which the client doesn't see, in
+/// millimetres: a linear pattern's spacing, a shell's thickness, an
+/// offset face's distance, a chamfer's two distances and a fillet's
+/// radius (the mock's), a sweep's helix's pitch.
+fn client_lengths(kind: MotionKind) -> &'static [(MotionField, f64)] {
+    match kind {
+        MotionKind::LinearPattern => &[(MotionField::Spread, 10.0)],
+        MotionKind::Shell => &[(MotionField::Thickness, 2.0)],
+        MotionKind::OffsetFace => &[(MotionField::Distance, 1.0)],
+        MotionKind::Chamfer => &[
+            (MotionField::ChamferDistance, 1.0),
+            (MotionField::ChamferSecond, 2.0),
+        ],
+        MotionKind::Fillet => &[(MotionField::Radius, 2.0)],
+        MotionKind::Sweep => &[(MotionField::Pitch, 10.0)],
+        _ => &[],
+    }
+}
+
+/// A session setting up a new `kind` of `document` for the MCP client,
+/// of `bodies`, as the panel's ([`MotionSession::new`]) but with the
+/// client's lengths ([`client_lengths`]) for those that follow the view.
+pub(super) fn for_client(
+    kind: MotionKind,
+    document: &Document,
+    bodies: Vec<BodyId>,
+) -> MotionSession {
+    MotionSession::new(kind, document, &Camera::default(), bodies)
+        .with_lengths(client_lengths(kind), document)
+}
+
+/// [`MotionSession::editing`] for the MCP client: a value the feature
+/// has none for (a helix's pitch on a path sweep, an equal chamfer's
+/// second distance) is the client's default, as a new one's
+/// ([`for_client`]), not one following the user's view.
+pub(super) fn editing_for_client(
+    document: &Document,
+    feature: FeatureId,
+    shape: Option<&PatternShape>,
+) -> Option<MotionSession> {
+    let fresh = |kind, bodies| for_client(kind, document, bodies);
+    MotionSession::opened(document, fresh, feature, shape)
+}
+
 /// The commands `tool` makes on `doc`'s design, and what it's to make:
 /// a session setting up `kind` of `bodies` for the client
-/// ([`MotionSession::for_client`]), set up by `set`, the feature it sets
+/// ([`for_client`]), set up by `set`, the feature it sets
 /// up then added where the panel's OK adds it; refused, saying why in
 /// the panel's words, where its OK would be off (a sweep's or loft's
 /// names the document refuses at its place among those,
@@ -584,7 +631,7 @@ pub(super) fn made_of(
     set: impl FnOnce(&mut MotionSession) -> Result<(), Wrong>,
 ) -> Result<(Vec<Command>, Made), Refused> {
     let document = doc.editor.document();
-    let mut session = MotionSession::for_client(kind, document, bodies);
+    let mut session = for_client(kind, document, bodies);
     set(&mut session).map_err(|wrong| wrong.of(tool))?;
     let kind = (session.built(&document.design())).map_err(|why| failed(tool, why))?;
     if let Some(why) = doc.motion_held_in(&session) {
@@ -607,7 +654,7 @@ pub(super) fn typed(
         return Ok(());
     };
     session.input(field, text.trim().to_owned(), doc.editor.document());
-    Ok(read(session.field_error(field), said)?)
+    Ok(read(session.field(field).error.as_ref(), said)?)
 }
 
 /// The face, edge or corner (`kind`) the key `text` (the argument

@@ -1,6 +1,6 @@
 //! The MCP client's blend tools, `chamfer` and `fillet` (see
 //! `agents/mcp.md`, "Edits"): each set up in the motion panel's own
-//! session ([`MotionSession::for_client`]) as the motion tools are (see
+//! session ([`for_client`](super::args::for_client)) as the motion tools are (see
 //! `motion`), its edges and faces by key taken as clicks on them in the
 //! committed model are (an edge with its tangent chain while Tangent
 //! chain is on, each edge of its own, as the panel's tick has a click

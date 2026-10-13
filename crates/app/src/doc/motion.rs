@@ -326,38 +326,6 @@ const BLEND_SHARE: f64 = 0.02;
 /// at, at most: its 3 copies then span half of it.
 const SPACING_SHARE: f64 = 0.25;
 
-/// The spacing a new linear pattern the MCP client adds starts with, in
-/// millimetres: the panel's follows the view, which the client doesn't
-/// see.
-#[cfg(not(target_arch = "wasm32"))]
-const CLIENT_SPACING: f64 = 10.0;
-
-/// The thickness a new shell the MCP client adds starts with, in
-/// millimetres: the panel's follows the view.
-#[cfg(not(target_arch = "wasm32"))]
-const CLIENT_THICKNESS: f64 = 2.0;
-
-/// The distance a new offset face the MCP client adds starts with, in
-/// millimetres: the panel's follows the view.
-#[cfg(not(target_arch = "wasm32"))]
-const CLIENT_OFFSET: f64 = 1.0;
-
-/// The distances a new chamfer the MCP client adds starts with, in
-/// millimetres, the first and the second (the mock's): the panel's
-/// follow the view.
-#[cfg(not(target_arch = "wasm32"))]
-const CLIENT_CHAMFER: [f64; 2] = [1.0, 2.0];
-
-/// The radius a new fillet the MCP client adds starts with, in
-/// millimetres (the mock's): the panel's follows the view.
-#[cfg(not(target_arch = "wasm32"))]
-const CLIENT_RADIUS: f64 = 2.0;
-
-/// The pitch a new sweep's helix the MCP client adds starts with, in
-/// millimetres: the panel's follows the view.
-#[cfg(not(target_arch = "wasm32"))]
-const CLIENT_PITCH: f64 = 10.0;
-
 /// A field for `ask` reading `length`, in millimetres, written in
 /// `design`'s units with their symbol.
 fn length_field(length: f64, ask: &Ask, design: &Design) -> TypedText {
@@ -378,7 +346,7 @@ impl MotionSession {
     /// ([`fitting_length`]), so what the session makes shows without the
     /// camera moving. Clicks pick bodies, or a mirror's plane once it has
     /// bodies.
-    fn new(
+    pub(crate) fn new(
         kind: MotionKind,
         document: &Document,
         camera: &Camera,
@@ -512,47 +480,25 @@ impl MotionSession {
         }
     }
 
-    /// A session setting up a new `kind` of `document` for the MCP
-    /// client, of `bodies`, as the panel's ([`MotionSession::new`]) but
-    /// for lengths that would follow the view, which the client doesn't
-    /// see: a linear pattern's spacing is [`CLIENT_SPACING`], a shell's
-    /// thickness [`CLIENT_THICKNESS`], an offset face's distance
-    /// [`CLIENT_OFFSET`], a chamfer's distances [`CLIENT_CHAMFER`], a
-    /// fillet's radius [`CLIENT_RADIUS`], a sweep's helix's pitch
-    /// [`CLIENT_PITCH`].
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn for_client(kind: MotionKind, document: &Document, bodies: Vec<BodyId>) -> Self {
-        let mut session = Self::new(kind, document, &Camera::default(), bodies);
+    /// The session with each of `lengths`' fields set to its length, in
+    /// millimetres, written in `document`'s units.
+    pub(crate) fn with_lengths(
+        mut self,
+        lengths: &[(MotionField, f64)],
+        document: &Document,
+    ) -> Self {
         let design = document.design();
-        let lengths: &[(MotionField, f64)] = match kind {
-            MotionKind::LinearPattern => &[(MotionField::Spread, CLIENT_SPACING)],
-            MotionKind::Shell => &[(MotionField::Thickness, CLIENT_THICKNESS)],
-            MotionKind::OffsetFace => &[(MotionField::Distance, CLIENT_OFFSET)],
-            MotionKind::Chamfer => &[
-                (MotionField::ChamferDistance, CLIENT_CHAMFER[0]),
-                (MotionField::ChamferSecond, CLIENT_CHAMFER[1]),
-            ],
-            MotionKind::Fillet => &[(MotionField::Radius, CLIENT_RADIUS)],
-            MotionKind::Sweep => &[(MotionField::Pitch, CLIENT_PITCH)],
-            _ => &[],
-        };
         for &(field, length) in lengths {
-            let ask = field_ask(kind, field, &design);
-            session.fields[field.index()] = length_field(length, &ask, &design);
+            let ask = field_ask(self.kind, field, &design);
+            self.fields[field.index()] = length_field(length, &ask, &design);
         }
-        session
+        self
     }
 
     /// Reads `text` into `field`, as typed into it in `document`.
     pub(crate) fn input(&mut self, field: MotionField, text: String, document: &Document) {
         let ask = field_ask(self.kind, field, &document.design());
         self.fields[field.index()].input(text, &ask);
-    }
-
-    /// What `field` read last: its error, if it refused it.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn field_error(&self, field: MotionField) -> Option<&varde_expr::Error> {
-        self.field(field).error.as_ref()
     }
 
     /// Takes the world axis `axis` as a move's or pattern's axis, or a
@@ -609,24 +555,9 @@ impl MotionSession {
         Self::opened(document, fresh, feature, shape)
     }
 
-    /// [`MotionSession::editing`] for the MCP client: a value the
-    /// feature has none for (a helix's pitch on a path sweep, an equal
-    /// chamfer's second distance) is the client's default, as a new
-    /// one's ([`MotionSession::for_client`]), not one following the
-    /// user's view.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn editing_for_client(
-        document: &Document,
-        feature: FeatureId,
-        shape: Option<&PatternShape>,
-    ) -> Option<Self> {
-        let fresh = |kind, bodies| Self::for_client(kind, document, bodies);
-        Self::opened(document, fresh, feature, shape)
-    }
-
     /// A session of `fresh` (a new one of a kind and bodies) opened on
     /// the `feature` of `document`: see [`MotionSession::editing`].
-    fn opened(
+    pub(crate) fn opened(
         document: &Document,
         fresh: impl Fn(MotionKind, Vec<BodyId>) -> Self,
         feature: FeatureId,

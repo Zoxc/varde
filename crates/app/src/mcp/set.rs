@@ -31,13 +31,13 @@ use serde_json::{Map, Value};
 use varde_document::{Command, FeatureId, FeatureKind};
 use varde_mcp::tools::{self, Call, CallError};
 
-use super::args::{Given, SET_FEATURE, Wrong, failed};
+use super::args::{self, Given, SET_FEATURE, Wrong, failed};
 use super::edit::{Made, Refused};
 use super::make;
 use super::names::feature_id;
 use super::query::{Shape, tool_of};
 use super::{blend, modify, motion, sweep};
-use crate::doc::{CombineSession, Doc, ExtrudeSession, MotionSession, RevolveSession};
+use crate::doc::{CombineSession, Doc, ExtrudeSession, RevolveSession};
 
 /// The tool refusals here go under.
 const TOOL: &str = SET_FEATURE;
@@ -168,7 +168,7 @@ pub(super) fn set_feature(
 fn motion(doc: &Doc, id: FeatureId, call: &Call, given: Given) -> Result<FeatureKind, Refused> {
     let document = doc.editor.document();
     let shape = doc.pattern_shapes.get(&id);
-    let mut session = MotionSession::editing_for_client(document, id, shape)
+    let mut session = args::editing_for_client(document, id, shape)
         .ok_or_else(|| failed(TOOL, "internal error: another kind's arguments".to_owned()))?;
     // As the panel opens it: what's gone since said to be.
     session.prune(document);

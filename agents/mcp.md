@@ -813,8 +813,8 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   check made as an edit queues is only that), so the clone's ids hold.
 - `move_body`, `mirror`, `pattern`, `align`, `scale` (`mcp/motion.rs`):
   set up in the motion panel's own session,
-  `MotionSession::for_client` (the panel's `new` with a default camera,
-  a linear pattern's spacing `CLIENT_SPACING`, 10 mm, where the panel's
+  `args::for_client` (the panel's `new` with a default camera and
+  `with_lengths` of `client_lengths`: a linear pattern's spacing 10 mm, where the panel's
   follows the view), so the defaults are the panel's (a move by 0 mm,
   0° about Z; a mirror keeping the original; a linear pattern along X,
   3, joined; a circular one about Z, 4, Full 360°; a scale by 1 about
@@ -856,8 +856,8 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
 - `split`, `shell`, `offset_face`, `draft` (`mcp/modify.rs`): the
   motion session as the motion tools have it, sharing their `made`,
   `made_of`, `typed`, `by_key` and `keyed`; `for_client` sets a shell's thickness
-  to `CLIENT_THICKNESS`, 2 mm, and an offset face's distance to
-  `CLIENT_OFFSET`, 1 mm, where the panel's follow the view; a draft's 3°
+  to 2 mm, and an offset face's distance to
+  1 mm, where the panel's follow the view; a draft's 3°
   from XY and Tangent faces on are the panel's own. Faces by key go
   through `key::found` and `Doc::pick_face`, the face session's click
   path (`Doc::take_ref_in`, which `refs_click` runs on `Doc::mode`'s motion session),
@@ -891,8 +891,8 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   regeneration's failure, as Add anyway does for the user.
 - `chamfer`, `fillet` (`mcp/blend.rs`): the motion session as the
   motion tools have it; `for_client` sets a chamfer's distances to
-  `CLIENT_CHAMFER`, 1 and 2 mm, and a fillet's radius to
-  `CLIENT_RADIUS`, 2 mm (the mock's; the panel's follow the view); 45°,
+  1 and 2 mm, and a fillet's radius to
+  2 mm (the mock's; the panel's follow the view); 45°,
   Equal and Tangent chain on are the panel's own. The Tangent chain tick
   (`BlendSetup::chains`) is set before the edges, which go through
   `key::found` and `Doc::pick_edge`: refused as a click is (another
@@ -912,7 +912,7 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   without distance and angle) and Flip with Equal (the panel shows it
   for the other two; Equal is stored unflipped) are refused saying so.
 - `sweep`, `loft` (`mcp/sweep.rs`): `for_client` sets a helix's pitch
-  to `CLIENT_PITCH`, 10 mm; 5 turns, no twist, Follow path and a new
+  to 10 mm; 5 turns, no twist, Follow path and a new
   body are the panel's. A sweep's profile is picked in a fresh
   `RegionPick` of its sketch by `args::pick` (as split's regions), its
   tile set by `MotionSession::sweep_mode`; a path's chains by
@@ -1081,10 +1081,10 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   `fields`), into the session opened on the
   feature as the panel's EditFeature opens it, but with the client's
   defaults for the values the feature has none for
-  (`ExtrudeSession::editing_for_client`, `MotionSession::editing_for_client`:
+  (`ExtrudeSession::editing_for_client`, `args::editing_for_client`:
   a through-all extrude made one side gets `CLIENT_DISTANCE`, an equal
-  chamfer made two distances its second `CLIENT_CHAMFER`, a path sweep
-  made a helix `CLIENT_PITCH`, never a length following the user's
+  chamfer made two distances its second and a path sweep made a helix
+  its pitch from `client_lengths`, never a length following the user's
   view; `Shape::of` reads through the same) (a combine's pruned as
   the panel prunes it) by the setters the creating tools share
   (`make::set_extrude`, `set_revolve`, `set_combine`: the creating tools

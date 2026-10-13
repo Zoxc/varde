@@ -1,6 +1,6 @@
 //! The MCP client's motion tools, `move_body`, `mirror`, `pattern`,
 //! `align` and `scale` (see `agents/mcp.md`, "Edits"): each set up in
-//! the motion panel's own session ([`MotionSession::for_client`]), built
+//! the motion panel's own session ([`for_client`](super::args::for_client)), built
 //! from what its panel shows (typed text read by its fields, bodies by
 //! name as clicks pick them, faces, edges and corners by key taken as
 //! clicks on them in the committed model are), its defaults the panel's,
