@@ -35,6 +35,19 @@ struct Cut {
     end: Option<Id>,
 }
 
+impl Cut {
+    /// Takes in a place found within tolerance of this one: each cutting
+    /// curve once, the first end found kept.
+    fn absorb(&mut self, by: impl IntoIterator<Item = Id>, end: Option<Id>) {
+        for by in by {
+            if !self.by.contains(&by) {
+                self.by.push(by);
+            }
+        }
+        self.end = self.end.or(end);
+    }
+}
+
 /// What trimming a curve near a place takes away.
 #[derive(Debug, Clone, PartialEq)]
 enum Trimmed {
@@ -90,12 +103,7 @@ impl Sketch {
         let mut cuts: Vec<Cut> = Vec::new();
         for (u, by, end) in places {
             match cuts.last_mut() {
-                Some(cut) if geom.length(cut.u, u) <= tolerance => {
-                    if !cut.by.contains(&by) {
-                        cut.by.push(by);
-                    }
-                    cut.end = cut.end.or(end);
-                }
+                Some(cut) if geom.length(cut.u, u) <= tolerance => cut.absorb([by], end),
                 _ => cuts.push(Cut {
                     u,
                     by: vec![by],
@@ -110,13 +118,7 @@ impl Sketch {
             && geom.length(last.u, first.u + geom.last()) <= tolerance
             && let Some(last) = cuts.pop()
         {
-            let first = &mut cuts[0];
-            for by in last.by {
-                if !first.by.contains(&by) {
-                    first.by.push(by);
-                }
-            }
-            first.end = first.end.or(last.end);
+            cuts[0].absorb(last.by, last.end);
         }
         Some(cuts)
     }
