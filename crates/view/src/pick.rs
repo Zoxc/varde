@@ -259,7 +259,7 @@ impl PickIndex {
     pub fn face_ref(&self, face: u32, near: DVec3) -> Option<FaceRef> {
         Some(FaceRef {
             body: self.face_body(face)?,
-            key: self.picking.faces().get(face as usize)?.key,
+            key: self.face_key(face)?,
             near,
         })
     }
@@ -566,24 +566,24 @@ impl PickIndex {
     /// The faces of the body `face` is on keyed as it is, ascending, it
     /// among them: the pieces a face named once is left in.
     pub fn faces_keyed_as(&self, face: u32) -> Vec<u32> {
-        let (Some(body), Some(key)) = (
-            self.face_body(face),
-            (self.picking.faces().get(face as usize)).map(|face| face.key),
-        ) else {
+        let (Some(body), Some(key)) = (self.face_body(face), self.face_key(face)) else {
             return Vec::new();
         };
         (self.body_faces(body))
-            .filter(|&other| {
-                (self.picking.faces().get(other as usize)).is_some_and(|f| f.key == key)
-            })
+            .filter(|&other| self.face_key(other) == Some(key))
             .collect()
+    }
+
+    /// The key that names mesh face `face`, if there's such a face.
+    pub fn face_key(&self, face: u32) -> Option<FaceKey> {
+        Some(self.picking.faces().get(face as usize)?.key)
     }
 
     /// The keys of the faces either side of `chain`, sorted, as an edge
     /// reference keeps them, if it's an edge between two faces.
     pub fn chain_keys(&self, chain: u32) -> Option<[FaceKey; 2]> {
         let faces = self.edge_faces(chain)?;
-        let [a, b] = faces.map(|f| self.picking.faces().get(f as usize).map(|face| face.key));
+        let [a, b] = faces.map(|face| self.face_key(face));
         let (a, b) = (a?, b?);
         Some([a.min(b), a.max(b)])
     }
@@ -592,7 +592,7 @@ impl PickIndex {
     /// the faces meeting there, sorted, if three faces or more do.
     pub fn vertex_keys(&self, corner: u32) -> Option<[FaceKey; 3]> {
         let mut keys: Vec<FaceKey> = (self.corner_faces(corner).iter())
-            .filter_map(|&(_, face)| Some(self.picking.faces().get(face as usize)?.key))
+            .filter_map(|&(_, face)| self.face_key(face))
             .collect();
         keys.sort_unstable();
         keys.dedup();

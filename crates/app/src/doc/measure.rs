@@ -142,10 +142,7 @@ fn inspect_pick(index: &PickIndex, pick: Pick) -> Option<InspectPick> {
         (Some(Snapped::EdgePoint(edge)), _) => {
             (Entity::EdgePoint(index.chain_keys(edge)?), pick.at)
         }
-        (None, Picked::Face(face)) => (
-            Entity::Face(picking.faces().get(face as usize)?.key),
-            pick.at,
-        ),
+        (None, Picked::Face(face)) => (Entity::Face(index.face_key(face)?), pick.at),
         (None, Picked::Edge(edge)) => (Entity::Edge(index.chain_keys(edge)?), pick.at),
         // A vertex is its corner, which it snaps to; one with no corner
         // in the tables (past their bound) isn't picked.

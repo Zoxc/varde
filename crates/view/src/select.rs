@@ -508,7 +508,7 @@ impl Selection {
         }
         match (self.mode, pick.target) {
             (_, Picked::Face(face)) => {
-                let Some(key) = index.picking().faces().get(face as usize).map(|f| f.key) else {
+                let Some(key) = index.face_key(face) else {
                     return Vec::new();
                 };
                 let item = Selected::Face {

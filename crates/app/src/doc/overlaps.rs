@@ -36,7 +36,7 @@ fn name(index: &PickIndex, pick: &Pick) -> Option<Selected> {
     Some(match pick.target {
         Picked::Face(face) => Selected::Face {
             body,
-            key: index.picking().faces().get(face as usize)?.key,
+            key: index.face_key(face)?,
             near,
         },
         Picked::Edge(chain) => Selected::Edge {
