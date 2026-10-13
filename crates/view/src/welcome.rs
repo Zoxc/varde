@@ -49,7 +49,6 @@ pub struct WelcomeState<'a> {
     pub damaged: Option<DamagedPrompt<'a>>,
     /// The panic a session recorded, if one did.
     pub panic: Option<PanicNote<'a>>,
-    pub mode: theme::Mode,
     /// The settings page, while it shows: natively in the recent designs'
     /// place, on the web under the header.
     pub settings: Option<SettingsState<'a>>,

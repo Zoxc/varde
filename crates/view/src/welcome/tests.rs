@@ -50,7 +50,6 @@ fn state<'a>(recent: Option<Vec<RecentCard<'a>>>, stored: Vec<DesignCard<'a>>) -
         dragging: false,
         damaged: None,
         panic: None,
-        mode: theme::Mode::Light,
         settings: None,
     }
 }

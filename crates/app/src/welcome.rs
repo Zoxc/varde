@@ -584,7 +584,6 @@ impl Welcome {
             dragging: self.dragging,
             damaged,
             panic,
-            mode,
             settings,
         })
     }
