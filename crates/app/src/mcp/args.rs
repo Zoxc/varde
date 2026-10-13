@@ -344,7 +344,7 @@ fn made_after(name: &str, feature: &str, edited: Option<FeatureId>) -> String {
 /// How a sketch coordinate the client types is read: a length in the
 /// design's units, within the coordinate limit either side.
 pub(super) fn coordinate_ask<'a>(design: &varde_sketch::Design<'a>) -> Ask<'a> {
-    Ask::length(design.units, f64::from(MAX_COORD)).with_params(design.params)
+    design.length(f64::from(MAX_COORD))
 }
 
 /// The sketch point `[x, y]` typed ([`coordinate_ask`]), or why not.

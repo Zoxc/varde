@@ -70,7 +70,7 @@ impl Scale {
     /// `1 / `[`MAX_SCALE_FACTOR`] to [`MAX_SCALE_FACTOR`]
     /// ([`Ask::factor`]).
     pub fn factor_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::factor(design.units, MAX_SCALE_FACTOR).with_params(design.params)
+        design.factor(MAX_SCALE_FACTOR)
     }
 
     /// What an edge length is checked against in `design`: a length as

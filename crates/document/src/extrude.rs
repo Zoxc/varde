@@ -134,10 +134,10 @@ impl Extent {
     /// What a distance is checked against in `design`: a length at least
     /// [`MIN_LENGTH`] and at most [`MAX_COORD`], bare numbers in its units.
     pub fn ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::length(design.units, f64::from(MAX_COORD))
+        design
+            .length(f64::from(MAX_COORD))
             .positive()
             .at_least(MIN_LENGTH)
-            .with_params(design.params)
     }
 
     /// Its distances.
@@ -165,9 +165,7 @@ impl Extrude {
     /// What a taper is checked against in `design`: an angle under a
     /// right angle either way, bare numbers in degrees.
     pub fn taper_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::angle(design.units, FRAC_PI_2)
-            .under_max()
-            .with_params(design.params)
+        design.angle(FRAC_PI_2).under_max()
     }
 
     /// Its taper, if its walls lean: none for no taper or one of zero

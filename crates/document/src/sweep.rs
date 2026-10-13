@@ -152,7 +152,7 @@ impl Sweep {
     /// What its twist is checked against in `design`: an angle within
     /// [`MAX_TWIST_TURNS`] turns either way, bare numbers in degrees.
     pub fn twist_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::angle(design.units, MAX_TWIST_TURNS * TAU).with_params(design.params)
+        design.angle(MAX_TWIST_TURNS * TAU)
     }
 
     /// What a helix's pitch is checked against in `design`: a length as
@@ -164,10 +164,10 @@ impl Sweep {
     /// What a helix's turns are checked against in `design`: a number
     /// from [`MIN_HELIX_TURNS`] to [`MAX_HELIX_TURNS`].
     pub fn turns_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::number(design.units, MAX_HELIX_TURNS)
+        design
+            .number(MAX_HELIX_TURNS)
             .positive()
             .at_least(MIN_HELIX_TURNS)
-            .with_params(design.params)
     }
 
     /// The sketches its path's parts name, sorted without repeats.

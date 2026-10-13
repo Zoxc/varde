@@ -33,7 +33,9 @@ parameters).
   inside one take the design's units, as in any value.
 - **Use.** An `Ask` carries the parameters names are looked up in
   (`Ask::with_params`; `Params::EMPTY` unless given, so it stays
-  `Copy`). A use is never bare, so it takes no units and gets no pins; an
+  `Copy`); features and dimensions build theirs from a `Design`
+  (`Design::length`, `angle`, `number`, `factor`), which joins its
+  units and parameters. A use is never bare, so it takes no units and gets no pins; an
   unknown name is `UnknownName` with a near name suggested (the same but
   for case, or two edits; `Params::nearest` skips names whose length
   differs by more and fills only the band of the edit table within the

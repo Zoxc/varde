@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use varde_expr::{LengthUnit, Params};
+use varde_expr::{Ask, LengthUnit, Params};
 
 use crate::origin::LAST_ID;
 use crate::{Annotation, Constraint, Curve, Id, Role, Sketch};
@@ -21,6 +21,32 @@ pub struct Design<'a> {
     /// expressions (and features' values) are read with
     /// ([`Measure::ask`](crate::Measure::ask)).
     pub params: &'a Params,
+}
+
+impl<'a> Design<'a> {
+    /// A length within `max` millimetres of zero ([`Ask::length`]), in
+    /// the design's units and with its parameters.
+    pub fn length(&self, max: f64) -> Ask<'a> {
+        Ask::length(self.units, max).with_params(self.params)
+    }
+
+    /// An angle within `max` radians of zero ([`Ask::angle`]), with the
+    /// design's parameters.
+    pub fn angle(&self, max: f64) -> Ask<'a> {
+        Ask::angle(self.units, max).with_params(self.params)
+    }
+
+    /// A plain number within `max` of zero ([`Ask::number`]), with the
+    /// design's parameters.
+    pub fn number(&self, max: f64) -> Ask<'a> {
+        Ask::number(self.units, max).with_params(self.params)
+    }
+
+    /// A factor from `1 / max` to `max` ([`Ask::factor`]), with the
+    /// design's parameters.
+    pub fn factor(&self, max: f64) -> Ask<'a> {
+        Ask::factor(self.units, max).with_params(self.params)
+    }
 }
 
 /// One of a sketch's lists of items, as [`SketchError::TooMany`] names it.

@@ -82,10 +82,10 @@ impl Field {
         // Only the kind of measure matters to what it asks.
         let any = Id::ORIGIN;
         match self {
-            Field::Sides => Ask::number(design.units, f64::from(MAX_SIDES))
+            Field::Sides => design
+                .number(f64::from(MAX_SIDES))
                 .at_least(f64::from(MIN_SIDES))
-                .whole()
-                .with_params(design.params),
+                .whole(),
             Field::Angle => Measure::Angle(any, any).ask(design),
             Field::Diameter => Measure::Diameter(any).ask(design),
             Field::Radius => Measure::Radius(any).ask(design),

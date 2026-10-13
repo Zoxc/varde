@@ -81,10 +81,7 @@ impl Chamfer {
     /// What an angle is checked against in `design`: above zero and
     /// under a right angle, bare numbers in degrees.
     pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::angle(design.units, FRAC_PI_2)
-            .positive()
-            .under_max()
-            .with_params(design.params)
+        design.angle(FRAC_PI_2).positive().under_max()
     }
 
     /// The body its edges and faces are on ([`blend_body`]). `None`

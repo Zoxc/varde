@@ -162,16 +162,14 @@ impl Measure {
     /// may be `max`).
     /// Names in its text are `design`'s parameters.
     pub fn ask<'p>(&self, design: &Design<'p>) -> Ask<'p> {
-        let ask = match self {
-            Measure::Angle(..) => Ask::angle(design.units, TAU).positive().under_max(),
-            Measure::Diameter(_) => Ask::length(design.units, 2.0 * design.max)
+        match self {
+            Measure::Angle(..) => design.angle(TAU).positive().under_max(),
+            Measure::Diameter(_) => design
+                .length(2.0 * design.max)
                 .positive()
                 .at_least(MIN_LENGTH),
-            _ => Ask::length(design.units, design.max)
-                .positive()
-                .at_least(MIN_LENGTH),
-        };
-        ask.with_params(design.params)
+            _ => design.length(design.max).positive().at_least(MIN_LENGTH),
+        }
     }
 }
 

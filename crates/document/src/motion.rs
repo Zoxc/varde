@@ -180,13 +180,13 @@ impl Move {
     /// [`MAX_COORD`] of zero, bare numbers in its units. Zero and
     /// negative offsets are offsets too.
     pub fn offset_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::length(design.units, f64::from(MAX_COORD)).with_params(design.params)
+        design.length(f64::from(MAX_COORD))
     }
 
     /// What its turn's angle is checked against in `design`: within a
     /// turn either way, bare numbers in degrees.
     pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::angle(design.units, TAU).with_params(design.params)
+        design.angle(TAU)
     }
 
     /// Its offsets as a vector, in millimetres.

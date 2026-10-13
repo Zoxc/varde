@@ -139,25 +139,23 @@ impl Pattern {
     /// What a count is checked against in `design`: a whole number from 2
     /// to [`MAX_PATTERN_COUNT`].
     pub fn count_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::number(design.units, f64::from(MAX_PATTERN_COUNT))
+        design
+            .number(f64::from(MAX_PATTERN_COUNT))
             .whole()
             .at_least(2.0)
-            .with_params(design.params)
     }
 
     /// What a linear pattern's spacing is checked against in `design`: a
     /// length within [`MAX_COORD`] of zero, bare numbers in its units
     /// (zero is refused apart, see [`Pattern::check_own`]).
     pub fn spacing_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::length(design.units, f64::from(MAX_COORD)).with_params(design.params)
+        design.length(f64::from(MAX_COORD))
     }
 
     /// What a circular pattern's angle is checked against in `design`:
     /// above zero and at most a turn, bare numbers in degrees.
     pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
-        Ask::angle(design.units, TAU)
-            .positive()
-            .with_params(design.params)
+        design.angle(TAU).positive()
     }
 
     /// How many copies it makes of each body, the original among them, if
