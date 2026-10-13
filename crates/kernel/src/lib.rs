@@ -3,7 +3,9 @@
 //! the charging of work against it, the errors ([`KernelError`]), the
 //! parallel map and quadrature; and the first of its geometry: the tile
 //! ([`geom::tile`]), the forms' keys ([`geom::form`]: plane, cylinder,
-//! sphere) and their lattices of tiles ([`geom::lattice`]).
+//! sphere) and their lattices of tiles ([`geom::lattice`]), tiled
+//! surfaces, edge and coedge curves and their seam bounds; and the
+//! minimal B-rep store counting reads ([`topo::brep_min`]).
 //! The quadrature rules are public ([`measure::quadrature`]): the facade
 //! measures profiles' areas with them.
 
@@ -14,6 +16,7 @@ pub mod geom;
 mod infra;
 #[allow(dead_code, reason = "moved ahead of its callers")]
 pub mod measure;
+pub mod topo;
 
 pub use infra::budget::{
     Budget, BudgetProfile, Cap, HOTTEST, ItemAt, Limit, MAX_WORK, Step, Stopped,
