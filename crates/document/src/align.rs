@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 use varde_kernel_compat::mesh::FaceKey;
 
+use crate::check::OnBody;
 use crate::motion::Referred;
 use crate::{
     Axis3, AxisRef, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, Move, RefError,
@@ -123,12 +124,15 @@ impl PointRef {
         }
     }
 
-    /// The features its keys name as its faces' makers.
-    pub(crate) fn makers(&self) -> Vec<FeatureId> {
+    /// What it names on a body, if it's on one.
+    pub(crate) fn on_body(&self) -> Option<OnBody> {
         match self {
-            PointRef::Origin => Vec::new(),
-            PointRef::Corner { faces, .. } => faces.map(|key| FeatureId(key.feature)).to_vec(),
-            PointRef::Middle(edge) | PointRef::Centre(edge) => edge.makers().to_vec(),
+            PointRef::Origin => None,
+            PointRef::Corner { body, faces, .. } => Some(OnBody {
+                body: *body,
+                makers: faces.map(|key| FeatureId(key.feature)).to_vec(),
+            }),
+            PointRef::Middle(edge) | PointRef::Centre(edge) => Some(edge.on_body()),
         }
     }
 }
@@ -169,13 +173,6 @@ fn check_near(near: DVec3) -> Result<(), PointRefError> {
     }
 }
 
-/// What a reference of an align names on a body: the body and the
-/// features its keys name as its faces' makers.
-pub(crate) struct Named {
-    pub(crate) body: BodyId,
-    pub(crate) makers: Vec<FeatureId>,
-}
-
 impl AlignRefs {
     /// Its directions, primary first.
     pub fn directions(&self) -> impl Iterator<Item = &DirRef> {
@@ -196,19 +193,10 @@ impl AlignRefs {
     }
 
     /// What each of its references names on a body, if it names one.
-    pub(crate) fn named(&self) -> Vec<Named> {
-        let point = self.point.body().map(|body| Named {
-            body,
-            makers: self.point.makers(),
-        });
-        let directions = self.directions().filter_map(|direction| {
-            let referred = direction.refers()?;
-            Some(Named {
-                body: referred.body(),
-                makers: referred.makers(),
-            })
-        });
-        point.into_iter().chain(directions).collect()
+    pub(crate) fn named(&self) -> impl Iterator<Item = OnBody> {
+        let directions =
+            (self.directions()).filter_map(|direction| Some(direction.refers()?.on_body()));
+        self.point.on_body().into_iter().chain(directions)
     }
 
     /// Whether any of its references is the origin's.

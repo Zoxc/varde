@@ -7,6 +7,7 @@ use varde_expr::{Ask, Value};
 
 use crate::BodiesError;
 use crate::bodies::check_bodies;
+use crate::check::OnBody;
 use crate::{BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, PointRef, PointRefError};
 
 /// The largest factor a scale takes, and the inverse of the smallest:
@@ -122,10 +123,10 @@ impl Scale {
 
     /// The features its point's and edge's keys name as their faces'
     /// makers, with the body each is on.
-    pub(crate) fn named(&self) -> Vec<(BodyId, Vec<FeatureId>)> {
-        let edge = (self.factor.edge()).map(|edge| (edge.body, edge.makers().to_vec()));
-        let about = self.about.body().map(|body| (body, self.about.makers()));
-        about.into_iter().chain(edge).collect()
+    pub(crate) fn named(&self) -> impl Iterator<Item = OnBody> {
+        (self.about.on_body())
+            .into_iter()
+            .chain(self.factor.edge().map(EdgeRef::on_body))
     }
 }
 

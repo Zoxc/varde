@@ -8,6 +8,7 @@ use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 use varde_kernel_compat::mesh::FaceKey;
 
+use crate::check::OnBody;
 use crate::{BodyId, FeatureId, MAX_COORD};
 
 /// A plane in the world: the one a sketch is drawn on, a mirror's, a
@@ -65,6 +66,14 @@ pub struct FaceRef {
 }
 
 impl FaceRef {
+    /// What it names on its body: the body and its face's maker.
+    pub(crate) fn on_body(&self) -> OnBody {
+        OnBody {
+            body: self.body,
+            makers: vec![self.maker()],
+        }
+    }
+
     /// The feature the key names as the face's maker, which may not be
     /// there.
     pub fn maker(&self) -> FeatureId {

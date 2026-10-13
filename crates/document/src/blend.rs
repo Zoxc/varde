@@ -69,13 +69,9 @@ impl Document {
         edges: &[EdgeRef],
         faces: &[FaceRef],
     ) -> Result<(), BlendEdgesError> {
-        let named = (edges.iter().map(|edge| (edge.body, edge.makers().to_vec())))
-            .chain(faces.iter().map(|face| (face.body, vec![face.maker()])));
-        for (body, makers) in named {
-            (self.refers_before(index, body, &makers))
-                .map_err(|late| late.or(BlendEdgesError::Body, BlendEdgesError::RefMaker))?;
-        }
-        Ok(())
+        let named = (edges.iter().map(EdgeRef::on_body)).chain(faces.iter().map(FaceRef::on_body));
+        (self.all_refer_before(index, named))
+            .map_err(|late| late.or(BlendEdgesError::Body, BlendEdgesError::RefMaker))
     }
 }
 

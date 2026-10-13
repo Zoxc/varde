@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
 use crate::bodies::check_bodies;
+use crate::check::OnBody;
 use crate::{
     BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, NearError,
     Plane,
@@ -156,11 +157,11 @@ impl Referred<'_> {
         }
     }
 
-    /// The features its keys name as its faces' makers.
-    pub(crate) fn makers(&self) -> Vec<FeatureId> {
+    /// What it names on its body.
+    pub(crate) fn on_body(&self) -> OnBody {
         match self {
-            Referred::Edge(edge) => edge.makers().to_vec(),
-            Referred::Face(face) => vec![face.maker()],
+            Referred::Edge(edge) => edge.on_body(),
+            Referred::Face(face) => face.on_body(),
         }
     }
 }

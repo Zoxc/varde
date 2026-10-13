@@ -7,6 +7,7 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_kernel_compat::mesh::FaceKey;
 
+use crate::check::OnBody;
 use crate::{BodyId, FeatureId};
 
 /// An edge of a body, as picked: the body, the keys of the faces either
@@ -32,6 +33,14 @@ pub struct EdgeRef {
 }
 
 impl EdgeRef {
+    /// What it names on its body: the body and its faces' makers.
+    pub(crate) fn on_body(&self) -> OnBody {
+        OnBody {
+            body: self.body,
+            makers: self.makers().to_vec(),
+        }
+    }
+
     /// The features the two keys name as the faces' makers, which may not
     /// be there.
     pub fn makers(&self) -> [FeatureId; 2] {
