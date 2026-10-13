@@ -226,31 +226,42 @@ pub fn run(now: &dyn Fn() -> f64, report: &mut dyn FnMut(&str, f64)) {
         current
     };
 
-    for (name, (sketch, corner)) in [
-        ("plate, fixed", plate(9, true)),
-        ("plate, free", plate(9, false)),
-    ] {
-        let solved = settled(&sketch);
-        let analysis = analyse(&solved);
-        assert!(analysis.solved && analysis.redundant.is_empty());
-        assert_eq!(analysis.freedom, if name == "plate, fixed" { 0 } else { 4 });
-        time(&format!("{name}: settle"), 5, &mut || {
-            settled(&sketch);
-        });
-        time(&format!("{name}: analyse"), 5, &mut || {
-            analyse(&solved);
-        });
-        time(&format!("{name}: drag step"), 1, &mut || {
-            drags(&solved, corner, DVec2::new(15.0, 8.0));
-        });
-    }
-    for (name, (sketch, end)) in [
-        ("spline chain", spline_chain(10, 12, 4)),
-        ("long spline", spline_chain(1, 100, 20)),
-    ] {
+    // Each case with the point dragged, how far, and the freedom left
+    // once solved where it's checked.
+    let cases = [
+        (
+            "plate, fixed",
+            plate(9, true),
+            DVec2::new(15.0, 8.0),
+            Some(0),
+        ),
+        (
+            "plate, free",
+            plate(9, false),
+            DVec2::new(15.0, 8.0),
+            Some(4),
+        ),
+        (
+            "spline chain",
+            spline_chain(10, 12, 4),
+            DVec2::new(-6.0, 10.0),
+            None,
+        ),
+        (
+            "long spline",
+            spline_chain(1, 100, 20),
+            DVec2::new(-6.0, 10.0),
+            None,
+        ),
+        ("arc chain", arc_chain(100), DVec2::new(-20.0, 30.0), None),
+    ];
+    for (name, (sketch, dragged), by, freedom) in cases {
         let solved = settled(&sketch);
         let analysis = analyse(&solved);
         assert!(analysis.solved && analysis.redundant.is_empty(), "{name}");
+        if let Some(freedom) = freedom {
+            assert_eq!(analysis.freedom, freedom, "{name}");
+        }
         time(&format!("{name}: settle"), 5, &mut || {
             settled(&sketch);
         });
@@ -258,23 +269,9 @@ pub fn run(now: &dyn Fn() -> f64, report: &mut dyn FnMut(&str, f64)) {
             analyse(&solved);
         });
         time(&format!("{name}: drag step"), 1, &mut || {
-            drags(&solved, end, DVec2::new(-6.0, 10.0));
+            drags(&solved, dragged, by);
         });
     }
-
-    let (chain, end) = arc_chain(100);
-    let solved = settled(&chain);
-    let analysis = analyse(&solved);
-    assert!(analysis.solved && analysis.redundant.is_empty());
-    time("arc chain: settle", 5, &mut || {
-        settled(&chain);
-    });
-    time("arc chain: analyse", 5, &mut || {
-        analyse(&solved);
-    });
-    time("arc chain: drag step", 1, &mut || {
-        drags(&solved, end, DVec2::new(-20.0, 30.0));
-    });
 
     // Profiles: the plate solved, its circles touching their cells'
     // sides (five regions a cell); a plate of 40 by 40 cells, 6480 curves,
