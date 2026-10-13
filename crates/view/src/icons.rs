@@ -350,7 +350,9 @@ impl Icon {
             Svgs {
                 all: handle(Layer::All, 0.0),
                 button: handle(Layer::All, BUTTON_MARGIN),
-                layers: [Layer::Line, Layer::Accent, Layer::Reference].map(layer),
+                line: layer(Layer::Line),
+                accent: layer(Layer::Accent),
+                reference: layer(Layer::Reference),
             }
         })
     }
@@ -364,7 +366,9 @@ struct Svgs {
     button: svg::Handle,
     /// Its line, accent and reference layers, unframed, each if the icon
     /// draws in it; none for an icon drawn in one colour.
-    layers: [Option<svg::Handle>; 3],
+    line: Option<svg::Handle>,
+    accent: Option<svg::Handle>,
+    reference: Option<svg::Handle>,
 }
 
 impl Svgs {
@@ -378,7 +382,7 @@ impl Svgs {
 
     /// Whether the icon is drawn layer by layer.
     fn layered(&self) -> bool {
-        self.layers.iter().any(Option::is_some)
+        self.line.is_some() || self.accent.is_some() || self.reference.is_some()
     }
 }
 
@@ -537,9 +541,9 @@ pub fn icon<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
     };
     // The accents over the rest, as the mock draws them last.
     stack![
-        layer(&svgs.layers[2], |tone| tone.reference),
-        layer(&svgs.layers[0], |tone| tone.line),
-        layer(&svgs.layers[1], |tone| tone.accent),
+        layer(&svgs.reference, |tone| tone.reference),
+        layer(&svgs.line, |tone| tone.line),
+        layer(&svgs.accent, |tone| tone.accent),
     ]
     .into()
 }
