@@ -230,7 +230,7 @@ pub(super) fn sketch_made(doc: &Doc, id: FeatureId) -> Value {
     };
     let mut made = json!({ "sketch": feature.name, "id": id.get() });
     if let FeatureKind::Sketch { plane, .. } = &feature.kind {
-        made["plane"] = super::query::Shape::new(doc).sketch_plane(plane);
+        made["plane"] = super::query::Shape::new(doc).plane(plane);
     }
     made
 }

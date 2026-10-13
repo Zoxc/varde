@@ -198,20 +198,12 @@ impl<'a> Shape<'a> {
         Self { doc, document }
     }
 
-    /// A sketch's `plane`: an origin plane's word, or its face by key.
-    pub(crate) fn sketch_plane(&self, plane: &Plane) -> Value {
-        match plane {
-            Plane::Origin(plane) => json!(plane_word(*plane)),
-            Plane::Face(face) => self.face(face),
-        }
-    }
-
     /// `feature`'s settings as `feature` gives them: [`Shape::of`], a
     /// sketch summed up by its plane and counts.
     pub(crate) fn settings(&self, feature: &Feature) -> Value {
         match &feature.kind {
             FeatureKind::Sketch { plane, sketch, .. } => json!({
-                "plane": self.sketch_plane(plane),
+                "plane": self.plane(plane),
                 "points": sketch.points.len(),
                 "curves": sketch.curves.len(),
                 "constraints": sketch.constraints.len(),
@@ -322,8 +314,7 @@ impl<'a> Shape<'a> {
 
     fn move_body(&self, said: &mut Said, session: &MotionSession, moved: &varde_document::Move) {
         said.put("bodies", self.bodies(&moved.bodies));
-        for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
-            let axis = varde_document::Axis3::ALL[axis];
+        for (key, axis) in ["x", "y", "z"].into_iter().zip(varde_document::Axis3::ALL) {
             said.put(key, text(session, MotionField::Offset(axis)));
         }
         if let Some((axis, _)) = &moved.turn {
@@ -383,8 +374,7 @@ impl<'a> Shape<'a> {
             }
             ScaleFactor::PerAxis(_) => {
                 said.put("mode", json!(tools::ScaleMode::PerAxis.word()));
-                for (key, axis) in [("x", 0), ("y", 1), ("z", 2)] {
-                    let axis = varde_document::Axis3::ALL[axis];
+                for (key, axis) in ["x", "y", "z"].into_iter().zip(varde_document::Axis3::ALL) {
                     said.put(key, text(session, MotionField::AxisFactor(axis)));
                 }
             }
@@ -729,7 +719,8 @@ impl<'a> Shape<'a> {
         }
     }
 
-    fn plane(&self, plane: &Plane) -> Value {
+    /// A `plane`: an origin plane's word, or its face by key.
+    pub(crate) fn plane(&self, plane: &Plane) -> Value {
         match plane {
             Plane::Origin(plane) => json!(plane_word(*plane)),
             Plane::Face(face) => self.face(face),

@@ -138,7 +138,7 @@ pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
         "name": feature.name,
         "id": feature.id.get(),
         "units": units.symbol(),
-        "plane": Shape::new(doc).sketch_plane(plane),
+        "plane": Shape::new(doc).plane(plane),
         "revision": super::revision(doc),
     });
     let mut lists = vec![
