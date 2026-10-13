@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FeatureId, FeatureKind};
 use varde_view::{
-    AlignRole, ModelHighlight, ModelPicking, MotionKind, MotionPick, ObjectRow, PanelHover, Pick,
-    Picked, Picks, Selection, SketchItem, SketchLines,
+    AlignRole, ModelHighlight, ModelPicking, MotionKind, MotionPick, Naming, ObjectRow, PanelHover,
+    Pick, Picked, Picks, Selection, Shown, SketchItem, SketchLines,
 };
 
 use super::{Doc, MotionSession};
@@ -102,6 +102,29 @@ impl ModelPick {
 }
 
 impl Doc {
+    /// What the model shown found that naming its faces needs.
+    pub(crate) fn shown(&self) -> Shown<'_> {
+        self.feed.shown_marks()
+    }
+
+    /// The naming of picks as of `feature` ([`Naming::before`]): the
+    /// history stopped there, or where a new feature (`None`) goes.
+    pub(crate) fn naming_at(&self, feature: Option<FeatureId>) -> Naming {
+        self.naming_in(feature, self.shown())
+    }
+
+    /// The naming of picks as of `feature`, as the model whose `marks`
+    /// these are found its merges ([`Naming::before`]): of the committed
+    /// model's for the MCP client's keys ([`MeshFeed::marks_of`]).
+    ///
+    /// [`MeshFeed::marks_of`]: super::feed::MeshFeed::marks_of
+    pub(crate) fn naming_in(&self, feature: Option<FeatureId>, marks: Shown) -> Naming {
+        let document = self.editor.document();
+        let before =
+            (feature.and_then(|id| document.feature_index(id))).unwrap_or(document.insert_at());
+        Naming::before(document, before, marks)
+    }
+
     /// Whether the cursor picks the model: in a sketch only for its
     /// Project or Intersect tool ([`Doc::picks_outside`]), else outside
     /// sketches and the extrude or revolve being set up, which pick what

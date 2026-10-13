@@ -36,7 +36,7 @@ the Save As answer syncs for that.
 
 **A new sketch** (`S`, the toolbar's or the rail's Sketch, enabled
 outside a sketch in a document that can be changed, an operation being
-set up dropped for it) first asks for its plane (`Look::PickPlane`, `Doc::mode`'s `PickingPlane` holding a
+set up dropped for it) first asks for its plane (`Look::PickPlane`, `Doc::mode`'s `PickingPlane` (`doc/plane.rs`) holding a
 `PlanePick`): the toolbar offers XY, XZ and YZ (`Edit::PlanePicked`, keys `1`, `2`, `3`,
 `shortcut::plane_binding`),
 and the viewport picks flat

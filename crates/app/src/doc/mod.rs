@@ -13,6 +13,7 @@ mod motion;
 mod overlaps;
 pub(crate) mod params;
 mod pick;
+mod plane;
 mod rail;
 mod regions;
 mod relink;
@@ -64,6 +65,8 @@ pub(crate) use motion::MotionSession;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use motion::PatternShape;
 use pick::ModelPick;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use plane::face_placement_in;
 use rail::Rail;
 pub(crate) use regions::pickable;
 #[cfg(not(target_arch = "wasm32"))]
@@ -78,8 +81,7 @@ use sketch::GEOMETRY_SHARE;
 pub(crate) use sketch::Refusal;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use sketch::{
-    Clicks, Settled, Step, clicked, face_placement_in, outside_model_in, outside_sketch_item_at,
-    outside_target_in,
+    Clicks, Settled, Step, clicked, outside_model_in, outside_sketch_item_at, outside_target_in,
 };
 pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
@@ -131,7 +133,7 @@ pub(crate) struct Doc {
     pub(crate) params: params::Params,
     /// Where the newest sketch on a face was placed when its face was
     /// picked, until a model places it: see [`Doc::placement`].
-    placed: Option<sketch::Placed>,
+    placed: Option<plane::Placed>,
     /// A sketch edit the solver refused after its sketch was left, which
     /// sketch it was of and why: shown in a banner over the viewport
     /// until dismissed, see [`Doc::refused_edit`].
@@ -346,7 +348,7 @@ pub(crate) enum DocMode {
     Idle,
     /// The plane being picked: for a new sketch, or for the sketch whose
     /// plane is changed.
-    PickingPlane(sketch::PickingPlane),
+    PickingPlane(plane::PickingPlane),
     /// The sketch being edited.
     Sketch(SketchSession),
     /// The extrude, revolve, combine or motion kind being set up.
@@ -393,7 +395,7 @@ macro_rules! mode_accessors {
 
 impl DocMode {
     mode_accessors! {
-        PickingPlane: sketch::PickingPlane => picking_plane, picking_plane_mut, take_picking_plane;
+        PickingPlane: plane::PickingPlane => picking_plane, picking_plane_mut, take_picking_plane;
         Sketch: SketchSession => sketch, sketch_mut, take_sketch;
         Measure: MeasureSession => measure, measure_mut, take_measure;
         Operation: OperationSession => operation, operation_mut, take_operation;
