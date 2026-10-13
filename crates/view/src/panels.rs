@@ -595,11 +595,6 @@ fn name<'a>(name: impl text::IntoFragment<'a>, visible: bool) -> iced::widget::T
     })
 }
 
-/// A group's heading in a list: its `label` and how many it holds.
-fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
-    group_row(label, count).padding([0, 8]).into()
-}
-
 /// What [`objects`] lists, and how, out of a [`DocumentState`].
 #[derive(Clone, Copy)]
 struct ObjectsView<'a> {
@@ -1481,7 +1476,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
     };
     let list = if rows == [GeometryRow::Header(GeometryGroup::Own, 0)] {
         column![
-            container(group("Geometry", 0)).padding([0, 8]),
+            container(row_at(0)).padding(Padding::from([0, 8]).right(0)),
             empty_note("Nothing drawn yet.")
         ]
         .into()
@@ -1801,19 +1796,6 @@ fn geometry_item<'a>(
         )
     });
     row_context(row, RowMenu::Item(id), menu)
-}
-
-/// A group's header as a row of a list: as [`group`], within the list's
-/// own padding.
-fn group_row<'a>(label: &'a str, count: usize) -> Row<'a, Message> {
-    row![
-        icons::tinted(Icon::Chev, icons::INLINE, |p| p.muted),
-        chrome::heading(label),
-        text(count).size(11.5).style(theme::faint_text),
-    ]
-    .spacing(8)
-    .height(ROW_HEIGHT)
-    .align_y(Alignment::Center)
 }
 
 /// A link's row: its kind's icon and what it comes from, in the
