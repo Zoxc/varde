@@ -63,7 +63,8 @@ impl<'a> Sketching<'a> {
         modifiers: Modifiers,
     ) -> (Arc<SketchLayer>, SketchLayer) {
         let projector = self.projector(camera, bounds);
-        let closing = self.drag_closing(input, projector.as_ref(), modifiers);
+        let dragged = self.dragged(input, projector.as_ref(), modifiers);
+        let closing = self.drag_closing(input, dragged);
         let mut base = input.base.borrow_mut();
         let current =
             (base.as_ref()).is_some_and(|base| base.drawn.matches(self, colors, &closing));
@@ -95,27 +96,41 @@ impl<'a> Sketching<'a> {
                 })
             }
         };
-        let mut live = self.live_layer(input, projector.as_ref(), colors, &base.arrows, modifiers);
+        let mut live = self.live_layer(
+            input,
+            projector.as_ref(),
+            colors,
+            &base.arrows,
+            modifiers,
+            dragged,
+        );
         if let Some(projector) = &projector {
             combs(&mut live, &base.combs, projector.pixel(), colors.guide);
         }
         (base.layer.clone(), live)
     }
 
-    /// A point dragged onto the other end of its arc or spline (see
-    /// [`crate::spline::closed_by_drop`]): the sketch as dropping it there
-    /// leaves it, drawn in place of the one shown.
-    fn drag_closing(
+    /// Where what the button held down drags snaps with the cursor where
+    /// it is, if it drags and snaps ([`Sketching::drag_snap`]).
+    fn dragged(
         &self,
         input: &Input,
         projector: Option<&Projector>,
         modifiers: Modifiers,
-    ) -> Option<Sketch> {
+    ) -> Option<Snap> {
         let press = input.press.filter(|press| press.moved && press.grab)?;
         let cursor = projector?.cursor(input.cursor?)?;
-        let (_, snap) = self.drag_snap(&press, cursor, modifiers)?;
-        crate::spline::closed_by_drop(self.sketch, press.hit?.item()?, snap.target)
-            .map(|(_, closed)| closed)
+        self.drag_snap(&press, cursor, modifiers)
+            .map(|(_, snap)| snap)
+    }
+
+    /// A point dragged onto the other end of its arc or spline (see
+    /// [`crate::spline::closed_by_drop`]), snapping as `dragged`: the
+    /// sketch as dropping it there leaves it, drawn in place of the one
+    /// shown.
+    fn drag_closing(&self, input: &Input, dragged: Option<Snap>) -> Option<Sketch> {
+        let id = input.press?.hit?.item()?;
+        crate::spline::closed_by_drop(self.sketch, id, dragged?.target).map(|(_, closed)| closed)
     }
 
     /// The failing curves of the base layer last built, placed in the
@@ -419,7 +434,8 @@ impl<'a> Sketching<'a> {
     /// the tool is drawing to where the cursor snaps, with `modifiers`
     /// held, and the snap's guide, and the dimension being placed (in the
     /// driven colour while the reference modifier is held), seen through
-    /// `projector` if the viewport shows anything.
+    /// `projector` if the viewport shows anything, and where what's
+    /// dragged snaps, `dragged` ([`Sketching::dragged`]).
     fn live_layer(
         &self,
         input: &Input,
@@ -427,6 +443,7 @@ impl<'a> Sketching<'a> {
         colors: SketchColors,
         dimension_arrows: &[Arrows],
         modifiers: Modifiers,
+        dragged: Option<Snap>,
     ) -> SketchLayer {
         let mut layer = SketchLayer::default();
         if let Some(press) = input.press
@@ -485,11 +502,6 @@ impl<'a> Sketching<'a> {
         }
         // Where a drawing tool's click, or a point or rim dragged, snaps is
         // marked round the cursor, whatever it snapped to.
-        let dragged = (input.press)
-            .filter(|press| press.moved && press.grab && self.snaps(modifiers))
-            .zip(cursor)
-            .and_then(|(press, cursor)| self.drag_snap(&press, cursor, modifiers))
-            .map(|(_, snap)| snap);
         let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::snapped);
         if let Some(spot) = spot {
             layer.point(spot.at, snap_disc(colors.point));
