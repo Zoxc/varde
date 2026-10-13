@@ -297,12 +297,6 @@ pub struct State {
     limits: rpc::Limits,
 }
 
-/// 405, naming the methods [`State::handle`] takes, for any other (the
-/// guard's answer to `OPTIONS` too).
-pub(crate) fn method_not_allowed() -> Response {
-    Response::empty(Status::MethodNotAllowed).with_header("Allow", "POST, DELETE")
-}
-
 impl State {
     pub fn new() -> Self {
         Self::default()
@@ -354,7 +348,7 @@ impl State {
             "POST" => self.post(request, now),
             "DELETE" => self.delete(request, now),
             // GET would open an SSE stream; Varde never pushes.
-            _ => Outcome::respond(method_not_allowed()),
+            _ => Outcome::respond(Response::method_not_allowed()),
         }
     }
 

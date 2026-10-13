@@ -405,6 +405,12 @@ impl Response {
         }
     }
 
+    /// 405, naming the methods `/mcp` takes (`POST` and `DELETE`): the
+    /// session's answer to any other, and the guard's to `OPTIONS`.
+    pub(crate) fn method_not_allowed() -> Self {
+        Self::empty(Status::MethodNotAllowed).with_header("Allow", "POST, DELETE")
+    }
+
     /// With the header `name: value` added.
     pub fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));

@@ -23,7 +23,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use crate::http::{Request, Response, Status};
-use crate::session::method_not_allowed;
 
 /// The one path the server answers.
 pub const PATH: &str = "/mcp";
@@ -129,7 +128,7 @@ impl Refusal {
             Refusal::NoHost => Response::empty(Status::BadRequest),
             Refusal::Host | Refusal::Origin => Response::empty(Status::Forbidden),
             Refusal::Path => Response::empty(Status::NotFound),
-            Refusal::Options => method_not_allowed(),
+            Refusal::Options => Response::method_not_allowed(),
             Refusal::Token => {
                 Response::empty(Status::Unauthorized).with_header("WWW-Authenticate", "Bearer")
             }
