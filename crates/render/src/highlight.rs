@@ -81,30 +81,19 @@ impl Highlights {
     /// edges are kept apart, so an edge both isn't joined to itself.
     pub(crate) fn build(&self, mesh: &RenderMesh) -> Built {
         let mut stream = EdgeStream::with_capacity(0);
-        let start = stream.len();
-        for (edge, polyline) in joined(mesh, &self.outlined) {
-            stream.push(edge, mesh.positions(), &polyline);
-        }
-        let outlined = start..stream.len();
+        let joined = joined(mesh, &self.outlined);
+        let outlined = run(
+            &mut stream,
+            mesh,
+            joined.iter().map(|(edge, polyline)| (*edge, &polyline[..])),
+        );
         stream.separate();
-        let start = stream.len();
-        for &edge in &self.selected_edges {
-            if let Some(polyline) = mesh.polyline(edge as usize) {
-                stream.push(edge, mesh.positions(), polyline);
-            }
-        }
-        let selected = start..stream.len();
+        let selected = run(&mut stream, mesh, own(mesh, &self.selected_edges));
         // Apart from the selected, if there are any.
         if !self.second_edges.is_empty() {
             stream.separate();
         }
-        let start = stream.len();
-        for &edge in &self.second_edges {
-            if let Some(polyline) = mesh.polyline(edge as usize) {
-                stream.push(edge, mesh.positions(), polyline);
-            }
-        }
-        let second = start..stream.len();
+        let second = run(&mut stream, mesh, own(mesh, &self.second_edges));
         let vertices = self
             .vertices
             .iter()
@@ -124,6 +113,26 @@ impl Highlights {
             vertices,
         }
     }
+}
+
+/// Pushes `edges`, each with its polyline, onto `stream`, returning the
+/// range of the stream's points they took.
+fn run<'a>(
+    stream: &mut EdgeStream,
+    mesh: &RenderMesh,
+    edges: impl IntoIterator<Item = (u32, &'a [u32])>,
+) -> Range<u32> {
+    let start = stream.len();
+    for (edge, polyline) in edges {
+        stream.push(edge, mesh.positions(), polyline);
+    }
+    start..stream.len()
+}
+
+/// `edges` of `mesh` each with its own polyline, leaving out ids the mesh
+/// hasn't.
+fn own<'a>(mesh: &'a RenderMesh, edges: &'a [u32]) -> impl Iterator<Item = (u32, &'a [u32])> {
+    (edges.iter()).filter_map(|&edge| Some((edge, mesh.polyline(edge as usize)?)))
 }
 
 /// `edges` of `mesh`, each once, joined end to end into polylines of its
