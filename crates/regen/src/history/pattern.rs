@@ -64,10 +64,7 @@ pub(super) fn evaluate_pattern(
             for (k, motion) in (1..).zip(&motions) {
                 // A checked pattern lists a body per copy.
                 let body = pattern.copy_body(source, k).ok_or(why::COPY_BODIES)?;
-                let copy = Instance {
-                    feature: feature.get(),
-                    index: u64::from(k),
-                };
+                let copy = instance(feature, k);
                 let key = copy_key(made.key, motion, copy, tolerance);
                 let solid =
                     cache.solid(key, || copy_of(&made.solid, motion, copy, tolerance, name))?;
@@ -93,9 +90,18 @@ pub(super) fn evaluate_pattern(
     Ok(())
 }
 
+/// The name of `feature`'s copy `k` (counting the original as 0).
+fn instance(feature: FeatureId, k: u32) -> Instance {
+    Instance {
+        feature: feature.get(),
+        index: u64::from(k),
+    }
+}
+
 /// `solid`, the body named `name`'s, moved by `motion` as the copy
-/// `copy` of a pattern whose copies are bodies of their own; or why not,
-/// with the kernel's evidence, as [`copied`] has it.
+/// `copy` of a pattern; or why not, with the kernel's evidence (patches
+/// and curves by value, as a move's), worded the same whether the copy
+/// is a body of its own or joined by [`copied`].
 fn copy_of(
     solid: &Solid,
     motion: &Motion,
@@ -185,21 +191,18 @@ fn copied(
     tolerance: &Tolerance,
     name: &str,
 ) -> Result<Solid, Failed> {
-    let kernel = |words: String, failure| Failed::by_value(words, failure, tolerance);
     let mut parts = Vec::with_capacity(motions.len().saturating_add(1));
     parts.push(solid.clone());
-    for (index, motion) in (1..).zip(motions) {
-        let copy = Instance {
-            feature: feature.get(),
-            index,
-        };
-        let part = solid
-            .transformed(motion, Some(copy), tolerance, &Budget::DEFAULT)
-            .map_err(|failure| {
-                kernel(why::moving(Moving::Pattern, name, failure.error), failure)
-            })?;
-        parts.push(part);
+    for (k, motion) in (1..).zip(motions) {
+        parts.push(copy_of(
+            solid,
+            motion,
+            instance(feature, k),
+            tolerance,
+            name,
+        )?);
     }
-    assemble(&parts, tolerance, &Budget::DEFAULT)
-        .map_err(|failure| kernel(why::with_copies(name, failure.error), failure))
+    assemble(&parts, tolerance, &Budget::DEFAULT).map_err(|failure| {
+        Failed::by_value(why::with_copies(name, failure.error), failure, tolerance)
+    })
 }
