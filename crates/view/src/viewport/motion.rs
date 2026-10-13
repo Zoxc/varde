@@ -71,8 +71,9 @@ use handles::{Drag, Grip, draw_handles};
 use loft::{LoftInput, SeamInput, loft_labels};
 use marks::scale_marks;
 use sketch_input::SketchInput;
+use sketch_input::chain_lines;
 use split::split_regions;
-use sweep::{sweep_lines, sweep_regions};
+use sweep::sweep_regions;
 
 /// How wide a split's sketches' curves are drawn, in pixels: a
 /// revolve's lines'. The one hovered and those picked are drawn as the
@@ -258,7 +259,7 @@ impl<'a> Moving<'a> {
                     .as_ref()
                     .map(|(sketch, curve)| (*sketch, std::slice::from_ref(curve)));
                 let chains = split.chain.as_slice();
-                sweep_lines(
+                chain_lines(
                     &mut live,
                     &split.lines,
                     chains,

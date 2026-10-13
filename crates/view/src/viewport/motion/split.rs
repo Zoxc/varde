@@ -7,10 +7,10 @@ use varde_render::Camera;
 
 use super::Moving;
 use super::sketch_input::{SketchInput, SketchPick, SketchPicker};
+use crate::Message;
 use crate::motion::{MotionLook, MotionPick, SplitMode, SplitView};
 use crate::viewport::local_cursor;
 use crate::viewport::regions::Regions;
-use crate::{Look, Message};
 
 /// A split's sketches whose regions show, and those picked. The panel's
 /// region rows don't light their region here.
@@ -74,15 +74,13 @@ impl<'a> Moving<'a> {
             }
             mouse::Event::CursorLeft => input.leave().then(Action::request_redraw),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local_cursor(bounds, cursor)?;
                 let regions = mode == SplitMode::Regions;
-                let look = match split_picker(split).under(regions, at, camera, bounds)? {
+                split_picker(split).press(regions, bounds, cursor, camera, |pick| match pick {
                     SketchPick::Region { sketch, region } => {
                         MotionLook::SplitRegion { sketch, region }
                     }
                     SketchPick::Curve { sketch, curve } => MotionLook::SplitCurve { sketch, curve },
-                };
-                Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
+                })
             }
             _ => None,
         }

@@ -24,7 +24,7 @@ use crate::viewport::style::{fill_region_in, line, mark_dot, srgba};
 use crate::viewport::{drag_step, hover_action, local, local_cursor};
 use crate::{Look, Message};
 
-use super::sweep::sweep_lines;
+use super::sketch_input::chain_lines;
 
 /// How opaque a loft's sections are filled.
 const PICKED_FILL: f32 = 0.35;
@@ -279,9 +279,7 @@ impl<'a> Moving<'a> {
     /// curves. The model isn't picked meanwhile.
     pub(super) fn loft_picking(&self) -> Option<MotionPick> {
         self.state.loft()?;
-        let picking = self.state.picking;
-        (self.state.editable && matches!(picking, MotionPick::Regions | MotionPick::Path))
-            .then_some(picking)
+        self.regions_or_path()
     }
 
     /// What's under the screen position `at` for a loft picking
@@ -458,7 +456,7 @@ impl<'a> Moving<'a> {
         };
         let rails = picking == Some(MotionPick::Path);
         if rails || !loft.chains.is_empty() {
-            sweep_lines(
+            chain_lines(
                 live,
                 &loft.lines,
                 &loft.chains,

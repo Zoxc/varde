@@ -5,19 +5,15 @@ use std::sync::Arc;
 use glam::DVec2;
 use iced::widget::shader::Action;
 use iced::{Rectangle, mouse};
-use varde_document::FeatureId;
-use varde_render::{Camera, SketchLayer, Space as LayerSpace};
-use varde_sketch::Id;
+use varde_render::{Camera, SketchLayer};
 
-use super::sketch_input::{SketchInput, SketchPick, SketchPicker};
-use super::{CURVE_WIDTH, Input, Moving};
-use crate::motion::{MotionLook, MotionPick, SketchLines, SweepView};
+use super::sketch_input::{SketchInput, SketchPick, SketchPicker, chain_lines};
+use super::{Input, Moving};
+use crate::motion::{MotionLook, MotionPick, SweepView};
 use crate::operation_panel::PanelHover;
 use crate::theme::SketchColors;
 use crate::viewport::local_cursor;
-use crate::viewport::regions::{Regions, grid_plane};
-use crate::viewport::sketch_pick::{HOVERED_WIDTH, SELECTED_WIDTH};
-use crate::viewport::style::line;
+use crate::viewport::regions::Regions;
 use crate::{Look, Message};
 
 /// A sweep's sketches whose regions show, those picked, and the one
@@ -37,70 +33,13 @@ fn sweep_picker<'s, 'a>(sweep: &'s SweepView<'a>) -> SketchPicker<'s, 'a> {
     }
 }
 
-/// Draws a sweep's path (or a loft's rails, or a split's line) on
-/// `live`: while it's picked (`picking`), the curves of the sketches of
-/// `lines` (construction ones dashed, the chain of the one `hovered`
-/// stronger), and each part's curves of `chains` in the selected colour,
-/// those of the part whose row is hovered (`part`) in the hovered one.
-pub(super) fn sweep_lines(
-    live: &mut SketchLayer,
-    lines: &[SketchLines<'_>],
-    chains: &[(FeatureId, &[Id])],
-    hovered: Option<(FeatureId, Id)>,
-    part: Option<(FeatureId, &[Id])>,
-    picking: bool,
-    colors: SketchColors,
-) {
-    let picked = |feature: FeatureId, id: Id| {
-        (chains.iter())
-            .any(|&(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
-    };
-    let lit = |feature: FeatureId, id: Id| {
-        part.is_some_and(|(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
-    };
-    for candidate in lines {
-        let Some(plane) = grid_plane(candidate.placement) else {
-            continue;
-        };
-        let space = LayerSpace::On(plane);
-        let sketch = candidate.sketch;
-        let chain = match hovered {
-            Some((feature, curve)) if feature == candidate.feature => sketch.chain_of(curve),
-            _ => Vec::new(),
-        };
-        for entry in &sketch.curves {
-            let is_picked = picked(candidate.feature, entry.id);
-            let is_hovered = chain.contains(&entry.id) || lit(candidate.feature, entry.id);
-            if !(picking || is_picked || is_hovered) {
-                continue;
-            }
-            let Some(points) = sketch.flatten(&entry.curve) else {
-                continue;
-            };
-            let (color, width) = if is_hovered {
-                (colors.hovered, HOVERED_WIDTH)
-            } else if is_picked {
-                (colors.selected, SELECTED_WIDTH)
-            } else if entry.construction {
-                (colors.construction, CURVE_WIDTH)
-            } else {
-                (colors.curve, CURVE_WIDTH)
-            };
-            let dashed = entry.construction && !is_picked && !is_hovered;
-            live.polyline(space, &points, line(color, width, dashed));
-        }
-    }
-}
-
 impl<'a> Moving<'a> {
     /// What a sweep picks in its sketches, while it does: its profile's
     /// regions, or its path's curves (the model's edges are picked as the
     /// model is, where no curve is under the cursor).
     pub(super) fn sweep_picking(&self) -> Option<MotionPick> {
         self.state.sweep()?;
-        let picking = self.state.picking;
-        (self.state.editable && matches!(picking, MotionPick::Regions | MotionPick::Path))
-            .then_some(picking)
+        self.regions_or_path()
     }
 
     /// Takes the mouse `event` while a sweep picks in its sketches
@@ -142,15 +81,13 @@ impl<'a> Moving<'a> {
             }
             mouse::Event::CursorLeft => input.leave().then(Action::request_redraw),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                let at = local_cursor(bounds, cursor)?;
                 let regions = picking == MotionPick::Regions;
-                let look = match sweep_picker(sweep).under(regions, at, camera, bounds)? {
+                sweep_picker(sweep).press(regions, bounds, cursor, camera, |pick| match pick {
                     SketchPick::Region { sketch, region } => {
                         MotionLook::SweepRegion { sketch, region }
                     }
                     SketchPick::Curve { sketch, curve } => MotionLook::SweepCurve { sketch, curve },
-                };
-                Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
+                })
             }
             _ => None,
         }
@@ -183,7 +120,7 @@ impl<'a> Moving<'a> {
             Some(PanelHover::Part(at)) => sweep.chains.get(at).copied(),
             _ => None,
         };
-        sweep_lines(
+        chain_lines(
             &mut live,
             &sweep.lines,
             &sweep.chains,
