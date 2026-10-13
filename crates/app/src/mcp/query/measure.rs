@@ -65,7 +65,7 @@ fn resolve(doc: &Doc, item: &Measured) -> Result<InspectPick, String> {
     let item = match item {
         Measured::Body(name) => {
             let document = doc.editor.document();
-            let body = super::super::edit::body_by_name(document, name)?;
+            let body = super::super::names::body_by_name(document, name)?;
             return Ok(InspectPick {
                 body: body.id,
                 entity: Entity::Body,

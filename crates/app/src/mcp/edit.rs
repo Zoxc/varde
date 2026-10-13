@@ -31,6 +31,7 @@ use varde_mcp::tools::{Call, Rename, Target, ToolReply, Units};
 use varde_sketch::Id;
 use varde_view::{McpCallState, ParamField};
 
+use super::names::{body_id, feature_id, not_named};
 use super::query;
 use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::{Doc, params};
@@ -355,8 +356,8 @@ fn made_commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused
     match call {
         Call::Rename(Rename { target, to }) => {
             let target = match target {
-                Target::Feature(name) => Named::Feature(feature_named(document, name)?),
-                Target::Body(name) => Named::Body(body_named(document, name)?),
+                Target::Feature(name) => Named::Feature(feature_id(document, name)?),
+                Target::Body(name) => Named::Body(body_id(document, name)?),
             };
             // As the rename field commits it; none for the name it has:
             // nothing to change.
@@ -369,27 +370,27 @@ fn made_commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused
         // As the Objects panel makes them; one as it is changes nothing,
         // so the editor adds no step and the call says so.
         Call::SetVisible { body, visible } => {
-            let id = body_named(document, body)?;
+            let id = body_id(document, body)?;
             one(Command::SetVisible(id, *visible), Made::Body(id))
         }
         Call::SetColor { body, color } => {
-            let id = body_named(document, body)?;
+            let id = body_id(document, body)?;
             // In range (the tools' check), so as the sliders round it.
             let tint = color
                 .map(|color| Tint::clamped(color.hue as f32, (color.saturation * 100.0) as f32));
             one(Command::SetColor(id, tint), Made::Body(id))
         }
         Call::SetOpacity { body, opacity } => {
-            let id = body_named(document, body)?;
+            let id = body_id(document, body)?;
             let opacity = Opacity::clamped((opacity * 100.0) as f32);
             one(Command::SetOpacity(id, opacity), Made::Body(id))
         }
         Call::RemoveFeature { feature } => {
-            let id = feature_named(document, feature)?;
+            let id = feature_id(document, feature)?;
             removal(document, Removable::Feature(id))
         }
         Call::RemoveBody { body } => {
-            let id = body_named(document, body)?;
+            let id = body_id(document, body)?;
             removal(document, Removable::Body(id))
         }
         Call::AddParameter { name, value } => {
@@ -435,7 +436,7 @@ fn made_commands(doc: &Doc, call: &Call) -> Result<(Vec<Command>, Made), Refused
         }
         Call::SetRollback { before } => {
             let until = match before {
-                Some(name) => Some(feature_named(document, name)?),
+                Some(name) => Some(feature_id(document, name)?),
                 None => None,
             };
             one(Command::SetRollback(until), Made::Design)
@@ -541,47 +542,11 @@ fn tolerance(text: &str, units: LengthUnit) -> Result<Tolerance, String> {
     Tolerance::new(fit).ok_or_else(|| "the tolerance is from 0.01 µm to 0.1 mm".to_owned())
 }
 
-/// The feature named `name`, by its Timeline name.
-pub(super) fn feature_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
-    feature_by_name(document, name)
-        .map(|feature| feature.id)
-        .map_err(Refused::failed)
-}
-
-/// The body named `name`, by its Objects name.
-pub(super) fn body_named(document: &Document, name: &str) -> Result<BodyId, Refused> {
-    body_by_name(document, name)
-        .map(|body| body.id)
-        .map_err(Refused::failed)
-}
-
-/// The feature named `name`, by its Timeline name, or why not.
-pub(super) fn feature_by_name<'a>(
-    document: &'a Document,
-    name: &str,
-) -> Result<&'a Feature, String> {
-    (document.features().iter())
-        .find(|feature| feature.name == *name)
-        .ok_or_else(|| not_named("feature", name))
-}
-
-/// The body named `name`, by its Objects name, or why not.
-pub(super) fn body_by_name<'a>(document: &'a Document, name: &str) -> Result<&'a Body, String> {
-    (document.bodies().iter())
-        .find(|body| body.name == *name)
-        .ok_or_else(|| not_named("body", name))
-}
-
 /// The index of the parameter named `name`.
 fn param_named(document: &Document, name: &str) -> Result<usize, Refused> {
     (document.params().iter())
         .position(|param| param.name == name.trim())
         .ok_or_else(|| Refused::failed(not_named("parameter", name)))
-}
-
-/// Why a name was found nowhere.
-fn not_named(what: &str, name: &str) -> String {
-    format!("no {what} is named \"{}\"", varde_mcp::shown(name))
 }
 
 /// `names` for a sentence, at most [`LISTED`] of them, then how many

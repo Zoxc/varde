@@ -21,8 +21,9 @@ use varde_mcp::tools::{
 };
 use varde_view::{MotionField, MotionKind, OperationKind, Pick, PickIndex};
 
-use super::edit::{Made, Refused, body_named, feature_named};
+use super::edit::{Made, Refused};
 use super::key;
+use super::names::{body_id, sketch_id};
 use crate::doc::{
     BodyTargets, Doc, Marks, Merges, MotionSession, RegionPick, merged_in, pickable, sketch_of,
 };
@@ -156,7 +157,7 @@ pub(super) fn picked_bodies(
     let merged = committed_merges(doc, edited).map_err(|why| failed(tool, why))?;
     let mut bodies = Vec::with_capacity(names.len());
     for name in names {
-        let id = body_named(document, name)?;
+        let id = body_id(document, name)?;
         let id = merged.holder(id).unwrap_or(id);
         if !pickable(document, id, edited) {
             return Err(failed(tool, made_after(name, feature, edited)));
@@ -360,16 +361,6 @@ pub(super) fn typed_point(
     Ok(DVec2::new(read(x, "x")?, read(y, "y")?))
 }
 
-/// The sketch feature named `name`, refused if it isn't one.
-pub(super) fn sketch_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
-    let id = feature_named(document, name)?;
-    if sketch_of(document, id).is_none() {
-        let why = format!("\"{}\" isn't a sketch", varde_mcp::shown(name));
-        return Err(Refused::failed(why));
-    }
-    Ok(id)
-}
-
 /// The sketch feature named `name`, made before the feature `edited` (or
 /// where a new one goes), the `tool`'s.
 pub(super) fn sketch_before(
@@ -378,7 +369,7 @@ pub(super) fn sketch_before(
     name: &str,
     edited: Option<FeatureId>,
 ) -> Result<FeatureId, Refused> {
-    let id = sketch_named(document, name)?;
+    let id = sketch_id(document, name)?;
     let at = match edited {
         None => Some(document.insert_at()),
         Some(edited) => document.feature_index(edited),
@@ -433,7 +424,7 @@ pub(super) fn excluded(
     let merged = committed_merges(doc, edited).map_err(|why| failed(tool, why))?;
     let mut excluded = BTreeSet::new();
     for name in names {
-        let body = body_named(document, name)?;
+        let body = body_id(document, name)?;
         let body = merged.holder(body).unwrap_or(body);
         if !pickable(document, body, edited) {
             return Err(failed(tool, made_after(name, "feature", edited)));

@@ -11,7 +11,7 @@ mod sketch;
 mod topology;
 
 use serde_json::{Map, Value, json};
-use varde_document::{Body, Document, Feature, FeatureId, Generation};
+use varde_document::{Document, Feature, FeatureId, Generation};
 use varde_expr::{LengthUnit, Power, Unit};
 use varde_mcp::tools::{Page, ToolReply};
 use varde_regen::FeatureFailure;
@@ -239,18 +239,6 @@ pub(super) fn pages(
             return said;
         }
     }
-}
-
-/// The feature of `doc`'s design named `name`, or the answer saying
-/// there's none.
-pub(super) fn named<'a>(doc: &'a Doc, name: &str) -> Result<&'a Feature, ToolReply> {
-    super::edit::feature_by_name(doc.editor.document(), name).map_err(ToolReply::error)
-}
-
-/// The body of `doc`'s design named `name`, or the answer saying
-/// there's none.
-pub(super) fn body_named<'a>(doc: &'a Doc, name: &str) -> Result<&'a Body, ToolReply> {
-    super::edit::body_by_name(doc.editor.document(), name).map_err(ToolReply::error)
 }
 
 /// The name of the feature `document` is rolled back to, if it is.

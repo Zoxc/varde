@@ -32,8 +32,9 @@ use varde_document::{Command, FeatureId, FeatureKind};
 use varde_mcp::tools::{self, Call, CallError};
 
 use super::args::{Given, SET_FEATURE, Wrong, failed};
-use super::edit::{Made, Refused, feature_named};
+use super::edit::{Made, Refused};
 use super::make;
+use super::names::feature_id;
 use super::query::{Shape, tool_of};
 use super::{blend, modify, motion, sweep};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, MotionSession, RevolveSession};
@@ -52,7 +53,7 @@ pub(super) fn set_feature(
     args: &tools::SetFeature,
 ) -> Result<(Vec<Command>, Made), Refused> {
     let document = doc.editor.document();
-    let id = feature_named(document, &args.name)?;
+    let id = feature_id(document, &args.name)?;
     let Some(feature) = document.feature(id) else {
         return Err(failed(
             TOOL,

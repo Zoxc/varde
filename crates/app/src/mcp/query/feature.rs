@@ -38,7 +38,7 @@ use crate::mcp::key::{self, Key, Ref};
 
 /// `feature {name, offset?, limit?}`: see the module's docs.
 pub(crate) fn feature(doc: &Doc, name: &str, page: Page) -> ToolReply {
-    let feature = match super::named(doc, name) {
+    let feature = match super::super::names::feature_reply(doc, name) {
         Ok(feature) => feature,
         Err(reply) => return reply,
     };

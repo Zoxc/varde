@@ -26,8 +26,9 @@ use varde_mcp::tools::{self, AddLink, Call, ItemKind, LinkFrom, Reference, Worde
 use varde_sketch::{Id, LinkKind, SketchEdit};
 use varde_view::{Picked, PlanePick, SketchItem, Tool};
 
-use super::args::{committed_marks, failed, origin_plane, said, sketch_named};
+use super::args::{committed_marks, failed, origin_plane, said};
 use super::edit::{Made, Refused};
+use super::names::sketch_id;
 use super::waiting::{Caller, Wait, Waiter};
 use crate::doc::{
     Doc, Settled, Step, face_placement_in, outside_model_in, outside_sketch_item_at,
@@ -88,7 +89,7 @@ pub(super) fn set_sketch_plane(
 ) -> Result<(Vec<Command>, Made), Refused> {
     const TOOL: &str = "set_sketch_plane";
     let document = doc.editor.document();
-    let feature = sketch_named(document, sketch)?;
+    let feature = sketch_id(document, sketch)?;
     let plane = sketch_plane(doc, TOOL, plane, Some(feature))?;
     let command = Command::SetSketchPlane { feature, plane };
     Ok((vec![command], Made::Sketch(feature)))
@@ -134,7 +135,7 @@ fn sketch_plane(
 pub(super) fn add_link(doc: &Doc, args: &AddLink) -> Result<Proposed, Refused> {
     const TOOL: &str = "add_link";
     let document = doc.editor.document();
-    let feature = sketch_named(document, &args.sketch)?;
+    let feature = sketch_id(document, &args.sketch)?;
     let (tool, kind) = match args.kind {
         tools::LinkKind::Project => (Tool::Project, LinkKind::Project),
         tools::LinkKind::Intersect => (Tool::Intersect, LinkKind::Intersect),
@@ -213,7 +214,7 @@ fn item_in(
     number: u32,
     find: fn(&Document, FeatureId, u32) -> Result<varde_sketch::Id, String>,
 ) -> Result<SketchItem, Refused> {
-    let feature = sketch_named(document, sketch)?;
+    let feature = sketch_id(document, sketch)?;
     let item =
         find(document, feature, number).map_err(|why| failed("add_link", said("from", why)))?;
     Ok(SketchItem {

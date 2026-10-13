@@ -48,7 +48,7 @@ pub(crate) struct Read {
 /// sketch). Each listing is paged alone.
 pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
     let document = doc.editor.document();
-    let feature = super::named(doc, &args.name)?;
+    let feature = super::super::names::feature_reply(doc, &args.name)?;
     let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
         let noun = feature.kind.noun().to_lowercase();
         return Err(ToolReply::error(format!(

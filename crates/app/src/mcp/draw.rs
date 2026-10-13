@@ -41,8 +41,8 @@ use varde_sketch::{
 use varde_view::typed::{MAX_SIDES, MIN_SIDES};
 use varde_view::{ConstraintKind, Target, Tool};
 
-use super::args::sketch_named;
 use super::edit::{Made, Refused};
+use super::names::sketch_id;
 use super::sketches::{Proposed, Proposing, sketch_made};
 use crate::doc::{Clicks, Doc, Step, clicked, sketch_of};
 
@@ -135,7 +135,7 @@ fn refused(index: usize, why: impl std::fmt::Display) -> Refused {
 /// sketch, which it's proposed on.
 pub(super) fn edit_sketch(doc: &Doc, args: &EditSketch, queued: bool) -> Result<Proposed, Refused> {
     let document = doc.editor.document();
-    let feature = sketch_named(document, &args.sketch)?;
+    let feature = sketch_id(document, &args.sketch)?;
     let base = match queued {
         true => doc.sketch_as_queued(feature),
         false => sketch_of(document, feature).cloned(),

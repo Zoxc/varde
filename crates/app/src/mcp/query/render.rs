@@ -57,7 +57,7 @@ pub(crate) fn render(doc: &Doc, args: &Args) -> Result<Shot, ToolReply> {
         let mut bodies = Vec::new();
         for name in &args.bodies {
             let shown = varde_mcp::shown(name);
-            let body = super::body_named(doc, name)?;
+            let body = super::super::names::body_reply(doc, name)?;
             if !model.parts.contains(&body.id) {
                 return Err(ToolReply::error(format!(
                     "{shown} isn't in the model shown: it's hidden (set_visible shows it), \

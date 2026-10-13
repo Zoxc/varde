@@ -25,6 +25,7 @@ pub(crate) mod key;
 mod make;
 mod modify;
 mod motion;
+mod names;
 mod query;
 pub(crate) mod revert;
 mod set;
