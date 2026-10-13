@@ -241,13 +241,9 @@ impl Using {
             picking_plane: state
                 .picking_plane
                 .is_some_and(|pick| pick.sketch.is_none()),
-            operation: OperationKeys::of(
-                state.extrude(),
-                state.revolve(),
-                state.combine(),
-                state.motion(),
-            )
-            .map(|operation| operation.kind),
+            operation: (state.operation.as_ref())
+                .and_then(OperationKeys::of)
+                .map(|operation| operation.kind),
             measuring: state.measure().is_some(),
             params: state.params.is_some(),
             tool: sketch.and_then(|s| s.tool).map(|t| t.tool),

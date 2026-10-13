@@ -18,6 +18,15 @@ pub(crate) fn counted(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// What a status bar says of the regions an extrude or a revolve has
+/// picked: "2 regions picked", or "pick the regions to `verb`".
+pub(crate) fn regions_picked(n: usize, verb: &str) -> String {
+    match n {
+        0 => format!("pick the regions to {verb}"),
+        n => format!("{} picked", counted(n, "region", "regions")),
+    }
+}
+
 /// Each of `kinds` there is, [`counted`] by its `(n, one, many)`, in
 /// order: "2 lines", "1 point".
 pub(crate) fn counts<const N: usize>(kinds: [(usize, &str, &str); N]) -> Vec<String> {

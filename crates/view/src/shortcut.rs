@@ -8,8 +8,8 @@ use iced::keyboard::{Key as KeyPress, Modifiers, key::Named};
 use varde_document::{FeatureId, OriginPlane};
 
 use crate::{
-    CombineState, ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message,
-    MotionKind, MotionState, RevolveState, SketchState, Tool, Verdict, Welcome,
+    ConstraintKind, ConstraintSet, Edit, File, Look, Message, MotionKind, OperationState,
+    SketchState, Tool, Welcome,
 };
 
 /// A key pressed on its own, or with the platform's command modifier
@@ -559,21 +559,19 @@ pub enum Operating {
 }
 
 impl OperationKeys {
-    /// The operation of those given that's being set up, if one is.
-    pub fn of(
-        extrude: Option<&ExtrudeState<'_>>,
-        revolve: Option<&RevolveState<'_>>,
-        combine: Option<&CombineState<'_>>,
-        motion: Option<&MotionState<'_>>,
-    ) -> Option<Self> {
-        let keys = |kind, verdict: &Verdict<'_>| Self {
-            kind,
-            ready: verdict.ready,
+    /// The keys of `operation`, unless it's the measure tool.
+    pub fn of(operation: &OperationState<'_>) -> Option<Self> {
+        let kind = match operation {
+            OperationState::Extrude(_) => Operating::Extrude,
+            OperationState::Revolve(_) => Operating::Revolve,
+            OperationState::Combine(_) => Operating::Combine,
+            OperationState::Motion(motion) => Operating::Motion(motion.kind),
+            OperationState::Measure(_) => return None,
         };
-        (extrude.map(|extrude| keys(Operating::Extrude, &extrude.verdict)))
-            .or_else(|| revolve.map(|revolve| keys(Operating::Revolve, &revolve.verdict)))
-            .or_else(|| combine.map(|combine| keys(Operating::Combine, &combine.verdict)))
-            .or_else(|| motion.map(|motion| keys(Operating::Motion(motion.kind), &motion.verdict)))
+        Some(Self {
+            kind,
+            ready: operation.verdict()?.ready,
+        })
     }
 
     /// The edit committing it.

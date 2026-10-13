@@ -10,7 +10,6 @@ use varde_document::{Axis3, EXTENSION, FeatureId, FeatureKind, OriginPlane};
 use varde_regen::Summary;
 use varde_sketch::Curve;
 
-use crate::OperationState;
 use crate::chrome::{Edge, edged, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::motion::{axis_label, plane_label};
@@ -161,29 +160,7 @@ struct Operation<'a> {
 fn operation<'a>(state: &DocumentState<'a>, keys: DocumentKeys) -> Option<Operation<'a>> {
     // OK sends what `Enter` does, when it does.
     let ok = commit_binding(keys).and_then(|binding| binding.sends());
-    let (icon, name, cancel) = match state.operation.as_ref()? {
-        OperationState::Motion(motion) => (
-            motion.kind.icon(),
-            motion.title(),
-            Message::Look(Look::Motion(MotionLook::Cancel)),
-        ),
-        OperationState::Extrude(extrude) => (
-            Icon::Extrude,
-            extrude.verdict.editing.unwrap_or("New extrude"),
-            Message::Look(Look::Extrude(crate::ExtrudeLook::Cancel)),
-        ),
-        OperationState::Revolve(revolve) => (
-            Icon::Revolve,
-            revolve.verdict.editing.unwrap_or("New revolve"),
-            Message::Look(Look::Revolve(crate::RevolveLook::Cancel)),
-        ),
-        OperationState::Combine(combine) => (
-            Icon::Combine,
-            combine.verdict.editing.unwrap_or("New combine"),
-            Message::Look(Look::Combine(crate::CombineLook::Cancel)),
-        ),
-        OperationState::Measure(_) => return None,
-    };
+    let (icon, name, cancel) = state.operation.as_ref()?.heading()?;
     Some(Operation {
         icon,
         name,

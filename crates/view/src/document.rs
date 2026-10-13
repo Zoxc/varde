@@ -22,6 +22,7 @@ use varde_sketch::{
 
 use crate::chrome::small_button;
 use crate::file_menu;
+use crate::icons::Icon;
 use crate::shortcut::{DocumentKeys, KeysInput, OperationKeys};
 use crate::status::{self};
 use crate::theme::Emphasis;
@@ -54,6 +55,73 @@ pub enum OperationState<'a> {
     /// A move, mirror or pattern, or another motion kind.
     Motion(crate::MotionState<'a>),
     Measure(crate::MeasureState<'a>),
+}
+
+impl<'a> OperationState<'a> {
+    /// Its OK, footer and title, unless it's the measure tool.
+    pub(crate) fn verdict(&self) -> Option<&crate::Verdict<'a>> {
+        Some(match self {
+            Self::Extrude(extrude) => &extrude.verdict,
+            Self::Revolve(revolve) => &revolve.verdict,
+            Self::Combine(combine) => &combine.verdict,
+            Self::Motion(motion) => &motion.verdict,
+            Self::Measure(_) => return None,
+        })
+    }
+
+    /// Its icon, title ("New revolve", or the feature edited) and what
+    /// Cancel sends, as the toolbar shows it, unless it's the measure
+    /// tool.
+    pub(crate) fn heading(&self) -> Option<(Icon, &'a str, Message)> {
+        use crate::{CombineLook, ExtrudeLook, Look, MotionLook, RevolveLook};
+        Some(match self {
+            Self::Extrude(extrude) => (
+                Icon::Extrude,
+                extrude.title(),
+                Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
+            ),
+            Self::Revolve(revolve) => (
+                Icon::Revolve,
+                revolve.title(),
+                Message::Look(Look::Revolve(RevolveLook::Cancel)),
+            ),
+            Self::Combine(combine) => (
+                Icon::Combine,
+                combine.title(),
+                Message::Look(Look::Combine(CombineLook::Cancel)),
+            ),
+            Self::Motion(motion) => (
+                motion.kind.icon(),
+                motion.title(),
+                Message::Look(Look::Motion(MotionLook::Cancel)),
+            ),
+            Self::Measure(_) => return None,
+        })
+    }
+
+    /// What its picking asks for, for the hint bar, while it can be
+    /// changed: `None` when it asks for nothing.
+    pub(crate) fn pick_hint(&self) -> Option<&'static str> {
+        match self {
+            Self::Extrude(extrude) => extrude.editable.then_some("Pick regions"),
+            Self::Revolve(revolve) => revolve.editable.then(|| revolve.pick_hint()),
+            Self::Combine(combine) => combine.editable.then(|| combine.pick_hint()),
+            Self::Motion(motion) => motion.editable.then(|| motion.pick_hint()).flatten(),
+            Self::Measure(_) => None,
+        }
+    }
+
+    /// What the status bar says of it after its title, unless it's the
+    /// measure tool.
+    pub(crate) fn status_info(&self) -> Option<String> {
+        Some(match self {
+            Self::Extrude(extrude) => extrude.status_info(),
+            Self::Revolve(revolve) => revolve.status_info(),
+            Self::Combine(combine) => combine.status_info(),
+            Self::Motion(motion) => crate::motion::status_info(motion),
+            Self::Measure(_) => return None,
+        })
+    }
 }
 
 /// The design's file as the document screen shows it: its name and
@@ -260,30 +328,6 @@ pub struct DocumentState<'a> {
 }
 
 impl<'a> DocumentState<'a> {
-    /// The extrude being set up, if it's the operation.
-    pub(crate) fn extrude(&self) -> Option<&ExtrudeState<'a>> {
-        match &self.operation {
-            Some(OperationState::Extrude(extrude)) => Some(extrude),
-            _ => None,
-        }
-    }
-
-    /// The revolve being set up, if it's the operation.
-    pub(crate) fn revolve(&self) -> Option<&RevolveState<'a>> {
-        match &self.operation {
-            Some(OperationState::Revolve(revolve)) => Some(revolve),
-            _ => None,
-        }
-    }
-
-    /// The combine being set up, if it's the operation.
-    pub(crate) fn combine(&self) -> Option<&crate::CombineState<'a>> {
-        match &self.operation {
-            Some(OperationState::Combine(combine)) => Some(combine),
-            _ => None,
-        }
-    }
-
     /// The move, mirror or pattern being set up, if it's the operation.
     pub(crate) fn motion(&self) -> Option<&crate::MotionState<'a>> {
         match &self.operation {
@@ -369,12 +413,7 @@ impl<'a> DocumentState<'a> {
             objects_deletable: (self.objects_selected.iter())
                 .any(|row| matches!(row, crate::ObjectRow::Sketch(_))),
             picking_plane: self.picking_plane.is_some(),
-            operation: OperationKeys::of(
-                self.extrude(),
-                self.revolve(),
-                self.combine(),
-                self.motion(),
-            ),
+            operation: self.operation.as_ref().and_then(OperationKeys::of),
             bodies: !self.editor.document().bodies().is_empty(),
             combinable: self.combinable,
             measuring: self.measure().is_some(),

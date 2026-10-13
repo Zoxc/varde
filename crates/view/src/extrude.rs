@@ -199,6 +199,18 @@ impl Handle {
     }
 }
 
+impl<'a> ExtrudeState<'a> {
+    /// The panel's title: the feature edited's name, or "New extrude".
+    pub(crate) fn title(&self) -> &'a str {
+        self.verdict.title("New extrude")
+    }
+
+    /// What the status bar says of it: the regions picked.
+    pub(crate) fn status_info(&self) -> String {
+        crate::words::regions_picked(self.picked.len(), "extrude")
+    }
+}
+
 impl ExtrudeState<'_> {
     /// The source sketch, if it's chosen.
     pub(crate) fn source(&self) -> Option<&Candidate<'_>> {
@@ -350,7 +362,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     .spacing(10);
     operation_panel(Parts {
         icon: Icon::Extrude,
-        title: state.verdict.title("New extrude"),
+        title: state.title(),
         body: body.into(),
         message,
         ok: state.verdict.ok(Message::Edit(Edit::CommitExtrude)),

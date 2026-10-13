@@ -70,6 +70,38 @@ pub struct CombineState<'a> {
     pub hover: Option<PanelHover>,
 }
 
+impl<'a> CombineState<'a> {
+    /// The panel's title: the feature edited's name, or "New combine".
+    pub(crate) fn title(&self) -> &'a str {
+        self.verdict.title("New combine")
+    }
+
+    /// What the picking asks for, for the hint bar.
+    pub(crate) fn pick_hint(&self) -> &'static str {
+        match self.picking {
+            CombinePick::Target => "Pick the target",
+            CombinePick::Tools => "Pick tools",
+        }
+    }
+
+    /// What the status bar says of it: "Body 1 with 2 tools · Union", or
+    /// what's still to pick.
+    pub(crate) fn status_info(&self) -> String {
+        let Some(target) = self.target else {
+            return "pick the target body".to_owned();
+        };
+        match self.tools.len() {
+            0 => format!("{} · pick the tool bodies", target.name),
+            n => format!(
+                "{} with {} · {}",
+                target.name,
+                crate::words::counted(n, "tool", "tools"),
+                self.op.label()
+            ),
+        }
+    }
+}
+
 /// The operations a combine does, as the panel offers them.
 const OPS: [BodyOp; 3] = [BodyOp::Union, BodyOp::Subtract, BodyOp::Intersect];
 
@@ -135,7 +167,7 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
     let body = column![target, tools, field("Operation", tiles(ops)), keep].spacing(10);
     operation_panel(Parts {
         icon: Icon::Combine,
-        title: state.verdict.title("New combine"),
+        title: state.title(),
         body: body.into(),
         message,
         ok: state.verdict.ok(Message::Edit(Edit::CommitCombine)),

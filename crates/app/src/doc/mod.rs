@@ -1787,12 +1787,7 @@ impl Doc {
                 objects_deletable: (self.objects_selected.iter())
                     .any(|row| matches!(row, varde_view::ObjectRow::Sketch(_))),
                 picking_plane: self.mode.picking_plane().is_some(),
-                operation: OperationKeys::of(
-                    self.extrude_state().as_ref(),
-                    self.revolve_state().as_ref(),
-                    self.combine_state().as_ref(),
-                    self.motion_state().as_ref(),
-                ),
+                operation: (self.operation_state().as_ref()).and_then(OperationKeys::of),
                 bodies: !self.editor.document().bodies().is_empty(),
                 combinable: self.combinable(),
                 measuring: self.mode.measure().is_some(),

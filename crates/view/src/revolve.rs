@@ -215,6 +215,29 @@ pub struct RevolveState<'a> {
 }
 
 impl<'a> RevolveState<'a> {
+    /// The panel's title: the feature edited's name, or "New revolve".
+    pub(crate) fn title(&self) -> &'a str {
+        self.verdict.title("New revolve")
+    }
+
+    /// What the picking asks for, for the hint bar.
+    pub(crate) fn pick_hint(&self) -> &'static str {
+        match self.picking {
+            RevolvePick::Regions => "Pick regions",
+            RevolvePick::Axis => "Pick the axis",
+        }
+    }
+
+    /// What the status bar says of it: the regions picked and the axis.
+    pub(crate) fn status_info(&self) -> String {
+        let regions = crate::words::regions_picked(self.picked.len(), "revolve");
+        let axis = match self.axis_name() {
+            Some(name) => format!("about {name}"),
+            None => "pick the axis".to_owned(),
+        };
+        format!("{regions} · {axis}")
+    }
+
     /// The source sketch, if it's chosen.
     pub(crate) fn source(&self) -> Option<&Candidate<'a>> {
         Candidate::find(&self.candidates, self.source)
@@ -528,7 +551,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
     .spacing(10);
     operation_panel(Parts {
         icon: Icon::Revolve,
-        title: state.verdict.title("New revolve"),
+        title: state.title(),
         body: body.into(),
         message,
         ok: state.verdict.ok(Message::Edit(Edit::CommitRevolve)),

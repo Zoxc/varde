@@ -16,7 +16,7 @@ use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{Held, Shortcut};
 use crate::status::Status;
 use crate::words::{counted, counts};
-use crate::{ConstraintKind, Message, RevolvePick, SketchItem, Tool, theme, viewport};
+use crate::{ConstraintKind, Message, SketchItem, Tool, theme, viewport};
 
 use super::prompts::{edit_refused, name_action};
 use super::{
@@ -107,30 +107,11 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     let keys: Vec<_> = if state.picking_plane.is_some() {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
     } else if let Some(operation) = &state.operation {
-        match operation {
-            OperationState::Extrude(extrude) => {
-                let pick = extrude.editable.then_some("Pick regions");
-                operation_hints(pick, extrude.verdict.ready)
-            }
-            OperationState::Revolve(revolve) => {
-                let pick = revolve.editable.then_some(match revolve.picking {
-                    RevolvePick::Regions => "Pick regions",
-                    RevolvePick::Axis => "Pick the axis",
-                });
-                operation_hints(pick, revolve.verdict.ready)
-            }
-            OperationState::Combine(combine) => {
-                let pick = combine.editable.then_some(match combine.picking {
-                    crate::CombinePick::Target => "Pick the target",
-                    crate::CombinePick::Tools => "Pick tools",
-                });
-                operation_hints(pick, combine.verdict.ready)
-            }
-            OperationState::Motion(motion) => {
-                let pick = motion.editable.then(|| motion.pick_hint()).flatten();
-                operation_hints(pick, motion.verdict.ready)
-            }
-            OperationState::Measure(measure) => measure_hints(measure),
+        if let OperationState::Measure(measure) = operation {
+            measure_hints(measure)
+        } else {
+            let ready = operation.verdict().is_some_and(|verdict| verdict.ready);
+            operation_hints(operation.pick_hint(), ready)
         }
     } else if let Some(sketch) = state.sketch {
         sketch_hints(&sketch, state.editable(), state.options.mouse.sketch_snap)
@@ -478,56 +459,13 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         }
         return Some(row(line).spacing(4).into());
     }
-    match &state.operation {
-        Some(OperationState::Extrude(extrude)) => {
-            let regions = match extrude.picked.len() {
-                0 => "pick the regions to extrude".to_owned(),
-                n => format!("{} picked", counted(n, "region", "regions")),
-            };
-            let title = extrude.verdict.editing.unwrap_or("New extrude");
-            return operation_status(title, &regions, state);
-        }
-        Some(OperationState::Revolve(revolve)) => {
-            let regions = match revolve.picked.len() {
-                0 => "pick the regions to revolve".to_owned(),
-                n => format!("{} picked", counted(n, "region", "regions")),
-            };
-            let axis = match revolve.axis_name() {
-                Some(name) => format!("about {name}"),
-                None => "pick the axis".to_owned(),
-            };
-            let title = revolve.verdict.editing.unwrap_or("New revolve");
-            return operation_status(title, &format!("{regions} · {axis}"), state);
-        }
-        Some(OperationState::Combine(combine)) => {
-            let title = combine.verdict.editing.unwrap_or("New combine");
-            return operation_status(title, &combine_session_info(combine), state);
-        }
-        Some(OperationState::Motion(motion)) => {
-            let detail = crate::motion::status_info(motion);
-            return operation_status(motion.title(), &detail, state);
-        }
-        Some(OperationState::Measure(_)) | None => {}
+    if let Some(operation) = &state.operation
+        && let (Some((_, title, _)), Some(detail)) = (operation.heading(), operation.status_info())
+    {
+        return operation_status(title, &detail, state);
     }
     let notes = status_notes(state);
     (!notes.is_empty()).then(|| bar_note(notes.join(" · ")).into())
-}
-
-/// What the status bar says of the combine being set up: "Body 1 with 2
-/// tools · Union", or what's still to pick.
-fn combine_session_info(combine: &crate::CombineState<'_>) -> String {
-    let Some(target) = combine.target else {
-        return "pick the target body".to_owned();
-    };
-    match combine.tools.len() {
-        0 => format!("{} · pick the tool bodies", target.name),
-        n => format!(
-            "{} with {} · {}",
-            target.name,
-            counted(n, "tool", "tools"),
-            combine.op.label()
-        ),
-    }
 }
 
 /// The feature selected in the Timeline, for the status bar's box of the
