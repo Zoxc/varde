@@ -32,6 +32,14 @@ pub(crate) enum Fixing {
     Equations,
 }
 
+/// A variable kept within bounds: its least and most.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bound {
+    pub var: usize,
+    pub least: f64,
+    pub most: f64,
+}
+
 /// The variables of a sketch and the equations over them.
 pub(crate) struct System {
     /// Each variable's value.
@@ -44,7 +52,7 @@ pub(crate) struct System {
     pub radii: Vec<Option<Slot>>,
     /// The variables kept within bounds, each with its least and most: a
     /// point's parameter on an open spline, from its start to its end.
-    pub bounds: Vec<(usize, f64, f64)>,
+    pub bounds: Vec<Bound>,
     /// The splines equations read, by id, with the Bézier segments of
     /// those points are on, for finding where on them the points are.
     splines: HashMap<Id, (Rc<SplineSlots>, Option<Path>)>,
@@ -544,7 +552,11 @@ impl System {
         self.values.push(t * spline.length);
         let var = self.values.len() - 1;
         if !spline.map.borrow().closed() {
-            self.bounds.push((var, 0.0, spline.length));
+            self.bounds.push(Bound {
+                var,
+                least: 0.0,
+                most: spline.length,
+            });
         }
         SplineAt {
             spline,
