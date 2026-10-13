@@ -210,8 +210,9 @@ largest component so squaring can't overflow or underflow.
   feature tools, each with its name, its `*_FIELDS` (the fields `feature`
   shows and `set_feature` patches) and its `NewBodies`; `FeatureTool::named`
   finds one by name, and `parse_arguments` checks a feature tool's arguments
-  against both (`only_making`) once, before its arm. The schemas get `name`, `body_name` and
-  `body_names` added at the end of `list` (a test checks they're the
+  against both (`only_making`) once, before its arm. Each creating tool's schema function adds
+  `name` and its `body_name` or `body_names` through `creating` (a test
+  checks they're the
   properties beyond `fields`). `set_feature` refuses a patch with
   `body_name`/`body_names` (`renaming`, also checked by `parse_patch`
   and the app's `set.rs`, `name` included), pointing to `rename`; its
@@ -321,11 +322,11 @@ largest component so squaring can't overflow or underflow.
   name, "region": index or [x, y], "start"?: point id}` or `{"sketch":
   name, "point": id}` (`Section`, `SectionShape`; a start only with a
   region), `mode` `"smooth"` (default) or `"ruled"`, `rails` a list of
-  `CurveIn`. `Sweep` is boxed as `Align` is. The thirteen motion-kind
-  tools' schemas are a function each (`move_body_tool` ... `loft_tool`,
-  sharing `typed`, `bodies`, `profiles`, `tangent` and the like), which
-  `list` appends to the literal of the rest: one `json!` literal with
-  them passes the macro's recursion limit. Their parsers share
+  `CurveIn`. Every feature tool's schema is a function (`extrude_tool`
+  ... `loft_tool`, sharing `typed`, `bodies`, `profiles`, `tangent` and
+  the like), which `list` appends to the literal of the queries and the
+  design's edits: one `json!` literal with them passes the macro's
+  recursion limit. Their parsers share
   `Arguments::flag`, `optional_name` and `optional_choice`.
 
 Every choice is a `(&str, T)` table (`UNITS`, `OPERATIONS`,

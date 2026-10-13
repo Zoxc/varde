@@ -422,8 +422,72 @@ fn build_list() -> Value {
             "annotations": edit(),
         },
     ]);
-    let features = json!([
-        {
+    let Value::Array(mut tools) = design else {
+        unreachable!("a literal list")
+    };
+    // After the queries and the design's edits: the sketch tools, the
+    // patch the feature tools share, the feature tools, and undo last.
+    tools.extend([
+        add_sketch_tool(),
+        set_sketch_plane_tool(),
+        add_link_tool(),
+        draw::edit_sketch_tool(),
+        set_feature_tool(),
+        extrude_tool(),
+        revolve_tool(),
+        combine_tool(),
+        move_body_tool(),
+        mirror_tool(),
+        pattern_tool(),
+        align_tool(),
+        scale_tool(),
+        split_tool(),
+        shell_tool(),
+        offset_face_tool(),
+        draft_tool(),
+        chamfer_tool(),
+        fillet_tool(),
+        sweep_tool(),
+        loft_tool(),
+        undo_tool(),
+    ]);
+    json!({ "tools": tools })
+}
+
+/// A creating tool's schema, `tool` with the `name` of the feature it
+/// adds and the `body_name` or `body_names` of the `bodies` it makes.
+fn creating(mut tool: Value, bodies: NewBodies) -> Value {
+    let properties = &mut tool["inputSchema"]["properties"];
+    properties["name"] = json!({
+        "type": "string",
+        "maxLength": NAME_BYTES,
+        "description": "The feature's name in the Timeline; a default like 'Extrude 2' if left out — give a descriptive one"
+    });
+    match bodies {
+        NewBodies::None => {}
+        NewBodies::One => {
+            properties["body_name"] = json!({
+                "type": "string",
+                "maxLength": NAME_BYTES,
+                "description": "The name of the body it makes, in Objects; a default like 'Body 3' if left out. Refused when it makes none"
+            });
+        }
+        NewBodies::Many => {
+            properties["body_names"] = json!({
+                "type": "array",
+                "items": { "type": "string", "maxLength": NAME_BYTES },
+                "maxItems": MAX_ITEMS,
+                "description": "Names for the bodies it makes (copies with join false), in the order the result lists them; those left out keep defaults like 'Body 3'. Refused when it makes fewer"
+            });
+        }
+    }
+    tool
+}
+
+/// The `extrude` tool's schema.
+fn extrude_tool() -> Value {
+    creating(
+        json!({
             "name": "extrude",
             "title": "Extrude",
             "description": "Adds an extrude of regions of a sketch, as the Extrude panel's OK \
@@ -449,8 +513,15 @@ fn build_list() -> Value {
                 "additionalProperties": false
             },
             "annotations": edit_once(),
-        },
-        {
+        }),
+        FeatureTool::Extrude.new_bodies(),
+    )
+}
+
+/// The `revolve` tool's schema.
+fn revolve_tool() -> Value {
+    creating(
+        json!({
             "name": "revolve",
             "title": "Revolve",
             "description": "Adds a revolve of regions of a sketch about an axis, as the \
@@ -482,8 +553,15 @@ fn build_list() -> Value {
                 "additionalProperties": false
             },
             "annotations": edit_once(),
-        },
-        {
+        }),
+        FeatureTool::Revolve.new_bodies(),
+    )
+}
+
+/// The `combine` tool's schema.
+fn combine_tool() -> Value {
+    creating(
+        json!({
             "name": "combine",
             "title": "Combine bodies",
             "description": "Adds a combine, as the Combine panel's OK does, at the rollback \
@@ -503,76 +581,9 @@ fn build_list() -> Value {
                 "additionalProperties": false
             },
             "annotations": edit_once(),
-        },
-    ]);
-    let as_list = |tools: Value| match tools {
-        Value::Array(tools) => tools,
-        _ => unreachable!("a literal list"),
-    };
-    // In order: the queries and the design's edits, the sketch tools, the
-    // patch the feature tools share, the feature tools, then the motion
-    // panel's kinds, a schema each (as one literal they'd pass the
-    // macro's recursion limit), and undo last.
-    let mut tools = as_list(design);
-    tools.extend([
-        add_sketch_tool(),
-        set_sketch_plane_tool(),
-        add_link_tool(),
-        draw::edit_sketch_tool(),
-        set_feature_tool(),
-    ]);
-    tools.extend(as_list(features));
-    tools.extend([
-        move_body_tool(),
-        mirror_tool(),
-        pattern_tool(),
-        align_tool(),
-        scale_tool(),
-        split_tool(),
-        shell_tool(),
-        offset_face_tool(),
-        draft_tool(),
-        chamfer_tool(),
-        fillet_tool(),
-        sweep_tool(),
-        loft_tool(),
-        undo_tool(),
-    ]);
-    for tool in tools.iter_mut() {
-        let word = tool["name"].as_str().unwrap_or_default();
-        let bodies = match word {
-            "add_sketch" => NewBodies::None,
-            _ => match FeatureTool::named(word) {
-                Some(tool) => tool.new_bodies(),
-                None => continue,
-            },
-        };
-        let properties = &mut tool["inputSchema"]["properties"];
-        properties["name"] = json!({
-            "type": "string",
-            "maxLength": NAME_BYTES,
-            "description": "The feature's name in the Timeline; a default like 'Extrude 2' if left out — give a descriptive one"
-        });
-        match bodies {
-            NewBodies::None => {}
-            NewBodies::One => {
-                properties["body_name"] = json!({
-                    "type": "string",
-                    "maxLength": NAME_BYTES,
-                    "description": "The name of the body it makes, in Objects; a default like 'Body 3' if left out. Refused when it makes none"
-                });
-            }
-            NewBodies::Many => {
-                properties["body_names"] = json!({
-                    "type": "array",
-                    "items": { "type": "string", "maxLength": NAME_BYTES },
-                    "maxItems": MAX_ITEMS,
-                    "description": "Names for the bodies it makes (copies with join false), in the order the result lists them; those left out keep defaults like 'Body 3'. Refused when it makes fewer"
-                });
-            }
-        }
-    }
-    json!({ "tools": tools })
+        }),
+        FeatureTool::Combine.new_bodies(),
+    )
 }
 
 /// A sketch's plane's schema.
@@ -595,21 +606,24 @@ fn plane(description: &str) -> Value {
 
 /// The `add_sketch` tool's schema.
 fn add_sketch_tool() -> Value {
-    json!({
-        "name": "add_sketch",
-        "title": "Add a sketch",
-        "description": "Adds an empty sketch on an origin plane or a flat face, as New sketch \
-            does, at the rollback marker (the end unless rolled back). It isn't opened for \
-            the user. Draw in it with the sketch tools. One undo step; the result names the \
-            sketch and its id, and waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": { "plane": sketch_plane() },
-            "required": ["plane"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+    creating(
+        json!({
+            "name": "add_sketch",
+            "title": "Add a sketch",
+            "description": "Adds an empty sketch on an origin plane or a flat face, as New sketch \
+                does, at the rollback marker (the end unless rolled back). It isn't opened for \
+                the user. Draw in it with the sketch tools. One undo step; the result names the \
+                sketch and its id, and waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "plane": sketch_plane() },
+                "required": ["plane"],
+                "additionalProperties": false
+            },
+            "annotations": edit_once(),
+        }),
+        NewBodies::None,
+    )
 }
 
 /// The `set_sketch_plane` tool's schema.
@@ -697,456 +711,490 @@ fn set_feature_tool() -> Value {
             "required": ["name"],
             "additionalProperties": true
         },
-        "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true,
-            "idempotentHint": true,
-            "openWorldHint": false
-        },
+        "annotations": edit_hints(true, true),
     })
 }
 
 /// The `move_body` tool's schema.
 fn move_body_tool() -> Value {
-    json!({
-        "name": "move_body",
-        "title": "Move bodies",
-        "description": "Adds a move, as the Move panel's OK does, at the rollback marker: \
-            each body turned by angle about axis, then shifted by x, y and z along the \
-            world axes. Values are typed text in the design's units. Defaults are the \
-            panel's: 0 mm, 0 deg about the Z axis; one that moves nothing is refused. \
-            One undo step; the result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "bodies": bodies(),
-                "x": typed("The shift along world X, a length: default 0 mm"),
-                "y": typed("The shift along world Y: default 0 mm"),
-                "z": typed("The shift along world Z: default 0 mm"),
-                "angle": typed("The turn about axis, right-handed, \"90 deg\": default 0 deg"),
-                "axis": motion_axis("What it turns about: default \"z\""),
+    creating(
+        json!({
+            "name": "move_body",
+            "title": "Move bodies",
+            "description": "Adds a move, as the Move panel's OK does, at the rollback marker: \
+                each body turned by angle about axis, then shifted by x, y and z along the \
+                world axes. Values are typed text in the design's units. Defaults are the \
+                panel's: 0 mm, 0 deg about the Z axis; one that moves nothing is refused. \
+                One undo step; the result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bodies": bodies(),
+                    "x": typed("The shift along world X, a length: default 0 mm"),
+                    "y": typed("The shift along world Y: default 0 mm"),
+                    "z": typed("The shift along world Z: default 0 mm"),
+                    "angle": typed("The turn about axis, right-handed, \"90 deg\": default 0 deg"),
+                    "axis": motion_axis("What it turns about: default \"z\""),
+                },
+                "required": ["bodies"],
+                "additionalProperties": false
             },
-            "required": ["bodies"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::MoveBody.new_bodies(),
+    )
 }
 
 /// The `mirror` tool's schema.
 fn mirror_tool() -> Value {
-    json!({
-        "name": "mirror",
-        "title": "Mirror bodies",
-        "description": "Adds a mirror, as the Mirror panel's OK does, at the rollback \
-            marker: each body reflected in plane, keeping the original too (default) \
-            or becoming its image. One undo step; the result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "bodies": bodies(),
-                "plane": sketch_plane(),
-                "keep_original": { "type": "boolean", "description": "The panel's Create copy: keep each body and its image together; default true" }
+    creating(
+        json!({
+            "name": "mirror",
+            "title": "Mirror bodies",
+            "description": "Adds a mirror, as the Mirror panel's OK does, at the rollback \
+                marker: each body reflected in plane, keeping the original too (default) \
+                or becoming its image. One undo step; the result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bodies": bodies(),
+                    "plane": sketch_plane(),
+                    "keep_original": { "type": "boolean", "description": "The panel's Create copy: keep each body and its image together; default true" }
+                },
+                "required": ["bodies", "plane"],
+                "additionalProperties": false
             },
-            "required": ["bodies", "plane"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Mirror.new_bodies(),
+    )
 }
 
 /// The `pattern` tool's schema.
 fn pattern_tool() -> Value {
-    json!({
-        "name": "pattern",
-        "title": "Pattern bodies",
-        "description": "Adds a linear or circular pattern, as its panel's OK does, at the \
-            rollback marker: count copies of each body, the original among them, along \
-            or about axis. Defaults are the panel's: linear along X, 3, spaced 10 mm \
-            (the panel's own spacing follows the view, so give spread); circular about Z, \
-            4 evenly round a full turn. Copies join their body unless join is false, \
-            when each is a body of its own. One undo step; the result waits for \
-            regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "kind": { "enum": words(PATTERN_KINDS), "description": "Default linear" },
-                "bodies": bodies(),
-                "axis": motion_axis("The direction (linear: default \"x\") or the axis turned about (circular: default \"z\")"),
-                "count": {
-                    "type": ["string", "integer"],
-                    "maxLength": TEXT_BYTES,
-                    "description": format!("How many, the original among them, 2 to {MAX_PATTERN_COUNT}: a whole number or an expression; default 3 (linear) or 4 (circular)")
+    creating(
+        json!({
+            "name": "pattern",
+            "title": "Pattern bodies",
+            "description": "Adds a linear or circular pattern, as its panel's OK does, at the \
+                rollback marker: count copies of each body, the original among them, along \
+                or about axis. Defaults are the panel's: linear along X, 3, spaced 10 mm \
+                (the panel's own spacing follows the view, so give spread); circular about Z, \
+                4 evenly round a full turn. Copies join their body unless join is false, \
+                when each is a body of its own. One undo step; the result waits for \
+                regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "enum": words(PATTERN_KINDS), "description": "Default linear" },
+                    "bodies": bodies(),
+                    "axis": motion_axis("The direction (linear: default \"x\") or the axis turned about (circular: default \"z\")"),
+                    "count": {
+                        "type": ["string", "integer"],
+                        "maxLength": TEXT_BYTES,
+                        "description": format!("How many, the original among them, 2 to {MAX_PATTERN_COUNT}: a whole number or an expression; default 3 (linear) or 4 (circular)")
+                    },
+                    "mode": { "enum": words(PATTERN_MODES), "description": "What spread is: spacing, one step (linear's default); total, first to last; full, a circular one's copies round a full turn with no spread (circular's default)" },
+                    "spread": typed("The spacing or total: a positive length for linear (default 10 mm), an angle for circular (default 90 deg)"),
+                    "flip": { "type": "boolean", "description": "A linear one's copies the other way along axis; default false" },
+                    "join": { "type": "boolean", "description": "Join to original: the copies in their body (default true), else each copy a new body" }
                 },
-                "mode": { "enum": words(PATTERN_MODES), "description": "What spread is: spacing, one step (linear's default); total, first to last; full, a circular one's copies round a full turn with no spread (circular's default)" },
-                "spread": typed("The spacing or total: a positive length for linear (default 10 mm), an angle for circular (default 90 deg)"),
-                "flip": { "type": "boolean", "description": "A linear one's copies the other way along axis; default false" },
-                "join": { "type": "boolean", "description": "Join to original: the copies in their body (default true), else each copy a new body" }
+                "required": ["bodies"],
+                "additionalProperties": false
             },
-            "required": ["bodies"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Pattern.new_bodies(),
+    )
 }
 
 /// The `align` tool's schema.
 fn align_tool() -> Value {
-    json!({
-        "name": "align",
-        "title": "Align a body",
-        "description": "Adds an align, as the Align panel's OK does, at the rollback \
-            marker: the body moved so from's point meets to's, and with directions on \
-            both sides, from's direction turned onto to's (a second pair fixes the turn \
-            about it). Points are corners or edges (a straight one's middle, a round \
-            one's centre; a round edge's centre with no direction also gives its side \
-            the rim's axis) by body_topology key, or to's \"origin\"; directions are \
-            faces or edges by key, or to's \"x\", \"y\" or \"z\". One undo step; the \
-            result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "body": { "type": "string", "description": "The body moved, by name: default the one from's point is on" },
-                "from": align_side("On the body moved"),
-                "to": align_side("What it's aligned to, on another body or the origin"),
-                "flip": { "type": "boolean", "description": "The directions meet the other way round (with directions only); default false" },
-                "distance": typed("An offset along to's direction (with directions only): default 0 mm"),
-                "angle": typed("A turn about to's direction (with directions only): default 0 deg")
+    creating(
+        json!({
+            "name": "align",
+            "title": "Align a body",
+            "description": "Adds an align, as the Align panel's OK does, at the rollback \
+                marker: the body moved so from's point meets to's, and with directions on \
+                both sides, from's direction turned onto to's (a second pair fixes the turn \
+                about it). Points are corners or edges (a straight one's middle, a round \
+                one's centre; a round edge's centre with no direction also gives its side \
+                the rim's axis) by body_topology key, or to's \"origin\"; directions are \
+                faces or edges by key, or to's \"x\", \"y\" or \"z\". One undo step; the \
+                result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "body": { "type": "string", "description": "The body moved, by name: default the one from's point is on" },
+                    "from": align_side("On the body moved"),
+                    "to": align_side("What it's aligned to, on another body or the origin"),
+                    "flip": { "type": "boolean", "description": "The directions meet the other way round (with directions only); default false" },
+                    "distance": typed("An offset along to's direction (with directions only): default 0 mm"),
+                    "angle": typed("A turn about to's direction (with directions only): default 0 deg")
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
             },
-            "required": ["from", "to"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Align.new_bodies(),
+    )
 }
 
 /// The `scale` tool's schema.
 fn scale_tool() -> Value {
-    json!({
-        "name": "scale",
-        "title": "Scale bodies",
-        "description": "Adds a scale, as the Scale panel's OK does, at the rollback \
-            marker, about point: uniform by factor, per_axis by x, y and z factors, or \
-            edge_length, the factor that gives edge (an edge of a scaled body) length. \
-            Factors are from 0.001 to 1000; one scaling nothing is refused. One undo \
-            step; the result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "bodies": bodies(),
-                "point": {
-                    "description": "What it scales about: \"origin\" (default), or {\"corner\": key} or {\"edge\": key} (a straight edge's middle, a round one's centre) by body_topology key",
-                    "oneOf": [
-                        { "const": "origin" },
-                        item(&[ItemKind::Corner, ItemKind::Edge])
-                    ]
+    creating(
+        json!({
+            "name": "scale",
+            "title": "Scale bodies",
+            "description": "Adds a scale, as the Scale panel's OK does, at the rollback \
+                marker, about point: uniform by factor, per_axis by x, y and z factors, or \
+                edge_length, the factor that gives edge (an edge of a scaled body) length. \
+                Factors are from 0.001 to 1000; one scaling nothing is refused. One undo \
+                step; the result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bodies": bodies(),
+                    "point": {
+                        "description": "What it scales about: \"origin\" (default), or {\"corner\": key} or {\"edge\": key} (a straight edge's middle, a round one's centre) by body_topology key",
+                        "oneOf": [
+                            { "const": "origin" },
+                            item(&[ItemKind::Corner, ItemKind::Edge])
+                        ]
+                    },
+                    "mode": { "enum": words(SCALE_MODES), "description": "Default uniform" },
+                    "factor": typed("Uniform's factor: default 1"),
+                    "x": typed("Per axis's factor along world X: default 1"),
+                    "y": typed("Per axis's factor along world Y: default 1"),
+                    "z": typed("Per axis's factor along world Z: default 1"),
+                    "edge": { "type": "string", "description": "Edge length's edge, by its body_topology key" },
+                    "length": typed("Edge length's length, \"50 mm\""),
+                    "axis_only": { "type": "boolean", "description": "Edge length's Along its axis only, for a straight edge along a world axis: scale along that axis alone; default false" }
                 },
-                "mode": { "enum": words(SCALE_MODES), "description": "Default uniform" },
-                "factor": typed("Uniform's factor: default 1"),
-                "x": typed("Per axis's factor along world X: default 1"),
-                "y": typed("Per axis's factor along world Y: default 1"),
-                "z": typed("Per axis's factor along world Z: default 1"),
-                "edge": { "type": "string", "description": "Edge length's edge, by its body_topology key" },
-                "length": typed("Edge length's length, \"50 mm\""),
-                "axis_only": { "type": "boolean", "description": "Edge length's Along its axis only, for a straight edge along a world axis: scale along that axis alone; default false" }
+                "required": ["bodies"],
+                "additionalProperties": false
             },
-            "required": ["bodies"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Scale.new_bodies(),
+    )
 }
 
 /// The `split` tool's schema.
 pub(super) fn split_tool() -> Value {
-    json!({
-        "name": "split",
-        "title": "Split a body",
-        "description": "Adds a split, as the Split panel's OK does, at the rollback \
-            marker: body cut in two by tool. The front is the part inside the tool (on \
-            the side a plane's normal points to, out of a face's body, inside a tool \
-            body or the sketch's regions, left of a line); the back the rest. With keep \
-            both, the piece original names (default front) keeps the body's name and id \
-            and the other becomes a new body; keeping one side trims the other away. \
-            One undo step; the result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "body": body(),
-                "tool": {
-                    "description": "\"xy\", \"xz\" or \"yz\", an origin plane; {\"face\": key}, a face by its body_topology key (a flat one's plane, a curved one's surface continued); {\"body\": name}, another body, kept; {\"sketch\": name, \"profiles\": ...}, regions of a sketch made before, through the body both ways; or {\"sketch\": name, \"curves\": [id, ...]}, the curves of one open line of a sketch",
-                    "oneOf": [
-                        { "enum": words(WORLD_PLANES) },
-                        item(&[ItemKind::Face]),
-                        {
-                            "type": "object",
-                            "properties": { "body": { "type": "string" } },
-                            "required": ["body"],
-                            "additionalProperties": false
-                        },
-                        {
-                            "type": "object",
-                            "properties": { "sketch": sketch(), "profiles": profiles() },
-                            "required": ["sketch", "profiles"],
-                            "additionalProperties": false
-                        },
-                        {
-                            "type": "object",
-                            "properties": {
-                                "sketch": sketch(),
-                                "curves": {
-                                    "type": "array",
-                                    "items": { "type": "integer", "minimum": 0 },
-                                    "minItems": 1,
-                                    "maxItems": MAX_ITEMS
-                                }
+    creating(
+        json!({
+            "name": "split",
+            "title": "Split a body",
+            "description": "Adds a split, as the Split panel's OK does, at the rollback \
+                marker: body cut in two by tool. The front is the part inside the tool (on \
+                the side a plane's normal points to, out of a face's body, inside a tool \
+                body or the sketch's regions, left of a line); the back the rest. With keep \
+                both, the piece original names (default front) keeps the body's name and id \
+                and the other becomes a new body; keeping one side trims the other away. \
+                One undo step; the result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "body": body(),
+                    "tool": {
+                        "description": "\"xy\", \"xz\" or \"yz\", an origin plane; {\"face\": key}, a face by its body_topology key (a flat one's plane, a curved one's surface continued); {\"body\": name}, another body, kept; {\"sketch\": name, \"profiles\": ...}, regions of a sketch made before, through the body both ways; or {\"sketch\": name, \"curves\": [id, ...]}, the curves of one open line of a sketch",
+                        "oneOf": [
+                            { "enum": words(WORLD_PLANES) },
+                            item(&[ItemKind::Face]),
+                            {
+                                "type": "object",
+                                "properties": { "body": { "type": "string" } },
+                                "required": ["body"],
+                                "additionalProperties": false
                             },
-                            "required": ["sketch", "curves"],
-                            "additionalProperties": false
-                        }
-                    ]
+                            {
+                                "type": "object",
+                                "properties": { "sketch": sketch(), "profiles": profiles() },
+                                "required": ["sketch", "profiles"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "sketch": sketch(),
+                                    "curves": {
+                                        "type": "array",
+                                        "items": { "type": "integer", "minimum": 0 },
+                                        "minItems": 1,
+                                        "maxItems": MAX_ITEMS
+                                    }
+                                },
+                                "required": ["sketch", "curves"],
+                                "additionalProperties": false
+                            }
+                        ]
+                    },
+                    "original": { "enum": words(SPLIT_SIDES), "description": "With keep both: the piece that keeps the body's name and id; default front" },
+                    "keep": { "enum": words(SPLIT_KEEPS), "description": "The pieces kept: both (default), or front or back alone, trimming the other away" }
                 },
-                "original": { "enum": words(SPLIT_SIDES), "description": "With keep both: the piece that keeps the body's name and id; default front" },
-                "keep": { "enum": words(SPLIT_KEEPS), "description": "The pieces kept: both (default), or front or back alone, trimming the other away" }
+                "required": ["body", "tool"],
+                "additionalProperties": false
             },
-            "required": ["body", "tool"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Split.new_bodies(),
+    )
 }
 
 /// The `shell` tool's schema.
 fn shell_tool() -> Value {
-    json!({
-        "name": "shell",
-        "title": "Shell a body",
-        "description": "Adds a shell, as the Shell panel's OK does, at the rollback \
-            marker: a body hollowed to walls thickness thick, faces opened (none, a \
-            closed hollow body). Its body is its faces'; with no faces give body, or the \
-            model's only body is taken. Defaults: 2 mm (the panel's own follows the \
-            view), inward. One undo step; the result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "body": { "type": "string", "description": "The body hollowed closed, by its Objects name: only with no faces" },
-                "faces": keys("The faces removed, opening the shell, all on one body", 0),
-                "thickness": typed("The walls' thickness, a positive length: default 2 mm"),
-                "direction": { "enum": words(SHELL_DIRECTIONS), "description": "inward (default), the walls inside the body's faces; or outward, outside them" }
+    creating(
+        json!({
+            "name": "shell",
+            "title": "Shell a body",
+            "description": "Adds a shell, as the Shell panel's OK does, at the rollback \
+                marker: a body hollowed to walls thickness thick, faces opened (none, a \
+                closed hollow body). Its body is its faces'; with no faces give body, or the \
+                model's only body is taken. Defaults: 2 mm (the panel's own follows the \
+                view), inward. One undo step; the result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "body": { "type": "string", "description": "The body hollowed closed, by its Objects name: only with no faces" },
+                    "faces": keys("The faces removed, opening the shell, all on one body", 0),
+                    "thickness": typed("The walls' thickness, a positive length: default 2 mm"),
+                    "direction": { "enum": words(SHELL_DIRECTIONS), "description": "inward (default), the walls inside the body's faces; or outward, outside them" }
+                },
+                "additionalProperties": false
             },
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Shell.new_bodies(),
+    )
 }
 
 /// The `offset_face` tool's schema.
 fn offset_face_tool() -> Value {
-    json!({
-        "name": "offset_face",
-        "title": "Offset faces",
-        "description": "Adds an offset face, as the Offset face panel's OK does, at the \
-            rollback marker: faces of one body moved along their normals by distance, \
-            out of the body or inward into it. Defaults: 1 mm (the panel's own follows \
-            the view), outward, tangent faces taken in. One undo step; the result waits \
-            for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "faces": keys("The faces moved, all on one body", 1),
-                "distance": typed("How far, a positive length: default 1 mm"),
-                "inward": { "type": "boolean", "description": "Into the body, shrinking it; default false" },
-                "tangent": { "type": "boolean", "description": "Take in faces that run on smoothly; default true" }
+    creating(
+        json!({
+            "name": "offset_face",
+            "title": "Offset faces",
+            "description": "Adds an offset face, as the Offset face panel's OK does, at the \
+                rollback marker: faces of one body moved along their normals by distance, \
+                out of the body or inward into it. Defaults: 1 mm (the panel's own follows \
+                the view), outward, tangent faces taken in. One undo step; the result waits \
+                for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "faces": keys("The faces moved, all on one body", 1),
+                    "distance": typed("How far, a positive length: default 1 mm"),
+                    "inward": { "type": "boolean", "description": "Into the body, shrinking it; default false" },
+                    "tangent": { "type": "boolean", "description": "Take in faces that run on smoothly; default true" }
+                },
+                "required": ["faces"],
+                "additionalProperties": false
             },
-            "required": ["faces"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::OffsetFace.new_bodies(),
+    )
 }
 
 /// The `draft` tool's schema.
 fn draft_tool() -> Value {
-    json!({
-        "name": "draft",
-        "title": "Draft faces",
-        "description": "Adds a draft, as the Draft panel's OK does, at the rollback \
-            marker: faces of one body turned by angle about where they meet the neutral \
-            plane, so the part narrows along the pull (the plane's normal, reversed by \
-            flip). Defaults: XY, 3 deg, tangent faces taken in. One undo step; the result \
-            waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "faces": keys("The faces drafted, all on one body", 1),
-                "neutral": plane("The neutral plane: \"xy\" (default), \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face not drafted, by its body_topology key"),
-                "angle": typed("The draft angle, above 0 and under 90 deg: default 3 deg"),
-                "flip": { "type": "boolean", "description": "Pull against the neutral plane's normal; default false" },
-                "tangent": { "type": "boolean", "description": "Take in faces that run on smoothly; default true" }
+    creating(
+        json!({
+            "name": "draft",
+            "title": "Draft faces",
+            "description": "Adds a draft, as the Draft panel's OK does, at the rollback \
+                marker: faces of one body turned by angle about where they meet the neutral \
+                plane, so the part narrows along the pull (the plane's normal, reversed by \
+                flip). Defaults: XY, 3 deg, tangent faces taken in. One undo step; the result \
+                waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "faces": keys("The faces drafted, all on one body", 1),
+                    "neutral": plane("The neutral plane: \"xy\" (default), \"xz\" or \"yz\", an origin plane; or {\"face\": key}, a flat face not drafted, by its body_topology key"),
+                    "angle": typed("The draft angle, above 0 and under 90 deg: default 3 deg"),
+                    "flip": { "type": "boolean", "description": "Pull against the neutral plane's normal; default false" },
+                    "tangent": { "type": "boolean", "description": "Take in faces that run on smoothly; default true" }
+                },
+                "required": ["faces"],
+                "additionalProperties": false
             },
-            "required": ["faces"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Draft.new_bodies(),
+    )
 }
 
 /// The `chamfer` tool's schema.
 fn chamfer_tool() -> Value {
-    json!({
-        "name": "chamfer",
-        "title": "Chamfer edges",
-        "description": "Adds a chamfer, as the Chamfer panel's OK does, at the rollback \
-            marker: edges of one body cut off flat, a face standing for the edges round it \
-            (an edge named round a face named is left out). type equal cuts distance along \
-            both faces; two_distances distance along the first face and second_distance \
-            along the other; distance_angle distance along the first face at angle to it. \
-            An edge's first face is its key's first, the other with flip (not for equal). \
-            Defaults: equal, 1 mm, second 2 mm, 45 deg (the panel's distances follow the \
-            view), tangent chains taken in. The kernel doesn't chamfer yet: it applies and \
-            fails in regeneration, as for the user. One undo step; the result waits for \
-            regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "edges": keys("The edges cut off, all on one body", 0),
-                "faces": keys("Faces whose edges are cut off, on the edges' body", 0),
-                "type": { "enum": words(CHAMFER_TYPES), "description": "How it's sized: default equal" },
-                "distance": typed("A positive length: default 1 mm"),
-                "second_distance": typed("With two_distances, the length along the other face: default 2 mm"),
-                "angle": typed("With distance_angle, the cut's angle to the first face, above 0 and under 90 deg: default 45 deg"),
-                "flip": { "type": "boolean", "description": "With two_distances or distance_angle: the first face is the other; default false" },
-                "tangent": tangent()
+    creating(
+        json!({
+            "name": "chamfer",
+            "title": "Chamfer edges",
+            "description": "Adds a chamfer, as the Chamfer panel's OK does, at the rollback \
+                marker: edges of one body cut off flat, a face standing for the edges round it \
+                (an edge named round a face named is left out). type equal cuts distance along \
+                both faces; two_distances distance along the first face and second_distance \
+                along the other; distance_angle distance along the first face at angle to it. \
+                An edge's first face is its key's first, the other with flip (not for equal). \
+                Defaults: equal, 1 mm, second 2 mm, 45 deg (the panel's distances follow the \
+                view), tangent chains taken in. The kernel doesn't chamfer yet: it applies and \
+                fails in regeneration, as for the user. One undo step; the result waits for \
+                regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "edges": keys("The edges cut off, all on one body", 0),
+                    "faces": keys("Faces whose edges are cut off, on the edges' body", 0),
+                    "type": { "enum": words(CHAMFER_TYPES), "description": "How it's sized: default equal" },
+                    "distance": typed("A positive length: default 1 mm"),
+                    "second_distance": typed("With two_distances, the length along the other face: default 2 mm"),
+                    "angle": typed("With distance_angle, the cut's angle to the first face, above 0 and under 90 deg: default 45 deg"),
+                    "flip": { "type": "boolean", "description": "With two_distances or distance_angle: the first face is the other; default false" },
+                    "tangent": tangent()
+                },
+                "additionalProperties": false
             },
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Chamfer.new_bodies(),
+    )
 }
 
 /// The `fillet` tool's schema.
 fn fillet_tool() -> Value {
-    json!({
-        "name": "fillet",
-        "title": "Fillet edges",
-        "description": "Adds a fillet, as the Fillet panel's OK does, at the rollback \
-            marker: edges of one body rounded to radius, a face standing for the edges round \
-            it (an edge named round a face named is left out). Defaults: 2 mm (the panel's \
-            follows the view), tangent chains taken in. The kernel doesn't fillet yet: it \
-            applies and fails in regeneration, as for the user. One undo step; the result \
-            waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "edges": keys("The edges rounded, all on one body", 0),
-                "faces": keys("Faces whose edges are rounded, on the edges' body", 0),
-                "radius": typed("A positive length: default 2 mm"),
-                "tangent": tangent()
+    creating(
+        json!({
+            "name": "fillet",
+            "title": "Fillet edges",
+            "description": "Adds a fillet, as the Fillet panel's OK does, at the rollback \
+                marker: edges of one body rounded to radius, a face standing for the edges round \
+                it (an edge named round a face named is left out). Defaults: 2 mm (the panel's \
+                follows the view), tangent chains taken in. The kernel doesn't fillet yet: it \
+                applies and fails in regeneration, as for the user. One undo step; the result \
+                waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "edges": keys("The edges rounded, all on one body", 0),
+                    "faces": keys("Faces whose edges are rounded, on the edges' body", 0),
+                    "radius": typed("A positive length: default 2 mm"),
+                    "tangent": tangent()
+                },
+                "additionalProperties": false
             },
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Fillet.new_bodies(),
+    )
 }
 
 /// The `sweep` tool's schema.
 fn sweep_tool() -> Value {
-    json!({
-        "name": "sweep",
-        "title": "Sweep",
-        "description": "Adds a sweep of regions of a sketch, as the Sweep panel's OK does, \
-            at the rollback marker: along a path (chains of curves of sketches made before \
-            but the profile's, each named by one of its curves, and model edges of one body) \
-            or a helix about an axis. keep_orientation and twist go with a path only. \
-            Defaults: follow the path, no twist, a helix's pitch 10 mm (the panel's follows \
-            the view) and 5 turns, a new body. One undo step; the result waits for \
-            regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "sketch": sketch(),
-                "profiles": profiles(),
-                "path": {
-                    "type": "object",
-                    "description": "Along a path: give this or helix",
-                    "properties": {
-                        "curves": curves_in("Chains of sketch curves, each the chain the curve named is in"),
-                        "edges": keys("Model edges, all on one body", 0),
-                        "tangent": tangent()
+    creating(
+        json!({
+            "name": "sweep",
+            "title": "Sweep",
+            "description": "Adds a sweep of regions of a sketch, as the Sweep panel's OK does, \
+                at the rollback marker: along a path (chains of curves of sketches made before \
+                but the profile's, each named by one of its curves, and model edges of one body) \
+                or a helix about an axis. keep_orientation and twist go with a path only. \
+                Defaults: follow the path, no twist, a helix's pitch 10 mm (the panel's follows \
+                the view) and 5 turns, a new body. One undo step; the result waits for \
+                regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sketch": sketch(),
+                    "profiles": profiles(),
+                    "path": {
+                        "type": "object",
+                        "description": "Along a path: give this or helix",
+                        "properties": {
+                            "curves": curves_in("Chains of sketch curves, each the chain the curve named is in"),
+                            "edges": keys("Model edges, all on one body", 0),
+                            "tangent": tangent()
+                        },
+                        "additionalProperties": false
                     },
-                    "additionalProperties": false
-                },
-                "helix": {
-                    "type": "object",
-                    "description": "Along a helix: give this or path",
-                    "properties": {
-                        "axis": motion_axis("The helix's axis: \"x\", \"y\" or \"z\", or {\"edge\": key} (straight or round) or {\"face\": key} (round)"),
-                        "pitch": typed("The rise per turn, a positive length: default 10 mm"),
-                        "turns": { "type": ["string", "number"], "maxLength": TEXT_BYTES, "description": "How many turns, part of one too, typed text or a number: default 5" },
-                        "left_handed": { "type": "boolean", "description": "Turning the other way; default false" },
-                        "flip": { "type": "boolean", "description": "Rising the other way along the axis; default false" }
+                    "helix": {
+                        "type": "object",
+                        "description": "Along a helix: give this or path",
+                        "properties": {
+                            "axis": motion_axis("The helix's axis: \"x\", \"y\" or \"z\", or {\"edge\": key} (straight or round) or {\"face\": key} (round)"),
+                            "pitch": typed("The rise per turn, a positive length: default 10 mm"),
+                            "turns": { "type": ["string", "number"], "maxLength": TEXT_BYTES, "description": "How many turns, part of one too, typed text or a number: default 5" },
+                            "left_handed": { "type": "boolean", "description": "Turning the other way; default false" },
+                            "flip": { "type": "boolean", "description": "Rising the other way along the axis; default false" }
+                        },
+                        "required": ["axis"],
+                        "additionalProperties": false
                     },
-                    "required": ["axis"],
-                    "additionalProperties": false
+                    "keep_orientation": { "type": "boolean", "description": "A path's profile keeps its orientation rather than turning with the path; default false" },
+                    "twist": typed("A path's twist from end to end, an angle: default 0 deg"),
+                    "operation": operation(),
+                    "exclude": exclude()
                 },
-                "keep_orientation": { "type": "boolean", "description": "A path's profile keeps its orientation rather than turning with the path; default false" },
-                "twist": typed("A path's twist from end to end, an angle: default 0 deg"),
-                "operation": operation(),
-                "exclude": exclude()
+                "required": ["sketch", "profiles"],
+                "additionalProperties": false
             },
-            "required": ["sketch", "profiles"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Sweep.new_bodies(),
+    )
 }
 
 /// The `loft` tool's schema.
 fn loft_tool() -> Value {
-    json!({
-        "name": "loft",
-        "title": "Loft",
-        "description": "Adds a loft, as the Loft panel's OK does, at the rollback marker: a \
-            solid through its sections in order, each a region without holes of a sketch \
-            made before, or first or last a sketch point on its own. A region's start is a \
-            sketch point at one of its corners (default the corner nearest the previous \
-            section's start). Rails, open chains of sketch curves each named by one of its \
-            curves, guide it, not with closed. Defaults: smooth, open, a new body. One undo \
-            step; the result waits for regeneration.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "sections": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": MAX_ITEMS,
-                    "description": "The sections in order, at least two for a loft",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "sketch": sketch(),
-                            "region": {
-                                "description": "A region of the sketch: its index (as sketch lists them) or a point [x, y] inside it",
-                                "oneOf": region()
+    creating(
+        json!({
+            "name": "loft",
+            "title": "Loft",
+            "description": "Adds a loft, as the Loft panel's OK does, at the rollback marker: a \
+                solid through its sections in order, each a region without holes of a sketch \
+                made before, or first or last a sketch point on its own. A region's start is a \
+                sketch point at one of its corners (default the corner nearest the previous \
+                section's start). Rails, open chains of sketch curves each named by one of its \
+                curves, guide it, not with closed. Defaults: smooth, open, a new body. One undo \
+                step; the result waits for regeneration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sections": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_ITEMS,
+                        "description": "The sections in order, at least two for a loft",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sketch": sketch(),
+                                "region": {
+                                    "description": "A region of the sketch: its index (as sketch lists them) or a point [x, y] inside it",
+                                    "oneOf": region()
+                                },
+                                "point": { "type": "integer", "minimum": 0, "description": "A point of the sketch on its own, by id: the first or last section only" },
+                                "start": { "type": "integer", "minimum": 0, "description": "A region's start: a point of the sketch at one of its corners, by id" }
                             },
-                            "point": { "type": "integer", "minimum": 0, "description": "A point of the sketch on its own, by id: the first or last section only" },
-                            "start": { "type": "integer", "minimum": 0, "description": "A region's start: a point of the sketch at one of its corners, by id" }
-                        },
-                        "required": ["sketch"],
-                        "additionalProperties": false
-                    }
+                            "required": ["sketch"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "mode": { "enum": words(LOFT_MODES), "description": "Between sections: smooth (default) or ruled; two sections are ruled either way" },
+                    "closed": { "type": "boolean", "description": "The last section lofted back to the first; no rails then; default false" },
+                    "rails": curves_in("Rails guiding it from the first section to the last, each the open chain the curve named is in"),
+                    "operation": operation(),
+                    "exclude": exclude()
                 },
-                "mode": { "enum": words(LOFT_MODES), "description": "Between sections: smooth (default) or ruled; two sections are ruled either way" },
-                "closed": { "type": "boolean", "description": "The last section lofted back to the first; no rails then; default false" },
-                "rails": curves_in("Rails guiding it from the first section to the last, each the open chain the curve named is in"),
-                "operation": operation(),
-                "exclude": exclude()
+                "required": ["sections"],
+                "additionalProperties": false
             },
-            "required": ["sections"],
-            "additionalProperties": false
-        },
-        "annotations": edit_once(),
-    })
+            "annotations": edit_once(),
+        }),
+        FeatureTool::Loft.new_bodies(),
+    )
 }
 
 /// `undo`'s schema: the session's own newest edits taken back.
