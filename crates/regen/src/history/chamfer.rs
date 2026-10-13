@@ -20,8 +20,7 @@ use varde_kernel_compat::{
     BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology,
 };
 
-use super::blend::{find_edges, find_faces, plan, refused};
-use super::in_place::InPlace;
+use super::blend::prepare;
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
 use crate::why::{self, Blend};
@@ -51,25 +50,17 @@ pub(super) fn evaluate_chamfer(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    // A checked document's chamfer has edges or faces, all on one body.
-    let body = chamfer.body().ok_or(why::NOTHING_PICKED)?;
-    let place = InPlace::of(document, body, evaluation, cache)?;
-    let (solid, topology) = (&*place.solid, &*place.topology);
-    let found = find_edges(&place, &chamfer.edges)?;
-    let faces = find_faces(&place, &chamfer.faces)?;
-    let planned = plan(
-        solid,
-        topology,
-        &chamfer.edges,
-        &found,
-        &faces,
+    let prepared = prepare(
+        document,
+        chamfer.body(),
+        (&chamfer.edges, &chamfer.faces),
         chamfer.chains,
         chamfer.flip,
-    );
-    // Every edge it names left out: nothing to chamfer.
-    if planned.is_empty() {
-        return Err(why::BLEND_ALL_LEFT_OUT.to_owned().into());
-    }
+        evaluation,
+        cache,
+    )?;
+    let (place, planned) = (&prepared.place, &prepared.planned);
+    let (solid, topology) = (&*place.solid, &*place.topology);
     let chains: Vec<ChamferChain> = (planned.iter())
         .map(|planned| ChamferChain {
             chain: planned.chain,
@@ -101,16 +92,14 @@ pub(super) fn evaluate_chamfer(
     }
     let key = keyer.finish();
     let chamfer_by = chamferer();
-    let counts = [chamfer.edges.len(), chamfer.faces.len()];
     place.replace(
         key,
         evaluation,
         cache,
         |name| why::blend_leaves_nothing(Blend::Chamfer, name),
         |budget| {
-            chamfer_by(solid, topology, &chains, feature.get(), tolerance, budget).map_err(
-                |error| refused(Blend::Chamfer, error, &place, &planned, tolerance, counts),
-            )
+            chamfer_by(solid, topology, &chains, feature.get(), tolerance, budget)
+                .map_err(|error| prepared.refused(Blend::Chamfer, error, tolerance))
         },
     )
 }

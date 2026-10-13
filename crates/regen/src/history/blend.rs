@@ -37,19 +37,83 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use varde_document::{EdgeRef, FaceRef};
+use varde_document::{BodyId, Document, EdgeRef, FaceRef};
 use varde_kernel_compat::mesh::FaceKey;
 use varde_kernel_compat::topology::blend_edge;
 use varde_kernel_compat::{BlendError, Solid, Tolerance, Topology};
 
-use super::Failed;
 use super::in_place::InPlace;
+use super::{Evaluation, Failed};
 use crate::ErrorGeometry;
+use crate::cache::Cache;
 use crate::why::{self, Blend, BlendRefusal, BlendSource};
+
+/// A blend's body in place and the chains it blends, ready for the
+/// kernel: what chamfers and fillets share before their own chains.
+pub(super) struct Prepared<'a> {
+    pub(super) place: InPlace<'a>,
+    pub(super) planned: Vec<Planned>,
+    /// How many edges and faces the feature names, for the messages.
+    counts: [usize; 2],
+}
+
+/// The body `body` of `evaluation` and the chains `edges` and `faces`
+/// come to on it, grown along tangent chains when `chains` and the first
+/// faces the other way round when `flip` ([`plan`]). Fails when it picks
+/// nothing, its body has no solid of its own, an edge or face isn't
+/// found, or every edge it names is left out.
+pub(super) fn prepare<'a>(
+    document: &'a Document,
+    body: Option<BodyId>,
+    (edges, faces): (&[EdgeRef], &[FaceRef]),
+    chains: bool,
+    flip: bool,
+    evaluation: &Evaluation,
+    cache: &mut Cache,
+) -> Result<Prepared<'a>, Failed> {
+    // A checked document's blend has edges or faces, all on one body.
+    let body = body.ok_or(why::NOTHING_PICKED)?;
+    let place = InPlace::of(document, body, evaluation, cache)?;
+    let found = find_edges(&place, edges)?;
+    let regions = find_faces(&place, faces)?;
+    let planned = plan(
+        &place.solid,
+        &place.topology,
+        edges,
+        &found,
+        &regions,
+        chains,
+        flip,
+    );
+    // Every edge it names left out: nothing to blend.
+    if planned.is_empty() {
+        return Err(why::BLEND_ALL_LEFT_OUT.to_owned().into());
+    }
+    Ok(Prepared {
+        place,
+        planned,
+        counts: [edges.len(), faces.len()],
+    })
+}
+
+impl Prepared<'_> {
+    /// The kernel's refusal of the `blend`, worded with the edge drawn
+    /// ([`refused`]).
+    pub(super) fn refused(&self, blend: Blend, error: BlendError, tolerance: &Tolerance) -> Failed {
+        refused(
+            blend,
+            error,
+            &self.place,
+            &self.planned,
+            tolerance,
+            self.counts,
+        )
+    }
+}
 
 /// The chains of `own`'s topology `edges` are found as, in their order:
 /// one not found fails ("its edge 2 of 3 wasn't found").
-pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
+fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
     let count = edges.len();
     (edges.iter().enumerate())
         .map(|(i, edge)| {
@@ -61,7 +125,7 @@ pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, F
 
 /// The regions of `own`'s topology `faces` are found as, in their order:
 /// one not found fails ("its face 2 of 3 wasn't found").
-pub(super) fn find_faces(own: &InPlace, faces: &[FaceRef]) -> Result<Vec<u32>, Failed> {
+fn find_faces(own: &InPlace, faces: &[FaceRef]) -> Result<Vec<u32>, Failed> {
     own.find_regions(faces, why::face_not_found)
 }
 
@@ -91,7 +155,7 @@ struct Seed {
 /// regions `faces`, with tangent chains grown when `chains` and the
 /// first faces the other way round when `flip`, as the module's docs
 /// say.
-pub(super) fn plan(
+fn plan(
     solid: &Solid,
     topology: &Topology,
     edges: &[EdgeRef],
@@ -234,7 +298,7 @@ fn first_region(topology: &Topology, sides: [u32; 2], edge: &EdgeRef, flip: bool
 /// Why the kernel's chamfer or fillet, `blend`, of `own` naming `counts`
 /// edges and faces, planned as `planned`, gave no solid, in words, with what to
 /// draw: the edge a refusal is about, or the failure's evidence.
-pub(super) fn refused(
+fn refused(
     blend: Blend,
     error: BlendError,
     own: &InPlace,

@@ -19,8 +19,7 @@
 use varde_document::{Document, FeatureId, Fillet};
 use varde_kernel_compat::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
-use super::blend::{find_edges, find_faces, plan, refused};
-use super::in_place::InPlace;
+use super::blend::prepare;
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
 use crate::why::{self, Blend};
@@ -56,25 +55,17 @@ pub(super) fn evaluate_fillet(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    // A checked document's fillet has edges or faces, all on one body.
-    let body = fillet.body().ok_or(why::NOTHING_PICKED)?;
-    let place = InPlace::of(document, body, evaluation, cache)?;
-    let (solid, topology) = (&*place.solid, &*place.topology);
-    let found = find_edges(&place, &fillet.edges)?;
-    let faces = find_faces(&place, &fillet.faces)?;
-    let planned = plan(
-        solid,
-        topology,
-        &fillet.edges,
-        &found,
-        &faces,
+    let prepared = prepare(
+        document,
+        fillet.body(),
+        (&fillet.edges, &fillet.faces),
         fillet.chains,
         false,
-    );
-    // Every edge it names left out: nothing to fillet.
-    if planned.is_empty() {
-        return Err(why::BLEND_ALL_LEFT_OUT.to_owned().into());
-    }
+        evaluation,
+        cache,
+    )?;
+    let (place, planned) = (&prepared.place, &prepared.planned);
+    let (solid, topology) = (&*place.solid, &*place.topology);
     let chains: Vec<FilletChain> = (planned.iter())
         .map(|planned| FilletChain {
             chain: planned.chain,
@@ -89,7 +80,6 @@ pub(super) fn evaluate_fillet(
     }
     let key = keyer.finish();
     let fillet_by = filleter();
-    let counts = [fillet.edges.len(), fillet.faces.len()];
     place.replace(
         key,
         evaluation,
@@ -105,7 +95,7 @@ pub(super) fn evaluate_fillet(
                 tolerance,
                 budget,
             )
-            .map_err(|error| refused(Blend::Fillet, error, &place, &planned, tolerance, counts))
+            .map_err(|error| prepared.refused(Blend::Fillet, error, tolerance))
         },
     )
 }
