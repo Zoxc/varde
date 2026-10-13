@@ -1,6 +1,6 @@
 //! The file menu: saving, exporting, the design's units and tolerance.
 
-use iced::widget::{Space, column, container, mouse_area, opaque, row, text};
+use iced::widget::{column, container, mouse_area, opaque, row, text};
 use iced::{Alignment, Element, Length, Padding, mouse};
 use varde_document::Tolerance;
 use varde_expr::LengthUnit;
@@ -112,12 +112,11 @@ pub fn file_menu(state: FileMenu) -> Element<'static, Message> {
     });
     // Its dot in line with the items' icons.
     let downloads = downloads.as_ref().map(|downloads| {
-        let (said, color) = crate::welcome::downloads_said(downloads);
+        let (said, color) = crate::downloads::downloads_said(downloads);
         column![
             container(
                 row![
-                    container(container(Space::new().width(7).height(7)).style(theme::dot(color)))
-                        .center_x(icons::INLINE),
+                    container(crate::downloads::dot(color)).center_x(icons::INLINE),
                     text(said).size(11.5).style(theme::muted_text),
                 ]
                 .spacing(MENU_ITEM_SPACING)

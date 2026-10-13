@@ -17,6 +17,7 @@ mod controls;
 pub mod dimension;
 mod divider;
 mod document;
+mod downloads;
 mod errors;
 mod escape;
 mod extrude;
@@ -80,6 +81,7 @@ pub use document::{
     MeshStatus, NamePrompt, OperationState, Overlay, RecoveredChanges, Refusal, RefusedEdit,
     Rollback, SketchState, ValueField, ValueTarget, body_tint, document, part_opacity, part_tints,
 };
+pub use downloads::Downloads;
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle};
 pub use feature_text::{
@@ -155,8 +157,8 @@ pub use viewport::ModelPicking;
 pub use viewport::sketch_grid;
 pub use viewport::warm_up;
 pub use welcome::{
-    CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, Downloads, PanicNote, RecentCard,
-    SampleCard, StorageNote, WelcomeState, welcome,
+    CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, PanicNote, RecentCard, SampleCard,
+    StorageNote, WelcomeState, welcome,
 };
 
 /// The text field a dimension's value is typed in, placing it or editing

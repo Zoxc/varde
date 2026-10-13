@@ -1,9 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use iced::advanced::{Layout, Shell, clipboard};
-use iced::{Event, Point, Rectangle, mouse};
+use iced::{Event, Point, Rectangle, Size, mouse};
 
+use super::cards::{DELETE_SIZE, STORED_META_HEIGHT};
 use super::*;
+use crate::Welcome;
+use crate::downloads::{Downloads, downloads_said};
 use crate::probe::Shown;
 use crate::testing::Laid;
 
