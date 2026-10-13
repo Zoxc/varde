@@ -326,36 +326,47 @@ impl Sketch {
     /// the lines' ends cut off dashed, and leaving them out of profiles.
     pub fn cut_back(&self) -> HashMap<Id, [f64; 2]> {
         let mut cut: HashMap<Id, [f64; 2]> = HashMap::new();
-        for entry in &self.curves {
-            let Some(corner) = entry.corner else {
-                continue;
-            };
-            let Some(ends) = entry.curve.ends() else {
-                continue;
-            };
-            for (line, meets) in [(corner.a, ends[0]), (corner.b, ends[1])] {
-                let (Some([start, end]), Some(meets)) = (self.line_ends(line), self.point(meets))
-                else {
-                    continue;
-                };
-                let (Some(from), Some(to)) = (self.point(start), self.point(end)) else {
-                    continue;
-                };
-                let along = to.at - from.at;
-                let u = along.dot(meets.at - from.at) / along.length_squared();
-                if !u.is_finite() {
-                    continue;
-                }
-                let u = u.clamp(0.0, 1.0);
-                let kept = cut.entry(line).or_insert([0.0, 1.0]);
-                if start == corner.at {
-                    kept[0] = kept[0].max(u);
-                } else if end == corner.at {
-                    kept[1] = kept[1].min(u);
-                }
-            }
+        for (line, end, u) in self.cuts_into() {
+            keep(cut.entry(line).or_insert([0.0, 1.0]), end, u);
         }
         cut
+    }
+
+    /// What fillets and chamfers leave of the line `line`, as
+    /// [`cut_back`](Sketch::cut_back) has it: `[0, 1]` if none cut it.
+    pub fn cut_back_of(&self, line: Id) -> [f64; 2] {
+        let mut kept = [0.0, 1.0];
+        for (_, end, u) in self.cuts_into().filter(|&(on, ..)| on == line) {
+            keep(&mut kept, end, u);
+        }
+        kept
+    }
+
+    /// Where each fillet or chamfer meets a line it cuts back: the line,
+    /// which of its ends (0 its start, 1 its end) the corner is at, `None`
+    /// if neither, and the parameter along it of the meeting.
+    fn cuts_into(&self) -> impl Iterator<Item = (Id, Option<usize>, f64)> + '_ {
+        self.curves.iter().flat_map(move |entry| {
+            let meetings = entry.corner.zip(entry.curve.ends()).map(|(corner, ends)| {
+                [(corner.a, ends[0]), (corner.b, ends[1])]
+                    .map(|(line, meets)| (corner, line, meets))
+            });
+            meetings
+                .into_iter()
+                .flatten()
+                .filter_map(|(corner, line, meets)| {
+                    let [start, end] = self.line_ends(line)?;
+                    let meets = self.point(meets)?;
+                    let (from, to) = (self.point(start)?, self.point(end)?);
+                    let along = to.at - from.at;
+                    let u = along.dot(meets.at - from.at) / along.length_squared();
+                    if !u.is_finite() {
+                        return None;
+                    }
+                    let side = [start, end].iter().position(|&id| id == corner.at);
+                    Some((line, side, u.clamp(0.0, 1.0)))
+                })
+        })
     }
 
     /// Adds `curve` as the fillet or chamfer on `corner`, giving its id.
@@ -606,6 +617,16 @@ pub fn cut_line(
         cut.push([kept[1], end]);
     }
     (Some(kept), cut)
+}
+
+/// Narrows `kept`, what's left of a line, by a fillet or chamfer meeting
+/// it at `u` from its end `end` (0 its start, 1 its end; `None` neither).
+fn keep(kept: &mut [f64; 2], end: Option<usize>, u: f64) {
+    match end {
+        Some(0) => kept[0] = kept[0].max(u),
+        Some(_) => kept[1] = kept[1].min(u),
+        None => {}
+    }
 }
 
 #[cfg(test)]

@@ -534,7 +534,7 @@ impl Sketch {
             &Curve::Line { start, end } => {
                 // What a fillet or chamfer at an end leaves of it.
                 let (s, e) = (at(start)?, at(end)?);
-                let [from, to] = self.cut_back().get(&item).copied().unwrap_or([0.0, 1.0]);
+                let [from, to] = self.cut_back_of(item);
                 let (a, b) = (
                     map.transform_point2(s.lerp(e, from)),
                     map.transform_point2(s.lerp(e, to.max(from))),

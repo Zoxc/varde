@@ -364,7 +364,7 @@ Links' geometry is made here from what regenerating finds
 (`agents/features/sketch-links.md`): `Sketch::project_item` projects another sketch's
 point or curve through the affine map from its plane into this one's,
 exactly where it can be (a point, a line, what fillets and chamfers
-leave of it (`cut_back`), or a point where the line is square to this
+leave of it (`cut_back_of`), or a point where the line is square to this
 plane; a circle or an arc where the map keeps lengths, the
 planes parallel, an arc reversed where the map reflects; a spline by its
 control points mapped, with its knots, which an affine map keeps exact),
