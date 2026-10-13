@@ -22,6 +22,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use glam::{DVec2, DVec3};
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::widget::text::{LineHeight, Wrapping};
@@ -31,7 +32,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Border, Color, Element, Event, Length, Padding, Rectangle, Size, Vector};
 use varde_document::{BodyId, BodyOp, FeatureId, Placement};
-use varde_sketch::{Profiles, Sketch};
+use varde_sketch::{Profiles, Region, Sketch};
 
 use crate::chrome::{hrule, scrolled, sentence, tip};
 use crate::controls::CONTROLS_HEIGHT;
@@ -131,10 +132,60 @@ impl<'a> Candidate<'a> {
         candidates.iter().find(|c| c.feature == source)
     }
 
+    /// The centre of its regions `picked`, in the world ([`centroid`]).
+    pub(crate) fn centre_of(&self, picked: &BTreeSet<usize>) -> Option<DVec3> {
+        let regions = (picked.iter()).filter_map(|&index| self.profiles.regions.get(index));
+        Some(self.placement.to_world(centroid(regions)?))
+    }
+
     /// Whether none of `candidates` has a closed region to pick.
     pub(crate) fn none_closed(candidates: &[Candidate<'_>]) -> bool {
         (candidates.iter()).all(|candidate| candidate.profiles.regions.is_empty())
     }
+}
+
+/// The centre of `regions` together, weighing each loop of their outlines
+/// by its area (holes taking theirs away), or of their boxes if that
+/// comes to nothing.
+pub(crate) fn centroid<'r>(regions: impl Iterator<Item = &'r Region>) -> Option<DVec2> {
+    let mut area = 0.0;
+    let mut moment = DVec2::ZERO;
+    let mut boxes: Option<(DVec2, DVec2)> = None;
+    for region in regions {
+        let (min, max) = region.bounds;
+        boxes = Some(boxes.map_or((min, max), |(lo, hi)| (lo.min(min), hi.max(max))));
+        for (k, polyline) in region.outline.iter().enumerate() {
+            let (a, m) = loop_moment(polyline);
+            // The outer loop adds, holes take away, whichever way round.
+            let sign = if k == 0 { a.signum() } else { -a.signum() };
+            area += sign * a;
+            moment += m * sign;
+        }
+    }
+    let centre = moment / area;
+    if area > 0.0 && centre.is_finite() {
+        Some(centre)
+    } else {
+        boxes.map(|(lo, hi)| (lo + hi) / 2.0)
+    }
+}
+
+/// The signed area of the closed `polyline` and its first moment (its
+/// centroid times its area), by the shoelace formula.
+fn loop_moment(polyline: &[DVec2]) -> (f64, DVec2) {
+    let Some(&last) = polyline.last() else {
+        return (0.0, DVec2::ZERO);
+    };
+    let mut area = 0.0;
+    let mut moment = DVec2::ZERO;
+    let mut before = last;
+    for &at in polyline {
+        let cross = before.perp_dot(at);
+        area += cross;
+        moment += (before + at) * cross;
+        before = at;
+    }
+    (area / 2.0, moment / 6.0)
 }
 
 /// One of the values of a two-sided extent, an extrude's distances or a

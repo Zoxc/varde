@@ -13,7 +13,6 @@ use iced::widget::{column, text};
 use varde_document::{AxisLine, BodyId, Document, EdgeRef, FeatureId, Placement};
 use varde_sketch::{Curve, Id, Sketch, angle};
 
-use crate::extrude::centroid;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, ListRow, OperationKind, PanelHover, Parts, Side, Sides, TypedField,
@@ -323,8 +322,7 @@ impl RevolveState<'_> {
     /// angles, and the regions' centre is off the axis.
     pub fn handle(&self) -> Option<RevolveHandle> {
         let source = self.source()?;
-        let regions = (self.picked.iter()).filter_map(|&index| source.profiles.regions.get(index));
-        let centre = source.placement.to_world(centroid(regions)?);
+        let centre = source.centre_of(self.picked)?;
         let (at, axis) = self.axis_in_world()?;
         let origin = at + axis * (centre - at).dot(axis);
         let radial = centre - origin;

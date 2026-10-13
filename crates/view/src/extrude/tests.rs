@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use glam::DVec2;
 use varde_document::{ExtrudeError, OriginPlane, Plane};
 use varde_sketch::Profiles;
 use varde_sketch::{Curve, Sketch};
 
 use super::*;
 use crate::operation_panel::PANEL_WIDTH;
-use crate::operation_panel::joined_into;
+use crate::operation_panel::{centroid, joined_into};
 
 /// A sketch of a 4 × 2 rectangle from the origin with a unit square hole
 /// from (1, 0.5), and its profiles.

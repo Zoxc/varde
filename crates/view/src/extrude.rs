@@ -6,12 +6,11 @@
 
 use std::collections::BTreeSet;
 
-use glam::{DVec2, DVec3};
+use glam::DVec3;
 use iced::Element;
 use iced::widget::{column, text};
 use varde_document::{BodyId, FeatureId, Placement};
 use varde_expr::LengthUnit;
-use varde_sketch::Region;
 
 use crate::chrome::tip;
 use crate::icons::Icon;
@@ -220,65 +219,17 @@ impl ExtrudeState<'_> {
     /// The handle, once regions are picked and the extent has distances.
     pub fn handle(&self) -> Option<Handle> {
         let source = self.source()?;
-        let regions = self
-            .picked
-            .iter()
-            .filter_map(|&index| source.profiles.regions.get(index));
-        let centre = centroid(regions)?;
+        let centre = source.centre_of(self.picked)?;
         let placement = source.placement;
         let sign = self.extent.sides().sign(self.flip);
         let knobs = (self.extent.sides()).knobs(self.fields.map(|field| field.value), sign);
         let handle = Handle {
-            origin: placement.to_world(centre),
+            origin: centre,
             normal: placement.normal,
             knobs,
         };
         (handle.origin.is_finite() && !handle.knobs.is_empty()).then_some(handle)
     }
-}
-
-/// The centre of `regions` together, weighing each loop of their outlines
-/// by its area (holes taking theirs away), or of their boxes if that
-/// comes to nothing.
-pub(crate) fn centroid<'r>(regions: impl Iterator<Item = &'r Region>) -> Option<DVec2> {
-    let mut area = 0.0;
-    let mut moment = DVec2::ZERO;
-    let mut boxes: Option<(DVec2, DVec2)> = None;
-    for region in regions {
-        let (min, max) = region.bounds;
-        boxes = Some(boxes.map_or((min, max), |(lo, hi)| (lo.min(min), hi.max(max))));
-        for (k, polyline) in region.outline.iter().enumerate() {
-            let (a, m) = loop_moment(polyline);
-            // The outer loop adds, holes take away, whichever way round.
-            let sign = if k == 0 { a.signum() } else { -a.signum() };
-            area += sign * a;
-            moment += m * sign;
-        }
-    }
-    let centre = moment / area;
-    if area > 0.0 && centre.is_finite() {
-        Some(centre)
-    } else {
-        boxes.map(|(lo, hi)| (lo + hi) / 2.0)
-    }
-}
-
-/// The signed area of the closed `polyline` and its first moment (its
-/// centroid times its area), by the shoelace formula.
-fn loop_moment(polyline: &[DVec2]) -> (f64, DVec2) {
-    let Some(&last) = polyline.last() else {
-        return (0.0, DVec2::ZERO);
-    };
-    let mut area = 0.0;
-    let mut moment = DVec2::ZERO;
-    let mut before = last;
-    for &at in polyline {
-        let cross = before.perp_dot(at);
-        area += cross;
-        moment += (before + at) * cross;
-        before = at;
-    }
-    (area / 2.0, moment / 6.0)
 }
 
 /// The floating panel of the extrude being set up.
