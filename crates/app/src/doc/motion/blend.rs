@@ -118,15 +118,19 @@ impl MotionSession {
             MotionKind::Fillet => "pick the edges to fillet",
             _ => "pick the edges",
         };
-        (self.blend.edges.refs.is_empty() && self.faces.refs.is_empty()).then_some(words)
+        (!self.blend_picks_any()).then_some(words)
+    }
+
+    /// Whether the blend has anything picked: an edge or a face, of which
+    /// the document asks at least one.
+    pub(super) fn blend_picks_any(&self) -> bool {
+        !self.blend.edges.refs.is_empty() || !self.faces.refs.is_empty()
     }
 
     /// The words for its edges or faces being gone, if they are, the UI
     /// mock's.
     pub(super) fn blend_gone(&self) -> Option<&'static str> {
-        let edges = &self.blend.edges;
-        let any = !edges.refs.is_empty() || !self.faces.refs.is_empty();
-        (edges.gone && any).then_some("A picked edge is gone")
+        (self.blend.edges.gone && self.blend_picks_any()).then_some("A picked edge is gone")
     }
 
     /// Notes whether `document` no longer takes the edges and faces at

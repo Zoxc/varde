@@ -49,7 +49,7 @@ impl MotionSession {
     /// values as they last read. Equal is the same either way round, so
     /// it's stored unflipped.
     pub(super) fn chamfer(&self) -> Option<Chamfer> {
-        if self.blend.edges.refs.is_empty() && self.faces.refs.is_empty() {
+        if !self.blend_picks_any() {
             return None;
         }
         // A size its field refuses (dragged to zero) leaves it out.

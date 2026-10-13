@@ -25,8 +25,7 @@ impl MotionSession {
     /// it last read, while its field takes it (not dragged to zero).
     pub(super) fn fillet(&self) -> Option<Fillet> {
         let radius = self.field(MotionField::Radius);
-        let none = self.blend.edges.refs.is_empty() && self.faces.refs.is_empty();
-        if none || radius.error.is_some() {
+        if !self.blend_picks_any() || radius.error.is_some() {
             return None;
         }
         Some(Fillet {
