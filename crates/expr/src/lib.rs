@@ -187,11 +187,7 @@ pub enum Quantity {
 impl Quantity {
     /// "a length", for messages.
     pub fn name(self) -> &'static str {
-        match self {
-            Quantity::Length => "a length",
-            Quantity::Angle => "an angle",
-            Quantity::Number => "a number",
-        }
+        Kind::from(self).name()
     }
 
     /// The unit it's shown in, in a design in `units`: the design's for
@@ -566,6 +562,16 @@ impl Kind {
             Kind::Angle => "an angle",
             Kind::Area => "an area",
             Kind::Mixed => "a mix of units",
+        }
+    }
+}
+
+impl From<Quantity> for Kind {
+    fn from(quantity: Quantity) -> Kind {
+        match quantity {
+            Quantity::Length => Kind::Length,
+            Quantity::Angle => Kind::Angle,
+            Quantity::Number => Kind::Number,
         }
     }
 }

@@ -101,13 +101,6 @@ impl Dim {
         }
     }
 
-    fn of(unit: Unit) -> Dim {
-        match unit {
-            Unit::Length(_) => Dim::LENGTH,
-            Unit::Angle(_) => Dim::ANGLE,
-        }
-    }
-
     fn kind(self) -> Kind {
         match self {
             Dim::NONE => Kind::Number,
@@ -282,7 +275,7 @@ impl<'a> Evaluator<'a> {
                 }
                 Ok(Quant {
                     value: finite(quant.value * unit.factor(), span)?,
-                    dim: Dim::of(unit),
+                    dim: Dim::of_quantity(unit.quantity()),
                     bare: false,
                 })
             }
