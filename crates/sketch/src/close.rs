@@ -29,7 +29,7 @@ impl Sketch {
         let Some(&Curve::Arc { start, end, .. }) = self.curve(arc).map(|entry| &entry.curve) else {
             return Err(EditError::Target(arc));
         };
-        self.merge_into(end, start)?;
+        self.merge_into(end, start);
         Ok(())
     }
 
@@ -37,17 +37,13 @@ impl Sketch {
     /// it, `gone` going with the constraints and dimensions on it, then
     /// those that no longer fit (a tangent at an end that's no longer
     /// one, say).
-    fn merge_into(&mut self, gone: Id, kept: Id) -> Result<(), EditError> {
+    fn merge_into(&mut self, gone: Id, kept: Id) {
         self.drop_annotations(|_, annotation| annotation.on(gone));
-        let swap = |id| Ok::<_, EditError>(if id == gone { kept } else { id });
         for entry in &mut self.curves {
-            if entry.curve.points().any(|id| id == gone) {
-                entry.curve = entry.curve.map_points(swap)?;
-            }
+            entry.curve.replace_point(gone, kept);
         }
         self.points.retain(|point| point.id != gone);
         self.drop_unfit();
-        Ok(())
     }
 
     /// Whether the open spline `curve`'s ends meet, so closing it makes
@@ -106,7 +102,7 @@ impl Sketch {
         self.store_spline(curve, spline, true)?;
         self.delete(&unused);
         if merge {
-            self.merge_into(last, first)?;
+            self.merge_into(last, first);
         } else {
             self.drop_unfit();
         }

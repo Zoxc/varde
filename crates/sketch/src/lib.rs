@@ -220,6 +220,30 @@ impl Curve {
         }
     }
 
+    /// Makes the curve use `new` wherever it used `old`.
+    pub(crate) fn replace_point(&mut self, old: Id, new: Id) {
+        let swap = |id: &mut Id| {
+            if *id == old {
+                *id = new;
+            }
+        };
+        match self {
+            Curve::Line { start, end } => [start, end].into_iter().for_each(swap),
+            Curve::Circle { center, .. } => swap(center),
+            Curve::Arc { center, start, end } => {
+                [center, start, end].into_iter().for_each(swap);
+            }
+            Curve::Spline(spline) => {
+                spline.points.iter_mut().for_each(swap);
+                for handle in &mut spline.handles {
+                    [&mut handle.at, &mut handle.tip, &mut handle.end]
+                        .into_iter()
+                        .for_each(swap);
+                }
+            }
+        }
+    }
+
     /// The same curve made from the points `map` gives for its own.
     pub(crate) fn map_points<E>(
         &self,

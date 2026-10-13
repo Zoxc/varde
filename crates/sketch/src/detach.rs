@@ -57,8 +57,7 @@ impl Sketch {
         for curve in self.users(point).into_iter().skip(1) {
             let own = self.add_point(at)?;
             let entry = self.curve_mut(curve).ok_or(EditError::Target(curve))?;
-            let swap = |id| Ok::<_, EditError>(if id == point { own } else { id });
-            entry.curve = entry.curve.map_points(swap)?;
+            entry.curve.replace_point(point, own);
             self.add_constraint(Constraint::Coincident(point, own))?;
         }
         Ok(())
