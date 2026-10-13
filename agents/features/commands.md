@@ -1,6 +1,8 @@
 # Commands shared by every kind
 
-`crates/document/src/command.rs` (the undo history, `Editor`, in `editor.rs`).
+`crates/document/src/command.rs`, with its body planning in `command/planning.rs`,
+sketch-face upkeep in `command/sketch_face.rs` and parameter and unit edits
+in `command/params.rs` (the undo history, `Editor`, in `editor.rs`).
 
 - `Command::AddFeature { name, kind: Box<FeatureKind> }`, made by
   `Document::add_feature(kind)`, which names it one past the highest

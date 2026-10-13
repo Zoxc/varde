@@ -1,17 +1,20 @@
 //! The edits to a [`Document`]: [`Command`], and [`Document::after`], the
-//! document each makes, with the body and pattern planning they share.
+//! document each makes; `planning`, `sketch_face` and `params` hold the
+//! body planning, sketch-face upkeep and parameter edits they share.
 
-use std::collections::BTreeMap;
+mod params;
+mod planning;
+mod sketch_face;
+
 use std::fmt;
 
-use varde_expr::{LengthUnit, exact};
+use varde_expr::LengthUnit;
 use varde_kernel_compat::Tolerance;
-use varde_sketch::{Budget, LinkKind, Sketch, Unrevalued};
+use varde_sketch::{Budget, Sketch};
 
 use crate::{
-    Body, BodyId, CheckError, Copies, Document, FeatureId, FeatureKind, Id, LinkSource,
-    MAX_PATTERN_BODIES, Named, Opacity, Operation, OutsideRef, Param, Pattern, Plane, Removable,
-    Removal, Tint, param, sketch_face,
+    Body, BodyId, CheckError, Document, FeatureId, FeatureKind, LinkSource, Named, Opacity, Param,
+    Plane, Removable, Removal, Tint,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`](crate::Editor::apply) refuses one that would
@@ -64,7 +67,7 @@ pub enum Command {
     /// both sides makes one too, whatever its `new_body` held, and one
     /// keeping a side makes none ([`Split::new_body`]); nothing added
     /// holds an id ([`FeatureKind::held_body`]). A pattern whose
-    /// copies are bodies of their own ([`Copies::Separate`]) adds them,
+    /// copies are bodies of their own ([`Copies::Separate`](crate::Copies::Separate)) adds them,
     /// one per copy, named so in turn, whatever its list held. A
     /// revolve's axis must be a line of its sketch
     /// ([`Revolve::check_axis`]), a split's line's curves curves of its
@@ -188,37 +191,6 @@ impl Document {
         }
     }
 
-    /// The command giving the sketch feature `feature` `sketch` whole:
-    /// [`Command::SetSketch`], or, as `sketch` lacks the sketch face
-    /// ([`sketch_face`]) the feature's plane has it hold, [`Command::AddLink`]
-    /// with one added to it (last, making nothing until relinked), so
-    /// drawing a sketch afresh keeps it.
-    pub fn set_sketch_whole(&self, feature: FeatureId, mut sketch: Sketch) -> Command {
-        let face = (self.feature(feature)).and_then(|found| match &found.kind {
-            FeatureKind::Sketch { plane, .. } => plane.face().copied(),
-            _ => None,
-        });
-        let held = (self.feature_index(feature)).and_then(|index| self.sketch_face_of(index));
-        let lacks = held
-            .is_none_or(|id| (sketch.link(id)).is_none_or(|link| link.kind != LinkKind::Project));
-        if let Some(face) = face.filter(|_| lacks)
-            && let Ok(link) = sketch.add_link(LinkKind::Project)
-        {
-            return Command::AddLink {
-                feature,
-                sketch: Box::new(sketch),
-                source: LinkSource {
-                    link,
-                    source: OutsideRef::Face(face),
-                },
-            };
-        }
-        Command::SetSketch {
-            feature,
-            sketch: Box::new(sketch),
-        }
-    }
-
     /// The command adding a feature of `kind`, named one past the highest
     /// of its kind's names in the document ("Extrude N", "Revolve N"),
     /// like [`Document::add_sketch`].
@@ -247,459 +219,6 @@ impl Document {
             next
         })
     }
-
-    /// Gives the sketch feature at `index` `sketch`, keeping the sources
-    /// of the links it still has, and adding `source` for its link, in
-    /// its place by link (one there for the link already is replaced).
-    /// The check is the caller's.
-    fn set_sketch(&mut self, index: usize, sketch: Sketch, source: Option<LinkSource>) {
-        if let FeatureKind::Sketch {
-            sketch: old,
-            sources,
-            ..
-        } = &mut self.features[index].kind
-        {
-            sources.retain(|kept| sketch.link(kept.link).is_some());
-            if let Some(source) = source {
-                sources.retain(|kept| kept.link != source.link);
-                let at = sources.partition_point(|kept| kept.link < source.link);
-                sources.insert(at, source);
-            }
-            *old = sketch;
-        }
-    }
-
-    /// The sketch face ([`sketch_face`]) of feature `index`, if it's a
-    /// sketch on a face with one.
-    pub(crate) fn sketch_face_of(&self, index: usize) -> Option<Id> {
-        match &self.features.get(index)?.kind {
-            FeatureKind::Sketch {
-                plane,
-                sketch,
-                sources,
-            } => sketch_face(plane, sketch, sources),
-            _ => None,
-        }
-    }
-
-    /// Refuses a sketch set at `index` that leaves it without the sketch
-    /// face it had in `before`, as nothing removes it but leaving the face.
-    fn keeps_sketch_face(&self, before: &Document, index: usize) -> Result<(), EditError> {
-        match before.sketch_face_of(index) {
-            Some(_) if self.sketch_face_of(index).is_none() => {
-                Err(EditError::SketchFace(self.features[index].id))
-            }
-            _ => Ok(()),
-        }
-    }
-
-    /// Gives the sketch feature at `index` its sketch face
-    /// ([`sketch_face`]) as its plane has it, `was` being the link that
-    /// was its sketch face before its plane changed: on a face, the one
-    /// there is kept, else `was` follows the new face, else a new link is
-    /// added (making nothing until it's relinked: construction, out of
-    /// profiles); a sketch face that's no longer one, as the sketch left
-    /// its face or a link of the new face was there already, is deleted.
-    /// The check is the caller's.
-    fn follow_sketch_face(&mut self, index: usize, was: Option<Id>) -> Result<(), EditError> {
-        let feature = self.features[index].id;
-        let FeatureKind::Sketch {
-            plane,
-            sketch,
-            sources,
-        } = &mut self.features[index].kind
-        else {
-            return Ok(());
-        };
-        let now = sketch_face(plane, sketch, sources);
-        let drop = |sketch: &mut Sketch, sources: &mut Vec<LinkSource>, link: Id| {
-            sketch.delete(&[link]);
-            sources.retain(|from| from.link != link);
-        };
-        match (plane.face().copied(), now, was) {
-            (Some(_), Some(now), Some(was)) if now != was => drop(sketch, sources, was),
-            (Some(_), Some(_), _) | (None, _, None) => {}
-            (Some(face), None, Some(was)) => {
-                if let Some(from) = sources.iter_mut().find(|from| from.link == was) {
-                    from.source = OutsideRef::Face(face);
-                }
-            }
-            (Some(face), None, None) => {
-                let link = (sketch.add_link(LinkKind::Project))
-                    .map_err(|why| EditError::Sketch(feature, why.into()))?;
-                sources.push(LinkSource {
-                    link,
-                    source: OutsideRef::Face(face),
-                });
-            }
-            (None, _, Some(was)) => drop(sketch, sources, was),
-        }
-        Ok(())
-    }
-
-    /// The document with every sketch on a face given its sketch face
-    /// ([`sketch_face`]) where it lacks one, as a document read is: one
-    /// whose sketch has no id left stays without. Passes the check as it did.
-    pub(crate) fn with_sketch_faces(mut self) -> Document {
-        for index in 0..self.features.len() {
-            // With no link before, the only change is the link added,
-            // which leaves the sketch as it was when it fails.
-            let _ = self.follow_sketch_face(index, None);
-        }
-        debug_assert_eq!(self.check(), Ok(()));
-        self
-    }
-
-    /// Adds a visible, opaque body made by `feature` with a new id, "Body
-    /// N" one past the bodies so named, see [`Document::add_sketch`]. New
-    /// ids are the highest, so it goes last.
-    fn add_body(&mut self, feature: FeatureId) -> Result<BodyId, EditError> {
-        let number = self.next_number("Body");
-        self.add_numbered_body(feature, number)
-    }
-
-    /// Adds a body made by `feature` with the id `id` it held (see
-    /// [`FeatureKind::held_body`]), in its place in id order, named as
-    /// [`Document::add_body`] names a new one. The id is one the
-    /// document's check held for it: below the next id and no body's.
-    fn restore_body(&mut self, feature: FeatureId, id: BodyId) {
-        let body = new_body(id, self.next_number("Body"), feature);
-        let at = self.bodies.partition_point(|body| body.id < id);
-        self.bodies.insert(at, body);
-    }
-
-    /// Adds a body as [`Document::add_body`] does, named "Body `number`".
-    fn add_numbered_body(&mut self, feature: FeatureId, number: u64) -> Result<BodyId, EditError> {
-        let id = BodyId(self.new_id()?);
-        self.bodies.push(new_body(id, number, feature));
-        Ok(id)
-    }
-}
-
-/// A new body: visible, opaque, uncoloured, "Body `number`", made by
-/// `created_by`.
-fn new_body(id: BodyId, number: u64, created_by: FeatureId) -> Body {
-    Body {
-        id,
-        name: format!("Body {number}"),
-        visible: true,
-        opacity: Opacity::default(),
-        color: None,
-        created_by,
-    }
-}
-
-/// The copy bodies `pattern` lists once added or set in place of `old`
-/// (see [`Copies::Separate`]): in its order, the body `old`, if it's a
-/// pattern, made of the same copy (its original and `k`), or `None` for
-/// one to add. `None` whole for a pattern joined to its originals, or
-/// with a count or a number of bodies the document refuses, whose list
-/// is then left as given, for the check to refuse.
-fn planned_copies(old: Option<&FeatureKind>, pattern: &Pattern) -> Option<Vec<Option<BodyId>>> {
-    if pattern.joins() {
-        return None;
-    }
-    let count = (pattern.separate_count()).filter(|&count| count <= MAX_PATTERN_BODIES)?;
-    let made: BTreeMap<(BodyId, u32), BodyId> = match old {
-        Some(FeatureKind::Pattern(old)) => (old.copy_bodies())
-            .map(|(source, k, body)| ((source, k), body))
-            .collect(),
-        _ => BTreeMap::new(),
-    };
-    let n = pattern.bodies.len();
-    if n == 0 {
-        return None;
-    }
-    (0..count)
-        .map(|at| {
-            let k = u32::try_from(at / n).ok()?.checked_add(1)?;
-            Some(made.get(&(pattern.bodies[at % n], k)).copied())
-        })
-        .collect::<Option<Vec<_>>>()
-}
-
-/// Fills in the body `kind` makes or holds, as [`Command::AddFeature`]
-/// (with no `old`) and [`Command::SetFeature`] (in place of `old`) take
-/// it, whatever the command held: the body `old` makes or holds
-/// ([`FeatureKind::held_body`]), if any, else [`BodyId::NEW`] for a body
-/// it makes, for the command to give a new id; a panel needn't keep them
-/// in step. A split's new body and an operation's (a new body's, or a
-/// join's, cut's or intersect's held id, [`Targets::held`]); other kinds
-/// hold none, and drop what `old` held.
-///
-/// [`Targets::held`]: crate::Targets::held
-fn planned_new_body(old: Option<&FeatureKind>, kind: &mut FeatureKind) {
-    let held = old.and_then(|old| old.new_body().or(old.held_body()));
-    if let FeatureKind::Split(split) = kind {
-        split.new_body = held.or(split.keeps_both().then_some(BodyId::NEW));
-        return;
-    }
-    match kind.operation_mut() {
-        Some(Operation::NewBody(body)) => *body = held.unwrap_or(BodyId::NEW),
-        Some(
-            Operation::Join(targets) | Operation::Cut(targets) | Operation::Intersect(targets),
-        ) => {
-            targets.held = held;
-        }
-        None => {}
-    }
-}
-
-/// The bodies `old`, a pattern, makes of its copies ([`Copies::Separate`]).
-fn copy_bodies_of(old: &FeatureKind) -> Vec<BodyId> {
-    match old {
-        FeatureKind::Pattern(Pattern {
-            copies: Copies::Separate(made),
-            ..
-        }) => made.clone(),
-        _ => Vec::new(),
-    }
-}
-
-impl Document {
-    /// Has `feature` make `body` as its new body.
-    fn set_new_body(&mut self, feature: FeatureId, body: BodyId) {
-        if let Some(index) = self.feature_index(feature)
-            && let Some(new) = self.features[index].kind.new_body_mut()
-        {
-            *new = body;
-        }
-    }
-
-    /// The copy bodies of the pattern feature `id` that setting it to
-    /// `kind` ([`Command::SetFeature`]) would remove, sorted: those it
-    /// makes of copies `kind` doesn't make bodies of. For a panel to say
-    /// which a later feature names, which refuses it.
-    pub fn copies_dropped(&self, id: FeatureId, kind: &FeatureKind) -> Vec<BodyId> {
-        let Some(old) = self.feature(id).map(|feature| &feature.kind) else {
-            return Vec::new();
-        };
-        let kept: Vec<BodyId> = match kind {
-            FeatureKind::Pattern(pattern) => (planned_copies(Some(old), pattern).into_iter())
-                .flatten()
-                .flatten()
-                .collect(),
-            _ => Vec::new(),
-        };
-        let mut dropped: Vec<BodyId> = (copy_bodies_of(old).into_iter())
-            .filter(|body| !kept.contains(body))
-            .collect();
-        dropped.sort_unstable();
-        dropped
-    }
-
-    /// Gives the pattern feature `id` the copy bodies `planned`
-    /// ([`planned_copies`]): a new body for each `None`, numbered on
-    /// from the bodies named "Body N".
-    fn make_copies(
-        &mut self,
-        id: FeatureId,
-        planned: Vec<Option<BodyId>>,
-    ) -> Result<(), EditError> {
-        let mut number = self.next_number("Body");
-        let mut made = Vec::with_capacity(planned.len());
-        for body in planned {
-            made.push(match body {
-                Some(body) => body,
-                None => {
-                    let body = self.add_numbered_body(id, number)?;
-                    number = number.saturating_add(1);
-                    body
-                }
-            });
-        }
-        if let Some(index) = self.feature_index(id)
-            && let FeatureKind::Pattern(pattern) = &mut self.features[index].kind
-        {
-            pattern.copies = Copies::Separate(made);
-        }
-        Ok(())
-    }
-
-    /// Removes `bodies`, sorted, dropping them from the other features'
-    /// excluded lists.
-    fn remove_bodies(&mut self, bodies: &[BodyId]) {
-        if bodies.is_empty() {
-            return;
-        }
-        self.bodies
-            .retain(|body| bodies.binary_search(&body.id).is_err());
-        self.drop_excluded(bodies);
-    }
-
-    /// The document with feature `feature`'s kind set to `kind`, as
-    /// [`Command::SetFeature`] does; `None` if that changes nothing.
-    fn with_kind(
-        &self,
-        feature: FeatureId,
-        mut kind: Box<FeatureKind>,
-    ) -> Result<Option<Document>, EditError> {
-        let Some((index, old)) = self
-            .feature_index(feature)
-            .map(|index| (index, &self.features[index].kind))
-        else {
-            return Ok(None);
-        };
-        if matches!(old, FeatureKind::Sketch { .. }) || matches!(*kind, FeatureKind::Sketch { .. })
-        {
-            return Err(EditError::SketchKind);
-        }
-        planned_new_body(Some(old), &mut kind);
-        let kept = old.new_body();
-        let copies = match &mut *kind {
-            FeatureKind::Pattern(pattern) => {
-                let planned = planned_copies(Some(old), pattern);
-                // Every copy kept: the list as it'll be, for
-                // telling an edit that changes nothing.
-                if let Some(made) = (planned.as_ref())
-                    .and_then(|planned| planned.iter().copied().collect::<Option<Vec<_>>>())
-                {
-                    pattern.copies = Copies::Separate(made);
-                }
-                planned
-            }
-            _ => None,
-        };
-        if *old == *kind {
-            return Ok(None);
-        }
-        let mut next = self.clone();
-        let makes_body = kind.new_body().is_some();
-        let dropped = self.copies_dropped(feature, &kind);
-        next.features[index].kind = *kind;
-        next.remove_bodies(&dropped);
-        if let Some(planned) = copies {
-            next.make_copies(feature, planned)?;
-        }
-        match (kept, makes_body) {
-            (Some(body), false) => {
-                if let Some(at) = next.body_index(body) {
-                    next.bodies.remove(at);
-                }
-                next.drop_excluded(&[body]);
-            }
-            (None, true) => match next.features[index].kind.new_body() {
-                // Made again with the id it held.
-                Some(held) if held != BodyId::NEW => next.restore_body(feature, held),
-                _ => {
-                    let body = next.add_body(feature)?;
-                    next.set_new_body(feature, body);
-                }
-            },
-            _ => {}
-        }
-        next.check_new(index, &next.features[index].kind)?;
-        Ok(Some(next))
-    }
-
-    /// The document with `params` for its parameters, resolved, and every
-    /// feature value and sketch dimension naming a parameter evaluated
-    /// again, as the parameter commands do, each sketch whose dimensions
-    /// change solved again ([`varde_sketch::revalue`]) within `budget`; with `renamed`, the old name and the new, each use of
-    /// the old in feature values (and in `params`, which the caller
-    /// renames) written as the new first. `None` if nothing changes.
-    fn with_params(
-        &self,
-        params: Vec<Param>,
-        renamed: Option<(&str, &str)>,
-        budget: &Budget,
-    ) -> Result<Option<Document>, EditError> {
-        if params == self.params {
-            return Ok(None);
-        }
-        param::check_params(&params).map_err(EditError::Invalid)?;
-        let mut next = self.clone();
-        next.resolved = param::resolve(&params, self.units);
-        next.params = params;
-        let design = next.design();
-        let mut changed = Vec::new();
-        let mut sketches = Vec::new();
-        for (index, feature) in next.features.iter().enumerate() {
-            if let FeatureKind::Sketch { sketch, .. } = &feature.kind {
-                let error = |why| EditError::Value(ValueOf::Feature(feature.id), why);
-                let mut renamed_sketch = None;
-                if let Some((old, new)) = renamed {
-                    let mut copy = sketch.clone();
-                    for entry in &mut copy.dimensions {
-                        let value = &mut entry.dimension.value;
-                        value.text = varde_expr::rename(&value.text, old, new).map_err(error)?;
-                    }
-                    renamed_sketch = Some(copy);
-                }
-                let base = renamed_sketch.as_ref().unwrap_or(sketch);
-                // Solved within the caller's bound, as a proposal is, but
-                // here and now: the change is one undo step.
-                let solved = match varde_sketch::revalue(base, &design, budget) {
-                    Ok(solved) => solved.or(renamed_sketch),
-                    Err(Unrevalued::Value(_, why)) => return Err(error(why)),
-                    Err(Unrevalued::Rejected(why)) => {
-                        return Err(EditError::Unsolved(feature.id, why));
-                    }
-                };
-                if let Some(solved) = solved.filter(|solved| solved != sketch) {
-                    sketches.push((index, solved));
-                }
-                continue;
-            }
-            let mut kind = feature.kind.clone();
-            for (value, ask) in kind.values_mut(&design) {
-                let error = |why| EditError::Value(ValueOf::Feature(feature.id), why);
-                if let Some((old, new)) = renamed {
-                    value.text = varde_expr::rename(&value.text, old, new).map_err(error)?;
-                }
-                if !varde_expr::names(&value.text).is_empty() {
-                    value.value = varde_expr::evaluate(&value.text, &ask).map_err(error)?;
-                }
-            }
-            if kind != feature.kind {
-                changed.push((feature.id, Box::new(kind)));
-            }
-        }
-        for (index, sketch) in sketches {
-            next.set_sketch(index, sketch, None);
-        }
-        for (feature, kind) in changed {
-            if let Some(set) = next.with_kind(feature, kind)? {
-                next = set;
-            }
-        }
-        Ok(Some(next))
-    }
-
-    /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
-    /// require of `kind`, feature `index` of this document, beyond
-    /// [`Document::check`]: a revolve's axis is a line of its sketch, a
-    /// split's line's and a sweep's path's curves are curves of their
-    /// sketches, and a loft's points and rail curves are of its sketches.
-    fn check_new(&self, index: usize, kind: &FeatureKind) -> Result<(), EditError> {
-        let id = self.features[index].id;
-        let checked = match kind {
-            FeatureKind::Sweep(sweep) => sweep
-                .check_curves(|sketch| self.sketch_before(index, sketch))
-                .map_err(|why| CheckError::Sweep(id, why)),
-            FeatureKind::Loft(loft) => loft
-                .check_names(|sketch| self.sketch_before(index, sketch))
-                .map_err(|why| CheckError::Loft(id, why)),
-            FeatureKind::Split(split) => match split.tool.sketch() {
-                Some(sketch) => self.sketch_before(index, sketch).map_or(Ok(()), |sketch| {
-                    split
-                        .check_curves(sketch)
-                        .map_err(|why| CheckError::Split(id, why))
-                }),
-                None => Ok(()),
-            },
-            FeatureKind::Revolve(revolve) => {
-                self.sketch_before(index, revolve.sketch)
-                    .map_or(Ok(()), |sketch| {
-                        revolve
-                            .check_axis(sketch)
-                            .map_err(|why| CheckError::Revolve(id, why))
-                    })
-            }
-            _ => Ok(()),
-        };
-        checked.map_err(EditError::Invalid)
-    }
 }
 
 impl Document {
@@ -724,21 +243,7 @@ impl Document {
             Command::SetColor(id, color) => {
                 return Ok(self.with_body(id, |body| body.color = color));
             }
-            Command::AddSketch { name, plane } => {
-                let mut next = self.clone();
-                let sketch = Sketch::default();
-                let id = next.push_feature(
-                    name,
-                    FeatureKind::Sketch {
-                        plane,
-                        sketch,
-                        sources: Vec::new(),
-                    },
-                )?;
-                let index = next.feature_index(id).expect("just added");
-                next.follow_sketch_face(index, None)?;
-                next
-            }
+            Command::AddSketch { name, plane } => self.with_new_sketch(name, plane)?,
             Command::SetSketch { feature, sketch } => {
                 let Some(index) = self.feature_index(feature) else {
                     return Ok(None);
@@ -784,36 +289,7 @@ impl Document {
                 next.follow_sketch_face(index, was)?;
                 next
             }
-            Command::AddFeature { name, kind } => {
-                if matches!(*kind, FeatureKind::Sketch { .. }) {
-                    return Err(EditError::SketchKind);
-                }
-                let mut kind = kind;
-                planned_new_body(None, &mut kind);
-                let mut next = self.clone();
-                let sketches = kind.profile_sketches();
-                let makes_body = kind.new_body().is_some();
-                let copies = match &*kind {
-                    FeatureKind::Pattern(pattern) => planned_copies(None, pattern),
-                    _ => None,
-                };
-                let id = next.push_feature(name, *kind)?;
-                if makes_body {
-                    let body = next.add_body(id)?;
-                    next.set_new_body(id, body);
-                }
-                if let Some(planned) = copies {
-                    next.make_copies(id, planned)?;
-                }
-                for sketch in sketches {
-                    if let Some(index) = next.feature_index(sketch) {
-                        next.features[index].visible = false;
-                    }
-                }
-                let index = next.feature_index(id).expect("just added");
-                next.check_new(index, &next.features[index].kind)?;
-                next
-            }
+            Command::AddFeature { name, kind } => self.with_new_feature(name, kind)?,
             Command::SetFeature { feature, kind } => return self.with_kind(feature, kind),
             Command::RemoveFeature(id) => {
                 return Ok(self.with_removal(self.removal(Removable::Feature(id))));
@@ -857,34 +333,7 @@ impl Document {
                 }
                 next
             }
-            Command::SetUnits(units) => {
-                if units == self.units {
-                    return Ok(None);
-                }
-                let mut next = self.clone();
-                let before = self.design();
-                for feature in &mut next.features {
-                    if let FeatureKind::Sketch { sketch, .. } = &mut feature.kind {
-                        sketch.pin_units(&before);
-                    }
-                    // Counts, factors and turns have no unit, but are
-                    // pinned all the same: a bare number added to a length
-                    // inside one took the units.
-                    for (value, ask) in feature.kind.values_mut(&before) {
-                        value.pin_units(&ask);
-                    }
-                }
-                for (param, result) in next.params.iter_mut().zip(self.resolved.iter()) {
-                    if let (_, Ok(resolved)) = result {
-                        param.text = (self.resolved)
-                            .pin_units(&param.text, self.units)
-                            .unwrap_or_else(|_| exact(resolved.value, resolved.quantity));
-                    }
-                }
-                next.units = units;
-                next.resolved = param::resolve(&next.params, units);
-                next
-            }
+            Command::SetUnits(units) => return Ok(self.with_units(units)),
             Command::AddParam { name, text } => {
                 let mut params = self.params.clone();
                 params.push(Param {
@@ -976,7 +425,7 @@ pub enum EditError {
     #[error("sketches are added and set by their own commands")]
     SketchKind,
     /// [`Command::SetSketch`] or [`Command::AddLink`] would take away the
-    /// sketch face ([`sketch_face`]) of this sketch feature, which stays
+    /// sketch face (`sketch_face`) of this sketch feature, which stays
     /// while the sketch is on its face.
     #[error("the sketch face can't be removed")]
     SketchFace(FeatureId),
