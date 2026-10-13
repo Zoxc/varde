@@ -47,8 +47,7 @@ use serde::{Deserialize, Serialize};
 use varde_document::{DecodeError, LengthUnit, Revision, codec};
 use varde_expr::{MAX_LEN, MAX_NAME_LEN, MAX_PARAMS, Params};
 use varde_sketch::{
-    Analysis, BoundsError, Constraint, Curve, Id, Kind, Measure, OffsetPair, Rejected, Sketch,
-    SketchEdit, SketchError, check_targets,
+    Analysis, BoundsError, Curve, Id, Rejected, Sketch, SketchEdit, SketchError, check_targets,
 };
 
 use crate::{Answer, Job, MAX, Request, Response, Tag, design};
@@ -443,7 +442,9 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
             }
         }
         (Reply::Rejected { base, why }, Request::Propose { sketch, edit, .. }) => {
-            check_rejected(&why, sketch, edit, &asked.design())?;
+            if !why.fits(sketch, edit, &asked.design()) {
+                return Err(Error::Items);
+            }
             Response::Rejected { base, why }
         }
         (
@@ -490,93 +491,9 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
     }))
 }
 
-/// Checks that `analysis` is of `sketch`: at most as many degrees of
-/// freedom as it has variables (its points' coordinates, circles' radii
-/// and points' parameters on splines, or where they're offset from one),
-/// what's fixed its points and curves, what's sized its lines, circles and
-/// arcs, and what's redundant its constraints and arcs.
+/// Checks that `analysis` could be of `sketch` ([`Analysis::fits`]).
 fn check_analysis(analysis: &Analysis, sketch: &Sketch) -> Result<(), Error> {
-    let circles = sketch.curves.iter().filter_map(radius).count();
-    let from_spline = |pair: [Id; 2]| sketch.offset_pair(pair) == Some(OffsetPair::Spline);
-    let offsets = sketch.dimensions.iter().filter(
-        |entry| matches!(entry.dimension.measure, Measure::Offset(a, b) if from_spline([a, b])),
-    );
-    let on_splines = sketch
-        .constraints
-        .iter()
-        .map(|entry| match entry.constraint {
-            Constraint::PointOnCurve { curve, .. } => {
-                usize::from(sketch.kind(curve) == Some(Kind::Spline))
-            }
-            Constraint::EqualOffset { a, b } => {
-                [a, b].into_iter().filter(|&p| from_spline(p)).count()
-            }
-            _ => 0,
-        })
-        .try_fold(offsets.count(), usize::checked_add);
-    let variables = sketch
-        .points
-        .len()
-        .checked_mul(2)
-        .and_then(|n| n.checked_add(circles))
-        .and_then(|n| n.checked_add(on_splines?))
-        .ok_or(Error::Items)?;
-    let fixed = |id| matches!(sketch.kind(id), Some(kind) if kind != Kind::Constraint);
-    if analysis.freedom > variables
-        || !analysis.fixed.iter().all(|&id| fixed(id))
-        || !(analysis.sized.iter())
-            .all(|&id| matches!(sketch.kind(id), Some(Kind::Line | Kind::Circle | Kind::Arc)))
-        || !check_involved(&analysis.redundant, sketch)
-    {
-        return Err(Error::Items);
-    }
-    Ok(())
-}
-
-/// Whether `involved` are constraints, arcs, fillets and chamfers and
-/// dimensions of `sketch`, the items equations come from.
-fn check_involved<'a>(involved: impl IntoIterator<Item = &'a Id>, sketch: &Sketch) -> bool {
-    involved.into_iter().all(|&id| {
-        matches!(
-            sketch.kind(id),
-            Some(Kind::Constraint | Kind::Arc | Kind::Dimension)
-        ) || sketch.curve(id).is_some_and(|entry| entry.corner.is_some())
-    })
-}
-
-/// Checks that what `why` names is of the sketch `edit` makes of
-/// `sketch`, which is only made if it names anything, and that driving
-/// dimensions it names are among those involved.
-fn check_rejected(
-    why: &Rejected,
-    sketch: &Sketch,
-    edit: &SketchEdit,
-    design: &Design,
-) -> Result<(), Error> {
-    if let Rejected::Driving {
-        dimensions,
-        involved,
-    } = why
-        && (dimensions.is_empty() || !dimensions.is_subset(involved))
-    {
-        return Err(Error::Items);
-    }
-    let involved = why.involved();
-    if involved.is_empty() {
-        return Ok(());
-    }
-    let applied = edit.apply(sketch, design).map_err(|_| Error::Items)?;
-    if !check_involved(involved, &applied) {
-        return Err(Error::Items);
-    }
-    if let Rejected::Driving { dimensions, .. } = why
-        && !dimensions
-            .iter()
-            .all(|&id| applied.kind(id) == Some(Kind::Dimension))
-    {
-        return Err(Error::Items);
-    }
-    Ok(())
+    analysis.fits(sketch).then_some(()).ok_or(Error::Items)
 }
 
 /// `sketch` with its points at `points` and its circles' radii `radii`, in

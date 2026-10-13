@@ -126,6 +126,13 @@ pub fn dimension(sketch: &mut Sketch, measure: Measure, text: &str) -> Id {
 
 /// `edit` proposed on `sketch` against [`DESIGN`], with the default
 /// budget.
+/// What it gives passes the checks a web worker's answer must
+/// ([`Analysis::fits`], [`Rejected::fits`]).
 pub fn propose_it(sketch: &Sketch, edit: &SketchEdit) -> Result<Accepted, Rejected> {
-    propose(sketch, edit, &DESIGN, &Budget::default())
+    let result = propose(sketch, edit, &DESIGN, &Budget::default());
+    match &result {
+        Ok(accepted) => assert!(accepted.analysis.fits(&accepted.sketch)),
+        Err(why) => assert!(why.fits(sketch, edit, &DESIGN), "{why:?}"),
+    }
+    result
 }

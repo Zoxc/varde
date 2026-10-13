@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::angle;
 use crate::{
-    Analysis, Budget, Design, EditError, Failure, Goal, Id, Measure, Sketch, SketchEdit, analyse,
-    solve,
+    Analysis, Budget, Design, EditError, Failure, Goal, Id, Kind, Measure, Sketch, SketchEdit,
+    analyse, solve,
 };
 
 /// The most steps a dimension's value is changed in
@@ -68,6 +68,38 @@ pub enum Rejected {
 static NONE: BTreeSet<Id> = BTreeSet::new();
 
 impl Rejected {
+    /// Whether this could be why `edit` on `sketch` in `design` was
+    /// refused: driving dimensions it names among those involved, and
+    /// what it involves items equations come from
+    /// ([`Sketch::equation_sources`]) in the sketch the edit makes, which
+    /// is only made if it involves anything. A check on a rejection made
+    /// elsewhere, such as a web worker's.
+    pub fn fits(&self, sketch: &Sketch, edit: &SketchEdit, design: &Design) -> bool {
+        let dimensions = match self {
+            Rejected::Driving {
+                dimensions,
+                involved,
+            } => {
+                if dimensions.is_empty() || !dimensions.is_subset(involved) {
+                    return false;
+                }
+                Some(dimensions)
+            }
+            _ => None,
+        };
+        let involved = self.involved();
+        if involved.is_empty() {
+            return true;
+        }
+        let Ok(applied) = edit.apply(sketch, design) else {
+            return false;
+        };
+        applied.equation_sources(involved)
+            && dimensions.is_none_or(|dimensions| {
+                (dimensions.iter()).all(|&id| applied.kind(id) == Some(Kind::Dimension))
+            })
+    }
+
     /// The constraints and dimensions (and arcs) involved, to highlight;
     /// empty where they can't be told.
     pub fn involved(&self) -> &BTreeSet<Id> {

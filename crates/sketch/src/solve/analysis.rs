@@ -9,7 +9,7 @@ use faer::{Conj, Mat, MatRef, Par};
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
-use crate::{Curve, Id, Sketch};
+use crate::{Constraint, Curve, Id, Kind, Measure, OffsetPair, Sketch};
 
 use super::equation::{PointSlots, Slot};
 use super::jacobian::Jacobian;
@@ -53,10 +53,72 @@ pub struct Analysis {
     pub solved: bool,
 }
 
+impl Analysis {
+    /// Whether this could be the analysis of `sketch`: at most as many
+    /// degrees of freedom as it has variables
+    /// ([`Sketch::most_variables`]), what's fixed its points and curves,
+    /// what's sized its lines, circles and arcs, and what's redundant
+    /// items equations come from ([`Sketch::equation_sources`]). A check
+    /// on an analysis made elsewhere, such as a web worker's.
+    pub fn fits(&self, sketch: &Sketch) -> bool {
+        let fixed = |id| matches!(sketch.kind(id), Some(kind) if kind != Kind::Constraint);
+        let sized = |id| matches!(sketch.kind(id), Some(Kind::Line | Kind::Circle | Kind::Arc));
+        sketch
+            .most_variables()
+            .is_some_and(|variables| self.freedom <= variables)
+            && self.fixed.iter().all(|&id| fixed(id))
+            && self.sized.iter().all(|&id| sized(id))
+            && sketch.equation_sources(&self.redundant)
+    }
+}
+
+impl Sketch {
+    /// How many variables the solver has for the sketch at most: its
+    /// points' coordinates, circles' radii, and a parameter for each point
+    /// on a spline or offset from one. Fewer where links hold some as
+    /// constants. `None` if that overflows.
+    pub fn most_variables(&self) -> Option<usize> {
+        let circles = (self.curves.iter())
+            .filter(|entry| matches!(entry.curve, Curve::Circle { .. }))
+            .count();
+        let from_spline = |pair: [Id; 2]| self.offset_pair(pair) == Some(OffsetPair::Spline);
+        let offsets = self.dimensions.iter().filter(
+            |entry| matches!(entry.dimension.measure, Measure::Offset(a, b) if from_spline([a, b])),
+        );
+        let on_splines = (self.constraints.iter())
+            .map(|entry| match entry.constraint {
+                Constraint::PointOnCurve { curve, .. } => {
+                    usize::from(self.kind(curve) == Some(Kind::Spline))
+                }
+                Constraint::EqualOffset { a, b } => {
+                    [a, b].into_iter().filter(|&p| from_spline(p)).count()
+                }
+                _ => 0,
+            })
+            .try_fold(offsets.count(), usize::checked_add)?;
+        self.points
+            .len()
+            .checked_mul(2)?
+            .checked_add(circles)?
+            .checked_add(on_splines)
+    }
+
+    /// Whether `ids` are all items of the sketch equations come from:
+    /// constraints, arcs, fillets and chamfers, and dimensions.
+    pub fn equation_sources<'a>(&self, ids: impl IntoIterator<Item = &'a Id>) -> bool {
+        ids.into_iter().all(|&id| {
+            matches!(
+                self.kind(id),
+                Some(Kind::Constraint | Kind::Arc | Kind::Dimension)
+            ) || self.curve(id).is_some_and(|entry| entry.corner.is_some())
+        })
+    }
+}
+
 /// Analyses `sketch`, which is to have passed [`Sketch::check`] and is
 /// usually solved, at its points and radii. Unlike solving, what a
-/// [`Constraint::Fix`](crate::Constraint::Fix) pins is variables held by
-/// equations of its own, so a `Fix` can be named as redundant too.
+/// [`Constraint::Fix`] pins is variables held by equations of its own,
+/// so a `Fix` can be named as redundant too.
 ///
 /// Each component's Jacobian is factored (QR with column pivoting of its
 /// transpose): its rank takes from the degrees of freedom, a variable is
