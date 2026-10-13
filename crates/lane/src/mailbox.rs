@@ -23,10 +23,10 @@ pub use page::{Wire, spawn};
 
 /// What the page does next, as the [`Mailbox`] says.
 #[derive(Debug)]
-pub enum Next<R> {
+pub enum Next {
     Nothing,
-    /// Post this request to the worker.
-    Post(R),
+    /// Post the request the worker is now [`busy`](Mailbox::busy) with.
+    Post,
     /// Start a worker. What waits goes to it once it's ready; if it can't
     /// start, that's a [`fail`](Mailbox::fail) like any other.
     Start,
@@ -63,11 +63,11 @@ impl<R, P: Default> Default for Mailbox<R, P> {
     }
 }
 
-impl<R: Clone, P: Pending<R>> Mailbox<R, P> {
+impl<R, P: Pending<R>> Mailbox<R, P> {
     /// Takes `request`, which goes to the worker now if it's idle. It waits
     /// otherwise, for a new worker if there's none. What `P` refuses or
     /// replaces is dropped.
-    pub fn send(&mut self, request: R) -> Next<R> {
+    pub fn send(&mut self, request: R) -> Next {
         drop(self.pending.push(request));
         match self.worker {
             Worker::Idle => self.next(),
@@ -81,7 +81,7 @@ impl<R: Clone, P: Pending<R>> Mailbox<R, P> {
 
     /// The worker is ready, having started. A worker says so once, first,
     /// so it's ignored at any other time.
-    pub fn ready(&mut self) -> Next<R> {
+    pub fn ready(&mut self) -> Next {
         match self.worker {
             Worker::Starting => self.next(),
             Worker::Stopped | Worker::Idle | Worker::Busy(_) => Next::Nothing,
@@ -97,7 +97,7 @@ impl<R: Clone, P: Pending<R>> Mailbox<R, P> {
     }
 
     /// The worker answered the request it had. Ignored unless it had one.
-    pub fn done(&mut self) -> Next<R> {
+    pub fn done(&mut self) -> Next {
         match self.worker {
             Worker::Busy(_) => self.next(),
             Worker::Stopped | Worker::Starting | Worker::Idle => Next::Nothing,
@@ -106,11 +106,11 @@ impl<R: Clone, P: Pending<R>> Mailbox<R, P> {
 
     /// Hands the worker the request to handle next, if one waits, or
     /// leaves it idle.
-    fn next(&mut self) -> Next<R> {
+    fn next(&mut self) -> Next {
         match self.pending.pop() {
             Some(request) => {
-                self.worker = Worker::Busy(request.clone());
-                Next::Post(request)
+                self.worker = Worker::Busy(request);
+                Next::Post
             }
             None => {
                 self.worker = Worker::Idle;
@@ -129,7 +129,7 @@ impl<R: Clone, P: Pending<R>> Mailbox<R, P> {
     /// that would have gone to it first is reported instead of kept, and a
     /// worker starts only if more wait. So each worker that dies costs one
     /// request, and a crashing worker can't be restarted without end.
-    pub fn fail(&mut self) -> (Option<R>, Next<R>) {
+    pub fn fail(&mut self) -> (Option<R>, Next) {
         let failed = match std::mem::replace(&mut self.worker, Worker::Stopped) {
             Worker::Busy(request) => Some(request),
             Worker::Starting => self.pending.pop(),

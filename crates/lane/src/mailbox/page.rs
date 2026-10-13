@@ -16,7 +16,7 @@ use crate::page::{self, Host, Lane, Page, Refused, Responses};
 /// how to post a request, what a reply says, and the answer to a request
 /// its worker failed on.
 pub trait Wire: 'static {
-    type Request: Clone + 'static;
+    type Request: 'static;
     type Response: 'static;
     /// Where requests wait for the worker, which decides their order and
     /// which replace others.
@@ -132,11 +132,18 @@ impl<W: Wire> Page<W::Request> for Posting<W> {
 
 impl<W: Wire> Posting<W> {
     /// Does what the mailbox said.
-    fn act(&self, next: Next<W::Request>) {
+    fn act(&self, next: Next) {
         match next {
             Next::Nothing => {}
-            Next::Post(request) => {
-                if let Err(error) = self.wire.post(&self.host, &request) {
+            Next::Post => {
+                let posted = {
+                    let mailbox = self.mailbox.borrow();
+                    let request = mailbox
+                        .busy()
+                        .expect("the mailbox posts what it's busy with");
+                    self.wire.post(&self.host, request)
+                };
+                if let Err(error) = posted {
                     self.fail(error);
                 }
             }
