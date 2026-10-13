@@ -1,5 +1,5 @@
-//! The geometric order: `−0` before `+0`, NaNs refused, ties only where
-//! the bits are equal; and on random sets with many exact ties, permuting
+//! The geometric order: `−0` before `+0` in positions, the two one point
+//! as parameters, NaNs refused, ties only where the bits are equal; and on random sets with many exact ties, permuting
 //! the ids (which turns edges stored from their lower-id end round)
 //! changes neither the order nor the first entity, except among exact
 //! ties.
@@ -145,9 +145,11 @@ fn points_on_an_edge_from_its_lesser_end() {
         ix.sort_by(|&i, &j| along.cmp_params(t(i), t(j)).unwrap());
         ix
     };
-    // From p: −0.75, −0, +0, 0.5, whichever way the edge is stored.
+    // From p: −0.75, then −0 and +0 (one point, tied), then 0.5, whichever
+    // way the edge is stored.
     assert_eq!(order(along_p, false), [3, 1, 2, 0]);
     assert_eq!(order(along_q, true), [3, 1, 2, 0]);
+    assert_eq!(along_p.cmp_params(-0.0, 0.0), Ok(Ordering::Equal));
     // The lesser end itself comes first.
     assert_eq!(along_q.cmp_params(1.0, -0.75), Ok(Ordering::Less));
     // Ends tied exactly (here a closed edge): the stored direction.
@@ -256,9 +258,10 @@ fn permuting_ids_changes_no_order_but_among_exact_ties() {
             if keys[u] == keys[v] {
                 continue; // which end is lesser is an id's choice
             }
-            // From the lesser end: increasing `s` from `u` if `u` is lesser.
+            // From the lesser end: increasing `s` from `u` if `u` is lesser,
+            // the two zeros one point.
             let geo: Vec<Coord> = (feet.iter())
-                .map(|&s| Coord::new(if keys[v] < keys[u] { -s } else { s }).unwrap())
+                .map(|&s| Coord::new(if keys[v] < keys[u] { -s } else { s } + 0.0).unwrap())
                 .collect();
             assert!(a.windows(2).all(|w| geo[w[0]] <= geo[w[1]]));
             agree(&geo, &a, &b);
@@ -373,6 +376,33 @@ fn keys_order_as_the_reference_and_hash_with_equality() {
         assert!(items.windows(2).all(|w| w[0].0 <= w[1].0));
         assert!((items.windows(2)).all(|w| w[0].0 < w[1].0 || w[0].1 < w[1].1));
     }
+}
+
+/// A stored range starting at `−0`, `[−0, 2]`, reversed as `t0 + t1 − t`
+/// is `[+0, 2]` the other way round: the point at the start (`−0`) and one
+/// stored at `+0` are one point, and both ways round they tie, so neither
+/// stored direction puts one before the other.
+#[test]
+fn signed_zero_parameters_tie_in_both_stored_directions() {
+    let p = VertKey::new([0.0; 3], [()]).unwrap();
+    let q = VertKey::new([1.0, 0.0, 0.0], [()]).unwrap();
+    let (fwd, bwd) = (Along::of(&p, &q), Along::of(&q, &p));
+    let (t0, t1) = (-0.0f64, 2.0f64);
+    let rev = |t: f64| t0 + t1 - t;
+    for (s, t) in [(t0, 0.0), (0.0, t0), (t0, t0), (0.0, 0.0)] {
+        assert_eq!(fwd.cmp_params(s, t), Ok(Ordering::Equal));
+        assert_eq!(bwd.cmp_params(rev(s), rev(t)), Ok(Ordering::Equal));
+    }
+    // Reversed storage gives `+0` at what was the far end; read from the
+    // lesser end, both zeros are the same place as a stored `−0`.
+    assert_eq!(rev(t1).to_bits(), 0.0f64.to_bits());
+    assert_eq!(fwd.param(-0.0), fwd.param(0.0));
+    assert_eq!(bwd.param(-0.0), bwd.param(0.0));
+    assert_eq!(bwd.param(0.0).unwrap().get().to_bits(), 0.0f64.to_bits());
+    // Every other point keeps its order both ways round.
+    assert_eq!(fwd.cmp_params(t0, 5e-324), Ok(Ordering::Less));
+    assert_eq!(bwd.cmp_params(rev(t0), rev(1.0)), Ok(Ordering::Less));
+    assert_eq!(bwd.cmp_params(-5e-324, 0.0), Ok(Ordering::Greater));
 }
 
 /// Points on an edge between two vertices: the same order from the

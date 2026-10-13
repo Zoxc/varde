@@ -24,7 +24,9 @@
 //!   the edge's geometrically lesser end ([`Along`]), which is the stored
 //!   start or the stored end: an edge is stored from its lower-id vertex,
 //!   so the parameter's own direction is an id's choice, read only where
-//!   the two ends tie exactly.
+//!   the two ends tie exactly. A parameter's zero has one place: `−0` and
+//!   `+0` are one point, and reversing a range (`t0 + t1 − t`) can turn
+//!   one into the other, so both read as `+0`.
 //! - An edge ([`EdgeKey`]): its lesser end, then its other end (a closed
 //!   edge's ends both its one vertex), then its curve's point at the
 //!   middle of its parameter range, which tells apart two arcs between
@@ -201,14 +203,19 @@ impl Along {
 
     /// The place in the order of the point at stored parameter `t`:
     /// `t`, or `−t` on a reversed edge (negation is exact and reverses
-    /// [`f64::total_cmp`], `+0` and `−0` included), so it is the
-    /// parameter from the lesser end up to a constant. Comparable only
-    /// with other points of the same edge. Refused if `t` is a NaN.
+    /// the order), so it is the parameter from the lesser end up to a
+    /// constant. A `−0` reads as `+0`: the two are one point, and an edge
+    /// stored the other way round may hold either (`0 − 0` is `+0`, the
+    /// negation of `+0` is `−0`), so telling them apart would make the
+    /// order depend on the stored direction. Comparable only with other
+    /// points of the same edge. Refused if `t` is a NaN.
     pub fn param(self, t: f64) -> Result<Coord, NotANumber> {
-        Coord::new(match self {
+        let t = match self {
             Along::Stored => t,
             Along::Reversed => -t,
-        })
+        };
+        // `−0 + 0` is `+0`; every other value, NaN included, is kept.
+        Coord::new(t + 0.0)
     }
 
     /// The order of the points at stored parameters `s` and `t` on the

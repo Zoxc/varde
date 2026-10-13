@@ -73,7 +73,8 @@ pub struct XClusterIx(pub u32);
 /// A foot of a point on an edge of the other operand: a 3D component of
 /// the edge's parameters within the edge's near radius of the point, by
 /// its index in parameter order along the stored edge (from its
-/// lower-id end). An identity only: where a choice reads the order of
+/// lower-id end), on a closed edge a foot through its vertex first
+/// ([`super::feet`]). An identity only: where a choice reads the order of
 /// feet it is the geometric one, the parameter from the edge's
 /// geometrically lesser end, which runs the other way when that end has
 /// the higher id.

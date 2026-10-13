@@ -413,10 +413,10 @@ pub(super) fn shadow_error<K, E>(
 /// `r² − ‖w − q‖²`: at least zero when the points are within `r`. The
 /// radius is any finite `r ≥ 0`, so it enters as an exact rational, not
 /// bound by the coordinates' input range.
-struct NearGap {
-    q: glam::DVec3,
-    w: glam::DVec3,
-    r: Rational,
+pub(super) struct NearGap {
+    pub(super) q: glam::DVec3,
+    pub(super) w: glam::DVec3,
+    pub(super) r: Rational,
 }
 
 impl Pred for NearGap {

@@ -1058,7 +1058,7 @@ fn foot<S: Scalar>(
 /// points `3/8` and `5/8` of the way and keeps the part between those
 /// whose sign is certified, until neither is (the root is then within
 /// the level's error of both) or the interval stops shrinking.
-fn bracket<S: Scalar>(
+pub(super) fn bracket<S: Scalar>(
     g: &Poly<S>,
     [mut a, mut b]: [f64; 2],
     start: Sign,
