@@ -718,7 +718,7 @@ impl Sketch {
         }
         self.drop_broken_corners();
         self.delete_unused(gone);
-        self.drop_annotations(|sketch, annotation| annotation.ties_own_point(sketch));
+        self.drop_annotations(|sketch, annotation| annotation.own_point(sketch).is_some());
         let mut added = Vec::with_capacity(ties.len());
         for tie in ties {
             // A tie with a curve's own point, joining its end to itself,

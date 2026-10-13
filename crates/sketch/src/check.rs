@@ -1,11 +1,13 @@
 //! [`Sketch::check`]: what a file could get wrong about a sketch.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use varde_expr::{LengthUnit, Params};
 
 use crate::origin::LAST_ID;
-use crate::{Constraint, Curve, Id, Role, Sketch};
+use crate::{Annotation, Constraint, Curve, Id, Role, Sketch};
 
 /// What a sketch is checked against, from the design it's part of: the
 /// coordinate limit, the design's units, in which bare numbers in
@@ -178,6 +180,7 @@ impl Sketch {
             return Err(SketchError::Corner(id));
         }
         self.check_links()?;
+        let tips = self.tips();
         for entry in &self.constraints {
             let from = entry.id;
             match entry.constraint {
@@ -193,29 +196,12 @@ impl Sketch {
                 }
                 _ => self.check_references(from, entry.constraint.items())?,
             }
-            if !entry.constraint.fits(self) {
-                return Err(SketchError::Unfit(from));
-            }
-            if !entry.constraint.fits_builtins() {
-                return Err(SketchError::Builtin(from));
-            }
-            if let Some((curve, point)) = entry.constraint.own_point(self) {
-                return Err(SketchError::OwnPoint { from, curve, point });
-            }
+            self.check_annotation(from, Annotation::Constraint(&entry.constraint), &tips)?;
         }
-        let tips = self.tips();
         for entry in &self.dimensions {
             let (from, dimension) = (entry.id, &entry.dimension);
             self.check_references(from, dimension.measure.items())?;
-            if let Some((curve, point)) = dimension.measure.own_point(self) {
-                return Err(SketchError::OwnPoint { from, curve, point });
-            }
-            if !dimension.measure.fits_builtins(self) {
-                return Err(SketchError::Builtin(from));
-            }
-            if !dimension.measure.fits(self, &tips) {
-                return Err(SketchError::Unfit(from));
-            }
+            self.check_annotation(from, Annotation::Dimension(&dimension.measure), &tips)?;
             let within = |v: &f64| (-max..=max).contains(v);
             if !dimension.label.to_array().iter().all(within) {
                 return Err(SketchError::Label(from));
@@ -227,6 +213,28 @@ impl Sketch {
             {
                 return Err(SketchError::Value(from));
             }
+        }
+        Ok(())
+    }
+
+    /// The rules constraints and dimensions share, once their references
+    /// are checked, in one order: items of kinds that go together,
+    /// built-ins used as they may be, and no curve tied to its own point.
+    /// `tips` are the sketch's handles' tips.
+    fn check_annotation(
+        &self,
+        from: Id,
+        annotation: Annotation<'_>,
+        tips: &HashSet<Id>,
+    ) -> Result<(), SketchError> {
+        if !annotation.fits(self, tips) {
+            return Err(SketchError::Unfit(from));
+        }
+        if !annotation.fits_builtins(self) {
+            return Err(SketchError::Builtin(from));
+        }
+        if let Some((curve, point)) = annotation.own_point(self) {
+            return Err(SketchError::OwnPoint { from, curve, point });
         }
         Ok(())
     }

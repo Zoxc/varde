@@ -672,12 +672,21 @@ impl Annotation<'_> {
         }
     }
 
-    /// Whether it ties a curve to its own point, see
+    /// The curve it ties to one of its own points, and that point, see
     /// [`Constraint::own_point`].
-    pub(crate) fn ties_own_point(self, sketch: &Sketch) -> bool {
+    pub(crate) fn own_point(self, sketch: &Sketch) -> Option<(Id, Id)> {
         match self {
-            Annotation::Constraint(constraint) => constraint.own_point(sketch).is_some(),
-            Annotation::Dimension(measure) => measure.own_point(sketch).is_some(),
+            Annotation::Constraint(constraint) => constraint.own_point(sketch),
+            Annotation::Dimension(measure) => measure.own_point(sketch),
+        }
+    }
+
+    /// Whether it uses `sketch`'s built-ins as it may, see
+    /// [`Constraint::fits_builtins`].
+    pub(crate) fn fits_builtins(self, sketch: &Sketch) -> bool {
+        match self {
+            Annotation::Constraint(constraint) => constraint.fits_builtins(),
+            Annotation::Dimension(measure) => measure.fits_builtins(sketch),
         }
     }
 }
