@@ -373,12 +373,8 @@ impl State {
         now: Duration,
         events: &mut Vec<Event>,
     ) -> Result<&mut Session, Status> {
-        let id = request
-            .once("mcp-session-id")
-            .ok()
-            .flatten()
-            .ok_or(Status::BadRequest)?
-            .trim_matches([' ', '\t']);
+        let id =
+            (request.headers.once("mcp-session-id").ok().flatten()).ok_or(Status::BadRequest)?;
         if self.session().is_none_or(|s| s.as_str() != id) {
             return Err(Status::NotFound);
         }
@@ -408,9 +404,9 @@ impl State {
             Ok(session) => session,
             Err(status) => return Outcome::status(status).with_events(events),
         };
-        match request.once("mcp-protocol-version") {
+        match request.headers.once("mcp-protocol-version") {
             Ok(None) => {}
-            Ok(Some(version)) if VERSIONS.contains(&version.trim_matches([' ', '\t'])) => {}
+            Ok(Some(version)) if VERSIONS.contains(&version) => {}
             _ => return Outcome::status(Status::BadRequest),
         }
         session.last_active = now;

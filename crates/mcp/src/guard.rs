@@ -169,7 +169,7 @@ impl Guard {
     /// `127.0.0.1`, `localhost` (in any case, as names are) or `[::1]`,
     /// then `:` and the port.
     fn is_host(&self, host: &str) -> bool {
-        let Some((name, port)) = host.trim_matches([' ', '\t']).rsplit_once(':') else {
+        let Some((name, port)) = host.rsplit_once(':') else {
             return false;
         };
         let loopback =
@@ -181,7 +181,6 @@ impl Guard {
     /// `https`, which the server doesn't speak, and not another port,
     /// which is another program.
     fn is_origin(&self, origin: &str) -> bool {
-        let origin = origin.trim_matches([' ', '\t']);
         let Some(scheme) = origin.get(..7) else {
             return false;
         };
@@ -202,7 +201,7 @@ impl Guard {
         if value.len() > AUTHORIZATION {
             return false;
         }
-        let Some((scheme, token)) = value.trim_matches([' ', '\t']).split_once(' ') else {
+        let Some((scheme, token)) = value.split_once(' ') else {
             return false;
         };
         scheme.eq_ignore_ascii_case("bearer") && self.token.matches(token.trim_start_matches(' '))
@@ -215,7 +214,7 @@ fn only<'a>(
     name: &str,
     refusal: Refusal,
 ) -> Result<Option<&'a str>, Refusal> {
-    request.once(name).map_err(|_| refusal)
+    request.headers.once(name).map_err(|_| refusal)
 }
 
 #[cfg(test)]

@@ -54,8 +54,7 @@ pub struct Request {
     pub method: String,
     /// The request target, such as `/mcp`.
     pub path: String,
-    /// In the order sent, names as sent: see [`Request::header`].
-    pub headers: Vec<(String, String)>,
+    pub headers: Headers,
     /// Empty unless `Content-Length` said otherwise.
     pub body: Vec<u8>,
     /// The client asked to close the connection after this request
@@ -66,77 +65,74 @@ pub struct Request {
 impl Request {
     /// The first header named `name`, in any case.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.all(name).next()
+        self.headers.all(name).next()
+    }
+}
+
+/// A message's headers, in the order sent, names as sent. Names are
+/// matched in any case; a value read with `Headers::once` has HTTP's
+/// optional whitespace trimmed off.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Headers(Vec<(String, String)>);
+
+impl Headers {
+    /// The headers httparse found, values as text: [`Error::Malformed`]
+    /// if one isn't UTF-8.
+    pub(crate) fn parsed(parsed: &[httparse::Header]) -> Result<Headers, Error> {
+        parsed
+            .iter()
+            .map(|h| {
+                let value = std::str::from_utf8(h.value).map_err(|_| Error::Malformed)?;
+                Ok((h.name.to_owned(), value.to_owned()))
+            })
+            .collect()
     }
 
     /// Every header named `name`, in any case, in the order sent.
     pub(crate) fn all<'a>(&'a self, name: &str) -> impl Iterator<Item = &'a str> {
-        named(&self.headers, name)
+        self.0
+            .iter()
+            .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
-    /// The header named `name` if sent at most once, `Err` if more often:
-    /// with two, one check and whatever reads the request after could
-    /// each look at a different one.
+    /// The header named `name` if sent at most once, its value trimmed of
+    /// spaces and tabs (only HTTP's own whitespace: `str::trim` would
+    /// also take Unicode spaces off); `Err` if sent more often: with two,
+    /// one check and whatever reads the message after could each look at
+    /// a different one.
     pub(crate) fn once(&self, name: &str) -> Result<Option<&str>, Repeated> {
-        once(&self.headers, name)
+        let mut all = self.all(name);
+        let first = all.next();
+        match all.next() {
+            None => Ok(first.map(|value| value.trim_matches([' ', '\t']))),
+            Some(_) => Err(Repeated),
+        }
+    }
+
+    /// Whether a comma-separated header named `name`, such as
+    /// `Connection`, lists `token`, in any case.
+    pub(crate) fn lists(&self, name: &str, token: &str) -> bool {
+        self.all(name)
+            .flat_map(|v| v.split(','))
+            .any(|t| t.trim().eq_ignore_ascii_case(token))
+    }
+
+    /// The body's length, if they give one: [`Error::LengthRequired`]
+    /// with any `Transfer-Encoding`, as framing by both could be read two
+    /// ways (request smuggling), else as [`content_length`].
+    pub(crate) fn body_length(&self) -> Result<Option<u64>, Error> {
+        if self.all("transfer-encoding").next().is_some() {
+            return Err(Error::LengthRequired);
+        }
+        content_length(self.all("content-length"))
     }
 }
 
-/// Every header in `headers` named `name`, in any case, in the order
-/// sent. Shared by requests and the relay's reading of answers.
-pub(crate) fn named<'a>(
-    headers: &'a [(String, String)],
-    name: &str,
-) -> impl Iterator<Item = &'a str> {
-    headers
-        .iter()
-        .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.as_str())
-}
-
-/// The header named `name` if in `headers` at most once, as
-/// [`Request::once`].
-pub(crate) fn once<'a>(
-    headers: &'a [(String, String)],
-    name: &str,
-) -> Result<Option<&'a str>, Repeated> {
-    let mut all = named(headers, name);
-    let first = all.next();
-    match all.next() {
-        None => Ok(first),
-        Some(_) => Err(Repeated),
+impl FromIterator<(String, String)> for Headers {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(iter: I) -> Headers {
+        Headers(iter.into_iter().collect())
     }
-}
-
-/// Whether a comma-separated header named `name`, such as
-/// `Connection`, lists `token`, in any case.
-pub(crate) fn has_token(headers: &[(String, String)], name: &str, token: &str) -> bool {
-    named(headers, name)
-        .flat_map(|v| v.split(','))
-        .any(|t| t.trim().eq_ignore_ascii_case(token))
-}
-
-/// The headers httparse found, values as text: [`Error::Malformed`] if
-/// one isn't UTF-8.
-pub(crate) fn owned_headers(parsed: &[httparse::Header]) -> Result<Vec<(String, String)>, Error> {
-    parsed
-        .iter()
-        .map(|h| {
-            let value = std::str::from_utf8(h.value).map_err(|_| Error::Malformed)?;
-            Ok((h.name.to_owned(), value.to_owned()))
-        })
-        .collect()
-}
-
-/// The body's length by `headers`, if they give one:
-/// [`Error::LengthRequired`] with any `Transfer-Encoding`, as framing
-/// by both could be read two ways (request smuggling), else as
-/// [`content_length`].
-pub(crate) fn body_length(headers: &[(String, String)]) -> Result<Option<u64>, Error> {
-    if named(headers, "transfer-encoding").next().is_some() {
-        return Err(Error::LengthRequired);
-    }
-    content_length(named(headers, "content-length"))
 }
 
 /// A header sent more than once where only one is taken.
@@ -220,7 +216,7 @@ pub fn read_request_head(
     if path.len() > limits.url {
         return Err(Error::UrlTooLong);
     }
-    let headers = owned_headers(parsed.headers)?;
+    let headers = Headers::parsed(parsed.headers)?;
     let mut request = Request {
         method: method.to_owned(),
         path: path.to_owned(),
@@ -229,10 +225,10 @@ pub fn read_request_head(
         close: false,
     };
 
-    let connection = |token| has_token(&request.headers, "connection", token);
+    let connection = |token| request.headers.lists("connection", token);
     request.close = connection("close") || (version == 0 && !connection("keep-alive"));
 
-    let Some(length) = body_length(&request.headers)? else {
+    let Some(length) = request.headers.body_length()? else {
         if request.method == "POST" {
             return Err(Error::LengthRequired);
         }

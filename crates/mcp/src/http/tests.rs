@@ -35,9 +35,9 @@ fn once_refuses_a_repeated_header() {
         read(b"POST /mcp HTTP/1.1\r\nHost: a\r\nX: 1\r\nx: 2\r\nContent-Length: 0\r\n\r\n")
             .unwrap()
             .unwrap();
-    assert_eq!(request.once("host"), Ok(Some("a")));
-    assert_eq!(request.once("origin"), Ok(None));
-    assert_eq!(request.once("x"), Err(Repeated));
+    assert_eq!(request.headers.once("host"), Ok(Some("a")));
+    assert_eq!(request.headers.once("origin"), Ok(None));
+    assert_eq!(request.headers.once("x"), Err(Repeated));
 }
 
 #[test]

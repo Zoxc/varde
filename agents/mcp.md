@@ -439,13 +439,13 @@ more). Connect within 5 s, an answer within 60 s (`ANSWER_TIMEOUT`, 25 s past th
 35 s `REPLY`), a write within 10 s (`SEND_TIMEOUT`). The answer's head is read with
 `http::read_head` (now `pub(crate)`) and `httparse` within
 `http::Limits`' head bytes and header count, its headers looked up
-with the server's own helpers (`http::owned_headers`, `named`, `once`,
-`has_token`); `Transfer-Encoding` is refused (as is a 200 whose `Content-Type` isn't `application/json`,
+with the server's own `http::Headers` (`parsed`, `all`, `once`, which
+trims HTTP's whitespace, and `lists`); a repeated `Content-Type` isn't JSON; `Transfer-Encoding` is refused (as is a 200 whose `Content-Type` isn't `application/json`,
 such as an event stream); an answer without `Content-Length` has none
 read and its connection dropped, so what follows isn't taken for the
 next answer; redirects aren't followed (a 3xx is a status like any);
 `Content-Length` and the `Transfer-Encoding` refusal by
-`http::body_length`, shared with the server; the body within `BODY_BYTES`, `ToolReply::IMAGE_BYTES` as
+`Headers::body_length`, shared with the server; the body within `BODY_BYTES`, `ToolReply::IMAGE_BYTES` as
 base64 plus 1 MiB for text, the tools list and JSON's escapes. A
 session id or version is only kept if short visible ASCII. A stdin line
 is bounded by `LINE_BYTES`, the server's body cap: a longer one is read

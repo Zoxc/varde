@@ -620,33 +620,27 @@ fn read_answer(reader: &mut impl BufRead) -> Result<(Answer, bool), Attempt> {
         return Err(malformed());
     };
     let reason = http_text(parsed.reason.unwrap_or(""));
-    let headers = http::owned_headers(parsed.headers).map_err(|_| malformed())?;
-    let length = http::body_length(&headers).map_err(|e| {
+    let headers = http::Headers::parsed(parsed.headers).map_err(|_| malformed())?;
+    let length = headers.body_length().map_err(|e| {
         Attempt::Failed(match e {
             http::Error::BodyTooLarge => Failure::TooLarge,
             _ => Failure::Malformed,
         })
     })?;
-    let session = match http::once(&headers, "mcp-session-id") {
+    let session = match headers.once("mcp-session-id") {
         Ok(None) => None,
-        Ok(Some(value)) => match value.trim_matches([' ', '\t']) {
-            value if header_value(value) => Some(value.to_owned()),
-            _ => return Err(malformed()),
-        },
-        Err(_) => return Err(malformed()),
+        Ok(Some(value)) if header_value(value) => Some(value.to_owned()),
+        _ => return Err(malformed()),
     };
-    let json = http::named(&headers, "content-type")
-        .next()
-        .is_some_and(|t| {
-            t.split(';')
-                .next()
-                .is_some_and(|m| m.trim().eq_ignore_ascii_case("application/json"))
-        });
+    let json = (headers.once("content-type").ok().flatten()).is_some_and(|t| {
+        t.split(';')
+            .next()
+            .is_some_and(|m| m.trim().eq_ignore_ascii_case("application/json"))
+    });
     // Without a length the body runs to the connection's end (an event
     // stream, say): none is read, and the connection is dropped so the
     // rest isn't read as the next answer.
-    let close =
-        version == 0 || length.is_none() || http::has_token(&headers, "connection", "close");
+    let close = version == 0 || length.is_none() || headers.lists("connection", "close");
     let length = length.unwrap_or(0);
     if length > BODY_BYTES {
         return Err(Attempt::Failed(Failure::TooLarge));
