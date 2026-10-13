@@ -156,6 +156,14 @@ pub struct Selection {
     model: Option<u64>,
 }
 
+/// What a click selects or toggles, part of a unit: an item and its
+/// face or edge, none for a body or a sketch's item.
+#[derive(Debug, Clone, Copy)]
+struct Part {
+    item: Selected,
+    target: Option<Picked>,
+}
+
 /// An item of a [`Selection`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Entry {
@@ -168,12 +176,12 @@ struct Entry {
 }
 
 impl Entry {
-    /// Whether this is `item`, whose target is `target`: by the target if
-    /// there's one, else by the item.
-    fn is(&self, item: Selected, target: Option<Picked>) -> bool {
-        match target {
-            Some(_) => self.target == target,
-            None => self.item == item,
+    /// Whether this is `part`: by its target if there's one, else by its
+    /// item.
+    fn is(&self, part: Part) -> bool {
+        match part.target {
+            Some(_) => self.target == part.target,
+            None => self.item == part.item,
         }
     }
 }
@@ -354,7 +362,7 @@ impl Selection {
                     .map(|corner| Some(Picked::Vertex(corner))),
             };
             match found {
-                Some(target) => self.push(item, target),
+                Some(target) => self.push(Part { item, target }),
                 None => self.items.push(Entry {
                     item,
                     target: None,
@@ -366,10 +374,11 @@ impl Selection {
         !fresh || self.items != before
     }
 
-    /// Adds `item`, whose target is `target`, unless something of that
-    /// target, or that body or sketch item, is selected.
-    fn push(&mut self, item: Selected, target: Option<Picked>) {
-        if !self.found().any(|other| other.is(item, target)) {
+    /// Adds `part` unless something of its target, or its body or sketch
+    /// item, is selected.
+    fn push(&mut self, part: Part) {
+        if !self.found().any(|other| other.is(part)) {
+            let Part { item, target } = part;
             self.items.push(Entry {
                 item,
                 target,
@@ -421,13 +430,13 @@ impl Selection {
 
     /// Selects `unit` alone, or with `add` adds it or takes it out
     /// ([`Selection::toggle`]). Whether anything changed.
-    fn apply(&mut self, unit: Vec<(Selected, Option<Picked>)>, add: bool) -> bool {
+    fn apply(&mut self, unit: Vec<Part>, add: bool) -> bool {
         if add {
             return self.toggle(unit);
         }
         let before = std::mem::take(&mut self.items);
-        for (item, target) in unit {
-            self.push(item, target);
+        for part in unit {
+            self.push(part);
         }
         self.items != before
     }
@@ -440,7 +449,7 @@ impl Selection {
             return false;
         }
         self.forget_missing();
-        self.apply(vec![(item, None)], add)
+        self.apply(vec![Part { item, target: None }], add)
     }
 
     /// Takes a click on `body`'s row in Objects: selects it alone, or with
@@ -475,7 +484,7 @@ impl Selection {
 
     /// What a click on `pick` selects or toggles as one in the mode, or
     /// its body if `body`: an edge's tangent chain where it's asked for.
-    fn unit(&self, index: &PickIndex, pick: Pick, body: bool) -> Vec<(Selected, Option<Picked>)> {
+    fn unit(&self, index: &PickIndex, pick: Pick, body: bool) -> Vec<Part> {
         let edge = |chain: u32, near: DVec3| {
             let faces = index.chain_keys(chain)?;
             let item = Selected::Edge {
@@ -483,10 +492,16 @@ impl Selection {
                 faces,
                 near,
             };
-            Some((item, Some(Picked::Edge(chain))))
+            Some(Part {
+                item,
+                target: Some(Picked::Edge(chain)),
+            })
         };
         if body || self.mode == SelectionMode::Bodies {
-            return vec![(Selected::Body(pick.body), None)];
+            return vec![Part {
+                item: Selected::Body(pick.body),
+                target: None,
+            }];
         }
         if !self.mode.accepts(pick.target) {
             return Vec::new();
@@ -501,7 +516,10 @@ impl Selection {
                     key,
                     near: pick.at,
                 };
-                vec![(item, Some(pick.target))]
+                vec![Part {
+                    item,
+                    target: Some(pick.target),
+                }]
             }
             (SelectionMode::Edges { tangent: true }, Picked::Edge(chain)) => {
                 (index.tangent_chain(chain).iter())
@@ -525,28 +543,25 @@ impl Selection {
                     faces,
                     near: pick.at,
                 };
-                vec![(item, Some(pick.target))]
+                vec![Part {
+                    item,
+                    target: Some(pick.target),
+                }]
             }
         }
     }
 
     /// Takes `unit` out if all of it is selected, else adds what of it
     /// isn't. Whether anything changed.
-    fn toggle(&mut self, unit: Vec<(Selected, Option<Picked>)>) -> bool {
-        let is =
-            |entry: &Entry, &(item, target): &(Selected, Option<Picked>)| entry.is(item, target);
+    fn toggle(&mut self, unit: Vec<Part>) -> bool {
         if unit.is_empty() {
             return false;
         }
-        if unit
-            .iter()
-            .all(|part| self.found().any(|entry| is(entry, part)))
-        {
-            self.items
-                .retain(|entry| !unit.iter().any(|part| is(entry, part)));
+        if (unit.iter()).all(|&part| self.found().any(|entry| entry.is(part))) {
+            (self.items).retain(|entry| !unit.iter().any(|&part| entry.is(part)));
         } else {
-            for (item, target) in unit {
-                self.push(item, target);
+            for part in unit {
+                self.push(part);
             }
         }
         true
