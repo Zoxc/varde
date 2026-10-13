@@ -153,15 +153,10 @@ pub(super) fn picked_bodies(
     names: &[String],
     edited: Option<FeatureId>,
 ) -> Result<Vec<BodyId>, Refused> {
-    let document = doc.editor.document();
     let merged = committed_merges(doc, edited).map_err(|why| failed(tool, why))?;
     let mut bodies = Vec::with_capacity(names.len());
     for name in names {
-        let id = body_id(document, name)?;
-        let id = merged.holder(id).unwrap_or(id);
-        if !pickable(document, id, edited) {
-            return Err(failed(tool, made_after(name, feature, edited)));
-        }
+        let id = resolve_body(doc, &merged, tool, feature, name, edited)?;
         if bodies.contains(&id) {
             let name = varde_mcp::shown(name);
             let why = format!("\"{name}\" is named twice (or a body it was merged into is)");
@@ -170,6 +165,27 @@ pub(super) fn picked_bodies(
         bodies.push(id);
     }
     Ok(bodies)
+}
+
+/// The body `name` as a click on it picks it for the `feature`
+/// `edited` (or a new one), with `merged` its committed merges: the
+/// body holding it if merged, refused (as the `tool`'s) unless made
+/// before it.
+fn resolve_body(
+    doc: &Doc,
+    merged: &Merges,
+    tool: &str,
+    feature: &str,
+    name: &str,
+    edited: Option<FeatureId>,
+) -> Result<BodyId, Refused> {
+    let document = doc.editor.document();
+    let id = body_id(document, name)?;
+    let id = merged.holder(id).unwrap_or(id);
+    if !pickable(document, id, edited) {
+        return Err(failed(tool, made_after(name, feature, edited)));
+    }
+    Ok(id)
 }
 
 /// What naming and merging read of `doc`'s committed model, which the
@@ -414,7 +430,6 @@ pub(super) fn excluded(
     new_body: bool,
     edited: Option<FeatureId>,
 ) -> Result<BodyTargets, Refused> {
-    let document = doc.editor.document();
     if new_body && !names.is_empty() {
         let why = "exclude goes with operation join, cut or intersect".to_owned();
         return Err(failed(tool, why));
@@ -424,12 +439,7 @@ pub(super) fn excluded(
     let merged = committed_merges(doc, edited).map_err(|why| failed(tool, why))?;
     let mut excluded = BTreeSet::new();
     for name in names {
-        let body = body_id(document, name)?;
-        let body = merged.holder(body).unwrap_or(body);
-        if !pickable(document, body, edited) {
-            return Err(failed(tool, made_after(name, "feature", edited)));
-        }
-        excluded.insert(body);
+        excluded.insert(resolve_body(doc, &merged, tool, "feature", name, edited)?);
     }
     Ok(BodyTargets::new(&Vec::from_iter(excluded)))
 }
