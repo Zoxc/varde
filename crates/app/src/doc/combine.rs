@@ -326,18 +326,7 @@ impl Doc {
     /// ([`Doc::commit_by`]), and the document takes it. Refused, the
     /// session stays, and why shows.
     pub(crate) fn commit_combine(&mut self, accept: bool) {
-        if !self.commit_by(self.combine_ready(), accept) {
-            return;
-        }
-        let Some(session) = self.mode.combine() else {
-            return;
-        };
-        let Some(combine) = session.combine() else {
-            return;
-        };
-        if self.commit_feature(session.feature, combine.into()) {
-            self.mode.take_operation();
-        }
+        self.commit_built(self.combine_ready(), accept, self.combine_draft());
     }
 
     /// Ends the combine session if the combine edited is gone, the

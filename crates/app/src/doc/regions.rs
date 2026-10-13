@@ -847,6 +847,28 @@ impl Doc {
         true
     }
 
+    /// Commits `built`, the operation being set up as a feature and the
+    /// feature it edits, if `ready` and [`Doc::commit_by`] lets it,
+    /// ending the session once the document takes it: whether it did.
+    pub(crate) fn commit_built(
+        &mut self,
+        ready: bool,
+        accept: bool,
+        built: Option<(Option<FeatureId>, FeatureKind)>,
+    ) -> bool {
+        if !self.commit_by(ready, accept) {
+            return false;
+        }
+        let Some((edited, kind)) = built else {
+            return false;
+        };
+        let done = self.commit_feature(edited, kind);
+        if done {
+            self.mode.take_operation();
+        }
+        done
+    }
+
     /// Whether a session ready to be committed (`ready`) is to be by OK
     /// and `Enter` (`accept` false), which wait while the preview failed,
     /// or by Accept error (`accept`), which takes only a failed one, to

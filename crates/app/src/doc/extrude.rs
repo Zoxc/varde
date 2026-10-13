@@ -367,18 +367,7 @@ impl Doc {
     /// document takes it. Refused, the session stays, and why
     /// shows.
     pub(crate) fn commit_extrude(&mut self, accept: bool) {
-        if !self.commit_by(self.extrude_ready(), accept) {
-            return;
-        }
-        let Some(session) = self.mode.extrude() else {
-            return;
-        };
-        let Some(extrude) = session.extrude() else {
-            return;
-        };
-        if self.commit_feature(session.feature, extrude.into()) {
-            self.mode.take_operation();
-        }
+        self.commit_built(self.extrude_ready(), accept, self.extrude_draft());
     }
 
     /// Ends the extrude session if what it's about is gone, e.g. by undo,

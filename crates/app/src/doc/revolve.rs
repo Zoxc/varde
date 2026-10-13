@@ -573,18 +573,7 @@ impl Doc {
     /// ([`Doc::commit_by`]), and the document takes it. Refused, the
     /// session stays, and why shows.
     pub(crate) fn commit_revolve(&mut self, accept: bool) {
-        if !self.commit_by(self.revolve_ready(), accept) {
-            return;
-        }
-        let Some(session) = self.mode.revolve() else {
-            return;
-        };
-        let Some(revolve) = session.revolve(self.editor.document()) else {
-            return;
-        };
-        if self.commit_feature(session.feature, revolve.into()) {
-            self.mode.take_operation();
-        }
+        self.commit_built(self.revolve_ready(), accept, self.revolve_draft());
     }
 
     /// Ends the revolve session if what it's about is gone, the document

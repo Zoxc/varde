@@ -2251,22 +2251,16 @@ impl Doc {
     /// ([`Doc::commit_by`]), and the document takes it. Refused, the
     /// session stays, and why shows.
     pub(crate) fn commit_motion(&mut self, accept: bool) {
-        if !self.commit_by(self.motion_ready(), accept) {
-            return;
-        }
         let Some(session) = self.mode.motion() else {
             return;
         };
-        let Some(kind) = session.kind() else {
-            return;
-        };
         let edited = session.feature;
+        let built = session.kind().map(|kind| (edited, kind));
         let shape = (session.kind.pattern()).then(|| {
             let spread = session.field(MotionField::Spread).value.clone();
             (session.mode, session.flip, spread)
         });
-        if self.commit_feature(edited, kind) {
-            self.mode.take_operation();
+        if self.commit_built(self.motion_ready(), accept, built) {
             // Its shape is kept for editing it again: the feature edited,
             // or the one added, which is selected.
             if let (Some((mode, flip, Some(spread))), Some(id)) =
