@@ -294,7 +294,6 @@ impl RecentIds {
 #[derive(Default)]
 pub struct State {
     session: Option<Session>,
-    limits: rpc::Limits,
 }
 
 impl State {
@@ -391,7 +390,7 @@ impl State {
     }
 
     fn post(&mut self, request: &Request, now: Duration) -> Outcome {
-        let message = match rpc::parse(&request.body, &self.limits) {
+        let message = match rpc::parse(&request.body, &rpc::Limits::default()) {
             Ok(message) => message,
             Err(error) => {
                 let mut response = Response::json(error.reply());
