@@ -4248,6 +4248,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "snap",
+ "thiserror 2.0.21",
  "toml",
  "varde-document",
  "varde-expr",

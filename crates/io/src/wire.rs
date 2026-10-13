@@ -27,7 +27,6 @@
 //! [`Document::to_postcard`]: varde_document::Document::to_postcard
 //! [`codec`]: varde_document::codec
 
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -108,35 +107,18 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
 }
 
 /// Why a message was refused.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Error {
     /// A message of this many bytes is larger than [`MAX_MESSAGE_BYTES`].
+    #[error("message too large: {0} bytes")]
     TooLarge(usize),
     /// The message couldn't be encoded.
-    Encode(postcard::Error),
+    #[error("couldn't encode the message: {0}")]
+    Encode(#[source] postcard::Error),
     /// The message, or a document in it, couldn't be decoded, or bytes were
     /// left over after it.
-    Decode(DecodeError),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::TooLarge(len) => write!(f, "message too large: {len} bytes"),
-            Error::Encode(e) => write!(f, "couldn't encode the message: {e}"),
-            Error::Decode(e) => write!(f, "couldn't decode the message: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Encode(e) => Some(e),
-            Error::Decode(e) => Some(e),
-            Error::TooLarge(_) => None,
-        }
-    }
+    #[error("couldn't decode the message: {0}")]
+    Decode(#[source] DecodeError),
 }
 
 #[cfg(test)]

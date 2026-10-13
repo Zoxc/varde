@@ -127,7 +127,6 @@
 //!
 //! `version` stays 1 while the app is WIP, see `AGENTS.md`.
 
-use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
@@ -271,86 +270,56 @@ impl FileType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    Io(io::Error),
+    #[error("{0}")]
+    Io(#[from] io::Error),
     /// The file doesn't start with a `.vrdp` magic number.
+    #[error("not a {APP_NAME} file")]
     NotVarde,
     /// The file is an auto-save, opened as a design.
+    #[error("an auto-save, not a design")]
     IsAutoSave,
     /// The file is a design, opened as an auto-save.
+    #[error("a design, not an auto-save")]
     IsDesign,
     /// The file was written in a format version this build can't read.
+    #[error("unsupported file format version {0}")]
     UnsupportedVersion(u32),
     /// The file contains no complete record.
+    #[error("file contains no saved document")]
     Empty,
     /// The file is damaged at `offset`: before any intact record when
     /// reading, or, appending to a held file, where its records, none of
     /// them intact, begin to be damaged.
-    Corrupt {
-        offset: u64,
-    },
+    #[error("file is damaged at byte {offset}")]
+    Corrupt { offset: u64 },
     /// The newest record couldn't be decoded, e.g. it was written by an
     /// incompatible build: `writer`, the record's tag, as far as it's
     /// shown.
+    #[error("couldn't decode document (saved by {writer}, this is {}): {error}", env!("CARGO_PKG_VERSION"))]
     Decode {
         writer: String,
+        #[source]
         error: DecodeError,
     },
     /// The file changed since it was last read or written.
+    #[error("file was changed by someone else")]
     Conflict,
     /// The file was damaged since it was last read or written: damage
     /// reading didn't find, or the record it read or wrote last. Saving
     /// is refused, as it could cut off what's still readable.
+    #[error("file was damaged since it was opened")]
     Damaged,
     /// The file was read as [`Outcome::Damaged`]: saving to it is refused,
     /// as cutting it short could lose what can still be got out of it, so
     /// it's only saved as another file.
+    #[error("file is damaged, so it can only be saved as another file")]
     OpenedDamaged,
     /// The document is too large to save: it would decode to more than a
     /// file may hold, so it couldn't be opened again.
+    #[error("document is too large to save")]
     TooLarge,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Io(e) => e.fmt(f),
-            Error::NotVarde => write!(f, "not a {APP_NAME} file"),
-            Error::IsAutoSave => f.write_str("an auto-save, not a design"),
-            Error::IsDesign => f.write_str("a design, not an auto-save"),
-            Error::UnsupportedVersion(v) => write!(f, "unsupported file format version {v}"),
-            Error::Empty => f.write_str("file contains no saved document"),
-            Error::Corrupt { offset } => write!(f, "file is damaged at byte {offset}"),
-            Error::Decode { writer, error } => write!(
-                f,
-                "couldn't decode document (saved by {writer}, this is {}): {error}",
-                env!("CARGO_PKG_VERSION")
-            ),
-            Error::Conflict => f.write_str("file was changed by someone else"),
-            Error::Damaged => f.write_str("file was damaged since it was opened"),
-            Error::OpenedDamaged => {
-                f.write_str("file is damaged, so it can only be saved as another file")
-            }
-            Error::TooLarge => f.write_str("document is too large to save"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Io(e) => Some(e),
-            Error::Decode { error, .. } => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self {
-        Error::Io(e)
-    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

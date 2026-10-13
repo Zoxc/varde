@@ -33,24 +33,15 @@ pub struct Body {
 }
 
 /// Why no package was written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// There is nothing to write.
+    #[error("there are no visible bodies to export")]
     NoObjects,
     /// The package would be past what a zip without zip64 holds.
+    #[error("the bodies' meshes are too large for a 3MF file")]
     TooLarge,
 }
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Error::NoObjects => "there are no visible bodies to export",
-            Error::TooLarge => "the bodies' meshes are too large for a 3MF file",
-        })
-    }
-}
-
-impl std::error::Error for Error {}
 
 /// The model part's path in the package.
 const MODEL_PATH: &str = "3D/3dmodel.model";
