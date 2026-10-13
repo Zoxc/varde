@@ -799,7 +799,7 @@ pub(crate) fn place_on_face(
             |made| place_on(made, face, tolerance, cache),
             not_found,
         )
-        .unwrap_or(Err(why::FACE_BODY_GONE.into()))
+        .unwrap_or(Err(why::Picked::Face.body_gone().into()))
 }
 
 /// Whether [`place_on`] found no face of the name on its body, which a
@@ -826,10 +826,14 @@ fn place_on(
         let solid = &made.solid;
         let topology = solid.topology();
         let region = (topology.face(solid, &face.key, face.near))
-            .map_err(|_| Failed::missing(why::FACE_NOT_FOUND))?;
+            .map_err(|_| Failed::missing(why::Picked::Face.not_found()))?;
         let region = &topology.regions()[region as usize];
-        let not_flat =
-            || Failed::shown(why::FACE_NOT_FLAT, face_geometry(solid, region, tolerance));
+        let not_flat = || {
+            Failed::shown(
+                why::Picked::Face.not_flat(),
+                face_geometry(solid, region, tolerance),
+            )
+        };
         let Form::Plane { n, d } = *region_form(solid, region) else {
             return Err(not_flat());
         };

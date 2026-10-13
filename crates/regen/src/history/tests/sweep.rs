@@ -769,7 +769,7 @@ fn a_helix_s_axis_is_resolved() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, about_edge).unwrap().message,
-        why::EDGE_NOT_FOUND
+        why::Picked::AxisEdge.not_found()
     );
 }
 

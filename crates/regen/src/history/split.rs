@@ -173,7 +173,9 @@ impl Building<'_> {
                 Ok((solid, key))
             }
             SplitTool::Plane(Plane::Face(face)) => {
-                let made = evaluation.holding(face.body).ok_or(SPLIT_PLANE.body_gone)?;
+                let made = evaluation
+                    .holding(face.body)
+                    .ok_or(SPLIT_PLANE.picked.body_gone())?;
                 let key = self.face_key(SPLIT_PLANE.kind, made.key, face);
                 let solid = cache.solid(key, || {
                     let (n, d) = face_plane(&made.solid, face, &SPLIT_PLANE, &self.tolerance)?;
@@ -184,7 +186,7 @@ impl Building<'_> {
             SplitTool::Face(face) => {
                 let made = evaluation
                     .holding(face.body)
-                    .ok_or(why::SPLIT_FACE_BODY_GONE)?;
+                    .ok_or(why::Picked::Face.body_gone())?;
                 let key = self.face_key("split face", made.key, face);
                 let solid = cache.solid(key, || self.surface(&made.solid, face))?;
                 Ok((solid, key))
@@ -295,8 +297,8 @@ impl Building<'_> {
     /// found on `solid`.
     fn surface(&self, solid: &Solid, face: &FaceRef) -> Result<Solid, Failed> {
         let topology = solid.topology();
-        let region =
-            (topology.face(solid, &face.key, face.near)).map_err(|_| why::SPLIT_FACE_NOT_FOUND)?;
+        let region = (topology.face(solid, &face.key, face.near))
+            .map_err(|_| why::Picked::Face.not_found())?;
         let region = &topology.regions()[region as usize];
         let form = region_form(solid, region);
         // A point inside the face, which picks a cone's nappe: the middle

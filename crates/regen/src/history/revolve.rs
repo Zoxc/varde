@@ -195,7 +195,9 @@ pub(crate) fn edge_axis(
     tolerance: Tolerance,
     cache: &mut Cache,
 ) -> Result<Axis, Failed> {
-    let made = evaluation.holding(edge.body).ok_or(why::EDGE_BODY_GONE)?;
+    let made = evaluation
+        .holding(edge.body)
+        .ok_or(why::Picked::AxisEdge.body_gone())?;
     let key = motion::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
     let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
     let local = |p: DVec3| {
@@ -255,7 +257,8 @@ pub(crate) fn edge_ends(
     tolerance: &Tolerance,
 ) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
-    let chain = (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::EDGE_NOT_FOUND)?;
+    let chain = (topology.edge(solid, edge.faces, edge.near))
+        .map_err(|_| why::Picked::AxisEdge.not_found())?;
     let chain = &topology.chains()[chain as usize];
     let EdgeShape::Line { from, to } = edge_shape(solid, chain) else {
         return Err(Failed::shown(

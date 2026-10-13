@@ -415,7 +415,7 @@ fn edge_part(
     };
     let made = evaluation
         .holding(first.body)
-        .ok_or(why::PATH_EDGE_BODY_GONE)?;
+        .ok_or(why::Picked::PathEdge.body_gone())?;
     let solid = Arc::clone(&made.solid);
     let topology = inspect::topology(made, cache);
     let count = edges.len();

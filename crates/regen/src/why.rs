@@ -12,20 +12,74 @@ use varde_kernel_compat::{BooleanError, KernelError, ProfileError};
 /// What a message calls a body that isn't in the document.
 pub(crate) const SOME_BODY: &str = "a body";
 
+/// A face or edge of the model a feature names, for the words of its
+/// failures: its body has no solid when the history reaches the
+/// feature (its maker failed or is gone); no face or edge of its body as
+/// the features before it leave it has its name; a face found isn't a
+/// plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Picked {
+    /// A sketch's face, or the face a split cuts along.
+    Face,
+    /// A revolve's or a move's axis edge.
+    AxisEdge,
+    /// A move's round axis face.
+    AxisFace,
+    /// A mirror's face.
+    MirrorFace,
+    /// A draft's neutral face.
+    NeutralFace,
+    /// The face whose plane a split cuts by.
+    PlaneFace,
+    /// An edge of a sweep's path.
+    PathEdge,
+}
+
+impl Picked {
+    /// Why it fails when its body has no solid.
+    pub(crate) const fn body_gone(self) -> &'static str {
+        match self {
+            Picked::Face => "its face's body is gone",
+            Picked::AxisEdge => "its axis edge's body is gone",
+            Picked::AxisFace => "its axis face's body is gone",
+            Picked::MirrorFace => "its mirror face's body is gone",
+            Picked::NeutralFace => "its neutral face's body is gone",
+            Picked::PlaneFace => "its plane face's body is gone",
+            Picked::PathEdge => "its path edge's body is gone",
+        }
+    }
+
+    /// Why it fails when it isn't found on its body.
+    pub(crate) const fn not_found(self) -> &'static str {
+        match self {
+            Picked::Face => "its face wasn't found",
+            Picked::AxisEdge => "its axis edge wasn't found",
+            Picked::AxisFace => "its axis face wasn't found",
+            Picked::MirrorFace => "its mirror face wasn't found",
+            Picked::NeutralFace => "its neutral face wasn't found",
+            Picked::PlaneFace => "its plane face wasn't found",
+            Picked::PathEdge => "its path edge wasn't found",
+        }
+    }
+
+    /// Why a face that must be flat fails when it isn't (an axis face
+    /// must be round, and edges aren't faces).
+    pub(crate) const fn not_flat(self) -> &'static str {
+        match self {
+            Picked::Face => "its face isn't flat",
+            Picked::MirrorFace => "its mirror face isn't flat",
+            Picked::NeutralFace => "its neutral face isn't flat",
+            Picked::PlaneFace => "its plane face isn't flat",
+            Picked::AxisFace | Picked::AxisEdge | Picked::PathEdge => {
+                panic!("only a face that must be flat is worded not flat")
+            }
+        }
+    }
+}
+
 /// Why an edge or face feature fails that picks nothing, so names no
 /// body: a checked document's never does.
 pub(crate) const NOTHING_PICKED: &str = "it picks no edges or faces";
-
-/// Why a sketch on a face isn't placed: no face of its body as the
-/// features before it leave it has the face's name.
-pub(crate) const FACE_NOT_FOUND: &str = "its face wasn't found";
-
-/// Why a sketch on a face isn't placed: the face found isn't a plane.
-pub(crate) const FACE_NOT_FLAT: &str = "its face isn't flat";
-
-/// Why a sketch on a face isn't placed: the face's body has no solid
-/// when the history reaches the sketch (its maker failed or is gone).
-pub(crate) const FACE_BODY_GONE: &str = "its face's body is gone";
 
 /// Why a sketch on a face isn't placed: the placement the face gives
 /// isn't one ([`Placement::valid`]), its origin past the coordinate
@@ -51,7 +105,7 @@ pub(crate) const LINK_NOT_PLACED: &str = "the sketch isn't placed";
 /// The body it's on is gone.
 pub(crate) const LINK_BODY_GONE: &str = "its body is gone";
 pub(crate) const LINK_EDGE_NOT_FOUND: &str = "its edge wasn't found";
-/// The same words as [`FACE_NOT_FOUND`], kept apart: one is a link's,
+/// The same words as [`Picked::Face`]'s, kept apart: one is a link's,
 /// the other a face sketch's.
 pub(crate) const LINK_FACE_NOT_FOUND: &str = "its face wasn't found";
 pub(crate) const LINK_CORNER_NOT_FOUND: &str = "its corner wasn't found";
@@ -81,14 +135,6 @@ pub(crate) const AXIS_NO_LENGTH: &str = "its axis line has no length";
 /// past the coordinate limit.
 pub(crate) const AXIS_TOO_FAR: &str = "its regions are too far from the axis to revolve";
 
-/// Why a revolve about a model edge fails: the edge's body has no solid
-/// when the history reaches the revolve (its maker failed or is gone).
-pub(crate) const EDGE_BODY_GONE: &str = "its axis edge's body is gone";
-
-/// Why a revolve about a model edge fails: no edge of its body as the
-/// features before it leave it is between faces of the edge's names.
-pub(crate) const EDGE_NOT_FOUND: &str = "its axis edge wasn't found";
-
 /// Why a revolve about a model edge fails: the edge found isn't a line.
 pub(crate) const EDGE_NOT_STRAIGHT: &str = "its axis edge isn't straight";
 
@@ -112,39 +158,9 @@ pub(crate) const OFFSET_NOT_FINITE: &str = "its offsets are out of range";
 /// nor a circle (or an arc of one).
 pub(crate) const EDGE_NOT_AN_AXIS: &str = "its axis edge isn't straight or round";
 
-/// Why a move about a round face fails: the face's body has no solid
-/// when the history reaches the move.
-pub(crate) const AXIS_FACE_BODY_GONE: &str = "its axis face's body is gone";
-
-/// Why a move about a round face fails: no face of its body as the
-/// features before it leave it has the face's name.
-pub(crate) const AXIS_FACE_NOT_FOUND: &str = "its axis face wasn't found";
-
 /// Why a move about a round face fails: the face found isn't a cylinder,
 /// cone, torus or other surface of revolution.
 pub(crate) const AXIS_FACE_NOT_ROUND: &str = "its axis face isn't round";
-
-/// Why a mirror in a face fails: the face's body has no solid when the
-/// history reaches the mirror.
-pub(crate) const MIRROR_FACE_BODY_GONE: &str = "its mirror face's body is gone";
-
-/// Why a mirror in a face fails: no face of its body as the features
-/// before it leave it has the face's name.
-pub(crate) const MIRROR_FACE_NOT_FOUND: &str = "its mirror face wasn't found";
-
-/// Why a mirror in a face fails: the face found isn't a plane.
-pub(crate) const MIRROR_FACE_NOT_FLAT: &str = "its mirror face isn't flat";
-
-/// Why a draft from a face fails: the face's body has no solid when the
-/// history reaches the draft.
-pub(crate) const NEUTRAL_FACE_BODY_GONE: &str = "its neutral face's body is gone";
-
-/// Why a draft from a face fails: no face of its body as the features
-/// before it leave it has the face's name.
-pub(crate) const NEUTRAL_FACE_NOT_FOUND: &str = "its neutral face wasn't found";
-
-/// Why a draft from a face fails: the face found isn't a plane.
-pub(crate) const NEUTRAL_FACE_NOT_FLAT: &str = "its neutral face isn't flat";
 
 /// Why a pattern fails: its count isn't one it takes (never, checked as
 /// it is).
@@ -344,25 +360,6 @@ pub(crate) const SCALE_FACTOR: &str = "a factor is out of range";
 pub(crate) fn scale_measure(error: varde_kernel_compat::measure::MeasureError) -> String {
     format!("its edge can't be measured: {error}")
 }
-
-/// Why a split by a face's plane fails: the face's body has no solid
-/// when the history reaches the split.
-pub(crate) const SPLIT_PLANE_BODY_GONE: &str = "its plane face's body is gone";
-
-/// Why a split by a face's plane fails: no face of its body as the
-/// features before it leave it has the face's name.
-pub(crate) const SPLIT_PLANE_NOT_FOUND: &str = "its plane face wasn't found";
-
-/// Why a split by a face's plane fails: the face found isn't a plane.
-pub(crate) const SPLIT_PLANE_NOT_FLAT: &str = "its plane face isn't flat";
-
-/// Why a split by a face's surface fails: the face's body has no solid
-/// when the history reaches the split.
-pub(crate) const SPLIT_FACE_BODY_GONE: &str = "its face's body is gone";
-
-/// Why a split by a face's surface fails: no face of its body as the
-/// features before it leave it has the face's name.
-pub(crate) const SPLIT_FACE_NOT_FOUND: &str = "its face wasn't found";
 
 /// Why a split by a face's surface fails: the face's form has no surface
 /// to continue past the face (a blend traced along its edges, a drafted
@@ -1220,10 +1217,6 @@ pub(crate) fn chain(of: ChainOf, error: crate::profile::ChainError) -> String {
         ChainError::Profile(error) => format!("{subject} can't be used: {error}"),
     }
 }
-
-/// Why a sweep fails: an edge part's body has no solid when the history
-/// reaches the sweep.
-pub(crate) const PATH_EDGE_BODY_GONE: &str = "its path edge's body is gone";
 
 /// Why a sweep fails: the edge at `index` of an edge part of `count`
 /// edges wasn't found on its body.

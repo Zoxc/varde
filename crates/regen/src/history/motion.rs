@@ -90,7 +90,7 @@ pub(super) fn evaluate_mirror(
     let [point, normal] =
         resolve_plane(&mirror.plane, &MIRROR_PLANE, evaluation, tolerance, cache)?;
     note_reference(evaluation, feature, [point, normal]);
-    let motion = Motion::mirror(point, normal).ok_or(why::MIRROR_FACE_NOT_FLAT)?;
+    let motion = Motion::mirror(point, normal).ok_or(why::Picked::MirrorFace.not_flat())?;
     let how = How {
         moving: Moving::Mirror,
         copy: mirror.keep_original.then_some(Instance {
@@ -244,14 +244,16 @@ pub(super) fn resolve_axis(
     match axis {
         AxisRef::Origin(axis) => Ok([DVec3::ZERO, axis.direction()]),
         AxisRef::Edge(edge) => {
-            let made = evaluation.holding(edge.body).ok_or(why::EDGE_BODY_GONE)?;
+            let made = evaluation
+                .holding(edge.body)
+                .ok_or(why::Picked::AxisEdge.body_gone())?;
             let key = reference_key("axis edge", made.key, &edge.faces, edge.near, tolerance);
             cache.reference(key, || edge_line(&made.solid, edge, tolerance))
         }
         AxisRef::Face(face) => {
             let made = evaluation
                 .holding(face.body)
-                .ok_or(why::AXIS_FACE_BODY_GONE)?;
+                .ok_or(why::Picked::AxisFace.body_gone())?;
             let key = reference_key("axis face", made.key, &face.key, face.near, tolerance);
             cache.reference(key, || face_axis(&made.solid, face, tolerance))
         }
@@ -259,37 +261,28 @@ pub(super) fn resolve_axis(
 }
 
 /// What a feature calls the plane it names, for its failures: the
-/// cache key's kind, and why a face fails (its body gone, the face not
-/// found, the face not flat).
+/// cache key's kind, and what the face is to the words of its failures.
 pub(super) struct PlaneWords {
     pub(super) kind: &'static str,
-    pub(super) body_gone: &'static str,
-    not_found: &'static str,
-    not_flat: &'static str,
+    pub(super) picked: why::Picked,
 }
 
 /// A split's plane: "its plane face wasn't found".
 pub(super) const SPLIT_PLANE: PlaneWords = PlaneWords {
     kind: "split plane face",
-    body_gone: why::SPLIT_PLANE_BODY_GONE,
-    not_found: why::SPLIT_PLANE_NOT_FOUND,
-    not_flat: why::SPLIT_PLANE_NOT_FLAT,
+    picked: why::Picked::PlaneFace,
 };
 
 /// A mirror's plane: "its mirror face wasn't found".
 pub(super) const MIRROR_PLANE: PlaneWords = PlaneWords {
     kind: "mirror face",
-    body_gone: why::MIRROR_FACE_BODY_GONE,
-    not_found: why::MIRROR_FACE_NOT_FOUND,
-    not_flat: why::MIRROR_FACE_NOT_FLAT,
+    picked: why::Picked::MirrorFace,
 };
 
 /// A draft's neutral plane: "its neutral face wasn't found".
 pub(super) const NEUTRAL_PLANE: PlaneWords = PlaneWords {
     kind: "neutral face",
-    body_gone: why::NEUTRAL_FACE_BODY_GONE,
-    not_found: why::NEUTRAL_FACE_NOT_FOUND,
-    not_flat: why::NEUTRAL_FACE_NOT_FLAT,
+    picked: why::Picked::NeutralFace,
 };
 
 /// The plane `plane` names, as a point on it and its normal (not unit,
@@ -306,7 +299,9 @@ pub(super) fn resolve_plane(
     match plane {
         Plane::Origin(origin) => Ok([DVec3::ZERO, origin.placement().normal]),
         Plane::Face(face) => {
-            let made = evaluation.holding(face.body).ok_or(words.body_gone)?;
+            let made = evaluation
+                .holding(face.body)
+                .ok_or(words.picked.body_gone())?;
             let key = reference_key(words.kind, made.key, &face.key, face.near, tolerance);
             cache.reference(key, || {
                 face_plane(&made.solid, face, words, tolerance).map(|(n, d)| [n * d, n])
@@ -333,7 +328,8 @@ pub(super) fn reference_key(
 /// axis, see [`resolve_axis`].
 fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
-    let chain = (topology.edge(solid, edge.faces, edge.near)).map_err(|_| why::EDGE_NOT_FOUND)?;
+    let chain = (topology.edge(solid, edge.faces, edge.near))
+        .map_err(|_| why::Picked::AxisEdge.not_found())?;
     let chain = &topology.chains()[chain as usize];
     let shape = edge_shape(solid, chain);
     let line = match shape {
@@ -375,7 +371,7 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
                 why::AXIS_FACE_NOT_ROUND,
                 face_geometry(solid, &topology.regions()[region as usize], tolerance),
             ),
-            _ => why::AXIS_FACE_NOT_FOUND.into(),
+            _ => why::Picked::AxisFace.not_found().into(),
         })
 }
 
@@ -390,12 +386,13 @@ pub(super) fn face_plane(
     tolerance: &Tolerance,
 ) -> Result<(DVec3, f64), Failed> {
     let topology = solid.topology();
-    let region = (topology.face(solid, &face.key, face.near)).map_err(|_| words.not_found)?;
+    let region =
+        (topology.face(solid, &face.key, face.near)).map_err(|_| words.picked.not_found())?;
     let region = &topology.regions()[region as usize];
     match *region_form(solid, region) {
         Form::Plane { n, d } if n != DVec3::ZERO && n.is_finite() && d.is_finite() => Ok((n, d)),
         _ => Err(Failed::shown(
-            words.not_flat,
+            words.picked.not_flat(),
             face_geometry(solid, region, tolerance),
         )),
     }
