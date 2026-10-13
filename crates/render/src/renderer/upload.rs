@@ -544,21 +544,16 @@ impl BuiltErrors {
                 stream.push_points(polyline, line.iter().copied());
                 polyline = (polyline + 1) % CREASE;
             }
-            let mut boxes: Vec<Aabb> = [mesh.bounds(), error.lines.bounds()]
-                .into_iter()
-                .flatten()
-                .collect();
             let shown =
                 |point: &&[f32; 3]| (point.iter()).all(|x| x.abs() <= RenderLines::MAX_POSITION);
             for &position in error.points.iter().filter(shown) {
                 built.points.push(VertexInstance { position, flags: 0 });
-                let at = Vec3::from(position);
-                boxes.push(Aabb { min: at, max: at });
             }
-            built.bounds = (boxes.into_iter().chain(built.bounds)).reduce(|a, b| Aabb {
-                min: a.min.min(b.min),
-                max: a.max.max(b.max),
-            });
+            let points = Aabb::of_points(error.points.iter().filter(shown).map(|&p| Vec3::from(p)));
+            built.bounds = [mesh.bounds(), error.lines.bounds(), points, built.bounds]
+                .into_iter()
+                .flatten()
+                .reduce(Aabb::union);
         }
         if !counted {
             built.cores = built.counts(&stream);

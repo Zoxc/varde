@@ -235,10 +235,7 @@ impl MeshUpload {
 /// The bounds of the positions `indices` refer to, or `None` if there are
 /// none.
 fn bounds_of(positions: &[[f32; 3]], indices: &[u32]) -> Option<Aabb> {
-    let mut points = indices.iter().map(|&i| Vec3::from(positions[i as usize]));
-    let first = points.next()?;
-    let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
-    Some(Aabb { min, max })
+    Aabb::of_points(indices.iter().map(|&i| Vec3::from(positions[i as usize])))
 }
 
 /// An [`EdgePoint`] stream being built: polylines one after another, from

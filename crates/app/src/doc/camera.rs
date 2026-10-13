@@ -161,10 +161,7 @@ impl Doc {
         let bounds = [self.feed.mesh().bounds(), self.feed.sketches().bounds()]
             .into_iter()
             .flatten()
-            .reduce(|a, b| Aabb {
-                min: a.min.min(b.min),
-                max: a.max.max(b.max),
-            });
+            .reduce(Aabb::union);
         if let Some(bounds) = bounds {
             // The mesh and lines keep their positions finite and bounded,
             // and the camera clamps what it's given.

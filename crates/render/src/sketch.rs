@@ -493,17 +493,9 @@ impl SketchLayer {
             .iter()
             .map(|f| world(f.at[0], f.at[1], f.z, f.flags));
         let limit = Vec3::splat(RenderLines::MAX_POSITION);
-        lines
-            .chain(points)
-            .chain(fills)
-            .flatten()
-            .filter(|p| p.abs().cmple(limit).all())
-            .fold(None, |bounds: Option<Aabb>, p| {
-                Some(bounds.map_or(Aabb { min: p, max: p }, |b| Aabb {
-                    min: b.min.min(p),
-                    max: b.max.max(p),
-                }))
-            })
+        Aabb::of_points(
+            (lines.chain(points).chain(fills).flatten()).filter(|p| p.abs().cmple(limit).all()),
+        )
     }
 }
 

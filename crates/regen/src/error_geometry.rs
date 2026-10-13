@@ -415,31 +415,20 @@ impl ErrorGeometry {
     /// The box around its mesh, lines and points, and its faces in
     /// `model` (the answer's mesh) if given.
     fn bounds_in(&self, model: Option<&RenderMesh>) -> Option<Aabb> {
-        let mut bounds: Option<Aabb> = None;
-        let mut take = |p: [f32; 3]| {
-            let p = Vec3::from(p);
-            bounds = Some(bounds.map_or(Aabb { min: p, max: p }, |b| Aabb {
-                min: b.min.min(p),
-                max: b.max.max(p),
-            }));
-        };
         // The triangles' corners: positions no triangle uses (which
         // parts from the other side may hold) aren't drawn.
         let positions = self.mesh.positions();
-        (self.mesh.indices().iter()).for_each(|&v| take(positions[v as usize]));
-        self.lines.points().iter().copied().for_each(&mut take);
-        self.points.iter().copied().for_each(&mut take);
-        if let Some(model) = model {
-            for &(_, face) in &self.faces {
-                let Some(range) = model.face_indices(face as usize) else {
-                    continue;
-                };
-                for &v in &model.indices()[range] {
-                    take(model.positions()[v as usize]);
-                }
-            }
-        }
-        bounds
+        let corners = (self.mesh.indices().iter()).map(|&v| positions[v as usize]);
+        let faces = model.into_iter().flat_map(|model| {
+            (self.faces.iter())
+                .filter_map(|&(_, face)| model.face_indices(face as usize))
+                .flat_map(|range| &model.indices()[range])
+                .map(|&v| model.positions()[v as usize])
+        });
+        let points = (corners.chain(self.lines.points().iter().copied()))
+            .chain(self.points.iter().copied())
+            .chain(faces);
+        Aabb::of_points(points.map(Vec3::from))
     }
 
     /// The patches, tessellated: one part of one face, or no part if
