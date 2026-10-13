@@ -24,9 +24,28 @@ use super::args::{
 use super::edit::{Made, Refused};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, RevolveSession, sketch_of};
 
-/// Why an edited extrude's or revolve's Flip can't be set: its extent
-/// ignores it (stored as it was).
-const FLIP_EXTENT: &str = "flip goes with extent one_side or two_sides";
+/// Refuses, editing an extrude or revolve, a value given that its
+/// extent doesn't show: the first or second of `fields` (a side and its
+/// argument) unless `shows` holds it, Flip unless `flips` (stored as it
+/// was), as the panel has no field for them.
+fn shown<F: PartialEq>(
+    tool: &str,
+    given: Given,
+    shows: &[F],
+    [(first, first_said), (second, second_said)]: [(F, &str); 2],
+    flips: bool,
+) -> Result<(), Refused> {
+    let why = if given.has(first_said) && !shows.contains(&first) {
+        format!("{first_said} goes with extent one_side, symmetric or two_sides")
+    } else if given.has(second_said) && !shows.contains(&second) {
+        format!("{second_said} goes with extent two_sides")
+    } else if given.has("flip") && !flips {
+        "flip goes with extent one_side or two_sides".to_owned()
+    } else {
+        return Ok(());
+    };
+    Err(failed(tool, why))
+}
 
 /// Why an extrude through all can't take another operation.
 const THROUGH_ALL_CUT: &str = "through_all goes with operation cut only";
@@ -88,16 +107,11 @@ pub(super) fn set_extrude(
     }
     if edited.is_some() {
         let shows = session.extent.distances();
-        if given.has("distance") && !shows.contains(&Distance::First) {
-            let why = "distance goes with extent one_side, symmetric or two_sides";
-            return Err(failed(tool, why));
-        }
-        if given.has("second_distance") && !shows.contains(&Distance::Second) {
-            return Err(failed(tool, "second_distance goes with extent two_sides"));
-        }
-        if given.has("flip") && !session.extent.flips() {
-            return Err(failed(tool, FLIP_EXTENT));
-        }
+        let fields = [
+            (Distance::First, "distance"),
+            (Distance::Second, "second_distance"),
+        ];
+        shown(tool, given, shows, fields, session.extent.flips())?;
     }
     // Two sides' second is the first's unless given, as a new panel's
     // fields start alike; an edited one's keeps its own.
@@ -185,16 +199,8 @@ pub(super) fn set_revolve(
     }
     if edited.is_some() {
         let shows = session.extent.angles();
-        if given.has("angle") && !shows.contains(&Angle::First) {
-            let why = "angle goes with extent one_side, symmetric or two_sides";
-            return Err(failed(tool, why));
-        }
-        if given.has("second_angle") && !shows.contains(&Angle::Second) {
-            return Err(failed(tool, "second_angle goes with extent two_sides"));
-        }
-        if given.has("flip") && !session.extent.flips() {
-            return Err(failed(tool, FLIP_EXTENT));
-        }
+        let fields = [(Angle::First, "angle"), (Angle::Second, "second_angle")];
+        shown(tool, given, shows, fields, session.extent.flips())?;
     }
     for (angle, text, said) in [
         (Angle::First, &args.angle, "angle"),
