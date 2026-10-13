@@ -96,6 +96,95 @@ impl Draw {
             .expect("ids to spare");
     }
 
+    /// A `2w` x `2h` outline about the origin with corners of radius `r`
+    /// and a bolt hole of diameter `hole` about each corner's centre,
+    /// fully dimensioned.
+    fn rounded_plate(&mut self, w: f64, h: f64, r: f64, hole: f64) {
+        // The lines' ends, counter-clockwise from the bottom line's start,
+        // and the corners' centres.
+        let ends = [
+            (-w + r, -h),
+            (w - r, -h),
+            (w, -h + r),
+            (w, h - r),
+            (w - r, h),
+            (-w + r, h),
+            (-w, h - r),
+            (-w, -h + r),
+        ]
+        .map(|(x, y)| self.point(x, y));
+        let centers = [
+            (w - r, -h + r),
+            (w - r, h - r),
+            (-w + r, h - r),
+            (-w + r, -h + r),
+        ]
+        .map(|(x, y)| self.point(x, y));
+        let mut lines = [Id::ORIGIN; 4];
+        let mut arcs = [Id::ORIGIN; 4];
+        for k in 0..4 {
+            lines[k] = self.line(ends[2 * k], ends[2 * k + 1]);
+            arcs[k] = self.arc(centers[k], ends[2 * k + 1], ends[(2 * k + 2) % 8]);
+        }
+        for k in 0..4 {
+            self.tangent(lines[k], arcs[k]);
+            self.tangent(arcs[k], lines[(k + 1) % 4]);
+        }
+        self.constrain(Constraint::Horizontal(lines[0]));
+        self.constrain(Constraint::Vertical(lines[1]));
+        self.constrain(Constraint::Horizontal(lines[2]));
+        self.constrain(Constraint::Vertical(lines[3]));
+        for &arc in &arcs[1..] {
+            self.constrain(Constraint::Equal(arcs[0], arc));
+        }
+        // Bolt holes about the corners' centres.
+        let holes = centers.map(|center| self.circle(center, hole / 2.0));
+        for &hole in &holes[1..] {
+            self.constrain(Constraint::Equal(holes[0], hole));
+        }
+        self.dimension(
+            Measure::Radius(arcs[0]),
+            &r.to_string(),
+            DVec2::new(6.0, -6.0),
+        );
+        self.dimension(
+            Measure::Diameter(holes[1]),
+            &hole.to_string(),
+            DVec2::new(6.0, 6.0),
+        );
+        self.dimension(
+            Measure::Length(lines[0]),
+            &format!("{} - 2 * {r}", 2.0 * w),
+            DVec2::new(0.0, -8.0),
+        );
+        self.dimension(
+            Measure::Length(lines[1]),
+            &format!("{} - 2 * {r}", 2.0 * h),
+            DVec2::new(8.0, 0.0),
+        );
+        // Centred on the origin.
+        self.dimension(
+            Measure::HorizontalDistance(Id::ORIGIN, ends[2]),
+            &w.to_string(),
+            DVec2::new(0.0, -12.0),
+        );
+        self.dimension(
+            Measure::VerticalDistance(Id::ORIGIN, ends[4]),
+            &h.to_string(),
+            DVec2::new(-12.0, 0.0),
+        );
+    }
+
+    /// A circle centred on the origin, dimensioned to `diameter` with its
+    /// label at `label`.
+    fn centred_circle(&mut self, diameter: f64, label: DVec2) -> Id {
+        let center = self.point(0.0, 0.0);
+        let circle = self.circle(center, diameter / 2.0);
+        self.constrain(Constraint::Coincident(center, Id::ORIGIN));
+        self.dimension(Measure::Diameter(circle), &diameter.to_string(), label);
+        circle
+    }
+
     /// Checks the sketch through and through and commits it to `feature`.
     fn commit(self, editor: &mut Editor, feature: FeatureId, name: &str) -> Sketch {
         self.sketch
@@ -158,72 +247,7 @@ fn mounting_plate() -> Document {
     let mut editor = Editor::new(Document::default());
     let outline = add_sketch(&mut editor, "Plate outline", OriginPlane::XY);
     let mut draw = Draw::new(&editor);
-    let (w, h, r) = (40.0, 25.0, 8.0);
-    // The lines' ends, counter-clockwise from the bottom line's start,
-    // and the corners' centres.
-    let ends = [
-        (-w + r, -h),
-        (w - r, -h),
-        (w, -h + r),
-        (w, h - r),
-        (w - r, h),
-        (-w + r, h),
-        (-w, h - r),
-        (-w, -h + r),
-    ]
-    .map(|(x, y)| draw.point(x, y));
-    let centers = [
-        (w - r, -h + r),
-        (w - r, h - r),
-        (-w + r, h - r),
-        (-w + r, -h + r),
-    ]
-    .map(|(x, y)| draw.point(x, y));
-    let mut lines = [Id::ORIGIN; 4];
-    let mut arcs = [Id::ORIGIN; 4];
-    for k in 0..4 {
-        lines[k] = draw.line(ends[2 * k], ends[2 * k + 1]);
-        arcs[k] = draw.arc(centers[k], ends[2 * k + 1], ends[(2 * k + 2) % 8]);
-    }
-    for k in 0..4 {
-        draw.tangent(lines[k], arcs[k]);
-        draw.tangent(arcs[k], lines[(k + 1) % 4]);
-    }
-    draw.constrain(Constraint::Horizontal(lines[0]));
-    draw.constrain(Constraint::Vertical(lines[1]));
-    draw.constrain(Constraint::Horizontal(lines[2]));
-    draw.constrain(Constraint::Vertical(lines[3]));
-    for &arc in &arcs[1..] {
-        draw.constrain(Constraint::Equal(arcs[0], arc));
-    }
-    // Bolt holes about the corners' centres.
-    let holes = centers.map(|center| draw.circle(center, 3.25));
-    for &hole in &holes[1..] {
-        draw.constrain(Constraint::Equal(holes[0], hole));
-    }
-    draw.dimension(Measure::Radius(arcs[0]), "8", DVec2::new(6.0, -6.0));
-    draw.dimension(Measure::Diameter(holes[1]), "6.5", DVec2::new(6.0, 6.0));
-    draw.dimension(
-        Measure::Length(lines[0]),
-        "80 - 2 * 8",
-        DVec2::new(0.0, -8.0),
-    );
-    draw.dimension(
-        Measure::Length(lines[1]),
-        "50 - 2 * 8",
-        DVec2::new(8.0, 0.0),
-    );
-    // Centred on the origin.
-    draw.dimension(
-        Measure::HorizontalDistance(Id::ORIGIN, ends[2]),
-        "40",
-        DVec2::new(0.0, -12.0),
-    );
-    draw.dimension(
-        Measure::VerticalDistance(Id::ORIGIN, ends[4]),
-        "25",
-        DVec2::new(-12.0, 0.0),
-    );
+    draw.rounded_plate(40.0, 25.0, 8.0, 6.5);
     let sketch = draw.commit(&mut editor, outline, "Plate outline");
     let plate = region(&sketch, |region| region.holes.len() == 4);
     add_feature(
@@ -342,10 +366,7 @@ fn knob() -> Document {
 
     let bore_sketch = add_sketch(&mut editor, "Shaft hole", OriginPlane::XY);
     let mut draw = Draw::new(&editor);
-    let center = draw.point(0.0, 0.0);
-    let bore = draw.circle(center, 3.0);
-    draw.constrain(Constraint::Coincident(center, Id::ORIGIN));
-    draw.dimension(Measure::Diameter(bore), "6", DVec2::new(6.0, 6.0));
+    draw.centred_circle(6.0, DVec2::new(6.0, 6.0));
     let sketch = draw.commit(&mut editor, bore_sketch, "Shaft hole");
     let hole = region(&sketch, |_| true);
     add_feature(
@@ -371,71 +392,10 @@ fn knob() -> Document {
 fn pillow_block() -> Document {
     let mut editor = Editor::new(Document::default());
 
-    // The base: as the mounting plate's outline, 100 x 50 mm.
+    // The base: a plate outline as the mounting plate's, 100 x 50 mm.
     let base_sketch = add_sketch(&mut editor, "Base outline", OriginPlane::XY);
     let mut draw = Draw::new(&editor);
-    let (w, h, r) = (50.0, 25.0, 8.0);
-    let ends = [
-        (-w + r, -h),
-        (w - r, -h),
-        (w, -h + r),
-        (w, h - r),
-        (w - r, h),
-        (-w + r, h),
-        (-w, h - r),
-        (-w, -h + r),
-    ]
-    .map(|(x, y)| draw.point(x, y));
-    let centers = [
-        (w - r, -h + r),
-        (w - r, h - r),
-        (-w + r, h - r),
-        (-w + r, -h + r),
-    ]
-    .map(|(x, y)| draw.point(x, y));
-    let mut lines = [Id::ORIGIN; 4];
-    let mut arcs = [Id::ORIGIN; 4];
-    for k in 0..4 {
-        lines[k] = draw.line(ends[2 * k], ends[2 * k + 1]);
-        arcs[k] = draw.arc(centers[k], ends[2 * k + 1], ends[(2 * k + 2) % 8]);
-    }
-    for k in 0..4 {
-        draw.tangent(lines[k], arcs[k]);
-        draw.tangent(arcs[k], lines[(k + 1) % 4]);
-    }
-    draw.constrain(Constraint::Horizontal(lines[0]));
-    draw.constrain(Constraint::Vertical(lines[1]));
-    draw.constrain(Constraint::Horizontal(lines[2]));
-    draw.constrain(Constraint::Vertical(lines[3]));
-    for &arc in &arcs[1..] {
-        draw.constrain(Constraint::Equal(arcs[0], arc));
-    }
-    let holes = centers.map(|center| draw.circle(center, 3.25));
-    for &hole in &holes[1..] {
-        draw.constrain(Constraint::Equal(holes[0], hole));
-    }
-    draw.dimension(Measure::Radius(arcs[0]), "8", DVec2::new(6.0, -6.0));
-    draw.dimension(Measure::Diameter(holes[1]), "6.5", DVec2::new(6.0, 6.0));
-    draw.dimension(
-        Measure::Length(lines[0]),
-        "100 - 2 * 8",
-        DVec2::new(0.0, -8.0),
-    );
-    draw.dimension(
-        Measure::Length(lines[1]),
-        "50 - 2 * 8",
-        DVec2::new(8.0, 0.0),
-    );
-    draw.dimension(
-        Measure::HorizontalDistance(Id::ORIGIN, ends[2]),
-        "50",
-        DVec2::new(0.0, -12.0),
-    );
-    draw.dimension(
-        Measure::VerticalDistance(Id::ORIGIN, ends[4]),
-        "25",
-        DVec2::new(-12.0, 0.0),
-    );
+    draw.rounded_plate(50.0, 25.0, 8.0, 6.5);
     let sketch = draw.commit(&mut editor, base_sketch, "Base outline");
     let base = region(&sketch, |region| region.holes.len() == 4);
     add_feature(
@@ -576,10 +536,7 @@ fn pillow_block() -> Document {
     // The bearing's bore, through the housing and the base.
     let bore_sketch = add_sketch(&mut editor, "Bore", OriginPlane::XY);
     let mut draw = Draw::new(&editor);
-    let center = draw.point(0.0, 0.0);
-    let bore = draw.circle(center, 8.0);
-    draw.constrain(Constraint::Coincident(center, Id::ORIGIN));
-    draw.dimension(Measure::Diameter(bore), "16", DVec2::new(8.0, 8.0));
+    draw.centred_circle(16.0, DVec2::new(8.0, 8.0));
     let sketch = draw.commit(&mut editor, bore_sketch, "Bore");
     let hole = region(&sketch, |_| true);
     add_feature(
