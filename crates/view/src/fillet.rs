@@ -3,7 +3,7 @@
 
 use varde_document::{Fillet, LengthUnit};
 
-use crate::panels::length_note;
+use crate::feature_text::length_note;
 
 /// A fillet's Timeline note, as the UI mock's row: its radius, "R2" (a
 /// number of the design's units).

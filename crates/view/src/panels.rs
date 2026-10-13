@@ -491,16 +491,6 @@ fn sized_row_menu<'a>(items: Vec<Element<'a, Message>>, width: f32) -> Element<'
         .into()
 }
 
-/// An angle of `radians`, as angles are shown: "90°".
-pub(crate) fn angle_note(radians: f64) -> String {
-    varde_expr::Shown::current().format(radians, Some(varde_expr::AngleUnit::Deg.into()))
-}
-
-/// A distance of an extrude in `units`: "10 mm".
-pub(crate) fn length_note(value: &varde_expr::Value, units: LengthUnit) -> String {
-    varde_expr::Shown::current().format(value.value, Some(units.into()))
-}
-
 /// A row of a list that's selected by clicking it: an icon, a name, and a
 /// note at the right, highlighted while selected or hovered.
 struct SelectableRow<'a> {

@@ -14,13 +14,13 @@ use varde_document::{AxisLine, BodyId, Document, EdgeRef, FeatureId, FeatureKind
 use varde_sketch::{Curve, Id, Sketch, angle};
 
 use crate::extrude::centroid;
+use crate::feature_text::angle_note;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, ListRow, OperationKind, PanelHover, Parts, Side, Sides, TypedField,
     Verdict, field, operation_panel, operation_section, pick_field, pick_rows, region_rows, tile,
     tiles,
 };
-use crate::panels::angle_note;
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
 use crate::{Edit, Look, Message};

@@ -14,12 +14,12 @@ use varde_expr::LengthUnit;
 use varde_sketch::{Region, angle};
 
 use crate::chrome::tip;
+use crate::feature_text::{angle_note, length_note};
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, OperationKind, PanelHover, Parts, Side, Sides, TypedField, Verdict,
     field, operation_panel, operation_section, pick_field, region_rows, tile, tiles, value_field,
 };
-use crate::panels::{angle_note, length_note};
 use crate::{Edit, Look, Message};
 
 /// The field of an extrude's second distance, for two sides. The first

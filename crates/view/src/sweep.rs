@@ -3,8 +3,8 @@
 
 use varde_document::{Document, PathPart, PathRef, Sweep};
 
+use crate::feature_text::angle_note;
 use crate::operation_panel::OperationKind;
-use crate::panels::angle_note;
 
 /// What the Timeline notes of a sweep, as the plan's rows: "along Sketch
 /// 3", "along Body 1", "along 3 parts", "helix · 10 turns".

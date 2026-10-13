@@ -3,7 +3,7 @@
 
 use varde_document::{LengthUnit, Shell};
 
-use crate::panels::length_note;
+use crate::feature_text::length_note;
 
 /// A shell's Timeline note, as the UI mock's row: its thickness, "2 mm".
 pub(crate) fn shell_note(shell: &Shell, units: LengthUnit) -> String {

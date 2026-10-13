@@ -3,7 +3,7 @@
 
 use varde_document::{Chamfer, ChamferSize, EdgeRef, FaceRef, LengthUnit, blend_excludes};
 
-use crate::panels::{angle_note, length_note};
+use crate::feature_text::{angle_note, length_note};
 
 /// A chamfer's Timeline note, as the UI mock's row: its size, "1 mm",
 /// "1 × 2" (along the face of the edges' first key first, so Flip sides

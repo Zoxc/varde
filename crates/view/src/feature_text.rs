@@ -1,12 +1,23 @@
 //! The view's per-kind texts of a feature: its icon, its Timeline note
 //! and its status bar info, each one match over [`FeatureKind`] handing
-//! off to the kind's own module.
+//! off to the kind's own module, and the angle and length notes those
+//! modules share.
 
 use varde_document::{Document, Feature, FeatureKind};
 use varde_expr::LengthUnit;
 
 use crate::document::sketch_summary;
 use crate::icons::Icon;
+
+/// An angle of `radians`, as angles are shown: "90°".
+pub(crate) fn angle_note(radians: f64) -> String {
+    varde_expr::Shown::current().format(radians, Some(varde_expr::AngleUnit::Deg.into()))
+}
+
+/// A length in `units`: "10 mm".
+pub(crate) fn length_note(value: &varde_expr::Value, units: LengthUnit) -> String {
+    varde_expr::Shown::current().format(value.value, Some(units.into()))
+}
 
 /// The icon of `feature`, in the Timeline and wherever it's listed.
 pub(crate) fn feature_icon(feature: &Feature) -> Icon {

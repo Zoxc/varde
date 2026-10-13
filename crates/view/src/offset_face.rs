@@ -3,7 +3,7 @@
 
 use varde_document::{LengthUnit, OffsetFace};
 
-use crate::panels::length_note;
+use crate::feature_text::length_note;
 use crate::words::counted;
 
 /// An offset face's Timeline note: its distance and the faces it moves,
