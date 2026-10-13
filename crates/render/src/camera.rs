@@ -155,8 +155,7 @@ impl Camera {
     /// [`Self::pan`]. A target that isn't finite is ignored.
     pub fn set_target(&mut self, target: Vec3) {
         if target.is_finite() {
-            let extent = Vec3::splat(Self::EXTENT);
-            self.target = target.clamp(-extent, extent);
+            self.target = clamp_target(target);
         }
     }
 
@@ -220,7 +219,6 @@ impl Camera {
     /// than straight down or up, rolled upside down rather than over the
     /// top. An orientation that isn't finite is ignored.
     fn set_orientation(&mut self, orientation: Quat) {
-        use std::f32::consts::TAU;
         let length = orientation.length();
         if !(length.is_finite() && length > 0.0) {
             return;
@@ -242,8 +240,8 @@ impl Camera {
         };
         let (right0, up0) = (self::right(yaw), up(yaw, pitch));
         let roll = right.dot(up0).atan2(right.dot(right0));
-        self.yaw = yaw.rem_euclid(TAU);
-        self.pitch = pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+        self.yaw = wrap_yaw(yaw);
+        self.pitch = clamp_pitch(pitch);
         // Within rounding of none, none, so a view turned back level is
         // a turntable's again.
         self.roll = if roll.abs() < ROLL_SLACK { 0.0 } else { roll };
@@ -261,7 +259,7 @@ impl Camera {
     pub fn set_view_height(&mut self, height: f32) {
         let distance = height / (2.0 * (self.fov_y * 0.5).tan());
         if height > 0.0 && distance.is_finite() {
-            self.distance = distance.clamp(Self::MIN_DISTANCE, Self::EXTENT);
+            self.distance = clamp_distance(distance);
         }
     }
 
@@ -325,16 +323,14 @@ impl Camera {
     /// Non-finite angles are ignored, and so is a trackball turn too large
     /// to tell its axis.
     pub fn turn(&mut self, rotation: Rotation, delta_yaw: f32, delta_pitch: f32) {
-        use std::f32::consts::TAU;
         if !(delta_yaw.is_finite() && delta_pitch.is_finite()) {
             return;
         }
         match rotation {
             Rotation::Turntable => {
                 self.upright();
-                self.yaw = (self.yaw + delta_yaw).rem_euclid(TAU);
-                self.pitch =
-                    (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+                self.yaw = wrap_yaw(self.yaw + delta_yaw);
+                self.pitch = clamp_pitch(self.pitch + delta_pitch);
             }
             Rotation::OverTheTop => {
                 self.unroll();
@@ -343,7 +339,7 @@ impl Camera {
                 } else {
                     delta_yaw
                 };
-                self.yaw = (self.yaw + delta_yaw).rem_euclid(TAU);
+                self.yaw = wrap_yaw(self.yaw + delta_yaw);
                 self.pitch = wrap_half_turn(self.pitch + delta_pitch);
             }
             Rotation::Trackball => {
@@ -377,7 +373,7 @@ impl Camera {
         self.roll = 0.0;
         if self.upside_down() {
             self.flip_over_pole();
-            self.pitch = self.pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+            self.pitch = clamp_pitch(self.pitch);
         }
     }
 
@@ -401,10 +397,10 @@ impl Camera {
     /// is: the pitch mirrored about straight up or down, the yaw turned a
     /// half turn.
     fn flip_over_pole(&mut self) {
-        use std::f32::consts::{PI, TAU};
+        use std::f32::consts::PI;
         let sign = if self.pitch < 0.0 { -1.0 } else { 1.0 };
         self.pitch = PI * sign - self.pitch;
-        self.yaw = (self.yaw + PI).rem_euclid(TAU);
+        self.yaw = wrap_yaw(self.yaw + PI);
     }
 
     /// Rotates the camera around `pivot` by the given angles in radians,
@@ -455,8 +451,7 @@ impl Camera {
         if offset.is_finite() {
             // Clamped rather than ignored if the sum overflows, so not
             // through `set_target`.
-            let extent = Vec3::splat(Self::EXTENT);
-            self.target = (self.target + offset).clamp(-extent, extent);
+            self.target = clamp_target(self.target + offset);
         }
     }
 
@@ -538,7 +533,7 @@ impl Camera {
         let pitch = if over {
             wrap_half_turn(pitch)
         } else {
-            pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT)
+            clamp_pitch(pitch)
         };
         let distance = self.distance * (to.distance / self.distance).powf(t);
         // The target moves in step with the distance, not with `t`: the
@@ -564,7 +559,7 @@ impl Camera {
     /// factor is ignored.
     pub fn zoom(&mut self, factor: f32) {
         if !factor.is_nan() {
-            self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::EXTENT);
+            self.distance = clamp_distance(self.distance * factor);
         }
     }
 
@@ -637,6 +632,27 @@ fn up(yaw: f32, pitch: f32) -> Vec3 {
 }
 
 /// `angle` within a half turn either way. Finite angles stay finite.
+/// A pitch within [`Camera::PITCH_LIMIT`] either way.
+fn clamp_pitch(pitch: f32) -> f32 {
+    pitch.clamp(-Camera::PITCH_LIMIT, Camera::PITCH_LIMIT)
+}
+
+/// A yaw wrapped to a full turn from zero.
+fn wrap_yaw(yaw: f32) -> f32 {
+    yaw.rem_euclid(std::f32::consts::TAU)
+}
+
+/// A distance from [`Camera::MIN_DISTANCE`] to [`Camera::EXTENT`].
+fn clamp_distance(distance: f32) -> f32 {
+    distance.clamp(Camera::MIN_DISTANCE, Camera::EXTENT)
+}
+
+/// A target within [`Camera::EXTENT`] of the origin on each axis.
+fn clamp_target(target: Vec3) -> Vec3 {
+    let extent = Vec3::splat(Camera::EXTENT);
+    target.clamp(-extent, extent)
+}
+
 fn wrap_half_turn(angle: f32) -> f32 {
     use std::f32::consts::{PI, TAU};
     (angle + PI).rem_euclid(TAU) - PI
