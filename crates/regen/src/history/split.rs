@@ -35,6 +35,7 @@ use varde_kernel_compat::patch::Bounds3;
 use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
 use super::motion::{SPLIT_PLANE, face_plane};
+use super::run::tool_failed;
 use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solid, through_all};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
@@ -219,12 +220,7 @@ impl Building<'_> {
                         &self.tolerance,
                         &Budget::DEFAULT,
                     )
-                    .map_err(|failure| {
-                        let finest = self.tolerance.fit() <= Tolerance::MIN_FIT;
-                        let words = why::tool(Making::Extrude, failure.error, finest);
-                        let failure = KernelFailure::new(failure, &self.tolerance);
-                        Failed::kernel(words, &failure, [&[], &[]])
-                    })
+                    .map_err(|failure| tool_failed(Making::Extrude, failure, &self.tolerance))
                 })?;
                 Ok((solid, key))
             }
@@ -322,8 +318,7 @@ impl Building<'_> {
     /// evidence (by value: the tool is no body).
     fn tool_failed(&self, failure: Failure) -> Failed {
         let words = why::split_tool(self.body_name, failure.error);
-        let failure = KernelFailure::new(failure, &self.tolerance);
-        Failed::kernel(words, &failure, [&[], &[]])
+        Failed::by_value(words, failure, &self.tolerance)
     }
 }
 

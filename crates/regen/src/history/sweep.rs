@@ -78,7 +78,7 @@ use varde_sketch::Curve;
 use super::{Evaluation, Failed, Run, motion};
 use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::{ErrorGeometry, KernelFailure};
+use crate::error_geometry::ErrorGeometry;
 use crate::inspect;
 use crate::profile::{ChainError, path_chain};
 use crate::why::{self, SweepRefusal};
@@ -329,15 +329,7 @@ impl Run<'_> {
             SweepError::ReachesAxis => SweepRefusal::ReachesAxis,
             SweepError::Pitch => SweepRefusal::Pitch,
             SweepError::IntoItself => SweepRefusal::IntoItself,
-            SweepError::Failed(failure) => {
-                let words = why::tool(
-                    why::Making::Sweep,
-                    failure.error,
-                    self.tolerance.fit() <= Tolerance::MIN_FIT,
-                );
-                let failure = KernelFailure::new(failure, &self.tolerance);
-                return Failed::kernel(words, &failure, [&[], &[]]);
-            }
+            SweepError::Failed(failure) => return self.kernel_error(failure),
         };
         why::sweep_refused(why).into()
     }

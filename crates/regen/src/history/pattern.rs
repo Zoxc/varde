@@ -8,7 +8,6 @@ use varde_kernel_compat::{Budget, Instance, MAX_PATCHES, Motion, Solid, Toleranc
 use super::motion::{note_reference, resolve_axis, within};
 use super::{BodySolid, Evaluation, Failed, own_solids};
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::KernelFailure;
 use crate::why::{self, Moving};
 
 /// Changes the bodies of `evaluation` (those the features before it
@@ -108,8 +107,7 @@ fn copy_of(
         .transformed(motion, Some(copy), tolerance, &Budget::DEFAULT)
         .map_err(|failure| {
             let words = why::moving(Moving::Pattern, name, failure.error);
-            let failure = KernelFailure::new(failure, tolerance);
-            Failed::kernel(words, &failure, [&[], &[]])
+            Failed::by_value(words, failure, tolerance)
         })
 }
 
@@ -187,10 +185,7 @@ fn copied(
     tolerance: &Tolerance,
     name: &str,
 ) -> Result<Solid, Failed> {
-    let kernel = |words: String, failure| {
-        let failure = KernelFailure::new(failure, tolerance);
-        Failed::kernel(words, &failure, [&[], &[]])
-    };
+    let kernel = |words: String, failure| Failed::by_value(words, failure, tolerance);
     let mut parts = Vec::with_capacity(motions.len().saturating_add(1));
     parts.push(solid.clone());
     for (index, motion) in (1..).zip(motions) {

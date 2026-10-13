@@ -16,7 +16,6 @@ use super::{
     BodySolid, Evaluation, Failed, chain_curves, chain_runs_with, face_geometry, own_solids,
 };
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::KernelFailure;
 use crate::picking::region_form;
 use crate::why::{self, Moving};
 
@@ -211,10 +210,7 @@ fn moved(
     tolerance: &Tolerance,
     name: &str,
 ) -> Result<Solid, Failed> {
-    let kernel = |words: String, failure| {
-        let failure = KernelFailure::new(failure, tolerance);
-        Failed::kernel(words, &failure, [&[], &[]])
-    };
+    let kernel = |words: String, failure| Failed::by_value(words, failure, tolerance);
     let image = solid
         .transformed(motion, how.copy, tolerance, &Budget::DEFAULT)
         .map_err(|failure| kernel(why::moving(how.moving, name, failure.error), failure))?;

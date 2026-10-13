@@ -115,7 +115,7 @@ use varde_document::{
     BodyId, Document, FaceRef, Feature, FeatureId, FeatureKind, Placement, Plane, Section, Sketch,
 };
 use varde_kernel_compat::mesh::Form;
-use varde_kernel_compat::{Budget, Frame, Profile, Solid, Tolerance};
+use varde_kernel_compat::{Budget, Failure, Frame, Profile, Solid, Tolerance};
 use varde_sketch::{Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
@@ -415,6 +415,12 @@ impl Failed {
             message,
             geometry: failure.geometry(operands),
         }
+    }
+
+    /// The kernel's `failure`, worded as `message`, with its evidence by
+    /// value: of no operand bodies.
+    pub(crate) fn by_value(message: String, failure: Failure, tolerance: &Tolerance) -> Failed {
+        Failed::kernel(message, &KernelFailure::new(failure, tolerance), [&[], &[]])
     }
 
     /// What was looked for isn't on the body, in `message`'s words, see

@@ -446,14 +446,15 @@ impl Run<'_> {
     /// Why the kernel couldn't make the tool, in words, and its
     /// failure.
     pub(super) fn kernel_error(&self, failure: Failure) -> Failed {
-        let words = why::tool(
-            self.shape.making(),
-            failure.error,
-            self.tolerance.fit() <= Tolerance::MIN_FIT,
-        );
-        let failure = KernelFailure::new(failure, &self.tolerance);
-        Failed::kernel(words, &failure, [&[], &[]])
+        tool_failed(self.shape.making(), failure, &self.tolerance)
     }
+}
+
+/// Why the kernel couldn't make a tool by `making`, in words, and its
+/// failure.
+pub(super) fn tool_failed(making: Making, failure: Failure, tolerance: &Tolerance) -> Failed {
+    let words = why::tool(making, failure.error, tolerance.fit() <= Tolerance::MIN_FIT);
+    Failed::by_value(words, failure, tolerance)
 }
 
 /// The key of whether the tool filed under `tool` touches the body's

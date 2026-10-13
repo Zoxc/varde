@@ -59,7 +59,6 @@ use varde_kernel_compat::{Budget, Solid, Tolerance};
 
 use super::{Failed, Run, SketchOutput};
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::KernelFailure;
 use crate::profile::{chain, loft_corner, profile_marked};
 use crate::why::{self, LoftRefusal};
 
@@ -265,8 +264,7 @@ impl Run<'_> {
             LoftError::IntoItself => LoftRefusal::IntoItself,
             LoftError::Failed(failure) => {
                 let words = why::lofting(failure.error, self.tolerance.fit() <= Tolerance::MIN_FIT);
-                let failure = KernelFailure::new(failure, &self.tolerance);
-                return Failed::kernel(words, &failure, [&[], &[]]);
+                return Failed::by_value(words, failure, &self.tolerance);
             }
         };
         why::loft_refused(why).into()
