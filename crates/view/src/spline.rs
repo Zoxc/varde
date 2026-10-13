@@ -100,28 +100,52 @@ pub fn handles(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Option<Sket
     Some(SketchEdit::Delete(tips.into_iter().collect()))
 }
 
-/// The sketch as dropping its point `point`, dragged and snapped to
-/// `target`, the other end of its arc or spline (see
-/// [`crate::closing`]), leaves it: the point at the other end, the curve
-/// closed there ([`Sketch::close_arc`], [`Sketch::close_spline`], an
-/// open spline only with enough points left to close), with the closed
-/// curve's id. For the drag's preview; `None` if the drop closes nothing.
-pub fn closed_by_drop(sketch: &Sketch, point: Id, target: Option<Target>) -> Option<(Id, Sketch)> {
+/// The edit dropping the point `point` of `sketch`, dragged and snapped
+/// to `target`, makes of its curve, if it closes one: on the other end of
+/// an arc it's an end of ([`crate::closing`]), the arc closed
+/// ([`SketchEdit::CloseArc`]), as two coincident ends of one would be
+/// redundant; likewise an open spline's, not linked, closed with its ends
+/// made one ([`SketchEdit::CloseSpline`]) where it keeps enough points to
+/// close. `None` for a drop closing nothing.
+pub fn close_on_drop(sketch: &Sketch, point: Id, target: Option<Target>) -> Option<SketchEdit> {
     let Some(Target::Point(other)) = target else {
         return None;
     };
-    let entry = (sketch.curves.iter())
-        .find(|entry| crate::closing(sketch, entry.id, point) == Some(other))?;
+    (sketch.curves.iter())
+        .filter(|entry| crate::closing(sketch, entry.id, point) == Some(other))
+        .find_map(|entry| match &entry.curve {
+            Curve::Arc { .. } => Some(SketchEdit::CloseArc(entry.id)),
+            // Its ends made one, it must keep enough to close.
+            Curve::Spline(spline)
+                if spline.points.len() > spline.kind.least(true) && !sketch.is_linked(entry.id) =>
+            {
+                Some(SketchEdit::CloseSpline(entry.id))
+            }
+            _ => None,
+        })
+}
+
+/// The sketch as dropping its point `point`, dragged and snapped to
+/// `target`, leaves it where that closes a curve ([`close_on_drop`]): the
+/// point at the other end, the curve closed there, with the closed
+/// curve's id. For the drag's preview; `None` if the drop closes nothing.
+pub(crate) fn closed_by_drop(
+    sketch: &Sketch,
+    point: Id,
+    target: Option<Target>,
+) -> Option<(Id, Sketch)> {
+    let Some(Target::Point(other)) = target else {
+        return None;
+    };
+    let edit = close_on_drop(sketch, point, target)?;
     let mut closed = sketch.clone();
     closed.point_mut(point)?.at = sketch.point(other)?.at;
-    match &entry.curve {
-        Curve::Arc { .. } => closed.close_arc(entry.id).ok()?,
-        Curve::Spline(spline) if spline.points.len() > spline.kind.least(true) => {
-            closed.close_spline(entry.id).ok()?
-        }
+    let id = match edit {
+        SketchEdit::CloseArc(id) => closed.close_arc(id).map(|()| id),
+        SketchEdit::CloseSpline(id) => closed.close_spline(id).map(|()| id),
         _ => return None,
-    }
-    Some((entry.id, closed))
+    };
+    Some((id.ok()?, closed))
 }
 
 /// What closing or opening the curves selected in `sketch` does, and

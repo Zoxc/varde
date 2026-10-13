@@ -583,8 +583,9 @@ bar says why (`EditError::Sketch`).
   after the `Move`, a step of its own). On an arc's other end it's
   `CloseArc` instead, as two coincident ends of an arc are redundant;
   on an open spline's other end `CloseSpline`, its ends made one, where
-  it keeps enough points to close (more than three), else its two points
-  are coincident; while it's dragged there the viewport's base layer draws
+  it keeps enough points to close (more than three) and isn't linked,
+  else its two points are coincident (`spline::close_on_drop` decides,
+  for the drop and its preview alike); while it's dragged there the viewport's base layer draws
   the sketch as the drop leaves it (`spline::closed_by_drop`,
   `Sketching::drag_closing`): the curve closed, the point merged away,
   its region filled from the closed sketch's profiles. A circle's rim dragged snaps

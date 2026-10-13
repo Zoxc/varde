@@ -1113,30 +1113,13 @@ fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<Sk
 }
 
 /// The edit tying the point `point` of `sketch`, dragged, to `target`,
-/// what it snapped to: the `auto` constraints a drawing tool's point
-/// gets ([`ties`]), so one that restates the rest is dropped; or, on the
-/// other end of an arc it's an end of, the arc closed
-/// ([`SketchEdit::CloseArc`]), as two coincident ends of one would be
-/// redundant; likewise an open spline's, closed with its ends made one
-/// ([`SketchEdit::CloseSpline`]) where it keeps enough points to close.
+/// what it snapped to: the curve it closes, if any
+/// ([`varde_view::spline::close_on_drop`]); else the `auto` constraints a
+/// drawing tool's point gets ([`ties`]), so one that restates the rest is
+/// dropped.
 fn snapped(sketch: &Sketch, point: Id, target: Target) -> Option<SketchEdit> {
-    if let Target::Point(other) = target {
-        let closes = |entry: &&varde_sketch::CurveEntry| {
-            varde_view::closing(sketch, entry.id, point) == Some(other)
-        };
-        for entry in sketch.curves.iter().filter(closes) {
-            match &entry.curve {
-                Curve::Arc { .. } => return Some(SketchEdit::CloseArc(entry.id)),
-                // Its ends made one, it must keep enough to close.
-                Curve::Spline(spline)
-                    if spline.points.len() > spline.kind.least(true)
-                        && !sketch.is_linked(entry.id) =>
-                {
-                    return Some(SketchEdit::CloseSpline(entry.id));
-                }
-                _ => {}
-            }
-        }
+    if let Some(close) = varde_view::spline::close_on_drop(sketch, point, Some(target)) {
+        return Some(close);
     }
     let auto = ties(sketch, point, Some(target));
     (!auto.is_empty()).then(|| {
