@@ -297,13 +297,13 @@ impl SketchLayer {
     }
 
     /// Adds the segments between the `placed` points, as the GPU takes
-    /// them, flagged `space`, each as long as `lengths` says in turn,
+    /// them, flagged `flags` ([`SCREEN`], [`WORLD`], [`FADES`]), each as long as `lengths` says in turn,
     /// joined at the ends if `closed`, the `i`th as opaque as `style`'s
     /// colour times `alpha(i)`: two or more points, the last the first
     /// again if `closed`.
     fn push_lines(
         &mut self,
-        space: u32,
+        flags: u32,
         placed: &[Vec3],
         lengths: impl Iterator<Item = f64>,
         closed: bool,
@@ -332,7 +332,7 @@ impl SketchLayer {
                 _ => None,
             };
             let flag = |neighbour: Option<usize>, flag| neighbour.map_or(0, |_| flag);
-            let flags = space | flag(prev, HAS_PREV) | flag(next, HAS_NEXT);
+            let flags = flags | flag(prev, HAS_PREV) | flag(next, HAS_NEXT);
             let [a, b] = [i, i + 1].map(|i| placed[i]);
             let [p, n] = [prev.map_or(a, |i| placed[i]), next.map_or(b, |i| placed[i])];
             let pair = |a: Vec3, b: Vec3| [a.x, a.y, b.x, b.y];
