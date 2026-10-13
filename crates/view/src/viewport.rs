@@ -41,6 +41,7 @@ use crate::projection::Projector;
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::thumbnail::PreviewRequest;
+use crate::view_choices::Choice;
 use crate::{
     Edges, Edit, Look, Message, MotionLook, PlanePick, SketchItem, SketchLines, ViewOptions,
     controls,
@@ -633,10 +634,8 @@ pub fn hints<'a>(sketching: bool, mouse: &MouseOptions) -> Vec<Hint<'a>> {
             .drag_said()
             .map(|label| mouse_hint(MouseButton::Left, label))
     };
-    let right = mouse
-        .right
-        .said()
-        .map(|label| mouse_hint(MouseButton::Right, label));
+    let right = (mouse.right != DragAction::Nothing)
+        .then(|| mouse_hint(MouseButton::Right, Choice::said(mouse.right)));
     let middle = mouse
         .middle
         .drag_said()
