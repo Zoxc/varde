@@ -5,7 +5,7 @@
 
 use glam::DVec2;
 
-use crate::{Constraint, Curve, Id, Kind, Side, Sketch, SplineKind};
+use crate::{Constraint, Curve, Id, Kind, Side, Sketch, SplineKind, signed_distance};
 
 /// Where a [`Constraint::Tangent`] or [`Constraint::Smooth`] with a
 /// spline holds: its point `at`, an end of `spline` (the first of the
@@ -136,7 +136,7 @@ impl Sketch {
     fn off(&self, curve: Id, at: Id) -> Option<f64> {
         let at = self.point(at)?.at;
         if let Some((start, end)) = self.line(curve) {
-            return Some((end - start).normalize().perp_dot(at - start).abs());
+            return Some(signed_distance(at, start, end).abs());
         }
         let (center, radius) = self.round(curve)?;
         Some((at.distance(center) - radius).abs())
