@@ -4,6 +4,8 @@
 //! double-double with them, [`num::bigf`], big-float with them,
 //! [`num::expansion`], the exact floating-point expansions,
 //! [`num::exact`], the exact flat predicates over them,
+//! [`num::decide`], every record's sign with ties broken by symbolic
+//! perturbation,
 //! [`num::trig`], the deterministic trigonometry, and [`bezier`], the
 //! Bernstein forms over those numbers, in one and two parameters.
 
