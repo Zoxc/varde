@@ -500,6 +500,46 @@ pub struct DocumentKeys {
     pub rail: Option<crate::RailOpen>,
 }
 
+/// What [`DocumentKeys::new`] builds the keys from: the one list both
+/// the screen (what it shows) and the app (what a key does) fill in.
+#[derive(Debug, Clone, Copy)]
+pub struct KeysInput<'a> {
+    /// Whether the document can be changed.
+    pub editable: bool,
+    /// The feature selected in the Timeline, if any.
+    pub selected: Option<FeatureId>,
+    /// The sketch being edited, if one is.
+    pub sketch: Option<SketchState<'a>>,
+    /// See [`DocumentKeys::face_selected`].
+    pub face_selected: bool,
+    /// Whether sketches are selected in Objects.
+    pub objects_deletable: bool,
+    /// See [`DocumentKeys::picking_plane`].
+    pub picking_plane: bool,
+    /// See [`DocumentKeys::operation`].
+    pub operation: Option<OperationKeys>,
+    /// See [`DocumentKeys::bodies`].
+    pub bodies: bool,
+    /// See [`DocumentKeys::combinable`].
+    pub combinable: bool,
+    /// See [`DocumentKeys::measuring`].
+    pub measuring: bool,
+    /// See [`DocumentKeys::rail`].
+    pub rail: Option<crate::RailOpen>,
+    /// See [`DocumentKeys::rename`].
+    pub rename: Option<varde_document::Named>,
+    /// See [`DocumentKeys::menu`].
+    pub menu: Option<crate::RowMenu>,
+    /// See [`DocumentKeys::edited`].
+    pub edited: bool,
+    /// See [`DocumentKeys::settings`].
+    pub settings: bool,
+    /// See [`DocumentKeys::undo`].
+    pub undo: bool,
+    /// See [`DocumentKeys::redo`].
+    pub redo: bool,
+}
+
 /// An operation being set up, as the shortcuts see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OperationKeys {
@@ -548,14 +588,27 @@ impl OperationKeys {
 }
 
 impl DocumentKeys {
-    /// The keys of a document, which can be changed if `editable`, with
-    /// `selected` selected in the Timeline and `sketch` being edited, if
-    /// they are.
-    pub fn new(
-        editable: bool,
-        selected: Option<FeatureId>,
-        sketch: Option<SketchState<'_>>,
-    ) -> Self {
+    /// The keys of a document in the state `input` gives.
+    pub fn new(input: KeysInput<'_>) -> Self {
+        let KeysInput {
+            editable,
+            selected,
+            sketch,
+            face_selected,
+            objects_deletable,
+            picking_plane,
+            operation,
+            bodies,
+            combinable,
+            measuring,
+            rail,
+            rename,
+            menu,
+            edited,
+            settings,
+            undo,
+            redo,
+        } = input;
         let tool = sketch.and_then(|sketch| sketch.tool);
         // A drawing tool in use, which keeps what's selected from being
         // closed, opened or taken out.
@@ -603,73 +656,20 @@ impl DocumentKeys {
                     .into_iter()
                     .collect()
             }),
-            ..Self::default()
-        }
-    }
-
-    /// The same keys where `Delete` removes the sketches selected in
-    /// Objects if `objects_deletable`.
-    pub fn with_objects_deletable(self, objects_deletable: bool) -> Self {
-        Self {
-            objects_deletable,
-            ..self
-        }
-    }
-
-    /// The same keys where a face and nothing else is selected in the
-    /// model if `face_selected`.
-    pub fn with_face_selected(self, face_selected: bool) -> Self {
-        Self {
             face_selected,
-            ..self
-        }
-    }
-
-    /// The same keys with the rail's set `rail` open, if one is.
-    pub fn with_rail(self, rail: Option<crate::RailOpen>) -> Self {
-        Self { rail, ..self }
-    }
-
-    /// The same keys with `F2` renaming `rename`, if anything.
-    pub fn with_rename(self, rename: Option<varde_document::Named>) -> Self {
-        Self { rename, ..self }
-    }
-
-    /// The same keys with the context menu key opening `menu`'s, if
-    /// anything's.
-    pub fn with_menu(self, menu: Option<crate::RowMenu>) -> Self {
-        Self { menu, ..self }
-    }
-
-    /// The same keys where the document has changes not saved if
-    /// `edited`.
-    pub fn with_edited(self, edited: bool) -> Self {
-        Self { edited, ..self }
-    }
-
-    /// The same keys with the settings page showing if `settings`.
-    pub fn with_settings(self, settings: bool) -> Self {
-        Self { settings, ..self }
-    }
-
-    /// The same keys where undo can take something back if `undo`, and
-    /// redo bring something back if `redo`.
-    pub fn with_history(self, undo: bool, redo: bool) -> Self {
-        Self { undo, redo, ..self }
-    }
-
-    /// The same keys with `operation` being set up, if one is.
-    pub fn with_operation(self, operation: Option<OperationKeys>) -> Self {
-        Self { operation, ..self }
-    }
-
-    /// The same keys where the document has a body if `bodies`, and two
-    /// or more, to combine, if `combinable`.
-    pub fn with_bodies(self, bodies: bool, combinable: bool) -> Self {
-        Self {
+            objects_deletable,
+            picking_plane,
+            operation,
             bodies,
             combinable,
-            ..self
+            measuring,
+            rail,
+            rename,
+            menu,
+            edited,
+            settings,
+            undo,
+            redo,
         }
     }
 
@@ -679,19 +679,6 @@ impl DocumentKeys {
             Operating::Motion(kind) => Some(kind),
             _ => None,
         }
-    }
-
-    /// The same keys with the plane for a sketch being picked if `picking`.
-    pub fn with_picking_plane(self, picking_plane: bool) -> Self {
-        Self {
-            picking_plane,
-            ..self
-        }
-    }
-
-    /// The same keys with the measure tool in use if `measuring`.
-    pub fn with_measure(self, measuring: bool) -> Self {
-        Self { measuring, ..self }
     }
 
     /// Whether an operation is being set up: an extrude, a revolve, a
@@ -1350,14 +1337,25 @@ mod tests {
     fn undo_and_redo_have_keys_while_there_s_something_to_do() {
         let command = Modifiers::COMMAND;
         let shift = command | Modifiers::SHIFT;
-        let history = |undo, redo| keys(true).with_history(undo, redo);
+        let history = |undo, redo| DocumentKeys {
+            undo,
+            redo,
+            ..keys(true)
+        };
         let undo = |keys| pressed(document_bindings(keys), &key("z"), command);
         assert!(matches!(
             undo(history(true, false)),
             Some(Message::Edit(Edit::Undo))
         ));
         assert!(undo(history(false, true)).is_none());
-        assert!(undo(keys(false).with_history(true, true)).is_none());
+        assert!(
+            undo(DocumentKeys {
+                undo: true,
+                redo: true,
+                ..keys(false)
+            })
+            .is_none()
+        );
         for (letter, modifiers) in [("Z", shift), ("y", command)] {
             let redo = |keys| pressed(document_bindings(keys), &key(letter), modifiers);
             assert!(matches!(
@@ -1380,7 +1378,10 @@ mod tests {
         let command = Modifiers::COMMAND;
         let shift = command | Modifiers::SHIFT;
         let save = |editable, edited| {
-            let keys = keys(editable).with_edited(edited);
+            let keys = DocumentKeys {
+                edited,
+                ..keys(editable)
+            };
             pressed(document_bindings(keys), &key("s"), command)
         };
         assert!(matches!(save(true, true), Some(Message::File(File::Save))));

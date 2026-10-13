@@ -149,7 +149,11 @@ fn the_page_leaves_what_is_open_and_turns_off_the_viewports_keys() {
         keyboard::Modifiers::COMMAND | keyboard::Modifiers::SHIFT,
     );
     // Undo and redo, with something to undo and redo.
-    let keys = varde.doc_keys().unwrap().with_history(true, true);
+    let keys = varde_view::DocumentKeys {
+        undo: true,
+        redo: true,
+        ..varde.doc_keys().unwrap()
+    };
     assert!(varde_view::claimed(
         varde_view::document_bindings(keys),
         &keyboard::Key::Character("z".into()),

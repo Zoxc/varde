@@ -39,8 +39,8 @@ use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeco
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
-    DocumentKeys, Edit, Look, Message as Ui, Mode, OperationKeys, OperationState, Overlay, Panel,
-    PanelHover, Rollback, RowMenu, Snap, ViewOptions,
+    DocumentKeys, Edit, KeysInput, Look, Message as Ui, Mode, OperationKeys, OperationState,
+    Overlay, Panel, PanelHover, Rollback, RowMenu, Snap, ViewOptions,
 };
 
 #[cfg(test)]
@@ -1779,28 +1779,33 @@ impl Doc {
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
         let dragging = self.body_look.sliding();
         (self.dialog().is_none() && !dragging).then(|| {
-            DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
-                .with_face_selected(self.selected_face().is_some())
-                .with_operation(OperationKeys::of(
+            DocumentKeys::new(KeysInput {
+                editable: self.editable(),
+                selected: self.selected_feature,
+                sketch: self.sketch_state(),
+                face_selected: self.selected_face().is_some(),
+                objects_deletable: (self.objects_selected.iter())
+                    .any(|row| matches!(row, varde_view::ObjectRow::Sketch(_))),
+                picking_plane: self.mode.picking_plane().is_some(),
+                operation: OperationKeys::of(
                     self.extrude_state().as_ref(),
                     self.revolve_state().as_ref(),
                     self.combine_state().as_ref(),
                     self.motion_state().as_ref(),
-                ))
-                .with_bodies(
-                    !self.editor.document().bodies().is_empty(),
-                    self.combinable(),
-                )
-                .with_measure(self.mode.measure().is_some())
-                .with_picking_plane(self.mode.picking_plane().is_some())
-                .with_rail(self.rail.state())
-                .with_rename(self.rename_target())
-                .with_menu(self.menu_target())
-                .with_edited(self.edited())
-                .with_history(
-                    self.editor.can_undo() || self.proposing(),
-                    self.editor.can_redo() && !self.proposing(),
-                )
+                ),
+                bodies: !self.editor.document().bodies().is_empty(),
+                combinable: self.combinable(),
+                measuring: self.mode.measure().is_some(),
+                rail: self.rail.state(),
+                rename: self.rename_target(),
+                menu: self.menu_target(),
+                edited: self.edited(),
+                // The settings page is the app's, see `Varde::doc_keys`.
+                settings: false,
+                undo: self.editor.can_undo() || self.proposing(),
+                // Not while edits wait on the solver, which come after.
+                redo: self.editor.can_redo() && !self.proposing(),
+            })
         })
     }
 

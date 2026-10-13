@@ -838,7 +838,10 @@ impl Varde {
     /// settings page in the viewport's place, see [`Doc::keys`].
     fn doc_keys(&self) -> Option<varde_view::DocumentKeys> {
         let keys = self.screen.doc()?.keys()?;
-        (!self.page.resetting).then(|| keys.with_settings(self.page.open))
+        (!self.page.resetting).then_some(varde_view::DocumentKeys {
+            settings: self.page.open,
+            ..keys
+        })
     }
 
     /// What `Esc` does on the settings page, if it's open: cancels Reset

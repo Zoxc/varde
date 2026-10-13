@@ -22,7 +22,7 @@ use varde_sketch::{
 
 use crate::chrome::small_button;
 use crate::file_menu;
-use crate::shortcut::{DocumentKeys, OperationKeys};
+use crate::shortcut::{DocumentKeys, KeysInput, OperationKeys};
 use crate::status::{self};
 use crate::theme::Emphasis;
 use crate::typed::Field;
@@ -362,29 +362,33 @@ impl<'a> DocumentState<'a> {
 
     /// What the screen's shortcuts depend on.
     pub(crate) fn keys(&self) -> DocumentKeys {
-        DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
-            .with_face_selected(self.face_selected())
-            .with_objects_deletable(
-                (self.objects_selected.iter())
-                    .any(|row| matches!(row, crate::ObjectRow::Sketch(_))),
-            )
-            .with_operation(OperationKeys::of(
+        DocumentKeys::new(KeysInput {
+            editable: self.editable(),
+            selected: self.selected_feature,
+            sketch: self.sketch,
+            face_selected: self.face_selected(),
+            objects_deletable: (self.objects_selected.iter())
+                .any(|row| matches!(row, crate::ObjectRow::Sketch(_))),
+            picking_plane: self.picking_plane.is_some(),
+            operation: OperationKeys::of(
                 self.extrude(),
                 self.revolve(),
                 self.combine(),
                 self.motion(),
-            ))
-            .with_bodies(!self.editor.document().bodies().is_empty(), self.combinable)
-            .with_measure(self.measure().is_some())
-            .with_picking_plane(self.picking_plane.is_some())
-            .with_rail(self.rail)
-            .with_edited(self.file.edited)
-            .with_settings(self.settings.is_some())
-            .with_history(
-                self.editor.can_undo() || self.proposing,
-                // Not while edits wait on the solver, which come after.
-                self.editor.can_redo() && !self.proposing,
-            )
+            ),
+            bodies: !self.editor.document().bodies().is_empty(),
+            combinable: self.combinable,
+            measuring: self.measure().is_some(),
+            rail: self.rail,
+            // The screen shows no chip for `F2` or the context menu key.
+            rename: None,
+            menu: None,
+            edited: self.file.edited,
+            settings: self.settings.is_some(),
+            undo: self.editor.can_undo() || self.proposing,
+            // Not while edits wait on the solver, which come after.
+            redo: self.editor.can_redo() && !self.proposing,
+        })
     }
 }
 

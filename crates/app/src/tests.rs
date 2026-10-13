@@ -4426,6 +4426,11 @@ fn origin_objects_and_sketches_are_selected_in_objects() {
     // Not a lone plane with sketches selected: the tool picks as ever.
     assert_eq!(doc.selected_origin_plane(), None);
 
+    // `Delete` removes them.
+    assert!(matches!(
+        press_in(&doc, keyboard::Key::Named(key::Named::Delete)),
+        Some(Message::Ui(Ui::Edit(Edit::RemoveObjects)))
+    ));
     doc.update(Edit::RemoveObjects);
     assert!(sketches(&doc).is_empty());
     assert!(doc.objects_selected.is_empty());
