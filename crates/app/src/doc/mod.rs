@@ -546,17 +546,9 @@ fn home_camera(projection: Projection) -> Camera {
 }
 
 impl Doc {
-    pub(crate) fn new(document: Document, origin: Origin) -> Self {
-        let Origin {
-            target,
-            access,
-            name,
-            saved,
-            creating,
-            recovered,
-            damage,
-            download,
-        } = origin;
+    pub(crate) fn new(document: Document, mut origin: Origin) -> Self {
+        let read_only = read_only(origin.access.clone());
+        let name = std::mem::take(&mut origin.name);
         // Opened from a file, or as a sample: anything with a model.
         let fit_on_model = !document.features().is_empty();
         let editor = Editor::new(document);
@@ -564,21 +556,14 @@ impl Doc {
         let lineage = editor.lineage();
         let mut doc = Self {
             id: DocId::unique(),
-            persist: Persist::new(
-                target,
-                creating,
-                recovered,
-                damage,
-                saved.then_some(revision),
-                revision,
-            ),
+            persist: Persist::new(origin, revision),
             editor,
             camera: home_camera(Projection::default()),
             aspect: None,
             feed: MeshFeed::new(),
             solver: None,
             proposals: Proposals::default(),
-            read_only: read_only(access),
+            read_only,
             edit_error: None,
             notice: None,
             toast: None,
@@ -629,7 +614,6 @@ impl Doc {
             export: Export::default(),
             thumbnails: thumbnail::Thumbnails::default(),
         };
-        doc.opened_download(download);
         doc.sync();
         doc
     }

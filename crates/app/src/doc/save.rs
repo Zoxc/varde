@@ -18,7 +18,7 @@ use varde_io::{
 };
 use varde_view::{NOT_SAVED, SavePlace, Unsaved};
 
-use super::{Doc, FileDamage, Recovery, design_name, read_only, shown_damage};
+use super::{Doc, FileDamage, Origin, Recovery, design_name, read_only, shown_damage};
 use crate::Next;
 use crate::files::Files;
 use crate::io::Io;
@@ -80,21 +80,23 @@ pub(super) struct Persist {
 }
 
 impl Persist {
-    /// Writing to `target`, with `creating`, `recovered` and `damage` as
-    /// in an [`Origin`](super::Origin),
-    /// loaded at editor `revision` and saved at `saved_revision`.
-    pub(super) fn new(
-        target: Target,
-        creating: Option<OpenId>,
-        recovered: Option<Recovery>,
-        damage: Option<FileDamage>,
-        saved_revision: Option<Revision>,
-        revision: Revision,
-    ) -> Self {
+    /// Saving what `origin` says the design was opened from, loaded at
+    /// editor `revision`; its access and name are the [`Doc`]'s.
+    pub(super) fn new(origin: Origin, revision: Revision) -> Self {
+        let Origin {
+            target,
+            saved,
+            creating,
+            recovered,
+            damage,
+            download,
+            access: _,
+            name: _,
+        } = origin;
         Self {
             target,
             creating,
-            saved_revision,
+            saved_revision: saved.then_some(revision),
             // What it was loaded as is saved, or in its store entry.
             auto_save: AutoSave::at(revision),
             recovered,
@@ -105,7 +107,10 @@ impl Persist {
             auto_save_error: None,
             picking: None,
             name_focus: false,
-            download: None,
+            download: download.map(|download| DocDownload {
+                time: download.time,
+                revision: download.latest.then_some(revision),
+            }),
             leaving: None,
         }
     }
@@ -1264,16 +1269,6 @@ impl Doc {
                 }
             }
         })
-    }
-
-    /// The last download of the design, as it's opened, see
-    /// [`DocDownload`].
-    pub(super) fn opened_download(&mut self, download: Option<LastDownload>) {
-        let revision = self.editor.revision();
-        self.persist.download = download.map(|download| DocDownload {
-            time: download.time,
-            revision: download.latest.then_some(revision),
-        });
     }
 
     /// The answer to the store entry `id` asked for for a new design, see
