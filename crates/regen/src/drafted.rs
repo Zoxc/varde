@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, FeatureId, FeatureKind};
 
-use crate::{ErrorGeometry, Evaluation};
+use crate::{ErrorGeometry, Evaluation, bounds};
 
 /// A feature being set up, new or edited, that isn't committed (an
 /// extrude, a revolve): a request answers with it applied, as
@@ -138,6 +138,11 @@ pub(crate) fn of_feature<T: Clone>(list: &[(FeatureId, T)], feature: FeatureId) 
         .map(|(_, found)| found.clone())
 }
 
+/// How near 1 the lengths of a [`SweepFound`]'s directions are: looser
+/// than the answer's tables' [`Picking::UNIT`](crate::Picking::UNIT), as
+/// they're worked out from the path as built.
+const SWEEP_UNIT: f64 = 1e-6;
+
 /// Where a sweep's handles stand, found from its path as built, before
 /// the kernel is asked: for its twist, the end of an open chain; for a
 /// helix's pitch and turns, its axis and the profile's middle.
@@ -166,7 +171,7 @@ impl SweepFound {
     /// Whether the workers' wire takes it: its points within
     /// [`MAX_REFERENCE`] of zero, finite, its directions unit.
     pub fn fits(&self) -> bool {
-        let unit = |v: &[f64; 3]| (glam::DVec3::from(*v).length() - 1.0).abs() < 1e-6;
+        let unit = |v: &[f64; 3]| bounds::unit_within(*v, SWEEP_UNIT);
         match self {
             SweepFound::End { at, tangent, zero } => {
                 within_reference(at) && unit(tangent) && unit(zero)
@@ -250,7 +255,7 @@ impl AlignFound {
     /// Whether the workers' wire takes it: its point and directions
     /// within [`MAX_REFERENCE`] of zero, finite, no direction zero.
     pub fn fits(&self) -> bool {
-        let direction = |v: &[f64; 3]| within_reference(v) && nonzero(v);
+        let direction = |v: &[f64; 3]| within_reference(v) && bounds::nonzero(*v);
         within_reference(&self.point) && self.primary.iter().chain(&self.secondary).all(direction)
     }
 }
@@ -276,16 +281,11 @@ pub const MAX_REFERENCE: f64 = 4.0 * varde_document::MAX_COORD as f64;
 /// those (one far out, a big arc's centre, isn't drawn), so a reply it
 /// sends is never refused on the wire for its reference.
 pub(crate) fn reference_fits([point, along]: &[[f64; 3]; 2]) -> bool {
-    within_reference(point) && within_reference(along) && nonzero(along)
+    within_reference(point) && within_reference(along) && bounds::nonzero(*along)
 }
 
 /// Whether every coordinate of `v` is finite and within
 /// [`MAX_REFERENCE`] of zero, as the wire takes a reference's.
-pub(crate) fn within_reference(v: &[f64; 3]) -> bool {
-    v.iter().all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE)
-}
-
-/// Whether `v`, a direction, isn't zero.
-pub(crate) fn nonzero(v: &[f64; 3]) -> bool {
-    v.iter().any(|&x| x != 0.0)
+fn within_reference(v: &[f64; 3]) -> bool {
+    bounds::within(*v, MAX_REFERENCE)
 }
