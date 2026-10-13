@@ -33,6 +33,9 @@ varde-regen = { workspace = true, features = ["testing"] }
 iced_runtime.workspace = true
 png.workspace = true
 varde-testing.workspace = true
+# Blocks on wgpu setup in examples/samples.rs, which writes the sample
+# designs with their thumbnails.
+pollster.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 resvg.workspace = true

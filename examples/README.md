@@ -24,5 +24,5 @@ would write, rendered offscreen; it needs a GPU adapter, and writes
 nothing without one. To write them again:
 
 ```sh
-cargo run -p varde-view --example samples
+cargo run -p varde-app --example samples
 ```

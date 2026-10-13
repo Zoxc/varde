@@ -23,6 +23,8 @@ mod save;
 mod sketch;
 mod thumbnail;
 
+pub use thumbnail::thumbnail_of;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

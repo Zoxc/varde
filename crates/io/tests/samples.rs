@@ -1,6 +1,6 @@
 //! The sample designs of the workspace's `examples/`, which the web build
 //! lists on its start page: each reads, and has a thumbnail for its card.
-//! They're written by `cargo run -p varde-view --example samples`.
+//! They're written by `cargo run -p varde-app --example samples`.
 
 /// The samples' files, as `crates/app/src/samples.rs` lists them.
 const SAMPLES: [&str; 3] = ["mounting-plate", "knob", "pillow-block"];

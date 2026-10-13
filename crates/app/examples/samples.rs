@@ -1,5 +1,5 @@
 //! Writes the sample designs in the workspace's `examples/` directory:
-//! `cargo run -p varde-view --example samples [-- <directory>]`.
+//! `cargo run -p varde-app --example samples [-- <directory>]`.
 //!
 //! Each design is built as the commands a user would give build it,
 //! every sketch fully constrained and dimensioned. Before writing, each
@@ -8,7 +8,7 @@
 //! same document, and its history regenerates without a failed feature.
 //!
 //! Each is written with its thumbnail, as the app's save writes it (see
-//! `crates/app/src/doc/thumbnail.rs`): the regenerated model's bodies,
+//! `src/doc/thumbnail.rs`): the regenerated model's bodies,
 //! framed from the home camera, rendered offscreen in both themes'
 //! colours. That needs a GPU adapter: without one nothing is written.
 
@@ -21,12 +21,12 @@ use varde_document::{
     FeatureKind, Operation, OriginPlane, Plane, Revolve, Targets, Turn,
 };
 use varde_expr::Value;
-use varde_io::thumbnail::{Image, Thumbnail};
+use varde_io::thumbnail::Thumbnail;
 use varde_render::{Camera, Renderer, wgpu};
 use varde_sketch::{
     Constraint, Curve, Design, Dimension, Id, Measure, Region, RegionRef, Sketch, Spline, analyse,
 };
-use varde_view::{PreviewRequest, THUMBNAIL_SCALE, thumbnail_shot};
+use varde_view::{PreviewRequest, THUMBNAIL_SCALE, ThumbnailImages, thumbnail_shot};
 
 /// A sketch being drawn, with the design its dimensions are read in
 /// (without parameters, which dimensions don't use yet).
@@ -638,13 +638,7 @@ impl Gpu {
             .expect("the thumbnail to be read back")
             .expect("the thumbnail's pixels");
         let [light, dark] = <[_; 2]>::try_from(images).expect("an image in each theme");
-        let image = |image: varde_render::PreviewImage| {
-            Image::new(image.width, image.height, image.rgba).expect("an image of its size")
-        };
-        Thumbnail {
-            light: image(light),
-            dark: image(dark),
-        }
+        varde_app::thumbnail_of(ThumbnailImages { light, dark }).expect("images of their size")
     }
 }
 

@@ -240,10 +240,11 @@ over a dialog, is let go of (`pick::forget`).
 ### Samples
 
 Below browser storage the page can list **samples**: the designs of the
-workspace's `examples/` (written by `cargo run -p varde-view --example
+workspace's `examples/` (written by `cargo run -p varde-app --example
 samples`, with the thumbnail a save would write, rendered offscreen
 through `varde_view::thumbnail_shot`, `PreviewRequest::THEMES` and
-`varde_render::render_preview`, encoded by `varde_io::thumbnail::previews`;
+`varde_render::render_preview`, turned into one by `varde_app::thumbnail_of` as
+saves do and encoded by `varde_io::thumbnail::previews`;
 `crates/io/tests/samples.rs` checks each file has one), each a card with
 its thumbnail (`thumbnail::of_file`, decoded once into
 `Files::sample_thumbnails`),

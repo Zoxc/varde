@@ -853,6 +853,8 @@ fn only_if(
     }
 }
 
+pub use doc::thumbnail_of;
+
 /// What [`run`] ends with, so the executables need not name iced. The
 /// parameters default to that and otherwise make it `std`'s `Result`.
 pub type Result<T = (), E = iced::Error> = std::result::Result<T, E>;

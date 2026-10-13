@@ -19,7 +19,7 @@ use std::time::Duration;
 use iced::futures::channel::oneshot;
 use iced::time::Instant;
 use varde_document::{FeatureId, FeatureKind, Generation};
-use varde_io::thumbnail::Thumbnail;
+use varde_io::thumbnail::{Image, Thumbnail};
 use varde_kernel_compat::{RenderLines, RenderMesh};
 use varde_render::Camera;
 use varde_view::{PreviewRequest, ThumbnailImages};
@@ -31,6 +31,17 @@ use crate::files::Files;
 /// How long a save waits for its thumbnail before it goes without: a
 /// frame is all it takes, unless the window isn't drawn.
 const PATIENCE: Duration = Duration::from_secs(2);
+
+/// The thumbnail a save writes of `images`, rendered in both themes:
+/// `None` if either isn't an image of its size.
+pub fn thumbnail_of(images: ThumbnailImages) -> Option<Thumbnail> {
+    let image =
+        |image: varde_render::PreviewImage| Image::new(image.width, image.height, image.rgba);
+    Some(Thumbnail {
+        light: image(images.light)?,
+        dark: image(images.dark)?,
+    })
+}
 
 /// The document's thumbnails: the one being rendered, if one is, and the
 /// last one rendered.

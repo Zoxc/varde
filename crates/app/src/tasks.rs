@@ -15,16 +15,8 @@ pub(crate) fn thumbnail(
     tag: u64,
     answer: iced::futures::channel::oneshot::Receiver<Option<varde_view::ThumbnailImages>>,
 ) -> Task<Message> {
-    use varde_io::thumbnail::{Image, Thumbnail};
     Task::perform(answer, move |images| {
-        let image =
-            |image: varde_render::PreviewImage| Image::new(image.width, image.height, image.rgba);
-        let thumbnail = images.ok().flatten().and_then(|images| {
-            Some(Thumbnail {
-                light: image(images.light)?,
-                dark: image(images.dark)?,
-            })
-        });
+        let thumbnail = images.ok().flatten().and_then(crate::thumbnail_of);
         Message::Doc(id, ForDoc::Thumbnail(tag, thumbnail))
     })
 }

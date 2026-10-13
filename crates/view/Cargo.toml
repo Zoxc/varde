@@ -27,9 +27,6 @@ probe = []
 varde-document = { workspace = true, features = ["testing"] }
 # Building sketches.
 varde-sketch = { workspace = true, features = ["testing"] }
-# The sample designs' files, written by examples/samples.rs with their
-# thumbnails.
-varde-io.workspace = true
 # Blocks on wgpu setup in headless render tests.
 pollster.workspace = true
 # An independent reference for the bits of saved angles.
