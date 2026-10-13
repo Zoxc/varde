@@ -8,9 +8,9 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileSystemFileHandle, FileSystemWritableFileStream};
 
-use crate::js::{self, file_len};
 use crate::vrdp::{self, WholeRead};
 use crate::web::js::{call, copy_exact, js_error};
+use crate::web_support::numbers::{self, file_len};
 use crate::{Picked, PickedFrom};
 
 /// What the page posted along with a request using a file the user
@@ -93,7 +93,7 @@ async fn read_file(file: &File) -> vrdp::Result<Vec<u8>> {
 /// the file's length as read.
 async fn read_at(file: &File, buf: &mut [u8], at: u64) -> io::Result<()> {
     let part = file
-        .slice_with_f64_and_f64(js::offset(at, 0)?, js::offset(at, buf.len())?)
+        .slice_with_f64_and_f64(numbers::offset(at, 0)?, numbers::offset(at, buf.len())?)
         .map_err(js_error)?;
     let buffer: ArrayBuffer = call(part.array_buffer()).await?.unchecked_into();
     copy_exact(&buffer, buf)

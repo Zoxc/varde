@@ -1,6 +1,6 @@
-//! Glue between Rust and the JS the web build calls: the conversions of
-//! the numbers JS hands over, which are `f64`s, and of its exceptions to IO
-//! errors. Used by the Origin Private File System's store (`src/opfs.rs`)
+//! Glue between Rust and the JS the web build calls: the conversions of the
+//! numbers JS hands over, which are `f64`s, and of its exceptions to IO errors.
+//! Used by the Origin Private File System's store (`src/web_support/names.rs`)
 //! and by files of the user's (`src/pick.rs`).
 //!
 //! Plain Rust, tested natively; waiting for JS promises and turning its
@@ -8,7 +8,7 @@
 
 use std::io;
 
-use crate::wire::MAX_MESSAGE_BYTES;
+use crate::web_support::wire::MAX_MESSAGE_BYTES;
 
 /// The largest integer an `f64` holds exactly, and so the largest size or
 /// offset that crosses to JS and back unchanged.

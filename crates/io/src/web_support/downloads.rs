@@ -37,8 +37,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::UnixSeconds;
 use crate::browser::{DownloadStatus, LastDownload, is_design_name};
-use crate::dir::{Dir, Make, take_waiting};
 use crate::vrdp::{ReadAt, Storage};
+use crate::web_support::dir::{Dir, Make, take_waiting};
 
 /// The file's name at the root of the Origin Private File System.
 pub(crate) const FILE: &str = "downloads.toml";

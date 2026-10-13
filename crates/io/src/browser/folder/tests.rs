@@ -13,8 +13,8 @@ use pollster::block_on;
 use varde_document::Document;
 
 use super::*;
-use crate::dir::fs::FsDir;
 use crate::tests::{TempDir, with_sketch_named};
+use crate::web_support::dir::fs::FsDir;
 use crate::{UnixSeconds, thumbnail};
 
 fn dir(name: &str) -> (TempDir, FsDir) {

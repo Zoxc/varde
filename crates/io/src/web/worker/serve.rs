@@ -11,7 +11,7 @@ use super::disk::Handed;
 use super::files::Files;
 use crate::queue::{Queue, Queued};
 use crate::web::message_bytes;
-use crate::wire::{self, ToWorker};
+use crate::web_support::wire::{self, ToWorker};
 use crate::{Request, Stores};
 
 /// A request the worker was posted, with its number and what was posted

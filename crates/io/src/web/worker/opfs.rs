@@ -14,12 +14,12 @@ use web_sys::{
 };
 
 use crate::UnixSeconds;
-use crate::dir::{Dir, Make};
-use crate::js::{self, number, offset, seconds, size};
-use crate::opfs::{dir_names, done};
 use crate::vrdp::{ReadAt, Storage};
 use crate::web::js::{call, call_method, copy_exact, js_error, method};
-use crate::wire::MAX_MESSAGE_BYTES;
+use crate::web_support::dir::{Dir, Make};
+use crate::web_support::names::{dir_names, done};
+use crate::web_support::numbers::{self, number, offset, seconds, size};
+use crate::web_support::wire::MAX_MESSAGE_BYTES;
 
 /// The root of the Origin Private File System. A browser without it, or
 /// with it turned off, has no `getDirectory`: an error then, never an
@@ -260,7 +260,7 @@ impl Dir for OpfsDir {
         let file: File = call(self.get(name).await?.get_file())
             .await?
             .unchecked_into();
-        let len = js::len(file.size(), max, |size| {
+        let len = numbers::len(file.size(), max, |size| {
             io::Error::new(
                 io::ErrorKind::FileTooLarge,
                 format!("{name} is too large to read: {size} bytes"),
@@ -337,7 +337,7 @@ impl Dir for OpfsDir {
 
 /// `name`, if it's a plain file name, as a [`Dir`]'s names are.
 fn plain(name: &str) -> io::Result<&str> {
-    if crate::dir::is_plain_name(name) {
+    if crate::web_support::dir::is_plain_name(name) {
         Ok(name)
     } else {
         Err(io::Error::new(

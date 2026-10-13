@@ -5,9 +5,9 @@ use std::io;
 use std::path::Path;
 
 use super::opfs::{self, OpfsDir, not_a_place};
-use crate::dir::{Dir, Make};
 use crate::settings::{MAX_BYTES, Settings};
 use crate::vrdp::Storage;
+use crate::web_support::dir::{Dir, Make};
 
 /// Reads the settings from `store`. A missing or unreadable store gives
 /// the defaults.

@@ -10,12 +10,11 @@
 //! The code here is split by where it runs. `page` is the page's side: the
 //! lane's, which never waits (how its requests reach the worker is
 //! [`varde_lane::page`]'s), and the pickers and downloads of files of the
-//! user's (see `src/pick.rs`). `worker` is the worker's: its serve loop,
-//! what it does with each request (`src/web/worker/files.rs`), the Origin
-//! Private File System it keeps designs and auto-saves in, whose
-//! synchronous access handles only exist in workers (see `src/opfs.rs`),
-//! and reading and writing the files the user picked. `js` is used by
-//! both.
+//! user's (see `src/pick.rs`). `worker` is the worker's: its serve loop, what
+//! it does with each request (`src/web/worker/files.rs`), the Origin Private
+//! File System it keeps designs and auto-saves in, whose synchronous access
+//! handles only exist in workers (see `src/web_support/names.rs`), and reading
+//! and writing the files the user picked. `js` is used by both.
 //!
 //! A request using a file the user picked (see `src/pick.rs`) is posted
 //! along with what the browser handed over for it, a handle or a file,
@@ -36,7 +35,7 @@
 use js_sys::Uint8Array;
 use varde_lane::bytes;
 
-use crate::wire;
+use crate::web_support::wire;
 
 pub(crate) mod js;
 pub(crate) mod page;

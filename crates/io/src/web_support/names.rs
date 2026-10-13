@@ -5,12 +5,13 @@
 //! new design is an entry `designs/<id>.vrdp`, a `.vrdp` like any other,
 //! until it's first saved. Beside it, `saved` holds the designs saved to
 //! browser storage by name, each with its sidecar, see `src/browser.rs`, and
-//! `downloads.toml` the downloads made of them, see `src/downloads.rs`.
+//! `downloads.toml` the downloads made of them, see
+//! `src/web_support/downloads.rs`.
 //! OPFS is only reachable through handles, and its synchronous access
 //! handles, which read and write at an offset, exist only in workers, so
 //! the web's IO worker handles them, in `src/web/worker/files.rs`, with
 //! the OPFS primitives of `src/web/worker/opfs.rs`, which also makes a
-//! directory a [`Dir`](crate::dir::Dir). A sync access handle is
+//! directory a [`Dir`](crate::web_support::dir::Dir). A sync access handle is
 //! exclusive: holding one open on an entry, or a sidecar, for as long as
 //! its design is open is its lock, like the OS lock natively, and another
 //! tab trying to take it is refused (`NoModificationAllowedError`). The
@@ -32,14 +33,14 @@
 //!
 //! What's here is plain Rust: the checks on paths and names,
 //! and on the numbers reads and writes hand JS and get back, which are
-//! `f64`s there (see `src/js.rs`). It is tested natively.
+//! `f64`s there (see `src/web_support/numbers.rs`). It is tested natively.
 
 use std::io;
 use std::path::{Component, Path};
 
 use varde_document::EXTENSION;
 
-use crate::js;
+use crate::web_support::numbers;
 
 /// The names of the directories, from the root of the Origin Private File
 /// System, that `dir` is made of. `None` unless it's all plain names.
@@ -67,7 +68,7 @@ pub(crate) fn new_name(millis: f64, random: f64, n: u64) -> String {
 /// How many bytes a read or write that asked for `wanted` did, as JS gave
 /// it: never more than asked for.
 pub(crate) fn done(value: f64, wanted: usize) -> io::Result<usize> {
-    js::len(value, wanted, |_| {
+    numbers::len(value, wanted, |_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("the browser did {value} bytes of {wanted}"),

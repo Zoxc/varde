@@ -1,11 +1,11 @@
 //! The lane on the web: what its IO worker (`src/web.rs`) does with each
-//! request, the counterpart of the native lane's `src/native/files.rs`.
-//! Designs are saved in browser storage, by name, see `src/browser.rs`; new
-//! designs never saved, and designs opened from files of the user's, are
-//! auto-saved to entries in the store of new designs, see `src/opfs.rs`,
-//! and the latter saved to the files the user picked, see `src/pick.rs`.
-//! Getting at files there is asynchronous, so unlike the native lane's
-//! this is too; the worker still handles one request at a time.
+//! request, the counterpart of the native lane's `src/native/files.rs`. Designs
+//! are saved in browser storage, by name, see `src/browser.rs`; new designs
+//! never saved, and designs opened from files of the user's, are auto-saved to
+//! entries in the store of new designs, see `src/web_support/names.rs`, and the
+//! latter saved to the files the user picked, see `src/pick.rs`. Getting at
+//! files there is asynchronous, so unlike the native lane's this is too; the
+//! worker still handles one request at a time.
 
 use std::io;
 use std::mem;
@@ -20,10 +20,7 @@ use super::settings;
 use crate::autosave::{Ending, Held, to_open};
 use crate::browser::folder::{self, Design};
 use crate::browser::{self, BrowserDesign, LastDownload};
-use crate::dir::{Dir, Make, end_held, remove_if_free, take_new};
-use crate::downloads::{self, Downloads};
 use crate::open::{NOT_FOUND, OpenFiles};
-use crate::opfs::new_name;
 use crate::store::{
     Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
 };
@@ -33,6 +30,9 @@ use crate::vrdp::{
     self, Error as FileError, Known, Preview, Tail, check_unchanged, from_bytes_with_found,
     whole_file,
 };
+use crate::web_support::dir::{Dir, Make, end_held, remove_if_free, take_new};
+use crate::web_support::downloads::{self, Downloads};
+use crate::web_support::names::new_name;
 use crate::{
     Access, Chosen, Closing, Damage, FileId, OpenId, Opened, Picked, ReadOnly, Recovered, Request,
     Response, SaveError, SaveTo, SavedAs, Stores, UnixSeconds,

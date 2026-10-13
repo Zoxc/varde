@@ -38,7 +38,7 @@ mod imp {
     use web_sys::StorageManager;
 
     use super::Space;
-    use crate::js::size;
+    use crate::web_support::numbers::size;
 
     fn manager() -> Option<StorageManager> {
         Some(web_sys::window()?.navigator().storage())

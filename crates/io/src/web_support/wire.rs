@@ -27,7 +27,6 @@
 //! [`Document::to_postcard`]: varde_document::Document::to_postcard
 //! [`codec`]: varde_document::codec
 
-
 use serde::{Deserialize, Serialize};
 
 use varde_document::{DecodeError, codec};

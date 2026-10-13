@@ -27,17 +27,17 @@
 //!
 //! On the web, designs are saved in browser storage, by name, laid out
 //! like a folder of designs with their sidecars (`src/browser.rs`, over the
-//! directories of `src/dir.rs`), and the downloads made of them are
-//! recorded (`src/downloads.rs`).
+//! directories of `src/web_support/dir.rs`), and the downloads made of them
+//! are recorded (`src/web_support/downloads.rs`).
 //!
-//! Natively the lane is a thread for the whole app
-//! (`src/native/thread.rs`). The web has no path based file system: there
-//! the lane is a Web Worker (`src/web.rs`, handling requests in
-//! `src/web/worker/files.rs`) keeping
-//! designs and auto-saves in the Origin Private File System (`src/opfs.rs`), and
-//! requests and responses cross to it as bytes (see `src/wire.rs`). Both
-//! are [`lane`]. Files of the user's are picked on the web by the page,
-//! see [`pick`], and handed to the worker as a [`Picked`].
+//! Natively the lane is a thread for the whole app (`src/native/thread.rs`).
+//! The web has no path based file system: there the lane is a Web Worker
+//! (`src/web.rs`, handling requests in `src/web/worker/files.rs`) keeping
+//! designs and auto-saves in the Origin Private File System
+//! (`src/web_support/names.rs`), and requests and responses cross to it as
+//! bytes (see `src/web_support/wire.rs`). Both are [`lane`]. Files of the
+//! user's are picked on the web by the page, see [`pick`], and handed to the
+//! worker as a [`Picked`].
 //!
 //! [`three_mf`] writes bodies' meshes as a 3MF package, for printing, and
 //! [`thumbnail`] encodes and decodes the PNG thumbnails saves write.
@@ -47,22 +47,14 @@
 // Modules at the root are compiled for both targets. What only native
 // builds have, with a path based file system, is under `native`; what only
 // the web has is under `web`, split into the page's side and the IO
-// worker's. The plain Rust halves of what only the web uses (`js`, `opfs`,
-// `wire`) are at the root, tested natively too.
+// worker's. The plain Rust halves of what only the web uses are under
+// `web_support`, which native tests build too.
 mod autosave;
 pub mod browser;
-#[cfg(any(target_arch = "wasm32", test))]
-mod dir;
-#[cfg(any(target_arch = "wasm32", test))]
-mod downloads;
-#[cfg(any(target_arch = "wasm32", test))]
-mod js;
 mod lock;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod open;
-#[cfg(any(target_arch = "wasm32", test))]
-mod opfs;
 pub mod panicked;
 pub mod pick;
 mod queue;
@@ -76,7 +68,7 @@ pub mod vrdp;
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(any(target_arch = "wasm32", test))]
-mod wire;
+mod web_support;
 
 /// Handles the app's file system requests in order: natively a thread
 /// (`src/native/thread.rs`), on the web a Web Worker (`src/web.rs`). Both
@@ -218,7 +210,8 @@ pub struct OpenId(pub u64);
 
 /// Work for the IO lane.
 ///
-/// Serializable to cross to the web's IO worker, see `src/wire.rs`.
+/// Serializable to cross to the web's IO worker, see
+/// `src/web_support/wire.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     /// Reads the document the user chose, answered with

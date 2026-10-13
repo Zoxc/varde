@@ -8,7 +8,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::DomException;
 
-use crate::js::error_kind;
+use crate::web_support::numbers::error_kind;
 
 /// Waits for `promise`.
 pub(crate) async fn call(promise: Promise) -> io::Result<JsValue> {

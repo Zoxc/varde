@@ -1,8 +1,8 @@
 use pollster::block_on;
 
 use super::*;
-use crate::dir::fs::FsDir;
 use crate::tests::TempDir;
+use crate::web_support::dir::fs::FsDir;
 
 const SUM: u128 = 0x0123_4567_89ab_cdef_0011_2233_4455_6677;
 

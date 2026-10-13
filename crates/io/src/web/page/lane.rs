@@ -15,7 +15,7 @@ use super::pick;
 use crate::lane::{Lane, Responses};
 use crate::queue::Queue;
 use crate::web::message_bytes;
-use crate::wire::{self, Reply, ToWorker};
+use crate::web_support::wire::{self, Reply, ToWorker};
 use crate::{Chosen, Picked, Request, Response, SaveTo};
 
 /// Starts the lane in a new Web Worker, which keeps the app's own files in

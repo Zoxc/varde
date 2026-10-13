@@ -64,8 +64,8 @@ sidecar a few times, a short pause between (`dir::take_waiting`, 300 ms
 in all), before taking the design to be open elsewhere.
 
 The code over OPFS is generic over a small directory trait, `Dir`
-(`crates/io/src/dir.rs`: names, take a file exclusively, read one whole
-or in parts without taking it, when it was written, remove, rename, and
+(`crates/io/src/web_support/dir.rs`: names, take a file exclusively, read
+one whole or in parts without taking it, when it was written, remove, rename, and
 a pause before trying again), so it's tested natively over `std::fs` with
 OS locks standing in for the sync access handles (`FsDir`, in the tests,
 and a wrapper having another tab act between the steps of one);

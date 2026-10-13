@@ -15,14 +15,16 @@ use varde_document::Document;
 
 use super::{BrowserDesign, DownloadStatus, is_design_name, within};
 use crate::autosave::{AutoSaved, Ending, Held, Origin};
-use crate::dir::{Dir, Make, end_held, lost_race, remove_if_free, take_new, take_waiting};
-use crate::downloads::Downloads;
 use crate::lock::{Left, Lock, READ_ONLY};
 use crate::vrdp::{
     self, Error as FileError, FileEnd, Known, Preview, Storage, Tail, WithFound,
     from_bytes_with_report, write_new,
 };
-use crate::wire::MAX_MESSAGE_BYTES;
+use crate::web_support::dir::{
+    Dir, Make, end_held, lost_race, remove_if_free, take_new, take_waiting,
+};
+use crate::web_support::downloads::Downloads;
+use crate::web_support::wire::MAX_MESSAGE_BYTES;
 use crate::{Access, ListedDamage, Offer, ReadOnly, RecoveryError, SaveError, thumbnail};
 
 /// The sidecar of the design `name`: `.{name}.autosave`, as natively.

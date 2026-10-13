@@ -5,7 +5,8 @@
 //! designs/<id>.vrdp            new designs never saved (`src/store.rs`)
 //! saved/<name>.vrdp            designs saved to browser storage
 //! saved/.<name>.vrdp.autosave  their auto-saves and lock
-//! downloads.toml               the downloads made of them (`src/downloads.rs`)
+//! downloads.toml               the downloads made of them
+//!                              (`src/web_support/downloads.rs`)
 //! settings.toml                the settings (`src/settings.rs`)
 //! ```
 //!
@@ -21,14 +22,14 @@
 //! name, as [`file_name`] makes it, so a design downloads under the name it
 //! has in storage, and two can't share one.
 //!
-//! Saving as another name writes a new file of one record (the sidecar of
-//! the new name taken first, so a design open elsewhere is never written
-//! over); any file written whole, saved as a name, over a design or copied
-//! in, is written under a temporary name, `.<name>.<id>.tmp`, then put in
-//! place, and listing puts one left by a tab closed in between in place.
-//! Renaming moves the file, keeping its saves. The code over the directory
-//! is `folder`, generic over `Dir` (`src/dir.rs`), so it's tested natively;
-//! here are the names and what the lane answers with.
+//! Saving as another name writes a new file of one record (the sidecar of the
+//! new name taken first, so a design open elsewhere is never written over); any
+//! file written whole, saved as a name, over a design or copied in, is written
+//! under a temporary name, `.<name>.<id>.tmp`, then put in place, and listing
+//! puts one left by a tab closed in between in place. Renaming moves the file,
+//! keeping its saves. The code over the directory is `folder`, generic over
+//! `Dir` (`src/web_support/dir.rs`), so it's tested natively; here are the
+//! names and what the lane answers with.
 
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +67,7 @@ pub struct BrowserDesign {
 }
 
 /// Where a design in browser storage stands against its downloads, see
-/// `src/downloads.rs`, each with when it was last downloaded.
+/// `src/web_support/downloads.rs`, each with when it was last downloaded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DownloadStatus {
     /// Nothing is recorded for it: what's in the browser is all there is.

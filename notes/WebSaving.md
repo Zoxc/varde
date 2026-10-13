@@ -162,8 +162,8 @@ The user always sees the location, since the two look the same otherwise:
    code (save, auto-save, the lock, recovery) over `Storage` and a
    directory trait (list, open, create, remove, rename), `std::fs`
    natively and OPFS on the web. Native behaviour unchanged, its tests
-   passing; the OPFS side tested natively as `src/opfs.rs` is, through the
-   trait.
+   passing; the OPFS side tested natively as `src/web_support/names.rs`
+   is, through the trait.
 2. **Browser storage in the IO worker.** `saved/` in OPFS: Save and Save As
    to a name (`Request::Save` with a storage name where natively a path),
    open, list, delete, the sidecar lock across tabs. Tests over an
@@ -179,7 +179,7 @@ The user always sees the location, since the two look the same otherwise:
    and Download beside Open; the drop zone; persistent storage and the
    space used.
 6. **Docs.** `agents/web-files.md` and `agents/files.md` rewritten for
-   it, and the module docs of `src/pick.rs` and `src/opfs.rs`.
+   it, and the module docs of `src/pick.rs` and `src/web_support/names.rs`.
 
 ## Open questions
 
@@ -196,8 +196,8 @@ The user always sees the location, since the two look the same otherwise:
 
 ## As built
 
-- **The directory trait** (`crates/io/src/dir.rs`, `Dir`: names, take
-  exclusively, read whole or in parts without taking, modified, remove,
+- **The directory trait** (`crates/io/src/web_support/dir.rs`, `Dir`:
+  names, take exclusively, read whole or in parts without taking, modified, remove,
   rename, pause) is async, as OPFS is. Browser storage's code over it is `src/browser/folder.rs`,
   tested natively over `std::fs` with OS locks standing in for the sync
   access handles (`dir/fs.rs`, test only); `OpfsDir` is the web's. The

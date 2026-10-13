@@ -39,11 +39,11 @@
 //!
 //! Auto-saves of designs from the user's files go to the Origin Private
 //! File System like those of new designs, each to an entry of its own, see
-//! `src/opfs.rs`, along with the file's name, so one left behind by a tab
-//! that closed is listed on the welcome screen by its name. It opens as a
-//! copy: the handle is gone with the tab. Should the entry not be made,
-//! say with the site's data blocked, the file still opens and saves, only
-//! without auto-saves.
+//! `src/web_support/names.rs`, along with the file's name, so one left
+//! behind by a tab that closed is listed on the welcome screen by its name.
+//! It opens as a copy: the handle is gone with the tab. Should the entry not
+//! be made, say with the site's data blocked, the file still opens and saves,
+//! only without auto-saves.
 //!
 //! A file dropped on the page (the app's welcome screen takes them, see
 //! `dropped`) is kept like one the Open picker handed over: where the File
@@ -52,12 +52,11 @@
 //! kept as it's dropped, before the app decides whether to open it: one it
 //! doesn't is let go of with [`forget`].
 //!
-//! Downloading a design is a command of its own, never a save: the page
-//! hands the design over through the [`downloader`], which a design in
-//! browser storage records (see `src/downloads.rs`). Exporting a 3MF file
-//! goes through [`pick_export`]: a save picker suggesting `name.3mf`,
-//! natively or with the File System Access API, and otherwise a download
-//! of `name.3mf`.
+//! Downloading a design is a command of its own, never a save: the page hands
+//! the design over through the [`downloader`], which a design in browser
+//! storage records (see `src/web_support/downloads.rs`). Exporting a 3MF file
+//! goes through [`pick_export`]: a save picker suggesting `name.3mf`, natively
+//! or with the File System Access API, and otherwise a download of `name.3mf`.
 //!
 //! On the web the pickers and downloads are the page's, see
 //! `src/web/page/pick.rs`, and reading and writing what they handed over

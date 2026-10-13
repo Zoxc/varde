@@ -11,7 +11,7 @@ varde-document.workspace = true
 varde-kernel-compat.workspace = true
 varde-lane.workspace = true
 serde.workspace = true
-# The wire format, src/wire.rs.
+# The wire format, src/web_support/wire.rs.
 postcard.workspace = true
 # The .vrdp payload, src/vrdp.rs.
 rmp-serde.workspace = true

@@ -23,12 +23,12 @@
 //! welcome screen offers them as recovered designs. Entries are private to
 //! the user, so on Unix they're made readable by the owner only.
 //!
-//! On the web the store is the directory `designs` in the Origin Private
-//! File System, laid out and used the same way, see `src/opfs.rs`, beside
-//! browser storage's designs saved by name (`src/browser.rs`). What's
-//! here is what both lanes use: [`Recovered`], the checks on entry names
-//! and the constants; making, opening, listing and discarding entries at a
-//! path is `src/native/store.rs`'s.
+//! On the web the store is the directory `designs` in the Origin Private File
+//! System, laid out and used the same way, see `src/web_support/names.rs`,
+//! beside browser storage's designs saved by name (`src/browser.rs`). What's
+//! here is what both lanes use: [`Recovered`], the checks on entry names and
+//! the constants; making, opening, listing and discarding entries at a path is
+//! `src/native/store.rs`'s.
 
 use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
