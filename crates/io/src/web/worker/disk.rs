@@ -70,8 +70,7 @@ pub(crate) async fn read(handed: &Handed) -> vrdp::Result<Vec<u8>> {
 /// Reads the whole file `handle` refers to, see
 /// [`read_file`].
 pub(crate) async fn read_handle(handle: &FileSystemFileHandle) -> vrdp::Result<Vec<u8>> {
-    let file: File = call(handle.get_file()).await?.unchecked_into();
-    read_file(&file).await
+    read_file(&super::opfs::file_of(handle).await?).await
 }
 
 /// Reads the whole of `file` once its start shows it's a `.vrdp` file, as

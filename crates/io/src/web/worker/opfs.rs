@@ -87,10 +87,15 @@ pub(crate) async fn file(
         .unchecked_into())
 }
 
+/// The `File` behind `handle`: a snapshot of its contents now.
+pub(crate) async fn file_of(handle: &FileSystemFileHandle) -> io::Result<File> {
+    Ok(call(handle.get_file()).await?.unchecked_into())
+}
+
 /// When `file` was last written. Not while a sync access handle on it is
 /// open.
 pub(crate) async fn modified(file: &FileSystemFileHandle) -> Option<UnixSeconds> {
-    let file: File = call(file.get_file()).await.ok()?.unchecked_into();
+    let file = file_of(file).await.ok()?;
     seconds(file.last_modified()).map(UnixSeconds)
 }
 
@@ -257,9 +262,7 @@ impl Dir for OpfsDir {
     }
 
     async fn read(&self, name: &str, max: usize) -> io::Result<Vec<u8>> {
-        let file: File = call(self.get(name).await?.get_file())
-            .await?
-            .unchecked_into();
+        let file = file_of(&self.get(name).await?).await?;
         let len = numbers::len(file.size(), max, |size| {
             io::Error::new(
                 io::ErrorKind::FileTooLarge,
@@ -274,9 +277,7 @@ impl Dir for OpfsDir {
     }
 
     async fn reader(&self, name: &str) -> io::Result<Snapshot> {
-        let file: File = call(self.get(name).await?.get_file())
-            .await?
-            .unchecked_into();
+        let file = file_of(&self.get(name).await?).await?;
         Ok(Snapshot(file))
     }
 
