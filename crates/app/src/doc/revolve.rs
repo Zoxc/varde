@@ -25,7 +25,7 @@ use varde_view::{
 use super::regions::{
     BodyTargets, ReadIn, RegionPick, SideFields, TypedText, drag_side, regions_session_stays,
 };
-use super::{Doc, Focus, OUT_OF_DATE, sketch_of};
+use super::{Doc, OUT_OF_DATE, sketch_of};
 
 /// The revolve being set up, while one is: [`Doc::mode`].
 #[derive(Debug)]
@@ -358,16 +358,18 @@ impl Doc {
             session.take_curves(sketch, &curves, document);
         }
         // An edge alone selected is the axis to be.
-        let mut items = self.pick.selection.items();
-        session.axis_selected = match (items.next(), items.next()) {
-            (Some(&Selected::Edge { body, faces, near }), None) => {
-                Some(EdgeRef { body, faces, near })
+        session.axis_selected = {
+            let mut items = self.pick.selection.items();
+            match (items.next(), items.next()) {
+                (Some(&Selected::Edge { body, faces, near }), None) => {
+                    Some(EdgeRef { body, faces, near })
+                }
+                _ => None,
             }
-            _ => None,
         };
-        drop(items);
-        self.mode = DocMode::Operation(OperationSession::Revolve(session));
-        self.focus = Some(Focus::All);
+        self.open_operation(OperationSession::Revolve(session), None, true);
+        // Picking the selected edge is part of opening: the baseline is
+        // taken again with the axis it gives.
         self.axis_from_selection();
         self.opened_operation();
     }
