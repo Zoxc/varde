@@ -111,7 +111,7 @@ pub(super) fn evaluate_mirror(
 
 /// Notes `reference`, the axis or plane `feature` found, in
 /// `evaluation` for its draft's reply, if the workers' wire takes it
-/// ([`crate::reference_fits`]): one that's out of bounds there (a round
+/// ([`crate::drafted::reference_fits`]): one that's out of bounds there (a round
 /// edge's centre far out, an axis of no length) isn't drawn, natively
 /// as on the web.
 pub(super) fn note_reference(
@@ -119,7 +119,7 @@ pub(super) fn note_reference(
     feature: FeatureId,
     reference: [DVec3; 2],
 ) {
-    if crate::reference_fits(&reference.map(|v| v.to_array())) {
+    if crate::drafted::reference_fits(&reference.map(|v| v.to_array())) {
         evaluation.references.push((feature, reference));
     }
 }

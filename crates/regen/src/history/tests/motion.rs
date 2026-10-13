@@ -689,7 +689,10 @@ fn an_axis_is_found_beside_its_face() {
     let apex = DVec3::new(1.0e6 + 5.0, 0.0, -3.0e7);
     let at = varde_kernel_compat::topology::beside(apex, DVec3::Z, DVec3::new(1.0e6, 0.0, 5.0));
     assert_eq!(at, DVec3::new(1.0e6 + 5.0, 0.0, 5.0));
-    assert!(crate::reference_fits(&[at.to_array(), [0.0, 0.0, 1.0]]));
+    assert!(crate::drafted::reference_fits(&[
+        at.to_array(),
+        [0.0, 0.0, 1.0]
+    ]));
 }
 
 /// Draws the closed polygon through `points`.

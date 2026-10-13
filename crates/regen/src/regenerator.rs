@@ -7,10 +7,11 @@ use std::sync::Arc;
 use varde_document::{Command, Document, Editor, FeatureId};
 
 use crate::drafted::of_feature;
+use crate::draw::tessellate_scene;
+use crate::sight::COARSER_STEPS;
 use crate::{
-    Answer, Asked, COARSER_STEPS, Cache, Draft, Drafted, ErrorGeometry, Evaluation, Inspect,
-    Progress, Query, Regenerated, Request, Response, Sight, evaluate, flatten_sketches,
-    tessellate_scene, unsolved,
+    Answer, Asked, Cache, Draft, Drafted, ErrorGeometry, Evaluation, Inspect, Progress, Query,
+    Regenerated, Request, Response, Sight, evaluate, flatten_sketches, unsolved,
 };
 
 /// `document` rolled back to before `until`, if it's given.

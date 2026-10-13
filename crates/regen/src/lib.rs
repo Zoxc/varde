@@ -105,10 +105,6 @@ pub use protocol::{Answer, Asked, Progress, Query, Regenerated, Request, Respons
 pub use regenerator::{Regenerator, handle};
 pub use sight::{Detail, Sight};
 
-pub(crate) use drafted::reference_fits;
-pub(crate) use draw::tessellate_scene;
-pub(crate) use sight::COARSER_STEPS;
-
 /// Carries [`Request`]s to a lane without waiting for them to be handled;
 /// tests stand in for one with their own and answer with [`handle`].
 pub use varde_lane::Transport;

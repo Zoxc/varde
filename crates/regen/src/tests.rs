@@ -10,6 +10,7 @@ use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
 use super::*;
 use crate::cache::Keyer;
+use crate::draw::tessellate_scene;
 use crate::history::tests::{example_extrude, plate_below};
 use crate::picking::{Drawn, Scene};
 
