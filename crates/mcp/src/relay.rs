@@ -31,7 +31,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::guard::{PATH, Token};
-use crate::http::{self, Limits};
+use crate::http::{self, Limits, Status};
 use crate::rpc::{self, Code, Id};
 use crate::tools::ToolReply;
 
@@ -265,6 +265,13 @@ struct Answer {
     body: Vec<u8>,
 }
 
+impl Answer {
+    /// Whether the server answered with `status`.
+    fn is(&self, status: Status) -> bool {
+        self.status == status.code()
+    }
+}
+
 /// Why no answer came.
 #[derive(Debug)]
 enum Failure {
@@ -361,13 +368,13 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         let result = self.send_replaying(&line, kind.headers());
         if let Kind::Notification { initialized } = kind {
             // Never answered, whatever came back.
-            if initialized && result.is_ok_and(|a| a.status == 202) {
+            if initialized && result.is_ok_and(|a| a.is(Status::Accepted)) {
                 self.initialized = Some(line);
             }
             return Ok(());
         }
         match result {
-            Ok(answer) if answer.status == 200 => {
+            Ok(answer) if answer.is(Status::Ok) => {
                 if answer.body.is_empty() || !answer.json {
                     return self.fail(&kind, &Failure::Malformed, out);
                 }
@@ -376,7 +383,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
                 }
                 write_line(out, answer.body)
             }
-            Ok(answer) if answer.status == 202 => Ok(()),
+            Ok(answer) if answer.is(Status::Accepted) => Ok(()),
             // A JSON-RPC error of the server's own, such as -32700 with
             // its 400, goes to the client as it is.
             Ok(answer) if is_error_reply(&answer.body) => write_line(out, answer.body),
@@ -416,7 +423,8 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
     /// another for as long as the server 404s.
     fn send_replaying(&mut self, body: &[u8], headers: Headers) -> Result<Answer, Failure> {
         let answer = self.send(body, headers)?;
-        if answer.status != 404 || headers != Headers::Session || self.initialize.is_none() {
+        if !answer.is(Status::NotFound) || headers != Headers::Session || self.initialize.is_none()
+        {
             return Ok(answer);
         }
         self.replay().map_err(|f| Failure::Replay(Box::new(f)))?;
@@ -426,12 +434,12 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
     /// POSTs `body`, reading the token again after a 401, once.
     fn send(&mut self, body: &[u8], headers: Headers) -> Result<Answer, Failure> {
         let answer = self.post(body, headers)?;
-        if answer.status != 401 {
+        if !answer.is(Status::Unauthorized) {
             return Ok(answer);
         }
         self.token = None;
         let answer = self.post(body, headers)?;
-        if answer.status == 401 {
+        if answer.is(Status::Unauthorized) {
             return Err(Failure::Unauthorized);
         }
         Ok(answer)
@@ -446,7 +454,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         self.session = None;
         self.version = None;
         let answer = self.send(&initialize, Headers::Fresh)?;
-        if answer.status != 200 {
+        if !answer.is(Status::Ok) {
             return Err(Failure::Status(answer.status, answer.reason));
         }
         if answer.session.is_none() {
@@ -455,7 +463,7 @@ impl<C: Connect, S: TokenSource> Relay<C, S> {
         self.started(&answer, initialize);
         if let Some(initialized) = self.initialized.clone() {
             let answer = self.send(&initialized, Headers::Session)?;
-            if answer.status != 202 {
+            if !answer.is(Status::Accepted) {
                 return Err(Failure::Status(answer.status, answer.reason));
             }
         }
