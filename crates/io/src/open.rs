@@ -7,9 +7,9 @@ use std::fmt;
 
 use crate::{FileId, OpenId, Request, SaveError};
 
-/// Why a document isn't auto-saved while what a crashed session left
-/// can't be read, see [`RecoveryError::kept`](crate::RecoveryError::kept).
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+/// Why a document isn't auto-saved while what a crashed session or a
+/// closed tab left can't be read, see
+/// [`RecoveryError::kept`](crate::RecoveryError::kept).
 pub(crate) const KEPT: &str =
     "what was auto-saved before is damaged, and kept until it's discarded";
 
