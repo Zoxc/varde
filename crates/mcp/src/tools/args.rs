@@ -46,21 +46,21 @@ pub(super) fn render(args: &Arguments) -> Result<Render, CallError> {
         None | Some(Value::Null) => RenderFrom::View(NamedView::Iso),
         Some(Value::String(word)) => lookup(NAMED_VIEWS, word)
             .map(RenderFrom::View)
-            .ok_or_else(|| args.error(RENDER_FROM))?,
+            .ok_or_else(|| args.error(render_from()))?,
         Some(Value::Object(map)) => {
             let from = args.nested(map);
             from.only(&["yaw", "pitch"])?;
             let angle = |key: &str| {
                 (from.map.get(key))
                     .and_then(coordinate)
-                    .ok_or_else(|| args.error(RENDER_FROM))
+                    .ok_or_else(|| args.error(render_from()))
             };
             RenderFrom::Angles {
                 yaw: angle("yaw")?,
                 pitch: angle("pitch")?,
             }
         }
-        Some(_) => return Err(args.error(RENDER_FROM)),
+        Some(_) => return Err(args.error(render_from())),
     };
     let projection = args.choice("projection", PROJECTIONS)?;
     let zoom = match args.map.get("zoom") {
@@ -105,9 +105,13 @@ pub(super) fn render(args: &Arguments) -> Result<Render, CallError> {
 }
 
 /// What `render`'s `from` takes, in words.
-const RENDER_FROM: &str = "from is \"iso\", \"front\", \"back\", \"left\", \"right\", \"top\" \
-                           or \"bottom\", or {\"yaw\": angle, \"pitch\": angle}, each typed text \
-                           (\"30 deg\") or a number of degrees";
+fn render_from() -> String {
+    format!(
+        "from is {}, or {{\"yaw\": angle, \"pitch\": angle}}, each typed text (\"30 deg\") or a \
+         number of degrees",
+        quoted_words(NAMED_VIEWS)
+    )
+}
 
 /// `offset` and `limit`, `limit` defaulting to `default` and cut down to
 /// [`MAX_LIMIT`].
@@ -367,14 +371,8 @@ impl<'a> Arguments<'a> {
             Some(Value::String(word)) => Some(word.as_str()),
             Some(_) => None,
         };
-        word.and_then(|word| lookup(choices, word)).ok_or_else(|| {
-            let words: Vec<String> = choices
-                .iter()
-                .map(|(said, _)| format!("{said:?}"))
-                .collect();
-            let (last, rest) = words.split_last().expect("choices aren't empty");
-            self.error(format_args!("{key} is {} or {last}", rest.join(", ")))
-        })
+        word.and_then(|word| lookup(choices, word))
+            .ok_or_else(|| self.error(format_args!("{key} is {}", quoted_words(choices))))
     }
 
     /// An expression, if sent: as [`Arguments::text`].
@@ -586,24 +584,29 @@ impl<'a> Arguments<'a> {
     /// `{"face": key}`, `{"body": name}`, `{"sketch": name, "profiles":
     /// ...}` and `{"sketch": name, "curves": [id, ...]}`.
     pub(super) fn split_tool(&self) -> Result<SplitWith, CallError> {
-        const SAID: &str = "tool is \"xy\", \"xz\" or \"yz\" (an origin plane), {\"face\": key} \
-                            (a face from body_topology), {\"body\": name}, {\"sketch\": name, \
-                            \"profiles\": ...} or {\"sketch\": name, \"curves\": [id, ...]}";
+        let said = || {
+            self.error(format_args!(
+                "tool is {} (an origin plane), {{\"face\": key}} (a face from body_topology), \
+                 {{\"body\": name}}, {{\"sketch\": name, \"profiles\": ...}} or {{\"sketch\": \
+                 name, \"curves\": [id, ...]}}",
+                quoted_words(WORLD_PLANES)
+            ))
+        };
         let map = match self.map.get("tool") {
             None | Some(Value::Null) => return Err(self.error("tool is required")),
             Some(Value::String(word)) => {
                 return lookup(WORLD_PLANES, word)
                     .map(|plane| SplitWith::Surface(Reference::World(plane)))
-                    .ok_or_else(|| self.error(SAID));
+                    .ok_or_else(said);
             }
             Some(Value::Object(map)) => map,
-            Some(_) => return Err(self.error(SAID)),
+            Some(_) => return Err(said()),
         };
         let tool = self.nested(map);
         let has = |key: &str| map.contains_key(key);
         if has("face") || has("body") {
             if map.len() != 1 {
-                return Err(self.error(SAID));
+                return Err(said());
             }
             if has("body") {
                 return tool.name("body").map(SplitWith::Body);
@@ -632,7 +635,7 @@ impl<'a> Arguments<'a> {
                     curves,
                 })
             }
-            _ => Err(self.error(SAID)),
+            _ => Err(said()),
         }
     }
 
@@ -677,16 +680,14 @@ impl<'a> Arguments<'a> {
         kinds: &[ItemKind],
     ) -> Result<Option<Reference<W>>, CallError> {
         let said = || {
-            let mut choices: Vec<String> = worlds.iter().map(|(w, _)| format!("{w:?}")).collect();
-            choices.extend(
+            let choices = (worlds.iter().map(|(w, _)| format!("{w:?}"))).chain(
                 kinds
                     .iter()
                     .map(|kind| format!("{{\"{}\": key}}", kind.word())),
             );
-            let (last, rest) = choices.split_last().expect("choices aren't empty");
             self.error(format_args!(
-                "{key} is {} or {last} (keys from body_topology)",
-                rest.join(", ")
+                "{key} is {} (keys from body_topology)",
+                or_list(choices)
             ))
         };
         match self.map.get(key) {
@@ -738,7 +739,9 @@ impl<'a> Arguments<'a> {
     pub(super) fn sketch_plane(&self) -> Result<Reference<WorldPlane>, CallError> {
         self.reference("plane", WORLD_PLANES, &[ItemKind::Face])?
             .ok_or_else(|| {
-                self.error("plane is required: \"xy\", \"xz\", \"yz\" or {\"face\": key}")
+                let choices = (WORLD_PLANES.iter().map(|(w, _)| format!("{w:?}")))
+                    .chain(["{\"face\": key}".to_owned()]);
+                self.error(format_args!("plane is required: {}", or_list(choices)))
             })
     }
 

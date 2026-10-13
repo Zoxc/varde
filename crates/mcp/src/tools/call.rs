@@ -288,6 +288,21 @@ pub(super) fn words<T>(choices: &[(&str, T)]) -> Value {
     choices.iter().map(|(word, _)| json!(word)).collect()
 }
 
+/// `items` as a list in words: `a, b or c`.
+pub(super) fn or_list<I: IntoIterator<Item = impl std::fmt::Display>>(items: I) -> String {
+    let items: Vec<String> = items.into_iter().map(|item| item.to_string()).collect();
+    match items.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        Some((last, _)) => last.clone(),
+        None => String::new(),
+    }
+}
+
+/// The words of `choices`, each quoted, as an [`or_list`]: `"a", "b" or "c"`.
+pub(super) fn quoted_words<T>(choices: &[(&str, T)]) -> String {
+    or_list(choices.iter().map(|(word, _)| format!("{word:?}")))
+}
+
 /// The one with `word` among `choices`, by one rule for every argument:
 /// trimmed and ignoring ASCII case.
 pub(super) fn lookup<T: Copy>(choices: &[(&str, T)], word: &str) -> Option<T> {

@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use super::call::worded;
 use super::schema::{edit_once, sketch};
-use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, Worded, coordinate, id, words};
+use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, Worded, coordinate, id, or_list, words};
 
 /// The most operations one `edit_sketch` takes: a sketch of a few
 /// shapes, their constraints and dimensions in one call, each
@@ -256,9 +256,7 @@ const OPS: &[OpSpec] = &[
 
 /// The operations' words, for errors: "point, line, ... or move".
 fn op_words() -> String {
-    let (last, rest) = OP_WORDS.split_last().expect("there are operations");
-    let rest: Vec<&str> = rest.iter().map(|(word, _)| *word).collect();
-    format!("{} or {}", rest.join(", "), last.0)
+    or_list(OP_WORDS.iter().map(|(word, _)| word))
 }
 
 worded! {
