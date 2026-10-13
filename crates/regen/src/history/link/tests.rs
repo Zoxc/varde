@@ -292,7 +292,7 @@ fn an_edge_crossing_the_plane_intersects_at_a_point() {
         LinkKind::Intersect,
         OutsideRef::Edge(edge(front_top)),
     );
-    assert_eq!(found(&editor, feature).1, [EDGE_MISSES]);
+    assert_eq!(found(&editor, feature).1, [why::LINK_EDGE_MISSES]);
 }
 
 #[test]
@@ -390,7 +390,7 @@ fn relinking_keeps_ids_and_a_missing_source_is_broken() {
         .unwrap();
     let (relinked, broken) = found(&editor, feature);
     assert!(relinked.is_none());
-    assert_eq!(broken, [SOURCE_ITEM_GONE]);
+    assert_eq!(broken, [why::LINK_SOURCE_ITEM_GONE]);
 }
 
 #[test]
@@ -403,5 +403,5 @@ fn an_edge_not_on_its_body_is_broken() {
         LinkKind::Project,
         OutsideRef::Edge(missing),
     );
-    assert_eq!(found(&editor, feature).1, [EDGE_NOT_FOUND]);
+    assert_eq!(found(&editor, feature).1, [why::LINK_EDGE_NOT_FOUND]);
 }

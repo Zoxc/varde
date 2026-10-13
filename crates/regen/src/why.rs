@@ -37,6 +37,38 @@ pub(crate) const FACE_TOO_FAR: &str = "its face is too far out to sketch on";
 /// Why a feature made from a sketch that isn't placed fails.
 pub(crate) const SKETCH_NOT_PLACED: &str = "its sketch isn't placed";
 
+// Why a sketch's link to something outside it is broken, shown on
+// the link.
+
+/// The sketch it projects from isn't there.
+pub(crate) const LINK_SOURCE_SKETCH_GONE: &str = "its sketch isn't there";
+/// The sketch it projects from isn't placed.
+pub(crate) const LINK_SOURCE_SKETCH_NOT_PLACED: &str = "its sketch isn't placed";
+/// The point or curve it projects isn't in its sketch.
+pub(crate) const LINK_SOURCE_ITEM_GONE: &str = "it isn't in its sketch any more";
+/// The sketch the link is in isn't placed.
+pub(crate) const LINK_NOT_PLACED: &str = "the sketch isn't placed";
+/// The body it's on is gone.
+pub(crate) const LINK_BODY_GONE: &str = "its body is gone";
+pub(crate) const LINK_EDGE_NOT_FOUND: &str = "its edge wasn't found";
+/// The same words as [`FACE_NOT_FOUND`], kept apart: one is a link's,
+/// the other a face sketch's.
+pub(crate) const LINK_FACE_NOT_FOUND: &str = "its face wasn't found";
+pub(crate) const LINK_CORNER_NOT_FOUND: &str = "its corner wasn't found";
+/// An edge intersected that doesn't meet the plane.
+pub(crate) const LINK_EDGE_MISSES: &str = "its edge doesn't cross the sketch's plane";
+/// An edge intersected that lies in the plane.
+pub(crate) const LINK_EDGE_IN_PLANE: &str =
+    "its edge lies in the sketch's plane: project it instead";
+/// A face intersected that the plane doesn't cut.
+pub(crate) const LINK_FACE_MISSES: &str = "the sketch's plane doesn't cut its face";
+/// More than a section or a sampling may take.
+pub(crate) const LINK_TOO_COMPLEX: &str = "it's too complex to follow";
+/// What it found can't be held by the sketch (past the limit).
+pub(crate) const LINK_CANT_HOLD: &str = "what it finds is outside what a sketch can hold";
+/// The kind of source a link can't take (a file's).
+pub(crate) const LINK_WRONG_KIND: &str = "it can't take what it comes from";
+
 /// Why a revolve fails: the line its axis names is gone or isn't a line
 /// any more.
 pub(crate) const AXIS_NOT_FOUND: &str = "axis not found";

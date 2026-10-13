@@ -43,35 +43,10 @@ use varde_sketch::{Budget, Id, LinkKind, LinkShape, SampledChain, SketchEdit};
 
 use super::{BodySolid, Evaluation, SketchOutput};
 use crate::cache::{Cache, Key, Keyer};
+use crate::why;
 
 /// How many places each conic of a projected edge is sampled at.
 const PER_CONIC: usize = 32;
-
-/// The sketch it projects from isn't there.
-pub(crate) const SOURCE_SKETCH_GONE: &str = "its sketch isn't there";
-/// The sketch it projects from isn't placed.
-pub(crate) const SOURCE_SKETCH_NOT_PLACED: &str = "its sketch isn't placed";
-/// The point or curve it projects isn't in its sketch.
-pub(crate) const SOURCE_ITEM_GONE: &str = "it isn't in its sketch any more";
-/// The sketch the link is in isn't placed.
-pub(crate) const NOT_PLACED: &str = "the sketch isn't placed";
-/// The body it's on is gone.
-pub(crate) const BODY_GONE: &str = "its body is gone";
-pub(crate) const EDGE_NOT_FOUND: &str = "its edge wasn't found";
-pub(crate) const FACE_NOT_FOUND: &str = "its face wasn't found";
-pub(crate) const CORNER_NOT_FOUND: &str = "its corner wasn't found";
-/// An edge intersected that doesn't meet the plane.
-pub(crate) const EDGE_MISSES: &str = "its edge doesn't cross the sketch's plane";
-/// An edge intersected that lies in the plane.
-pub(crate) const EDGE_IN_PLANE: &str = "its edge lies in the sketch's plane: project it instead";
-/// A face intersected that the plane doesn't cut.
-pub(crate) const FACE_MISSES: &str = "the sketch's plane doesn't cut its face";
-/// More than a section or a sampling may take.
-pub(crate) const TOO_COMPLEX: &str = "it's too complex to follow";
-/// What it found can't be held by the sketch (past the limit).
-pub(crate) const CANT_HOLD: &str = "what it finds is outside what a sketch can hold";
-/// The kind of source a link can't take (a file's).
-pub(crate) const WRONG_KIND: &str = "it can't take what it comes from";
 
 /// What one link of a sketch found: its shape, or why it's broken.
 pub(crate) type Found = (Id, Result<LinkShape, String>);
@@ -132,10 +107,10 @@ pub(super) fn find(
     (sources.iter())
         .map(|from| {
             let Some(link) = sketch.link(from.link) else {
-                return (from.link, Err(WRONG_KIND.to_owned()));
+                return (from.link, Err(why::LINK_WRONG_KIND.to_owned()));
             };
             let Some(placement) = placement else {
-                return (from.link, Err(NOT_PLACED.to_owned()));
+                return (from.link, Err(why::LINK_NOT_PLACED.to_owned()));
             };
             let found = one(
                 link.kind,
@@ -151,7 +126,7 @@ pub(super) fn find(
                 if shape.fits(design.max) {
                     Ok(shape)
                 } else {
-                    Err(CANT_HOLD.to_owned())
+                    Err(why::LINK_CANT_HOLD.to_owned())
                 }
             });
             (from.link, found)
@@ -170,7 +145,7 @@ fn one(
     cache: &mut Cache,
 ) -> Result<LinkShape, Broken> {
     if !source.takes(kind) {
-        return Err(WRONG_KIND.into());
+        return Err(why::LINK_WRONG_KIND.into());
     }
     let (exact, fit) = (tolerance.resolution(), tolerance.fit());
     match *source {
@@ -178,8 +153,8 @@ fn one(
             let (source, from) = super::placed_sketch(
                 sketches,
                 sketch,
-                || SOURCE_SKETCH_GONE,
-                || SOURCE_SKETCH_NOT_PLACED,
+                || why::LINK_SOURCE_SKETCH_GONE,
+                || why::LINK_SOURCE_SKETCH_NOT_PLACED,
             )?;
             let map = affine(&from, placement);
             let key = Keyer::new("link sketch")
@@ -191,7 +166,7 @@ fn one(
                 .finish();
             cache.link(key, || {
                 (source.sketch.project_item(item, &map, exact, fit)).map_err(|why| match why {
-                    varde_sketch::ProjectError::Missing => SOURCE_ITEM_GONE.into(),
+                    varde_sketch::ProjectError::Missing => why::LINK_SOURCE_ITEM_GONE.into(),
                     varde_sketch::ProjectError::Fit(why) => why.to_string().into(),
                 })
             })
@@ -202,9 +177,9 @@ fn one(
             cache.link(key, || {
                 let solid = &made.solid;
                 let chain = (topology.edge(solid, edge.faces, edge.near))
-                    .map_err(|_| Broken::missing(EDGE_NOT_FOUND))?;
+                    .map_err(|_| Broken::missing(why::LINK_EDGE_NOT_FOUND))?;
                 let chain = &topology.chains()[chain as usize];
-                let curves = chain_curves(solid.mesh(), chain, EDGE_NOT_FOUND)?;
+                let curves = chain_curves(solid.mesh(), chain, why::LINK_EDGE_NOT_FOUND)?;
                 match kind {
                     LinkKind::Project => {
                         let chain = sample(&curves, chain.closed, placement)?;
@@ -214,12 +189,12 @@ fn one(
                         let points =
                             section::crossings(&curves, &cut(placement), exact).map_err(|why| {
                                 match why {
-                                    SectionError::InPlane => Broken::from(EDGE_IN_PLANE),
-                                    SectionError::TooComplex => Broken::from(TOO_COMPLEX),
+                                    SectionError::InPlane => Broken::from(why::LINK_EDGE_IN_PLANE),
+                                    SectionError::TooComplex => Broken::from(why::LINK_TOO_COMPLEX),
                                 }
                             })?;
                         if points.is_empty() {
-                            return Err(EDGE_MISSES.into());
+                            return Err(why::LINK_EDGE_MISSES.into());
                         }
                         let mut shape = LinkShape::default();
                         for p in points {
@@ -237,7 +212,7 @@ fn one(
                 cache.link(key, || {
                     let solid = &made.solid;
                     let region = (topology.face(solid, &face.key, face.near))
-                        .map_err(|_| Broken::missing(FACE_NOT_FOUND))?;
+                        .map_err(|_| Broken::missing(why::LINK_FACE_NOT_FOUND))?;
                     let outline = || {
                         let chains = outline(made, &topology, region, placement)?;
                         LinkShape::fit(&chains, exact, fit).map_err(|why| why.to_string().into())
@@ -251,10 +226,10 @@ fn one(
                         Ok(sections) => sections,
                         // Cut by its own plane, a face gives its outline.
                         Err(SectionError::InPlane) => return outline(),
-                        Err(SectionError::TooComplex) => return Err(TOO_COMPLEX.into()),
+                        Err(SectionError::TooComplex) => return Err(why::LINK_TOO_COMPLEX.into()),
                     };
                     if sections.is_empty() {
-                        return Err(FACE_MISSES.into());
+                        return Err(why::LINK_FACE_MISSES.into());
                     }
                     LinkShape::fit(&chains(placement, sections), exact, fit)
                         .map_err(|why| why.to_string().into())
@@ -267,14 +242,14 @@ fn one(
                 let topology = crate::inspect::topology(made, cache);
                 cache.link(key, || {
                     let at = (topology.corner_point(&made.solid, faces, near))
-                        .map_err(|_| Broken::missing(CORNER_NOT_FOUND))?;
+                        .map_err(|_| Broken::missing(why::LINK_CORNER_NOT_FOUND))?;
                     let mut shape = LinkShape::default();
                     shape.point(placement.to_sketch(at));
                     Ok(shape)
                 })
             })
         }
-        OutsideRef::Corner(_) => Err(WRONG_KIND.into()),
+        OutsideRef::Corner(_) => Err(why::LINK_WRONG_KIND.into()),
     }
 }
 
@@ -327,7 +302,7 @@ fn on_body<T>(
         .following_splits(body, find, |found| {
             found.as_ref().is_err_and(|broken| broken.missing)
         })
-        .unwrap_or(Err(BODY_GONE.into()))
+        .unwrap_or(Err(why::LINK_BODY_GONE.into()))
 }
 
 /// The boundary of the region `region` of `made`'s solid, its outer
@@ -347,11 +322,11 @@ fn outline(
         if a == b || (a != region && b != region) {
             continue;
         }
-        let curves = chain_curves(mesh, chain, FACE_NOT_FOUND)?;
+        let curves = chain_curves(mesh, chain, why::LINK_FACE_NOT_FOUND)?;
         out.push(sample(&curves, chain.closed, placement)?);
     }
     if out.is_empty() {
-        return Err(Broken::missing(FACE_NOT_FOUND));
+        return Err(Broken::missing(why::LINK_FACE_NOT_FOUND));
     }
     Ok(out)
 }
@@ -377,7 +352,7 @@ fn chain_curves(mesh: &Mesh, chain: &Chain, missing: &str) -> Result<Vec<Conic3>
 /// The chain of `curves` sampled along its conics and projected square
 /// onto the plane of the sketch at `placement`, in that sketch.
 fn sample(curves: &[Conic3], closed: bool, placement: &Placement) -> Result<SampledChain, Broken> {
-    let places = section::sample(curves, PER_CONIC, closed).map_err(|_| TOO_COMPLEX)?;
+    let places = section::sample(curves, PER_CONIC, closed).map_err(|_| why::LINK_TOO_COMPLEX)?;
     Ok(in_sketch(&places, closed, placement))
 }
 
@@ -442,7 +417,7 @@ pub(super) fn relink(
             for (link, _) in stale {
                 evaluation
                     .broken
-                    .push((feature, link, format!("{CANT_HOLD}: {why}")));
+                    .push((feature, link, format!("{}: {why}", why::LINK_CANT_HOLD)));
             }
         }
     }
