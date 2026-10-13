@@ -11,7 +11,7 @@ use varde_expr::{Ask, Quantity, Value};
 
 use crate::angle;
 use crate::constraint::own_point;
-use crate::{Design, EditError, Id, Role, Side, Sketch, crossing, foot, signed_distance};
+use crate::{Design, EditError, Id, Role, Shape, Side, Sketch, crossing, foot, signed_distance};
 
 /// The least length a dimension may be, in millimetres: a micrometre. The
 /// solver holds equations to a ten-billionth of the sketch's size, which
@@ -200,39 +200,26 @@ pub struct DimensionEntry {
     pub dimension: Dimension,
 }
 
-/// A point or a line, as a [`Measure::Distance`] names it.
-#[derive(Debug, Clone, Copy)]
-enum End {
-    Point(DVec2),
-    Line(DVec2, DVec2),
-}
-
 impl Sketch {
-    fn end(&self, id: Id) -> Option<End> {
-        match self.point(id) {
-            Some(point) => Some(End::Point(point.at)),
-            None => self.line(id).map(|(start, end)| End::Line(start, end)),
-        }
-    }
-
     /// Two points, or a point and a line (the point first, and whether it
     /// was so), or two lines: what a [`Measure::Distance`] of `a` and `b`
     /// is between, as the sided distance and its anchor. `None` if either
     /// is missing or of another kind.
     fn distance(&self, a: Id, b: Id) -> Option<(f64, DVec2, Side)> {
-        let (a, b) = (self.end(a)?, self.end(b)?);
+        let (a, b) = (self.shape(a)?, self.shape(b)?);
         let sided = |point: DVec2, start, end| {
             let distance = signed_distance(point, start, end);
             let anchor = point.midpoint(foot(point, start, end));
             (distance, anchor, Side::of(distance))
         };
         Some(match (a, b) {
-            (End::Point(a), End::Point(b)) => (a.distance(b), a.midpoint(b), Side::Positive),
-            (End::Point(point), End::Line(start, end))
-            | (End::Line(start, end), End::Point(point)) => sided(point, start, end),
-            (End::Line(a_start, a_end), End::Line(start, end)) => {
+            (Shape::Point(a), Shape::Point(b)) => (a.distance(b), a.midpoint(b), Side::Positive),
+            (Shape::Point(point), Shape::Line(start, end))
+            | (Shape::Line(start, end), Shape::Point(point)) => sided(point, start, end),
+            (Shape::Line(a_start, a_end), Shape::Line(start, end)) => {
                 sided(a_start.midpoint(a_end), start, end)
             }
+            (Shape::Round(..), _) | (_, Shape::Round(..)) => return None,
         })
     }
 
@@ -242,13 +229,10 @@ impl Sketch {
     fn edge_gap(&self, round: Id, other: Id, side: Side) -> Option<f64> {
         let (center, radius) = self.round(round)?;
         let sign = side.sign();
-        Some(match self.end(other) {
-            Some(End::Point(point)) => sign * (point.distance(center) - radius),
-            Some(End::Line(start, end)) => sign * signed_distance(center, start, end) - radius,
-            None => {
-                let (to, to_radius) = self.round(other)?;
-                sign * (to.distance(center) - radius) - to_radius
-            }
+        Some(match self.shape(other)? {
+            Shape::Point(point) => sign * (point.distance(center) - radius),
+            Shape::Line(start, end) => sign * signed_distance(center, start, end) - radius,
+            Shape::Round(to, to_radius) => sign * (to.distance(center) - radius) - to_radius,
         })
     }
 
@@ -256,11 +240,10 @@ impl Sketch {
     /// them on now: outside or inside, which side of a line.
     fn edge_side(&self, round: Id, other: Id) -> Option<Side> {
         let (center, radius) = self.round(round)?;
-        Some(match self.end(other) {
-            Some(End::Point(point)) => Side::of(point.distance(center) - radius),
-            Some(End::Line(start, end)) => Side::of(signed_distance(center, start, end)),
-            None => {
-                let (to, to_radius) = self.round(other)?;
+        Some(match self.shape(other)? {
+            Shape::Point(point) => Side::of(point.distance(center) - radius),
+            Shape::Line(start, end) => Side::of(signed_distance(center, start, end)),
+            Shape::Round(to, to_radius) => {
                 if to.distance(center) + to_radius < radius {
                     Side::Negative
                 } else {
@@ -279,9 +262,9 @@ impl Sketch {
     pub fn edge_ends(&self, round: Id, other: Id, side: Side) -> Option<(DVec2, DVec2)> {
         let (center, radius) = self.round(round)?;
         let toward = |to: DVec2| (to - center).try_normalize();
-        match self.end(other) {
-            Some(End::Point(point)) => Some((center + toward(point)? * radius, point)),
-            Some(End::Line(start, end)) => {
+        match self.shape(other)? {
+            Shape::Point(point) => Some((center + toward(point)? * radius, point)),
+            Shape::Line(start, end) => {
                 let foot = foot(center, start, end);
                 // The near edge, on the side of the line the centre is.
                 let way = toward(foot).or_else(|| {
@@ -290,8 +273,7 @@ impl Sketch {
                 })?;
                 Some((center + way * radius, foot))
             }
-            None => {
-                let (to, to_radius) = self.round(other)?;
+            Shape::Round(to, to_radius) => {
                 let way = toward(to)?;
                 let far = match side {
                     Side::Positive => -to_radius,

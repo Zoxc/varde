@@ -388,8 +388,12 @@ impl Sketch {
         tangent_between((a, self.shape(a)?), (b, self.shape(b)?))
     }
 
-    /// The shape of the curve `id`, or an axis, for [`tangent_between`].
+    /// The shape of the point, curve or axis `id`: `None` if it's missing
+    /// or a spline.
     pub fn shape(&self, id: Id) -> Option<Shape> {
+        if let Some(point) = self.point(id) {
+            return Some(Shape::Point(point.at));
+        }
         match self.round(id) {
             Some((center, radius)) => Some(Shape::Round(center, radius)),
             None => self.line(id).map(|(start, end)| Shape::Line(start, end)),
@@ -397,10 +401,11 @@ impl Sketch {
     }
 }
 
-/// A curve's shape, whether in a sketch or not yet: a line's ends, or a
-/// circle's or an arc's centre and radius.
+/// An item's shape, whether in a sketch or not yet: a point's place, a
+/// line's ends, or a circle's or an arc's centre and radius.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Shape {
+    Point(DVec2),
     Line(DVec2, DVec2),
     Round(DVec2, f64),
 }
@@ -409,7 +414,7 @@ pub enum Shape {
 /// shape, on the side their geometry is nearer to: a circle or an arc on
 /// the side of a line its centre is on, two of them outside each other or
 /// one inside the other, whichever they're nearer to, the larger first
-/// when inside. `None` for two lines.
+/// when inside. `None` for two lines or a point.
 pub fn tangent_between((a, a_shape): (Id, Shape), (b, b_shape): (Id, Shape)) -> Option<Constraint> {
     let side_of =
         |start: DVec2, end: DVec2, center: DVec2| Side::of((end - start).perp_dot(center - start));
@@ -444,6 +449,8 @@ pub fn tangent_between((a, a_shape): (Id, Shape), (b, b_shape): (Id, Shape)) -> 
             side: side_of(start, end, center),
             at: None,
         },
-        (Shape::Line(..), Shape::Line(..)) => return None,
+        (Shape::Line(..), Shape::Line(..)) | (Shape::Point(_), _) | (_, Shape::Point(_)) => {
+            return None;
+        }
     })
 }
