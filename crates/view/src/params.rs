@@ -20,7 +20,7 @@ use crate::chrome::{hrule, scrolled, sentence};
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::operation_panel::{
-    CLOSE_BUTTON, PANEL_MARGIN, PANEL_WIDTH, Sections, head_button, placed_from,
+    PANEL_MARGIN, PANEL_WIDTH, PARAMS_CLOSE, Sections, head_button, placed_from,
 };
 use crate::theme::{self, SEMIBOLD};
 use crate::{Edit, Look, Message};
@@ -226,7 +226,7 @@ fn card<'a>(state: ParamsState<'a>) -> Element<'a, Message> {
     .align_y(Alignment::Center);
     let close = head_button(
         Icon::Cancel,
-        CLOSE_BUTTON,
+        PARAMS_CLOSE,
         false,
         Some(Message::Look(Look::ToggleParams)),
         "Close",

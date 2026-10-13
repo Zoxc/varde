@@ -71,13 +71,17 @@ pub const PANEL_BODY: iced::widget::Id = iced::widget::Id::new("operation-panel-
 pub(crate) const OK_BUTTON: iced::widget::Id = iced::widget::Id::new("OK");
 pub(crate) const CANCEL_BUTTON: iced::widget::Id = iced::widget::Id::new("Cancel");
 pub(crate) const CLOSE_BUTTON: iced::widget::Id = iced::widget::Id::new("Close");
+/// The parameters popup's close button, its own id as the popup can
+/// show beside a panel with [`CLOSE_BUTTON`].
+pub(crate) const PARAMS_CLOSE: iced::widget::Id = iced::widget::Id::new("Close parameters");
 
 /// The head's buttons and what each is called, see [`OK_BUTTON`].
 #[cfg(any(test, feature = "probe"))]
-pub(crate) const BUTTON_NAMES: [(iced::widget::Id, &str); 3] = [
+pub(crate) const BUTTON_NAMES: [(iced::widget::Id, &str); 4] = [
     (OK_BUTTON, "OK"),
     (CANCEL_BUTTON, "Cancel"),
     (CLOSE_BUTTON, "Close"),
+    (PARAMS_CLOSE, "Close"),
 ];
 
 /// How tall a message at the foot gets at most, in pixels: about five
