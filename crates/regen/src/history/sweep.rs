@@ -63,6 +63,7 @@
 //! [`edge_shape`]: varde_kernel_compat::measure::edge_shape
 //! [`JOINT_SINE`]: varde_kernel_compat::sweep::JOINT_SINE
 
+use std::cell::OnceCell;
 use std::sync::Arc;
 
 use glam::DVec3;
@@ -125,8 +126,14 @@ impl Run<'_> {
     ) -> Result<(Arc<Solid>, Key), Failed> {
         let placement = self.placement()?;
         let frame = super::frame(&placement);
+        // Built at most once: for the start's search when that needs it,
+        // and for the kernel on a cache miss.
+        let profile = OnceCell::new();
+        let middle = || profile_middle(profile.get_or_init(|| self.profile()), &placement);
         let path = match &sweep.path {
-            PathRef::Chain(parts) => self.chain_path(parts, &placement, evaluation, cache)?,
+            PathRef::Chain(parts) => {
+                self.chain_path(parts, &placement, middle, evaluation, cache)?
+            }
             PathRef::Helix(helix) => self.helix_path(helix, evaluation, cache)?,
         };
         let orientation = match sweep.orientation {
@@ -137,7 +144,7 @@ impl Run<'_> {
             Path::Chain { pieces, closed } => (!closed)
                 .then(|| chain_end(pieces, &frame, orientation))
                 .flatten(),
-            Path::Helix(helix) => Some(helix_start(helix, self.profile_middle(&placement))),
+            Path::Helix(helix) => Some(helix_start(helix, middle())),
         };
         if let Some(found) = found.filter(SweepFound::fits) {
             evaluation.swept.push((self.feature.id, found));
@@ -156,7 +163,7 @@ impl Run<'_> {
         let key = keyer.finish();
         let sweep_by = sweeper();
         let solid = cache.solid(key, || {
-            let profile = self.profile()?;
+            let profile = profile.into_inner().unwrap_or_else(|| self.profile())?;
             sweep_by(
                 &profile,
                 &frame,
@@ -173,11 +180,13 @@ impl Run<'_> {
     }
 
     /// The chain path `parts` make, for a profile on the sketch placed at
-    /// `placement`, as the module's docs say.
+    /// `placement`, as the module's docs say; `middle` gives the
+    /// profile's middle, should the start need looking for.
     fn chain_path(
         &self,
         parts: &[PathPart],
         placement: &Placement,
+        middle: impl FnOnce() -> DVec3,
         evaluation: &Evaluation,
         cache: &mut Cache,
     ) -> Result<Path, Failed> {
@@ -191,32 +200,7 @@ impl Run<'_> {
             });
         }
         let start = (placement.origin, placement.normal);
-        join(
-            built,
-            start,
-            || self.profile_middle(placement),
-            &self.tolerance,
-        )
-    }
-
-    /// The middle of the profile's box, in the world: where the start is
-    /// looked for nearest among several ends on the profile's plane. The
-    /// plane's origin if the profile can't be made (its failure is told
-    /// when the kernel is asked).
-    fn profile_middle(&self, placement: &Placement) -> DVec3 {
-        let Ok(profile) = self.profile() else {
-            return placement.origin;
-        };
-        let points = (profile.loops.iter())
-            .flat_map(|lp| lp.segments.iter())
-            .flat_map(|segment| [segment.conic.p0, segment.conic.p1]);
-        let mut bounds: Option<(glam::DVec2, glam::DVec2)> = None;
-        for p in points {
-            bounds = Some(bounds.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))));
-        }
-        bounds.map_or(placement.origin, |(lo, hi)| {
-            placement.to_world((lo + hi) * 0.5)
-        })
+        join(built, start, middle, &self.tolerance)
     }
 
     /// The part a chain of a sketch's curves makes, in the world.
@@ -781,4 +765,24 @@ fn path_bits(keyer: &mut Keyer, path: &Path) {
                 .number(u64::from(helix.left));
         }
     }
+}
+
+/// The middle of the profile's box, in the world: where the start is
+/// looked for nearest among several ends on the profile's plane. The
+/// plane's origin if the profile can't be made (its failure is told
+/// when the kernel is asked).
+fn profile_middle(profile: &Result<Profile, String>, placement: &Placement) -> DVec3 {
+    let Ok(profile) = profile else {
+        return placement.origin;
+    };
+    let points = (profile.loops.iter())
+        .flat_map(|lp| lp.segments.iter())
+        .flat_map(|segment| [segment.conic.p0, segment.conic.p1]);
+    let mut bounds: Option<(glam::DVec2, glam::DVec2)> = None;
+    for p in points {
+        bounds = Some(bounds.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))));
+    }
+    bounds.map_or(placement.origin, |(lo, hi)| {
+        placement.to_world((lo + hi) * 0.5)
+    })
 }
