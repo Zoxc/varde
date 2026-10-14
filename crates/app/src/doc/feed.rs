@@ -1288,6 +1288,11 @@ impl Merges {
         varde_regen::merged_into(&self.0, body)
     }
 
+    /// The body holding `body`: the one it was merged into, or itself.
+    pub(crate) fn holding(&self, body: BodyId) -> BodyId {
+        varde_regen::holding(&self.0, body)
+    }
+
     /// The bodies merged into `holder`.
     pub(crate) fn held_by(&self, holder: BodyId) -> impl Iterator<Item = BodyId> + '_ {
         (self.0.iter())

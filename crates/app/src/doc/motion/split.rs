@@ -241,7 +241,7 @@ impl MotionSession {
         let Some(body) = self.split.body else {
             return false;
         };
-        let held = merges.holder(body).unwrap_or(body);
+        let held = merges.holding(body);
         if self.bodies.first() == Some(&held) {
             self.split.body = None;
             if self.split.mode == SplitMode::Body && self.picking == MotionPick::Nothing {

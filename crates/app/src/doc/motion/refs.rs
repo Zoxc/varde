@@ -310,7 +310,7 @@ impl Doc {
             R::named(&naming, index, target, pick.at).map_err(|why| unnamed(why, R::NOUN, kind))?;
         let document = self.editor.document();
         let merged = merged_in(document, session.feature, marks);
-        let held = merged.holder(named.body()).unwrap_or(named.body());
+        let held = merged.holding(named.body());
         // A blend's edges and faces are all on one body.
         let picked = if kind.blends() {
             varde_document::blend_body(&session.blend.edges.refs, &session.faces.refs)

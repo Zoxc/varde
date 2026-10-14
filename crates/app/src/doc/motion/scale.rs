@@ -278,7 +278,7 @@ impl Doc {
             .map_err(|why| unnamed(why, "edge", MotionKind::Scale))?;
         let document = self.editor.document();
         let merged = merged_in(document, session.feature, marks);
-        let held = merged.holder(named.body).unwrap_or(named.body);
+        let held = merged.holding(named.body);
         if !session.bodies.is_empty() && session.bodies.binary_search(&held).is_err() {
             return Err("Pick an edge of a body it scales".into());
         }

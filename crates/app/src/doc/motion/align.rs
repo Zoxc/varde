@@ -297,7 +297,7 @@ impl AlignSetup {
     /// merges before the align) merged into it: picking another body to
     /// move leaves neither side naming the wrong one.
     fn moved_to(&mut self, body: BodyId, merges: &Merges) {
-        let held = |on: BodyId| merges.holder(on).unwrap_or(on);
+        let held = |on: BodyId| merges.holding(on);
         for role in AlignRole::ALL {
             let moved = AlignSlot::new(AlignSide::Moved, role);
             if self
@@ -348,7 +348,7 @@ impl AlignSetup {
     /// combine added or redone since. Regenerating refuses those, so the
     /// panel says they're gone ([`AlignSetup::gone`]).
     fn merged_into(&mut self, body: Option<BodyId>, merges: &Merges) {
-        let held = |on: BodyId| merges.holder(on).unwrap_or(on);
+        let held = |on: BodyId| merges.holding(on);
         self.merged = AlignRole::ALL
             .into_iter()
             .map(|role| AlignSlot::new(AlignSide::Target, role))
@@ -765,7 +765,7 @@ impl Doc {
             return Ok(taken);
         };
         let merged = merged_in(document, session.feature, marks);
-        let held = merged.holder(body).unwrap_or(body);
+        let held = merged.holding(body);
         let moved = session.bodies.first().copied();
         match slot.side {
             // Named on the body holding it at the align, the one moved,

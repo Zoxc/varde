@@ -145,7 +145,7 @@ impl CombineSession {
     /// 2 is in Body 1 now"). A tool landing on the target, or on another
     /// tool, is taken once. Whether anything moved.
     fn follow(&mut self, merges: &Merges) -> bool {
-        let held = |body: BodyId| merges.holder(body).unwrap_or(body);
+        let held = |body: BodyId| merges.holding(body);
         let target = self.target.map(held);
         let mut tools: Vec<BodyId> = self.tools.iter().map(|&tool| held(tool)).collect();
         normalise(&mut tools, target);
@@ -196,7 +196,7 @@ impl Doc {
             let Some(body) = item.body() else {
                 continue;
             };
-            let body = merged.holder(body).unwrap_or(body);
+            let body = merged.holding(body);
             if pickable(document, body, None) && !bodies.contains(&body) {
                 bodies.push(body);
             }
@@ -264,7 +264,7 @@ impl Doc {
         let merged = self
             .feed
             .merged_before(self.editor.document(), session.feature);
-        let body = merged.holder(pick.body).unwrap_or(pick.body);
+        let body = merged.holding(pick.body);
         session.target == Some(body)
             || (session.picking == CombinePick::Tools && session.tools.contains(&body))
     }
@@ -283,7 +283,7 @@ impl Doc {
             return;
         };
         let merged = self.feed.merged_before(document, session.feature);
-        let body = merged.holder(body).unwrap_or(body);
+        let body = merged.holding(body);
         if pickable(document, body, session.feature) {
             session.pick(body);
         }

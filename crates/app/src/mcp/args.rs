@@ -178,7 +178,7 @@ fn resolve_body(
 ) -> Result<BodyId, Refused> {
     let document = doc.editor.document();
     let id = body_id(document, name)?;
-    let id = merged.holder(id).unwrap_or(id);
+    let id = merged.holding(id);
     if !pickable(document, id, edited) {
         return Err(failed(tool, made_after(name, feature, edited)));
     }

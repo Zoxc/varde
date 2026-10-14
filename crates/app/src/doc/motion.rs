@@ -1270,7 +1270,7 @@ impl MotionSession {
         if self.kind.picks_faces() {
             return self.follow_faces(merges);
         }
-        let held = |body: BodyId| merges.holder(body).unwrap_or(body);
+        let held = |body: BodyId| merges.holding(body);
         let mut bodies: Vec<BodyId> = self.bodies.iter().map(|&body| held(body)).collect();
         bodies.sort_unstable();
         bodies.dedup();
@@ -1463,7 +1463,7 @@ impl Doc {
         let document = self.editor.document();
         let merged = merged_in(document, session.feature, marks);
         let body = self.naming_in(session.feature, marks).unsplit(body);
-        merged.holder(body).unwrap_or(body)
+        merged.holding(body)
     }
 
     /// Starts setting up a new move, mirror or pattern (`kind`), in a
