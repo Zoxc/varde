@@ -110,8 +110,10 @@
 //! **Roles** ([`role`], in `roles`). A mixed box is a strip box of one
 //! trimming curve (or of a slit's coedges), a corner box of a vertex
 //! (inside the vertex's corner component, which takes an acute or cusp
-//! corner's spike), or thin; the tubes round the trimming curves in
-//! space ([`in_tube`]) and the corners' runs ([`Corners`]) are there.
+//! corner's spike, cut by the sharp corner's record), or thin (a box
+//! meeting one curve in several ranges among them); the tubes round the
+//! trimming curves in space ([`in_tube`]) and the corners' runs
+//! ([`Corners`]) are there.
 //!
 //! **Levels.** Classification and splits run at the level of the value
 //! (or patch) passed, every hull certified there: a mixed box at one
@@ -426,6 +428,9 @@ pub enum BoxError {
     Coedge { coedge: CoedgeId },
     /// The patches given aren't one per tile of the face.
     Patches,
+    /// The geometric order given doesn't list the face's vertices, each
+    /// once.
+    Order,
 }
 
 /// A face as the counting reads it (module docs), validated.
@@ -1349,8 +1354,8 @@ mod roles;
 
 pub(crate) use roles::surface_hull;
 pub use roles::{
-    Corner, Corners, HULL_TILES, NEAR_DEPTH, NEAR_PIECES, RUN_DEPTH, RUN_PIECES, Role, Roled, Run,
-    Tube, box_hull, in_tube, role, within_band,
+    CUSP_PIECES, Corner, Corners, HULL_TILES, NEAR_DEPTH, NEAR_PIECES, RUN_DEPTH, RUN_PIECES, Role,
+    Roled, Run, Tube, box_hull, in_tube, role, within_band,
 };
 
 #[cfg(test)]

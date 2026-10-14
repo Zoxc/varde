@@ -6,12 +6,14 @@
 //! point against a vertex of the other operand, a point's ray against a
 //! straight edge), [`ray`] the curved ones (a point's ray against a span
 //! of a curved edge, and against the whole edge), [`feet`] the stretches
-//! of an edge near a point, [`side`] a point's ray against a box side on a
+//! of an edge near a point, [`cusp`] the certificate of a sharp corner
+//! (how its two curves come apart, where its spike is cut), [`side`] a point's ray against a box side on a
 //! tile line the counting can't certify off the point, [`height`] the
 //! height keys a point reads against a vertex, an edge or a face's layer,
 //! the layers themselves and the height records, and [`near`] the
 //! operation's bands and near radii they read.
 
+pub mod cusp;
 pub mod feet;
 pub mod height;
 pub mod keys;

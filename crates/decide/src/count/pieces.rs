@@ -41,8 +41,9 @@
 //!
 //! **Cuts off the ray.** A crossing of the p-curve with an outer side is
 //! found exactly or certified: a root of the p-span in the side's line
-//! equation (isolated, its position along the side certified inside the
-//! side's open extent), or a knot of the p-curve exactly on the line (a
+//! equation (isolated, then halved at the certified sign of the equation
+//! until its position along the side is certified inside the side's open
+//! extent or outside it), or a knot of the p-curve exactly on the line (a
 //! p-curve is broken at every tile line), crossing where the middle
 //! control points of the two spans meeting there lie on opposite sides.
 //! The crossing's direction against the side (`σ = sign(T × d)`, `T` the
@@ -106,6 +107,15 @@
 //! (a run with a hole, or a part of the run clear of the curve) is
 //! `Unsettled` for one coedge: run such boxes as core boxes.
 //!
+//! **Ends in corner pieces** ([`corner_end`]). A corner piece may reach
+//! far from its vertex `w` (a sharp corner's spike), so an edge's
+//! crossing in it is placed at `w` only where the piece's part holding the
+//! crossing's cluster lies within `w`'s near radius `r_w` (its hull's
+//! farthest point from `w`, rounded upwards, against `r_w` rounded
+//! downwards); farther along the spike it is a strip end on the curve its
+//! cluster names, and where it names both curves, on the one lower in
+//! the geometric order the caller gives (ids only between equal keys).
+//!
 //! **Slits.** The coedges of a slit share one p-curve (bitwise) with the
 //! face on both sides of it, so their run's sides are inside the trim all
 //! along; each coedge adds its own ribbon, and two coedges of one edge
@@ -132,7 +142,7 @@ use super::degree::{Ray, RecTurnError, Side, line_edge, rec_turn};
 use crate::bezier::roots::MAX_ROOT_DEPTH;
 use crate::bezier::{Dir, Dyadic, Found, HomCurve, HomPatch, HullBox, Limits, Scalar, isolate};
 use crate::ids::{CoedgeId, FaceId, VertId};
-use crate::num::bounded::Bounded;
+use crate::num::bounded::{Bounded, add_up, down, up};
 use crate::perturb::{NU, R_HAT};
 use crate::records::keys::{Operand, Point, SideKey};
 use crate::records::ray::{ChainRec, Span};
@@ -141,6 +151,9 @@ use crate::records::side::Sides;
 /// The most splits one root isolation of a p-span against a side line
 /// takes (a quadratic's isolation stays far below).
 pub const CUT_SPLITS: u32 = 4096;
+
+/// The most halvings of a root's interval placing it along a side.
+const ROOT_HALVINGS: u32 = 64;
 
 /// The finest window around a cut: `2^-WINDOW_DEPTH` of a tile.
 pub const WINDOW_DEPTH: u32 = 52;
@@ -670,25 +683,51 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                         ([cl.lo.bounds()[0], cl.hi.bounds()[1]], None)
                     }
                 };
-                let mut box_o = [f64::INFINITY, f64::NEG_INFINITY];
-                for piece in sub_pieces(&c, span) {
-                    let b = piece.control_box().ok_or(PieceError::Unsettled)?[o];
-                    if b[0] < box_o[0] {
-                        box_o[0] = b[0];
+                let place = |span: [f64; 2]| -> Result<[f64; 2], PieceError> {
+                    let mut box_o = [f64::INFINITY, f64::NEG_INFINITY];
+                    for piece in sub_pieces(&c, span) {
+                        let b = piece.control_box().ok_or(PieceError::Unsettled)?[o];
+                        if b[0] < box_o[0] {
+                            box_o[0] = b[0];
+                        }
+                        if b[1] > box_o[1] {
+                            box_o[1] = b[1];
+                        }
                     }
-                    if b[1] > box_o[1] {
-                        box_o[1] = b[1];
-                    }
-                }
-                let p = local(box_o);
+                    Ok(local(box_o))
+                };
+                let mut span = span;
+                let mut p = place(span)?;
                 if p[1] < elo || p[0] > ehi {
                     continue;
                 }
                 let Some(dir) = root else {
                     return Err(PieceError::Unsettled);
                 };
-                if !(p[0] > elo && p[1] < ehi) {
-                    return Err(PieceError::Unsettled);
+                // A root narrowed less than the side needs (its
+                // derivative's range too wide for Krawczyk's operator):
+                // halve its interval by the certified sign of the side's
+                // equation at the middle, until its position is certified
+                // inside the side's extent or outside it.
+                let mut halvings = 0;
+                while !(p[0] > elo && p[1] < ehi) {
+                    let m = 0.5 * span[0] + 0.5 * span[1];
+                    if halvings >= ROOT_HALVINGS || !(m > span[0] && m < span[1]) {
+                        return Err(PieceError::Unsettled);
+                    }
+                    halvings += 1;
+                    let past = match g.eval(&S::from_f64(m, &self.like)).sign() {
+                        Some(Ordering::Equal) | None => return Err(PieceError::Unsettled),
+                        Some(x) => x == dir,
+                    };
+                    span = if past { [span[0], m] } else { [m, span[1]] };
+                    p = place(span)?;
+                    if p[1] < elo || p[0] > ehi {
+                        break;
+                    }
+                }
+                if p[1] < elo || p[0] > ehi {
+                    continue;
                 }
                 let s: i8 = if dir == Ordering::Greater { 1 } else { -1 };
                 out.push(Hit {
@@ -1282,6 +1321,57 @@ pub fn strip_degree<S: Scalar>(
         cuts: u32::try_from(hits.len()).unwrap_or(u32::MAX),
         pieces: ctx.pieces,
     })
+}
+
+/// Where an edge's crossing in a corner piece is placed (module docs,
+/// "Ends in corner pieces").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CornerEnd {
+    /// At the corner's vertex.
+    Vertex,
+    /// A strip end on this coedge's curve, at the crossing's point on it.
+    Curve(CoedgeId),
+}
+
+/// Where a crossing in a corner piece is placed: `part` the hull of the
+/// piece's part holding the crossing's cluster, `w` the vertex's point,
+/// `r_w` its near radius, `named` the corner's curves the cluster names,
+/// each with its key in the geometric order (module docs). `None` where
+/// the part isn't certified within `r_w` and no curve is named.
+pub fn corner_end<K: Ord>(
+    part: &HullBox,
+    w: [f64; 3],
+    r_w: f64,
+    named: &[(K, CoedgeId)],
+) -> Option<CornerEnd> {
+    let mut far = 0.0;
+    let mut finite = true;
+    for k in 0..3 {
+        // `|x − w| ≤ max(hi − w, w − lo)`, both bounded upwards.
+        let d = {
+            let x = up_diff(part.hi[k], w[k]);
+            let y = up_diff(w[k], part.lo[k]);
+            if x > y { x } else { y }
+        };
+        if !d.is_finite() {
+            finite = false;
+            break;
+        }
+        let d = if d > 0.0 { d } else { 0.0 };
+        far = add_up(far, up(d * d));
+    }
+    if finite && r_w.is_finite() && far <= down(r_w * r_w) {
+        return Some(CornerEnd::Vertex);
+    }
+    named
+        .iter()
+        .min_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|&(_, c)| CornerEnd::Curve(c))
+}
+
+/// `a − b` rounded upwards.
+fn up_diff(a: f64, b: f64) -> f64 {
+    -down(b - a)
 }
 
 #[cfg(test)]

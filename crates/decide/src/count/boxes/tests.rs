@@ -1366,7 +1366,11 @@ fn strips_and_corners_of_random_faces() {
         let face = face_uv(&trims, tf.flipped);
         // Weights drawn over the whole grid: one surface across tile lines.
         let ps = patches(Some(&mut rng));
-        let corners = Corners::new(&face, &ps).expect("corners");
+        // Any order of the vertices serves as their geometric order here.
+        let mut order: Vec<VertId> = trims.iter().flat_map(|t| t.ends).collect();
+        order.sort_unstable();
+        order.dedup();
+        let corners = Corners::new(&face, &ps, &order).expect("corners");
         let mut queue: VecDeque<(BoxKey, Option<SmallVec<[SpanRef; 8]>>)> =
             face.tile_boxes().map(|b| (b, None)).collect();
         let mut boxes = 0;

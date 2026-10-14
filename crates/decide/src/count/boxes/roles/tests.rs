@@ -192,6 +192,31 @@ fn face_uv<'a>(trims: &'a [Trim<'a>]) -> FaceUv<'a> {
     FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], trims, false).unwrap()
 }
 
+/// The face's vertices in the geometric order: by their points on the
+/// plane, `x` then `y` (`u` then `v`), ids last.
+fn geo(face: &FaceUv<'_>) -> Vec<VertId> {
+    let mut pts: Vec<([f64; 2], VertId)> = Vec::new();
+    for t in face.trims() {
+        let n = t.spans.len();
+        for (v, p) in [(t.ends[0], t.spans[0][0]), (t.ends[1], t.spans[n - 1][2])] {
+            pts.push(([p[0], p[1]], v));
+        }
+    }
+    pts.sort_by(|a, b| {
+        a.0[0]
+            .total_cmp(&b.0[0])
+            .then(a.0[1].total_cmp(&b.0[1]))
+            .then(a.1.cmp(&b.1))
+    });
+    let mut out: Vec<VertId> = Vec::new();
+    for (_, v) in pts {
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    out
+}
+
 /// The box's UV rectangle `[[u_lo, u_hi], [v_lo, v_hi]]`.
 fn rect(b: &BoxKey) -> [[f64; 2]; 2] {
     b.sides(&first())
@@ -443,14 +468,17 @@ fn check_corner(case: Case, spiky: bool) {
     let built = Built::new(&case.loops, case.beta);
     let trims = built.trims();
     let face = face_uv(&trims);
-    let corners = Corners::new(&face, &ps).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
     let corner = corners.corner(case.w).expect("the corner");
     assert!(corner.curves.contains(&case.into) && corner.curves.contains(&case.out));
     let span_of = |c: CoedgeId| &trims[c.index()].spans[0];
     let (s_in, s_out) = (span_of(case.into), span_of(case.out));
-    // The runs: within the band of the other curve, and most of the true
-    // component's way.
-    let mut reach = 0.0f64;
+    // The runs: within the band of the other curve (at a sharp corner,
+    // whose runs reach the record's cut, within a few bands), and most of
+    // the true component's way.
+    let sharp = corners.cusp(corner.vertex).is_some();
+    let tol = if sharp { 16.0 * case.beta } else { case.beta };
+    let (mut reach, mut limit) = (0.0f64, 0.0f64);
     for (c, end, s, other) in [(case.into, 1u8, s_in, s_out), (case.out, 0u8, s_out, s_in)] {
         let (at_corner, run) = corners.run(&face, c, end).expect("a run");
         assert_eq!(at_corner.vertex, corner.vertex);
@@ -476,10 +504,7 @@ fn check_corner(case: Case, spiky: bool) {
                     &map_q(&[q(a[0]), q(a[1])]),
                     &map_q(&[q(b[0]), q(b[1])]),
                 );
-                assert!(
-                    d2 <= sq(&q(case.beta)),
-                    "run of {c:?} leaves the band at {t}"
-                );
+                assert!(d2 <= sq(&q(tol)), "run of {c:?} leaves the band at {t}");
             } else {
                 let f = to_f(&p);
                 let p3 = map(f[0], f[1]);
@@ -489,10 +514,7 @@ fn check_corner(case: Case, spiky: bool) {
                         dist3(map(o[0], o[1]), p3)
                     })
                     .fold(f64::INFINITY, |m, x| if x < m { x } else { m });
-                assert!(
-                    d <= case.beta + 3e-5,
-                    "run of {c:?} leaves the band at {t}: {d}"
-                );
+                assert!(d <= tol + 3e-5, "run of {c:?} leaves the band at {t}: {d}");
             }
         }
         let far = to_f(&span_at(s, &q(at)));
@@ -503,6 +525,7 @@ fn check_corner(case: Case, spiky: bool) {
             "run of {c:?} reaches {far}, the component {want}"
         );
         reach = reach.max(want);
+        limit = limit.max(if sharp { far } else { want });
     }
     // Refined round the vertex: nothing thin, the boxes meeting both
     // curves the corner's, anywhere along a spike.
@@ -521,8 +544,8 @@ fn check_corner(case: Case, spiky: bool) {
                 );
                 let d = box_dist(b, case.at);
                 assert!(
-                    d <= reach + case.beta,
-                    "corner box {b:?} at {d}, the component {reach}"
+                    d <= limit + case.beta,
+                    "corner box {b:?} at {d}, the component {limit}"
                 );
                 farthest = farthest.max(d);
             }
@@ -578,7 +601,7 @@ fn zero_length_edges_belong_to_the_corner() {
     let trims = built.trims();
     let face = face_uv(&trims);
     let ps = plane();
-    let corners = Corners::new(&face, &ps).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
     let corner = corners
         .corner(VertId(0))
         .expect("one corner of both vertices");
@@ -631,7 +654,7 @@ fn slits_are_strips_of_both_sides() {
         let built = Built::new(&loops, BETA);
         let trims = built.trims();
         let face = face_uv(&trims);
-        let corners = Corners::new(&face, &ps).expect("corners");
+        let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
         let region = |b: &BoxKey| box_dist(b, [1.0, 0.75]) <= 0.4;
         let leaves = refine(&face, &corners, &ps, BETA, &region, 30);
         let (mut strips, mut feet) = (0, 0);
@@ -659,7 +682,10 @@ fn bad_corners_input_is_refused() {
     let trims = built.trims();
     let face = face_uv(&trims);
     let ps = plane();
-    assert_eq!(Corners::new(&face, &ps[1..]).err(), Some(BoxError::Patches));
+    assert_eq!(
+        Corners::new(&face, &ps[1..], &geo(&face)).err(),
+        Some(BoxError::Patches)
+    );
     let b = face.tile_boxes().next().unwrap();
     assert_eq!(
         in_tube(&face, &ps, &b, CoedgeId(9)).err(),
@@ -671,7 +697,7 @@ fn bad_corners_input_is_refused() {
     let other = Built::new(&reflex().loops, BETA);
     let other_trims = other.trims();
     let other_face = face_uv(&other_trims);
-    let corners = Corners::new(&other_face, &ps).unwrap();
+    let corners = Corners::new(&other_face, &ps, &geo(&other_face)).unwrap();
     assert_eq!(
         role(&face, &corners, &b, &first(), None).err(),
         Some(BoxError::Foreign)
@@ -701,7 +727,7 @@ fn round_vertex(case: &Case) -> (usize, Vec<BoxKey>) {
     let built = Built::new(&case.loops, case.beta);
     let trims = built.trims();
     let face = face_uv(&trims);
-    let corners = Corners::new(&face, &ps).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
     let r = 8.0 * case.beta;
     let region = |b: &BoxKey| box_dist(b, case.at) <= r;
     let leaves = refine(&face, &corners, &ps, case.beta, &region, MAX_BOX_DEPTH);
@@ -745,7 +771,7 @@ fn leaves_round(loops: &[Vec<Edge>], at: [f64; 2], r: f64) -> Vec<(BoxKey, Role)
     let built = Built::new(loops, BETA);
     let trims = built.trims();
     let face = face_uv(&trims);
-    let corners = Corners::new(&face, &ps).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
     let region = |b: &BoxKey| box_dist(b, at) <= r;
     refine(&face, &corners, &ps, BETA, &region, 40)
 }
@@ -870,4 +896,219 @@ fn curves_near_away_from_their_corner_are_thin() {
             "box {bx:?}: {r:?}"
         );
     }
+}
+
+/// The cusp of [`cusp`] at band `beta`, its face's trims built.
+fn cusp_at(beta: f64) -> (Built, Case) {
+    let case = Case { beta, ..cusp() };
+    (Built::new(&case.loops, beta), case)
+}
+
+#[test]
+fn a_cusp_at_a_tight_band_is_one_record() {
+    // A line tangent to an arc of radius 1 at `β = 10⁻⁸`: the spike is
+    // about `√(2β·2)/…` long, tens of thousands of bands. The record cuts
+    // it at a fixed cost; the runs reach the cut, and boxes anywhere along
+    // the spike meeting both curves are the corner's, down to the finest.
+    let (built, case) = cusp_at(1e-8);
+    let trims = built.trims();
+    let face = face_uv(&trims);
+    let ps = plane();
+    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let rec = corners.cusp(case.w).expect("a sharp corner's record");
+    assert_eq!(rec.m, 2);
+    let s_beta = rec.s_beta_f64();
+    // The tilted plane stretches lengths by at most 1.15: the cut lies
+    // where the arc is between one and eight bands from the line.
+    assert!(s_beta > 1e-4 && s_beta < 1e-3, "{s_beta}");
+    for (c, end) in [(case.into, 1u8), (case.out, 0u8)] {
+        let (_, run) = corners.run(&face, c, end).expect("a run");
+        let t = run.reach().1.bounds()[0];
+        let s = trims[c.index()].spans[0];
+        let p = span_at_f(&s, t);
+        let d = ((p[0] - W[0]) * (p[0] - W[0]) + (p[1] - W[1]) * (p[1] - W[1])).sqrt();
+        assert!(
+            d > 0.5 * s_beta && d < 1.01 * s_beta,
+            "run of {c:?} reaches {d}"
+        );
+    }
+    // The runs' search would have cost thousands of pieces per end.
+    assert!(corners.pieces() < 20_000, "{}", corners.pieces());
+    // Round points of the spike, refined until within the band: none is
+    // left thin. Near `W`, where the curves are far less than a band
+    // apart, the leaves meeting both are the corner's; at the middle the
+    // band-sized leaves meet one curve each.
+    for (f, corner_leaves) in [(0.05, true), (0.7, false)] {
+        let s = f * s_beta;
+        let at = [W[0] + s, W[1] + 0.25 * s * s];
+        let region = |b: &BoxKey| box_dist(b, at) <= 1e-7;
+        let leaves = refine(&face, &corners, &ps, case.beta, &region, MAX_BOX_DEPTH);
+        let mut corner_boxes = 0;
+        for (b, r) in &leaves {
+            match r {
+                Role::Thin(c) => panic!("box {b:?} left thin, meeting {c:?}"),
+                Role::Corner { vertex, .. } => {
+                    assert_eq!(*vertex, case.w);
+                    corner_boxes += 1;
+                }
+                _ => {}
+            }
+        }
+        assert!(leaves.len() < 5000, "{}", leaves.len());
+        assert!(!corner_leaves || corner_boxes > 0, "at {f}");
+    }
+}
+
+/// A lens of two parabolic arcs between `p` and `p + (L, 0)`, `L` a
+/// quarter band, its vertices numbered `ids` (the one at `p` first): the
+/// boxes holding the lens lie in both vertices' corners.
+fn lens(ids: [u32; 2]) -> Vec<Vec<Edge>> {
+    let l = BETA / 4.0;
+    let (p, q) = ([1.0, 0.5], [1.0 + l, 0.5]);
+    let h = l * 0.25;
+    let mid = [1.0 + l * 0.5, 0.5];
+    let arc = |a: [f64; 2], b: [f64; 2], up: f64| -> UvSpan {
+        [
+            [a[0], a[1], 1.0],
+            [mid[0], mid[1] + up, 1.0],
+            [b[0], b[1], 1.0],
+        ]
+    };
+    vec![vec![
+        edge(ids[0], vec![arc(p, q, h)]),
+        edge(ids[1], vec![arc(q, p, -h)]),
+    ]]
+}
+
+#[test]
+fn a_box_in_two_corners_goes_to_the_lower_vertex() {
+    let ps = plane();
+    for ids in [[0, 1], [1, 0], [7, 2]] {
+        let built = Built::new(&lens(ids), BETA);
+        let trims = built.trims();
+        let face = face_uv(&trims);
+        let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+        assert_eq!(corners.corners().len(), 2);
+        let region = |b: &BoxKey| box_dist(b, [1.0, 0.5]) <= BETA;
+        let leaves = refine(&face, &corners, &ps, BETA, &region, 30);
+        let mut seen = 0;
+        for (b, r) in &leaves {
+            match r {
+                Role::Thin(c) => panic!("box {b:?} left thin, meeting {c:?}"),
+                Role::Corner { vertex, met } if met.len() == 2 => {
+                    // Both corners claim it: the vertex at `(1, ½)`, lower
+                    // in `x`, whatever its id.
+                    assert_eq!(*vertex, VertId(ids[0]), "ids {ids:?}, box {b:?}");
+                    seen += 1;
+                }
+                _ => {}
+            }
+        }
+        assert!(seen > 0, "ids {ids:?}");
+    }
+    // The geometric order must list the face's vertices.
+    let built = Built::new(&lens([0, 1]), BETA);
+    let trims = built.trims();
+    let face = face_uv(&trims);
+    for order in [
+        vec![VertId(0)],
+        vec![VertId(0), VertId(0)],
+        vec![VertId(0), VertId(5)],
+    ] {
+        assert_eq!(
+            Corners::new(&face, &ps, &order).err(),
+            Some(BoxError::Order)
+        );
+    }
+}
+
+#[test]
+fn a_teardrop_is_a_strip_of_one_range_at_a_time() {
+    // One edge closed at `W` in two spans out to `(1½, ½)` and back, its
+    // ends `90°` apart: a box beside `W` meeting both spans, away from the
+    // runs, is no strip; refined round `W` none is left thin, and no strip
+    // box meets the curve on both sides.
+    let v = [snap(1.3), snap(0.47)];
+    let tip = [v[0] + 0.5, v[1]];
+    let (lo, hi) = ([v[0] + 0.25, v[1] - 0.25], [v[0] + 0.25, v[1] + 0.25]);
+    let loops = vec![vec![edge(
+        0,
+        vec![
+            [
+                [v[0], v[1], 1.0],
+                [lo[0], lo[1], 1.0],
+                [tip[0], tip[1], 1.0],
+            ],
+            [
+                [tip[0], tip[1], 1.0],
+                [hi[0], hi[1], 1.0],
+                [v[0], v[1], 1.0],
+            ],
+        ],
+    )]];
+    let built = Built::new(&loops, BETA);
+    let trims = built.trims();
+    let face = face_uv(&trims);
+    let ps = plane();
+    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    // A box an eighth wide just right of the vertex, a half high: both
+    // spans cross it.
+    let grid = |x: f64, up: bool| {
+        let k = x * 32.0;
+        Dyadic::new((if up { k.ceil() } else { k.floor() }) as u64, 5).unwrap()
+    };
+    let u0 = grid(v[0] - 1.0 + 0.04, true);
+    let u1 = Dyadic::new(u0.num() * (32 >> u0.exp()) + 4, 5).unwrap();
+    let bx = BoxKey::new(
+        Operand::A,
+        FaceId(3),
+        [1, 0],
+        Extent::new(u0, u1).unwrap(),
+        Extent::new(grid(v[1] - 0.25, false), grid(v[1] + 0.25, true)).unwrap(),
+    );
+    let r = role(&face, &corners, &bx, &first(), None).expect("role");
+    assert_eq!(r.role, Role::Thin(smallvec::smallvec![CoedgeId(0)]));
+    let region = |b: &BoxKey| box_dist(b, v) <= 0.2;
+    let leaves = refine(&face, &corners, &ps, BETA, &region, 30);
+    let mut corner_boxes = 0;
+    for (b, r) in &leaves {
+        match r {
+            Role::Thin(c) => panic!("box {b:?} left thin, meeting {c:?}"),
+            Role::Corner { vertex, .. } => {
+                assert_eq!(*vertex, VertId(0));
+                corner_boxes += 1;
+            }
+            Role::Strip(_) => {
+                // One range: the box doesn't meet both halves, unless it
+                // holds the vertex (the range runs across it).
+                let rc = rect(b);
+                let holds =
+                    (rc[0][0]..=rc[0][1]).contains(&v[0]) && (rc[1][0]..=rc[1][1]).contains(&v[1]);
+                let meets = |s: &UvSpan| {
+                    (0..=400).any(|i| {
+                        let p = span_at_f(s, i as f64 / 400.0);
+                        box_dist(b, p) == 0.0
+                    })
+                };
+                let both = meets(&trims[0].spans[0]) && meets(&trims[0].spans[1]);
+                // Sampled points beside a box side may miss it: only a
+                // box meeting both clearly inside is checked.
+                if both && !holds {
+                    let inner = |s: &UvSpan| {
+                        (0..=400).any(|i| {
+                            let p = span_at_f(s, i as f64 / 400.0);
+                            p[0] > rc[0][0] && p[0] < rc[0][1] && p[1] > rc[1][0] && p[1] < rc[1][1]
+                        })
+                    };
+                    let tip_in = rc[0][0] <= tip[0] && tip[0] <= rc[0][1];
+                    assert!(
+                        tip_in || !(inner(&trims[0].spans[0]) && inner(&trims[0].spans[1])),
+                        "strip box {b:?} meets both sides"
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(corner_boxes > 0);
 }

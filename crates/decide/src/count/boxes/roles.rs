@@ -47,55 +47,86 @@
 //! over pairs `a ≠ b` of its curves and zero-length trims (whose `Γ` is
 //! the vertex's point, so with a curve they add the curve's stretch
 //! within a band of the vertex, and a corner of one curve and a
-//! zero-length trim has a component too): at a convex or reflex corner about
-//! a band round the vertex, at an acute corner the wedge out to where its
-//! sides are a band apart, at a cusp (a curve leaving the vertex tangent
-//! to another) the whole spike between them, about `√(2Rβ)` long for a
-//! line tangent to an arc of radius `R`. On each curve the component
-//! holds a **run** from the corner ([`Run`]): the stretch from the
-//! curve's end at the corner certified within the band of another of the
-//! corner's trims, piece by piece (each piece's hull within `β_b` of
-//! `Γ_b`, as above), the span at the end first, each span halved from the
-//! end inwards, a piece that doesn't certify halved until one does, and
-//! the run ending at the first piece that doesn't once it is within an
-//! eighth of the least band across (halving it would move the run's end
-//! by less), [`RUN_DEPTH`] deep, or past [`RUN_PIECES`]. Every piece of a run lies on its own
-//! curve and within another trim's band, the run is connected and holds
-//! the vertex, so the run lies in the component. A mixed box is a
-//! **corner** box of the corner when every coedge it meets is a curve or
-//! a zero-length trim of the corner, and every piece of a curve that the
-//! box isn't separated from ([`classify`]'s test) lies in that curve's
-//! runs at the corner: it meets the curves only inside the component. A
-//! box at a spike, anywhere along it, meets the two curves only inside
-//! their runs once it is a fraction of a band across, so the spike goes
-//! to the corner and not to a strip or a refinement that never ends;
-//! beyond the runs the curves are apart by about a band, and a box that
-//! small meets one of them only.
+//! zero-length trim has a component too): at a convex or reflex corner
+//! about a band round the vertex, at an acute corner the wedge out to
+//! where its sides are a band apart, at a cusp (a curve leaving the vertex
+//! tangent to another) the whole spike between them, about `√(2Rβ)` long
+//! for a line tangent to an arc of radius `R`. On each curve the
+//! component holds a **run** from the corner ([`Run`]).
+//!
+//! **Sharp corners.** A corner where exactly two curve ends meet (no
+//! zero-length trim), whose tangents there aren't certified more than
+//! `2⁻⁴` rad apart in space, is sharp: its record
+//! ([`CuspRec`], [`Corners::cusp`]) bounds
+//! how the two curves come apart and cuts the spike where they are a band
+//! apart; each curve's run is its stretch up to the cut (the record's
+//! reach), however many bands long, at a fixed cost. Where the record
+//! doesn't apply (the cut past the stretch its bounds hold over, the
+//! curves one curve, not graphs over one axis), the corner is searched as
+//! any other.
+//!
+//! **Searched runs.** Elsewhere a run is the stretch from the curve's end
+//! at the corner certified within the band of another of the corner's
+//! trims, piece by piece (each piece's hull within `β_b` of `Γ_b`, as
+//! above), the span at the end first, each span halved from the end
+//! inwards, a piece that doesn't certify halved until one does, and the
+//! run ending at the first piece that doesn't once it is within an eighth
+//! of the least band across (halving it would move the run's end by less),
+//! [`RUN_DEPTH`] deep, or past [`RUN_PIECES`]. A curve with both ends at
+//! the corner (a loop closed there) has its own far half as another curve
+//! there: each end's run covers at most its own half, against the spans
+//! past the middle one. Every piece of a run lies on its own curve and
+//! within another trim's band, the run is connected and holds the vertex,
+//! so the run lies in the component.
+//!
+//! **Corner boxes.** A mixed box is a **corner** box of the corner when
+//! every coedge it meets is a curve or a zero-length trim of the corner,
+//! and every piece of a curve that the box isn't separated from
+//! ([`classify`]'s test) lies in that curve's runs at the corner: it meets
+//! the curves only inside the component. A box at a spike, anywhere along
+//! it, meets the two curves only inside their runs once it is a fraction
+//! of a band across, so the spike goes to the corner and not to a strip or
+//! a refinement that never ends; beyond the runs the curves are apart by
+//! about a band, and a box that small meets one of them only. A box in two
+//! corners' components goes to the corner whose lowest vertex (in the
+//! geometric order the caller gives, [`Corners::new`]) is the lower, never
+//! by ids.
+//!
+//! **Teardrops.** A box meeting one curve (or a slit's) in several
+//! disjoint parameter ranges (pieces it isn't separated from that don't
+//! meet end to end, at a knot or across the vertex of a curve closed
+//! there) is not a strip box: it is a corner box of the curve's vertex
+//! where the rule above makes it one, else it refines until it meets one
+//! range.
 //!
 //! **Keys.** The runs are a function of the operands: the corners are
 //! built once per operation at the first level ([`Corners::new`]), from
 //! the stored trims, the operation's bands and the first level's
-//! patches, never again by a precision step. A run is a certified part
-//! of the component, which is all a corner needs (a shorter run leaves
-//! more boxes to refine; it never mislabels one). Which boxes are corner
+//! patches, never again by a precision step (a sharp corner's record
+//! likewise). A searched run is a certified part of the component, a
+//! sharp corner's run the curve's side of the spike its record cuts: all
+//! a corner needs (a shorter run leaves more boxes to refine; it never
+//! mislabels one). Which boxes are corner
 //! boxes then depends on their level only as [`classify`]'s mixed boxes
 //! do: a box's pieces separate further at a higher level.
 //!
 //! **Thin.** Any other mixed box (two curves that are not one corner's,
-//! or meeting a curve outside its runs) is **thin**: it refines in space,
-//! then in precision.
+//! meeting a curve outside its runs, or one curve in several ranges) is
+//! **thin**: it refines in space, then in precision.
 
 use std::collections::VecDeque;
+use std::ops::Range;
 
 use smallvec::SmallVec;
 
 use super::{
-    BoxError, BoxKey, Class, Classified, FaceUv, SEP_PIECES, SpanRef, Trim, classify_in, cut,
-    met_within, span_error, sub_patch, uv_curve,
+    BoxError, BoxKey, Class, Classified, FaceUv, SEP_DEPTH, SEP_PIECES, SpanRef, Trim, Verdict,
+    classify_in, cut, met_within, small, span_error, sub_patch, uv_curve, verdict,
 };
 use crate::bezier::{Dir, Dyadic, HomCurve, HomPatch, HullBox, Scalar};
 use crate::ids::{CoedgeId, VertId};
 use crate::num::bounded::{Bounded, add_up, down, up};
+use crate::records::cusp::{CuspRec, CuspSpan, Sharp, cusp_rec};
 
 #[cfg(doc)]
 use super::classify;
@@ -115,6 +146,10 @@ pub const NEAR_PIECES: u32 = 256;
 /// The most tiles the hull of one piece of a p-curve is cut from; a piece
 /// spread over more is halved first.
 pub const HULL_TILES: u64 = 16;
+
+/// The pieces a sharp corner's record is charged as: a fixed count of
+/// exact polynomial tests, whatever the corner.
+pub const CUSP_PIECES: u64 = 64;
 
 /// What a box is to the counting (module docs).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -224,6 +259,9 @@ pub struct Corner {
     pub curves: SmallVec<[CoedgeId; 4]>,
     /// Its zero-length coedges, ascending.
     pub zero: SmallVec<[CoedgeId; 2]>,
+    /// Its vertex lowest in the geometric order, which decides between
+    /// two corners claiming one box.
+    pub lowest: VertId,
 }
 
 /// The corners of a face and the runs of their curves (module docs),
@@ -231,6 +269,10 @@ pub struct Corner {
 #[derive(Clone, Debug)]
 pub struct Corners {
     corners: Vec<Corner>,
+    /// Per corner, the rank of its lowest vertex in the geometric order.
+    rank: Vec<u32>,
+    /// Per corner, its sharp-corner record, if it is sharp and has one.
+    cusps: Vec<Option<CuspRec>>,
     /// Per trim (the face's order), the corner of each end.
     ends: Vec<[u32; 2]>,
     /// Per trim, the run from each end (unused for zero-length trims).
@@ -241,8 +283,14 @@ pub struct Corners {
 impl Corners {
     /// The corners of `face` and their runs, from the first level's
     /// patches of its tiles (one per tile, in
-    /// [`FaceUv::tile_boxes`]' order).
-    pub fn new(face: &FaceUv<'_>, patches: &[HomPatch<Bounded<f64>>]) -> Result<Corners, BoxError> {
+    /// [`FaceUv::tile_boxes`]' order); `order` lists the face's vertices
+    /// in the geometric order (each once, lowest first), which decides
+    /// between corners.
+    pub fn new(
+        face: &FaceUv<'_>,
+        patches: &[HomPatch<Bounded<f64>>],
+        order: &[VertId],
+    ) -> Result<Corners, BoxError> {
         if !face.patches_fit(patches) {
             return Err(BoxError::Patches);
         }
@@ -253,6 +301,17 @@ impl Corners {
         verts.sort_unstable();
         verts.dedup();
         let index = |v: VertId| verts.binary_search(&v).expect("collected");
+        // Each vertex's rank in the geometric order.
+        let mut sorted: Vec<VertId> = order.to_vec();
+        sorted.sort_unstable();
+        if sorted != verts {
+            return Err(BoxError::Order);
+        }
+        let mut geo = vec![0u32; verts.len()];
+        for (r, &v) in order.iter().enumerate() {
+            // Fits: as many as the vertices, at most twice the trims.
+            geo[index(v)] = r as u32;
+        }
         let mut parent: Vec<usize> = (0..verts.len()).collect();
         fn root(parent: &mut [usize], mut k: usize) -> usize {
             while parent[k] != k {
@@ -272,6 +331,7 @@ impl Corners {
         // Corners in order of their least vertex.
         let mut slot = vec![u32::MAX; verts.len()];
         let mut corners: Vec<Corner> = Vec::new();
+        let mut rank: Vec<u32> = Vec::new();
         for k in 0..verts.len() {
             let r = root(&mut parent, k);
             if slot[r] == u32::MAX {
@@ -282,10 +342,17 @@ impl Corners {
                     vertices: SmallVec::new(),
                     curves: SmallVec::new(),
                     zero: SmallVec::new(),
+                    lowest: verts[r],
                 });
+                rank.push(u32::MAX);
             }
             slot[k] = slot[r];
-            corners[slot[k] as usize].vertices.push(verts[k]);
+            let c = slot[k] as usize;
+            corners[c].vertices.push(verts[k]);
+            if geo[k] < rank[c] {
+                rank[c] = geo[k];
+                corners[c].lowest = verts[k];
+            }
         }
         let ends: Vec<[u32; 2]> = trims
             .iter()
@@ -308,45 +375,93 @@ impl Corners {
             c.zero.dedup();
         }
         let like = Bounded::exact(0.0);
+        let ctx = Space {
+            face,
+            patches,
+            like: &like,
+        };
         let mut pieces = 0u64;
-        let mut runs = Vec::with_capacity(trims.len());
+        // Fits: the face checked the span counts fit a `u32`.
+        let mut runs: Vec<[Run; 2]> = trims
+            .iter()
+            .map(|t| {
+                let n = t.spans.len() as u32;
+                [Run::empty(0, n), Run::empty(1, n)]
+            })
+            .collect();
+        let mut done: Vec<[bool; 2]> = vec![[false; 2]; trims.len()];
+        // Sharp corners first: their runs are the record's reaches.
+        let mut cusps: Vec<Option<CuspRec>> = vec![None; corners.len()];
+        for (c, cusp) in cusps.iter_mut().enumerate() {
+            let Some(pair) = curve_ends(trims, &ends, c as u32) else {
+                continue;
+            };
+            pieces = pieces.saturating_add(CUSP_PIECES);
+            let Some(rec) = sharp_corner(&ctx, pair)? else {
+                continue;
+            };
+            for ((k, end), reach) in pair.into_iter().zip(rec.reach) {
+                runs[k][usize::from(end)] = reach_run(trims[k].spans.len(), end, reach);
+                done[k][usize::from(end)] = true;
+            }
+            *cusp = Some(rec);
+        }
         for (k, t) in trims.iter().enumerate() {
             // Fits: the face checked the span count fits a `u32`.
-            let n = t.spans.len() as u32;
-            let mut r = [Run::empty(0, n), Run::empty(1, n)];
-            if !t.zero_length && n > 0 {
-                for end in 0..2u8 {
-                    let corner = &corners[ends[k][usize::from(end)] as usize];
-                    let others: SmallVec<[usize; 4]> = corner
-                        .curves
-                        .iter()
-                        .chain(&corner.zero)
-                        .filter(|&&c| c != t.coedge)
-                        .map(|&c| face.trim_index(c).expect("the face's coedge"))
-                        .collect();
-                    if others.is_empty() {
-                        continue;
-                    }
-                    let ctx = Space {
-                        face,
-                        patches,
-                        like: &like,
-                    };
-                    let (run, p) = run_from(&ctx, t, end, &others)?;
-                    r[usize::from(end)] = run;
-                    pieces = pieces.saturating_add(p);
-                }
+            let n = t.spans.len();
+            if t.zero_length || n == 0 {
+                continue;
             }
-            runs.push(r);
+            for end in 0..2u8 {
+                if done[k][usize::from(end)] {
+                    continue;
+                }
+                let c = ends[k][usize::from(end)];
+                let corner = &corners[c as usize];
+                let mut others: SmallVec<[(usize, Range<usize>); 4]> = corner
+                    .curves
+                    .iter()
+                    .chain(&corner.zero)
+                    .filter(|&&o| o != t.coedge)
+                    .map(|&o| {
+                        let i = face.trim_index(o).expect("the face's coedge");
+                        (i, 0..trims[i].spans.len())
+                    })
+                    .collect();
+                // A curve with both ends at the corner (a loop closed at
+                // its vertex): its own other half is another curve there.
+                // The run then covers at most its own half, the other's
+                // spans past the middle one.
+                let mut limit = n;
+                if ends[k][usize::from(1 - end)] == c && n > 1 {
+                    let half = if end == 0 { n.div_ceil(2)..n } else { 0..n / 2 };
+                    others.push((k, half));
+                    limit = n / 2;
+                }
+                if others.is_empty() {
+                    continue;
+                }
+                let (run, p) = run_from(&ctx, t, end, &others, limit)?;
+                runs[k][usize::from(end)] = run;
+                pieces = pieces.saturating_add(p);
+            }
         }
         Ok(Corners {
             corners,
+            rank,
+            cusps,
             ends,
             runs,
             pieces,
         })
     }
 
+    /// The sharp-corner record of the corner named by its least vertex
+    /// `v`, if it is sharp and has one.
+    pub fn cusp(&self, v: VertId) -> Option<&CuspRec> {
+        let k = self.corners.binary_search_by_key(&v, |c| c.vertex).ok()?;
+        self.cusps[k].as_ref()
+    }
     /// The corners, in order of their least vertex.
     pub fn corners(&self) -> &[Corner] {
         &self.corners
@@ -379,6 +494,105 @@ impl Corners {
     }
 }
 
+/// The two curve ends at corner `c` (trim index, end), the curve into
+/// the corner's vertex first where the coedges say which; `None` unless
+/// exactly two ends of positive-length curves and no zero-length trim
+/// meet there.
+fn curve_ends(trims: &[Trim<'_>], ends: &[[u32; 2]], c: u32) -> Option<[(usize, u8); 2]> {
+    let mut found: SmallVec<[(usize, u8); 2]> = SmallVec::new();
+    for (k, t) in trims.iter().enumerate() {
+        for end in 0..2u8 {
+            if ends[k][usize::from(end)] != c {
+                continue;
+            }
+            if t.zero_length {
+                return None;
+            }
+            if t.spans.is_empty() {
+                return None;
+            }
+            found.push((k, end));
+        }
+    }
+    if found.len() != 2 {
+        return None;
+    }
+    // A coedge runs into its end `1` unless reversed.
+    let into = |(k, end): (usize, u8)| (end == 1) != trims[k].reversed;
+    let (a, b) = (found[0], found[1]);
+    Some(if !into(a) && into(b) { [b, a] } else { [a, b] })
+}
+
+/// The first span of trim `t` from its end `end`, run away from it.
+fn span_from(t: &Trim<'_>, end: u8) -> CuspSpan {
+    if end == 0 {
+        t.spans[0]
+    } else {
+        let s = t.spans[t.spans.len() - 1];
+        [s[2], s[1], s[0]]
+    }
+}
+
+/// The sharp-corner record of the corner where the curve ends `pair`
+/// meet, if the corner is sharp and the record applies (its errors leave
+/// the corner to the runs' search).
+fn sharp_corner(
+    ctx: &Space<'_, '_, '_, Bounded<f64>>,
+    pair: [(usize, u8); 2],
+) -> Result<Option<CuspRec>, BoxError> {
+    let trims = ctx.face.trims();
+    let [(ka, ea), (kb, eb)] = pair;
+    let (a, b) = (span_from(&trims[ka], ea), span_from(&trims[kb], eb));
+    // The surface's partial derivatives at the vertex's UV point, from the
+    // patch of a tile holding it.
+    let tiles = ctx.face.tiles();
+    let mut tile = [0i64; 2];
+    let mut local = [Bounded::exact(0.0); 2];
+    for k in 0..2 {
+        let x = a[0][k];
+        let r = &tiles[k];
+        // Within the face's range: the conversions and the difference
+        // are exact.
+        if !(x >= r.start as f64 && x <= r.end as f64) {
+            return Ok(None);
+        }
+        let i = (x.floor() as i64).clamp(r.start, r.end - 1);
+        tile[k] = i;
+        local[k] = Bounded::exact(x - i as f64);
+    }
+    let patch = ctx
+        .face
+        .patch_of(ctx.patches, tile)
+        .ok_or(BoxError::Patches)?;
+    let p = patch.eval_partials(&local[0], &local[1]);
+    let bands = add_up(trims[ka].band, trims[kb].band);
+    Ok(match cusp_rec(&a, &b, &p.du, &p.dv, bands) {
+        Ok(Sharp::Cusp(r)) => Some(*r),
+        Ok(Sharp::Apart) | Err(_) => None,
+    })
+}
+
+/// The run of a trim of `n` spans from its end `end` to the parameter
+/// `reach` of its first span from that end.
+fn reach_run(n: usize, end: u8, reach: Dyadic) -> Run {
+    if end == 0 {
+        Run {
+            end,
+            span: 0,
+            at: reach,
+        }
+    } else {
+        let back = Dyadic::new((1u64 << reach.exp()) - reach.num(), reach.exp())
+            .expect("the complement of a point of [0, 1]");
+        Run {
+            end,
+            // Fits: the face checked the span count.
+            span: (n - 1) as u32,
+            at: back,
+        }
+    }
+}
+
 /// The face's surface at a level: its trims and its tiles' patches.
 struct Space<'f, 'p, 'l, S> {
     face: &'f FaceUv<'f>,
@@ -387,20 +601,22 @@ struct Space<'f, 'p, 'l, S> {
 }
 
 /// The run of trim `t`'s curve from its end `end`, within the band of
-/// one of the trims `others` (module docs), and the pieces tested.
+/// one of the trims `others` (each over a range of its spans) (module
+/// docs), over at most `limit` spans from the end, and the pieces tested.
 fn run_from<S: Scalar>(
     ctx: &Space<'_, '_, '_, S>,
     t: &Trim<'_>,
     end: u8,
-    others: &[usize],
+    others: &[(usize, Range<usize>)],
+    limit: usize,
 ) -> Result<(Run, u64), BoxError> {
     let n = t.spans.len();
     let mut budget = RUN_PIECES;
     let mut tested = 0u64;
     let order: Vec<usize> = if end == 0 {
-        (0..n).collect()
+        (0..limit).collect()
     } else {
-        (0..n).rev().collect()
+        (n - limit..n).rev().collect()
     };
     for j in order {
         let c = uv_curve(&t.spans[j], ctx.like).ok_or(span_error(t, j))?;
@@ -423,16 +639,17 @@ fn run_from<S: Scalar>(
             return Ok((run, tested.saturating_add(u64::from(RUN_PIECES - budget))));
         }
     }
+    // Fits: the face checked the span count.
     let run = if end == 0 {
         Run {
             end,
-            span: n.saturating_sub(1) as u32,
+            span: limit.saturating_sub(1) as u32,
             at: Dyadic::ONE,
         }
     } else {
         Run {
             end,
-            span: 0,
+            span: (n - limit) as u32,
             at: Dyadic::ZERO,
         }
     };
@@ -447,7 +664,7 @@ fn reach<S: Scalar>(
     ctx: &Space<'_, '_, '_, S>,
     c: &HomCurve<S, 2>,
     (k, d): (u64, u32),
-    others: &[usize],
+    others: &[(usize, Range<usize>)],
     budget: &mut u32,
     tested: &mut u64,
 ) -> Result<Option<(u64, u32)>, BoxError> {
@@ -457,9 +674,9 @@ fn reach<S: Scalar>(
     *budget -= 1;
     let h = piece_hull(ctx, c);
     if let Some(h) = &h {
-        for &o in others {
-            let t = &ctx.face.trims()[o];
-            let (near, n) = near_curve(ctx, h, t, t.band)?;
+        for (o, spans) in others {
+            let t = &ctx.face.trims()[*o];
+            let (near, n) = near_curve(ctx, h, t, spans.clone(), t.band)?;
             *tested = tested.saturating_add(n);
             if near {
                 return Ok(None);
@@ -480,26 +697,28 @@ fn reach<S: Scalar>(
 }
 
 /// The least band among the trims `others`.
-fn least_band<S>(ctx: &Space<'_, '_, '_, S>, others: &[usize]) -> f64 {
+fn least_band<S>(ctx: &Space<'_, '_, '_, S>, others: &[(usize, Range<usize>)]) -> f64 {
     others
         .iter()
-        .map(|&o| ctx.face.trims()[o].band)
+        .map(|(o, _)| ctx.face.trims()[*o].band)
         .fold(f64::INFINITY, |m, b| if b < m { b } else { m })
 }
 
-/// Whether the hull `h` lies within `beta` of trim `t`'s curve (module
-/// docs), and the pieces tested.
+/// Whether the hull `h` lies within `beta` of trim `t`'s curve over its
+/// spans `spans` (module docs), and the pieces tested.
 fn near_curve<S: Scalar>(
     ctx: &Space<'_, '_, '_, S>,
     h: &HullBox,
     t: &Trim<'_>,
+    spans: Range<usize>,
     beta: f64,
 ) -> Result<(bool, u64), BoxError> {
     let b2 = [down(beta * beta), up(beta * beta)];
     // Breadth first, the spans in order and each piece's halves in order,
     // so the budget goes to the coarsest pieces first.
     let mut queue = VecDeque::new();
-    for (k, s) in t.spans.iter().enumerate() {
+    for k in spans {
+        let s = &t.spans[k];
         queue.push_back((uv_curve(s, ctx.like).ok_or(span_error(t, k))?, 0u32));
     }
     let mut tested = 0u64;
@@ -726,7 +945,7 @@ pub fn in_tube<S: Scalar>(
         patches,
         like: &like,
     };
-    let (inside, pieces) = near_curve(&ctx, &h, t, t.band)?;
+    let (inside, pieces) = near_curve(&ctx, &h, t, 0..t.spans.len(), t.band)?;
     Ok(Tube { inside, pieces })
 }
 
@@ -772,18 +991,28 @@ pub fn role<S: Scalar>(
         .map(|&c| face.trim_index(c).expect("a met coedge is the face's"))
         .collect();
     let zero = idx.iter().any(|&k| trims[k].zero_length);
+    let sides = b.sides(like);
     if !zero && idx.iter().all(|&k| face.same_curve(idx[0], k)) {
-        return Ok(Roled {
-            role: Role::Strip(coedges),
-            pieces,
-            met,
-        });
+        // One curve: a strip box, unless it meets the curve in several
+        // parameter ranges (a teardrop, a closed loop near its vertex):
+        // then a corner box of the curve's vertex, or it refines.
+        let (count, n) = ranges(trims, idx[0], &met, &sides, like)?;
+        pieces = pieces.saturating_add(n);
+        if count.is_none_or(|c| c <= 1) {
+            return Ok(Roled {
+                role: Role::Strip(coedges),
+                pieces,
+                met,
+            });
+        }
     }
     // The corners every met coedge has an end at.
     let mut cands: SmallVec<[u32; 2]> = SmallVec::from_slice(&corners.ends[idx[0]]);
     cands.dedup();
     cands.retain(|c| idx.iter().all(|&k| corners.ends[k].contains(c)));
-    let sides = b.sides(like);
+    // Every corner whose component holds the box's meetings; of two, the
+    // one whose lowest vertex is the lower in the geometric order.
+    let mut best: Option<u32> = None;
     'corner: for c in cands {
         for r in &met {
             let k = face
@@ -806,6 +1035,11 @@ pub fn role<S: Scalar>(
                 continue 'corner;
             }
         }
+        if best.is_none_or(|o| corners.rank[c as usize] < corners.rank[o as usize]) {
+            best = Some(c);
+        }
+    }
+    if let Some(c) = best {
         return Ok(Roled {
             role: Role::Corner {
                 vertex: corners.corners[c as usize].vertex,
@@ -820,6 +1054,149 @@ pub fn role<S: Scalar>(
         pieces,
         met,
     })
+}
+
+/// How many disjoint parameter ranges of trim `k`'s p-curve the closed box
+/// `sides` isn't separated from, over the spans of it among `met` (module
+/// docs, "Teardrops"), and the pieces tested; `None` where the pieces
+/// run out first. Pieces that meet end to end (at a knot, or across the
+/// vertex of a curve closed there) are one range.
+fn ranges<S: Scalar>(
+    trims: &[Trim<'_>],
+    k: usize,
+    met: &[SpanRef],
+    sides: &[[S; 2]; 2],
+    like: &S,
+) -> Result<(Option<usize>, u64), BoxError> {
+    let t = &trims[k];
+    // Consecutive spans whose control points run monotonically in `u` and
+    // in `v` (with positive weights, so does the curve) meet a box in one
+    // range: the parameters inside it in each coordinate are an interval.
+    let mine: SmallVec<[u32; 4]> = met
+        .iter()
+        .filter(|r| r.coedge == t.coedge)
+        .map(|r| r.span)
+        .collect();
+    let consecutive = mine.windows(2).all(|w| w[1] == w[0] + 1);
+    if consecutive && let (Some(&a), Some(&b)) = (mine.first(), mine.last()) {
+        let pts = t.spans[a as usize..=b as usize]
+            .iter()
+            .flat_map(|s| s.iter().map(|p| [p[0], p[1]]));
+        let mono = (0..2).all(|c| {
+            let (mut up, mut down) = (true, true);
+            let mut prev: Option<f64> = None;
+            for p in pts.clone() {
+                if let Some(q) = prev {
+                    up &= p[c] >= q;
+                    down &= p[c] <= q;
+                }
+                prev = Some(p[c]);
+            }
+            up || down
+        });
+        if mono {
+            return Ok((Some(1), 0));
+        }
+    }
+    let mut parts: Vec<(u32, Dyadic, Dyadic)> = Vec::new();
+    let mut tested = 0u64;
+    for r in met.iter().filter(|r| r.coedge == t.coedge) {
+        let j = r.span as usize;
+        let c = uv_curve(&t.spans[j], like).ok_or(span_error(t, j))?;
+        let mut budget = SEP_PIECES;
+        let ok = unseparated(&c, sides, (0, 0), &mut budget, &mut |(n, d)| {
+            parts.push((
+                r.span,
+                Dyadic::new(n, d).expect("a piece"),
+                Dyadic::new(n + 1, d).expect("a piece"),
+            ));
+        });
+        tested = tested.saturating_add(u64::from(SEP_PIECES - budget));
+        if !ok {
+            return Ok((None, tested));
+        }
+    }
+    parts.sort_by_key(|a| (a.0, a.1));
+    let mut count = 0usize;
+    let mut last: Option<(u32, Dyadic)> = None;
+    for &(span, lo, hi) in &parts {
+        let joined = match last {
+            Some((ls, lh)) => {
+                (ls == span && lh >= lo)
+                    || (ls + 1 == span && lh == Dyadic::ONE && lo == Dyadic::ZERO)
+            }
+            None => false,
+        };
+        if !joined {
+            count += 1;
+        }
+        last = match last {
+            Some((ls, lh)) if ls == span && lh > hi => Some((ls, lh)),
+            _ => Some((span, hi)),
+        };
+    }
+    // A curve closed at its vertex: its first and last pieces meet there.
+    let n = t.spans.len();
+    let closed = t.ends[0] == t.ends[1] && {
+        let (a, b) = (t.spans[0][0], t.spans[n - 1][2]);
+        (a[0] + 0.0).to_bits() == (b[0] + 0.0).to_bits()
+            && (a[1] + 0.0).to_bits() == (b[1] + 0.0).to_bits()
+    };
+    if closed && count > 1 {
+        let first = parts.first().expect("counted");
+        let ends_last = parts
+            .iter()
+            .any(|p| p.0 as usize == n - 1 && p.2 == Dyadic::ONE);
+        if first.0 == 0 && first.1 == Dyadic::ZERO && ends_last {
+            count -= 1;
+        }
+    }
+    Ok((Some(count), tested))
+}
+
+/// Whether the piece `c` lies certainly in the closed box: its hull in
+/// each side line's equation of one sign.
+fn whole_in<S: Scalar>(c: &HomCurve<S, 2>, sides: &[[S; 2]; 2]) -> bool {
+    let like = &c.weights().coefs()[0];
+    sides.iter().enumerate().all(|(k, [lo, hi])| {
+        let mut a = [S::int(0, like), S::int(0, like)];
+        a[k] = S::int(1, like);
+        c.compose_linear(&a, &lo.neg()).hull().lo >= 0.0
+            && c.compose_linear(&a, &hi.neg()).hull().hi <= 0.0
+    })
+}
+
+/// Visits the pieces of `c` (the piece `(k, d)` of its span) that the
+/// closed box isn't separated from, halving as [`classify`]'s test does;
+/// `false` where the budget runs out.
+fn unseparated<S: Scalar>(
+    c: &HomCurve<S, 2>,
+    sides: &[[S; 2]; 2],
+    (k, d): (u64, u32),
+    budget: &mut u32,
+    out: &mut impl FnMut((u64, u32)),
+) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    match verdict(c, sides) {
+        Verdict::Beyond => return true,
+        // The whole piece in the box; one whose end only is in it halves
+        // on, so a range ends where the curve leaves the box.
+        Verdict::In if whole_in(c, sides) => {
+            out((k, d));
+            return true;
+        }
+        Verdict::In | Verdict::Open => {}
+    }
+    if d >= SEP_DEPTH || small(c, sides) {
+        out((k, d));
+        return true;
+    }
+    let [l, r] = c.split_half();
+    unseparated(&l, sides, (2 * k, d + 1), budget, out)
+        && unseparated(&r, sides, (2 * k + 1, d + 1), budget, out)
 }
 
 #[cfg(test)]

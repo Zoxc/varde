@@ -1313,3 +1313,43 @@ fn signed_zeros_are_one_uv_point() {
     let (a, b) = uv_ends(&t);
     assert_eq!(a, b);
 }
+
+#[test]
+fn ends_in_corner_pieces_are_the_vertex_only_near_it() {
+    let w = [1.0, 2.0, 3.0];
+    let hull = |r: f64| HullBox {
+        lo: w.map(|x| x - r),
+        hi: w.map(|x| x + r),
+    };
+    let named = [(5u32, CoedgeId(1)), (2u32, CoedgeId(7))];
+    // Within `r_w` (the box's corner at `√3·r`): the vertex.
+    assert_eq!(
+        corner_end(&hull(0.5), w, 1.0, &named),
+        Some(CornerEnd::Vertex)
+    );
+    // Past it, or not certified within it: the curve lower in the
+    // geometric order, whatever its id.
+    assert_eq!(
+        corner_end(&hull(0.6), w, 1.0, &named),
+        Some(CornerEnd::Curve(CoedgeId(7)))
+    );
+    assert_eq!(
+        corner_end(&hull(0.5), w, 0.5, &named[..1]),
+        Some(CornerEnd::Curve(CoedgeId(1)))
+    );
+    // Equal keys: the lesser id.
+    let tied = [(3u32, CoedgeId(9)), (3u32, CoedgeId(4))];
+    assert_eq!(
+        corner_end(&hull(2.0), w, 1.0, &tied),
+        Some(CornerEnd::Curve(CoedgeId(4)))
+    );
+    // Nothing named far out; an unbounded hull is never near.
+    assert_eq!(corner_end::<u32>(&hull(2.0), w, 1.0, &[]), None);
+    let open = HullBox {
+        lo: [f64::NEG_INFINITY; 3],
+        hi: w,
+    };
+    assert_eq!(corner_end::<u32>(&open, w, 1.0, &[]), None);
+}
+
+mod spike;

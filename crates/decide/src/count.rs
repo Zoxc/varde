@@ -9,7 +9,8 @@
 //! face sum to its own; and [`pieces`], the strip pieces: a run of strip
 //! boxes with its trimming curve's ribbon, their degree from the free
 //! sides inside the trim, the cuts certified off the query point's ray,
-//! and the edge's ray record between them.
+//! and the edge's ray record between them, the corner pieces likewise,
+//! and where an edge's crossing in a corner piece is placed.
 
 pub mod boxes;
 pub mod degree;
