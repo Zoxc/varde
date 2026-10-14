@@ -1153,6 +1153,12 @@ impl QShadow {
                 })
                 .enclose()
         };
+        QShadow::from_dot(dot)
+    }
+
+    /// The shadow of a point whose dot product with a stored vector is
+    /// enclosed by `dot`; `None` unless finite and ordered.
+    pub(crate) fn from_dot(dot: impl Fn([f64; 3]) -> [f64; 2]) -> Option<QShadow> {
         QShadow::enclosing(dot([R_HAT.x, R_HAT.y, R_HAT.z]), dot([NU.x, NU.y, NU.z]))
     }
 

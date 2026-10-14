@@ -11,8 +11,10 @@
 //! tile line the counting can't certify off the point, [`height`] the
 //! height keys a point reads against a vertex, an edge or a face's layer,
 //! the layers themselves and the height records (and, in
-//! [`height::model`], the geometry they are decided from), and [`near`] the
-//! operation's bands and near radii they read.
+//! [`height::model`], the geometry they are decided from), [`near`] the
+//! operation's bands and near radii they read, and [`xrec`] the count of
+//! an edge pair's shadow crossings from four ray records and the degrees
+//! of the boxes of their parameter square.
 
 pub mod cusp;
 pub mod feet;
@@ -23,3 +25,4 @@ pub mod ray;
 pub mod shadow;
 pub mod side;
 pub mod table;
+pub mod xrec;

@@ -18,3 +18,4 @@ pub mod boxes;
 pub mod degree;
 pub mod pieces;
 pub mod s02;
+pub mod xrec;
