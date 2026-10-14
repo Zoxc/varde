@@ -12,31 +12,28 @@ use std::mem;
 use std::path::{Path, PathBuf};
 
 use varde_document::{Document, Snapshot};
-use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle};
 
+use self::unsaved::{Disk, Entry, Unsaved};
+use super::dirs::Dirs;
 use super::disk::{self, Handed};
-use super::opfs::{self, Handle, OpfsDir};
+use super::opfs::Handle;
 use super::settings;
 use crate::autosave::{Ending, Held, to_open};
 use crate::browser::folder::{self, Design};
-use crate::browser::{self, BrowserDesign, LastDownload};
+use crate::browser::{BrowserDesign, LastDownload};
 use crate::open::{NOT_FOUND, OpenFiles};
-use crate::store::{
-    Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
-};
+use crate::store::{Listing, NO_RECOVERED, is_entry_name, listed_entry, listing, newest_first};
 use crate::three_mf;
 use crate::thumbnail::previews;
-use crate::vrdp::{
-    self, Error as FileError, Known, Preview, Tail, check_unchanged, from_bytes_with_found,
-    whole_file,
-};
+use crate::vrdp::{self, Preview, Tail, from_bytes_with_found, whole_file};
 use crate::web_support::dir::{Dir, Make, end_held, remove_if_free, take_new};
-use crate::web_support::downloads::{self, Downloads};
 use crate::web_support::names::new_name;
 use crate::{
     Access, Chosen, Closing, Damage, FileId, OpenId, Opened, Picked, ReadOnly, Recovered, Request,
     Response, SaveError, SaveTo, SavedAs, Stores, UnixSeconds,
 };
+
+mod unsaved;
 
 /// What the web build answers requests for files at a path with: it only
 /// has the files the user picks, see `src/pick.rs`, and browser storage.
@@ -77,50 +74,6 @@ enum Place {
     /// In browser storage, by name: its saves there, its auto-saves in its
     /// sidecar.
     Browser(Design<Handle>),
-}
-
-/// A design auto-saved to an entry in the store of new designs.
-#[derive(Debug)]
-struct Unsaved {
-    /// Its entry, or why it has none: a design opened from or saved as a
-    /// file of the user's still is when the store can't be used, say with
-    /// the site's data blocked, only without auto-saves.
-    entry: Result<Entry, String>,
-    /// The file of the user's the design was opened from or saved as, if
-    /// it can be written to: saves go there.
-    disk: Option<Disk>,
-    /// The name of the file of the user's the design was opened from or
-    /// saved as, kept with its auto-saves; `None` for a new design.
-    title: Option<String>,
-}
-
-/// A design's entry in the store, held.
-#[derive(Debug)]
-struct Entry {
-    /// Its file name in the store.
-    name: String,
-    held: Held<Handle>,
-}
-
-/// A file of the user's a design is saved to, through the File System
-/// Access API.
-#[derive(Debug)]
-struct Disk {
-    handle: FileSystemFileHandle,
-    /// What the file held when last read or written, see
-    /// [`check_unchanged`]: one read as damaged is never saved to.
-    known: Known,
-}
-
-impl Unsaved {
-    /// The design was just saved to its file, so what was auto-saved is
-    /// older. Failing to empty it only leaves an older state to be offered
-    /// should the tab close; the next save or a clean close tries again.
-    fn saved(&mut self) {
-        if let Ok(entry) = &mut self.entry {
-            let _ = entry.held.clear();
-        }
-    }
 }
 
 impl Open {
@@ -753,22 +706,7 @@ impl Files {
             .disk
             .as_mut()
             .ok_or_else(|| SaveError::Failed("the design has no file to save to".to_owned()))?;
-        // A file that's no longer a `.vrdp` was changed by someone else:
-        // a native save, reading no header, would find other bytes where
-        // the last record was. Other errors are `check_unchanged`'s to say,
-        // as a native save's are.
-        let current = disk::read_handle(&disk.handle).await.map_err(|e| match e {
-            FileError::Io(e) => SaveError::Failed(e.to_string()),
-            _ => SaveError::Conflict,
-        })?;
-        // No failed save to allow for: the browser replaces the file as a
-        // write is closed, a failure leaving it as it was.
-        check_unchanged(current.as_slice(), &disk.known)?;
-        let (bytes, known) = whole_file(document, previews)?;
-        disk::write(&disk.handle, &bytes)
-            .await
-            .map_err(|e| SaveError::Failed(e.to_string()))?;
-        disk.known = known;
+        disk.save(document, previews).await?;
         unsaved.saved();
         Ok(())
     }
@@ -794,22 +732,20 @@ impl Files {
         disk::write(&handle, &bytes)
             .await
             .map_err(|e| SaveError::Failed(e.to_string()))?;
-        let disk = Some(Disk { handle, known });
-        let title = Some(picked.name.clone());
+        let disk = Disk { handle, known };
+        let title = picked.name.clone();
         let file = match file {
             Some(file) => {
                 let open = self.open.get_mut(file)?;
                 open.found = None;
                 if let Place::Entry(unsaved) = &mut open.place {
-                    unsaved.disk = disk;
-                    unsaved.title = title;
-                    unsaved.saved();
+                    unsaved.saved_to(disk, title);
                 } else {
                     // A design leaving browser storage gets an entry for
                     // its auto-saves, as one opened from a file of the
                     // user's.
                     let entry = self.entry().await;
-                    let unsaved = Unsaved { entry, disk, title };
+                    let unsaved = Unsaved::saved_as(entry, disk, title);
                     let open = self.open.get_mut(file)?;
                     let old = mem::replace(&mut open.place, Place::Entry(unsaved));
                     self.saved_elsewhere(old).await;
@@ -825,7 +761,7 @@ impl Files {
                 self.open.add(
                     None,
                     Open {
-                        place: Place::Entry(Unsaved { entry, disk, title }),
+                        place: Place::Entry(Unsaved::saved_as(entry, disk, title)),
                         found: None,
                     },
                 )
@@ -919,7 +855,7 @@ impl Files {
         let downloads = self.dirs.downloads().await;
         let store = self.dirs.store().await.ok();
         let (open, named) = (&self.open, &mut self.named);
-        let held = |name: &str| open.values().any(|open| open.browser_name() == Some(name));
+        let held = |name: &str| holds_in_browser(open, name);
         let listing =
             folder::list(&dir, store.as_ref(), || entry_name(named), &downloads, held).await;
         self.rescued |= listing.rescued;
@@ -930,7 +866,7 @@ impl Files {
     /// [`Request::DeleteFromBrowser`].
     async fn delete_from_browser(&mut self, name: &str) -> Result<(), String> {
         let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
-        let held = (self.open.values()).any(|open| open.browser_name() == Some(name));
+        let held = holds_in_browser(&self.open, name);
         folder::delete(&dir, name, held).await?;
         self.forget_downloads(name).await;
         Ok(())
@@ -984,78 +920,9 @@ impl Files {
     }
 }
 
-/// The directories the worker keeps designs in, each found and made on
-/// first use and kept from then on.
-#[derive(Debug)]
-struct Dirs {
-    /// Where new designs are kept, if anywhere, see [`Stores::designs`](crate::Stores::designs).
-    designs: Option<PathBuf>,
-    /// The directory `designs` names, once found.
-    store: Option<OpfsDir>,
-    /// Browser storage's directory, `saved`, once found.
-    browser: Option<OpfsDir>,
-    /// The root of the Origin Private File System, where `downloads.toml`
-    /// is, once found.
-    root: Option<OpfsDir>,
-}
-
-impl Dirs {
-    /// The directory in `slot`, found by `find` and kept there if it's
-    /// not yet.
-    async fn cached(
-        slot: &mut Option<OpfsDir>,
-        find: impl Future<Output = io::Result<FileSystemDirectoryHandle>>,
-    ) -> io::Result<OpfsDir> {
-        if let Some(dir) = slot {
-            return Ok(dir.clone());
-        }
-        let dir = OpfsDir(find.await?);
-        *slot = Some(dir.clone());
-        Ok(dir)
-    }
-
-    /// The store's directory, made if needed.
-    async fn store(&mut self) -> io::Result<OpfsDir> {
-        let designs = self
-            .designs
-            .as_deref()
-            .ok_or_else(|| io::Error::other(NO_STORE))?;
-        Self::cached(&mut self.store, opfs::dir(designs)).await
-    }
-
-    /// Browser storage's directory, made if needed.
-    async fn browser(&mut self) -> io::Result<OpfsDir> {
-        Self::cached(&mut self.browser, opfs::dir(Path::new(browser::DIR))).await
-    }
-
-    /// The root, where `downloads.toml` is.
-    async fn root(&mut self) -> io::Result<OpfsDir> {
-        Self::cached(&mut self.root, opfs::root()).await
-    }
-
-    /// The last download recorded of the design `name`, whose file ends at
-    /// `tail`.
-    async fn last_download(&mut self, name: &str, tail: Tail) -> Option<LastDownload> {
-        self.downloads().await.last(name, tail.sum())
-    }
-
-    /// The downloads recorded, none if they can't be read, see
-    /// [`downloads::load`].
-    async fn downloads(&mut self) -> Downloads {
-        match self.root().await {
-            Ok(root) => downloads::load(&root).await,
-            Err(_) => Downloads::default(),
-        }
-    }
-
-    /// Changes the downloads recorded as `change` does, see
-    /// [`downloads::update`].
-    async fn update_downloads<T>(
-        &mut self,
-        change: impl FnOnce(&mut Downloads) -> T,
-    ) -> io::Result<T> {
-        downloads::update(&self.root().await?, change).await
-    }
+/// Whether a design open in this tab is `name` in browser storage.
+fn holds_in_browser(open: &OpenFiles<Open>, name: &str) -> bool {
+    open.values().any(|open| open.browser_name() == Some(name))
 }
 
 /// A name for a new entry in the store, `named` counting the names made:

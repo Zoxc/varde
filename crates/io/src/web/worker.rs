@@ -2,6 +2,7 @@
 //! web app's `serve_worker` in the role [`WORKER`](crate::WORKER),
 //! never on the page.
 
+mod dirs;
 mod disk;
 mod files;
 mod opfs;
