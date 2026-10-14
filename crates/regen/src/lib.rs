@@ -90,6 +90,7 @@ pub use draw::{
 };
 pub use edge_facts::{Convexity, EdgeFacts};
 pub use error_geometry::{ErrorGeometry, FeatureFailure, GeometryError, GeometryParts};
+pub use history::revolve::sketch_axis;
 pub use history::scale::{AXIS_SINE, along_axis};
 pub use history::{BodySolid, Evaluation, evaluate, holding, merged_into, note_merge};
 pub use inspect::{

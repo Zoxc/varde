@@ -423,21 +423,9 @@ pub(crate) fn axis_of(sketch: &Sketch, id: Id) -> Option<AxisLine> {
 /// coordinates, as regeneration takes it: an axis from the origin along
 /// +x or +y, a line from its start to its end. `None` for a line that's
 /// gone or isn't one, or has no length, and for a model edge, which isn't
-/// the sketch's.
+/// the sketch's ([`varde_regen::sketch_axis`]), or that isn't finite.
 pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Option<(DVec2, DVec2)> {
-    let (at, along) = match axis {
-        AxisLine::SketchX => (DVec2::ZERO, DVec2::X),
-        AxisLine::SketchY => (DVec2::ZERO, DVec2::Y),
-        AxisLine::Curve(id) => {
-            let Curve::Line { start, end } = sketch.curve(id)?.curve else {
-                return None;
-            };
-            let start = sketch.point(start)?.at;
-            (start, sketch.point(end)?.at - start)
-        }
-        AxisLine::Edge(_) => return None,
-    };
-    (along != DVec2::ZERO && along.is_finite() && at.is_finite()).then_some((at, along))
+    varde_regen::sketch_axis(sketch, axis).filter(|(at, along)| at.is_finite() && along.is_finite())
 }
 
 /// How far either side of its origin `sketch`'s axes are drawn, and

@@ -169,6 +169,15 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, AxisErr
     Ok(Axis { at, along, curve })
 }
 
+/// [`axis_line`] for those outside regeneration (the view's preview and
+/// handle): `axis` of `sketch` as a point on it and its direction, `None`
+/// where regeneration finds no axis in the sketch.
+pub fn sketch_axis(sketch: &Sketch, axis: AxisLine) -> Option<(DVec2, DVec2)> {
+    axis_line(sketch, axis)
+        .ok()
+        .map(|axis| (axis.at, axis.along))
+}
+
 /// The axis a revolve about the model edge `edge` turns about, in the
 /// coordinates of its sketch placed at `placement`, given the bodies the
 /// features before it made (`evaluation`), or why there's none. The

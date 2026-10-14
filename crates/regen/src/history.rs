@@ -154,7 +154,7 @@ mod motion;
 mod offset_face;
 mod pattern;
 mod reference;
-mod revolve;
+pub(crate) mod revolve;
 mod run;
 pub(crate) mod scale;
 mod shell;
