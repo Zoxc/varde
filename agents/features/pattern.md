@@ -268,7 +268,7 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   `Pattern::count_ask`; the spread a positive length within the
   coordinate limit (linear: `spacing_ask().positive()`, the sign is
   Flip's) or an angle by `Pattern::angle_ask`. Stored
-  (`MotionSession::pattern`): linear Spacing as typed, Total as
+  (`MotionSession::pattern`, `app/src/doc/motion/pattern.rs`): linear Spacing as typed, Total as
   `"(total) / (n − 1)"`, Flip as `"-(...)"` round either (a negative
   spacing); circular Full 360° as `"360°"`, Total as typed, Spacing as
   `"(spacing) * (n − 1)"`. Texts, not rounded numbers, so the values are
