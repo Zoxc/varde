@@ -155,10 +155,10 @@ impl Document {
                     .map_err(|why| CheckError::SketchLink(id, why))?;
             }
             FeatureKind::Extrude(extrude) => self
-                .check_extrude(index, extrude)
+                .check_extrude(index, extrude, design)
                 .map_err(|why| CheckError::Extrude(id, why))?,
             FeatureKind::Revolve(revolve) => self
-                .check_revolve(index, revolve)
+                .check_revolve(index, revolve, design)
                 .map_err(|why| CheckError::Revolve(id, why))?,
             FeatureKind::Combine(combine) => self
                 .check_combine(index, combine)
@@ -248,7 +248,7 @@ impl Document {
                     .map_err(|why| CheckError::FaceDraft(id, why))?;
             }
             FeatureKind::Sweep(sweep) => self
-                .check_sweep(index, sweep)
+                .check_sweep(index, sweep, design)
                 .map_err(|why| CheckError::Sweep(id, why))?,
             FeatureKind::Loft(loft) => self
                 .check_loft(index, loft)
@@ -376,21 +376,31 @@ impl Document {
     }
 
     /// Checks `extrude`, feature `index`, see [`Document::check`].
-    fn check_extrude(&self, index: usize, extrude: &Extrude) -> Result<(), ExtrudeError> {
+    fn check_extrude(
+        &self,
+        index: usize,
+        extrude: &Extrude,
+        design: &Design<'_>,
+    ) -> Result<(), ExtrudeError> {
         if !self.sketch_ref_before(index, extrude.sketch) {
             return Err(ExtrudeError::Sketch(extrude.sketch));
         }
-        extrude.check_own(&self.design())?;
+        extrude.check_own(design)?;
         self.check_uses(index, &extrude.operation)
             .map_err(ExtrudeError::Operation)
     }
 
     /// Checks `revolve`, feature `index`, see [`Document::check`].
-    fn check_revolve(&self, index: usize, revolve: &Revolve) -> Result<(), RevolveError> {
+    fn check_revolve(
+        &self,
+        index: usize,
+        revolve: &Revolve,
+        design: &Design<'_>,
+    ) -> Result<(), RevolveError> {
         if !self.sketch_ref_before(index, revolve.sketch) {
             return Err(RevolveError::Sketch(revolve.sketch));
         }
-        revolve.check_own(&self.design())?;
+        revolve.check_own(design)?;
         if let AxisLine::Edge(edge) = &revolve.axis {
             self.check_edge(index, edge)?;
         }
@@ -684,11 +694,16 @@ impl Document {
     }
 
     /// Checks `sweep`, feature `index`, see [`Document::check`].
-    fn check_sweep(&self, index: usize, sweep: &Sweep) -> Result<(), SweepError> {
+    fn check_sweep(
+        &self,
+        index: usize,
+        sweep: &Sweep,
+        design: &Design<'_>,
+    ) -> Result<(), SweepError> {
         if !self.sketch_ref_before(index, sweep.sketch) {
             return Err(SweepError::Sketch(sweep.sketch));
         }
-        sweep.check_own(&self.design())?;
+        sweep.check_own(design)?;
         self.check_path(index, sweep.sketch, &sweep.path)?;
         self.check_uses(index, &sweep.operation)
             .map_err(SweepError::Operation)
