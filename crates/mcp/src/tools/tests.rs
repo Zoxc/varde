@@ -2084,3 +2084,44 @@ fn every_listed_tool_reads_the_arguments_it_lists() {
         }
     }
 }
+
+/// Every listed tool, read from arguments that pass, names the tool it
+/// was read as and edits unless its listing says it only reads: the
+/// names in `Call::tool` and the queries in `Call::edits` agree with
+/// the catalogue.
+#[test]
+fn a_read_call_names_its_tool_and_edits_as_listed() {
+    let passing = |name: &str| match name {
+        "feature" | "sketch" => json!({ "name": "F" }),
+        "set_feature" => json!({ "name": "F", "flip": true }),
+        "remove_feature" => json!({ "feature": "F" }),
+        "body_topology" | "remove_body" => json!({ "body": "B" }),
+        "measure" => json!({ "a": { "body": "B" } }),
+        "rename" => json!({ "body": "B", "to": "C" }),
+        "set_visible" => json!({ "body": "B", "visible": false }),
+        "set_color" => json!({ "body": "B", "color": null }),
+        "set_opacity" => json!({ "body": "B", "opacity": 0.5 }),
+        "add_parameter" | "set_parameter" => json!({ "name": "w", "value": "5 mm" }),
+        "rename_parameter" => json!({ "name": "w", "to": "v" }),
+        "remove_parameter" => json!({ "name": "w" }),
+        "set_units" => json!({ "units": "mm" }),
+        "set_tolerance" => json!({ "tolerance": "0.01 mm" }),
+        "set_rollback" => json!({ "before": null }),
+        "add_sketch" => json!({ "plane": "XZ" }),
+        "set_sketch_plane" => json!({ "sketch": "S", "plane": "yz" }),
+        "add_link" => json!({ "sketch": "S", "from": { "edge": "e" } }),
+        "edit_sketch" => json!({ "sketch": "S", "operations": [{ "op": "delete", "items": [1] }] }),
+        _ => json!({}),
+    };
+    for tool in list()["tools"].as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        let read = match FeatureTool::named(name) {
+            Some(feature) => parse_patch(feature, &Map::new()),
+            None => call(name, passing(name)),
+        };
+        let read = read.unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        assert_eq!(read.tool(), name);
+        let read_only = tool["annotations"]["readOnlyHint"].as_bool().unwrap();
+        assert_eq!(read.edits(), !read_only, "{name}");
+    }
+}
