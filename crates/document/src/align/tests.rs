@@ -4,7 +4,7 @@ use varde_kernel_compat::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::testing::{extrude_again, with_body};
-use crate::{Axis3, AxisRef, EdgeError, EdgeRef, FaceRef};
+use crate::{Axis3, AxisRef, EdgeError, EdgeRef, FaceRef, NearError};
 use crate::{CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, Removable};
 
 /// The example's body and another plate: the editor, the bodies and
@@ -247,7 +247,7 @@ fn references_are_checked() {
     refused(
         &mut editor,
         other,
-        AlignError::Ref(PointRefError::Near(far.near)),
+        AlignError::Ref(PointRefError::Near(NearError(far.near))),
     );
     let at = match align.to.point {
         PointRef::Corner { near, .. } => near,
@@ -255,7 +255,7 @@ fn references_are_checked() {
     };
     let check = align.check_own(&editor.document().design());
     assert!(
-        matches!(check, Err(AlignError::Ref(PointRefError::Near(p))) if p.z.is_nan() && p.x == at.x)
+        matches!(check, Err(AlignError::Ref(PointRefError::Near(NearError(p)))) if p.z.is_nan() && p.x == at.x)
     );
     // An edge's keys sorted.
     let mut edge = rim(a, first);

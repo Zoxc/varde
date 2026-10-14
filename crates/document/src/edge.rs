@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use varde_kernel_compat::mesh::FaceKey;
 
 use crate::refs::OnBody;
-use crate::{BodyId, FeatureId};
+use crate::{BodyId, FeatureId, NearError};
 
 /// An edge of a body, as picked: the body, the keys of the faces either
 /// side of it (the kernel's names for them, from the features that made
@@ -86,12 +86,7 @@ impl EdgeRef {
         if a >= b {
             return Err(EdgeError::Faces);
         }
-        let near = self.near;
-        if crate::in_bounds(near) {
-            Ok(())
-        } else {
-            Err(EdgeError::Near(near))
-        }
+        Ok(NearError::check(self.near)?)
     }
 }
 
@@ -103,8 +98,8 @@ pub enum EdgeError {
     Faces,
     /// Its point isn't finite, or is further from zero than
     /// [`MAX_COORD`](crate::MAX_COORD).
-    #[error("its edge's point {0} is out of bounds")]
-    Near(DVec3),
+    #[error("its edge's point {} is out of bounds", .0.0)]
+    Near(#[from] NearError),
 }
 
 /// Points in the order references keep them in: their coordinates in

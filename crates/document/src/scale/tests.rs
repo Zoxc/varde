@@ -3,6 +3,7 @@ use varde_expr::Value;
 use varde_kernel_compat::mesh::{FaceKey, PartKey};
 
 use super::*;
+use crate::NearError;
 use crate::testing::{extrude_again, with_body};
 use crate::{CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, Removable};
 
@@ -250,7 +251,7 @@ fn bodies_and_references_are_checked() {
     refused(
         &mut editor,
         tampered,
-        ScaleError::Edge(EdgeError::Near(near)),
+        ScaleError::Edge(EdgeError::Near(NearError(near))),
     );
     let mut tampered = edge.clone();
     if let ScaleFactor::EdgeLength { edge, .. } = &mut tampered.factor {

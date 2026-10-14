@@ -94,7 +94,20 @@ impl FaceRef {
     /// within [`MAX_COORD`]. What it names is
     /// [`Document::check`](crate::Document::check)'s.
     pub fn check_own(&self) -> Result<(), NearError> {
-        let near = self.near;
+        NearError::check(self.near)
+    }
+}
+
+/// A reference's point isn't finite, or is further from zero than
+/// [`MAX_COORD`]: why [`FaceRef::check_own`] fails, and the point part
+/// of the edge's and the other references' own checks.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+#[error("its face's point {0} is out of bounds")]
+pub struct NearError(pub DVec3);
+
+impl NearError {
+    /// Checks a reference's point: finite and within [`MAX_COORD`].
+    pub(crate) fn check(near: DVec3) -> Result<(), NearError> {
         if crate::in_bounds(near) {
             Ok(())
         } else {
@@ -102,12 +115,6 @@ impl FaceRef {
         }
     }
 }
-
-/// A face reference's point isn't finite, or is further from zero than
-/// [`MAX_COORD`]: why [`FaceRef::check_own`] fails.
-#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
-#[error("its face's point {0} is out of bounds")]
-pub struct NearError(pub DVec3);
 
 /// What's wrong with a sketch's plane, see
 /// [`CheckError::SketchPlane`](crate::CheckError::SketchPlane).

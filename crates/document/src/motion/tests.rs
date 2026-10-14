@@ -4,7 +4,7 @@ use varde_kernel_compat::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::testing::{extrude_again, with_body};
-use crate::{Axis3, EdgeError, EdgeRef, FaceRef};
+use crate::{Axis3, EdgeError, EdgeRef, FaceRef, NearError};
 use crate::{
     BodiesError, CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit,
     MAX_FEATURE_BODIES, OriginPlane, Removable, Removal,
@@ -206,11 +206,11 @@ fn offsets_and_angles_are_checked() {
     turned.turn = Some((AxisRef::Face(far), angle(document, "30")));
     assert_eq!(
         turned.check_own(&design),
-        Err(MotionError::Ref(RefError::Near(far.near)))
+        Err(MotionError::Ref(RefError::Near(NearError(far.near))))
     );
     assert_eq!(
         mirror(&[a], Plane::Face(far)).check_own(),
-        Err(MotionError::Ref(RefError::Near(far.near)))
+        Err(MotionError::Ref(RefError::Near(NearError(far.near))))
     );
 }
 

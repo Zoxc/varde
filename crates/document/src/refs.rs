@@ -109,9 +109,7 @@ impl Referred<'_> {
     pub(crate) fn check_own(&self) -> Result<(), RefError> {
         match self {
             Referred::Edge(edge) => edge.check_own().map_err(RefError::Edge),
-            Referred::Face(face) => face
-                .check_own()
-                .map_err(|NearError(near)| RefError::Near(near)),
+            Referred::Face(face) => Ok(face.check_own()?),
         }
     }
 
@@ -141,8 +139,8 @@ pub enum RefError {
     Edge(#[source] EdgeError),
     /// Its face's point isn't finite, or is further from zero than
     /// [`MAX_COORD`](crate::MAX_COORD).
-    #[error("its face's point {0} is out of bounds")]
-    Near(DVec3),
+    #[error("{0}")]
+    Near(#[from] NearError),
 }
 
 /// A point on a body, as picked, or the origin. Found on its body as the
@@ -206,7 +204,7 @@ impl PointRef {
                 if !(a < b && b < c) {
                     return Err(PointRefError::Corner);
                 }
-                check_near(*near)
+                Ok(NearError::check(*near)?)
             }
             PointRef::Middle(edge) | PointRef::Centre(edge) => {
                 edge.check_own().map_err(PointRefError::Edge)
@@ -254,15 +252,6 @@ impl DirRef {
     }
 }
 
-/// Checks a reference's point: finite and within [`MAX_COORD`](crate::MAX_COORD).
-fn check_near(near: DVec3) -> Result<(), PointRefError> {
-    if crate::in_bounds(near) {
-        Ok(())
-    } else {
-        Err(PointRefError::Near(near))
-    }
-}
-
 /// What's wrong with a point's or a direction's reference on its own,
 /// see [`PointRef::check_own`] and [`DirRef::check_own`].
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
@@ -275,6 +264,6 @@ pub enum PointRefError {
     Edge(#[source] EdgeError),
     /// A corner's or face's point isn't finite, or is further from zero
     /// than [`MAX_COORD`](crate::MAX_COORD).
-    #[error("a reference's point {0} is out of bounds")]
-    Near(DVec3),
+    #[error("a reference's point {} is out of bounds", .0.0)]
+    Near(#[from] NearError),
 }
