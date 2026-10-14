@@ -173,6 +173,25 @@ pub(crate) struct Found {
     pub(crate) profiles: Arc<Profiles>,
 }
 
+/// The regions `references` resolved to, `resolved`, split into those
+/// found and the references that weren't.
+fn split_resolved(
+    references: &[RegionRef],
+    resolved: Vec<Option<usize>>,
+) -> (BTreeSet<usize>, Vec<RegionRef>) {
+    let mut found = BTreeSet::new();
+    let mut lost = Vec::new();
+    for (reference, index) in references.iter().zip(resolved) {
+        match index {
+            Some(index) => {
+                found.insert(index);
+            }
+            None => lost.push(reference.clone()),
+        }
+    }
+    (found, lost)
+}
+
 impl RegionPick {
     /// None picked yet, of `source` if given, else of the sketch the
     /// first is picked in; at most `most`. Its profiles are found by
@@ -211,12 +230,8 @@ impl RegionPick {
             .found(sketch)
             .map(|found| found.profiles.resolve(regions));
         let resolved = found.unwrap_or_else(|| vec![None; regions.len()]);
-        let lost = (regions.iter().zip(&resolved))
-            .filter(|(_, index)| index.is_none())
-            .map(|(reference, _)| reference.clone())
-            .collect();
-        let picked = resolved.into_iter().flatten().collect();
-        pick.pick(picked);
+        let (picked, lost) = split_resolved(regions, resolved);
+        pick.pick_within(picked, most);
         pick.lost = lost;
         pick.missing = pick.lost.len();
         pick
@@ -257,6 +272,11 @@ impl RegionPick {
     /// Those that can't be referenced, too thin for a point inside to be
     /// found, are left out.
     pub(crate) fn pick(&mut self, picked: BTreeSet<usize>) {
+        self.pick_within(picked, self.most.saturating_sub(self.lost.len()));
+    }
+
+    /// [`RegionPick::pick`], at most `most` of them.
+    fn pick_within(&mut self, picked: BTreeSet<usize>, most: usize) {
         let profiles = self
             .source
             .and_then(|source| self.found(source))
@@ -269,7 +289,7 @@ impl RegionPick {
         let referenced: Vec<(usize, RegionRef)> = picked
             .into_iter()
             .filter_map(|index| Some((index, profiles.reference(index)?)))
-            .take(self.most.saturating_sub(self.lost.len()))
+            .take(most)
             .collect();
         self.picked = referenced.iter().map(|(index, _)| *index).collect();
         self.references = referenced
@@ -355,15 +375,7 @@ impl RegionPick {
     /// visible sketches' within [`refresh_work`] in all, and
     /// [`RegionPick::also`]'s within [`also_work`].
     pub(crate) fn refresh(&mut self, document: &Document) -> bool {
-        let wanted: Vec<FeatureId> = match self.source {
-            Some(source) => vec![source],
-            None => document
-                .features()
-                .iter()
-                .filter(|feature| feature.visible || self.also.contains(&feature.id))
-                .map(|feature| feature.id)
-                .collect(),
-        };
+        let wanted = self.wanted(document);
         let mut old = std::mem::take(&mut self.found);
         let mut old_skipped = std::mem::take(&mut self.skipped);
         let mut left = refresh_work();
@@ -433,33 +445,41 @@ impl RegionPick {
         let others = old_skipped.into_iter();
         (self.skipped).extend(others.filter(|(id, _)| is_sketch(document, *id)));
         if remap {
-            let source = self.source.and_then(|source| self.found(source));
-            let profiles = source.map(|found| found.profiles.clone());
-            match profiles.map(|profiles| (profiles.resolve(&self.references), profiles)) {
-                Some((resolved, profiles)) => {
-                    // Those lost may be found again.
-                    let lost = profiles.resolve(&self.lost);
-                    let mut picked: BTreeSet<usize> = resolved.into_iter().flatten().collect();
-                    let lost_found = (std::mem::take(&mut self.lost).into_iter().zip(lost))
-                        .filter_map(|(reference, index)| match index {
-                            Some(index) => Some(index),
-                            None => {
-                                self.lost.push(reference);
-                                None
-                            }
-                        });
-                    picked.extend(lost_found);
-                    let lost = std::mem::take(&mut self.lost);
-                    self.pick(picked);
-                    self.lost = lost;
-                    self.missing = self.lost.len();
-                }
-                // Its regions can't be found for now: the references wait
-                // for the sketch to have them again.
-                None => self.picked.clear(),
-            }
+            self.remap();
         }
         true
+    }
+
+    /// The sketches whose profiles are wanted: the source, or before
+    /// there is one, the visible sketches and [`RegionPick::also`]'s.
+    fn wanted(&self, document: &Document) -> Vec<FeatureId> {
+        match self.source {
+            Some(source) => vec![source],
+            None => (document.features().iter())
+                .filter(|feature| feature.visible || self.also.contains(&feature.id))
+                .map(|feature| feature.id)
+                .collect(),
+        }
+    }
+
+    /// Picks the regions of the source, its sketch changed, again by
+    /// their references, and those lost too where they're found again.
+    /// Its regions not found for now, the references wait for the
+    /// sketch to have them again.
+    fn remap(&mut self) {
+        let source = self.source.and_then(|source| self.found(source));
+        let Some(profiles) = source.map(|found| found.profiles.clone()) else {
+            self.picked.clear();
+            return;
+        };
+        let (mut picked, _) = split_resolved(&self.references, profiles.resolve(&self.references));
+        let (found_again, lost) = split_resolved(&self.lost, profiles.resolve(&self.lost));
+        picked.extend(found_again);
+        // Those still lost don't count against the most here: they were
+        // kept beside the picked before, within it.
+        self.pick_within(picked, self.most);
+        self.lost = lost;
+        self.missing = self.lost.len();
     }
 
     /// The sketches whose regions show, for the view: each found's that
