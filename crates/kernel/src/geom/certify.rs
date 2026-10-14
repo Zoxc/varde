@@ -52,7 +52,7 @@
 //! runs: a unit at the first level, above it a precision step of the
 //! level's units (4 for double-double, `(bits/53)²` for big-float);
 //! running out of budget stops the coedge. A cell still open at the top
-//! level, or at [`MAX_DEPTH`] halvings, is done with its bound, above the
+//! level, or at [`MAX_SUBDIV_DEPTH`] halvings, is done with its bound, above the
 //! target; without a certified bound it stops the coedge at
 //! [`Cap::PrecisionBits`] or [`Cap::SubdivisionDepth`].
 //!
@@ -80,10 +80,7 @@ use varde_decide::num::dd::Dd;
 use super::curve::{Curve3D, PCurve, Span2, local};
 use super::surface::Surface;
 use super::tile::Tile;
-use crate::infra::budget::{Cap, LEVELS, Ledger, Stop, level_step, level_units};
-
-/// The most halvings of a piece.
-pub const MAX_DEPTH: u32 = 40;
+use crate::infra::budget::{Cap, LEVELS, Ledger, MAX_SUBDIV_DEPTH, Stop, level_step, level_units};
 
 /// How far above the greatest lower bound found a cell's bound may be to
 /// be done when the target is out of reach (module docs).
@@ -97,7 +94,7 @@ pub struct SeamBound {
     /// The bound, certified and finite: at most the target unless the
     /// target is out of reach (the bound then within [`TIGHT`] of the
     /// greatest deviation) or a cell was open at the top level or at
-    /// [`MAX_DEPTH`]. Above the target it is an achieved bound the
+    /// [`MAX_SUBDIV_DEPTH`]. Above the target it is an achieved bound the
     /// caller warns of (module docs, "Above the target").
     pub bound: f64,
     /// The highest level a cell was done at: 0 for `f64`, 1 for
@@ -192,7 +189,7 @@ pub(crate) fn seam_bound(
             }),
             Verdict::Precision if e.bound < f64::INFINITY => done(),
             Verdict::Precision => return Err(Stop::Cap(Cap::PrecisionBits)),
-            Verdict::Space if cell.depth < MAX_DEPTH => {
+            Verdict::Space if cell.depth < MAX_SUBDIV_DEPTH => {
                 // The left half on top.
                 for k in [2 * cell.k + 1, 2 * cell.k] {
                     cells.push(Cell {

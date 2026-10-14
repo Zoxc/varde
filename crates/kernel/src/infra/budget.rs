@@ -42,6 +42,12 @@ use super::par::par_map_indexed;
 /// flat tori of 36 864 patches each, take about 2 million units.
 pub const MAX_WORK: u64 = 1 << 22;
 
+/// The most halvings of one item, counted from the item's own start (a
+/// seam span, a profile pair, a leaf's pair box): reaching it is
+/// [`Cap::SubdivisionDepth`]. 48 halvings take the 4·10⁶ mm base tile
+/// down to about 10⁻⁸ mm, the kernel's resolution.
+pub const MAX_SUBDIV_DEPTH: u32 = 48;
+
 /// How much work one kernel operation may do, in units of about one patch
 /// or one pair of patches tested or split. Running out gives
 /// [`KernelError::OutOfBudget`], never a hang. One budget covers the
@@ -130,7 +136,7 @@ pub enum Cap {
     /// The highest precision of the escalation schedule, a sign or
     /// certificate still open ([`Cause::Precision`]).
     PrecisionBits,
-    /// The deepest subdivision of an item.
+    /// The deepest subdivision of an item, [`MAX_SUBDIV_DEPTH`].
     SubdivisionDepth,
     /// The deepest search for a point certifying a region's label.
     AuditDepth,
@@ -814,6 +820,17 @@ mod tests {
         });
         let ran = done.load(Ordering::Relaxed);
         assert!(ran <= 2000, "{ran} units of work for a budget of 1000");
+    }
+
+    #[test]
+    fn the_depth_cap_reaches_the_resolution_on_the_base_tile() {
+        // The base tile spans the coordinate box, 4·10⁶ mm: 48 halvings
+        // bring it within a factor 1.5 of 10⁻⁸ mm, a depth of 40 left it
+        // near 4·10⁻⁶ mm, and every depth is exact in a `u64` cell index.
+        let side = 4.0e6 / (1u64 << MAX_SUBDIV_DEPTH) as f64;
+        assert!(side < 1.5e-8, "{side}");
+        assert!(4.0e6 / (1u64 << 40) as f64 > 1.0e-6);
+        const { assert!(MAX_SUBDIV_DEPTH < u64::BITS) };
     }
 
     #[test]

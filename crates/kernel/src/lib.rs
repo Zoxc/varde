@@ -19,7 +19,7 @@ pub mod measure;
 pub mod topo;
 
 pub use infra::budget::{
-    Budget, BudgetProfile, Cap, HOTTEST, ItemAt, Limit, MAX_WORK, Step, Stopped,
+    Budget, BudgetProfile, Cap, HOTTEST, ItemAt, Limit, MAX_SUBDIV_DEPTH, MAX_WORK, Step, Stopped,
 };
 #[cfg(feature = "staging")]
 pub use infra::error::Stage;
