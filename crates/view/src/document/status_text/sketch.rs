@@ -5,7 +5,7 @@ use glam::DVec2;
 use varde_sketch::{Kind, Measure, Sketch};
 
 use crate::chrome::{Hint, chord_hint, double_hint, key_hint, mouse_hint, step_hint};
-use crate::document::{ActiveTool, SketchState, ValueField, ValueTarget};
+use crate::document::{Drawing, SketchState, ValueField, ValueTarget};
 use crate::icons::MouseButton;
 use crate::shortcut::{Held, Shortcut};
 use crate::{ConstraintKind, Tool};
@@ -26,11 +26,11 @@ pub(super) fn sketch_hints<'a>(
     }
     if let Some(tool) = sketch.tool {
         return if tool.tool == Tool::Dimension {
-            dimension_hints(sketch.sketch, &tool)
+            dimension_hints(sketch.sketch, tool)
         } else if tool.tool.draws() {
-            drawing_tool_hints(sketch.sketch, &tool, snap)
+            drawing_tool_hints(sketch.sketch, tool, snap)
         } else {
-            picking_tool_hints(sketch.sketch, &tool)
+            picking_tool_hints(sketch.sketch, tool)
         };
     }
     if sketch.constraining {
@@ -64,7 +64,7 @@ fn value_hints<'a>(field: ValueField<'a>) -> Vec<Hint<'a>> {
 /// The hints of a tool that picks rather than draws (Trim, Mirror,
 /// Offset, Fillet, ...): what it asks for, finishing or typing its value
 /// once something's picked, and cancelling or stopping it.
-fn picking_tool_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Hint<'a>> {
+fn picking_tool_hints<'a>(sketch: &Sketch, tool: &Drawing) -> Vec<Hint<'a>> {
     let picked = !tool.picked.is_empty();
     let done = match tool.tool {
         Tool::Mirror => (picked && !tool.about).then_some((Shortcut::ENTER, "Pick the line")),
@@ -87,7 +87,7 @@ fn picking_tool_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Hint<'a
 /// The hints of a drawing tool: what it asks for, placing without
 /// snapping (or with it, if tools don't otherwise `snap`), typing values,
 /// its own keys, construction, and how to stop it.
-fn drawing_tool_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>, snap: bool) -> Vec<Hint<'a>> {
+fn drawing_tool_hints<'a>(sketch: &Sketch, tool: &Drawing, snap: bool) -> Vec<Hint<'a>> {
     let escape = match (tool.tool, tool.placed.is_empty()) {
         (_, true) => "Stop tool",
         (Tool::Line, false) => "End line",
@@ -204,8 +204,8 @@ fn selection_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>
 
 /// The status bar's hints in the Dimension tool: what it asks for, the
 /// radius or diameter to switch to, placing a reference and stopping.
-fn dimension_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Hint<'a>> {
-    let placing = crate::dimension::measure(sketch, tool.picked, DVec2::ZERO, tool.switched);
+fn dimension_hints<'a>(sketch: &Sketch, tool: &Drawing) -> Vec<Hint<'a>> {
+    let placing = crate::dimension::measure(sketch, &tool.picked, DVec2::ZERO, tool.switched);
     let switch = match placing {
         Some((Measure::Radius(_), _)) => Some("Diameter"),
         Some((Measure::Diameter(_), _)) => Some("Radius"),

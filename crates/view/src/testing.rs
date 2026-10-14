@@ -7,8 +7,8 @@ use varde_sketch::{Curve, Dimension, Handle, Id, Measure, Selectable, Sketch, Sp
 
 pub(crate) use varde_sketch::testing::{DESIGN, handle, line, point};
 
-use crate::typed::{DEFAULT_SIDES, Field};
-use crate::{ActiveTool, Target, Tool};
+use crate::typed::Field;
+use crate::{Drawing, Target, Tool};
 
 pub(crate) fn at(x: f64, y: f64) -> DVec2 {
     DVec2::new(x, y)
@@ -76,24 +76,12 @@ pub(crate) fn dimension(
 
 /// `tool` in use with `placed` placed, snapped to `targets`, drawing
 /// normal geometry with nothing typed.
-pub(crate) fn tool<'a>(
-    tool: Tool,
-    placed: &'a [DVec2],
-    targets: &'a [Option<Target>],
-) -> ActiveTool<'a> {
-    ActiveTool {
+pub(crate) fn tool(tool: Tool, placed: &[DVec2], targets: &[Option<Target>]) -> Drawing {
+    Drawing {
         tool,
-        placed,
-        targets,
-        construction: false,
-        picked: &[],
-        about: false,
-        switched: false,
-        typed: &[],
-        sides: DEFAULT_SIDES,
-        centered: false,
-        control: false,
-        chained: 0,
+        placed: placed.to_vec(),
+        targets: targets.to_vec(),
+        ..Drawing::new(tool)
     }
 }
 

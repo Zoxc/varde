@@ -21,7 +21,7 @@ use crate::shortcut::{
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
-    ActiveTool, AlignRole, AlignSide, ConstraintKind, DocumentState, Edit, Location, Look, Message,
+    AlignRole, AlignSide, ConstraintKind, DocumentState, Drawing, Edit, Location, Look, Message,
     MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Picked, SketchState, SplitMode, Tool,
 };
 
@@ -56,7 +56,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                 },
             ),
             match sketch.tool {
-                Some(tool) => Some(tool_tag(&tool)),
+                Some(tool) => Some(tool_tag(tool)),
                 None if sketch.constraining => Some("Constrain".to_owned()),
                 None => None,
             },
@@ -234,7 +234,7 @@ fn shortened(name: &str, max: usize) -> Cow<'_, str> {
 /// What the toolbar's tag says of `tool`: its name, and how it draws: the
 /// Rectangle tool from the centre, the Polygon tool's sides, the Spline
 /// tool by control points, construction geometry.
-fn tool_tag(tool: &ActiveTool<'_>) -> String {
+fn tool_tag(tool: &Drawing) -> String {
     let how = match tool.tool {
         Tool::Rectangle if tool.centered => Some("From center".to_owned()),
         Tool::Polygon => Some(format!("{} sides", tool.sides)),

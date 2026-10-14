@@ -34,7 +34,7 @@ use varde_sketch::{Curve, Id, Sketch, angle, arc_sweep, crossing, flatten_spline
 
 use crate::dimension::sector_holds;
 use crate::hit;
-use crate::{ActiveTool, ConstraintKind, Tool};
+use crate::{ConstraintKind, Drawing, Tool};
 
 /// How near the cursor a snap is taken, in pixels: also how near its
 /// first point the Spline tool's click closes the spline.
@@ -194,12 +194,7 @@ impl Snap {
     /// `tool` drawing in `sketch` and a pixel `pixel` sketch units: along a
     /// direction inferred, from the start on past where it snapped, or
     /// from a circle's centre out to its quadrant.
-    pub(crate) fn guide(
-        &self,
-        sketch: &Sketch,
-        tool: &ActiveTool,
-        pixel: f64,
-    ) -> Option<[DVec2; 2]> {
+    pub(crate) fn guide(&self, sketch: &Sketch, tool: &Drawing, pixel: f64) -> Option<[DVec2; 2]> {
         if let Some(Target::Quadrant { round, .. }) = self.target {
             let (center, _) = sketch.round(round)?;
             return Some([center, self.at]);
@@ -227,7 +222,7 @@ enum Placing {
 
 /// What the tool's next click places, if it snaps at all: the Dimension
 /// tool and the shape tools pick instead.
-fn placing(tool: &ActiveTool) -> Option<Placing> {
+fn placing(tool: &Drawing) -> Option<Placing> {
     Some(match (tool.tool, tool.placed.len()) {
         (kind, _) if !kind.draws() => return None,
         (Tool::Circle, 1) | (Tool::Arc, 2) => Placing::Through,
@@ -239,7 +234,7 @@ fn placing(tool: &ActiveTool) -> Option<Placing> {
 /// a pixel being `pixel` sketch units there, and what it snaps to: see
 /// the module's documentation for the order. Where the cursor is if it
 /// snaps to nothing.
-pub(crate) fn snap(sketch: &Sketch, tool: &ActiveTool, cursor: DVec2, pixel: f64) -> Snap {
+pub(crate) fn snap(sketch: &Sketch, tool: &Drawing, cursor: DVec2, pixel: f64) -> Snap {
     let free = Snap::free(cursor);
     let Some(placing) = placing(tool) else {
         return free;
@@ -382,7 +377,7 @@ pub fn closing(sketch: &Sketch, curve: Id, end: Id) -> Option<Id> {
 /// anywhere.
 fn snap_within(
     sketch: &Sketch,
-    tool: &ActiveTool,
+    tool: &Drawing,
     placing: Placing,
     cursor: DVec2,
     tolerance: f64,
@@ -390,7 +385,7 @@ fn snap_within(
 ) -> Option<Snap> {
     // The nearest within reach, the first of those as near.
     let near = |candidates: Vec<Snap>| nearest(candidates, cursor, tolerance);
-    let start = match (tool.tool, tool.placed) {
+    let start = match (tool.tool, tool.placed.as_slice()) {
         (Tool::Line, &[start]) => Some(start),
         _ => None,
     };
@@ -468,7 +463,7 @@ fn snap_within(
 /// The points the Spline tool `tool` has placed that its next click
 /// snaps to, a pixel being `pixel`: all but the last, and the first only
 /// where a click there closes the spline.
-fn own_points(tool: &ActiveTool, pixel: f64) -> Vec<Snap> {
+fn own_points(tool: &Drawing, pixel: f64) -> Vec<Snap> {
     if tool.tool != Tool::Spline {
         return Vec::new();
     }
@@ -482,11 +477,11 @@ fn own_points(tool: &ActiveTool, pixel: f64) -> Vec<Snap> {
 /// The place nearest `cursor` on the curve the Spline tool `tool` has
 /// placed so far, as its preview draws it short of the cursor: straight
 /// between its points while too few. None with fewer than two.
-fn own_foot(tool: &ActiveTool, cursor: DVec2) -> Option<DVec2> {
+fn own_foot(tool: &Drawing, cursor: DVec2) -> Option<DVec2> {
     if tool.tool != Tool::Spline || tool.placed.len() < 2 {
         return None;
     }
-    let line = flatten_spline(tool.placed, tool.spline_kind(), false)
+    let line = flatten_spline(&tool.placed, tool.spline_kind(), false)
         .unwrap_or_else(|| tool.placed.to_vec());
     (line.windows(2))
         .map(|pair| {
@@ -564,8 +559,8 @@ fn tangent_points(sketch: &Sketch, start: DVec2) -> Vec<Snap> {
 /// For the Arc tool's last click, the places on the arc through its ends
 /// tangent at one of them to the line or arc ending there: each the
 /// nearest place to `cursor` on such an arc.
-fn tangent_arcs(sketch: &Sketch, tool: &ActiveTool, cursor: DVec2) -> Vec<Snap> {
-    let (&[a, b], [ta, tb]) = (tool.placed, tool.targets) else {
+fn tangent_arcs(sketch: &Sketch, tool: &Drawing, cursor: DVec2) -> Vec<Snap> {
+    let (&[a, b], [ta, tb]) = (tool.placed.as_slice(), tool.targets.as_slice()) else {
         return Vec::new();
     };
     let mut found = Vec::new();
@@ -622,7 +617,7 @@ fn tangents_at(sketch: &Sketch, point: Id) -> Vec<(Id, DVec2)> {
 /// they're preferred: horizontal, vertical, tangent to an arc ending at
 /// the start or a circle or an arc it's on, perpendicular then parallel
 /// to a line ending there or it's on.
-fn directions(sketch: &Sketch, tool: &ActiveTool, start: DVec2) -> Vec<(Inference, DVec2)> {
+fn directions(sketch: &Sketch, tool: &Drawing, start: DVec2) -> Vec<(Inference, DVec2)> {
     let mut found = vec![
         (Inference::Horizontal, DVec2::X),
         (Inference::Vertical, DVec2::Y),

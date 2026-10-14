@@ -46,7 +46,7 @@ pub(super) fn still_picked(sketch: &Sketch, drawing: &Drawing) -> bool {
             let chain: Vec<Id> = drawing.picked.iter().map(|picked| picked.id()).collect();
             sketch.is_chain(&chain)
         }
-        _ => match drawing.active().corner() {
+        _ => match drawing.corner() {
             Some((at, [a, b])) => sketch.corner_of(a, b) == Some(at),
             None => !drawing.tool.corners(),
         },
@@ -154,7 +154,7 @@ impl Doc {
         // design's units show it: none where that's less than a pixel, or
         // no value the field can take.
         let typed_or = |field: Field, reach: f64| {
-            if let Some(value) = drawing.active().value_in(field) {
+            if let Some(value) = drawing.value_in(field) {
                 return Some(value.clone());
             }
             if reach < click.pixel {
@@ -172,7 +172,7 @@ impl Doc {
                 side,
             });
         }
-        let (at, lines) = drawing.active().corner()?;
+        let (at, lines) = drawing.corner()?;
         Some(if drawing.tool == Tool::Fillet {
             let reach = sketch.fillet_through(at, lines, click.at).unwrap_or(0.0);
             let radius = typed_or(Field::Radius, reach)?;
@@ -180,7 +180,7 @@ impl Doc {
         } else {
             let reach = sketch.chamfer_through(at, lines, click.at).unwrap_or(0.0);
             let first = typed_or(Field::Distance, reach)?;
-            let setback = typed::setback(&drawing.active(), first, Value::clone);
+            let setback = typed::setback(drawing, first, Value::clone);
             SketchEdit::Chamfer { at, lines, setback }
         })
     }

@@ -47,7 +47,7 @@ impl Doc {
         let Some(&next) = next else {
             return;
         };
-        let typed = drawing.active().value_in(next);
+        let typed = drawing.value_in(next);
         let text = typed.map_or_else(String::new, |value| value.text.clone());
         self.open_value(ValueEdit {
             target: ValueTarget::Field(next),
@@ -77,7 +77,7 @@ impl Doc {
         let read = if open.text.trim().is_empty() {
             Ok(None)
         } else {
-            typed::read(&drawing.active(), field, &open.text, &design).map(Some)
+            typed::read(drawing, field, &open.text, &design).map(Some)
         };
         let value = match read {
             Ok(value) => value,

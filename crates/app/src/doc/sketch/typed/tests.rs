@@ -95,7 +95,7 @@ fn a_line_is_placed_at_the_length_and_angle_typed_with_their_dimensions() {
     aim(&mut doc, 1.0, 9.0);
     let state = doc.sketch_state().unwrap();
     let tool = state.tool.unwrap();
-    let preview = varde_view::typed::outline(&tool, at(1.0, 9.0)).unwrap();
+    let preview = varde_view::typed::outline(tool, at(1.0, 9.0)).unwrap();
     assert_eq!(preview.value(Field::Length), Some(20.0));
     assert!(sketch(&doc).points.is_empty(), "nothing until it's placed");
 

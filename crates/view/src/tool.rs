@@ -167,7 +167,7 @@ pub struct ToolClick {
     /// The point or curve under the cursor, if there is one: what the
     /// Dimension tool picks. For Trim and Extend, and Offset picking its
     /// chain, the curve under it, points aside, for Mirror's line to
-    /// mirror about the line (see [`ActiveTool::about`](crate::ActiveTool::about)), and for Fillet
+    /// mirror about the line (see [`Drawing::about`](crate::Drawing::about)), and for Fillet
     /// and Chamfer picking their corner the point where lines make one.
     pub hit: Option<Selectable>,
     /// A pixel's size at `at`, in sketch units, above zero: a shape

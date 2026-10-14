@@ -548,7 +548,7 @@ mod tests {
         let none = BTreeSet::new();
         let with = |tool: Option<Tool>| {
             let tool = tool.map(|tool| crate::testing::tool(tool, &[], &[]));
-            left_orbits(Some(&SketchState::plain(&sketch, &none, tool)))
+            left_orbits(Some(&SketchState::plain(&sketch, &none, tool.as_ref())))
         };
         assert!(left_orbits(None));
         assert!(!with(None));

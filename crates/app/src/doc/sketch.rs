@@ -18,12 +18,10 @@ use glam::{DVec2, Vec3};
 use varde_document::{
     Feature, FeatureId, FeatureKind, Generation, LinkSource, Placement, Plane, Revision, Sketch,
 };
-use varde_expr::Value;
 use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, Selectable, SketchEdit, TooComplex};
-use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, GeometryGroup, LinkRow, Panel, RowMenu, SketchState, Snap, Target, Tool, ToolClick,
+    Chain, Drawing, GeometryGroup, LinkRow, Panel, RowMenu, SketchState, Snap, Tool, ToolClick,
     ValueField, ValueTarget,
 };
 
@@ -168,7 +166,7 @@ impl SketchSession {
             self.drag = None;
         }
         if let Some(drawing) = &mut self.tool {
-            drawing.prune(sketch);
+            prune(drawing, sketch);
         }
         // Where the next click snaps isn't on what's gone: `Enter`
         // places at the aim.
@@ -300,150 +298,31 @@ pub(crate) struct Edited<'a> {
     pub(crate) sources: &'a [LinkSource],
 }
 
-/// A tool in use, and the shape it's drawing.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Drawing {
-    pub(crate) tool: Tool,
-    /// The points of the shape placed so far, in sketch coordinates: see
-    /// [`ActiveTool::placed`].
-    pub(crate) placed: Vec<DVec2>,
-    /// What each point placed snapped to, if anything: see
-    /// [`ActiveTool::targets`].
-    pub(crate) targets: Vec<Option<Target>>,
-    /// The lines the Line tool has drawn since it started the chain, if it
-    /// has.
-    pub(crate) chain: Option<Chain>,
-    /// Whether it draws construction geometry.
-    pub(crate) construction: bool,
-    /// The Dimension tool's items picked so far, to measure, the Mirror
-    /// tool's to mirror, the chain the Offset tool offsets, or the corner
-    /// Fillet or Chamfer is on, as its point and its lines (see
-    /// [`Tool::pick`](varde_view::Tool::pick)).
-    pub(crate) picked: Vec<Selectable>,
-    /// Whether the Mirror tool has what it mirrors and waits for the line
-    /// to mirror about.
-    pub(crate) about: bool,
-    /// Whether the Dimension tool measures a circle's radius, or an arc's
-    /// diameter, rather than the other: switched for what's picked.
-    pub(crate) switched: bool,
-    /// The values typed in the tool's fields for the shape being drawn,
-    /// each fixing what its field measures and added with the shape as
-    /// its driving dimension: see [`varde_view::typed`].
-    pub(crate) typed: Vec<(Field, Value)>,
-    /// How many sides the Polygon tool draws, from [`MIN_SIDES`] to
-    /// [`MAX_SIDES`]: kept from one polygon to the next.
-    ///
-    /// [`MIN_SIDES`]: varde_view::typed::MIN_SIDES
-    /// [`MAX_SIDES`]: varde_view::typed::MAX_SIDES
-    pub(crate) sides: u32,
-    /// Whether the Rectangle tool draws from the centre, rather than from
-    /// a corner.
-    pub(crate) centered: bool,
-    /// Whether the Spline tool draws by control points, rather than
-    /// through fit points: kept from one spline to the next.
-    pub(crate) control: bool,
-}
-
-impl Drawing {
-    pub(super) fn new(tool: Tool) -> Self {
-        Self {
-            tool,
-            placed: Vec::new(),
-            targets: Vec::new(),
-            chain: None,
-            construction: false,
-            picked: Vec::new(),
-            about: false,
-            switched: false,
-            typed: Vec::new(),
-            sides: DEFAULT_SIDES,
-            centered: false,
-            control: false,
-        }
+/// Prunes `drawing` against `sketch`: the shape starts again if what it
+/// picked is gone, a target placed on what's gone is let go of, and a
+/// chain whose lines are gone, by undo, say, is over.
+fn prune(drawing: &mut Drawing, sketch: &Sketch) {
+    if drawing.picked.iter().any(|&id| !sketch.selectable(id))
+        || !shape::still_picked(sketch, drawing)
+    {
+        drawing.restart();
     }
-
-    /// The tool as the view has it.
-    pub(crate) fn active(&self) -> ActiveTool<'_> {
-        ActiveTool {
-            tool: self.tool,
-            placed: &self.placed,
-            targets: &self.targets,
-            construction: self.construction,
-            picked: &self.picked,
-            about: self.about,
-            switched: self.switched,
-            typed: &self.typed,
-            sides: self.sides,
-            centered: self.centered,
-            control: self.control,
-            chained: self.chain.map_or(0, |chain| chain.lines),
-        }
-    }
-
-    /// The fields its shape has now, see [`ActiveTool::fields`].
-    pub(crate) fn fields(&self) -> &'static [Field] {
-        self.active().fields()
-    }
-
-    /// Whether it has anything of a shape placed, or picked to measure.
-    pub(crate) fn started(&self) -> bool {
-        !(self.placed.is_empty() && self.picked.is_empty())
-    }
-
-    /// Prunes it against `sketch`: the shape starts again if what it
-    /// picked is gone, a target placed on what's gone is let go of, and a
-    /// chain whose lines are gone, by undo, say, is over.
-    fn prune(&mut self, sketch: &Sketch) {
-        if self.picked.iter().any(|&id| !sketch.selectable(id))
-            || !shape::still_picked(sketch, self)
+    for target in &mut drawing.targets {
+        if target
+            .and_then(|target| target.item())
+            .is_some_and(|item| sketch.kind(item).is_none())
         {
-            self.restart();
+            *target = None;
         }
-        for target in &mut self.targets {
-            if target
-                .and_then(|target| target.item())
-                .is_some_and(|item| sketch.kind(item).is_none())
-            {
-                *target = None;
+    }
+    if let Some(chain) = drawing.chain {
+        match sketch.point(chain.last) {
+            Some(last) if sketch.point(chain.first).is_some() => {
+                drawing.resume_chain(chain, last.at);
             }
-        }
-        if let Some(chain) = self.chain {
-            match sketch.point(chain.last) {
-                Some(last) if sketch.point(chain.first).is_some() => {
-                    self.resume_chain(chain, last.at);
-                }
-                _ => self.restart(),
-            }
+            _ => drawing.restart(),
         }
     }
-
-    /// Goes on with the Line tool's `chain` from its last point, at `at`.
-    fn resume_chain(&mut self, chain: Chain, at: DVec2) {
-        self.placed = vec![at];
-        self.targets = vec![Some(Target::Point(chain.last))];
-        self.chain = Some(chain);
-    }
-
-    /// Starts the shape again, keeping the tool.
-    fn restart(&mut self) {
-        self.placed.clear();
-        self.targets.clear();
-        self.chain = None;
-        self.picked.clear();
-        self.about = false;
-        self.switched = false;
-        self.typed.clear();
-    }
-}
-
-/// Connected lines the Line tool is drawing: the next starts at `last`,
-/// and clicking `first` closes the loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Chain {
-    pub(crate) first: Id,
-    pub(crate) last: Id,
-    /// How many lines it has: a loop takes at least three.
-    pub(crate) lines: usize,
 }
 
 /// Geometry being dragged, a drag session of the solver's: each step goes
@@ -920,7 +799,7 @@ impl Doc {
             },
             selection: &session.selection,
             listed_on: &session.listed_on,
-            tool: session.tool.as_ref().map(Drawing::active),
+            tool: session.tool.as_ref(),
             constraining: session.constraining,
             split: self.sketch_split,
             scroll: session.scroll,

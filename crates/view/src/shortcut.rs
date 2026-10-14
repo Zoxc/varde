@@ -456,7 +456,7 @@ pub struct DocumentKeys {
     /// arc, which can be its radius or its diameter.
     pub round_picked: bool,
     /// Whether the drawing tool's shape has fields to type values in, see
-    /// [`ActiveTool::fields`](crate::ActiveTool::fields).
+    /// [`Drawing::fields`](crate::Drawing::fields).
     pub fields: bool,
     /// Whether the Rectangle tool is in use.
     pub rectangle: bool,
@@ -471,7 +471,7 @@ pub struct DocumentKeys {
     /// the sketch being edited (see [`crate::spline::handles`]).
     pub handles: bool,
     /// Whether the drawing tool can close its shape (see
-    /// [`ActiveTool::can_close`](crate::ActiveTool::can_close)).
+    /// [`Drawing::can_close`](crate::Drawing::can_close)).
     pub tool_closes: bool,
     /// Whether the curves selected in the sketch being edited can be
     /// closed (`Some(true)`) or opened (`Some(false)`), see
@@ -648,7 +648,7 @@ impl DocumentKeys {
                 })
             }),
             round_picked: sketch.zip(tool).is_some_and(|(sketch, tool)| {
-                tool.tool == Tool::Dimension && crate::dimension::round(sketch.sketch, tool.picked)
+                tool.tool == Tool::Dimension && crate::dimension::round(sketch.sketch, &tool.picked)
             }),
             fields: tool.is_some_and(|tool| !tool.fields().is_empty()),
             rectangle: tool.is_some_and(|tool| tool.tool == Tool::Rectangle),

@@ -449,7 +449,7 @@ pub struct SketchState<'a> {
     /// is while its rows are clicked.
     pub listed_on: &'a BTreeSet<Id>,
     /// The tool in use, if one is.
-    pub tool: Option<ActiveTool<'a>>,
+    pub tool: Option<&'a Drawing>,
     /// Whether the Constrain tool is in use.
     pub constraining: bool,
     /// The share of the Sketch tab's height the Geometry list takes.
@@ -576,7 +576,7 @@ impl<'a> SketchState<'a> {
     pub(crate) fn plain(
         sketch: &'a Sketch,
         selection: &'a BTreeSet<Selectable>,
-        tool: Option<ActiveTool<'a>>,
+        tool: Option<&'a Drawing>,
     ) -> Self {
         static NONE: BTreeSet<Id> = BTreeSet::new();
         static NO_GROUPS: BTreeSet<crate::GeometryGroup> = BTreeSet::new();
@@ -670,46 +670,103 @@ pub(crate) fn tied_items(sketch: &Sketch, id: Id) -> Vec<Id> {
 }
 
 /// The tool in use in a sketch, and the shape it's drawing.
-#[derive(Debug, Clone, Copy)]
-pub struct ActiveTool<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Drawing {
     pub tool: Tool,
     /// The points of the shape being drawn placed so far, in sketch
     /// coordinates: the start of the next line, a circle's centre, an
     /// arc's ends.
-    pub placed: &'a [DVec2],
+    pub placed: Vec<DVec2>,
     /// What each point placed snapped to, if anything: a point of the
     /// sketch's is the shape's own.
-    pub targets: &'a [Option<Target>],
+    pub targets: Vec<Option<Target>>,
+    /// The lines the Line tool has drawn since it started the chain, if it
+    /// has.
+    pub chain: Option<Chain>,
     /// Whether it draws construction geometry.
     pub construction: bool,
     /// The Dimension tool's items picked so far, to measure, the Mirror
     /// tool's to mirror, the chain the Offset tool offsets, or the corner
     /// Fillet or Chamfer is on, as its point and its lines (see
     /// [`Tool::pick`](crate::Tool::pick)).
-    pub picked: &'a [Selectable],
+    pub picked: Vec<Selectable>,
     /// Whether the Mirror tool has what it mirrors and waits for the line
     /// to mirror about.
     pub about: bool,
     /// Whether the Dimension tool measures a circle's radius, or an
-    /// arc's diameter, rather than the other.
+    /// arc's diameter, rather than the other: switched for what's picked.
     pub switched: bool,
     /// The values typed in the tool's fields for the shape being drawn,
-    /// each fixing what its field measures: see [`crate::typed`].
-    pub typed: &'a [(Field, varde_expr::Value)],
-    /// How many sides the Polygon tool draws.
+    /// each fixing what its field measures and added with the shape as
+    /// its driving dimension: see [`crate::typed`].
+    pub typed: Vec<(Field, varde_expr::Value)>,
+    /// How many sides the Polygon tool draws, from
+    /// [`MIN_SIDES`](crate::typed::MIN_SIDES) to
+    /// [`MAX_SIDES`](crate::typed::MAX_SIDES): kept from one polygon to
+    /// the next.
     pub sides: u32,
     /// Whether the Rectangle tool draws from the centre, rather than from
     /// a corner.
     pub centered: bool,
     /// Whether the Spline tool draws by control points, rather than
-    /// through fit points.
+    /// through fit points: kept from one spline to the next.
     pub control: bool,
-    /// How many lines the Line tool's chain has drawn, 0 without one: a
-    /// chain of two or more can close.
-    pub chained: usize,
 }
 
-impl ActiveTool<'_> {
+/// Connected lines the Line tool is drawing: the next starts at `last`,
+/// and clicking `first` closes the loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Chain {
+    pub first: Id,
+    pub last: Id,
+    /// How many lines it has: a loop takes at least three.
+    pub lines: usize,
+}
+
+impl Drawing {
+    /// `tool` in use with nothing drawn, drawing normal geometry.
+    pub fn new(tool: Tool) -> Self {
+        Self {
+            tool,
+            placed: Vec::new(),
+            targets: Vec::new(),
+            chain: None,
+            construction: false,
+            picked: Vec::new(),
+            about: false,
+            switched: false,
+            typed: Vec::new(),
+            sides: crate::typed::DEFAULT_SIDES,
+            centered: false,
+            control: false,
+        }
+    }
+
+    /// Whether it has anything of a shape placed, or picked to measure.
+    pub fn started(&self) -> bool {
+        !(self.placed.is_empty() && self.picked.is_empty())
+    }
+
+    /// Goes on with the Line tool's `chain` from its last point, at `at`.
+    pub fn resume_chain(&mut self, chain: Chain, at: DVec2) {
+        self.placed = vec![at];
+        self.targets = vec![Some(Target::Point(chain.last))];
+        self.chain = Some(chain);
+    }
+
+    /// Starts the shape again, keeping the tool.
+    pub fn restart(&mut self) {
+        self.placed.clear();
+        self.targets.clear();
+        self.chain = None;
+        self.picked.clear();
+        self.about = false;
+        self.switched = false;
+        self.typed.clear();
+    }
+}
+
+impl Drawing {
     /// What the tool asks of the user next in `sketch`, for the status
     /// bar.
     pub(crate) fn step(&self, sketch: &Sketch) -> &'static str {
@@ -730,7 +787,7 @@ impl ActiveTool<'_> {
             (Tool::Spline, 0) => "Click first fit point",
             (Tool::Spline, _) if self.control => "Click next control point",
             (Tool::Spline, _) => "Click next fit point",
-            (Tool::Dimension, _) => match *self.picked {
+            (Tool::Dimension, _) => match *self.picked.as_slice() {
                 [] => "Click what to measure",
                 // A handle's angle, or with its fit point its length.
                 [one] if sketch.handle(one.id()).is_some() => "Click to place, or pick another",
@@ -778,7 +835,7 @@ impl ActiveTool<'_> {
     pub fn can_close(&self) -> bool {
         match self.tool {
             Tool::Spline => self.placed.len() >= self.spline_kind().least(true),
-            Tool::Line => self.chained >= 2,
+            Tool::Line => self.chain.is_some_and(|chain| chain.lines >= 2),
             _ => false,
         }
     }

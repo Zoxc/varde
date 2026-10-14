@@ -109,11 +109,11 @@ fn the_spline_tool_ends_with_enough_points_and_closes_on_its_first() {
     let placed = [at(0.0, 0.0), at(5.0, 5.0), at(10.0, 0.0)];
     let mut tool = testing::tool(Tool::Spline, &placed[..1], &[]);
     assert!(!tool.spline_ends());
-    tool.placed = &placed[..2];
+    tool.placed = placed[..2].to_vec();
     assert!(tool.spline_ends());
     // Too few to close.
     assert!(!tool.closes(at(0.0, 0.0), 0.1));
-    tool.placed = &placed;
+    tool.placed = placed.to_vec();
     // Within the snap's reach of the first point, eight pixels.
     assert!(tool.closes(at(0.7, 0.3), 0.1));
     assert!(!tool.closes(at(1.0, 0.0), 0.1));

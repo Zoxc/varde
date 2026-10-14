@@ -30,9 +30,7 @@ use crate::viewport::style::line as line_style;
 use crate::viewport::style::{fill_region, srgba};
 use crate::viewport::tests::program;
 use crate::viewport::{Interaction, Program};
-use crate::{
-    ActiveTool, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField, ValueTarget,
-};
+use crate::{Drawing, Edit, Look, Message, SketchState, Tool, ToolClick, ValueField, ValueTarget};
 
 /// The viewport's width and height: through [`top_camera`], 20 sketch
 /// units across, the origin in its middle, a unit 10 pixels.
@@ -65,7 +63,7 @@ fn drawn() -> (Sketch, [Id; 3]) {
 fn sketching<'a>(
     sketch: &'a Sketch,
     selection: &'a BTreeSet<Selectable>,
-    tool: Option<ActiveTool<'a>>,
+    tool: Option<&'a Drawing>,
     editable: bool,
 ) -> Sketching<'a> {
     let state = SketchState::plain(sketch, selection, tool);
@@ -76,7 +74,7 @@ fn sketching<'a>(
 fn viewport<'a>(
     sketch: &'a Sketch,
     selection: &'a BTreeSet<Selectable>,
-    tool: Option<ActiveTool<'a>>,
+    tool: Option<&'a Drawing>,
     editable: bool,
 ) -> Program<'a> {
     shown(sketching(sketch, selection, tool, editable))
@@ -381,7 +379,7 @@ fn a_tool_clicks_where_it_is_pressed_as_it_snaps() {
     let (sketch, [a, _, line]) = drawn();
     let selection = BTreeSet::new();
     let tool = testing::tool(Tool::Line, &[], &[]);
-    let viewport = viewport(&sketch, &selection, Some(tool), true);
+    let viewport = viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
 
     // Moving there first tells the app where it snaps, if anywhere.
@@ -440,7 +438,7 @@ fn snapping_off_snaps_only_with_shift() {
     let tool = testing::tool(Tool::Line, &[], &[]);
     let viewport = shown(Sketching {
         snaps: false,
-        ..sketching(&sketch, &selection, Some(tool), true)
+        ..sketching(&sketch, &selection, Some(&tool), true)
     });
     let mut state = Interaction::default();
     let clicks = |messages: Vec<Message>| match messages.as_slice() {
@@ -470,7 +468,7 @@ fn snapping_off_snaps_only_with_shift() {
     assert_eq!(snapped.point(), Some(a));
     assert_eq!(snapped.at, DVec2::new(-5.0, 0.0));
     // On by default, as it always was.
-    let default = sketching(&sketch, &selection, Some(tool), true);
+    let default = sketching(&sketch, &selection, Some(&tool), true);
     assert!(default.snaps(Modifiers::empty()) && !default.snaps(Modifiers::SHIFT));
     let off = Sketching {
         snaps: false,
@@ -562,7 +560,7 @@ fn the_cursor_shows_what_the_left_button_does() {
     );
 
     let tool = testing::tool(Tool::Point, &[], &[]);
-    let drawing = viewport(&sketch, &selection, Some(tool), true);
+    let drawing = viewport(&sketch, &selection, Some(&tool), true);
     let state = Interaction::default();
     assert_eq!(
         interaction(&drawing, &state, empty),
@@ -573,7 +571,7 @@ fn the_cursor_shows_what_the_left_button_does() {
         interaction(&drawing, &state, outside),
         mouse::Interaction::None
     );
-    let read_only = viewport(&sketch, &selection, Some(tool), false);
+    let read_only = viewport(&sketch, &selection, Some(&tool), false);
     assert_eq!(
         interaction(&read_only, &state, empty),
         mouse::Interaction::None
@@ -706,11 +704,11 @@ fn the_live_layer_has_the_box_the_hover_and_the_tool() {
     // The point hovered, and the line from the point placed to the cursor.
     let placed = [DVec2::new(0.0, 5.0)];
     let tool = testing::tool(Tool::Line, &placed, &[None; 1]);
-    let drawing = viewport(&sketch, &selection, Some(tool), true);
+    let drawing = viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
     let on_a = screen_at(-5.0, 0.1);
     feed(&drawing, &mut state, on_a, &[moved(on_a)]);
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(tool), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&tool), true), &state);
     // Snapped to the point.
     let cursor = sketch.point(a).unwrap().at;
     let mut expected = SketchLayer::default();
@@ -894,7 +892,7 @@ fn the_dimension_tool_clicks_what_it_is_on_and_alt_makes_a_reference() {
     let (sketch, [_, _, line]) = drawn();
     let selection = BTreeSet::new();
     let tool = testing::tool(Tool::Dimension, &[], &[]);
-    let viewport = viewport(&sketch, &selection, Some(tool), true);
+    let viewport = viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
     let on = tool_click(click(&viewport, &mut state, screen_at(1.0, 0.0)));
     assert_eq!(
@@ -1058,7 +1056,7 @@ fn a_tool_whose_shape_has_fields_tells_the_app_where_it_aims() {
     let selection = BTreeSet::new();
     // Nothing placed: no fields, only where it snaps, when that changes.
     let tool = testing::tool(Tool::Line, &[], &[]);
-    let viewport = viewport(&sketch, &selection, Some(tool), true);
+    let viewport = viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
     let (messages, _) = feed(
         &viewport,
@@ -1071,7 +1069,7 @@ fn a_tool_whose_shape_has_fields_tells_the_app_where_it_aims() {
     // A point placed: every move, where the click would go.
     let placed = [DVec2::new(0.0, 5.0)];
     let tool = testing::tool(Tool::Line, &placed, &[None]);
-    let viewport = self::viewport(&sketch, &selection, Some(tool), true);
+    let viewport = self::viewport(&sketch, &selection, Some(&tool), true);
     let aims = |messages: Vec<Message>| match messages.as_slice() {
         [Message::Look(Look::Aim(click))] => *click,
         other => panic!("{other:?}"),
@@ -1099,15 +1097,15 @@ fn the_preview_holds_what_the_values_typed_fix() {
     let colors = Mode::Light.palette().sketching;
     let placed = [DVec2::new(-2.0, -2.0)];
     let length = [testing::typed(Field::Length, "5")];
-    let tool = ActiveTool {
-        typed: &length,
+    let tool = Drawing {
+        typed: length.to_vec(),
         ..testing::tool(Tool::Line, &placed, &[None])
     };
-    let viewport = viewport(&sketch, &selection, Some(tool), true);
+    let viewport = viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
     let cursor = screen_at(1.6, 2.8);
     feed(&viewport, &mut state, cursor, &[moved(cursor)]);
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(tool), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&tool), true), &state);
     // As long as typed, towards the cursor, the point placed at its end.
     let projector = Projector::new(&top_camera(), OriginPlane::XY.placement(), SIZE, SIZE).unwrap();
     let under = projector
@@ -1127,15 +1125,15 @@ fn the_preview_holds_what_the_values_typed_fix() {
 
     // A rectangle from its centre, with its construction diagonal.
     let center = [DVec2::new(1.0, 1.0)];
-    let tool = ActiveTool {
+    let tool = Drawing {
         centered: true,
         ..testing::tool(Tool::Rectangle, &center, &[None])
     };
-    let viewport = self::viewport(&sketch, &selection, Some(tool), true);
+    let viewport = self::viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
     let cursor = screen_at(3.0, 4.0);
     feed(&viewport, &mut state, cursor, &[moved(cursor)]);
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(tool), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&tool), true), &state);
     // The cursor is at a corner, the one across from it as far the other
     // way.
     let at = projector
@@ -1174,23 +1172,23 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
         ..SketchState::plain(&sketch, &none, tool)
     };
     let line = testing::tool(Tool::Line, &placed, &[None]);
-    let shown = Sketching::new(with(Some(line), Some(aim)), true, true);
+    let shown = Sketching::new(with(Some(&line), Some(aim)), true, true);
     assert_eq!(shown.fields().map(|(at, _)| at), Some(aim));
     // Not before the cursor's been anywhere, nor for a shape with none.
     assert!(
-        Sketching::new(with(Some(line), None), true, true)
+        Sketching::new(with(Some(&line), None), true, true)
             .fields()
             .is_none()
     );
     let point = testing::tool(Tool::Point, &[], &[]);
     assert!(
-        Sketching::new(with(Some(point), Some(aim)), true, true)
+        Sketching::new(with(Some(&point), Some(aim)), true, true)
             .fields()
             .is_none()
     );
     // Nor in a sketch that can't be changed, which has no tool.
     assert!(
-        Sketching::new(with(Some(line), Some(aim)), false, true)
+        Sketching::new(with(Some(&line), Some(aim)), false, true)
             .fields()
             .is_none()
     );
@@ -1204,7 +1202,7 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
             error: None,
             in_list: false,
         }),
-        ..with(Some(line), Some(aim))
+        ..with(Some(&line), Some(aim))
     };
     let open = Sketching::new(open, true, true);
     assert!(open.field().is_none());
@@ -1221,17 +1219,17 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
         ..with(Some(tool), Some(aim))
     };
     assert!(
-        Sketching::new(snapped(line), true, true)
+        Sketching::new(snapped(&line), true, true)
             .snap_glyph()
             .is_some()
     );
     let length = [testing::typed(Field::Length, "5")];
-    let typed = ActiveTool {
-        typed: &length,
-        ..line
+    let typed = Drawing {
+        typed: length.to_vec(),
+        ..line.clone()
     };
     assert!(
-        Sketching::new(snapped(typed), true, true)
+        Sketching::new(snapped(&typed), true, true)
             .snap_glyph()
             .is_none()
     );
@@ -1243,7 +1241,7 @@ fn a_shape_with_fields_stays_aimed_where_the_cursor_left_it() {
     let selection = BTreeSet::new();
     let placed = [DVec2::new(0.0, 5.0)];
     let tool = testing::tool(Tool::Line, &placed, &[None]);
-    let viewport = viewport(&sketch, &selection, Some(tool), true);
+    let viewport = viewport(&sketch, &selection, Some(&tool), true);
     let mut state = Interaction::default();
     let near_a = screen_at(-5.0, 0.2);
     let (messages, _) = feed(&viewport, &mut state, near_a, &[moved(near_a)]);
@@ -1255,7 +1253,7 @@ fn a_shape_with_fields_stays_aimed_where_the_cursor_left_it() {
         let shown = SketchState {
             aim: Some(aim.at),
             snap: Some(aim.snap()),
-            ..SketchState::plain(&sketch, &selection, Some(tool))
+            ..SketchState::plain(&sketch, &selection, Some(&tool))
         };
         layers(&Sketching::new(shown, true, true), state).1
     };
@@ -1292,7 +1290,7 @@ fn found(sketch: &Sketch) -> Result<Arc<varde_sketch::Profiles>, varde_sketch::T
 fn profiled<'a>(
     sketch: &'a Sketch,
     selection: &'a BTreeSet<Selectable>,
-    tool: Option<ActiveTool<'a>>,
+    tool: Option<&'a Drawing>,
     profiles: Option<&'a Result<Arc<varde_sketch::Profiles>, varde_sketch::TooComplex>>,
 ) -> Sketching<'a> {
     let state = SketchState {
@@ -1422,14 +1420,14 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
     // By the point at its start, Trim takes the line, and shows the piece
     // up to the crossing going, over the line hovered.
     let trim = testing::tool(Tool::Trim, &[], &[]);
-    let viewport = viewport(&sketch, &selection, Some(trim), true);
+    let viewport = viewport(&sketch, &selection, Some(&trim), true);
     let mut state = Interaction::default();
     let by_a = screen_at(-4.6, 0.1);
     assert_eq!(
         tool_click(click(&viewport, &mut state, by_a)).hit,
         Some(Selectable::Item(across))
     );
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(trim), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&trim), true), &state);
     let mut expected = SketchLayer::default();
     expected.polyline(
         Space::Sketch,
@@ -1447,14 +1445,14 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
 
     // Extend shows the line reaching the wall from its nearer end.
     let extend = testing::tool(Tool::Extend, &[], &[]);
-    let viewport = self::viewport(&sketch, &selection, Some(extend), true);
+    let viewport = self::viewport(&sketch, &selection, Some(&extend), true);
     let mut state = Interaction::default();
     let by_end = screen_at(4.0, 0.1);
     assert_eq!(
         tool_click(click(&viewport, &mut state, by_end)).hit,
         Some(Selectable::Item(across))
     );
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(extend), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&extend), true), &state);
     let mut expected = SketchLayer::default();
     expected.polyline(
         Space::Sketch,
@@ -1474,19 +1472,19 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
     // Mirror, choosing its line, takes the line under the cursor over the
     // point there, and shows the picks' images in it.
     let picked = [Selectable::Item(across)];
-    let mirror = ActiveTool {
-        picked: &picked,
+    let mirror = Drawing {
+        picked: picked.to_vec(),
         about: true,
         ..testing::tool(Tool::Mirror, &[], &[])
     };
-    let viewport = self::viewport(&sketch, &selection, Some(mirror), true);
+    let viewport = self::viewport(&sketch, &selection, Some(&mirror), true);
     let mut state = Interaction::default();
     let on_cutter = screen_at(0.1, 2.8);
     assert_eq!(
         tool_click(click(&viewport, &mut state, on_cutter)).hit,
         Some(Selectable::Item(cutter))
     );
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(mirror), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&mirror), true), &state);
     let mut expected = SketchLayer::default();
     expected.polyline(
         Space::Sketch,
@@ -1522,12 +1520,15 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
 
     // Picking: by a corner, the side is clicked, and its whole loop shows.
     let picking = testing::tool(Tool::Offset, &[], &[]);
-    let viewport = viewport(&sketch, &selection, Some(picking), true);
+    let viewport = viewport(&sketch, &selection, Some(&picking), true);
     let mut state = Interaction::default();
     let by_corner = screen_at(-3.7, -4.1);
     let clicked = tool_click(click(&viewport, &mut state, by_corner));
     assert_eq!(clicked.hit, Some(Selectable::Item(sides[0])));
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(picking), true), &state);
+    let (_, live) = layers(
+        &sketching(&sketch, &selection, Some(&picking), true),
+        &state,
+    );
     let mut expected = SketchLayer::default();
     let hovered = line_style(colors.hovered, HOVERED_WIDTH, false);
     let chain = sketch.chain_of(sides[0]);
@@ -1539,15 +1540,16 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
 
     // Picked: the cursor 2 outside, the loop's copy 2 out, and where it
     // aims said on every move, for its distance's field.
-    let offsetting = ActiveTool {
-        picked: &sides
+    let offsetting = Drawing {
+        picked: sides
             .iter()
             .copied()
             .map(Selectable::Item)
-            .collect::<Vec<_>>(),
+            .collect::<Vec<_>>()
+            .to_vec(),
         ..picking
     };
-    let viewport = self::viewport(&sketch, &selection, Some(offsetting), true);
+    let viewport = self::viewport(&sketch, &selection, Some(&offsetting), true);
     let mut state = Interaction::default();
     let outside = screen_at(0.0, 6.0);
     match feed(&viewport, &mut state, outside, &[moved(outside)])
@@ -1557,7 +1559,7 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
         [Message::Look(Look::Aim(aim))] => assert!(aim.at.abs_diff_eq(DVec2::new(0.0, 6.0), 1e-3)),
         other => panic!("{other:?}"),
     }
-    let shown = sketching(&sketch, &selection, Some(offsetting), true);
+    let shown = sketching(&sketch, &selection, Some(&offsetting), true);
     let (_, live) = layers(&shown, &state);
     let mut expected = SketchLayer::default();
     let selected = line_style(colors.selected, HOVERED_WIDTH, false);
@@ -1574,11 +1576,11 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
     assert_eq!(live, expected);
     // The distance typed holds the copy, on the cursor's side.
     let distance = [testing::typed(Field::Distance, "1")];
-    let typed = ActiveTool {
-        typed: &distance,
-        ..offsetting
+    let typed = Drawing {
+        typed: distance.to_vec(),
+        ..offsetting.clone()
     };
-    let (_, live) = layers(&sketching(&sketch, &selection, Some(typed), true), &state);
+    let (_, live) = layers(&sketching(&sketch, &selection, Some(&typed), true), &state);
     let mut expected = SketchLayer::default();
     for &side in &sides {
         expected.polyline(Space::Sketch, &polyline(side), selected);
@@ -1589,7 +1591,7 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
     assert_eq!(live, expected);
     let aimed = SketchState {
         aim: Some(DVec2::new(0.0, 6.0)),
-        ..SketchState::plain(&sketch, &selection, Some(offsetting))
+        ..SketchState::plain(&sketch, &selection, Some(&offsetting))
     };
     assert!(Sketching::new(aimed, true, true).fields().is_some());
 
@@ -1685,13 +1687,16 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
     // show, the one the click is nearer the way along first.
     for tool in [Tool::Fillet, Tool::Chamfer] {
         let picking = testing::tool(tool, &[], &[]);
-        let viewport = viewport(&sketch, &selection, Some(picking), true);
+        let viewport = viewport(&sketch, &selection, Some(&picking), true);
         let mut state = Interaction::default();
         let by_corner = screen_at(0.8, 0.3);
         let clicked = tool_click(click(&viewport, &mut state, by_corner));
         assert_eq!(clicked.hit, Some(Selectable::Item(corner)));
         assert_eq!(sketch.corner_lines(corner, clicked.at), Some([a, b]));
-        let (_, live) = layers(&sketching(&sketch, &selection, Some(picking), true), &state);
+        let (_, live) = layers(
+            &sketching(&sketch, &selection, Some(&picking), true),
+            &state,
+        );
         let mut expected = SketchLayer::default();
         let hovered = dot(HOVERED_POINT_RADIUS, colors.hovered, colors.hovered);
         expected.point(DVec2::ZERO, hovered);
@@ -1705,12 +1710,12 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
     // Picked, the fillet whose middle is as far in as the cursor, placed
     // where the button's let go.
     let picked = [corner, a, b].map(Selectable::Item);
-    let filleting = ActiveTool {
-        picked: &picked,
+    let filleting = Drawing {
+        picked: picked.to_vec(),
         ..testing::tool(Tool::Fillet, &[], &[])
     };
     assert_eq!(filleting.fields(), [Field::Radius]);
-    let viewport = viewport(&sketch, &selection, Some(filleting), true);
+    let viewport = viewport(&sketch, &selection, Some(&filleting), true);
     let mut state = Interaction::default();
     let inside = screen_at(1.0, 1.0);
     match feed(&viewport, &mut state, inside, &[moved(inside)])
@@ -1721,7 +1726,7 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
         other => panic!("{other:?}"),
     }
     let (_, live) = layers(
-        &sketching(&sketch, &selection, Some(filleting), true),
+        &sketching(&sketch, &selection, Some(&filleting), true),
         &state,
     );
     // The corner picked, and its lines, as selected.
@@ -1757,9 +1762,9 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
         testing::typed(Field::Distance, "1"),
         testing::typed(Field::Angle, "45"),
     ];
-    let chamfering = ActiveTool {
-        picked: &picked,
-        typed: &typed,
+    let chamfering = Drawing {
+        picked: picked.to_vec(),
+        typed: typed.to_vec(),
         ..testing::tool(Tool::Chamfer, &[], &[])
     };
     assert_eq!(
@@ -1776,7 +1781,7 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
     assert!((made.value(Field::SecondDistance).unwrap() - 1.0).abs() < 1e-9);
     let aimed = SketchState {
         aim: Some(DVec2::new(1.0, 1.0)),
-        ..SketchState::plain(&sketch, &selection, Some(chamfering))
+        ..SketchState::plain(&sketch, &selection, Some(&chamfering))
     };
     assert!(Sketching::new(aimed, true, true).fields().is_some());
 }

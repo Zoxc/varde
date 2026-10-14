@@ -33,7 +33,7 @@ use crate::projection::Projector;
 use crate::shortcut::Held;
 use crate::snap::Snap;
 use crate::theme::SketchColors;
-use crate::{ActiveTool, SketchState, ValueField};
+use crate::{Drawing, SketchState, ValueField};
 
 /// How far the cursor moves with the button held before it's a drag
 /// rather than a click, in pixels.
@@ -78,7 +78,7 @@ pub(crate) struct Sketching<'a> {
     placement: Placement,
     selection: &'a BTreeSet<Selectable>,
     /// The tool in use, if the sketch is editable and one is.
-    tool: Option<ActiveTool<'a>>,
+    tool: Option<&'a Drawing>,
     /// Whether geometry can be dragged.
     editable: bool,
     /// How items are drawn by their state.

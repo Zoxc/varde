@@ -60,7 +60,7 @@ impl<'a> Sketching<'a> {
         // What the values typed leave of it, where it snapped.
         let snap = Snap {
             at: snap.at,
-            ..typed::hold(&tool, snap)?
+            ..typed::hold(tool, snap)?
         };
         if !snap.snapped() {
             return None;
@@ -164,7 +164,7 @@ impl<'a> Sketching<'a> {
         let fields = tool.fields();
         let at = self.aim.filter(|_| !fields.is_empty())?;
         let outline =
-            typed::outline(&tool, at).or_else(|| typed::corner_outline(&tool, self.sketch, at));
+            typed::outline(tool, at).or_else(|| typed::corner_outline(tool, self.sketch, at));
         let open = self
             .value
             .filter(|field| matches!(field.target, ValueTarget::Field(_)));
@@ -174,7 +174,7 @@ impl<'a> Sketching<'a> {
                 Field::Sides => Some(f64::from(tool.sides)),
                 Field::Distance if tool.tool == Tool::Offset => self
                     .sketch
-                    .offset_side(&tool_items(&tool), at)
+                    .offset_side(&tool_items(tool), at)
                     .map(|(reach, _)| reach),
                 _ => outline.as_ref().and_then(|outline| outline.value(field)),
             };

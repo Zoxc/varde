@@ -99,7 +99,7 @@ impl Doc {
             self.set_drawing(drawing);
             return;
         }
-        let Some(click) = typed::aim(&drawing.active(), click) else {
+        let Some(click) = typed::aim(&drawing, click) else {
             return;
         };
         let next_id = sketch.next_id;
@@ -542,7 +542,7 @@ pub(crate) fn clicked(
         ..Drawing::new(clicks.tool)
     };
     if clicks.tool == Tool::Spline {
-        let kind = drawing.active().spline_kind();
+        let kind = drawing.spline_kind();
         if drawing.placed.len() < kind.least(clicks.closed) {
             return Ok(None);
         }
@@ -777,8 +777,7 @@ fn rectangle(
     click: ToolClick,
     design: &Design,
 ) -> Result<Step, OutOfIds> {
-    let Some(Outline::Rectangle { corners, center }) = typed::outline(&drawing.active(), click.at)
-    else {
+    let Some(Outline::Rectangle { corners, center }) = typed::outline(drawing, click.at) else {
         return Ok(Step::Refused);
     };
     let [a, b, c, d] = corners;
@@ -845,7 +844,7 @@ fn polygon(
     click: ToolClick,
     design: &Design,
 ) -> Result<Step, OutOfIds> {
-    let outline = typed::outline(&drawing.active(), click.at);
+    let outline = typed::outline(drawing, click.at);
     let Some(Outline::Polygon {
         center,
         radius,
@@ -924,7 +923,7 @@ fn typed_dimensions(
     // makes of the sketch, whose new ids are the edit's placeholders.
     let made = SketchEdit::Add(add.clone()).apply(sketch, design).ok();
     for (field, measure, label) in measures {
-        let Some(value) = drawing.active().value_in(*field) else {
+        let Some(value) = drawing.value_in(*field) else {
             continue;
         };
         let anchor = made.as_ref().and_then(|made| made.anchor(measure));

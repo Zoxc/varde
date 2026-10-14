@@ -4,7 +4,7 @@
 //! them ([`closings`]), and taking spline points selected out of their
 //! splines ([`removals`]). Pure, shared by the keys, the toolbar and the
 //! app. When the Spline tool's spline can end or closes is
-//! [`ActiveTool`](crate::ActiveTool)'s to say.
+//! [`Drawing`](crate::Drawing)'s to say.
 
 use std::collections::BTreeSet;
 

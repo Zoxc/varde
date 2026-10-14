@@ -1384,7 +1384,7 @@ fn project_picks_outside_the_sketch_and_through_the_faded_model() {
     let camera = plate.camera;
     let mut program = plate.program(&camera, None);
     program.sketching = Some(Sketching::new(
-        crate::SketchState::plain(&own, &selection, Some(tool)),
+        crate::SketchState::plain(&own, &selection, Some(&tool)),
         true,
         true,
     ));
@@ -1437,9 +1437,10 @@ fn a_left_drag_started_picking_outside_ends_once_the_tool_is_gone() {
     let sketch = varde_sketch::Sketch::default();
     let selection = Default::default();
     let camera = plate.camera;
-    let with = |tool: Option<crate::Tool>| {
+    let project = crate::testing::tool(crate::Tool::Project, &[], &[]);
+    let with = |projecting: bool| {
         let mut program = plate.program(&camera, None);
-        let tool = tool.map(|tool| crate::testing::tool(tool, &[], &[]));
+        let tool = projecting.then_some(&project);
         program.sketching = Some(Sketching::new(
             crate::SketchState::plain(&sketch, &selection, tool),
             true,
@@ -1458,14 +1459,9 @@ fn a_left_drag_started_picking_outside_ends_once_the_tool_is_gone() {
             .and_then(|action| action.into_inner().0)
     };
     let mut state = Interaction::default();
-    send(
-        &with(Some(crate::Tool::Project)),
-        &mut state,
-        left(true),
-        at,
-    );
+    send(&with(true), &mut state, left(true), at);
     assert!(state.drag.is_some());
-    let program = with(None);
+    let program = with(false);
     send(&program, &mut state, left(false), at);
     assert!(state.drag.is_none(), "the release ends the drag");
     let away = Point::new(at.x + 40.0, at.y + 30.0);
@@ -1576,7 +1572,7 @@ fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
     let camera = plate.camera;
     let mut program = plate.program(&camera, None);
     program.sketching = Some(Sketching::new(
-        crate::SketchState::plain(&own, &selection, Some(tool)),
+        crate::SketchState::plain(&own, &selection, Some(&tool)),
         true,
         true,
     ));

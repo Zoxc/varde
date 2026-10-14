@@ -77,9 +77,10 @@ mod wrap;
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, FileShown, LinkRow,
-    MeshStatus, NamePrompt, OperationState, Overlay, RecoveredChanges, Refusal, RefusedEdit,
-    Rollback, SketchState, ValueField, ValueTarget, body_tint, document, part_opacity, part_tints,
+    CURVED_FACE, Chain, Damage, DamagedFile, DeletePrompt, DocumentState, Drawing, FileShown,
+    LinkRow, MeshStatus, NamePrompt, OperationState, Overlay, RecoveredChanges, Refusal,
+    RefusedEdit, Rollback, SketchState, ValueField, ValueTarget, body_tint, document, part_opacity,
+    part_tints,
 };
 pub use downloads::Downloads;
 pub use errors::{ShownError, ShownErrors};

@@ -26,13 +26,12 @@ impl Doc {
     /// last, on its first before it can close, on a point of the sketch's
     /// it has already, or past [`MAX_SPLINE_POINTS`], is refused.
     pub(super) fn spline_click(&mut self, mut drawing: Drawing, click: ToolClick) {
-        let active = drawing.active();
-        if active.closes(click.at, click.pixel) {
+        if drawing.closes(click.at, click.pixel) {
             self.end_spline(drawing, true);
             return;
         }
         if click.double {
-            if active.spline_ends() {
+            if drawing.spline_ends() {
                 self.end_spline(drawing, false);
             }
             return;
@@ -52,7 +51,7 @@ impl Doc {
         let drawing = self.drawing();
         match drawing {
             Some(drawing) if drawing.tool == Tool::Spline => {
-                if drawing.active().spline_ends() {
+                if drawing.spline_ends() {
                     self.end_spline(drawing, false);
                 }
                 true
@@ -69,7 +68,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
-        let kind = drawing.active().spline_kind();
+        let kind = drawing.spline_kind();
         if drawing.placed.len() < kind.least(closed) {
             return;
         }
@@ -122,7 +121,7 @@ impl Doc {
     pub(crate) fn toggle_closed(&mut self) {
         let drawing = self.drawing();
         if let Some(drawing) = drawing.filter(|drawing| drawing.tool.draws()) {
-            if drawing.active().can_close() {
+            if drawing.can_close() {
                 match drawing.tool {
                     Tool::Spline => self.end_spline(drawing, true),
                     Tool::Line => self.close_chain(drawing),
@@ -211,7 +210,7 @@ pub(super) fn refuses_point(
     let near_last = (drawing.placed.last()).is_some_and(|last| last.distance(at) < pixel);
     let again = matches!(target, Some(Target::Point(id))
         if !id.is_builtin() && drawing.targets.contains(&Some(Target::Point(id))));
-    let first = drawing.active().on_first(at, pixel);
+    let first = drawing.on_first(at, pixel);
     near_last || again || first || drawing.placed.len() >= MAX_SPLINE_POINTS
 }
 

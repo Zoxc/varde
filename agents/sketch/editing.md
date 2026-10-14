@@ -5,7 +5,7 @@ shown before (`Doc::panel_before_sketch`), unless Objects was picked in
 the sketch, which stays.
 
 The sketch being edited is `Doc::mode`'s `Sketch`, a `SketchSession`
-(`crates/app/src/doc/sketch.rs`): the feature, the tool in use (`Drawing`)
+(`crates/app/src/doc/sketch.rs`): the feature, the tool in use (`Drawing`, varde-view's, which the view draws from)
 or the Constrain tool, the selection (a `BTreeSet<Selectable>` shared by
 the viewport and the lists, see below), the item hovered in a list or by its glyph, a
 drag in progress, the sketch with the edits waiting on the solver applied,
@@ -275,7 +275,7 @@ bar says why (`EditError::Sketch`).
     sharing it (`Chain`); clicking the chain's first point once it has two
     lines or more closes the loop and ends the chain, as `Shift O`
     (`Shortcut::CLOSE`, `Edit::ToggleClosed`, `Doc::close_chain`, the
-    chain's length in `ActiveTool::chained`) does; `Esc` or a
+    chain's length in `Chain::lines`) does; `Esc` or a
     double-click ends an open one.
   - Circle: centre, then a point on it.
   - Arc: start, end, then a point on it; stored counter-clockwise with its
@@ -298,12 +298,12 @@ bar says why (`EditError::Sketch`).
     (`Drawing::placed`, what it snapped to in `targets`), none within a
     pixel of the last, on a point of the sketch's it has already, or past
     `MAX_SPLINE_POINTS`; nothing is proposed until it ends. A click on its
-    first point (within `SNAP_TOLERANCE` pixels, `ActiveTool::closes`)
+    first point (within `SNAP_TOLERANCE` pixels, `Drawing::closes`)
     once it has three ends it closed, as `Shift O` does
-    (`ActiveTool::can_close`, which also has the toolbar offer Close
+    (`Drawing::can_close`, which also has the toolbar offer Close
     after Constrain and the status bar its key); a double-click, or `Enter`
     (`Edit::PlaceShape`, `Doc::end_spline_here`), once it has enough
-    (`ActiveTool::spline_ends`: two fit points, four control points) ends
+    (`Drawing::spline_ends`: two fit points, four control points) ends
     it open where it is. The spline is an `Add` of its points placed as
     any shape's (`place`: a point of the sketch's its own, else a new one
     with the snap's `auto` ties) and the curve, through fit points with a
@@ -347,7 +347,7 @@ bar says why (`EditError::Sketch`).
     meanwhile. Offset picks the chain the curve clicked is in
     (`Sketch::chain_of`; taken up with a chain, or a curve, selected, that
     one, `shape::offsettable`); then it has a field,
-    `Field::Distance` (`ActiveTool::fields`), so the viewport sends
+    `Field::Distance` (`Drawing::fields`), so the viewport sends
     `Look::Aim` as the cursor moves, and a click (sent where the button's
     let go, `Input::releasing`, so it can be dragged there; `Esc` while
     it's held sends none), or `Enter` at the aim, proposes `Offset` of the

@@ -27,8 +27,8 @@ fn each_tool_offers_its_fields_once_its_shape_has_a_point() {
     let offset = testing::tool(Tool::Offset, &[], &[]);
     assert!(offset.fields().is_empty());
     let chain = [Selectable::Item(Id::X_AXIS)];
-    let picked = ActiveTool {
-        picked: &chain,
+    let picked = Drawing {
+        picked: chain.to_vec(),
         ..offset
     };
     assert_eq!(picked.fields(), [Field::Distance]);
@@ -117,7 +117,7 @@ fn an_arc_s_radius_has_to_reach_across_its_chord() {
 fn a_line_s_values_hold_its_end_and_the_cursor_moves_the_rest() {
     let placed = [at(1.0, 1.0)];
     let mut tool = testing::tool(Tool::Line, &placed, &[None]);
-    let end = |tool: &ActiveTool, x, y| match outline(tool, at(x, y)) {
+    let end = |tool: &Drawing, x, y| match outline(tool, at(x, y)) {
         Some(Outline::Line { start, end }) => {
             assert_eq!(start, at(1.0, 1.0));
             end
@@ -129,20 +129,20 @@ fn a_line_s_values_hold_its_end_and_the_cursor_moves_the_rest() {
 
     // The length typed, towards the cursor.
     let length = [typed(Field::Length, "10")];
-    tool.typed = &length;
+    tool.typed = length.to_vec();
     assert!(close(end(&tool, 4.0, 5.0), at(7.0, 9.0)));
     assert!(close(end(&tool, 1.0, -3.0), at(1.0, -9.0)));
 
     // The angle typed, as far along it as the cursor is.
     let angle = [typed(Field::Angle, "90")];
-    tool.typed = &angle;
+    tool.typed = angle.to_vec();
     assert!(close(end(&tool, 3.0, 6.0), at(1.0, 6.0)));
     // Behind the start is nowhere along it.
     assert!(close(end(&tool, 3.0, -6.0), at(1.0, 1.0)));
 
     // Both typed, wherever the cursor is.
     let both = [typed(Field::Angle, "180"), typed(Field::Length, "2")];
-    tool.typed = &both;
+    tool.typed = both.to_vec();
     assert!(close(end(&tool, 30.0, 6.0), at(-1.0, 1.0)));
     let line = outline(&tool, at(0.0, 0.0)).unwrap();
     assert!((line.value(Field::Length).unwrap() - 2.0).abs() < 1e-12);
@@ -207,7 +207,7 @@ fn a_typed_angle_places_the_end_with_libm_s_bits() {
     let placed = [at(1.0, 1.0)];
     let mut tool = testing::tool(Tool::Line, &placed, &[None]);
     let both = [typed(Field::Angle, "9.2"), typed(Field::Length, "10")];
-    tool.typed = &both;
+    tool.typed = both.to_vec();
     let angle = tool.value_in(Field::Angle).unwrap().value;
     let direction = DVec2::new(libm::cos(angle), libm::sin(angle));
     let line = outline(&tool, at(30.0, 6.0)).unwrap();
@@ -220,7 +220,7 @@ fn a_typed_angle_places_the_end_with_libm_s_bits() {
 
     // As far along it as the cursor goes, the same.
     let angle = [typed(Field::Angle, "9.2")];
-    tool.typed = &angle;
+    tool.typed = angle.to_vec();
     let Some(Outline::Line { end, .. }) = outline(&tool, at(30.0, 6.0)) else {
         panic!()
     };
@@ -233,7 +233,7 @@ fn a_circle_s_and_an_arc_s_values_hold_their_size() {
     let center = [at(0.0, 0.0)];
     let mut circle = testing::tool(Tool::Circle, &center, &[None]);
     let diameter = [typed(Field::Diameter, "8")];
-    circle.typed = &diameter;
+    circle.typed = diameter.to_vec();
     assert_eq!(
         outline(&circle, at(1.0, 0.0)),
         Some(Outline::Circle {
@@ -245,8 +245,8 @@ fn a_circle_s_and_an_arc_s_values_hold_their_size() {
     let ends = [at(-3.0, 0.0), at(3.0, 0.0)];
     let mut arc = testing::tool(Tool::Arc, &ends, &[None, None]);
     let radius = [typed(Field::Radius, "5")];
-    arc.typed = &radius;
-    let middle = |tool: &ActiveTool, x, y| {
+    arc.typed = radius.to_vec();
+    let middle = |tool: &Drawing, x, y| {
         let outline = outline(tool, at(x, y)).unwrap();
         let Outline::Arc(points) = outline else {
             panic!("{outline:?}")
@@ -262,7 +262,7 @@ fn a_circle_s_and_an_arc_s_values_hold_their_size() {
     assert!(close(middle(&arc, 0.0, -1.5), at(0.0, -1.0)));
     // A radius short of the chord makes no arc.
     let short = [typed(Field::Radius, "2")];
-    arc.typed = &short;
+    arc.typed = short.to_vec();
     assert_eq!(outline(&arc, at(0.0, 1.0)), None);
 }
 
@@ -270,7 +270,7 @@ fn a_circle_s_and_an_arc_s_values_hold_their_size() {
 fn a_rectangle_from_a_corner_or_its_centre() {
     let first = [at(1.0, 1.0)];
     let mut tool = testing::tool(Tool::Rectangle, &first, &[None]);
-    let corners = |tool: &ActiveTool, x, y| match outline(tool, at(x, y)) {
+    let corners = |tool: &Drawing, x, y| match outline(tool, at(x, y)) {
         Some(Outline::Rectangle { corners, center }) => (corners, center),
         other => panic!("{other:?}"),
     };
@@ -287,13 +287,13 @@ fn a_rectangle_from_a_corner_or_its_centre() {
 
     // The width typed, the height the cursor's, which way the cursor is.
     let width = [typed(Field::Width, "10")];
-    tool.typed = &width;
+    tool.typed = width.to_vec();
     let (drawn, _) = corners(&tool, -4.0, 3.0);
     assert_eq!(drawn[2], at(-9.0, 3.0));
 
     // From the centre, the cursor is at a corner.
     tool.centered = true;
-    tool.typed = &[];
+    tool.typed = vec![];
     let (drawn, center) = corners(&tool, 4.0, 3.0);
     assert_eq!(center, Some(at(1.0, 1.0)));
     assert_eq!(
@@ -307,7 +307,7 @@ fn a_rectangle_from_a_corner_or_its_centre() {
         Some(vec![at(-2.0, -1.0), at(4.0, 3.0)])
     );
     let both = [typed(Field::Width, "4"), typed(Field::Height, "2")];
-    tool.typed = &both;
+    tool.typed = both.to_vec();
     let (drawn, _) = corners(&tool, -40.0, 30.0);
     assert_eq!(
         drawn,
@@ -337,7 +337,7 @@ fn a_polygon_has_its_sides_on_its_circle() {
 
     tool.sides = 4;
     let diameter = [typed(Field::Diameter, "2")];
-    tool.typed = &diameter;
+    tool.typed = diameter.to_vec();
     let polygon = outline(&tool, at(5.0, 0.0)).unwrap();
     let Outline::Polygon { corners, .. } = &polygon else {
         panic!()
@@ -371,14 +371,14 @@ fn a_click_is_held_where_the_values_typed_put_it() {
     // A length typed takes it off what it snapped to, but not off the
     // way it runs.
     let length = [typed(Field::Length, "5")];
-    tool.typed = &length;
+    tool.typed = length.to_vec();
     let aimed = aim(&tool, click).unwrap();
     assert_eq!(aimed.at, at(5.0, 0.0));
     assert_eq!(aimed.target, None);
     assert_eq!(aimed.inference, Some(Inference::Horizontal));
     // An angle typed says how it runs.
     let angle = [typed(Field::Angle, "90")];
-    tool.typed = &angle;
+    tool.typed = angle.to_vec();
     let aimed = aim(
         &tool,
         ToolClick {
@@ -394,7 +394,7 @@ fn a_click_is_held_where_the_values_typed_put_it() {
     let ends = [at(0.0, 0.0), at(10.0, 0.0)];
     let mut arc = testing::tool(Tool::Arc, &ends, &[None, None]);
     let short = [typed(Field::Radius, "1")];
-    arc.typed = &short;
+    arc.typed = short.to_vec();
     assert_eq!(aim(&arc, click), None);
 }
 
@@ -422,10 +422,10 @@ fn a_spline_runs_through_the_points_placed_to_the_cursor() {
     assert_eq!(drawn_to.aimed(at(12.0, 2.0)), at(12.0, 2.0));
     // By control points: its control polygon, and short of four, straight
     // between them.
-    let control = ActiveTool {
+    let control = Drawing {
         control: true,
-        placed: &placed[..2],
-        ..tool
+        placed: placed[..2].to_vec(),
+        ..tool.clone()
     };
     let short = super::outline(&control, at(8.0, 0.0)).unwrap();
     assert_eq!(short.polylines(), [placed.to_vec()]);
@@ -437,9 +437,9 @@ fn a_spline_runs_through_the_points_placed_to_the_cursor() {
         closing.polylines(),
         [flatten_spline(&placed, SplineKind::Through, true).unwrap()]
     );
-    let two = ActiveTool {
-        placed: &placed[..2],
-        ..tool
+    let two = Drawing {
+        placed: placed[..2].to_vec(),
+        ..tool.clone()
     };
     let open = super::outline(&two, placed[0]).unwrap();
     assert!(matches!(open, Outline::Spline { closed: false, .. }));
@@ -462,9 +462,9 @@ fn typed_angles_at_the_edges_place_the_end_with_libm_s_bits() {
             let angle = read(&tool, Field::Angle, degrees, &design).unwrap();
             let size = read(&tool, Field::Length, length, &design).unwrap();
             let both = [(Field::Angle, angle.clone()), (Field::Length, size.clone())];
-            let typing = ActiveTool {
-                typed: &both,
-                ..tool
+            let typing = Drawing {
+                typed: both.to_vec(),
+                ..tool.clone()
             };
             let line = outline(&typing, at(30.0, 6.0)).unwrap();
             let Outline::Line { start, end } = line else {

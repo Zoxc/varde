@@ -65,7 +65,7 @@ fn drawn() -> Drawn {
 }
 
 /// Where `tool`'s click with the cursor at `x`, `y` snaps in `sketch`.
-fn snapped(sketch: &Sketch, tool: &ActiveTool, x: f64, y: f64) -> Snap {
+fn snapped(sketch: &Sketch, tool: &Drawing, x: f64, y: f64) -> Snap {
     snap(sketch, tool, at(x, y), PIXEL)
 }
 

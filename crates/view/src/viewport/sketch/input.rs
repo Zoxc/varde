@@ -432,7 +432,7 @@ impl<'a> Sketching<'a> {
         if !self.snaps(modifiers) {
             return None;
         }
-        Some(snap::snap(self.sketch, &tool, cursor.at, cursor.pixel)).filter(Snap::snapped)
+        Some(snap::snap(self.sketch, tool, cursor.at, cursor.pixel)).filter(Snap::snapped)
     }
 
     /// The drawing tool's click with the cursor at `cursor` and

@@ -23,7 +23,7 @@ Pure functions, tested headless:
   it): `Item(id)` (built-ins too; ordered first, so items sort as their
   ids) or `HandleLine(tip)`. It's never stored: the
   hit results, the selection, the hover, the overlaps list, the tools'
-  picks (`ActiveTool::picked`) and the `Look`/`Edit` messages carrying
+  picks (`Drawing::picked`) and the `Look`/`Edit` messages carrying
   them (`ClickGeometry`, `SelectBox`, `ClickRow`, `HoverItem`,
   `LeaveItem`, `DragGeometry`, `DeleteItem`, `RowMenu::Item`) take it,
   and only ids reach `SketchEdit`s: a handle by its tip

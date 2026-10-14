@@ -20,7 +20,7 @@ circle's rim, an arc's last point) snaps only to points, and for an arc
 the tangent arc; the Dimension tool doesn't snap. A spline being drawn
 snaps to itself (`Target::Own`): to the points it has placed, before the
 sketch's points (never its last, its first only where a click closes it,
-`ActiveTool::closes`), and to its curve through them, as the preview
+`Drawing::closes`), and to its curve through them, as the preview
 draws it short of the cursor, where that's nearer than the sketch's
 curves. A point snapped to one it placed is a new point, `auto`
 coincident with it; one on its curve is only placed there, untied, as a

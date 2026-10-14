@@ -30,7 +30,7 @@ use crate::theme::SketchColors;
 use crate::typed::{self, Field};
 use crate::viewport::sketch_pick::HOVERED_WIDTH;
 use crate::viewport::style::{fill_region, line, srgba};
-use crate::{ActiveTool, Tool, ValueTarget, dimension};
+use crate::{Drawing, Tool, ValueTarget, dimension};
 
 const POINT_RIM: f32 = 1.2;
 /// How wide dimensions' lines are, in pixels.
@@ -559,21 +559,21 @@ impl<'a> Sketching<'a> {
             .zip(aim.cursor);
         match self.tool {
             Some(tool) if tool.tool == Tool::Dimension => {
-                for &id in tool.picked {
+                for &id in &tool.picked {
                     self.highlight(layer, id, colors.selected);
                 }
             }
             Some(tool) if !tool.tool.draws() => {
-                self.shape_preview(layer, &tool, under, aim.at, colors);
+                self.shape_preview(layer, tool, under, aim.at, colors);
             }
             Some(tool) => {
                 if let Some((snap, cursor)) = aim.snap.zip(aim.cursor)
-                    && let Some(guide) = snap.guide(self.sketch, &tool, cursor.pixel)
+                    && let Some(guide) = snap.guide(self.sketch, tool, cursor.pixel)
                 {
                     layer.polyline(Space::Sketch, &guide, line(colors.guide, GUIDE_WIDTH, true));
                 }
                 let at = aim.snap.map(|snap| snap.at).or(aim.at);
-                preview(layer, &tool, at, colors);
+                preview(layer, tool, at, colors);
             }
             None => {}
         }
@@ -623,7 +623,7 @@ impl<'a> Sketching<'a> {
     fn shape_preview(
         &self,
         layer: &mut SketchLayer,
-        tool: &ActiveTool<'_>,
+        tool: &Drawing,
         under: Option<(Id, Cursor)>,
         at: Option<DVec2>,
         colors: SketchColors,
@@ -660,7 +660,7 @@ impl<'a> Sketching<'a> {
                 }
             }
             placing if placing.places() => {
-                for &id in tool.picked {
+                for &id in &tool.picked {
                     self.highlight(layer, id, colors.selected);
                 }
                 let style = line(colors.preview, CURVE_WIDTH, false);
@@ -669,7 +669,7 @@ impl<'a> Sketching<'a> {
                 }
             }
             Tool::Mirror => {
-                for &id in tool.picked {
+                for &id in &tool.picked {
                     self.highlight(layer, id, colors.selected);
                 }
                 let about = under
@@ -715,7 +715,7 @@ impl<'a> Sketching<'a> {
         }
         let tool = self.tool.filter(|tool| tool.tool == Tool::Dimension)?;
         let at = at?;
-        let (measure, side) = dimension::measure(self.sketch, tool.picked, at, tool.switched)?;
+        let (measure, side) = dimension::measure(self.sketch, &tool.picked, at, tool.switched)?;
         Some((measure, side, at))
     }
 
@@ -847,7 +847,7 @@ impl Drawn {
 
 /// The items `tool` has picked, by their ids: what Offset and Mirror
 /// work on.
-pub(super) fn tool_items(tool: &ActiveTool<'_>) -> Vec<Id> {
+pub(super) fn tool_items(tool: &Drawing) -> Vec<Id> {
     tool.picked.iter().map(|target| target.id()).collect()
 }
 
@@ -941,12 +941,7 @@ pub(super) fn arrows(
 
 /// The shape `tool` is drawing, with the cursor `at` its next point if
 /// it's over the sketch, and the points placed so far.
-fn preview(
-    layer: &mut SketchLayer,
-    tool: &ActiveTool<'_>,
-    at: Option<DVec2>,
-    colors: SketchColors,
-) {
+fn preview(layer: &mut SketchLayer, tool: &Drawing, at: Option<DVec2>, colors: SketchColors) {
     let color = if tool.construction {
         colors.construction
     } else {
@@ -967,7 +962,7 @@ fn preview(
             }
             // Its third point on the line through its ends.
             None if tool.tool == Tool::Arc && tool.typed.is_empty() => {
-                if let &[start, end] = tool.placed {
+                if let &[start, end] = tool.placed.as_slice() {
                     layer.polyline(Space::Sketch, &[start, end], style);
                 }
             }
@@ -980,7 +975,7 @@ fn preview(
             .map_or(at, |outline| outline.aimed(at));
         layer.point(placed, dot(POINT_RADIUS, color, color));
     }
-    for &placed in tool.placed {
+    for &placed in &tool.placed {
         layer.point(placed, dot(POINT_RADIUS, colors.point_fill, color));
     }
 }
@@ -991,7 +986,7 @@ fn preview(
 /// cursor's side; Fillet's or Chamfer's through the cursor, or as the
 /// values typed make it (see [`typed::corner_outline`]). Empty where it
 /// makes nothing.
-pub(super) fn placed(tool: &ActiveTool<'_>, sketch: &Sketch, at: DVec2) -> Vec<Vec<DVec2>> {
+pub(super) fn placed(tool: &Drawing, sketch: &Sketch, at: DVec2) -> Vec<Vec<DVec2>> {
     if tool.tool == Tool::Offset {
         let chain = tool_items(tool);
         let copy = sketch.offset_side(&chain, at).and_then(|(reach, side)| {

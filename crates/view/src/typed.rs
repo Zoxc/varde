@@ -16,7 +16,7 @@ use varde_sketch::{
     arc_through, flatten_spline,
 };
 
-use crate::{ActiveTool, Snap, Tool, ToolClick};
+use crate::{Drawing, Snap, Tool, ToolClick};
 
 /// The fewest and the most sides a polygon may have, and how many it has
 /// until others are typed.
@@ -109,7 +109,7 @@ pub fn fields(tool: Tool, placed: usize) -> &'static [Field] {
     }
 }
 
-impl<'a> ActiveTool<'a> {
+impl Drawing {
     /// The fields its shape offers now, see [`fields`], the Offset tool's
     /// distance once it has its chain, the Fillet tool's radius once it has
     /// its corner, and the Chamfer tool's distance, and the second distance
@@ -127,7 +127,7 @@ impl<'a> ActiveTool<'a> {
     /// The corner the Fillet or Chamfer tool has picked: its point and its
     /// lines, the first the one a chamfer's first distance runs along.
     pub fn corner(&self) -> Option<(Id, [Id; 2])> {
-        match *self.picked {
+        match *self.picked.as_slice() {
             [
                 Selectable::Item(at),
                 Selectable::Item(a),
@@ -138,7 +138,7 @@ impl<'a> ActiveTool<'a> {
     }
 
     /// The value typed in `field` for its shape, if one is.
-    pub fn value_in(&self, field: Field) -> Option<&'a Value> {
+    pub fn value_in(&self, field: Field) -> Option<&Value> {
         let typed = self.typed.iter().find(|(typed, _)| *typed == field);
         typed.map(|(_, value)| value)
     }
@@ -147,9 +147,9 @@ impl<'a> ActiveTool<'a> {
 /// Reads `text`, typed in `field` for the shape `tool` draws, as the
 /// value it asks for in `design`. Beyond what the field asks, an arc's
 /// radius has to reach across the chord between its ends.
-pub fn read(tool: &ActiveTool, field: Field, text: &str, design: &Design) -> Result<Value, Error> {
+pub fn read(tool: &Drawing, field: Field, text: &str, design: &Design) -> Result<Value, Error> {
     let value = Value::new(text, &field.ask(design))?;
-    if let (Field::Radius, &[a, b]) = (field, tool.placed) {
+    if let (Field::Radius, &[a, b]) = (field, tool.placed.as_slice()) {
         let least = a.distance(b) / 2.0;
         if value.value < least {
             return Err(Error {
@@ -168,7 +168,7 @@ pub fn read(tool: &ActiveTool, field: Field, text: &str, design: &Design) -> Res
 /// in `tool`'s other fields say (`value` of each): as far along the
 /// second line as typed, or at the angle typed to the first, or else as
 /// far along both.
-pub fn setback<V>(tool: &ActiveTool, first: V, value: impl Fn(&Value) -> V) -> Setback<V> {
+pub fn setback<V>(tool: &Drawing, first: V, value: impl Fn(&Value) -> V) -> Setback<V> {
     match (
         tool.value_in(Field::SecondDistance),
         tool.value_in(Field::Angle),
@@ -185,7 +185,7 @@ pub fn setback<V>(tool: &ActiveTool, first: V, value: impl Fn(&Value) -> V) -> S
 /// cursor; a chamfer as far back as typed, or crossing the way into the
 /// corner as far in as the cursor. `None` for another tool, with no corner
 /// picked, or where it doesn't fit.
-pub fn corner_outline(tool: &ActiveTool, sketch: &Sketch, at: DVec2) -> Option<Outline> {
+pub fn corner_outline(tool: &Drawing, sketch: &Sketch, at: DVec2) -> Option<Outline> {
     let (corner, lines) = tool.corner()?;
     let place = sketch.point(corner)?.at;
     let typed = |field| tool.value_in(field).map(|value| value.value);
@@ -378,11 +378,11 @@ fn closed(points: &[DVec2]) -> Vec<DVec2> {
 /// fix it, if its next click completes one or draws a line to it: `None`
 /// with nothing placed, or values typed it can't hold (an arc's radius
 /// short of its chord).
-pub fn outline(tool: &ActiveTool, at: DVec2) -> Option<Outline> {
+pub fn outline(tool: &Drawing, at: DVec2) -> Option<Outline> {
     let typed = |field| tool.value_in(field).map(|value| value.value);
     // The way from `from` to the cursor, or along X where it's there.
     let toward = |from: DVec2| (at - from).try_normalize().unwrap_or(DVec2::X);
-    Some(match (tool.tool, tool.placed) {
+    Some(match (tool.tool, tool.placed.as_slice()) {
         (Tool::Line, &[start]) => {
             let end = match (typed(Field::Length), typed(Field::Angle)) {
                 (None, None) => at,
@@ -490,7 +490,7 @@ fn arc_with_radius(a: DVec2, b: DVec2, radius: f64, toward: DVec2) -> Option<Arc
 
 /// `snap`, where the click of `tool` goes, as the values typed hold it,
 /// see [`aim`].
-pub(crate) fn hold(tool: &ActiveTool, snap: Snap) -> Option<Snap> {
+pub(crate) fn hold(tool: &Drawing, snap: Snap) -> Option<Snap> {
     if tool.typed.is_empty() {
         return Some(snap);
     }
@@ -510,7 +510,7 @@ pub(crate) fn hold(tool: &ActiveTool, snap: Snap) -> Option<Snap> {
 /// snapped to where a value typed takes it off it, nor running as it was
 /// inferred to where a direction is typed (an angle, an arc's radius).
 /// `None` if the values typed can't make a shape there.
-pub fn aim(tool: &ActiveTool, click: ToolClick) -> Option<ToolClick> {
+pub fn aim(tool: &Drawing, click: ToolClick) -> Option<ToolClick> {
     hold(tool, click.snap()).map(|snap| click.snapped(snap))
 }
 
