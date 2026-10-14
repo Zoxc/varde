@@ -89,6 +89,11 @@ impl HeightGeometry for Geo {
         (n >= from).then(|| S::from_f64(v, like))
     }
 
+    fn facing_only<S: Curved>(&self, _: HKey, _: &S) -> bool {
+        // A curved value never formed stands for an uncertified facing.
+        true
+    }
+
     fn row(&self, k: HeightKey) -> AnchorRow<Flat> {
         match (k.h, k.anchor) {
             (HKey::VV { a, .. }, Anchor::Face(B, f)) => {
@@ -176,6 +181,7 @@ fn faces_at_a_shared_vertex_read_one_value() {
     let rec = HeightRec {
         above: Sign::Pos,
         by_orders: false,
+        fold: false,
     };
     for f in [F1, F2] {
         assert_eq!(hs.get(k1, Anchor::Face(B, f)), Some(rec));
@@ -211,7 +217,8 @@ fn at_a_tie_each_face_s_tangent_plane_decides() {
         above(F1),
         HeightRec {
             above: Sign::Neg,
-            by_orders: true
+            by_orders: true,
+            fold: false,
         }
     );
     assert_eq!(above(F2).above, Sign::Pos);
@@ -287,7 +294,8 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
         hs.get(own, Anchor::Face(B, F1)),
         Some(HeightRec {
             above: Sign::Neg,
-            by_orders: true
+            by_orders: true,
+            fold: false,
         })
     );
     // Beyond the band, the value decides.
@@ -299,13 +307,28 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
     hs.fill([at(h, F1)], &g, band(), &mut Seq::default())
         .unwrap();
     assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, Sign::Pos);
-    // Never formed: the key's escalation stands past the last level.
+    // Never formed: a point–face value is a tie at the last level, so
+    // the anchor's orders decide; with none either (and no fold rule
+    // here), the row's escalation stands past the last level.
     let g = Geo {
         curved: Some((0.0, u32::MAX)),
         ..Geo::default()
     };
-    let got = Heights::new().fill([at(h, F1)], &g, band(), &mut Seq::default());
-    assert_eq!(got, Err(HeightError::Pass(Fail::Escalate { order: 0 })));
+    let mut hs = Heights::new();
+    let got = hs.fill([at(h, F1)], &g, band(), &mut Seq::default());
+    assert_eq!(got, Err(HeightError::Pass(Fail::Escalate { order: 1 })));
+    // With orders, they decide.
+    let g = Geo {
+        curved: Some((0.0, u32::MAX)),
+        rows: Some([0.25, 0.0, 0.0, 0.0]),
+        ..Geo::default()
+    };
+    let mut hs = Heights::new();
+    hs.fill([at(h, F1)], &g, band(), &mut Seq::default())
+        .unwrap();
+    let last = u8::try_from(crate::records::shadow::LEVELS - 1).unwrap();
+    assert_eq!(hs.key(h).map(|r| (r.value, r.level)), Some((None, last)));
+    assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, Sign::Pos);
 }
 
 #[test]

@@ -10,8 +10,11 @@
 //! boxes with its trimming curve's ribbon, their degree from the free
 //! sides inside the trim, the cuts certified off the query point's ray,
 //! and the edge's ray record between them, the corner pieces likewise,
-//! and where an edge's crossing in a corner piece is placed.
+//! and where an edge's crossing in a corner piece is placed; and [`s02`],
+//! a face's layers above or below a point, from its pieces refined until
+//! height-clear and, near the point, its layers' height records.
 
 pub mod boxes;
 pub mod degree;
 pub mod pieces;
+pub mod s02;

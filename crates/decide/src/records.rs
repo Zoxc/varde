@@ -10,7 +10,8 @@
 //! (how its two curves come apart, where its spike is cut), [`side`] a point's ray against a box side on a
 //! tile line the counting can't certify off the point, [`height`] the
 //! height keys a point reads against a vertex, an edge or a face's layer,
-//! the layers themselves and the height records, and [`near`] the
+//! the layers themselves and the height records (and, in
+//! [`height::model`], the geometry they are decided from), and [`near`] the
 //! operation's bands and near radii they read.
 
 pub mod cusp;

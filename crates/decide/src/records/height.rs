@@ -49,6 +49,18 @@
 //! the facing `sign(n_f·ê)` isn't certified the in-face fold rule decides
 //! instead.
 //!
+//! **The fold rule.** An anchor whose facing isn't certified at any level
+//! (its tangent plane holds `ê`: a silhouette inside the face) has no
+//! orders. Its record is then the fold's ([`HeightRec::fold`]): the face
+//! there is two sheets folded over in the shadow, and the record holds
+//! the upper sheet's facing ([`HeightGeometry::curved_fold`]), the same
+//! from either side. The counting reads it: a layer whose pieces the
+//! point's column enters (some piece of non-zero degree) contributes the
+//! upper sheet's facing, else nothing. A point–face key whose value can't
+//! be formed at the last level for the face's facing alone
+//! ([`HeightGeometry::facing_only`]) is a tie, so its anchor's orders, or
+//! the fold, decide; one whose hit can't be formed escalates. The concrete geometry is [`model`]'s.
+//!
 //! **The records.** A height is decided in two parts ([`Heights`]). The
 //! key's value, order 0, is decided **once per key** for every anchor
 //! reading it ([`KeyRec`]): its sign, or a tie; its band class (geometric
@@ -81,9 +93,12 @@ use crate::records::keys::{
 };
 use crate::records::ray::RayLevel;
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LevelWork, Pass, Shadows, VvRec, ladder, neg, replay, table_error,
+    AtLevel, Cost, Decided, LEVELS, LevelWork, Pass, Shadows, VvRec, ladder, neg, replay,
+    table_error,
 };
 use crate::records::table::{Fresh, Table, TableError};
+
+pub mod model;
 
 /// What [`height_key`] and the layers read: the geometric order of the
 /// other operand's vertices and edges, the point–vertex records (their
@@ -151,7 +166,7 @@ pub enum KeyError {
         foot: FootId,
     },
     /// Face `f` has no layer `layer` at `q`, or its layers at `q` aren't
-    /// given.
+    /// given, or aren't the ones the count's pieces form.
     NoLayer {
         /// The point.
         q: Point,
@@ -359,6 +374,17 @@ impl LayerPieces {
         q: Point,
         f: FaceId,
     ) -> Result<Layers, KeyError> {
+        self.layers_of(reads, q, f).map(|(l, _)| l)
+    }
+
+    /// [`layers`](Self::layers), with the layer of each piece, in the
+    /// order the pieces were added.
+    pub fn layers_of<R: HeightReads>(
+        &self,
+        reads: &R,
+        q: Point,
+        f: FaceId,
+    ) -> Result<(Layers, Vec<LayerId>), KeyError> {
         let of = q.operand.other();
         let n = self.pieces.len();
         let mut parent: Vec<usize> = (0..n).collect();
@@ -392,9 +418,9 @@ impl LayerPieces {
                 (a, b) => a.or(b),
             };
         }
-        type Sort<K> = (bool, Option<Place<K>>, Option<Pos>, Layer);
+        type Sort<K> = (bool, Option<Place<K>>, Option<Pos>, Layer, usize);
         let mut out: Vec<Sort<R::Key>> = Vec::with_capacity(comps.len());
-        for c in comps.into_values() {
+        for (r, c) in comps {
             let mut verts = c.verts;
             verts.sort_unstable();
             verts.dedup();
@@ -426,7 +452,7 @@ impl LayerPieces {
                 feature,
                 core,
             };
-            out.push((pl.is_none(), pl, core, layer));
+            out.push((pl.is_none(), pl, core, layer, r));
         }
         // Layers whose features tie in place (bitwise-equal entities) go
         // by the feature's id: one layer holds each feature, so the order
@@ -437,9 +463,15 @@ impl LayerPieces {
                 return Err(KeyError::CoreTie { q, f });
             }
         }
-        Ok(Layers {
+        let mut id: BTreeMap<usize, LayerId> = BTreeMap::new();
+        for (k, s) in out.iter().enumerate() {
+            id.insert(s.4, LayerId(u32::try_from(k).expect("few layers")));
+        }
+        let of_piece = (0..n).map(|i| id[&root(&mut parent, i)]).collect();
+        let layers = Layers {
             layers: out.into_iter().map(|s| s.3).collect(),
-        })
+        };
+        Ok((layers, of_piece))
     }
 }
 
@@ -570,6 +602,29 @@ pub trait HeightGeometry {
     /// escalates (where no level does, the fold rule is the consumer's).
     fn curved_row<S: Curved>(&self, k: HeightKey, like: &S) -> Option<[S; ORDERS]>;
 
+    /// Whether point–face key `h`'s value, not formed at the level of
+    /// `like` ([`curved_value`](Self::curved_value) `None`), fails only
+    /// for the face's facing: the hit and the face there are formed, the
+    /// face's normal at the hit not certified off `ê`. At the last level
+    /// such a value is a tie (module docs, "The fold rule"); a value
+    /// failing for anything else (the hit, the face) escalates. By
+    /// default none is.
+    fn facing_only<S: Curved>(&self, h: HKey, like: &S) -> bool {
+        let _ = (h, like);
+        false
+    }
+
+    /// Where anchor `k`'s facing isn't certified at any level (the anchor
+    /// on a silhouette inside its face), the fold's upper sheet's facing
+    /// at the level of `like`: a value whose sign is `+` where the upper
+    /// sheet faces up (module docs, "The fold rule"); `None` where the
+    /// level can't form it. By default there is no fold rule: such an
+    /// anchor's record can't be decided.
+    fn curved_fold<S: Curved>(&self, k: HeightKey, like: &S) -> Option<S> {
+        let _ = (k, like);
+        None
+    }
+
     /// Whether anchor `k`'s record is geometric (its value a certified
     /// truth, never a tie). A key is geometric only when every anchor
     /// reading it is.
@@ -594,10 +649,15 @@ pub struct KeyRec {
 /// [`Heights::get`], from the reader's side).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HeightRec {
-    /// `Pos`: the target is above.
+    /// `Pos`: the target is above. On a fold (`fold`), the facing of the
+    /// fold's upper sheet instead, `Pos` facing up, read as stored from
+    /// either side.
     pub above: Sign,
     /// Whether the key's value was a tie, so the anchor's orders decided.
     pub by_orders: bool,
+    /// Whether the anchor's facing wasn't certified at any level, so the
+    /// fold rule decided: `above` is the upper sheet's facing.
+    pub fold: bool,
 }
 
 /// How filling height records failed.
@@ -694,7 +754,7 @@ impl Heights {
     /// it isn't decided.
     pub fn get(&self, h: Oriented<HKey>, anchor: Anchor) -> Option<HeightRec> {
         let r = *self.at.get(&HeightKey { h: h.key, anchor })?;
-        Some(if h.swapped {
+        Some(if h.swapped && !r.fold {
             HeightRec {
                 above: neg(r.above),
                 ..r
@@ -821,6 +881,22 @@ impl<G: HeightGeometry> AtLevel for KeyAt<'_, G> {
         let level = u8::try_from(level).expect("few levels");
         let escalate = Err(Fail::Escalate { order: 0 });
         let Some(v) = self.geom.curved_value(self.h, like) else {
+            // A point–face value can't be formed where the face's facing
+            // isn't certified (a silhouette inside the face). At the last
+            // level that alone is a tie (an unformed hit escalates): the anchor's own orders decide, and where
+            // its facing isn't certified either, the fold rule. A truth is
+            // never a tie.
+            if matches!(self.h, HKey::Face { .. })
+                && usize::from(level) + 1 == LEVELS
+                && self.b.kind() != BandKind::Geometric
+                && self.geom.facing_only(self.h, like)
+            {
+                return Ok(KeyRec {
+                    value: None,
+                    kind: self.b.kind(),
+                    level,
+                });
+            }
             return escalate;
         };
         let rec = |value| KeyRec {
@@ -860,6 +936,7 @@ fn decide_at<G: HeightGeometry>(
         let rec = HeightRec {
             above,
             by_orders: false,
+            fold: false,
         };
         return (Ok(rec), cost);
     }
@@ -867,7 +944,7 @@ fn decide_at<G: HeightGeometry>(
         AnchorRow::Flat(p) => {
             let (s, work) = decide_flat_orders(std::cmp::Ordering::Equal, &p, tie);
             cost.exact = work;
-            s
+            s.map(|s| (s, false))
         }
         AnchorRow::Curved => {
             let mut at = RowAt { k, geom, band, tie };
@@ -875,9 +952,10 @@ fn decide_at<G: HeightGeometry>(
                 .unwrap_or(Err(Fail::Escalate { order: 0 }))
         }
     };
-    let rec = above.map(|above| HeightRec {
+    let rec = above.map(|(above, fold)| HeightRec {
         above,
         by_orders: true,
+        fold,
     });
     (rec, cost)
 }
@@ -891,20 +969,31 @@ struct RowAt<'a, G> {
 }
 
 impl<G: HeightGeometry> AtLevel for RowAt<'_, G> {
-    type Out = Result<Sign, Fail>;
+    /// The sign, and whether the fold rule gave it.
+    type Out = Result<(Sign, bool), Fail>;
 
     fn escalates(out: &Self::Out) -> bool {
         matches!(out, Err(Fail::Escalate { .. }))
     }
 
-    fn at<S: RayLevel>(&mut self, like: &S, _: usize, work: &mut LevelWork) -> Self::Out {
+    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
         work.evals = work.evals.saturating_add(1);
         let Some(ord) = self.geom.curved_row(self.k, like) else {
+            // The facing isn't certified here. A later level may certify
+            // it; at the last, the anchor is on a fold.
+            if level + 1 == LEVELS {
+                work.evals = work.evals.saturating_add(1);
+                if let Some(f) = self.geom.curved_fold(self.k, like)
+                    && let Some(s) = f.beyond(0.0)
+                {
+                    return Ok((s, true));
+                }
+            }
             return Err(Fail::Escalate { order: 1 });
         };
         // The value is the key's tie: zero here, the orders deciding.
         let zero = S::int(0, like);
-        decide(zero, ord, self.band, self.tie)
+        decide(zero, ord, self.band, self.tie).map(|s| (s, false))
     }
 }
 
