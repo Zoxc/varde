@@ -11,10 +11,10 @@
 //! [`RailLook`]); the layer ([`Rail`]) places the cards and the list
 //! and closes the list on a click anywhere else.
 
-use iced::advanced::widget::{Operation, Tree};
-use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
+use iced::advanced::widget::Tree;
+use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse};
 use iced::widget::{button, column, container, mouse_area, responsive, row, space, text};
-use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size, Vector};
+use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size};
 
 use crate::chrome::{ChipSize, key_chip, over_viewport, scrolled, side_tip};
 use crate::icons::{self, Icon};
@@ -713,13 +713,10 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rail<'_> {
         Size::new(Length::Fill, Length::Fill)
     }
 
-    fn children(&self) -> Vec<Tree> {
-        self.children.iter().map(Tree::new).collect()
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&self.children);
-    }
+    crate::wrap::pass_to_children!(
+        children, iced::Theme, iced::Renderer;
+        children, diff, operate, mouse_interaction, draw, overlay,
+    );
 
     fn layout(
         &mut self,
@@ -760,25 +757,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rail<'_> {
         layout::Node::with_children(size, nodes)
     }
 
-    fn operate(
-        &mut self,
-        tree: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &iced::Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        for ((child, tree), layout) in self
-            .children
-            .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
-        {
-            child
-                .as_widget_mut()
-                .operate(tree, layout, renderer, operation);
-        }
-    }
-
     fn update(
         &mut self,
         tree: &mut Tree,
@@ -811,68 +789,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rail<'_> {
         {
             shell.publish(Message::Look(Look::Rail(RailLook::Close)));
         }
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &iced::Renderer,
-    ) -> mouse::Interaction {
-        self.children
-            .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
-            .rev()
-            .map(|((child, tree), layout)| {
-                child
-                    .as_widget()
-                    .mouse_interaction(tree, layout, cursor, viewport, renderer)
-            })
-            .find(|&interaction| interaction != mouse::Interaction::None)
-            .unwrap_or_default()
-    }
-
-    fn draw(
-        &self,
-        tree: &Tree,
-        renderer: &mut iced::Renderer,
-        theme: &iced::Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-    ) {
-        for ((child, tree), layout) in self
-            .children
-            .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
-        {
-            child
-                .as_widget()
-                .draw(tree, renderer, theme, style, layout, cursor, viewport);
-        }
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        tree: &'b mut Tree,
-        layout: Layout<'b>,
-        renderer: &iced::Renderer,
-        viewport: &Rectangle,
-        translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
-        overlay::from_children(
-            &mut self.children,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
     }
 }
 

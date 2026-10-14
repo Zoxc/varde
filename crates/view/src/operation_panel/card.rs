@@ -2,9 +2,9 @@
 //! drawn as: placed over the viewport's right, and laid out in sections.
 
 use iced::advanced::widget::{Operation, Tree};
-use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
+use iced::advanced::{Layout, Widget, layout, mouse, renderer};
 use iced::widget::{button, container, text};
-use iced::{Border, Color, Element, Event, Length, Rectangle, Size, Vector};
+use iced::{Border, Color, Element, Length, Rectangle, Size};
 
 use crate::Message;
 use crate::chrome::tip;
@@ -90,12 +90,16 @@ pub(crate) fn placed(panel: Element<'_, Message>) -> Element<'_, Message> {
 /// panel. It keeps [`PANEL_MARGIN`] from the viewport's left, and gets
 /// narrower where it has to.
 pub(crate) fn placed_from(panel: Element<'_, Message>, right: f32) -> Element<'_, Message> {
-    Element::new(Placed { panel, right })
+    Element::new(Placed {
+        panel: [panel],
+        right,
+    })
 }
 
 /// See [`placed`].
 pub(super) struct Placed<'a> {
-    panel: Element<'a, Message>,
+    /// The panel, its only child.
+    panel: [Element<'a, Message>; 1],
     /// How far in from the viewport's right the panel's right edge is.
     right: f32,
 }
@@ -115,13 +119,10 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
         Size::new(Length::Fill, Length::Fill)
     }
 
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.panel)]
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(std::slice::from_ref(&self.panel));
-    }
+    crate::wrap::pass_to_children!(
+        panel, iced::Theme, iced::Renderer;
+        children, diff, operate, update, mouse_interaction, draw, overlay,
+    );
 
     fn layout(
         &mut self,
@@ -135,108 +136,14 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
             (size.width - self.right - PANEL_MARGIN).max(0.0),
             (size.height - top - PANEL_BOTTOM).max(0.0),
         );
-        let panel = self.panel.as_widget_mut().layout(
+        let [panel] = &mut self.panel;
+        let panel = panel.as_widget_mut().layout(
             &mut tree.children[0],
             renderer,
             &layout::Limits::new(Size::ZERO, room),
         );
         let x = (size.width - self.right - panel.size().width).max(0.0);
         layout::Node::with_children(size, vec![panel.move_to((x, top))])
-    }
-
-    fn operate(
-        &mut self,
-        tree: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &iced::Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        let panel = layout.children().next().expect("the panel's layout");
-        self.panel
-            .as_widget_mut()
-            .operate(&mut tree.children[0], panel, renderer, operation);
-    }
-
-    fn update(
-        &mut self,
-        tree: &mut Tree,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &iced::Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) {
-        let panel = layout.children().next().expect("the panel's layout");
-        self.panel.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            panel,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        );
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &iced::Renderer,
-    ) -> mouse::Interaction {
-        let panel = layout.children().next().expect("the panel's layout");
-        self.panel.as_widget().mouse_interaction(
-            &tree.children[0],
-            panel,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn draw(
-        &self,
-        tree: &Tree,
-        renderer: &mut iced::Renderer,
-        theme: &iced::Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-    ) {
-        let panel = layout.children().next().expect("the panel's layout");
-        self.panel.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            panel,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        tree: &'b mut Tree,
-        layout: Layout<'b>,
-        renderer: &iced::Renderer,
-        viewport: &Rectangle,
-        translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
-        let panel = layout.children().next().expect("the panel's layout");
-        self.panel.as_widget_mut().overlay(
-            &mut tree.children[0],
-            panel,
-            renderer,
-            viewport,
-            translation,
-        )
     }
 }
 
@@ -266,13 +173,10 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
         Size::new(Length::Fixed(self.width), Length::Shrink)
     }
 
-    fn children(&self) -> Vec<Tree> {
-        self.parts.iter().map(Tree::new).collect()
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&self.parts);
-    }
+    crate::wrap::pass_to_children!(
+        parts, iced::Theme, iced::Renderer;
+        children, diff, update, mouse_interaction, overlay,
+    );
 
     fn layout(
         &mut self,
@@ -339,49 +243,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
                     .operate(tree, layout, renderer, operation);
             }
         });
-    }
-
-    fn update(
-        &mut self,
-        tree: &mut Tree,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &iced::Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) {
-        for ((part, tree), layout) in self
-            .parts
-            .iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
-        {
-            part.as_widget_mut().update(
-                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
-            );
-        }
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &iced::Renderer,
-    ) -> mouse::Interaction {
-        self.parts
-            .iter()
-            .zip(&tree.children)
-            .zip(layout.children())
-            .map(|((part, tree), layout)| {
-                part.as_widget()
-                    .mouse_interaction(tree, layout, cursor, viewport, renderer)
-            })
-            .max()
-            .unwrap_or_default()
     }
 
     fn draw(
@@ -461,24 +322,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
             part.as_widget()
                 .draw(tree, renderer, theme, &style, layout, cursor, viewport);
         }
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        tree: &'b mut Tree,
-        layout: Layout<'b>,
-        renderer: &iced::Renderer,
-        viewport: &Rectangle,
-        translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
-        overlay::from_children(
-            &mut self.parts,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
     }
 }
 
