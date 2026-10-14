@@ -25,7 +25,7 @@ use crate::document::tied_items;
 use crate::hit::BoxMode;
 use crate::projection::{Cursor, Projector};
 use crate::shortcut::Held;
-use crate::snap::Snap;
+use crate::snap::{Snap, Target};
 use crate::theme::SketchColors;
 use crate::typed::{self, Field};
 use crate::viewport::sketch_pick::HOVERED_WIDTH;
@@ -66,18 +66,18 @@ impl<'a> Sketching<'a> {
         let dragged = self.dragged(input, projector.as_ref(), modifiers);
         let closing = self.drag_closing(input, dragged);
         let mut base = input.base.borrow_mut();
-        let current =
-            (base.as_ref()).is_some_and(|base| base.drawn.matches(self, colors, &closing));
+        let current = (base.as_ref()).is_some_and(|base| base.drawn.matches(self, colors, closing));
         let base = match &mut *base {
             Some(base) if current => base,
             base => {
                 // Dropped on the other end of its curve, the sketch as the
                 // drop leaves it: the curve closed, the point gone, the
                 // region filled.
-                let profiles = closing
+                let closed = closing.and_then(|closing| self.closed(closing));
+                let profiles = closed
                     .as_ref()
                     .map(|closed| closed.profiles().ok().map(Arc::new));
-                let (layer, arrows) = match (&closing, &profiles) {
+                let (layer, arrows) = match (&closed, &profiles) {
                     (Some(closed), Some(profiles)) => Sketching {
                         sketch: closed,
                         profiles: profiles.as_ref(),
@@ -125,12 +125,26 @@ impl<'a> Sketching<'a> {
     }
 
     /// A point dragged onto the other end of its arc or spline (see
-    /// [`crate::spline::closed_by_drop`]), snapping as `dragged`: the
-    /// sketch as dropping it there leaves it, drawn in place of the one
-    /// shown.
-    fn drag_closing(&self, input: &Input, dragged: Option<Snap>) -> Option<Sketch> {
-        let id = input.press?.hit?.item()?;
-        crate::spline::closed_by_drop(self.sketch, id, dragged?.target).map(|(_, closed)| closed)
+    /// [`crate::spline::close_on_drop`]), snapping as `dragged`: the point
+    /// and the one it's dropped on. Cheap, for [`Drawn`]'s key: the sketch
+    /// the drop leaves ([`Sketching::closed`]) is built only with the
+    /// layer.
+    fn drag_closing(&self, input: &Input, dragged: Option<Snap>) -> Option<(Id, Id)> {
+        let point = input.press?.hit?.item()?;
+        let target = dragged?.target;
+        let Some(Target::Point(other)) = target else {
+            return None;
+        };
+        crate::spline::close_on_drop(self.sketch, point, target)?;
+        Some((point, other))
+    }
+
+    /// The sketch as dropping `point` on `other` leaves it, closing its
+    /// curve (see [`crate::spline::closed_by_drop`]), drawn in place of
+    /// the one shown.
+    fn closed(&self, (point, other): (Id, Id)) -> Option<Sketch> {
+        crate::spline::closed_by_drop(self.sketch, point, Some(Target::Point(other)))
+            .map(|(_, closed)| closed)
     }
 
     /// The failing curves of the base layer last built, placed in the
@@ -791,14 +805,15 @@ pub(super) struct Drawn {
     /// changes.
     profiles: Option<Arc<Profiles>>,
     comb: bool,
-    /// The sketch drawn as a drop closing a curve leaves it, see
-    /// [`Sketching::drag_closing`].
-    closing: Option<Sketch>,
+    /// The point dropped on the other end of its curve, and that end, see
+    /// [`Sketching::drag_closing`]: the sketch drawn is as the drop leaves
+    /// it.
+    closing: Option<(Id, Id)>,
 }
 
 impl Drawn {
     /// What `sketching` draws in `colors`, `closing` a curve or not.
-    fn of(sketching: &Sketching, colors: SketchColors, closing: Option<Sketch>) -> Self {
+    fn of(sketching: &Sketching, colors: SketchColors, closing: Option<(Id, Id)>) -> Self {
         Drawn {
             sketch: sketching.sketch.clone(),
             selection: sketching.selection.clone(),
@@ -818,7 +833,7 @@ impl Drawn {
         &self,
         sketching: &Sketching,
         colors: SketchColors,
-        closing: &Option<Sketch>,
+        closing: Option<(Id, Id)>,
     ) -> bool {
         // Destructured, so a field added fails to compile until it's
         // compared.
@@ -841,7 +856,7 @@ impl Drawn {
             && *placement == sketching.placement
             && profiles.as_ref().map(Arc::as_ptr) == sketching.profiles.map(Arc::as_ptr)
             && *comb == sketching.comb
-            && drawn_closing == closing
+            && *drawn_closing == closing
     }
 }
 

@@ -586,8 +586,9 @@ bar says why (`EditError::Sketch`).
   it keeps enough points to close (more than three) and isn't linked,
   else its two points are coincident (`spline::close_on_drop` decides,
   for the drop and its preview alike); while it's dragged there the viewport's base layer draws
-  the sketch as the drop leaves it (`spline::closed_by_drop`,
-  `Sketching::drag_closing`): the curve closed, the point merged away,
+  the sketch as the drop leaves it (`spline::closed_by_drop`, keyed by
+  the point and the end it's on from `Sketching::drag_closing`, so the
+  closed sketch is built only with the layer): the curve closed, the point merged away,
   its region filled from the closed sketch's profiles. A circle's rim dragged snaps
   likewise, but only to points, as a circle's rim drawn does
   (`snap::snap_rim`: another point or the origin, not its centre), its
