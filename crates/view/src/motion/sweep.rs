@@ -93,6 +93,8 @@ pub struct SweepView<'a> {
     pub chains: Vec<(FeatureId, &'a [Id])>,
     pub keep_orientation: bool,
     pub left_handed: bool,
+    /// A helix's Flip: it climbs the other way along the axis.
+    pub flip: bool,
     pub operation: OperationKind,
     /// The bodies a join, cut or intersect lists.
     pub targets: Vec<BodyTarget<'a>>,
@@ -190,7 +192,7 @@ pub(super) fn body<'a>(
             let flip = toggle(
                 Icon::TkFlip,
                 "Flip",
-                state.flip,
+                sweep.flip,
                 state.send(MotionLook::Flip),
                 Some("Climb the other way along the axis"),
             );

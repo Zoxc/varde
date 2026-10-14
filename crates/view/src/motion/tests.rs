@@ -13,6 +13,35 @@ fn field(text: &str) -> TypedField<'_> {
     }
 }
 
+/// The parts of a move, mirror or pattern as the tests set them up.
+fn parts_of<'a>(kind: MotionKind) -> MotionParts<'a> {
+    match kind {
+        MotionKind::Move => MotionParts::Move(MoveView {
+            centre: None,
+            origin_axis: Some(Axis3::Z),
+        }),
+        MotionKind::Mirror => MotionParts::Mirror(MirrorView {
+            keep_original: true,
+        }),
+        MotionKind::LinearPattern | MotionKind::CircularPattern => {
+            MotionParts::Pattern(Box::new(PatternView {
+                join: true,
+                mode: PatternMode::Spacing,
+                ..PatternView::default()
+            }))
+        }
+        _ => MotionParts::None,
+    }
+}
+
+/// A pattern's parts in `state`.
+fn pattern<'s>(state: &'s mut MotionState<'_>) -> &'s mut PatternView {
+    match &mut state.parts {
+        MotionParts::Pattern(pattern) => pattern,
+        _ => panic!("not a pattern"),
+    }
+}
+
 fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'a> {
     MotionState {
         kind,
@@ -44,19 +73,11 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         reference: Some("Z axis".to_owned()),
         line: None,
         bounds: None,
-        centre: None,
-        origin_axis: Some(Axis3::Z),
         units: LengthUnit::Mm,
-        keep_original: true,
-        flip: false,
-        join: true,
-        mode: PatternMode::Spacing,
-        spread_error: None,
-        copies: None,
         need: None,
         editable: true,
         hover: None,
-        parts: MotionParts::None,
+        parts: parts_of(kind),
         knobs: Vec::new(),
     }
 }
@@ -175,7 +196,7 @@ fn a_linear_pattern_s_panel_is_the_mock_s() {
     assert!(join > found(&shown, "Total").bounds.y);
     assert!(!has(&shown, "Full 360°"));
     // Unticked, the overlap warning where there's nothing else.
-    state.join = false;
+    pattern(&mut state).join = false;
     let warning = "The copies overlap (12 mm long this way): tick Join to original to merge them";
     state.verdict.warning = Some(warning.to_owned());
     found(&texts_of(&state), warning);
@@ -184,8 +205,8 @@ fn a_linear_pattern_s_panel_is_the_mock_s() {
     state.verdict.refused = None;
     state.verdict.warning = None;
     // The field is the mode's, its whole error under it.
-    state.mode = PatternMode::Total;
-    state.spread_error = Some("The pattern runs past 1000000 mm".to_owned());
+    pattern(&mut state).mode = PatternMode::Total;
+    pattern(&mut state).spread_error = Some("The pattern runs past 1000000 mm".to_owned());
     let shown = texts_of(&state);
     let labels = shown.iter().filter(|shown| shown.text == "Total").count();
     assert_eq!(labels, 2, "the tile and the field: {shown:?}");
@@ -195,7 +216,7 @@ fn a_linear_pattern_s_panel_is_the_mock_s() {
 #[test]
 fn a_circular_pattern_s_panel_has_no_field_for_a_full_turn() {
     let mut state = state_of(MotionKind::CircularPattern, vec![body("Body 1")]);
-    state.mode = PatternMode::Full;
+    pattern(&mut state).mode = PatternMode::Full;
     let shown = texts_of(&state);
     for text in [
         "New circular pattern",
@@ -215,7 +236,7 @@ fn a_circular_pattern_s_panel_has_no_field_for_a_full_turn() {
     // Full 360° has only the tile named Spacing; another mode its field.
     let spacings = |shown: &[Shown]| shown.iter().filter(|s| s.text == "Spacing").count();
     assert_eq!(spacings(&shown), 1);
-    state.mode = PatternMode::Spacing;
+    pattern(&mut state).mode = PatternMode::Spacing;
     assert_eq!(spacings(&texts_of(&state)), 2);
 }
 
@@ -228,6 +249,7 @@ fn an_align_s_panel_has_its_sides_flip_and_offset() {
     state.reference = None;
     state.picking = MotionPick::Align(AlignSlot::new(AlignSide::Target, AlignRole::Point));
     state.parts = MotionParts::Align(Box::new(AlignView {
+        flip: false,
         names: [
             [
                 Some("Centre of an edge of Body 2".to_owned()),
@@ -460,6 +482,7 @@ fn chamfer_view(edges: &[(&str, Option<&str>, bool)], kind: ChamferType) -> Cham
         })
         .collect();
     ChamferView {
+        flip: false,
         edges: BlendEdges {
             faces: Vec::new(),
             edges,

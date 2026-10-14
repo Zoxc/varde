@@ -262,7 +262,7 @@ labels' layer is an empty placeholder: the handles are drawn by the
 renderer with the rest.
 
 **A move's handles** (`viewport/motion/handles.rs`, question 13's decision: typed
-fields and handles): at a pivot of the bodies (`MotionState::centre`):
+fields and handles): at a pivot of the bodies (`MoveView::centre`):
 the centre of their box in the model shown (`MotionState::bounds`,
 merged bodies as their holders) found once, taken back through the move
 that model shows to a point of the bodies before the move
@@ -297,7 +297,7 @@ and no ring's knob or arc comes within reach of an arrow. Not for a mirror,
 while the axis is picked, without the bodies' box, or in a document
 that can't be changed; while the move turns about another axis than a
 world axis only the arrows, while about a world axis only its ring
-(`MotionState::origin_axis`). Drawn on top of the model, as the axis is.
+(`MoveView::origin_axis`). Drawn on top of the model, as the axis is.
 They take the mouse ahead of picking the model (`Moving::mouse`,
 `viewport::Interaction::motion`): over one, the cursor is a grab hand,
 the model's hover is let go of and not worked out again until the cursor

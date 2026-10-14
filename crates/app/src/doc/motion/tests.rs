@@ -589,7 +589,7 @@ fn the_handles_set_the_offsets_and_a_ring_the_turn_committed_as_one_undo_step() 
     // The handles stand at the body's box centre, about world axes.
     let state = plates.doc.motion_state().expect("a move");
     assert_eq!(state.bounds, Some(plates.bounds(right)));
-    assert_eq!(state.origin_axis, Some(Axis3::Z));
+    assert_eq!(state.move_view().unwrap().origin_axis, Some(Axis3::Z));
     assert_eq!(state.units, varde_expr::LengthUnit::Mm);
 
     // The Z arrow dragged: the viewport types the snapped offset in.
@@ -735,7 +735,10 @@ fn lopsided() -> (Plates, [BodyId; 2]) {
 fn handles_at(doc: &Doc) -> DVec3 {
     let state = doc.motion_state().expect("a move");
     let [low, high] = state.bounds.expect("bodies shown");
-    state.centre.unwrap_or((low + high) / 2.0)
+    state
+        .move_view()
+        .and_then(|moved| moved.centre)
+        .unwrap_or((low + high) / 2.0)
 }
 
 /// What a ring of the handles at `centre` sends turning about `axis`

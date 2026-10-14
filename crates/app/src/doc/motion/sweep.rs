@@ -486,6 +486,7 @@ impl Doc {
                 .collect(),
             keep_orientation: setup.keep_orientation,
             left_handed: setup.left_handed,
+            flip: session.flip,
             operation: setup.operation,
             targets: self.body_targets(setup.operation, session.feature, &setup.targets),
             info: session.sweep().map(|sweep| sweep_info(document, &sweep)),

@@ -51,10 +51,10 @@ use varde_kernel_compat::Motion;
 use varde_regen::Summary;
 use varde_render::Camera;
 use varde_view::{
-    AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
-    MotionKind, MotionLook, MotionParts, MotionPick, MotionState, NamingPicks, OperationKind,
-    PanelHover, PatternMode, Pick, PickIndex, Picked, ShellDirection, SplitMode, SweepPath,
-    Unnamed, axis_name, pattern_copies, plane_name,
+    AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, MirrorView, ModelHighlight,
+    MotionField, MotionKind, MotionLook, MotionParts, MotionPick, MotionState, MoveView,
+    NamingPicks, OperationKind, PanelHover, PatternMode, PatternView, Pick, PickIndex, Picked,
+    ShellDirection, SplitMode, SweepPath, Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
@@ -2391,21 +2391,7 @@ impl Doc {
             reference,
             line,
             bounds,
-            centre,
-            origin_axis: match session.axis {
-                Some(AxisRef::Origin(axis)) => Some(axis),
-                _ => None,
-            },
             units: document.units(),
-            keep_original: session.keep_original,
-            flip: session.flip,
-            join: session.join,
-            mode: session.mode,
-            spread_error: session.spread_error(),
-            copies: match session.kind() {
-                Some(FeatureKind::Pattern(pattern)) => Some(pattern_copies(document, &pattern)),
-                _ => None,
-            },
             need: session.need(),
             editable: self.editable(),
             hover: self.panel_hover(),
@@ -2422,10 +2408,30 @@ impl Doc {
                 MotionKind::Draft => MotionParts::Draft(Box::new(self.face_draft_view(session))),
                 MotionKind::Sweep => MotionParts::Sweep(Box::new(self.sweep_view(session))),
                 MotionKind::Loft => MotionParts::Loft(Box::new(self.loft_view(session))),
-                MotionKind::Move
-                | MotionKind::Mirror
-                | MotionKind::LinearPattern
-                | MotionKind::CircularPattern => MotionParts::None,
+                MotionKind::Move => MotionParts::Move(MoveView {
+                    centre,
+                    origin_axis: match session.axis {
+                        Some(AxisRef::Origin(axis)) => Some(axis),
+                        _ => None,
+                    },
+                }),
+                MotionKind::Mirror => MotionParts::Mirror(MirrorView {
+                    keep_original: session.keep_original,
+                }),
+                MotionKind::LinearPattern | MotionKind::CircularPattern => {
+                    MotionParts::Pattern(Box::new(PatternView {
+                        flip: session.flip,
+                        join: session.join,
+                        mode: session.mode,
+                        spread_error: session.spread_error(),
+                        copies: match session.kind() {
+                            Some(FeatureKind::Pattern(pattern)) => {
+                                Some(pattern_copies(document, &pattern))
+                            }
+                            _ => None,
+                        },
+                    }))
+                }
             },
             knobs: self.motion_knobs(session, bounds),
         })

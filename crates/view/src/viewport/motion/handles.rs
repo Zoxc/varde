@@ -16,7 +16,7 @@ use super::{HIT_PIXELS, Input, Moving};
 use crate::handle_snap::angle_step;
 use crate::handle_snap::snap_step;
 use crate::hit::segment_distance;
-use crate::motion::{MotionField, MotionKind, MotionLook, MotionPick};
+use crate::motion::{MotionField, MotionLook, MotionPick};
 use crate::projection::Projector;
 use crate::theme::SketchColors;
 use crate::viewport::handle::{self, Puck, wrapped};
@@ -581,8 +581,8 @@ impl<'a> Moving<'a> {
         bounds: Rectangle,
     ) -> Option<Handles> {
         let state = &self.state;
-        if state.kind != MotionKind::Move || state.picking != MotionPick::Bodies || !state.editable
-        {
+        let moved = state.move_view()?;
+        if state.picking != MotionPick::Bodies || !state.editable {
             return None;
         }
         let [low, high] = state.bounds?;
@@ -594,7 +594,7 @@ impl<'a> Moving<'a> {
                 },
             ) => drag.centre + (self.offset() - drag.offset),
             Some(drag) => drag.centre,
-            None => state.centre.unwrap_or((low + high) / 2.0),
+            None => moved.centre.unwrap_or((low + high) / 2.0),
         };
         if !centre.is_finite() {
             return None;
@@ -602,7 +602,7 @@ impl<'a> Moving<'a> {
         let projector = Projector::world_in(camera, bounds)?;
         let pixel = projector.pixel_at_point(centre)?;
         let angle = self.field(MotionField::Angle).unwrap_or(0.0);
-        let rings = Axis3::ALL.map(|axis| angle == 0.0 || state.origin_axis == Some(axis));
+        let rings = Axis3::ALL.map(|axis| angle == 0.0 || moved.origin_axis == Some(axis));
         Some(Handles::new(centre, pixel, rings, projector))
     }
 

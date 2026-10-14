@@ -276,7 +276,7 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   what an expression holds (`MAX_LEN`, `MAX_DEPTH`: a spread typed near
   the 256 bytes), the value it comes to is stored instead, written
   exactly (`varde_expr::exact`), rather than refusing a text that reads. The mock's errors under the field
-  (`MotionState::spread_error`, OK off): "The pattern runs past 1000000
+  (`PatternView::spread_error`, OK off): "The pattern runs past 1000000
   mm" (spacing × (n − 1) past `MAX_COORD`; the mock's limit is its
   10 000 mm), "4 copies 120° apart go past a full turn" (a Spacing
   coming to a turn or more, within the rounding `full_turn` allows),

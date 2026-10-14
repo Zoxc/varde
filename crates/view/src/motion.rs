@@ -683,35 +683,9 @@ pub struct MotionState<'a> {
     /// if it shows them: the axis and plane are drawn across it, and a
     /// move's handles at its centre.
     pub bounds: Option<[DVec3; 2]>,
-    /// Where a move's handles stand, if the app knows: a point of the
-    /// bodies found once, taken where the move as set up takes it, so
-    /// they stay put as a ring turns the bodies about them and move with
-    /// the offsets at once. Without it, the centre of
-    /// [`MotionState::bounds`].
-    pub centre: Option<DVec3>,
-    /// A move's axis, if it's a world axis: while the move turns, only
-    /// that axis's ring of the handles turns it further.
-    pub origin_axis: Option<Axis3>,
     /// The design's units, which the handles' snapped offsets are typed
     /// in.
     pub units: LengthUnit,
-    /// A mirror's Create copy.
-    pub keep_original: bool,
-    /// The Flip tick of a linear pattern (its direction), an align, a
-    /// chamfer and a sweep; a draft's and an offset face's are in their
-    /// own views ([`DraftView::flip`], [`OffsetFaceView::inward`]).
-    pub flip: bool,
-    /// A pattern's Join to original.
-    pub join: bool,
-    /// How a pattern's copies are spread.
-    pub mode: PatternMode,
-    /// Why a pattern's spread is refused where its own text isn't, the
-    /// mock's words under its field: "The pattern runs past 1000000 mm",
-    /// "4 copies 120° apart go past a full turn".
-    pub spread_error: Option<String>,
-    /// A whole pattern's copies as the status bar says them, "4 × 25 mm
-    /// along X axis", "6 × 60° about Z axis" ([`pattern_copies`]).
-    pub copies: Option<String>,
     /// What's still to be done before it can be committed, if anything:
     /// "pick the bodies to move", for the status bar.
     pub need: Option<&'static str>,
@@ -733,9 +707,12 @@ pub struct MotionState<'a> {
 /// most, matching [`MotionState::kind`].
 #[derive(Debug, Clone, Default)]
 pub enum MotionParts<'a> {
-    /// A move's, mirror's or pattern's: none of their own here.
+    /// None sent: the panel shows only the bodies.
     #[default]
     None,
+    Move(MoveView),
+    Mirror(MirrorView),
+    Pattern(Box<PatternView>),
     Align(Box<AlignView<'a>>),
     Scale(Box<ScaleView<'a>>),
     Split(Box<SplitView<'a>>),
@@ -748,12 +725,51 @@ pub enum MotionParts<'a> {
     Loft(Box<LoftView<'a>>),
 }
 
+/// A move's own parts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MoveView {
+    /// Where its handles stand, if the app knows: a point of the bodies
+    /// found once, taken where the move as set up takes it, so they stay
+    /// put as a ring turns the bodies about them and move with the
+    /// offsets at once. Without it, the centre of
+    /// [`MotionState::bounds`].
+    pub centre: Option<DVec3>,
+    /// Its axis, if it's a world axis: while the move turns, only that
+    /// axis's ring of the handles turns it further.
+    pub origin_axis: Option<Axis3>,
+}
+
+/// A mirror's own parts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MirrorView {
+    /// Its Create copy.
+    pub keep_original: bool,
+}
+
+/// A linear or circular pattern's own parts.
+#[derive(Debug, Clone, Default)]
+pub struct PatternView {
+    /// A linear pattern's Flip direction.
+    pub flip: bool,
+    /// Its Join to original.
+    pub join: bool,
+    /// How its copies are spread.
+    pub mode: PatternMode,
+    /// Why its spread is refused where its own text isn't, the mock's
+    /// words under its field: "The pattern runs past 1000000 mm", "4
+    /// copies 120° apart go past a full turn".
+    pub spread_error: Option<String>,
+    /// Its copies, once it's whole, as the status bar says them, "4 × 25
+    /// mm along X axis", "6 × 60° about Z axis" ([`pattern_copies`]).
+    pub copies: Option<String>,
+}
+
 impl<'a> MotionParts<'a> {
     /// What the status bar says of the kind's own set-up, if it says
     /// anything.
     pub fn info(&self) -> Option<&str> {
         match self {
-            Self::None => None,
+            Self::None | Self::Move(_) | Self::Mirror(_) | Self::Pattern(_) => None,
             Self::Align(parts) => parts.info.as_deref(),
             Self::Scale(parts) => parts.info.as_deref(),
             Self::Split(parts) => parts.info.as_deref(),
@@ -814,6 +830,14 @@ impl<'a> MotionState<'a> {
     pub fn align(&self) -> Option<&AlignView<'a>> {
         match &self.parts {
             MotionParts::Align(parts) => Some(parts),
+            _ => None,
+        }
+    }
+
+    /// A move's own parts, for a move.
+    pub fn move_view(&self) -> Option<&MoveView> {
+        match &self.parts {
+            MotionParts::Move(parts) => Some(parts),
             _ => None,
         }
     }
@@ -963,10 +987,16 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
                 None => bodies,
             }
         }
-        (MotionKind::LinearPattern | MotionKind::CircularPattern, Some(_)) => match &state.copies {
-            Some(copies) => format!("{bodies} · {copies}"),
-            None => bodies,
-        },
+        (MotionKind::LinearPattern | MotionKind::CircularPattern, Some(_)) => {
+            let copies = match &state.parts {
+                MotionParts::Pattern(pattern) => pattern.copies.as_deref(),
+                _ => None,
+            };
+            match copies {
+                Some(copies) => format!("{bodies} · {copies}"),
+                None => bodies,
+            }
+        }
         _ => state.parts.info().map_or(bodies, str::to_owned),
     }
 }
@@ -1059,88 +1089,86 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         MotionParts::Draft(draft) => draft::body(state, draft, reference, field_of),
         MotionParts::Sweep(sweep) => sweep::body(state, sweep, reference, field_of),
         MotionParts::Loft(loft) => loft::body(state, loft),
-        MotionParts::None => match state.kind {
-            MotionKind::Move => {
-                let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
-                column![
-                    bodies,
-                    section("Translate"),
-                    column(translate).spacing(8),
-                    section("Rotate"),
-                    reference,
-                    field_of(MotionField::Angle),
-                ]
-                .spacing(10)
-                .into()
-            }
-            MotionKind::Mirror => {
-                let copy = toggle(
-                    Icon::TkCopy,
-                    "Create copy",
-                    state.keep_original,
-                    state.send(MotionLook::Copy),
-                    Some("Keep the original too"),
-                );
-                column![bodies, reference, copy].spacing(10).into()
-            }
-            MotionKind::LinearPattern | MotionKind::CircularPattern => {
-                let flip = (state.kind == MotionKind::LinearPattern).then(|| {
-                    toggle(
-                        Icon::TkFlip,
-                        "Flip direction",
-                        state.flip,
-                        state.send(MotionLook::Flip),
-                        None,
-                    )
-                });
-                let modes = PatternMode::of(state.kind).iter().map(|&mode| {
-                    tile(
-                        mode.icon(state.kind),
-                        mode.label(),
-                        state.mode == mode,
-                        state.send(MotionLook::Mode(mode)),
-                    )
-                });
-                let spread = (state.mode != PatternMode::Full).then(|| {
-                    let label = match state.mode {
-                        PatternMode::Total => "Total",
-                        _ => "Spacing",
-                    };
-                    // The mock's error for the spread as a whole, under its
-                    // field, where its text has none of its own.
-                    let note = (state.spread_error.clone())
-                        .filter(|_| state.fields[MotionField::Spread.index()].error.is_none())
-                        .map(|note| {
-                            text(sentence(&note).into_owned())
-                                .size(11.5)
-                                .wrapping(Wrapping::WordOrGlyph)
-                                .style(theme::danger_text)
-                        });
-                    column![field_named(MotionField::Spread, label), note].spacing(3)
-                });
-                let join = toggle(
-                    Icon::TkJoin,
-                    "Join to original",
-                    state.join,
-                    state.send(MotionLook::Join),
-                    Some("One body; otherwise each copy is its own"),
-                );
-                column![
-                    bodies,
-                    reference,
-                    flip,
-                    section("Copies"),
-                    field_of(MotionField::Count),
-                    tiles(modes),
-                    spread,
-                    join,
-                ]
-                .spacing(10)
-                .into()
-            }
-            // A kind with parts of its own, sent without them.
-            _ => bodies,
-        },
+        MotionParts::Move(_) => {
+            let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
+            column![
+                bodies,
+                section("Translate"),
+                column(translate).spacing(8),
+                section("Rotate"),
+                reference,
+                field_of(MotionField::Angle),
+            ]
+            .spacing(10)
+            .into()
+        }
+        MotionParts::Mirror(mirror) => {
+            let copy = toggle(
+                Icon::TkCopy,
+                "Create copy",
+                mirror.keep_original,
+                state.send(MotionLook::Copy),
+                Some("Keep the original too"),
+            );
+            column![bodies, reference, copy].spacing(10).into()
+        }
+        MotionParts::Pattern(pattern) => {
+            let flip = (state.kind == MotionKind::LinearPattern).then(|| {
+                toggle(
+                    Icon::TkFlip,
+                    "Flip direction",
+                    pattern.flip,
+                    state.send(MotionLook::Flip),
+                    None,
+                )
+            });
+            let modes = PatternMode::of(state.kind).iter().map(|&mode| {
+                tile(
+                    mode.icon(state.kind),
+                    mode.label(),
+                    pattern.mode == mode,
+                    state.send(MotionLook::Mode(mode)),
+                )
+            });
+            let spread = (pattern.mode != PatternMode::Full).then(|| {
+                let label = match pattern.mode {
+                    PatternMode::Total => "Total",
+                    _ => "Spacing",
+                };
+                // The mock's error for the spread as a whole, under its
+                // field, where its text has none of its own.
+                let note = (pattern.spread_error.clone())
+                    .filter(|_| state.fields[MotionField::Spread.index()].error.is_none())
+                    .map(|note| {
+                        text(sentence(&note).into_owned())
+                            .size(11.5)
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .style(theme::danger_text)
+                    });
+                column![field_named(MotionField::Spread, label), note].spacing(3)
+            });
+            let join = toggle(
+                Icon::TkJoin,
+                "Join to original",
+                pattern.join,
+                state.send(MotionLook::Join),
+                Some("One body; otherwise each copy is its own"),
+            );
+            column![
+                bodies,
+                reference,
+                flip,
+                section("Copies"),
+                field_of(MotionField::Count),
+                tiles(modes),
+                spread,
+                join,
+            ]
+            .spacing(10)
+            .into()
+        }
+        // A kind's parts not sent.
+        MotionParts::None => bodies,
     };
     let message = state.verdict.footer(state.kind.noun());
     operation_panel(Parts {

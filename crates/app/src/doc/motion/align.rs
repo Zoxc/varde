@@ -829,6 +829,7 @@ impl Doc {
             info,
             marks,
             snaps,
+            flip: session.flip,
         }
     }
 

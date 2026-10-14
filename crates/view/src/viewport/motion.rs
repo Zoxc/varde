@@ -9,7 +9,7 @@
 //! as an axis. All in the selected colour, or the hovered one while the
 //! panel's row of it is hovered.
 //!
-//! A move has handles at its bodies' pivot ([`MotionState::centre`],
+//! A move has handles at its bodies' pivot ([`MoveView::centre`](crate::motion::MoveView::centre),
 //! else their box's centre), a fixed size on the screen and laid out
 //! there to keep apart ([`Handles::new`](handles::Handles::new)): a short arrow along each world
 //! axis, a shaft in the axis's colour to a puck as the extrude's handle

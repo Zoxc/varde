@@ -37,6 +37,8 @@ pub struct AlignView<'a> {
     /// While a point is picked, the model shown and what of it the
     /// cursor is over: its snap points are drawn as the measure tool's.
     pub snaps: Option<(&'a PickIndex, Pick)>,
+    /// Its Flip: the directions meet the other way round.
+    pub flip: bool,
 }
 
 /// One side of an align as the viewport draws it: its point and
@@ -120,7 +122,7 @@ pub(super) fn body<'a>(
     let flip = toggle(
         Icon::TkFlip,
         "Flip",
-        state.flip,
+        align.flip,
         state.send(MotionLook::Flip),
         Some("The directions meet the other way round"),
     );

@@ -58,11 +58,13 @@ impl ChamferType {
 }
 
 /// What the panel shows of a chamfer being set up, beside what every
-/// move's session has (its Flip sides is the session's flip).
+/// move's session has.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChamferView {
     pub edges: BlendEdges,
     pub kind: ChamferType,
+    /// Its Flip sides.
+    pub flip: bool,
     /// What the status bar says of it once it's whole: "2 edges · Equal ·
     /// 1 mm · Tangent chain".
     pub info: Option<String>,
@@ -98,7 +100,7 @@ pub(super) fn body<'a>(
         toggle(
             Icon::TkFlip,
             "Flip sides",
-            state.flip,
+            chamfer.flip,
             state.send(MotionLook::Flip),
             None,
         )

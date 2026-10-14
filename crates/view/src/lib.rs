@@ -106,11 +106,11 @@ pub use message::{
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, BlendFace,
     ChamferType, ChamferView, DraftView, FilletView, KnobPath, KnobRadius, KnobScale, KnobSnap,
-    KnobTone, LoftSection, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionParts,
-    MotionPick, MotionState, OffsetFaceView, OpKnob, PatternMode, PickedFace, PickedFaces,
-    ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView,
-    SweepPart, SweepPath, SweepView, axis_name, direction_name, pattern_copies, plane_name,
-    point_name,
+    KnobTone, LoftSection, LoftShape, LoftView, MirrorView, MotionField, MotionKind, MotionLook,
+    MotionParts, MotionPick, MotionState, MoveView, OffsetFaceView, OpKnob, PatternMode,
+    PatternView, PickedFace, PickedFaces, ScaleMode, ScaleView, ShellDirection, ShellView,
+    SketchLines, SplitMode, SplitPiece, SplitView, SweepPart, SweepPath, SweepView, axis_name,
+    direction_name, pattern_copies, plane_name, point_name,
 };
 pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
 pub use naming::NamingPicks;

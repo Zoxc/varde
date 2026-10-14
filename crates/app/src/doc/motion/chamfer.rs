@@ -111,6 +111,7 @@ impl Doc {
         ChamferView {
             edges: self.blend_edges(session),
             kind: session.chamfer_type,
+            flip: session.flip,
             info: (session.chamfer()).map(|chamfer| {
                 let chains = session.blend.shown_chains();
                 varde_view::chamfer_info(&Chamfer { chains, ..chamfer }, units)

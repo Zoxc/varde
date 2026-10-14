@@ -12,8 +12,7 @@ use super::handles::{ORB_PIXELS, turned_about};
 use super::*;
 use crate::Look;
 use crate::handle_snap::angle_step;
-use crate::motion::PatternMode;
-use crate::motion::{MotionLook, MotionParts, MotionPick, SplitView};
+use crate::motion::{MotionLook, MotionParts, MotionPick, MoveView, SplitView};
 use crate::operation_panel::{TypedField, Verdict};
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
@@ -43,19 +42,17 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
-        centre: None,
-        origin_axis: Some(Axis3::Z),
         units: LengthUnit::Mm,
-        keep_original: true,
-        flip: false,
-        join: true,
-        mode: PatternMode::Spacing,
-        spread_error: None,
-        copies: None,
         need: None,
         editable: true,
         hover: None,
-        parts: MotionParts::None,
+        parts: match kind {
+            MotionKind::Move => MotionParts::Move(MoveView {
+                centre: None,
+                origin_axis: Some(Axis3::Z),
+            }),
+            _ => MotionParts::None,
+        },
         knobs: Vec::new(),
     }
 }
@@ -196,6 +193,7 @@ fn an_align_draws_its_points_and_directions() {
         let mut state = state(MotionKind::Align, MotionPick::Nothing, None);
         state.reference = None;
         state.parts = MotionParts::Align(Box::new(crate::AlignView {
+            flip: false,
             names: Default::default(),
             info: None,
             marks,
@@ -366,7 +364,7 @@ fn while_turning_about_another_axis_only_its_ring_shows() {
     assert!(input.motion.hover.is_none() && input.motion.drag.is_none());
     assert!(input.drag.is_some());
     // About an edge, none.
-    turned.origin_axis = None;
+    turned.parts = MotionParts::Move(MoveView::default());
     let handles = Moving::new(turned).handles(&Input::default(), &camera, bounds());
     assert_eq!(handles.map(|handles| handles.rings), Some([false; 3]));
 }
@@ -782,6 +780,7 @@ fn a_move_s_handle_left_hovered_lets_go_in_a_session_picking_sketches() {
     let index = plate();
     let mut sweep = state(MotionKind::Sweep, MotionPick::Path, None);
     sweep.parts = MotionParts::Sweep(Box::new(SweepView {
+        flip: false,
         path: SweepPath::Path,
         candidates: Vec::new(),
         source: None,
@@ -919,6 +918,7 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
     for picking in [MotionPick::Regions, MotionPick::Path] {
         let mut state: MotionState<'_> = state(MotionKind::Sweep, picking, None);
         state.parts = MotionParts::Sweep(Box::new(SweepView {
+            flip: false,
             path: SweepPath::Path,
             candidates: vec![crate::Candidate {
                 feature: profile,
@@ -1275,6 +1275,7 @@ fn a_sweep_s_path_curve_and_the_model_hand_the_hover_over_as_the_camera_moves() 
     let state = || {
         let mut state: MotionState<'_> = state(MotionKind::Sweep, MotionPick::Path, None);
         state.parts = MotionParts::Sweep(Box::new(SweepView {
+            flip: false,
             path: SweepPath::Path,
             candidates: Vec::new(),
             source: None,
