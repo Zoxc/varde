@@ -43,6 +43,9 @@ use std::hash::{Hash, Hasher};
 
 use smallvec::SmallVec;
 
+use crate::ids::{EdgeId, VertId};
+use crate::records::keys::Operand;
+
 /// A coordinate or parameter that is a NaN, refused by the order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotANumber;
@@ -274,6 +277,22 @@ impl<K: Ord> EdgeKey<K> {
     pub fn faces(&self) -> &[K; 2] {
         &self.faces
     }
+}
+
+/// The geometric order of an operand's vertices and edges: what a choice
+/// among them reads.
+pub trait EntityOrder {
+    /// The face keys compared ([`FaceOrd`]'s, or `()`).
+    type Key: Ord + Clone;
+
+    /// Edge `g` of `operand`'s ends, its stored start first.
+    fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2];
+
+    /// Vertex `v` of `operand`'s place in the order.
+    fn vert_key(&self, operand: Operand, v: VertId) -> VertKey<Self::Key>;
+
+    /// Edge `g` of `operand`'s place in the order.
+    fn edge_key(&self, operand: Operand, g: EdgeId) -> EdgeKey<Self::Key>;
 }
 
 /// The id of the first entity in geometric order among `items`, pairs of

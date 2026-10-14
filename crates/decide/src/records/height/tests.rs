@@ -41,8 +41,6 @@ impl Reads {
 }
 
 impl HeightReads for Reads {
-    type Key = ();
-
     fn vv(&self, q: Point, w: VertId) -> Option<VvRec> {
         self.near.get(&(q, w)).map(|&near| VvRec {
             side: crate::num::decide::Sign::Pos,
@@ -54,6 +52,10 @@ impl HeightReads for Reads {
     fn feet(&self, q: Point, g: EdgeId) -> Option<&Feet> {
         self.feet.get(&(q, g))
     }
+}
+
+impl EntityOrder for Reads {
+    type Key = ();
 
     fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
         self.edges[&(operand, g)]
@@ -541,3 +543,5 @@ fn core_keys_read_minus_zero_as_zero() {
         assert_eq!(core.get().map(f64::to_bits), pos.get().map(f64::to_bits));
     }
 }
+
+mod records;

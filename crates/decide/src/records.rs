@@ -8,9 +8,9 @@
 //! of a curved edge, and against the whole edge), [`feet`] the stretches
 //! of an edge near a point, [`side`] a point's ray against a box side on a
 //! tile line the counting can't certify off the point, [`height`] the
-//! height keys a point reads against a vertex, an edge or a face's layer
-//! and the layers themselves, and [`near`] the operation's bands and near
-//! radii they read.
+//! height keys a point reads against a vertex, an edge or a face's layer,
+//! the layers themselves and the height records, and [`near`] the
+//! operation's bands and near radii they read.
 
 pub mod feet;
 pub mod height;

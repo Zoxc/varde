@@ -1172,7 +1172,7 @@ fn a_span_end_off_its_vertex_or_knot_is_refused() {
 mod chains;
 
 /// The geometric order of [`Geom`]'s edges: positions only, no face keys.
-impl crate::records::height::EntityOrder for Geom {
+impl crate::order::EntityOrder for Geom {
     type Key = ();
 
     fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {

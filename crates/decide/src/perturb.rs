@@ -48,7 +48,7 @@
 //! |---|---|---|
 //! | vertex–vertex shadow ([`VvShadow`], [`vv_shadow`]) | `ν·(w − q)`, ahead/behind `r̂·(w − q)` | `ν·(Δw − Δq)`, likewise `r̂` |
 //! | vertex–curve shadow, box side ([`LineShadow`], [`curve_shadow`]) | `ν·(q − C(s*))`, `ν = ê × T` at the foot | `ν·(Δq − ΔC(s*))` |
-//! | layer height, anchor `f` ([`PlaneHeight`], [`layer_height`]) | from the record's height key | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
+//! | layer height, anchor `f` ([`PlaneHeight`], [`layer_height`]) | from the record's height key ([`PointHeight`], [`PlaneHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
 //!
 //! The height and z-order rows are per anchor: their order 0 is the value
@@ -359,6 +359,23 @@ impl Pred for PlaneHeight {
         let c = N::lit(self.offset).moved_by(&shift);
         let above = c.sub(&dot(&n, &self.q.eval()));
         above.mul(&dot(&n, &point(UP)))
+    }
+}
+
+/// The point–point height, flat: `UP·(w − q)`, the height of `w` above
+/// `q` along `UP` times `|UP|`: a vertex–vertex height key's value, and,
+/// with `w` a straight edge's point at the foot, a point–line one's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PointHeight {
+    /// The lower point asked of.
+    pub q: Moving,
+    /// The point whose height above `q` it is.
+    pub w: Moving,
+}
+
+impl Pred for PointHeight {
+    fn eval<N: Num>(&self) -> N {
+        dot(&point(UP), &sub(&self.w.eval(), &self.q.eval()))
     }
 }
 

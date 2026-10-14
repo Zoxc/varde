@@ -43,7 +43,7 @@
 //! ([`super::ray`], module docs there: roots of the shadow across the ray
 //! line isolated, their place along it certified or decided by the
 //! vertex–curve shadow row at the piece, here
-//! [`Row::BoxSide`](crate::num::decide::Row::BoxSide), the side's points
+//! [`Row::BoxSide`], the side's points
 //! moving with their face), level by level until one decides. A side
 //! inside a tile (an interior split the splits couldn't move off the
 //! point) has no stored row and no key here.
