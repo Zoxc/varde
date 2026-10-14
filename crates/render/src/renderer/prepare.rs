@@ -51,19 +51,18 @@ pub(super) struct Uniforms {
     /// xyz: orbit target, w: how far in front of the eye a perspective
     /// view starts, [`Camera::near`]. Not `target`, which WGSL reserves.
     pub(super) focus: [f32; 4],
-    /// Unit vector towards the camera; w: [`PatternStyle::wash`].
+    /// Unit vector towards the camera; w unused.
     pub(super) backward: [f32; 4],
     /// xy: viewport size in physical pixels, z: physical pixels per logical
-    /// pixel, w: [`PatternStyle::stripes`].
+    /// pixel, w unused.
     pub(super) viewport: [f32; 4],
     /// xy: the viewport's top left corner on the target, in physical
-    /// pixels, where fragment positions count from; z: [`Frame::shading`]
-    /// ([`Shading::code`]); w: [`Colors::contrast`].
+    /// pixels, where fragment positions count from; zw unused.
     pub(super) viewport_origin: [f32; 4],
     /// [`Colors`], converted to linear with w = 1, except `model`, whose
     /// w is how opaque the model is, and `edge`, whose w is
-    /// [`Colors::hidden_edge_alpha`]. The errors' colours are in
-    /// [`ErrorUniforms`].
+    /// [`Colors::hidden_edge_alpha`]. The rest of the style is in
+    /// [`Style`].
     pub(super) background_top: [f32; 4],
     pub(super) background_bottom: [f32; 4],
     pub(super) model: [f32; 4],
@@ -82,14 +81,13 @@ pub(super) struct Uniforms {
     pub(super) grid_origin: [f32; 4],
     pub(super) grid_x: [f32; 4],
     pub(super) grid_y: [f32; 4],
-    /// [`SketchScene::plane`]: xyz its origin, and unit x and y axes; the
-    /// w's [`Colors::second`]'s red, green and blue.
+    /// [`SketchScene::plane`]: xyz its origin, and unit x and y axes; w
+    /// unused.
     pub(super) sketch_origin: [f32; 4],
     pub(super) sketch_x: [f32; 4],
     pub(super) sketch_y: [f32; 4],
-    /// [`Colors::hover_face`], with w [`Colors::selected_tint`],
-    /// [`Colors::hover_outline`], with w [`PatternStyle::edge_width`], and [`Colors::selected`],
-    /// with w [`Colors::selected_edge_shade`].
+    /// [`Colors::hover_face`], [`Colors::hover_outline`] and
+    /// [`Colors::selected`], linear, w = 1.
     pub(super) hover_face: [f32; 4],
     pub(super) hover_outline: [f32; 4],
     pub(super) selected: [f32; 4],
@@ -97,22 +95,41 @@ pub(super) struct Uniforms {
 
 // WGSL lays out uniform structs in 16-byte steps.
 const _: () = assert!(size_of::<Uniforms>().is_multiple_of(16));
-// The limits tests' device takes buffers of 512 bytes at most, and the
-// uniforms are at that: a new value has to go in an unused `w`, or be
-// worked out from another (as the axis lines' colours are from `grid_x.w`).
+// The limits tests' device takes buffers of 512 bytes at most; each of
+// the scene's uniform buffers has to fit.
 const _: () = assert!(size_of::<Uniforms>() <= 512);
 
-/// The errors' colours, for the pipelines drawing their halo's composite
-/// and their core: `ErrorColors` in `scene.wgsl` mirrors it. Their own,
-/// since [`Uniforms`] are full.
+/// The scene shader's style: the colours and amounts [`Uniforms`] has no
+/// field of its own for, beside them at binding 1 of every group 0 the
+/// scene's pipelines take. `Style` in `scene.wgsl` mirrors this field for
+/// field.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub(super) struct ErrorUniforms {
+pub(super) struct Style {
+    /// [`Colors::second`], linear, w = 1.
+    pub(super) second: [f32; 4],
     /// [`Colors::error`], linear, w = 1.
-    pub(super) core: [f32; 4],
+    pub(super) error_core: [f32; 4],
     /// [`Colors::error_halo`], linear, its alpha as it is.
-    pub(super) halo: [f32; 4],
+    pub(super) error_halo: [f32; 4],
+    /// [`Frame::shading`], as [`Shading::code`].
+    pub(super) shading: f32,
+    /// [`Colors::contrast`].
+    pub(super) contrast: f32,
+    /// [`Colors::selected_tint`].
+    pub(super) selected_tint: f32,
+    /// [`Colors::selected_edge_shade`].
+    pub(super) selected_edge_shade: f32,
+    /// [`PatternStyle::wash`], [`PatternStyle::stripes`] and
+    /// [`PatternStyle::edge_width`].
+    pub(super) pattern_wash: f32,
+    pub(super) pattern_stripes: f32,
+    pub(super) pattern_edge_width: f32,
+    pub(super) _pad: f32,
 }
+
+const _: () = assert!(size_of::<Style>().is_multiple_of(16));
+const _: () = assert!(size_of::<Style>() <= 512);
 
 /// The size of an entry of a slot's tints: a linear colour, w unused. See
 /// [`Slot::tints`].
@@ -355,7 +372,10 @@ impl Upload {
 /// keeps its mesh uploaded.
 pub struct Slot {
     pub(super) uniforms: wgpu::Buffer,
-    /// Group 0: the uniforms, and the tints at a dynamic offset.
+    /// The [`Style`], the same for both grids' uniforms.
+    pub(super) style: wgpu::Buffer,
+    /// Group 0: the uniforms, the style, and the tints at a dynamic
+    /// offset.
     pub(super) bind_group: wgpu::BindGroup,
     /// The uniforms again with the grid on the other plane of
     /// [`Frame::fading_grid`]'s crossfade, and their group 0.
@@ -486,12 +506,12 @@ impl Default for SlotState {
 
 impl Renderer {
     /// A slot's tints' buffer with room for `room` entries, and its
-    /// groups 0 binding it with `uniforms` and with `other_grid`.
+    /// groups 0 binding it and `style` with `uniforms` and with
+    /// `other_grid`.
     pub(super) fn tints(
         &self,
         device: &wgpu::Device,
-        uniforms: &wgpu::Buffer,
-        other_grid: &wgpu::Buffer,
+        [uniforms, style, other_grid]: [&wgpu::Buffer; 3],
         room: u32,
     ) -> (wgpu::Buffer, wgpu::BindGroup, wgpu::BindGroup) {
         let tints = device.create_buffer(&wgpu::BufferDescriptor {
@@ -508,6 +528,10 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: uniforms.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: style.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
@@ -555,8 +579,11 @@ impl Renderer {
         let needed = colors.len() as u32;
         if needed > slot.tint_room {
             let room = needed.next_power_of_two().min(most as u32).max(needed);
-            (slot.tints, slot.bind_group, slot.other_grid_group) =
-                self.tints(device, &slot.uniforms, &slot.other_grid, room);
+            (slot.tints, slot.bind_group, slot.other_grid_group) = self.tints(
+                device,
+                [&slot.uniforms, &slot.style, &slot.other_grid],
+                room,
+            );
             slot.tint_room = room;
         }
         let stride = self.tint_stride as usize;
@@ -581,9 +608,17 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (tints, bind_group, other_grid_group) = self.tints(device, &uniforms, &other_grid, 1);
+        let style = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("varde style"),
+            size: size_of::<Style>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let buffers = [&uniforms, &style, &other_grid];
+        let (tints, bind_group, other_grid_group) = self.tints(device, buffers, 1);
         Slot {
             uniforms,
+            style,
             bind_group,
             other_grid,
             other_grid_group,
@@ -680,6 +715,8 @@ impl Renderer {
 
         let uniforms = uniforms(slot, frame, &p.colors, fade);
         self.write_grids(slot, &mut p, &uniforms, fade);
+        let style = style(frame, &p.colors);
+        p.write(&slot.style, bytemuck::bytes_of(&style));
         self.ensure_targets(slot, &mut p);
         if p.changed || p.written != slot.written || before != slot.state {
             *slot.drawn.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
@@ -876,8 +913,7 @@ impl Renderer {
 
     /// Makes `slot`'s depth target, and the selected faces' pattern's and
     /// the errors' when they're drawn, at `frame`'s target size if they
-    /// aren't yet, noting in `changed` that it did; and writes the errors'
-    /// colours.
+    /// aren't yet, noting in `changed` that it did.
     fn ensure_targets(&self, slot: &mut Slot, p: &mut Prepare<'_, '_>) {
         let device = p.device;
         let size = p.frame.target_size.map(|s| s.max(1));
@@ -889,33 +925,23 @@ impl Renderer {
             p.changed = true;
             slot.pattern_target = Some(CoverageTarget::new(
                 device,
-                (&self.pattern_layout, false),
-                &slot.uniforms,
+                &self.pattern_layout,
+                [&slot.uniforms, &slot.style],
                 ("varde selected pattern", self.format),
                 size,
                 self.samples,
             ));
         }
-        if !slot.errors.any() {
-            return;
-        }
-        if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
+        if slot.errors.any() && slot.error_target.as_ref().map(|t| t.size) != Some(size) {
             p.changed = true;
             slot.error_target = Some(CoverageTarget::new(
                 device,
-                (&self.errors.layout, true),
-                &slot.uniforms,
+                &self.errors.layout,
+                [&slot.uniforms, &slot.style],
                 ("varde error halo", HALO_FORMAT),
                 size,
                 self.samples,
             ));
-        }
-        if let Some(buffer) = slot.error_target.as_ref().and_then(|t| t.uniforms.as_ref()) {
-            let colors = ErrorUniforms {
-                core: p.colors.error.linear(),
-                halo: p.colors.error_halo.linear(),
-            };
-            p.write(buffer, bytemuck::bytes_of(&colors));
         }
     }
 }
@@ -1028,8 +1054,6 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
         let [r, g, b, _] = color.linear();
         [r, g, b, alpha]
     };
-    let second = colors.second.linear();
-    let pattern = colors.pattern;
     Uniforms {
         view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
             .to_cols_array_2d(),
@@ -1037,19 +1061,14 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
         right: camera.right().extend(half.x).to_array(),
         up: camera.up().extend(half.y).to_array(),
         focus: camera.target().extend(camera.near()).to_array(),
-        backward: camera.backward().extend(pattern.wash).to_array(),
+        backward: camera.backward().extend(0.0).to_array(),
         viewport: [
             frame.viewport.width,
             frame.viewport.height,
             frame.scale_factor,
-            pattern.stripes,
+            0.0,
         ],
-        viewport_origin: [
-            frame.viewport.x,
-            frame.viewport.y,
-            frame.shading.code(),
-            colors.contrast,
-        ],
+        viewport_origin: [frame.viewport.x, frame.viewport.y, 0.0, 0.0],
         background_top: colors.background_top.linear(),
         background_bottom: colors.background_bottom.linear(),
         model: with_alpha(colors.model, alpha),
@@ -1068,11 +1087,29 @@ fn uniforms(slot: &Slot, frame: &Frame<'_>, colors: &Colors, fade: f32) -> Unifo
             .to_array(),
         grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
         grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
-        sketch_origin: sketch_plane.origin().extend(second[0]).to_array(),
-        sketch_x: sketch_plane.x().extend(second[1]).to_array(),
-        sketch_y: sketch_plane.y().extend(second[2]).to_array(),
-        hover_face: with_alpha(colors.hover_face, colors.selected_tint),
-        hover_outline: with_alpha(colors.hover_outline, pattern.edge_width),
-        selected: with_alpha(colors.selected, colors.selected_edge_shade),
+        sketch_origin: sketch_plane.origin().extend(0.0).to_array(),
+        sketch_x: sketch_plane.x().extend(0.0).to_array(),
+        sketch_y: sketch_plane.y().extend(0.0).to_array(),
+        hover_face: colors.hover_face.linear(),
+        hover_outline: colors.hover_outline.linear(),
+        selected: colors.selected.linear(),
+    }
+}
+
+/// The scene shader's style for `frame` in `colors`, sanitized.
+fn style(frame: &Frame<'_>, colors: &Colors) -> Style {
+    let pattern = colors.pattern;
+    Style {
+        second: colors.second.linear(),
+        error_core: colors.error.linear(),
+        error_halo: colors.error_halo.linear(),
+        shading: frame.shading.code(),
+        contrast: colors.contrast,
+        selected_tint: colors.selected_tint,
+        selected_edge_shade: colors.selected_edge_shade,
+        pattern_wash: pattern.wash,
+        pattern_stripes: pattern.stripes,
+        pattern_edge_width: pattern.edge_width,
+        _pad: 0.0,
     }
 }

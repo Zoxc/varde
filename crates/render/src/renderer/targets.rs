@@ -1,7 +1,6 @@
 //! The depth, multisample and halo coverage targets a frame draws into.
 
 use super::Renderer;
-use super::prepare::ErrorUniforms;
 
 /// The depth buffer's format on `device`, with a stencil: 32 bit float
 /// depth if it has that, else 24 bits. The stencil marks which part less
@@ -125,63 +124,50 @@ impl SlotTargets {
 }
 
 /// A target of the frame's size drawn into beside the scene and read
-/// back over it: the errors' halo's (see [`HALO_FORMAT`]), with their
-/// colours, or the selected faces' pattern's mask, without.
+/// back over it: the errors' halo's (see [`HALO_FORMAT`]) or the
+/// selected faces' pattern's mask.
 /// Multisampled as the scene's colour.
 pub(super) struct CoverageTarget {
     target: ColorTarget,
-    /// The errors' halo's [`ErrorUniforms`], written each frame there
-    /// are errors; `None` for the pattern's mask.
-    pub(super) uniforms: Option<wgpu::Buffer>,
-    /// Group 0 of what reads it back: the scene's uniforms, the colours
-    /// if any and the coverage.
+    /// Group 0 of what reads it back: the scene's uniforms and style,
+    /// and the coverage.
     pub(super) group: wgpu::BindGroup,
     pub(super) size: [u32; 2],
 }
 
 impl CoverageTarget {
-    /// A target and its group by `layout`, which has the colours at
-    /// binding 1 if `colors`.
+    /// A target and its group by `layout`, binding the scene's
+    /// `uniforms` and `style`.
     pub(super) fn new(
         device: &wgpu::Device,
-        (layout, colors): (&wgpu::BindGroupLayout, bool),
-        scene: &wgpu::Buffer,
+        layout: &wgpu::BindGroupLayout,
+        [uniforms, style]: [&wgpu::Buffer; 2],
         (label, format): (&str, wgpu::TextureFormat),
         size: [u32; 2],
         samples: u32,
     ) -> CoverageTarget {
         let samples_label = format!("{label} samples");
         let target = ColorTarget::new(device, [label, &samples_label], format, size, samples);
-        let uniforms = colors.then(|| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("varde error colours"),
-                size: size_of::<ErrorUniforms>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        });
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: scene.as_entire_binding(),
-        }];
-        if let Some(uniforms) = &uniforms {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uniforms.as_entire_binding(),
-            });
-        }
-        entries.push(wgpu::BindGroupEntry {
-            binding: 2,
-            resource: wgpu::BindingResource::TextureView(&target.resolved),
-        });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout,
-            entries: &entries,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: style.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&target.resolved),
+                },
+            ],
         });
         CoverageTarget {
             target,
-            uniforms,
             group,
             size,
         }

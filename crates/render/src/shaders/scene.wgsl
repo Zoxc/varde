@@ -31,6 +31,24 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
+// See `Style` in renderer/prepare.rs for what each field holds. In
+// every group 0, beside the uniforms.
+struct Style {
+    second: vec4<f32>,
+    error_core: vec4<f32>,
+    error_halo: vec4<f32>,
+    shading: f32,
+    contrast: f32,
+    selected_tint: f32,
+    selected_edge_shade: f32,
+    pattern_wash: f32,
+    pattern_stripes: f32,
+    pattern_edge_width: f32,
+    pad: f32,
+};
+
+@group(0) @binding(1) var<uniform> style: Style;
+
 // See `PartUniforms` in renderer/prepare.rs: how opaque the part of the
 // model being drawn is, bound at its step's offset for each part's draws.
 struct Part {
@@ -41,7 +59,8 @@ struct Part {
 
 // See `Slot::tints` in renderer/prepare.rs: the linear colour of the part
 // of the model being drawn, the model's or its body's own, bound at its
-// entry's offset. Binding 3, as the errors' group 0 has 1 and 2.
+// entry's offset. Binding 3, as a coverage reader's group 0 has the
+// coverage at 2.
 struct Tint {
     color: vec4<f32>,
 };
@@ -379,7 +398,7 @@ override SHADING_FLAT_METAL: f32;
 // `Colors::contrast` spreads it from.
 const LIGHT_MIDDLE: f32 = 0.8;
 
-// The face at `in` of colour `base` lit as `u.viewport_origin.z` says: by
+// The face at `in` of colour `base` lit as `style.shading` says: by
 // default bright, low contrast shading (as `Colors::contrast` spreads it); flat, each triangle lit by its own
 // plane's normal, so the tessellation shows; as polished metal (see
 // `metal`); or as metal lit flat. A back face, drawn only for a part less
@@ -391,7 +410,7 @@ fn shaded(in: MeshOut, front: bool, base: vec3<f32>) -> vec3<f32> {
     let across = cross(dpdx(in.world), dpdy(in.world));
     let interpolated = normalize(in.normal);
     var normal = interpolated;
-    let shading = u.viewport_origin.z;
+    let shading = style.shading;
     let flat = shading == SHADING_FLAT || shading == SHADING_FLAT_METAL;
     if flat && dot(across, across) > 0.0 {
         let plane = normalize(across);
@@ -408,7 +427,7 @@ fn shaded(in: MeshOut, front: bool, base: vec3<f32>) -> vec3<f32> {
     let diffuse = max(dot(n, key), 0.0) * 0.30 + max(dot(n, view), 0.0) * 0.25;
     // `Colors::contrast`: the light spread from its middle, LIGHT_MIDDLE,
     // and the highlight with it.
-    let contrast = u.viewport_origin.w;
+    let contrast = style.contrast;
     let light = max(vec3<f32>(LIGHT_MIDDLE) + (ambient + diffuse - LIGHT_MIDDLE) * contrast, vec3<f32>(0.0));
     let spec = pow(max(dot(n, normalize(key + view)), 0.0), 32.0) * 0.15 * contrast;
     return base * light + spec;
@@ -457,20 +476,21 @@ fn fs_hover_face_through(in: MeshOut, @builtin(front_facing) front: bool) -> @lo
     return output(vec4<f32>(shaded(in, front, u.hover_face.rgb), alpha));
 }
 
-// A selected face, likewise, tinted `u.hover_face.w` of the way towards
+// A selected face, likewise, tinted `style.selected_tint` of the way towards
 // the selection's colour, over the hover if it's hovered too.
 @fragment
 fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return output(vec4<f32>(shaded(in, front, u.selected.rgb), u.hover_face.w * part.alpha.x));
+    return output(vec4<f32>(shaded(in, front, u.selected.rgb), style.selected_tint * part.alpha.x));
 }
 
 // How the parts of a selected or hovered face something hides are drawn over it: a
 // wash of the colour the face is shown in, with diagonal stripes across it on the
 // screen SELECTED_STRIPE logical pixels apart, half of that wide, shaded as
 // the face is shown, within an edge in the stripes' colour where it ends
-// (`fs_pattern_edge`). How opaque the wash is is `u.backward.w`, the
-// stripes and the edge `u.viewport.w`, and how wide the edge is, in
-// logical pixels, `u.hover_outline.w` (`PatternStyle` in renderer/color.rs).
+// (`fs_pattern_edge`). How opaque the wash is is `style.pattern_wash`,
+// the stripes and the edge `style.pattern_stripes`, and how wide the edge
+// is, in logical pixels, `style.pattern_edge_width` (`PatternStyle` in
+// renderer/color.rs).
 const SELECTED_STRIPE: f32 = 8.0;
 
 // A selected face where something hides it (depth tested Greater), over
@@ -478,13 +498,13 @@ const SELECTED_STRIPE: f32 = 8.0;
 // it's shown in, its part's tinted towards the selection's.
 @fragment
 fn fs_selected_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return hidden_face(in, front, tint.color.rgb, u.hover_face.w);
+    return hidden_face(in, front, tint.color.rgb, style.selected_tint);
 }
 
 // A selected face that's hovered too, likewise from the hover's colour.
 @fragment
 fn fs_hovered_selected_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return hidden_face(in, front, u.hover_face.rgb, u.hover_face.w);
+    return hidden_face(in, front, u.hover_face.rgb, style.selected_tint);
 }
 
 // A hovered face where something hides it, likewise in the hover's colour.
@@ -507,7 +527,7 @@ fn hidden_face(in: MeshOut, front: bool, base: vec3<f32>, selected: f32) -> vec4
     // Distance from the middle of the nearest stripe, in pixels across it.
     let across = abs(wrapped((p.x + p.y) * inverseSqrt(2.0), period) - 0.5 * period);
     let stripe = clamp(0.25 * period + 0.5 - across, 0.0, 1.0);
-    let alpha = mix(u.backward.w, u.viewport.w, stripe) * part.alpha.x;
+    let alpha = mix(style.pattern_wash, style.pattern_stripes, stripe) * part.alpha.x;
     let under = output(vec4<f32>(shaded(in, front, base), 1.0)).rgb;
     let over = output(vec4<f32>(shaded(in, front, u.selected.rgb), 1.0)).rgb;
     return vec4<f32>(mix(under, over, selected), alpha);
@@ -535,12 +555,12 @@ fn pattern(color: vec3<f32>, kind: f32) -> vec4<f32> {
 
 @fragment
 fn fs_selected_face_pattern(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return pattern(hidden_face(in, front, tint.color.rgb, u.hover_face.w).rgb, 1.0);
+    return pattern(hidden_face(in, front, tint.color.rgb, style.selected_tint).rgb, 1.0);
 }
 
 @fragment
 fn fs_hovered_selected_face_pattern(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return pattern(hidden_face(in, front, u.hover_face.rgb, u.hover_face.w).rgb, 1.0);
+    return pattern(hidden_face(in, front, u.hover_face.rgb, style.selected_tint).rgb, 1.0);
 }
 
 @fragment
@@ -571,7 +591,7 @@ fn fs_pattern_edge(in: FullscreenOut) -> @location(0) vec4<f32> {
         discard;
     }
     let size = vec2<i32>(textureDimensions(coverage));
-    let radius = u.hover_outline.w * u.viewport.z;
+    let radius = style.pattern_edge_width * u.viewport.z;
     let reach = i32(ceil(radius));
     var edge = false;
     for (var y = -reach; y <= reach && !edge; y++) {
@@ -594,19 +614,18 @@ fn fs_pattern_edge(in: FullscreenOut) -> @location(0) vec4<f32> {
     // As much of the pixel as the pattern covers.
     let full = select(1.0, PATTERN_HOVERED, kind == 1);
     let covered = min(here.a / full, 1.0);
-    return vec4<f32>(here.rgb / here.a, u.viewport.w * covered);
+    return vec4<f32>(here.rgb / here.a, style.pattern_stripes * covered);
 }
 
-// The second colour (the measure tool's B), kept in the sketch plane's
-// unused w's: the uniforms have no room for another vector.
+// The second colour (the measure tool's B).
 fn second_color() -> vec3<f32> {
-    return vec3<f32>(u.sketch_origin.w, u.sketch_x.w, u.sketch_y.w);
+    return style.second.rgb;
 }
 
 // A face in the second colour, tinted as a selected face is.
 @fragment
 fn fs_second_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return output(vec4<f32>(shaded(in, front, second_color()), u.hover_face.w * part.alpha.x));
+    return output(vec4<f32>(shaded(in, front, second_color()), style.selected_tint * part.alpha.x));
 }
 
 // --- Feature edges ---
@@ -1163,10 +1182,10 @@ fn vs_hovered_edge_through(in: EdgeIn) -> LineOut {
 }
 
 // The selected edges' and vertices' colour: the selection's, shaded by
-// `u.selected.w` towards black or white, so it stands out on a selected
+// `style.selected_edge_shade` towards black or white, so it stands out on a selected
 // face.
 fn selected_edge() -> vec4<f32> {
-    let shade = u.selected.w;
+    let shade = style.selected_edge_shade;
     let towards = select(vec3<f32>(0.0), vec3<f32>(1.0), shade > 0.0);
     return vec4<f32>(mix(u.selected.rgb, towards, abs(shade)), 1.0);
 }
@@ -1780,19 +1799,9 @@ fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
 // are pulled in by their distance from their middle as the highlight's are
 // (`highlight_slope`), patches as the edges are (`pulled`).
 
-// The errors' colours, linear: the core's, and the halo's with its alpha.
-// `ErrorUniforms` in renderer/prepare.rs. In group 0 beside the scene's
-// uniforms (iced's device has two bind groups), bound for the halo's
-// composite and the core, not for the halo's coverage, which is drawn into
-// the texture bound beside it.
-struct ErrorColors {
-    core: vec4<f32>,
-    halo: vec4<f32>,
-};
-@group(0) @binding(1) var<uniform> errors: ErrorColors;
-
+// The errors' core's colour, linear.
 fn error_color() -> vec3<f32> {
-    return errors.core.rgb;
+    return style.error_core.rgb;
 }
 
 // A corner of a patch's triangle, pulled towards the camera like the edges,
@@ -1902,5 +1911,5 @@ fn vs_error_halo_point(
 @fragment
 fn fs_error_halo(in: FullscreenOut) -> @location(0) vec4<f32> {
     let covered = textureLoad(coverage, vec2<i32>(in.position.xy), 0).r;
-    return output(vec4<f32>(errors.halo.rgb, errors.halo.a * covered));
+    return output(vec4<f32>(style.error_halo.rgb, style.error_halo.a * covered));
 }

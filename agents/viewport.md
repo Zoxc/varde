@@ -784,11 +784,10 @@ opaque) go:
 
 Shading. `shaded` in the shader lights every face draw (the model, faded
 or not, the glass, the hovered and selected faces) as `Frame::shading`
-says, its `Shading::code` in the uniforms' `viewport_origin.z`, as the
-uniforms have no room for another vector. Regular is bright and low
+says, its `Shading::code` in `Style::shading`. Regular is bright and low
 contrast, smooth across a face by its interpolated normals, its light
 spread from its middle (`LIGHT_MIDDLE`, 0.8) by `Colors::contrast`, in
-`viewport_origin.w` (the light theme's 1.2, the dark's 1.6, for its
+`Style::contrast` (the light theme's 1.2, the dark's 1.6, for its
 darker faces); so is Flat's, not the metals'. Flat (and
 Flat metal) lights
 each triangle by its own plane's normal, from the derivatives of the
@@ -1841,7 +1840,7 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   a hovered and a selected face's), inside it, in its stripes' colour.
   How it's drawn is `Colors::pattern` (`PatternStyle`: the wash 0.2
   opaque, the stripes and edge 0.5, the edge 3 logical pixels wide),
-  passed in the uniforms' spare w's. The scene's pass is split before
+  passed in the scene's `Style` uniform. The scene's pass is split before
   what's drawn over everything of the model to draw the pattern as a
   mask into `Slot::pattern_target` (a `CoverageTarget`, as the errors'
   halo's; `draw_pattern`, `fs_*_face_pattern`), its alpha telling the
@@ -1977,9 +1976,8 @@ the geometry has a box (`Verdict::footer`'s `show`, the states'
   (`vs_error_line` into `fs_highlight_line`) and points
   (`vs_error_point` into `fs_highlight_point`); then the sketch being
   edited. The composite and the core bind a group 0 of their own
-  (`ErrorTarget::group`): the scene's uniforms, the errors' colours
-  (`ErrorUniforms`, `ErrorColors` in the shader, written each frame there
-  are errors; the scene's uniforms are full) and the halo's texture. Not
+  (`CoverageTarget::group`): the scene's uniforms and `Style` (which
+  holds the errors' colours) and the halo's texture. Not
   a third group: iced asks the device for `max_bind_groups: 2`. The
   sketch drawn after them binds the scene's group 0 again. The halo's
   own pipelines take the scene's layout, since they draw into that
@@ -2021,14 +2019,16 @@ device has (the render tests' devices ask for that limit too). The GL tests draw
 the target, so one read upside down would show.
 
 Pipelines that differ only by what they draw each have their own entry
-point, since wgpu's GL backend keys programs by module and entry point. The uniforms stay within 512 bytes (the limits
-tests' device's largest buffer): the grid's axis lines' colours are
-picked in the shader by which world axis each lies along (the `w` of
-`grid_x` and `grid_y`), the hidden edges' alpha is `edge`'s `w`, the
-selected edges' shade `selected`'s, the selected faces' tint
-`hover_face`'s, and the model's faded alpha `model`'s. The errors' colours have a
-uniform of their own (`ErrorUniforms`, above), bound only where they're
-drawn.
+point, since wgpu's GL backend keys programs by module and entry point. Each uniform buffer stays within 512 bytes (the limits
+tests' device's largest buffer). `Uniforms` holds the camera, the
+viewport, the grid and sketch planes and the colours: the grid's axis
+lines' colours are picked in the shader by which world axis each lies
+along (the `w` of `grid_x` and `grid_y`), the hidden edges' alpha is
+`edge`'s `w`, and the model's faded alpha `model`'s. The rest of the
+style (the second colour, the errors' colours, the shading and
+contrast, the selected faces' tint and edges' shade, the pattern) is a
+second uniform, `Style`, at binding 1 of every group 0, written once per
+frame for both grids' uniforms.
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The

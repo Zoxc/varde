@@ -13,7 +13,7 @@ use crate::style::{
 
 use super::Renderer;
 use super::frame::{AXES_ONLY, HOVERED_SHIFT, ORIGIN_MARKER, Shading};
-use super::prepare::{Alphas, ErrorUniforms, PartUniforms, TINT_SIZE, Tint, Uniforms};
+use super::prepare::{Alphas, PartUniforms, Style, TINT_SIZE, Tint, Uniforms};
 use super::targets::{HALO_FORMAT, depth_format, sample_count};
 use super::upload::{EDGE_SLOTS, Segment};
 
@@ -523,19 +523,28 @@ impl Renderer {
         let samples = sample_count(device, &[format, depth_format, HALO_FORMAT]);
         let (composite, composite_layout) = composite_pipeline(device, format);
 
-        // The uniforms, and at binding 3 (the errors' group 0 has 1 and 2)
-        // the colour of the part drawn, at a dynamic offset into the
-        // slot's tints: see `Slot::tints`. Group 0 rather than a group of
-        // its own: iced asks the device for two bind groups only.
+        // The uniforms and the style, as in every group 0, and at binding
+        // 3 (a coverage reader's group 0 has the coverage at 2) the colour
+        // of the part drawn, at a dynamic offset into the slot's tints: see
+        // `Slot::tints`. Group 0 rather than a group of its own: iced asks
+        // the device for two bind groups only.
+        let scene_entry = uniform_entry(
+            0,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
+            false,
+            size_of::<Uniforms>() as u64,
+        );
+        let style_entry = uniform_entry(
+            1,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
+            false,
+            size_of::<Style>() as u64,
+        );
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde uniforms"),
             entries: &[
-                uniform_entry(
-                    0,
-                    wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    false,
-                    size_of::<Uniforms>() as u64,
-                ),
+                scene_entry,
+                style_entry,
                 uniform_entry(3, wgpu::ShaderStages::FRAGMENT, true, TINT_SIZE),
             ],
         });
@@ -561,17 +570,9 @@ impl Renderer {
             push_constant_ranges: &[],
         });
         // Group 0 of what reads a `CoverageTarget` back: the scene's
-        // uniforms as everywhere, the errors' colours (`ErrorUniforms`)
-        // for the halo's composite and the errors' core, and the coverage,
-        // read texel by texel (`textureLoad`, no sampler). In group 0
-        // rather than a group of their own: iced asks the device for two
-        // bind groups only.
-        let scene_entry = uniform_entry(
-            0,
-            wgpu::ShaderStages::VERTEX_FRAGMENT,
-            false,
-            size_of::<Uniforms>() as u64,
-        );
+        // uniforms and style as everywhere, and the coverage, read texel
+        // by texel (`textureLoad`, no sampler). In group 0 rather than a
+        // group of its own: iced asks the device for two bind groups only.
         let coverage_entry = wgpu::BindGroupLayoutEntry {
             binding: 2,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -584,20 +585,11 @@ impl Renderer {
         };
         let errors_group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde errors"),
-            entries: &[
-                scene_entry,
-                uniform_entry(
-                    1,
-                    wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    false,
-                    size_of::<ErrorUniforms>() as u64,
-                ),
-                coverage_entry,
-            ],
+            entries: &[scene_entry, style_entry, coverage_entry],
         });
         let pattern_group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde selected pattern"),
-            entries: &[scene_entry, coverage_entry],
+            entries: &[scene_entry, style_entry, coverage_entry],
         });
         let pattern_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("varde selected pattern"),
