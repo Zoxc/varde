@@ -171,6 +171,52 @@ impl<'a> Operating<'a> {
             Operating::Measure(_) => None,
         }
     }
+
+    /// Works out again what's under a `cursor` that stayed put as a
+    /// frame is drawn: a move's handles, the camera or the bodies having
+    /// moved under it. `hovered` as for [`Operating::mouse`].
+    fn redraw(
+        &self,
+        state: &mut Interaction,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+        hovered: bool,
+    ) -> Option<Action<Message>> {
+        match self {
+            Operating::Motion(moving) => {
+                moving.redraw(&mut state.motion, bounds, cursor, camera, hovered)
+            }
+            Operating::Extrude(_) | Operating::Revolve(_) | Operating::Measure(_) => None,
+        }
+    }
+
+    /// Whether its handles have the mouse, so nothing of the model is
+    /// picked under them.
+    fn holds_mouse(&self, state: &Interaction) -> bool {
+        match self {
+            Operating::Motion(_) => state.motion.holds(),
+            Operating::Extrude(_) | Operating::Revolve(_) | Operating::Measure(_) => false,
+        }
+    }
+
+    /// Whether the last event, without taking it, left it wanting a
+    /// frame: asked once.
+    fn take_redraw(&self, state: &mut Interaction) -> bool {
+        match self {
+            Operating::Motion(_) => state.motion.take_redraw(),
+            Operating::Extrude(_) | Operating::Revolve(_) | Operating::Measure(_) => false,
+        }
+    }
+
+    /// Lets go of what it picks in sketches under the cursor: whether
+    /// there was something, to be drawn away.
+    fn leave_sketches(&self, state: &mut Interaction) -> bool {
+        match self {
+            Operating::Motion(_) => state.motion.leave_sketches(),
+            Operating::Extrude(_) | Operating::Revolve(_) | Operating::Measure(_) => false,
+        }
+    }
 }
 
 /// How far below the viewport's top the camera controls are, in pixels.
@@ -1389,18 +1435,13 @@ impl Program<'_> {
         }
         let model_hovered =
             (self.picking.as_ref()).is_some_and(|picking| picking.hovered.is_some());
-        // A move's handles under a cursor that stayed put as the frame
-        // changed.
-        if let Some(Operating::Motion(moving)) = &self.operating
+        // The operation's handles under a cursor that stayed put as the
+        // frame changed.
+        if let Some(operating) = &self.operating
             && state.drag.is_none()
             && redrawing
-            && let Some(action) = moving.redraw(
-                &mut state.motion,
-                bounds,
-                cursor,
-                &self.scene.camera,
-                model_hovered,
-            )
+            && let Some(action) =
+                operating.redraw(state, bounds, cursor, &self.scene.camera, model_hovered)
         {
             // The model let go of under it is picked again once it's off.
             state.hover_seen = None;
@@ -1418,12 +1459,14 @@ impl Program<'_> {
                 return action;
             }
         }
-        // Nothing's picked under a move's handles.
-        let handled = matches!(self.operating, Some(Operating::Motion(_))) && state.motion.holds();
+        // Nothing's picked under the operation's handles.
+        let handled =
+            (self.operating.as_ref()).is_some_and(|operating| operating.holds_mouse(state));
         // A move the session saw without taking it that still wants a
         // frame (the cursor off a sweep's path curve): after the model's
         // picking has had it.
-        let redraw = state.motion.take_redraw();
+        let redraw =
+            (self.operating.as_ref()).is_some_and(|operating| operating.take_redraw(state));
         if let Some(picking) = &self.picking
             && state.drag.is_none()
             && !handled
@@ -1439,7 +1482,9 @@ impl Program<'_> {
         // the drag ends. A sweep's region or path curve likewise.
         if state.drag.is_some() && state.click.is_none() && redrawing {
             let hovers = (self.picking.as_ref()).is_some_and(ModelPicking::hovers);
-            if state.motion.leave_sketches() && !hovers {
+            let left =
+                (self.operating.as_ref()).is_some_and(|operating| operating.leave_sketches(state));
+            if left && !hovers {
                 return Some(Action::request_redraw());
             }
             if self.picking.is_some() {
