@@ -3,7 +3,7 @@
 
 use glam::DVec2;
 
-use super::{BSpline, Interpolation, Spline, SplineKind, chord_params, handle_tip_for};
+use super::{BSpline, Interpolation, Spline, SplineForm, SplineKind, chord_params, handle_tip_for};
 use crate::{EditError, Id, Sketch};
 
 impl Sketch {
@@ -22,7 +22,7 @@ impl Sketch {
     pub fn convert_spline(&mut self, curve: Id, to: SplineKind) -> Result<(), EditError> {
         let target = EditError::Target(curve);
         let spline = self.spline(curve).ok_or(target)?;
-        if spline.kind == to {
+        if spline.kind() == to {
             return Ok(());
         }
         let spline = spline.clone();
@@ -73,11 +73,12 @@ impl Sketch {
         self.replace_spline(
             curve,
             Spline {
-                kind: to,
+                form: match to {
+                    SplineKind::Through => SplineForm::Through { handles },
+                    SplineKind::Control => SplineForm::Control { knots },
+                },
                 points,
                 closed: spline.closed,
-                handles,
-                knots,
             },
         )
     }

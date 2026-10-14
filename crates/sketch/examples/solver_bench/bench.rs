@@ -164,7 +164,7 @@ pub fn spline_chain(splines: usize, fit: usize, on: usize) -> (Sketch, Id) {
             let tip = from + (from - place(start + toward)) * -0.3;
             let end = sketch.add_point(2.0 * from - tip).unwrap();
             let tip = sketch.add_point(tip).unwrap();
-            spline.handles.push(Handle {
+            spline.handles_mut().unwrap().push(Handle {
                 at: points[at],
                 tip,
                 end,

@@ -1012,7 +1012,8 @@ fn wave(closed: bool, handles: &[usize]) -> (Sketch, Vec<Id>, Vec<Id>, Id) {
             let (x, y) = places[i];
             let tip = point(&mut sketch, x + 3.0, y + 1.0);
             spline
-                .handles
+                .handles_mut()
+                .unwrap()
                 .push(crate::testing::handle(&mut sketch, fit[i], tip));
             tip
         })
@@ -1286,13 +1287,7 @@ fn a_point_on_a_spline_slides_past_its_knots_in_one_solve() {
         .collect();
     let places: Vec<DVec2> = control.iter().map(|&id| at(&sketch, id)).collect();
     let knots = crate::control_knots(&places, false);
-    let spline = Spline {
-        kind: crate::SplineKind::Control,
-        points: control,
-        closed: false,
-        handles: Vec::new(),
-        knots,
-    };
+    let spline = Spline::control(control, knots, false);
     let spline = sketch.add_curve(Curve::Spline(spline), false).unwrap();
     constrain(&mut sketch, Constraint::Fix(spline));
     let p = point(&mut sketch, 5.0, 1.0);

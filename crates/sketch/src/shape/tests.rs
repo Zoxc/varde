@@ -824,7 +824,7 @@ fn trimming_a_spline_between_cuts_leaves_two_keeping_its_shape() {
             trimmed.spline(spline).unwrap(),
             trimmed.spline(rest.id).unwrap(),
         );
-        assert_eq!((kept.kind, rest.kind), (kind, kind));
+        assert_eq!((kept.kind(), rest.kind()), (kind, kind));
         let ([start, cut], [cut_rest, end]) = (kept.ends().unwrap(), rest.ends().unwrap());
         assert_eq!((start, end), (first, last));
         // Through fit points, the solver moves what's held on it onto

@@ -254,7 +254,8 @@ fn a_handle_is_hit_by_its_tip_along_both_arms_before_curves() {
     );
     let mut spline = Spline::through(vec![a, b, c], false);
     spline
-        .handles
+        .handles_mut()
+        .unwrap()
         .push(crate::testing::handle(&mut sketch, b, tip));
     let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
     // On the tip's arm and on the mirrored one, as a line of its own.
@@ -305,7 +306,8 @@ fn a_handle_s_ends_go_before_arms() {
     for (ends, at, tip) in [([a, b, c], b, tip), ([d, e, f], e, across)] {
         let mut spline = Spline::through(ends.to_vec(), false);
         spline
-            .handles
+            .handles_mut()
+            .unwrap()
             .push(crate::testing::handle(&mut sketch, at, tip));
         sketch.add_curve(Curve::Spline(spline), false).unwrap();
     }

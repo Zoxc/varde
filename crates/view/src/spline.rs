@@ -36,7 +36,7 @@ pub fn conversions(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Vec<Ske
     selected_splines(sketch, selection)
         .map(|(spline, shape)| SketchEdit::Convert {
             spline,
-            to: match shape.kind {
+            to: match shape.kind() {
                 SplineKind::Through => SplineKind::Control,
                 SplineKind::Control => SplineKind::Through,
             },
@@ -53,7 +53,9 @@ pub fn conversions(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Vec<Ske
 pub fn handles(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Option<SketchEdit> {
     let through = || {
         sketch.curves.iter().filter_map(|entry| match &entry.curve {
-            Curve::Spline(spline) if spline.kind == SplineKind::Through => Some((entry.id, spline)),
+            Curve::Spline(spline) if spline.kind() == SplineKind::Through => {
+                Some((entry.id, spline))
+            }
             _ => None,
         })
     };
@@ -71,7 +73,7 @@ pub fn handles(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Option<Sket
         .collect();
     if points.is_empty() {
         points = selected_splines(sketch, selection)
-            .filter(|(_, spline)| spline.kind == SplineKind::Through)
+            .filter(|(_, spline)| spline.kind() == SplineKind::Through)
             .flat_map(|(id, spline)| spline.points.iter().map(move |&point| (point, vec![id])))
             .collect();
     }
@@ -79,7 +81,7 @@ pub fn handles(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Option<Sket
         return None;
     }
     let handle = |point: Id, spline: Id| {
-        let handles = &sketch.spline(spline)?.handles;
+        let handles = &sketch.spline(spline)?.handles();
         handles.iter().find(|handle| handle.at == point)
     };
     // Each once, as two splines selected may share an end.
@@ -117,7 +119,8 @@ pub fn close_on_drop(sketch: &Sketch, point: Id, target: Option<Target>) -> Opti
             Curve::Arc { .. } => Some(SketchEdit::CloseArc(entry.id)),
             // Its ends made one, it must keep enough to close.
             Curve::Spline(spline)
-                if spline.points.len() > spline.kind.least(true) && !sketch.is_linked(entry.id) =>
+                if spline.points.len() > spline.kind().least(true)
+                    && !sketch.is_linked(entry.id) =>
             {
                 Some(SketchEdit::CloseSpline(entry.id))
             }
@@ -246,9 +249,9 @@ pub fn removals(
         if own != lost {
             return Some(Err("A point selected is a spline's handle".into()));
         }
-        let least = spline.kind.least(spline.closed);
+        let least = spline.kind().least(spline.closed);
         if spline.points.len().saturating_sub(lost) < least {
-            return Some(Err(match (spline.kind, spline.closed) {
+            return Some(Err(match (spline.kind(), spline.closed) {
                 (_, true) => format!("A closed spline needs {least} points"),
                 (SplineKind::Through, false) => {
                     format!("A spline through fit points needs {least}")

@@ -113,7 +113,7 @@ fn a_spline_s_handle_is_read_back() {
     let tip = sketch.add_point(DVec2::new(13.0, 8.0)).unwrap();
     let end = sketch.add_point(DVec2::new(7.0, 2.0)).unwrap();
     let mut through = Spline::through(fit.to_vec(), false);
-    through.handles.push(Handle {
+    through.handles_mut().unwrap().push(Handle {
         at: fit[1],
         tip,
         end,

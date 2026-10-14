@@ -88,7 +88,11 @@ a new point first (`Sketch::add_handle_ends`), so old files read.
 `SplineKind::Control` is pulled towards its control points, touching an
 open one's ends, over `knots` it keeps (as `BSpline::clamped` or
 `BSpline::periodic` take them, at least `MIN_KNOT_GAP` apart;
-`control_knots` makes them from the control polygon). The math is in
+`control_knots` makes them from the control polygon). The kind carries
+its data, `Spline::form` a `SplineForm`, `Through { handles }` or
+`Control { knots }`, so neither kind can hold the other's; `kind()`,
+`handles()` (none by control points) and `knots()` (none through fit
+points) read it, `handles_mut` changes the handles. The math is in
 `spline/basis.rs`: `BSpline` (evaluation with two derivatives,
 curvature, `breaks`, `piece` and `with_knot` by Boehm's knot insertion,
 a closed one's laid out over several periods), and `Interpolation`, the
@@ -192,7 +196,7 @@ kind (or role), a constraint's items going together and neither a
 constraint nor a dimension naming a curve and one of its own points,
 coordinates within `MAX_COORD` and radii above zero, splines' counts
 (`SplineKind::least` to `MAX_SPLINE_POINTS`, 100), handles (on its fit
-points, one each, none by control points) and knots (`Spline::fits`,
+points, one each) and knots (`Spline::fits`,
 `SketchError::Spline`), a tangent with a spline or a smooth join at a
 `Joint` (smooth with a handle there through fit points), an angle's
 points handles' tips (`Sketch::tips`), labels within

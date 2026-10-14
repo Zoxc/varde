@@ -16,11 +16,7 @@ fn splines() -> (Sketch, [Id; 2], Id) {
         .iter()
         .map(|&id| sketch.point(id).unwrap().at)
         .collect();
-    let by = Spline {
-        kind: SplineKind::Control,
-        knots: varde_sketch::control_knots(&places, false),
-        ..Spline::through(control, false)
-    };
+    let by = Spline::control(control, varde_sketch::control_knots(&places, false), false);
     let by = sketch.add_curve(Curve::Spline(by), false).unwrap();
     let (a, b) = (
         point(&mut sketch, 0.0, -5.0),
@@ -74,7 +70,7 @@ fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
     let first = crate::testing::handle(&mut sketch, fit[0], tips[0]);
     let last = crate::testing::handle(&mut sketch, fit[2], tips[1]);
     if let Some(Curve::Spline(spline)) = sketch.curve_mut(through).map(|e| &mut e.curve) {
-        spline.handles = vec![first, last];
+        *spline.handles_mut().unwrap() = vec![first, last];
     }
     let ends = crate::testing::items([fit[0], fit[2]]);
     assert_eq!(

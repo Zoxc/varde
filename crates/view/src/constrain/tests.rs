@@ -60,7 +60,10 @@ fn drawn() -> Drawn {
         .add_point(2.0 * from - DVec2::new(13.0, 1.3))
         .unwrap();
     let mut through = Spline::through(vec![b, on, last], false);
-    through.handles.push(Handle { at: b, tip, end });
+    through
+        .handles_mut()
+        .unwrap()
+        .push(Handle { at: b, tip, end });
     let spline = sketch.add_curve(Curve::Spline(through), false).unwrap();
     Drawn {
         sketch,
@@ -299,7 +302,7 @@ fn splines_take_a_point_on_them_a_tangent_a_smooth_join_and_a_fix() {
 fn a_handle_picked_as_a_line_is_held_as_one() {
     let drawn = drawn();
     let sketch = &drawn.sketch;
-    let tip = sketch.spline(drawn.spline).unwrap().handles[0].tip;
+    let tip = sketch.spline(drawn.spline).unwrap().handles()[0].tip;
     let handle = Selectable::HandleLine(tip);
     // Alone, nearly horizontal: horizontal first, then vertical, named
     // by its tip.

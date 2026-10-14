@@ -4344,6 +4344,7 @@ dependencies = [
  "glam 0.30.10",
  "libm",
  "postcard",
+ "rmp-serde",
  "serde",
  "thiserror 2.0.21",
  "varde-expr",

@@ -439,7 +439,8 @@ fn a_handle_s_angle_is_measured_and_goes_with_the_handle() {
     let tip = point(&mut sketch, 10.0 + 3.0, 5.0 + 3.0);
     let mut through = Spline::through(fit.to_vec(), false);
     through
-        .handles
+        .handles_mut()
+        .unwrap()
         .push(crate::testing::handle(&mut sketch, fit[1], tip));
     sketch.add_curve(Curve::Spline(through), false).unwrap();
     // The tip is a line's end too, which keeps it.

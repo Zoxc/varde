@@ -144,7 +144,7 @@ impl LinkShape {
             let points = curve.points().all(|id| id.placeholder_index() < count);
             let own = match curve {
                 &Curve::Circle { radius, .. } => radius > 0.0 && within(radius),
-                Curve::Spline(spline) => spline.fits() && spline.handles.is_empty(),
+                Curve::Spline(spline) => spline.fits() && spline.handles().is_empty(),
                 Curve::Line { start, end } => start != end,
                 Curve::Arc { center, start, end } => {
                     center != start && center != end && start != end
@@ -163,11 +163,11 @@ impl LinkShape {
             && (self.curves.iter().zip(&other.curves)).all(|pair| match pair {
                 (Curve::Circle { center: a, .. }, Curve::Circle { center: b, .. }) => a == b,
                 (Curve::Spline(a), Curve::Spline(b)) => {
-                    a.kind == b.kind
+                    a.kind() == b.kind()
                         && a.closed == b.closed
                         && a.points == b.points
-                        && a.handles == b.handles
-                        && a.knots.len() == b.knots.len()
+                        && a.handles() == b.handles()
+                        && a.knots().len() == b.knots().len()
                 }
                 (a, b) => a == b,
             })
@@ -187,7 +187,7 @@ impl LinkShape {
                     near(a, b, within)
                 }
                 (Curve::Spline(a), Curve::Spline(b)) => {
-                    (a.knots.iter().zip(&b.knots)).all(|(&a, &b)| near(a, b, 1e-9))
+                    (a.knots().iter().zip(b.knots())).all(|(&a, &b)| near(a, b, 1e-9))
                 }
                 _ => true,
             })
@@ -679,7 +679,7 @@ impl Sketch {
                         .curve
                         .points()
                         .any(|point| link.points.binary_search(&point).is_err())
-                    || matches!(&entry.curve, Curve::Spline(spline) if !spline.handles.is_empty())
+                    || matches!(&entry.curve, Curve::Spline(spline) if !spline.handles().is_empty())
                 {
                     return Err(SketchError::Link(id));
                 }

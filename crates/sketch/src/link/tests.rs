@@ -590,9 +590,9 @@ fn projecting_a_sketchs_items() {
     let [Curve::Spline(mapped)] = &projected.curves[..] else {
         panic!("{projected:?}");
     };
-    assert_eq!(mapped.kind, SplineKind::Control);
+    assert_eq!(mapped.kind(), SplineKind::Control);
     let shape = sketch.curve_shape(spline).unwrap();
-    let image = crate::BSpline::new(&mapped.knots, projected.points.clone(), false).unwrap();
+    let image = crate::BSpline::new(mapped.knots(), projected.points.clone(), false).unwrap();
     for t in [0.0, 0.3, 0.7, 1.0] {
         let p = shape.point(t);
         assert!(image.point(t).distance(DVec2::new(p.x, p.y * 0.5)) < 1e-9);

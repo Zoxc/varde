@@ -1806,7 +1806,7 @@ fn arched(kind: SplineKind) -> (Sketch, Id, Option<Id>) {
             let at = sketch.add_point(DVec2::new(2.0, 4.5)).unwrap();
             let handle = crate::testing::handle(&mut sketch, points[1], at);
             if let Some(Curve::Spline(shape)) = sketch.curve_mut(spline).map(|e| &mut e.curve) {
-                shape.handles.push(handle);
+                shape.handles_mut().unwrap().push(handle);
             }
             tip = Some(at);
         }

@@ -399,7 +399,11 @@ the point they meet at), splines (through fit points or by control
 points, open or closed, their points and handles' tips and ends by id
 (a handle saved before ends were points reads with `Id::MISSING` and is
 given one on reading, `Sketch::add_handle_ends`), by control points
-their knots), constraints (a tangent with a spline, and a smooth
+their knots; a `Spline` is stored flat, as `{kind, points, closed,
+handles, knots}` through a serde shim (`FlatSpline`), while in memory
+its kind carries its handles or knots (`SplineForm`), and a record with
+knots through fit points or handles by control points doesn't read),
+constraints (a tangent with a spline, and a smooth
 join, naming the spline's end they're at) and dimensions carry ids from the
 sketch's own `next_id`,
 below the three kept for the origin and axes, which aren't stored but

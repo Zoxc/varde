@@ -311,7 +311,7 @@ pub(super) fn geometry_point_name(
 ) -> String {
     let name = sketch.point_name(point);
     let spline = sketch.splines().find(|(_, spline)| {
-        let mut arms = spline.handles.iter().flat_map(|handle| handle.arms());
+        let mut arms = spline.handles().iter().flat_map(|handle| handle.arms());
         arms.any(|arm| arm == point.id)
     });
     match spline.and_then(|(id, _)| sketch.curve(id)) {

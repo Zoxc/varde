@@ -251,7 +251,7 @@ fn points_are_named_by_their_role_in_a_curve() {
         .add_curve(Curve::Spline(spline.clone()), false)
         .unwrap();
     assert_eq!(sketch.name(b).unwrap(), "Point 6");
-    spline.kind = SplineKind::Control;
+    spline.form = SplineForm::Control { knots: Vec::new() };
     sketch.curves.last_mut().unwrap().curve = Curve::Spline(spline);
     assert_eq!(sketch.name(b).unwrap(), "Control point 2 of Spline 1");
 }

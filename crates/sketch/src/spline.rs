@@ -90,52 +90,145 @@ impl Handle {
     }
 }
 
+/// What a spline's kind carries: through fit points its handles, by
+/// control points its knots.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SplineForm {
+    /// Through fit points, with handles at fit points, at most one at
+    /// each.
+    Through { handles: Vec<Handle> },
+    /// By control points, with its knots, as [`BSpline::clamped`] (open)
+    /// or [`BSpline::periodic`] (closed) take them, which keep it as it
+    /// was made or converted.
+    Control { knots: Vec<f64> },
+}
+
 /// A spline by its points, see [`SplineKind`].
+///
+/// Stored flat, as `{kind, points, closed, handles, knots}`, as it was before its kind carried its data; a record
+/// with handles by control points or knots through fit points doesn't
+/// read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "FlatSpline", into = "FlatSpline")]
 pub struct Spline {
-    pub kind: SplineKind,
+    /// Its kind, with its handles or knots.
+    pub form: SplineForm,
     /// The fit or control points, in order.
     pub points: Vec<Id>,
     /// A closed spline makes a loop, from its last point on round to its
     /// first.
     pub closed: bool,
-    /// Handles at fit points, at most one at each, only through fit
-    /// points.
-    pub handles: Vec<Handle>,
-    /// By control points, its knots, as [`BSpline::clamped`] (open) or
-    /// [`BSpline::periodic`] (closed) take them, which keep it as it was
-    /// made or converted; through fit points, none, the parameters being
-    /// found from the points.
-    pub knots: Vec<f64>,
+}
+
+/// A [`Spline`] as stored: its kind beside both its handles and its
+/// knots, the one its kind doesn't carry empty.
+#[derive(Serialize, Deserialize)]
+struct FlatSpline {
+    kind: SplineKind,
+    points: Vec<Id>,
+    closed: bool,
+    handles: Vec<Handle>,
+    knots: Vec<f64>,
+}
+
+impl TryFrom<FlatSpline> for Spline {
+    type Error = &'static str;
+
+    fn try_from(flat: FlatSpline) -> Result<Spline, Self::Error> {
+        let form = match flat.kind {
+            SplineKind::Through if flat.knots.is_empty() => SplineForm::Through {
+                handles: flat.handles,
+            },
+            SplineKind::Control if flat.handles.is_empty() => {
+                SplineForm::Control { knots: flat.knots }
+            }
+            SplineKind::Through => return Err("knots on a spline through fit points"),
+            SplineKind::Control => return Err("handles on a spline by control points"),
+        };
+        Ok(Spline {
+            form,
+            points: flat.points,
+            closed: flat.closed,
+        })
+    }
+}
+
+impl From<Spline> for FlatSpline {
+    fn from(spline: Spline) -> FlatSpline {
+        let kind = spline.kind();
+        let (handles, knots) = match spline.form {
+            SplineForm::Through { handles } => (handles, Vec::new()),
+            SplineForm::Control { knots } => (Vec::new(), knots),
+        };
+        FlatSpline {
+            kind,
+            points: spline.points,
+            closed: spline.closed,
+            handles,
+            knots,
+        }
+    }
 }
 
 impl Spline {
     /// The spline through the fit points `points`, without handles.
     pub fn through(points: Vec<Id>, closed: bool) -> Spline {
         Spline {
-            kind: SplineKind::Through,
+            form: SplineForm::Through {
+                handles: Vec::new(),
+            },
             points,
             closed,
-            handles: Vec::new(),
-            knots: Vec::new(),
         }
     }
 
     /// The spline by the control points `points` and `knots`, as
-    /// [`Spline::knots`] holds them.
+    /// [`SplineForm::Control`] holds them.
     pub fn control(points: Vec<Id>, knots: Vec<f64>, closed: bool) -> Spline {
         Spline {
-            kind: SplineKind::Control,
+            form: SplineForm::Control { knots },
             points,
             closed,
-            handles: Vec::new(),
-            knots,
+        }
+    }
+
+    /// How its points shape it.
+    pub fn kind(&self) -> SplineKind {
+        match self.form {
+            SplineForm::Through { .. } => SplineKind::Through,
+            SplineForm::Control { .. } => SplineKind::Control,
+        }
+    }
+
+    /// Its handles: none by control points.
+    pub fn handles(&self) -> &[Handle] {
+        match &self.form {
+            SplineForm::Through { handles } => handles,
+            SplineForm::Control { .. } => &[],
+        }
+    }
+
+    /// Its handles, to change: `None` by control points, which have
+    /// none.
+    pub fn handles_mut(&mut self) -> Option<&mut Vec<Handle>> {
+        match &mut self.form {
+            SplineForm::Through { handles } => Some(handles),
+            SplineForm::Control { .. } => None,
+        }
+    }
+
+    /// Its knots: none through fit points, the parameters being found
+    /// from the points.
+    pub fn knots(&self) -> &[f64] {
+        match &self.form {
+            SplineForm::Through { .. } => &[],
+            SplineForm::Control { knots } => knots,
         }
     }
 
     /// Its fit or control points, then its handles' tips and ends.
     pub fn all_points(&self) -> impl Iterator<Item = Id> + Clone + '_ {
-        let arms = self.handles.iter().flat_map(Handle::arms);
+        let arms = self.handles().iter().flat_map(Handle::arms);
         self.points.iter().copied().chain(arms)
     }
 
@@ -169,21 +262,18 @@ impl Spline {
     /// else is looked at, so a spline from outside can be asked.
     pub fn fits(&self) -> bool {
         let count = self.points.len();
-        if !self.kind.admits(count, self.closed) {
+        if !self.kind().admits(count, self.closed) {
             return false;
         }
-        match self.kind {
-            SplineKind::Through => {
-                self.knots.is_empty()
-                    && self.handles.len() <= count
-                    && self.handles.iter().enumerate().all(|(i, handle)| {
+        match &self.form {
+            SplineForm::Through { handles } => {
+                handles.len() <= count
+                    && handles.iter().enumerate().all(|(i, handle)| {
                         self.points.contains(&handle.at)
-                            && !self.handles[..i].iter().any(|other| other.at == handle.at)
+                            && !handles[..i].iter().any(|other| other.at == handle.at)
                     })
             }
-            SplineKind::Control => {
-                self.handles.is_empty() && basis::knots_fit(&self.knots, self.closed, count)
-            }
+            SplineForm::Control { knots } => basis::knots_fit(knots, self.closed, count),
         }
     }
 
@@ -191,9 +281,9 @@ impl Spline {
     /// make: `None` if they're not as many as it has, or the knots or the
     /// interpolation aren't sound.
     fn shape_of(&self, points: Vec<DVec2>, tips: &[DVec2]) -> Option<BSpline> {
-        match self.kind {
-            SplineKind::Control => BSpline::new(&self.knots, points, self.closed),
-            SplineKind::Through => {
+        match &self.form {
+            SplineForm::Control { knots } => BSpline::new(knots, points, self.closed),
+            SplineForm::Through { .. } => {
                 let handles = self.handle_indices()?;
                 Interpolation::at_chords(&points, self.closed, &handles)?.spline(&points, tips)
             }
@@ -212,9 +302,11 @@ impl Spline {
             .copied()
             .chain(self.ordered_tips()?)
             .collect();
-        let map = match self.kind {
-            SplineKind::Control => SplineMap::control(&self.knots, self.closed, self.points.len())?,
-            SplineKind::Through => {
+        let map = match &self.form {
+            SplineForm::Control { knots } => {
+                SplineMap::control(knots, self.closed, self.points.len())?
+            }
+            SplineForm::Through { .. } => {
                 let places: Vec<DVec2> = self
                     .points
                     .iter()
@@ -229,7 +321,7 @@ impl Spline {
 
     /// Whether it has a handle at the point `at`.
     pub fn has_handle(&self, at: Id) -> bool {
-        self.handles.iter().any(|handle| handle.at == at)
+        self.handles().iter().any(|handle| handle.at == at)
     }
 
     /// Its handles in order of their fit points, each as the index of its
@@ -237,7 +329,7 @@ impl Spline {
     /// of its points.
     fn ordered_handles(&self) -> Option<Vec<(usize, Id)>> {
         let mut handles: Vec<(usize, Id)> = self
-            .handles
+            .handles()
             .iter()
             .map(|handle| {
                 let index = self.points.iter().position(|&id| id == handle.at)?;
@@ -279,27 +371,34 @@ impl Spline {
             .copied()
             .filter(|id| !deleted.contains(id))
             .collect();
-        if points.len() < self.kind.least(self.closed) {
+        if points.len() < self.kind().least(self.closed) {
             return None;
         }
-        let (handles, gone): (Vec<Handle>, Vec<Handle>) = self.handles.iter().partition(|handle| {
-            !deleted.contains(&handle.at) && handle.arms().iter().all(|id| !deleted.contains(id))
-        });
-        let knots = match self.kind {
-            SplineKind::Through => Vec::new(),
-            SplineKind::Control if points.len() == self.points.len() => self.knots.clone(),
-            SplineKind::Control => {
+        let (form, gone) = match &self.form {
+            SplineForm::Through { handles } => {
+                let (handles, gone): (Vec<Handle>, Vec<Handle>) =
+                    handles.iter().partition(|handle| {
+                        !deleted.contains(&handle.at)
+                            && handle.arms().iter().all(|id| !deleted.contains(id))
+                    });
+                (SplineForm::Through { handles }, gone)
+            }
+            SplineForm::Control { knots } if points.len() == self.points.len() => {
+                let knots = knots.clone();
+                (SplineForm::Control { knots }, Vec::new())
+            }
+            SplineForm::Control { .. } => {
                 let places: Vec<DVec2> = points.iter().map(|&id| at(id)).collect::<Option<_>>()?;
-                control_knots(&places, self.closed)
+                let knots = control_knots(&places, self.closed);
+                (SplineForm::Control { knots }, Vec::new())
             }
         };
         let dropped = gone.iter().flat_map(Handle::arms);
         let dropped = dropped.filter(|tip| !deleted.contains(tip)).collect();
         let spline = Spline {
+            form,
             points,
-            handles,
-            knots,
-            ..self.clone()
+            closed: self.closed,
         };
         Some((spline, dropped))
     }
@@ -318,7 +417,7 @@ impl Sketch {
     /// if there's one: the first spline's with it.
     pub fn handle(&self, tip: Id) -> Option<(Id, Handle)> {
         self.splines().find_map(|(id, spline)| {
-            let handle = spline.handles.iter().find(|handle| handle.tip == tip)?;
+            let handle = spline.handles().iter().find(|handle| handle.tip == tip)?;
             Some((id, *handle))
         })
     }
@@ -380,7 +479,7 @@ impl Sketch {
     /// them, or the spline has no shape.
     pub fn handle_tip(&self, curve: Id, at: Id) -> Option<DVec2> {
         let spline = self.spline(curve)?;
-        if spline.kind != SplineKind::Through {
+        if spline.kind() != SplineKind::Through {
             return None;
         }
         let index = spline.points.iter().position(|&id| id == at)?;
@@ -403,7 +502,7 @@ impl Sketch {
             let Curve::Spline(spline) = &entry.curve else {
                 continue;
             };
-            for (i, handle) in spline.handles.iter().enumerate() {
+            for (i, handle) in spline.handles().iter().enumerate() {
                 if handle.end != Id::MISSING {
                     continue;
                 }
@@ -415,8 +514,10 @@ impl Sketch {
         // Adding points leaves the curves where they are.
         for (index, i, place) in missing {
             let end = self.add_point(place)?;
-            if let Curve::Spline(spline) = &mut self.curves[index].curve {
-                spline.handles[i].end = end;
+            if let Curve::Spline(spline) = &mut self.curves[index].curve
+                && let Some(handles) = spline.handles_mut()
+            {
+                handles[i].end = end;
             }
         }
         Ok(())
@@ -447,7 +548,7 @@ impl Sketch {
             }
             let before = added.len();
             for (curve, spline) in self.splines() {
-                if spline.kind == SplineKind::Through
+                if spline.kind() == SplineKind::Through
                     && spline.points.contains(&at)
                     && !spline.has_handle(at)
                 {
@@ -466,7 +567,9 @@ impl Sketch {
             else {
                 return Err(EditError::Target(curve));
             };
-            spline.handles.push(handle);
+            if let Some(handles) = spline.handles_mut() {
+                handles.push(handle);
+            }
         }
         Ok(())
     }
@@ -480,8 +583,8 @@ impl Sketch {
         let spline = self.spline(curve).ok_or(target)?.clone();
         let shape = self.spline_shape(&spline).ok_or(target)?;
         let u = shape.path().closest(near);
-        let (points, knots) = match spline.kind {
-            SplineKind::Through => {
+        let (points, form) = match &spline.form {
+            SplineForm::Through { .. } => {
                 let places = self.places(&spline.points).ok_or(target)?;
                 let params = chord_params(&places, spline.closed);
                 if params.iter().any(|&t| (t - u).abs() < MIN_SPAN) || (u >= 1.0 - MIN_SPAN) {
@@ -490,20 +593,21 @@ impl Sketch {
                 let index = params.partition_point(|&t| t < u);
                 let mut points = spline.points.clone();
                 points.insert(index, self.add_point(shape.point(u))?);
-                (points, Vec::new())
+                (points, spline.form.clone())
             }
-            SplineKind::Control => {
+            SplineForm::Control { .. } => {
                 let inserted = shape.with_knot(u).ok_or(target)?;
                 let points = self.reuse_points(&spline.points, inserted.control())?;
-                (points, inserted.knots().to_vec())
+                let knots = inserted.knots().to_vec();
+                (points, SplineForm::Control { knots })
             }
         };
         self.replace_spline(
             curve,
             Spline {
+                form,
                 points,
-                knots,
-                ..spline
+                closed: spline.closed,
             },
         )
     }
@@ -528,7 +632,7 @@ impl Sketch {
         let target = EditError::Target(curve);
         let spline = self.spline(curve).ok_or(target)?.clone();
         let shape = self.spline_shape(&spline).ok_or(target)?;
-        if spline.kind == SplineKind::Control {
+        if spline.kind() == SplineKind::Control {
             let piece = shape.piece(from, to).ok_or(target)?;
             let control = piece.control();
             let inner = &control[1..control.len() - 1];
@@ -565,7 +669,7 @@ impl Sketch {
             .collect();
         let new_places = self.places(&ids).ok_or(target)?;
         let mut handles: Vec<Handle> = spline
-            .handles
+            .handles()
             .iter()
             .filter(|handle| ids.contains(&handle.at))
             .copied()
@@ -581,11 +685,9 @@ impl Sketch {
             }
         }
         Ok(Spline {
-            kind: SplineKind::Through,
+            form: SplineForm::Through { handles },
             points: ids,
             closed: false,
-            handles,
-            knots: Vec::new(),
         })
     }
 

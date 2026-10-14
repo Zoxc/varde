@@ -1089,7 +1089,7 @@ fn a_fit_point_dragged_takes_its_handle_along() {
     let tip = sketch_.add_point(at(14.0, 10.0)).unwrap();
     let end = sketch_.add_point(at(6.0, 10.0)).unwrap();
     let mut spline = varde_sketch::Spline::through(fit.clone(), false);
-    spline.handles.push(varde_sketch::Handle {
+    spline.handles_mut().unwrap().push(varde_sketch::Handle {
         at: fit[1],
         tip,
         end,

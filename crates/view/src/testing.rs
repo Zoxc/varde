@@ -29,7 +29,7 @@ pub(crate) fn handled_spline(sketch: &mut Sketch) -> (Id, Vec<Id>, Id) {
     let tip = point(sketch, 13.0, 7.0);
     let end = point(sketch, 7.0, 1.0);
     if let Some(Curve::Spline(shape)) = sketch.curve_mut(spline).map(|entry| &mut entry.curve) {
-        shape.handles.push(Handle {
+        shape.handles_mut().unwrap().push(Handle {
             at: fit[1],
             tip,
             end,

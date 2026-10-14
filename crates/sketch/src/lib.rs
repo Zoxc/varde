@@ -69,7 +69,7 @@ pub use selectable::Selectable;
 pub use solve::{Analysis, Budget, DEFAULT_ITERATIONS, Failure, Goal, Solution, analyse, solve};
 pub use spline::{
     BSpline, Handle, Interpolation, MAX_COMB_TEETH, MAX_SPLINE_POINTS, MIN_KNOT_GAP, MIN_SPAN,
-    Spline, SplineKind, chord_params, control_knots, flatten_spline, handle_tips,
+    Spline, SplineForm, SplineKind, chord_params, control_knots, flatten_spline, handle_tips,
 };
 
 use std::collections::HashSet;
@@ -256,7 +256,7 @@ impl Curve {
             }
             Curve::Spline(spline) => {
                 spline.points.iter_mut().for_each(swap);
-                for handle in &mut spline.handles {
+                for handle in spline.handles_mut().into_iter().flatten() {
                     [&mut handle.at, &mut handle.tip, &mut handle.end]
                         .into_iter()
                         .for_each(swap);
@@ -287,18 +287,24 @@ impl Curve {
             Curve::Spline(spline) => {
                 let points = spline.points.iter().map(|&id| map(id));
                 let points = points.collect::<Result<_, E>>()?;
-                let mut handles = Vec::with_capacity(spline.handles.len());
-                for handle in &spline.handles {
-                    handles.push(Handle {
-                        at: map(handle.at)?,
-                        tip: map(handle.tip)?,
-                        end: map(handle.end)?,
-                    });
-                }
+                let form = match &spline.form {
+                    SplineForm::Through { handles } => {
+                        let mut mapped = Vec::with_capacity(handles.len());
+                        for handle in handles {
+                            mapped.push(Handle {
+                                at: map(handle.at)?,
+                                tip: map(handle.tip)?,
+                                end: map(handle.end)?,
+                            });
+                        }
+                        SplineForm::Through { handles: mapped }
+                    }
+                    form @ SplineForm::Control { .. } => form.clone(),
+                };
                 Curve::Spline(Spline {
+                    form,
                     points,
-                    handles,
-                    ..spline.clone()
+                    closed: spline.closed,
                 })
             }
         })

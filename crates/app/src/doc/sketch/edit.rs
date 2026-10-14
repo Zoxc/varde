@@ -1049,7 +1049,7 @@ fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<Sk
     // A handle's tip or end follows the cursor, the other mirroring it
     // in its fit point.
     let mirrored = (sketch.splines())
-        .flat_map(|(_, spline)| &spline.handles)
+        .flat_map(|(_, spline)| spline.handles())
         .find_map(|handle| match handle.arms() {
             [tip, end] if tip == id => Some(end),
             [tip, end] if end == id => Some(tip),
@@ -1101,7 +1101,7 @@ fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<Sk
     };
     // A fit point's handle goes with it, its tip and end moved as far.
     let tips: Vec<(Id, DVec2)> = (sketch.splines())
-        .flat_map(|(_, spline)| &spline.handles)
+        .flat_map(|(_, spline)| spline.handles())
         .filter(|handle| points.iter().any(|&(point, _)| point == handle.at))
         .flat_map(|handle| handle.arms())
         .filter(|&arm| points.iter().all(|&(point, _)| point != arm))

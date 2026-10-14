@@ -210,7 +210,7 @@ impl System {
     /// Holds each spline handle's end mirroring its tip in its fit point.
     fn add_handles(&mut self, sketch: &Sketch) {
         for (id, spline) in sketch.splines() {
-            for handle in &spline.handles {
+            for handle in spline.handles() {
                 let slots = |id| self.point(sketch, id);
                 if let (Some(center), Some(a), Some(b)) =
                     (slots(handle.at), slots(handle.tip), slots(handle.end))
@@ -339,7 +339,7 @@ impl System {
                     Some(map.spline(&places?)?.path())
                 })
                 .flatten();
-            let refit = match spline.kind {
+            let refit = match spline.kind() {
                 SplineKind::Through => spline.handle_indices().map(|handles| Refit {
                     fit: spline.points.len(),
                     closed: spline.closed,
@@ -807,7 +807,7 @@ impl System {
                 // A spline's handles' ends mirror their tips:
                 // held by those equations, not fixed again.
                 Curve::Spline(ref spline) => {
-                    let ends: Vec<Id> = spline.handles.iter().map(|h| h.end).collect();
+                    let ends: Vec<Id> = spline.handles().iter().map(|h| h.end).collect();
                     for id in entry.curve.points().filter(|id| !ends.contains(id)) {
                         slots.extend(point(id)?);
                     }

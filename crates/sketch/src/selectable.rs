@@ -85,7 +85,7 @@ impl Sketch {
     /// The handle whose end (not its tip) is `end`, with its spline.
     pub fn handle_by_end(&self, end: Id) -> Option<(Id, Handle)> {
         self.splines().find_map(|(id, spline)| {
-            let handle = spline.handles.iter().find(|handle| handle.end == end)?;
+            let handle = spline.handles().iter().find(|handle| handle.end == end)?;
             Some((id, *handle))
         })
     }
@@ -95,7 +95,7 @@ impl Spline {
     /// The number of its handle whose tip is `tip`, from 1, in the order
     /// of their fit points along it.
     pub fn handle_number(&self, tip: Id) -> Option<usize> {
-        let handle = self.handles.iter().find(|handle| handle.tip == tip)?;
+        let handle = self.handles().iter().find(|handle| handle.tip == tip)?;
         let before = (self.points.iter())
             .take_while(|&&point| point != handle.at)
             .filter(|&&point| self.has_handle(point))

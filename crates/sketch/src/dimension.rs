@@ -288,7 +288,7 @@ impl Sketch {
     /// may name ([`Measure::fits`]).
     pub fn tips(&self) -> HashSet<Id> {
         self.splines()
-            .flat_map(|(_, spline)| spline.handles.iter().map(|handle| handle.tip))
+            .flat_map(|(_, spline)| spline.handles().iter().map(|handle| handle.tip))
             .collect()
     }
 

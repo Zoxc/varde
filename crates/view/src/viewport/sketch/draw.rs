@@ -273,8 +273,8 @@ impl<'a> Sketching<'a> {
         // colour.
         let mut tips = sketch.tips();
         for (_, spline) in sketch.splines() {
-            tips.extend(spline.handles.iter().map(|handle| handle.end));
-            if spline.kind == SplineKind::Control {
+            tips.extend(spline.handles().iter().map(|handle| handle.end));
+            if spline.kind() == SplineKind::Control {
                 tips.extend(spline.points.iter().copied());
             }
         }
@@ -386,7 +386,7 @@ impl<'a> Sketching<'a> {
             } else {
                 colors.spline_handle
             };
-            for handle in &spline.handles {
+            for handle in spline.handles() {
                 if let Some(arms) = handle_arms(sketch, handle.tip) {
                     let line_selected =
                         self.selection.contains(&Selectable::HandleLine(handle.tip));
@@ -399,7 +399,7 @@ impl<'a> Sketching<'a> {
                     layer.polyline(Space::Sketch, &arms, style);
                 }
             }
-            if spline.kind == SplineKind::Control
+            if spline.kind() == SplineKind::Control
                 && (selected || spline.points.iter().any(|&id| self.selected(id)))
             {
                 let mut polygon: Vec<DVec2> =

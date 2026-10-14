@@ -111,7 +111,7 @@ fn a_handle_read_without_an_end_is_given_one() {
     let fit = [(0.0, 0.0), (10.0, 5.0), (20.0, 0.0)]
         .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
     let mut through = Spline::through(fit.to_vec(), false);
-    through.handles.push(
+    through.handles_mut().unwrap().push(
         sketch
             .new_handle(fit[1], DVec2::new(10.0, 5.0), DVec2::new(13.0, 8.0))
             .unwrap(),
@@ -139,8 +139,8 @@ fn a_handle_read_without_an_end_is_given_one() {
     let Curve::Spline(spline) = &mut sketch.curves[0].curve else {
         unreachable!()
     };
-    let end = std::mem::replace(&mut spline.handles[0].end, Id::MISSING);
-    let tip = spline.handles[0].tip;
+    let end = std::mem::replace(&mut spline.handles_mut().unwrap()[0].end, Id::MISSING);
+    let tip = spline.handles()[0].tip;
     sketch.points.retain(|point| point.id != end);
 
     let read = Document::from_postcard(&old.to_postcard()).unwrap();

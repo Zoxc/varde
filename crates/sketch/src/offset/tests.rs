@@ -957,7 +957,7 @@ fn a_spline_offsets_as_a_spline_along_it_tied_by_one_dimension() {
             panic!("a spline");
         };
         assert_eq!(
-            (copied.kind, copied.closed),
+            (copied.kind(), copied.closed),
             (crate::SplineKind::Through, closed)
         );
         assert!(copied.points.len() >= 4 && copied.points.len() <= crate::MAX_SPLINE_POINTS);

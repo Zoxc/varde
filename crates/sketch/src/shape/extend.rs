@@ -7,7 +7,9 @@ use glam::DVec2;
 
 use super::*;
 use crate::intersect::Geom;
-use crate::{BSpline, Constraint, Curve, EditError, Id, Sketch, SplineKind, control_knots};
+use crate::{
+    BSpline, Constraint, Curve, EditError, Id, Sketch, SplineForm, SplineKind, control_knots,
+};
 
 /// Where extending a line or an arc takes an end: the curve it runs on
 /// from the end on (see [`Sketch::ahead`]) and the cut there.
@@ -171,7 +173,7 @@ impl Sketch {
         } else {
             spline.points.insert(0, new);
         }
-        if spline.kind == SplineKind::Control {
+        if spline.kind() == SplineKind::Control {
             let places = self.places(&spline.points).ok_or(target)?;
             let (old, reach) = if at_end {
                 let old = &places[..places.len() - 1];
@@ -182,19 +184,20 @@ impl Sketch {
             let length: f64 = old.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
             let share = length / (length + reach);
             let knots: Vec<f64> = if at_end {
-                let old = spline.knots.iter().map(|&k| k * share);
+                let old = spline.knots().iter().map(|&k| k * share);
                 old.chain([share]).collect()
             } else {
                 let start = 1.0 - share;
-                let old = spline.knots.iter().map(|&k| start + k * share);
+                let old = spline.knots().iter().map(|&k| start + k * share);
                 std::iter::once(start).chain(old).collect()
             };
             let sound = BSpline::clamped(&knots, places.clone()).is_some();
-            spline.knots = if sound {
+            let knots = if sound {
                 knots
             } else {
                 control_knots(&places, false)
             };
+            spline.form = SplineForm::Control { knots };
         }
         self.curve_mut(curve).ok_or(target)?.curve = Curve::Spline(spline);
         self.constraints.retain(|entry| match entry.constraint {

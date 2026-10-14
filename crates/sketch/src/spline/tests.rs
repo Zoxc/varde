@@ -468,7 +468,7 @@ fn converting_keeps_the_shape() {
         let Curve::Spline(control) = &sketch.curve(id).unwrap().curve else {
             panic!("still a spline");
         };
-        assert_eq!(control.kind, SplineKind::Control);
+        assert_eq!(control.kind(), SplineKind::Control);
         assert_eq!(control.points.len(), if closed { 6 } else { 8 });
         // An open spline keeps its ends, the rest of its fit points go.
         if !closed {
@@ -517,8 +517,8 @@ fn converting_a_spline_with_handles_round_and_back_keeps_its_shape() {
         sketch.convert_spline(id, SplineKind::Through).unwrap();
         assert_eq!(sketch.check(&DESIGN), Ok(()));
         let spline = sketch.spline(id).unwrap();
-        assert_eq!(spline.kind, SplineKind::Through);
-        assert_eq!(spline.handles.len(), spline.points.len());
+        assert_eq!(spline.kind(), SplineKind::Through);
+        assert_eq!(spline.handles().len(), spline.points.len());
         // Through the places at its knots with a handle at each, a hair
         // off between them: with handles at its ends alone, it strayed
         // half a percent of its size open.
@@ -596,16 +596,9 @@ fn its_points_solve_as_free_points() {
 fn spline_of(sketch: &mut Sketch, count: usize, kind: SplineKind, closed: bool) -> Spline {
     let places: Vec<DVec2> = ring(DVec2::ZERO, 10.0, count);
     let points = places.iter().map(|p| point(sketch, p.x, p.y)).collect();
-    let knots = match kind {
-        SplineKind::Through => Vec::new(),
-        SplineKind::Control => control_knots(&places, closed),
-    };
-    Spline {
-        kind,
-        points,
-        closed,
-        handles: Vec::new(),
-        knots,
+    match kind {
+        SplineKind::Through => Spline::through(points, closed),
+        SplineKind::Control => Spline::control(points, control_knots(&places, closed), closed),
     }
 }
 
@@ -648,51 +641,32 @@ fn check_refuses_splines_that_cant_be() {
     let end = point(&mut sketch, 5.0, 5.0);
     let second_end = point(&mut sketch, 6.0, 6.0);
     let handle = |at| Handle { at, tip, end };
-    // A handle is at one of its points, once.
-    let good = Spline {
-        handles: vec![handle(base.points[1])],
+    let handled = |handles| Spline {
+        form: SplineForm::Through { handles },
         ..base.clone()
     };
+    // A handle is at one of its points, once.
+    let good = handled(vec![handle(base.points[1])]);
     assert_eq!(checked(sketch.clone(), good), Ok(()));
+    refused(&sketch, handled(vec![handle(other)]));
     refused(
         &sketch,
-        Spline {
-            handles: vec![handle(other)],
-            ..base.clone()
-        },
-    );
-    refused(
-        &sketch,
-        Spline {
-            handles: vec![
-                handle(base.points[1]),
-                Handle {
-                    at: base.points[1],
-                    tip: other,
-                    end: second_end,
-                },
-            ],
-            ..base.clone()
-        },
-    );
-    // Through fit points, no knots.
-    refused(
-        &sketch,
-        Spline {
-            knots: vec![0.5],
-            ..base.clone()
-        },
+        handled(vec![
+            handle(base.points[1]),
+            Handle {
+                at: base.points[1],
+                tip: other,
+                end: second_end,
+            },
+        ]),
     );
     // A tip that's one of its points, or a point twice.
     let id = Id(sketch.next_id);
-    let own_tip = Spline {
-        handles: vec![Handle {
-            at: base.points[0],
-            tip: base.points[2],
-            end,
-        }],
-        ..base.clone()
-    };
+    let own_tip = handled(vec![Handle {
+        at: base.points[0],
+        tip: base.points[2],
+        end,
+    }]);
     assert_eq!(
         checked(sketch.clone(), own_tip),
         Err(SketchError::Repeated {
@@ -711,10 +685,10 @@ fn check_refuses_splines_that_cant_be() {
     missing.points[0] = Id(sketch.next_id + 5);
     assert!(checked(sketch.clone(), missing).is_err());
 
-    // By control points: no handles, and knots as it takes them.
+    // By control points: knots as it takes them (handles it can't have,
+    // see `a_spline_is_stored_flat`).
     let mut sketch = Sketch::default();
     let control = spline_of(&mut sketch, 6, SplineKind::Control, false);
-    let tip = point(&mut sketch, 1.0, 1.0);
     for knots in [
         vec![0.5],
         vec![0.6, 0.4],
@@ -725,23 +699,9 @@ fn check_refuses_splines_that_cant_be() {
     ] {
         refused(
             &sketch,
-            Spline {
-                knots,
-                ..control.clone()
-            },
+            Spline::control(control.points.clone(), knots, false),
         );
     }
-    refused(
-        &sketch,
-        Spline {
-            handles: vec![Handle {
-                at: control.points[0],
-                tip,
-                end: tip,
-            }],
-            ..control.clone()
-        },
-    );
     let mut sketch = Sketch::default();
     let periodic = spline_of(&mut sketch, 4, SplineKind::Control, true);
     for knots in [
@@ -752,10 +712,7 @@ fn check_refuses_splines_that_cant_be() {
     ] {
         refused(
             &sketch,
-            Spline {
-                knots,
-                ..periodic.clone()
-            },
+            Spline::control(periodic.points.clone(), knots, true),
         );
     }
 }
@@ -767,14 +724,14 @@ fn deleting_a_fit_point_keeps_the_spline_while_it_can() {
     let second = sketch.points[1].id;
     let handle = crate::testing::handle(&mut sketch, second, tip);
     if let Curve::Spline(spline) = &mut sketch.curve_mut(id).unwrap().curve {
-        spline.handles.push(handle);
+        spline.handles_mut().unwrap().push(handle);
     }
     assert_eq!(sketch.check(&DESIGN), Ok(()));
     // Its handle's point goes, and the handle with its tip.
     sketch.delete(&[second]);
     assert_eq!(sketch.check(&DESIGN), Ok(()));
     let points = |sketch: &Sketch| match &sketch.curve(id).unwrap().curve {
-        Curve::Spline(spline) => (spline.points.len(), spline.handles.len()),
+        Curve::Spline(spline) => (spline.points.len(), spline.handles().len()),
         _ => panic!("a spline"),
     };
     assert_eq!(points(&sketch), (5, 0));
@@ -796,13 +753,13 @@ fn deleting_a_tip_takes_the_handle_and_a_control_point_new_knots() {
     let second = sketch.points[1].id;
     let handle = crate::testing::handle(&mut sketch, second, tip);
     if let Curve::Spline(spline) = &mut sketch.curve_mut(id).unwrap().curve {
-        spline.handles.push(handle);
+        spline.handles_mut().unwrap().push(handle);
     }
     sketch.delete(&[tip]);
     let Curve::Spline(spline) = &sketch.curve(id).unwrap().curve else {
         panic!("a spline");
     };
-    assert!(spline.handles.is_empty());
+    assert!(spline.handles().is_empty());
     assert_eq!(spline.points.len(), 6);
 
     sketch.convert_spline(id, SplineKind::Control).unwrap();
@@ -816,7 +773,7 @@ fn deleting_a_tip_takes_the_handle_and_a_control_point_new_knots() {
         panic!("a spline");
     };
     assert_eq!(spline.points.len(), 7);
-    assert_eq!(spline.knots.len(), 3);
+    assert_eq!(spline.knots().len(), 3);
 }
 
 #[test]
@@ -1125,7 +1082,7 @@ fn handles_added_keep_the_tangent() {
     let edit = crate::SketchEdit::AddHandles(vec![first, third, first]);
     let handled = edit.apply(&sketch, &DESIGN).unwrap();
     let spline = handled.spline(id).unwrap();
-    assert_eq!(spline.handles.len(), 2);
+    assert_eq!(spline.handles().len(), 2);
     assert!(spline.has_handle(first) && spline.has_handle(third));
     // The tangent where each is, as it was.
     let params = chord_params(&wave(), false);
@@ -1139,7 +1096,7 @@ fn handles_added_keep_the_tangent() {
     }
     assert!(strayed(&sketch, &handled, id) < 0.01 * 12.0);
     // Where one's drawn before it's there.
-    let tip = handled.point(spline.handles[1].tip).unwrap().at;
+    let tip = handled.point(spline.handles()[1].tip).unwrap().at;
     assert!(sketch.handle_tip(id, third).unwrap().distance(tip) < 1e-12);
     // Not twice, nor on a point that's no fit point.
     let again = crate::SketchEdit::AddHandles(vec![third]);
@@ -1147,14 +1104,14 @@ fn handles_added_keep_the_tangent() {
         again.apply(&handled, &DESIGN),
         Err(EditError::Target(third))
     );
-    let tip = spline.handles[0].tip;
+    let tip = spline.handles()[0].tip;
     let on_tip = crate::SketchEdit::AddHandles(vec![tip]);
     assert_eq!(on_tip.apply(&handled, &DESIGN), Err(EditError::Target(tip)));
     // Deleting its tip takes one away.
     let deleted = crate::SketchEdit::Delete(vec![tip])
         .apply(&handled, &DESIGN)
         .unwrap();
-    assert_eq!(deleted.spline(id).unwrap().handles.len(), 1);
+    assert_eq!(deleted.spline(id).unwrap().handles().len(), 1);
 }
 
 #[test]
@@ -1167,12 +1124,12 @@ fn converting_round_and_back_as_an_edit() {
     let control = crate::testing::propose_it(&sketch, &to(SplineKind::Control))
         .unwrap()
         .sketch;
-    assert_eq!(control.spline(id).unwrap().kind, SplineKind::Control);
+    assert_eq!(control.spline(id).unwrap().kind(), SplineKind::Control);
     assert!(strayed(&sketch, &control, id) < 1e-9);
     let back = crate::testing::propose_it(&control, &to(SplineKind::Through))
         .unwrap()
         .sketch;
-    assert_eq!(back.spline(id).unwrap().kind, SplineKind::Through);
+    assert_eq!(back.spline(id).unwrap().kind(), SplineKind::Through);
     assert!(strayed(&sketch, &back, id) < 1e-8);
     // Of a line, nothing.
     let (mut lined, _) = sketch_with(&wave(), false);
@@ -1218,7 +1175,7 @@ fn the_curvature_comb_turns_as_the_spline_and_stays_bounded() {
         })
         .collect();
     let spline = Spline {
-        handles,
+        form: SplineForm::Through { handles },
         ..Spline::through(fit, false)
     };
     let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
@@ -1268,10 +1225,75 @@ fn converting_a_spline_with_handles_round_and_back_again_doesnt_grow_it() {
             sketch.convert_spline(id, SplineKind::Through).unwrap();
             let spline = sketch.spline(id).unwrap();
             assert_eq!(spline.points.len(), fit.len(), "{closed}");
-            assert_eq!(spline.handles.len(), fit.len(), "{closed}");
+            assert_eq!(spline.handles().len(), fit.len(), "{closed}");
         }
         let after = geom(&sketch, id);
         let both = strays(&before, &after).max(strays(&after, &before));
         assert!(both < 1e-6, "{closed} {both}");
+    }
+}
+
+/// [`Spline`] as it was stored before its kind carried its data, and is
+/// still: the layout files and the wire hold.
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+struct Flat {
+    kind: SplineKind,
+    points: Vec<Id>,
+    closed: bool,
+    handles: Vec<Handle>,
+    knots: Vec<f64>,
+}
+
+#[test]
+fn a_spline_is_stored_flat() {
+    let handle = Handle {
+        at: Id(1),
+        tip: Id(7),
+        end: Id(8),
+    };
+    let through = Spline {
+        form: SplineForm::Through {
+            handles: vec![handle],
+        },
+        ..Spline::through(vec![Id(1), Id(2), Id(3)], true)
+    };
+    let control = Spline::control(vec![Id(4), Id(5), Id(6), Id(9)], vec![0.25], false);
+    let flat = |spline: &Spline| Flat {
+        kind: spline.kind(),
+        points: spline.points.clone(),
+        closed: spline.closed,
+        handles: spline.handles().to_vec(),
+        knots: spline.knots().to_vec(),
+    };
+    for spline in [through, control] {
+        // As the files have it, by field names, and as the wire does.
+        let named = rmp_serde::to_vec_named(&spline).unwrap();
+        assert_eq!(named, rmp_serde::to_vec_named(&flat(&spline)).unwrap());
+        assert_eq!(rmp_serde::from_slice::<Spline>(&named).unwrap(), spline);
+        let wire = postcard::to_allocvec(&spline).unwrap();
+        assert_eq!(wire, postcard::to_allocvec(&flat(&spline)).unwrap());
+        assert_eq!(postcard::from_bytes::<Spline>(&wire).unwrap(), spline);
+    }
+
+    // The field the kind doesn't carry, not empty, doesn't read.
+    let wrong = [
+        Flat {
+            kind: SplineKind::Through,
+            points: vec![Id(1), Id(2)],
+            closed: false,
+            handles: Vec::new(),
+            knots: vec![0.5],
+        },
+        Flat {
+            kind: SplineKind::Control,
+            points: vec![Id(1), Id(2), Id(3), Id(4)],
+            closed: false,
+            handles: vec![handle],
+            knots: Vec::new(),
+        },
+    ];
+    for flat in wrong {
+        let named = rmp_serde::to_vec_named(&flat).unwrap();
+        assert!(rmp_serde::from_slice::<Spline>(&named).is_err(), "{flat:?}");
     }
 }

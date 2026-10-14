@@ -95,13 +95,13 @@ impl Sketch {
                 &Curve::Arc { center, .. } if center == id => "Centre".to_owned(),
                 &Curve::Arc { start, .. } if start == id => "Start".to_owned(),
                 &Curve::Arc { end, .. } if end == id => "End".to_owned(),
-                Curve::Spline(spline) if spline.kind == SplineKind::Control => {
+                Curve::Spline(spline) if spline.kind() == SplineKind::Control => {
                     let at = spline.points.iter().position(|&p| p == id)?;
                     format!("Control point {}", at + 1)
                 }
                 Curve::Spline(spline) => {
                     let handle = spline
-                        .handles
+                        .handles()
                         .iter()
                         .find(|handle| handle.arms().contains(&id))?;
                     let end = if handle.tip == id { 1 } else { 2 };

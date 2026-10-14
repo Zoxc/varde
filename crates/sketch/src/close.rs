@@ -5,7 +5,7 @@
 
 use glam::DVec2;
 
-use crate::{Constraint, Curve, EditError, Id, Sketch, Spline, SplineKind, control_knots};
+use crate::{Constraint, Curve, EditError, Id, Sketch, Spline, SplineForm, control_knots};
 
 impl Sketch {
     /// Whether the arc `arc` can be closed: an open arc of the sketch's
@@ -69,7 +69,7 @@ impl Sketch {
             return false;
         };
         let count = spline.points.len() - usize::from(self.ends_meet(curve));
-        !spline.closed && count >= spline.kind.least(true) && !self.is_linked(curve)
+        !spline.closed && count >= spline.kind().least(true) && !self.is_linked(curve)
     }
 
     /// Closes the spline `curve`, see the module: it runs on from its
@@ -90,14 +90,21 @@ impl Sketch {
         if merge {
             spline.points.pop();
             let first_handled = spline.has_handle(first);
-            if let Some(handle) = spline.handles.iter_mut().find(|handle| handle.at == last) {
+            if let Some(handle) = spline
+                .handles_mut()
+                .into_iter()
+                .flatten()
+                .find(|handle| handle.at == last)
+            {
                 if first_handled {
                     unused.extend(handle.arms());
                 } else {
                     handle.at = first;
                 }
             }
-            spline.handles.retain(|handle| handle.at != last);
+            if let Some(handles) = spline.handles_mut() {
+                handles.retain(|handle| handle.at != last);
+            }
         }
         self.store_spline(curve, spline, true)?;
         self.delete(&unused);
@@ -148,11 +155,11 @@ impl Sketch {
         closed: bool,
     ) -> Result<(), EditError> {
         spline.closed = closed;
-        if spline.kind == SplineKind::Control {
+        if let SplineForm::Control { knots } = &mut spline.form {
             let places = self
                 .places(&spline.points)
                 .ok_or(EditError::Target(curve))?;
-            spline.knots = control_knots(&places, closed);
+            *knots = control_knots(&places, closed);
         }
         self.curve_mut(curve).ok_or(EditError::Target(curve))?.curve = Curve::Spline(spline);
         Ok(())

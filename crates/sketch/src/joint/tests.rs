@@ -27,7 +27,8 @@ fn spline_through(
     for &(i, (dx, dy)) in handles {
         let from = at(sketch, fit[i]);
         let tip = point(sketch, from.x + dx, from.y + dy);
-        made.handles
+        made.handles_mut()
+            .unwrap()
             .push(crate::testing::handle(sketch, fit[i], tip));
         tips.push(tip);
     }
@@ -120,7 +121,7 @@ fn a_tangent_or_smooth_join_is_made_at_the_end_nearer_and_on_its_side() {
     let Curve::Spline(made) = &mut sketch.curve_mut(s).unwrap().curve else {
         unreachable!()
     };
-    made.handles.push(handle);
+    made.handles_mut().unwrap().push(handle);
     assert_eq!(
         sketch.smooth(joined, s),
         Some(Constraint::Smooth {

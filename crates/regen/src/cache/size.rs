@@ -48,7 +48,7 @@ fn splines_bytes<'a>(curves: impl IntoIterator<Item = &'a Curve>) -> usize {
     (curves.into_iter()).fold(0usize, |sum, curve| match curve {
         Curve::Spline(spline) => sum
             .saturating_add(size_of_val(&spline.points[..]))
-            .saturating_add(size_of_val(&spline.knots[..])),
+            .saturating_add(size_of_val(spline.knots())),
         _ => sum,
     })
 }

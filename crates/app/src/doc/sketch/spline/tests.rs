@@ -59,7 +59,7 @@ fn draw_bare_wave(doc: &mut Answered) -> Id {
     let tips: Vec<Id> = sketch(doc)
         .spline(id)
         .unwrap()
-        .handles
+        .handles()
         .iter()
         .map(|handle| handle.tip)
         .collect();
@@ -70,7 +70,7 @@ fn draw_bare_wave(doc: &mut Answered) -> Id {
         });
     }
     doc.update(Edit::DeleteSelection);
-    assert!(sketch(doc).spline(id).unwrap().handles.is_empty());
+    assert!(sketch(doc).spline(id).unwrap().handles().is_empty());
     id
 }
 
@@ -109,14 +109,14 @@ fn the_spline_tool_draws_through_the_points_clicked_until_a_double_click() {
     let [(spline_id, spline)] = &splines(&drawn)[..] else {
         panic!("{drawn:?}");
     };
-    assert_eq!((spline.kind, spline.closed), (SplineKind::Through, false));
+    assert_eq!((spline.kind(), spline.closed), (SplineKind::Through, false));
     assert_eq!(
         places(&drawn, &spline.points),
         [at(0.0, 0.0), at(5.0, 4.0), at(10.0, 1.0)]
     );
     // A handle at each fit point, keeping the shape it'd have without.
-    assert_eq!(spline.handles.len(), 3);
-    for (handle, &point) in spline.handles.iter().zip(&spline.points) {
+    assert_eq!(spline.handles().len(), 3);
+    for (handle, &point) in spline.handles().iter().zip(&spline.points) {
         assert_eq!(handle.at, point);
         let tip = drawn.point(handle.tip).unwrap().at;
         let kept = drawn.handle_tip(*spline_id, point).unwrap();
@@ -198,7 +198,7 @@ fn z_switches_the_spline_tool_to_control_points() {
     let [(id, spline)] = &splines(&drawn)[..] else {
         panic!("{drawn:?}");
     };
-    assert_eq!(spline.kind, SplineKind::Control);
+    assert_eq!(spline.kind(), SplineKind::Control);
     assert_eq!(spline.points.len(), 4);
     // Starting and ending at its first and last control points.
     let geom = drawn.flatten(&drawn.curve(*id).unwrap().curve).unwrap();
@@ -259,13 +259,13 @@ fn handles_come_and_go_by_their_key() {
     let spline = handled.spline(id).unwrap();
     let [first, last] = spline.ends().unwrap();
     assert!(spline.has_handle(first) && spline.has_handle(last));
-    assert_eq!(spline.handles.len(), 5);
+    assert_eq!(spline.handles().len(), 5);
     assert_eq!(undo_to(&mut doc, &before), 1);
     shift_key(&mut doc, "H");
     // And away again, in one step.
     let with = sketch(&doc).clone();
     shift_key(&mut doc, "H");
-    assert!(sketch(&doc).spline(id).unwrap().handles.is_empty());
+    assert!(sketch(&doc).spline(id).unwrap().handles().is_empty());
     assert_eq!(undo_to(&mut doc, &with), 1);
 
     // At a fit point selected, there.
@@ -275,7 +275,7 @@ fn handles_come_and_go_by_their_key() {
     shift_key(&mut doc, "H");
     assert!(sketch(&doc).spline(id).unwrap().has_handle(middle));
     // A tip dragged is any point's drag; deleted, its handle goes.
-    let tip = sketch(&doc).spline(id).unwrap().handles[0].tip;
+    let tip = sketch(&doc).spline(id).unwrap().handles()[0].tip;
     select(&mut doc, tip);
     doc.update(Edit::DeleteSelection);
     assert!(!sketch(&doc).spline(id).unwrap().has_handle(middle));
@@ -370,12 +370,12 @@ fn z_converts_the_splines_selected_and_back() {
     assert!(crate::tests::press_in(&doc, letter("z")).is_none());
     select(&mut doc, id);
     doc.key(letter("z"));
-    assert_eq!(sketch(&doc).spline(id).unwrap().kind, SplineKind::Control);
+    assert_eq!(sketch(&doc).spline(id).unwrap().kind(), SplineKind::Control);
     let converted = sketch(&doc).clone();
     select(&mut doc, id);
     doc.key(letter("z"));
     let back = sketch(&doc).clone();
-    assert_eq!(back.spline(id).unwrap().kind, SplineKind::Through);
+    assert_eq!(back.spline(id).unwrap().kind(), SplineKind::Through);
     // Through its places at its knots, the fit points it had.
     let (was, is) = (
         before.flatten(&before.curve(id).unwrap().curve).unwrap(),
@@ -467,7 +467,7 @@ fn trim_extend_and_offset_take_splines() {
 fn a_handle_is_selected_dragged_constrained_and_deleted_as_a_line() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
-    let handle = sketch(&doc).spline(id).unwrap().handles[1];
+    let handle = sketch(&doc).spline(id).unwrap().handles()[1];
     let line = Selectable::HandleLine(handle.tip);
     let (fit, tip) = (
         sketch(&doc).point(handle.at).unwrap().at,
@@ -515,7 +515,7 @@ fn a_handle_is_selected_dragged_constrained_and_deleted_as_a_line() {
 fn the_dimension_tool_takes_a_handle_as_a_line() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
-    let tip = sketch(&doc).spline(id).unwrap().handles[1].tip;
+    let tip = sketch(&doc).spline(id).unwrap().handles()[1].tip;
     let line = Selectable::HandleLine(tip);
     doc.look(Look::SelectTool(Tool::Dimension));
     doc.update(Edit::ToolClick(ToolClick {
@@ -536,7 +536,7 @@ fn the_dimension_tool_takes_a_handle_as_a_line() {
 fn a_handle_s_end_is_selected_dragged_and_deleted() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
-    let handle = sketch(&doc).spline(id).unwrap().handles[1];
+    let handle = sketch(&doc).spline(id).unwrap().handles()[1];
     let end = Selectable::Item(handle.end);
     let fit = sketch(&doc).point(handle.at).unwrap().at;
     let mirrored = sketch(&doc).point(handle.end).unwrap().at;

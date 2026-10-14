@@ -56,7 +56,7 @@ impl Joint {
         [self.spline, self.other].into_iter().all(|id| {
             sketch
                 .spline(id)
-                .is_none_or(|spline| spline.kind == SplineKind::Control || spline.has_handle(at))
+                .is_none_or(|spline| spline.kind() == SplineKind::Control || spline.has_handle(at))
         })
     }
 }

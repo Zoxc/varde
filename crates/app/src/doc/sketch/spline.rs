@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use varde_sketch::{
     Add, Constraint, Curve, Handle, Id, MAX_SPLINE_POINTS, OutOfIds, Selectable, Sketch,
-    SketchEdit, Spline, SplineKind, control_knots, handle_tips,
+    SketchEdit, Spline, SplineForm, SplineKind, control_knots, handle_tips,
 };
 use varde_view::{Own, Target, Tool, ToolClick};
 
@@ -242,29 +242,29 @@ pub(super) fn spline_add(
         };
         points.push(point);
     }
-    let knots = match kind {
-        SplineKind::Through => Vec::new(),
-        SplineKind::Control => control_knots(&drawing.placed, closed),
-    };
-    // Through fit points, a handle at each, keeping the shape drawn.
-    let mut handles = Vec::new();
-    if kind == SplineKind::Through
-        && let Some(tips) = handle_tips(&drawing.placed, closed)
-    {
-        for ((&at, &from), tip) in points.iter().zip(&drawing.placed).zip(tips) {
-            handles.push(Handle {
-                at,
-                tip: add.point(tip)?,
-                end: add.point(2.0 * from - tip)?,
-            });
+    let form = match kind {
+        SplineKind::Control => SplineForm::Control {
+            knots: control_knots(&drawing.placed, closed),
+        },
+        // Through fit points, a handle at each, keeping the shape drawn.
+        SplineKind::Through => {
+            let mut handles = Vec::new();
+            if let Some(tips) = handle_tips(&drawing.placed, closed) {
+                for ((&at, &from), tip) in points.iter().zip(&drawing.placed).zip(tips) {
+                    handles.push(Handle {
+                        at,
+                        tip: add.point(tip)?,
+                        end: add.point(2.0 * from - tip)?,
+                    });
+                }
+            }
+            SplineForm::Through { handles }
         }
-    }
+    };
     let spline = Spline {
-        kind,
+        form,
         points,
         closed,
-        handles,
-        knots,
     };
     add.curve(Curve::Spline(spline), drawing.construction)?;
     Ok(add)

@@ -177,7 +177,7 @@ pub(crate) fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Optio
 fn handles(sketch: &Sketch, at: DVec2) -> Vec<(Selectable, f64)> {
     let mut found = Vec::new();
     for (_, spline) in sketch.splines() {
-        for handle in &spline.handles {
+        for handle in spline.handles() {
             if let (Some(end), Some(tip)) = (sketch.point(handle.end), sketch.point(handle.tip)) {
                 let distance = segment_distance(at, end.at, tip.at);
                 found.push((Selectable::HandleLine(handle.tip), distance));
@@ -196,7 +196,7 @@ const END_REACH: f64 = 2.0;
 /// `at` is from each.
 fn handle_ends(sketch: &Sketch, at: DVec2) -> Vec<(Selectable, f64)> {
     (sketch.splines())
-        .flat_map(|(_, spline)| spline.handles.iter().flat_map(|handle| handle.arms()))
+        .flat_map(|(_, spline)| spline.handles().iter().flat_map(|handle| handle.arms()))
         .filter_map(|id| Some((id.into(), at.distance(sketch.point(id)?.at))))
         .collect()
 }
