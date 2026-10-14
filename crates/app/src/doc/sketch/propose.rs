@@ -77,7 +77,7 @@ pub(crate) struct Proposals {
     /// [`Doc::send_proposal`].
     asking: bool,
     /// How many MCP client edits were applied: what the user's proposal
-    /// notes as it's made ([`Proposal::made_on`]), to tell a client's
+    /// notes as it's made ([`Origin::User`]), to tell a client's
     /// commit from a relink's amend once the sketch's `next_id` moved.
     client_edits: u64,
 }
@@ -105,7 +105,7 @@ impl Pending {
     /// Whether it's the user's own, not an MCP client's.
     fn users(&self) -> bool {
         match self {
-            Pending::Proposal(proposal) => proposal.client.is_none(),
+            Pending::Proposal(proposal) => matches!(proposal.origin, Origin::User { .. }),
             Pending::Change(_) => true,
             #[cfg(not(target_arch = "wasm32"))]
             Pending::Client { .. } => false,
@@ -136,34 +136,48 @@ struct Proposal {
     /// Whether the edit's dimensions were made references, refused as
     /// driving, which a toast tells once it's committed.
     forced: bool,
-    /// The MCP client's call it's for, by its tag in `Doc::mcp`, if it's
-    /// a client's (`add_link`, `edit_sketch`): shown waiting, as the
-    /// user works on the sketch with it ([`Proposals::waiting`]), but not
-    /// theirs, so passed over by the user's Undo, and committed or refused through the client's
-    /// apply path, answering the call ([`Doc::client_proposal_settled`]).
-    /// Always `None` on the web, which serves no MCP.
-    client: Option<u64>,
-    /// The steps of the MCP client's sketch edit (`edit_sketch`) after
-    /// this one, which go on from its solution, committed together once
-    /// the last is accepted: one undo step.
-    steps: Option<Box<Steps>>,
-    /// The `next_id` of the sketch the user's edit was made on, as they
-    /// worked on it (committed, with what waited applied), and
-    /// [`Proposals::client_edits`] then; `None` for an MCP client's. Its
-    /// ids name what that sketch had, the user's own edits waiting
-    /// before it by the ids they were to get: if the sketch committed
-    /// has gone past it by its turn and a client edit was applied since,
-    /// that edit, queued before it, which they didn't see, took those
-    /// ids. Gone past with none, it was a relink's amend (`relink.rs`,
-    /// new ids for a link's new shape), which names nothing the user's
-    /// edit does: it's proposed on the sketch relinked.
-    made_on: Option<(u32, u64)>,
+    /// Whose edit it is: the user's, or an MCP client's.
+    origin: Origin,
+}
+
+/// Whose a [`Proposal`] is.
+#[derive(Debug, Clone)]
+enum Origin {
+    /// The user's.
+    User {
+        /// The `next_id` of the sketch the edit was made on, as they
+        /// worked on it (committed, with what waited applied), and
+        /// [`Proposals::client_edits`] then. Its ids name what that
+        /// sketch had, the user's own edits waiting before it by the ids
+        /// they were to get: if the sketch committed has gone past it by
+        /// its turn and a client edit was applied since, that edit,
+        /// queued before it, which they didn't see, took those ids. Gone
+        /// past with none, it was a relink's amend (`relink.rs`, new ids
+        /// for a link's new shape), which names nothing the user's edit
+        /// does: it's proposed on the sketch relinked.
+        made_on: (u32, u64),
+    },
+    /// An MCP client's, for its call by its tag in `Doc::mcp`
+    /// (`add_link`, `edit_sketch`): shown waiting, as the user works on
+    /// the sketch with it ([`Proposals::waiting`]), but not theirs, so
+    /// passed over by the user's Undo, and committed or refused through
+    /// the client's apply path, answering the call
+    /// ([`Doc::client_proposal_settled`]). Natively only: the web serves
+    /// no MCP.
+    #[cfg(not(target_arch = "wasm32"))]
+    Client {
+        tag: u64,
+        /// The steps of the client's sketch edit (`edit_sketch`) after
+        /// this one, which go on from its solution, committed together
+        /// once the last is accepted: one undo step.
+        steps: Option<Box<Steps>>,
+    },
 }
 
 impl Proposal {
     /// `edit` of the sketch `feature`, made in `units`, on the sketch
     /// committed, with nothing else to it.
-    fn new(feature: FeatureId, edit: SketchEdit, units: LengthUnit) -> Self {
+    fn new(feature: FeatureId, edit: SketchEdit, units: LengthUnit, origin: Origin) -> Self {
         Proposal {
             feature,
             edit,
@@ -172,9 +186,35 @@ impl Proposal {
             source: None,
             probe: None,
             forced: false,
-            client: None,
-            steps: None,
-            made_on: None,
+            origin,
+        }
+    }
+
+    /// The tag of the MCP client's call it's for, if it's a client's.
+    fn client(&self) -> Option<u64> {
+        match &self.origin {
+            #[cfg(not(target_arch = "wasm32"))]
+            Origin::Client { tag, .. } => Some(*tag),
+            _ => None,
+        }
+    }
+
+    /// The steps of the MCP client's sketch edit after this one, if it's
+    /// one of those.
+    fn steps(&self) -> Option<&Steps> {
+        match &self.origin {
+            #[cfg(not(target_arch = "wasm32"))]
+            Origin::Client { steps, .. } => steps.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// [`Proposal::steps`], to change.
+    fn steps_mut(&mut self) -> Option<&mut Steps> {
+        match &mut self.origin {
+            #[cfg(not(target_arch = "wasm32"))]
+            Origin::Client { steps, .. } => steps.as_deref_mut(),
+            _ => None,
         }
     }
 
@@ -183,7 +223,7 @@ impl Proposal {
     /// at its revision or the steps it's one of go on from it.
     fn base(&self, committed: &Sketch, revision: Revision) -> Option<&Arc<Sketch>> {
         let (at, from) = self.from.as_ref()?;
-        let going_on = || (self.steps.as_ref()).is_some_and(|steps| steps.going_on(committed));
+        let going_on = || self.steps().is_some_and(|steps| steps.going_on(committed));
         (*at == revision || going_on()).then_some(from)
     }
 }
@@ -203,7 +243,8 @@ pub(crate) struct Step {
     pub(crate) measured: Option<bool>,
 }
 
-/// Where the MCP client's sketch edit in steps is ([`Proposal::steps`]).
+/// Where the MCP client's sketch edit in steps is ([`Origin::Client`]'s
+/// `steps`).
 #[derive(Debug, Clone)]
 struct Steps {
     /// The operations the step proposed was made from.
@@ -368,7 +409,7 @@ impl Proposals {
 
     /// Whether the proposal with the lane is the user's own.
     fn users_in_flight(&self) -> bool {
-        (self.in_flight.as_ref()).is_some_and(|(_, proposal)| proposal.client.is_none())
+        (self.in_flight.as_ref()).is_some_and(|(_, proposal)| proposal.client().is_none())
     }
 
     /// Has `change` wait behind the proposals waiting.
@@ -425,14 +466,12 @@ impl Proposals {
         let before = self.queued.len();
         self.queued.retain(|pending| match pending {
             Pending::Client { tag, .. } => kept(*tag),
-            Pending::Proposal(Proposal {
-                client: Some(tag), ..
-            }) => kept(*tag),
+            Pending::Proposal(proposal) => proposal.client().is_none_or(&kept),
             _ => true,
         });
         let mut went = self.queued.len() != before;
         let ended = (self.in_flight.as_ref())
-            .and_then(|(_, proposal)| proposal.client)
+            .and_then(|(_, proposal)| proposal.client())
             .is_some_and(|tag| !kept(tag));
         if ended {
             self.drop_in_flight();
@@ -455,11 +494,25 @@ impl Proposals {
         source: Option<OutsideRef>,
         units: LengthUnit,
     ) {
+        self.propose_client_with(tag, feature, edit, source, units, None);
+    }
+
+    /// [`Proposals::propose_client`], with the `steps` after it, if any.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn propose_client_with(
+        &mut self,
+        tag: u64,
+        feature: FeatureId,
+        edit: SketchEdit,
+        source: Option<OutsideRef>,
+        units: LengthUnit,
+        steps: Option<Box<Steps>>,
+    ) {
         self.start_timing();
+        let origin = Origin::Client { tag, steps };
         self.queued.push_front(Pending::Proposal(Proposal {
             source,
-            client: Some(tag),
-            ..Proposal::new(feature, edit, units)
+            ..Proposal::new(feature, edit, units, origin)
         }));
     }
 
@@ -482,18 +535,16 @@ impl Proposals {
         let Some(first) = rest.pop_front() else {
             return;
         };
-        self.propose_client(tag, feature, first.edit, None, units);
-        if let Some(Pending::Proposal(proposal)) = self.queued.front_mut() {
-            proposal.steps = Some(Box::new(Steps {
-                ops: first.ops,
-                measured: first.measured,
-                rest,
-                referenced: Vec::new(),
-                next_id,
-                on: None,
-                later: false,
-            }));
-        }
+        let steps = Box::new(Steps {
+            ops: first.ops,
+            measured: first.measured,
+            rest,
+            referenced: Vec::new(),
+            next_id,
+            on: None,
+            later: false,
+        });
+        self.propose_client_with(tag, feature, first.edit, None, units, Some(steps));
     }
 
     /// Starts timing the wait, unless something is waiting already: for
@@ -568,18 +619,18 @@ impl Analyses {
 /// The next step of the MCP client's sketch edit in steps `proposal`,
 /// accepted on `base` as `sketch`: proposed on that, if there's one.
 fn next_step(proposal: &Proposal, base: Revision, sketch: &Arc<Sketch>) -> Option<Proposal> {
-    let mut steps = proposal.steps.clone()?;
+    // Cloned only for a step to come.
+    proposal.steps()?.rest.front()?;
+    let mut next = proposal.clone();
+    let steps = next.steps_mut()?;
     let step = steps.rest.pop_front()?;
     steps.ops = step.ops;
     steps.measured = step.measured;
     steps.later = true;
-    Some(Proposal {
-        edit: step.edit,
-        from: Some((base, sketch.clone())),
-        forced: false,
-        steps: Some(steps),
-        ..proposal.clone()
-    })
+    next.edit = step.edit;
+    next.from = Some((base, sketch.clone()));
+    next.forced = false;
+    Some(next)
 }
 
 /// `edit`, a step of the MCP client's edit placing dimensions, with
@@ -631,7 +682,7 @@ fn applied<'a>(
             }
             sketch = next;
         }
-        let rest = proposal.steps.iter().flat_map(|steps| &steps.rest);
+        let rest = proposal.steps().into_iter().flat_map(|steps| &steps.rest);
         for step in rest {
             if let Ok(next) = step.edit.apply(&sketch, &design) {
                 sketch = next;
@@ -725,13 +776,15 @@ impl Doc {
         let feature = session.feature;
         let units = self.editor.document().units();
         let proposals = &mut self.proposals;
+        let origin = Origin::User {
+            made_on: (made_on, proposals.client_edits),
+        };
         proposals.start_timing();
         proposals.queued.push_back(Pending::Proposal(Proposal {
             from,
             source,
             probe,
-            made_on: Some((made_on, proposals.client_edits)),
-            ..Proposal::new(feature, edit, units)
+            ..Proposal::new(feature, edit, units, origin)
         }));
         self.send_proposal();
         self.refresh_waiting();
@@ -779,15 +832,15 @@ impl Doc {
             let sketch = match sketch_of(self.editor.document(), proposal.feature) {
                 None => Err(SKETCH_GONE),
                 Some(committed)
-                    if (proposal.steps.as_ref())
+                    if proposal
+                        .steps()
                         .is_some_and(|steps| steps.changed(committed, &proposal.from)) =>
                 {
                     Err(SKETCH_CHANGED)
                 }
                 Some(committed)
-                    if proposal.made_on.is_some_and(|(made, edits)| {
-                        committed.next_id > made && self.proposals.client_edits != edits
-                    }) =>
+                    if matches!(proposal.origin, Origin::User { made_on: (made, edits) }
+                        if committed.next_id > made && self.proposals.client_edits != edits) =>
                 {
                     Err(TAKEN_BY_CLIENT)
                 }
@@ -799,7 +852,7 @@ impl Doc {
                 // The client's call says so; the user's sketch is gone
                 // from under them, which they see.
                 Err(why) => {
-                    if let Some(tag) = proposal.client {
+                    if let Some(tag) = proposal.client() {
                         self.client_proposal_settled(tag, Err(why.to_owned()));
                     } else if why == TAKEN_BY_CLIENT {
                         self.refused(proposal.feature, Refusal::Failed(why.to_owned()));
@@ -808,10 +861,10 @@ impl Doc {
                 }
             };
             let mut proposal = proposal;
-            if let Some(steps) = proposal.steps.as_mut().filter(|steps| !steps.later) {
+            if let Some(steps) = proposal.steps_mut().filter(|steps| !steps.later) {
                 steps.on = Some(sketch.clone());
             }
-            if let Some(measured) = proposal.steps.as_ref().and_then(|steps| steps.measured) {
+            if let Some(measured) = proposal.steps().and_then(|steps| steps.measured) {
                 let design = Design {
                     units: proposal.units,
                     ..self.editor.document().design()
@@ -987,7 +1040,7 @@ impl Doc {
             // A dimension placed that over-constrains the sketch is placed
             // as a reference instead, as the refusal would suggest; the
             // MCP client's call says which operations.
-            if let Some(steps) = &mut reference.steps {
+            if let Some(steps) = reference.steps_mut() {
                 let (first, last) = steps.ops;
                 steps.referenced.extend(first..=last);
             }
@@ -1004,14 +1057,15 @@ impl Doc {
         }
         // The client's commits through its apply path, or answers its call
         // why not: never the session's refusal, the banner or a toast.
-        if let Some(tag) = proposal.client {
-            let said = |why: String| match &proposal.steps {
+        if let Some(tag) = proposal.client() {
+            let said = |why: String| match proposal.steps() {
                 Some(steps) => format!("{}: {why}", steps.said()),
                 None => why,
             };
             let settled = match answer {
                 Answer::Accepted(sketch, analysis) => Ok(Settled {
-                    referenced: (proposal.steps.as_ref())
+                    referenced: proposal
+                        .steps()
                         .map(|steps| steps.referenced.clone())
                         .unwrap_or_default(),
                     command: self.committing(&proposal, sketch),

@@ -990,8 +990,8 @@ here in `mcp/design.rs`):
   (`edit::plan`; the other tools are `Plan::Apply`, `commands`), so
   `client_edit_now`, after `clear_for_client`, hands it to
   `Doc::client_propose`: the call waits as `Wait::Solving` and
-  `Proposals::propose_client` puts a client `Proposal` (`client:
-  Some(tag)`) first in the queue (it's at its turn), then
+  `Proposals::propose_client` puts a client `Proposal` (`Origin::Client`)
+  first in the queue (it's at its turn), then
   `send_proposal` sends it. See "Sketch edits through the solver" below.
   Its result (`Made::Link`): the sketch's as `sketch_made` gives it
   (name, id and plane, as `add_sketch`'s and `edit_sketch`'s), the
@@ -1141,8 +1141,9 @@ here in `mcp/design.rs`):
   mode back from what it stores.
 
 **Sketch edits through the solver** (`add_link`, `edit_sketch`). A
-`Proposal` carries `client: Option<u64>`, its call's tag (always `None`
-on the web). A client's proposal, once made at its turn, is shown
+`Proposal`'s `origin` says whose it is: `Origin::User`, or
+`Origin::Client` with its call's tag (natively only: the web has no
+such variant). A client's proposal, once made at its turn, is shown
 waiting as the user's are (`Proposals::waiting`, which
 `refresh_waiting` and `sketch_as_queued` read), so the user drawing
 in the sketch behind it builds on its items rather than naming, by
@@ -1150,7 +1151,7 @@ the ids they were to get, what its commit takes first; a user's edit
 made while the client's was still `Pending::Client` (unseen) is
 refused at its turn if the committed sketch's `next_id` went past the
 one it was made on and a client edit was applied since
-(`Proposal::made_on`, `Proposals::client_edits`, `TAKEN_BY_CLIENT`; a
+(`Origin::User`'s `made_on`, `Proposals::client_edits`, `TAKEN_BY_CLIENT`; a
 relink's amend alone moves `next_id` too, and refuses nothing). It isn't
 the user's (`Pending::users`, `Proposals::users_in_flight`): Undo and
 Redo go to the queue only for the user's, and `drop_newest` never drops
@@ -1178,7 +1179,7 @@ it with the queued ones (`mcp_end_queued`). The user may open the sketch
 while it waits: it commits under them then, as a link's relinking does.
 
 An `edit_sketch` goes in steps (`Proposals::propose_steps`): the
-client `Proposal` carries `steps` (`Steps`: the steps after it, the
+client `Proposal` carries `steps` in its `Origin::Client` (`Steps`: the steps after it, the
 operations of the one proposed, those whose dimensions became
 references, and the sketch's `next_id` they were made on). Accepted,
 `proposal_settled` proposes the next first in the queue on the
