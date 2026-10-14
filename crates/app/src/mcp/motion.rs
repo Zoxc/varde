@@ -20,7 +20,7 @@
 use varde_document::{Axis3, Command};
 use varde_mcp::tools::{self, FeatureTool, Item, ItemKind, Reference, WorldAxis};
 use varde_view::{
-    AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode, ScaleMode,
+    AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode,
 };
 
 use super::args::{
@@ -28,7 +28,7 @@ use super::args::{
     typed_given,
 };
 use super::edit::{Made, Refused};
-use super::words::{origin_plane, pattern_mode, world_axis};
+use super::words::{origin_plane, pattern_mode, scale_mode, world_axis};
 use crate::doc::{Doc, MotionSession};
 
 /// The commands `move_body` makes on `doc`'s design, and what it's to
@@ -457,13 +457,4 @@ fn align_origin(
         said,
         "the origin and its axes can only be what it's aligned to, in to",
     ))
-}
-
-/// The panel's scale mode for the tools' `mode`.
-fn scale_mode(mode: tools::ScaleMode) -> ScaleMode {
-    match mode {
-        tools::ScaleMode::Uniform => ScaleMode::Uniform,
-        tools::ScaleMode::PerAxis => ScaleMode::PerAxis,
-        tools::ScaleMode::EdgeLength => ScaleMode::EdgeLength,
-    }
 }

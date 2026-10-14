@@ -236,13 +236,9 @@ impl<'a> Shape<'a> {
         let session = ExtrudeSession::editing_for_client(self.document, id, extrude);
         said.put("sketch", self.feature_name(extrude.sketch));
         said.put("profiles", self.regions(extrude.sketch, &extrude.regions));
-        let (word, distances) = match &extrude.extent {
-            varde_document::Extent::OneSide(_) => (tools::ExtrudeExtent::OneSide, 1),
-            varde_document::Extent::Symmetric(_) => (tools::ExtrudeExtent::Symmetric, 1),
-            varde_document::Extent::TwoSides(..) => (tools::ExtrudeExtent::TwoSides, 2),
-            varde_document::Extent::ThroughAll => (tools::ExtrudeExtent::ThroughAll, 0),
-        };
+        let word = words::extrude_extent_word(session.extent);
         said.put("extent", json!(word.word()));
+        let distances = session.extent.distances().len();
         if distances >= 1 {
             said.put("distance", json!(session.sides.fields[0].text));
         }
@@ -265,13 +261,9 @@ impl<'a> Shape<'a> {
             AxisLine::Edge(edge) => self.edge(edge),
         };
         said.put("axis", axis);
-        let (word, angles) = match &revolve.extent {
-            varde_document::Turn::Full => (tools::RevolveExtent::Full, 0),
-            varde_document::Turn::OneSide(_) => (tools::RevolveExtent::OneSide, 1),
-            varde_document::Turn::Symmetric(_) => (tools::RevolveExtent::Symmetric, 1),
-            varde_document::Turn::TwoSides(..) => (tools::RevolveExtent::TwoSides, 2),
-        };
+        let word = words::revolve_extent_word(session.extent);
         said.put("extent", json!(word.word()));
+        let angles = session.extent.angles().len();
         if angles >= 1 {
             said.put("angle", json!(session.sides.fields[0].text));
         }
@@ -340,13 +332,13 @@ impl<'a> Shape<'a> {
     fn scale(&self, said: &mut Said, session: &MotionSession, scale: &varde_document::Scale) {
         said.put("bodies", self.bodies(&scale.bodies));
         said.put("point", self.point(&scale.about));
+        let mode = words::scale_mode_word(session.scale.mode);
+        said.put("mode", json!(mode.word()));
         match &scale.factor {
             ScaleFactor::Uniform(_) => {
-                said.put("mode", json!(tools::ScaleMode::Uniform.word()));
                 said.put("factor", text(session, MotionField::Factor));
             }
             ScaleFactor::PerAxis(_) => {
-                said.put("mode", json!(tools::ScaleMode::PerAxis.word()));
                 for (key, axis) in ["x", "y", "z"].into_iter().zip(varde_document::Axis3::ALL) {
                     said.put(key, text(session, MotionField::AxisFactor(axis)));
                 }
@@ -354,7 +346,6 @@ impl<'a> Shape<'a> {
             ScaleFactor::EdgeLength {
                 edge, axis_only, ..
             } => {
-                said.put("mode", json!(tools::ScaleMode::EdgeLength.word()));
                 said.put("edge", self.edge_key(edge));
                 said.put("length", text(session, MotionField::Length));
                 said.put("axis_only", json!(axis_only));
@@ -393,11 +384,7 @@ impl<'a> Shape<'a> {
         }
         said.put("faces", self.face_keys(&shell.open));
         said.put("thickness", text(session, MotionField::Thickness));
-        let direction = if shell.outward {
-            tools::ShellDirection::Outward
-        } else {
-            tools::ShellDirection::Inward
-        };
+        let direction = words::shell_direction_word(session.direction);
         said.put("direction", json!(direction.word()));
     }
 

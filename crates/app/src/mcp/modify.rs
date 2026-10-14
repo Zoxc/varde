@@ -13,7 +13,7 @@
 
 use varde_document::{Command, Keep, MAX_EXTRUDE_REGIONS};
 use varde_mcp::tools::{self, FeatureTool, Reference, SplitWith};
-use varde_view::{MotionField, MotionKind, MotionPick, ShellDirection, SplitMode};
+use varde_view::{MotionField, MotionKind, MotionPick, SplitMode};
 
 use super::args::{
     Given, SET_FEATURE, Wrong, by_key, committed_marks, curve_in, faces, faces_given, failed,
@@ -21,7 +21,7 @@ use super::args::{
     typed_given,
 };
 use super::edit::{Made, Refused};
-use super::words::{origin_plane, split_keep, split_side};
+use super::words::{origin_plane, shell_direction, split_keep, split_side};
 use crate::doc::{Doc, MotionSession, RegionPick};
 
 /// The commands `split` makes on `doc`'s design, and what it's to make:
@@ -196,10 +196,7 @@ pub(super) fn set_shell(
         "thickness",
     )?;
     if given.has("direction") {
-        session.direction = match args.direction {
-            tools::ShellDirection::Inward => ShellDirection::Inward,
-            tools::ShellDirection::Outward => ShellDirection::Outward,
-        };
+        session.direction = shell_direction(args.direction);
     }
     Ok(())
 }

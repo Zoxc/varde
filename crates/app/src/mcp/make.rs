@@ -14,8 +14,8 @@
 //! ([`Profiles::region_at`](varde_sketch::Profiles::region_at)).
 
 use varde_document::{AxisLine, Command, FeatureId};
-use varde_mcp::tools::{self, Axis, ExtrudeExtent, FeatureTool, RevolveExtent};
-use varde_view::{Angle, Distance, ExtentKind, OperationKind, TurnKind};
+use varde_mcp::tools::{self, Axis, FeatureTool};
+use varde_view::{Angle, Distance, ExtentKind, OperationKind};
 
 use super::args::Wrong;
 use super::args::{
@@ -23,7 +23,7 @@ use super::args::{
     sketch_before, tool_for,
 };
 use super::edit::{Made, Refused};
-use super::words::{body_op, operation};
+use super::words::{body_op, extrude_extent, operation, revolve_extent};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, RevolveSession, sketch_of};
 
 /// Refuses, editing an extrude or revolve, a value given that its
@@ -96,16 +96,8 @@ pub(super) fn set_extrude(
         }
         session.set_operation(operation);
     }
-    if given.has("extent") {
-        let extent = match args.extent {
-            ExtrudeExtent::OneSide => ExtentKind::OneSide,
-            ExtrudeExtent::Symmetric => ExtentKind::Symmetric,
-            ExtrudeExtent::TwoSides => ExtentKind::TwoSides,
-            ExtrudeExtent::ThroughAll => ExtentKind::ThroughAll,
-        };
-        if !session.set_extent(extent) {
-            return Err(Wrong::Said(THROUGH_ALL_CUT.to_owned()));
-        }
+    if given.has("extent") && !session.set_extent(extrude_extent(args.extent)) {
+        return Err(Wrong::Said(THROUGH_ALL_CUT.to_owned()));
     }
     if edited.is_some() {
         let shows = session.extent.distances();
@@ -196,12 +188,7 @@ pub(super) fn set_revolve(
         axis(doc, session, sketch, &args.axis)?;
     }
     if given.has("extent") {
-        session.extent = match args.extent {
-            RevolveExtent::Full => TurnKind::Full,
-            RevolveExtent::OneSide => TurnKind::OneSide,
-            RevolveExtent::Symmetric => TurnKind::Symmetric,
-            RevolveExtent::TwoSides => TurnKind::TwoSides,
-        };
+        session.extent = revolve_extent(args.extent);
     }
     if edited.is_some() {
         let shows = session.extent.angles();

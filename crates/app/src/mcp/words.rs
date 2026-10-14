@@ -5,10 +5,11 @@
 
 use varde_document::{Axis3, BodyOp, Keep, LoftMode, OriginPlane, Side};
 use varde_mcp::tools::{
-    BodyOp as BodyOpWord, LoftMode as LoftModeWord, Operation as OperationWord,
-    PatternMode as PatternModeWord, SplitKeep, SplitSide, WorldAxis, WorldPlane,
+    BodyOp as BodyOpWord, ExtrudeExtent, LoftMode as LoftModeWord, Operation as OperationWord,
+    PatternMode as PatternModeWord, RevolveExtent, ScaleMode as ScaleModeWord,
+    ShellDirection as ShellDirectionWord, SplitKeep, SplitSide, WorldAxis, WorldPlane,
 };
-use varde_view::{OperationKind, PatternMode};
+use varde_view::{ExtentKind, OperationKind, PatternMode, ScaleMode, ShellDirection, TurnKind};
 
 mirror! {
     pub(super) fn origin_plane(WorldPlane) -> OriginPlane / pub(super) fn plane_word {
@@ -34,5 +35,18 @@ mirror! {
     }
     pub(super) fn loft_mode(LoftModeWord) -> LoftMode / pub(super) fn loft_mode_word {
         Smooth = Smooth, Ruled = Ruled,
+    }
+    pub(super) fn extrude_extent(ExtrudeExtent) -> ExtentKind / pub(super) fn extrude_extent_word {
+        OneSide = OneSide, Symmetric = Symmetric, TwoSides = TwoSides, ThroughAll = ThroughAll,
+    }
+    pub(super) fn revolve_extent(RevolveExtent) -> TurnKind / pub(super) fn revolve_extent_word {
+        Full = Full, OneSide = OneSide, Symmetric = Symmetric, TwoSides = TwoSides,
+    }
+    pub(super) fn shell_direction(ShellDirectionWord) -> ShellDirection
+        / pub(super) fn shell_direction_word {
+        Inward = Inward, Outward = Outward,
+    }
+    pub(super) fn scale_mode(ScaleModeWord) -> ScaleMode / pub(super) fn scale_mode_word {
+        Uniform = Uniform, PerAxis = PerAxis, EdgeLength = EdgeLength,
     }
 }
