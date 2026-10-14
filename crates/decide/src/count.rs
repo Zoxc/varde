@@ -12,9 +12,12 @@
 //! and the edge's ray record between them, the corner pieces likewise,
 //! and where an edge's crossing in a corner piece is placed; and [`s02`],
 //! a face's layers above or below a point, from its pieces refined until
-//! height-clear and, near the point, its layers' height records.
+//! height-clear and, near the point, its layers' height records; and
+//! [`cross`], the edge–face crossing counts `x12`, `x21` from those and
+//! the edge pairs' `s11` by identity.
 
 pub mod boxes;
+pub mod cross;
 pub mod degree;
 pub mod pieces;
 pub mod s02;
