@@ -517,6 +517,18 @@ pub fn layer_height<S: Curved>(
     }))
 }
 
+/// The point–face height key's value, curved: `n_f·(x_h − q)·sign(n_f·ê)`
+/// with `n_f` the unit normal at the hit `x_h` of `q`'s column on the face
+/// (from `normal`, any positive multiple, oriented as the face): the
+/// face's height above `q`, a length, positive where the face is above
+/// whichever way it faces. `None` when the facing `sign(n_f·ê)` isn't
+/// certified: the in-face fold rule decides instead. Flat, the value is
+/// [`PlaneHeight`]'s.
+pub fn face_height<S: Curved>(normal: &[S; 3], hit: &[S; 3], q: &[S; 3]) -> Option<S> {
+    let n = oriented(unit3(normal), &q[0])?;
+    Some(dot3(&n, &sub3(hit, q)))
+}
+
 /// The edge–edge z-order row, curved: `m·(C_g − C_e)` and its orders
 /// `m·(Δg − Δe)`, `m = unit(T_e × T_g)` oriented `m·ê > 0`, at the
 /// crossing's points `e` (on the edge of `A`) and `g` (on the anchor edge

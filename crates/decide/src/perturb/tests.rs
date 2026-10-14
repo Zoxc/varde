@@ -780,6 +780,54 @@ fn flat_rows_decide_ties_by_the_first_motion_that_moves_them() {
     );
 }
 
+/// The point–face height key's value on random rational patches: `q` at
+/// height `h` below the hit along the unit `UP` reads `h·|n̂·ê|`, positive
+/// with the face above whichever way it faces (the patch flipped gives the
+/// same), and the flat row on the tangent plane has the same sign.
+#[test]
+fn face_height_is_the_height_above_whichever_way_the_face_faces() {
+    for seed in varde_testing::seeds(6, 64) {
+        let mut r = Rng::new(seed);
+        let net = random_patch(&mut r);
+        let face = patch(&net, |x| x.clone());
+        let uv = [big(r.range(0.3, 0.7)), big(r.range(0.3, 0.7))];
+        let (hit, normal) = patch_point(&face, &uv[0], &uv[1]);
+        let h = big(r.int(3) * 0.25);
+        let q = sub3(&hit, &scale3(&up(), &h));
+        let got = face_height(&normal, &hit, &q).expect("a facing");
+        let flipped = normal.clone().map(|x| x.neg());
+        assert_eq!(face_height(&flipped, &hit, &q), Some(got.clone()));
+        let facing = dot3(&unit3(&normal), &up()).abs();
+        let want = h.mul(&facing);
+        let diff = f(&got.sub(&want)).abs();
+        assert!(
+            diff <= 1e-60 * (1.0 + f(&want).abs()),
+            "seed {seed}: {diff:e}"
+        );
+        // The flat row on the tangent plane at the hit, rounded to `f64`:
+        // a positive multiple of the same value, so of its sign.
+        let fl = |p: &[B; 3]| DVec3::new(f(&p[0]), f(&p[1]), f(&p[2]));
+        let (n, at, qf) = (fl(&normal), fl(&hit), fl(&hit) - UP * (r.int(3) * 0.25));
+        let flat = PlaneHeight {
+            normal: n,
+            offset: n.dot(at),
+            rates: [Rate::ZERO; ORDERS],
+            q: Moving::fixed(qf),
+        };
+        let curved = face_height(&v3(n), &v3(at), &v3(qf)).expect("a facing");
+        let offset_exact = Q::try_from(n.dot(at)).unwrap() == q3dot(n, at);
+        if offset_exact && let Some(s) = curved.sign() {
+            assert_eq!(value(&flat).cmp(&Q::from(0u32)), s, "seed {seed}");
+        }
+    }
+}
+
+/// `n·a` exactly.
+fn q3dot(n: DVec3, a: DVec3) -> Q {
+    let q = |x: f64| Q::try_from(x).unwrap();
+    q(n.x) * q(a.x) + q(n.y) * q(a.y) + q(n.z) * q(a.z)
+}
+
 /// A curved row has no answer where its orientation isn't certified: a
 /// face seen edge-on, shadows parallel.
 #[test]
@@ -789,6 +837,7 @@ fn curved_rows_refuse_an_uncertified_orientation() {
     let edge_on = lit3(UP.cross(DVec3::X), &z);
     let rates = MovingAt::fixed([z; 3]).rates;
     assert_eq!(layer_height(&edge_on, &rates, &at), None);
+    assert_eq!(face_height(&edge_on, &at.at, &at.at), None);
     let t = lit3(DVec3::X, &z);
     assert_eq!(z_order(&at, &t, &at, &t), None);
     // A tangent along `UP` has no shadow normal: uncertified, never a sign.
@@ -1256,4 +1305,34 @@ fn curved_rows_stay_sound_near_degenerate_data() {
             meets(&third[i], w, &what);
         }
     }
+}
+
+/// The face key's value where the facing has no certified sign: a zero
+/// normal (a degenerate point of the patch), an edge-on normal held with
+/// `−0` components, and one tilted below what the level certifies give no
+/// value, never a height of either sign.
+#[test]
+fn face_height_refuses_degenerate_and_edge_on_normals() {
+    let z = Bounded::exact(0.0);
+    let q = lit3(DVec3::ZERO, &z);
+    let hit = lit3(UP, &z);
+    assert_eq!(face_height(&[z; 3], &hit, &q), None);
+    let nz = Bounded::exact(-0.0);
+    let edge_on = lit3(UP.cross(DVec3::X), &z).map(|x| {
+        if x.sign() == Some(Ordering::Equal) {
+            nz
+        } else {
+            x
+        }
+    });
+    assert_eq!(face_height(&edge_on, &hit, &q), None);
+    let zb = big(0.0);
+    assert_eq!(
+        face_height(
+            &[zb.clone(), zb.clone(), zb.clone()],
+            &v3(UP),
+            &v3(DVec3::ZERO)
+        ),
+        None
+    );
 }

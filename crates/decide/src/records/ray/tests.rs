@@ -10,7 +10,8 @@
 //! sum to its winding number, which a ray in another direction counts
 //! too; an edge stored the other way reads its records negated; each
 //! record decided once, replayed alike; a tie no level reaches the target
-//! of escalates past the last level.
+//! of escalates past the last level; the height keys read through the
+//! decided tables.
 
 use std::collections::BTreeMap;
 
@@ -1169,3 +1170,73 @@ fn a_span_end_off_its_vertex_or_knot_is_refused() {
 }
 
 mod chains;
+
+/// The geometric order of [`Geom`]'s edges: positions only, no face keys.
+impl crate::records::height::EntityOrder for Geom {
+    type Key = ();
+
+    fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
+        self.edges[&(operand, g)].0
+    }
+
+    fn vert_key(&self, operand: Operand, v: VertId) -> crate::order::VertKey<()> {
+        let p = self.pos[&Point::vert(operand, v)];
+        crate::order::VertKey::new(p.to_array(), []).expect("no NaN")
+    }
+
+    fn edge_key(&self, operand: Operand, g: EdgeId) -> crate::order::EdgeKey<()> {
+        let (ends, spans) = &self.edges[&(operand, g)];
+        let mid = middle(&spans[spans.len() / 2]).to_array();
+        let ends = ends.map(|v| self.vert_key(operand, v));
+        crate::order::EdgeKey::new(ends, mid, [(), ()]).expect("no NaN")
+    }
+}
+
+/// The height keys read through the decided tables: a point near one end
+/// of an arc reads that end's vertex key for its foot on the arc, and for
+/// a layer whose feature is the foot; the tables' reads are the stored
+/// records.
+#[test]
+fn height_keys_read_the_decided_tables() {
+    use crate::records::feet::NearFeet;
+    use crate::records::height::{
+        Feature, HeightReads, LayerPieces, LayerTable, Records, height_key,
+    };
+    use crate::records::keys::{FootId, HKey, LayerId, Target};
+
+    let mut g = Geom::with(DIRECTIONS[0], Sign::Pos);
+    g.r_g = 0.125;
+    let spans = circle(lat(0.0, 0.0, 0.0), 1.0, 4, 0.25);
+    let e = g.edge(B, 0, 0, 1, &spans[..2]);
+    let start = point_of(&spans[0][0]);
+    let q = g.query(A, 9, start + DVec3::new(0.03125, 0.0, 0.0625));
+    let (mut r, mut s) = (CurvedRays::new(), Shadows::new());
+    let keys: Vec<SpanKey> = (0..2).map(|span| SpanKey { q, g: e, span }).collect();
+    r.fill(keys, &mut s, &g, band(), &mut Seq::default())
+        .expect("decided");
+    let mut feet = NearFeet::new();
+    feet.fill([RayKey { q, g: e }], &g, &mut Seq::default())
+        .expect("decided");
+    let reads = Records {
+        shadows: &s,
+        feet: &feet,
+        order: &g,
+    };
+    let [v0, v1] = [VertId(0), VertId(1)];
+    assert_eq!(reads.vv(q, v0), s.vv(q, v0));
+    assert!(reads.vv(q, v0).expect("decided").near);
+    assert!(!reads.vv(q, v1).expect("decided").near);
+    assert_eq!(reads.feet(q, e), feet.get(q, e));
+    let k = FootId(0);
+    let want = HKey::vv(q, v0);
+    let mut layers = LayerTable::new();
+    assert_eq!(height_key(&reads, &layers, q, Target::Edge(e, k)), Ok(want));
+    let mut pieces = LayerPieces::new();
+    pieces.piece([Feature::Foot(e, k)], None);
+    let f = crate::ids::FaceId(3);
+    layers.insert(q, f, pieces.layers(&reads, q, f).expect("layers"));
+    assert_eq!(
+        height_key(&reads, &layers, q, Target::Layer(f, LayerId(0))),
+        Ok(want)
+    );
+}
