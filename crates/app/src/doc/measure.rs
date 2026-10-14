@@ -17,7 +17,7 @@
 //! the new model. One the new model doesn't have is shown as not found,
 //! and kept, so an undo finds it again.
 
-use super::pick::CachedHighlight;
+use super::pick::{CachedHighlight, CursorOwner};
 use std::sync::Arc;
 
 use varde_document::BodyId;
@@ -230,11 +230,8 @@ impl Doc {
     /// every draft, and leave the model shown not answering what was
     /// asked last, which their picks wait for.
     pub(crate) fn selection_inspect(&self) -> Option<(InspectPick, Option<InspectPick>)> {
-        if !self.picks()
-            || self.mode.sketch().is_some()
-            || self.mode.measure().is_some()
-            || self.operating()
-            || self.mode.picking_plane().is_some()
+        if self.cursor_owner() != CursorOwner::Selection
+            || !self.picks()
             || self.selected_feature.is_some()
         {
             return None;

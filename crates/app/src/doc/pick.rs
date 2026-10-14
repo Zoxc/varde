@@ -17,7 +17,7 @@ use varde_view::{
     Pick, Picked, Picks, Selection, Shown, SketchItem, SketchLines,
 };
 
-use super::{Doc, MotionSession};
+use super::{Doc, DocMode, MotionSession};
 
 /// A highlight built when what it's of changes, so the renderer uploads
 /// it only then: of the model `built` names, from what its key holds.
@@ -61,6 +61,30 @@ impl<K: PartialEq> CachedHighlight<K> {
         let current = (self.built.as_ref()).is_some_and(|(built, _)| *built == model);
         Some(&self.highlight).filter(|highlight| current && !highlight.is_empty())
     }
+}
+
+/// Who the cursor picks the model for, decided once from the
+/// document's mode ([`Doc::cursor_owner`]), so every place that asks
+/// agrees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CursorOwner {
+    /// The model's selection: no sketch, session or tool is open.
+    Selection,
+    /// The plane picked for a sketch.
+    PlanePick,
+    /// The sketch being edited, which picks its own items.
+    Sketch,
+    /// The Project or Intersect tool of the sketch being edited, which
+    /// picks outside it.
+    Outside,
+    /// The extrude or revolve being set up, which picks on its panel.
+    Panel,
+    /// The combine being set up.
+    Combine,
+    /// The motion kind being set up.
+    Motion,
+    /// The measure tool.
+    Measure,
 }
 
 /// What's hovered and selected in the model shown, and its highlight.
@@ -136,11 +160,30 @@ impl Doc {
     /// a combine's draft makes no body, so the bodies its model has are
     /// the document's.
     pub(crate) fn picks(&self) -> bool {
-        let combining = self.mode.combine().is_some() || self.mode.motion().is_some();
-        (self.picks_outside()
-            || (self.mode.sketch().is_none()
-                && (combining || (!self.operating() && !self.feed.shows_draft()))))
-            && !self.feed.predates_replacement()
+        let owned = match self.cursor_owner() {
+            CursorOwner::Outside | CursorOwner::Combine | CursorOwner::Motion => true,
+            CursorOwner::Sketch | CursorOwner::Panel => false,
+            CursorOwner::Selection | CursorOwner::PlanePick | CursorOwner::Measure => {
+                !self.feed.shows_draft()
+            }
+        };
+        owned && !self.feed.predates_replacement()
+    }
+
+    /// Who the cursor picks the model for, by the document's mode.
+    pub(crate) fn cursor_owner(&self) -> CursorOwner {
+        match &self.mode {
+            DocMode::Idle => CursorOwner::Selection,
+            DocMode::PickingPlane(_) => CursorOwner::PlanePick,
+            DocMode::Sketch(_) if self.picks_outside() => CursorOwner::Outside,
+            DocMode::Sketch(_) => CursorOwner::Sketch,
+            DocMode::Operation(OperationSession::Extrude(_) | OperationSession::Revolve(_)) => {
+                CursorOwner::Panel
+            }
+            DocMode::Operation(OperationSession::Combine(_)) => CursorOwner::Combine,
+            DocMode::Operation(OperationSession::Motion(_)) => CursorOwner::Motion,
+            DocMode::Measure(_) => CursorOwner::Measure,
+        }
     }
 
     /// The row of the operation's panel the cursor is over, if one is set
@@ -245,13 +288,8 @@ impl Doc {
     /// with the model: while the cursor picks it outside the sessions,
     /// and not picking a plane.
     fn picks_sketch_items(&self) -> bool {
-        self.picks()
-            && self.mode.sketch().is_none()
-            && !self.operating()
-            && self.mode.measure().is_none()
-            && self.mode.combine().is_none()
-            && self.mode.motion().is_none()
-            && self.mode.picking_plane().is_none()
+        self.cursor_owner() == CursorOwner::Selection
+            && self.picks()
             && self.pick.selection.mode().takes_sketch_items()
     }
 
@@ -281,9 +319,12 @@ impl Doc {
         // Picking a plane, a click on a flat face asks for a sketch on it
         // instead (`Edit::FacePicked`), and one elsewhere does nothing.
         // In a sketch, the tool picking outside it has the click.
+        let owner = self.cursor_owner();
         if !self.picks()
-            || self.mode.sketch().is_some()
-            || self.mode.picking_plane().is_some()
+            || matches!(
+                owner,
+                CursorOwner::Sketch | CursorOwner::Outside | CursorOwner::PlanePick
+            )
             || pick.is_some_and(|pick| pick.model != self.feed.model())
         {
             return;
@@ -435,10 +476,15 @@ impl Doc {
         let document = self.editor.document();
         (self.pick.selection).retain_sketch_items(|item| shown_sketch_item(document, item));
         // Not in a combine's preview, which isn't the document's model.
+        let owner = self.cursor_owner();
         if self.picks()
-            && self.mode.sketch().is_none()
-            && self.mode.combine().is_none()
-            && self.mode.motion().is_none()
+            && !matches!(
+                owner,
+                CursorOwner::Sketch
+                    | CursorOwner::Outside
+                    | CursorOwner::Combine
+                    | CursorOwner::Motion
+            )
             && !self.pick.selection.holds_nothing()
         {
             let document = self.editor.document();
@@ -456,24 +502,21 @@ impl Doc {
         if !self.picks() {
             return;
         }
-        // The tool picking outside the sketch has its own.
-        if self.picks_outside() {
-            self.pick.outside_highlight = self.outside_highlight();
-            return;
-        }
-        // The measure tool's own, leaving the selection's as it was, and
-        // likewise the combine's.
-        if self.mode.measure().is_some() {
-            self.refresh_measure_highlight();
-            return;
-        }
-        if self.mode.combine().is_some() {
-            self.refresh_combine_highlight();
-            return;
-        }
-        if self.mode.motion().is_some() {
-            self.refresh_motion_highlight();
-            return;
+        // The tool picking outside the sketch has its own, and the
+        // measure tool, the combine and the motion kinds theirs, leaving
+        // the selection's as it was.
+        match self.cursor_owner() {
+            CursorOwner::Outside => {
+                self.pick.outside_highlight = self.outside_highlight();
+                return;
+            }
+            CursorOwner::Measure => return self.refresh_measure_highlight(),
+            CursorOwner::Combine => return self.refresh_combine_highlight(),
+            CursorOwner::Motion => return self.refresh_motion_highlight(),
+            CursorOwner::Selection
+            | CursorOwner::PlanePick
+            | CursorOwner::Sketch
+            | CursorOwner::Panel => {}
         }
         let hover = self.shown_hover();
         let row = self.pick.row_hover;
@@ -512,7 +555,7 @@ impl Doc {
     /// was built. The preview keeps the bodies' ids, so the body is found
     /// in the model shown, preview or not.
     fn refresh_panel_highlight(&mut self) {
-        let operating = self.mode.extrude().is_some() || self.mode.revolve().is_some();
+        let operating = self.cursor_owner() == CursorOwner::Panel;
         let body = (self.panel_hover())
             .filter(|_| operating)
             .and_then(PanelHover::body);
@@ -545,7 +588,8 @@ impl Doc {
     /// anywhere on a body picks it, whatever the selection's mode), else
     /// what the selection's mode takes.
     pub(crate) fn model_picking(&self) -> Option<ModelPicking<'_>> {
-        let measuring = self.mode.measure().is_some();
+        let owner = self.cursor_owner();
+        let measuring = owner == CursorOwner::Measure;
         // An align's point is picked as the measure tool picks points: on
         // what the cursor is over, at its snap points.
         let pointing = (self.mode.motion()).is_some_and(|session| match session.picking {
@@ -562,20 +606,20 @@ impl Doc {
             index: self.feed.pick_index(),
             hovered: self.pick.hover().map(|pick| pick.target),
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
-            sketches: if self.picks_outside() {
+            sketches: if owner == CursorOwner::Outside {
                 self.outside_sketches()
             } else {
                 self.selectable_sketches()
             },
             hovered_sketch: self.pick.sketch_hover(),
-            marked: if self.picks_outside() {
+            marked: if owner == CursorOwner::Outside {
                 self.outside_marked()
             } else if self.picks_sketch_items() {
                 self.pick.selection.sketch_items().collect()
             } else {
                 Vec::new()
             },
-            picks: if measuring || pointing || self.picks_outside() {
+            picks: if measuring || pointing || owner == CursorOwner::Outside {
                 Picks::All
             } else if let Some(session) = self.mode.motion() {
                 match session.picking {
@@ -586,7 +630,7 @@ impl Doc {
                     MotionPick::Edge | MotionPick::Edges | MotionPick::Path => Picks::Edges,
                     _ => Picks::Faces,
                 }
-            } else if self.mode.picking_plane().is_some() || self.mode.combine().is_some() {
+            } else if matches!(owner, CursorOwner::PlanePick | CursorOwner::Combine) {
                 Picks::Faces
             } else {
                 self.pick.selection.mode().picks()
@@ -633,25 +677,21 @@ impl Doc {
         if let Some(highlight) = self.hovered_link_highlight() {
             return Some(highlight);
         }
-        if self.picks_outside() {
-            return Some(&self.pick.outside_highlight).filter(|highlight| !highlight.is_empty());
+        match self.cursor_owner() {
+            CursorOwner::Outside => {
+                Some(&self.pick.outside_highlight).filter(|highlight| !highlight.is_empty())
+            }
+            // While measuring, the measure tool's, and not the selection's.
+            CursorOwner::Measure => self.measure_highlight().filter(|_| self.picks()),
+            CursorOwner::Combine => self.combine_highlight().filter(|_| self.picks()),
+            CursorOwner::Motion => self.motion_highlight().filter(|_| self.picks()),
+            // An extrude's or revolve's: the body hovered in its panel.
+            CursorOwner::Panel => self.pick.panel_highlight.current(self.feed.model()),
+            // Only of the model shown.
+            CursorOwner::Selection | CursorOwner::PlanePick | CursorOwner::Sketch => {
+                (self.pick.highlight.current(self.feed.model())).filter(|_| self.picks())
+            }
         }
-        // While measuring, the measure tool's, and not the selection's.
-        if self.mode.measure().is_some() {
-            return self.measure_highlight().filter(|_| self.picks());
-        }
-        if self.mode.combine().is_some() {
-            return self.combine_highlight().filter(|_| self.picks());
-        }
-        if self.mode.motion().is_some() {
-            return self.motion_highlight().filter(|_| self.picks());
-        }
-        // An extrude's or revolve's: the body hovered in its panel.
-        if self.mode.extrude().is_some() || self.mode.revolve().is_some() {
-            return self.pick.panel_highlight.current(self.feed.model());
-        }
-        // Only of the model shown.
-        (self.pick.highlight.current(self.feed.model())).filter(|_| self.picks())
     }
 }
 

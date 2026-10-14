@@ -18,6 +18,7 @@ use varde_view::{
 
 use super::Doc;
 use super::motion::HeldRef;
+use super::pick::CursorOwner;
 
 /// The list open, and the row of it hovered.
 #[derive(Debug)]
@@ -368,7 +369,8 @@ impl Doc {
             ticked,
             ..OverlapTick::default()
         };
-        if self.picks_outside() {
+        let owner = self.cursor_owner();
+        if owner == CursorOwner::Outside {
             let marked = self.outside_marked();
             let ticks = rows.iter().map(|row| match &row.item {
                 OverlapItem::Model(pick) => plain(self.outside_has(*pick)),
@@ -377,10 +379,13 @@ impl Doc {
             });
             return Some(ticks.collect());
         }
-        let own = self.mode.combine().is_some()
-            || self.mode.motion().is_some()
-            || self.mode.measure().is_some()
-            || self.mode.picking_plane().is_some();
+        let own = matches!(
+            owner,
+            CursorOwner::Combine
+                | CursorOwner::Motion
+                | CursorOwner::Measure
+                | CursorOwner::PlanePick
+        );
         if !own {
             let OverlapItems::Model(items) = &listed.list.items else {
                 return None;

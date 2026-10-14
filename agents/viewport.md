@@ -1518,7 +1518,8 @@ tool is in use (`Doc::hovered_link_highlight`); outside sketches the app
 gives none while the model is faded.
 
 Outside sketches and the extrude session, and not over a draft's preview
-(`Doc::picks`; they pick what they need themselves) the viewport is given `ModelPicking` (the index,
+(`Doc::picks`; they pick what they need themselves; who the cursor picks for,
+the selection, a session or a tool, is decided once by `Doc::cursor_owner`) the viewport is given `ModelPicking` (the index,
 the target the app holds hovered, and what the cursor picks, `Picks`:
 all, or only faces or only edges, from the selection's mode; edges and
 faces, never a vertex, while a move's axis is picked). It
