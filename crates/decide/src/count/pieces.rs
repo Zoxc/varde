@@ -70,6 +70,21 @@
 //! one reaching across a whole window, or lying inside one, is
 //! `Unsettled`.
 //!
+//! **Trims on box lines.** A p-span whose three control points share one
+//! coordinate exactly lies along a UV line, which may be a box side (a
+//! tile line, or a dyadic line of a trim placed on one). Its cuts there
+//! would fall on box corners at every depth, so the trim is taken as
+//! moved off the line, infinitesimally, to the face's inside next to it
+//! (left of the coedge on an unflipped face, right on a flipped one), the
+//! same for every run, so their pieces stay additive: the span crosses no
+//! side along its line; a side across the line ending at the line is
+//! crossed just past its end, at that end, where it runs on from there to
+//! the face's side, else not at all; a knot on a side's line with a span
+//! along it is on the side's moved side. A loop no cut reaches but with a
+//! side along a moved span is outside the trim (the side lies on the
+//! span's other side). Spans not monotone along their line, and slits
+//! (the face on both sides), aren't moved: `Unsettled` as before.
+//!
 //! **Sides through the query.** An outer side on a tile line not
 //! certified off `q_xy` (through it, or too near for the level) is
 //! counted from its side record ([`Sides`]): the signed crossings of its
@@ -136,7 +151,8 @@ use malachite::Rational;
 use smallvec::SmallVec;
 
 use super::boxes::{
-    BoxError, BoxKey, Extent, FaceUv, QShadow, Trim, cover, dy, iso_line, surface_hull, uv_curve,
+    BoxError, BoxKey, Extent, FaceUv, QShadow, Trim, UvSpan, cover, dy, iso_line, surface_hull,
+    uv_curve,
 };
 use super::degree::{Ray, RecTurnError, Side, line_edge, rec_turn};
 use crate::bezier::roots::MAX_ROOT_DEPTH;
@@ -451,6 +467,58 @@ struct Hit {
     window: Option<Window>,
 }
 
+/// A p-span along a UV line (module docs, "Trims on box lines"): the
+/// coordinate `c` its three control points share exactly, and `n`, the
+/// side of that line (the sign along `c`) the face's inside lies on next
+/// to it, the side the span is moved to. `None` where it lies on no such
+/// line or doesn't run monotonically along it (its middle point strictly
+/// between its ends). `w` is the face's inside winding.
+fn on_line(sp: &UvSpan, reversed: bool, w: i64) -> Option<(usize, i8)> {
+    let c = (0..2).find(|&c| sp[0][c] == sp[1][c] && sp[1][c] == sp[2][c])?;
+    let o = 1 - c;
+    let (a, m, b) = (sp[0][o], sp[1][o], sp[2][o]);
+    let s: i8 = if a < m && m < b {
+        1
+    } else if a > m && m > b {
+        -1
+    } else {
+        return None;
+    };
+    // The coedge's direction along the line, and the inside on its left
+    // (`W = 1`) or right: left of `+u` is `+v`, left of `+v` is `−u`.
+    let s = if reversed { -s } else { s };
+    let s = if w > 0 { s } else { -s };
+    Some((c, if c == 1 { s } else { -s }))
+}
+
+/// The side of the line `x_k = line` span `sp` lies on next to its start
+/// (`start`) or end, that end on the line: moved to `push`'s side where
+/// the span runs along the line, else that of its first control point
+/// off the line from that end (`Equal` where none is).
+fn leaves(
+    sp: &UvSpan,
+    k: usize,
+    line: &Rational,
+    start: bool,
+    push: Option<(usize, i8)>,
+) -> Ordering {
+    if let Some((c, n)) = push
+        && c == k
+    {
+        return if n > 0 {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        };
+    }
+    let order = if start { [1, 2] } else { [1, 0] };
+    order
+        .iter()
+        .map(|&i| rat(sp[i][k]).cmp(line))
+        .find(|x| *x != Ordering::Equal)
+        .unwrap_or(Ordering::Equal)
+}
+
 /// The exact value of a finite float.
 fn rat(x: f64) -> Rational {
     Rational::try_from(x).expect("finite")
@@ -554,6 +622,11 @@ struct Ctx<'f, 'p, 'r, S> {
     like: S,
     q: QShadow,
     ray: Ray,
+    /// The face's inside winding.
+    w: i64,
+    /// Whether the ribbons are a slit's (the face on both sides of their
+    /// p-curve: no trim is moved off a line).
+    slit: bool,
     pieces: u64,
 }
 
@@ -602,7 +675,15 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             ]
         };
         let (elo, ehi) = (dy(seg.ext.lo()), dy(seg.ext.hi()));
+        let moved = |sp: &UvSpan| {
+            if self.slit {
+                None
+            } else {
+                on_line(sp, t.reversed, self.w)
+            }
+        };
         for (j, sp) in t.spans.iter().enumerate() {
+            let push = moved(sp);
             let fix: [Rational; 3] = sp.map(|p| rat(p[k]));
             let lo = fix.iter().min().expect("three");
             let hi = fix.iter().max().expect("three");
@@ -614,7 +695,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             // The knot at the span's start, exactly on the line.
             if fix[0] == line {
                 let a = rat(sp[0][o]);
-                if a > alo && a < ahi {
+                if a >= alo && a <= ahi {
                     let prev = if j > 0 {
                         j - 1
                     } else if closed {
@@ -624,30 +705,53 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                         // corner piece's vertex must lie inside the run.
                         return Err(PieceError::Unsettled);
                     };
-                    let before = rat(t.spans[prev][1][k]).cmp(&line);
-                    let after = fix[1].cmp(&line);
+                    let pv = &t.spans[prev];
+                    let before = leaves(pv, k, &line, false, moved(pv));
+                    let after = leaves(sp, k, &line, true, push);
                     match (before, after) {
                         (Ordering::Equal, _) | (_, Ordering::Equal) => {
                             return Err(PieceError::Unsettled);
                         }
-                        (x, y) if x != y => {
+                        // Touching the line, or along it on both sides of
+                        // the knot (moved off it alike): no crossing.
+                        (x, y) if x == y => (),
+                        (_, y) => {
+                            // At an end of the side, the knot moved off
+                            // the line across it with a span along that
+                            // line: on the side only where the side runs
+                            // on from the end that way.
+                            let p = if a == alo || a == ahi {
+                                let across = [moved(pv), push]
+                                    .into_iter()
+                                    .flatten()
+                                    .filter(|&(c, _)| c == o)
+                                    .map(|(_, n)| n);
+                                let Some(n) = across.clone().next() else {
+                                    return Err(PieceError::Unsettled);
+                                };
+                                if across.clone().any(|x| x != n) {
+                                    return Err(PieceError::Unsettled);
+                                }
+                                let at = if a == alo { elo } else { ehi };
+                                ((a == alo) == (n > 0)).then_some([at, at])
+                            } else {
+                                Some(local([sp[0][o], sp[0][o]]))
+                            };
                             let s: i8 = if y == Ordering::Greater { 1 } else { -1 };
-                            let p = local([sp[0][o], sp[0][o]]);
-                            out.push(Hit {
-                                member: m,
-                                seg: si,
-                                pos: p,
-                                pspan: ju,
-                                t: [0.0, 0.0],
-                                knot: Some(prev as u32),
-                                sigma: sigma(s),
-                                window: None,
-                            });
+                            if let Some(p) = p {
+                                out.push(Hit {
+                                    member: m,
+                                    seg: si,
+                                    pos: p,
+                                    pspan: ju,
+                                    t: [0.0, 0.0],
+                                    knot: Some(prev as u32),
+                                    sigma: sigma(s),
+                                    window: None,
+                                });
+                            }
                         }
-                        _ => (),
                     }
-                } else if a == alo || a == ahi {
-                    return Err(PieceError::Unsettled);
                 }
             }
             // The curve's end on the side (its start is the knot above).
@@ -657,6 +761,14 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     return Err(PieceError::Unsettled);
                 }
             }
+            // Along the side's line: moved off it, the span crosses
+            // nothing there.
+            if push.is_some_and(|(c, _)| c == k) {
+                continue;
+            }
+            // Along the other line through a point of the side: moved
+            // off that line too, the crossing lies just past the point.
+            let across = push.filter(|&(c, _)| c == o).map(|(_, n)| n);
             let c = uv_curve(sp, &self.like).ok_or(PieceError::Ribbon { coedge })?;
             let mut axis = [S::int(0, &self.like), S::int(0, &self.like)];
             axis[k] = S::int(1, &self.like);
@@ -683,6 +795,36 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                         ([cl.lo.bounds()[0], cl.hi.bounds()[1]], None)
                     }
                 };
+                if let Some(n) = across {
+                    let e = rat(sp[0][o]);
+                    if e < alo || e > ahi {
+                        continue;
+                    }
+                    if e == alo || e == ahi {
+                        let Some(dir) = root else {
+                            return Err(PieceError::Unsettled);
+                        };
+                        // Moved to `n`'s side of the side's end `e`: on
+                        // the side only where the side runs on from `e`
+                        // that way.
+                        if (e == alo) != (n > 0) {
+                            continue;
+                        }
+                        let at = if e == alo { elo } else { ehi };
+                        let s: i8 = if dir == Ordering::Greater { 1 } else { -1 };
+                        out.push(Hit {
+                            member: m,
+                            seg: si,
+                            pos: [at, at],
+                            pspan: ju,
+                            t: span,
+                            knot: None,
+                            sigma: sigma(s),
+                            window: None,
+                        });
+                        continue;
+                    }
+                }
                 let place = |span: [f64; 2]| -> Result<[f64; 2], PieceError> {
                     let mut box_o = [f64::INFINITY, f64::NEG_INFINITY];
                     for piece in sub_pieces(&c, span) {
@@ -743,6 +885,29 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a ribbon's p-span runs along `seg`'s line over a stretch of
+    /// `seg`, moved off it (module docs).
+    fn along(&self, seg: &Seg) -> bool {
+        if self.slit {
+            return false;
+        }
+        let (k, o) = (fixed(seg.dir), 1 - fixed(seg.dir));
+        let line = Rational::from(seg.tile[k]) + rat(dy(seg.at));
+        let at = |x: Dyadic| Rational::from(seg.tile[o]) + rat(dy(x));
+        let (alo, ahi) = (at(seg.ext.lo()), at(seg.ext.hi()));
+        self.trims.iter().any(|t| {
+            t.spans.iter().any(|sp| {
+                on_line(sp, t.reversed, self.w).is_some_and(|(c, _)| c == k)
+                    && rat(sp[0][k]) == line
+                    && {
+                        let (x, y) = (rat(sp[0][o]), rat(sp[2][o]));
+                        let (x, y) = if x < y { (x, y) } else { (y, x) };
+                        x.max(alo.clone()) < y.min(ahi.clone())
+                    }
+            })
+        })
     }
 
     /// The hull of the iso line of `seg` over `[a, b]`.
@@ -851,9 +1016,19 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         for d in 1..=WINDOW_DEPTH {
             let s = (1u64 << d) as f64;
             // Exact: scaling by a power of two.
-            let a = Dyadic::new((hit.pos[0] * s).floor() as u64, d).expect("in [0, 1]");
-            let b =
-                Dyadic::new(((hit.pos[1] * s).ceil() as u64).min(1u64 << d), d).expect("in [0, 1]");
+            let mut an = (hit.pos[0] * s).floor() as u64;
+            let mut bn = ((hit.pos[1] * s).ceil() as u64).min(1u64 << d);
+            // A crossing exactly at a dyadic point: the stretch next to
+            // it, inwards.
+            if an >= bn {
+                if Dyadic::new(bn, d).is_some_and(|x| x < ehi) {
+                    bn = an + 1;
+                } else {
+                    an = bn - 1;
+                }
+            }
+            let a = Dyadic::new(an, d).expect("in [0, 1]");
+            let b = Dyadic::new(bn, d).expect("in [0, 1]");
             let (a, b) = (a.max(elo), b.min(ehi));
             if a >= b {
                 continue;
@@ -1106,6 +1281,8 @@ pub fn strip_degree<S: Scalar>(
         like,
         q: *q,
         ray: Ray::of_query(point.operand),
+        w,
+        slit,
         pieces: 0,
     };
     let segs = outer(boxes)?;
@@ -1180,12 +1357,13 @@ pub fn strip_degree<S: Scalar>(
             order.push((s, on));
         }
         let mut m = if single {
-            let last = order
-                .iter()
-                .rev()
-                .find_map(|(_, on)| on.last())
-                .ok_or(PieceError::Unsettled)?;
-            inside_after(&hits[*last])
+            match order.iter().rev().find_map(|(_, on)| on.last()) {
+                Some(last) => inside_after(&hits[*last]),
+                // Uncut, but along a moved trim: its side there is
+                // outside the trim, and so is the whole loop.
+                None if l.iter().any(|&s| ctx.along(&segs[s])) => false,
+                None => return Err(PieceError::Unsettled),
+            }
         } else {
             true
         };

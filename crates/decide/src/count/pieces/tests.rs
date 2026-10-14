@@ -8,8 +8,9 @@
 //! any partition sum to the whole; flipped faces, coedges against their
 //! edge, a slit and a run ending at the tile line (a cut at the knot). On
 //! a curved surface with a curved p-curve and edge curve, runs of any
-//! partition sum to the whole run. Queries on the tile line read the
-//! side records of the parts' sides there. Corner pieces: a second
+//! partition sum to the whole run. Runs split along the trim's own line
+//! (taken as moved into the face) sum to the whole. Queries on the tile
+//! line read the side records of the parts' sides there. Corner pieces: a second
 //! coedge turning up from a vertex inside the run, its own edge's curve
 //! meeting the first's at the vertex; runs holding the vertex take both
 //! ribbons and sum, with the strip pieces beside them, to the winding of
@@ -563,6 +564,72 @@ fn a_cut_at_the_knot_on_the_tile_line() {
     // The two halves of the run meet at the knot: the sum is the whole.
     let right = r[2..].to_vec();
     check(&s, &trims, false, &[1], &[left, right], WHOLE, 1, 6);
+}
+
+/// The run `[½, 1] × [0, ½]` of tile 0 and `[0, ½] × [0, ½]` of tile 1,
+/// split at `v = ¼`, the trim's own line: per tile the box below the
+/// trim and the box above it.
+fn split_run() -> [BoxKey; 4] {
+    let (low, high) = (ext((0, 0), (1, 2)), ext((1, 2), (1, 1)));
+    let (u0, u1) = (ext((1, 1), (1, 0)), ext((0, 0), (1, 1)));
+    [
+        bx(0, u0, low),
+        bx(0, u0, high),
+        bx(1, u1, low),
+        bx(1, u1, high),
+    ]
+}
+
+#[test]
+fn a_trim_along_the_line_between_two_runs() {
+    // Runs whose outer side lies on the trim, cut at that side's ends:
+    // the trim taken as moved off the line into the face, the run beside
+    // the face holds none of it, the run on the face's side holds it all
+    // (its cuts at the ends of its sides across the line), and the two
+    // sum to the whole run's degree.
+    let r = split_run();
+    let (low, high) = (vec![r[0], r[2]], vec![r[1], r[3]]);
+    for (dy, reversed, flipped, region, sign, seed) in [
+        (-DELTA, false, false, WHOLE, 1, 11),
+        (-DELTA, true, true, WHOLE, -1, 12),
+        (DELTA, true, false, [2.5, 7.5, 0.0, SV * V0 + DELTA], 1, 13),
+    ] {
+        let s = Setup::new(dy);
+        let trims = [trim(&s.spans, 1, reversed)];
+        let parts = [
+            vec![low.clone(), high.clone()],
+            vec![r.to_vec()],
+            vec![vec![r[0]], vec![r[2]], high.clone()],
+            vec![low.clone(), vec![r[1], r[3]]],
+        ];
+        for (k, p) in parts.iter().enumerate() {
+            check(
+                &s,
+                &trims,
+                flipped,
+                &[1],
+                p,
+                region,
+                sign,
+                seed + 10 * k as u64,
+            );
+        }
+        // The run beside the face, alone: no cut, its side along the trim
+        // outside it, degree 0 wherever the query is.
+        let beside = if dy < 0.0 { &low } else { &high };
+        let mut rng = Rng::new(seed);
+        for _ in 0..40 {
+            let q = draw(&mut rng);
+            match s.degree(&trims, flipped, &[1], beside, q) {
+                Ok(d) => {
+                    assert_eq!(d.degree, 0, "{q:?}");
+                    assert_eq!(d.cuts, 0, "{q:?}");
+                }
+                Err(PieceError::Unsettled | PieceError::Through) => (),
+                Err(e) => panic!("{e:?} at {q:?}"),
+            }
+        }
+    }
 }
 
 #[test]
@@ -1352,4 +1419,5 @@ fn ends_in_corner_pieces_are_the_vertex_only_near_it() {
     assert_eq!(corner_end::<u32>(&open, w, 1.0, &[]), None);
 }
 
+mod lines;
 mod spike;

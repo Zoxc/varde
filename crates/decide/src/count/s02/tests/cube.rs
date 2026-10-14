@@ -373,12 +373,27 @@ fn a_corner_on_a_tile_corner_reads_the_point_vertex_record() {
 }
 
 #[test]
-#[ignore = "a trim along a tile line through the query point: its strip runs never settle"]
 fn a_corner_on_a_tile_corner_with_its_sides_on_tile_lines() {
-    // The square's sides at the corner run along the tile lines: the
-    // strip runs there, within a band of the query point, have outer
-    // sides along their own p-curve and are cut at box corners at every
-    // depth, so the face's count runs out of leaves.
-    let c = counts(&Cube::tiled(DVec3::new(1.0, 2.0, 3.0), Tiling::Lines));
-    assert_eq!(c.iter().sum::<i64>(), 1, "{c:?}");
+    // The square's sides at the corner run along the tile lines through
+    // the query point's shadow: the strip runs beside them have outer
+    // sides along their own p-curve, and every cut across a side lies on
+    // a tile line, at a box corner.
+    let mut rng = Rng::new(0x5c2c);
+    let mut seen = [0usize; 2];
+    let mut dirs = vec![
+        DVec3::new(1.0, 2.0, 3.0),
+        DVec3::new(-1.0, -2.0, -3.0),
+        DVec3::new(1.0, 2.0, -3.0),
+        DVec3::new(-1.0, 2.0, 3.0),
+    ];
+    for _ in 0..varde_testing::pick(3, 12) {
+        dirs.push(-(rotation(&mut rng) * DVec3::ONE));
+    }
+    for d in dirs {
+        let inside = d.x > 0.0 && d.y > 0.0 && d.z > 0.0;
+        let c = counts(&Cube::tiled(d, Tiling::Lines));
+        assert_eq!(c.iter().sum::<i64>(), i64::from(inside), "d = {d:?}: {c:?}");
+        seen[usize::from(inside)] += 1;
+    }
+    assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
 }
