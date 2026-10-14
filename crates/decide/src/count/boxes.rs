@@ -822,7 +822,7 @@ fn control_box(s: &UvSpan) -> [[f64; 2]; 2] {
 
 /// The span at `like`'s level, `None` unless its weights are certified
 /// positive.
-fn uv_curve<S: Scalar>(s: &UvSpan, like: &S) -> Option<HomCurve<S, 2>> {
+pub(crate) fn uv_curve<S: Scalar>(s: &UvSpan, like: &S) -> Option<HomCurve<S, 2>> {
     let c = HomCurve::from_affine(s.iter().map(|p| ([p[0], p[1]], p[2])), like)?;
     c.weights_positive().then_some(c)
 }
@@ -1347,6 +1347,7 @@ fn off<S: Scalar>(
 
 mod roles;
 
+pub(crate) use roles::surface_hull;
 pub use roles::{
     Corner, Corners, HULL_TILES, NEAR_DEPTH, NEAR_PIECES, RUN_DEPTH, RUN_PIECES, Role, Roled, Run,
     Tube, box_hull, in_tube, role, within_band,

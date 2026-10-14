@@ -648,6 +648,26 @@ fn piece_hull<S: Scalar>(ctx: &Space<'_, '_, '_, S>, c: &HomCurve<S, 2>) -> Opti
     out
 }
 
+/// The 3D hull of the piece `c` of a p-curve of `face` (module docs,
+/// "Space"), from `patches` at `like`'s level (one per tile, in
+/// [`FaceUv::tile_boxes`]' order); `None` where it isn't certified or the
+/// piece spreads over more than [`HULL_TILES`] tiles.
+pub(crate) fn surface_hull<S: Scalar>(
+    face: &FaceUv<'_>,
+    patches: &[HomPatch<S>],
+    like: &S,
+    c: &HomCurve<S, 2>,
+) -> Option<HullBox> {
+    piece_hull(
+        &Space {
+            face,
+            patches,
+            like,
+        },
+        c,
+    )
+}
+
 /// The least box holding both.
 fn union(a: &HullBox, b: &HullBox) -> HullBox {
     let mut o = *a;
