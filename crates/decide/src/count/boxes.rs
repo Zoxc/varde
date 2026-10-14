@@ -162,7 +162,8 @@ const MAX_TILE: i64 = 1 << 52;
 
 /// The relative split positions in order, `num/2^exp`: the middle, then
 /// shifted by `⅛`, then by `1/16` and `3/16`, the lesser first.
-const SHIFTS: [(u64, u32); 7] = [(1, 1), (3, 3), (5, 3), (7, 4), (9, 4), (5, 4), (11, 4)];
+pub(crate) const SHIFTS: [(u64, u32); 7] =
+    [(1, 1), (3, 3), (5, 3), (7, 4), (9, 4), (5, 4), (11, 4)];
 
 /// A trim's span: three affine control points with their weights,
 /// `(u, v, w)`, in global UV.
@@ -221,7 +222,7 @@ impl Extent {
     }
 
     /// The width as an `f64`, exactly (a numerator below `2⁵³`).
-    fn width(self) -> f64 {
+    pub(crate) fn width(self) -> f64 {
         let (a, b, e) = self.nums();
         float(b - a, e)
     }
@@ -229,7 +230,7 @@ impl Extent {
     /// The point at `num/2^exp` of the way from `lo` to `hi` (`exp ≤ 4`),
     /// `None` unless its denominator in lowest terms is at most
     /// `2^`[`MAX_BOX_DEPTH`].
-    fn at(self, num: u64, exp: u32) -> Option<Dyadic> {
+    pub(crate) fn at(self, num: u64, exp: u32) -> Option<Dyadic> {
         let (a, b, e) = self.nums();
         // Below `2^(e + exp) ≤ 2⁵⁶`: no overflow, and within the dyadics'
         // depth before reduction.

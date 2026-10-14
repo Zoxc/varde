@@ -875,3 +875,5 @@ fn far_and_negative_zero_coordinates_count_alike() {
     }
     assert!(boxed > 0 && summed > 0, "{boxed} boxes, {summed} summed");
 }
+
+mod clusters;

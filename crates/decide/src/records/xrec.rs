@@ -29,12 +29,54 @@
 //! tie (a vertex on the other edge's shadow, a ray through a vertex)
 //! under the perturbation, so the identity is exact on the moved data.
 //!
-//! The boxes of the square and their degrees are counting's
+//! The boxes of the square and their degrees, and the refinement that
+//! cuts the square into clusters, are counting's
 //! ([`crate::count::xrec`]).
+//!
+//! **Clusters** ([`XCluster`]). A box of non-zero degree refines until
+//! the z-order of its two pieces is clear (the heights `ê·x` of the two
+//! pieces certified apart over the box) or both pieces are within their
+//! edges' bands in 3D; it is then one cluster, of the box's degree, in
+//! the record's list ([`XRec`]) by its index ([`XClusterIx`]). `s11(e,
+//! g)` is the sum of the degrees of the clusters with `g` above `e`
+//! ([`XRec::s11`]).
+//!
+//! **The z-order key** ([`zorder_key`]). A cluster whose z-order isn't
+//! clear reads a height record anchored at `g`, keyed by one rule: if an
+//! end of `e` lies within `r_g` of the cluster's piece of `g` (one of its
+//! feet on `g` meets the piece), the height key of the geometrically
+//! lesser such end against `g` at that foot; else, if an end of `g` lies
+//! within `r_e` of the piece of `e`, the same for the lesser end of `g`
+//! against `e`, negated (it is `e`'s height above that end); else the
+//! edge–edge key of the cluster itself, `HKey::X(e, g, c)`. The ends are
+//! chosen by their places in the geometric order, never by their ids, so
+//! the stored start of an edge (its lower-id end) has no say; a foot
+//! among several on one edge likewise by its rank from the edge's lesser
+//! end. At a shared corner this is the corner's point–vertex key, the one
+//! the point's own count reads.
+//!
+//! **Degenerate z-order** ([`ZRow`]). Where the shadows' tangents can't
+//! be certified apart at the crossing (`T_e`, `T_g` and `ê` coplanar, so
+//! `m = T_e × T_g` has no certified upward side), the edges don't cross
+//! transversally in shadow. Two straight edges whose shadows are exactly
+//! parallel cross only where the four terms' ties put a crossing; their
+//! one cluster then reads the point–curve height row at the end whose
+//! term counted it ([`ZRow::PointCurve`]), never an edge–edge row with an
+//! undefined `m`. Curved pieces in that state refine, and escalate where
+//! no level certifies them.
 
 use crate::bezier::{Dyadic, HomCurve, Scalar};
+use crate::ids::{EdgeId, VertId};
+use crate::num::decide::Sign;
+use crate::order::{Along, EntityOrder, first};
+use crate::records::feet::{Feet, Foot};
+use crate::records::height::{HeightReads, HeightRec, KeyError, LayerTable, height_key};
+use crate::records::keys::{
+    Anchor, FootId, HKey, HeightKey, Operand, Oriented, Point, RayKey, RecordKey, Target,
+    XClusterIx, XKey,
+};
 use crate::records::ray::{ChainRec, Span};
-use crate::records::shadow::RayRec;
+use crate::records::shadow::{RayRec, neg};
 
 /// An edge's curve along its stored direction, from its lower-id end.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,3 +191,250 @@ pub struct XPair<'a> {
     /// The ray records of the square's boundary.
     pub terms: XTerms<'a>,
 }
+
+/// A piece of an edge: an extent of one of its spans' parameters, along
+/// its stored direction, its ends exact dyadic values.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct XPart {
+    /// The span, from 0 at the edge's lower-id end (0 on a straight
+    /// edge).
+    pub span: u32,
+    /// `[lo, hi]` on the span's `[0, 1]`.
+    pub t: [f64; 2],
+}
+
+impl XPart {
+    /// Whether the piece meets foot `k`, as far as the foot's end
+    /// brackets tell (a bracket touching the piece counts as meeting).
+    fn meets(&self, k: &Foot, spans: u32) -> bool {
+        let lo = (k.lo.span, k.lo.t[0]);
+        let hi = (k.hi.span, k.hi.t[1]);
+        let (a, b) = ((self.span, self.t[0]), (self.span, self.t[1]));
+        // A knot is the end of one span and the start of the next: named
+        // by the later span, so a foot ending there meets a piece starting
+        // there.
+        let at = |x: (u32, f64)| {
+            if x.1 >= 1.0 && x.0 + 1 < spans {
+                (x.0 + 1, 0.0)
+            } else {
+                x
+            }
+        };
+        let le = |x: (u32, f64), y: (u32, f64)| {
+            let (x, y) = (at(x), at(y));
+            x.0 < y.0 || (x.0 == y.0 && x.1 <= y.1)
+        };
+        if k.wraps {
+            // From `lo` to the chain's end, and from its start to `hi`.
+            let end = (spans.saturating_sub(1), 1.0);
+            (le(lo, b) && le(a, end)) || le(a, hi)
+        } else {
+            le(lo, b) && le(a, hi)
+        }
+    }
+}
+
+/// Which row a cluster's edge–edge key reads (module docs, "Degenerate
+/// z-order").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ZRow {
+    /// The edge–edge height `m·(C_g(s) − C_e(t))`, `m = unit(T_e × T_g)`
+    /// turned so `m·ê > 0`.
+    EdgeEdge,
+    /// The shadows are exactly parallel: the point–curve height of this
+    /// end of one edge against the other edge, the end whose term counted
+    /// the crossing.
+    PointCurve(Point),
+}
+
+/// One cluster of an edge pair's crossing record (module docs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct XCluster {
+    /// The piece of `e`.
+    pub e: XPart,
+    /// The piece of `g`.
+    pub g: XPart,
+    /// The signed crossings in it, non-zero.
+    pub degree: i64,
+    /// The z-order where it is clear over the cluster's box: `Pos` for
+    /// `g` above `e`; `None` where the cluster reads its height record.
+    pub clear: Option<Sign>,
+    /// The row its edge–edge key reads.
+    pub row: ZRow,
+}
+
+/// The crossing record of an edge pair: its clusters, in the order their
+/// boxes were keyed ([`XClusterIx`] is the index here).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct XRec {
+    /// The clusters.
+    pub clusters: Vec<XCluster>,
+}
+
+impl XRec {
+    /// Cluster `c`, if there is one.
+    pub fn get(&self, c: XClusterIx) -> Option<&XCluster> {
+        usize::try_from(c.0).ok().and_then(|i| self.clusters.get(i))
+    }
+
+    /// The clusters with their indices.
+    pub fn iter(&self) -> impl Iterator<Item = (XClusterIx, &XCluster)> {
+        (0u32..)
+            .zip(&self.clusters)
+            .map(|(i, c)| (XClusterIx(i), c))
+    }
+
+    /// The sum of the degrees: `X(e, g)` when the clusters are all of
+    /// the square's.
+    pub fn degree(&self) -> i64 {
+        self.clusters.iter().map(|c| c.degree).sum()
+    }
+
+    /// `s11(e, g)`: the sum of the degrees of the clusters with `g` above
+    /// `e`, a clear cluster by its own z-order, the others by `above`
+    /// (from their height records, [`ZKey::above`]).
+    pub fn s11<E>(
+        &self,
+        mut above: impl FnMut(XClusterIx, &XCluster) -> Result<Sign, E>,
+    ) -> Result<i64, E> {
+        let mut s = 0i64;
+        for (c, cl) in self.iter() {
+            let z = match cl.clear {
+                Some(z) => z,
+                None => above(c, cl)?,
+            };
+            if z == Sign::Pos {
+                s += cl.degree;
+            }
+        }
+        Ok(s)
+    }
+}
+
+/// A cluster's z-order key (module docs): the height key as its point
+/// asked it, and whether the key's height is `e`'s above an end of `g`,
+/// so that "`g` above `e`" is its negation. The record is anchored at
+/// `g` ([`ZKey::anchor`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ZKey {
+    /// The height key, oriented as its point asked it.
+    pub key: Oriented<HKey>,
+    /// The key is an end of `g`'s height against `e`.
+    pub negated: bool,
+}
+
+impl ZKey {
+    /// The anchor every z-order record of the pair reads: `g`, of `B`.
+    pub fn anchor(g: EdgeId) -> Anchor {
+        Anchor::Edge(Operand::B, g)
+    }
+
+    /// The height record's key at `g`.
+    pub fn height_key(&self, g: EdgeId) -> HeightKey {
+        HeightKey {
+            h: self.key.key,
+            anchor: ZKey::anchor(g),
+        }
+    }
+
+    /// The z-order from the record (read through
+    /// [`Heights::get`](super::height::Heights::get) with [`key`](Self::key)):
+    /// `Pos` for `g` above `e`.
+    pub fn above(&self, rec: &HeightRec) -> Sign {
+        if self.negated {
+            neg(rec.above)
+        } else {
+            rec.above
+        }
+    }
+}
+
+/// The z-order key of cluster `c` of the pair `x` (module docs), from the
+/// feet of the edges' ends on the other edge and the geometric order.
+/// The rule never reads which end of an edge is its stored start.
+pub fn zorder_key<R: HeightReads>(
+    reads: &R,
+    x: XKey,
+    c: XClusterIx,
+    cl: &XCluster,
+    spans: [u32; 2],
+) -> Result<ZKey, KeyError> {
+    let none = LayerTable::new();
+    for (of, edge, other, part, n, negated) in [
+        (Operand::A, x.e, x.g, &cl.g, spans[1], false),
+        (Operand::B, x.g, x.e, &cl.e, spans[0], true),
+    ] {
+        let mut near: Vec<_> = Vec::new();
+        for w in distinct(reads.ends(of, edge)) {
+            let q = Point::vert(of, w);
+            let feet = reads
+                .feet(q, other)
+                .ok_or(KeyError::Missing(RecordKey::Ray(RayKey { q, g: other })))?;
+            if let Some(k) = meeting(reads, of.other(), other, feet, part, n) {
+                near.push((reads.vert_key(of, w), (w, k)));
+            }
+        }
+        if let Some((w, k)) = first(near) {
+            let key = height_key(reads, &none, Point::vert(of, w), Target::Edge(other, k))?;
+            return Ok(ZKey { key, negated });
+        }
+    }
+    Ok(ZKey {
+        key: Oriented {
+            key: HKey::X { e: x.e, g: x.g, c },
+            swapped: false,
+        },
+        negated: false,
+    })
+}
+
+/// An edge's ends, a closed edge's one vertex once.
+fn distinct(ends: [VertId; 2]) -> impl Iterator<Item = VertId> {
+    let n = if ends[0] == ends[1] { 1 } else { 2 };
+    ends.into_iter().take(n)
+}
+
+/// The first foot (by rank from the lesser end of edge `g` of `of`) in
+/// `feet` meeting `part` of `g`, which has `spans` spans.
+fn meeting<R: HeightReads>(
+    reads: &R,
+    of: Operand,
+    g: EdgeId,
+    feet: &Feet,
+    part: &XPart,
+    spans: u32,
+) -> Option<FootId> {
+    let [s, e] = reads.ends(of, g);
+    let along = Along::of(&reads.vert_key(of, s), &reads.vert_key(of, e));
+    feet.in_order(along)
+        .find(|&k| feet.get(k).is_some_and(|f| part.meets(f, spans)))
+}
+
+/// For two straight edges whose shadows are exactly parallel (module
+/// docs, "Degenerate z-order"): the end whose term counted a crossing,
+/// the geometrically lesser of those whose term has the sign of the
+/// pair's count `X` (each term's contribution to `X` as the four-term
+/// identity signs it); `None` where `X` is 0.
+pub fn tie_point<O: EntityOrder>(order: &O, x: XKey, terms: &XTerms<'_>) -> Option<Point> {
+    let total = x_count(terms).signum();
+    if total == 0 {
+        return None;
+    }
+    let [a, b] = order.ends(Operand::A, x.e);
+    let [g0, g1] = order.ends(Operand::B, x.g);
+    let parts = [
+        (Operand::A, a, -terms.a_g.count()),
+        (Operand::A, b, terms.b_g.count()),
+        (Operand::B, g0, terms.g0_e.count()),
+        (Operand::B, g1, -terms.g1_e.count()),
+    ];
+    first(
+        parts
+            .into_iter()
+            .filter(|p| p.2.signum() == total)
+            .map(|(op, v, _)| ((order.vert_key(op, v), op), Point::vert(op, v))),
+    )
+}
+
+#[cfg(test)]
+mod tests;

@@ -41,17 +41,47 @@
 //! records' crossings are split between the boxes by their parameters,
 //! each counted once.
 //!
+//! **Clusters** ([`clusters`]). The cells are refined into the record's
+//! clusters ([`XRec`]): a box whose two pieces' shadows have certified
+//! disjoint hulls holds no crossing and is dropped; a box of non-zero
+//! degree whose z-order is clear (the pieces' heights along `ê` certified
+//! apart) or whose two pieces both lie within their bands (`β_e`, `β_g`,
+//! the hull's widths summed) is a cluster; a box of degree 0 whose
+//! z-order is clear or whose pieces are both that small is dropped (any
+//! crossings in it cancel and read one z-order); every other box splits.
+//! A split cuts the larger piece's parameter (in 3D, by the hulls' summed
+//! widths; `e`'s on a tie), at the middle or the first shifted position
+//! (as the face boxes' splits) whose two halves both have degrees, else
+//! the other parameter likewise; where none does the box is refused
+//! ([`XClusterError::Degree`]). A cluster of curved pieces whose shadow
+//! tangents aren't certified apart (the cone of the pieces' control
+//! point differences, which holds every tangent of a rational span with
+//! positive weights, against the other's) is a shadow tangency:
+//! [`XClusterError::Degenerate`], escalate. Two straight edges hold at
+//! most one crossing, so their whole cell is the one cluster where `X ≠
+//! 0`; if their shadows are exactly parallel (decided on the stored
+//! points) it reads the point–curve row at the end whose term counted
+//! the crossing ([`tie_point`]). The clusters are listed in their boxes'
+//! key order, so each cluster's index is a function of the pair and the
+//! level the record was decided at.
+//!
 //! Generic over the level, as the face boxes are; each call reports the
 //! pieces it tested, for the pass to charge.
 
 use std::cmp::Ordering;
 
+use malachite::Rational;
+
 use crate::bezier::{Dir, Dyadic, HomCurve, Scalar};
-use crate::count::boxes::{Extent, QShadow, dy};
+use crate::count::boxes::{Extent, QShadow, SHIFTS, dy};
 use crate::count::degree::{Ray, TurnError, curve_turn};
+use crate::count::s02::MAX_LEAVES;
 use crate::num::bounded::Bounded;
-use crate::perturb::NU;
-use crate::records::xrec::{EdgeRays, XCurve, XPair};
+use crate::num::decide::Sign;
+use crate::order::EntityOrder;
+use crate::perturb::{NU, R_HAT, UP};
+use crate::records::keys::XKey;
+use crate::records::xrec::{EdgeRays, XCluster, XCurve, XPair, XPart, XRec, ZRow, tie_point};
 
 /// A box of the square of an edge pair: the cell of span `cell[0]` of `e`
 /// and span `cell[1]` of `g`, cut to the extents `t` (of `e`'s span) and
@@ -359,6 +389,313 @@ fn line_param(q: [f64; 3], p0: [f64; 3], p1: [f64; 3]) -> Option<[f64; 2]> {
     }
     let at = Scalar::enclose(&(dot(q, p0) / den));
     (at[0].is_finite() && at[1].is_finite()).then_some(at)
+}
+
+/// Why an edge pair's clusters aren't formed at a level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum XClusterError {
+    /// A box's degree isn't settled, and no split of it gives both
+    /// halves one (or a cell's own sides don't): escalate, or the sides
+    /// need records not there yet.
+    Degree(XBox, XDegreeError),
+    /// A cluster's shadow tangents aren't certified apart: a shadow
+    /// tangency of curved pieces, escalate (module docs).
+    Degenerate(XBox),
+    /// A box can't split further within the depth limit: escalate.
+    Depth(XBox),
+    /// More than [`MAX_LEAVES`] boxes at once.
+    SizeLimit,
+}
+
+/// An edge pair's clusters and what they took.
+#[derive(Clone, Debug, PartialEq)]
+pub struct XClusters {
+    /// The record's clusters.
+    pub rec: XRec,
+    /// Each cluster's box, by the same index.
+    pub boxes: Vec<XBox>,
+    /// The curve pieces tested.
+    pub pieces: u64,
+}
+
+/// The clusters of pair `x` (`pair` its curves and terms) at `like`'s
+/// level, `beta` the bands `[β_e, β_g]` (module docs).
+pub fn clusters<S: Scalar, O: EntityOrder>(
+    order: &O,
+    x: XKey,
+    pair: &XPair<'_>,
+    beta: [f64; 2],
+    like: &S,
+) -> Result<XClusters, XClusterError> {
+    let spans = [pair.e.span_count(), pair.g.span_count()];
+    let mut pieces = 0u64;
+    if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {
+        let whole = XBox {
+            cell: [0, 0],
+            t: Extent::WHOLE,
+            s: Extent::WHOLE,
+        };
+        let d = box_degree(pair, &whole, like).map_err(|e| XClusterError::Degree(whole, e))?;
+        pieces += d.pieces;
+        let mut out = XClusters {
+            rec: XRec::default(),
+            boxes: Vec::new(),
+            pieces,
+        };
+        if d.degree == 0 {
+            return Ok(out);
+        }
+        let row = if parallel([a, b], [g0, g1]) {
+            match tie_point(order, x, &pair.terms) {
+                Some(p) => ZRow::PointCurve(p),
+                None => return Ok(out),
+            }
+        } else {
+            ZRow::EdgeEdge
+        };
+        let pe = pair
+            .e
+            .span(0, like)
+            .ok_or(XClusterError::Degree(whole, XDegreeError::Shape))?;
+        let pg = pair
+            .g
+            .span(0, like)
+            .ok_or(XClusterError::Degree(whole, XDegreeError::Shape))?;
+        let clear = hulls(&pe, &pg, like).and_then(|h| h.z_order());
+        out.rec.clusters.push(cluster(&whole, d.degree, clear, row));
+        out.boxes.push(whole);
+        return Ok(out);
+    }
+    let mut work: Vec<(XBox, Option<i64>)> = XBox::cells(spans).map(|b| (b, None)).collect();
+    work.reverse();
+    let mut found: Vec<(XBox, XCluster)> = Vec::new();
+    while let Some((b, degree)) = work.pop() {
+        if work.len() + found.len() >= MAX_LEAVES {
+            return Err(XClusterError::SizeLimit);
+        }
+        let shape = XClusterError::Degree(b, XDegreeError::Shape);
+        let ce = pair.e.span(b.cell[0], like).ok_or(shape)?;
+        let cg = pair.g.span(b.cell[1], like).ok_or(shape)?;
+        let (pe, pg) = (cut(&ce, b.t, like), cut(&cg, b.s, like));
+        let h = hulls(&pe, &pg, like).ok_or(shape)?;
+        if h.apart() {
+            continue;
+        }
+        let degree = match degree {
+            Some(d) => d,
+            None => {
+                let d = box_degree(pair, &b, like).map_err(|e| XClusterError::Degree(b, e))?;
+                pieces += d.pieces;
+                d.degree
+            }
+        };
+        let clear = h.z_order();
+        let small = h.size[0] <= beta[0] && h.size[1] <= beta[1];
+        if degree == 0 && (clear.is_some() || small) {
+            continue;
+        }
+        if clear.is_some() || small {
+            if clear.is_none() && !transversal(&pe, &pg, like) {
+                return Err(XClusterError::Degenerate(b));
+            }
+            found.push((b, cluster(&b, degree, clear, ZRow::EdgeEdge)));
+            continue;
+        }
+        let first = if h.size[1] > h.size[0] {
+            Dir::V
+        } else {
+            Dir::U
+        };
+        let halves = split_box(pair, &b, first, like, &mut pieces)?;
+        // Lower half processed first.
+        work.push((halves[1].0, Some(halves[1].1)));
+        work.push((halves[0].0, Some(halves[0].1)));
+    }
+    found.sort_by_key(|x| x.0);
+    let (boxes, clusters) = found.into_iter().unzip();
+    Ok(XClusters {
+        rec: XRec { clusters },
+        boxes,
+        pieces,
+    })
+}
+
+/// The cluster of box `b`.
+fn cluster(b: &XBox, degree: i64, clear: Option<Sign>, row: ZRow) -> XCluster {
+    let part = |span: u32, x: Extent| XPart {
+        span,
+        t: [dy(x.lo()), dy(x.hi())],
+    };
+    XCluster {
+        e: part(b.cell[0], b.t),
+        g: part(b.cell[1], b.s),
+        degree,
+        clear,
+        row,
+    }
+}
+
+/// Splits `b` (module docs): `first`'s parameter first, at the middle or
+/// the first shifted position whose halves both have degrees.
+fn split_box<S: Scalar>(
+    pair: &XPair<'_>,
+    b: &XBox,
+    first: Dir,
+    like: &S,
+    pieces: &mut u64,
+) -> Result<[(XBox, i64); 2], XClusterError> {
+    let mut any = false;
+    let mut last = XDegreeError::Through;
+    for dir in [first, crate::count::boxes::other(first)] {
+        let ext = match dir {
+            Dir::U => b.t,
+            Dir::V => b.s,
+        };
+        for (num, exp) in SHIFTS {
+            let Some(at) = ext.at(num, exp) else {
+                continue;
+            };
+            let Some(halves) = b.split_at(dir, at) else {
+                continue;
+            };
+            any = true;
+            let mut out = [(halves[0], 0i64); 2];
+            let mut ok = true;
+            for (o, h) in out.iter_mut().zip(halves) {
+                match box_degree(pair, &h, like) {
+                    Ok(d) => {
+                        *pieces += d.pieces;
+                        *o = (h, d.degree);
+                    }
+                    // A ray stopped at an end on its line may be a split
+                    // position's own: another may not be.
+                    Err(
+                        e
+                        @ (XDegreeError::Through | XDegreeError::Placed | XDegreeError::Unsettled),
+                    ) => {
+                        last = e;
+                        ok = false;
+                        break;
+                    }
+                    Err(e) => return Err(XClusterError::Degree(h, e)),
+                }
+            }
+            if ok {
+                return Ok(out);
+            }
+        }
+    }
+    if any {
+        Err(XClusterError::Degree(*b, last))
+    } else {
+        Err(XClusterError::Depth(*b))
+    }
+}
+
+/// Certified hulls of a box's two pieces in the frame `(r̂·x, ν·x, ê·x)`,
+/// and their sizes in 3D (the summed widths of their boxes).
+struct Hulls {
+    frame: [[[f64; 2]; 3]; 2],
+    size: [f64; 2],
+}
+
+impl Hulls {
+    /// Whether the shadows' hulls are certified apart.
+    fn apart(&self) -> bool {
+        let [e, g] = &self.frame;
+        (0..2).any(|k| e[k][1] < g[k][0] || g[k][1] < e[k][0])
+    }
+
+    /// `Pos` where `g`'s piece lies certainly above `e`'s along `ê`,
+    /// `Neg` certainly below.
+    fn z_order(&self) -> Option<Sign> {
+        let [e, g] = &self.frame;
+        if g[2][0] > e[2][1] {
+            Some(Sign::Pos)
+        } else if g[2][1] < e[2][0] {
+            Some(Sign::Neg)
+        } else {
+            None
+        }
+    }
+}
+
+/// The hulls of two pieces; `None` where a weight isn't certified
+/// positive.
+fn hulls<S: Scalar>(pe: &HomCurve<S, 3>, pg: &HomCurve<S, 3>, like: &S) -> Option<Hulls> {
+    let v = |d: glam::DVec3| [d.x, d.y, d.z].map(|c| S::from_f64(c, like));
+    let rows = [v(R_HAT), v(NU), v(UP)];
+    let one = |c: &HomCurve<S, 3>| -> Option<([[f64; 2]; 3], f64)> {
+        let f = c.map_linear(&rows).control_box()?;
+        let b = c.control_box()?;
+        let size = b.iter().fold(0.0f64, |s, [lo, hi]| s + (hi - lo));
+        // Rounded up: a size within the band is certified.
+        Some((f, crate::num::bounded::up(size)))
+    };
+    let (fe, se) = one(pe)?;
+    let (fg, sg) = one(pg)?;
+    Some(Hulls {
+        frame: [fe, fg],
+        size: [se, sg],
+    })
+}
+
+/// Whether every shadow tangent of `pe` is certified off every one of
+/// `pg`: each pair of control point differences, one of each piece, has
+/// one strict sign of their cross product (module docs).
+fn transversal<S: Scalar>(pe: &HomCurve<S, 3>, pg: &HomCurve<S, 3>, like: &S) -> bool {
+    let v = |d: glam::DVec3| [d.x, d.y, d.z].map(|c| S::from_f64(c, like));
+    let (ex, ey) = (v(R_HAT), v(NU));
+    let diffs = |c: &HomCurve<S, 3>| -> Vec<[S; 2]> {
+        let sh = c.shadow(&ex, &ey);
+        let w = sh.weights().coefs();
+        let pts: Vec<[S; 2]> = (0..w.len())
+            .map(|i| [0, 1].map(|k| sh.coords()[k].coefs()[i].div(&w[i])))
+            .collect();
+        let mut out = Vec::new();
+        for i in 0..pts.len() {
+            for j in i + 1..pts.len() {
+                out.push([pts[j][0].sub(&pts[i][0]), pts[j][1].sub(&pts[i][1])]);
+            }
+        }
+        out
+    };
+    let mut sign = None;
+    for de in diffs(pe) {
+        for dg in diffs(pg) {
+            let c = de[0].mul(&dg[1]).sub(&de[1].mul(&dg[0]));
+            match (c.sign(), sign) {
+                (None | Some(Ordering::Equal), _) => return false,
+                (Some(o), None) => sign = Some(o),
+                (Some(o), Some(s)) if o != s => return false,
+                _ => {}
+            }
+        }
+    }
+    sign.is_some()
+}
+
+/// Whether two straight edges' shadows are exactly parallel: `(T_e ×
+/// T_g)·ê = 0` on the stored points, exactly.
+fn parallel(e: [[f64; 3]; 2], g: [[f64; 3]; 2]) -> bool {
+    let q = |x: f64| Rational::try_from(x).ok();
+    let d = |p: [[f64; 3]; 2]| -> Option<[Rational; 3]> {
+        Some([
+            q(p[1][0])? - q(p[0][0])?,
+            q(p[1][1])? - q(p[0][1])?,
+            q(p[1][2])? - q(p[0][2])?,
+        ])
+    };
+    let (Some(te), Some(tg), Some(up)) = (d(e), d(g), d([[0.0; 3], [UP.x, UP.y, UP.z]])) else {
+        return false;
+    };
+    let c = [
+        &te[1] * &tg[2] - &te[2] * &tg[1],
+        &te[2] * &tg[0] - &te[0] * &tg[2],
+        &te[0] * &tg[1] - &te[1] * &tg[0],
+    ];
+    let dot = &c[0] * &up[0] + &c[1] * &up[1] + &c[2] * &up[2];
+    dot == 0u32
 }
 
 #[cfg(test)]
