@@ -1,6 +1,7 @@
-//! Strip pieces: a run of strip boxes of one trimming curve (or of a
-//! slit's coedges) together with the curve's ribbon over the run, and the
-//! piece's degree about the query point's shadow, an exact integer.
+//! Strip and corner pieces: a run of strip boxes of one trimming curve
+//! (or of a slit's coedges), or of corner boxes of a vertex, together
+//! with the curves' ribbons over the run, and the piece's degree about the
+//! query point's shadow, an exact integer.
 //!
 //! **The counting surface.** A face's counting surface is the face plus,
 //! per coedge, the **ribbon** between the trimming curve carried onto the
@@ -68,6 +69,38 @@
 //! one reaching across a whole window, or lying inside one, is
 //! `Unsettled`.
 //!
+//! **Sides through the query.** An outer side on a tile line not
+//! certified off `q_xy` (through it, or too near for the level) is
+//! counted from its side record ([`Sides`]): the signed crossings of its
+//! tile edge by the query point's ray, the point moved, over the part of
+//! the edge the piece runs along, as
+//! [`box_degree_sided`](super::degree::box_degree_sided) reads it; a part
+//! certified off `q_xy` but ending on the ray's line ahead of it at a tile
+//! corner takes that end's side from the corner's record. The other parts
+//! and the windows are certified for the query's whole enclosure, so they
+//! hold for the moved point too, and every part counts the one moved
+//! configuration: pieces on the two sides of a tile line read the same
+//! record and stay additive. A record not yet decided is
+//! [`PieceError::Need`]; an outer side inside a tile not certified off
+//! `q_xy` has none ([`PieceError::Through`]).
+//!
+//! **Corner pieces.** A vertex inside the run joins the curves meeting
+//! there: the piece's boundary runs along one edge's curve to the vertex's
+//! point and on along the next, the two radials at the vertex (from the
+//! same UV point to the same point) cancelling. So the ribbons of a run
+//! holding curve ends are those of every coedge ending or starting inside
+//! it, as many ending as starting at each vertex and UV point
+//! ([`PieceError::Open`] otherwise), and a coedge's ribbon is counted from
+//! its start, where that is inside the run, to its first exit, and from
+//! its last entry to its end where that is inside: the ray records'
+//! crossings up to and from the edge's own ends, a crossing at the vertex
+//! counted in the one edge its records give it to. A curve end on the
+//! outer boundary is [`PieceError::Unsettled`]: cut the run elsewhere. A
+//! closed curve (one vertex, one UV point at both ends) wraps round its
+//! vertex as before, and counts its whole record when it lies inside the
+//! run uncut. The ribbons of a corner have pairwise different p-curves;
+//! the coedges of a slit share one.
+//!
 //! Inside the trim or not changes only at the cuts, so each loop of the
 //! outer boundary takes it from its cuts; a loop the curve doesn't cut
 //! (a run with a hole, or a part of the run clear of the curve) is
@@ -95,14 +128,15 @@ use smallvec::SmallVec;
 use super::boxes::{
     BoxError, BoxKey, Extent, FaceUv, QShadow, Trim, cover, dy, iso_line, surface_hull, uv_curve,
 };
-use super::degree::{Ray, Side, TurnError, iso_turn_given};
+use super::degree::{Ray, RecTurnError, Side, line_edge, rec_turn};
 use crate::bezier::roots::MAX_ROOT_DEPTH;
 use crate::bezier::{Dir, Dyadic, Found, HomCurve, HomPatch, HullBox, Limits, Scalar, isolate};
-use crate::ids::CoedgeId;
+use crate::ids::{CoedgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::perturb::{NU, R_HAT};
-use crate::records::keys::Point;
+use crate::records::keys::{Operand, Point, SideKey};
 use crate::records::ray::{ChainRec, Span};
+use crate::records::side::Sides;
 
 /// The most splits one root isolation of a p-span against a side line
 /// takes (a quadratic's isolation stays far below).
@@ -160,21 +194,29 @@ pub enum PieceError {
     /// No boxes, or two of them overlap.
     Boxes,
     /// The ribbons are none, repeat a coedge, name a coedge that isn't a
-    /// trim of the face (or is of length zero), aren't bitwise one
-    /// p-curve, or their maps or curves don't fit the trim.
+    /// trim of the face (or has no spans), are neither bitwise one
+    /// p-curve (a slit) nor pairwise different p-curves, or their maps or
+    /// curves don't fit the trim.
     Ribbon { coedge: CoedgeId },
     /// The run's outer boundary passes a point twice (boxes meeting at a
     /// corner only): cut the run there.
     Pinch,
-    /// An outer side isn't certified off `q_xy` (through it, or too near
-    /// for the level): its side record decides, not read here.
+    /// An outer side inside a tile isn't certified off `q_xy` (through
+    /// it, or too near for the level): no record counts it.
     Through,
+    /// An outer side on a tile line isn't certified off `q_xy`, or ends on
+    /// the ray's line ahead of it at a tile corner: the piece reads this
+    /// side record (and its corners'), not yet decided. Fill it and ask
+    /// again.
+    Need(SideKey),
     /// The level doesn't settle a cut, a side's ends, or the crossings'
     /// order (a cut at a box corner or next to the query, a tangency):
     /// cut the run elsewhere, or escalate.
     Unsettled,
-    /// A coedge's curve ends inside the run (only a closed curve may
-    /// wrap round it).
+    /// A coedge's curve ends inside the run and the curves meeting it
+    /// there aren't all among the ribbons, or this trim of the face ends
+    /// inside the run and isn't among them: a corner piece takes every
+    /// coedge at its vertex.
     Open { coedge: CoedgeId },
 }
 
@@ -489,6 +531,10 @@ fn off_ray(h: &HullBox, q: &QShadow, ray: Ray) -> Option<Option<i8>> {
 /// The context of one piece.
 struct Ctx<'f, 'p, 'r, S> {
     face: &'f FaceUv<'f>,
+    /// The face's operand and id, for its tile edges.
+    of: (Operand, FaceId),
+    sides: &'r Sides,
+    point: Point,
     patches: &'p [HomPatch<S>],
     ribbons: &'r [Ribbon<'r>],
     trims: SmallVec<[&'f Trim<'f>; 2]>,
@@ -523,7 +569,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         let along = |x: Dyadic| Rational::from(cell) + rat(dy(x));
         let (alo, ahi) = (along(seg.ext.lo()), along(seg.ext.hi()));
         let n = t.spans.len();
-        let closed = t.ends[0] == t.ends[1];
+        let closed = is_closed(t);
         // Positive tangent of the coedge along the fixed coordinate.
         let rev: i8 = if t.reversed { -1 } else { 1 };
         // `d`'s component along the other coordinate.
@@ -561,7 +607,9 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     } else if closed {
                         n - 1
                     } else {
-                        return Err(PieceError::Open { coedge });
+                        // The curve's start on the outer boundary: a
+                        // corner piece's vertex must lie inside the run.
+                        return Err(PieceError::Unsettled);
                     };
                     let before = rat(t.spans[prev][1][k]).cmp(&line);
                     let after = fix[1].cmp(&line);
@@ -589,11 +637,11 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     return Err(PieceError::Unsettled);
                 }
             }
-            // The curve's end inside the side.
+            // The curve's end on the side (its start is the knot above).
             if j + 1 == n && !closed && fix[2] == line {
                 let a = rat(sp[2][o]);
                 if a >= alo && a <= ahi {
-                    return Err(PieceError::Open { coedge });
+                    return Err(PieceError::Unsettled);
                 }
             }
             let c = uv_curve(sp, &self.like).ok_or(PieceError::Ribbon { coedge })?;
@@ -783,7 +831,10 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
     }
 
     /// The turn of `seg` over `[x, y]` (local, along), its ends' sides
-    /// where given, counter-clockwise round the run.
+    /// where given, counter-clockwise round the run; on a tile line not
+    /// certified off the query, the side record's count over `[x, y]`,
+    /// and an end at a tile corner on the ray's line ahead of the query
+    /// takes its side from the corner's record (module docs).
     fn laps(
         &mut self,
         seg: &Seg,
@@ -796,16 +847,23 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         }
         let ext = Extent::new(x, y).expect("within the segment");
         let patch = self.patch(seg.tile)?;
+        // Every side reads `TurnError::Off` on such a patch: no record
+        // may stand in for it.
+        if !patch.weights_positive() {
+            return Err(PieceError::Unsettled);
+        }
+        let edge = line_edge(self.of, seg.tile, seg.dir, seg.at);
         let mut n = 0u64;
-        let t = iso_turn_given(
-            patch, seg.dir, seg.at, ext, &self.q, self.ray, given, &mut n,
+        let laps = rec_turn(
+            patch, seg.dir, seg.at, ext, &self.q, self.point, edge, self.sides, given, &mut n,
         );
         self.pieces = self.pieces.saturating_add(n);
-        match t {
-            Ok(t) => Ok(if seg.back { -t.laps } else { t.laps }),
-            Err(TurnError::Off) => Err(PieceError::Through),
-            Err(_) => Err(PieceError::Unsettled),
-        }
+        let laps = laps.map_err(|e| match e {
+            RecTurnError::Need(k) => PieceError::Need(k),
+            RecTurnError::Through => PieceError::Through,
+            RecTurnError::Unsettled => PieceError::Unsettled,
+        })?;
+        Ok(if seg.back { -laps } else { laps })
     }
 }
 
@@ -827,12 +885,109 @@ fn past(x: [EdgePos; 2], w: [EdgePos; 2]) -> Option<bool> {
     }
 }
 
-/// The degree of the strip piece of the run `boxes` of `face` with the
-/// ribbons `ribbons` about the query point `point`, whose shadow is `q`
-/// (module docs), `patches` the face's tiles' patches at the level worked
-/// at (one per tile, in [`FaceUv::tile_boxes`]' order). The ribbons are
-/// those of the coedges the run's strip boxes meet (one coedge, or a
-/// slit's), each with the query point's ray record against its edge.
+/// Whether trim `t`'s p-curve is closed: its edge's two ends one vertex
+/// and its first and last points bitwise one UV point.
+fn is_closed(t: &Trim<'_>) -> bool {
+    let (a, b) = uv_ends(t);
+    t.ends[0] == t.ends[1] && a == b
+}
+
+/// The UV points (as bits) of trim `t`'s first and last control points,
+/// along its edge: its p-curve's ends, `−0` as `0`. Its spans are not
+/// empty.
+fn uv_ends(t: &Trim<'_>) -> ([u64; 2], [u64; 2]) {
+    let bits = |p: [f64; 3]| [(p[0] + 0.0).to_bits(), (p[1] + 0.0).to_bits()];
+    let last = t.spans.len() - 1;
+    (bits(t.spans[0][0]), bits(t.spans[last][2]))
+}
+
+/// The coedge's start and end, along the coedge: per end its vertex and
+/// UV point (as bits), and the point.
+fn coedge_ends(t: &Trim<'_>) -> [(VertId, [u64; 2], [f64; 2]); 2] {
+    let last = t.spans.len() - 1;
+    let pt = |p: [f64; 3]| [p[0], p[1]];
+    let (a, b) = uv_ends(t);
+    let stored = [
+        (t.ends[0], a, pt(t.spans[0][0])),
+        (t.ends[1], b, pt(t.spans[last][2])),
+    ];
+    if t.reversed {
+        [stored[1], stored[0]]
+    } else {
+        stored
+    }
+}
+
+/// Where the UV point `p` lies against the run of `boxes`, whose outer
+/// boundary is `segs`: `Some(true)` inside, `Some(false)` outside, `None`
+/// on the outer boundary. Exact.
+fn place(boxes: &[BoxKey], segs: &[Seg], p: [f64; 2]) -> Option<bool> {
+    let p = p.map(rat);
+    let at = |i: i64, t: Dyadic| Rational::from(i) + rat(dy(t));
+    for s in segs {
+        let (k, o) = (fixed(s.dir), 1 - fixed(s.dir));
+        if p[k] == at(s.tile[k], s.at)
+            && at(s.tile[o], s.ext.lo()) <= p[o]
+            && p[o] <= at(s.tile[o], s.ext.hi())
+        {
+            return None;
+        }
+    }
+    Some(boxes.iter().any(|b| {
+        [Dir::U, Dir::V].into_iter().all(|d| {
+            let (e, k) = (b.extent(d), fixed(d));
+            at(b.tile()[k], e.lo()) <= p[k] && p[k] <= at(b.tile()[k], e.hi())
+        })
+    }))
+}
+
+/// The signed crossings of `rays` past the window `lo` and before `hi`
+/// along the edge's stored direction (from the edge's start where `lo` is
+/// `None`, to its end where `hi` is), or outside the two where `wrap`
+/// (module docs).
+fn count_between(
+    rays: &ChainRec,
+    lo: Option<[EdgePos; 2]>,
+    hi: Option<[EdgePos; 2]>,
+    wrap: bool,
+) -> Result<i64, PieceError> {
+    let mut count = 0i64;
+    for c in &rays.crossings {
+        let pos = [
+            EdgePos {
+                span: c.span,
+                t: c.crossing.t[0],
+            },
+            EdgePos {
+                span: c.span,
+                t: c.crossing.t[1],
+            },
+        ];
+        let a = match lo {
+            Some(w) => past(pos, w).ok_or(PieceError::Unsettled)?,
+            None => true,
+        };
+        let b = match hi {
+            Some(w) => past(pos, w).ok_or(PieceError::Unsettled)?,
+            None => false,
+        };
+        let inside = if wrap { a || !b } else { a && !b };
+        if inside {
+            count += i64::from(c.crossing.sign.as_i8());
+        }
+    }
+    Ok(count)
+}
+
+/// The degree of the piece of the run `boxes` of `face` with the ribbons
+/// `ribbons` about the query point `point`, whose shadow is `q` (module
+/// docs), `patches` the face's tiles' patches at the level worked at (one
+/// per tile, in [`FaceUv::tile_boxes`]' order), `sides` the side and
+/// corner records read where an outer side on a tile line isn't certified
+/// off `q_xy`. The ribbons are those of the coedges the run's boxes meet:
+/// one coedge or a slit's (a strip piece), or the coedges meeting at the
+/// vertices inside the run (a corner piece), each with the query point's
+/// ray record against its edge.
 pub fn strip_degree<S: Scalar>(
     face: &FaceUv<'_>,
     patches: &[HomPatch<S>],
@@ -840,6 +995,7 @@ pub fn strip_degree<S: Scalar>(
     ribbons: &[Ribbon<'_>],
     q: &QShadow,
     point: Point,
+    sides: &Sides,
 ) -> Result<PieceDegree, PieceError> {
     if boxes.is_empty() {
         return Err(PieceError::Boxes);
@@ -861,16 +1017,24 @@ pub fn strip_degree<S: Scalar>(
         });
     };
     let mut trims: SmallVec<[&Trim<'_>; 2]> = SmallVec::new();
+    let mut index: SmallVec<[usize; 2]> = SmallVec::new();
     let i0 = face.trim_index(first.coedge).ok_or(PieceError::Ribbon {
         coedge: first.coedge,
     })?;
+    // A slit: two or more coedges sharing one p-curve. Otherwise every
+    // ribbon's p-curve is its own.
+    let slit = ribbons.len() > 1
+        && ribbons.iter().all(|r| {
+            face.trim_index(r.coedge)
+                .is_some_and(|i| face.same_curve(i0, i))
+        });
     for (k, r) in ribbons.iter().enumerate() {
         let bad = PieceError::Ribbon { coedge: r.coedge };
         let i = face.trim_index(r.coedge).ok_or(bad)?;
         let t = &face.trims()[i];
-        let fits = !t.zero_length
-            && face.same_curve(i0, i)
+        let fits = !t.spans.is_empty()
             && !ribbons[..k].iter().any(|o| o.coedge == r.coedge)
+            && (slit || !index.iter().any(|&j| face.same_curve(j, i)))
             && r.map.len() == t.spans.len()
             && r.map.iter().all(|m| {
                 (m.span as usize) < r.curve.len()
@@ -888,11 +1052,15 @@ pub fn strip_degree<S: Scalar>(
             return Err(bad);
         }
         trims.push(t);
+        index.push(i);
     }
     let like = patches[0].weights().coefs()[0].clone();
     let w = face.inside_winding();
     let mut ctx = Ctx {
         face,
+        of: (boxes[0].operand(), boxes[0].face()),
+        sides,
+        point,
         patches,
         ribbons,
         trims,
@@ -903,6 +1071,40 @@ pub fn strip_degree<S: Scalar>(
     };
     let segs = outer(boxes)?;
     let loops = loops(&segs)?;
+
+    // The curves' ends inside the run: every trim ending there is a
+    // ribbon, and at each vertex (and UV point) as many curves end as
+    // start, so the radials there cancel.
+    let mut ends_in: SmallVec<[[bool; 2]; 2]> = smallvec::smallvec![[false; 2]; ribbons.len()];
+    let mut balance: BTreeMap<(VertId, [u64; 2]), i32> = BTreeMap::new();
+    for (i, t) in face.trims().iter().enumerate() {
+        if t.spans.is_empty() || is_closed(t) {
+            continue;
+        }
+        let m = index.iter().position(|&j| j == i);
+        for (k, (v, bits, p)) in coedge_ends(t).into_iter().enumerate() {
+            match place(boxes, &segs, p) {
+                None => return Err(PieceError::Unsettled),
+                Some(false) => continue,
+                Some(true) => (),
+            }
+            let Some(m) = m else {
+                return Err(PieceError::Open { coedge: t.coedge });
+            };
+            ends_in[m][k] = true;
+            *balance.entry((v, bits)).or_default() += if k == 0 { 1 } else { -1 };
+        }
+    }
+    for (m, t) in ctx.trims.iter().enumerate() {
+        if is_closed(t) {
+            continue;
+        }
+        for (k, (v, bits, _)) in coedge_ends(t).into_iter().enumerate() {
+            if ends_in[m][k] && balance.get(&(v, bits)) != Some(&0) {
+                return Err(PieceError::Open { coedge: t.coedge });
+            }
+        }
+    }
 
     // The cuts and their windows.
     let mut hits = Vec::new();
@@ -917,7 +1119,7 @@ pub fn strip_degree<S: Scalar>(
     let win = |h: &Hit| h.window.expect("certified");
 
     // The free sides inside the trim.
-    let single = ribbons.len() == 1;
+    let single = !slit;
     let inside_after = |h: &Hit| w * i64::from(h.sigma) > 0;
     let mut free = 0i64;
     for l in &loops {
@@ -989,7 +1191,7 @@ pub fn strip_degree<S: Scalar>(
     let mut ribbon = 0i64;
     for (m, r) in ribbons.iter().enumerate() {
         let t = ctx.trims[m];
-        let closed = t.ends[0] == t.ends[1];
+        let closed = is_closed(t);
         let mut mine: Vec<&Hit> = hits.iter().filter(|h| h.member == m).collect();
         mine.sort_by(|a, b| {
             (a.pspan, a.t[0])
@@ -1005,54 +1207,71 @@ pub fn strip_degree<S: Scalar>(
         if t.reversed {
             mine.reverse();
         }
-        if mine.is_empty() {
-            continue;
-        }
         let entry = |h: &Hit| h.sigma < 0;
-        if !entry(mine[0]) {
-            if !closed {
-                return Err(PieceError::Open { coedge: t.coedge });
-            }
-            mine.rotate_left(1);
-        }
-        if !mine.len().is_multiple_of(2)
-            || mine
-                .iter()
-                .enumerate()
-                .any(|(k, h)| entry(h) != (k % 2 == 0))
-        {
-            return Err(PieceError::Unsettled);
-        }
         let mut count = 0i64;
-        for pair in mine.chunks(2) {
-            let (e, x) = (win(pair[0]).c, win(pair[1]).c);
-            // Along the stored direction, from `lo` to `hi`.
-            let (lo, hi) = if t.reversed { (x, e) } else { (e, x) };
-            // The windows apart along the edge.
-            if !(lo[1] < hi[0] || hi[1] < lo[0]) {
+        if closed {
+            if mine.is_empty() {
+                // The whole loop inside the run, or clear of it; its
+                // vertex on the outer boundary (touching it uncut) says
+                // neither.
+                match place(boxes, &segs, coedge_ends(t)[0].2) {
+                    Some(true) => count = count_between(r.rays, None, None, false)?,
+                    Some(false) => (),
+                    None => return Err(PieceError::Unsettled),
+                }
+            } else {
+                if !entry(mine[0]) {
+                    mine.rotate_left(1);
+                }
+                if !mine.len().is_multiple_of(2)
+                    || mine
+                        .iter()
+                        .enumerate()
+                        .any(|(k, h)| entry(h) != (k % 2 == 0))
+                {
+                    return Err(PieceError::Unsettled);
+                }
+                for pair in mine.chunks(2) {
+                    let (e, x) = (win(pair[0]).c, win(pair[1]).c);
+                    // Along the stored direction, from `lo` to `hi`.
+                    let (lo, hi) = if t.reversed { (x, e) } else { (e, x) };
+                    // The windows apart along the edge.
+                    if !(lo[1] < hi[0] || hi[1] < lo[0]) {
+                        return Err(PieceError::Unsettled);
+                    }
+                    count += count_between(r.rays, Some(lo), Some(hi), hi[0] < lo[0])?;
+                }
+            }
+        } else {
+            // Stretches in the coedge's order: from its start if inside
+            // the run, between an entry and the next exit, to its end if
+            // inside the run.
+            let [start_in, end_in] = ends_in[m];
+            let mut marks: Vec<Option<[EdgePos; 2]>> = Vec::new();
+            if start_in {
+                marks.push(None);
+            }
+            for (k, h) in mine.iter().enumerate() {
+                if entry(h) != ((k + usize::from(start_in)).is_multiple_of(2)) {
+                    return Err(PieceError::Unsettled);
+                }
+                marks.push(Some(win(h).c));
+            }
+            if end_in {
+                marks.push(None);
+            }
+            if !marks.len().is_multiple_of(2) {
                 return Err(PieceError::Unsettled);
             }
-            let wrap = hi[0] < lo[0];
-            if wrap && !closed {
-                return Err(PieceError::Open { coedge: t.coedge });
-            }
-            for c in &r.rays.crossings {
-                let pos = [
-                    EdgePos {
-                        span: c.span,
-                        t: c.crossing.t[0],
-                    },
-                    EdgePos {
-                        span: c.span,
-                        t: c.crossing.t[1],
-                    },
-                ];
-                let a = past(pos, lo).ok_or(PieceError::Unsettled)?;
-                let b = past(pos, hi).ok_or(PieceError::Unsettled)?;
-                let inside = if wrap { a || !b } else { a && !b };
-                if inside {
-                    count += i64::from(c.crossing.sign.as_i8());
+            for pair in marks.chunks(2) {
+                let (e, x) = (pair[0], pair[1]);
+                let (lo, hi) = if t.reversed { (x, e) } else { (e, x) };
+                if let (Some(lo), Some(hi)) = (lo, hi)
+                    && lo[1] >= hi[0]
+                {
+                    return Err(PieceError::Unsettled);
                 }
+                count += count_between(r.rays, lo, hi, false)?;
             }
         }
         ribbon += if t.reversed { -count } else { count };

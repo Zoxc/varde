@@ -8,17 +8,29 @@
 //! any partition sum to the whole; flipped faces, coedges against their
 //! edge, a slit and a run ending at the tile line (a cut at the knot). On
 //! a curved surface with a curved p-curve and edge curve, runs of any
-//! partition sum to the whole run.
+//! partition sum to the whole run. Queries on the tile line read the
+//! side records of the parts' sides there. Corner pieces: a second
+//! coedge turning up from a vertex inside the run, its own edge's curve
+//! meeting the first's at the vertex; runs holding the vertex take both
+//! ribbons and sum, with the strip pieces beside them, to the winding of
+//! the piece's boundary polygon.
 
 use varde_testkit::rng::Rng;
+
+use glam::DVec3;
 
 use super::*;
 use crate::bezier::Dyadic;
 use crate::count::boxes::UvSpan;
-use crate::ids::{FaceId, VertId};
-use crate::num::decide::Sign;
-use crate::records::keys::{Operand, Query};
+use crate::ids::{EdgeId, FaceId, VertId};
+use crate::num::decide::{Band, Fail, Sign};
+use crate::num::exact::ORDERS;
+use crate::perturb::{Curved, Moving, Seg as Line, T};
+use crate::records::keys::{Operand, Query, TileCorner, TileEdge};
 use crate::records::ray::{ChainCrossing, Crossing};
+use crate::records::shadow::{Decided, Pass, ShadowGeometry};
+use crate::records::side::SideGeometry;
+use crate::records::table::Fresh;
 
 type Patch = HomPatch<Bounded<f64>>;
 
@@ -124,8 +136,10 @@ fn rays(c: &[Span], q: [f64; 3]) -> ChainRec {
         } else {
             let disc = b * b - 4.0 * a * c0;
             if disc > 0.0 {
-                let s = disc.sqrt();
-                ts.extend([(-b - s) / (2.0 * a), (-b + s) / (2.0 * a)]);
+                // Without cancellation: a nearly straight span has `a`
+                // tiny, one root far off, the other `c₀/h`.
+                let h = -(b + b.signum() * disc.sqrt()) / 2.0;
+                ts.extend([h / a, c0 / h]);
             }
         }
         ts.sort_by(f64::total_cmp);
@@ -279,15 +293,103 @@ impl Setup {
                 rays: &rec,
             })
             .collect();
-        strip_degree(
-            &face,
-            &self.patches,
-            boxes,
-            &ribbons,
-            &QShadow::of(q).unwrap(),
-            point(),
-        )
+        settle(q, |sides| {
+            strip_degree(
+                &face,
+                &self.patches,
+                boxes,
+                &ribbons,
+                &QShadow::of(q).unwrap(),
+                point(),
+                sides,
+            )
+        })
     }
+}
+
+/// The face's points move with `A`, along `σ_A·d` and the fixed
+/// translations: `d = (1, 0, 0)`, `σ_A = +`.
+const D: DVec3 = DVec3::new(1.0, 0.0, 0.0);
+
+/// The plane face's tile edges and corners as the side records read
+/// them, and the query point at `q`.
+struct Plane {
+    q: DVec3,
+}
+
+impl ShadowGeometry for Plane {
+    fn point(&self, p: Point) -> Moving {
+        assert_eq!(p, point());
+        Moving::fixed(self.q)
+    }
+
+    fn near_radius(&self, _: Point) -> f64 {
+        0.0
+    }
+
+    fn ends(&self, _: Operand, _: EdgeId) -> [VertId; 2] {
+        unreachable!("no edges here")
+    }
+
+    fn line(&self, _: Point, _: EdgeId) -> Line {
+        unreachable!("no edges here")
+    }
+}
+
+impl SideGeometry for Plane {
+    fn tile_edge(&self, e: &TileEdge) -> Option<Span> {
+        let at = |c: f64| match e.fixed {
+            Dir::U => [SU * e.line as f64, SV * c, 0.0, 1.0],
+            Dir::V => [SU * c, SV * e.line as f64, 0.0, 1.0],
+        };
+        let c = e.cell as f64;
+        Some([at(c), at(c + 0.5), at(c + 1.0)])
+    }
+
+    fn corner(&self, _: Point, c: &TileCorner) -> Option<Moving> {
+        let at = DVec3::new(SU * c.at[0] as f64, SV * c.at[1] as f64, 0.0);
+        Some(Moving::of_a(at, Sign::Pos, D))
+    }
+
+    fn edge_rates<S: Curved>(&self, _: Point, _: &TileEdge, t: &S) -> [[S; 3]; ORDERS] {
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
+        [lit(D), lit(T[0]), lit(T[1]), lit(T[2])]
+    }
+}
+
+/// A pass deciding in order on one thread.
+struct Seq;
+
+impl Pass for Seq {
+    type Error = Fail;
+
+    fn run<K: Sync, V: Send>(
+        &mut self,
+        keys: &[Fresh<K>],
+        decide: &(dyn Fn(&Fresh<K>) -> Decided<V> + Sync),
+    ) -> Result<Vec<V>, Fail> {
+        keys.iter().map(|k| decide(k).0).collect()
+    }
+}
+
+/// `degree` with the side records it needs for the query at `q`,
+/// decided as it asks for them.
+fn settle(
+    q: [f64; 3],
+    degree: impl Fn(&Sides) -> Result<PieceDegree, PieceError>,
+) -> Result<PieceDegree, PieceError> {
+    let geom = Plane {
+        q: DVec3::from_array(q),
+    };
+    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
+    let mut sides = Sides::new();
+    for _ in 0..8 {
+        match degree(&sides) {
+            Err(PieceError::Need(k)) => sides.fill([k], &geom, band, &mut Seq).unwrap(),
+            r => return r,
+        }
+    }
+    panic!("records asked again after filling")
 }
 
 /// A random query point over the run and round it, above the plane.
@@ -680,6 +782,8 @@ fn box_order_and_uniform_weights_do_not_change_the_degree() {
     }
 }
 
+/// Queries on the tile line `x = 5`, where the two halves of the run
+/// meet; the halves' sides there are read from their side records.
 #[test]
 fn queries_on_tile_and_box_lines() {
     let s = Setup::new(-DELTA);
@@ -701,6 +805,11 @@ fn queries_on_tile_and_box_lines() {
                     Err(e) => panic!("{e:?} at ({x}, {y})"),
                 }
             }
+            // On the tile line inside the run and away from the cut, the
+            // parts' sides there are read from their side records.
+            if x == 5.0 && [3.0, 3.75, 4.5].contains(&y) {
+                assert_eq!(sum, Some(1), "({x}, {y})");
+            }
             match whole {
                 Ok(w) => {
                     if let Some(t) = truth {
@@ -715,4 +824,492 @@ fn queries_on_tile_and_box_lines() {
             }
         }
     }
+}
+
+/// A corner: coedge 1 along `v = V0` from `u = U0` to the vertex `W`, at
+/// `u = WU`, then coedge 2 up from `W` to `(WU + 0.1, 0.85)`, each
+/// straight (coedge 1 broken at the tile line), the face above the first
+/// and left of the second. Each edge's curve is straight, beside its
+/// p-curve's image, and the two meet at `W`'s point, `DELTA` right of and
+/// below `S(W)`.
+struct Corner {
+    spans: [Vec<UvSpan>; 2],
+    curves: [Vec<Span>; 2],
+    maps: [Vec<SpanMap>; 2],
+    patches: Vec<Patch>,
+}
+
+const WU: f64 = 1.3;
+const TOP: [f64; 2] = [WU + 0.1, 0.85];
+
+/// The vertex's point.
+fn w_pos() -> [f64; 2] {
+    [SU * WU + DELTA, SV * V0 - DELTA]
+}
+
+/// The corner's edge curves at their parameters.
+fn c1_at(t: f64) -> [f64; 2] {
+    let (a, b) = ([SU * U0, SV * V0 - DELTA], w_pos());
+    [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
+}
+
+fn c2_at(t: f64) -> [f64; 2] {
+    let (a, b) = (w_pos(), [SU * TOP[0] + DELTA, SV * TOP[1]]);
+    [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
+}
+
+impl Corner {
+    fn new() -> Corner {
+        let line = |a: [f64; 2], b: [f64; 2]| {
+            [
+                [a[0], a[1], 1.0],
+                [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 1.0],
+                [b[0], b[1], 1.0],
+            ]
+        };
+        let seg = |a: [f64; 2], b: [f64; 2]| {
+            vec![[
+                [a[0], a[1], 0.0, 1.0],
+                [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0, 1.0],
+                [b[0], b[1], 0.0, 1.0],
+            ]]
+        };
+        // `u = U0 + (WU − U0)·t` on the first edge: the knot at `u = 1`.
+        let k = (1.0 - U0) / (WU - U0);
+        Corner {
+            spans: [
+                vec![line([U0, V0], [1.0, V0]), line([1.0, V0], [WU, V0])],
+                vec![line([WU, V0], TOP)],
+            ],
+            curves: [seg(c1_at(0.0), c1_at(1.0)), seg(c2_at(0.0), c2_at(1.0))],
+            maps: [
+                vec![
+                    SpanMap {
+                        span: 0,
+                        t: [0.0, k],
+                    },
+                    SpanMap {
+                        span: 0,
+                        t: [k, 1.0],
+                    },
+                ],
+                vec![SpanMap {
+                    span: 0,
+                    t: [0.0, 1.0],
+                }],
+            ],
+            patches: patches(),
+        }
+    }
+
+    fn trims(&self, reversed: bool) -> [Trim<'_>; 2] {
+        let t = |k: usize, ends: [u32; 2]| Trim {
+            coedge: CoedgeId(k as u32 + 1),
+            reversed,
+            spans: &self.spans[k],
+            ends: ends.map(VertId),
+            zero_length: false,
+            band: 0.0,
+        };
+        [t(0, [1, 2]), t(1, [2, 3])]
+    }
+
+    fn degree(
+        &self,
+        trims: &[Trim<'_>],
+        flipped: bool,
+        coedges: &[u32],
+        boxes: &[BoxKey],
+        q: [f64; 3],
+    ) -> Result<PieceDegree, PieceError> {
+        let face = FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], trims, flipped).unwrap();
+        let recs = [rays(&self.curves[0], q), rays(&self.curves[1], q)];
+        let ribbons: Vec<Ribbon<'_>> = coedges
+            .iter()
+            .map(|&c| {
+                let k = c as usize - 1;
+                Ribbon {
+                    coedge: CoedgeId(c),
+                    curve: &self.curves[k],
+                    map: &self.maps[k],
+                    rays: &recs[k],
+                }
+            })
+            .collect();
+        settle(q, |sides| {
+            strip_degree(
+                &face,
+                &self.patches,
+                boxes,
+                &ribbons,
+                &QShadow::of(q).unwrap(),
+                point(),
+                sides,
+            )
+        })
+    }
+}
+
+/// The corner run: [`run`], the vertex in its last box (`u ∈ [1¼,
+/// 1½]`), coedge 2 leaving it by its top.
+fn corner_run() -> Vec<BoxKey> {
+    run()
+}
+
+/// The corner run's piece boundary in the plane, counter-clockwise: in at
+/// the run's left side along coedge 1's radial, along the edges' curves
+/// through the vertex, out along coedge 2's radial at the run's top, back
+/// along the top and the left side.
+fn corner_polygon() -> Vec<[f64; 2]> {
+    let entry = (0.5 - U0) / (WU - U0);
+    let exit = (0.5 - V0) / (TOP[1] - V0);
+    let ux = WU + (TOP[0] - WU) * exit;
+    vec![
+        [SU * 0.5, SV * V0],
+        c1_at(entry),
+        w_pos(),
+        c2_at(exit),
+        [SU * ux, SV * 0.5],
+        [SU * 0.5, SV * 0.5],
+    ]
+}
+
+/// The winding of `ring` about `p`, `None` within `m` of it.
+fn winding(ring: &[[f64; 2]], p: [f64; 2], m: f64) -> Option<i64> {
+    let mut w = 0;
+    for k in 0..ring.len() {
+        let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = dx * dx + dy * dy;
+        let s = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0);
+        let (ex, ey) = (a[0] + s * dx - p[0], a[1] + s * dy - p[1]);
+        if ex * ex + ey * ey < m * m {
+            return None;
+        }
+        let cross = dx * (p[1] - a[1]) - dy * (p[0] - a[0]);
+        if a[1] <= p[1] && p[1] < b[1] && cross > 0.0 {
+            w += 1;
+        } else if b[1] <= p[1] && p[1] < a[1] && cross < 0.0 {
+            w -= 1;
+        }
+    }
+    Some(w)
+}
+
+/// The corner run's partitions: strip pieces of either coedge and corner
+/// pieces holding the vertex, cut across the tile line and the vertex's
+/// box.
+fn corner_parts() -> Vec<Vec<Vec<BoxKey>>> {
+    let r = corner_run();
+    vec![
+        vec![r.clone()],
+        vec![r[..2].to_vec(), r[2..].to_vec()],
+        // `r[3]` lies inside the trim, clear of the curves: not alone.
+        vec![vec![r[0]], vec![r[1]], vec![r[2], r[3]], vec![r[4]]],
+        vec![r[..4].to_vec(), vec![r[4]]],
+        vec![vec![r[0], r[2], r[4]], vec![r[1], r[3]]],
+        vec![r[..3].to_vec(), vec![r[3], r[4]]],
+    ]
+}
+
+/// Runs of any partition of the corner run, each with both ribbons, sum
+/// to the winding of the piece's boundary.
+fn check_corner(flipped: bool, sign: i64, seed: u64) {
+    let c = Corner::new();
+    let trims = c.trims(flipped);
+    let ring = corner_polygon();
+    for (k, parts) in corner_parts().iter().enumerate() {
+        let mut rng = Rng::new(seed + k as u64);
+        let (mut ok, mut all) = (0, 0);
+        // Random queries, and queries on the tile line `x = 5`.
+        let qs: Vec<[f64; 3]> = (0..150)
+            .map(|_| draw(&mut rng))
+            .chain((0..40).map(|j| [5.0, 1.0 + 0.1 * j as f64, 0.0]))
+            .collect();
+        for q in qs {
+            let Some(truth) = winding(&ring, plane_xy(q), 1e-3) else {
+                continue;
+            };
+            all += 1;
+            let mut sum = Some(0);
+            for p in parts {
+                match c.degree(&trims, flipped, &[1, 2], p, q) {
+                    Ok(d) => sum = sum.map(|x| x + d.degree),
+                    Err(PieceError::Unsettled | PieceError::Through) => sum = None,
+                    Err(e) => panic!("{e:?} partition {k} q {q:?}"),
+                }
+            }
+            if let Some(sum) = sum {
+                ok += 1;
+                assert_eq!(sum, sign * truth, "partition {k}, q = {q:?}");
+            }
+        }
+        assert!(ok * 10 >= all * 8, "partition {k}: {ok} of {all}");
+    }
+}
+
+#[test]
+fn corner_pieces_sum_to_the_winding() {
+    check_corner(false, 1, 300);
+}
+
+#[test]
+fn flipped_corner_with_its_coedges_against_their_edges() {
+    // Both coedges against their edges on a flipped face: the same
+    // region, its boundary clockwise in UV.
+    check_corner(true, -1, 400);
+}
+
+#[test]
+fn a_corner_needs_every_coedge_at_its_vertex() {
+    let c = Corner::new();
+    let trims = c.trims(false);
+    let r = corner_run();
+    let q = [4.0, 4.0, 0.0];
+    // Coedge 2 starts inside the run: a corner piece must take it.
+    assert_eq!(
+        c.degree(&trims, false, &[1], &r, q),
+        Err(PieceError::Open {
+            coedge: CoedgeId(2)
+        })
+    );
+    // Without coedge 1's ribbon, coedge 2 starts where nothing ends.
+    assert_eq!(
+        c.degree(&trims, false, &[2], &r[2..], q),
+        Err(PieceError::Open {
+            coedge: CoedgeId(1)
+        })
+    );
+    assert_eq!(c.degree(&trims, false, &[1, 2], &r, q).unwrap().degree, 1);
+    // The two halves of the run: the left one a strip piece of coedge 1.
+    let left = c.degree(&trims, false, &[1], &r[..2], q).unwrap();
+    let right = c.degree(&trims, false, &[1, 2], &r[2..], q).unwrap();
+    assert_eq!(left.degree + right.degree, 1);
+    // The vertex's two curves meeting there, unbalanced: coedge 2 made
+    // to start at another vertex.
+    let mut odd = c.trims(false);
+    odd[1].ends = [VertId(7), VertId(3)];
+    assert_eq!(
+        c.degree(&odd, false, &[1, 2], &r, q),
+        Err(PieceError::Open {
+            coedge: CoedgeId(1)
+        })
+    );
+}
+
+#[test]
+fn a_side_on_the_tile_line_needs_its_record() {
+    let s = Setup::new(-DELTA);
+    let trims = [trim(&s.spans, 1, false)];
+    let face = FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], &trims, false).unwrap();
+    let q = [5.0, 4.0, 0.0];
+    let rec = rays(&s.curve, q);
+    let ribbons = [Ribbon {
+        coedge: CoedgeId(1),
+        curve: &s.curve,
+        map: &s.maps,
+        rays: &rec,
+    }];
+    let left = &run()[..2];
+    let got = strip_degree(
+        &face,
+        &s.patches,
+        left,
+        &ribbons,
+        &QShadow::of(q).unwrap(),
+        point(),
+        &Sides::new(),
+    );
+    let edge = TileEdge {
+        operand: Operand::A,
+        face: FaceId(3),
+        fixed: Dir::U,
+        line: 1,
+        cell: 0,
+    };
+    assert_eq!(got, Err(PieceError::Need(SideKey { q: point(), edge })));
+}
+
+/// A hole: a closed straight triangle (one vertex, clockwise in UV)
+/// above the trim in tile 0, its apex at `(0.75, top)`, its edge's curve
+/// its image on the plane.
+struct Hole {
+    spans: Vec<UvSpan>,
+    curve: Vec<Span>,
+    maps: Vec<SpanMap>,
+}
+
+impl Hole {
+    fn new(top: f64) -> Hole {
+        let pts = [[0.75, top], [0.9, 0.3], [0.6, 0.3]];
+        let mut spans = Vec::new();
+        let mut curve = Vec::new();
+        for k in 0..3 {
+            let (a, b) = (pts[k], pts[(k + 1) % 3]);
+            let m = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+            spans.push([a, m, b].map(|p| [p[0], p[1], 1.0]));
+            curve.push([a, m, b].map(|p| [SU * p[0], SV * p[1], 0.0, 1.0]));
+        }
+        let maps = (0..3)
+            .map(|k| SpanMap {
+                span: k,
+                t: [0.0, 1.0],
+            })
+            .collect();
+        Hole { spans, curve, maps }
+    }
+}
+
+/// A closed trim inside a corner piece counts its whole ray record; one
+/// touching the run's outer boundary at its vertex, not cut there, is
+/// not known to be inside.
+#[test]
+fn a_closed_trim_touching_the_boundary_is_unsettled() {
+    let s = Setup::new(-DELTA);
+    let run = run();
+    let degree = |h: &Hole, q: [f64; 3]| {
+        let hole = Trim {
+            coedge: CoedgeId(2),
+            reversed: false,
+            spans: &h.spans,
+            ends: [VertId(5), VertId(5)],
+            zero_length: false,
+            band: 0.0,
+        };
+        let trims = [trim(&s.spans, 1, false), hole];
+        let face = FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], &trims, false).unwrap();
+        let recs = [rays(&s.curve, q), rays(&h.curve, q)];
+        let ribbons = [
+            Ribbon {
+                coedge: CoedgeId(1),
+                curve: &s.curve,
+                map: &s.maps,
+                rays: &recs[0],
+            },
+            Ribbon {
+                coedge: CoedgeId(2),
+                curve: &h.curve,
+                map: &h.maps,
+                rays: &recs[1],
+            },
+        ];
+        settle(q, |sides| {
+            strip_degree(
+                &face,
+                &s.patches,
+                &run,
+                &ribbons,
+                &QShadow::of(q).unwrap(),
+                point(),
+                sides,
+            )
+        })
+    };
+    // In the hole, and in the face above it.
+    let (hole_q, face_q) = ([3.7, 3.6, 0.0], [3.7, 4.8, 0.0]);
+    let inner = Hole::new(0.45);
+    assert_eq!(degree(&inner, hole_q).unwrap().degree, 0);
+    assert_eq!(degree(&inner, face_q).unwrap().degree, 1);
+    // The apex on the run's top side.
+    let touching = Hole::new(0.5);
+    assert_eq!(degree(&touching, hole_q), Err(PieceError::Unsettled));
+}
+
+/// A corner whose vertex lies on the tile line `u = 1` inside the run:
+/// coedge 1 along `v = V0` up to it in tile 0, coedge 2 from it up to
+/// `TOP` in tile 1, each edge's curve its p-curve's image.
+#[test]
+fn a_corner_on_the_tile_line() {
+    let line = |a: [f64; 2], b: [f64; 2]| {
+        let m = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+        (
+            [a, m, b].map(|p| [p[0], p[1], 1.0]),
+            [a, m, b].map(|p| [SU * p[0], SV * p[1], 0.0, 1.0]),
+        )
+    };
+    let top = [1.1, 0.85];
+    let (s1, c1) = line([U0, V0], [1.0, V0]);
+    let (s2, c2) = line([1.0, V0], top);
+    let (s1, s2, c1, c2) = (vec![s1], vec![s2], vec![c1], vec![c2]);
+    let map = [SpanMap {
+        span: 0,
+        t: [0.0, 1.0],
+    }];
+    let t = |k: u32, spans, ends: [u32; 2]| Trim {
+        coedge: CoedgeId(k),
+        reversed: false,
+        spans,
+        ends: ends.map(VertId),
+        zero_length: false,
+        band: 0.0,
+    };
+    let trims = [t(1, &s1[..], [1, 2]), t(2, &s2[..], [2, 3])];
+    let face = FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], &trims, false).unwrap();
+    let r = run();
+    let exit = 1.0 + (top[0] - 1.0) * (0.5 - V0) / (top[1] - V0);
+    let ring = [
+        [SU * 0.5, SV * V0],
+        [SU, SV * V0],
+        [SU * exit, SV * 0.5],
+        [SU * 0.5, SV * 0.5],
+    ];
+    let mut rng = Rng::new(500);
+    let (mut ok, mut all) = (0, 0);
+    for _ in 0..200 {
+        let q = draw(&mut rng);
+        let Some(truth) = winding(&ring, plane_xy(q), 1e-3) else {
+            continue;
+        };
+        all += 1;
+        let recs = [rays(&c1, q), rays(&c2, q)];
+        let ribbons = [
+            Ribbon {
+                coedge: CoedgeId(1),
+                curve: &c1,
+                map: &map,
+                rays: &recs[0],
+            },
+            Ribbon {
+                coedge: CoedgeId(2),
+                curve: &c2,
+                map: &map,
+                rays: &recs[1],
+            },
+        ];
+        let got = settle(q, |sides| {
+            strip_degree(
+                &face,
+                &patches(),
+                &r,
+                &ribbons,
+                &QShadow::of(q).unwrap(),
+                point(),
+                sides,
+            )
+        });
+        match got {
+            Ok(d) => {
+                ok += 1;
+                assert_eq!(d.degree, truth, "q = {q:?}");
+            }
+            Err(PieceError::Unsettled | PieceError::Through) => (),
+            Err(e) => panic!("{e:?} at {q:?}"),
+        }
+    }
+    assert!(ok * 10 >= all * 8, "{ok} of {all}");
+}
+
+/// A p-curve's ends at `0` and `−0` are one UV point: the curve is closed,
+/// and a vertex's curves meeting there balance.
+#[test]
+fn signed_zeros_are_one_uv_point() {
+    let spans = [
+        [[0.0, 0.3, 1.0], [0.2, 0.1, 1.0], [0.4, 0.3, 1.0]],
+        [[0.4, 0.3, 1.0], [0.2, 0.5, 1.0], [-0.0, 0.3, 1.0]],
+    ];
+    let mut t = trim(&spans, 1, false);
+    t.ends = [VertId(4), VertId(4)];
+    assert!(is_closed(&t));
+    let (a, b) = uv_ends(&t);
+    assert_eq!(a, b);
 }

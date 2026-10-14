@@ -90,6 +90,7 @@ use super::boxes::{
     BoxError, BoxKey, Extent, FaceUv, OFF_DEPTH, QShadow, cover, dy, iso_line, sub_patch,
 };
 use crate::bezier::{Dir, Dyadic, HomCurve, HomPatch, Scalar};
+use crate::ids::FaceId;
 use crate::num::bounded::Bounded;
 use crate::perturb::{NU, R_HAT};
 use crate::records::keys::{Operand, Point, SideKey, TileEdge};
@@ -651,24 +652,108 @@ pub fn box_degree<S: Scalar>(
 /// line ([`Side::on_tile_line`]).
 pub fn tile_edge(b: &BoxKey, side: Side) -> Option<TileEdge> {
     let (dir, at, _, _) = side.line(b);
+    line_edge((b.operand(), b.face()), b.tile(), dir, at)
+}
+
+/// The tile edge of face `of`'s tile `tile` on the line `dir = at`
+/// (local), if `at` is the tile's 0 or 1.
+pub(crate) fn line_edge(
+    of: (Operand, FaceId),
+    tile: [i64; 2],
+    dir: Dir,
+    at: Dyadic,
+) -> Option<TileEdge> {
     let (k, o) = match dir {
         Dir::U => (0, 1),
         Dir::V => (1, 0),
     };
     let line = if at == Dyadic::ZERO {
-        b.tile()[k]
+        tile[k]
     } else if at == Dyadic::ONE {
-        b.tile()[k] + 1
+        tile[k] + 1
     } else {
         return None;
     };
     Some(TileEdge {
-        operand: b.operand(),
-        face: b.face(),
+        operand: of.0,
+        face: of.1,
         fixed: dir,
         line,
-        cell: b.tile()[o],
+        cell: tile[o],
     })
+}
+
+/// Why a side's turn isn't certified with its side records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecTurnError {
+    /// This side record (or one of its corners') isn't decided yet.
+    Need(SideKey),
+    /// The side, inside a tile, isn't certified off `q_xy`.
+    Through,
+    /// Not settled at this level.
+    Unsettled,
+}
+
+/// The laps of the side `dir = at` of `patch` over `along` (local, in the
+/// side's own direction), its ends' sides where `given`, about the ray of
+/// `point`: [`iso_turn_given`] where certified; on a tile edge `edge` not
+/// certified off `q_xy`, the side record's count over `along`, and an end
+/// at a tile corner on the ray's line ahead of the query takes its side
+/// from the corner's record (module docs). The patch's weights are
+/// positive.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rec_turn<S: Scalar>(
+    patch: &HomPatch<S>,
+    dir: Dir,
+    at: Dyadic,
+    along: Extent,
+    q: &QShadow,
+    point: Point,
+    edge: Option<TileEdge>,
+    sides: &Sides,
+    given: [Option<i8>; 2],
+    pieces: &mut u64,
+) -> Result<i64, RecTurnError> {
+    let ray = Ray::of_query(point.operand);
+    let mut t = iso_turn_given(patch, dir, at, along, q, ray, given, pieces);
+    if let (Err(TurnError::End), Some(e)) = (t, edge) {
+        // Left of `+r̂` is `+ν`, the corner record's `Pos`; of `−r̂` it
+        // is `−ν`.
+        let flip: i8 = match point.operand {
+            Operand::A => -1,
+            Operand::B => 1,
+        };
+        let [c0, c1] = e.corners();
+        let mut g = given;
+        let mut read = false;
+        for (slot, (c, at_corner)) in g.iter_mut().zip([
+            (c0, along.lo() == Dyadic::ZERO),
+            (c1, along.hi() == Dyadic::ONE),
+        ]) {
+            if slot.is_none() && at_corner {
+                let r = sides
+                    .corner(point, c)
+                    .ok_or(RecTurnError::Need(SideKey { q: point, edge: e }))?;
+                *slot = Some(flip * r.side.as_i8());
+                read = true;
+            }
+        }
+        if read {
+            t = iso_turn_given(patch, dir, at, along, q, ray, g, pieces);
+        }
+    }
+    match (t, edge) {
+        (Ok(t), _) => Ok(t.laps),
+        (Err(TurnError::Off), Some(e)) => {
+            let rec = sides
+                .side(point, e)
+                .ok_or(RecTurnError::Need(SideKey { q: point, edge: e }))?;
+            rec.count_over([dy(along.lo()), dy(along.hi())])
+                .ok_or(RecTurnError::Unsettled)
+        }
+        (Err(TurnError::Off), None) => Err(RecTurnError::Through),
+        (Err(_), _) => Err(RecTurnError::Unsettled),
+    }
 }
 
 /// Why a box's degree isn't certified with its side records.
@@ -718,46 +803,28 @@ pub fn box_degree_sided<S: Scalar>(
         return Err(SidedError::Unsettled);
     }
     let ray = Ray::of_query(point.operand);
-    // Left of `+r̂` is `+ν`, the corner record's `Pos`; of `−r̂` it is `−ν`.
-    let flip: i8 = match point.operand {
-        Operand::A => -1,
-        Operand::B => 1,
-    };
     let mut pieces = 0u64;
     let mut laps = 0i64;
     for side in Side::CCW {
         let (dir, at, along, back) = side.line(b);
         let edge = tile_edge(b, side);
-        let mut t = iso_turn(patch, dir, at, along, q, ray, &mut pieces);
-        if let (Err(TurnError::End), Some(e)) = (t, edge) {
-            // An end on the ray's line ahead: at a tile corner, its side
-            // from the corner's record.
-            let [c0, c1] = e.corners();
-            let mut given = [None, None];
-            for (g, (c, at_corner)) in given.iter_mut().zip([
-                (c0, along.lo() == Dyadic::ZERO),
-                (c1, along.hi() == Dyadic::ONE),
-            ]) {
-                if at_corner {
-                    let r = sides
-                        .corner(point, c)
-                        .ok_or(SidedError::Need(SideKey { q: point, edge: e }))?;
-                    *g = Some(flip * r.side.as_i8());
-                }
-            }
-            t = iso_turn_given(patch, dir, at, along, q, ray, given, &mut pieces);
-        }
-        let n = match (t, edge) {
-            (Ok(t), _) => t.laps,
-            (Err(TurnError::Off), Some(e)) => {
-                let key = SideKey { q: point, edge: e };
-                let rec = sides.side(point, e).ok_or(SidedError::Need(key))?;
-                rec.count_over([dy(along.lo()), dy(along.hi())])
-                    .ok_or(SidedError::Unsettled)?
-            }
-            (Err(TurnError::Off), None) => return Err(SidedError::Through(side)),
-            (Err(_), _) => return Err(SidedError::Unsettled),
-        };
+        let n = rec_turn(
+            patch,
+            dir,
+            at,
+            along,
+            q,
+            point,
+            edge,
+            sides,
+            [None, None],
+            &mut pieces,
+        )
+        .map_err(|e| match e {
+            RecTurnError::Need(k) => SidedError::Need(k),
+            RecTurnError::Through => SidedError::Through(side),
+            RecTurnError::Unsettled => SidedError::Unsettled,
+        })?;
         laps += if back { -n } else { n };
     }
     Ok(Degree {
