@@ -63,7 +63,9 @@
 //! points) it reads the point–curve row at the end whose term counted
 //! the crossing ([`tie_point`]). The clusters are listed in their boxes'
 //! key order, so each cluster's index is a function of the pair and the
-//! level the record was decided at.
+//! level the record was decided at. A pair on one curve is never
+//! searched ([`XClusterError::Shared`]): its clusters come from the
+//! records alone ([`shared_clusters`](crate::records::xrec::shared_clusters)).
 //!
 //! Generic over the level, as the face boxes are; each call reports the
 //! pieces it tested, for the pass to charge.
@@ -76,12 +78,13 @@ use crate::bezier::{Dir, Dyadic, HomCurve, Scalar};
 use crate::count::boxes::{Extent, QShadow, SHIFTS, dy};
 use crate::count::degree::{Ray, TurnError, curve_turn};
 use crate::count::s02::MAX_LEAVES;
-use crate::num::bounded::Bounded;
 use crate::num::decide::Sign;
 use crate::order::EntityOrder;
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::keys::XKey;
-use crate::records::xrec::{EdgeRays, XCluster, XCurve, XPair, XPart, XRec, ZRow, tie_point};
+use crate::records::xrec::{
+    EdgeRays, XCluster, XCurve, XPair, XPart, XRec, ZRow, line_param, tie_point,
+};
 
 /// A box of the square of an edge pair: the cell of span `cell[0]` of `e`
 /// and span `cell[1]` of `g`, cut to the extents `t` (of `e`'s span) and
@@ -373,24 +376,6 @@ fn within(at: [f64; 2], ext: Extent) -> Result<bool, XDegreeError> {
     Ok(past_lo && before_hi)
 }
 
-/// The enclosure of the parameter where `q`'s `r̂` line meets the line
-/// from `p0` to `p1`, `ν·(q − p₀)/ν·(p₁ − p₀)`; `None` unless the
-/// denominator is certainly non-zero.
-fn line_param(q: [f64; 3], p0: [f64; 3], p1: [f64; 3]) -> Option<[f64; 2]> {
-    let nu = [NU.x, NU.y, NU.z];
-    let dot = |u: [f64; 3], v: [f64; 3]| {
-        (0..3).fold(Bounded::exact(0.0), |s, i| {
-            s + Bounded::exact(nu[i]) * (Bounded::exact(u[i]) - Bounded::exact(v[i]))
-        })
-    };
-    let den = dot(p1, p0);
-    if den.sign().is_none_or(|o| o == Ordering::Equal) {
-        return None;
-    }
-    let at = Scalar::enclose(&(dot(q, p0) / den));
-    (at[0].is_finite() && at[1].is_finite()).then_some(at)
-}
-
 /// Why an edge pair's clusters aren't formed at a level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum XClusterError {
@@ -405,6 +390,10 @@ pub enum XClusterError {
     Depth(XBox),
     /// More than [`MAX_LEAVES`] boxes at once.
     SizeLimit,
+    /// The pair's edges lie on one curve: no geometric search, its
+    /// clusters are the records'
+    /// ([`shared_clusters`](crate::records::xrec::shared_clusters)).
+    Shared,
 }
 
 /// An edge pair's clusters and what they took.
@@ -427,6 +416,9 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
     beta: [f64; 2],
     like: &S,
 ) -> Result<XClusters, XClusterError> {
+    if pair.shared {
+        return Err(XClusterError::Shared);
+    }
     let spans = [pair.e.span_count(), pair.g.span_count()];
     let mut pieces = 0u64;
     if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {

@@ -64,11 +64,45 @@
 //! term counted it ([`ZRow::PointCurve`]), never an edge–edge row with an
 //! undefined `m`. Curved pieces in that state refine, and escalate where
 //! no level certifies them.
+//!
+//! **Shared curves** ([`shared_clusters`]). Two edges on one curve (one
+//! curve object, or bitwise-equal canonical curves: the caller knows,
+//! [`XPair::shared`]) have shadows that coincide wherever the edges
+//! overlap, so no box of their square ever settles: they get no
+//! geometric crossing search. `X` is the four terms', and each crossing
+//! is one the records' ties put at an end: a crossing of an end's ray
+//! record lying in one of that end's feet on the other edge (the end on
+//! the other edge's shadow, moved off it by the perturbation) is a
+//! cluster of its own, of the crossing's sign as the identity counts its
+//! term, its piece of the end's edge the end itself and of the other
+//! edge the crossing's parameter enclosure, reading the point–curve row
+//! at that end ([`ZRow::PointCurve`]). A closed edge's two ends are one
+//! vertex, whose two terms cancel. Crossings away from every end's feet
+//! (the curve's shadow crossing itself) are refused
+//! ([`SharedError::Crossed`]).
+//!
+//! **Cut points** ([`cut_point`]). The cut point `Cut(e, g, c)` is the
+//! point of `e` at cluster `c` ([`XCluster::part`]). Its records (against
+//! a vertex, an edge's ray, a height) are the ordinary ones of a point at
+//! its stored position: the point of `e`'s span at the middle of the
+//! cluster's piece, evaluated exactly and rounded to the nearest `f64`
+//! (exactly the vertex or knot where the piece is a span's end), within
+//! the piece and so within the band of the crossing. Against its own
+//! edge `g` its height is the crossing's, `HKey::X(e, g, c)`
+//! ([`HKey::x`]).
+
+use std::cmp::Ordering;
+
+use malachite::Rational;
+use malachite::base::num::conversion::traits::RoundingFrom;
+use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use crate::bezier::{Dyadic, HomCurve, Scalar};
 use crate::ids::{EdgeId, VertId};
+use crate::num::bounded::Bounded;
 use crate::num::decide::Sign;
 use crate::order::{Along, EntityOrder, first};
+use crate::perturb::NU;
 use crate::records::feet::{Feet, Foot};
 use crate::records::height::{HeightReads, HeightRec, KeyError, LayerTable, height_key};
 use crate::records::keys::{
@@ -190,6 +224,9 @@ pub struct XPair<'a> {
     pub g: XCurve<'a>,
     /// The ray records of the square's boundary.
     pub terms: XTerms<'a>,
+    /// The edges lie on one curve (module docs, "Shared curves"): the
+    /// pair gets no geometric crossing search.
+    pub shared: bool,
 }
 
 /// A piece of an edge: an extent of one of its spans' parameters, along
@@ -205,8 +242,10 @@ pub struct XPart {
 
 impl XPart {
     /// Whether the piece meets foot `k`, as far as the foot's end
-    /// brackets tell (a bracket touching the piece counts as meeting).
-    fn meets(&self, k: &Foot, spans: u32) -> bool {
+    /// brackets tell (a bracket touching the piece counts as meeting). On
+    /// a closed edge (`closed`) the chain's start and end are one vertex,
+    /// so a piece or foot at one touches one at the other.
+    fn meets(&self, k: &Foot, spans: u32, closed: bool) -> bool {
         let lo = (k.lo.span, k.lo.t[0]);
         let hi = (k.hi.span, k.hi.t[1]);
         let (a, b) = ((self.span, self.t[0]), (self.span, self.t[1]));
@@ -224,12 +263,25 @@ impl XPart {
             let (x, y) = (at(x), at(y));
             x.0 < y.0 || (x.0 == y.0 && x.1 <= y.1)
         };
+        let end = (spans.saturating_sub(1), 1.0);
         if k.wraps {
             // From `lo` to the chain's end, and from its start to `hi`.
-            let end = (spans.saturating_sub(1), 1.0);
             (le(lo, b) && le(a, end)) || le(a, hi)
         } else {
-            le(lo, b) && le(a, hi)
+            let start = (0, 0.0);
+            let through =
+                closed && ((le(end, b) && le(lo, start)) || (le(a, start) && le(end, hi)));
+            through || (le(lo, b) && le(a, hi))
+        }
+    }
+}
+
+impl XCluster {
+    /// The piece of the edge of `of`: `e`'s for `A`, `g`'s for `B`.
+    pub fn part(&self, of: Operand) -> &XPart {
+        match of {
+            Operand::A => &self.e,
+            Operand::B => &self.g,
         }
     }
 }
@@ -407,7 +459,7 @@ fn meeting<R: HeightReads>(
     let [s, e] = reads.ends(of, g);
     let along = Along::of(&reads.vert_key(of, s), &reads.vert_key(of, e));
     feet.in_order(along)
-        .find(|&k| feet.get(k).is_some_and(|f| part.meets(f, spans)))
+        .find(|&k| feet.get(k).is_some_and(|f| part.meets(f, spans, s == e)))
 }
 
 /// For two straight edges whose shadows are exactly parallel (module
@@ -434,6 +486,170 @@ pub fn tie_point<O: EntityOrder>(order: &O, x: XKey, terms: &XTerms<'_>) -> Opti
             .filter(|p| p.2.signum() == total)
             .map(|(op, v, _)| ((order.vert_key(op, v), op), Point::vert(op, v))),
     )
+}
+
+/// Why a shared-curve pair's clusters aren't formed (module docs,
+/// "Shared curves").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SharedError {
+    /// An end's feet on the other edge aren't decided.
+    Missing(RecordKey),
+    /// A term's record is of the wrong kind for its edge, names a span
+    /// the edge doesn't have, or an edge has no spans.
+    Shape,
+    /// The four terms count this many crossings (as `X` sums them) away
+    /// from every end's feet: the curve's shadow crosses itself.
+    Crossed(i64),
+}
+
+/// The clusters of a shared-curve pair `x` (module docs, "Shared
+/// curves"), from its four terms and its ends' feet on the other edge,
+/// with no geometric search: one cluster per crossing of an end's ray
+/// lying in its feet, in the order `a`, `b`, `g0`, `g1`, then along the
+/// other edge.
+pub fn shared_clusters<R: HeightReads>(
+    reads: &R,
+    x: XKey,
+    pair: &XPair<'_>,
+) -> Result<XRec, SharedError> {
+    let t = &pair.terms;
+    if pair.e.span_count() == 0 || pair.g.span_count() == 0 {
+        return Err(SharedError::Shape);
+    }
+    let mut rec = XRec::default();
+    let mut placed = 0i64;
+    // (operand, edge, its curve, the other's, the end's term and sign,
+    // last end).
+    let ends = [
+        (Operand::A, x.e, x.g, &pair.e, &pair.g, t.a_g, -1, false),
+        (Operand::A, x.e, x.g, &pair.e, &pair.g, t.b_g, 1, true),
+        (Operand::B, x.g, x.e, &pair.g, &pair.e, t.g0_e, 1, false),
+        (Operand::B, x.g, x.e, &pair.g, &pair.e, t.g1_e, -1, true),
+    ];
+    for (of, edge, other, own, theirs, rays, sign, last) in ends {
+        let [v0, v1] = reads.ends(of, edge);
+        if v0 == v1 {
+            // A closed edge's two terms are one record, cancelling.
+            continue;
+        }
+        let q = Point::vert(of, if last { v1 } else { v0 });
+        let feet = reads
+            .feet(q, other)
+            .ok_or(SharedError::Missing(RecordKey::Ray(RayKey { q, g: other })))?;
+        let n_own = own.span_count();
+        let n_other = theirs.span_count();
+        let [o0, o1] = reads.ends(of.other(), other);
+        let at_end = XPart {
+            span: if last { n_own - 1 } else { 0 },
+            t: if last { [1.0, 1.0] } else { [0.0, 0.0] },
+        };
+        let mut found = |crossing: Sign, part: XPart| {
+            if feet.feet.iter().any(|k| part.meets(k, n_other, o0 == o1)) {
+                let degree = sign * i64::from(crossing.as_i8());
+                placed += degree;
+                let (e, g) = match of {
+                    Operand::A => (at_end, part),
+                    Operand::B => (part, at_end),
+                };
+                rec.clusters.push(XCluster {
+                    e,
+                    g,
+                    degree,
+                    clear: None,
+                    row: ZRow::PointCurve(q),
+                });
+            }
+        };
+        match (rays, theirs) {
+            (EdgeRays::Line(r), XCurve::Line(p0, p1)) => {
+                if let Some(c) = r.crossing {
+                    let p = own.end(last).ok_or(SharedError::Shape)?;
+                    let t = line_param(p, *p0, *p1).unwrap_or([0.0, 1.0]);
+                    found(c, XPart { span: 0, t });
+                }
+            }
+            (EdgeRays::Chain(r), XCurve::Spans(_)) => {
+                for c in &r.crossings {
+                    if c.span >= n_other {
+                        return Err(SharedError::Shape);
+                    }
+                    let part = XPart {
+                        span: c.span,
+                        t: c.crossing.t,
+                    };
+                    found(c.crossing.sign, part);
+                }
+            }
+            _ => return Err(SharedError::Shape),
+        }
+    }
+    let rest = x_count(t) - placed;
+    if rest != 0 {
+        return Err(SharedError::Crossed(rest));
+    }
+    Ok(rec)
+}
+
+/// The enclosure of the parameter where `q`'s `r̂` line meets the line
+/// from `p0` to `p1`, `ν·(q − p₀)/ν·(p₁ − p₀)`; `None` unless the
+/// denominator is certainly non-zero.
+pub(crate) fn line_param(q: [f64; 3], p0: [f64; 3], p1: [f64; 3]) -> Option<[f64; 2]> {
+    let nu = [NU.x, NU.y, NU.z];
+    let dot = |u: [f64; 3], v: [f64; 3]| {
+        (0..3).fold(Bounded::exact(0.0), |s, i| {
+            s + Bounded::exact(nu[i]) * (Bounded::exact(u[i]) - Bounded::exact(v[i]))
+        })
+    };
+    let den = dot(p1, p0);
+    if den.sign().is_none_or(|o| o == Ordering::Equal) {
+        return None;
+    }
+    let at = Scalar::enclose(&(dot(q, p0) / den));
+    (at[0].is_finite() && at[1].is_finite()).then_some(at)
+}
+
+/// The stored position of a cut point (module docs, "Cut points"): the
+/// point of `curve` (the cut edge, along its stored direction) at the
+/// middle of `part`, evaluated exactly and rounded to the nearest `f64`
+/// per coordinate; exactly the span's end control point where the piece
+/// is that end. `None` if the curve has no such span, a parameter or
+/// weight isn't finite or the weights sum to 0 there.
+pub fn cut_point(curve: &XCurve<'_>, part: &XPart) -> Option<[f64; 3]> {
+    let [lo, hi] = part.t;
+    if lo == hi && (lo == 0.0 || lo == 1.0) {
+        let at = if lo == 0.0 { Dyadic::ZERO } else { Dyadic::ONE };
+        return curve.span_end(part.span, at);
+    }
+    let q = |x: f64| Rational::try_from(x).ok();
+    let t = (q(lo)? + q(hi)?) / Rational::from(2u32);
+    let one = Rational::from(1u32);
+    let u = &one - &t;
+    let (pts, basis): (Vec<[f64; 4]>, Vec<Rational>) = match curve {
+        XCurve::Line(a, b) if part.span == 0 => (
+            vec![[a[0], a[1], a[2], 1.0], [b[0], b[1], b[2], 1.0]],
+            vec![u, t],
+        ),
+        XCurve::Line(..) => return None,
+        XCurve::Spans(s) => {
+            let sp = s.get(usize::try_from(part.span).ok()?)?;
+            let b = vec![&u * &u, Rational::from(2u32) * &u * &t, &t * &t];
+            (sp.to_vec(), b)
+        }
+    };
+    let mut num = [0, 1, 2].map(|_| Rational::from(0u32));
+    let mut den = Rational::from(0u32);
+    for (p, b) in pts.iter().zip(&basis) {
+        let wb = q(p[3])? * b;
+        for k in 0..3 {
+            num[k] += q(p[k])? * &wb;
+        }
+        den += wb;
+    }
+    if den == 0u32 {
+        return None;
+    }
+    let out = num.map(|n| f64::rounding_from(&(n / &den), Nearest).0);
+    out.iter().all(|x| x.is_finite()).then_some(out)
 }
 
 #[cfg(test)]

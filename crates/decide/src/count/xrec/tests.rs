@@ -16,6 +16,7 @@ use varde_testkit::rng::Rng;
 
 use super::*;
 use crate::ids::{EdgeId, VertId};
+use crate::num::bounded::Bounded;
 use crate::num::decide::{Band, Fail, Sign};
 use crate::num::exact::ORDERS;
 use crate::perturb::{Curved, Moving, R_HAT, Rate, Seg, T, UP, rates_a};
@@ -36,12 +37,23 @@ struct Geom {
     /// straight one).
     edges: BTreeMap<(Operand, EdgeId), ([VertId; 2], Vec<Span>)>,
     d: DVec3,
+    /// A linear part of `A`'s direction field: `d + (field·p)·ν` at `p`.
+    field: DVec3,
 }
 
 impl Geom {
     fn rates(&self, op: Operand) -> [Rate; ORDERS] {
+        self.rates_at(op, DVec3::ZERO)
+    }
+
+    /// `A`'s direction field at `p`.
+    fn d_at(&self, p: DVec3) -> DVec3 {
+        self.d + NU * self.field.dot(p)
+    }
+
+    fn rates_at(&self, op: Operand, p: DVec3) -> [Rate; ORDERS] {
         match op {
-            A => rates_a(Sign::Pos, self.d),
+            A => rates_a(Sign::Pos, self.d_at(p)),
             B => [Rate::ZERO; ORDERS],
         }
     }
@@ -75,12 +87,12 @@ impl Geom {
 
     /// `A`'s offset in the moved configuration: `δ·(d + η·T₂ + η²·T₃ +
     /// η³·T₄)`, `δ = 2⁻²⁰⁰`, `η = 2⁻²⁰`.
-    fn offset(&self, op: Operand) -> [Q; 3] {
+    fn offset(&self, op: Operand, p: DVec3) -> [Q; 3] {
         let mut out = [0, 1, 2].map(|_| Q::from(0u32));
         if op == B {
             return out;
         }
-        for (k, r) in (0i64..).zip([self.d, T[0], T[1], T[2]]) {
+        for (k, r) in (0i64..).zip([self.d_at(p), T[0], T[1], T[2]]) {
             let eps = Q::power_of_2(-200 - 20 * k);
             let r = q3(r);
             for i in 0..3 {
@@ -92,7 +104,7 @@ impl Geom {
 
     /// Point `p`'s moved shadow `(r̂·x, ν·x)`, exactly.
     fn moved_shadow(&self, p: Point) -> [Q; 2] {
-        let o = self.offset(p.operand);
+        let o = self.offset(p.operand, self.pos[&p]);
         let at = q3(self.pos[&p]);
         let x: [Q; 3] = [0, 1, 2].map(|i| &at[i] + &o[i]);
         [qdot(&q3(R_HAT), &x), qdot(&q3(NU), &x)]
@@ -113,7 +125,7 @@ impl ShadowGeometry for Geom {
     fn point(&self, p: Point) -> Moving {
         Moving {
             at: self.pos[&p],
-            rates: self.rates(p.operand),
+            rates: self.rates_at(p.operand, self.pos[&p]),
         }
     }
 
@@ -130,10 +142,12 @@ impl ShadowGeometry for Geom {
         let [a, b] = self.edges[&(op, g)]
             .0
             .map(|v| self.pos[&Point::vert(op, v)]);
+        // The edge's motion where `q` meets it (a tie's): the field is
+        // linear, so a straight edge stays straight.
         Seg {
             a,
             b,
-            rates: self.rates(op),
+            rates: self.rates_at(op, self.pos[&q]),
         }
     }
 }
@@ -273,6 +287,7 @@ impl Recs {
                 g0_e: self.rays(geom, g0, EdgeId(E)),
                 g1_e: self.rays(geom, g1, EdgeId(E)),
             },
+            shared: false,
         }
     }
 }
@@ -537,6 +552,7 @@ fn curved_partitions_sum_to_the_four_terms() {
 #[test]
 fn splits_keep_a_box_degree() {
     let mut kept = 0;
+    let mut decided = 0;
     for seed in varde_testing::seeds(60, 800) {
         let mut rng = Rng::new(seed);
         let mut int = |n: u64| (rng.next_u64() % (2 * n + 1)) as f64 - n as f64;
@@ -549,7 +565,13 @@ fn splits_keep_a_box_degree() {
         let mut rng = Rng::new(seed ^ 0xab);
         geom.curve(A, E, 0, 1, vec![conic(&mut rng, a, b, [1.0, 3.0])]);
         geom.curve(B, G, 0, 1, vec![conic(&mut rng, g0, g1, [1.0 / 3.0, 1.0])]);
-        let recs = decide(&geom);
+        // A span whose shadow folds back to a point of the other edge
+        // (a shadow cusp at its end on the other's vertex) has no ray
+        // record at any level: no degree to keep.
+        let Some(recs) = try_decide(&geom) else {
+            continue;
+        };
+        decided += 1;
         let pair = recs.pair(&geom);
         for b in partition(&mut rng, [1, 1], 6) {
             let Ok(d) = box_degree(&pair, &b, &like()) else {
@@ -568,7 +590,8 @@ fn splits_keep_a_box_degree() {
             }
         }
     }
-    assert!(kept > 0);
+    // A run of one seed may hold only geometry with no records.
+    assert!(kept > 0 || decided == 0);
 }
 
 /// A box with no outer side whose two pieces lie far apart has degree 0,
