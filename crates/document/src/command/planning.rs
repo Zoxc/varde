@@ -36,6 +36,18 @@ impl Document {
     }
 }
 
+/// Setting a feature's kind, as [`Document::plan_kind`] plans it for
+/// [`Document::set_kind`].
+pub(super) struct KindPlan {
+    feature: FeatureId,
+    index: usize,
+    kind: Box<FeatureKind>,
+    /// The pattern's copy bodies, see [`planned_copies`].
+    copies: Option<Vec<Option<BodyId>>>,
+    /// The copy bodies it no longer makes, see [`Document::copies_dropped`].
+    dropped: Vec<BodyId>,
+}
+
 /// A new body: visible, opaque, uncoloured, "Body `number`", made by
 /// `created_by`.
 fn new_body(id: BodyId, number: u64, created_by: FeatureId) -> Body {
@@ -191,8 +203,25 @@ impl Document {
     pub(super) fn with_kind(
         &self,
         feature: FeatureId,
-        mut kind: Box<FeatureKind>,
+        kind: Box<FeatureKind>,
     ) -> Result<Option<Document>, EditError> {
+        let Some(plan) = self.plan_kind(feature, kind)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.set_kind(plan)?;
+        Ok(Some(next))
+    }
+
+    /// Plans setting feature `feature`'s kind to `kind`, as
+    /// [`Command::SetFeature`](crate::Command::SetFeature) does, without
+    /// changing anything: `kind` with the body it makes or holds filled
+    /// in, and a pattern's copies; `None` if that changes nothing.
+    pub(super) fn plan_kind(
+        &self,
+        feature: FeatureId,
+        mut kind: Box<FeatureKind>,
+    ) -> Result<Option<KindPlan>, EditError> {
         let Some((index, old)) = self
             .feature_index(feature)
             .map(|index| (index, &self.features[index].kind))
@@ -204,7 +233,6 @@ impl Document {
             return Err(EditError::SketchKind);
         }
         planned_new_body(Some(old), &mut kind);
-        let kept = old.new_body();
         let copies = match &mut *kind {
             FeatureKind::Pattern(pattern) => {
                 let planned = planned_copies(Some(old), pattern);
@@ -222,33 +250,52 @@ impl Document {
         if *old == *kind {
             return Ok(None);
         }
-        let mut next = self.clone();
-        let makes_body = kind.new_body().is_some();
         let dropped = self.copies_dropped(feature, &kind);
-        next.features[index].kind = *kind;
-        next.remove_bodies(&dropped);
+        Ok(Some(KindPlan {
+            feature,
+            index,
+            kind,
+            copies,
+            dropped,
+        }))
+    }
+
+    /// Sets a feature's kind in place as `plan`
+    /// ([`Document::plan_kind`]) has it: its bodies removed, restored or
+    /// added, then [`Document::check_new`] on it.
+    pub(super) fn set_kind(&mut self, plan: KindPlan) -> Result<(), EditError> {
+        let KindPlan {
+            feature,
+            index,
+            kind,
+            copies,
+            dropped,
+        } = plan;
+        let kept = self.features[index].kind.new_body();
+        let makes_body = kind.new_body().is_some();
+        self.features[index].kind = *kind;
+        self.remove_bodies(&dropped);
         if let Some(planned) = copies {
-            next.make_copies(feature, planned)?;
+            self.make_copies(feature, planned)?;
         }
         match (kept, makes_body) {
             (Some(body), false) => {
-                if let Some(at) = next.body_index(body) {
-                    next.bodies.remove(at);
+                if let Some(at) = self.body_index(body) {
+                    self.bodies.remove(at);
                 }
-                next.drop_excluded(&[body]);
+                self.drop_excluded(&[body]);
             }
-            (None, true) => match next.features[index].kind.new_body() {
+            (None, true) => match self.features[index].kind.new_body() {
                 // Made again with the id it held.
-                Some(held) if held != BodyId::NEW => next.restore_body(feature, held),
+                Some(held) if held != BodyId::NEW => self.restore_body(feature, held),
                 _ => {
-                    let body = next.add_body(feature)?;
-                    next.set_new_body(feature, body);
+                    let body = self.add_body(feature)?;
+                    self.set_new_body(feature, body);
                 }
             },
             _ => {}
         }
-        next.check_new(index, &next.features[index].kind)?;
-        Ok(Some(next))
+        self.check_new(index, &self.features[index].kind)
     }
 
     /// The document with a feature of `kind` added, as

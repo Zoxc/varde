@@ -75,8 +75,10 @@ impl Document {
             next.set_sketch(index, sketch, None);
         }
         for (feature, kind) in changed {
-            if let Some(set) = next.with_kind(feature, kind)? {
-                next = set;
+            // Planned against `next` as each before it left it, as
+            // a `SetFeature` each would be.
+            if let Some(plan) = next.plan_kind(feature, kind)? {
+                next.set_kind(plan)?;
             }
         }
         Ok(Some(next))

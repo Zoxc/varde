@@ -76,8 +76,8 @@ parameters).
   - `SetParam { index, text }` sets its text, then resolves the list
     again and evaluates every feature value naming a parameter again
     (live link: values keep their text, their value follows), the
-    features changed set through `SetFeature`'s path (`Document::
-    with_kind`), so a pattern whose count follows a parameter gets or
+    features changed set through `SetFeature`'s path in place on the
+    one copy (`Document::plan_kind` then `set_kind`), so a pattern whose count follows a parameter gets or
     loses its copy bodies. A value that would be in error, directly or
     through other parameters, refuses it: `EditError::Value(ValueOf::
     Feature(id), error)` (a sketch's id for a dimension's). Sketches
