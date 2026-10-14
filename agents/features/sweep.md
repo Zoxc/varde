@@ -224,7 +224,9 @@ Operation as tiles and the Bodies list.
   (the move leaving a curve is the model's picking's too, so an edge
   there lights at once, the frame drawing the curve away asked for
   after it, `Input::take_redraw`; `refs`: named as of the sweep, all on one body, the Tangent chain
-  tick, lit, `MotionLook::DropEdge`), stored as one `PathPart::Edges`
+  tick, lit, `MotionLook::DropEdge`; kept in the sweep's own
+  `SweepSetup::path_edges`, a `PathEdges` whose `tangent` is the tick),
+  stored as one `PathPart::Edges`
   after the chains: so a session's edge parts are on one body (an
   edited sweep's other edge parts are kept as stored, listed as "Edges
   of Body 2", and the edited sweep's parts kept in the order it stored

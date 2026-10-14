@@ -15,8 +15,8 @@
 use std::borrow::Cow;
 
 use varde_document::{
-    BodyId, CurveChain, Design, Document, FeatureId, Helix, MAX_PATH_CURVES, MAX_PATH_PARTS,
-    MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
+    BodyId, CurveChain, Design, Document, EdgeRef, FeatureId, Helix, MAX_PATH_CURVES,
+    MAX_PATH_PARTS, MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_render::Camera;
@@ -26,14 +26,35 @@ use varde_view::{
     sweep_info,
 };
 
+use super::refs::Refs;
 use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
 use super::{Doc, MotionSession, fitted_length_field};
 use crate::doc::regions::{BodyTargets, GoneRegions, RegionPick, TypedText};
 use crate::doc::sketch_of;
 
-/// A sweep's profile, path and options as picked; its model edges are
-/// the session's blend's ([`MotionSession::blend`]), its helix's axis
-/// and Flip the session's own.
+/// The model's edges a sweep's path takes as one part, as picked (as a
+/// blend's, see `refs`), and its Tangent chain tick, stored as the
+/// part's `tangent`: each edge taking in its tangent chain as it's
+/// regenerated.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PathEdges {
+    /// The edges, all on one body, in [`EdgeRef::order`](varde_document::EdgeRef::order).
+    pub(crate) edges: Refs<EdgeRef>,
+    /// The Tangent chain tick: on to begin with.
+    pub(crate) tangent: bool,
+}
+
+impl Default for PathEdges {
+    fn default() -> Self {
+        Self {
+            edges: Refs::default(),
+            tangent: true,
+        }
+    }
+}
+
+/// A sweep's profile, path and options as picked; its helix's axis and
+/// Flip are the session's own.
 #[derive(Debug, Clone)]
 pub(crate) struct SweepSetup {
     pub(crate) path: SweepPath,
@@ -42,6 +63,8 @@ pub(crate) struct SweepSetup {
     /// The path's parts of sketch curves, in the order they were picked,
     /// each sorted.
     pub(crate) chains: Vec<CurveChain>,
+    /// The path's part of the model's edges.
+    pub(crate) path_edges: PathEdges,
     /// An edited sweep's edge parts past its first, which a session's
     /// edges (all on one body) can't hold: kept as stored, listed after
     /// the chains.
@@ -74,6 +97,7 @@ impl Default for SweepSetup {
             path: SweepPath::Path,
             regions: RegionPick::new(None, MAX_SWEEP_REGIONS),
             chains: Vec::new(),
+            path_edges: PathEdges::default(),
             stored_edges: Vec::new(),
             keep_orientation: false,
             left_handed: false,
@@ -138,7 +162,10 @@ impl MotionSession {
                     }
                 }
                 if let Some((picked, tangent)) = edges {
-                    self.blend = super::blend::BlendSetup::sweep_path(&picked, tangent);
+                    setup.path_edges = PathEdges {
+                        edges: Refs::of(&picked),
+                        tangent,
+                    };
                 }
             }
             PathRef::Helix(helix) => {
@@ -165,10 +192,10 @@ impl MotionSession {
                 let mut parts: Vec<PathPart> = (setup.chains.iter().cloned())
                     .map(PathPart::Curves)
                     .collect();
-                if !self.blend.edges.refs.is_empty() {
+                if !setup.path_edges.edges.refs.is_empty() {
                     parts.push(PathPart::Edges {
-                        edges: self.blend.edges.refs.clone(),
-                        tangent: self.blend.chains,
+                        edges: setup.path_edges.edges.refs.clone(),
+                        tangent: setup.path_edges.tangent,
                     });
                 }
                 parts.extend(setup.stored_edges.iter().cloned());
@@ -326,7 +353,7 @@ impl MotionSession {
     /// edges they name in all.
     pub(super) fn path_counts(&self) -> (usize, usize) {
         let setup = &self.sweep;
-        let edges = self.blend.edges.refs.len();
+        let edges = setup.path_edges.edges.refs.len();
         let parts = (setup.chains.len())
             .saturating_add(setup.stored_edges.len())
             .saturating_add(usize::from(edges > 0));

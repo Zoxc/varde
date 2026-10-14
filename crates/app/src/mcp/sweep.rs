@@ -91,7 +91,7 @@ pub(super) fn set_sweep(
         if edited.is_some() {
             session.sweep.chains.clear();
             session.sweep.stored_edges.clear();
-            session.blend.edges = Default::default();
+            session.sweep.path_edges.edges = Default::default();
         }
         match &args.along {
             SweepAlong::Path {
@@ -100,7 +100,7 @@ pub(super) fn set_sweep(
                 tangent,
             } => {
                 session.sweep_mode(SweepPath::Path);
-                session.blend.chains = *tangent;
+                session.sweep.path_edges.tangent = *tangent;
                 for (at, chain) in curves.iter().enumerate() {
                     let argument = format!("path.curves[{at}]");
                     let id = sketch_before(document, tool, &chain.sketch, edited)?;

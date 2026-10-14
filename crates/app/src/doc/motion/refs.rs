@@ -812,15 +812,15 @@ impl Ref for EdgeRef {
     }
 
     fn refs(session: &MotionSession) -> &Refs<Self> {
-        &session.blend.edges
+        session.edges()
     }
 
     fn refs_mut(session: &mut MotionSession) -> &mut Refs<Self> {
-        &mut session.blend.edges
+        session.edges_mut()
     }
 
     fn grown(_: &Doc, session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32> {
-        let chains = session.kind == MotionKind::Sweep && session.blend.chains;
+        let chains = session.kind == MotionKind::Sweep && session.sweep.path_edges.tangent;
         super::blend::chain_of(index, target, chains)
     }
 

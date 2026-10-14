@@ -428,7 +428,15 @@ fn model_edges_are_path_parts_beside_sketch_chains() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     assert!(boxed(plates, plate, [26.0, 16.0, 0.0], [30.0, 20.0, 10.0]));
-    let edge = (plates.doc.mode.motion().unwrap().blend.edges.refs)[0];
+    let edge = (plates
+        .doc
+        .mode
+        .motion()
+        .unwrap()
+        .sweep
+        .path_edges
+        .edges
+        .refs)[0];
     plates.motion(MotionLook::DropEdge(edge));
     assert!(!plates.doc.motion_ready(), "no path left");
 }
@@ -723,7 +731,10 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         plates.doc.notice
     );
     let session = plates.doc.mode.motion().unwrap();
-    assert!(session.blend.edges.refs.is_empty(), "no 65th part");
+    assert!(
+        session.sweep.path_edges.edges.refs.is_empty(),
+        "no 65th part"
+    );
     let sweep = session.sweep().expect("whole");
     sweep
         .check_own(&plates.doc.editor.document().design())
@@ -778,7 +789,7 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         plates.doc.notice
     );
     let session = plates.doc.mode.motion().unwrap();
-    assert!(session.blend.edges.refs.is_empty());
+    assert!(session.sweep.path_edges.edges.refs.is_empty());
     let sweep = session.sweep().expect("whole");
     sweep
         .check_own(&plates.doc.editor.document().design())
@@ -796,7 +807,18 @@ fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
     let plates = &mut swept.plates;
     plates.answer();
     click_edge(plates, plate, CORNER);
-    let edges = |plates: &Plates| plates.doc.mode.motion().unwrap().blend.edges.refs.clone();
+    let edges = |plates: &Plates| {
+        plates
+            .doc
+            .mode
+            .motion()
+            .unwrap()
+            .sweep
+            .path_edges
+            .edges
+            .refs
+            .clone()
+    };
     let first = edges(plates);
     let chain = plates.doc.mode.motion().unwrap().sweep.chains[0].clone();
     plates.answer();

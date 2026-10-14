@@ -118,7 +118,7 @@ pub(crate) struct MotionSession {
     pub(crate) scale: ScaleSetup,
     /// A split's tools and what it keeps.
     pub(crate) split: SplitSetup,
-    /// A chamfer's edges and Tangent chain; a sweep's path's edges.
+    /// A chamfer's or fillet's edges and Tangent chain.
     pub(crate) blend: BlendSetup,
     /// A sweep's profile, path parts and options.
     pub(crate) sweep: SweepSetup,
@@ -1807,12 +1807,12 @@ impl Doc {
                 session.chamfer_type = kind;
             }
             MotionLook::Chain if session.kind.blends() || session.kind == MotionKind::Sweep => {
-                session.blend.chains = !session.blend.chains;
+                session.toggle_edge_tick();
             }
             MotionLook::DropEdge(edge)
                 if session.kind.blends() || session.kind == MotionKind::Sweep =>
             {
-                session.blend.edges.drop_ref(&edge);
+                session.edges_mut().drop_ref(&edge);
                 session.refs_body();
             }
             MotionLook::ChamferType(_) | MotionLook::Chain | MotionLook::DropEdge(_) => {}
@@ -2468,7 +2468,7 @@ impl Doc {
             bodies: session.bodies.clone(),
             lit: self.motion_lit(session, hovered),
             tool_body,
-            chains: session.blend.chains,
+            chains: session.edge_tick(),
         };
         if session.highlight.is_built(model, &key) {
             return;

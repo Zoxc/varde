@@ -38,15 +38,14 @@ fn drafted(plates: &Plates) -> Option<Chamfer> {
     }
 }
 
-/// The edges of the chamfer being set up.
+/// The edges of the chamfer (or sweep's path) being set up.
 pub(super) fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
     plates
         .doc
         .mode
         .motion()
         .expect("a session")
-        .blend
-        .edges
+        .edges()
         .refs
         .clone()
 }

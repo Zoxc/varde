@@ -27,8 +27,8 @@ use super::{Doc, MotionSession, edge_radius};
 pub(crate) struct BlendSetup {
     /// The edges, all on one body, in [`EdgeRef::order`].
     pub(crate) edges: Refs<EdgeRef>,
-    /// The Tangent chain tick: on to begin with, as the plan has it. A
-    /// blend's says what a click picks; a sweep's is stored.
+    /// The Tangent chain tick, which says what a click picks: on to
+    /// begin with, as the plan has it.
     pub(crate) chains: bool,
     /// A blend's stored `chains`, each edge taking in its tangent chain
     /// as it's regenerated: kept for a feature that had it, never set for
@@ -52,17 +52,6 @@ impl BlendSetup {
     /// chains.
     pub(super) fn shown_chains(&self) -> bool {
         self.stored || self.chains
-    }
-
-    /// A stored sweep's path `edges` and its tangent chain tick
-    /// `tangent`, which goes in `chains` (a sweep stores the tick),
-    /// picked on no model shown.
-    pub(super) fn sweep_path(edges: &[EdgeRef], tangent: bool) -> Self {
-        Self {
-            edges: Refs::of(edges),
-            chains: tangent,
-            stored: false,
-        }
     }
 
     /// A stored blend's edges `edges` and its `chains`, which go in
@@ -102,6 +91,44 @@ impl Doc {
 }
 
 impl MotionSession {
+    /// The model's edges picked: a sweep's path's ([`PathEdges`](super::sweep::PathEdges)), else
+    /// a blend's.
+    pub(crate) fn edges(&self) -> &Refs<EdgeRef> {
+        if self.kind == MotionKind::Sweep {
+            &self.sweep.path_edges.edges
+        } else {
+            &self.blend.edges
+        }
+    }
+
+    /// The model's edges picked, to change: see [`MotionSession::edges`].
+    pub(super) fn edges_mut(&mut self) -> &mut Refs<EdgeRef> {
+        if self.kind == MotionKind::Sweep {
+            &mut self.sweep.path_edges.edges
+        } else {
+            &mut self.blend.edges
+        }
+    }
+
+    /// The Tangent chain tick of the edges picked: a sweep's stored
+    /// `tangent`, else a blend's, which says what a click picks.
+    pub(crate) fn edge_tick(&self) -> bool {
+        if self.kind == MotionKind::Sweep {
+            self.sweep.path_edges.tangent
+        } else {
+            self.blend.chains
+        }
+    }
+
+    /// Turns the Tangent chain tick of the edges picked over.
+    pub(super) fn toggle_edge_tick(&mut self) {
+        if self.kind == MotionKind::Sweep {
+            self.sweep.path_edges.tangent ^= true;
+        } else {
+            self.blend.chains ^= true;
+        }
+    }
+
     /// Keeps the bodies the edges' and faces' body, which the session's
     /// own rules (gone, merged) follow.
     pub(super) fn blend_body(&mut self) {
@@ -124,23 +151,24 @@ impl MotionSession {
     /// Whether the blend has anything picked: an edge or a face, of which
     /// the document asks at least one.
     pub(super) fn blend_picks_any(&self) -> bool {
-        !self.blend.edges.refs.is_empty() || !self.faces.refs.is_empty()
+        !self.edges().refs.is_empty() || !self.faces.refs.is_empty()
     }
 
     /// The words for its edges or faces being gone, if they are, the UI
     /// mock's.
     pub(super) fn blend_gone(&self) -> Option<&'static str> {
-        (self.blend.edges.gone && self.blend_picks_any()).then_some("A picked edge is gone")
+        (self.edges().gone && self.blend_picks_any()).then_some("A picked edge is gone")
     }
 
     /// Notes whether `document` no longer takes the edges and faces at
     /// feature `index`, or no longer holds their body.
     pub(super) fn prune_blend(&mut self, document: &Document, index: usize) {
-        let (edges, faces) = (&self.blend.edges.refs, &self.faces.refs);
+        let (edges, faces) = (&self.edges().refs, &self.faces.refs);
         let body = blend_body(edges, faces);
-        self.blend.edges.gone = body.is_some()
+        let gone = body.is_some()
             && (body.is_some_and(|body| document.body(body).is_none())
                 || document.check_blend_edges(index, edges, faces).is_err());
+        self.edges_mut().gone = gone;
     }
 }
 
@@ -148,10 +176,7 @@ impl Doc {
     /// What lights under the cursor for `pick` while a blend's edges are
     /// picked: its edge, with its tangent chain while they take them in.
     pub(super) fn blend_hover(&self, pick: Pick) -> Vec<Picked> {
-        let chains = self
-            .mode
-            .motion()
-            .is_some_and(|session| session.blend.chains);
+        let chains = self.mode.motion().is_some_and(MotionSession::edge_tick);
         match pick.target {
             Picked::Edge(edge) => (chain_of(self.feed.pick_index(), edge, chains).into_iter())
                 .map(Picked::Edge)
@@ -218,7 +243,7 @@ impl Doc {
                 name: format!("Face {}", at + 1),
             })
             .collect();
-        let edges = (session.blend.edges.found(index.model()))
+        let edges = (session.edges().found(index.model()))
             .enumerate()
             .map(|(at, (edge, found))| {
                 let (meta, round) =
@@ -235,7 +260,7 @@ impl Doc {
         BlendEdges {
             faces,
             edges,
-            chains: session.blend.chains,
+            chains: session.edge_tick(),
         }
     }
 }

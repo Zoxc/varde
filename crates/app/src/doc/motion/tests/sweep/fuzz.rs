@@ -179,7 +179,7 @@ fn check_session(plates: &Plates, what: &str) {
             "{what}: {chain:?}"
         );
     }
-    let edges = &session.blend.edges.refs;
+    let edges = &session.sweep.path_edges.edges.refs;
     assert!(
         edges.windows(2).all(|pair| pair[0].order(&pair[1]).is_lt()),
         "{what}: {edges:?}"
@@ -232,7 +232,7 @@ fn check_lit(plates: &Plates, what: &str) {
     if lit.is_empty() || !current {
         return;
     }
-    let body = (session.blend.edges.refs.first())
+    let body = (session.sweep.path_edges.edges.refs.first())
         .map(|edge| edge.body)
         .unwrap_or_else(|| panic!("{what}: lit {lit:?} with no edges"));
     let merged = plates.doc.feed.merged_bodies();
@@ -471,7 +471,7 @@ fn run(seed: u64, steps: usize) {
             17 => plates.motion(MotionLook::DropPart(rng.below(4))),
             18 => {
                 let edges = (plates.doc.mode.motion())
-                    .map(|session| session.blend.edges.refs.clone())
+                    .map(|session| session.sweep.path_edges.edges.refs.clone())
                     .unwrap_or_default();
                 if !edges.is_empty() {
                     plates.motion(MotionLook::DropEdge(*rng.pick(&edges)));

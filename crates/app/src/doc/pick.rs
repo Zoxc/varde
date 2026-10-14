@@ -210,7 +210,7 @@ impl Doc {
             return session.hover.filter(|&hover| match hover {
                 PanelHover::Body(body) => session.bodies.contains(&body),
                 PanelHover::Axis => true,
-                PanelHover::Edge(at) => at < session.blend.edges.refs.len(),
+                PanelHover::Edge(at) => at < session.edges().refs.len(),
                 PanelHover::Face(at) => at < session.faces.refs.len(),
                 PanelHover::Part(at) if session.kind == MotionKind::Loft => {
                     at < session.loft.rails.len()
