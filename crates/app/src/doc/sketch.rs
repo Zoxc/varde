@@ -119,12 +119,14 @@ pub(crate) struct SketchSession {
 
 impl SketchSession {
     /// Puts down the tool in use, the Constrain tool and adding points to
-    /// splines too, and the drag with them.
+    /// splines too, and the drag, the snap and the aim with them.
     fn put_down(&mut self) {
         self.drag = None;
         self.tool = None;
         self.constraining = false;
         self.inserting = false;
+        self.snap = None;
+        self.aim = None;
     }
 
     /// Prunes it against `committed`, the sketch it edits as the document
@@ -674,12 +676,9 @@ impl Doc {
         let Some(session) = self.mode.sketch_mut() else {
             return;
         };
-        session.drag = None;
-        session.constraining = false;
-        session.inserting = false;
-        session.snap = None;
-        session.aim = None;
-        session.tool = match &session.tool {
+        let current = session.tool.take();
+        session.put_down();
+        session.tool = match &current {
             Some(drawing) if drawing.tool == tool => None,
             _ => editable.then(|| {
                 let picked = picked.unwrap_or_default();
