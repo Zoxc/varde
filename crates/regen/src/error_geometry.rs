@@ -218,7 +218,7 @@ impl ErrorGeometry {
     /// own, until one doesn't fit; a patch that fails its check, or
     /// reaches past [`ErrorGeometry::MAX_POSITION`], is left out.
     fn add_patches(&mut self, patches: &[Patch], display: &Display, diagonal: f64) {
-        let mut parts = MeshParts::default();
+        let mut build = MeshBuild::default();
         for patch in patches {
             if patch.check().is_err() {
                 self.truncated = true;
@@ -227,28 +227,23 @@ impl ErrorGeometry {
             let samples = display.sample_patch(patch, diagonal);
             let positions: Option<Vec<[f32; 3]>> =
                 samples.points.iter().map(|&p| placed(p)).collect();
-            let base = u32::try_from(parts.positions.len()).ok();
-            let fits = (parts.positions.len()).saturating_add(samples.points.len())
-                <= Self::MAX_VERTICES
-                && (parts.indices.len()).saturating_add(samples.indices.len()) <= Self::MAX_INDICES;
-            if !fits {
+            if !build.fits(samples.points.len(), samples.indices.len()) {
                 self.truncated = true;
                 break;
             }
-            let (Some(positions), Some(base)) = (positions, base) else {
+            let Some(positions) = positions else {
                 self.truncated = true;
                 continue;
             };
-            parts.positions.extend(positions);
-            parts
-                .normals
-                .extend((samples.normals.iter()).map(|n| n.as_vec3().to_array()));
             // Within `MAX_VERTICES`, checked above.
-            parts
-                .indices
-                .extend(samples.indices.iter().map(|&v| base + v));
+            let base = build.vertices() as u32;
+            build.push(
+                positions,
+                (samples.normals.iter()).map(|n| n.as_vec3().to_array()),
+                samples.indices.iter().map(|&v| base + v),
+            );
         }
-        match mesh_of(parts.positions, parts.normals, parts.indices) {
+        match build.finish() {
             Ok(mesh) => self.mesh = mesh,
             // Every part is whole and within bounds, so this isn't
             // reached; nothing is drawn of the patches if it is.
@@ -333,9 +328,7 @@ impl ErrorGeometry {
         let Some(faces) = self.faces.get(first..).filter(|f| !f.is_empty()) else {
             return;
         };
-        let mut positions = self.mesh.positions().to_vec();
-        let mut normals = self.mesh.normals().to_vec();
-        let mut indices = self.mesh.indices().to_vec();
+        let mut build = MeshBuild::of(&self.mesh);
         for &(_, face) in faces {
             let Some(range) = model.face_indices(face as usize) else {
                 continue;
@@ -345,7 +338,7 @@ impl ErrorGeometry {
             let mut ids: std::collections::BTreeMap<u32, u32> = Default::default();
             let mut added = Vec::new();
             for &v in corners {
-                let next = positions.len().saturating_add(added.len());
+                let next = build.vertices().saturating_add(added.len());
                 if let std::collections::btree_map::Entry::Vacant(e) = ids.entry(v) {
                     // Within `MAX_VERTICES` once checked below, so it fits.
                     e.insert(u32::try_from(next).unwrap_or(u32::MAX));
@@ -354,25 +347,24 @@ impl ErrorGeometry {
             }
             let lines = outline(model.positions(), corners);
             let points = (lines.iter()).fold(0usize, |sum, line| sum.saturating_add(line.len()));
-            let fits = positions.len().saturating_add(added.len()) <= Self::MAX_VERTICES
-                && indices.len().saturating_add(corners.len()) <= Self::MAX_INDICES
+            let fits = build.fits(added.len(), corners.len())
                 && self.lines.points().len().saturating_add(points) <= Self::MAX_LINE_POINTS;
             if !fits {
                 self.truncated = true;
                 break;
             }
-            for v in added {
-                positions.push(model.positions()[v as usize]);
-                normals.push(model.normals()[v as usize]);
-            }
-            indices.extend(corners.iter().map(|v| ids[v]));
+            build.push(
+                added.iter().map(|&v| model.positions()[v as usize]),
+                added.iter().map(|&v| model.normals()[v as usize]),
+                corners.iter().map(|v| ids[v]),
+            );
             for line in lines {
                 // Within `MAX_POSITION`, as the model's positions are, and
                 // within `MAX_LINE_POINTS`, checked above.
                 self.truncated |= self.lines.push(line).is_err();
             }
         }
-        match mesh_of(positions, normals, indices) {
+        match build.finish() {
             Ok(mesh) => self.mesh = mesh,
             // The model's triangles are whole and within bounds, as are
             // its own, so this isn't reached; its mesh stays as it was.
@@ -630,6 +622,58 @@ pub enum GeometryError {
     /// A face isn't one of the answer's mesh, or not of the body named.
     #[error("a failure's face isn't one of the model")]
     Face,
+}
+
+/// The triangles of an [`ErrorGeometry`]'s mesh as they're gathered,
+/// kept within its bounds by asking [`MeshBuild::fits`] before each
+/// [`MeshBuild::push`].
+#[derive(Default)]
+struct MeshBuild {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+}
+
+impl MeshBuild {
+    /// One holding `mesh`'s triangles, to add to.
+    fn of(mesh: &RenderMesh) -> Self {
+        MeshBuild {
+            positions: mesh.positions().to_vec(),
+            normals: mesh.normals().to_vec(),
+            indices: mesh.indices().to_vec(),
+        }
+    }
+
+    /// How many vertices it has: the number the next one pushed gets.
+    fn vertices(&self) -> usize {
+        self.positions.len()
+    }
+
+    /// Whether `vertices` more vertices and `indices` more indices keep
+    /// it within [`ErrorGeometry::MAX_VERTICES`] and
+    /// [`ErrorGeometry::MAX_INDICES`].
+    fn fits(&self, vertices: usize, indices: usize) -> bool {
+        self.positions.len().saturating_add(vertices) <= ErrorGeometry::MAX_VERTICES
+            && self.indices.len().saturating_add(indices) <= ErrorGeometry::MAX_INDICES
+    }
+
+    /// Adds vertices and triangles, the indices numbering all its
+    /// vertices; [`MeshBuild::fits`] said they fit.
+    fn push(
+        &mut self,
+        positions: impl IntoIterator<Item = [f32; 3]>,
+        normals: impl IntoIterator<Item = [f32; 3]>,
+        indices: impl IntoIterator<Item = u32>,
+    ) {
+        self.positions.extend(positions);
+        self.normals.extend(normals);
+        self.indices.extend(indices);
+    }
+
+    /// Its mesh ([`mesh_of`]).
+    fn finish(self) -> Result<RenderMesh, MeshError> {
+        mesh_of(self.positions, self.normals, self.indices)
+    }
 }
 
 /// The mesh of these triangles: one part of one face, or none without
