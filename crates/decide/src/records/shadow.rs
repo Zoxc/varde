@@ -177,6 +177,18 @@ pub type Decided<V> = (Result<V, Fail>, Cost);
 /// ([`Width::ALL`]).
 pub const LEVELS: usize = 2 + Width::ALL.len();
 
+/// The units of one computation at each level ([`LEVELS`]), in those of
+/// the same computation at the first: 1, 4 for double-double,
+/// `(bits/53)²` for the big-float widths (16, 64, 256). Provisional,
+/// until calibrated per computation kind.
+pub const SCHEDULE_UNITS: [u64; LEVELS] = [1, 4, 16, 64, 256];
+
+/// The most halvings of one item, counted from the item's own start (a
+/// seam span, a profile pair, a box from its tile): refinement in space
+/// stops there. 48 halvings take the 4·10⁶ mm base tile down to about
+/// 10⁻⁸ mm, the kernel's resolution.
+pub const MAX_SUBDIV_DEPTH: u32 = 48;
+
 /// One step of a curved decision, run at a precision level by [`ladder`].
 pub(crate) trait AtLevel {
     /// The step's answer.

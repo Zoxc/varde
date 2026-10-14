@@ -30,6 +30,8 @@
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
+use varde_decide::records::shadow;
+
 use super::error::{Cause, KernelError};
 use super::par::par_map_indexed;
 
@@ -42,11 +44,7 @@ use super::par::par_map_indexed;
 /// flat tori of 36 864 patches each, take about 2 million units.
 pub const MAX_WORK: u64 = 1 << 22;
 
-/// The most halvings of one item, counted from the item's own start (a
-/// seam span, a profile pair, a leaf's pair box): reaching it is
-/// [`Cap::SubdivisionDepth`]. 48 halvings take the 4·10⁶ mm base tile
-/// down to about 10⁻⁸ mm, the kernel's resolution.
-pub const MAX_SUBDIV_DEPTH: u32 = 48;
+pub use varde_decide::records::shadow::MAX_SUBDIV_DEPTH;
 
 /// How much work one kernel operation may do, in units of about one patch
 /// or one pair of patches tested or split. Running out gives
@@ -97,7 +95,7 @@ pub enum Step {
 /// double-double (1), then big-float at 212, 424 and 848 bits (2 to 4).
 /// The top level's width is the highest precision there is: an item still
 /// open there reaches [`Cap::PrecisionBits`].
-pub(crate) const LEVELS: u8 = 5;
+pub(crate) const LEVELS: u8 = shadow::LEVELS as u8;
 
 /// The step of one computation at precision level `level`: ordinary work
 /// at the first level, a precision step above it.
@@ -112,12 +110,7 @@ pub(crate) fn level_step(level: u8) -> Step {
 /// the same computation in `f64`: 1, 4 for double-double, `(bits/53)²`
 /// for big-float (16 at 212 bits, 256 at 848).
 pub(crate) fn level_units(level: u8) -> u64 {
-    match level {
-        0 => 1,
-        1 => 4,
-        // 212 = 4·53 bits, doubling.
-        l => 16 << (2 * u32::from(l - 2).min(30)),
-    }
+    shadow::SCHEDULE_UNITS[usize::from(level)]
 }
 
 /// What [`KernelError::OutOfBudget`] reached.

@@ -27,10 +27,14 @@ use crate::records::ray::Span;
 use crate::records::shadow::{Decided, Pass, Shadows};
 use crate::records::table::Fresh;
 
+mod budget;
 mod cube;
 mod fold;
 
 type Patch = HomPatch<Bounded<f64>>;
+
+/// A face query at the first level.
+type FirstQuery<'a> = FaceQuery<'a, 'a, Bounded<f64>>;
 
 fn first() -> Bounded<f64> {
     Bounded::exact(0.0)
@@ -129,6 +133,27 @@ impl FaceData {
         reads: &R,
         sides: &Sides,
     ) -> Result<FacePieces, CountError> {
+        self.query(order, point, at, rays, &|fq, edges| {
+            let out = face_pieces(fq, sides, reads)?;
+            assert_eq!(
+                out.degree(),
+                ray_degree(fq.face, edges).unwrap(),
+                "the pieces' degrees sum to the ray records'"
+            );
+            Ok(out)
+        })
+    }
+
+    /// `f` of the face's query against `point` at `at` and its trims'
+    /// edges, the ray records of its edges from `rays`.
+    fn query<T>(
+        &self,
+        order: &Order,
+        point: Point,
+        at: [f64; 3],
+        rays: &dyn Fn(&TrimData) -> ChainRec,
+        f: &dyn Fn(&FirstQuery<'_>, &[TrimEdge<'_>]) -> T,
+    ) -> T {
         let trims: Vec<Trim<'_>> = self
             .trims
             .iter()
@@ -175,13 +200,7 @@ impl FaceData {
             at,
             eps_tie: 1e-9,
         };
-        let out = face_pieces(&fq, sides, reads)?;
-        assert_eq!(
-            out.degree(),
-            ray_degree(&face, &edges).unwrap(),
-            "the pieces' degrees sum to the ray records'"
-        );
-        Ok(out)
+        f(&fq, &edges)
     }
 }
 

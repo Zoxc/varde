@@ -60,7 +60,22 @@
 //! [`line_chain`] for a straight edge), the query point and `ε_tie`. The
 //! counting asks for records it reads and doesn't find
 //! ([`CountError::Need`], [`CountError::NeedHeight`]): fill them and ask
-//! again. Work is counted ([`FacePieces::pieces`]), not charged.
+//! again.
+//!
+//! **Termination** ([`count_pieces`]). Refinement is in space first: a
+//! box splits at most [`MAX_SUBDIV_DEPTH`] times from its tile, and a
+//! piece the level doesn't settle by then (or at the boxes' own depth
+//! limit) leaves the level unsettled. Then in precision: the whole count
+//! runs again at the next level of the schedule ([`LEVELS`]: `f64`,
+//! double-double, the big-float widths), the patches lifted exactly. A
+//! count still unsettled at the last level is
+//! [`CountError::OutOfBudget`] with [`Exhausted::Precision`], keyed by
+//! the point and the face, never a loop. Every piece tested is charged,
+//! at its level's units ([`Charge`]), against the share of the budget the
+//! count is given: running past it stops the count at once,
+//! [`Exhausted::Work`] at the first level and [`Exhausted::Precision`]
+//! above it. [`MAX_LEAVES`] and [`MAX_ROUNDS`] are fixed limits,
+//! [`Exhausted::SizeLimit`].
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -85,8 +100,11 @@ use crate::records::height::{
     Feature, HeightReads, Heights, KeyError, LayerPieces, LayerTable, Layers, height_key,
 };
 use crate::records::keys::{Anchor, HeightKey, LayerId, Operand, Point, SideKey, Target};
+use crate::records::ray::RayLevel;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing};
-use crate::records::shadow::RayRec;
+use crate::records::shadow::{
+    AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, SCHEDULE_UNITS, ladder,
+};
 use crate::records::side::Sides;
 
 #[cfg(doc)]
@@ -97,6 +115,46 @@ pub const MAX_LEAVES: usize = 1 << 16;
 
 /// The most times the runs are built again after refining some.
 pub const MAX_ROUNDS: u32 = 64;
+
+/// What a count may spend (module docs): `share` units, a piece tested
+/// at level `k` costing `units[k]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Charge {
+    /// The units the count may spend, its share of the budget left.
+    pub share: u64,
+    /// The units of one piece tested, per precision level.
+    pub units: [u64; LEVELS],
+}
+
+impl Charge {
+    /// A share of `share` units at the schedule's units
+    /// ([`SCHEDULE_UNITS`]).
+    pub fn new(share: u64) -> Charge {
+        Charge {
+            share,
+            units: SCHEDULE_UNITS,
+        }
+    }
+
+    /// The units of `cost`'s pieces.
+    pub fn spent(&self, cost: &Cost) -> u64 {
+        cost.levels.iter().zip(self.units).fold(0u64, |s, (l, u)| {
+            s.saturating_add(u64::from(l.evals).saturating_mul(u))
+        })
+    }
+}
+
+/// What a count ran out of ([`CountError::OutOfBudget`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Exhausted {
+    /// The share, at the first level.
+    Work,
+    /// The share at a level above the first, or the last level reached
+    /// with a piece unsettled.
+    Precision,
+    /// [`MAX_LEAVES`] or [`MAX_ROUNDS`].
+    SizeLimit,
+}
 
 /// One trim of the face as the counting reads it: its edge and its
 /// ribbon.
@@ -152,11 +210,18 @@ pub enum CountError {
     /// A box side inside a tile isn't certified off `q_xy` and no split
     /// moves it: no record counts it.
     Through,
-    /// The level doesn't settle a piece down to the deepest boxes:
-    /// escalate.
+    /// The level doesn't settle a piece down to the deepest boxes
+    /// ([`MAX_SUBDIV_DEPTH`]): escalate.
     Unsettled,
-    /// More than [`MAX_LEAVES`] leaves, or [`MAX_ROUNDS`] rounds.
-    Budget,
+    /// The count ran out (module docs), keyed by its point and face.
+    OutOfBudget {
+        /// What ran out.
+        cause: Exhausted,
+        /// The query point.
+        point: Point,
+        /// The face.
+        face: FaceId,
+    },
 }
 
 impl From<BoxError> for CountError {
@@ -197,6 +262,8 @@ struct Leaf {
     /// Within its stopping size.
     small: bool,
     met: SmallVec<[SpanRef; 8]>,
+    /// The splits from its tile.
+    splits: u32,
 }
 
 /// A near piece: its degree and what names its layer.
@@ -408,6 +475,8 @@ struct Ctx<'q, 'a, 'f, S, R> {
     up_q: [f64; 2],
     like: S,
     pieces: u64,
+    /// The most pieces the count may test.
+    limit: u64,
 }
 
 impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
@@ -416,6 +485,38 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
             .face
             .patch_of(self.fq.patches, b.tile())
             .ok_or(CountError::Box(BoxError::Patches))
+    }
+
+    /// Counts `n` pieces tested, failing past the limit.
+    fn charge(&mut self, n: u64) -> Result<(), CountError> {
+        self.pieces = self.pieces.saturating_add(n);
+        if self.pieces > self.limit {
+            return Err(self.out(Exhausted::Work));
+        }
+        Ok(())
+    }
+
+    fn out(&self, cause: Exhausted) -> CountError {
+        CountError::OutOfBudget {
+            cause,
+            point: self.fq.point,
+            face: self.fq.face.tile_boxes().next().expect("tiles").face(),
+        }
+    }
+
+    /// The split of `b`, `splits` splits from its tile: the level is
+    /// unsettled past [`MAX_SUBDIV_DEPTH`] or the boxes' depth.
+    fn split(&mut self, b: &BoxKey, splits: u32) -> Result<[BoxKey; 2], CountError> {
+        if splits >= MAX_SUBDIV_DEPTH {
+            return Err(CountError::Unsettled);
+        }
+        let patch = self.patch(b)?;
+        let s = split(self.fq.face, b, patch, Some(&self.q)).map_err(|e| match e {
+            BoxError::Depth => CountError::Unsettled,
+            e => CountError::Box(e),
+        })?;
+        self.charge(s.pieces)?;
+        Ok(s.halves)
     }
 
     fn band(&self, coedges: &[CoedgeId]) -> f64 {
@@ -432,12 +533,13 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
         &mut self,
         b: BoxKey,
         among: Option<SmallVec<[SpanRef; 8]>>,
+        splits: u32,
         out: &mut Vec<Leaf>,
     ) -> Result<(), CountError> {
-        let mut stack = vec![(b, among)];
-        while let Some((b, among)) = stack.pop() {
+        let mut stack = vec![(b, among, splits)];
+        while let Some((b, among, splits)) = stack.pop() {
             if out.len() >= MAX_LEAVES {
-                return Err(CountError::Budget);
+                return Err(self.out(Exhausted::SizeLimit));
             }
             let r = role(
                 self.fq.face,
@@ -446,7 +548,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                 &self.like,
                 among.as_deref(),
             )?;
-            self.pieces = self.pieces.saturating_add(r.pieces);
+            self.charge(r.pieces)?;
             let (owner, pad, thin) = match &r.role {
                 Role::Outside => continue,
                 Role::Core => (Owner::Core, 0.0, false),
@@ -460,7 +562,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
             }
             let patch = self.patch(&b)?;
             let sub = sub_patch(patch, &b);
-            self.pieces = self.pieces.saturating_add(1);
+            self.charge(1)?;
             let r_hat = [R_HAT.x, R_HAT.y, R_HAT.z];
             let nu = [NU.x, NU.y, NU.z];
             let off = lin_side(&sub, r_hat, self.q.r, pad).is_some()
@@ -473,6 +575,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                         height: None,
                         small: false,
                         met: r.met,
+                        splits,
                     });
                 }
                 continue;
@@ -499,17 +602,13 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                     height: Some(h.unwrap_or(Height::Near)),
                     small,
                     met: r.met,
+                    splits,
                 });
                 continue;
             }
-            let s = split(self.fq.face, &b, patch, Some(&self.q)).map_err(|e| match e {
-                BoxError::Depth => CountError::Unsettled,
-                e => CountError::Box(e),
-            })?;
-            self.pieces = self.pieces.saturating_add(s.pieces);
-            let [lo, hi] = s.halves;
-            stack.push((hi, Some(r.met.clone())));
-            stack.push((lo, Some(r.met)));
+            let [lo, hi] = self.split(&b, splits)?;
+            stack.push((hi, Some(r.met.clone()), splits + 1));
+            stack.push((lo, Some(r.met), splits + 1));
         }
         Ok(())
     }
@@ -524,14 +623,8 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
             taken.push(leaves.remove(k));
         }
         for l in taken.into_iter().rev() {
-            let patch = self.patch(&l.b)?;
-            let s = split(self.fq.face, &l.b, patch, Some(&self.q)).map_err(|e| match e {
-                BoxError::Depth => CountError::Unsettled,
-                e => CountError::Box(e),
-            })?;
-            self.pieces = self.pieces.saturating_add(s.pieces);
-            for h in s.halves {
-                self.refine(h, Some(l.met.clone()), leaves)?;
+            for h in self.split(&l.b, l.splits)? {
+                self.refine(h, Some(l.met.clone()), l.splits + 1, leaves)?;
             }
         }
         Ok(())
@@ -653,13 +746,133 @@ fn foot_meets(f: &Foot, span: u32, [t0, t1]: [f64; 2]) -> bool {
     }
 }
 
-/// The pieces of `fq.face` against `fq.point` (module docs), reading the
-/// side records `sides` and, for the near pieces' features, `reads` (the
-/// point–vertex records and the feet).
+/// The pieces of `fq.face` against `fq.point` (module docs) at the level
+/// of `fq.patches`, reading the side records `sides` and, for the near
+/// pieces' features, `reads` (the point–vertex records and the feet).
+/// Not charged: [`count_pieces`] charges and escalates.
 pub fn face_pieces<S: Scalar, R: HeightReads>(
     fq: &FaceQuery<'_, '_, S>,
     sides: &Sides,
     reads: &R,
+) -> Result<FacePieces, CountError> {
+    let mut pieces = 0;
+    pieces_within(fq, sides, reads, u64::MAX, &mut pieces)
+}
+
+/// The pieces of `fq.face` against `fq.point` (module docs) at the
+/// first level, then at each next one while the level is unsettled,
+/// each level's patches lifted exactly from `fq.patches`;
+/// every piece tested charged against `charge`. With the pieces, or the
+/// error, the work per level ([`LevelWork::evals`]) for the pass to
+/// charge. Unsettled at the last level, or past the share:
+/// [`CountError::OutOfBudget`] (module docs).
+pub fn count_pieces<R: HeightReads>(
+    fq: &FaceQuery<'_, '_, Bounded<f64>>,
+    sides: &Sides,
+    reads: &R,
+    charge: &Charge,
+) -> (Result<FacePieces, CountError>, Cost) {
+    let mut cost = Cost::default();
+    let mut at = CountAt {
+        fq,
+        sides,
+        reads,
+        charge,
+        spent: 0,
+    };
+    let r = ladder(&mut at, 0, &mut cost).expect("the first level runs");
+    let r = match r {
+        Err(CountError::Unsettled) => Err(CountError::OutOfBudget {
+            cause: Exhausted::Precision,
+            point: fq.point,
+            face: fq.face.tile_boxes().next().expect("tiles").face(),
+        }),
+        r => r,
+    };
+    (r, cost)
+}
+
+/// The count at one level ([`count_pieces`]).
+struct CountAt<'c, 'q, 'a, 'f, R> {
+    fq: &'c FaceQuery<'a, 'f, Bounded<f64>>,
+    sides: &'q Sides,
+    reads: &'q R,
+    charge: &'c Charge,
+    /// The units the levels before spent.
+    spent: u64,
+}
+
+impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
+    type Out = Result<FacePieces, CountError>;
+
+    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
+        let unit = self.charge.units[level];
+        // A level whose pieces cost nothing has no limit.
+        let limit = match unit {
+            0 => u64::MAX,
+            u => self.charge.share.saturating_sub(self.spent) / u,
+        };
+        let patches: Vec<HomPatch<S>> = self.fq.patches.iter().map(|p| lift(p, like)).collect();
+        let f = self.fq;
+        let fq = FaceQuery {
+            face: f.face,
+            corners: f.corners,
+            patches: &patches,
+            edges: f.edges,
+            point: f.point,
+            at: f.at,
+            eps_tie: f.eps_tie,
+        };
+        let mut pieces = 0;
+        let r = pieces_within(&fq, self.sides, self.reads, limit, &mut pieces);
+        work.evals = work
+            .evals
+            .saturating_add(u32::try_from(pieces).unwrap_or(u32::MAX));
+        self.spent = self.spent.saturating_add(pieces.saturating_mul(unit));
+        match r {
+            Err(CountError::OutOfBudget {
+                cause: Exhausted::Work,
+                point,
+                face,
+            }) if level > 0 => Err(CountError::OutOfBudget {
+                cause: Exhausted::Precision,
+                point,
+                face,
+            }),
+            r => r,
+        }
+    }
+
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(CountError::Unsettled))
+    }
+}
+
+/// `p` at the level of `like`: each value exactly, its error kept.
+fn lift<S: RayLevel>(p: &HomPatch<Bounded<f64>>, like: &S) -> HomPatch<S> {
+    let [x, y, z, w] = p.tensors().each_ref().map(|t| t.coefs());
+    let (m, n) = p.degrees();
+    let at = |b: &Bounded<f64>| {
+        let v = S::from_f64(b.v, like);
+        let e = b.err();
+        if e == 0.0 { v } else { v.widened(e) }
+    };
+    HomPatch::new(
+        m,
+        n,
+        (0..x.len()).map(|k| [at(&x[k]), at(&y[k]), at(&z[k]), at(&w[k])]),
+    )
+    .expect("the same degrees")
+}
+
+/// [`face_pieces`], testing at most `limit` pieces; `pieces` the pieces
+/// tested, also on failure.
+fn pieces_within<S: Scalar, R: HeightReads>(
+    fq: &FaceQuery<'_, '_, S>,
+    sides: &Sides,
+    reads: &R,
+    limit: u64,
+    pieces: &mut u64,
 ) -> Result<FacePieces, CountError> {
     let face = fq.face;
     let first = face
@@ -692,21 +905,31 @@ pub fn face_pieces<S: Scalar, R: HeightReads>(
         up_q,
         like,
         pieces: 0,
+        limit,
     };
+    let r = rounds(&mut ctx);
+    *pieces = ctx.pieces;
+    r
+}
+
+/// The leaves refined, then the rounds until the pieces settle.
+fn rounds<S: Scalar, R: HeightReads>(
+    ctx: &mut Ctx<'_, '_, '_, S, R>,
+) -> Result<FacePieces, CountError> {
     let mut leaves: Vec<Leaf> = Vec::new();
-    for b in face.tile_boxes() {
-        ctx.refine(b, None, &mut leaves)?;
+    for b in ctx.fq.face.tile_boxes() {
+        ctx.refine(b, None, 0, &mut leaves)?;
     }
 
     let mut cache: BTreeMap<(Owner, Vec<BoxKey>), Result<i64, PieceError>> = BTreeMap::new();
     for _ in 0..MAX_ROUNDS {
         leaves.sort_by_key(|l| l.b);
-        match round(&mut ctx, &mut leaves, &mut cache)? {
+        match round(ctx, &mut leaves, &mut cache)? {
             Some(out) => return Ok(out),
             None => continue,
         }
     }
-    Err(CountError::Budget)
+    Err(ctx.out(Exhausted::SizeLimit))
 }
 
 /// One round over the leaves: the pieces, or `None` where some leaves
@@ -792,7 +1015,7 @@ fn round<S: Scalar, R: HeightReads>(
                 SidedError::Unsettled => CountError::Unsettled,
             },
         )?;
-        ctx.pieces = ctx.pieces.saturating_add(d.pieces);
+        ctx.charge(d.pieces)?;
         let near = (h == Height::Near).then(|| NearPiece {
             degree: d.degree,
             features: SmallVec::new(),
@@ -912,10 +1135,10 @@ fn run_degree<S: Scalar, R: HeightReads>(
     let r = strip_degree(
         fq.face, fq.patches, &key.1, &ribbons, &ctx.q, fq.point, ctx.sides,
     );
-    let r = r.map(|d| {
-        ctx.pieces = ctx.pieces.saturating_add(d.pieces);
-        d.degree
-    });
+    if let Ok(d) = &r {
+        ctx.charge(d.pieces)?;
+    }
+    let r = r.map(|d| d.degree);
     // A record not yet decided is asked for, not cached.
     if !matches!(r, Err(PieceError::Need(_))) {
         cache.insert(key, r);
