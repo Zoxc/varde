@@ -6,12 +6,14 @@
 //! point against a vertex of the other operand, a point's ray against a
 //! straight edge), [`ray`] the curved ones (a point's ray against a span
 //! of a curved edge, and against the whole edge), [`feet`] the stretches
-//! of an edge near a point, [`near`] the operation's bands and near radii
-//! they read.
+//! of an edge near a point, [`side`] a point's ray against a box side on a
+//! tile line the counting can't certify off the point, and [`near`] the
+//! operation's bands and near radii they read.
 
 pub mod feet;
 pub mod keys;
 pub mod near;
 pub mod ray;
 pub mod shadow;
+pub mod side;
 pub mod table;

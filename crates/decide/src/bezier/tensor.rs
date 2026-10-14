@@ -30,7 +30,7 @@ use super::scalar::Scalar;
 use crate::num::bounded::{Bounded, down};
 
 /// A parameter direction of a tensor-product form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Dir {
     /// The first parameter, `u` (the row index `i` of the net).
     U,

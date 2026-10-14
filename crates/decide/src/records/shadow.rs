@@ -446,13 +446,7 @@ fn decide_vv<G: ShadowGeometry>(k: &Fresh<VvKey>, geom: &G) -> Decided<VvRec> {
     );
     let (q, w) = (geom.point(pa), geom.point(pb));
     let (ra, rb) = (geom.near_radius(pa), geom.near_radius(pb));
-    let row = |axis| VvShadow {
-        q: q.clone(),
-        w: w.clone(),
-        axis,
-    };
-    let (side, w1) = decide_flat(&row(ShadowAxis::Side), tie);
-    let (ahead, w2) = decide_flat(&row(ShadowAxis::Along), tie);
+    let (side_ahead, w12) = side_and_ahead(&q, &w, tie);
     let fine = |r: f64| r.is_finite() && r >= 0.0;
     let (near, w3) = if fine(ra) && fine(rb) {
         let r = if ra >= rb { ra } else { rb };
@@ -470,15 +464,33 @@ fn decide_vv<G: ShadowGeometry>(k: &Fresh<VvKey>, geom: &G) -> Decided<VvRec> {
     } else {
         (Err(Fail::Internal { key: tie }), Work::default())
     };
-    let work = Cost::exact(w1.and(w2).and(w3));
-    let rec = side.and_then(|side| {
+    let work = Cost::exact(w12.and(w3));
+    let rec = side_ahead.and_then(|[side, ahead]| {
         Ok(VvRec {
             side,
-            ahead: ahead?,
+            ahead,
             near: near?,
         })
     });
     (rec, work)
+}
+
+/// The flat point–vertex shadow rows of `w` against `q`'s `r̂` line:
+/// `[side, ahead]`, `ν·(w − q)` and `r̂·(w − q)` under the perturbation,
+/// with the work both took.
+pub(super) fn side_and_ahead(
+    q: &Moving,
+    w: &Moving,
+    tie: TieKey,
+) -> (Result<[Sign; 2], Fail>, Work) {
+    let row = |axis| VvShadow {
+        q: q.clone(),
+        w: w.clone(),
+        axis,
+    };
+    let (side, w1) = decide_flat(&row(ShadowAxis::Side), tie);
+    let (ahead, w2) = decide_flat(&row(ShadowAxis::Along), tie);
+    (side.and_then(|s| Ok([s, ahead?])), w1.and(w2))
 }
 
 /// Decides a ray record from its ends' stored point–vertex records and,

@@ -43,6 +43,7 @@
 //! Keys order by their ids: the order a record table stores and decides
 //! them in. Ids order work only; no answer reads that order.
 
+use crate::bezier::Dir;
 use crate::ids::{EdgeId, FaceId, VertId};
 
 /// One of the two operands of a boolean.
@@ -221,6 +222,72 @@ pub struct XKey {
     pub g: EdgeId,
 }
 
+/// A tile edge of a face: the maximal dyadic segment of a tile line in
+/// one tile, a row of the tile's stored control points, shared by the
+/// tiles on its two sides. The line is where the global coordinate in
+/// `fixed` is the integer `line`; the edge runs over the cell `[cell,
+/// cell + 1]` of the other coordinate, in its increasing direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TileEdge {
+    /// The face's operand.
+    pub operand: Operand,
+    /// The face.
+    pub face: FaceId,
+    /// The direction whose coordinate is fixed along the edge.
+    pub fixed: Dir,
+    /// That coordinate, a tile line.
+    pub line: i64,
+    /// The cell of the other coordinate the edge runs over.
+    pub cell: i64,
+}
+
+impl TileEdge {
+    /// The edge's two corners, at its start and end.
+    pub fn corners(&self) -> [TileCorner; 2] {
+        let at = |c: i64| match self.fixed {
+            Dir::U => [self.line, c],
+            Dir::V => [c, self.line],
+        };
+        [self.cell, self.cell + 1].map(|c| TileCorner {
+            operand: self.operand,
+            face: self.face,
+            at: at(c),
+        })
+    }
+}
+
+/// A corner of a face's tiles: the lattice point `at` of its global UV,
+/// `(u, v)`, shared by the tiles and tile edges meeting there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TileCorner {
+    /// The face's operand.
+    pub operand: Operand,
+    /// The face.
+    pub face: FaceId,
+    /// The lattice point.
+    pub at: [i64; 2],
+}
+
+/// A point against a tile edge of a face of the other operand: the side
+/// record of a box side on a tile line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SideKey {
+    /// The point.
+    pub q: Point,
+    /// The tile edge.
+    pub edge: TileEdge,
+}
+
+/// A point against a tile corner of a face of the other operand: the
+/// ends of the side records there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CornerKey {
+    /// The point.
+    pub q: Point,
+    /// The corner.
+    pub corner: TileCorner,
+}
+
 /// A height key: the geometry a height above or below is decided from,
 /// once for every anchor reading it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -335,6 +402,10 @@ pub enum RecordKey {
     HeightAt(HeightKey),
     /// A crossing record.
     X(XKey),
+    /// A point's ray against a tile edge of a face.
+    Side(SideKey),
+    /// A point against a tile corner of a face.
+    Corner(CornerKey),
 }
 
 #[cfg(test)]

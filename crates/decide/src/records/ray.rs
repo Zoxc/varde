@@ -168,13 +168,13 @@ use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::ORDERS;
 use crate::perturb::{
-    Curved, LineShadow, Moving, MovingAt, NU, R_HAT, Rate, Seg, ShadowAxis, VvShadow, curve_point,
-    curve_shadow, decide_flat,
+    Curved, LineShadow, Moving, MovingAt, NU, R_HAT, Rate, Seg, curve_point, curve_shadow,
+    decide_flat,
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
     Cost, Decided, LEVELS, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, neg, ray_ahead,
-    read_vv, replay, shadow_error, table_error,
+    read_vv, replay, shadow_error, side_and_ahead, table_error,
 };
 use crate::records::table::{Fresh, Table};
 
@@ -565,25 +565,40 @@ fn decide_knot<G: CurveGeometry>(k: &Fresh<KnotKey>, geom: &G) -> Decided<KnotRe
         rates: geom.knot_rates(key.q, key.g, key.knot),
     };
     let q = geom.point(key.q);
-    let row = |axis| VvShadow {
-        q: q.clone(),
-        w: w.clone(),
-        axis,
-    };
-    let (side, w1) = decide_flat(&row(ShadowAxis::Side), tie);
-    let (ahead, w2) = decide_flat(&row(ShadowAxis::Along), tie);
-    let rec = side.and_then(|side| {
-        Ok(KnotRec {
-            side,
-            ahead: ahead?,
-        })
-    });
-    (rec, Cost::exact(w1.and(w2)))
+    let (rec, w) = side_and_ahead(&q, &w, tie);
+    (
+        rec.map(|[side, ahead]| KnotRec { side, ahead }),
+        Cost::exact(w),
+    )
+}
+
+/// The rates of a curve's points, for the vertex–curve shadow row at a
+/// parameter: what a span record reads of the curve beyond its stored
+/// control points. A curved edge's span reads its edge's
+/// ([`CurveGeometry::span_rates`]); a box side reads its face's.
+pub(super) trait SpanRates {
+    /// The rates of the curve's point at `t` (an enclosure at its level),
+    /// for the asking point's record.
+    fn rates_at<S: Curved>(&self, t: &S) -> [[S; 3]; ORDERS];
+}
+
+/// A curved edge's span, for its rates.
+struct EdgeSpan<'a, G> {
+    geom: &'a G,
+    key: SpanKey,
+}
+
+impl<G: CurveGeometry> SpanRates for EdgeSpan<'_, G> {
+    fn rates_at<S: Curved>(&self, t: &S) -> [[S; 3]; ORDERS] {
+        self.geom
+            .span_rates(self.key.q, self.key.g, self.key.span, t)
+    }
 }
 
 /// A span record's inputs, read once for every level.
-struct SpanCtx<'a, G> {
-    key: SpanKey,
+struct SpanCtx<'a, R> {
+    /// The asking point's operand: its ray's direction.
+    operand: Operand,
     span: &'a Span,
     /// The side of each end and whether it is on the ray, from its record.
     ends: [(Sign, bool); 2],
@@ -591,7 +606,7 @@ struct SpanCtx<'a, G> {
     /// or not certainly beyond), the row there ([`EndRow`]).
     near: [Option<EndRow>; 2],
     q: Moving,
-    geom: &'a G,
+    rates: &'a R,
     band: Band,
     tie: TieKey,
 }
@@ -651,7 +666,7 @@ fn decide_span<G: CurveGeometry>(
         row: Row::VertexCurveShadow,
         record: RecordKey::RaySpan(key),
     };
-    let mut cost = Cost::default();
+    let cost = Cost::default();
     let internal = Err(Fail::Internal { key: tie });
     let op = key.q.operand.other();
     let spans = geom.spans(op, key.g);
@@ -690,37 +705,70 @@ fn decide_span<G: CurveGeometry>(
         return (internal, cost);
     };
     let span = &spans[i];
-    let q = geom.point(key.q);
+    let rates = EdgeSpan { geom, key };
+    let end_rates = |j: usize| {
+        if (i + j == 0) || (i + j == spans.len()) {
+            geom.point(Point::vert(op, edge_ends[j])).rates
+        } else {
+            geom.knot_rates(key.q, key.g, key.span + j as u32)
+        }
+    };
+    span_crossings(
+        span,
+        [e0, e1],
+        end_rates,
+        geom.point(key.q),
+        key.q.operand,
+        &rates,
+        band,
+        tie,
+    )
+}
+
+/// The crossings of `span`'s shadow by the ray of the point `q` (of
+/// `operand`), decided at each level in turn until one decides them
+/// (module docs): `ends` the side of each end against `q`'s `r̂` line and
+/// whether it is on the ray, from the end's own record; `end_rates(j)`
+/// the rates of end `j`'s point (for the row at an end `q` is near);
+/// `rates` the span's points' rates; `tie` the key ties are reported
+/// under.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn span_crossings<R: SpanRates>(
+    span: &Span,
+    ends: [(Sign, bool); 2],
+    end_rates: impl Fn(usize) -> [Rate; ORDERS],
+    q: Moving,
+    operand: Operand,
+    rates: &R,
+    band: Band,
+    tie: TieKey,
+) -> Decided<SpanRec> {
+    let mut cost = Cost::default();
     // The rows at the ends `q` is near, decided once for every level.
     let near = [0, 1].map(|j| {
         let at = point_of(&span[2 * j]);
         if !near_end(q.at, at, band) {
             return None;
         }
-        let rates = if (i + j == 0) || (i + j == spans.len()) {
-            geom.point(Point::vert(op, edge_ends[j])).rates
-        } else {
-            geom.knot_rates(key.q, key.g, key.span + j as u32)
-        };
         let line = Seg {
             a: point_of(&span[j]),
             b: point_of(&span[j + 1]),
-            rates,
+            rates: end_rates(j),
         };
         let (side, w) = decide_flat(&LineShadow { q: q.clone(), line }, tie);
         cost.exact = cost.exact.and(w);
         Some(EndRow {
             side: side.ok(),
-            on: [e0, e1][j].1,
+            on: ends[j].1,
         })
     });
     let ctx = SpanCtx {
-        key,
+        operand,
         span,
-        ends: [e0, e1],
+        ends,
         near,
         q,
-        geom,
+        rates,
         band,
         tie,
     };
@@ -743,7 +791,7 @@ fn decide_span<G: CurveGeometry>(
     unreachable!("the last level returns")
 }
 
-impl<G: CurveGeometry> SpanCtx<'_, G> {
+impl<R: SpanRates> SpanCtx<'_, R> {
     /// The record at the level of `like`, or why this level doesn't
     /// decide it; `last` at the last level, where a piece's sign along
     /// the ray and `q`'s foot on the span are also sought by halving.
@@ -840,12 +888,12 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
             }
         }
 
-        let ahead = ray_ahead(self.key.q.operand);
+        let ahead = ray_ahead(self.operand);
         let mut crossings = SmallVec::new();
         for p in &pieces {
             // `ρ × T` seen from above: `ν·T` along `+r̂`, the sign of the
             // side crossed to; negated along `−r̂`.
-            let net = (p.sides[0] != p.sides[1]).then(|| match self.key.q.operand {
+            let net = (p.sides[0] != p.sides[1]).then(|| match self.operand {
                 Operand::A => neg(p.sides[1]),
                 Operand::B => p.sides[1],
             });
@@ -975,9 +1023,7 @@ impl<G: CurveGeometry> SpanCtx<'_, G> {
         } else {
             (tangent, ts)
         };
-        let rates = self
-            .geom
-            .span_rates(self.key.q, self.key.g, self.key.span, &ts);
+        let rates = self.rates.rates_at(&ts);
         let foot = MovingAt { at, rates };
         let q = MovingAt::from_flat(&self.q, like);
         let row = curve_shadow(&q, &foot, &tangent);
