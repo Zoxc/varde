@@ -385,15 +385,22 @@ impl Coeff for Bounded<Dd> {
     }
 }
 
-/// `|v| > err + band` for a big float, exactly: the margin formed in big
-/// floats at the widest width (two `f64`s span fewer bits), then the sign
-/// of `|v|` less it, which rounding to nearest keeps.
+/// `|v| > err + band` for a big float, exactly: the margin formed exactly
+/// (a double-double's sum carries all its bits into a big float; past the
+/// `f64` range both terms are near its top, so their sum spans few bits
+/// and the widest width holds it), then the sign of `|v|` less it, which
+/// rounding to nearest keeps.
 fn big_exceeds<B: BigF>(v: &B, err: f64, band: f64) -> bool {
     if band == 0.0 {
         return v.cmp_abs(err) == Some(Ordering::Greater);
     }
     let w = Width::MAX;
-    let m = B::from_f64(err, w).add(&B::from_f64(band, w), w).v;
+    let sum = Dd::sum(err, band);
+    let m = if sum.hi().is_finite() {
+        B::from_dd(sum, w)
+    } else {
+        B::from_f64(err, w).add(&B::from_f64(band, w), w).v
+    };
     let d = v.abs().sub(&m, w).v;
     d.is_finite() && !d.is_zero() && !d.is_sign_negative()
 }

@@ -1,6 +1,6 @@
 //! Big-float, the precision levels above double-double: a value is a
-//! binary float rounded to one of the schedule's widths, 212, 424, 848,
-//! 1696 and 3392 bits ([`Width`]), and [`Bounded<B>`] its values with
+//! binary float rounded to one of the schedule's widths, 212, 424 and 848
+//! bits ([`Width`]), and [`Bounded<B>`] its values with
 //! certified error bounds. A [`Bounded<Dd>`] moves up to the first width
 //! exactly ([`Bounded::promote`]), and a value to a wider width exactly
 //! ([`Bounded::widen`]).
@@ -35,9 +35,8 @@
 //! one).
 //!
 //! **Error terms.** Both error parts stay `f64` upper bounds, rounded up
-//! as at the other levels ([`up`]). The width's unit roundoff `2^−bits` is
-//! not an `f64` from 1696 bits on (`2⁻¹⁶⁹⁶` is below the least subnormal),
-//! so no operation multiplies by it: an inexact result's own rounding is
+//! as at the other levels ([`up`]). No operation multiplies by the width's
+//! unit roundoff `2^−bits`: an inexact result's own rounding is
 //! half its ulp, `2^(⌊log₂|v|⌋ − bits)`, a power of two taken from the
 //! result's exponent ([`pow2_up`]): exact when it is an `f64`, `η` (above
 //! it) when it falls below `η`, `+∞` (uncertified) above the `f64` range.
@@ -47,13 +46,13 @@
 //! [`BigF::mag_down`]), so a value beyond `2¹⁰²⁴` with a small error stays
 //! certified, and so does a quotient over an exact divisor below `η`. For
 //! algorithms bounding afterwards, [`Width::unit_roundoff`] gives an `f64`
-//! at least `2^−bits` (`η` from 1696 bits on).
+//! at least `2^−bits` (the power itself at every width of the schedule).
 //!
 //! Since every error term is at least `η = 2⁻¹⁰⁷⁴`, a width's own rounding
 //! shows only for magnitudes above about `2^(bits − 1074)`: `2⁻⁸⁶²` at 212
-//! bits, but `2⁶²²` at 1696 and `2²³¹⁸` at 3392. Below that it is the
-//! floor `η`: for values up to `2⁶²²`, 3392 bits give no smaller bound than
-//! 1696, and 1696 than 848 only down to `η` from `2^(⌊log₂|v|⌋ − 848)`.
+//! bits, `2⁻²²⁶` at 848. Below that it is the floor `η`, which is why the
+//! schedule ends at 848 bits: a wider width would bound no smaller for
+//! values of ordinary size.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -73,8 +72,8 @@ use super::dd::Dd;
 /// coordinates up to `1e6`.
 pub const BF_EXP: i64 = 1 << 20;
 
-/// A width of the precision schedule, `212·2ᵏ` bits for `k = 0..=4`: 212,
-/// 424, 848, 1696, 3392 ([`Width::MAX`], the schedule's last).
+/// A width of the precision schedule, `212·2ᵏ` bits for `k = 0..=2`: 212,
+/// 424, 848 ([`Width::MAX`], the schedule's last).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Width(u8);
 
@@ -82,11 +81,11 @@ impl Width {
     /// The first big-float width, 212 bits (four times double's 53).
     pub const MIN: Width = Width(0);
 
-    /// The last width of the schedule, 3392 bits.
-    pub const MAX: Width = Width(4);
+    /// The last width of the schedule, 848 bits.
+    pub const MAX: Width = Width(2);
 
     /// Every width, narrowest first.
-    pub const ALL: [Width; 5] = [Width(0), Width(1), Width(2), Width(3), Width(4)];
+    pub const ALL: [Width; 3] = [Width(0), Width(1), Width(2)];
 
     /// The number of significant bits.
     #[inline]
@@ -109,8 +108,8 @@ impl Width {
         Width::ALL.into_iter().find(|w| w.bits() == bits)
     }
 
-    /// An `f64` at least the unit roundoff `2^−bits`: the power itself to
-    /// 848 bits, `η` from 1696 bits on (where `2^−bits` underflows).
+    /// An `f64` at least the unit roundoff `2^−bits`: the power itself at
+    /// every width of the schedule.
     #[inline]
     pub fn unit_roundoff(self) -> f64 {
         pow2_up(-i64::from(self.bits()))

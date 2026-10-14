@@ -717,7 +717,7 @@ enum Spread {
     Full,
 }
 
-/// The exponent bound of [`Spread::Beyond`]: past `2^(1024 + 3392)`, where
+/// The exponent bound of [`Spread::Beyond`]: past `2^(1024 + 848)`, where
 /// half an ulp at the widest width is past the `f64` range.
 const BEYOND: i64 = 5000;
 
@@ -783,9 +783,9 @@ fn operations_hold_their_bounds() {
             } else {
                 Spread::Moderate
             };
-            let wa = Width::ALL[rng.below(5) as usize];
+            let wa = Width::ALL[rng.below(Width::ALL.len() as u64) as usize];
             let wb = if rng.below(3) == 0 {
-                Width::ALL[rng.below(5) as usize]
+                Width::ALL[rng.below(Width::ALL.len() as u64) as usize]
             } else {
                 wa
             };
@@ -852,7 +852,7 @@ fn chains_hold_their_bounds() {
     for seed in varde_testing::seeds(1, 16) {
         let mut rng = Rng::new(seed);
         for case in 0..100 {
-            let w = Width::ALL[case % 5];
+            let w = Width::ALL[case % Width::ALL.len()];
             let spread = if case % 3 == 0 {
                 Spread::Beyond
             } else {
@@ -929,7 +929,7 @@ fn values_beyond_the_f64_range_stay_certified() {
 /// below it, bounds the quotient's and the root's errors through its
 /// mantissa and exponent too: `2³⁰⁰⁰·(1 + 2⁻⁵⁰)` with an error of `2¹⁰⁰⁰`
 /// over `2³⁰⁰⁰` is `1 + 2⁻⁵⁰` within about `2⁻²⁰⁰⁰`, and the root of
-/// `(2¹⁵⁰⁰ + 1)²` with that error is within `2⁻⁵⁰⁰`; dividing by an exact
+/// `(2⁶⁰⁰ + 2⁵⁰⁰)²` with an error of `2⁴⁰⁰` is within `2⁻¹⁵⁰`; dividing by an exact
 /// `2^−BF_EXP` is exact.
 #[test]
 fn divisors_and_roots_beyond_the_f64_range_stay_certified() {
@@ -951,11 +951,11 @@ fn divisors_and_roots_beyond_the_f64_range_stay_certified() {
     assert_eq!(d.sign(), Some(Ordering::Greater), "{d:?}");
 
     let w = Width::MAX;
-    let root = p2(1500) + Q::from(1u32);
-    let a = Bounded::new(exact(root.clone() * root.clone(), w), pow2(1000), 0.0);
+    let root = p2(600) + p2(500);
+    let a = Bounded::new(exact(root.clone() * root.clone(), w), pow2(400), 0.0);
     let r = a.sqrt();
-    check_sqrt(&r, &(qb(&a.v) + q(pow2(1000))));
-    assert!(r.err() < pow2(-400), "{r:?}");
+    check_sqrt(&r, &(qb(&a.v) + q(pow2(400))));
+    assert!(r.err() < pow2(-150), "{r:?}");
     let near = root - p2(-30);
     let d = &r - &Bounded::exact(exact(near, w));
     assert_eq!(d.sign(), Some(Ordering::Greater), "{d:?}");
@@ -1046,10 +1046,11 @@ fn sign_needs_the_value_past_the_error() {
     // The root of an exact zero is certified.
     let r = Bounded::exact(f(0.0)).sqrt();
     assert!(check_sqrt(&r, &Q::from(0u32)), "{r:?}");
-    assert_eq!(Width::MAX.bits(), 3392);
-    assert_eq!(Width::from_bits(848), Some(Width::ALL[2]));
+    assert_eq!(Width::MAX.bits(), 848);
+    assert_eq!(Width::from_bits(848), Some(Width::MAX));
+    assert_eq!(Width::from_bits(2 * 848), None);
     assert_eq!(Width::MAX.next(), None);
-    assert_eq!(Width::ALL[3].unit_roundoff(), ETA);
+    assert_eq!(Width::MAX.unit_roundoff(), pow2(-848));
     assert_eq!(Width::MIN.unit_roundoff(), pow2(-212));
 }
 
@@ -1145,7 +1146,7 @@ fn results_are_the_same_bits_everywhere() {
     h.bounded(&(&d * &d));
     println!("hash of the results: {:#018x}", h.0);
     assert_eq!(
-        h.0, 0xe37f_0210_f5b4_29a1,
+        h.0, 0x74a2_c6af_935c_4323,
         "results differ from the reference bits"
     );
 }

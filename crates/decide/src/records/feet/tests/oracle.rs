@@ -1089,11 +1089,36 @@ fn far_out_with_tiny_and_huge_radii() {
             &[5e-324, 1e-300, 1e-12, ext * 0.5, ext, 1e12, 1e300, f64::MAX],
         );
         let what = format!("seed {seed}");
-        exact_check(&chain, c, r, false, &what);
         let a = DVec3::new(chain[0][0][0], chain[0][0][1], chain[0][0][2]);
         let b = DVec3::new(chain[0][2][0], chain[0][2][1], chain[0][2][2]);
-        exact_line(a, b, c, r, &what);
+        if r < 1e250 {
+            exact_check(&chain, c, r, false, &what);
+            exact_line(a, b, c, r, &what);
+        } else {
+            let spans = EdgeCurve::Spans {
+                spans: &chain,
+                closed: false,
+            };
+            huge_radius(spans, chain.len(), c, r, &what);
+            huge_radius(EdgeCurve::Line([a, b]), 1, c, r, &what);
+        }
     }
+}
+
+/// A radius whose square is past `2^(1024 + 848)`, where the widest
+/// precision level's rounding no longer has an `f64` bound: the chain,
+/// all inside, is one foot over it end to end, possibly a hull foot (its
+/// clusters taken inside whole at the last level).
+fn huge_radius(curve: EdgeCurve<'_>, spans: usize, c: DVec3, r: f64, what: &str) {
+    let got = feet(c, curve, r);
+    let last = u32::try_from(spans - 1).expect("short chain");
+    let [f] = &got.feet[..] else {
+        panic!("{what}: not one foot: {got:?}");
+    };
+    assert!(
+        f.lo.span == 0 && f.lo.t[0] == 0.0 && f.hi.span == last && f.hi.t[1] == 1.0 && !f.wraps,
+        "{what}: {got:?}"
+    );
 }
 
 /// Degenerate spans: a point, a span folded back on itself, a zero-length

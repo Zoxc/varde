@@ -725,6 +725,15 @@ fn a_value_just_past_its_error_and_band_is_decided_by_it() {
     let huge = Bounded::new(s.mul(&s, w).v, f64::MAX, 0.0);
     let ord = [big(exact(-1.0))];
     assert_eq!(decide(huge, ord, wide(f64::MAX), key()), Ok(Sign::Pos));
+    // A margin whose bits span past the widest width, `1 + 2⁻¹⁰⁰⁰`: a
+    // value at it is a tie, one past it is decided.
+    let tau = p2(-1000);
+    for (lo, beyond) in [(tau, false), (p2(-999), true)] {
+        let want = Ok(if beyond { Sign::Pos } else { Sign::Neg });
+        let v = Bounded::new(Big::from_dd(Dd::sum(1.0, lo), Width::MAX), 1.0, 0.0);
+        let ord = [big(exact(-1.0))];
+        assert_eq!(decide(v, ord, wide(tau), key()), want);
+    }
 }
 
 /// An uncertified value escalates even at the largest target: its error

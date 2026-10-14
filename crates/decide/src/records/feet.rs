@@ -85,17 +85,14 @@ use smallvec::SmallVec;
 use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
 use crate::bezier::{HomCurve, Poly, Scalar};
 use crate::ids::{EdgeId, VertId};
-use crate::num::bigf::{Big, BigF, Width};
-use crate::num::bounded::Bounded;
-use crate::num::dd::Dd;
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact;
 use crate::order::Along;
 use crate::records::keys::{FootId, Operand, Point, RayKey, RecordKey};
-use crate::records::ray::{Span, bracket};
+use crate::records::ray::{RayLevel, Span, bracket};
 use crate::records::shadow::{
-    Cost, Decided, LEVELS, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, replay,
-    shadow_error,
+    AtLevel, Cost, Decided, LEVELS, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, ladder,
+    replay, shadow_error,
 };
 use crate::records::table::{Fresh, Table};
 
@@ -476,32 +473,32 @@ fn span_feet(
     ends: [Ordering; 2],
     cost: &mut Cost,
 ) -> Option<Events> {
-    for (level, work) in cost.levels.iter_mut().enumerate() {
-        let last = level + 1 == LEVELS;
-        let got = match level {
-            0 => span_at(pts, q, r, ends, &Bounded::exact(0.0), work, last),
-            1 => span_at(
-                pts,
-                q,
-                r,
-                ends,
-                &Bounded::exact(Dd::from_f64(0.0)),
-                work,
-                last,
-            ),
-            _ => {
-                let w = Width::ALL[level - 2];
-                let like = Bounded::exact(Big::from_f64(0.0, w));
-                span_at(pts, q, r, ends, &like, work, last)
-            }
-        };
-        match got {
-            Step::Done(events) => return Some(events),
-            Step::Escalate if !last => {}
-            Step::Escalate | Step::Bad => return None,
-        }
+    let mut at = SpanAt { pts, q, r, ends };
+    match ladder(&mut at, 0, cost) {
+        Some(Step::Done(events)) => Some(events),
+        _ => None,
     }
-    None
+}
+
+/// A span's events at one level.
+struct SpanAt<'a> {
+    pts: &'a [[f64; 4]],
+    q: DVec3,
+    r: f64,
+    ends: [Ordering; 2],
+}
+
+impl AtLevel for SpanAt<'_> {
+    type Out = Step;
+
+    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Step {
+        let last = level + 1 == LEVELS;
+        span_at(self.pts, self.q, self.r, self.ends, like, work, last)
+    }
+
+    fn escalates(out: &Step) -> bool {
+        matches!(out, Step::Escalate)
+    }
 }
 
 /// One level's answer for a span.

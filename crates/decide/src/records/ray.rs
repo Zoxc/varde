@@ -162,7 +162,7 @@ use smallvec::SmallVec;
 use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
 use crate::bezier::{HomCurve, Poly, Scalar};
 use crate::ids::EdgeId;
-use crate::num::bigf::{Big, BigF, Width};
+use crate::num::bigf::BigF;
 use crate::num::bounded::{Bounded, add_up, down, mul_up};
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
@@ -173,16 +173,14 @@ use crate::perturb::{
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
-    Cost, Decided, LEVELS, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, neg, ray_ahead,
-    read_vv, replay, shadow_error, side_and_ahead, table_error,
+    AtLevel, Cost, Decided, LEVELS, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, ladder,
+    neg, ray_ahead, read_vv, replay, shadow_error, side_and_ahead, table_error,
 };
 use crate::records::table::{Fresh, Table};
 
 /// A span: three affine control points with their weights `(x, y, z, w)`,
 /// weights positive; its point is `Σ Bᵢ·wᵢ·xᵢ / Σ Bᵢ·wᵢ`.
 pub type Span = [[f64; 4]; 3];
-
-const _: () = assert!(LEVELS == 2 + Width::ALL.len());
 
 /// The most splits one root isolation takes; a quadratic's isolation to
 /// the deepest level stays far below.
@@ -762,7 +760,7 @@ pub(super) fn span_crossings<R: SpanRates>(
             on: ends[j].1,
         })
     });
-    let ctx = SpanCtx {
+    let mut ctx = SpanCtx {
         operand,
         span,
         ends,
@@ -772,23 +770,20 @@ pub(super) fn span_crossings<R: SpanRates>(
         band,
         tie,
     };
-    for level in 0..LEVELS {
-        let work = &mut cost.levels[level];
-        let r = match level {
-            0 => ctx.at(&Bounded::exact(0.0), work, false),
-            1 => ctx.at(&Bounded::exact(Dd::from_f64(0.0)), work, false),
-            _ => {
-                let w = Width::ALL[level - 2];
-                let last = level + 1 == LEVELS;
-                ctx.at(&Bounded::exact(Big::from_f64(0.0, w)), work, last)
-            }
-        };
-        match r {
-            Err(Fail::Escalate { .. }) if level + 1 < LEVELS => {}
-            r => return (r, cost),
-        }
+    let r = ladder(&mut ctx, 0, &mut cost).expect("the first level runs");
+    (r, cost)
+}
+
+impl<R: SpanRates> AtLevel for SpanCtx<'_, R> {
+    type Out = Result<SpanRec, Fail>;
+
+    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
+        SpanCtx::at(self, like, work, level + 1 == LEVELS)
     }
-    unreachable!("the last level returns")
+
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(Fail::Escalate { .. }))
+    }
 }
 
 impl<R: SpanRates> SpanCtx<'_, R> {

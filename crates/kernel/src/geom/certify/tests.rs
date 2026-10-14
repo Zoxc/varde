@@ -662,9 +662,14 @@ fn the_top_precision_gives_its_achieved_bound() {
         &Curve3D::new(vec![[x(0.0), x(1.5), x(3.0)]], vec![0.0, 3.0]).unwrap(),
     );
     let coedges = vec![arcs(&s)[3].clone(), (c, line)];
-    let (out, _) = pass(&s, &coedges, 0.0, MAX_WORK);
+    let (out, used) = pass(&s, &coedges, 0.0, MAX_WORK);
     let b = out.unwrap()[1];
     assert_eq!(b.level, LEVELS - 1, "{b:?}");
+    // A unit short, the budget runs out at the top level's last cell.
+    let (cause, profile) = ran_out(pass(&s, &coedges, 0.0, used - 1).0);
+    assert_eq!(cause, Cause::Precision);
+    let top = Step::Precision { level: LEVELS - 1 };
+    assert_eq!(profile.stopped.step, Some(top), "{profile:?}");
     assert!(0.0 < b.bound && b.bound <= 1e-200, "{b:?}");
     // Within reach of the top level's rounding, it is met.
     let (out, _) = pass(&s, &coedges, 1e-200, MAX_WORK);

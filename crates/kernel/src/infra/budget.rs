@@ -88,10 +88,10 @@ pub enum Step {
 }
 
 /// The precision levels of the escalation schedule: `f64` (0),
-/// double-double (1), then big-float at 212, 424, 848, 1696 and 3392 bits
-/// (2 to 6). The top level's width is the highest precision there is:
-/// an item still open there reaches [`Cap::PrecisionBits`].
-pub(crate) const LEVELS: u8 = 7;
+/// double-double (1), then big-float at 212, 424 and 848 bits (2 to 4).
+/// The top level's width is the highest precision there is: an item still
+/// open there reaches [`Cap::PrecisionBits`].
+pub(crate) const LEVELS: u8 = 5;
 
 /// The step of one computation at precision level `level`: ordinary work
 /// at the first level, a precision step above it.
@@ -104,7 +104,7 @@ pub(crate) fn level_step(level: u8) -> Step {
 
 /// The units of one computation at precision level `level`, in those of
 /// the same computation in `f64`: 1, 4 for double-double, `(bits/53)²`
-/// for big-float (16 at 212 bits, 4096 at 3392).
+/// for big-float (16 at 212 bits, 256 at 848).
 pub(crate) fn level_units(level: u8) -> u64 {
     match level {
         0 => 1,
@@ -579,6 +579,18 @@ impl Work {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The schedule: `f64`, double-double and the big-float widths, the
+    /// last at 848 bits, its units `(848/53)²`.
+    #[test]
+    fn the_schedule_ends_at_848_bits() {
+        use varde_decide::num::bigf::Width;
+        assert_eq!(usize::from(LEVELS), 2 + Width::ALL.len());
+        assert_eq!(Width::MAX.bits(), 848);
+        let units: Vec<u64> = (0..LEVELS).map(level_units).collect();
+        assert_eq!(units, [1, 4, 16, 64, 256]);
+        assert_eq!(level_step(LEVELS - 1), Step::Precision { level: 4 });
+    }
 
     const PASS: Pass = Pass {
         stage: "test",

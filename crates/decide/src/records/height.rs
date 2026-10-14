@@ -70,9 +70,6 @@ use std::collections::BTreeMap;
 use smallvec::SmallVec;
 
 use crate::ids::{EdgeId, FaceId, VertId};
-use crate::num::bigf::{Big, BigF, Width};
-use crate::num::bounded::Bounded;
-use crate::num::dd::Dd;
 use crate::num::decide::{Band, BandKind, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::{self, ORDERS, Pred};
 use crate::order::{Along, EdgeKey, EntityOrder, Pos, VertKey};
@@ -82,7 +79,10 @@ use crate::records::keys::{
     Anchor, FootId, HKey, HeightKey, LayerId, Operand, Oriented, Point, RayKey, RecordKey, Target,
     VvKey,
 };
-use crate::records::shadow::{Cost, Decided, Pass, Shadows, VvRec, neg, replay, table_error};
+use crate::records::ray::RayLevel;
+use crate::records::shadow::{
+    AtLevel, Cost, Decided, LevelWork, Pass, Shadows, VvRec, ladder, neg, replay, table_error,
+};
 use crate::records::table::{Fresh, Table, TableError};
 
 /// What [`height_key`] and the layers read: the geometric order of the
@@ -796,7 +796,7 @@ fn decide_key<G: HeightGeometry>(
         KeyValue::Curved => {
             let b = if geometric { Band::GEOMETRIC } else { band };
             let mut at = KeyAt { h, geom, b };
-            let r = ladder(&mut at, 0, &mut cost);
+            let r = ladder(&mut at, 0, &mut cost).expect("the first level runs");
             (r, cost)
         }
     }
@@ -810,9 +810,15 @@ struct KeyAt<'a, G> {
 }
 
 impl<G: HeightGeometry> AtLevel for KeyAt<'_, G> {
-    type Out = KeyRec;
+    type Out = Result<KeyRec, Fail>;
 
-    fn at<S: Curved + Coeff>(&mut self, like: &S, level: u8) -> Result<KeyRec, Fail> {
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(Fail::Escalate { .. }))
+    }
+
+    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
+        work.evals = work.evals.saturating_add(1);
+        let level = u8::try_from(level).expect("few levels");
         let escalate = Err(Fail::Escalate { order: 0 });
         let Some(v) = self.geom.curved_value(self.h, like) else {
             return escalate;
@@ -865,7 +871,8 @@ fn decide_at<G: HeightGeometry>(
         }
         AnchorRow::Curved => {
             let mut at = RowAt { k, geom, band, tie };
-            ladder(&mut at, key.level, &mut cost)
+            ladder(&mut at, usize::from(key.level), &mut cost)
+                .unwrap_or(Err(Fail::Escalate { order: 0 }))
         }
     };
     let rec = above.map(|above| HeightRec {
@@ -884,9 +891,14 @@ struct RowAt<'a, G> {
 }
 
 impl<G: HeightGeometry> AtLevel for RowAt<'_, G> {
-    type Out = Sign;
+    type Out = Result<Sign, Fail>;
 
-    fn at<S: Curved + Coeff>(&mut self, like: &S, _: u8) -> Result<Sign, Fail> {
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(Fail::Escalate { .. }))
+    }
+
+    fn at<S: RayLevel>(&mut self, like: &S, _: usize, work: &mut LevelWork) -> Self::Out {
+        work.evals = work.evals.saturating_add(1);
         let Some(ord) = self.geom.curved_row(self.k, like) else {
             return Err(Fail::Escalate { order: 1 });
         };
@@ -894,36 +906,6 @@ impl<G: HeightGeometry> AtLevel for RowAt<'_, G> {
         let zero = S::int(0, like);
         decide(zero, ord, self.band, self.tie)
     }
-}
-
-/// One step of a curved decision, at the level of `like` (level `level`).
-trait AtLevel {
-    type Out;
-
-    fn at<S: Curved + Coeff>(&mut self, like: &S, level: u8) -> Result<Self::Out, Fail>;
-}
-
-/// Runs `f` at each level from `from` in turn until one doesn't escalate;
-/// past the last level its [`Fail::Escalate`] stands. Each level run is
-/// one evaluation, charged at that level.
-fn ladder<F: AtLevel>(f: &mut F, from: u8, cost: &mut Cost) -> Result<F::Out, Fail> {
-    let mut r = Err(Fail::Escalate { order: 0 });
-    for (level, work) in cost.levels.iter_mut().enumerate().skip(usize::from(from)) {
-        work.evals = work.evals.saturating_add(1);
-        let l = u8::try_from(level).expect("few levels");
-        r = match level {
-            0 => f.at(&Bounded::exact(0.0), l),
-            1 => f.at(&Bounded::exact(Dd::from_f64(0.0)), l),
-            _ => f.at(
-                &Bounded::exact(Big::from_f64(0.0, Width::ALL[level - 2])),
-                l,
-            ),
-        };
-        if !matches!(r, Err(Fail::Escalate { .. })) {
-            break;
-        }
-    }
-    r
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@
 //!
 //! **The bound on a cell.** A piece is bounded cell by cell, a cell its
 //! `k`-th of `2^d` equal parts in `t`, at a precision level of the
-//! escalation schedule (`f64`, double-double, big-float at 212 to 3392
+//! escalation schedule (`f64`, double-double, big-float at 212 to 848
 //! bits). At the cell's level the spans' homogeneous coefficients are
 //! formed from their affine control points ([`Curve3D::span_at`]: each
 //! product `w·x` rounded once with its rounding carried at the first

@@ -89,10 +89,14 @@ use malachite::Rational;
 
 use crate::bezier::roots::Work as RootWork;
 use crate::ids::{EdgeId, VertId};
+use crate::num::bigf::{Big, BigF, Width};
+use crate::num::bounded::Bounded;
+use crate::num::dd::Dd;
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact::{self, Num, Pred, Work, dot, point, sub};
 use crate::perturb::{LineShadow, Moving, Seg, ShadowAxis, VvShadow, decide_flat};
 use crate::records::keys::{Operand, Point, RayKey, RecordKey, VvKey};
+use crate::records::ray::RayLevel;
 use crate::records::table::{FillError, Fresh, Table, TableError};
 
 /// A point against a vertex of the other operand, oriented from the
@@ -170,8 +174,44 @@ pub type Decided<V> = (Result<V, Fail>, Cost);
 
 /// The precision levels a curved record is decided at, in order: the
 /// first (`f64`), double-double, then the big-float widths
-/// ([`Width::ALL`](crate::num::bigf::Width::ALL)).
-pub const LEVELS: usize = 7;
+/// ([`Width::ALL`]).
+pub const LEVELS: usize = 2 + Width::ALL.len();
+
+/// One step of a curved decision, run at a precision level by [`ladder`].
+pub(crate) trait AtLevel {
+    /// The step's answer.
+    type Out;
+
+    /// The step at level `level`, `like` a value of that level's scalar
+    /// and `work` the level's curved work.
+    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out;
+
+    /// Whether `out` asks for the next level.
+    fn escalates(out: &Self::Out) -> bool;
+}
+
+/// Runs `f` at each level from `from` in turn until one doesn't escalate;
+/// at the last level its answer stands, whatever it is. `None` when
+/// `from` is past the last level.
+pub(crate) fn ladder<F: AtLevel>(f: &mut F, from: usize, cost: &mut Cost) -> Option<F::Out> {
+    let mut out = None;
+    for (level, work) in cost.levels.iter_mut().enumerate().skip(from) {
+        let r = match level {
+            0 => f.at(&Bounded::exact(0.0), level, work),
+            1 => f.at(&Bounded::exact(Dd::from_f64(0.0)), level, work),
+            _ => {
+                let like = Bounded::exact(Big::from_f64(0.0, Width::ALL[level - 2]));
+                f.at(&like, level, work)
+            }
+        };
+        let escalates = F::escalates(&r);
+        out = Some(r);
+        if !escalates {
+            break;
+        }
+    }
+    out
+}
 
 /// What deciding one record ran, for the pass to charge: its exact
 /// predicates' work, and per precision level the curved work.
