@@ -390,6 +390,54 @@ fn fitted_length_field(design: &Design, camera: &Camera, share: f64, ask: &Ask) 
 }
 
 impl MotionSession {
+    /// Takes a click on the panel's `field` for what to pick, by this
+    /// kind: a field clicked again while it picks stops picking (a
+    /// scale's point or edge hands the clicks back to the bodies), and
+    /// a field this kind doesn't have is ignored. A loft's are its own
+    /// ([`MotionSession::loft_picking`]).
+    fn click_field(&mut self, field: MotionPick) {
+        let again = |stop| if self.picking == field { stop } else { field };
+        self.picking = match (self.kind, field) {
+            // An align's references are its own; the field clicked again
+            // stops picking, so the align shows as set up without picking
+            // all it can take.
+            (MotionKind::Align, MotionPick::Align(_)) => again(MotionPick::Nothing),
+            (MotionKind::Align, MotionPick::Nothing) => field,
+            // A scale picks its edge only while scaling to an edge length.
+            (MotionKind::Scale, MotionPick::Edge)
+                if self.scale.mode != varde_view::ScaleMode::EdgeLength =>
+            {
+                return;
+            }
+            (MotionKind::Scale, MotionPick::Point | MotionPick::Edge) => again(MotionPick::Bodies),
+            // A split's tool, clicked again, shows the split as set up.
+            (MotionKind::Split, MotionPick::Tool) => again(MotionPick::Nothing),
+            (MotionKind::Align | MotionKind::Scale | MotionKind::Split, MotionPick::Bodies) => {
+                field
+            }
+            // A sweep picks its profile, its path or its helix's axis.
+            (MotionKind::Sweep, MotionPick::Regions | MotionPick::Path | MotionPick::Reference) => {
+                again(MotionPick::Nothing)
+            }
+            // A chamfer or fillet picks only its edges.
+            (kind, MotionPick::Edges) if kind.blends() => again(MotionPick::Nothing),
+            // A draft's neutral plane row toggles picking it and its faces.
+            (MotionKind::Draft, MotionPick::Reference) => again(MotionPick::Faces),
+            // A shell, offset face or draft picks its faces.
+            (kind, MotionPick::Faces) if kind.picks_faces() => again(MotionPick::Nothing),
+            // The others pick their bodies and their axis or plane.
+            (
+                MotionKind::Move
+                | MotionKind::Mirror
+                | MotionKind::LinearPattern
+                | MotionKind::CircularPattern
+                | MotionKind::Loft,
+                MotionPick::Bodies | MotionPick::Reference,
+            ) => field,
+            _ => return,
+        };
+    }
+
     /// A session setting up a new `kind` of `document`, of `bodies`: a
     /// move by nothing yet about the Z axis, a mirror keeping the
     /// original with its plane to pick, or a pattern as the UI mock's
@@ -1703,77 +1751,7 @@ impl Doc {
                 self.mode.take_operation();
             }
             _ if !editable => {}
-            // An align's references are its own; others pick none.
-            MotionLook::Picking(MotionPick::Align(_) | MotionPick::Nothing)
-                if session.kind != MotionKind::Align => {}
-            MotionLook::Picking(MotionPick::Point | MotionPick::Edge)
-                if session.kind != MotionKind::Scale => {}
-            MotionLook::Picking(MotionPick::Reference)
-                if matches!(
-                    session.kind,
-                    MotionKind::Align | MotionKind::Scale | MotionKind::Split
-                ) => {}
-            MotionLook::Picking(MotionPick::Tool) if session.kind != MotionKind::Split => {}
-            // A sweep picks its profile, its path or its helix's axis: a
-            // field clicked again while it picks stops picking.
-            MotionLook::Picking(
-                picking @ (MotionPick::Regions | MotionPick::Path | MotionPick::Reference),
-            ) if session.kind == MotionKind::Sweep => {
-                session.picking = if session.picking == picking {
-                    MotionPick::Nothing
-                } else {
-                    picking
-                };
-            }
-            MotionLook::Picking(_) if session.kind == MotionKind::Sweep => {}
-            MotionLook::Picking(MotionPick::Regions | MotionPick::Path) => {}
-            // A chamfer picks only its edges: its field clicked turns
-            // picking them off and on.
-            MotionLook::Picking(MotionPick::Edges) if session.kind.blends() => {
-                session.picking = match session.picking {
-                    MotionPick::Edges => MotionPick::Nothing,
-                    _ => MotionPick::Edges,
-                };
-            }
-            MotionLook::Picking(_) if session.kind.blends() => {}
-            MotionLook::Picking(MotionPick::Edges) => {}
-            // A shell picks only its faces, the same way.
-            MotionLook::Picking(MotionPick::Faces) if session.kind.picks_faces() => {
-                session.picking = match session.picking {
-                    MotionPick::Faces => MotionPick::Nothing,
-                    _ => MotionPick::Faces,
-                };
-            }
-            // A draft's neutral plane row toggles picking it and its
-            // faces.
-            MotionLook::Picking(MotionPick::Reference) if session.kind == MotionKind::Draft => {
-                session.picking = match session.picking {
-                    MotionPick::Reference => MotionPick::Faces,
-                    _ => MotionPick::Reference,
-                };
-            }
-            MotionLook::Picking(_) if session.kind.picks_faces() => {}
-            MotionLook::Picking(MotionPick::Faces) => {}
-            // A split's tool field clicked again while it picks stops
-            // picking, so the split shows as set up.
-            MotionLook::Picking(MotionPick::Tool) if session.picking == MotionPick::Tool => {
-                session.picking = MotionPick::Nothing;
-            }
-            MotionLook::Picking(MotionPick::Edge)
-                if session.scale.mode != varde_view::ScaleMode::EdgeLength => {}
-            // A scale's point or edge field clicked again while it picks
-            // hands the clicks back to the bodies.
-            MotionLook::Picking(picking @ (MotionPick::Point | MotionPick::Edge))
-                if session.picking == picking =>
-            {
-                session.picking = MotionPick::Bodies;
-            }
-            // An align's field clicked again while it picks stops picking,
-            // so the align shows as set up without picking all it can take.
-            MotionLook::Picking(picking @ MotionPick::Align(_)) if session.picking == picking => {
-                session.picking = MotionPick::Nothing;
-            }
-            MotionLook::Picking(picking) => session.picking = picking,
+            MotionLook::Picking(field) => session.click_field(field),
             MotionLook::OriginAxis(axis) if session.kind == MotionKind::Align => {
                 self.align_origin(Some(axis));
             }
