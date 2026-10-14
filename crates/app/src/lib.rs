@@ -62,8 +62,8 @@ use crate::message::{ForDoc, Message};
 use crate::page::{Page, settings_shown};
 use crate::settings::Settings;
 use crate::tasks::{
-    ask_writable, focus_field, focus_name, focus_param, focus_rename, pick_export, pick_open,
-    pick_save_as, snap_list, storage_state, thumbnail,
+    ask_writable, focus_field, focus_selected, pick_export, pick_open, pick_save_as, snap_list,
+    storage_state, thumbnail,
 };
 use crate::toast::Toast;
 use crate::welcome::Welcome;
@@ -225,18 +225,21 @@ impl Varde {
             );
             // The rename field takes the focus as it opens, its text selected.
             if doc.take_rename_focus() {
-                tasks.push(focus_rename());
+                tasks.push(focus_selected(varde_view::RENAME_FIELD));
             }
             // A parameter just added has its name take the focus, its text
             // selected.
-            tasks.extend(doc.take_param_focus().map(focus_param));
+            tasks.extend(
+                (doc.take_param_focus())
+                    .map(|index| focus_selected(varde_view::param_name_id(index))),
+            );
             // What the document has to say shows as a toast.
             if let Some(message) = doc.take_toast() {
                 self.toast.show(message, iced::time::Instant::now());
             }
             // The Save As dialog's name field takes the focus as it shows.
             if doc.take_name_focus() {
-                tasks.push(focus_name());
+                tasks.push(focus_selected(varde_view::NAME_FIELD));
             }
             let id = doc.id;
             // A thumbnail asked for, rendered by the viewport's next frame.

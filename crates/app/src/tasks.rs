@@ -112,29 +112,13 @@ impl<T: Send + 'static> iced::advanced::widget::Operation<T> for RevealField {
     }
 }
 
-/// Has the rename field take the focus, its text selected to overtype.
-pub(crate) fn focus_rename() -> Task<Message> {
+/// Has the text field `id` take the focus, its text selected to
+/// overtype: the rename field, a parameter's name, the Save As dialog's
+/// name.
+pub(crate) fn focus_selected(id: iced::widget::Id) -> Task<Message> {
     use iced::widget::operation;
 
-    operation::focus(varde_view::RENAME_FIELD)
-        .chain(operation::select_all(varde_view::RENAME_FIELD))
-}
-
-/// Has the name field of the parameter at `index` take the focus, its
-/// text selected to overtype.
-pub(crate) fn focus_param(index: usize) -> Task<Message> {
-    use iced::widget::operation;
-
-    let id = varde_view::param_name_id(index);
     operation::focus(id.clone()).chain(operation::select_all(id))
-}
-
-/// Has the Save As dialog's name field take the focus, its text selected
-/// to overtype.
-pub(crate) fn focus_name() -> Task<Message> {
-    use iced::widget::operation;
-
-    operation::focus(varde_view::NAME_FIELD).chain(operation::select_all(varde_view::NAME_FIELD))
 }
 
 /// Asks the browser what it says of its storage, answering with
