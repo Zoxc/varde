@@ -300,7 +300,7 @@ impl Sketch {
             .collect();
         let splits = splits(&curves, &kept, tolerance, most_splits, work)?;
         work.spend(splits.len().saturating_mul(CUT_COST))?;
-        let (vertex_of, vertices) = merge(&splits, tolerance, work)?;
+        let (vertex_of, vertices) = merge_splits(&splits, tolerance, work)?;
         let edges = edges(&curves, &kept, &splits, &vertex_of, tolerance, work)?;
         let graph = Graph::new(&curves, vertices, edges, tolerance);
         let open_ends = graph.open_ends();
@@ -417,7 +417,7 @@ fn splits(
 /// the next) into vertices: each split's vertex, and where each vertex is,
 /// a curve's end's place if one is in it. Splits are found near each
 /// other by the cells `tolerance` wide they're in, sorted.
-fn merge(
+fn merge_splits(
     splits: &[Split],
     tolerance: f64,
     work: &mut Work,
