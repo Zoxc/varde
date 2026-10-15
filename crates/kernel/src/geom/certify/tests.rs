@@ -634,11 +634,13 @@ fn targets_out_of_reach_run_out_of_precision_at_the_coedge() {
     let s = base_plane();
     let coedges = arcs(&s);
     // The budget runs out at the arc with weights 64 and 1/64 as it
-    // escalates: a unit at the first level, then double-double's four.
+    // escalates: past its first cell at the first level, in its first
+    // double-double step.
     let first = pass(&s, &coedges[..2], TARGET, MAX_WORK).1;
-    let (cause, profile) = ran_out(pass(&s, &coedges[..3], TARGET, first + 2).0);
+    let budget = first + seam_cell_units(0) + 2;
+    let (cause, profile) = ran_out(pass(&s, &coedges[..3], TARGET, budget).0);
     assert_eq!(cause, Cause::Precision);
-    assert_eq!(profile.limit, Limit::Budget(first + 2));
+    assert_eq!(profile.limit, Limit::Budget(budget));
     assert_eq!(profile.stopped.at.item, 2);
     assert_eq!(profile.stopped.step, Some(Step::Precision { level: 1 }));
 }
@@ -684,9 +686,83 @@ fn targets_below_zero_or_nan_count_as_zero() {
     let s = base_plane();
     let c = quarter(3.0);
     let p = on_plane(&s, &c).perturbed(&[[2e-7, -2e-7]]).unwrap();
-    let zero = seam_bound_alone(&s, &c, &p, 0.0, 10_000).unwrap();
+    let zero = seam_bound_alone(&s, &c, &p, 0.0, MAX_WORK).unwrap();
     for target in [f64::NAN, -1.0, f64::NEG_INFINITY] {
-        let b = seam_bound_alone(&s, &c, &p, target, 10_000);
+        let b = seam_bound_alone(&s, &c, &p, target, MAX_WORK);
         assert_eq!(b, Ok(zero), "{target}");
+    }
+}
+
+/// Budgets at the exact end of each coedge's charges and a unit short of
+/// it, on any number of threads: the whole charge passes; at the end of
+/// a coedge the budget runs out at the next one's first cell, ordinary
+/// work at the first level; a unit short it runs out at that coedge's
+/// last cell, precision when that cell was above the first level. The
+/// work used is the budget, split by step kind as the ledger charged it.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn budgets_at_each_coedge_s_end_run_out_at_the_next() {
+    use crate::infra::par::assert_deterministic;
+    let s = base_plane();
+    let coedges = arcs(&s);
+    let alone: Vec<u64> = coedges
+        .iter()
+        .map(|e| pass(&s, std::slice::from_ref(e), TARGET, MAX_WORK).1)
+        .collect();
+    let mut end = 0;
+    for (k, &units) in alone.iter().enumerate() {
+        // A unit short of this coedge's end.
+        end += units;
+        let (out, used) = assert_deterministic(|| pass(&s, &coedges, TARGET, end - 1));
+        assert_eq!(used, end - 1);
+        let (cause, profile) = ran_out(out);
+        assert_eq!(profile.stopped.at.item as usize, k);
+        let step = profile.stopped.step.expect("charged");
+        let want = match step {
+            Step::Work => Cause::Work,
+            Step::Precision { .. } => Cause::Precision,
+        };
+        assert_eq!(cause, want, "{profile:?}");
+        assert_eq!(profile.used, end - 1);
+        assert_eq!(
+            profile.work + profile.precision.iter().sum::<u64>(),
+            end - 1
+        );
+        // At its end: the next coedge's first cell, or all of them.
+        let (out, used) = assert_deterministic(|| pass(&s, &coedges, TARGET, end));
+        if k + 1 == coedges.len() {
+            assert_eq!(used, end);
+            assert!(out.is_ok());
+        } else {
+            let (cause, profile) = ran_out(out);
+            assert_eq!(cause, Cause::Work);
+            assert_eq!(profile.stopped.at.item as usize, k + 1);
+            assert_eq!(profile.stopped.step, Some(Step::Work));
+            assert_eq!(profile.used, end);
+        }
+    }
+    // The arc with weights 64 and 1/64 ends above the first level.
+    let (_, p) = ran_out(pass(&s, &coedges, TARGET, alone[..3].iter().sum::<u64>() - 1).0);
+    assert!(
+        matches!(p.stopped.step, Some(Step::Precision { .. })),
+        "{p:?}"
+    );
+}
+
+/// A pass of copies of the arcs towards a target of 0, none of which it
+/// meets, uses up its budget the same way on any number of threads: all
+/// of it, running out at the same coedge and step.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_pass_past_its_budget_uses_it_up_on_any_number_of_threads() {
+    use crate::infra::par::assert_deterministic;
+    let s = base_plane();
+    let coedges: Vec<_> = arcs(&s).into_iter().cycle().take(64).collect();
+    for budget in [1, seam_cell_units(0), seam_cell_units(0) + 1, 100_000] {
+        let (out, used) = assert_deterministic(|| pass(&s, &coedges, 0.0, budget));
+        assert_eq!(used, budget);
+        let (_, profile) = ran_out(out);
+        assert_eq!(profile.used, budget);
+        assert_eq!(profile.limit, Limit::Budget(budget));
     }
 }

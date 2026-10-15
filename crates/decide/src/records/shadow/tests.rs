@@ -1059,3 +1059,69 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
         assert_eq!(stored(&s3), records);
     }
 }
+
+/// A record's cost in units: each kind of work at its price in parts,
+/// summed over the exact stages and the levels, rounded up to whole units
+/// once for the record, not per kind.
+#[test]
+fn a_record_s_cost_is_its_parts_rounded_up_once() {
+    let u = RecordUnits {
+        filter: 3,
+        expansion: 5,
+        rational: 7,
+        eval: [1, 2, 3, 4, 5],
+        root: [10, 20, 30, 40, 50],
+    };
+    let mut cost = Cost::exact(Work {
+        filters: 2,
+        expansions: 1,
+        longest: 9,
+        rationals: 1,
+    });
+    assert_eq!(cost.exact_parts(&u), 2 * 3 + 5 + 7);
+    cost.levels[0].evals = 4;
+    cost.levels[3].evals = 1;
+    cost.levels[3].roots = RootWork {
+        splits: 1,
+        tests: 3,
+        steps: 2,
+    };
+    assert_eq!(cost.level_parts(0, &u), 4);
+    assert_eq!(cost.level_parts(3, &u), 4 + 6 * 40);
+    let parts = 18 + 4 + 244;
+    assert_eq!(cost.parts(&u), parts);
+    assert_eq!(cost.units(&u), parts.div_ceil(UNIT_PARTS));
+    // Below a unit, a record costs one; nothing costs nothing.
+    let one = Cost::exact(Work {
+        filters: 1,
+        ..Work::default()
+    });
+    assert_eq!(one.units(&u), 1);
+    assert_eq!(Cost::default().units(&UNITS.record), 0);
+    // Counts past `u32` per kind saturate, never wrap.
+    let mut huge = Cost::default();
+    huge.levels[4].evals = u32::MAX;
+    let dear = RecordUnits {
+        eval: [u64::MAX; LEVELS],
+        ..u
+    };
+    assert_eq!(huge.parts(&dear), u64::MAX);
+}
+
+/// Every kind with levels costs at least as much at a level as at the one
+/// below, and something at each: a precision step is never free, nor
+/// cheaper than the computation it repeats.
+#[test]
+fn the_unit_table_grows_with_the_level() {
+    let r = &UNITS.record;
+    for (kind, row) in [
+        ("seam cell", UNITS.seam_cell),
+        ("count piece", UNITS.count_piece),
+        ("record eval", r.eval),
+        ("record root", r.root),
+    ] {
+        assert!(row[0] > 0, "{kind}: {row:?}");
+        assert!(row.windows(2).all(|w| w[0] <= w[1]), "{kind}: {row:?}");
+    }
+    assert!(r.filter > 0 && r.expansion > 0 && r.rational > 0);
+}

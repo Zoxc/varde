@@ -36,18 +36,18 @@ use super::error::{Cause, KernelError};
 use super::par::par_map_indexed;
 
 /// The most work one operation may do, in the units of [`Budget`]: about
-/// one patch or pair of patches tested or split each, about half a
-/// microsecond on one thread (0.2 to 0.7 µs measured across booleans that
-/// work and fail). So an operation stops after about two seconds of work
-/// at most on one thread, less on several. The heaviest booleans
-/// measured, a plate with 144 holes joined to a boss across them or two
-/// flat tori of 36 864 patches each, take about 2 million units.
+/// two seconds of work on one thread of the reference machine, less on
+/// several. A unit is about half a microsecond, each computation kind
+/// charged its own units from the unit table ([`shadow::UNITS`]); the
+/// calibration benchmark (`benches/calibrate.rs`) measures a seam pass
+/// that uses it up at 2.1 s on one thread, and fails past four times the
+/// two seconds.
 pub const MAX_WORK: u64 = 1 << 22;
 
 pub use varde_decide::records::shadow::MAX_SUBDIV_DEPTH;
 
-/// How much work one kernel operation may do, in units of about one patch
-/// or one pair of patches tested or split. Running out gives
+/// How much work one kernel operation may do, in units of about half a
+/// microsecond of work ([`MAX_WORK`]). Running out gives
 /// [`KernelError::OutOfBudget`], never a hang. One budget covers the
 /// whole operation, its retries included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,11 +106,10 @@ pub(crate) fn level_step(level: u8) -> Step {
     }
 }
 
-/// The units of one computation at precision level `level`, in those of
-/// the same computation in `f64`: 1, 4 for double-double, `(bits/53)²`
-/// for big-float (16 at 212 bits, 256 at 848).
-pub(crate) fn level_units(level: u8) -> u64 {
-    shadow::SCHEDULE_UNITS[usize::from(level)]
+/// The units of one seam-bound cell at precision level `level`, from the
+/// unit table ([`shadow::UNITS`]).
+pub(crate) fn seam_cell_units(level: u8) -> u64 {
+    shadow::UNITS.seam_cell[usize::from(level)]
 }
 
 /// What [`KernelError::OutOfBudget`] reached.
@@ -580,14 +579,12 @@ mod tests {
     use super::*;
 
     /// The schedule: `f64`, double-double and the big-float widths, the
-    /// last at 848 bits, its units `(848/53)²`.
+    /// last at 848 bits.
     #[test]
     fn the_schedule_ends_at_848_bits() {
         use varde_decide::num::bigf::Width;
         assert_eq!(usize::from(LEVELS), 2 + Width::ALL.len());
         assert_eq!(Width::MAX.bits(), 848);
-        let units: Vec<u64> = (0..LEVELS).map(level_units).collect();
-        assert_eq!(units, [1, 4, 16, 64, 256]);
         assert_eq!(level_step(LEVELS - 1), Step::Precision { level: 4 });
     }
 

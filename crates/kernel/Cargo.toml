@@ -26,6 +26,12 @@ varde-testkit.workspace = true
 rayon.workspace = true
 spade.workspace = true
 
+# The unit table's calibration (benches/calibrate.rs): `cargo bench -p
+# varde-kernel --bench calibrate`.
+[[bench]]
+name = "calibrate"
+harness = false
+
 [lints.rust]
 # tools/ci.sh builds tests/ban_probe.rs with `--cfg ban_probe`.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ban_probe)"] }

@@ -103,7 +103,7 @@ use crate::records::keys::{Anchor, HeightKey, LayerId, Operand, Point, SideKey, 
 use crate::records::ray::RayLevel;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing};
 use crate::records::shadow::{
-    AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, SCHEDULE_UNITS, ladder,
+    AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, UNITS, ladder,
 };
 use crate::records::side::Sides;
 
@@ -127,12 +127,12 @@ pub struct Charge {
 }
 
 impl Charge {
-    /// A share of `share` units at the schedule's units
-    /// ([`SCHEDULE_UNITS`]).
+    /// A share of `share` units at the table's units for count pieces
+    /// ([`Units::count_piece`](crate::records::shadow::Units::count_piece)).
     pub fn new(share: u64) -> Charge {
         Charge {
             share,
-            units: SCHEDULE_UNITS,
+            units: UNITS.count_piece,
         }
     }
 

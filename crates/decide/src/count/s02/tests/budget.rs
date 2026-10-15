@@ -103,9 +103,11 @@ fn a_thin_face_ends_out_of_budget_at_the_last_level_keyed() {
         "every level ran: {full:?}"
     );
     // A share spent at the first level is work; one spent above it,
-    // precision.
-    let first = u64::from(full.levels[0].evals);
-    let runs: Vec<_> = [0, 10, first - 1, first + 8]
+    // precision. Shares in units: the first level's pieces cost `u[0]`
+    // each, the next's `u[1]`.
+    let u = UNITS.count_piece;
+    let first = u64::from(full.levels[0].evals) * u[0];
+    let runs: Vec<_> = [0, 10, first - 1, first + 2 * u[1]]
         .into_iter()
         .map(|s| (on_thin(), Charge::new(s)))
         .collect();
@@ -143,9 +145,10 @@ fn a_settled_count_charges_the_first_level_alone() {
             &Heights::new(),
         );
         assert_eq!(got, Ok(want), "z = {z}");
+        let units = p.pieces * UNITS.count_piece[0];
         let [(enough, _), (short, _)] = counts(
             &pts,
-            &[(q, Charge::new(p.pieces)), (q, Charge::new(p.pieces - 1))],
+            &[(q, Charge::new(units)), (q, Charge::new(units - 1))],
         )
         .try_into()
         .unwrap();
@@ -272,8 +275,9 @@ fn each_share_of_a_settled_count_ends_the_same_way() {
             .try_into()
             .unwrap();
         let full = full.expect("settled");
-        let n = full.pieces;
-        assert_eq!(u64::from(cost.levels[0].evals), n);
+        assert_eq!(u64::from(cost.levels[0].evals), full.pieces);
+        // The units the full count spends.
+        let n = full.pieces * UNITS.count_piece[0];
         let mut shares: Vec<u64> = (0..8)
             .map(|k| n * k / 8)
             .chain([0, 1, 2, n - 2, n - 1, n, n + 1, u64::MAX - 1])
@@ -316,4 +320,64 @@ fn free_pieces_spend_nothing() {
         .unwrap();
     assert_eq!(r, full);
     assert_eq!(free.spent(&cost), 0);
+}
+
+/// The thin face's count on shares at the exact end of each level's
+/// spend and a unit short of it, at the table's units: a share that
+/// covers a level ends in the next one, a unit short ends in that level;
+/// past the first level both are precision, and the levels run before
+/// the one that ran out did the full count's work.
+#[test]
+fn shares_at_each_level_s_end_run_out_in_the_next_level() {
+    let [(_, full)] = counts(&THIN, &[(on_thin(), Charge::new(u64::MAX))])
+        .try_into()
+        .unwrap();
+    let u = UNITS.count_piece;
+    let mut ends = Vec::new();
+    let mut through = 0u64;
+    for (level, l) in full.levels.iter().enumerate() {
+        through += u64::from(l.evals) * u[level];
+        ends.push(through);
+    }
+    let runs: Vec<_> = ends
+        .iter()
+        .flat_map(|&s| [s - 1, s])
+        .map(|s| (on_thin(), Charge::new(s)))
+        .collect();
+    for (k, ((r, cost), (_, charge))) in counts(&THIN, &runs).into_iter().zip(&runs).enumerate() {
+        let (level, short) = (k / 2, k % 2 == 0);
+        // The level the count ran out at.
+        let at = if short {
+            level
+        } else {
+            (level + 1).min(LEVELS - 1)
+        };
+        let cause = if at == 0 {
+            Exhausted::Work
+        } else {
+            Exhausted::Precision
+        };
+        assert_eq!(r, out(cause), "share {}", charge.share);
+        assert_eq!(
+            cost.levels[..at],
+            full.levels[..at],
+            "share {}",
+            charge.share
+        );
+        assert!(
+            cost.levels[at].evals > 0,
+            "share {}: {cost:?}",
+            charge.share
+        );
+        assert!(
+            cost.levels[at + 1..].iter().all(|l| l.evals == 0),
+            "share {}: {cost:?}",
+            charge.share
+        );
+        if short || level + 1 < LEVELS {
+            assert!(charge.spent(&cost) > charge.share, "share {}", charge.share);
+        } else {
+            assert_eq!(cost, full, "the full spend, unsettled at the top");
+        }
+    }
 }

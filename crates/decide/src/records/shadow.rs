@@ -177,11 +177,68 @@ pub type Decided<V> = (Result<V, Fail>, Cost);
 /// ([`Width::ALL`]).
 pub const LEVELS: usize = 2 + Width::ALL.len();
 
-/// The units of one computation at each level ([`LEVELS`]), in those of
-/// the same computation at the first: 1, 4 for double-double,
-/// `(bits/53)²` for the big-float widths (16, 64, 256). Provisional,
-/// until calibrated per computation kind.
-pub const SCHEDULE_UNITS: [u64; LEVELS] = [1, 4, 16, 64, 256];
+/// The parts of a unit a [`Cost`] is counted in: the kinds a record runs
+/// many of ([`RecordUnits`]) take less than a unit each, so they are
+/// priced in parts, summed per record and rounded up to whole units
+/// ([`Cost::units`]).
+pub const UNIT_PARTS: u64 = 64;
+
+/// The units of one computation of each kind the kernel charges: the one
+/// table of unit costs. A unit is about half a microsecond on one thread
+/// of the reference machine (an AMD Ryzen 7 5700X3D), each kind's value
+/// measured by the kernel's calibration benchmark
+/// (`crates/kernel/benches/calibrate.rs`), which fails when a kind's time
+/// per unit drifts more than 4× from it; the kernel's `MAX_WORK` is set
+/// from the same measurement. The values are constants, so charges are
+/// the same on every run, thread count and platform; changing one
+/// changes where operations run out, a versioned change like one to the
+/// precision schedule. A kind gets its row with the loop that charges it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Units {
+    /// A seam-bound cell (the kernel's `geom::certify`) at each precision
+    /// level ([`LEVELS`]): its spans restricted and halved down to it, the
+    /// tile composed with the p-curve (degree 8) and the bound formed
+    /// against the curve (degree 10).
+    pub seam_cell: [u64; LEVELS],
+    /// A piece of a face's count tested
+    /// ([`count_pieces`](crate::count::s02::count_pieces)) at each level:
+    /// a box classified against the trims, split, or tested off the
+    /// query point's lines.
+    pub count_piece: [u64; LEVELS],
+    /// The work a record's decision reports ([`Cost`]), in parts.
+    pub record: RecordUnits,
+}
+
+/// The parts of a unit ([`UNIT_PARTS`]) of each kind of work a record's
+/// decision reports in its [`Cost`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordUnits {
+    /// An exact predicate's filter run ([`Work::filters`]).
+    pub filter: u64,
+    /// An exact run in expansions ([`Work::expansions`]).
+    pub expansion: u64,
+    /// A run in rationals ([`Work::rationals`]).
+    pub rational: u64,
+    /// A row or polynomial piece evaluated ([`LevelWork::evals`]), at each
+    /// level.
+    pub eval: [u64; LEVELS],
+    /// A root isolation's split, interval test or Krawczyk step
+    /// ([`LevelWork::roots`]), at each level.
+    pub root: [u64; LEVELS],
+}
+
+/// The unit costs ([`Units`]), as measured on the reference machine.
+pub const UNITS: Units = Units {
+    seam_cell: [190, 310, 840, 890, 1060],
+    count_piece: [9, 10, 40, 40, 48],
+    record: RecordUnits {
+        filter: 190,
+        expansion: 54,
+        rational: 550,
+        eval: [11, 180, 520, 550, 660],
+        root: [130, 410, 1400, 1400, 1700],
+    },
+};
 
 /// The most halvings of one item, counted from the item's own start (a
 /// seam span, a profile pair, a box from its tile): refinement in space
@@ -240,7 +297,9 @@ pub struct Cost {
 pub struct LevelWork {
     /// Root isolations' splits, tests and narrowing steps.
     pub roots: RootWork,
-    /// Rows and polynomial pieces evaluated.
+    /// Rows and polynomial pieces evaluated; in a face count's cost,
+    /// the pieces tested
+    /// ([`count_pieces`](crate::count::s02::count_pieces)).
     pub evals: u32,
 }
 
@@ -255,6 +314,51 @@ impl LevelWork {
 }
 
 impl Cost {
+    /// The units this cost is charged at `u`'s prices: its parts
+    /// ([`Cost::parts`]) rounded up to whole units. For a record's cost
+    /// alone: a face count's cost counts its pieces in
+    /// [`LevelWork::evals`], priced per piece by
+    /// [`Charge::spent`](crate::count::s02::Charge::spent) instead.
+    pub fn units(&self, u: &RecordUnits) -> u64 {
+        self.parts(u).div_ceil(UNIT_PARTS)
+    }
+
+    /// This cost in parts of a unit ([`UNIT_PARTS`]) at `u`'s prices: the
+    /// exact predicates' runs ([`Cost::exact_parts`]) and each level's
+    /// curved work ([`Cost::level_parts`]).
+    pub fn parts(&self, u: &RecordUnits) -> u64 {
+        (0..LEVELS).fold(self.exact_parts(u), |s, level| {
+            s.saturating_add(self.level_parts(level, u))
+        })
+    }
+
+    /// The exact predicates' runs in parts of a unit at `u`'s prices.
+    pub fn exact_parts(&self, u: &RecordUnits) -> u64 {
+        let w = &self.exact;
+        [
+            (w.filters, u.filter),
+            (w.expansions, u.expansion),
+            (w.rationals, u.rational),
+        ]
+        .into_iter()
+        .fold(0u64, |s, (n, p)| {
+            s.saturating_add(u64::from(n).saturating_mul(p))
+        })
+    }
+
+    /// The curved work at precision level `level` (below [`LEVELS`]) in
+    /// parts of a unit at `u`'s prices.
+    pub fn level_parts(&self, level: usize, u: &RecordUnits) -> u64 {
+        let w = &self.levels[level];
+        let r = &w.roots;
+        let roots = u64::from(r.splits)
+            .saturating_add(u64::from(r.tests))
+            .saturating_add(u64::from(r.steps));
+        u64::from(w.evals)
+            .saturating_mul(u.eval[level])
+            .saturating_add(roots.saturating_mul(u.root[level]))
+    }
+
     /// Exact work alone.
     pub fn exact(work: Work) -> Cost {
         Cost {

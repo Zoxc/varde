@@ -829,7 +829,8 @@ fn seam_bounds_out_of_budget_name_their_coedge() {
     // Room for the second's first-level computation and not for its
     // double-double one.
     let (f, e) = face(&mut fresh);
-    let mut work = Work::new(&Budget::new(first + 2));
+    let budget = first + crate::infra::budget::seam_cell_units(0) + 2;
+    let mut work = Work::new(&Budget::new(budget));
     let before = fresh.coedge_count();
     match fresh.add_loop(f, true, on(&e, &uses), TARGET, &mut work) {
         Err(StoreError::Coedge {

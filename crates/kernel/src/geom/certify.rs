@@ -49,8 +49,9 @@
 //! result depends on the input alone.
 //!
 //! **Charges and limits.** Each cell's computation is charged before it
-//! runs: a unit at the first level, above it a precision step of the
-//! level's units (4 for double-double, `(bits/53)²` for big-float);
+//! runs, the unit table's units for a seam cell at its level
+//! (`UNITS.seam_cell`, about 190 at the first level, a cell taking about
+//! 95 µs): ordinary work at the first level, a precision step above it;
 //! running out of budget stops the coedge. A cell still open at the top
 //! level, or at [`MAX_SUBDIV_DEPTH`] halvings, is done with its bound, above the
 //! target; without a certified bound it stops the coedge at
@@ -80,7 +81,9 @@ use varde_decide::num::dd::Dd;
 use super::curve::{Curve3D, PCurve, Span2, local};
 use super::surface::Surface;
 use super::tile::Tile;
-use crate::infra::budget::{Cap, LEVELS, Ledger, MAX_SUBDIV_DEPTH, Stop, level_step, level_units};
+use crate::infra::budget::{
+    Cap, LEVELS, Ledger, MAX_SUBDIV_DEPTH, Stop, level_step, seam_cell_units,
+};
 
 /// How far above the greatest lower bound found a cell's bound may be to
 /// be done when the target is out of reach (module docs).
@@ -98,7 +101,7 @@ pub struct SeamBound {
     /// caller warns of (module docs, "Above the target").
     pub bound: f64,
     /// The highest level a cell was done at: 0 for `f64`, 1 for
-    /// double-double, 2 to 6 for the big-float widths.
+    /// double-double, 2 to 4 for the big-float widths.
     pub level: u8,
 }
 
@@ -168,7 +171,7 @@ pub(crate) fn seam_bound(
     // The greatest certified lower bound of the deviation found.
     let mut lower = 0.0;
     while let Some(cell) = cells.pop() {
-        ledger.charge(level_step(cell.level), level_units(cell.level))?;
+        ledger.charge(level_step(cell.level), seam_cell_units(cell.level))?;
         let e = eval(curve, pcurve, &pieces[cell.piece], cell);
         if e.lower > lower {
             lower = e.lower;
@@ -585,6 +588,69 @@ fn direct<S: Approx>(
         value,
         ends,
         lower,
+    }
+}
+
+/// Hooks for the unit table's calibration benchmark
+/// (`crates/kernel/benches/calibrate.rs`), which times seam cells per
+/// precision level and whole seam passes against the units charged for
+/// them. Not part of the kernel's interface.
+#[doc(hidden)]
+pub mod calibration {
+    use super::*;
+    use crate::infra::budget::{Budget, Pass, Work};
+
+    /// Evaluates every cell `depth` halvings deep of every piece of the
+    /// coedge (`2^depth` per piece) at precision level `level`, as the
+    /// seam bound does; the number of cells.
+    pub fn cells(
+        surface: &Surface,
+        curve: &Curve3D,
+        pcurve: &PCurve,
+        level: u8,
+        depth: u32,
+    ) -> Result<u64, SeamError> {
+        let pieces = pieces(surface, curve, pcurve)?;
+        let mut n = 0u64;
+        let mut lower = 0.0;
+        for (piece, p) in pieces.iter().enumerate() {
+            for k in 0..1u64 << depth {
+                let cell = Cell {
+                    piece,
+                    k,
+                    depth,
+                    level,
+                };
+                let e = eval(curve, pcurve, p, cell);
+                // Kept, so the evaluation isn't optimised away.
+                if e.lower > lower {
+                    lower = e.lower;
+                }
+                n += 1;
+            }
+        }
+        std::hint::black_box(lower);
+        Ok(n)
+    }
+
+    /// The seam bounds of `coedges` on `surface` towards `target`, in one
+    /// pass on a budget of `budget` units: the bounds, `None` if the pass
+    /// ran out or failed, and the units used.
+    pub fn pass(
+        surface: &Surface,
+        coedges: &[(Curve3D, PCurve)],
+        target: f64,
+        budget: u64,
+    ) -> (Option<Vec<SeamBound>>, u64) {
+        let mut work = Work::new(&Budget::new(budget));
+        let pass = Pass {
+            stage: "seam",
+            rung: 0,
+        };
+        let out = work.pass(pass, coedges, |(c, p), ledger| {
+            seam_bound(surface, c, p, target, ledger)
+        });
+        (out.ok(), work.used())
     }
 }
 
