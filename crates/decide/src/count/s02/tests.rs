@@ -7,202 +7,26 @@
 //! straight edges' ray records.
 
 use std::collections::BTreeMap;
-use std::ops::Range;
 
 use glam::DVec3;
 
 use super::*;
 use crate::bezier::HomPatch;
-use crate::count::boxes::{Trim, UvSpan};
-use crate::count::pieces::SpanMap;
+use crate::count::boxes::UvSpan;
+use crate::count::testing::*;
 use crate::ids::{EdgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
-use crate::num::decide::{Fail, Sign};
+use crate::num::decide::Sign;
 use crate::num::trig;
-use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::feet::NearFeet;
 use crate::records::height::Records;
 use crate::records::keys::{Operand, Query};
 use crate::records::ray::Span;
-use crate::records::shadow::{Decided, Pass, Shadows};
-use crate::records::table::Fresh;
+use crate::records::shadow::Shadows;
 
 mod budget;
 mod cube;
 mod fold;
-
-type Patch = HomPatch<Bounded<f64>>;
-
-/// A face query at the first level.
-type FirstQuery<'a> = FaceQuery<'a, 'a, Bounded<f64>>;
-
-fn first() -> Bounded<f64> {
-    Bounded::exact(0.0)
-}
-
-/// A pass deciding in order on one thread.
-struct Seq;
-
-impl Pass for Seq {
-    type Error = Fail;
-
-    fn run<K: Sync, V: Send>(
-        &mut self,
-        keys: &[Fresh<K>],
-        decide: &(dyn Fn(&Fresh<K>) -> Decided<V> + Sync),
-    ) -> Result<Vec<V>, Fail> {
-        keys.iter().map(|k| decide(k).0).collect()
-    }
-}
-
-/// One trim of a test face, with its edge's curve.
-#[derive(Clone, Debug)]
-struct TrimData {
-    coedge: CoedgeId,
-    edge: EdgeId,
-    reversed: bool,
-    /// The p-curve, along the edge's stored direction.
-    spans: Vec<UvSpan>,
-    /// The edge's stored ends.
-    ends: [VertId; 2],
-    band: f64,
-    /// The edge's curve, along its stored direction.
-    curve: Vec<Span>,
-    maps: Vec<SpanMap>,
-}
-
-/// A test face.
-#[derive(Clone, Debug)]
-struct FaceData {
-    operand: Operand,
-    id: FaceId,
-    tiles: [Range<i64>; 2],
-    patches: Vec<Patch>,
-    flipped: bool,
-    trims: Vec<TrimData>,
-}
-
-/// The geometric order of a test operand's vertices and edges.
-#[derive(Clone, Debug, Default)]
-struct Order {
-    pos: BTreeMap<(Operand, VertId), [f64; 3]>,
-    edges: BTreeMap<(Operand, EdgeId), [VertId; 2]>,
-}
-
-impl EntityOrder for Order {
-    type Key = ();
-
-    fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
-        self.edges[&(operand, g)]
-    }
-
-    fn vert_key(&self, operand: Operand, v: VertId) -> VertKey<()> {
-        VertKey::new(self.pos[&(operand, v)], []).expect("no NaN")
-    }
-
-    fn edge_key(&self, operand: Operand, g: EdgeId) -> EdgeKey<()> {
-        let [s, e] = self.edges[&(operand, g)];
-        let [a, b] = [s, e].map(|v| self.pos[&(operand, v)]);
-        let mid = [0, 1, 2].map(|k| 0.5 * (a[k] + b[k]));
-        EdgeKey::new([s, e].map(|v| self.vert_key(operand, v)), mid, [(), ()]).expect("no NaN")
-    }
-}
-
-impl FaceData {
-    /// The face's vertices in geometric order.
-    fn order(&self, order: &Order) -> Vec<VertId> {
-        let mut vs: Vec<VertId> = self.trims.iter().flat_map(|t| t.ends).collect();
-        vs.sort_unstable();
-        vs.dedup();
-        let mut keyed: Vec<_> = vs
-            .into_iter()
-            .map(|v| (order.vert_key(self.operand, v), v))
-            .collect();
-        keyed.sort();
-        keyed.into_iter().map(|(_, v)| v).collect()
-    }
-
-    /// The face's pieces against `point` at `at`, the ray records of its
-    /// edges from `rays`.
-    fn pieces<R: HeightReads>(
-        &self,
-        order: &Order,
-        point: Point,
-        at: [f64; 3],
-        rays: &dyn Fn(&TrimData) -> ChainRec,
-        reads: &R,
-        sides: &Sides,
-    ) -> Result<FacePieces, CountError> {
-        self.query(order, point, at, rays, &|fq, edges| {
-            let out = face_pieces(fq, sides, reads)?;
-            assert_eq!(
-                out.degree(),
-                ray_degree(fq.face, edges).unwrap(),
-                "the pieces' degrees sum to the ray records'"
-            );
-            Ok(out)
-        })
-    }
-
-    /// `f` of the face's query against `point` at `at` and its trims'
-    /// edges, the ray records of its edges from `rays`.
-    fn query<T>(
-        &self,
-        order: &Order,
-        point: Point,
-        at: [f64; 3],
-        rays: &dyn Fn(&TrimData) -> ChainRec,
-        f: &dyn Fn(&FirstQuery<'_>, &[TrimEdge<'_>]) -> T,
-    ) -> T {
-        let trims: Vec<Trim<'_>> = self
-            .trims
-            .iter()
-            .map(|t| Trim {
-                coedge: t.coedge,
-                reversed: t.reversed,
-                spans: &t.spans,
-                ends: t.ends,
-                zero_length: false,
-                band: t.band,
-            })
-            .collect();
-        let face = FaceUv::new(
-            self.operand,
-            self.id,
-            self.tiles.clone(),
-            [1.0, 1.0],
-            &trims,
-            self.flipped,
-        )
-        .expect("a valid face");
-        let corners = Corners::new(&face, &self.patches, &self.order(order)).expect("corners");
-        let recs: Vec<ChainRec> = self.trims.iter().map(rays).collect();
-        let edges: Vec<TrimEdge<'_>> = self
-            .trims
-            .iter()
-            .zip(&recs)
-            .map(|(t, r)| TrimEdge {
-                edge: t.edge,
-                ribbon: Ribbon {
-                    coedge: t.coedge,
-                    curve: &t.curve,
-                    map: &t.maps,
-                    rays: r,
-                },
-            })
-            .collect();
-        let fq = FaceQuery {
-            face: &face,
-            corners: &corners,
-            patches: &self.patches,
-            edges: &edges,
-            point,
-            at,
-            eps_tie: 1e-9,
-        };
-        f(&fq, &edges)
-    }
-}
 
 /// The signed crossings of the ray of a point of `of` at `q` with a
 /// chain of rational quadratic spans (affine points and weights): per
@@ -275,34 +99,6 @@ fn eval(s: &Span, t: f64) -> [f64; 3] {
     let c = [(1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t];
     let w: f64 = (0..3).map(|i| c[i] * s[i][3]).sum();
     std::array::from_fn(|k| (0..3).map(|i| c[i] * s[i][3] * s[i][k]).sum::<f64>() / w)
-}
-
-/// A straight span from `a` to `b`.
-fn line(a: [f64; 3], b: [f64; 3]) -> Span {
-    let m = [0, 1, 2].map(|k| 0.5 * (a[k] + b[k]));
-    [
-        [a[0], a[1], a[2], 1.0],
-        [m[0], m[1], m[2], 1.0],
-        [b[0], b[1], b[2], 1.0],
-    ]
-}
-
-/// A straight p-span.
-fn pline(a: [f64; 2], b: [f64; 2]) -> UvSpan {
-    [
-        [a[0], a[1], 1.0],
-        [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 1.0],
-        [b[0], b[1], 1.0],
-    ]
-}
-
-fn whole(n: u32) -> Vec<SpanMap> {
-    (0..n)
-        .map(|span| SpanMap {
-            span,
-            t: [0.0, 1.0],
-        })
-        .collect()
 }
 
 /// The reads of a run with no records: nothing near.
