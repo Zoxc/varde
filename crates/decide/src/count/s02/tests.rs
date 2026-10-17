@@ -490,3 +490,96 @@ fn a_straight_edge_s_ray_record_as_a_chain() {
     let c = line_chain(&rec, [0.0; 3], along, [0.0; 3]);
     assert_eq!(c.crossings[0].crossing.t, [0.0, 1.0]);
 }
+
+// ---------------------------------------------------------------------
+// A small face on a plane's one huge tile.
+
+/// A square face `1/8` wide trimmed from a plane tile `4·10⁶` wide (a
+/// plane lattice's base cell), tilted to `UP` along both its directions,
+/// and points `10⁻⁵` in front of and behind it: the counts settle at the
+/// first level and are the plane's crossings by the column. Its boxes
+/// take about 25 halvings in each direction, past what a cap on a box's
+/// splits in both directions together would allow.
+#[test]
+fn a_small_face_on_a_huge_tile_settles() {
+    const HALF: f64 = 2_097_152.0;
+    let a3 = (R_HAT.normalize() + UP.normalize()).normalize();
+    let b3 = (NU.normalize() + UP.normalize()).normalize();
+    let b3 = (b3 - a3 * a3.dot(b3)).normalize();
+    let n = a3.cross(b3).normalize();
+    let mut net = Vec::new();
+    for i in 0..3 {
+        for j in 0..3 {
+            let [s, t] = [i, j].map(|k| -HALF + HALF * f64::from(k));
+            let p = a3 * s + b3 * t;
+            net.push([p.x, p.y, p.z, 1.0]);
+        }
+    }
+    let patch = Patch::from_affine(2, 2, net, &first()).unwrap();
+    let uv = |s: f64, t: f64| [(s + HALF) / (2.0 * HALF), (t + HALF) / (2.0 * HALF)];
+    let corners = [[0.0, 0.0], [0.125, 0.0], [0.125, 0.125], [0.0, 0.125]];
+    let pos = |c: [f64; 2]| (a3 * c[0] + b3 * c[1]).to_array();
+    let band = 1e-6;
+    let trims = (0..4)
+        .map(|k| {
+            let (p, q) = (k, (k + 1) % 4);
+            let (lo, hi) = if p < q { (p, q) } else { (q, p) };
+            TrimData {
+                coedge: CoedgeId(k as u32 + 1),
+                edge: EdgeId(k as u32 + 1),
+                reversed: p > q,
+                spans: vec![pline(
+                    uv(corners[lo][0], corners[lo][1]),
+                    uv(corners[hi][0], corners[hi][1]),
+                )],
+                ends: [VertId(lo as u32 + 1), VertId(hi as u32 + 1)],
+                band,
+                curve: vec![line(pos(corners[lo]), pos(corners[hi]))],
+                maps: whole(1),
+            }
+        })
+        .collect();
+    let f = FaceData {
+        operand: Operand::B,
+        id: FaceId(1),
+        tiles: [0..1, 0..1],
+        patches: vec![patch],
+        flipped: false,
+        trims,
+    };
+    let mut order = Order::default();
+    for (k, c) in corners.iter().enumerate() {
+        order
+            .pos
+            .insert((Operand::B, VertId(k as u32 + 1)), pos(*c));
+    }
+    for t in &f.trims {
+        order.edges.insert((Operand::B, t.edge), t.ends);
+    }
+    let point = Point::vert(Operand::A, VertId(7));
+    let (sh, ft, o) = no_reads(&order);
+    let reads = Records {
+        shadows: &sh,
+        feet: &ft,
+        order: o,
+    };
+    for side in [1.0, -1.0] {
+        let q = (a3 * 0.0625 + b3 * 0.0625 + n * (1e-5 * side)).to_array();
+        let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
+        let p = f
+            .pieces(&order, point, q, &rays, &reads, &Sides::new())
+            .expect("settled");
+        // The column meets the plane above `q` on the side the normal
+        // faces down from, where the face faces `sign(n·UP)`.
+        let up = n.dot(UP);
+        let want = if side * up < 0.0 {
+            up.signum() as i64
+        } else {
+            0
+        };
+        let got = p
+            .count(&reads, &LayerTable::new(), &Heights::new())
+            .expect("no record read");
+        assert_eq!(got, want, "side {side}");
+    }
+}

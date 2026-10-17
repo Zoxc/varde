@@ -1,0 +1,1321 @@
+//! Two solids counted against each other: every record the counting
+//! reads decided once on the stored bodies (point–vertex, ray against
+//! straight and curved edges, feet), each face count `s02` (`s20` for
+//! `B`'s vertices) through its pieces at the precision levels it needs,
+//! each edge pair's crossing record through its clusters and `s11`,
+//! `x12` and `x21` by identity, the seeds and the windings carried from
+//! them. `A` moves along a constant direction `d` (`σ_A = +1`).
+//!
+//! What the counting can't answer yet is a [`Refusal`] with its cause,
+//! never a guess: a layer near a point reads a height record (no store-
+//! backed height model decides those yet), a crossing cluster whose
+//! z-order isn't clear reads one too (no decider for edge–edge keys), a
+//! side record a piece asks for, a record or count that runs past the
+//! last precision level, a ladder signal from the windings.
+
+use std::cmp::Ordering;
+
+use glam::DVec3;
+use malachite::Rational;
+use malachite::base::num::arithmetic::traits::Sign as _;
+use malachite::base::num::basic::traits::{One as _, Zero as _};
+use malachite::base::num::conversion::traits::RoundingFrom;
+use malachite::base::rounding_modes::RoundingMode::Nearest;
+use varde_decide::bezier::Dir;
+use varde_decide::bezier::{HomPatch, HullBox};
+use varde_decide::count::boxes::{BoxError, Corners, FaceUv, Trim};
+use varde_decide::count::cross::{Coedge, x12, x21};
+use varde_decide::count::pieces::{Ribbon, SpanMap};
+use varde_decide::count::s02::{Charge, CountError, FaceQuery, TrimEdge, count_pieces, line_chain};
+use varde_decide::count::winding::{Graph, WindingError, clear_of, seeds, windings};
+use varde_decide::count::xrec::{XClusterError, XClusters, clusters};
+use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
+use varde_decide::num::bigf::{Big, BigF, Width};
+use varde_decide::num::bounded::Bounded;
+use varde_decide::num::dd::Dd;
+use varde_decide::num::decide::{Band, Fail, Sign};
+use varde_decide::num::exact::ORDERS;
+use varde_decide::order::{EdgeKey, EntityOrder, VertKey};
+use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rates_a};
+use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
+use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights};
+use varde_decide::records::height::{HeightError, Heights, LayerTable, Records};
+use varde_decide::records::keys::{FootId, HKey};
+use varde_decide::records::keys::{Operand, Point, Query, RayKey, VvKey, XKey};
+use varde_decide::records::keys::{TileCorner, TileEdge};
+use varde_decide::records::near::OpBands;
+use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span};
+use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry, Shadows};
+use varde_decide::records::side::{SideGeometry, Sides};
+use varde_decide::records::table::Fresh;
+use varde_decide::records::xrec::{EdgeRays, XCurve, XPair, XTerms};
+
+use super::solids::Solid;
+
+use Operand::{A, B};
+
+/// The counting's settings for a run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Config {
+    /// The size a core box near a point refines to (mm), and the seeds'
+    /// clearance.
+    pub eps_tie: f64,
+    /// The curved records' error target (mm): a curved value certified
+    /// within it of 0 is a tie.
+    pub target: f64,
+    /// Factors on each face's UV unit lengths, which the box splits
+    /// compare to pick a direction: another partition of the same face.
+    pub scale: [f64; 2],
+}
+
+impl Config {
+    /// The runs' settings: `ε_tie` an eighth of a `10⁻⁵` tolerance; the
+    /// curved records decide by value down to `2⁻³⁰` mm (about `10⁻⁹`),
+    /// far below the plan's `ε_tie/4` so that only true ties (and values
+    /// within `10⁻⁹` of one) are perturbed, yet above what the first
+    /// levels can reach on a tile row `4·10⁶` mm long (a curved root's
+    /// parameter is an `f64`, `2⁻⁵³` of the row, ~`5·10⁻¹⁰` mm).
+    pub(super) const RUNS: Config = Config {
+        eps_tie: 1.25e-6,
+        target: 1.0 / 1_073_741_824.0,
+        scale: [1.0, 1.0],
+    };
+}
+
+/// Why a placement has no counted answer.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) enum Cause {
+    /// A record pass failed: `kind` names the record, the failure its
+    /// [`Fail`] (escalated past the last level, or the guard).
+    Record { kind: &'static str, fail: String },
+    /// A face count ran out ([`Exhausted`]).
+    OutOfBudget(String),
+    /// A face count's side record can't be decided, or it kept asking.
+    Side(String),
+    /// A face count's layer near the point reads a height record the
+    /// flat model can't decide (a curved face's or edge's: no curved
+    /// height model here).
+    Height,
+    /// A face count failed otherwise.
+    Count(String),
+    /// An edge pair's clusters can't be formed at any level.
+    Clusters(String),
+    /// A crossing cluster's z-order isn't clear: it reads an edge–edge
+    /// or point–curve height record.
+    ZOrder,
+    /// Edges on one curve whose crossing lies away from their ends' feet
+    /// (refused with `Crossed`, never a wrong total).
+    Crossed,
+    /// The seeds can't be found.
+    Seeds(String),
+    /// The windings disagree with the crossings (`Disagree`) or leave
+    /// `{0, 1}` (`Outside`): a ladder signal.
+    Signal(String),
+    /// Another failure.
+    Other(String),
+}
+
+/// A refusal with where it happened.
+#[derive(Clone, Debug)]
+pub(super) struct Refusal {
+    pub cause: Cause,
+    pub at: String,
+}
+
+/// What a placement's counting ran: the records decided per kind and the
+/// highest precision level each reached, the face counts' and the
+/// clusters' levels.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Stats {
+    /// Per record kind (point–vertex, flat ray, curved ray span/knot/
+    /// whole edge, feet): records decided, and how many reached each
+    /// level (the highest level with curved work; exact-only records at
+    /// level 0), and how many ran exact rational arithmetic.
+    pub records: std::collections::BTreeMap<&'static str, KindStats>,
+    /// Face counts per highest level reached.
+    pub counts: [u64; LEVELS],
+    /// Edge pairs' clusters per level formed at.
+    pub clusters: [u64; LEVELS],
+    /// Side records filled at a count's request.
+    pub side_fills: u64,
+    /// Face counts whose layers read height records.
+    pub height_fills: u64,
+    /// Edge pairs on one curve.
+    pub shared: u64,
+    /// Every edge pair's refusal, by cause (not only a placement's
+    /// first): the rate of `Crossed` among shared pairs.
+    pub pair_causes: std::collections::BTreeMap<String, u64>,
+    /// Clusters whose z-order was clear.
+    pub clear: u64,
+    /// Clusters whose z-order wasn't, read from the geometry instead
+    /// ([`zorder_standin`]).
+    pub standins: u64,
+    /// Seeds certified clear of the other operand.
+    pub cleared_seeds: u64,
+    /// Seeds not cleared (the first vertex taken).
+    pub uncleared_seeds: u64,
+    /// Seconds spent: records, face counts (with their corners),
+    /// clusters.
+    pub time: [f64; 3],
+    /// Seconds spent building the faces' corners.
+    pub corners: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct KindStats {
+    pub decided: u64,
+    pub levels: [u64; LEVELS],
+    pub rationals: u64,
+}
+
+impl Stats {
+    pub(super) fn add(&mut self, o: &Stats) {
+        for (k, s) in &o.records {
+            let e = self.records.entry(k).or_default();
+            e.decided += s.decided;
+            e.rationals += s.rationals;
+            for l in 0..LEVELS {
+                e.levels[l] += s.levels[l];
+            }
+        }
+        for l in 0..LEVELS {
+            self.counts[l] += o.counts[l];
+            self.clusters[l] += o.clusters[l];
+        }
+        self.clear += o.clear;
+        self.shared += o.shared;
+        for (k, n) in &o.pair_causes {
+            *self.pair_causes.entry(k.clone()).or_default() += n;
+        }
+        self.side_fills += o.side_fills;
+        self.height_fills += o.height_fills;
+        self.standins += o.standins;
+        self.cleared_seeds += o.cleared_seeds;
+        for k in 0..3 {
+            self.time[k] += o.time[k];
+        }
+        self.corners += o.corners;
+        self.uncleared_seeds += o.uncleared_seeds;
+    }
+}
+
+/// The highest level with curved work in `c` (0 for exact work alone).
+fn top_level(c: &Cost) -> usize {
+    (0..LEVELS)
+        .rev()
+        .find(|&l| {
+            let w = &c.levels[l];
+            w.evals > 0 || w.roots.splits > 0 || w.roots.tests > 0 || w.roots.steps > 0
+        })
+        .unwrap_or(0)
+}
+
+/// A pass deciding in order on one thread, tallying what it decided.
+struct Tally<'s> {
+    kind: &'static str,
+    stats: &'s mut Stats,
+}
+
+impl Pass for Tally<'_> {
+    type Error = Fail;
+
+    fn run<K: Sync, V: Send>(
+        &mut self,
+        keys: &[Fresh<K>],
+        decide: &(dyn Fn(&Fresh<K>) -> Decided<V> + Sync),
+    ) -> Result<Vec<V>, Fail> {
+        let s = self.stats.records.entry(self.kind).or_default();
+        keys.iter()
+            .map(|k| {
+                let (v, c) = decide(k);
+                s.decided += 1;
+                s.levels[top_level(&c)] += 1;
+                if c.exact.rationals > 0 {
+                    s.rationals += 1;
+                }
+                v
+            })
+            .collect()
+    }
+}
+
+/// The geometric order of both operands' vertices and edges.
+struct Order {
+    pos: [Vec<[f64; 3]>; 2],
+    ends: [Vec<[VertId; 2]>; 2],
+    mid: [Vec<[f64; 3]>; 2],
+}
+
+fn ix(op: Operand) -> usize {
+    match op {
+        A => 0,
+        B => 1,
+    }
+}
+
+impl EntityOrder for Order {
+    type Key = ();
+
+    fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
+        self.ends[ix(operand)][g.index()]
+    }
+
+    fn vert_key(&self, operand: Operand, v: VertId) -> VertKey<()> {
+        VertKey::new(self.pos[ix(operand)][v.index()], []).expect("no NaN")
+    }
+
+    fn edge_key(&self, operand: Operand, g: EdgeId) -> EdgeKey<()> {
+        let [s, e] = self.ends(operand, g);
+        EdgeKey::new(
+            [self.vert_key(operand, s), self.vert_key(operand, e)],
+            self.mid[ix(operand)][g.index()],
+            [(), ()],
+        )
+        .expect("no NaN")
+    }
+}
+
+/// The two solids as the records read them.
+pub(super) struct World<'s> {
+    solids: [&'s Solid; 2],
+    d: DVec3,
+    bands: OpBands,
+    vert_near: [Vec<f64>; 2],
+    order: Order,
+}
+
+impl<'s> World<'s> {
+    pub(super) fn new(a: &'s Solid, b: &'s Solid, d: DVec3) -> World<'s> {
+        let (ma, mb) = (a.brep.max_coord(), b.brep.max_coord());
+        let m = if ma > mb { ma } else { mb };
+        let bands = OpBands::new(m).expect("finite coordinates");
+        let solids = [a, b];
+        let vert_near = solids.map(|s| s.brep.vert_near_radii(&bands).expect("radii"));
+        let order = Order {
+            pos: solids.map(|s| s.verts().into_iter().map(|v| s.brep.pos(v)).collect()),
+            ends: solids.map(|s| s.edges().into_iter().map(|e| s.brep.ends(e)).collect()),
+            mid: solids.map(|s| {
+                s.edges()
+                    .into_iter()
+                    .map(|e| {
+                        let [t0, t1] = s.brep.t_range(e);
+                        let p = s.brep.curve(e).eval(0.5 * (t0 + t1)).expect("a point");
+                        p.map(|c| c.v)
+                    })
+                    .collect()
+            }),
+        };
+        World {
+            solids,
+            d,
+            bands,
+            vert_near,
+            order,
+        }
+    }
+
+    fn solid(&self, op: Operand) -> &'s Solid {
+        self.solids[ix(op)]
+    }
+
+    fn straight(&self, op: Operand, g: EdgeId) -> bool {
+        self.solid(op).straight[g.index()]
+    }
+
+    fn edge_points(&self, op: Operand, g: EdgeId) -> [[f64; 3]; 2] {
+        let b = &self.solid(op).brep;
+        b.ends(g).map(|v| b.pos(v))
+    }
+
+    /// Edge `g`'s band `β_g`.
+    fn band(&self, op: Operand, g: EdgeId) -> f64 {
+        let b = &self.solid(op).brep;
+        self.bands.band(b.edge_tol(g)).expect("a band")
+    }
+
+    fn rates(&self, op: Operand) -> [Rate; ORDERS] {
+        match op {
+            A => rates_a(Sign::Pos, Rate::Float(self.d)),
+            B => std::array::from_fn(|_| Rate::ZERO),
+        }
+    }
+}
+
+fn vert(p: Point) -> VertId {
+    match p.q {
+        Query::Vert(v) => v,
+        Query::Cut(..) => panic!("no cut points here"),
+    }
+}
+
+impl ShadowGeometry for World<'_> {
+    fn point(&self, p: Point) -> Moving {
+        let at = DVec3::from_array(self.solid(p.operand).brep.pos(vert(p)));
+        match p.operand {
+            A => Moving::of_a(at, Sign::Pos, Rate::Float(self.d)),
+            B => Moving::fixed(at),
+        }
+    }
+
+    fn near_radius(&self, p: Point) -> f64 {
+        self.vert_near[ix(p.operand)][vert(p).index()]
+    }
+
+    fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
+        self.solid(operand).brep.ends(g)
+    }
+
+    fn line(&self, q: Point, g: EdgeId) -> Seg {
+        let op = q.operand.other();
+        let [a, b] = self.edge_points(op, g).map(DVec3::from_array);
+        match op {
+            A => Seg::of_a(a, b, Sign::Pos, Rate::Float(self.d)),
+            B => Seg::fixed(a, b),
+        }
+    }
+}
+
+impl CurveGeometry for World<'_> {
+    fn spans(&self, operand: Operand, g: EdgeId) -> &[Span] {
+        self.solid(operand).brep.edge_spans(g)
+    }
+
+    fn knot_rates(&self, q: Point, _: EdgeId, _: u32) -> [Rate; ORDERS] {
+        self.rates(q.operand.other())
+    }
+
+    fn span_rates<S: Curved>(&self, q: Point, _: EdgeId, _: u32, t: &S) -> [[S; 3]; ORDERS] {
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
+        match q.operand.other() {
+            A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
+            B => std::array::from_fn(|_| lit(DVec3::ZERO)),
+        }
+    }
+}
+
+impl FeetGeometry for World<'_> {
+    fn curve(&self, operand: Operand, g: EdgeId) -> EdgeCurve<'_> {
+        if self.straight(operand, g) {
+            EdgeCurve::Line(self.edge_points(operand, g).map(DVec3::from_array))
+        } else {
+            let [s, e] = self.ends(operand, g);
+            EdgeCurve::Spans {
+                spans: self.solid(operand).brep.edge_spans(g),
+                closed: s == e,
+            }
+        }
+    }
+
+    fn near_radius_of(&self, operand: Operand, g: EdgeId) -> f64 {
+        let b = &self.solid(operand).brep;
+        b.edge_near_radius(g, &self.bands).expect("a radius")
+    }
+}
+
+impl SideGeometry for World<'_> {
+    fn tile_edge(&self, e: &TileEdge) -> Option<Span> {
+        let s = self.solid(e.operand);
+        let surf = s.brep.surface(e.face);
+        let r = surf.rect();
+        let (u, v) = (&r.u, &r.v);
+        // The tile on the line's upper side if the face has it, else the
+        // lower; its row along the line.
+        match e.fixed {
+            Dir::U => {
+                if !v.contains(&e.cell) {
+                    return None;
+                }
+                let (i, at) = if u.contains(&e.line) {
+                    (e.line, 0)
+                } else if u.contains(&(e.line - 1)) {
+                    (e.line - 1, 2)
+                } else {
+                    return None;
+                };
+                let n = surf.tile(i, e.cell)?.net();
+                Some([n[3 * at], n[3 * at + 1], n[3 * at + 2]])
+            }
+            Dir::V => {
+                if !u.contains(&e.cell) {
+                    return None;
+                }
+                let (j, at) = if v.contains(&e.line) {
+                    (e.line, 0)
+                } else if v.contains(&(e.line - 1)) {
+                    (e.line - 1, 2)
+                } else {
+                    return None;
+                };
+                let n = surf.tile(e.cell, j)?.net();
+                Some([n[at], n[3 + at], n[6 + at]])
+            }
+        }
+    }
+
+    fn corner(&self, _: Point, c: &TileCorner) -> Option<Moving> {
+        let s = self.solid(c.operand);
+        let surf = s.brep.surface(c.face);
+        let r = surf.rect();
+        let [cu, cv] = c.at;
+        let pick = |x: i64, range: &std::ops::Range<i64>| {
+            if range.contains(&x) {
+                Some((x, 0))
+            } else if range.contains(&(x - 1)) {
+                Some((x - 1, 2))
+            } else {
+                None
+            }
+        };
+        let ((i, a), (j, b)) = (pick(cu, &r.u)?, pick(cv, &r.v)?);
+        let p = surf.tile(i, j)?.net()[3 * a + b];
+        let at = DVec3::new(p[0], p[1], p[2]);
+        Some(match c.operand {
+            A => Moving::of_a(at, Sign::Pos, Rate::Float(self.d)),
+            B => Moving::fixed(at),
+        })
+    }
+
+    fn edge_rates<S: Curved>(&self, q: Point, _: &TileEdge, t: &S) -> [[S; 3]; ORDERS] {
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
+        match q.operand.other() {
+            A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
+            B => std::array::from_fn(|_| lit(DVec3::ZERO)),
+        }
+    }
+}
+
+/// The height model of the flat elements: plane faces by their keys'
+/// planes (the face's outward normal), straight edges at the point whose
+/// shadow is nearest the asking point's. Curved faces and edges have no
+/// model here (no store-backed one exists yet): their keys escalate and
+/// the count is refused.
+impl HeightModel for World<'_> {
+    fn plane(&self, operand: Operand, f: FaceId) -> Option<(DVec3, f64)> {
+        let b = &self.solid(operand).brep;
+        plane_of(b, f)
+    }
+
+    fn plane_rates(&self, q: Point, _: FaceId, _: DVec3) -> [Rate; ORDERS] {
+        self.rates(q.operand.other())
+    }
+
+    fn foot_point(&self, q: Point, g: EdgeId, _: FootId) -> Option<Moving> {
+        let op = q.operand.other();
+        if !self.straight(op, g) {
+            return None;
+        }
+        let [a, b] = self.edge_points(op, g).map(DVec3::from_array);
+        let at = DVec3::from_array(self.solid(q.operand).brep.pos(vert(q)));
+        let x = foot_at(a, b, at);
+        Some(match op {
+            A => Moving::of_a(x, Sign::Pos, Rate::Float(self.d)),
+            B => Moving::fixed(x),
+        })
+    }
+
+    fn curved_target<S: Curved>(&self, _: HKey, _: &S) -> Option<[S; 3]> {
+        None
+    }
+
+    fn face_at<S: Curved>(&self, _: Point, _: FaceId, _: &[S; 3], _: &S) -> Option<FaceAt<S>> {
+        None
+    }
+}
+
+/// The point of segment `ab` whose shadow along `UP` is nearest `q`'s,
+/// as an `f64` point whose height above `q`, `UP·(x − q)`, has the sign
+/// of the exact foot's: the exact foot where it is an `f64` point (so a
+/// `q` on the segment is its own foot, a tie), else the foot rounded,
+/// moved along `z` by ulps where rounding flipped or zeroed that sign.
+fn foot_at(a: DVec3, b: DVec3, q: DVec3) -> DVec3 {
+    type R3 = [Rational; 3];
+    let r = |p: DVec3| -> R3 { p.to_array().map(|c| Rational::try_from(c).expect("finite")) };
+    let dot = |x: &R3, y: &R3| -> Rational { (0..3).map(|k| &x[k] * &y[k]).sum() };
+    let sub = |x: &R3, y: &R3| -> R3 { std::array::from_fn(|k| &x[k] - &y[k]) };
+    let (up, ra, rb, rq) = (r(varde_decide::perturb::UP), r(a), r(b), r(q));
+    let uu = dot(&up, &up);
+    // The dot product of two vectors' shadows.
+    let flat = |x: &R3, y: &R3| dot(x, y) - dot(&up, x) * dot(&up, y) / &uu;
+    let (d, w) = (sub(&rb, &ra), sub(&rq, &ra));
+    let dd = flat(&d, &d);
+    let t = if dd > Rational::ZERO {
+        (flat(&w, &d) / dd).clamp(Rational::ZERO, Rational::ONE)
+    } else {
+        Rational::ZERO
+    };
+    let foot: R3 = std::array::from_fn(|k| &ra[k] + &d[k] * &t);
+    let want = dot(&up, &sub(&foot, &rq)).sign();
+    let near = |c: &Rational| f64::rounding_from(c, Nearest).0;
+    let mut x = DVec3::new(near(&foot[0]), near(&foot[1]), near(&foot[2]));
+    if want != Ordering::Equal {
+        // UP's z is its largest component: a step in z moves the height
+        // most.
+        for _ in 0..64 {
+            if dot(&up, &sub(&r(x), &rq)).sign() == want {
+                break;
+            }
+            x.z = if want == Ordering::Greater {
+                x.z.next_up()
+            } else {
+                x.z.next_down()
+            };
+        }
+    }
+    x
+}
+
+/// A plane face's plane `n·x = c`, its normal outward; `None` for a
+/// curved face.
+fn plane_of(b: &crate::topo::brep_min::Brep, f: FaceId) -> Option<(DVec3, f64)> {
+    let crate::geom::form::FormKey::Plane(k) = b.surface(f).lattice().key() else {
+        return None;
+    };
+    let (n, c) = (DVec3::from_array(k.normal()), k.offset());
+    Some(if b.flipped(f) { (-n, -c) } else { (n, c) })
+}
+
+/// The counting's answers for a placement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Answers {
+    /// Per operand, its vertices' windings in the other, carried from
+    /// the seeds.
+    pub winding: [Vec<i64>; 2],
+    /// Per operand, its vertices' own columns: `Σ_f s02` (`s20`).
+    pub column: [Vec<i64>; 2],
+    /// `x12[e][f]`, `e` of `A`, `f` of `B`.
+    pub x12: Vec<Vec<i64>>,
+    /// `x21[g][f]`, `g` of `B`, `f` of `A`.
+    pub x21: Vec<Vec<i64>>,
+}
+
+/// The records of a placement.
+struct Recs {
+    shadows: Shadows,
+    curved: CurvedRays,
+    feet: NearFeet,
+}
+
+fn refused(cause: Cause, at: impl Into<String>) -> Refusal {
+    Refusal {
+        cause,
+        at: at.into(),
+    }
+}
+
+fn record_fail<E: std::fmt::Debug>(kind: &'static str, e: E) -> Refusal {
+    refused(
+        Cause::Record {
+            kind,
+            fail: format!("{e:?}"),
+        },
+        kind,
+    )
+}
+
+impl World<'_> {
+    fn records(&self, cfg: &Config, stats: &mut Stats) -> Result<Recs, Refusal> {
+        let band = Band::curved(0.0, cfg.target).expect("a band");
+        let (mut flat, mut curved, mut vv) = (Vec::new(), Vec::new(), Vec::new());
+        for op in [A, B] {
+            let (s, o) = (self.solid(op), self.solid(op.other()));
+            for v in s.verts() {
+                let q = Point::vert(op, v);
+                for g in o.edges() {
+                    let k = RayKey { q, g };
+                    if self.straight(op.other(), g) {
+                        flat.push(k);
+                    } else {
+                        curved.push(k);
+                    }
+                }
+                vv.extend(o.verts().into_iter().map(|w| VvKey::of(q, w).key));
+            }
+        }
+        let mut shadows = Shadows::new();
+        shadows
+            .fill_vv(vv, self, &mut Tally { kind: "vv", stats })
+            .map_err(|e| record_fail("vv", e))?;
+        shadows
+            .fill_rays(flat.clone(), self, &mut Tally { kind: "ray", stats })
+            .map_err(|e| record_fail("ray", e))?;
+        let mut rays = CurvedRays::new();
+        rays.fill_chains(
+            curved.clone(),
+            &mut shadows,
+            self,
+            band,
+            &mut Tally {
+                kind: "curved ray",
+                stats,
+            },
+        )
+        .map_err(|e| record_fail("curved ray", e))?;
+        let mut feet = NearFeet::new();
+        feet.fill(
+            flat.into_iter().chain(curved),
+            self,
+            &mut Tally {
+                kind: "feet",
+                stats,
+            },
+        )
+        .map_err(|e| record_fail("feet", e))?;
+        Ok(Recs {
+            shadows,
+            curved: rays,
+            feet,
+        })
+    }
+
+    /// Point `q`'s ray record against edge `g` of the other operand as a
+    /// chain.
+    fn chain(&self, r: &Recs, q: Point, g: EdgeId) -> ChainRec {
+        let op = q.operand.other();
+        if self.straight(op, g) {
+            let rec = r.shadows.ray(q, g).expect("decided");
+            let [a, b] = self.edge_points(op, g);
+            let at = self.solid(q.operand).brep.pos(vert(q));
+            line_chain(&rec, a, b, at)
+        } else {
+            r.curved.chain(q, g).expect("decided").clone()
+        }
+    }
+
+    /// `s02(v, f)` (`s20`) for every vertex `v` of `op` and face `f` of
+    /// the other, by vertex then face.
+    fn face_counts(
+        &self,
+        r: &Recs,
+        op: Operand,
+        cfg: &Config,
+        stats: &mut Stats,
+    ) -> Result<Vec<Vec<i64>>, Refusal> {
+        let (s, o) = (self.solid(op), self.solid(op.other()));
+        let reads = Records {
+            shadows: &r.shadows,
+            feet: &r.feet,
+            order: &self.order,
+        };
+        let mut sides = Sides::new();
+        let mut heights = Heights::new();
+        let band = Band::curved(0.0, cfg.target).expect("a band");
+        let mut layers = LayerTable::new();
+        let charge = Charge::new(u64::MAX / 4);
+        let verts = s.verts();
+        let mut out = vec![Vec::new(); verts.len()];
+        for f in o.faces() {
+            let face = FaceSetup::new(self, op.other(), f)?;
+            let views = face.views();
+            let uv = face.uv(op.other(), f, &views, cfg.scale)?;
+            let t = std::time::Instant::now();
+            let corners = Corners::new(&uv, &face.patches, &face.order)
+                .map_err(|e| refused(Cause::Other(format!("corners {e:?}")), format!("{f:?}")))?;
+            stats.corners += t.elapsed().as_secs_f64();
+            for &v in &verts {
+                let q = Point::vert(op, v);
+                let at = s.brep.pos(v);
+                let recs: Vec<ChainRec> = face
+                    .trims
+                    .iter()
+                    .map(|t| self.chain(r, q, t.edge))
+                    .collect();
+                let edges: Vec<TrimEdge<'_>> = face
+                    .trims
+                    .iter()
+                    .zip(&recs)
+                    .map(|(t, rays)| TrimEdge {
+                        edge: t.edge,
+                        ribbon: Ribbon {
+                            coedge: t.coedge,
+                            curve: o.brep.edge_spans(t.edge),
+                            map: &t.map,
+                            rays,
+                        },
+                    })
+                    .collect();
+                let fq = FaceQuery {
+                    face: &uv,
+                    corners: &corners,
+                    patches: &face.patches,
+                    edges: &edges,
+                    point: q,
+                    at,
+                    eps_tie: cfg.eps_tie,
+                };
+                let here = || format!("{q:?} face {f:?}");
+                // Side records asked for are filled and the count run
+                // again.
+                let mut asked = 0;
+                let (res, cost) = loop {
+                    let (res, cost) = count_pieces(&fq, &sides, &reads, &charge);
+                    match res {
+                        Err(CountError::Need(k)) if asked < 64 => {
+                            asked += 1;
+                            stats.side_fills += 1;
+                            sides
+                                .fill(
+                                    [k],
+                                    self,
+                                    band,
+                                    &mut Tally {
+                                        kind: "side",
+                                        stats,
+                                    },
+                                )
+                                .map_err(|e| refused(Cause::Side(format!("{e:?}")), here()))?;
+                        }
+                        res => break (res, cost),
+                    }
+                };
+                stats.counts[top_level(&cost)] += 1;
+                let p = res.map_err(|e| {
+                    let cause = match e {
+                        CountError::Need(_) => Cause::Side("asked again".into()),
+                        CountError::NeedHeight(_) => Cause::Height,
+                        CountError::OutOfBudget { cause, .. } => {
+                            Cause::OutOfBudget(format!("{cause:?}"))
+                        }
+                        e => Cause::Count(short(&e)),
+                    };
+                    refused(cause, here())
+                })?;
+                let ls = p
+                    .layers(&reads)
+                    .map_err(|e| refused(Cause::Count(format!("layers {e:?}")), here()))?;
+                layers.insert(q, f, ls);
+                let wanted = p
+                    .wanted(&reads, &layers)
+                    .map_err(|e| refused(Cause::Count(format!("keys {e:?}")), here()))?;
+                if !wanted.is_empty() {
+                    stats.height_fills += 1;
+                    heights
+                        .fill(
+                            wanted,
+                            &ModelHeights { model: self },
+                            band,
+                            &mut Tally {
+                                kind: "height",
+                                stats,
+                            },
+                        )
+                        .map_err(|e| {
+                            let cause = match e {
+                                HeightError::Pass(Fail::Escalate { .. }) => Cause::Height,
+                                e => Cause::Count(format!("heights {e:?}")),
+                            };
+                            refused(cause, here())
+                        })?;
+                }
+                let n = p
+                    .count(&reads, &layers, &heights)
+                    .map_err(|e| refused(Cause::Count(short(&e)), here()))?;
+                out[v.index()].push(n);
+            }
+        }
+        Ok(out)
+    }
+
+    /// `s11(e, g)` for every edge pair, `[e][g]`.
+    fn s11s(&self, r: &Recs, stats: &mut Stats) -> Result<Vec<Vec<i64>>, Refusal> {
+        let (a, b) = (self.solid(A), self.solid(B));
+        let curve = |op: Operand, e: EdgeId| {
+            if self.straight(op, e) {
+                let [p, q] = self.edge_points(op, e);
+                XCurve::Line(p, q)
+            } else {
+                XCurve::Spans(self.solid(op).brep.edge_spans(e))
+            }
+        };
+        let rays = |q: Point, g: EdgeId| {
+            if self.straight(q.operand.other(), g) {
+                EdgeRays::Line(r.shadows.ray(q, g).expect("decided"))
+            } else {
+                EdgeRays::Chain(r.curved.chain(q, g).expect("decided"))
+            }
+        };
+        let mut out = Vec::new();
+        let mut first = None;
+        for e in a.edges() {
+            let mut row = Vec::new();
+            for g in b.edges() {
+                let [p0, p1] = a.brep.ends(e).map(|v| Point::vert(A, v));
+                let [g0, g1] = b.brep.ends(g).map(|v| Point::vert(B, v));
+                let pair = XPair {
+                    e: curve(A, e),
+                    g: curve(B, g),
+                    terms: XTerms {
+                        a_g: rays(p0, g),
+                        b_g: rays(p1, g),
+                        g0_e: rays(g0, e),
+                        g1_e: rays(g1, e),
+                    },
+                    shared: false,
+                };
+                let x = XKey { e, g };
+                let mut one = || -> Result<i64, Refusal> {
+                    let (se, sg) = (
+                        self.solid(A).brep.edge_spans(e),
+                        self.solid(B).brep.edge_spans(g),
+                    );
+                    // One curve: bitwise the same spans, either way round.
+                    let shared = se == sg
+                        || (se.len() == sg.len()
+                            && se
+                                .iter()
+                                .rev()
+                                .zip(sg)
+                                .all(|(a, b)| [a[2], a[1], a[0]] == *b));
+                    if shared {
+                        stats.shared += 1;
+                        let pair = XPair {
+                            shared: true,
+                            ..pair
+                        };
+                        let reads = Records {
+                            shadows: &r.shadows,
+                            feet: &r.feet,
+                            order: &self.order,
+                        };
+                        let rec = varde_decide::records::xrec::shared_clusters(&reads, x, &pair)
+                            .map_err(|err| {
+                                let cause = match err {
+                                    varde_decide::records::xrec::SharedError::Crossed(_) => {
+                                        Cause::Crossed
+                                    }
+                                    err => Cause::Clusters(format!("shared {err:?}")),
+                                };
+                                refused(cause, format!("{e:?} {g:?}"))
+                            })?;
+                        let s = rec
+                            .s11(|_, cl| {
+                                stats.standins += 1;
+                                zorder_standin(se, sg, cl).ok_or(())
+                            })
+                            .map_err(|()| refused(Cause::ZOrder, format!("shared {e:?} {g:?}")))?;
+                        return Ok(s);
+                    }
+                    let beta = [self.band(A, e), self.band(B, g)];
+                    let (c, level) = self.clusters_ladder(x, &pair, beta).map_err(|err| {
+                        refused(Cause::Clusters(format!("{err:?}")), format!("{e:?} {g:?}"))
+                    })?;
+                    stats.clusters[level] += 1;
+                    stats.clear +=
+                        c.rec.clusters.iter().filter(|c| c.clear.is_some()).count() as u64;
+                    let s = c
+                        .rec
+                        .s11(|_, cl| {
+                            stats.standins += 1;
+                            zorder_standin(se, sg, cl).ok_or(())
+                        })
+                        .map_err(|()| refused(Cause::ZOrder, format!("{e:?} {g:?}")))?;
+                    Ok(s)
+                };
+                match one() {
+                    Ok(s) => row.push(s),
+                    Err(r) => {
+                        *stats.pair_causes.entry(cause_key(&r.cause)).or_default() += 1;
+                        first.get_or_insert(r);
+                        row.push(0);
+                    }
+                }
+            }
+            out.push(row);
+        }
+        match first {
+            Some(r) => Err(r),
+            None => Ok(out),
+        }
+    }
+
+    /// The pair's clusters at the first level that forms them.
+    fn clusters_ladder(
+        &self,
+        x: XKey,
+        pair: &XPair<'_>,
+        beta: [f64; 2],
+    ) -> Result<(XClusters, usize), XClusterError> {
+        let mut last = None;
+        for level in 0..LEVELS {
+            let r = match level {
+                0 => clusters(&self.order, x, pair, beta, &Bounded::exact(0.0)),
+                1 => clusters(
+                    &self.order,
+                    x,
+                    pair,
+                    beta,
+                    &Bounded::exact(Dd::from_f64(0.0)),
+                ),
+                _ => {
+                    let like = Bounded::exact(Big::from_f64(0.0, Width::ALL[level - 2]));
+                    clusters(&self.order, x, pair, beta, &like)
+                }
+            };
+            match r {
+                Ok(c) => return Ok((c, level)),
+                Err(e @ (XClusterError::SizeLimit | XClusterError::Shared)) => return Err(e),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.expect("a level ran"))
+    }
+
+    /// The windings of `op`'s vertices: seeded at its first cleared
+    /// vertex, carried by `x`'s rows summed.
+    fn windings_of(
+        &self,
+        op: Operand,
+        counts: &[Vec<i64>],
+        x: &[Vec<i64>],
+        cfg: &Config,
+        stats: &mut Stats,
+    ) -> Result<Vec<i64>, Refusal> {
+        let (s, o) = (self.solid(op), self.solid(op.other()));
+        let hulls: Vec<HullBox> = o
+            .faces()
+            .into_iter()
+            .flat_map(|f| {
+                let surf = o.brep.surface(f);
+                let r = surf.rect().clone();
+                r.u.clone()
+                    .flat_map(move |i| r.v.clone().map(move |j| (i, j)))
+                    .map(|(i, j)| surf.tile(i, j).expect("a tile").hull_box())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let ends: Vec<[VertId; 2]> = s.edges().into_iter().map(|e| s.brep.ends(e)).collect();
+        let graph = Graph {
+            operand: op,
+            verts: s.brep.vert_count() as u32,
+            edges: &ends,
+        };
+        let (r, _) = seeds(&self.order, &graph, 1 << 20, |v| {
+            (Ok::<_, ()>(clear_of(s.brep.pos(v), cfg.eps_tie, &hulls)), 1)
+        });
+        let sd = r.map_err(|e| refused(Cause::Seeds(format!("{e:?}")), format!("{op:?}")))?;
+        let mut seeded = Vec::new();
+        for seed in &sd {
+            if seed.cleared {
+                stats.cleared_seeds += 1;
+            } else {
+                stats.uncleared_seeds += 1;
+            }
+            seeded.push((seed.vert, counts[seed.vert.index()].iter().sum()));
+        }
+        windings(&self.order, &graph, &seeded, |e| {
+            Ok::<_, ()>(x[e.index()].iter().sum())
+        })
+        .map_err(|e| {
+            let cause = if e.is_signal() {
+                Cause::Signal(match e {
+                    WindingError::Disagree { .. } => "Disagree".into(),
+                    _ => "Outside".into(),
+                })
+            } else {
+                Cause::Other(format!("{e:?}"))
+            };
+            refused(cause, format!("{op:?}: {e:?}"))
+        })
+    }
+
+    /// The counting's answers, or why it has none.
+    pub(super) fn count(&self, cfg: &Config, stats: &mut Stats) -> Result<Answers, Refusal> {
+        let t = std::time::Instant::now();
+        let r = self.records(cfg, stats)?;
+        stats.time[0] += t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
+        let s11 = self.s11s(&r, stats);
+        stats.time[2] += t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
+        let s02 = self.face_counts(&r, A, cfg, stats)?;
+        let s20 = self.face_counts(&r, B, cfg, stats)?;
+        stats.time[1] += t.elapsed().as_secs_f64();
+        let s11 = s11?;
+        let (a, b) = (self.solid(A), self.solid(B));
+        let boundary = |s: &Solid, f: FaceId| -> Vec<Coedge> {
+            s.brep
+                .loops(f)
+                .flat_map(|l| s.brep.loop_coedges(l))
+                .map(|c| Coedge {
+                    edge: s.brep.edge(c),
+                    forward: !s.brep.reversed(c),
+                })
+                .collect()
+        };
+        let bad = |e| refused(Cause::Other(format!("cross {e:?}")), "x");
+        let mut x12s = Vec::new();
+        for e in a.edges() {
+            let [p, q] = a.brep.ends(e);
+            let mut row = Vec::new();
+            for f in b.faces() {
+                let x = x12(
+                    [s02[p.index()][f.index()], s02[q.index()][f.index()]],
+                    &boundary(b, f),
+                    |g| Ok::<_, ()>(s11[e.index()][g.index()]),
+                )
+                .map_err(bad)?;
+                row.push(x);
+            }
+            x12s.push(row);
+        }
+        let mut x21s = Vec::new();
+        for g in b.edges() {
+            let [g0, g1] = b.brep.ends(g);
+            let mut row = Vec::new();
+            for f in a.faces() {
+                let x = x21(
+                    [s20[g0.index()][f.index()], s20[g1.index()][f.index()]],
+                    &boundary(a, f),
+                    |e| Ok::<_, ()>(s11[e.index()][g.index()]),
+                )
+                .map_err(bad)?;
+                row.push(x);
+            }
+            x21s.push(row);
+        }
+        let wa = self.windings_of(A, &s02, &x12s, cfg, stats)?;
+        let wb = self.windings_of(B, &s20, &x21s, cfg, stats)?;
+        let column = |c: &[Vec<i64>]| c.iter().map(|r| r.iter().sum()).collect();
+        Ok(Answers {
+            winding: [wa, wb],
+            column: [column(&s02), column(&s20)],
+            x12: x12s,
+            x21: x21s,
+        })
+    }
+}
+
+/// A short name for a count error.
+fn short(e: &CountError) -> String {
+    match e {
+        CountError::Box(b) => format!("Box({})", box_kind(b)),
+        CountError::Piece(p) => format!("Piece({p:?})"),
+        e => {
+            let s = format!("{e:?}");
+            s.split(|c: char| !c.is_alphanumeric())
+                .next()
+                .unwrap_or("")
+                .to_string()
+        }
+    }
+}
+
+fn box_kind(b: &BoxError) -> String {
+    let s = format!("{b:?}");
+    s.split(|c: char| !c.is_alphanumeric())
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+/// One trim of a face: its coedge, edge, p-curve spans and their map
+/// onto the edge's spans.
+struct TrimSetup {
+    coedge: CoedgeId,
+    edge: EdgeId,
+    reversed: bool,
+    ends: [VertId; 2],
+    band: f64,
+    map: Vec<SpanMap>,
+}
+
+/// A face as the counting reads it.
+struct FaceSetup<'s> {
+    solid: &'s Solid,
+    trims: Vec<TrimSetup>,
+    patches: Vec<HomPatch<Bounded<f64>>>,
+    /// Its vertices in geometric order.
+    order: Vec<VertId>,
+}
+
+impl<'s> FaceSetup<'s> {
+    fn new(w: &World<'s>, op: Operand, f: FaceId) -> Result<FaceSetup<'s>, Refusal> {
+        let s = w.solid(op);
+        let b = &s.brep;
+        let mut trims = Vec::new();
+        for l in b.loops(f) {
+            for c in b.loop_coedges(l) {
+                let e = b.edge(c);
+                let map = span_map(b.pcurve(c).knots(), b.curve(e).knots(), b.t_range(e))
+                    .ok_or_else(|| {
+                        refused(
+                            Cause::Other("p-curve knots off the edge's spans".into()),
+                            format!("{c:?}"),
+                        )
+                    })?;
+                trims.push(TrimSetup {
+                    coedge: c,
+                    edge: e,
+                    reversed: b.reversed(c),
+                    ends: b.ends(e),
+                    band: w.band(op, e),
+                    map,
+                });
+            }
+        }
+        let surf = b.surface(f);
+        let r = surf.rect();
+        let mut patches = Vec::new();
+        for i in r.u.clone() {
+            for j in r.v.clone() {
+                patches.push(surf.tile(i, j).expect("a tile").patch().clone());
+            }
+        }
+        let mut vs: Vec<VertId> = trims.iter().flat_map(|t| t.ends).collect();
+        vs.sort_unstable();
+        vs.dedup();
+        let mut keyed: Vec<_> = vs
+            .into_iter()
+            .map(|v| (w.order.vert_key(op, v), v))
+            .collect();
+        keyed.sort();
+        Ok(FaceSetup {
+            solid: s,
+            trims,
+            patches,
+            order: keyed.into_iter().map(|(_, v)| v).collect(),
+        })
+    }
+
+    /// The trims as the face's UV domain reads them, borrowing the
+    /// p-curves' spans from the store.
+    fn views(&self) -> Vec<Trim<'s>> {
+        let b = &self.solid.brep;
+        self.trims
+            .iter()
+            .map(|t| Trim {
+                coedge: t.coedge,
+                reversed: t.reversed,
+                spans: b.pcurve(t.coedge).spans(),
+                ends: t.ends,
+                zero_length: false,
+                band: t.band,
+            })
+            .collect()
+    }
+
+    /// The face's UV domain over `views` ([`FaceSetup::views`]).
+    fn uv<'t>(
+        &self,
+        op: Operand,
+        f: FaceId,
+        views: &'t [Trim<'t>],
+        scale: [f64; 2],
+    ) -> Result<FaceUv<'t>, Refusal> {
+        let b = &self.solid.brep;
+        let r = b.surface(f).rect();
+        FaceUv::new(
+            op,
+            f,
+            [r.u.clone(), r.v.clone()],
+            {
+                let u = self.solid.scale[f.index()];
+                [u[0] * scale[0], u[1] * scale[1]]
+            },
+            views,
+            b.flipped(f),
+        )
+        .map_err(|e| refused(Cause::Other(format!("face {e:?}")), format!("{f:?}")))
+    }
+}
+
+/// A span's point at `t` in `f64` (de Casteljau on the homogeneous
+/// points) and its derivative.
+fn span_at(s: &Span, t: f64) -> (DVec3, DVec3) {
+    let h = s.map(|p| [p[0] * p[3], p[1] * p[3], p[2] * p[3], p[3]]);
+    let b = [(1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t];
+    let db = [-2.0 * (1.0 - t), 2.0 - 4.0 * t, 2.0 * t];
+    let mut p = [0.0; 4];
+    let mut dp = [0.0; 4];
+    for i in 0..3 {
+        for k in 0..4 {
+            p[k] += b[i] * h[i][k];
+            dp[k] += db[i] * h[i][k];
+        }
+    }
+    let x = DVec3::new(p[0], p[1], p[2]) / p[3];
+    let dx = (DVec3::new(dp[0], dp[1], dp[2]) - x * dp[3]) / p[3];
+    (x, dx)
+}
+
+/// A crossing cluster's z-order read from the geometry, `Pos` for `g`
+/// above `e`: a stand-in for the edge–edge height record no decider
+/// decides yet. The shadows' crossing in the cluster's pieces by Newton
+/// in `f64` from their middles, then the heights there compared; `None`
+/// (a refusal) unless Newton lands inside the pieces and the heights
+/// differ by more than `10⁻⁹` of the edges' size.
+fn zorder_standin(
+    e: &[Span],
+    g: &[Span],
+    cl: &varde_decide::records::xrec::XCluster,
+) -> Option<Sign> {
+    use varde_decide::perturb::{NU, R_HAT, UP};
+    let (r, n, up) = (R_HAT.normalize(), NU.normalize(), UP.normalize());
+    let (se, sg) = (e.get(cl.e.span as usize)?, g.get(cl.g.span as usize)?);
+    let (mut t, mut u) = (0.5 * (cl.e.t[0] + cl.e.t[1]), 0.5 * (cl.g.t[0] + cl.g.t[1]));
+    for _ in 0..60 {
+        let ((pe, de), (pg, dg)) = (span_at(se, t), span_at(sg, u));
+        let f = [r.dot(pe - pg), n.dot(pe - pg)];
+        let j = [[r.dot(de), -r.dot(dg)], [n.dot(de), -n.dot(dg)]];
+        let det = j[0][0] * j[1][1] - j[0][1] * j[1][0];
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        let dt = (f[0] * j[1][1] - f[1] * j[0][1]) / det;
+        let du = (j[0][0] * f[1] - j[1][0] * f[0]) / det;
+        t -= dt;
+        u -= du;
+        if dt.abs() < 1e-17 && du.abs() < 1e-17 {
+            break;
+        }
+    }
+    let slack = 1e-9;
+    let inside = |x: f64, p: [f64; 2]| p[0] - slack <= x && x <= p[1] + slack;
+    if !inside(t, cl.e.t) || !inside(u, cl.g.t) {
+        return None;
+    }
+    let ((pe, _), (pg, _)) = (span_at(se, t), span_at(sg, u));
+    let size = se
+        .iter()
+        .chain(sg)
+        .map(|p| DVec3::new(p[0], p[1], p[2]).length())
+        .fold(1.0, |m: f64, x| if x > m { x } else { m });
+    let gap = up.dot(pg - pe);
+    if gap.abs() <= 1e-9 * size {
+        return None;
+    }
+    Some(if gap > 0.0 { Sign::Pos } else { Sign::Neg })
+}
+
+/// A cause's name without its keys.
+pub(super) fn cause_key(c: &Cause) -> String {
+    let s = format!("{c:?}");
+    s.split(['{', '(']).next().unwrap_or("").to_string()
+}
+
+/// Where each p-curve span lies on the edge's spans (from the edge's
+/// first span inside `t_range`): the edge span holding its knots' range,
+/// and that range on the span's `[0, 1]`, linearly; `None` if a p-curve
+/// span straddles an edge knot.
+fn span_map(pk: &[f64], ek: &[f64], t_range: [f64; 2]) -> Option<Vec<SpanMap>> {
+    let first = ek.iter().position(|&k| k == t_range[0])?;
+    let mut out = Vec::new();
+    for w in pk.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let k = (first..ek.len() - 1).find(|&k| ek[k] <= a && b <= ek[k + 1])?;
+        let (t0, t1) = (ek[k], ek[k + 1]);
+        let at = |t: f64| {
+            if t == t0 {
+                0.0
+            } else if t == t1 {
+                1.0
+            } else {
+                (t - t0) / (t1 - t0)
+            }
+        };
+        out.push(SpanMap {
+            span: (k - first) as u32,
+            t: [at(a), at(b)],
+        });
+    }
+    Some(out)
+}

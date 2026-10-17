@@ -18,6 +18,9 @@ mod infra;
 pub mod measure;
 pub mod topo;
 
+#[cfg(test)]
+mod oracle;
+
 pub use infra::budget::{
     Budget, BudgetProfile, Cap, HOTTEST, ItemAt, Limit, MAX_SUBDIV_DEPTH, MAX_WORK, Step, Stopped,
 };

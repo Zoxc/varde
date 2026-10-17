@@ -889,3 +889,72 @@ fn edges_on_one_circle_cluster_at_their_ends_ties() {
     }
     assert!(formed > 0 && tied > 0, "{formed} {tied}");
 }
+
+/// A curved edge whose inner knot's shadow lies `10⁻⁴` beside a straight
+/// edge's (a sphere's latitude circle against a box edge, from a random
+/// placement of the counting's oracle runs): the cell's inner side at
+/// the knot can't be certified off at the cell's size, nor at its halves'
+/// first splits, so the cell refines until its sides settle, and its
+/// clusters sum to the four terms.
+#[test]
+fn a_knot_beside_the_other_edge_refines_its_cell() {
+    let e = vec![
+        [
+            [
+                1.5683476690881548,
+                0.7979907065814862,
+                -0.7605346356321209,
+                0.8535533905932737,
+            ],
+            [
+                1.4463546174240358,
+                0.004739113936898006,
+                -0.8672753232285304,
+                0.6035533905932737,
+            ],
+            [
+                0.9132092291144873,
+                0.004739113936897983,
+                -0.2579478552769246,
+                0.8535533905932737,
+            ],
+        ],
+        [
+            [
+                0.9132092291144873,
+                0.004739113936897983,
+                -0.2579478552769246,
+                0.8535533905932737,
+            ],
+            [
+                0.38006384080493893,
+                0.004739113936898006,
+                0.35137961267468115,
+                0.6035533905932737,
+            ],
+            [
+                0.502056892469058,
+                0.7979907065814862,
+                0.4581203002710907,
+                0.8535533905932737,
+            ],
+        ],
+    ];
+    let g0 = DVec3::new(1.018455089421735, 0.11551080273749709, 1.5170050025337993);
+    let g1 = DVec3::new(1.1109126010903216, 1.6619344992686311, 0.21565362879923344);
+    let mut geom = Geom {
+        d: DVec3::new(
+            0.13643047634087474,
+            -0.14384127281475897,
+            -0.9801512196393126,
+        ),
+        ..Geom::default()
+    };
+    geom.curve(A, E, 0, 1, e);
+    geom.segment(B, G, (2, g0), (3, g1));
+    let recs = decide(&geom);
+    let pair = recs.pair(&geom);
+    let out = clusters(&geom, X, &pair, [1e-6; 2], &like()).expect("formed");
+    assert_eq!(out.rec.degree(), x_count(&pair.terms));
+    assert!(out.boxes.len() == out.rec.clusters.len());
+}

@@ -48,12 +48,15 @@
 //! apart) or whose two pieces both lie within their bands (`β_e`, `β_g`,
 //! the hull's widths summed) is a cluster; a box of degree 0 whose
 //! z-order is clear or whose pieces are both that small is dropped (any
-//! crossings in it cancel and read one z-order); every other box splits.
+//! crossings in it cancel and read one z-order); every other box splits,
+//! as does a box larger than the bands whose degree its inner sides (at
+//! the edges' knots, or a split's) don't settle at its size.
 //! A split cuts the larger piece's parameter (in 3D, by the hulls' summed
 //! widths; `e`'s on a tie), at the middle or the first shifted position
 //! (as the face boxes' splits) whose two halves both have degrees, else
-//! the other parameter likewise; where none does the box is refused
-//! ([`XClusterError::Degree`]). A cluster of curved pieces whose shadow
+//! the other parameter likewise; where none does, at the middle, its
+//! halves splitting again (a box within the bands whose degree doesn't
+//! settle is refused, [`XClusterError::Degree`]). A cluster of curved pieces whose shadow
 //! tangents aren't certified apart (the cone of the pieces' control
 //! point differences, which holds every tangent of a rational span with
 //! positive weights, against the other's) is a shadow tangency:
@@ -473,16 +476,34 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
         if h.apart() {
             continue;
         }
-        let degree = match degree {
-            Some(d) => d,
-            None => {
-                let d = box_degree(pair, &b, like).map_err(|e| XClusterError::Degree(b, e))?;
-                pieces += d.pieces;
-                d.degree
-            }
-        };
         let clear = h.z_order();
         let small = h.size[0] <= beta[0] && h.size[1] <= beta[1];
+        let degree = match degree {
+            Some(d) => d,
+            None => match box_degree(pair, &b, like) {
+                Ok(d) => {
+                    pieces += d.pieces;
+                    d.degree
+                }
+                // A box whose inner sides (at the edges' knots, or a
+                // split's) aren't settled at its size: its halves' are,
+                // or they split again, down to the bands.
+                Err(XDegreeError::Through | XDegreeError::Placed | XDegreeError::Unsettled)
+                    if !small =>
+                {
+                    let first = if h.size[1] > h.size[0] {
+                        Dir::V
+                    } else {
+                        Dir::U
+                    };
+                    let halves = split_box(pair, &b, first, like, &mut pieces)?;
+                    work.push(halves[1]);
+                    work.push(halves[0]);
+                    continue;
+                }
+                Err(e) => return Err(XClusterError::Degree(b, e)),
+            },
+        };
         if degree == 0 && (clear.is_some() || small) {
             continue;
         }
@@ -500,8 +521,8 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
         };
         let halves = split_box(pair, &b, first, like, &mut pieces)?;
         // Lower half processed first.
-        work.push((halves[1].0, Some(halves[1].1)));
-        work.push((halves[0].0, Some(halves[0].1)));
+        work.push(halves[1]);
+        work.push(halves[0]);
     }
     found.sort_by_key(|x| x.0);
     let (boxes, clusters) = found.into_iter().unzip();
@@ -528,16 +549,18 @@ fn cluster(b: &XBox, degree: i64, clear: Option<Sign>, row: ZRow) -> XCluster {
 }
 
 /// Splits `b` (module docs): `first`'s parameter first, at the middle or
-/// the first shifted position whose halves both have degrees.
+/// the first shifted position whose halves both have degrees, else the
+/// other parameter likewise; where no position does, at the middle of
+/// `first`'s parameter, the halves' degrees left to find (each splits
+/// again until its own degree settles or it is within the bands).
 fn split_box<S: Scalar>(
     pair: &XPair<'_>,
     b: &XBox,
     first: Dir,
     like: &S,
     pieces: &mut u64,
-) -> Result<[(XBox, i64); 2], XClusterError> {
-    let mut any = false;
-    let mut last = XDegreeError::Through;
+) -> Result<[(XBox, Option<i64>); 2], XClusterError> {
+    let mut fallback = None;
     for dir in [first, crate::count::boxes::other(first)] {
         let ext = match dir {
             Dir::U => b.t,
@@ -550,22 +573,20 @@ fn split_box<S: Scalar>(
             let Some(halves) = b.split_at(dir, at) else {
                 continue;
             };
-            any = true;
-            let mut out = [(halves[0], 0i64); 2];
+            if fallback.is_none() {
+                fallback = Some(halves);
+            }
+            let mut out = [(halves[0], None); 2];
             let mut ok = true;
             for (o, h) in out.iter_mut().zip(halves) {
                 match box_degree(pair, &h, like) {
                     Ok(d) => {
                         *pieces += d.pieces;
-                        *o = (h, d.degree);
+                        *o = (h, Some(d.degree));
                     }
                     // A ray stopped at an end on its line may be a split
                     // position's own: another may not be.
-                    Err(
-                        e
-                        @ (XDegreeError::Through | XDegreeError::Placed | XDegreeError::Unsettled),
-                    ) => {
-                        last = e;
+                    Err(XDegreeError::Through | XDegreeError::Placed | XDegreeError::Unsettled) => {
                         ok = false;
                         break;
                     }
@@ -577,10 +598,9 @@ fn split_box<S: Scalar>(
             }
         }
     }
-    if any {
-        Err(XClusterError::Degree(*b, last))
-    } else {
-        Err(XClusterError::Depth(*b))
+    match fallback {
+        Some([lo, hi]) => Ok([(lo, None), (hi, None)]),
+        None => Err(XClusterError::Depth(*b)),
     }
 }
 

@@ -9,3 +9,4 @@ publish = false
 [dependencies]
 glam.workspace = true
 libm.workspace = true
+malachite.workspace = true

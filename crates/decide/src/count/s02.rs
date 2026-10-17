@@ -63,7 +63,8 @@
 //! again.
 //!
 //! **Termination** ([`count_pieces`]). Refinement is in space first: a
-//! box splits at most [`MAX_SUBDIV_DEPTH`] times from its tile, and a
+//! box splits at most [`MAX_SUBDIV_DEPTH`] times from its tile in each of `u`
+//! and `v` (halvings of its sides, as the cap counts them), and a
 //! piece the level doesn't settle by then (or at the boxes' own depth
 //! limit) leaves the level unsettled. Then in precision: the whole count
 //! runs again at the next level of the schedule ([`LEVELS`]: `f64`,
@@ -262,8 +263,8 @@ struct Leaf {
     /// Within its stopping size.
     small: bool,
     met: SmallVec<[SpanRef; 8]>,
-    /// The splits from its tile.
-    splits: u32,
+    /// The splits from its tile, in `u` and in `v`.
+    splits: [u32; 2],
 }
 
 /// A near piece: its degree and what names its layer.
@@ -504,19 +505,28 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
         }
     }
 
-    /// The split of `b`, `splits` splits from its tile: the level is
-    /// unsettled past [`MAX_SUBDIV_DEPTH`] or the boxes' depth.
-    fn split(&mut self, b: &BoxKey, splits: u32) -> Result<[BoxKey; 2], CountError> {
-        if splits >= MAX_SUBDIV_DEPTH {
-            return Err(CountError::Unsettled);
-        }
+    /// The split of `b`, `splits` splits from its tile in `u` and in `v`,
+    /// and the halves' counts: the level is unsettled where the split
+    /// would take a direction past [`MAX_SUBDIV_DEPTH`] halvings, or past
+    /// the boxes' depth.
+    fn split(
+        &mut self,
+        b: &BoxKey,
+        splits: [u32; 2],
+    ) -> Result<([BoxKey; 2], [u32; 2]), CountError> {
         let patch = self.patch(b)?;
         let s = split(self.fq.face, b, patch, Some(&self.q)).map_err(|e| match e {
             BoxError::Depth => CountError::Unsettled,
             e => CountError::Box(e),
         })?;
+        let k = usize::from(s.halves[0].extent(Dir::U) == b.extent(Dir::U));
+        if splits[k] >= MAX_SUBDIV_DEPTH {
+            return Err(CountError::Unsettled);
+        }
         self.charge(s.pieces)?;
-        Ok(s.halves)
+        let mut next = splits;
+        next[k] += 1;
+        Ok((s.halves, next))
     }
 
     fn band(&self, coedges: &[CoedgeId]) -> f64 {
@@ -533,7 +543,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
         &mut self,
         b: BoxKey,
         among: Option<SmallVec<[SpanRef; 8]>>,
-        splits: u32,
+        splits: [u32; 2],
         out: &mut Vec<Leaf>,
     ) -> Result<(), CountError> {
         let mut stack = vec![(b, among, splits)];
@@ -606,9 +616,9 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                 });
                 continue;
             }
-            let [lo, hi] = self.split(&b, splits)?;
-            stack.push((hi, Some(r.met.clone()), splits + 1));
-            stack.push((lo, Some(r.met), splits + 1));
+            let ([lo, hi], next) = self.split(&b, splits)?;
+            stack.push((hi, Some(r.met.clone()), next));
+            stack.push((lo, Some(r.met), next));
         }
         Ok(())
     }
@@ -623,8 +633,9 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
             taken.push(leaves.remove(k));
         }
         for l in taken.into_iter().rev() {
-            for h in self.split(&l.b, l.splits)? {
-                self.refine(h, Some(l.met.clone()), l.splits + 1, leaves)?;
+            let (halves, next) = self.split(&l.b, l.splits)?;
+            for h in halves {
+                self.refine(h, Some(l.met.clone()), next, leaves)?;
             }
         }
         Ok(())
@@ -918,7 +929,7 @@ fn rounds<S: Scalar, R: HeightReads>(
 ) -> Result<FacePieces, CountError> {
     let mut leaves: Vec<Leaf> = Vec::new();
     for b in ctx.fq.face.tile_boxes() {
-        ctx.refine(b, None, 0, &mut leaves)?;
+        ctx.refine(b, None, [0, 0], &mut leaves)?;
     }
 
     let mut cache: BTreeMap<(Owner, Vec<BoxKey>), Result<i64, PieceError>> = BTreeMap::new();
