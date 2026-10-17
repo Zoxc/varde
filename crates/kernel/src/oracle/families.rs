@@ -1,7 +1,8 @@
 //! The adversarial families: placements that put a vertex, an edge or a
 //! face of `A` on or next to a feature of `B` where the counting's rules
 //! meet (a band of an edge, a silhouette, a tile line, a fold, an acute or
-//! cusp corner, a shared corner, a ridge, coplanar faces), each family a
+//! cusp corner, a shared corner, a ridge, coplanar faces), and ties exact
+//! in the counting's own records ([`kernel_exact`]), each family a
 //! function of a seed.
 
 use glam::DVec3;
@@ -19,7 +20,7 @@ const UP: DVec3 = DVec3::new(2.0, 3.0, 32.0);
 pub(super) type Family = (&'static str, fn(u64) -> Placement);
 
 /// The families, by name.
-pub(super) const FAMILIES: [Family; 13] = [
+pub(super) const FAMILIES: [Family; 14] = [
     ("vertex within the band of an edge", near_edge),
     ("vertex on a silhouette", on_silhouette),
     ("vertex on a curved face's tile line", on_tile_line),
@@ -33,7 +34,12 @@ pub(super) const FAMILIES: [Family; 13] = [
     ("exact ties: axis-aligned boxes on a half grid", grid_boxes),
     ("trim through a plane lattice's origin", trim_through_origin),
     ("stacked half cylinders (arcs on one circle)", stacked),
+    (KERNEL_EXACT, kernel_exact),
 ];
+
+/// The name of the family of ties exact in the counting's records.
+pub(super) const KERNEL_EXACT: &str =
+    "kernel-exact ties: vertices on key planes, rays through edges";
 
 fn make(rng: &mut Rng) -> Make {
     Make {
@@ -488,4 +494,138 @@ fn stacked(seed: u64) -> Placement {
         },
     };
     placement(&mut rng, a, b)
+}
+
+/// The cube `[0, 2]³`: its faces' key planes hold its vertices exactly,
+/// and with unperturbed p-curves its tiles' patches, p-curves and edges
+/// agree bit for bit (no ribbon has width).
+fn cube() -> Shape {
+    Shape::Box {
+        o: [0.0; 3],
+        axes: [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
+    }
+}
+
+fn int(rng: &mut Rng, lo: i64, hi: i64) -> i64 {
+    lo + (rng.next_u64() % (hi - lo + 1) as u64) as i64
+}
+
+fn icross(a: [i64; 3], b: [i64; 3]) -> [i64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// A turned box's edges, exactly: integer vectors `u`, `v = u × t` and
+/// `w = u × v` (orthogonal, right-handed), each scaled by a power of two
+/// to a length in `[0.75, 1.5)`, so the box's corners are exact sums.
+/// No component is zero (no face parallel to a coordinate plane) but
+/// `u`'s on axis `flat`, if given (an edge in that coordinate plane).
+/// The box has its corner at `o`, and none of the cube's corners lies
+/// on the plane of one of its faces: a turned face's key plane is
+/// rounded, so such a corner would be tied only in the oracle's tiles,
+/// within their misfit, not in the counting's records.
+fn exact_axes(rng: &mut Rng, flat: Option<usize>, o: [f64; 3]) -> [[f64; 3]; 3] {
+    loop {
+        let mut u = [0, 1, 2].map(|_| int(rng, -4, 4));
+        if let Some(k) = flat {
+            u[k] = 0;
+        }
+        let t = [0, 1, 2].map(|_| int(rng, -4, 4));
+        let v = icross(u, t);
+        let w = icross(u, v);
+        let zero = |x: &[i64; 3], skip: Option<usize>| (0..3).any(|k| Some(k) != skip && x[k] == 0);
+        if zero(&u, flat) || zero(&v, None) || zero(&w, None) {
+            continue;
+        }
+        let axes = [u, v, w].map(|x| {
+            let n2 = x.iter().map(|c| c * c).sum::<i64>() as f64;
+            let mut s = 1.0;
+            while n2 * s * s >= 2.25 {
+                s *= 0.5;
+            }
+            DVec3::from_array(x.map(|c| c as f64 * s))
+        });
+        // Every value here is a short dyadic: the products are exact.
+        let o = DVec3::from_array(o);
+        let on_a_face = (0..3).any(|k| {
+            let n = axes[(k + 1) % 3].cross(axes[(k + 2) % 3]);
+            [o, o + axes[k]].iter().any(|&c| {
+                (0..8).any(|i| {
+                    let p = DVec3::new(
+                        f64::from(i & 1),
+                        f64::from(i >> 1 & 1),
+                        f64::from(i >> 2 & 1),
+                    ) * 2.0;
+                    n.dot(p - c) == 0.0
+                })
+            })
+        });
+        if !on_a_face {
+            return axes.map(|x| x.to_array());
+        }
+    }
+}
+
+/// A point of the cube's face on axis `k` (at 0 or 2), inside it by at
+/// least `3/8` (far outside every band), on the `1/8` grid.
+fn on_cube_face(rng: &mut Rng, k: usize) -> [f64; 3] {
+    let mut p = [0, 1, 2].map(|_| int(rng, 3, 13) as f64 / 8.0);
+    p[k] = 2.0 * int(rng, 0, 1) as f64;
+    p
+}
+
+/// Ties exact in the counting's own records, not only in the oracle's
+/// tiles: the cube (its faces on their key planes, every p-curve
+/// unperturbed) and a box turned by an exact frame, all corners exact,
+/// with
+/// - a corner of `A` on a face of `B` (a point–face height of 0 on the
+///   key plane);
+/// - a corner of `B` on a face of `A` (the cube as `A`);
+/// - a corner of `A` on a face of `B` and an edge of `A` in its plane
+///   (crossing `B`'s edges in it where it leaves the face);
+/// - a corner of `A` whose upward ray passes through a point of an edge
+///   of `B` (a ray record's tie).
+///
+/// Moving `A` by `δ·d` settles each; counting with `d` and `−d` must
+/// differ exactly where the oracle's answers at `±2^-28·d` do.
+fn kernel_exact(seed: u64) -> Placement {
+    let mut rng = Rng::new(seed);
+    let k = int(&mut rng, 0, 2) as usize;
+    let (a, b) = match seed % 4 {
+        0 | 2 => {
+            let o = on_cube_face(&mut rng, k);
+            let axes = exact_axes(&mut rng, (seed % 4 == 2).then_some(k), o);
+            (Shape::Box { o, axes }, cube())
+        }
+        1 => {
+            let o = on_cube_face(&mut rng, k);
+            let axes = exact_axes(&mut rng, None, o);
+            (cube(), Shape::Box { o, axes })
+        }
+        _ => {
+            // A point of an edge of the cube along axis `k`, and a corner
+            // of `A` below it along `UP` by `s·UP`.
+            let mut p = [0, 1, 2].map(|_| 2.0 * int(&mut rng, 0, 1) as f64);
+            p[k] = int(&mut rng, 3, 13) as f64 / 8.0;
+            let s = [1.0 / 32.0, 1.0 / 64.0][int(&mut rng, 0, 1) as usize];
+            let o = (DVec3::from_array(p) - UP * s).to_array();
+            let axes = exact_axes(&mut rng, None, o);
+            (Shape::Box { o, axes }, cube())
+        }
+    };
+    let mut make = || Make {
+        ids: Some(rng.next_u64()),
+        ..Make::PLAIN
+    };
+    let (make_a, make_b) = (make(), make());
+    Placement {
+        a,
+        b,
+        make_a,
+        make_b,
+        d: rng.direction(),
+    }
 }

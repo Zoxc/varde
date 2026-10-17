@@ -586,7 +586,17 @@ pub(super) struct Answers {
     pub x12: Vec<Vec<i64>>,
     /// `x21[g][f]`, `g` of `B`, `f` of `A`.
     pub x21: Vec<Vec<i64>>,
+    /// Per operand, per vertex and face of the other: whether a layer of
+    /// the face at the vertex's column was decided by the height of an
+    /// edge of the face at the vertex's foot on it (a point–curve key:
+    /// inside the edge's band the edge's height is the defined answer,
+    /// even where the face itself lies on the other side of the point).
+    pub edge_height: [Vec<Vec<bool>>; 2],
 }
+
+/// Per vertex and face, the face counts, and whether a layer was
+/// decided by an edge's height ([`World::face_counts`]).
+type FaceCounts = (Vec<Vec<i64>>, Vec<Vec<bool>>);
 
 /// The records of a placement.
 struct Recs {
@@ -682,14 +692,16 @@ impl World<'_> {
     }
 
     /// `s02(v, f)` (`s20`) for every vertex `v` of `op` and face `f` of
-    /// the other, by vertex then face.
+    /// the other, by vertex then face, and whether a layer of `f` at
+    /// `v`'s column was decided by a point–curve height record (by the
+    /// height of an edge of `f` at `v`'s foot on it).
     fn face_counts(
         &self,
         r: &Recs,
         op: Operand,
         cfg: &Config,
         stats: &mut Stats,
-    ) -> Result<Vec<Vec<i64>>, Refusal> {
+    ) -> Result<FaceCounts, Refusal> {
         let (s, o) = (self.solid(op), self.solid(op.other()));
         let reads = Records {
             shadows: &r.shadows,
@@ -703,6 +715,7 @@ impl World<'_> {
         let charge = Charge::new(u64::MAX / 4);
         let verts = s.verts();
         let mut out = vec![Vec::new(); verts.len()];
+        let mut by_edge = vec![Vec::new(); verts.len()];
         for f in o.faces() {
             let face = FaceSetup::new(self, op.other(), f)?;
             let views = face.views();
@@ -786,6 +799,7 @@ impl World<'_> {
                 let wanted = p
                     .wanted(&reads, &layers)
                     .map_err(|e| refused(Cause::Count(format!("keys {e:?}")), here()))?;
+                by_edge[v.index()].push(wanted.iter().any(|k| matches!(k.h, HKey::Curve { .. })));
                 if !wanted.is_empty() {
                     stats.height_fills += 1;
                     heights
@@ -812,7 +826,7 @@ impl World<'_> {
                 out[v.index()].push(n);
             }
         }
-        Ok(out)
+        Ok((out, by_edge))
     }
 
     /// `s11(e, g)` for every edge pair, `[e][g]`.
@@ -1026,8 +1040,8 @@ impl World<'_> {
         let s11 = self.s11s(&r, stats);
         stats.time[2] += t.elapsed().as_secs_f64();
         let t = std::time::Instant::now();
-        let s02 = self.face_counts(&r, A, cfg, stats)?;
-        let s20 = self.face_counts(&r, B, cfg, stats)?;
+        let (s02, ea) = self.face_counts(&r, A, cfg, stats)?;
+        let (s20, eb) = self.face_counts(&r, B, cfg, stats)?;
         stats.time[1] += t.elapsed().as_secs_f64();
         let s11 = s11?;
         let (a, b) = (self.solid(A), self.solid(B));
@@ -1080,6 +1094,7 @@ impl World<'_> {
             column: [column(&s02), column(&s20)],
             x12: x12s,
             x21: x21s,
+            edge_height: [ea, eb],
         })
     }
 }

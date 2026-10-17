@@ -227,10 +227,14 @@ const FIRST: Caps = Caps {
 /// The limits of the shifted count: the shift is `2^-512`, its smallest
 /// term `2^-708`, so splitting a root from a domain end takes boxes
 /// down to about `2^-1000` and beyond for roots that are not simple.
+/// An edge ending at a face's corner and leaving across its plane
+/// (boxes sharing a corner), moved by the shift, crosses the face's
+/// tile within `2^-512` of its own end and of the face's corner:
+/// closing in on that root takes about a million boxes in one count.
 const SHIFTED: Caps = Caps {
     depth: 4000,
     width: 3000,
-    boxes: 400_000,
+    boxes: 2_000_000,
     trim_depth: 4000,
 };
 
