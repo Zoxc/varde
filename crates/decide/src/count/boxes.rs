@@ -37,18 +37,25 @@
 //! across `u`) at a point of the canonical sequence of relative positions
 //! `½, ⅜, ⅝, 7/16, 9/16, 5/16, 11/16` of that extent, the first whose iso
 //! line over the box has a shadow certified off the query point's shadow
-//! `q_xy` ([`iso_off`]); a split with no query point is at `½`. The
-//! counting reads the winding of each box's shadow boundary about `q_xy`
-//! from angle increments of its sides, which a side through `q_xy` has
-//! none of: a moved split leaves such a side only on tile lines (fixed,
-//! read through their own side record) and where no position of the
-//! sequence is certified, where the split is at `½` and the [`Split`]
-//! says so. Every position lies in `[5/16, 11/16]`, so each half is at
-//! most `11/16` of the box and refinement shrinks every box. A position
-//! is skipped where, in lowest terms, it would pass [`MAX_BOX_DEPTH`];
-//! with none left the box can't split ([`BoxError::Depth`]). The split is
-//! a function of the box, the tile's patch, the face's scale and the
-//! query alone.
+//! `q_xy` ([`iso_off`]); a split with no query point is at `½`. Each
+//! position `k/16` is **snapped**: the split is the dyadic of least
+//! denominator within a sixteenth of the extent around it, `[(k − ½)/16,
+//! (k + ½)/16)` of the way. On an aligned extent (`[j, j + 1]/2^e`) that
+//! is the position itself; on any other it keeps the ends' denominators
+//! within five bits of the width's (`width·2^depth ≤ 32`), so a box
+//! reaches [`MAX_BOX_DEPTH`] by its width, never by the shifts it took
+//! (unsnapped, each shift by `⅛` or `1/16` would add three or four bits
+//! of depth for a shrink of about one). The counting reads the winding
+//! of each box's shadow boundary about `q_xy` from angle increments of
+//! its sides, which a side through `q_xy` has none of: a moved split
+//! leaves such a side only on tile lines (fixed, read through their own
+//! side record) and where no position of the sequence is certified,
+//! where the split is at `½` and the [`Split`] says so. Every position
+//! lies in `[9/32, 23/32)`, so each half is at most `23/32` of the box
+//! and refinement shrinks every box. A position is skipped where, in
+//! lowest terms, it would pass [`MAX_BOX_DEPTH`]; with none left the box
+//! can't split ([`BoxError::Depth`]). The split is a function of the box,
+//! the tile's patch, the face's scale and the query alone.
 //!
 //! **Shadows off the query** ([`iso_off`]). The iso line is the patch's
 //! boundary row after an exact-parameter split there (the row itself on a
@@ -160,10 +167,10 @@ pub const OFF_DEPTH: u32 = 6;
 /// centre is the index plus the local dyadic, formed at the level.
 const MAX_TILE: i64 = 1 << 52;
 
-/// The relative split positions in order, `num/2^exp`: the middle, then
-/// shifted by `⅛`, then by `1/16` and `3/16`, the lesser first.
-pub(crate) const SHIFTS: [(u64, u32); 7] =
-    [(1, 1), (3, 3), (5, 3), (7, 4), (9, 4), (5, 4), (11, 4)];
+/// The relative split positions in order, in sixteenths: the middle,
+/// then shifted by `⅛`, then by `1/16` and `3/16`, the lesser first;
+/// each snapped to the coarsest dyadic near it ([`Extent::snapped`]).
+pub(crate) const SPLIT_SIXTEENTHS: [u64; 7] = [8, 6, 10, 7, 9, 5, 11];
 
 /// A trim's span: three affine control points with their weights,
 /// `(u, v, w)`, in global UV.
@@ -227,15 +234,27 @@ impl Extent {
         float(b - a, e)
     }
 
-    /// The point at `num/2^exp` of the way from `lo` to `hi` (`exp ≤ 4`),
-    /// `None` unless its denominator in lowest terms is at most
-    /// `2^`[`MAX_BOX_DEPTH`].
-    pub(crate) fn at(self, num: u64, exp: u32) -> Option<Dyadic> {
+    /// The dyadic of least denominator in `[(k − ½)/16, (k + ½)/16)` of
+    /// the way from `lo` to `hi` (`1 ≤ k ≤ 15`), `k/16` itself on an
+    /// aligned extent; `None` unless its denominator is at most
+    /// `2^`[`MAX_BOX_DEPTH`] (module docs, "Splits").
+    pub(crate) fn snapped(self, k: u64) -> Option<Dyadic> {
+        debug_assert!((1..16).contains(&k));
         let (a, b, e) = self.nums();
-        // Below `2^(e + exp) ≤ 2⁵⁶`: no overflow, and within the dyadics'
-        // depth before reduction.
-        let n = a * ((1 << exp) - num) + b * num;
-        Dyadic::new(n, e + exp).filter(|t| t.exp() <= MAX_BOX_DEPTH)
+        // Over `2^(e + 5)`: below `2⁵⁸`, no overflow.
+        let scale = e + 5;
+        let w = b - a;
+        let lo = 32 * a + (2 * k - 1) * w;
+        let hi = 32 * a + (2 * k + 1) * w;
+        // The coarsest grid with a point in `[lo, hi)`: that point is
+        // unique (two of one grid would have a coarser one between them).
+        (0..=scale)
+            .find_map(|d| {
+                let step = 1u64 << (scale - d);
+                let m = lo.div_ceil(step) * step;
+                (m < hi).then(|| Dyadic::new(m, scale).expect("in [0, 1]"))
+            })
+            .filter(|t| t.exp() <= MAX_BOX_DEPTH)
     }
 
     /// The middle, exactly (denominator at most `2⁵³`).
@@ -1207,8 +1226,8 @@ pub fn split<S: Scalar>(
         let ext = b.extent(dir);
         let along = b.extent(other(dir));
         let mut middle = None;
-        for (num, exp) in SHIFTS {
-            let Some(at) = ext.at(num, exp) else {
+        for k in SPLIT_SIXTEENTHS {
+            let Some(at) = ext.snapped(k) else {
                 continue;
             };
             let halves = b.split_at(dir, at).expect("strictly inside, within depth");

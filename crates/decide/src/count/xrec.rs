@@ -53,7 +53,7 @@
 //! the edges' knots, or a split's) don't settle at its size.
 //! A split cuts the larger piece's parameter (in 3D, by the hulls' summed
 //! widths; `e`'s on a tie), at the middle or the first shifted position
-//! (as the face boxes' splits) whose two halves both have degrees, else
+//! (the face boxes' snapped positions) whose two halves both have degrees, else
 //! the other parameter likewise; where none does, at the middle, its
 //! halves splitting again (a box within the bands whose degree doesn't
 //! settle is refused, [`XClusterError::Degree`]). A cluster of curved pieces whose shadow
@@ -78,7 +78,7 @@ use std::cmp::Ordering;
 use malachite::Rational;
 
 use crate::bezier::{Dir, Dyadic, HomCurve, Scalar};
-use crate::count::boxes::{Extent, QShadow, SHIFTS, dy};
+use crate::count::boxes::{Extent, QShadow, SPLIT_SIXTEENTHS, dy};
 use crate::count::degree::{Ray, TurnError, curve_turn};
 use crate::count::s02::MAX_LEAVES;
 use crate::num::decide::Sign;
@@ -566,8 +566,8 @@ fn split_box<S: Scalar>(
             Dir::U => b.t,
             Dir::V => b.s,
         };
-        for (num, exp) in SHIFTS {
-            let Some(at) = ext.at(num, exp) else {
+        for k in SPLIT_SIXTEENTHS {
+            let Some(at) = ext.snapped(k) else {
                 continue;
             };
             let Some(halves) = b.split_at(dir, at) else {

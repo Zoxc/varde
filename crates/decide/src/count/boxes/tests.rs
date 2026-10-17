@@ -721,6 +721,102 @@ fn splits_shift_off_the_query() {
     }
 }
 
+/// A snapped position on an aligned extent (`[j, j + 1]/2^e`) is `k/16`
+/// of it exactly; on any extent it is the one dyadic of least
+/// denominator in `[(k − ½)/16, (k + ½)/16)` of the way, checked against
+/// every dyadic of the window by brute force.
+#[test]
+fn snapped_positions_are_the_coarsest_near_k_sixteenths() {
+    let d = |n, e| Dyadic::new(n, e).unwrap();
+    for e in [0u32, 1, 3, 20, 48] {
+        for j in [0u64, 1, 5].into_iter().filter(|&j| j < 1 << e) {
+            let x = Extent::new(d(j, e), d(j + 1, e)).unwrap();
+            for k in SPLIT_SIXTEENTHS {
+                assert_eq!(x.snapped(k), Some(d(16 * j + k, e + 4)), "{x:?}, {k}");
+            }
+        }
+    }
+    let mut rng = Rng::new(0x5a2);
+    for _ in 0..varde_testing::pick(200, 1000) {
+        let e = 6 + (rng.next_u64() % 6) as u32;
+        let a = rng.next_u64() % (1 << e);
+        let b = a + 1 + rng.next_u64() % ((1 << e) - a);
+        let x = Extent::new(d(a, e), d(b, e)).unwrap();
+        for k in SPLIT_SIXTEENTHS {
+            // The window over `2^(e + 5)`, every point of it.
+            let (lo, hi) = (
+                32 * a + (2 * k - 1) * (b - a),
+                32 * a + (2 * k + 1) * (b - a),
+            );
+            let best = (lo..hi)
+                .map(|m| d(m, e + 5))
+                .min_by_key(|t| t.exp())
+                .unwrap();
+            assert_eq!(x.snapped(k), Some(best), "{x:?}, {k}");
+        }
+    }
+}
+
+/// Splits shifted off a query again and again, down to a box `2⁻⁴⁰`
+/// wide: each position snaps to the coarsest dyadic near it, so the
+/// boxes' depth stays within five bits of their width's (`width·2^depth ≤
+/// 32`) and the box still splits. Unsnapped, each shift by `⅛` or `1/16`
+/// of a box no longer aligned to its grid would add three or four bits of
+/// depth for a shrink of about one, and the box would reach the finest
+/// depth twenty splits down.
+#[test]
+fn shifted_splits_keep_the_depth_to_the_width() {
+    let ps = patches(None);
+    let trims: [Trim<'_>; 0] = [];
+    let face = face_uv(&trims, false);
+    for seed in varde_testing::seeds(4, 32) {
+        let mut rng = Rng::new(seed ^ 0x5a1);
+        let mut b = face
+            .tile_boxes()
+            .nth((rng.next_u64() % 6) as usize)
+            .unwrap();
+        let p = patch_of(&ps, &b);
+        let (mut shifted, mut splits) = (0, 0);
+        while b.extent(Dir::U).width() > 1e-12 || b.extent(Dir::V).width() > 1e-12 {
+            let dir = if b.extent(Dir::V).width() > b.extent(Dir::U).width() {
+                Dir::V
+            } else {
+                Dir::U
+            };
+            // The query on the line the split would take without it.
+            let (e, along) = (b.extent(dir), b.extent(other(dir)));
+            let middle = e.snapped(8).expect("within depth");
+            let t = dy(along.lo()) + (dy(along.hi()) - dy(along.lo())) * rng.range(0.2, 0.8);
+            let st = match dir {
+                Dir::U => [dy(middle), t],
+                Dir::V => [t, dy(middle)],
+            };
+            let q = QShadow::of(point_on(p, st)).unwrap();
+            let s = split(&face, &b, p, Some(&q)).expect("the box splits");
+            assert_eq!(s.dir, dir);
+            shifted += usize::from(s.at != middle);
+            // Each half at most `23/32` of the box.
+            for h in s.halves {
+                assert!(h.extent(dir).width() <= e.width() * (23.0 / 32.0));
+            }
+            b = s.halves[(rng.next_u64() % 2) as usize];
+            splits += 1;
+            for d in [Dir::U, Dir::V] {
+                let x = b.extent(d);
+                // Exact: scaling by a power of two.
+                let scaled = x.width()
+                    * f64::from(1u32 << (x.depth() / 2))
+                    * f64::from(1u32 << (x.depth() - x.depth() / 2));
+                assert!(scaled <= 32.0, "seed {seed}, split {splits}: {x:?}");
+            }
+        }
+        assert!(
+            splits >= 70 && shifted > splits / 2,
+            "{shifted} of {splits} shifted"
+        );
+    }
+}
+
 /// A line certified off the query at the first level is off it exactly.
 #[test]
 fn off_query_holds_exactly() {

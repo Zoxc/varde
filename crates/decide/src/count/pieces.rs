@@ -59,7 +59,8 @@
 //! its line or behind the query. The windows are tried from the coarsest
 //! dyadic stretch to the finest; none certified is
 //! [`PieceError::Unsettled`]: the query lies on or next to the cut (the
-//! caller cuts the run elsewhere, or escalates). So every point where the
+//! caller cuts the run elsewhere, or escalates; [`strip_degree_near`]
+//! says where, for the caller to refine there). So every point where the
 //! boundary passes from one part to the next is off the ray, and the
 //! winding is the sum of the parts' crossings: the free sides' over the
 //! side stretches up to the windows (the windows themselves are crossed
@@ -524,6 +525,34 @@ fn rat(x: f64) -> Rational {
     Rational::try_from(x).expect("finite")
 }
 
+/// A closed rectangle of global UV, `[[u_lo, u_hi], [v_lo, v_hi]]`.
+pub type UvRect = [[f64; 2]; 2];
+
+/// The rectangle of the UV point `(p[0], p[1])` alone.
+fn point_rect(p: &[f64]) -> UvRect {
+    [[p[0], p[0]], [p[1], p[1]]]
+}
+
+/// The rectangle of `seg` over `along` (local, along the segment), in
+/// global UV: per coordinate the tile index plus the local value, each
+/// rounded outwards by an ulp (a hint, not a certificate).
+fn seg_rect(seg: &Seg, along: [f64; 2]) -> UvRect {
+    let (k, o) = (fixed(seg.dir), 1 - fixed(seg.dir));
+    let at = |i: i64, t: f64| [(i as f64 + t).next_down(), (i as f64 + t).next_up()];
+    let mut r = [[0.0; 2]; 2];
+    let line = at(seg.tile[k], dy(seg.at));
+    r[k] = line;
+    r[o] = [at(seg.tile[o], along[0])[0], at(seg.tile[o], along[1])[1]];
+    r
+}
+
+/// The least rectangle holding `a` and `b`.
+fn hull(a: UvRect, b: UvRect) -> UvRect {
+    let lo = |x: f64, y: f64| if y < x { y } else { x };
+    let hi = |x: f64, y: f64| if y > x { y } else { x };
+    [0, 1].map(|k| [lo(a[k][0], b[k][0]), hi(a[k][1], b[k][1])])
+}
+
 /// The pieces of `c` over aligned dyadic cells, at most two, covering
 /// `[lo, hi] ⊆ [0, 1]`, as fine as two cells allow.
 fn sub_pieces<S: Scalar, const N: usize>(
@@ -628,9 +657,29 @@ struct Ctx<'f, 'p, 'r, S> {
     /// p-curve: no trim is moved off a line).
     slit: bool,
     pieces: u64,
+    /// Where the piece is unsettled, as far as known: a closed rectangle
+    /// of global UV ([`strip_degree_near`]).
+    near: Option<UvRect>,
 }
 
 impl<S: Scalar> Ctx<'_, '_, '_, S> {
+    /// [`PieceError::Unsettled`], noting `r` as (part of) where.
+    fn unsettled(&mut self, r: UvRect) -> PieceError {
+        self.near = Some(match self.near {
+            Some(o) => hull(o, r),
+            None => r,
+        });
+        PieceError::Unsettled
+    }
+
+    /// [`PieceError::Unsettled`], noting `r` where given.
+    fn unsettled_at(&mut self, r: Option<UvRect>) -> PieceError {
+        match r {
+            Some(r) => self.unsettled(r),
+            None => PieceError::Unsettled,
+        }
+    }
+
     fn patch(&self, tile: [i64; 2]) -> Result<&HomPatch<S>, PieceError> {
         self.face
             .patch_of(self.patches, tile)
@@ -675,11 +724,12 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             ]
         };
         let (elo, ehi) = (dy(seg.ext.lo()), dy(seg.ext.hi()));
+        let (slit, w) = (self.slit, self.w);
         let moved = |sp: &UvSpan| {
-            if self.slit {
+            if slit {
                 None
             } else {
-                on_line(sp, t.reversed, self.w)
+                on_line(sp, t.reversed, w)
             }
         };
         for (j, sp) in t.spans.iter().enumerate() {
@@ -703,14 +753,14 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     } else {
                         // The curve's start on the outer boundary: a
                         // corner piece's vertex must lie inside the run.
-                        return Err(PieceError::Unsettled);
+                        return Err(self.unsettled(point_rect(&sp[0])));
                     };
                     let pv = &t.spans[prev];
                     let before = leaves(pv, k, &line, false, moved(pv));
                     let after = leaves(sp, k, &line, true, push);
                     match (before, after) {
                         (Ordering::Equal, _) | (_, Ordering::Equal) => {
-                            return Err(PieceError::Unsettled);
+                            return Err(self.unsettled(point_rect(&sp[0])));
                         }
                         // Touching the line, or along it on both sides of
                         // the knot (moved off it alike): no crossing.
@@ -727,10 +777,10 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                                     .filter(|&(c, _)| c == o)
                                     .map(|(_, n)| n);
                                 let Some(n) = across.clone().next() else {
-                                    return Err(PieceError::Unsettled);
+                                    return Err(self.unsettled(point_rect(&sp[0])));
                                 };
                                 if across.clone().any(|x| x != n) {
-                                    return Err(PieceError::Unsettled);
+                                    return Err(self.unsettled(point_rect(&sp[0])));
                                 }
                                 let at = if a == alo { elo } else { ehi };
                                 ((a == alo) == (n > 0)).then_some([at, at])
@@ -758,7 +808,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             if j + 1 == n && !closed && fix[2] == line {
                 let a = rat(sp[2][o]);
                 if a >= alo && a <= ahi {
-                    return Err(PieceError::Unsettled);
+                    return Err(self.unsettled(point_rect(&sp[2])));
                 }
             }
             // Along the side's line: moved off it, the span crosses
@@ -780,7 +830,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     max_splits: CUT_SPLITS,
                 },
             )
-            .map_err(|_| PieceError::Unsettled)?;
+            .map_err(|_| self.unsettled(seg_rect(seg, [elo, ehi])))?;
             self.pieces = self.pieces.saturating_add(u64::from(roots.work.tests));
             for f in roots.found {
                 let (span, root) = match f {
@@ -802,7 +852,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     }
                     if e == alo || e == ahi {
                         let Some(dir) = root else {
-                            return Err(PieceError::Unsettled);
+                            return Err(self.unsettled(point_rect(&sp[0])));
                         };
                         // Moved to `n`'s side of the side's end `e`: on
                         // the side only where the side runs on from `e`
@@ -825,10 +875,11 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                         continue;
                     }
                 }
-                let place = |span: [f64; 2]| -> Result<[f64; 2], PieceError> {
+                let whole = seg_rect(seg, [elo, ehi]);
+                let place = |span: [f64; 2]| -> Result<[f64; 2], UvRect> {
                     let mut box_o = [f64::INFINITY, f64::NEG_INFINITY];
                     for piece in sub_pieces(&c, span) {
-                        let b = piece.control_box().ok_or(PieceError::Unsettled)?[o];
+                        let b = piece.control_box().ok_or(whole)?[o];
                         if b[0] < box_o[0] {
                             box_o[0] = b[0];
                         }
@@ -839,12 +890,12 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     Ok(local(box_o))
                 };
                 let mut span = span;
-                let mut p = place(span)?;
+                let mut p = place(span).map_err(|r| self.unsettled(r))?;
                 if p[1] < elo || p[0] > ehi {
                     continue;
                 }
                 let Some(dir) = root else {
-                    return Err(PieceError::Unsettled);
+                    return Err(self.unsettled(seg_rect(seg, p)));
                 };
                 // A root narrowed less than the side needs (its
                 // derivative's range too wide for Krawczyk's operator):
@@ -855,15 +906,17 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 while !(p[0] > elo && p[1] < ehi) {
                     let m = 0.5 * span[0] + 0.5 * span[1];
                     if halvings >= ROOT_HALVINGS || !(m > span[0] && m < span[1]) {
-                        return Err(PieceError::Unsettled);
+                        return Err(self.unsettled(seg_rect(seg, p)));
                     }
                     halvings += 1;
                     let past = match g.eval(&S::from_f64(m, &self.like)).sign() {
-                        Some(Ordering::Equal) | None => return Err(PieceError::Unsettled),
+                        Some(Ordering::Equal) | None => {
+                            return Err(self.unsettled(seg_rect(seg, p)));
+                        }
                         Some(x) => x == dir,
                     };
                     span = if past { [span[0], m] } else { [m, span[1]] };
-                    p = place(span)?;
+                    p = place(span).map_err(|r| self.unsettled(r))?;
                     if p[1] < elo || p[0] > ehi {
                         break;
                     }
@@ -1009,8 +1062,9 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 smallvec::smallvec![(prev, [1.0 - h, 1.0]), (hit.pspan, [0.0, h])]
             }
         };
+        let here = seg_rect(seg, hit.pos);
         let Some((r, c)) = self.ribbon_hull(hit.member, &pw)? else {
-            return Err(PieceError::Unsettled);
+            return Err(self.unsettled(here));
         };
         let (elo, ehi) = (seg.ext.lo(), seg.ext.hi());
         for d in 1..=WINDOW_DEPTH {
@@ -1041,7 +1095,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 return Ok(Window { a, b, side, c });
             }
         }
-        Err(PieceError::Unsettled)
+        Err(self.unsettled(here))
     }
 
     /// The turn of `seg` over `[x, y]` (local, along), its ends' sides
@@ -1063,8 +1117,9 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         let patch = self.patch(seg.tile)?;
         // Every side reads `TurnError::Off` on such a patch: no record
         // may stand in for it.
+        let here = seg_rect(seg, [dy(x), dy(y)]);
         if !patch.weights_positive() {
-            return Err(PieceError::Unsettled);
+            return Err(self.unsettled(here));
         }
         let edge = line_edge(self.of, seg.tile, seg.dir, seg.at);
         let mut n = 0u64;
@@ -1075,7 +1130,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         let laps = laps.map_err(|e| match e {
             RecTurnError::Need(k) => PieceError::Need(k),
             RecTurnError::Through => PieceError::Through,
-            RecTurnError::Unsettled => PieceError::Unsettled,
+            RecTurnError::Unsettled => self.unsettled(here),
         })?;
         Ok(if seg.back { -laps } else { laps })
     }
@@ -1211,6 +1266,44 @@ pub fn strip_degree<S: Scalar>(
     point: Point,
     sides: &Sides,
 ) -> Result<PieceDegree, PieceError> {
+    strip_degree_near(face, patches, boxes, ribbons, q, point, sides).0
+}
+
+/// [`strip_degree`], with, where the piece is [`PieceError::Unsettled`],
+/// where as far as known: a closed rectangle of global UV holding every
+/// cut, side stretch or curve end found unsettled before the piece gave
+/// up (`None`: anywhere in the run). A hint for the caller to refine the
+/// run's boxes there and leave the rest, not a certificate.
+pub fn strip_degree_near<S: Scalar>(
+    face: &FaceUv<'_>,
+    patches: &[HomPatch<S>],
+    boxes: &[BoxKey],
+    ribbons: &[Ribbon<'_>],
+    q: &QShadow,
+    point: Point,
+    sides: &Sides,
+) -> (Result<PieceDegree, PieceError>, Option<UvRect>) {
+    let mut near = None;
+    let r = piece_degree(face, patches, boxes, ribbons, q, point, sides, &mut near);
+    let near = if r == Err(PieceError::Unsettled) {
+        near
+    } else {
+        None
+    };
+    (r, near)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn piece_degree<S: Scalar>(
+    face: &FaceUv<'_>,
+    patches: &[HomPatch<S>],
+    boxes: &[BoxKey],
+    ribbons: &[Ribbon<'_>],
+    q: &QShadow,
+    point: Point,
+    sides: &Sides,
+    near: &mut Option<UvRect>,
+) -> Result<PieceDegree, PieceError> {
     if boxes.is_empty() {
         return Err(PieceError::Boxes);
     }
@@ -1284,7 +1377,25 @@ pub fn strip_degree<S: Scalar>(
         w,
         slit,
         pieces: 0,
+        near: None,
     };
+    let r = run_degree(&mut ctx, boxes);
+    *near = ctx.near;
+    r
+}
+
+/// The degree of the run `boxes` (module docs), its ribbons and
+/// trims those of `ctx`.
+fn run_degree<S: Scalar>(
+    ctx: &mut Ctx<'_, '_, '_, S>,
+    boxes: &[BoxKey],
+) -> Result<PieceDegree, PieceError> {
+    let (face, ribbons, w, slit) = (ctx.face, ctx.ribbons, ctx.w, ctx.slit);
+    let index: SmallVec<[usize; 2]> = ctx
+        .trims
+        .iter()
+        .map(|t| face.trim_index(t.coedge).expect("a trim of the face"))
+        .collect();
     let segs = outer(boxes)?;
     let loops = loops(&segs)?;
 
@@ -1300,7 +1411,7 @@ pub fn strip_degree<S: Scalar>(
         let m = index.iter().position(|&j| j == i);
         for (k, (v, bits, p)) in coedge_ends(t).into_iter().enumerate() {
             match place(boxes, &segs, p) {
-                None => return Err(PieceError::Unsettled),
+                None => return Err(ctx.unsettled(point_rect(&p))),
                 Some(false) => continue,
                 Some(true) => (),
             }
@@ -1352,7 +1463,11 @@ pub fn strip_degree<S: Scalar>(
                     hits[p[0]].pos[1] >= hits[p[1]].pos[0] && hits[p[1]].pos[1] >= hits[p[0]].pos[0]
                 })
             {
-                return Err(PieceError::Unsettled);
+                let r = on
+                    .iter()
+                    .map(|&k| seg_rect(&segs[s], hits[k].pos))
+                    .reduce(hull);
+                return Err(ctx.unsettled_at(r));
             }
             order.push((s, on));
         }
@@ -1384,7 +1499,7 @@ pub fn strip_degree<S: Scalar>(
                 }
                 if single {
                     if inside_after(h) == m {
-                        return Err(PieceError::Unsettled);
+                        return Err(ctx.unsettled(seg_rect(&seg, h.pos)));
                     }
                     m = inside_after(h);
                 }
@@ -1415,11 +1530,16 @@ pub fn strip_degree<S: Scalar>(
                 .partial_cmp(&(b.pspan, b.t[0]))
                 .expect("finite")
         });
+        // Where this ribbon's cuts are, for the failures below.
+        let at = mine
+            .iter()
+            .map(|h| seg_rect(&segs[h.seg], h.pos))
+            .reduce(hull);
         if mine
             .windows(2)
             .any(|p| p[0].pspan == p[1].pspan && p[0].t[1] >= p[1].t[0])
         {
-            return Err(PieceError::Unsettled);
+            return Err(ctx.unsettled_at(at));
         }
         if t.reversed {
             mine.reverse();
@@ -1432,9 +1552,12 @@ pub fn strip_degree<S: Scalar>(
                 // vertex on the outer boundary (touching it uncut) says
                 // neither.
                 match place(boxes, &segs, coedge_ends(t)[0].2) {
-                    Some(true) => count = count_between(r.rays, None, None, false)?,
+                    Some(true) => {
+                        count = count_between(r.rays, None, None, false)
+                            .map_err(|_| ctx.unsettled_at(at))?;
+                    }
                     Some(false) => (),
-                    None => return Err(PieceError::Unsettled),
+                    None => return Err(ctx.unsettled(point_rect(&coedge_ends(t)[0].2))),
                 }
             } else {
                 if !entry(mine[0]) {
@@ -1446,7 +1569,7 @@ pub fn strip_degree<S: Scalar>(
                         .enumerate()
                         .any(|(k, h)| entry(h) != (k % 2 == 0))
                 {
-                    return Err(PieceError::Unsettled);
+                    return Err(ctx.unsettled_at(at));
                 }
                 for pair in mine.chunks(2) {
                     let (e, x) = (win(pair[0]).c, win(pair[1]).c);
@@ -1454,9 +1577,10 @@ pub fn strip_degree<S: Scalar>(
                     let (lo, hi) = if t.reversed { (x, e) } else { (e, x) };
                     // The windows apart along the edge.
                     if !(lo[1] < hi[0] || hi[1] < lo[0]) {
-                        return Err(PieceError::Unsettled);
+                        return Err(ctx.unsettled_at(at));
                     }
-                    count += count_between(r.rays, Some(lo), Some(hi), hi[0] < lo[0])?;
+                    count += count_between(r.rays, Some(lo), Some(hi), hi[0] < lo[0])
+                        .map_err(|_| ctx.unsettled_at(at))?;
                 }
             }
         } else {
@@ -1470,7 +1594,7 @@ pub fn strip_degree<S: Scalar>(
             }
             for (k, h) in mine.iter().enumerate() {
                 if entry(h) != ((k + usize::from(start_in)).is_multiple_of(2)) {
-                    return Err(PieceError::Unsettled);
+                    return Err(ctx.unsettled_at(at));
                 }
                 marks.push(Some(win(h).c));
             }
@@ -1478,7 +1602,7 @@ pub fn strip_degree<S: Scalar>(
                 marks.push(None);
             }
             if !marks.len().is_multiple_of(2) {
-                return Err(PieceError::Unsettled);
+                return Err(ctx.unsettled_at(at));
             }
             for pair in marks.chunks(2) {
                 let (e, x) = (pair[0], pair[1]);
@@ -1486,9 +1610,9 @@ pub fn strip_degree<S: Scalar>(
                 if let (Some(lo), Some(hi)) = (lo, hi)
                     && lo[1] >= hi[0]
                 {
-                    return Err(PieceError::Unsettled);
+                    return Err(ctx.unsettled_at(at));
                 }
-                count += count_between(r.rays, lo, hi, false)?;
+                count += count_between(r.rays, lo, hi, false).map_err(|_| ctx.unsettled_at(at))?;
             }
         }
         ribbon += if t.reversed { -count } else { count };

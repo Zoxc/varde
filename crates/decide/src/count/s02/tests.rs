@@ -494,19 +494,16 @@ fn a_straight_edge_s_ray_record_as_a_chain() {
 // ---------------------------------------------------------------------
 // A small face on a plane's one huge tile.
 
-/// A square face `1/8` wide trimmed from a plane tile `4·10⁶` wide (a
-/// plane lattice's base cell), tilted to `UP` along both its directions,
-/// and points `10⁻⁵` in front of and behind it: the counts settle at the
-/// first level and are the plane's crossings by the column. Its boxes
-/// take about 25 halvings in each direction, past what a cap on a box's
-/// splits in both directions together would allow.
-#[test]
-fn a_small_face_on_a_huge_tile_settles() {
-    const HALF: f64 = 2_097_152.0;
-    let a3 = (R_HAT.normalize() + UP.normalize()).normalize();
-    let b3 = (NU.normalize() + UP.normalize()).normalize();
-    let b3 = (b3 - a3 * a3.dot(b3)).normalize();
-    let n = a3.cross(b3).normalize();
+/// Half a plane tile's width: the tile is `4·10⁶` wide (a plane
+/// lattice's base cell).
+const HALF: f64 = 2_097_152.0;
+
+/// A square face `1/8` wide trimmed from a plane tile `4·10⁶` wide, its
+/// plane spanned by `a3` and `b3` (unit, orthogonal) through the
+/// origin, the tile's middle, its corners at `a3·s + b3·t` for
+/// `s ∈ c[0] + {0, 1/8}`, `t ∈ c[1] + {0, 1/8}`, edges `1/8` long with
+/// bands `band`, its corners' positions and edges in `order`.
+fn huge_tile_square(c: [f64; 2], a3: DVec3, b3: DVec3, band: f64, order: &mut Order) -> FaceData {
     let mut net = Vec::new();
     for i in 0..3 {
         for j in 0..3 {
@@ -517,9 +514,9 @@ fn a_small_face_on_a_huge_tile_settles() {
     }
     let patch = Patch::from_affine(2, 2, net, &first()).unwrap();
     let uv = |s: f64, t: f64| [(s + HALF) / (2.0 * HALF), (t + HALF) / (2.0 * HALF)];
-    let corners = [[0.0, 0.0], [0.125, 0.0], [0.125, 0.125], [0.0, 0.125]];
+    let corners =
+        [[0.0, 0.0], [0.125, 0.0], [0.125, 0.125], [0.0, 0.125]].map(|[s, t]| [c[0] + s, c[1] + t]);
     let pos = |c: [f64; 2]| (a3 * c[0] + b3 * c[1]).to_array();
-    let band = 1e-6;
     let trims = (0..4)
         .map(|k| {
             let (p, q) = (k, (k + 1) % 4);
@@ -547,7 +544,6 @@ fn a_small_face_on_a_huge_tile_settles() {
         flipped: false,
         trims,
     };
-    let mut order = Order::default();
     for (k, c) in corners.iter().enumerate() {
         order
             .pos
@@ -556,19 +552,184 @@ fn a_small_face_on_a_huge_tile_settles() {
     for t in &f.trims {
         order.edges.insert((Operand::B, t.edge), t.ends);
     }
+    f
+}
+
+/// A planar face of `B` with straight edges (`n·x = c`, `n` its
+/// outward normal) and a vertex of `A` at `q`, for the records the
+/// vertex's count reads: its feet on the edges (its near radius and the
+/// edges' `3·band`), its point–vertex records and its layers' heights.
+struct Planar<'a> {
+    order: &'a Order,
+    plane: (DVec3, f64),
+    q: [f64; 3],
+    band: f64,
+}
+
+impl Planar<'_> {
+    fn end(&self, g: EdgeId, k: usize) -> DVec3 {
+        let v = self.order.edges[&(Operand::B, g)][k];
+        DVec3::from_array(self.order.pos[&(Operand::B, v)])
+    }
+}
+
+impl crate::records::shadow::ShadowGeometry for Planar<'_> {
+    fn point(&self, p: Point) -> crate::perturb::Moving {
+        match (p.operand, p.q) {
+            (Operand::A, _) => {
+                crate::perturb::Moving::of_a(DVec3::from_array(self.q), Sign::Pos, R_HAT)
+            }
+            (Operand::B, Query::Vert(w)) => {
+                crate::perturb::Moving::fixed(DVec3::from_array(self.order.pos[&(Operand::B, w)]))
+            }
+            _ => panic!("no such point {p:?}"),
+        }
+    }
+
+    fn near_radius(&self, _: Point) -> f64 {
+        3.0 * self.band
+    }
+
+    fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
+        self.order.edges[&(operand, g)]
+    }
+
+    fn line(&self, _: Point, g: EdgeId) -> crate::perturb::Seg {
+        crate::perturb::Seg::fixed(self.end(g, 0), self.end(g, 1))
+    }
+}
+
+impl crate::records::feet::FeetGeometry for Planar<'_> {
+    fn curve(&self, _: Operand, g: EdgeId) -> crate::records::feet::EdgeCurve<'_> {
+        crate::records::feet::EdgeCurve::Line([self.end(g, 0), self.end(g, 1)])
+    }
+
+    fn near_radius_of(&self, _: Operand, _: EdgeId) -> f64 {
+        3.0 * self.band
+    }
+}
+
+impl crate::records::height::model::HeightModel for Planar<'_> {
+    fn plane(&self, _: Operand, _: FaceId) -> Option<(DVec3, f64)> {
+        Some(self.plane)
+    }
+
+    fn plane_rates(
+        &self,
+        _: Point,
+        _: FaceId,
+        _: DVec3,
+    ) -> [crate::perturb::Rate; crate::num::exact::ORDERS] {
+        [crate::perturb::Rate::ZERO; crate::num::exact::ORDERS]
+    }
+
+    fn foot_point(
+        &self,
+        _: Point,
+        g: EdgeId,
+        _: crate::records::keys::FootId,
+    ) -> Option<crate::perturb::Moving> {
+        // The edge's point nearest `q` (each edge has one foot).
+        let (a, b) = (self.end(g, 0), self.end(g, 1));
+        let t =
+            ((DVec3::from_array(self.q) - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+        Some(crate::perturb::Moving::fixed(a + (b - a) * t))
+    }
+
+    fn curved_target<S: crate::perturb::Curved>(
+        &self,
+        _: crate::records::keys::HKey,
+        _: &S,
+    ) -> Option<[S; 3]> {
+        None
+    }
+
+    fn face_at<S: crate::perturb::Curved>(
+        &self,
+        _: Point,
+        _: FaceId,
+        _: &[S; 3],
+        _: &S,
+    ) -> Option<crate::records::height::model::FaceAt<S>> {
+        None
+    }
+}
+
+/// The count of `f` (on the plane `n·x = c`, `n` its outward normal,
+/// its edges straight with bands `band`) against a vertex of `A` at `q`,
+/// which must settle (at the first level unless `ladder`, else at any),
+/// with the records it reads.
+fn huge_tile_count(
+    f: &FaceData,
+    order: &Order,
+    plane: (DVec3, f64),
+    q: [f64; 3],
+    band: f64,
+    ladder: bool,
+) -> i64 {
     let point = Point::vert(Operand::A, VertId(7));
-    let (sh, ft, o) = no_reads(&order);
+    let geom = Planar {
+        order,
+        plane,
+        q,
+        band,
+    };
+    let mut feet = NearFeet::new();
+    let keys = f.trims.iter().map(|t| crate::records::keys::RayKey {
+        q: point,
+        g: t.edge,
+    });
+    feet.fill(keys, &geom, &mut Seq).expect("feet");
+    let mut sh = Shadows::new();
+    let vv = order
+        .pos
+        .keys()
+        .map(|&(_, w)| crate::records::keys::VvKey::of(point, w).key);
+    sh.fill_vv(vv, &geom, &mut Seq)
+        .expect("point-vertex records");
     let reads = Records {
         shadows: &sh,
-        feet: &ft,
-        order: o,
+        feet: &feet,
+        order,
     };
+    let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
+    let sides = Sides::new();
+    let p = if ladder {
+        f.query(order, point, q, &rays, &|fq, _| {
+            count_pieces(fq, &sides, &reads, &Charge::new(u64::MAX)).0
+        })
+    } else {
+        f.pieces(order, point, q, &rays, &reads, &sides)
+    };
+    let p = p.unwrap_or_else(|e| panic!("q = {q:?}: {e:?}"));
+    let mut layers = LayerTable::new();
+    layers.insert(point, f.id, p.layers(&reads).expect("layers"));
+    let wanted = p.wanted(&reads, &layers).expect("keys");
+    let mut heights = Heights::new();
+    let model = crate::records::height::model::ModelHeights { model: &geom };
+    let band = crate::num::decide::Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
+    heights
+        .fill(wanted, &model, band, &mut Seq)
+        .expect("heights");
+    p.count(&reads, &layers, &heights).expect("records filled")
+}
+
+/// A square face `1/8` wide trimmed from a plane tile `4·10⁶` wide (a
+/// plane lattice's base cell), tilted to `UP` along both its directions,
+/// and points `10⁻⁵` in front of and behind it: the counts settle at the
+/// first level and are the plane's crossings by the column. Its boxes
+/// take about 25 halvings in each direction, past what a cap on a box's
+/// splits in both directions together would allow.
+#[test]
+fn a_small_face_on_a_huge_tile_settles() {
+    let a3 = (R_HAT.normalize() + UP.normalize()).normalize();
+    let b3 = (NU.normalize() + UP.normalize()).normalize();
+    let b3 = (b3 - a3 * a3.dot(b3)).normalize();
+    let n = a3.cross(b3).normalize();
+    let mut order = Order::default();
+    let f = huge_tile_square([0.0, 0.0], a3, b3, 1e-6, &mut order);
     for side in [1.0, -1.0] {
         let q = (a3 * 0.0625 + b3 * 0.0625 + n * (1e-5 * side)).to_array();
-        let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
-        let p = f
-            .pieces(&order, point, q, &rays, &reads, &Sides::new())
-            .expect("settled");
         // The column meets the plane above `q` on the side the normal
         // faces down from, where the face faces `sign(n·UP)`.
         let up = n.dot(UP);
@@ -577,9 +738,151 @@ fn a_small_face_on_a_huge_tile_settles() {
         } else {
             0
         };
-        let got = p
-            .count(&reads, &LayerTable::new(), &Heights::new())
-            .expect("no record read");
-        assert_eq!(got, want, "side {side}");
+        assert_eq!(
+            huge_tile_count(&f, &order, (n, 0.0), q, 1e-6, false),
+            want,
+            "side {side}"
+        );
+    }
+}
+
+/// Columns passing `10⁻⁸` inside and outside an edge of a small face on a
+/// huge plane tile, along the edge and next to its ends, a hair to a few
+/// hundredths below and above the face, on planes from steep (`UP` in
+/// the plane: the face's shadow a line) to flat: the strip runs round
+/// the column, whose cuts lie within `10⁻⁸` of it, settle (a level up
+/// where the `f64` hulls of so small a part of so large a tile can't
+/// tell `10⁻⁸`) and count the plane's crossing. The splits there must not use
+/// up the boxes' depth: a split shifted off the query by `⅛` or `1/16`
+/// of a box that isn't aligned to its dyadic grid would add three or four
+/// bits of depth for a halving, and a box `20` splits down would be as
+/// deep as boxes go while still millimetres long.
+#[test]
+fn runs_with_cuts_next_to_the_column_settle_on_a_huge_tile() {
+    let up = UP.normalize();
+    let mut rng = varde_testkit::rng::Rng::new(0x1d71);
+    // Planes along `UP` tilted by `tilt` (`a3` across `UP`), then planes
+    // along `z` (about `0.11` from `UP`) through the horizontal `across`.
+    let planes = [0.0, 1e-3, 0.3, 1.0, 4.0]
+        .map(|tilt| (tilt, None))
+        .into_iter()
+        .chain([[3.0, 4.0], [-1.0, 5.0], [7.0, -2.0]].map(|xy| (f64::NAN, Some(xy))));
+    for (tilt, across) in planes {
+        let (a3, b3) = match across {
+            None => {
+                let a3 = R_HAT.cross(UP).normalize();
+                let side = a3.cross(up).normalize();
+                (a3, (up + side * tilt).normalize())
+            }
+            Some([x, y]) => (DVec3::new(x, y, 0.0).normalize(), DVec3::Z),
+        };
+        let n = a3.cross(b3).normalize();
+        // The corners off the tile's middle, so none lies on a box's side
+        // (`V1` would be on the tile's first split).
+        let c = [0.0371, 0.0529];
+        let mut order = Order::default();
+        let f = huge_tile_square(c, a3, b3, 1e-6, &mut order);
+        let facing = n.dot(UP);
+        for _ in 0..varde_testing::pick(12, 48) {
+            // On an edge, along it or next to an end, `10⁻⁸` inside the
+            // face or outside: `(s, t)` from the corner `V1`, the edge
+            // `t = 0`, turned by quarters about the square's middle.
+            let along = match rng.next_u64() % 3 {
+                0 => rng.range(0.01, 0.115),
+                1 => rng.range(1e-7, 1e-5),
+                _ => 0.125 - rng.range(1e-7, 1e-5),
+            };
+            let inside = rng.next_u64().is_multiple_of(2);
+            let d = if inside { 1e-8 } else { -1e-8 };
+            let [s, t] = match rng.next_u64() % 4 {
+                0 => [along, d],
+                1 => [0.125 - d, along],
+                2 => [0.125 - along, 0.125 - d],
+                _ => [d, 0.125 - along],
+            };
+            let hit = a3 * (c[0] + s) + b3 * (c[1] + t);
+            // Along the column: `q` below the hit (`z < 0`: the plane above
+            // `q`) or above it.
+            let z = [-2.0, -3e-2, -1e-5, 1e-5, 3e-2, 2.0][(rng.next_u64() % 6) as usize];
+            let (q, want) = if tilt == 0.0 {
+                // A plane along `UP`: the column `10⁻⁸` off it crosses
+                // nothing.
+                let off = if rng.next_u64().is_multiple_of(2) {
+                    1e-8
+                } else {
+                    -1e-8
+                };
+                (hit + up * z + n * off, 0)
+            } else if inside && z < 0.0 {
+                (hit + up * z, facing.signum() as i64)
+            } else {
+                (hit + up * z, 0)
+            };
+            let q = q.to_array();
+            assert_eq!(
+                huge_tile_count(&f, &order, (n, 0.0), q, 1e-6, true),
+                want,
+                "tilt {tilt}, across {across:?}, (s, t) ({s}, {t}), inside {inside}, z {z}"
+            );
+        }
+    }
+}
+
+/// A column `1.5·10⁻⁶` above and below a steep plane (`UP` tilted by
+/// `0.3` into it), meeting it `10⁻⁸` inside an edge of a small face on
+/// a huge tile and `2.7·10⁻⁶` from a corner, within the near radius of
+/// both: the strip's boxes holding the crossing are height-clear (below
+/// the upper point, above the lower one) next to near ones whose cut no
+/// window settles. Their degree is the crossing's, so it must count by
+/// their own height, not by the near layer's, which the corner's vertex
+/// names (above the upper point while the plane is below it).
+#[test]
+fn clear_boxes_holding_the_crossing_next_to_a_near_run_count_by_their_height() {
+    let up = UP.normalize();
+    let a3 = R_HAT.cross(UP).normalize();
+    let b3 = (up + a3.cross(up).normalize() * 0.3).normalize();
+    let n = a3.cross(b3).normalize();
+    let c = [0.0371, 0.0529];
+    let mut order = Order::default();
+    let f = huge_tile_square(c, a3, b3, 1e-6, &mut order);
+    let hit = a3 * (c[0] + 0.125 - 1e-8) + b3 * (c[1] + 0.12499728797435371);
+    // Below the plane the column crosses it, facing down.
+    let facing = n.dot(UP).signum() as i64;
+    for (z, want) in [(1.5e-6, 0), (-1.5e-6, facing)] {
+        let q = (hit + up * z).to_array();
+        assert_eq!(
+            huge_tile_count(&f, &order, (n, 0.0), q, 1e-6, true),
+            want,
+            "z {z}"
+        );
+    }
+}
+
+/// Columns `1.1·10⁻⁶` above a plane at 45° to `UP` (inside its near
+/// radius), meeting it `10⁻⁸` inside either side edge of a small face on
+/// a huge tile: the near strip's cut walks past one dropped box at a
+/// time, each join a round of its own. Rounds that only join refine
+/// nothing and don't count against [`MAX_ROUNDS`], so the count settles
+/// (the column misses the plane above `q`).
+#[test]
+fn joining_dropped_boxes_one_by_one_settles() {
+    let up = UP.normalize();
+    let a3 = R_HAT.cross(UP).normalize();
+    let b3 = (up + a3.cross(up).normalize()).normalize();
+    let n = a3.cross(b3).normalize();
+    let c = [0.0371, 0.0529];
+    let mut order = Order::default();
+    let f = huge_tile_square(c, a3, b3, 1e-6, &mut order);
+    for [s, t] in [
+        [0.125 - 1e-8, 0.08369934805544053],
+        [1e-8, 0.0781092637202587],
+    ] {
+        let hit = a3 * (c[0] + s) + b3 * (c[1] + t);
+        let q = (hit + up * 1.1e-6).to_array();
+        assert_eq!(
+            huge_tile_count(&f, &order, (n, 0.0), q, 1e-6, true),
+            0,
+            "(s, t) ({s}, {t})"
+        );
     }
 }

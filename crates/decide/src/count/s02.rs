@@ -13,14 +13,36 @@
 //! their (padded) hull certified above or below `q` along `UP`, or small:
 //! a strip or corner box within its curves' least band across, a core box
 //! within `ε_tie` ([`FaceQuery::eps_tie`]). A core leaf is a piece of its
-//! own, its degree its box's ([`box_degree_sided`]). The strip and corner
+//! own, its degree its box's ([`box_degree_sided`]); where the level
+//! doesn't certify that (a side inside a tile not certified off `q_xy`,
+//! too long for its turn or through it), it refines. The strip and corner
 //! leaves form **runs**: the leaves of one strip (one coedge, or a slit's)
 //! or one corner, of one height class (above, below, near), joined where
 //! they share a side; each run with its curves' ribbons is a piece
-//! ([`strip_degree`]), a corner's run with every coedge of the corner. A
-//! run the level can't settle (a cut at a box corner or next to the ray,
-//! a run the curve doesn't cut) refines its boxes and is built again; a
-//! run passing a point twice is taken box by box.
+//! ([`strip_degree`](super::pieces::strip_degree)), a corner's run with
+//! every coedge of the corner. A run passing a point twice is taken box
+//! by box.
+//!
+//! **Refining runs.** A run the level can't settle (a cut at a box corner
+//! or next to the ray, a run the curve doesn't cut, an outer side inside
+//! a tile not certified off `q_xy`) refines its boxes where it is
+//! unsettled, those meeting the place its piece names (a cut's window, a
+//! side's stretch, a curve's end: [`strip_degree_near`]), or all of them
+//! where the piece names none, and the runs are built again. So a long
+//! run refines next to its cut, not along its length.
+//!
+//! **Runs near `q`.** A cut between a near run and dropped leaves of its
+//! owner next to it that no window certifies off the ray stays there
+//! however the boxes refine: a dropped box's parts are dropped, and the
+//! near run's boxes are within their size already. So the dropped leaves
+//! there join the near run (their degree, ribbons included, is 0), and
+//! its cut moves past them, away from `q`. A joined leaf is near; it
+//! doesn't name the layer: the piece's features, key and touching are
+//! its other leaves'. A height-clear leaf never joins: it may hold the
+//! column's crossing, whose degree counts by the leaf's height, and the
+//! record naming a near layer (a vertex, a foot) can lie on the other
+//! side of `q` from it (a steep face); a cut next to one refines as any
+//! other.
 //!
 //! **Around a vertex.** A corner's vertex lying on a box side (on a tile
 //! line, or a dyadic line the splits couldn't move) is on the outer
@@ -89,7 +111,7 @@ use super::boxes::{
     sub_patch, within_band,
 };
 use super::degree::{SidedError, box_degree_sided};
-use super::pieces::{PieceError, Ribbon, strip_degree};
+use super::pieces::{PieceError, Ribbon, UvRect, strip_degree_near};
 use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::{Bounded, add_up, mul_up, up};
@@ -114,7 +136,8 @@ use crate::records::height::HeightRec;
 /// The most leaves one face's count keeps.
 pub const MAX_LEAVES: usize = 1 << 16;
 
-/// The most times the runs are built again after refining some.
+/// The most times the runs are built again after refining some (not
+/// counting the times after only joining some to a near run).
 pub const MAX_ROUNDS: u32 = 64;
 
 /// What a count may spend (module docs): `share` units, a piece tested
@@ -208,11 +231,9 @@ pub enum CountError {
     Piece(PieceError),
     /// A trim of the face has no [`TrimEdge`].
     Edge { coedge: CoedgeId },
-    /// A box side inside a tile isn't certified off `q_xy` and no split
-    /// moves it: no record counts it.
-    Through,
     /// The level doesn't settle a piece down to the deepest boxes
-    /// ([`MAX_SUBDIV_DEPTH`]): escalate.
+    /// ([`MAX_SUBDIV_DEPTH`]), a box side inside a tile not certified
+    /// off `q_xy` included (no record counts such a side): escalate.
     Unsettled,
     /// The count ran out (module docs), keyed by its point and face.
     OutOfBudget {
@@ -262,6 +283,9 @@ struct Leaf {
     height: Option<Height>,
     /// Within its stopping size.
     small: bool,
+    /// Taken into the near run next to it across a cut the level doesn't
+    /// settle (module docs, "Runs near `q`"): near whatever its height.
+    joined: bool,
     met: SmallVec<[SpanRef; 8]>,
     /// The splits from its tile, in `u` and in `v`.
     splits: [u32; 2],
@@ -584,6 +608,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                         owner,
                         height: None,
                         small: false,
+                        joined: false,
                         met: r.met,
                         splits,
                     });
@@ -611,6 +636,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                     owner,
                     height: Some(h.unwrap_or(Height::Near)),
                     small,
+                    joined: false,
                     met: r.met,
                     splits,
                 });
@@ -932,24 +958,39 @@ fn rounds<S: Scalar, R: HeightReads>(
         ctx.refine(b, None, [0, 0], &mut leaves)?;
     }
 
-    let mut cache: BTreeMap<(Owner, Vec<BoxKey>), Result<i64, PieceError>> = BTreeMap::new();
-    for _ in 0..MAX_ROUNDS {
+    let mut cache = Cache::new();
+    // Only rounds that refine count: a round that only joins leaves
+    // takes each into the near run once (a joined leaf joins no more),
+    // so such rounds are fewer than the leaves.
+    let mut refined = 0;
+    while refined < MAX_ROUNDS {
         leaves.sort_by_key(|l| l.b);
         match round(ctx, &mut leaves, &mut cache)? {
-            Some(out) => return Ok(out),
-            None => continue,
+            Round::Settled(out) => return Ok(out),
+            Round::Refined => refined += 1,
+            Round::Joined => (),
         }
     }
     Err(ctx.out(Exhausted::SizeLimit))
 }
 
-/// One round over the leaves: the pieces, or `None` where some leaves
-/// were refined and the runs must be built again.
+/// How a round ended.
+enum Round {
+    /// The pieces.
+    Settled(FacePieces),
+    /// Some leaves were refined: the runs are built again.
+    Refined,
+    /// Some leaves joined a near run, none refined: the runs are built
+    /// again.
+    Joined,
+}
+
+/// One round over the leaves (module docs).
 fn round<S: Scalar, R: HeightReads>(
     ctx: &mut Ctx<'_, '_, '_, S, R>,
     leaves: &mut Vec<Leaf>,
-    cache: &mut BTreeMap<(Owner, Vec<BoxKey>), Result<i64, PieceError>>,
-) -> Result<Option<FacePieces>, CountError> {
+    cache: &mut Cache,
+) -> Result<Round, CountError> {
     let fq = ctx.fq;
     let rects: Vec<_> = leaves.iter().map(|l| rect(&l.b)).collect();
 
@@ -994,7 +1035,7 @@ fn round<S: Scalar, R: HeightReads>(
     }
     if !refine.is_empty() {
         ctx.resplit(leaves, &refine)?;
-        return Ok(None);
+        return Ok(Round::Refined);
     }
 
     let mut out = FacePieces {
@@ -1012,20 +1053,24 @@ fn round<S: Scalar, R: HeightReads>(
         Height::Near => out.near.push(near.expect("a near piece")),
     };
 
-    // Core leaves, each a piece.
-    for l in leaves.iter() {
+    // Core leaves, each a piece; one whose degree the level doesn't
+    // certify (a side inside a tile not certified off `q_xy`, or too long
+    // for its turn, a corner next to the ray) refines, as any piece does,
+    // until the caps escalate.
+    for (k, l) in leaves.iter().enumerate() {
         let (Owner::Core, Some(h)) = (&l.owner, l.height) else {
             continue;
         };
         let patch = ctx.patch(&l.b)?;
-        let d = box_degree_sided(fq.face, &l.b, patch, &ctx.q, fq.point, ctx.sides).map_err(
-            |e| match e {
-                SidedError::Box(e) => CountError::Box(e),
-                SidedError::Need(k) => CountError::Need(k),
-                SidedError::Through(_) => CountError::Through,
-                SidedError::Unsettled => CountError::Unsettled,
-            },
-        )?;
+        let d = match box_degree_sided(fq.face, &l.b, patch, &ctx.q, fq.point, ctx.sides) {
+            Ok(d) => d,
+            Err(SidedError::Through(_) | SidedError::Unsettled) => {
+                refine.push(k);
+                continue;
+            }
+            Err(SidedError::Box(e)) => return Err(CountError::Box(e)),
+            Err(SidedError::Need(k)) => return Err(CountError::Need(k)),
+        };
         ctx.charge(d.pieces)?;
         let near = (h == Height::Near).then(|| NearPiece {
             degree: d.degree,
@@ -1037,49 +1082,70 @@ fn round<S: Scalar, R: HeightReads>(
     }
 
     // Runs: leaves of one owner and class, joined along shared sides.
+    let class: Vec<Option<Height>> = (0..leaves.len())
+        .map(|k| match forced.get(&k) {
+            Some(c) => *c,
+            None if leaves[k].joined => Some(Height::Near),
+            None => leaves[k].height,
+        })
+        .collect();
     let mut groups: BTreeMap<(Owner, Height), Vec<usize>> = BTreeMap::new();
     for (k, l) in leaves.iter().enumerate() {
         if l.owner == Owner::Core {
             continue;
         }
-        let h = match forced.get(&k) {
-            Some(c) => *c,
-            None => l.height,
-        };
-        if let Some(h) = h {
+        if let Some(h) = class[k] {
             groups.entry((l.owner.clone(), h)).or_default().push(k);
         }
     }
+    // The runs left unsettled, with where.
+    let mut failed: Vec<(Owner, Vec<usize>, Option<UvRect>)> = Vec::new();
     for ((owner, h), ks) in groups {
         let parts = components(ks.len(), |i, j| share_side(&rects[ks[i]], &rects[ks[j]]));
         for part in parts {
             let idx: Vec<usize> = part.iter().map(|&i| ks[i]).collect();
             let runs: Vec<Vec<usize>> = match run_degree(ctx, &owner, leaves, &idx, cache)? {
-                Ok(_) => vec![idx.clone()],
-                Err(PieceError::Pinch) => idx.iter().map(|&k| vec![k]).collect(),
-                Err(PieceError::Unsettled) => {
-                    refine.extend(idx.iter().copied());
+                (Ok(_), _) => vec![idx.clone()],
+                (Err(PieceError::Pinch), _) => idx.iter().map(|&k| vec![k]).collect(),
+                (Err(PieceError::Unsettled), near) => {
+                    failed.push((owner.clone(), idx, near));
                     continue;
                 }
-                Err(PieceError::Need(k)) => return Err(CountError::Need(k)),
-                Err(PieceError::Through) => return Err(CountError::Through),
-                Err(PieceError::Box(e)) => return Err(CountError::Box(e)),
-                Err(e) => return Err(CountError::Piece(e)),
+                // An outer side inside a tile not certified off `q_xy`:
+                // the run refines, as a core leaf does.
+                (Err(PieceError::Through), _) => {
+                    failed.push((owner.clone(), idx, None));
+                    continue;
+                }
+                (Err(e), _) => return Err(piece_error(e)),
             };
             for run in runs {
                 let d = match run_degree(ctx, &owner, leaves, &run, cache)? {
-                    Ok(d) => d,
-                    Err(PieceError::Unsettled | PieceError::Pinch) => {
+                    (Ok(d), _) => d,
+                    (Err(PieceError::Unsettled), near) => {
+                        failed.push((owner.clone(), run, near));
+                        continue;
+                    }
+                    (Err(PieceError::Through), _) => {
+                        failed.push((owner.clone(), run, None));
+                        continue;
+                    }
+                    (Err(PieceError::Pinch), _) => {
                         refine.extend(run.iter().copied());
                         continue;
                     }
-                    Err(PieceError::Need(k)) => return Err(CountError::Need(k)),
-                    Err(PieceError::Through) => return Err(CountError::Through),
-                    Err(PieceError::Box(e)) => return Err(CountError::Box(e)),
-                    Err(e) => return Err(CountError::Piece(e)),
+                    (Err(e), _) => return Err(piece_error(e)),
                 };
                 let near = if h == Height::Near {
-                    let ls: Vec<&Leaf> = run.iter().map(|&k| &leaves[k]).collect();
+                    // A joined leaf moves the run's cut, it doesn't name
+                    // the layer: the features, the key and the touching
+                    // are the run's own leaves' (so a layer's feature
+                    // doesn't depend on whether a cut was moved), the
+                    // joined ones' only in a run of nothing else.
+                    let own: Vec<usize> =
+                        run.iter().copied().filter(|&k| !leaves[k].joined).collect();
+                    let named = if own.is_empty() { &run } else { &own };
+                    let ls: Vec<&Leaf> = named.iter().map(|&k| &leaves[k]).collect();
                     let mut features = ctx.feet(&owner, &ls)?;
                     if let Owner::Corner(v) = owner
                         && run.iter().any(|k| forced.contains_key(k))
@@ -1089,12 +1155,13 @@ fn round<S: Scalar, R: HeightReads>(
                             features.push(Feature::Vert(w));
                         }
                     }
-                    let patch = ctx.patch(&leaves[run[0]].b)?;
+                    let first = &leaves[named[0]].b;
+                    let patch = ctx.patch(first)?;
                     Some(NearPiece {
                         degree: d,
                         features,
-                        core: core_key(patch, &leaves[run[0]].b),
-                        boxes: run.iter().map(|&k| leaves[k].b).collect(),
+                        core: core_key(patch, first),
+                        boxes: named.iter().map(|&k| leaves[k].b).collect(),
                     })
                 } else {
                     None
@@ -1103,9 +1170,50 @@ fn round<S: Scalar, R: HeightReads>(
             }
         }
     }
+    // An unsettled cut between a near run and dropped leaves of the same
+    // owner: those join the near run (module docs, "Runs near `q`"); any
+    // other unsettled run refines there, but for the leaves joining.
+    let mut join: Vec<usize> = Vec::new();
+    let mut elsewhere: Vec<usize> = Vec::new();
+    for (owner, run, near) in failed {
+        let Some(r) = near else {
+            elsewhere.extend(run);
+            continue;
+        };
+        let rq = r.map(|c| c.map(|x| Rational::try_from(x).expect("finite")));
+        let there: Vec<usize> = (0..leaves.len())
+            .filter(|&k| leaves[k].owner == owner && touch(&rects[k], &rq))
+            .collect();
+        let near_there = there.iter().any(|&k| class[k] == Some(Height::Near));
+        // Dropped there (degree 0, ribbons included: they join any run),
+        // their class not fixed by a vertex they hold (joining wouldn't
+        // move the cut). A height-clear leaf never joins: it may hold the
+        // column's crossing, which counts by its own height.
+        let dropped: Vec<usize> = there
+            .iter()
+            .copied()
+            .filter(|&k| class[k].is_none() && !forced.contains_key(&k))
+            .collect();
+        if near_there && !dropped.is_empty() {
+            join.extend(dropped);
+        } else {
+            // A joined leaf refines only where nothing else there does: its
+            // halves would be dropped again.
+            let at = near_leaves(&rects, &run, Some(r));
+            let own: Vec<usize> = at.iter().copied().filter(|&k| !leaves[k].joined).collect();
+            elsewhere.extend(if own.is_empty() { at } else { own });
+        }
+    }
+    refine.extend(elsewhere.into_iter().filter(|k| !join.contains(k)));
+    for &k in &join {
+        leaves[k].joined = true;
+    }
     if !refine.is_empty() {
         ctx.resplit(leaves, &refine)?;
-        return Ok(None);
+        return Ok(Round::Refined);
+    }
+    if !join.is_empty() {
+        return Ok(Round::Joined);
     }
 
     // Near pieces touching in UV are of one layer.
@@ -1125,17 +1233,22 @@ fn round<S: Scalar, R: HeightReads>(
         }
     }
     out.pieces = ctx.pieces;
-    Ok(Some(out))
+    Ok(Round::Settled(out))
 }
 
-/// The degree of the run `idx` of `owner`'s leaves, cached.
+/// The runs' degrees found so far, by owner and boxes, each with where an
+/// unsettled one is unsettled ([`strip_degree_near`]).
+type Cache = BTreeMap<(Owner, Vec<BoxKey>), (Result<i64, PieceError>, Option<UvRect>)>;
+
+/// The degree of the run `idx` of `owner`'s leaves, cached, with where it
+/// is unsettled as far as known.
 fn run_degree<S: Scalar, R: HeightReads>(
     ctx: &mut Ctx<'_, '_, '_, S, R>,
     owner: &Owner,
     leaves: &[Leaf],
     idx: &[usize],
-    cache: &mut BTreeMap<(Owner, Vec<BoxKey>), Result<i64, PieceError>>,
-) -> Result<Result<i64, PieceError>, CountError> {
+    cache: &mut Cache,
+) -> Result<(Result<i64, PieceError>, Option<UvRect>), CountError> {
     let boxes: Vec<BoxKey> = idx.iter().map(|&k| leaves[k].b).collect();
     let key = (owner.clone(), boxes);
     if let Some(r) = cache.get(&key) {
@@ -1143,18 +1256,43 @@ fn run_degree<S: Scalar, R: HeightReads>(
     }
     let ribbons = ctx.ribbons(owner)?;
     let fq = ctx.fq;
-    let r = strip_degree(
+    let (r, near) = strip_degree_near(
         fq.face, fq.patches, &key.1, &ribbons, &ctx.q, fq.point, ctx.sides,
     );
     if let Ok(d) = &r {
         ctx.charge(d.pieces)?;
     }
-    let r = r.map(|d| d.degree);
+    let r = (r.map(|d| d.degree), near);
     // A record not yet decided is asked for, not cached.
-    if !matches!(r, Err(PieceError::Need(_))) {
+    if !matches!(r.0, Err(PieceError::Need(_))) {
         cache.insert(key, r);
     }
     Ok(r)
+}
+
+/// The leaves of `idx` to refine where their run is unsettled near
+/// `near`: those whose closed box meets it, or all where none does or
+/// where is unknown (module docs, "Refining runs").
+fn near_leaves(rects: &[[[Rational; 2]; 2]], idx: &[usize], near: Option<UvRect>) -> Vec<usize> {
+    let Some(r) = near else {
+        return idx.to_vec();
+    };
+    let r = r.map(|c| c.map(|x| Rational::try_from(x).expect("finite")));
+    let some: Vec<usize> = idx
+        .iter()
+        .copied()
+        .filter(|&k| touch(&rects[k], &r))
+        .collect();
+    if some.is_empty() { idx.to_vec() } else { some }
+}
+
+/// A run's failure other than unsettled, as the count's.
+fn piece_error(e: PieceError) -> CountError {
+    match e {
+        PieceError::Need(k) => CountError::Need(k),
+        PieceError::Box(e) => CountError::Box(e),
+        e => CountError::Piece(e),
+    }
 }
 
 /// A box's hull centre, its layer's key where the layer has no feature.

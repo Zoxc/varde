@@ -299,12 +299,16 @@ fn the_oracle_agrees_with_the_ideal_shapes() {
 /// past half the subdivision cap in each direction (seeds 3, 7, 8: a
 /// point within a few hundredths of a face on a plane's one huge tile;
 /// the cap counted the splits of a box, not the halvings in each
-/// direction), and an edge pair's cell whose inner side at a knot isn't
-/// settled at the cell's size (seed 139). Seed 8 only by default (the
-/// others take seconds each; varde-decide's own tests pin both rules).
+/// direction), an edge pair's cell whose inner side at a knot isn't
+/// settled at the cell's size (seed 139), and boxes on a plane's huge
+/// tile as deep as boxes go while still millimetres long, their splits
+/// shifted off the point by fractions of boxes no longer aligned to the
+/// dyadic grid (seeds 400, 1403, 1457, 1726). Seed 8 only by default
+/// (the others take seconds each; varde-decide's own tests pin the
+/// rules).
 #[test]
 fn placements_once_refused_agree() {
-    let seeds: &[u64] = varde_testing::pick(&[8], &[3, 7, 8, 139]);
+    let seeds: &[u64] = varde_testing::pick(&[8], &[3, 7, 8, 139, 400, 1403, 1457, 1726]);
     let outs = par(seeds.len() as u64, threads(), &|i| {
         let seed = seeds[i as usize];
         let o = check_answers(
