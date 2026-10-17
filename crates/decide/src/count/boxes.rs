@@ -621,10 +621,10 @@ impl<'a> FaceUv<'a> {
 /// Per trim, the least index of a trim whose p-curve is bitwise the same
 /// curve: the same spans in the same order, or each reversed in the
 /// reverse order (a slit's two sides stored along one edge, or along two
-/// edges of opposite directions). The bits are compared, `0.0` and `−0.0`
-/// apart.
+/// edges of opposite directions). The bits are compared, `−0.0` read as
+/// `0.0` (one UV point).
 fn same_curves(trims: &[Trim<'_>]) -> Vec<u32> {
-    let bits = |s: &UvSpan| s.map(|p| p.map(f64::to_bits));
+    let bits = |s: &UvSpan| s.map(|p| p.map(|x| (x + 0.0).to_bits()));
     let key = |t: &Trim<'_>| {
         let fwd: Vec<_> = t.spans.iter().map(bits).collect();
         let back: Vec<_> = t
@@ -1378,11 +1378,11 @@ fn off<S: Scalar>(
 
 mod roles;
 
-pub(crate) use roles::surface_hull;
 pub use roles::{
     CUSP_PIECES, Corner, Corners, HULL_TILES, NEAR_DEPTH, NEAR_PIECES, RUN_DEPTH, RUN_PIECES, Role,
     Roled, Run, Tube, box_hull, in_tube, role, within_band,
 };
+pub(crate) use roles::{surface_hull, within_of};
 
 #[cfg(test)]
 mod tests;

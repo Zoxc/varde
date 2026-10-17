@@ -23,13 +23,14 @@
 //! every coedge of the corner. A run passing a point twice is taken box
 //! by box.
 //!
-//! **Refining runs.** A run the level can't settle (a cut at a box corner
-//! or next to the ray, a run the curve doesn't cut, an outer side inside
-//! a tile not certified off `q_xy`) refines its boxes where it is
-//! unsettled, those meeting the place its piece names (a cut's window, a
-//! side's stretch, a curve's end: [`strip_degree_near`]), or all of them
-//! where the piece names none, and the runs are built again. So a long
-//! run refines next to its cut, not along its length.
+//! **Refining runs.** A run the level can't settle (a cut next to the
+//! ray, a run the curve doesn't cut and nothing on its boundary places,
+//! an outer side inside a tile not certified off `q_xy`) refines its
+//! boxes where it is unsettled, those meeting the place its piece names
+//! (a cut's window, a side's stretch, a curve's end, the uncut loop:
+//! [`strip_degree_near`]), or all of them where the piece names none, and
+//! the runs are built again. So a long run refines next to its cut, not
+//! along its length.
 //!
 //! **Runs near `q`.** A cut between a near run and dropped leaves of its
 //! owner next to it that no window certifies off the ray stays there
@@ -45,10 +46,14 @@
 //! other.
 //!
 //! **Around a vertex.** A corner's vertex lying on a box side (on a tile
-//! line, or a dyadic line the splits couldn't move) is on the outer
-//! boundary of any run that doesn't hold every box around it, and no cut
-//! there settles. So the corner's leaves holding one of its vertices (in
-//! their closed UV box) are one run, whatever their heights: their class
+//! line, or a dyadic line the splits couldn't move) lies in one box only
+//! (box lines read as moved,
+//! [`strip_degree`](super::pieces::strip_degree)), but next to the sides
+//! of the boxes around it: where `q` lies at the vertex (a shared
+//! corner), a run that doesn't hold every box around it has cuts next to
+//! `q` that no level certifies off its ray. So the corner's leaves
+//! holding one of its vertices (in their closed UV box) are one run,
+//! whatever their heights: their class
 //! is the one class of those not dropped, or, where they differ, near,
 //! once each is within the band (a dropped one joins: its degree, ribbons
 //! included, is 0). Such a run lies within a band or two of the vertex:
@@ -255,6 +260,18 @@ impl From<BoxError> for CountError {
 impl From<KeyError> for CountError {
     fn from(e: KeyError) -> CountError {
         CountError::Key(e)
+    }
+}
+
+/// A piece's failure other than unsettled (or through, which refine), as
+/// the count's.
+impl From<PieceError> for CountError {
+    fn from(e: PieceError) -> CountError {
+        match e {
+            PieceError::Need(k) => CountError::Need(k),
+            PieceError::Box(e) => CountError::Box(e),
+            e => CountError::Piece(e),
+        }
     }
 }
 
@@ -1098,8 +1115,9 @@ fn round<S: Scalar, R: HeightReads>(
             groups.entry((l.owner.clone(), h)).or_default().push(k);
         }
     }
-    // The runs left unsettled, with where.
-    let mut failed: Vec<(Owner, Vec<usize>, Option<UvRect>)> = Vec::new();
+    // The runs left unsettled, with where, and whether at a side through
+    // `q_xy` (refined there, never joined).
+    let mut failed: Vec<(Owner, Vec<usize>, Option<UvRect>, bool)> = Vec::new();
     for ((owner, h), ks) in groups {
         let parts = components(ks.len(), |i, j| share_side(&rects[ks[i]], &rects[ks[j]]));
         for part in parts {
@@ -1108,33 +1126,33 @@ fn round<S: Scalar, R: HeightReads>(
                 (Ok(_), _) => vec![idx.clone()],
                 (Err(PieceError::Pinch), _) => idx.iter().map(|&k| vec![k]).collect(),
                 (Err(PieceError::Unsettled), near) => {
-                    failed.push((owner.clone(), idx, near));
+                    failed.push((owner.clone(), idx, near, false));
                     continue;
                 }
                 // An outer side inside a tile not certified off `q_xy`:
-                // the run refines, as a core leaf does.
-                (Err(PieceError::Through), _) => {
-                    failed.push((owner.clone(), idx, None));
+                // the run refines there, as a core leaf does.
+                (Err(PieceError::Through), near) => {
+                    failed.push((owner.clone(), idx, near, true));
                     continue;
                 }
-                (Err(e), _) => return Err(piece_error(e)),
+                (Err(e), _) => return Err(e.into()),
             };
             for run in runs {
                 let d = match run_degree(ctx, &owner, leaves, &run, cache)? {
                     (Ok(d), _) => d,
                     (Err(PieceError::Unsettled), near) => {
-                        failed.push((owner.clone(), run, near));
+                        failed.push((owner.clone(), run, near, false));
                         continue;
                     }
-                    (Err(PieceError::Through), _) => {
-                        failed.push((owner.clone(), run, None));
+                    (Err(PieceError::Through), near) => {
+                        failed.push((owner.clone(), run, near, true));
                         continue;
                     }
                     (Err(PieceError::Pinch), _) => {
                         refine.extend(run.iter().copied());
                         continue;
                     }
-                    (Err(e), _) => return Err(piece_error(e)),
+                    (Err(e), _) => return Err(e.into()),
                 };
                 let near = if h == Height::Near {
                     // A joined leaf moves the run's cut, it doesn't name
@@ -1175,12 +1193,16 @@ fn round<S: Scalar, R: HeightReads>(
     // other unsettled run refines there, but for the leaves joining.
     let mut join: Vec<usize> = Vec::new();
     let mut elsewhere: Vec<usize> = Vec::new();
-    for (owner, run, near) in failed {
+    for (owner, run, near, through) in failed {
         let Some(r) = near else {
             elsewhere.extend(run);
             continue;
         };
-        let rq = r.map(|c| c.map(|x| Rational::try_from(x).expect("finite")));
+        let rq = exact_rect(&r);
+        if through {
+            elsewhere.extend(near_leaves(&rects, &run, &rq));
+            continue;
+        }
         let there: Vec<usize> = (0..leaves.len())
             .filter(|&k| leaves[k].owner == owner && touch(&rects[k], &rq))
             .collect();
@@ -1199,7 +1221,7 @@ fn round<S: Scalar, R: HeightReads>(
         } else {
             // A joined leaf refines only where nothing else there does: its
             // halves would be dropped again.
-            let at = near_leaves(&rects, &run, Some(r));
+            let at = near_leaves(&rects, &run, &rq);
             let own: Vec<usize> = at.iter().copied().filter(|&k| !leaves[k].joined).collect();
             elsewhere.extend(if own.is_empty() { at } else { own });
         }
@@ -1270,29 +1292,22 @@ fn run_degree<S: Scalar, R: HeightReads>(
     Ok(r)
 }
 
-/// The leaves of `idx` to refine where their run is unsettled near
-/// `near`: those whose closed box meets it, or all where none does or
-/// where is unknown (module docs, "Refining runs").
-fn near_leaves(rects: &[[[Rational; 2]; 2]], idx: &[usize], near: Option<UvRect>) -> Vec<usize> {
-    let Some(r) = near else {
-        return idx.to_vec();
-    };
-    let r = r.map(|c| c.map(|x| Rational::try_from(x).expect("finite")));
+/// The leaves of `idx` to refine where their run is unsettled near `r`
+/// (exactly, [`exact_rect`]): those whose closed box meets it, or all
+/// where none does (module docs, "Refining runs").
+fn near_leaves(rects: &[[[Rational; 2]; 2]], idx: &[usize], r: &[[Rational; 2]; 2]) -> Vec<usize> {
     let some: Vec<usize> = idx
         .iter()
         .copied()
-        .filter(|&k| touch(&rects[k], &r))
+        .filter(|&k| touch(&rects[k], r))
         .collect();
     if some.is_empty() { idx.to_vec() } else { some }
 }
 
-/// A run's failure other than unsettled, as the count's.
-fn piece_error(e: PieceError) -> CountError {
-    match e {
-        PieceError::Need(k) => CountError::Need(k),
-        PieceError::Box(e) => CountError::Box(e),
-        e => CountError::Piece(e),
-    }
+/// A piece's location hint ([`strip_degree_near`]) as an exact rectangle,
+/// as [`rect`] gives the boxes.
+fn exact_rect(r: &UvRect) -> [[Rational; 2]; 2] {
+    r.map(|c| c.map(|x| Rational::try_from(x).expect("finite")))
 }
 
 /// A box's hull centre, its layer's key where the layer has no feature.

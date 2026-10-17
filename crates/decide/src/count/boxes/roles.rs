@@ -31,11 +31,11 @@
 //! **Strips and slits.** A mixed box ([`Class::Mixed`]) whose met
 //! coedges are one coedge, or coedges whose p-curves are bitwise one
 //! curve (a slit: the same spans in the same order, or each reversed in
-//! the reverse order, by their bits), and none of zero length, is a
-//! **strip** box of those coedges. The slit's members with one space
-//! curve have ribbons of opposite orientation, which cancel, and members
-//! whose space curves differ give one strip each; the pieces built on
-//! the boxes tell the two apart, the box only names the set.
+//! the reverse order, by their bits, `−0` as `0`), and none of zero
+//! length, is a **strip** box of those coedges. The slit's members with
+//! one space curve have ribbons of opposite orientation, which cancel,
+//! and members whose space curves differ give one strip each; the pieces
+//! built on the boxes tell the two apart, the box only names the set.
 //!
 //! **Corners.** The vertices joined by zero-length trims are one
 //! **corner** ([`Corner`]), named by its least vertex; the corner holds
@@ -795,15 +795,14 @@ fn centre_sq(a: &HullBox, b: &HullBox) -> f64 {
 /// Whether the hull's diameter is at most `beta`, certified: the
 /// strip and corner boxes' stopping size.
 pub fn within_band(h: &HullBox, beta: f64) -> bool {
-    let mut s = 0.0;
-    for k in 0..3 {
-        let d = above(h.hi[k] - h.lo[k]);
-        if !d.is_finite() {
-            return false;
-        }
-        s = add_up(s, up(d * d));
-    }
-    s <= down(beta * beta)
+    farthest_sq(h, h) <= down(beta * beta)
+}
+
+/// Whether every point of the hull lies within `r` of the point `p`,
+/// certified (the greatest distance rounded upwards against `r²` rounded
+/// downwards); never where `r` or a side isn't finite.
+pub(crate) fn within_of(h: &HullBox, p: [f64; 3], r: f64) -> bool {
+    r.is_finite() && farthest_sq(h, &HullBox { lo: p, hi: p }) <= down(r * r)
 }
 
 /// The 3D hull of box `b` from its tile's patch ([`sub_patch`]); `None`

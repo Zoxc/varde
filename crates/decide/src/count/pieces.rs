@@ -71,20 +71,42 @@
 //! one reaching across a whole window, or lying inside one, is
 //! `Unsettled`.
 //!
-//! **Trims on box lines.** A p-span whose three control points share one
-//! coordinate exactly lies along a UV line, which may be a box side (a
-//! tile line, or a dyadic line of a trim placed on one). Its cuts there
-//! would fall on box corners at every depth, so the trim is taken as
-//! moved off the line, infinitesimally, to the face's inside next to it
-//! (left of the coedge on an unflipped face, right on a flipped one), the
-//! same for every run, so their pieces stay additive: the span crosses no
-//! side along its line; a side across the line ending at the line is
-//! crossed just past its end, at that end, where it runs on from there to
-//! the face's side, else not at all; a knot on a side's line with a span
-//! along it is on the side's moved side. A loop no cut reaches but with a
-//! side along a moved span is outside the trim (the side lies on the
-//! span's other side). Spans not monotone along their line, and slits
-//! (the face on both sides), aren't moved: `Unsettled` as before.
+//! **Box lines read as `c + 0⁺`.** Box sides lie on UV lines (tile lines
+//! and dyadic lines), and trims may meet them exactly: a span along one
+//! (a trim placed on a tile line), a knot or a vertex on one, a curve
+//! through a box corner. Every box line is read as moved infinitesimally
+//! to its high side, the same for every run and every box: a `u` line
+//! `u = c` as `u = c + ε`, a `v` line `v = c` as `v = c + √2·ε`, `ε → 0⁺`
+//! (a translation of the box grid, so pieces of any partition stay
+//! additive), but for the low edges of the face's tiles (the least `u`
+//! and the least `v` of its tile ranges), read as moved to their low side
+//! (`c − ε`, `c − √2·ε`): so the boxes still hold every trim, one along
+//! those edges included, with its ribbon. So no point of a trim lies on a
+//! box side: a point exactly on a line lies on its low side (on its high
+//! side at a low edge), a box `[lo, hi]` holds a point `p` exactly when
+//! `lo < p ≤ hi` in each coordinate (`lo ≤ p` at a low edge), a span
+//! along a line crosses none of its sides, and a curve end or vertex on a
+//! side lies in one box only. Where a curve's point `P` lies exactly on a side's line,
+//! the curve crosses the moved line next to `P` on each span leaving `P`
+//! across it, at a place along the line given by the span's
+//! exact local shape there (its germ); at a side's end, that place against
+//! the moved end decides whether the side is crossed, and crossings at
+//! one point are ordered along the side by their shapes (a curve's
+//! tangent, then its bend). A span through a box corner exactly, not at a
+//! knot, is placed by its exact crossing (its tangent there against the
+//! moved corner). A curve may so cross both moved sides next to a corner
+//! at one point of it (clipping the moved corner): the two cuts are
+//! ordered along the curve so entries and exits alternate from its
+//! start's side of the run, and nothing of the curve lies between them. The moved sides are infinitesimally apart from the
+//! sides the hulls and turns are taken of, so every certificate stays as
+//! it is. Slits are read alike.
+//!
+//! A loop of the outer boundary no curve cuts lies inside the trim or
+//! outside it as a whole: where a span runs along one of its sides, the
+//! face's side of that span says which; where a curve's end or knot lies
+//! on the loop, the face's sector there (towards the moved point of the
+//! loop next to it) does, from the curves' exact shapes; otherwise the
+//! loop is [`PieceError::Unsettled`].
 //!
 //! **Sides through the query.** An outer side on a tile line not
 //! certified off `q_xy` (through it, or too near for the level) is
@@ -112,16 +134,19 @@
 //! its last entry to its end where that is inside: the ray records'
 //! crossings up to and from the edge's own ends, a crossing at the vertex
 //! counted in the one edge its records give it to. A curve end on the
-//! outer boundary is [`PieceError::Unsettled`]: cut the run elsewhere. A
+//! outer boundary lies on one side of it (box lines read as `c + 0⁺`). A
 //! closed curve (one vertex, one UV point at both ends) wraps round its
 //! vertex as before, and counts its whole record when it lies inside the
 //! run uncut. The ribbons of a corner have pairwise different p-curves;
 //! the coedges of a slit share one.
 //!
 //! Inside the trim or not changes only at the cuts, so each loop of the
-//! outer boundary takes it from its cuts; a loop the curve doesn't cut
-//! (a run with a hole, or a part of the run clear of the curve) is
-//! `Unsettled` for one coedge: run such boxes as core boxes.
+//! outer boundary takes it from its cuts, and an uncut loop as above.
+//!
+//! **The run's trims.** Every trim of the face that ends inside the run,
+//! lies inside it (a closed one), or crosses its outer boundary must be
+//! among the ribbons: else [`PieceError::Open`] for it (the caller's
+//! boxes met a curve their roles don't name).
 //!
 //! **Ends in corner pieces** ([`corner_end`]). A corner piece may reach
 //! far from its vertex `w` (a sharp corner's spike), so an edge's
@@ -153,17 +178,22 @@ use smallvec::SmallVec;
 
 use super::boxes::{
     BoxError, BoxKey, Extent, FaceUv, QShadow, Trim, UvSpan, cover, dy, iso_line, surface_hull,
-    uv_curve,
+    uv_curve, within_of,
 };
 use super::degree::{Ray, RecTurnError, Side, line_edge, rec_turn};
 use crate::bezier::roots::MAX_ROOT_DEPTH;
 use crate::bezier::{Dir, Dyadic, Found, HomCurve, HomPatch, HullBox, Limits, Scalar, isolate};
 use crate::ids::{CoedgeId, FaceId, VertId};
-use crate::num::bounded::{Bounded, add_up, down, up};
+use crate::num::bounded::Bounded;
 use crate::perturb::{NU, R_HAT};
+use crate::records::cusp::{Poly, pderiv, peval};
 use crate::records::keys::{Operand, Point, SideKey};
 use crate::records::ray::{ChainRec, Span};
 use crate::records::side::Sides;
+
+mod germ;
+
+use germ::{Germ, Leg, Toward, inside_toward};
 
 /// The most splits one root isolation of a p-span against a side line
 /// takes (a quadratic's isolation stays far below).
@@ -240,13 +270,15 @@ pub enum PieceError {
     /// again.
     Need(SideKey),
     /// The level doesn't settle a cut, a side's ends, or the crossings'
-    /// order (a cut at a box corner or next to the query, a tangency):
-    /// cut the run elsewhere, or escalate.
+    /// order (a cut next to the query, a tangency), or a loop no curve
+    /// cuts says nothing of the trim (module docs): cut the run elsewhere,
+    /// or escalate.
     Unsettled,
     /// A coedge's curve ends inside the run and the curves meeting it
     /// there aren't all among the ribbons, or this trim of the face ends
-    /// inside the run and isn't among them: a corner piece takes every
-    /// coedge at its vertex.
+    /// inside the run, lies inside it (a closed one) or crosses its outer
+    /// boundary and isn't among them: a corner piece takes every coedge at
+    /// its vertex, and a run every curve it meets.
     Open { coedge: CoedgeId },
 }
 
@@ -458,22 +490,28 @@ struct Hit {
     seg: usize,
     /// Its position along the segment, local, an enclosure.
     pos: [f64; 2],
-    /// The p-span and its parameter there (`[0, 0]` at a knot).
+    /// Where the crossing lies at a point of the curve exactly on the
+    /// segment's line (a knot, an end, a pass through a box corner): that
+    /// point's coordinate along the line, global, and the crossing's germ
+    /// there (module docs, "Box lines read as `c + 0⁺`").
+    exact: Option<(Rational, Germ)>,
+    /// That point, global UV, where `exact` is given.
+    point: Option<[Rational; 2]>,
+    /// The p-span and its parameter there (`[0, 0]` or `[1, 1]` next to
+    /// the span's start or end on the line).
     pspan: u32,
     t: [f64; 2],
-    /// At the knot starting `pspan`, after the span `prev`.
-    knot: Option<u32>,
     /// `sign(T × d)` (module docs).
     sigma: i8,
     window: Option<Window>,
 }
 
-/// A p-span along a UV line (module docs, "Trims on box lines"): the
-/// coordinate `c` its three control points share exactly, and `n`, the
-/// side of that line (the sign along `c`) the face's inside lies on next
-/// to it, the side the span is moved to. `None` where it lies on no such
-/// line or doesn't run monotonically along it (its middle point strictly
-/// between its ends). `w` is the face's inside winding.
+/// A p-span along a UV line (module docs, "Box lines read as `c +
+/// 0⁺`"): the coordinate `c` its three control points share exactly, and
+/// `n`, the side of that line (the sign along `c`) the face's inside lies
+/// on next to it. `None` where it lies on no such line or doesn't run
+/// monotonically along it (its middle point strictly between its ends).
+/// `w` is the face's inside winding.
 fn on_line(sp: &UvSpan, reversed: bool, w: i64) -> Option<(usize, i8)> {
     let c = (0..2).find(|&c| sp[0][c] == sp[1][c] && sp[1][c] == sp[2][c])?;
     let o = 1 - c;
@@ -490,34 +528,6 @@ fn on_line(sp: &UvSpan, reversed: bool, w: i64) -> Option<(usize, i8)> {
     let s = if reversed { -s } else { s };
     let s = if w > 0 { s } else { -s };
     Some((c, if c == 1 { s } else { -s }))
-}
-
-/// The side of the line `x_k = line` span `sp` lies on next to its start
-/// (`start`) or end, that end on the line: moved to `push`'s side where
-/// the span runs along the line, else that of its first control point
-/// off the line from that end (`Equal` where none is).
-fn leaves(
-    sp: &UvSpan,
-    k: usize,
-    line: &Rational,
-    start: bool,
-    push: Option<(usize, i8)>,
-) -> Ordering {
-    if let Some((c, n)) = push
-        && c == k
-    {
-        return if n > 0 {
-            Ordering::Greater
-        } else {
-            Ordering::Less
-        };
-    }
-    let order = if start { [1, 2] } else { [1, 0] };
-    order
-        .iter()
-        .map(|&i| rat(sp[i][k]).cmp(line))
-        .find(|x| *x != Ordering::Equal)
-        .unwrap_or(Ordering::Equal)
 }
 
 /// The exact value of a finite float.
@@ -654,7 +664,7 @@ struct Ctx<'f, 'p, 'r, S> {
     /// The face's inside winding.
     w: i64,
     /// Whether the ribbons are a slit's (the face on both sides of their
-    /// p-curve: no trim is moved off a line).
+    /// p-curve: every free side inside the trim).
     slit: bool,
     pieces: u64,
     /// Where the piece is unsettled, as far as known: a closed rectangle
@@ -680,31 +690,44 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         }
     }
 
+    /// Whether the line of axis `k` at `at` in tile index `i` is the low
+    /// edge of the face's tiles, read as moved to its low side (module
+    /// docs, "Box lines read as `c + 0⁺`").
+    fn low_line(&self, k: usize, i: i64, at: Dyadic) -> bool {
+        low_edge(self.face, k, i, at)
+    }
+
     fn patch(&self, tile: [i64; 2]) -> Result<&HomPatch<S>, PieceError> {
         self.face
             .patch_of(self.patches, tile)
             .ok_or(PieceError::Box(BoxError::Patches))
     }
 
-    /// The crossings of ribbon `m`'s p-curve with segment `si`.
+    /// The crossings of trim `t`'s p-curve with segment `si`, as ribbon
+    /// `m`'s (module docs, "Cuts off the ray" and "Box lines read as `c +
+    /// 0⁺`").
     fn hits(
         &mut self,
+        t: &Trim<'_>,
         m: usize,
         si: usize,
         seg: &Seg,
         out: &mut Vec<Hit>,
     ) -> Result<(), PieceError> {
-        let t = self.trims[m];
         let coedge = t.coedge;
         let (k, o) = (fixed(seg.dir), 1 - fixed(seg.dir));
+        let (elo, ehi) = (dy(seg.ext.lo()), dy(seg.ext.hi()));
+        // A first test in floats, outwards by an ulp of the rounded line
+        // and ends.
+        let lf = seg.tile[k] as f64 + dy(seg.at);
+        let cf = seg.tile[o] as f64;
+        let (af, bf) = ((cf + elo).next_down(), (cf + ehi).next_up());
         let line = Rational::from(seg.tile[k]) + rat(dy(seg.at));
         let line_s =
             S::from_f64(seg.tile[k] as f64, &self.like).add(&S::from_f64(dy(seg.at), &self.like));
         let cell = seg.tile[o];
         let along = |x: Dyadic| Rational::from(cell) + rat(dy(x));
         let (alo, ahi) = (along(seg.ext.lo()), along(seg.ext.hi()));
-        let n = t.spans.len();
-        let closed = is_closed(t);
         // Positive tangent of the coedge along the fixed coordinate.
         let rev: i8 = if t.reversed { -1 } else { 1 };
         // `d`'s component along the other coordinate.
@@ -719,21 +742,42 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         let local = |[lo, hi]: [f64; 2]| {
             let c = Bounded::exact(cell as f64);
             [
-                (Bounded::exact(lo) - c).enclose()[0],
-                (Bounded::exact(hi) - c).enclose()[1],
+                (Bounded::exact(lo) - c).enclose()[0] + 0.0,
+                (Bounded::exact(hi) - c).enclose()[1] + 0.0,
             ]
         };
-        let (elo, ehi) = (dy(seg.ext.lo()), dy(seg.ext.hi()));
-        let (slit, w) = (self.slit, self.w);
-        let moved = |sp: &UvSpan| {
-            if slit {
-                None
-            } else {
-                on_line(sp, t.reversed, w)
-            }
+        // The side's line moved to its low side (the low edge of the
+        // face's tiles), and its low end moved so: `−1`.
+        let down = self.low_line(k, seg.tile[k], seg.at);
+        let lo_s: i8 = if self.low_line(o, seg.tile[o], seg.ext.lo()) {
+            -1
+        } else {
+            1
         };
+        // Whether a crossing exactly at the side's end `e` (`alo` or
+        // `ahi`) with germ `g` lies on the side: past the moved end.
+        let past_end = |e: &Rational, g: &Germ| {
+            (*e == alo && g.against(k, lo_s) == Ordering::Greater)
+                || (*e == ahi && g.against(k, 1) == Ordering::Less)
+        };
+        let end_at = |e: &Rational| if *e == alo { elo } else { ehi };
         for (j, sp) in t.spans.iter().enumerate() {
-            let push = moved(sp);
+            // Compare and select: the prefilter only (zeros' signs don't
+            // matter against the ulp-wide margins).
+            let lo = |x: f64, y: f64| if y < x { y } else { x };
+            let hi = |x: f64, y: f64| if y > x { y } else { x };
+            let (kmin, kmax, omin, omax) = sp.iter().fold(
+                (
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                ),
+                |(a, b, c, e), p| (lo(a, p[k]), hi(b, p[k]), lo(c, p[o]), hi(e, p[o])),
+            );
+            if kmax < lf.next_down() || kmin > lf.next_up() || omax < af || omin > bf {
+                continue;
+            }
             let fix: [Rational; 3] = sp.map(|p| rat(p[k]));
             let lo = fix.iter().min().expect("three");
             let hi = fix.iter().max().expect("three");
@@ -742,83 +786,48 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             }
             // Fits: the face checked the span count.
             let ju = j as u32;
-            // The knot at the span's start, exactly on the line.
-            if fix[0] == line {
-                let a = rat(sp[0][o]);
-                if a >= alo && a <= ahi {
-                    let prev = if j > 0 {
-                        j - 1
-                    } else if closed {
-                        n - 1
-                    } else {
-                        // The curve's start on the outer boundary: a
-                        // corner piece's vertex must lie inside the run.
-                        return Err(self.unsettled(point_rect(&sp[0])));
-                    };
-                    let pv = &t.spans[prev];
-                    let before = leaves(pv, k, &line, false, moved(pv));
-                    let after = leaves(sp, k, &line, true, push);
-                    match (before, after) {
-                        (Ordering::Equal, _) | (_, Ordering::Equal) => {
-                            return Err(self.unsettled(point_rect(&sp[0])));
-                        }
-                        // Touching the line, or along it on both sides of
-                        // the knot (moved off it alike): no crossing.
-                        (x, y) if x == y => (),
-                        (_, y) => {
-                            // At an end of the side, the knot moved off
-                            // the line across it with a span along that
-                            // line: on the side only where the side runs
-                            // on from the end that way.
-                            let p = if a == alo || a == ahi {
-                                let across = [moved(pv), push]
-                                    .into_iter()
-                                    .flatten()
-                                    .filter(|&(c, _)| c == o)
-                                    .map(|(_, n)| n);
-                                let Some(n) = across.clone().next() else {
-                                    return Err(self.unsettled(point_rect(&sp[0])));
-                                };
-                                if across.clone().any(|x| x != n) {
-                                    return Err(self.unsettled(point_rect(&sp[0])));
-                                }
-                                let at = if a == alo { elo } else { ehi };
-                                ((a == alo) == (n > 0)).then_some([at, at])
-                            } else {
-                                Some(local([sp[0][o], sp[0][o]]))
-                            };
-                            let s: i8 = if y == Ordering::Greater { 1 } else { -1 };
-                            if let Some(p) = p {
-                                out.push(Hit {
-                                    member: m,
-                                    seg: si,
-                                    pos: p,
-                                    pspan: ju,
-                                    t: [0.0, 0.0],
-                                    knot: Some(prev as u32),
-                                    sigma: sigma(s),
-                                    window: None,
-                                });
-                            }
-                        }
+            // The span's ends exactly on the line: crossed next to the end
+            // where the span rises from it.
+            for at_end in [false, true] {
+                if fix[if at_end { 2 } else { 0 }] != line {
+                    continue;
+                }
+                let Some(g) = Leg::new(sp, at_end).germ(k, down) else {
+                    continue;
+                };
+                let a = Leg::point(sp, at_end)[o].clone();
+                if a < alo || a > ahi {
+                    continue;
+                }
+                let pos = if a == alo || a == ahi {
+                    if !past_end(&a, &g) {
+                        continue;
                     }
-                }
+                    let at = end_at(&a);
+                    [at, at]
+                } else {
+                    let x = sp[if at_end { 2 } else { 0 }][o];
+                    local([x, x])
+                };
+                out.push(Hit {
+                    member: m,
+                    seg: si,
+                    pos,
+                    exact: Some((a, g)),
+                    point: Some(Leg::point(sp, at_end)),
+                    pspan: ju,
+                    t: if at_end { [1.0, 1.0] } else { [0.0, 0.0] },
+                    // Leaving the line across its moved line from the
+                    // start along the edge's parameter, coming back to the
+                    // end.
+                    sigma: sigma(if at_end == down { 1 } else { -1 }),
+                    window: None,
+                });
             }
-            // The curve's end on the side (its start is the knot above).
-            if j + 1 == n && !closed && fix[2] == line {
-                let a = rat(sp[2][o]);
-                if a >= alo && a <= ahi {
-                    return Err(self.unsettled(point_rect(&sp[2])));
-                }
-            }
-            // Along the side's line: moved off it, the span crosses
-            // nothing there.
-            if push.is_some_and(|(c, _)| c == k) {
+            // Along the line: below its moved line all along.
+            if fix.iter().all(|x| *x == line) {
                 continue;
             }
-            // Along the other line through a point of the side: moved
-            // off that line too, the crossing lies just past the point.
-            let across = push.filter(|&(c, _)| c == o).map(|(_, n)| n);
             let c = uv_curve(sp, &self.like).ok_or(PieceError::Ribbon { coedge })?;
             let mut axis = [S::int(0, &self.like), S::int(0, &self.like)];
             axis[k] = S::int(1, &self.like);
@@ -834,47 +843,29 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             self.pieces = self.pieces.saturating_add(u64::from(roots.work.tests));
             for f in roots.found {
                 let (span, root) = match f {
-                    Found::Root(r) => (r.near, Some(r.dir)),
+                    Found::Root(r) => {
+                        // The root at an end on the line is that end's.
+                        if (fix[0] == line && r.near[0] <= 0.0)
+                            || (fix[2] == line && r.near[1] >= 1.0)
+                        {
+                            continue;
+                        }
+                        (r.near, Some(r.dir))
+                    }
                     Found::Cluster(cl) => {
                         let at_start = cl.lo == Dyadic::ZERO && fix[0] == line;
                         let at_end = cl.hi == Dyadic::ONE && fix[2] == line;
-                        // The knot itself, and nothing more there.
-                        if (at_start || at_end) && cl.mult <= 1 {
+                        // The end itself, and nothing more there; or an end
+                        // the span leaves tangent to the line (its middle
+                        // control point on the line too): a double root of
+                        // the span's quadratic equation, its only one, and
+                        // the end's germ places its crossing.
+                        if (at_start || at_end) && (cl.mult <= 1 || fix[1] == line) {
                             continue;
                         }
                         ([cl.lo.bounds()[0], cl.hi.bounds()[1]], None)
                     }
                 };
-                if let Some(n) = across {
-                    let e = rat(sp[0][o]);
-                    if e < alo || e > ahi {
-                        continue;
-                    }
-                    if e == alo || e == ahi {
-                        let Some(dir) = root else {
-                            return Err(self.unsettled(point_rect(&sp[0])));
-                        };
-                        // Moved to `n`'s side of the side's end `e`: on
-                        // the side only where the side runs on from `e`
-                        // that way.
-                        if (e == alo) != (n > 0) {
-                            continue;
-                        }
-                        let at = if e == alo { elo } else { ehi };
-                        let s: i8 = if dir == Ordering::Greater { 1 } else { -1 };
-                        out.push(Hit {
-                            member: m,
-                            seg: si,
-                            pos: [at, at],
-                            pspan: ju,
-                            t: span,
-                            knot: None,
-                            sigma: sigma(s),
-                            window: None,
-                        });
-                        continue;
-                    }
-                }
                 let whole = seg_rect(seg, [elo, ehi]);
                 let place = |span: [f64; 2]| -> Result<[f64; 2], UvRect> {
                     let mut box_o = [f64::INFINITY, f64::NEG_INFINITY];
@@ -897,41 +888,73 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 let Some(dir) = root else {
                     return Err(self.unsettled(seg_rect(seg, p)));
                 };
+                let s: i8 = if dir == Ordering::Greater { 1 } else { -1 };
                 // A root narrowed less than the side needs (its
                 // derivative's range too wide for Krawczyk's operator):
                 // halve its interval by the certified sign of the side's
                 // equation at the middle, until its position is certified
                 // inside the side's extent or outside it.
                 let mut halvings = 0;
+                let mut stuck = false;
                 while !(p[0] > elo && p[1] < ehi) {
-                    let m = 0.5 * span[0] + 0.5 * span[1];
-                    if halvings >= ROOT_HALVINGS || !(m > span[0] && m < span[1]) {
-                        return Err(self.unsettled(seg_rect(seg, p)));
+                    let mid = 0.5 * span[0] + 0.5 * span[1];
+                    if halvings >= ROOT_HALVINGS || !(mid > span[0] && mid < span[1]) {
+                        stuck = true;
+                        break;
                     }
                     halvings += 1;
-                    let past = match g.eval(&S::from_f64(m, &self.like)).sign() {
+                    let past = match g.eval(&S::from_f64(mid, &self.like)).sign() {
                         Some(Ordering::Equal) | None => {
-                            return Err(self.unsettled(seg_rect(seg, p)));
+                            stuck = true;
+                            break;
                         }
                         Some(x) => x == dir,
                     };
-                    span = if past { [span[0], m] } else { [m, span[1]] };
+                    span = if past { [span[0], mid] } else { [mid, span[1]] };
                     p = place(span).map_err(|r| self.unsettled(r))?;
                     if p[1] < elo || p[0] > ehi {
                         break;
                     }
                 }
+                if stuck {
+                    // Through an end of the side exactly: placed by its
+                    // exact crossing there.
+                    let pass = [&alo, &ahi].into_iter().find_map(|e| {
+                        corner_pass(sp, k, &line, e, span)
+                            .map(|f1| (e.clone(), Germ::first(f1, down)))
+                    });
+                    let Some((e, g)) = pass else {
+                        return Err(self.unsettled(seg_rect(seg, p)));
+                    };
+                    if past_end(&e, &g) {
+                        let at = end_at(&e);
+                        let mut point = [line.clone(), line.clone()];
+                        point[o] = e.clone();
+                        out.push(Hit {
+                            member: m,
+                            seg: si,
+                            pos: [at, at],
+                            exact: Some((e, g)),
+                            point: Some(point),
+                            pspan: ju,
+                            t: span,
+                            sigma: sigma(s),
+                            window: None,
+                        });
+                    }
+                    continue;
+                }
                 if p[1] < elo || p[0] > ehi {
                     continue;
                 }
-                let s: i8 = if dir == Ordering::Greater { 1 } else { -1 };
                 out.push(Hit {
                     member: m,
                     seg: si,
                     pos: p,
+                    exact: None,
+                    point: None,
                     pspan: ju,
                     t: span,
-                    knot: None,
                     sigma: sigma(s),
                     window: None,
                 });
@@ -940,27 +963,91 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         Ok(())
     }
 
-    /// Whether a ribbon's p-span runs along `seg`'s line over a stretch of
-    /// `seg`, moved off it (module docs).
-    fn along(&self, seg: &Seg) -> bool {
-        if self.slit {
-            return false;
-        }
-        let (k, o) = (fixed(seg.dir), 1 - fixed(seg.dir));
-        let line = Rational::from(seg.tile[k]) + rat(dy(seg.at));
-        let at = |x: Dyadic| Rational::from(seg.tile[o]) + rat(dy(x));
-        let (alo, ahi) = (at(seg.ext.lo()), at(seg.ext.hi()));
-        self.trims.iter().any(|t| {
-            t.spans.iter().any(|sp| {
-                on_line(sp, t.reversed, self.w).is_some_and(|(c, _)| c == k)
-                    && rat(sp[0][k]) == line
-                    && {
-                        let (x, y) = (rat(sp[0][o]), rat(sp[2][o]));
-                        let (x, y) = if x < y { (x, y) } else { (y, x) };
-                        x.max(alo.clone()) < y.min(ahi.clone())
+    /// Whether the loop `l` of `segs`, no curve cutting it, lies inside the
+    /// trim (module docs, "Box lines read as `c + 0⁺`"): from a span along
+    /// one of its sides, else from the face's sector at a curve's end or
+    /// knot on it; `None` where neither says.
+    fn uncut(&self, l: &[usize], segs: &[Seg]) -> Option<bool> {
+        let at = |i: i64, x: Dyadic| Rational::from(i) + rat(dy(x));
+        // A span along a side, the run on the side's high side (the span
+        // lies below the side's moved line): the face's side of the span.
+        let mut said: Option<bool> = None;
+        for &s in l {
+            let seg = &segs[s];
+            let (k, o) = (fixed(seg.dir), 1 - fixed(seg.dir));
+            // The run on the side's high side, the side moved up.
+            if (k == 1) == seg.back || self.low_line(k, seg.tile[k], seg.at) {
+                continue;
+            }
+            let line = at(seg.tile[k], seg.at);
+            let (alo, ahi) = (at(seg.tile[o], seg.ext.lo()), at(seg.tile[o], seg.ext.hi()));
+            for t in self.face.trims() {
+                for sp in t.spans {
+                    let Some((c, n)) = on_line(sp, t.reversed, self.w) else {
+                        continue;
+                    };
+                    if c != k || rat(sp[0][k]) != line {
+                        continue;
                     }
+                    let (x, y) = (rat(sp[0][o]), rat(sp[2][o]));
+                    let (x, y) = if x < y { (x, y) } else { (y, x) };
+                    if x.max(alo.clone()) < y.min(ahi.clone()) {
+                        let inside = n > 0;
+                        if said.is_some_and(|v| v != inside) {
+                            return None;
+                        }
+                        said = Some(inside);
+                    }
+                }
+            }
+        }
+        if said.is_some() {
+            return said;
+        }
+        // A curve's end or knot on the loop: the point next to it on the
+        // loop, moved with the lines, lies in the direction `toward`.
+        let trims = self.face.trims();
+        let ends = || {
+            trims.iter().flat_map(|t| {
+                t.spans
+                    .iter()
+                    .flat_map(move |sp| [(sp, false, t.reversed), (sp, true, t.reversed)])
             })
-        })
+        };
+        for (sp, at_end, _) in ends() {
+            let wp = Leg::point(sp, at_end);
+            // Per axis, whether the point lies on a side of that axis's
+            // lines, and which way that line is moved.
+            let mut on = [0i8; 2];
+            for &s in l {
+                let seg = &segs[s];
+                let (k, o) = (fixed(seg.dir), 1 - fixed(seg.dir));
+                if wp[k] == at(seg.tile[k], seg.at)
+                    && at(seg.tile[o], seg.ext.lo()) <= wp[o]
+                    && wp[o] <= at(seg.tile[o], seg.ext.hi())
+                {
+                    on[k] = if self.low_line(k, seg.tile[k], seg.at) {
+                        -1
+                    } else {
+                        1
+                    };
+                }
+            }
+            if on == [0, 0] {
+                continue;
+            }
+            let toward = Toward { u: on[0], v: on[1] };
+            // Every span leaving that point, with whether its coedge
+            // leaves it.
+            let legs: Vec<(Leg, bool)> = ends()
+                .filter(|(usp, end, _)| Leg::point(usp, *end) == wp)
+                .map(|(usp, end, reversed)| (Leg::new(usp, end), end == reversed))
+                .collect();
+            if let Some(v) = inside_toward(&legs, toward, self.w) {
+                return Some(v);
+            }
+        }
+        None
     }
 
     /// The hull of the iso line of `seg` over `[a, b]`.
@@ -1054,14 +1141,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
 
     /// The window of `hit` (module docs).
     fn window(&mut self, hit: &Hit, seg: &Seg) -> Result<Window, PieceError> {
-        // At a knot, the finest stretches of the two spans meeting there.
-        let pw: SmallVec<[(u32, [f64; 2]); 2]> = match hit.knot {
-            None => smallvec::smallvec![(hit.pspan, hit.t)],
-            Some(prev) => {
-                let h = 1.0 / (1u64 << WINDOW_DEPTH) as f64;
-                smallvec::smallvec![(prev, [1.0 - h, 1.0]), (hit.pspan, [0.0, h])]
-            }
-        };
+        let pw = [(hit.pspan, hit.t)];
         let here = seg_rect(seg, hit.pos);
         let Some((r, c)) = self.ribbon_hull(hit.member, &pw)? else {
             return Err(self.unsettled(here));
@@ -1129,11 +1209,69 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
         self.pieces = self.pieces.saturating_add(n);
         let laps = laps.map_err(|e| match e {
             RecTurnError::Need(k) => PieceError::Need(k),
-            RecTurnError::Through => PieceError::Through,
+            RecTurnError::Through => {
+                self.unsettled(here);
+                PieceError::Through
+            }
             RecTurnError::Unsettled => self.unsettled(here),
         })?;
         Ok(if seg.back { -laps } else { laps })
     }
+}
+
+/// Sorts the hits `on` of one segment along it (increasing local
+/// position): hits at one exact point by their germs. Whether they are
+/// apart: no two enclosures overlap but at one exact point with germs
+/// told apart.
+fn along_side(hits: &[Hit], on: &mut [usize]) -> bool {
+    on.sort_by(|&a, &b| hits[a].pos[0].total_cmp(&hits[b].pos[0]));
+    let same = |a: &Hit, b: &Hit| match (&a.exact, &b.exact) {
+        (Some((x, _)), Some((y, _))) => x == y,
+        _ => false,
+    };
+    // Each stretch of hits at one exact point, by germ.
+    let mut i = 0;
+    while i < on.len() {
+        let mut j = i + 1;
+        while j < on.len() && same(&hits[on[i]], &hits[on[j]]) {
+            j += 1;
+        }
+        let part = &mut on[i..j];
+        for x in 1..part.len() {
+            let mut y = x;
+            while y > 0 {
+                let (Some((_, g)), Some((_, h))) = (&hits[part[y - 1]].exact, &hits[part[y]].exact)
+                else {
+                    return false;
+                };
+                match g.cmp(h) {
+                    None => return false,
+                    Some(Ordering::Greater) => part.swap(y - 1, y),
+                    Some(_) => break,
+                }
+                y -= 1;
+            }
+        }
+        i = j;
+    }
+    on.windows(2).all(|p| {
+        let (a, b) = (&hits[p[0]], &hits[p[1]]);
+        a.pos[1] < b.pos[0] || same(a, b)
+    })
+}
+
+/// Whether hits `a` and `b` of one ribbon are where its curve passes one
+/// point exactly (a knot or a pass through a box corner) on one p-span
+/// (parameters overlapping), crossing two outer sides there: the run's
+/// corner next to the point, moved, clipped (module docs, "Box lines read
+/// as `c + 0⁺`").
+fn twins(a: &Hit, b: &Hit) -> bool {
+    a.member == b.member
+        && a.point.is_some()
+        && a.point == b.point
+        && a.pspan == b.pspan
+        && a.t[0] <= b.t[1]
+        && b.t[0] <= a.t[1]
 }
 
 /// Whether the edge crossing over `x` lies past the window `w` along the
@@ -1187,27 +1325,106 @@ fn coedge_ends(t: &Trim<'_>) -> [(VertId, [u64; 2], [f64; 2]); 2] {
     }
 }
 
-/// Where the UV point `p` lies against the run of `boxes`, whose outer
-/// boundary is `segs`: `Some(true)` inside, `Some(false)` outside, `None`
-/// on the outer boundary. Exact.
-fn place(boxes: &[BoxKey], segs: &[Seg], p: [f64; 2]) -> Option<bool> {
+/// Whether the line of axis `k` at `at` in tile index `i` is the low edge
+/// of `face`'s tiles.
+fn low_edge(face: &FaceUv<'_>, k: usize, i: i64, at: Dyadic) -> bool {
+    i == face.tiles()[k].start && at == Dyadic::ZERO
+}
+
+/// Whether the UV point `p` lies in the run of `boxes` of `face`: in a box
+/// `[lo, hi]` where `lo < p ≤ hi` in each coordinate, `lo ≤ p` at the low
+/// edge of the face's tiles (module docs, "Box lines read as `c + 0⁺`").
+/// Exact.
+fn place(face: &FaceUv<'_>, boxes: &[BoxKey], p: [f64; 2]) -> bool {
     let p = p.map(rat);
     let at = |i: i64, t: Dyadic| Rational::from(i) + rat(dy(t));
-    for s in segs {
-        let (k, o) = (fixed(s.dir), 1 - fixed(s.dir));
-        if p[k] == at(s.tile[k], s.at)
-            && at(s.tile[o], s.ext.lo()) <= p[o]
-            && p[o] <= at(s.tile[o], s.ext.hi())
-        {
-            return None;
-        }
-    }
-    Some(boxes.iter().any(|b| {
+    boxes.iter().any(|b| {
         [Dir::U, Dir::V].into_iter().all(|d| {
             let (e, k) = (b.extent(d), fixed(d));
-            at(b.tile()[k], e.lo()) <= p[k] && p[k] <= at(b.tile()[k], e.hi())
+            let lo = at(b.tile()[k], e.lo());
+            let above = if low_edge(face, k, b.tile()[k], e.lo()) {
+                lo <= p[k]
+            } else {
+                lo < p[k]
+            };
+            above && p[k] <= at(b.tile()[k], e.hi())
         })
-    }))
+    })
+}
+
+/// Where span `sp` crosses the line `x_k = line` at the isolated simple
+/// root in `span` and passes exactly through the line's point `x_o = e`
+/// there: the tangent's slope `dx_o/dx_k` there, its germ's first term
+/// (module docs, "Box lines read as `c + 0⁺`"). `None` where it doesn't
+/// pass there (exactly, at a rational parameter, or along a line through
+/// the point).
+fn corner_pass(
+    sp: &UvSpan,
+    k: usize,
+    line: &Rational,
+    e: &Rational,
+    span: [f64; 2],
+) -> Option<Rational> {
+    let o = 1 - k;
+    let two = Rational::from(2);
+    // `Σ wᵢ·(xᵢ − c)·Bᵢ(t)` in power form: the weight times `x − c`.
+    let hom = |axis: usize, c: &Rational| -> Poly {
+        let x: [Rational; 3] = [0, 1, 2].map(|i| rat(sp[i][2]) * (rat(sp[i][axis]) - c));
+        vec![
+            x[0].clone(),
+            &two * (&x[1] - &x[0]),
+            &x[0] - &two * &x[1] + &x[2],
+        ]
+    };
+    let (pk, po) = (hom(k, line), hom(o, e));
+    top(&pk)?;
+    if top(&po).is_none() {
+        // Along the line `x_o = e`.
+        return Some(Rational::from(0));
+    }
+    let g = gcd(pk.clone(), po.clone());
+    let slope = match top(&g) {
+        Some(1) => {
+            let t = -&g[0] / &g[1];
+            if t < rat(span[0]) || t > rat(span[1]) {
+                return None;
+            }
+            let a = peval(&pderiv(&pk), &t);
+            if a == 0 {
+                return None;
+            }
+            peval(&pderiv(&po), &t) / a
+        }
+        // One a multiple of the other: a line through the point.
+        Some(2) => &po[2] / &pk[2],
+        _ => return None,
+    };
+    Some(slope)
+}
+
+/// The degree of `p`, `None` for zero.
+fn top(p: &[Rational]) -> Option<usize> {
+    p.iter().rposition(|x| *x != 0)
+}
+
+/// The greatest common divisor of two polynomials in power form, exact
+/// (up to a factor).
+fn gcd(mut a: Poly, mut b: Poly) -> Poly {
+    while let Some(db) = top(&b) {
+        // `a mod b`.
+        while let Some(da) = top(&a) {
+            if da < db {
+                break;
+            }
+            let f = &a[da] / &b[db];
+            for i in 0..=db {
+                let x = &f * &b[i];
+                a[da - db + i] -= x;
+            }
+        }
+        std::mem::swap(&mut a, &mut b);
+    }
+    a
 }
 
 /// The signed crossings of `rays` past the window `lo` and before `hi`
@@ -1269,11 +1486,12 @@ pub fn strip_degree<S: Scalar>(
     strip_degree_near(face, patches, boxes, ribbons, q, point, sides).0
 }
 
-/// [`strip_degree`], with, where the piece is [`PieceError::Unsettled`],
-/// where as far as known: a closed rectangle of global UV holding every
-/// cut, side stretch or curve end found unsettled before the piece gave
-/// up (`None`: anywhere in the run). A hint for the caller to refine the
-/// run's boxes there and leave the rest, not a certificate.
+/// [`strip_degree`], with, where the piece is [`PieceError::Unsettled`]
+/// or [`PieceError::Through`], where as far as known: a closed rectangle
+/// of global UV holding every cut, side stretch, curve end or uncut loop
+/// found unsettled before the piece gave up (`None`: anywhere in the
+/// run). A hint for the caller to refine the run's boxes there and leave
+/// the rest, not a certificate.
 pub fn strip_degree_near<S: Scalar>(
     face: &FaceUv<'_>,
     patches: &[HomPatch<S>],
@@ -1285,7 +1503,7 @@ pub fn strip_degree_near<S: Scalar>(
 ) -> (Result<PieceDegree, PieceError>, Option<UvRect>) {
     let mut near = None;
     let r = piece_degree(face, patches, boxes, ribbons, q, point, sides, &mut near);
-    let near = if r == Err(PieceError::Unsettled) {
+    let near = if matches!(r, Err(PieceError::Unsettled | PieceError::Through)) {
         near
     } else {
         None
@@ -1405,15 +1623,20 @@ fn run_degree<S: Scalar>(
     let mut ends_in: SmallVec<[[bool; 2]; 2]> = smallvec::smallvec![[false; 2]; ribbons.len()];
     let mut balance: BTreeMap<(VertId, [u64; 2]), i32> = BTreeMap::new();
     for (i, t) in face.trims().iter().enumerate() {
-        if t.spans.is_empty() || is_closed(t) {
+        if t.spans.is_empty() {
             continue;
         }
         let m = index.iter().position(|&j| j == i);
+        if is_closed(t) {
+            // A closed trim inside the run is one of its ribbons.
+            if m.is_none() && place(face, boxes, coedge_ends(t)[0].2) {
+                return Err(PieceError::Open { coedge: t.coedge });
+            }
+            continue;
+        }
         for (k, (v, bits, p)) in coedge_ends(t).into_iter().enumerate() {
-            match place(boxes, &segs, p) {
-                None => return Err(ctx.unsettled(point_rect(&p))),
-                Some(false) => continue,
-                Some(true) => (),
+            if !place(face, boxes, p) {
+                continue;
             }
             let Some(m) = m else {
                 return Err(PieceError::Open { coedge: t.coedge });
@@ -1437,7 +1660,21 @@ fn run_degree<S: Scalar>(
     let mut hits = Vec::new();
     for (si, seg) in segs.iter().enumerate() {
         for m in 0..ribbons.len() {
-            ctx.hits(m, si, seg, &mut hits)?;
+            let t = ctx.trims[m];
+            ctx.hits(t, m, si, seg, &mut hits)?;
+        }
+    }
+    // No other trim crosses the outer boundary.
+    for (i, t) in face.trims().iter().enumerate() {
+        if index.contains(&i) {
+            continue;
+        }
+        let mut other = Vec::new();
+        for (si, seg) in segs.iter().enumerate() {
+            ctx.hits(t, usize::MAX, si, seg, &mut other)?;
+            if !other.is_empty() {
+                return Err(PieceError::Open { coedge: t.coedge });
+            }
         }
     }
     for h in hits.iter_mut() {
@@ -1454,30 +1691,33 @@ fn run_degree<S: Scalar>(
         let mut order: Vec<(usize, Vec<usize>)> = Vec::new();
         for &s in l {
             let mut on: Vec<usize> = (0..hits.len()).filter(|&k| hits[k].seg == s).collect();
-            on.sort_by(|&a, &b| hits[a].pos[0].total_cmp(&hits[b].pos[0]));
-            if segs[s].back {
-                on.reverse();
-            }
-            if single
-                && on.windows(2).any(|p| {
-                    hits[p[0]].pos[1] >= hits[p[1]].pos[0] && hits[p[1]].pos[1] >= hits[p[0]].pos[0]
-                })
-            {
+            if !along_side(&hits, &mut on) && single {
                 let r = on
                     .iter()
                     .map(|&k| seg_rect(&segs[s], hits[k].pos))
                     .reduce(hull);
                 return Err(ctx.unsettled_at(r));
             }
+            if segs[s].back {
+                on.reverse();
+            }
             order.push((s, on));
         }
         let mut m = if single {
             match order.iter().rev().find_map(|(_, on)| on.last()) {
                 Some(last) => inside_after(&hits[*last]),
-                // Uncut, but along a moved trim: its side there is
-                // outside the trim, and so is the whole loop.
-                None if l.iter().any(|&s| ctx.along(&segs[s])) => false,
-                None => return Err(PieceError::Unsettled),
+                None => match ctx.uncut(l, &segs) {
+                    Some(inside) => inside,
+                    None => {
+                        let r = l
+                            .iter()
+                            .map(|&s| {
+                                seg_rect(&segs[s], [dy(segs[s].ext.lo()), dy(segs[s].ext.hi())])
+                            })
+                            .reduce(hull);
+                        return Err(ctx.unsettled_at(r));
+                    }
+                },
             }
         } else {
             true
@@ -1530,14 +1770,23 @@ fn run_degree<S: Scalar>(
                 .partial_cmp(&(b.pspan, b.t[0]))
                 .expect("finite")
         });
-        // Where this ribbon's cuts are, for the failures below.
+        // Where this ribbon's cuts and ends in the run are, for the
+        // failures below.
+        let ends = coedge_ends(t);
         let at = mine
             .iter()
             .map(|h| seg_rect(&segs[h.seg], h.pos))
+            .chain(
+                (0..2)
+                    .filter(|&k| {
+                        ends_in[m][k] || (closed && k == 0 && place(face, boxes, ends[0].2))
+                    })
+                    .map(|k| point_rect(&ends[k].2)),
+            )
             .reduce(hull);
         if mine
             .windows(2)
-            .any(|p| p[0].pspan == p[1].pspan && p[0].t[1] >= p[1].t[0])
+            .any(|p| p[0].pspan == p[1].pspan && p[0].t[1] >= p[1].t[0] && !twins(p[0], p[1]))
         {
             return Err(ctx.unsettled_at(at));
         }
@@ -1545,22 +1794,36 @@ fn run_degree<S: Scalar>(
             mine.reverse();
         }
         let entry = |h: &Hit| h.sigma < 0;
+        // Twins in the order the curve meets them: entries and exits
+        // alternate along the coedge from its start's side of the run.
+        let mut inside = if closed {
+            place(face, boxes, ends[0].2)
+        } else {
+            ends_in[m][0]
+        };
+        for k in 0..mine.len() {
+            if k + 1 < mine.len()
+                && entry(mine[k]) == inside
+                && twins(mine[k], mine[k + 1])
+                && entry(mine[k + 1]) != inside
+            {
+                mine.swap(k, k + 1);
+            }
+            inside = !inside;
+        }
         let mut count = 0i64;
         if closed {
             if mine.is_empty() {
-                // The whole loop inside the run, or clear of it; its
-                // vertex on the outer boundary (touching it uncut) says
-                // neither.
-                match place(boxes, &segs, coedge_ends(t)[0].2) {
-                    Some(true) => {
-                        count = count_between(r.rays, None, None, false)
-                            .map_err(|_| ctx.unsettled_at(at))?;
-                    }
-                    Some(false) => (),
-                    None => return Err(ctx.unsettled(point_rect(&coedge_ends(t)[0].2))),
+                // The whole loop inside the run, or clear of it.
+                if place(face, boxes, coedge_ends(t)[0].2) {
+                    count = count_between(r.rays, None, None, false)
+                        .map_err(|_| ctx.unsettled_at(at))?;
                 }
             } else {
-                if !entry(mine[0]) {
+                // The last pair wraps past the start where the curve
+                // starts inside the run.
+                let wraps = !entry(mine[0]);
+                if wraps {
                     mine.rotate_left(1);
                 }
                 if !mine.len().is_multiple_of(2)
@@ -1571,7 +1834,18 @@ fn run_degree<S: Scalar>(
                 {
                     return Err(ctx.unsettled_at(at));
                 }
-                for pair in mine.chunks(2) {
+                let last = mine.len() / 2 - 1;
+                for (k, pair) in mine.chunks(2).enumerate() {
+                    if twins(pair[0], pair[1]) {
+                        // A clip of the run at one point: nothing between;
+                        // wrapping, the curve leaves the run only there
+                        // (its only cuts): all of it.
+                        if wraps && k == last {
+                            count += count_between(r.rays, None, None, false)
+                                .map_err(|_| ctx.unsettled_at(at))?;
+                        }
+                        continue;
+                    }
                     let (e, x) = (win(pair[0]).c, win(pair[1]).c);
                     // Along the stored direction, from `lo` to `hi`.
                     let (lo, hi) = if t.reversed { (x, e) } else { (e, x) };
@@ -1588,7 +1862,7 @@ fn run_degree<S: Scalar>(
             // the run, between an entry and the next exit, to its end if
             // inside the run.
             let [start_in, end_in] = ends_in[m];
-            let mut marks: Vec<Option<[EdgePos; 2]>> = Vec::new();
+            let mut marks: Vec<Option<&Hit>> = Vec::new();
             if start_in {
                 marks.push(None);
             }
@@ -1596,7 +1870,7 @@ fn run_degree<S: Scalar>(
                 if entry(h) != ((k + usize::from(start_in)).is_multiple_of(2)) {
                     return Err(ctx.unsettled_at(at));
                 }
-                marks.push(Some(win(h).c));
+                marks.push(Some(h));
             }
             if end_in {
                 marks.push(None);
@@ -1605,10 +1879,18 @@ fn run_degree<S: Scalar>(
                 return Err(ctx.unsettled_at(at));
             }
             for pair in marks.chunks(2) {
-                let (e, x) = (pair[0], pair[1]);
+                // A clip of the run at one point: nothing between.
+                if let [Some(a), Some(b)] = pair
+                    && twins(a, b)
+                {
+                    continue;
+                }
+                let (e, x) = (pair[0].map(|h| win(h).c), pair[1].map(|h| win(h).c));
                 let (lo, hi) = if t.reversed { (x, e) } else { (e, x) };
+                // Windows touching at one point (two cuts of one knot) hold
+                // nothing between them.
                 if let (Some(lo), Some(hi)) = (lo, hi)
-                    && lo[1] >= hi[0]
+                    && lo[1] > hi[0]
                 {
                     return Err(ctx.unsettled_at(at));
                 }
@@ -1646,34 +1928,13 @@ pub fn corner_end<K: Ord>(
     r_w: f64,
     named: &[(K, CoedgeId)],
 ) -> Option<CornerEnd> {
-    let mut far = 0.0;
-    let mut finite = true;
-    for k in 0..3 {
-        // `|x − w| ≤ max(hi − w, w − lo)`, both bounded upwards.
-        let d = {
-            let x = up_diff(part.hi[k], w[k]);
-            let y = up_diff(w[k], part.lo[k]);
-            if x > y { x } else { y }
-        };
-        if !d.is_finite() {
-            finite = false;
-            break;
-        }
-        let d = if d > 0.0 { d } else { 0.0 };
-        far = add_up(far, up(d * d));
-    }
-    if finite && r_w.is_finite() && far <= down(r_w * r_w) {
+    if within_of(part, w, r_w) {
         return Some(CornerEnd::Vertex);
     }
     named
         .iter()
         .min_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
         .map(|&(_, c)| CornerEnd::Curve(c))
-}
-
-/// `a − b` rounded upwards.
-fn up_diff(a: f64, b: f64) -> f64 {
-    -down(b - a)
 }
 
 #[cfg(test)]

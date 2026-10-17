@@ -344,7 +344,7 @@ impl CeilingInt for Rational {
 }
 
 /// A polynomial in power form, exact.
-type Poly = Vec<Rational>;
+pub(crate) type Poly = Vec<Rational>;
 
 fn padd(a: &[Rational], b: &[Rational]) -> Poly {
     let n = a.len().max(b.len());
@@ -378,11 +378,11 @@ fn ppow(a: &[Rational], n: usize) -> Poly {
     out
 }
 
-fn peval(a: &[Rational], t: &Rational) -> Rational {
+pub(crate) fn peval(a: &[Rational], t: &Rational) -> Rational {
     a.iter().rev().fold(Rational::ZERO, |acc, c| acc * t + c)
 }
 
-fn pderiv(a: &[Rational]) -> Poly {
+pub(crate) fn pderiv(a: &[Rational]) -> Poly {
     if a.len() <= 1 {
         return vec![Rational::ZERO];
     }
@@ -441,7 +441,7 @@ fn smul(a: &[Rational], b: &[Rational]) -> Series {
 }
 
 /// `a / b`, `b[0] ≠ 0`.
-fn sdiv(a: &[Rational], b: &[Rational]) -> Series {
+pub(crate) fn sdiv(a: &[Rational], b: &[Rational]) -> Series {
     let (a, b) = (strunc(a.to_vec()), strunc(b.to_vec()));
     let mut out = vec![Rational::ZERO; MAX_ORDER + 1];
     for i in 0..=MAX_ORDER {
@@ -455,7 +455,7 @@ fn sdiv(a: &[Rational], b: &[Rational]) -> Series {
 }
 
 /// `Σ a_j·x^j` for a series `x` without a constant term.
-fn scompose(a: &[Rational], x: &[Rational]) -> Series {
+pub(crate) fn scompose(a: &[Rational], x: &[Rational]) -> Series {
     let mut out = vec![Rational::ZERO; MAX_ORDER + 1];
     for c in a.iter().rev() {
         out = smul(&out, x);
@@ -465,7 +465,7 @@ fn scompose(a: &[Rational], x: &[Rational]) -> Series {
 }
 
 /// The inverse of a series `s` with `s[0] = 0`, `s[1] ≠ 0`.
-fn srevert(s: &[Rational]) -> Series {
+pub(crate) fn srevert(s: &[Rational]) -> Series {
     let s1 = s[1].clone();
     // `τ ← (x − (s(τ) − s₁·τ))/s₁`, one more order exact per round.
     let x: Series = strunc(vec![Rational::ZERO, Rational::ONE]);

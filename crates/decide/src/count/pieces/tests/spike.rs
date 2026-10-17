@@ -38,9 +38,8 @@ fn tile_patch() -> Vec<Patch> {
     vec![Patch::from_affine(1, 1, net, &first()).unwrap()]
 }
 
-/// The cusp's vertex, the line's far end, the arc's far end.
-/// Off the dyadic lines of every box above the finest (a vertex on a box
-/// side leaves the box no piece of its own; a run across it would).
+/// The cusp's vertex, off the dyadic lines of every box above the finest
+/// (on them: [`spikes_with_their_vertex_on_box_corners_settle_at_once`]).
 const W: [f64; 2] = [
     1.0625 + 5.0 / 4_503_599_627_370_496.0,
     0.25 + 3.0 / 18_014_398_509_481_984.0,
@@ -64,30 +63,45 @@ impl Shape {
     /// The line out of `W` along `+u`, up the side, an arc of radius 1
     /// back into `W` tangent to the line (contact order 2).
     fn cusp() -> Shape {
-        let (a, p) = ([W[0] + SIN60, W[1]], [W[0] + SIN60, W[1] + 0.5]);
+        Shape::cusp_at(W)
+    }
+
+    /// The same with its vertex at `w`.
+    fn cusp_at(w: [f64; 2]) -> Shape {
+        let (a, p) = ([w[0] + SIN60, w[1]], [w[0] + SIN60, w[1] + 0.5]);
         Shape([
-            [pt(W), mid(W, a), pt(a)],
+            [pt(w), mid(w, a), pt(a)],
             [pt(a), mid(a, p), pt(p)],
-            [pt(p), [W[0] + 0.5773502691896257, W[1], SIN60], pt(W)],
+            [pt(p), [w[0] + 0.5773502691896257, w[1], SIN60], pt(w)],
         ])
     }
 
     /// Two lines `2⁻⁶` rad apart (order 1).
     fn acute() -> Shape {
+        Shape::acute_at(W)
+    }
+
+    /// The same with its vertex at `w`.
+    fn acute_at(w: [f64; 2]) -> Shape {
         let slope = crate::num::trig::tan(1.0 / 64.0);
-        let (a, b) = ([W[0] + 0.75, W[1]], [W[0] + 0.75, W[1] + 0.75 * slope]);
+        let (a, b) = ([w[0] + 0.75, w[1]], [w[0] + 0.75, w[1] + 0.75 * slope]);
         Shape([
-            [pt(W), mid(W, a), pt(a)],
+            [pt(w), mid(w, a), pt(a)],
             [pt(a), mid(a, b), pt(b)],
-            [pt(b), mid(b, W), pt(W)],
+            [pt(b), mid(b, w), pt(w)],
         ])
     }
 
     /// Two parabolas of one curvature at `W` (order 3): `(0.7t +
     /// 0.175t², 0.7t²)` out of `W`, `(0.7t, 0.7t²)` back into it.
     fn equal_curvature() -> Shape {
-        let at = |du: f64, dv: f64| [W[0] + du, W[1] + dv, 1.0];
-        let (b, a) = ([W[0] + 0.875, W[1] + 0.7], [W[0] + 0.7, W[1] + 0.7]);
+        Shape::equal_curvature_at(W)
+    }
+
+    /// The same with its vertex at `w`.
+    fn equal_curvature_at(w: [f64; 2]) -> Shape {
+        let at = |du: f64, dv: f64| [w[0] + du, w[1] + dv, 1.0];
+        let (b, a) = ([w[0] + 0.875, w[1] + 0.7], [w[0] + 0.7, w[1] + 0.7]);
         Shape([
             [at(0.0, 0.0), at(0.35, 0.0), pt(b)],
             [pt(b), mid(b, a), pt(a)],
@@ -423,8 +437,10 @@ fn lin_q(q: [f64; 3], a: DVec3) -> [f64; 2] {
     s.enclose()
 }
 
-/// The count of `shape` above `q` along `UP`, and the boxes visited.
-fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize) {
+/// The count of `shape` above `q` along `UP`, the boxes visited, and the
+/// corner boxes holding the vertex (in their closed UV box) whose piece
+/// didn't settle.
+fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
     let cs = shape.curves();
     let trims = shape.trims(beta);
     let face = FaceUv::new(Operand::A, FaceId(3), TILE, [1.0, 1.0], &trims, false).unwrap();
@@ -443,7 +459,15 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize) {
     let (up_q, r_q, n_q) = (lin_q(q, UP), lin_q(q, R_HAT), lin_q(q, NU));
     let mut queue: Vec<(BoxKey, Option<SmallVec<[crate::count::boxes::SpanRef; 8]>>)> =
         face.tile_boxes().map(|b| (b, None)).collect();
-    let (mut sum, mut visited) = (0i64, 0usize);
+    let (mut sum, mut visited, mut stuck) = (0i64, 0usize, 0usize);
+    let w = shape.w();
+    let holds_w = |b: &BoxKey| {
+        [Dir::U, Dir::V].into_iter().all(|d| {
+            let k = usize::from(d == Dir::V);
+            let (i, e) = (b.tile()[k] as f64, b.extent(d));
+            i + dy(e.lo()) <= w[k] && w[k] <= i + dy(e.hi())
+        })
+    };
     while let Some((b, among)) = queue.pop() {
         visited += 1;
         assert!(visited < 20_000, "refinement runs away at q = {q:?}");
@@ -494,7 +518,12 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize) {
                     |sides| strip_degree(&face, &patches, &[b], &ribbons, &qs, point(), sides),
                 ) {
                     Ok(d) => Some(d.degree),
-                    Err(PieceError::Unsettled | PieceError::Through) => None,
+                    Err(PieceError::Unsettled | PieceError::Through) => {
+                        if matches!(rl.role, Role::Corner { .. }) && holds_w(&b) {
+                            stuck += 1;
+                        }
+                        None
+                    }
                     Err(e) => panic!("{e:?} at box {b:?}, q = {q:?}"),
                 }
             }
@@ -515,7 +544,7 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize) {
             }
         }
     }
-    (sum, visited)
+    (sum, visited, stuck)
 }
 
 /// The query `δ` along `UP` below (`δ > 0`) or above the face's plane at
@@ -592,9 +621,10 @@ fn check_shape(shape: &Shape, seed: u64, most: usize) {
         let Some(want) = truth(shape, q) else {
             continue;
         };
-        let (got, visited) = count(shape, q, beta);
+        let (got, visited, stuck) = count(shape, q, beta);
         assert_eq!(got, want, "{kind} q = {q:?}");
         assert!(visited < most, "{kind} q = {q:?}: {visited} boxes");
+        assert_eq!(stuck, 0, "{kind} q = {q:?}: corner boxes at the vertex");
         checked += 1;
     }
     assert!(checked >= 30, "{checked}");
@@ -645,5 +675,30 @@ fn weighted_spikes_count_alike() {
     .enumerate()
     {
         check_shape(&shapes[k].weighted(scale, r), 60 + k as u64, 1000);
+    }
+}
+
+/// The spikes with their vertex on the dyadic grid, `(1 1/16, 1/4)`, a
+/// corner of every box from depth 4 in `u` and 2 in `v` on (box lines read
+/// as moved to their high side: the vertex lies in the box below and left
+/// of it, the curves leave it through that box's sides at one point,
+/// ordered by their shapes, and a box only touching the vertex is inside
+/// or outside by the face's sector there): every corner box holding the
+/// vertex settles where it is first reached, none refines for it, and the
+/// counts are exact. The cusp also mirrored, its spike towards `−u`.
+#[test]
+fn spikes_with_their_vertex_on_box_corners_settle_at_once() {
+    let w = [1.0625, 0.25];
+    let shapes = [
+        Shape::cusp_at(w),
+        Shape::acute_at(w),
+        Shape::equal_curvature_at(w),
+    ];
+    for (k, s) in shapes.iter().enumerate() {
+        check_shape(s, 70 + k as u64, 1000);
+    }
+    for m in [3u64, 5, 6] {
+        let s = shapes[0].mirrored(m & 1 != 0, m & 2 != 0, m & 4 != 0);
+        check_shape(&s, 80 + m, 1000);
     }
 }
