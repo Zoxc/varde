@@ -57,8 +57,10 @@ impl Reads {
 impl HeightReads for Reads {
     fn vv(&self, q: Point, w: VertId) -> Option<VvRec> {
         self.near.get(&(q, w)).map(|&near| VvRec {
-            side: Sign::Pos,
-            ahead: Sign::Pos,
+            place: crate::records::shadow::SideAhead {
+                side: Sign::Pos,
+                ahead: Sign::Pos,
+            },
             near,
         })
     }

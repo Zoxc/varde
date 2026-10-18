@@ -383,7 +383,22 @@ impl SideGeometry for Tilted {
         Some(Moving::of_a(DVec3::new(x, y, z), Sign::Pos, D))
     }
 
-    fn edge_rates<S: Curved>(&self, _: Point, _: &TileEdge, t: &S) -> [[S; 3]; ORDERS] {
+    fn tile_net(&self, _: Operand, _: FaceId, [i, j]: [i64; 2]) -> Option<TileNet> {
+        Some(std::array::from_fn(|k| {
+            let (u, v) = (
+                i as f64 + (k / 3) as f64 / 2.0,
+                j as f64 + (k % 3) as f64 / 2.0,
+            );
+            let [x, y, z] = map(u, v);
+            [x, y, z, 1.0]
+        }))
+    }
+
+    fn point_rates(&self, _: Point, _: &TilePoint) -> [Rate; ORDERS] {
+        rates_a(Sign::Pos, D)
+    }
+
+    fn line_rates<S: Curved>(&self, _: Point, _: &SideLine, t: &S) -> [[S; 3]; ORDERS] {
         let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
         [lit(D), lit(T[0]), lit(T[1]), lit(T[2])]
     }
@@ -392,7 +407,7 @@ impl SideGeometry for Tilted {
 /// `f` with the side records it asks for, decided as it asks.
 fn settled<R, E>(
     q: [f64; 3],
-    need: impl Fn(&E) -> Option<SideKey>,
+    need: impl Fn(&E) -> Option<Want>,
     f: impl Fn(&Sides) -> Result<R, E>,
 ) -> Result<R, E> {
     let geom = Tilted {

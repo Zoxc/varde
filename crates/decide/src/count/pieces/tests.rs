@@ -27,9 +27,9 @@ use crate::count::boxes::UvSpan;
 use crate::ids::{EdgeId, FaceId, VertId};
 use crate::num::decide::{Band, Fail, Sign};
 use crate::num::exact::ORDERS;
-use crate::perturb::{Curved, Moving, Seg as Line, T};
-use crate::records::keys::{Operand, Query, TileCorner, TileEdge};
-use crate::records::ray::{ChainCrossing, Crossing};
+use crate::perturb::{Curved, Moving, Rate, Seg as Line, T, rates_a};
+use crate::records::keys::{Operand, Query, SideKey, SideLine, TileCorner, TileEdge, TilePoint};
+use crate::records::ray::{ChainCrossing, Crossing, TileNet};
 use crate::records::shadow::{Decided, Pass, ShadowGeometry};
 use crate::records::side::SideGeometry;
 use crate::records::table::Fresh;
@@ -353,7 +353,21 @@ impl SideGeometry for Plane {
         Some(Moving::of_a(at, Sign::Pos, D))
     }
 
-    fn edge_rates<S: Curved>(&self, _: Point, _: &TileEdge, t: &S) -> [[S; 3]; ORDERS] {
+    fn tile_net(&self, _: Operand, _: FaceId, [i, j]: [i64; 2]) -> Option<TileNet> {
+        Some(std::array::from_fn(|k| {
+            let (u, v) = (
+                i as f64 + (k / 3) as f64 / 2.0,
+                j as f64 + (k % 3) as f64 / 2.0,
+            );
+            [SU * u, SV * v, 0.0, 1.0]
+        }))
+    }
+
+    fn point_rates(&self, _: Point, _: &TilePoint) -> [Rate; ORDERS] {
+        rates_a(Sign::Pos, D)
+    }
+
+    fn line_rates<S: Curved>(&self, _: Point, _: &SideLine, t: &S) -> [[S; 3]; ORDERS] {
         let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
         [lit(D), lit(T[0]), lit(T[1]), lit(T[2])]
     }
@@ -1375,7 +1389,13 @@ fn a_side_on_the_tile_line_needs_its_record() {
         line: 1,
         cell: 0,
     };
-    assert_eq!(got, Err(PieceError::Need(SideKey { q: point(), edge })));
+    assert_eq!(
+        got,
+        Err(PieceError::Need(Want::Side(SideKey {
+            q: point(),
+            line: SideLine::Edge(edge),
+        })))
+    );
 }
 
 /// A hole: a closed straight triangle (one vertex, clockwise in UV)

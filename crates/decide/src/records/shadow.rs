@@ -104,28 +104,24 @@ use crate::records::table::{FillError, Fresh, Table, TableError};
 /// module docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VvRec {
-    /// The side of `w` against `q`'s `r̂` line, `ν·(w − q)`: `Pos` to its
-    /// left seen from above.
-    pub side: Sign,
-    /// Whether `w` is ahead of `q` along `r̂`, `r̂·(w − q)`: `Pos` ahead.
-    pub ahead: Sign,
+    /// `w` against `q`'s `r̂` line: its side, `ν·(w − q)`, `Pos` to its
+    /// left seen from above, and whether it is ahead along `r̂`, `r̂·(w −
+    /// q)`. Whether `w` lies the way the ray of `q` goes
+    /// ([`SideAhead::on_ray`]) is the same for both readers of one
+    /// record: either point's ray passes the other.
+    pub place: SideAhead,
     /// `‖w − q‖ ≤ max(r_q, r_w)` on the stored positions.
     pub near: bool,
 }
 
 impl VvRec {
-    /// Whether `w` lies the way the ray of `q` (a point of `of`) goes:
-    /// behind `q` along `r̂` for `A`'s rays, ahead for `B`'s. The same for
-    /// both readers of one record: either point's ray passes the other.
-    pub fn on_ray(&self, of: Operand) -> bool {
-        self.ahead == ray_ahead(of)
-    }
-
     /// The record read from the other point.
     fn swapped(self) -> VvRec {
         VvRec {
-            side: neg(self.side),
-            ahead: neg(self.ahead),
+            place: SideAhead {
+                side: neg(self.place.side),
+                ahead: neg(self.place.ahead),
+            },
             near: self.near,
         }
     }
@@ -144,6 +140,27 @@ impl RayRec {
     /// The crossing as a count: `−1`, `0` or `+1`.
     pub fn count(&self) -> i8 {
         self.crossing.map_or(0, Sign::as_i8)
+    }
+}
+
+/// A point of the other operand against a point's `r̂` line, oriented
+/// from the point: the side of it, `ν·(w − q)` (`Pos` to its left seen
+/// from above), and whether it is ahead along `r̂`, `r̂·(w − q)`. The
+/// record of a knot ([`KnotRec`](super::ray::KnotRec)) and of a face's
+/// dyadic point ([`CornerRec`](super::side::CornerRec)), each asked by its
+/// point alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SideAhead {
+    /// The side against the `r̂` line, `ν·(w − q)`.
+    pub side: Sign,
+    /// Whether it is ahead along `r̂`, `r̂·(w − q)`.
+    pub ahead: Sign,
+}
+
+impl SideAhead {
+    /// Whether it lies the way the ray of the point (of `of`) goes.
+    pub fn on_ray(&self, of: Operand) -> bool {
+        self.ahead == ray_ahead(of)
     }
 }
 
@@ -621,13 +638,7 @@ fn decide_vv<G: ShadowGeometry>(k: &Fresh<VvKey>, geom: &G) -> Decided<VvRec> {
         (Err(Fail::Internal { key: tie }), Work::default())
     };
     let work = Cost::exact(w12.and(w3));
-    let rec = side_ahead.and_then(|[side, ahead]| {
-        Ok(VvRec {
-            side,
-            ahead,
-            near: near?,
-        })
-    });
+    let rec = side_ahead.and_then(|place| Ok(VvRec { place, near: near? }));
     (rec, work)
 }
 
@@ -638,15 +649,31 @@ pub(super) fn side_and_ahead(
     q: &Moving,
     w: &Moving,
     tie: TieKey,
-) -> (Result<[Sign; 2], Fail>, Work) {
-    let row = |axis| VvShadow {
-        q: q.clone(),
-        w: w.clone(),
-        axis,
-    };
+) -> (Result<SideAhead, Fail>, Work) {
+    side_and_ahead_by(
+        |axis| VvShadow {
+            q: q.clone(),
+            w: w.clone(),
+            axis,
+        },
+        tie,
+    )
+}
+
+/// [`side_and_ahead`] by the flat rows `row` gives along each axis.
+pub(super) fn side_and_ahead_by<P: Pred>(
+    row: impl Fn(ShadowAxis) -> P,
+    tie: TieKey,
+) -> (Result<SideAhead, Fail>, Work) {
     let (side, w1) = decide_flat(&row(ShadowAxis::Side), tie);
     let (ahead, w2) = decide_flat(&row(ShadowAxis::Along), tie);
-    (side.and_then(|s| Ok([s, ahead?])), w1.and(w2))
+    let rec = side.and_then(|side| {
+        Ok(SideAhead {
+            side,
+            ahead: ahead?,
+        })
+    });
+    (rec, w1.and(w2))
 }
 
 /// Decides a ray record from its ends' stored point–vertex records and,
@@ -663,7 +690,7 @@ fn decide_ray<G: ShadowGeometry>(
         record: RecordKey::Ray(key),
     };
     let ends = geom.ends(q.operand.other(), key.g);
-    let read = |w: VertId| read_vv(vv, q, w);
+    let read = |w: VertId| read_vv(vv, q, w).map(|r| r.place);
     let (Some(r0), Some(r1)) = (read(ends[0]), read(ends[1])) else {
         // The batch's ends are filled first: a missing one is a bug.
         let fail = Fail::Internal {

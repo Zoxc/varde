@@ -67,6 +67,7 @@ use malachite::{Integer, Rational};
 
 use crate::bezier::{Dir, Dyadic, Scalar};
 use crate::num::bounded::Bounded;
+use crate::num::exact::rat;
 
 /// The highest contact order the record looks for: two different conics
 /// meet with multiplicity at most 4.
@@ -159,8 +160,7 @@ pub fn cusp_rec(
     if a[0][0] != b[0][0] || a[0][1] != b[0][1] {
         return Err(CuspError::Span);
     }
-    let q = |x: f64| Rational::try_from(x).expect("finite");
-    let tangent = |s: &CuspSpan| [q(s[1][0]) - q(s[0][0]), q(s[1][1]) - q(s[0][1])];
+    let tangent = |s: &CuspSpan| [rat(s[1][0]) - rat(s[0][0]), rat(s[1][1]) - rat(s[0][1])];
     let (ta, tb) = (tangent(a), tangent(b));
     let zero = |t: &[Rational; 2]| t[0] == 0 && t[1] == 0;
     if zero(&ta) || zero(&tb) {
@@ -198,7 +198,7 @@ pub fn cusp_rec(
     let a_lo = &g_abs / Rational::from(2);
     let a_hi = &g_abs * Rational::from(3) / Rational::from(2);
     let beta = band_uv(du, dv, bands)?;
-    let (x, s_beta) = cut(&q(a[0][k]), sigma, m, &a_lo, &beta, &s_c)?;
+    let (x, s_beta) = cut(&rat(a[0][k]), sigma, m, &a_lo, &beta, &s_c)?;
     let reach = [0, 1].map(|i| curves[i].reach(&s_beta, ends[i].0));
     // Fits: `|κ| < 2⁵³`, a tile index.
     let kappa = if sigma > 0 { x } else { -x };
@@ -489,9 +489,8 @@ struct Curve {
 
 impl Curve {
     fn new(sp: &CuspSpan, k: usize, sigma: i8) -> Curve {
-        let q = |x: f64| Rational::try_from(x).expect("finite");
         let o = 1 - k;
-        let ws = [q(sp[0][2]), q(sp[1][2]), q(sp[2][2])];
+        let ws = [rat(sp[0][2]), rat(sp[1][2]), rat(sp[2][2])];
         // `Σ wᵢ·xᵢ·Bᵢ(t)` in power form.
         let hom = |x: [Rational; 3]| -> Poly {
             let (a, b, c) = (&ws[0] * &x[0], &ws[1] * &x[1], &ws[2] * &x[2]);
@@ -502,9 +501,9 @@ impl Curve {
             ]
         };
         let w = hom([Rational::ONE, Rational::ONE, Rational::ONE]);
-        let (wk, wo) = (q(sp[0][k]), q(sp[0][o]));
-        let xk = hom([q(sp[0][k]), q(sp[1][k]), q(sp[2][k])]);
-        let xo = hom([q(sp[0][o]), q(sp[1][o]), q(sp[2][o])]);
+        let (wk, wo) = (rat(sp[0][k]), rat(sp[0][o]));
+        let xk = hom([rat(sp[0][k]), rat(sp[1][k]), rat(sp[2][k])]);
+        let xo = hom([rat(sp[0][o]), rat(sp[1][o]), rat(sp[2][o])]);
         let sig = Rational::from(i64::from(sigma));
         let s = pscale(&padd(&xk, &pscale(&w, &-&wk)), &sig);
         let y = padd(&xo, &pscale(&w, &-&wo));

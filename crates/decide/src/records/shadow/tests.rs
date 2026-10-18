@@ -493,8 +493,12 @@ fn a_ray_through_a_shared_vertex_counts_once() {
                                 assert!(sum.abs() <= 1, "{at}");
                             }
                             let rec = s.vv(q, w).unwrap();
-                            assert_eq!((rec.side, rec.ahead), vv_oracle(&g, q, w), "{at}");
-                            assert!(w_x != on_ray || rec.on_ray(op));
+                            assert_eq!(
+                                (rec.place.side, rec.place.ahead),
+                                vv_oracle(&g, q, w),
+                                "{at}"
+                            );
+                            assert!(w_x != on_ray || rec.place.on_ray(op));
                             let row = |axis| VvShadow {
                                 q: g.point(q),
                                 w: g.point(Point::vert(other, w)),
@@ -541,8 +545,8 @@ fn a_point_on_an_edge_s_shadow_is_placed_by_the_line_row_at_order_three() {
             };
             assert_eq!(order(&row), 3);
             let (r0, r1) = (s.vv(q, g0).unwrap(), s.vv(q, g1).unwrap());
-            assert_ne!(r0.side, r1.side);
-            assert_ne!(r0.on_ray(op), r1.on_ray(op));
+            assert_ne!(r0.place.side, r1.place.side);
+            assert_ne!(r0.place.on_ray(op), r1.place.on_ray(op));
         }
     }
 }
@@ -580,7 +584,11 @@ fn records_on_lattice_loops_are_the_moved_configuration_s() {
                 assert_eq!(got, ray_oracle(&g, q, e), "seed {seed}, {q:?} {e:?}");
                 for v in g.ends(op.other(), e) {
                     let rec = s.vv(q, v).unwrap();
-                    assert_eq!((rec.side, rec.ahead), vv_oracle(&g, q, v), "seed {seed}");
+                    assert_eq!(
+                        (rec.place.side, rec.place.ahead),
+                        vv_oracle(&g, q, v),
+                        "seed {seed}"
+                    );
                 }
             }
         }
@@ -639,7 +647,11 @@ fn records_with_a_direction_per_vertex_are_the_moved_configuration_s() {
                 assert_eq!(got, ray_oracle(&g, q, e), "seed {seed}, {q:?} {e:?}");
                 for v in g.ends(op.other(), e) {
                     let rec = s.vv(q, v).unwrap();
-                    assert_eq!((rec.side, rec.ahead), vv_oracle(&g, q, v), "seed {seed}");
+                    assert_eq!(
+                        (rec.place.side, rec.place.ahead),
+                        vv_oracle(&g, q, v),
+                        "seed {seed}"
+                    );
                 }
             }
         }
@@ -676,18 +688,24 @@ fn a_point_pair_has_one_record_read_from_either_side() {
 
     let from_a = s.vv(pa, b).unwrap();
     let from_b = s.vv(pb, a).unwrap();
-    assert_eq!(from_b.side, neg(from_a.side));
-    assert_eq!(from_b.ahead, neg(from_a.ahead));
+    assert_eq!(from_b.place.side, neg(from_a.place.side));
+    assert_eq!(from_b.place.ahead, neg(from_a.place.ahead));
     assert_eq!(from_b.near, from_a.near);
-    assert_eq!(from_a.on_ray(A), from_b.on_ray(B));
-    assert!(from_a.on_ray(A));
-    assert_eq!((from_a.side, from_a.ahead), vv_oracle(&g, pa, b));
-    assert_eq!((from_b.side, from_b.ahead), vv_oracle(&g, pb, a));
+    assert_eq!(from_a.place.on_ray(A), from_b.place.on_ray(B));
+    assert!(from_a.place.on_ray(A));
+    assert_eq!(
+        (from_a.place.side, from_a.place.ahead),
+        vv_oracle(&g, pa, b)
+    );
+    assert_eq!(
+        (from_b.place.side, from_b.place.ahead),
+        vv_oracle(&g, pb, a)
+    );
     let from_cut = s.vv(cut, a).unwrap();
     let at = |p| q3(g.pos[&p]);
     let d = qsub(&g.moved(pa), &at(cut));
-    assert_eq!(from_cut.side, qsign(&qdot(&q3(NU), &d)));
-    assert_eq!(from_cut.ahead, qsign(&qdot(&q3(R_HAT), &d)));
+    assert_eq!(from_cut.place.side, qsign(&qdot(&q3(NU), &d)));
+    assert_eq!(from_cut.place.ahead, qsign(&qdot(&q3(R_HAT), &d)));
     #[cfg(debug_assertions)]
     assert_eq!(s.vv_table().reads(&VvKey::of(pa, b).key), Some(2));
 }
@@ -996,7 +1014,11 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
                 assert_eq!(sum, winding_oracle(&g, q, w), "seed {seed}, {q:?}");
                 for v in w.iter().flat_map(|&(e, _)| g.ends(other, e)) {
                     let rec = s.vv(q, v).expect("stored");
-                    assert_eq!((rec.side, rec.ahead), vv_oracle(&g, q, v), "seed {seed}");
+                    assert_eq!(
+                        (rec.place.side, rec.place.ahead),
+                        vv_oracle(&g, q, v),
+                        "seed {seed}"
+                    );
                 }
             }
         }

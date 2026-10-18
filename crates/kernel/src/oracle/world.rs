@@ -42,9 +42,9 @@ use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights};
 use varde_decide::records::height::{HeightError, Heights, LayerTable, Records};
 use varde_decide::records::keys::{FootId, HKey};
 use varde_decide::records::keys::{Operand, Point, Query, RayKey, VvKey, XKey};
-use varde_decide::records::keys::{TileCorner, TileEdge};
+use varde_decide::records::keys::{SideLine, TileCorner, TileEdge, TilePoint};
 use varde_decide::records::near::OpBands;
-use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span};
+use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span, TileNet};
 use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry, Shadows};
 use varde_decide::records::side::{SideGeometry, Sides};
 use varde_decide::records::table::Fresh;
@@ -475,7 +475,23 @@ impl SideGeometry for World<'_> {
         })
     }
 
-    fn edge_rates<S: Curved>(&self, q: Point, _: &TileEdge, t: &S) -> [[S; 3]; ORDERS] {
+    fn tile_net(&self, operand: Operand, face: FaceId, [i, j]: [i64; 2]) -> Option<TileNet> {
+        let surf = self.solid(operand).brep.surface(face);
+        let r = surf.rect();
+        if !r.u.contains(&i) || !r.v.contains(&j) {
+            return None;
+        }
+        Some(*surf.tile(i, j)?.net())
+    }
+
+    fn point_rates(&self, q: Point, _: &TilePoint) -> [Rate; ORDERS] {
+        match q.operand.other() {
+            A => rates_a(Sign::Pos, Rate::Float(self.d)),
+            B => [Rate::ZERO, Rate::ZERO, Rate::ZERO, Rate::ZERO],
+        }
+    }
+
+    fn line_rates<S: Curved>(&self, q: Point, _: &SideLine, t: &S) -> [[S; 3]; ORDERS] {
         let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
         match q.operand.other() {
             A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
@@ -756,13 +772,13 @@ impl World<'_> {
                     eps_tie: cfg.eps_tie,
                 };
                 let here = || format!("{q:?} face {f:?}");
-                // Side records asked for are filled and the count run
-                // again.
+                // Side and dyadic point records asked for are filled, one
+                // at a time, and the count run again.
                 let mut asked = 0;
                 let (res, cost) = loop {
                     let (res, cost) = count_pieces(&fq, &sides, &reads, &charge);
                     match res {
-                        Err(CountError::Need(k)) if asked < 64 => {
+                        Err(CountError::Need(k)) if asked < 256 => {
                             asked += 1;
                             stats.side_fills += 1;
                             sides

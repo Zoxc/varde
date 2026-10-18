@@ -77,6 +77,7 @@
 
 use std::cmp::Ordering;
 
+use malachite::Rational;
 use smallvec::SmallVec;
 
 use super::poly::Poly;
@@ -131,6 +132,11 @@ impl Dyadic {
     #[inline]
     pub fn exp(self) -> u32 {
         self.exp
+    }
+
+    /// The point as an exact rational, `num/2^exp`.
+    pub fn rational(self) -> Rational {
+        Rational::from(self.num) >> u64::from(self.exp)
     }
 
     /// `[lo, hi]`, `f64`s with the point between them: both the point

@@ -70,18 +70,22 @@
 //! strip or corner box's free sides are read with [`iso_turn`] over their
 //! part of a side and joined with the trims' crossings.
 //!
-//! **Sides through the query** ([`box_degree_sided`]). A side on a tile
-//! line not certified off `q_xy` is read from its side record
-//! ([`Sides`]): the signed crossings of its tile edge by the query
-//! point's own ray ([`Ray::of_query`]), the point moved, over the side's
-//! part of the edge. The box's other sides are then turned against that
-//! ray too, an end on its line ahead of the query at a tile corner taking
-//! its side from the corner's record, so all four sides count the one
-//! moved configuration and the degree is the box's winding about the
-//! moved point: additive with its neighbours' however deep each is
-//! refined (they read the same records along the tile line), and the
-//! winding about `q_xy` wherever that is certified. A side inside a tile
-//! not certified off `q_xy` has no record ([`SidedError::Through`]).
+//! **Sides through the query** ([`box_degree_sided`]). A side not
+//! certified off `q_xy` is read from the side record of the line it lies
+//! on ([`Sides`]): the tile edge for a side on a tile line, the iso line
+//! across the tile for one inside it, each the signed crossings of the
+//! line by the query point's own ray ([`Ray::of_query`]), the point
+//! moved, over the side's part of the line, a cut inside a crossing's
+//! enclosure ordered by the cut's dyadic point record. The box's other
+//! sides are then turned against that ray too, an end on its line ahead
+//! of the query taking its side from its dyadic point's record (a tile
+//! corner, a box corner on a tile edge or inside the tile), so all four
+//! sides count the one moved configuration and the degree is the box's
+//! winding about the moved point: additive with its neighbours' however
+//! deep each is refined (they read the same records along the line), and
+//! the winding about `q_xy` wherever that is certified. Every side of a
+//! box of the face's tiles has a record key; [`SidedError::Through`] is
+//! left for a line past the range of `i64`.
 //!
 //! Generic over the level, as the boxes are; each call reports the pieces
 //! it tested.
@@ -93,8 +97,8 @@ use crate::bezier::{Dir, Dyadic, HomCurve, HomPatch, Scalar};
 use crate::ids::FaceId;
 use crate::num::bounded::Bounded;
 use crate::perturb::{NU, R_HAT};
-use crate::records::keys::{Operand, Point, SideKey, TileEdge};
-use crate::records::side::Sides;
+use crate::records::keys::{CornerKey, Operand, Point, SideKey, SideLine};
+use crate::records::side::{CornerRec, Over, Sides, Want};
 
 /// A ray from the query's shadow along `(a, b)` in the shadow coordinates
 /// `(r̂·x, ν·x)`, `a, b ∈ {−1, 0, 1}` not both 0 (module docs).
@@ -494,25 +498,47 @@ pub(crate) fn iso_turn_given<S: Scalar>(
     if !patch.weights_positive() {
         return Err(TurnError::Off);
     }
+    pieces_turn(&iso_pieces(patch, dir, at, along), q, ray, given, pieces)
+}
+
+/// The aligned dyadic pieces of `patch`'s iso line where the local
+/// coordinate in `dir` is `at` that cover `along` exactly ([`cover`]),
+/// left to right: cut once and turned against every ray that reads the
+/// side ([`pieces_turn`]).
+pub(crate) fn iso_pieces<S: Scalar>(
+    patch: &HomPatch<S>,
+    dir: Dir,
+    at: Dyadic,
+    along: Extent,
+) -> Vec<HomCurve<S, 3>> {
     let iso = iso_line(patch, dir, at);
-    let frame = Frame::new(q, ray, &iso.weights().coefs()[0]);
+    let mut out = Vec::new();
+    cover(&iso, 0, 0, along.nums(), &mut |piece| {
+        out.push(piece.clone());
+        true
+    });
+    out
+}
+
+/// [`iso_turn_given`] over the line's pieces from [`iso_pieces`] (of a
+/// patch with positive weights): each halved as [`curve_turn`]'s.
+pub(crate) fn pieces_turn<S: Scalar>(
+    cut: &[HomCurve<S, 3>],
+    q: &QShadow,
+    ray: Ray,
+    given: [Option<i8>; 2],
+    pieces: &mut u64,
+) -> Result<Turn, TurnError> {
+    let Some(first) = cut.first() else {
+        return Err(TurnError::Unsettled);
+    };
+    let frame = Frame::new(q, ray, &first.weights().coefs()[0]);
     let mut tally = Tally {
         given,
         ..Tally::default()
     };
-    let mut failed = None;
-    let (lo, hi, e) = along.nums();
-    cover(&iso, 0, 0, (lo, hi, e), &mut |piece| match frame
-        .walk(piece, OFF_DEPTH, pieces, &mut tally)
-    {
-        Ok(()) => true,
-        Err(err) => {
-            failed = Some(err);
-            false
-        }
-    });
-    if let Some(err) = failed {
-        return Err(err);
+    for piece in cut {
+        frame.walk(piece, OFF_DEPTH, pieces, &mut tally)?;
     }
     tally.finish()
 }
@@ -552,6 +578,12 @@ impl Side {
         let (_, at, _, _) = self.line(b);
         at == Dyadic::ZERO || at == Dyadic::ONE
     }
+}
+
+/// Whether the line of axis `k` (0 for `u`) at the local `at` in tile
+/// index `i` is the low edge of `face`'s tiles.
+pub(crate) fn low_edge(face: &FaceUv<'_>, k: usize, i: i64, at: Dyadic) -> bool {
+    i == face.tiles()[k].start && at == Dyadic::ZERO
 }
 
 /// The turn of side `side` of box `b`, oriented counter-clockwise in UV,
@@ -619,10 +651,15 @@ pub fn box_degree<S: Scalar>(
         });
     }
     let sign = face.inside_winding();
+    // Each side's pieces, cut once for every ray.
+    let mut cuts: [Option<Vec<HomCurve<S, 3>>>; 4] = Default::default();
     for (k, ray) in Ray::ALL.into_iter().enumerate() {
         let mut laps = Some(0i64);
-        for side in Side::CCW {
-            match side_turn(b, patch, side, q, ray, &mut pieces) {
+        for (cut, side) in cuts.iter_mut().zip(Side::CCW) {
+            let (dir, at, along, back) = side.line(b);
+            let cut = cut.get_or_insert_with(|| iso_pieces(patch, dir, at, along));
+            let turn = pieces_turn(cut, q, ray, [None, None], &mut pieces);
+            match turn.map(|t| if back { t.reversed() } else { t }) {
                 Ok(t) => laps = laps.map(|l| l + t.laps),
                 // An axis ray's pieces are the splits' certificate: a side
                 // they don't cover isn't certified off the query.
@@ -648,108 +685,93 @@ pub fn box_degree<S: Scalar>(
     Err(DegreeError::Unsettled)
 }
 
-/// The tile edge side `side` of box `b` lies on, if it lies on a tile
-/// line ([`Side::on_tile_line`]).
-pub fn tile_edge(b: &BoxKey, side: Side) -> Option<TileEdge> {
-    let (dir, at, _, _) = side.line(b);
-    line_edge((b.operand(), b.face()), b.tile(), dir, at)
-}
-
-/// The tile edge of face `of`'s tile `tile` on the line `dir = at`
-/// (local), if `at` is the tile's 0 or 1.
-pub(crate) fn line_edge(
-    of: (Operand, FaceId),
-    tile: [i64; 2],
-    dir: Dir,
-    at: Dyadic,
-) -> Option<TileEdge> {
-    let (k, o) = match dir {
-        Dir::U => (0, 1),
-        Dir::V => (1, 0),
-    };
-    let line = if at == Dyadic::ZERO {
-        tile[k]
-    } else if at == Dyadic::ONE {
-        tile[k] + 1
-    } else {
-        return None;
-    };
-    Some(TileEdge {
-        operand: of.0,
-        face: of.1,
-        fixed: dir,
-        line,
-        cell: tile[o],
-    })
-}
-
 /// Why a side's turn isn't certified with its side records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecTurnError {
-    /// This side record (or one of its corners') isn't decided yet.
-    Need(SideKey),
-    /// The side, inside a tile, isn't certified off `q_xy`.
+    /// This record isn't decided yet.
+    Need(Want),
+    /// The side isn't certified off `q_xy` and has no record key: its
+    /// line is past the range of `i64`.
     Through,
     /// Not settled at this level.
     Unsettled,
 }
 
-/// The laps of the side `dir = at` of `patch` over `along` (local, in the
-/// side's own direction), its ends' sides where `given`, about the ray of
-/// `point`: [`iso_turn_given`] where certified; on a tile edge `edge` not
-/// certified off `q_xy`, the side record's count over `along`, and an end
-/// at a tile corner on the ray's line ahead of the query takes its side
-/// from the corner's record (module docs). The patch's weights are
-/// positive.
+/// The laps of the side `dir = at` of tile `tile` of face `of`, on
+/// `patch` (that tile's at the level worked at), over `along` (local, in
+/// the side's own direction), its ends' sides where `given`, about the
+/// ray of `point`: [`iso_turn_given`] where certified, an end on the
+/// ray's line ahead of the query taking its side from its dyadic point's
+/// record; on a side not certified off `q_xy`, the record of the line it
+/// lies on (a tile edge, or an iso line inside the tile) over `along`,
+/// a cut inside a crossing's enclosure ordered by the cut's record
+/// (module docs). The patch's weights are positive.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rec_turn<S: Scalar>(
     patch: &HomPatch<S>,
+    of: (Operand, FaceId),
+    tile: [i64; 2],
     dir: Dir,
     at: Dyadic,
     along: Extent,
     q: &QShadow,
     point: Point,
-    edge: Option<TileEdge>,
     sides: &Sides,
     given: [Option<i8>; 2],
     pieces: &mut u64,
 ) -> Result<i64, RecTurnError> {
     let ray = Ray::of_query(point.operand);
-    let mut t = iso_turn_given(patch, dir, at, along, q, ray, given, pieces);
-    if let (Err(TurnError::End), Some(e)) = (t, edge) {
-        // Left of `+r̂` is `+ν`, the corner record's `Pos`; of `−r̂` it
-        // is `−ν`.
+    let line = SideLine::of(of.0, of.1, tile, dir, at);
+    let ends = line.map(|l| [l.point(along.lo()), l.point(along.hi())]);
+    let corner = |j: usize| -> Result<CornerRec, RecTurnError> {
+        let p = ends.and_then(|e| e[j]).ok_or(RecTurnError::Unsettled)?;
+        sides
+            .corner(point, p)
+            .ok_or(RecTurnError::Need(Want::Corner(CornerKey {
+                q: point,
+                corner: p,
+            })))
+    };
+    // The line's pieces, cut once for both turns below.
+    let cut = patch
+        .weights_positive()
+        .then(|| iso_pieces(patch, dir, at, along));
+    let mut turn = |g: [Option<i8>; 2]| match &cut {
+        Some(c) => pieces_turn(c, q, ray, g, pieces),
+        None => Err(TurnError::Off),
+    };
+    let mut t = turn(given);
+    if let Err(TurnError::End) = t {
+        // Left of `+r̂` is `+ν`, the record's `Pos`; of `−r̂` it is `−ν`.
         let flip: i8 = match point.operand {
             Operand::A => -1,
             Operand::B => 1,
         };
-        let [c0, c1] = e.corners();
         let mut g = given;
-        let mut read = false;
-        for (slot, (c, at_corner)) in g.iter_mut().zip([
-            (c0, along.lo() == Dyadic::ZERO),
-            (c1, along.hi() == Dyadic::ONE),
-        ]) {
-            if slot.is_none() && at_corner {
-                let r = sides
-                    .corner(point, c)
-                    .ok_or(RecTurnError::Need(SideKey { q: point, edge: e }))?;
-                *slot = Some(flip * r.side.as_i8());
-                read = true;
+        for (j, slot) in g.iter_mut().enumerate() {
+            if slot.is_none() {
+                *slot = Some(flip * corner(j)?.side.as_i8());
             }
         }
-        if read {
-            t = iso_turn_given(patch, dir, at, along, q, ray, g, pieces);
+        if g != given {
+            t = turn(g);
         }
     }
-    match (t, edge) {
+    match (t, line) {
         (Ok(t), _) => Ok(t.laps),
-        (Err(TurnError::Off), Some(e)) => {
+        (Err(TurnError::Off), Some(line)) => {
             let rec = sides
-                .side(point, e)
-                .ok_or(RecTurnError::Need(SideKey { q: point, edge: e }))?;
-            rec.count_over([dy(along.lo()), dy(along.hi())])
-                .ok_or(RecTurnError::Unsettled)
+                .side(point, line)
+                .ok_or(RecTurnError::Need(Want::Side(SideKey { q: point, line })))?;
+            let x = [dy(along.lo()), dy(along.hi())];
+            let mut cut = [None, None];
+            loop {
+                match rec.count_over(point.operand, x, cut) {
+                    Ok(n) => return Ok(n),
+                    Err(Over::Side(j)) => cut[j] = Some(corner(j)?.side),
+                    Err(Over::Unordered) => return Err(RecTurnError::Unsettled),
+                }
+            }
         }
         (Err(TurnError::Off), None) => Err(RecTurnError::Through),
         (Err(_), _) => Err(RecTurnError::Unsettled),
@@ -762,25 +784,22 @@ pub enum SidedError {
     /// The box isn't of this face, or not in its tiles, or the query
     /// point is of the face's operand.
     Box(BoxError),
-    /// The degree reads this side record, not yet decided: fill it and
-    /// ask again.
-    Need(SideKey),
-    /// This side, inside a tile, isn't certified off `q_xy`: no record
-    /// counts it.
+    /// The degree reads this record, not yet decided: fill it and ask
+    /// again.
+    Need(Want),
+    /// This side isn't certified off `q_xy` and no record counts it (its
+    /// line past the range of `i64`): never from tiles a face can have.
     Through(Side),
     /// The sides don't settle against the query point's ray at this
-    /// level (a box corner inside a tile edge on or next to its line, an
-    /// end not certified, the patch's weights): escalate. A box corner
-    /// inside a tile edge exactly on the ray's line (an edge running
-    /// along it) stays unsettled at every level: no record yet orders a
-    /// crossing against an interior cut.
+    /// level (an end not certified, a tangency's crossing over a box
+    /// corner, the patch's weights): escalate.
     Unsettled,
 }
 
 /// The degree of box `b` of `face` about point `point`, whose shadow is
 /// `q` (module docs, "Sides through the query"): [`box_degree`] where it
 /// certifies the degree, else the four sides against `point`'s ray, a
-/// tile-line side not certified off `q_xy` read from `sides`.
+/// side not certified off `q_xy` read from `sides`.
 pub fn box_degree_sided<S: Scalar>(
     face: &FaceUv<'_>,
     b: &BoxKey,
@@ -792,6 +811,7 @@ pub fn box_degree_sided<S: Scalar>(
     if point.operand == b.operand() {
         return Err(SidedError::Box(BoxError::Foreign));
     }
+    // The plain degree's preconditions first: the box is the face's.
     match box_degree(face, b, patch, q) {
         Ok(d) => return Ok(d),
         Err(DegreeError::Box(e)) => return Err(SidedError::Box(e)),
@@ -807,15 +827,15 @@ pub fn box_degree_sided<S: Scalar>(
     let mut laps = 0i64;
     for side in Side::CCW {
         let (dir, at, along, back) = side.line(b);
-        let edge = tile_edge(b, side);
         let n = rec_turn(
             patch,
+            (b.operand(), b.face()),
+            b.tile(),
             dir,
             at,
             along,
             q,
             point,
-            edge,
             sides,
             [None, None],
             &mut pieces,

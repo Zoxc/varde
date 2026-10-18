@@ -303,12 +303,14 @@ fn the_oracle_agrees_with_the_ideal_shapes() {
 /// settled at the cell's size (seed 139), and boxes on a plane's huge
 /// tile as deep as boxes go while still millimetres long, their splits
 /// shifted off the point by fractions of boxes no longer aligned to the
-/// dyadic grid (seeds 400, 1403, 1457, 1726). Seed 8 only by default
-/// (the others take seconds each; varde-decide's own tests pin the
-/// rules).
+/// dyadic grid (seeds 400, 1403, 1457, 1726), and a box side inside a
+/// tile whose shadow no split position certified off the point, which
+/// had no side record (seeds 2861, 8919). Seed 8 only by default (the
+/// others take seconds each; varde-decide's own tests pin the rules).
 #[test]
 fn placements_once_refused_agree() {
-    let seeds: &[u64] = varde_testing::pick(&[8], &[3, 7, 8, 139, 400, 1403, 1457, 1726]);
+    let seeds: &[u64] =
+        varde_testing::pick(&[8], &[3, 7, 8, 139, 400, 1403, 1457, 1726, 2861, 8919]);
     let outs = par(seeds.len() as u64, threads(), &|i| {
         let seed = seeds[i as usize];
         let o = check_answers(

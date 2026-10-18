@@ -275,6 +275,12 @@ fn float(num: u64, exp: u32) -> f64 {
     num as f64 * f64::from_bits((1023 - u64::from(exp)) << 52)
 }
 
+/// The global coordinate of the local dyadic `t` in tile or cell `i`,
+/// exactly.
+pub(crate) fn global(i: i64, t: Dyadic) -> Rational {
+    Rational::from(i) + t.rational()
+}
+
 /// A dyadic point of `[0, 1]` as an `f64`, exactly (a box's sides and
 /// centre have denominators at most `2⁵³`).
 pub(crate) fn dy(t: Dyadic) -> f64 {
@@ -384,7 +390,7 @@ impl BoxKey {
     fn centre_coord_exact(&self, dir: Dir) -> Rational {
         let k = usize::from(dir == Dir::V);
         let t = self.extent(dir).mid();
-        Rational::from(self.tile[k]) + Rational::try_from(dy(t)).expect("a finite dyadic")
+        global(self.tile[k], t)
     }
 }
 

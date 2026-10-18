@@ -529,7 +529,7 @@ impl Scalar for Rational {
 
     /// Panics for a value that isn't finite.
     fn from_f64(x: f64, _: &Self) -> Self {
-        Rational::try_from(x).expect("a finite f64")
+        crate::num::exact::rat(x)
     }
 
     /// Panics for a factor that isn't finite.

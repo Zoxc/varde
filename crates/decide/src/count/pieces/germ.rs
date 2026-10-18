@@ -141,6 +141,47 @@ impl Leg {
         }
     }
 
+    /// `sp` split at the exact parameter `t` (strictly inside `(0, 1)`,
+    /// the weights positive), read from the point there: back towards its
+    /// start, then on towards its end; and the point. Exact homogeneous
+    /// de Casteljau.
+    pub(super) fn split(sp: &UvSpan, t: &Rational) -> ([Rational; 2], [Leg; 2]) {
+        let s = Rational::from(1) - t;
+        let h: [[Rational; 3]; 3] = sp.map(|p| {
+            let w = rat(p[2]);
+            [rat(p[0]) * &w, rat(p[1]) * &w, w]
+        });
+        let lerp = |a: &[Rational; 3], b: &[Rational; 3]| -> [Rational; 3] {
+            std::array::from_fn(|i| &s * &a[i] + t * &b[i])
+        };
+        let (h01, h12) = (lerp(&h[0], &h[1]), lerp(&h[1], &h[2]));
+        let m = lerp(&h01, &h12);
+        let at = |x: &[Rational; 3]| [&x[0] / &x[2], &x[1] / &x[2]];
+        let p = at(&m);
+        let leg = |a: &[Rational; 3], b: &[Rational; 3]| {
+            let rel = |x: &[Rational; 3]| {
+                let x = at(x);
+                [&x[0] - &p[0], &x[1] - &p[1]]
+            };
+            Leg {
+                d: [rel(a), rel(b)],
+                w: [m[2].clone(), a[2].clone(), b[2].clone()],
+            }
+        };
+        let legs = [leg(&h01, &h[0]), leg(&h12, &h[2])];
+        (p, legs)
+    }
+
+    /// The straight leg from `p` to `q`.
+    pub(super) fn straight(p: &[Rational; 2], q: &[Rational; 2]) -> Leg {
+        let d = [&q[0] - &p[0], &q[1] - &p[1]];
+        let half = Rational::from(1) / Rational::from(2);
+        Leg {
+            d: [[&d[0] * &half, &d[1] * &half], d],
+            w: [1, 1, 1].map(Rational::from),
+        }
+    }
+
     /// The point `P`, exactly.
     pub(super) fn point(sp: &UvSpan, at_end: bool) -> [Rational; 2] {
         let i = if at_end { 2 } else { 0 };

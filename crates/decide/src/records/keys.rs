@@ -43,7 +43,7 @@
 //! Keys order by their ids: the order a record table stores and decides
 //! them in. Ids order work only; no answer reads that order.
 
-use crate::bezier::Dir;
+use crate::bezier::{Dir, Dyadic};
 use crate::ids::{EdgeId, FaceId, VertId};
 
 /// One of the two operands of a boolean.
@@ -242,17 +242,19 @@ pub struct TileEdge {
 }
 
 impl TileEdge {
-    /// The edge's two corners, at its start and end.
-    pub fn corners(&self) -> [TileCorner; 2] {
+    /// The edge's two corners, at its start and end; `None` past the
+    /// range of `i64`.
+    pub fn corners(&self) -> Option<[TileCorner; 2]> {
+        let end = self.cell.checked_add(1)?;
         let at = |c: i64| match self.fixed {
             Dir::U => [self.line, c],
             Dir::V => [c, self.line],
         };
-        [self.cell, self.cell + 1].map(|c| TileCorner {
+        Some([self.cell, end].map(|c| TileCorner {
             operand: self.operand,
             face: self.face,
             at: at(c),
-        })
+        }))
     }
 }
 
@@ -268,24 +270,222 @@ pub struct TileCorner {
     pub at: [i64; 2],
 }
 
-/// A point against a tile edge of a face of the other operand: the side
-/// record of a box side on a tile line.
+/// A dyadic point of a face's global UV: tile `tile`'s point at the local
+/// coordinates `at`, each in `[0, 1)`, so a point has one key whichever
+/// tile or box reaches it (a coordinate at a tile's `1` is the next
+/// tile's `0`: [`TilePoint::new`]). A tile corner has `at = [0, 0]`, a
+/// point inside a tile edge one coordinate 0; any other lies inside its
+/// tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TilePoint {
+    /// The face's operand.
+    pub operand: Operand,
+    /// The face.
+    pub face: FaceId,
+    /// The tile whose lower corner is nearest: `at` lies in `[0, 1)²`.
+    pub tile: [i64; 2],
+    /// The local coordinates, `(u, v)`.
+    pub at: [Dyadic; 2],
+}
+
+impl TilePoint {
+    /// Tile `tile`'s point at the local coordinates `at` (each in `[0,
+    /// 1]`), in its canonical form; `None` past the range of `i64`.
+    pub fn new(
+        operand: Operand,
+        face: FaceId,
+        tile: [i64; 2],
+        at: [Dyadic; 2],
+    ) -> Option<TilePoint> {
+        let mut tile = tile;
+        let mut at = at;
+        for k in 0..2 {
+            if at[k] == Dyadic::ONE {
+                tile[k] = tile[k].checked_add(1)?;
+                at[k] = Dyadic::ZERO;
+            }
+        }
+        Some(TilePoint {
+            operand,
+            face,
+            tile,
+            at,
+        })
+    }
+
+    /// The tile corner, if the point is one.
+    pub fn corner(&self) -> Option<TileCorner> {
+        (self.at == [Dyadic::ZERO; 2]).then_some(TileCorner {
+            operand: self.operand,
+            face: self.face,
+            at: self.tile,
+        })
+    }
+
+    /// The tile edge the point lies inside (not at a corner of), and its
+    /// parameter there, if it does.
+    pub fn on_edge(&self) -> Option<(TileEdge, Dyadic)> {
+        let edge = |fixed: Dir, line: i64, cell: i64| TileEdge {
+            operand: self.operand,
+            face: self.face,
+            fixed,
+            line,
+            cell,
+        };
+        match self.at {
+            [u, v] if u == Dyadic::ZERO && v != Dyadic::ZERO => {
+                Some((edge(Dir::U, self.tile[0], self.tile[1]), v))
+            }
+            [u, v] if v == Dyadic::ZERO && u != Dyadic::ZERO => {
+                Some((edge(Dir::V, self.tile[1], self.tile[0]), u))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl From<TileCorner> for TilePoint {
+    fn from(c: TileCorner) -> TilePoint {
+        TilePoint {
+            operand: c.operand,
+            face: c.face,
+            tile: c.at,
+            at: [Dyadic::ZERO; 2],
+        }
+    }
+}
+
+/// An iso line inside a tile of a face: the maximal segment of the line
+/// where the tile's local coordinate in `fixed` is the dyadic `at`
+/// (strictly between 0 and 1), across the whole tile, in the increasing
+/// direction of the other coordinate. Boxes on its two sides are refined
+/// independently, so this, not a box side, is the record's key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InnerLine {
+    /// The face's operand.
+    pub operand: Operand,
+    /// The face.
+    pub face: FaceId,
+    /// The tile.
+    pub tile: [i64; 2],
+    /// The direction whose coordinate is fixed along the line.
+    pub fixed: Dir,
+    /// That coordinate, local to the tile.
+    pub at: Dyadic,
+}
+
+/// A line a box side lies on, as the side records key it: a tile edge, or
+/// an iso line inside a tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SideLine {
+    /// A tile edge, shared by the tiles on its two sides.
+    Edge(TileEdge),
+    /// An iso line inside one tile.
+    Inner(InnerLine),
+}
+
+impl SideLine {
+    /// The line of face `face` of `operand` through tile `tile` where the
+    /// local coordinate in `fixed` is `at`: a tile edge where `at` is 0
+    /// or 1, else inside the tile. `None` past the range of `i64`.
+    pub fn of(
+        operand: Operand,
+        face: FaceId,
+        tile: [i64; 2],
+        fixed: Dir,
+        at: Dyadic,
+    ) -> Option<SideLine> {
+        let (k, o) = match fixed {
+            Dir::U => (0, 1),
+            Dir::V => (1, 0),
+        };
+        let edge = |line: i64| {
+            SideLine::Edge(TileEdge {
+                operand,
+                face,
+                fixed,
+                line,
+                cell: tile[o],
+            })
+        };
+        Some(if at == Dyadic::ZERO {
+            edge(tile[k])
+        } else if at == Dyadic::ONE {
+            edge(tile[k].checked_add(1)?)
+        } else {
+            SideLine::Inner(InnerLine {
+                operand,
+                face,
+                tile,
+                fixed,
+                at,
+            })
+        })
+    }
+
+    /// The face's operand.
+    pub fn operand(&self) -> Operand {
+        match self {
+            SideLine::Edge(e) => e.operand,
+            SideLine::Inner(l) => l.operand,
+        }
+    }
+
+    /// The direction whose coordinate is fixed along the line.
+    pub fn fixed(&self) -> Dir {
+        match self {
+            SideLine::Edge(e) => e.fixed,
+            SideLine::Inner(l) => l.fixed,
+        }
+    }
+
+    /// The line's point at the parameter `t` in `[0, 1]` (the other
+    /// coordinate, local to the tile or cell); `None` past the range of
+    /// `i64`.
+    pub fn point(&self, t: Dyadic) -> Option<TilePoint> {
+        let (operand, face, fixed, tile, at) = match *self {
+            SideLine::Edge(e) => {
+                let tile = match e.fixed {
+                    Dir::U => [e.line, e.cell],
+                    Dir::V => [e.cell, e.line],
+                };
+                (e.operand, e.face, e.fixed, tile, Dyadic::ZERO)
+            }
+            SideLine::Inner(l) => (l.operand, l.face, l.fixed, l.tile, l.at),
+        };
+        let at = match fixed {
+            Dir::U => [at, t],
+            Dir::V => [t, at],
+        };
+        TilePoint::new(operand, face, tile, at)
+    }
+
+    /// The line's two ends, at its start and end.
+    pub fn ends(&self) -> Option<[TilePoint; 2]> {
+        Some([self.point(Dyadic::ZERO)?, self.point(Dyadic::ONE)?])
+    }
+}
+
+/// A point against a line of a face of the other operand, a tile edge or
+/// an iso line inside a tile: the side record of a box side on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SideKey {
     /// The point.
     pub q: Point,
-    /// The tile edge.
-    pub edge: TileEdge,
+    /// The line.
+    pub line: SideLine,
 }
 
-/// A point against a tile corner of a face of the other operand: the
-/// ends of the side records there.
+/// A point against a dyadic point of a face of the other operand (a tile
+/// corner, or a box corner on a tile edge or inside a tile): the ends of
+/// the side records there, and the side of box corners on the point's
+/// ray line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CornerKey {
     /// The point.
     pub q: Point,
-    /// The corner.
-    pub corner: TileCorner,
+    /// The face's point.
+    pub corner: TilePoint,
 }
 
 /// A height key: the geometry a height above or below is decided from,
@@ -402,9 +602,9 @@ pub enum RecordKey {
     HeightAt(HeightKey),
     /// A crossing record.
     X(XKey),
-    /// A point's ray against a tile edge of a face.
+    /// A point's ray against a tile edge or an iso line of a face.
     Side(SideKey),
-    /// A point against a tile corner of a face.
+    /// A point against a dyadic point of a face.
     Corner(CornerKey),
 }
 

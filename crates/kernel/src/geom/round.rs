@@ -12,9 +12,7 @@ use malachite::base::rounding_modes::RoundingMode::Nearest;
 use malachite::{Float, Rational};
 
 /// The finite `x` as an exact rational.
-pub(crate) fn q(x: f64) -> Rational {
-    Rational::try_from(x).expect("a finite f64")
-}
+pub(crate) use varde_decide::num::exact::rat as q;
 
 /// `x` rounded to the nearest `f64`, ties to even (`±∞` past the range).
 pub(crate) fn nearest(x: &Rational) -> f64 {

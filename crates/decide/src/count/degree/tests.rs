@@ -6,8 +6,9 @@
 //! random partitions into boxes, split off the query, sum to it, flipped
 //! faces negated. Also: additivity under further splits and of side turns
 //! under cuts, the same degree from every ray and level, polygons by
-//! segments against the exact winding, and sides, tile lines and corners
-//! through the query reported as such.
+//! segments against the exact winding, sides, tile lines and corners
+//! through the query reported as such, and every box of folded faces of
+//! degrees 1 to 4 against an exact rational oracle of its own boundary.
 
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -627,4 +628,318 @@ fn a_side_through_the_query_from_the_ray_is_reported() {
         box_degree(&face, &b, &patch, &qs),
         Err(DegreeError::Through(Side::Bottom))
     );
+}
+
+/// Control points with weights, a row or net.
+type Net = Vec<[f64; 4]>;
+
+/// A curve in the shadow plane, homogeneous `(r̂·X, ν·X, W)`, exactly.
+type Shadow2 = Vec<[Q; 3]>;
+
+/// How a curve's winding about a point came out of [`chord_winding`].
+#[derive(Debug, PartialEq)]
+enum Exact {
+    /// The signed crossings of its chords, exactly.
+    Laps(i64),
+    /// The point is on the curve (a piece's end is the point).
+    On,
+    /// Not separated within the depth.
+    Unknown,
+}
+
+/// Whether `p` lies in the closed triangle `a b c`, a degenerate one
+/// counting as holding every point of its line (conservative).
+fn in_triangle(a: &[Q; 2], b: &[Q; 2], c: &[Q; 2], p: &[Q; 2]) -> bool {
+    let orient = |s: &[Q; 2], t: &[Q; 2]| {
+        let v = (&t[0] - &s[0]) * (&p[1] - &s[1]) - (&t[1] - &s[1]) * (&p[0] - &s[0]);
+        v.cmp(&Q::from(0))
+    };
+    let o = [orient(a, b), orient(b, c), orient(c, a)];
+    o.iter().all(|x| x.is_ge()) || o.iter().all(|x| x.is_le())
+}
+
+/// The half-open crossing rule of [`polygon_winding`] for one directed
+/// chord, so chords of any closed cycles sum to their winding.
+fn chord_crossing(a: &[Q; 2], b: &[Q; 2], p: &[Q; 2]) -> i64 {
+    let cross = (&b[0] - &a[0]) * (&p[1] - &a[1]) - (&b[1] - &a[1]) * (&p[0] - &a[0]);
+    if a[1] <= p[1] && p[1] < b[1] && cross > 0 {
+        1
+    } else if b[1] <= p[1] && p[1] < a[1] && cross < 0 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// The winding contribution of `c` about `p`, independent of the code
+/// under test: halved exactly (de Casteljau on rationals) until `p` is
+/// outside the convex hull of each piece's control points (Carathéodory:
+/// in no triangle of them), where the piece and its chord are homotopic
+/// off `p`; then the chords' crossings.
+fn chord_winding(c: &Shadow2, p: &[Q; 2], depth: u32) -> Exact {
+    let pts: Vec<[Q; 2]> = c.iter().map(|[r, n, w]| [r / w, n / w]).collect();
+    let (a, b) = (&pts[0], &pts[pts.len() - 1]);
+    if a == p || b == p {
+        return Exact::On;
+    }
+    let n = pts.len();
+    let mut held = false;
+    // Three distinct control points each (a point in a 2D hull is in a
+    // closed triangle of three of them); a curve of two is its chord.
+    'outer: for i in 0..n {
+        for j in i + 1..n {
+            for k in j + 1..n {
+                if in_triangle(&pts[i], &pts[j], &pts[k], p) {
+                    held = true;
+                    break 'outer;
+                }
+            }
+        }
+    }
+    if !held {
+        return Exact::Laps(chord_crossing(a, b, p));
+    }
+    if depth == 0 {
+        return Exact::Unknown;
+    }
+    // Halve at 1/2.
+    let half = Q::from_unsigneds(1u32, 2u32);
+    let mut left = Vec::with_capacity(n);
+    let mut right = Vec::with_capacity(n);
+    let mut row = c.clone();
+    left.push(row[0].clone());
+    right.push(row[n - 1].clone());
+    for _ in 1..n {
+        row = row
+            .windows(2)
+            .map(|w| std::array::from_fn(|k| (&w[0][k] + &w[1][k]) * &half))
+            .collect();
+        left.push(row[0].clone());
+        right.push(row[row.len() - 1].clone());
+    }
+    right.reverse();
+    match (
+        chord_winding(&left, p, depth - 1),
+        chord_winding(&right, p, depth - 1),
+    ) {
+        (Exact::On, _) | (_, Exact::On) => Exact::On,
+        (Exact::Laps(x), Exact::Laps(y)) => Exact::Laps(x + y),
+        _ => Exact::Unknown,
+    }
+}
+
+/// The sides of box `b` of the exact `patch`, counter-clockwise in UV, in
+/// the shadow plane: read off the exact sub-patch's boundary rows.
+fn exact_sides(patch: &HomPatch<Q>, b: &BoxKey) -> [Shadow2; 4] {
+    let sub = sub_patch(patch, b);
+    let [x, y, z, w] = sub.tensors();
+    let (m, n) = sub.degrees();
+    let at = |i: usize, j: usize| {
+        let d = |a: glam::DVec3| q(a.x) * x.get(i, j) + q(a.y) * y.get(i, j) + q(a.z) * z.get(i, j);
+        [d(R_HAT), d(NU), w.get(i, j).clone()]
+    };
+    [
+        (0..=m).map(|i| at(i, 0)).collect(),
+        (0..=n).map(|j| at(m, j)).collect(),
+        (0..=m).rev().map(|i| at(i, n)).collect(),
+        (0..=n).rev().map(|j| at(0, j)).collect(),
+    ]
+}
+
+/// The sum of the curves' [`chord_winding`]s.
+fn exact_sum<'c>(curves: impl IntoIterator<Item = &'c Shadow2>, p: &[Q; 2]) -> Exact {
+    let mut sum = 0;
+    let mut unknown = false;
+    for c in curves {
+        match chord_winding(c, p, 24) {
+            Exact::On => return Exact::On,
+            Exact::Laps(l) => sum += l,
+            Exact::Unknown => unknown = true,
+        }
+    }
+    if unknown {
+        Exact::Unknown
+    } else {
+        Exact::Laps(sum)
+    }
+}
+
+/// A random face over the tiles of degree `deg` both ways: every control
+/// point, outer boundary included, thrown up to `wild` from the lattice
+/// (so the shadow folds, and boxes can wind several times), weights in
+/// `[0.5, 2]`; one shared grid, so neighbouring tiles share their tile
+/// line exactly. The nets per tile, row-major in `u`, and the grid.
+fn wild_nets(rng: &mut Rng, deg: usize, wild: f64) -> (Vec<Net>, Vec<Net>) {
+    let (nu, nv) = (3 * deg + 1, 2 * deg + 1);
+    let grid: Vec<Vec<[f64; 4]>> = (0..nu)
+        .map(|i| {
+            (0..nv)
+                .map(|j| {
+                    let (s, t) = (i as f64 / deg as f64, j as f64 / deg as f64);
+                    [
+                        (10.0 * s + rng.range(-wild, wild)).round(),
+                        (10.0 * t + rng.range(-wild, wild)).round(),
+                        int(rng, 8),
+                        [0.5, 1.0, 1.5, 2.0][(rng.next_u64() % 4) as usize],
+                    ]
+                })
+                .collect()
+        })
+        .collect();
+    let mut nets = Vec::new();
+    for i in TILES[0].clone() {
+        for j in TILES[1].clone() {
+            let mut n = Vec::new();
+            for a in 0..=deg {
+                for b in 0..=deg {
+                    n.push(grid[deg * i as usize + a][deg * j as usize + b]);
+                }
+            }
+            nets.push(n);
+        }
+    }
+    (nets, grid)
+}
+
+fn patches_at<S: Scalar>(deg: usize, nets: &[Vec<[f64; 4]>], like: &S) -> Vec<HomPatch<S>> {
+    nets.iter()
+        .map(|n| HomPatch::from_affine(deg, deg, n.iter().copied(), like).unwrap())
+        .collect()
+}
+
+fn big() -> Bounded<crate::num::bigf::Big> {
+    use crate::num::bigf::{Big, BigF, Width};
+    Bounded::exact(Big::from_f64(0.0, Width::ALL[1]))
+}
+
+/// Every box of random partitions of folded faces of degrees 1 to 4
+/// against the exact winding of its own boundary (exact rational halving
+/// and Carathéodory triangle tests, independent of the code under test),
+/// at every level; a box whose boundary holds the query is through it; a
+/// region of whole tiles (a face trimmed along tile lines) sums to the
+/// exact winding of its boundary's tile lines; and a box's degree is the
+/// same, with the same work, every time.
+#[test]
+fn every_box_is_the_exact_winding_of_its_boundary() {
+    let trims: [Trim<'_>; 0] = [];
+    let (mut boxes, mut certified, mut nonzero, mut multiple, mut on, mut regions) =
+        (0, 0, 0, 0, 0, 0);
+    let seeds = varde_testing::seeds(8, 160);
+    for seed in seeds.clone() {
+        let mut rng = Rng::new(seed);
+        let deg = 1 + (seed % 4) as usize;
+        let wild = [2.0, 8.0, 20.0][(seed / 4 % 3) as usize];
+        let (nets, grid) = wild_nets(&mut rng, deg, wild);
+        let ps = patches_at(deg, &nets, &first());
+        let pd = patches_at(deg, &nets, &dd());
+        let pb = patches_at(deg, &nets, &big());
+        let pq = patches_at(deg, &nets, &Q::from(0));
+        let face = face_uv(&trims, seed % 2 == 1);
+        let sign = face.inside_winding();
+        for round in 0..3 {
+            // The query: random, or exactly a tile corner (on the boundary
+            // of every box there).
+            let qp = if round == 2 {
+                let (i, j) = (
+                    deg * (rng.next_u64() % 4) as usize,
+                    deg * (rng.next_u64() % 3) as usize,
+                );
+                let g = grid[i][j];
+                [g[0], g[1], g[2]]
+            } else {
+                [rng.range(-2.0, 32.0), rng.range(-2.0, 22.0), 0.0]
+            };
+            let p = exact_shadow(qp);
+            let qs = QShadow::of(qp).unwrap();
+            let leaves = partition(&mut rng, &face, &ps, &qs, 0.5, 4, 6);
+            for b in &leaves {
+                boxes += 1;
+                let exact = exact_sum(&exact_sides(patch_of(&pq, b), b), &p);
+                let got = box_degree(&face, b, patch_of(&ps, b), &qs);
+                // The same, with the same work, again.
+                assert_eq!(got, box_degree(&face, b, patch_of(&ps, b), &qs));
+                match (&got, &exact) {
+                    (Ok(d), Exact::Laps(w)) => {
+                        certified += 1;
+                        nonzero += usize::from(*w != 0);
+                        multiple += usize::from(w.abs() > 1);
+                        assert_eq!(d.degree, sign * w, "seed {seed}: {b:?}, {qp:?}");
+                    }
+                    (Ok(d), Exact::On) => {
+                        panic!("seed {seed}: {b:?} through {qp:?} has degree {d:?}")
+                    }
+                    (Err(e), Exact::On) => {
+                        on += 1;
+                        assert!(
+                            matches!(e, DegreeError::Through(_)),
+                            "seed {seed}: {b:?} through {qp:?}: {e:?}"
+                        );
+                    }
+                    _ => {}
+                }
+                // The other levels agree wherever they settle.
+                for other in [
+                    box_degree(&face, b, patch_of(&pd, b), &qs),
+                    box_degree(&face, b, patch_of(&pb, b), &qs),
+                    box_degree(&face, b, patch_of(&pq, b), &qs),
+                ] {
+                    if let (Ok(o), Exact::Laps(w)) = (other, &exact) {
+                        assert_eq!(o.degree, sign * w, "seed {seed}: {b:?} by level");
+                    }
+                }
+            }
+            // A region of whole tiles: its boxes' degrees sum to the
+            // winding of its outer tile lines.
+            let (u0, v0) = ((rng.next_u64() % 3) as i64, (rng.next_u64() % 2) as i64);
+            let (u1, v1) = (
+                u0 + 1 + (rng.next_u64() % (3 - u0 as u64)) as i64,
+                v0 + 1 + (rng.next_u64() % (2 - v0 as u64)) as i64,
+            );
+            let mut rim = Vec::new();
+            for i in u0..u1 {
+                for j in v0..v1 {
+                    let t =
+                        BoxKey::new(Operand::B, FaceId(3), [i, j], Extent::WHOLE, Extent::WHOLE);
+                    let [bottom, right, top, left] = exact_sides(patch_of(&pq, &t), &t);
+                    for (side, on_rim) in [
+                        (bottom, j == v0),
+                        (right, i == u1 - 1),
+                        (top, j == v1 - 1),
+                        (left, i == u0),
+                    ] {
+                        if on_rim {
+                            rim.push(side);
+                        }
+                    }
+                }
+            }
+            let inside = |b: &BoxKey| {
+                let [i, j] = b.tile();
+                (u0..u1).contains(&i) && (v0..v1).contains(&j)
+            };
+            let degrees: Option<i64> = leaves
+                .iter()
+                .filter(|b| inside(b))
+                .map(|b| {
+                    box_degree(&face, b, patch_of(&ps, b), &qs)
+                        .ok()
+                        .map(|d| d.degree)
+                })
+                .sum();
+            if let (Some(d), Exact::Laps(w)) = (degrees, exact_sum(&rim, &p)) {
+                regions += 1;
+                assert_eq!(d, sign * w, "seed {seed}: tiles {u0}..{u1} × {v0}..{v1}");
+            }
+        }
+    }
+    eprintln!(
+        "{boxes} boxes, {certified} certified, {nonzero} non-zero, {multiple} several times, \
+         {on} through, {regions} regions"
+    );
+    assert!(
+        certified * 10 >= boxes * 9,
+        "{certified} of {boxes} certified"
+    );
+    let n = (seeds.end - seeds.start) as usize;
+    assert!(nonzero >= n && on >= n && regions >= n, "{n} seeds");
 }

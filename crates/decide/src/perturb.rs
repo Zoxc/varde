@@ -46,8 +46,8 @@
 //!
 //! | row (record) | `g` | `gₖ` |
 //! |---|---|---|
-//! | vertex–vertex shadow ([`VvShadow`], [`vv_shadow`]) | `ν·(w − q)`, ahead/behind `r̂·(w − q)` | `ν·(Δw − Δq)`, likewise `r̂` |
-//! | vertex–curve shadow, box side ([`LineShadow`], [`curve_shadow`]) | `ν·(q − C(s*))`, `ν = ê × T` at the foot | `ν·(Δq − ΔC(s*))` |
+//! | vertex–vertex shadow ([`VvShadow`], [`HomShadow`], [`vv_shadow`]) | `ν·(w − q)`, ahead/behind `r̂·(w − q)` | `ν·(Δw − Δq)`, likewise `r̂` |
+//! | vertex–curve shadow, box side ([`LineShadow`], [`HomLineShadow`], [`curve_shadow`]) | `ν·(q − C(s*))`, `ν = ê × T` at the foot | `ν·(Δq − ΔC(s*))` |
 //! | layer height, anchor `f` ([`PlaneHeight`], [`layer_height`]) | from the record's height key ([`PointHeight`], [`PlaneHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
 //!
@@ -402,6 +402,84 @@ impl Pred for EdgeEdge {
     }
 }
 
+/// A point of a rational form at exact parameters, homogeneous: `X =
+/// Σ cₖ·pₖ`, `W = Σ cₖ` over stored control points `pₖ`, each `cₖ` the
+/// exact product of its weight and its Bernstein value at the parameters
+/// (a dyadic point of a tile edge or a tile), the point `X/W` moving at
+/// `rates` (the field's value there). With positive weights `W > 0`, so a
+/// row multiplied by a positive power of `W` keeps its sign: the point's
+/// rows stay flat, exact on the stored data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomPoint {
+    /// The control points with their coefficients.
+    pub terms: Vec<(DVec3, Rational)>,
+    /// The point's rates.
+    pub rates: [Rate; ORDERS],
+}
+
+impl HomPoint {
+    /// `(X, W)`, `X` moved at the rates (`W·Δ` added to it).
+    fn eval<N: Num>(&self) -> (V3<N>, N) {
+        let zero = N::lit(0.0);
+        let (mut x, mut w) = ([zero.clone(), zero.clone(), zero.clone()], zero);
+        for (p, c) in &self.terms {
+            let c = N::rational(c);
+            let m = moved::<N>(*p, &self.rates);
+            for k in 0..3 {
+                x[k] = x[k].add(&c.mul(&m[k]));
+            }
+            w = w.add(&c);
+        }
+        (x, w)
+    }
+}
+
+/// The vertex–vertex shadow row against a homogeneous point, flat:
+/// `axis·(X − W·q)`, [`VvShadow`]'s value times `W > 0`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomShadow {
+    /// The query point.
+    pub q: Moving,
+    /// The other operand's point.
+    pub w: HomPoint,
+    /// The direction measured along.
+    pub axis: ShadowAxis,
+}
+
+impl Pred for HomShadow {
+    fn eval<N: Num>(&self) -> N {
+        let (x, w) = self.w.eval::<N>();
+        let q = self.q.eval::<N>();
+        let wq = [0, 1, 2].map(|k| w.mul(&q[k]));
+        dot(&point::<N>(self.axis.vector()), &sub(&x, &wq))
+    }
+}
+
+/// The vertex–curve shadow row on the line through two homogeneous
+/// points `a`, `b`, flat: `(UP × (W_a·X_b − W_b·X_a))·(W_a·q − X_a)`,
+/// [`LineShadow`]'s value on `a`, `b` times `W_a²·W_b > 0`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomLineShadow {
+    /// The query point.
+    pub q: Moving,
+    /// The line's first point.
+    pub a: HomPoint,
+    /// Its second.
+    pub b: HomPoint,
+}
+
+impl Pred for HomLineShadow {
+    fn eval<N: Num>(&self) -> N {
+        let (xa, wa) = self.a.eval::<N>();
+        let (xb, wb) = self.b.eval::<N>();
+        let q = self.q.eval::<N>();
+        let d = [0, 1, 2].map(|k| wa.mul(&xb[k]).sub(&wb.mul(&xa[k])));
+        let nu = cross(&point(UP), &d);
+        let off = [0, 1, 2].map(|k| wa.mul(&q[k]).sub(&xa[k]));
+        dot(&nu, &off)
+    }
+}
+
 /// A flat record decided on its own value and orders: the sign of `pred`
 /// under the perturbation, and what it took to charge.
 pub fn decide_flat(pred: &impl Pred, key: TieKey) -> (Result<Sign, Fail>, Work) {
@@ -641,7 +719,29 @@ fn cross3<S: Scalar>(a: &[S; 3], b: &[S; 3]) -> [S; 3] {
 
 /// `v / |v|`: uncertified where `|v|` isn't certainly non-zero.
 fn unit3<S: Curved>(v: &[S; 3]) -> [S; 3] {
-    let len = dot3(v, v).sqrt();
+    // Scaled first by a power of two to a largest component near 1: the
+    // same direction, but its squared length neither underflows (a
+    // tangent of a face at coordinates near `10⁻³⁰⁰`) nor overflows.
+    let big = v
+        .iter()
+        .flat_map(|x| x.enclose())
+        .map(f64::abs)
+        .fold(0.0, |m: f64, x| if x > m { x } else { m });
+    let v = if big > 0.0 && big.is_finite() {
+        // `2^−e` for `big` in `[2^e, 2^(e+1))`, exact, kept normal.
+        let e = ((big.to_bits() >> 52) & 0x7ff) as i64 - 1023;
+        let e = if big < f64::MIN_POSITIVE {
+            -1023
+        } else {
+            e.clamp(-1000, 1000)
+        };
+        let k = f64::from_bits(((1023 - e) as u64) << 52);
+        let k = S::from_f64(k, &v[0]);
+        [0, 1, 2].map(|i| v[i].mul(&k))
+    } else {
+        v.clone()
+    };
+    let len = dot3(&v, &v).sqrt();
     [0, 1, 2].map(|k| v[k].div(&len))
 }
 

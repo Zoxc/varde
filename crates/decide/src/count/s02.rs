@@ -112,11 +112,11 @@ use malachite::Rational;
 use smallvec::SmallVec;
 
 use super::boxes::{
-    BoxError, BoxKey, Corners, FaceUv, QShadow, Role, SpanRef, box_hull, dy, role, split,
+    BoxError, BoxKey, Corners, FaceUv, QShadow, Role, SpanRef, box_hull, global, role, split,
     sub_patch, within_band,
 };
 use super::degree::{SidedError, box_degree_sided};
-use super::pieces::{PieceError, Ribbon, UvRect, strip_degree_near};
+use super::pieces::{ExactRect, PieceError, Ribbon, UvRect, exact_rect, strip_degree_near};
 use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::{Bounded, add_up, mul_up, up};
@@ -127,13 +127,13 @@ use crate::records::feet::Foot;
 use crate::records::height::{
     Feature, HeightReads, Heights, KeyError, LayerPieces, LayerTable, Layers, height_key,
 };
-use crate::records::keys::{Anchor, HeightKey, LayerId, Operand, Point, SideKey, Target};
+use crate::records::keys::{Anchor, HeightKey, LayerId, Operand, Point, Target};
 use crate::records::ray::RayLevel;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing};
 use crate::records::shadow::{
     AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, UNITS, ladder,
 };
-use crate::records::side::Sides;
+use crate::records::side::{Sides, Want};
 
 #[cfg(doc)]
 use crate::records::height::HeightRec;
@@ -222,9 +222,9 @@ pub enum CountError {
     /// A box or the face is refused, or the query point is of the face's
     /// operand, or its position isn't finite, or `ε_tie` isn't.
     Box(BoxError),
-    /// A piece reads this side record, not yet decided: fill it and ask
-    /// again.
-    Need(SideKey),
+    /// A piece reads this side or dyadic point record, not yet decided:
+    /// fill it and ask again.
+    Need(Want),
     /// A layer reads this height record, not yet decided: fill it (with
     /// every anchor of its key) and ask again.
     NeedHeight(HeightKey),
@@ -452,19 +452,16 @@ fn enclose_dot(a: [f64; 3], q: [f64; 3]) -> [f64; 2] {
 }
 
 /// A box's closed rectangle in global UV, exactly.
-fn rect(b: &BoxKey) -> [[Rational; 2]; 2] {
-    let at = |i: i64, t: crate::bezier::Dyadic| {
-        Rational::from(i) + Rational::try_from(dy(t)).expect("a dyadic")
-    };
+fn rect(b: &BoxKey) -> ExactRect {
     [Dir::U, Dir::V].map(|d| {
         let k = usize::from(d == Dir::V);
         let e = b.extent(d);
-        [at(b.tile()[k], e.lo()), at(b.tile()[k], e.hi())]
+        [global(b.tile()[k], e.lo()), global(b.tile()[k], e.hi())]
     })
 }
 
 /// Whether two boxes share a stretch of a side.
-fn share_side(a: &[[Rational; 2]; 2], b: &[[Rational; 2]; 2]) -> bool {
+fn share_side(a: &ExactRect, b: &ExactRect) -> bool {
     (0..2).any(|k| {
         let o = 1 - k;
         (a[k][1] == b[k][0] || b[k][1] == a[k][0]) && a[o][0] < b[o][1] && b[o][0] < a[o][1]
@@ -472,11 +469,11 @@ fn share_side(a: &[[Rational; 2]; 2], b: &[[Rational; 2]; 2]) -> bool {
 }
 
 /// Whether two closed boxes meet.
-fn touch(a: &[[Rational; 2]; 2], b: &[[Rational; 2]; 2]) -> bool {
+fn touch(a: &ExactRect, b: &ExactRect) -> bool {
     (0..2).all(|k| a[k][0] <= b[k][1] && b[k][0] <= a[k][1])
 }
 
-fn holds(r: &[[Rational; 2]; 2], p: &[Rational; 2]) -> bool {
+fn holds(r: &ExactRect, p: &[Rational; 2]) -> bool {
     (0..2).all(|k| r[k][0] <= p[k] && p[k] <= r[k][1])
 }
 
@@ -1239,7 +1236,7 @@ fn round<S: Scalar, R: HeightReads>(
     }
 
     // Near pieces touching in UV are of one layer.
-    let near_rects: Vec<Vec<[[Rational; 2]; 2]>> = out
+    let near_rects: Vec<Vec<ExactRect>> = out
         .near
         .iter()
         .map(|p| p.boxes.iter().map(rect).collect())
@@ -1293,21 +1290,15 @@ fn run_degree<S: Scalar, R: HeightReads>(
 }
 
 /// The leaves of `idx` to refine where their run is unsettled near `r`
-/// (exactly, [`exact_rect`]): those whose closed box meets it, or all
+/// (exactly, [`exact_rect`](super::pieces::exact_rect)): those whose closed box meets it, or all
 /// where none does (module docs, "Refining runs").
-fn near_leaves(rects: &[[[Rational; 2]; 2]], idx: &[usize], r: &[[Rational; 2]; 2]) -> Vec<usize> {
+fn near_leaves(rects: &[ExactRect], idx: &[usize], r: &ExactRect) -> Vec<usize> {
     let some: Vec<usize> = idx
         .iter()
         .copied()
         .filter(|&k| touch(&rects[k], r))
         .collect();
     if some.is_empty() { idx.to_vec() } else { some }
-}
-
-/// A piece's location hint ([`strip_degree_near`]) as an exact rectangle,
-/// as [`rect`] gives the boxes.
-fn exact_rect(r: &UvRect) -> [[Rational; 2]; 2] {
-    r.map(|c| c.map(|x| Rational::try_from(x).expect("finite")))
 }
 
 /// A box's hull centre, its layer's key where the layer has no feature.

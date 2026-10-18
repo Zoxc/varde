@@ -48,6 +48,69 @@ impl Poly {
         Poly { spans, curve, maps }
     }
 
+    /// One coedge of the rational quadratic p-spans `spans` (`[u, v,
+    /// w]`); its edge's curve the image.
+    fn spans(spans: &[UvSpan]) -> Poly {
+        let curve = spans
+            .iter()
+            .map(|sp| sp.map(|p| [SU * p[0], SV * p[1], 0.0, p[2]]))
+            .collect();
+        let maps = (0..spans.len() as u32)
+            .map(|span| SpanMap {
+                span,
+                t: [0.0, 1.0],
+            })
+            .collect();
+        Poly {
+            spans: spans.to_vec(),
+            curve,
+            maps,
+        }
+    }
+
+    /// Points along the p-curve, 256 per span, in UV.
+    fn samples(&self) -> Vec<[f64; 2]> {
+        let mut out = Vec::new();
+        for sp in &self.spans {
+            for i in 0..=256 {
+                let t = f64::from(i) / 256.0;
+                let b = [(1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t];
+                let w: f64 = (0..3).map(|k| b[k] * sp[k][2]).sum();
+                out.push(
+                    [0, 1].map(|c| (0..3).map(|k| b[k] * sp[k][2] * sp[k][c]).sum::<f64>() / w),
+                );
+            }
+        }
+        out
+    }
+
+    /// Whether `p` lies within `m` of the p-curve in the plane.
+    fn near(&self, p: [f64; 2], m: f64) -> bool {
+        self.samples().windows(2).any(|l| {
+            let (a, c) = (l[0], l[1]);
+            let (dx, dy) = (SU * (c[0] - a[0]), SV * (c[1] - a[1]));
+            let (px, py) = (SU * (p[0] - a[0]), SV * (p[1] - a[1]));
+            let len2 = dx * dx + dy * dy;
+            let s = ((px * dx + py * dy) / len2).clamp(0.0, 1.0);
+            let (ex, ey) = (px - s * dx, py - s * dy);
+            (ex * ex + ey * ey).sqrt() < m
+        })
+    }
+
+    /// Whether `p` lies left of the p-curve where it is nearest to it.
+    fn left(&self, p: [f64; 2]) -> bool {
+        let s = self.samples();
+        let d2 = |a: [f64; 2]| {
+            let d = [a[0] - p[0], a[1] - p[1]];
+            d[0] * d[0] + d[1] * d[1]
+        };
+        let i = (0..s.len() - 1)
+            .min_by(|&i, &j| d2(s[i]).total_cmp(&d2(s[j])))
+            .expect("samples");
+        let (a, c) = (s[i], s[i + 1]);
+        (c[0] - a[0]) * (p[1] - a[1]) - (c[1] - a[1]) * (p[0] - a[0]) > 0.0
+    }
+
     fn degree(
         &self,
         reversed: bool,
@@ -792,4 +855,245 @@ fn a_closed_trim_through_a_reflex_corner() {
         }
     }
     assert!(checked >= 200, "{checked}");
+}
+
+/// A box a trim passes exactly through one corner of, not at a knot:
+/// alone, its loop is cut by no curve where the trim leaves the box
+/// outside (the moved corner on the box's side), and the face's sector at
+/// the corner, the span split there exactly, says whether it is inside;
+/// else the trim clips the moved corner. Either way the box settles at
+/// every query away from the lines, with the winding.
+#[test]
+fn a_trim_through_a_box_corner_only_settles() {
+    // Lines through each corner, slope `±1`, the box on one side only,
+    // with the face's side for the polyline's own direction.
+    let lines: [(&str, Vec<[f64; 2]>, Side); 5] = [
+        (
+            "low right corner",
+            vec![[0.375, 0.125], [1.0, 0.75], [1.125, 0.875]],
+            |p| p[1] > p[0] - 0.25,
+        ),
+        (
+            "low left corner",
+            vec![[0.875, 0.125], [0.125, 0.875], [0.0625, 0.9375]],
+            |p| p[1] < 1.0 - p[0],
+        ),
+        (
+            "high left corner",
+            vec![[0.125, 0.375], [0.625, 0.875], [0.6875, 0.9375]],
+            |p| p[1] > p[0] + 0.25,
+        ),
+        (
+            "high right corner",
+            vec![[0.625, 0.875], [0.875, 0.625], [0.9375, 0.5625]],
+            |p| p[1] > 1.5 - p[0],
+        ),
+        // The corner a third of the way along a span.
+        ("low right, uneven", vec![[0.5, 0.25], [1.25, 1.0]], |p| {
+            p[1] > p[0] - 0.25
+        }),
+    ];
+    // The face's side: the polyline's left, or the curve's own.
+    let mut cases: Vec<(String, Poly, Option<Side>)> = Vec::new();
+    for (name, pts, face) in lines {
+        for wt in [1.0, 1.0 / 64.0, 64.0] {
+            cases.push((format!("{name}, wt {wt}"), Poly::new(&pts, wt), Some(face)));
+        }
+    }
+    // Arcs through the low right corner at their middle, tangent to
+    // `v = u − ¼` there and below it: the moved corner above, the box
+    // uncut; and a steeper one, slope 2.5, clipping the moved corner.
+    for (name, sp) in [
+        (
+            "parabola",
+            [[0.5, 0.125, 1.0], [0.75, 0.625, 1.0], [1.0, 0.625, 1.0]],
+        ),
+        (
+            "conic",
+            [[0.5, 0.125, 1.0], [0.75, 0.5625, 2.0], [1.0, 0.625, 1.0]],
+        ),
+        (
+            "steep parabola",
+            [[0.5, 0.25, 1.0], [0.875, 0.4375, 1.0], [0.75, 0.875, 1.0]],
+        ),
+    ] {
+        cases.push((name.into(), Poly::spans(&[sp]), None));
+    }
+    check_box(&cases, 901);
+}
+
+/// Whether a UV point is on the face's side of a line.
+type Side = fn([f64; 2]) -> bool;
+
+/// Checks the box `[½, ¾] × [½, ¾]` of tile 0 alone against each case's
+/// trim (the face on its side's given side, or the curve's left) at
+/// queries over the box and round it, away from the lines: it settles,
+/// with the winding.
+fn check_box(cases: &[(String, Poly, Option<Side>)], seed: u64) {
+    let b = bx(0, ext((1, 1), (3, 2)), ext((1, 1), (3, 2)));
+    let mut rng = Rng::new(seed);
+    let qs: Vec<[f64; 3]> = std::iter::from_fn(|| {
+        Some([
+            rng.range(1.0, 6.0),
+            rng.range(3.0, 9.0),
+            rng.range(-1.0, 1.0),
+        ])
+    })
+    .filter(|&q| {
+        let p = uv(q);
+        (0.4..0.85).contains(&p[0]) && (0.4..0.85).contains(&p[1])
+    })
+    .take(24)
+    .collect();
+    for (name, poly, face) in cases {
+        for (reversed, flipped) in [(false, false), (true, false), (false, true), (true, true)] {
+            let sign = if flipped { -1 } else { 1 };
+            for &q in &qs {
+                let p = uv(q);
+                let lines = [p[0] - 0.5, p[0] - 0.75, p[1] - 0.5, p[1] - 0.75];
+                if poly.near(p, 1e-3) || lines.iter().any(|d| d.abs() < 1e-3) {
+                    continue;
+                }
+                let in_box = lines[0] > 0.0 && lines[1] < 0.0 && lines[2] > 0.0 && lines[3] < 0.0;
+                let left = face.map_or_else(|| poly.left(p), |f| f(p));
+                let inside = in_box && (left != (reversed != flipped));
+                let d = poly.degree(reversed, flipped, &[b], q).unwrap_or_else(|e| {
+                    panic!("{name}: {e:?} rev {reversed} flip {flipped} q {q:?}")
+                });
+                assert_eq!(
+                    d.degree,
+                    if inside { sign } else { 0 },
+                    "{name}: rev {reversed} flip {flipped} q {q:?}"
+                );
+            }
+        }
+    }
+}
+
+/// A box whose side a trim touches inside it, tangent to its line at a
+/// double root of the span's equation: on the side the line is moved
+/// away from, the loop is uncut and the face's sector at the touching
+/// point says whether it is inside; on the side the line is moved to, the
+/// curve crosses the moved line twice there, two cuts at one point
+/// ordered by their germs. Either way the box settles, with the winding.
+#[test]
+fn a_trim_tangent_to_a_box_side_settles() {
+    let mut cases: Vec<(String, Poly, Option<Side>)> = Vec::new();
+    for (name, sp) in [
+        (
+            "below the low side",
+            [[0.375, 0.25, 1.0], [0.625, 0.75, 1.0], [0.875, 0.25, 1.0]],
+        ),
+        (
+            "below the low side, a conic",
+            [[0.375, 0.25, 1.0], [0.625, 0.625, 2.0], [0.875, 0.25, 1.0]],
+        ),
+        (
+            "above the low side",
+            [[0.375, 0.75, 1.0], [0.625, 0.25, 1.0], [0.875, 0.75, 1.0]],
+        ),
+        (
+            "left of the left side",
+            [[0.25, 0.375, 1.0], [0.75, 0.625, 1.0], [0.25, 0.875, 1.0]],
+        ),
+        (
+            "right of the right side",
+            [[1.0, 0.375, 1.0], [0.5, 0.625, 1.0], [1.0, 0.875, 1.0]],
+        ),
+        (
+            "right of the right side, a conic",
+            [[1.0, 0.375, 1.0], [0.625, 0.625, 2.0], [1.0, 0.875, 1.0]],
+        ),
+    ] {
+        for rev in [false, true] {
+            let sp = if rev { [sp[2], sp[1], sp[0]] } else { sp };
+            cases.push((format!("{name}, rev {rev}"), Poly::spans(&[sp]), None));
+        }
+    }
+    check_box(&cases, 902);
+}
+
+/// Random graphs of rational quadratic spans over the grid, their knots
+/// and middle control points on the sixteenth grid, weights `1/64` to
+/// `64`: spans through box corners and along box lines at their middle,
+/// tangent to box lines there or at knots. The face lies above the
+/// graph; certified sums over every partition of the grid are the exact
+/// degree, and most settle.
+#[test]
+fn curved_trims_on_box_lines_are_the_winding() {
+    let rows = [ext((1, 2), (1, 1)), ext((1, 1), (3, 2))];
+    let us = [0.5, 0.625, 0.75, 0.875, 1.0, 1.25, 1.5];
+    let vs: Vec<f64> = (2..=14).map(|k| k as f64 / 16.0).collect();
+    let mut rng = Rng::new(950);
+    let pick = |rng: &mut Rng, xs: &[f64]| xs[(rng.next_u64() % xs.len() as u64) as usize];
+    let g = grid(rows);
+    let (vlo, vhi) = (dy(rows[0].lo()), dy(rows[1].hi()));
+    let (mut settled, mut all) = (0usize, 0usize);
+    for case in varde_testing::seeds(12, 96) {
+        let case = case as usize;
+        let n = 1 + (rng.next_u64() % 3) as usize;
+        let mut mid: Vec<f64> = (0..n).map(|_| pick(&mut rng, &us)).collect();
+        mid.sort_by(f64::total_cmp);
+        mid.dedup();
+        let mut knots = vec![[0.1, pick(&mut rng, &vs)]];
+        for u in mid {
+            knots.push([u, pick(&mut rng, &vs)]);
+        }
+        knots.push([1.9, pick(&mut rng, &vs)]);
+        let mut spans = Vec::new();
+        for leg in knots.windows(2) {
+            let (a, b) = (leg[0], leg[1]);
+            let w = [1.0, 1.0, 1.0 / 64.0, 64.0, 0.5, 2.0][(rng.next_u64() % 6) as usize];
+            let vm = pick(&mut rng, &vs);
+            spans.push([
+                [a[0], a[1], 1.0],
+                [0.5 * (a[0] + b[0]), vm, w],
+                [b[0], b[1], 1.0],
+            ]);
+        }
+        let poly = Poly::spans(&spans);
+        let mut ring = poly.samples();
+        ring.extend([[1.9, 2.0], [0.1, 2.0]]);
+        let (reversed, flipped) = (case % 2 == 1, case % 4 >= 2);
+        let sign = if flipped { -1 } else { 1 };
+        for _ in 0..6 {
+            let q = [
+                rng.range(2.0, 8.0),
+                rng.range(SV * vlo - 1.0, SV * vhi + 1.0),
+                rng.range(-1.0, 1.0),
+            ];
+            let p = uv(q);
+            let lines = [
+                SU * (p[0] - 0.5),
+                SU * (p[0] - 1.5),
+                SV * (p[1] - vlo),
+                SV * (p[1] - vhi),
+            ];
+            if poly.near(p, 1e-3) || lines.iter().any(|d| d.abs() < 1e-3) {
+                continue;
+            }
+            let in_run = p[0] > 0.5 && p[0] < 1.5 && p[1] > vlo && p[1] < vhi;
+            let inside = in_run && (in_ring(&ring, p) != (reversed != flipped));
+            for (k, parts) in grid_parts(&g).iter().enumerate() {
+                all += 1;
+                let mut sum = Some(0);
+                for part in parts {
+                    match poly.degree(reversed, flipped, part, q) {
+                        Ok(d) => sum = sum.map(|x| x + d.degree),
+                        Err(PieceError::Unsettled | PieceError::Through) => sum = None,
+                        Err(e) => panic!("{spans:?}: {e:?} partition {k} q {q:?}"),
+                    }
+                }
+                if let Some(sum) = sum {
+                    settled += 1;
+                    assert_eq!(
+                        sum,
+                        if inside { sign } else { 0 },
+                        "{spans:?}: rev {reversed} flip {flipped} partition {k} q {q:?}"
+                    );
+                }
+            }
+        }
+    }
+    assert!(settled * 3 >= all * 2, "{settled} of {all}");
 }

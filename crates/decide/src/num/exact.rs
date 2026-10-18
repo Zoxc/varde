@@ -200,6 +200,12 @@ pub struct Signs {
     pub work: Work,
 }
 
+/// The exact value of a finite `f64`: the one conversion of stored floats
+/// to rationals. Panics for a value that isn't finite.
+pub fn rat(x: f64) -> Rational {
+    Rational::try_from(x).expect("a finite f64")
+}
+
 /// The sign of `pred`'s value with its inputs unmoved, exactly, and what
 /// it took: for certificates on stored data, which are never perturbed.
 /// [`NotFinite`] when an input isn't finite.
