@@ -222,6 +222,87 @@ pub struct XKey {
     pub g: EdgeId,
 }
 
+/// A dyadic point of an edge, along its stored direction: span `span`'s
+/// point at the parameter `at`, in canonical form, so a point has one key
+/// whichever span reaches it: `at` in `[0, 1)`, a span's `1` being the
+/// next span's `0` ([`EdgeAt::new`]); the edge's last point is span `n`
+/// at 0, `n` its span count (a straight edge is one span). Its first and
+/// last points are its vertices, `at = 0` of an inner span its knot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EdgeAt {
+    /// The span, from 0 at the edge's lower-id end.
+    pub span: u32,
+    /// The parameter on the span, in `[0, 1)`.
+    pub at: Dyadic,
+}
+
+impl EdgeAt {
+    /// Span `span`'s point at `at` (in `[0, 1]`), canonical; `None` past
+    /// the range of `u32`.
+    pub fn new(span: u32, at: Dyadic) -> Option<EdgeAt> {
+        Some(if at == Dyadic::ONE {
+            EdgeAt {
+                span: span.checked_add(1)?,
+                at: Dyadic::ZERO,
+            }
+        } else {
+            EdgeAt { span, at }
+        })
+    }
+
+    /// Which end vertex of an edge of `spans` spans the point is (0 its
+    /// stored start, 1 its end), if one.
+    pub fn end(&self, spans: u32) -> Option<usize> {
+        match (self.span, self.at) {
+            (0, at) if at == Dyadic::ZERO => Some(0),
+            (s, at) if s == spans && at == Dyadic::ZERO => Some(1),
+            _ => None,
+        }
+    }
+
+    /// The inner knot of an edge of `spans` spans the point is, if one:
+    /// `1 ≤ knot < spans`.
+    pub fn knot(&self, spans: u32) -> Option<u32> {
+        (self.at == Dyadic::ZERO && self.span >= 1 && self.span < spans).then_some(self.span)
+    }
+
+    /// Whether the point is a span's end control point (a vertex or a
+    /// knot): a stored point.
+    pub fn stored(&self) -> bool {
+        self.at == Dyadic::ZERO
+    }
+}
+
+/// An edge pair's inner box side (module docs of
+/// [`crate::count::xrec`]): the point of one edge of the pair (`held`'s:
+/// `e` of `A`, `g` of `B`) at a dyadic parameter against the whole other
+/// edge, the side record of every box side at that parameter, keyed by
+/// the pair and the point, `(e, g, dyadic side)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct XSideKey {
+    /// The pair.
+    pub x: XKey,
+    /// The operand of the edge the point is on.
+    pub held: Operand,
+    /// The point.
+    pub at: EdgeAt,
+}
+
+/// A dyadic point of `e` against one of `g`, an edge pair's box corner:
+/// the side of `g`'s point against the `r̂` line of `e`'s and whether it
+/// is ahead along it, oriented from `e`'s point (`A`'s) to `g`'s (`B`'s).
+/// Where both are vertices or one a vertex and the other a knot, the
+/// fact is the point–vertex or knot record's, read from there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct XTieKey {
+    /// The pair.
+    pub x: XKey,
+    /// The point of `e`.
+    pub e: EdgeAt,
+    /// The point of `g`.
+    pub g: EdgeAt,
+}
+
 /// A tile edge of a face: the maximal dyadic segment of a tile line in
 /// one tile, a row of the tile's stored control points, shared by the
 /// tiles on its two sides. The line is where the global coordinate in
@@ -606,6 +687,10 @@ pub enum RecordKey {
     Side(SideKey),
     /// A point against a dyadic point of a face.
     Corner(CornerKey),
+    /// An edge pair's inner box side.
+    XSide(XSideKey),
+    /// An edge pair's box corner.
+    XTie(XTieKey),
 }
 
 #[cfg(test)]

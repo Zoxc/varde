@@ -358,6 +358,7 @@ fn s11_sums_the_clusters_with_g_above() {
     c[2].degree = -1;
     let rec = XRec {
         clusters: c.to_vec(),
+        level: 0,
     };
     assert_eq!(rec.degree(), -1);
     let read = |above: Sign| {
@@ -569,13 +570,19 @@ fn shared_chains_place_their_ties_and_closed_edges_cancel() {
     ]];
     let chain = |t: [f64; 2], sign| ChainCrossing {
         span: 0,
-        crossing: Crossing { t, sign },
+        crossing: Crossing {
+            t,
+            sign,
+            single: true,
+        },
     };
     let one = ChainRec {
         crossings: smallvec![chain([0.0, 0.0], Sign::Pos)],
+        ..ChainRec::default()
     };
     let two = ChainRec {
         crossings: smallvec![chain([0.0, 0.0], Sign::Pos), chain([0.5, 0.75], Sign::Neg)],
+        ..ChainRec::default()
     };
     let none = ChainRec::default();
     let pair = |rays| XPair {

@@ -146,6 +146,11 @@ impl Dyadic {
         let [lo, hi] = int_bounds(self.num);
         [lo * s, hi * s]
     }
+
+    /// The point as an `f64`, if it is one exactly (`num < 2⁵³`).
+    pub fn to_f64(self) -> Option<f64> {
+        (self.num < 1 << 53).then(|| self.bounds()[0])
+    }
 }
 
 impl Ord for Dyadic {

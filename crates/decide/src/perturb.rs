@@ -434,6 +434,110 @@ impl HomPoint {
     }
 }
 
+impl HomPoint {
+    /// The stored point `m`, of weight 1.
+    pub fn of_moving(m: &Moving) -> HomPoint {
+        HomPoint {
+            terms: vec![(m.at, Rational::from(1u32))],
+            rates: m.rates.clone(),
+        }
+    }
+
+    /// The point `X/W` at `like`'s level with its rates, certified
+    /// (exact where the level holds the coefficients).
+    pub fn at_level<S: Scalar>(&self, like: &S) -> MovingAt<S> {
+        let mut x: [S; 3] = std::array::from_fn(|_| S::int(0, like));
+        let mut w = S::int(0, like);
+        for (p, c) in &self.terms {
+            let c = rational_at(c, like);
+            let p = lit3(*p, like);
+            for k in 0..3 {
+                x[k] = x[k].add(&c.mul(&p[k]));
+            }
+            w = w.add(&c);
+        }
+        MovingAt {
+            at: x.map(|x| x.div(&w)),
+            rates: self.rates.each_ref().map(|r| r.at(like)),
+        }
+    }
+}
+
+/// The point a shadow row asks about: a stored point, or a homogeneous
+/// one (a dyadic point of a stored curve).
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueryPoint {
+    /// A stored point.
+    Flat(Moving),
+    /// A homogeneous point with positive weight.
+    Hom(HomPoint),
+}
+
+impl QueryPoint {
+    /// The point as a homogeneous one (a stored point of weight 1).
+    pub fn hom(&self) -> HomPoint {
+        match self {
+            QueryPoint::Flat(m) => HomPoint::of_moving(m),
+            QueryPoint::Hom(h) => h.clone(),
+        }
+    }
+
+    /// The point at `like`'s level with its rates, certified.
+    pub fn at_level<S: Scalar>(&self, like: &S) -> MovingAt<S> {
+        match self {
+            QueryPoint::Flat(m) => MovingAt::from_flat(m, like),
+            QueryPoint::Hom(h) => h.at_level(like),
+        }
+    }
+}
+
+/// The vertex–vertex shadow row between two homogeneous points, flat:
+/// `axis·(W_q·X_w − W_w·X_q)`, [`VvShadow`]'s value times `W_q·W_w > 0`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomPairShadow {
+    /// The query point.
+    pub q: HomPoint,
+    /// The other operand's point.
+    pub w: HomPoint,
+    /// The direction measured along.
+    pub axis: ShadowAxis,
+}
+
+impl Pred for HomPairShadow {
+    fn eval<N: Num>(&self) -> N {
+        let (xq, wq) = self.q.eval::<N>();
+        let (xw, ww) = self.w.eval::<N>();
+        let d = [0, 1, 2].map(|k| wq.mul(&xw[k]).sub(&ww.mul(&xq[k])));
+        dot(&point::<N>(self.axis.vector()), &d)
+    }
+}
+
+/// The vertex–curve shadow row of a homogeneous query point on the line
+/// through two homogeneous points `a`, `b`, flat: `(UP × (W_a·X_b −
+/// W_b·X_a))·(W_a·X_q − W_q·X_a)`, [`HomLineShadow`]'s value times `W_q >
+/// 0`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomPointLineShadow {
+    /// The query point.
+    pub q: HomPoint,
+    /// The line's first point.
+    pub a: HomPoint,
+    /// Its second.
+    pub b: HomPoint,
+}
+
+impl Pred for HomPointLineShadow {
+    fn eval<N: Num>(&self) -> N {
+        let (xa, wa) = self.a.eval::<N>();
+        let (xb, wb) = self.b.eval::<N>();
+        let (xq, wq) = self.q.eval::<N>();
+        let d = [0, 1, 2].map(|k| wa.mul(&xb[k]).sub(&wb.mul(&xa[k])));
+        let nu = cross(&point(UP), &d);
+        let off = [0, 1, 2].map(|k| wa.mul(&xq[k]).sub(&wq.mul(&xa[k])));
+        dot(&nu, &off)
+    }
+}
+
 /// The vertex–vertex shadow row against a homogeneous point, flat:
 /// `axis·(X − W·q)`, [`VvShadow`]'s value times `W > 0`.
 #[derive(Clone, Debug, PartialEq)]

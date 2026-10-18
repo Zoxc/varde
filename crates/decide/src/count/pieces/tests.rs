@@ -162,6 +162,7 @@ fn rays(c: &[Span], q: [f64; 3]) -> ChainRec {
                 crossing: Crossing {
                     t: [t - 1e-12, t + 1e-12],
                     sign,
+                    single: true,
                 },
             });
         }
@@ -353,13 +354,9 @@ impl SideGeometry for Plane {
         Some(Moving::of_a(at, Sign::Pos, D))
     }
 
-    fn tile_net(&self, _: Operand, _: FaceId, [i, j]: [i64; 2]) -> Option<TileNet> {
-        Some(std::array::from_fn(|k| {
-            let (u, v) = (
-                i as f64 + (k / 3) as f64 / 2.0,
-                j as f64 + (k % 3) as f64 / 2.0,
-            );
-            [SU * u, SV * v, 0.0, 1.0]
+    fn tile_net(&self, _: Operand, _: FaceId, tile: [i64; 2]) -> Option<TileNet> {
+        Some(crate::count::testing::mapped_net(tile, |u, v| {
+            [SU * u, SV * v, 0.0]
         }))
     }
 

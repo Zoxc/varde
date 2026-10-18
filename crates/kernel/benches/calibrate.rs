@@ -300,6 +300,7 @@ fn chain(spans: &[Span], q: [f64; 3]) -> ChainRec {
             crossing: Crossing {
                 t: [clamp(t - 1e-12), clamp(t + 1e-12)],
                 sign,
+                single: true,
             },
         });
     }

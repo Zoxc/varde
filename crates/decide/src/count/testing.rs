@@ -17,12 +17,26 @@ use crate::num::decide::Fail;
 use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::height::HeightReads;
 use crate::records::keys::{Operand, Point};
-use crate::records::ray::{ChainRec, Span};
+use crate::records::ray::{ChainRec, Span, TileNet};
 use crate::records::shadow::{Decided, Pass};
 use crate::records::side::Sides;
 use crate::records::table::Fresh;
 
 pub(crate) type Patch = HomPatch<Bounded<f64>>;
+
+/// The stored net of tile `[i, j]` of a face whose point at the global
+/// `(u, v)` is `map(u, v)`, an affine map: its nine points at the tile's
+/// half steps, weights 1.
+pub(crate) fn mapped_net([i, j]: [i64; 2], map: impl Fn(f64, f64) -> [f64; 3]) -> TileNet {
+    std::array::from_fn(|k| {
+        let (u, v) = (
+            i as f64 + (k / 3) as f64 / 2.0,
+            j as f64 + (k % 3) as f64 / 2.0,
+        );
+        let [x, y, z] = map(u, v);
+        [x, y, z, 1.0]
+    })
+}
 
 /// A face query at the first level.
 pub(crate) type FirstQuery<'a> = FaceQuery<'a, 'a, Bounded<f64>>;

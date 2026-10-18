@@ -397,7 +397,11 @@ pub fn line_chain(rec: &RayRec, a: [f64; 3], b: [f64; 3], q: [f64; 3]) -> ChainR
     };
     out.crossings.push(ChainCrossing {
         span: 0,
-        crossing: Crossing { t, sign },
+        crossing: Crossing {
+            t,
+            sign,
+            single: true,
+        },
     });
     out
 }

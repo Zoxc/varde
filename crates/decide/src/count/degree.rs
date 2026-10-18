@@ -636,6 +636,22 @@ pub fn box_degree<S: Scalar>(
     patch: &HomPatch<S>,
     q: &QShadow,
 ) -> Result<Degree, DegreeError> {
+    box_degree_cut(face, b, patch, q, &mut Default::default())
+}
+
+/// The sides' pieces of a box, counter-clockwise from the bottom, each
+/// cut once for every ray and record that reads it ([`iso_pieces`]).
+type SideCuts<S> = [Option<Vec<HomCurve<S, 3>>>; 4];
+
+/// [`box_degree`], the sides cut into `cuts` (those cut already read
+/// from there).
+fn box_degree_cut<S: Scalar>(
+    face: &FaceUv<'_>,
+    b: &BoxKey,
+    patch: &HomPatch<S>,
+    q: &QShadow,
+    cuts: &mut SideCuts<S>,
+) -> Result<Degree, DegreeError> {
     if !face.owns(b) {
         return Err(DegreeError::Box(BoxError::Foreign));
     }
@@ -651,8 +667,6 @@ pub fn box_degree<S: Scalar>(
         });
     }
     let sign = face.inside_winding();
-    // Each side's pieces, cut once for every ray.
-    let mut cuts: [Option<Vec<HomCurve<S, 3>>>; 4] = Default::default();
     for (k, ray) in Ray::ALL.into_iter().enumerate() {
         let mut laps = Some(0i64);
         for (cut, side) in cuts.iter_mut().zip(Side::CCW) {
@@ -720,6 +734,27 @@ pub(crate) fn rec_turn<S: Scalar>(
     given: [Option<i8>; 2],
     pieces: &mut u64,
 ) -> Result<i64, RecTurnError> {
+    // The line's pieces, cut once for both turns below.
+    let cut = patch
+        .weights_positive()
+        .then(|| iso_pieces(patch, dir, at, along));
+    let line = (of, tile, dir, at, along);
+    rec_turn_cut(cut.as_deref(), line, q, point, sides, given, pieces)
+}
+
+/// [`rec_turn`] on the side's pieces `cut` ([`iso_pieces`], `None` where
+/// the patch's weights aren't positive), the side the line `dir = at` of
+/// tile `tile` of face `of` over `along`.
+#[allow(clippy::type_complexity)]
+fn rec_turn_cut<S: Scalar>(
+    cut: Option<&[HomCurve<S, 3>]>,
+    (of, tile, dir, at, along): ((Operand, FaceId), [i64; 2], Dir, Dyadic, Extent),
+    q: &QShadow,
+    point: Point,
+    sides: &Sides,
+    given: [Option<i8>; 2],
+    pieces: &mut u64,
+) -> Result<i64, RecTurnError> {
     let ray = Ray::of_query(point.operand);
     let line = SideLine::of(of.0, of.1, tile, dir, at);
     let ends = line.map(|l| [l.point(along.lo()), l.point(along.hi())]);
@@ -732,11 +767,7 @@ pub(crate) fn rec_turn<S: Scalar>(
                 corner: p,
             })))
     };
-    // The line's pieces, cut once for both turns below.
-    let cut = patch
-        .weights_positive()
-        .then(|| iso_pieces(patch, dir, at, along));
-    let mut turn = |g: [Option<i8>; 2]| match &cut {
+    let mut turn = |g: [Option<i8>; 2]| match cut {
         Some(c) => pieces_turn(c, q, ray, g, pieces),
         None => Err(TurnError::Off),
     };
@@ -811,8 +842,10 @@ pub fn box_degree_sided<S: Scalar>(
     if point.operand == b.operand() {
         return Err(SidedError::Box(BoxError::Foreign));
     }
-    // The plain degree's preconditions first: the box is the face's.
-    match box_degree(face, b, patch, q) {
+    // The plain degree's preconditions first: the box is the face's. Its
+    // sides' pieces are kept for the records' turns.
+    let mut cuts: SideCuts<S> = Default::default();
+    match box_degree_cut(face, b, patch, q, &mut cuts) {
         Ok(d) => return Ok(d),
         Err(DegreeError::Box(e)) => return Err(SidedError::Box(e)),
         Err(DegreeError::Through(_) | DegreeError::Unsettled) => (),
@@ -825,15 +858,12 @@ pub fn box_degree_sided<S: Scalar>(
     let ray = Ray::of_query(point.operand);
     let mut pieces = 0u64;
     let mut laps = 0i64;
-    for side in Side::CCW {
+    for (side, cut) in Side::CCW.into_iter().zip(&mut cuts) {
         let (dir, at, along, back) = side.line(b);
-        let n = rec_turn(
-            patch,
-            (b.operand(), b.face()),
-            b.tile(),
-            dir,
-            at,
-            along,
+        let cut = cut.get_or_insert_with(|| iso_pieces(patch, dir, at, along));
+        let n = rec_turn_cut(
+            Some(cut),
+            ((b.operand(), b.face()), b.tile(), dir, at, along),
             q,
             point,
             sides,

@@ -6,7 +6,6 @@
 
 use super::*;
 use crate::order::{EdgeKey, EntityOrder, VertKey};
-use crate::records::keys::XKey;
 
 impl EntityOrder for Geom {
     type Key = ();
@@ -32,11 +31,6 @@ impl EntityOrder for Geom {
     }
 }
 
-const X: XKey = XKey {
-    e: EdgeId(E),
-    g: EdgeId(G),
-};
-
 #[test]
 fn a_straight_pair_is_one_cluster() {
     let (mut parallel, mut clear, mut crossing) = (0, 0, 0);
@@ -58,7 +52,9 @@ fn a_straight_pair_is_one_cluster() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         let x = x_count(&pair.terms);
-        let out = clusters(&geom, X, &pair, [1e-6; 2], &like()).expect("a straight pair");
+        let out = recs
+            .clusters(&geom, &pair, [1e-6; 2])
+            .expect("a straight pair");
         assert_eq!(out.rec.degree(), x, "seed {seed}");
         assert_eq!(out.rec.clusters.len(), usize::from(x != 0), "seed {seed}");
         let Some(c) = out.rec.clusters.first() else {
@@ -116,7 +112,7 @@ fn parallel_shadows_read_the_point_curve_row() {
             let recs = decide(&geom);
             let pair = recs.pair(&geom);
             assert_eq!(x_count(&pair.terms), 0);
-            let out = clusters(&geom, X, &pair, [1e-6; 2], &like()).expect("formed");
+            let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
             assert!(out.rec.clusters.is_empty(), "{d} {g0}");
         }
     }
@@ -135,7 +131,8 @@ fn parallel_shadows_read_the_point_curve_row() {
         },
         shared: false,
     };
-    let out = clusters(&geom, X, &pair, [1e-6; 2], &like()).expect("formed");
+    // Two straight edges' one cell has only outer sides: no side record.
+    let out = clusters_at(&geom, X, &pair, [1e-6; 2], &XSides::new(), 0).expect("formed");
     assert_eq!(out.rec.degree(), 1);
     assert_eq!(
         out.rec.clusters[0].row,
@@ -175,7 +172,7 @@ fn curved_clusters_sum_to_the_four_terms() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         trials += 1;
-        let Ok(out) = clusters(&geom, X, &pair, BETA, &like()) else {
+        let Ok(out) = recs.clusters(&geom, &pair, BETA) else {
             continue;
         };
         formed += 1;
@@ -191,7 +188,7 @@ fn curved_clusters_sum_to_the_four_terms() {
         if out.rec.clusters.len() > 1 {
             several += 1;
         }
-        let again = clusters(&geom, X, &pair, BETA, &like()).expect("formed once");
+        let again = recs.clusters(&geom, &pair, BETA).expect("formed once");
         assert_eq!(again, out, "seed {seed}");
     }
     assert!(
@@ -224,7 +221,7 @@ fn heights_apart_clear_at_once_and_meeting_pieces_refine_to_the_bands() {
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
     assert_eq!(x_count(&pair.terms), -1);
-    let out = clusters(&geom, X, &pair, [1e-3; 2], &like()).expect("formed");
+    let out = recs.clusters(&geom, &pair, [1e-3; 2]).expect("formed");
     assert_eq!(out.rec.clusters.len(), 1);
     assert_eq!(out.rec.clusters[0].clear, Some(Sign::Pos));
     assert_eq!(out.boxes[0], XBox::cells([1, 1]).next().expect("a cell"));
@@ -232,7 +229,7 @@ fn heights_apart_clear_at_once_and_meeting_pieces_refine_to_the_bands() {
     let geom = crossing_pair(-3.0);
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    let out = clusters(&geom, X, &pair, [1e-3; 2], &like()).expect("formed");
+    let out = recs.clusters(&geom, &pair, [1e-3; 2]).expect("formed");
     assert_eq!(out.rec.clusters[0].clear, Some(Sign::Neg));
 
     // The two meet in 3D: the cluster's pieces shrink to the bands and
@@ -241,7 +238,7 @@ fn heights_apart_clear_at_once_and_meeting_pieces_refine_to_the_bands() {
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
     for beta in [1.0, 1e-3] {
-        let out = clusters(&geom, X, &pair, [beta; 2], &like()).expect("formed");
+        let out = recs.clusters(&geom, &pair, [beta; 2]).expect("formed");
         assert_eq!(out.rec.degree(), -1);
         for (c, b) in out.rec.clusters.iter().zip(&out.boxes) {
             if c.clear.is_none() {
@@ -262,8 +259,10 @@ fn tangents_apart_and_parallel() {
     let e = span(lat(0.0, 0.0, 0.0), lat(1.0, 0.0, 0.0));
     let across = span(lat(0.5, -1.0, 2.0), lat(0.5, 1.0, 2.0));
     let along = span(lat(0.0, 0.0, 5.0), lat(2.0, 0.0, -1.0));
-    assert!(transversal(&e, &across, &like()));
-    assert!(!transversal(&e, &along, &like()));
+    let mut pieces = 0;
+    assert!(transversal(&e, &across, &like(), &mut pieces));
+    assert!(!transversal(&e, &along, &like(), &mut pieces));
+    assert!(pieces > 0, "the cones' work is counted");
 }
 
 /// A crossing of two curves' shadows found by the sampled oracle: its
@@ -474,7 +473,7 @@ fn s11_matches_the_sampled_crossings() {
         let x = x_count(&pair.terms);
         assert_eq!(found.iter().map(|c| c.sign).sum::<i64>(), x, "seed {seed}");
         for beta in [1e-3, 20.0, 500.0] {
-            let Ok(out) = clusters(&geom, X, &pair, [beta; 2], &like()) else {
+            let Ok(out) = recs.clusters(&geom, &pair, [beta; 2]) else {
                 continue;
             };
             checked += 1;
@@ -556,7 +555,7 @@ fn a_shadow_tangency_with_a_crossing_escalates() {
             let pair = recs.pair(&geom);
             let x = x_count(&pair.terms);
             for beta in [1e-3, 1.0, 1e3] {
-                match clusters(&geom, X, &pair, [beta; 2], &like()) {
+                match recs.clusters(&geom, &pair, [beta; 2]) {
                     Err(XClusterError::Degenerate(_) | XClusterError::Depth(_)) => {
                         assert_ne!(x, 0, "{d} {wm} {beta}");
                         escalated += 1;
@@ -607,11 +606,11 @@ fn close_crossings_of_opposite_z_orders() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         assert_eq!(x_count(&pair.terms), 0);
-        let out = clusters(&geom, X, &pair, [1e-6; 2], &like()).expect("formed");
+        let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
         assert_eq!(out.rec.clusters.len(), 2, "{k}");
         let s11 = out.rec.s11(|_, _| Err(())).expect("both clear");
         assert_eq!(s11, want, "{k}");
-        let out = clusters(&geom, X, &pair, [1e6; 2], &like()).expect("formed");
+        let out = recs.clusters(&geom, &pair, [1e6; 2]).expect("formed");
         assert!(out.rec.clusters.is_empty(), "{k}");
     }
 }
@@ -681,7 +680,7 @@ fn edges_on_one_line_cluster_at_their_ends_ties() {
         let mut pair = recs.pair(&geom);
         pair.shared = true;
         assert_eq!(
-            clusters(&geom, X, &pair, [1e-6; 2], &like()),
+            recs.clusters(&geom, &pair, [1e-6; 2]),
             Err(XClusterError::Shared)
         );
         let mut feet = BTreeMap::new();
@@ -847,7 +846,7 @@ fn edges_on_one_circle_cluster_at_their_ends_ties() {
         let mut pair = recs.pair(&geom);
         pair.shared = true;
         assert_eq!(
-            clusters(&geom, X, &pair, [1e-6; 2], &like()),
+            recs.clusters(&geom, &pair, [1e-6; 2]),
             Err(XClusterError::Shared)
         );
         let mut feet = BTreeMap::new();
@@ -954,7 +953,153 @@ fn a_knot_beside_the_other_edge_refines_its_cell() {
     geom.segment(B, G, (2, g0), (3, g1));
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    let out = clusters(&geom, X, &pair, [1e-6; 2], &like()).expect("formed");
+    let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
     assert_eq!(out.rec.degree(), x_count(&pair.terms));
     assert!(out.boxes.len() == out.rec.clusters.len());
+}
+
+/// Two-span conic chains on a small lattice, `g`'s knot under `e`'s
+/// (the knots' shadows one point), weights 1/64 to 64.
+fn coinciding_knots(seed: u64) -> Geom {
+    let mut rng = Rng::new(seed);
+    let mut int = |n: u64| (rng.next_u64() % (2 * n + 1)) as f64 - n as f64;
+    let mut pt = |z: f64| lat(int(2), int(2), z);
+    let (a, k, b) = (pt(1.0), pt(1.0), pt(1.0));
+    let (g0, _, g1) = (pt(-1.0), pt(-1.0), pt(-1.0));
+    let h = k - UP * 2.0;
+    let ws = [1.0 / 64.0, 0.5, 1.0, 3.0, 64.0];
+    let mut rng = Rng::new(seed ^ 0x7e);
+    let mut w = || ws[(rng.next_u64() % 5) as usize];
+    let (w0, w1, w2, w3) = (w(), w(), w(), w());
+    let mut rng = Rng::new(seed ^ 0x77);
+    let e = vec![
+        conic(&mut rng, a, k, [1.0, w0]),
+        conic(&mut rng, k, b, [w1, 1.0]),
+    ];
+    let g = vec![
+        conic(&mut rng, g0, h, [w2, 1.0]),
+        conic(&mut rng, h, g1, [w3, w2]),
+    ];
+    let mut geom = Geom {
+        d: [DVec3::new(0.25, -0.5, 0.125), R_HAT, NU][seed as usize % 3],
+        ..Geom::default()
+    };
+    geom.curve(A, E, 0, 1, e);
+    geom.curve(B, G, 0, 1, g);
+    geom
+}
+
+/// Two-span conic chains, `g`'s knot under `e`'s (the knots' shadows
+/// one point), weights 1/64 to 64, narrow bands: the boxes at the knots
+/// read the side and corner records, so no box within the bands is
+/// refused for its degree; the clusters sum to the four terms. A held
+/// knot where the other chain's shadow leaves it vertically (a shadow
+/// cusp on the knot) has no side record at any level, a level whose
+/// enclosures stay wider than the bands runs out of boxes, and a long
+/// near-tangency of the two shadows takes too many boxes reading records:
+/// those are refused, never counted.
+#[test]
+fn clusters_at_coinciding_knots_read_the_side_records() {
+    let (mut formed, mut read, mut trials) = (0, 0, 0);
+    for seed in varde_testing::seeds(40, 300) {
+        let geom = coinciding_knots(seed);
+        let Some(recs) = try_decide(&geom) else {
+            continue;
+        };
+        let pair = recs.pair(&geom);
+        trials += 1;
+        match recs.clusters(&geom, &pair, [1e-6; 2]) {
+            Ok(out) => {
+                assert_eq!(out.rec.degree(), x_count(&pair.terms), "seed {seed}");
+                formed += 1;
+                read += usize::from(!recs.sides.borrow().side_table().is_empty());
+            }
+            Err(XClusterError::Need(_) | XClusterError::Boxes | XClusterError::Sided(_)) => {}
+            Err(e) => panic!("seed {seed}: {e:?}"),
+        }
+    }
+    assert!(
+        formed * 5 > trials * 4 && read > 0,
+        "{formed} formed of {trials}, {read} reading side records"
+    );
+}
+
+/// Two straight spans meeting in 3D at a shadow angle of about `2⁻⁵²`
+/// (their shadow tangents apart by less than the first level's error):
+/// the first level can't certify the cluster transversal, the second
+/// does, so the record stores level 1, replays there, and is never
+/// formed again at level 0.
+#[test]
+fn a_record_replays_at_the_level_it_was_formed_at() {
+    let mut geom = Geom {
+        d: DVec3::new(0.25, -0.5, 0.125),
+        ..Geom::default()
+    };
+    // `2⁻⁵⁰`.
+    let tiny = DVec3::new(0.0, 1.0 / 1_125_899_906_842_624.0, 0.0);
+    let x = DVec3::X;
+    geom.curve(A, E, 0, 1, vec![straight(-x, x, 1.0)]);
+    geom.curve(
+        B,
+        G,
+        0,
+        1,
+        vec![straight(-x - tiny - UP, x + tiny + UP, 1.0)],
+    );
+    let recs = decide(&geom);
+    let pair = recs.pair(&geom);
+    let beta = [1e3; 2];
+    // One cell, its sides on the square: no side record read.
+    let sides = XSides::new();
+    let whole = XBox::cells([1, 1]).next().expect("a cell");
+    assert_eq!(
+        clusters_at(&geom, X, &pair, beta, &sides, 0),
+        Err(XClusterError::Degenerate(whole))
+    );
+    let out = form(&geom, X, &pair, beta, &sides).expect("formed");
+    assert_eq!(out.rec.level, 1);
+    assert_eq!(out.rec.degree(), x_count(&pair.terms));
+    assert_eq!(out.rec.clusters.len(), 1);
+    assert_eq!(replay(&geom, X, &pair, beta, &sides, &out.rec), Ok(()));
+    let at_0 = XRec {
+        level: 0,
+        ..out.rec.clone()
+    };
+    assert_eq!(
+        replay(&geom, X, &pair, beta, &sides, &at_0),
+        Err(XReplayError::Form(XClusterError::Degenerate(whole)))
+    );
+    let mut other = out.rec.clone();
+    other.clusters[0].degree = -other.clusters[0].degree;
+    assert_eq!(
+        replay(&geom, X, &pair, beta, &sides, &other),
+        Err(XReplayError::Differs)
+    );
+}
+
+/// A search reports the work it tested, whatever it finds: two curved
+/// edges far apart in shadow have no clusters, and each of their cells'
+/// hulls was still tested.
+#[test]
+fn cells_apart_are_charged() {
+    let mut geom = Geom {
+        d: DVec3::new(0.25, -0.5, 0.125),
+        ..Geom::default()
+    };
+    let (a, k, b) = (lat(0.0, 0.0, 0.0), lat(2.0, 0.0, 0.0), lat(4.0, 0.0, 0.0));
+    let up = lat(0.0, 100.0, 1.0);
+    geom.curve(A, E, 0, 1, vec![straight(a, k, 3.0), straight(k, b, 0.5)]);
+    geom.curve(
+        B,
+        G,
+        0,
+        1,
+        vec![straight(a + up, k + up, 1.0), straight(k + up, b + up, 2.0)],
+    );
+    let recs = decide(&geom);
+    let pair = recs.pair(&geom);
+    let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
+    assert!(out.rec.clusters.is_empty());
+    // Two pieces' hulls per cell.
+    assert!(out.pieces >= 8, "{} pieces", out.pieces);
 }

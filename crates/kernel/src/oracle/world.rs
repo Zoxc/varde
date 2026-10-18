@@ -28,11 +28,9 @@ use varde_decide::count::cross::{Coedge, x12, x21};
 use varde_decide::count::pieces::{Ribbon, SpanMap};
 use varde_decide::count::s02::{Charge, CountError, FaceQuery, TrimEdge, count_pieces, line_chain};
 use varde_decide::count::winding::{Graph, WindingError, clear_of, seeds, windings};
-use varde_decide::count::xrec::{XClusterError, XClusters, clusters};
+use varde_decide::count::xrec::{XClusterError, form};
 use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
-use varde_decide::num::bigf::{Big, BigF, Width};
 use varde_decide::num::bounded::Bounded;
-use varde_decide::num::dd::Dd;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::ORDERS;
 use varde_decide::order::{EdgeKey, EntityOrder, VertKey};
@@ -40,15 +38,15 @@ use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rates_a};
 use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
 use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights};
 use varde_decide::records::height::{HeightError, Heights, LayerTable, Records};
+use varde_decide::records::keys::{EdgeAt, Operand, Point, Query, RayKey, VvKey, XKey};
 use varde_decide::records::keys::{FootId, HKey};
-use varde_decide::records::keys::{Operand, Point, Query, RayKey, VvKey, XKey};
 use varde_decide::records::keys::{SideLine, TileCorner, TileEdge, TilePoint};
 use varde_decide::records::near::OpBands;
 use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span, TileNet};
 use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry, Shadows};
 use varde_decide::records::side::{SideGeometry, Sides};
 use varde_decide::records::table::Fresh;
-use varde_decide::records::xrec::{EdgeRays, XCurve, XPair, XTerms};
+use varde_decide::records::xrec::{EdgeRays, XBase, XCurve, XGeometry, XPair, XSides, XTerms};
 
 use super::solids::Solid;
 
@@ -138,6 +136,9 @@ pub(super) struct Stats {
     pub clusters: [u64; LEVELS],
     /// Side records filled at a count's request.
     pub side_fills: u64,
+    /// Edge pairs' side and corner records filled at the clusters'
+    /// request.
+    pub x_side_fills: u64,
     /// Face counts whose layers read height records.
     pub height_fills: u64,
     /// Edge pairs on one curve.
@@ -188,6 +189,7 @@ impl Stats {
             *self.pair_causes.entry(k.clone()).or_default() += n;
         }
         self.side_fills += o.side_fills;
+        self.x_side_fills += o.x_side_fills;
         self.height_fills += o.height_fills;
         self.standins += o.standins;
         self.cleared_seeds += o.cleared_seeds;
@@ -389,6 +391,43 @@ impl CurveGeometry for World<'_> {
         match q.operand.other() {
             A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
             B => std::array::from_fn(|_| lit(DVec3::ZERO)),
+        }
+    }
+}
+
+impl XGeometry for World<'_> {
+    fn x_curve(&self, operand: Operand, g: EdgeId) -> XCurve<'_> {
+        if self.straight(operand, g) {
+            let [p, q] = self.edge_points(operand, g);
+            XCurve::Line(p, q)
+        } else {
+            XCurve::Spans(self.solid(operand).brep.edge_spans(g))
+        }
+    }
+
+    fn edge_point_rates(&self, operand: Operand, _: EdgeId, _: EdgeAt) -> [Rate; ORDERS] {
+        self.rates(operand)
+    }
+
+    fn edge_rates<S: Curved>(
+        &self,
+        operand: Operand,
+        _: EdgeId,
+        _: u32,
+        t: &S,
+    ) -> [[S; 3]; ORDERS] {
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
+        match operand {
+            A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
+            B => std::array::from_fn(|_| lit(DVec3::ZERO)),
+        }
+    }
+
+    fn edge_line(&self, operand: Operand, g: EdgeId, _: DVec3) -> Seg {
+        let [a, b] = self.edge_points(operand, g).map(DVec3::from_array);
+        match operand {
+            A => Seg::of_a(a, b, Sign::Pos, Rate::Float(self.d)),
+            B => Seg::fixed(a, b),
         }
     }
 }
@@ -846,7 +885,13 @@ impl World<'_> {
     }
 
     /// `s11(e, g)` for every edge pair, `[e][g]`.
-    fn s11s(&self, r: &Recs, stats: &mut Stats) -> Result<Vec<Vec<i64>>, Refusal> {
+    fn s11s(&self, r: &Recs, cfg: &Config, stats: &mut Stats) -> Result<Vec<Vec<i64>>, Refusal> {
+        let band = Band::curved(0.0, cfg.target).expect("a band");
+        let base = XBase {
+            shadows: &r.shadows,
+            curved: &r.curved,
+        };
+        let mut sides = XSides::new();
         let (a, b) = (self.solid(A), self.solid(B));
         let curve = |op: Operand, e: EdgeId| {
             if self.straight(op, e) {
@@ -925,10 +970,41 @@ impl World<'_> {
                         return Ok(s);
                     }
                     let beta = [self.band(A, e), self.band(B, g)];
-                    let (c, level) = self.clusters_ladder(x, &pair, beta).map_err(|err| {
+                    // The side and corner records the boxes ask for are
+                    // filled, one at a time, and the clusters formed again.
+                    let mut asked = 0;
+                    let c = loop {
+                        match form(&self.order, x, &pair, beta, &sides) {
+                            Err(XClusterError::Need(ks)) if asked < 16 => {
+                                asked += 1;
+                                for k in ks {
+                                    stats.x_side_fills += 1;
+                                    sides
+                                        .fill(
+                                            [k],
+                                            base,
+                                            self,
+                                            band,
+                                            &mut Tally {
+                                                kind: "x side",
+                                                stats,
+                                            },
+                                        )
+                                        .map_err(|err| {
+                                            refused(
+                                                Cause::Side(format!("{err:?}")),
+                                                format!("{e:?} {g:?}"),
+                                            )
+                                        })?;
+                                }
+                            }
+                            r => break r,
+                        }
+                    }
+                    .map_err(|err| {
                         refused(Cause::Clusters(format!("{err:?}")), format!("{e:?} {g:?}"))
                     })?;
-                    stats.clusters[level] += 1;
+                    stats.clusters[c.rec.level] += 1;
                     stats.clear +=
                         c.rec.clusters.iter().filter(|c| c.clear.is_some()).count() as u64;
                     let s = c
@@ -955,38 +1031,6 @@ impl World<'_> {
             Some(r) => Err(r),
             None => Ok(out),
         }
-    }
-
-    /// The pair's clusters at the first level that forms them.
-    fn clusters_ladder(
-        &self,
-        x: XKey,
-        pair: &XPair<'_>,
-        beta: [f64; 2],
-    ) -> Result<(XClusters, usize), XClusterError> {
-        let mut last = None;
-        for level in 0..LEVELS {
-            let r = match level {
-                0 => clusters(&self.order, x, pair, beta, &Bounded::exact(0.0)),
-                1 => clusters(
-                    &self.order,
-                    x,
-                    pair,
-                    beta,
-                    &Bounded::exact(Dd::from_f64(0.0)),
-                ),
-                _ => {
-                    let like = Bounded::exact(Big::from_f64(0.0, Width::ALL[level - 2]));
-                    clusters(&self.order, x, pair, beta, &like)
-                }
-            };
-            match r {
-                Ok(c) => return Ok((c, level)),
-                Err(e @ (XClusterError::SizeLimit | XClusterError::Shared)) => return Err(e),
-                Err(e) => last = Some(e),
-            }
-        }
-        Err(last.expect("a level ran"))
     }
 
     /// The windings of `op`'s vertices: seeded at its first cleared
@@ -1053,7 +1097,7 @@ impl World<'_> {
         let r = self.records(cfg, stats)?;
         stats.time[0] += t.elapsed().as_secs_f64();
         let t = std::time::Instant::now();
-        let s11 = self.s11s(&r, stats);
+        let s11 = self.s11s(&r, cfg, stats);
         stats.time[2] += t.elapsed().as_secs_f64();
         let t = std::time::Instant::now();
         let (s02, ea) = self.face_counts(&r, A, cfg, stats)?;

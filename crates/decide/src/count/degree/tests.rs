@@ -812,6 +812,56 @@ fn big() -> Bounded<crate::num::bigf::Big> {
     Bounded::exact(Big::from_f64(0.0, Width::ALL[1]))
 }
 
+/// A tile mapped by `z ↦ z²` about its centre (`x² − y²`, `2xy`, a
+/// polynomial of degrees (2, 2)): its boundary winds twice round a point
+/// near the centre's image (both its preimages inside), not at all round
+/// one beyond the image of the sides' middles (both outside), and the box
+/// degree is that winding, the exact oracle's, at every level, on either
+/// facing.
+#[test]
+fn a_box_winding_twice_has_degree_two() {
+    let s = 4.0;
+    // Bernstein coefficients on `[0, 1]` of `(u − ½)²·s²` and `(u − ½)·s`.
+    let sq = [s * s / 4.0, -s * s / 4.0, s * s / 4.0];
+    let lin = [-s / 2.0, 0.0, s / 2.0];
+    let net: Vec<[f64; 4]> = (0..3)
+        .flat_map(|i| (0..3).map(move |j| [sq[i] - sq[j], 2.0 * lin[i] * lin[j], 0.0, 1.0]))
+        .collect();
+    let trims: [Trim<'_>; 0] = [];
+    let b = BoxKey::new(Operand::B, FaceId(3), [0, 0], Extent::WHOLE, Extent::WHOLE);
+    let pq = HomPatch::from_affine(2, 2, net.iter().copied(), &Q::from(0)).unwrap();
+    let sides = exact_sides(&pq, &b);
+    let mut seen = Vec::new();
+    for (qp, laps) in [([0.25, 0.125, 0.0], 2), ([4.5, 0.25, 0.0], 0)] {
+        let Exact::Laps(w) = exact_sum(&sides, &exact_shadow(qp)) else {
+            panic!("{qp:?} off the boundary");
+        };
+        assert_eq!(w.abs(), laps, "{qp:?}");
+        let qs = QShadow::of(qp).unwrap();
+        for flipped in [false, true] {
+            let face = face_uv(&trims, flipped);
+            let sign = face.inside_winding();
+            let at = |like| {
+                let p = HomPatch::from_affine(2, 2, net.iter().copied(), &like).unwrap();
+                box_degree(&face, &b, &p, &qs).map(|d| d.degree)
+            };
+            assert_eq!(at(first()), Ok(sign * w), "{qp:?}");
+            let p = HomPatch::from_affine(2, 2, net.iter().copied(), &dd()).unwrap();
+            assert_eq!(
+                box_degree(&face, &b, &p, &qs).map(|d| d.degree),
+                Ok(sign * w)
+            );
+            let p = HomPatch::from_affine(2, 2, net.iter().copied(), &big()).unwrap();
+            assert_eq!(
+                box_degree(&face, &b, &p, &qs).map(|d| d.degree),
+                Ok(sign * w)
+            );
+            seen.push(sign * w);
+        }
+    }
+    assert!(seen.iter().any(|&d| d.abs() == 2));
+}
+
 /// Every box of random partitions of folded faces of degrees 1 to 4
 /// against the exact winding of its own boundary (exact rational halving
 /// and Carathéodory triangle tests, independent of the code under test),

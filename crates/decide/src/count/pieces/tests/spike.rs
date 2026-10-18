@@ -333,7 +333,11 @@ fn rays_q(c: &[Span], q: [f64; 3]) -> ChainRec {
             };
             out.crossings.push(ChainCrossing {
                 span: k as u32,
-                crossing: Crossing { t: [lo, hi], sign },
+                crossing: Crossing {
+                    t: [lo, hi],
+                    sign,
+                    single: true,
+                },
             });
         }
     }
@@ -383,15 +387,8 @@ impl SideGeometry for Tilted {
         Some(Moving::of_a(DVec3::new(x, y, z), Sign::Pos, D))
     }
 
-    fn tile_net(&self, _: Operand, _: FaceId, [i, j]: [i64; 2]) -> Option<TileNet> {
-        Some(std::array::from_fn(|k| {
-            let (u, v) = (
-                i as f64 + (k / 3) as f64 / 2.0,
-                j as f64 + (k % 3) as f64 / 2.0,
-            );
-            let [x, y, z] = map(u, v);
-            [x, y, z, 1.0]
-        }))
+    fn tile_net(&self, _: Operand, _: FaceId, tile: [i64; 2]) -> Option<TileNet> {
+        Some(crate::count::testing::mapped_net(tile, map))
     }
 
     fn point_rates(&self, _: Point, _: &TilePoint) -> [Rate; ORDERS] {

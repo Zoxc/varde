@@ -81,7 +81,7 @@ use crate::bezier::{Dir, Dyadic};
 use crate::ids::FaceId;
 use crate::num::decide::{Band, Fail, Row, Sign, TieKey};
 use crate::num::exact::ORDERS;
-use crate::perturb::{Curved, HomPoint, HomShadow, Moving, Rate};
+use crate::perturb::{Curved, HomPoint, HomShadow, Moving, QueryPoint, Rate};
 use crate::records::keys::{
     CornerKey, Operand, Point, RecordKey, SideKey, SideLine, TileCorner, TileEdge, TilePoint,
 };
@@ -107,24 +107,17 @@ pub struct SideCrossing {
     pub single: bool,
 }
 
-impl SideCrossing {
-    /// The side of the ray's line the line goes to at the crossing:
-    /// `ρ × T` along `+r̂` is `ν·T`, negated along `−r̂`.
-    fn to(&self, of: Operand) -> Sign {
-        match (of, self.sign) {
-            (Operand::A, Sign::Pos) => Sign::Neg,
-            (Operand::A, Sign::Neg) => Sign::Pos,
-            (Operand::B, s) => s,
-        }
-    }
-}
-
 /// A point's ray against a line of a face of the other operand (module
 /// docs).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SideRec {
     /// The crossings, in increasing parameter on the line's `[0, 1]`.
     pub crossings: SmallVec<[SideCrossing; 2]>,
+    /// The enclosures of the line's tangencies with the ray's line ahead
+    /// of the point, whose two moved crossings cancel
+    /// ([`SpanRec::touches`](super::ray::SpanRec::touches)): a cut inside
+    /// one isn't ordered against them.
+    pub touches: SmallVec<[[f64; 2]; 1]>,
 }
 
 /// Why a part of a line's count isn't read off its record.
@@ -134,8 +127,8 @@ pub enum Over {
     /// its start, `1` its end), whose side isn't given: read the cut's
     /// dyadic point record and ask again.
     Side(usize),
-    /// A crossing of a tangency's pair has its enclosure over a cut: not
-    /// ordered against it.
+    /// A crossing of a tangency's pair, or a tangency whose pair cancels,
+    /// has its enclosure over a cut: not ordered against it.
     Unordered,
 }
 
@@ -161,33 +154,69 @@ impl SideRec {
         [lo, hi]: [f64; 2],
         sides: [Option<Sign>; 2],
     ) -> Result<i64, Over> {
-        // Whether the crossing lies after the cut `x`, end `j` of the part.
-        let after = |c: &SideCrossing, x: f64, j: usize| -> Result<bool, Over> {
-            let [a, b] = c.t;
+        count_part(
+            self.crossings.iter().map(|c| (c.t, c.sign, c.single)),
+            &self.touches,
+            of,
+            [lo, hi],
+            sides,
+        )
+    }
+}
+
+/// The signed crossings, each `(t, sign, single)` ([`SideCrossing`]'s
+/// fields), of a line or span read by the ray of a point of `of` that lie
+/// in the part `[lo, hi]` of its parameter (`0 ≤ lo < hi ≤ 1`), a cut
+/// inside the line (`lo` or `hi` in `(0, 1)`) inside a crossing's
+/// enclosure ordered against it by `sides`, the side of the cut's point
+/// against the ray's line (module docs; [`SideRec::count_over`]); a cut
+/// inside one of the `touches` (tangencies whose crossings cancel) is
+/// [`Over::Unordered`].
+pub(crate) fn count_part(
+    crossings: impl IntoIterator<Item = ([f64; 2], Sign, bool)>,
+    touches: &[[f64; 2]],
+    of: Operand,
+    [lo, hi]: [f64; 2],
+    sides: [Option<Sign>; 2],
+) -> Result<i64, Over> {
+    for x in [lo, hi] {
+        if x > 0.0 && x < 1.0 && touches.iter().any(|&[a, b]| a <= x && x <= b) {
+            return Err(Over::Unordered);
+        }
+    }
+    // The side of the ray's line the line goes to at a crossing of sign
+    // `sign`: `ρ × T` along `+r̂` is `ν·T`, negated along `−r̂`.
+    let to = |sign: Sign| match (of, sign) {
+        (Operand::A, Sign::Pos) => Sign::Neg,
+        (Operand::A, Sign::Neg) => Sign::Pos,
+        (Operand::B, s) => s,
+    };
+    // Whether the crossing lies after the cut `x`, end `j` of the part.
+    let after =
+        |[a, b]: [f64; 2], sign: Sign, single: bool, x: f64, j: usize| -> Result<bool, Over> {
             if x <= 0.0 || a > x {
                 return Ok(true);
             }
             if x >= 1.0 || b < x {
                 return Ok(false);
             }
-            if !c.single {
+            if !single {
                 return Err(Over::Unordered);
             }
             let s = sides[j].ok_or(Over::Side(j))?;
             // Before the cut exactly where the cut is on the side the
             // crossing goes to.
-            Ok(s != c.to(of))
+            Ok(s != to(sign))
         };
-        let mut n = 0;
-        for c in &self.crossings {
-            let starts = after(c, lo, 0)?;
-            let ends = hi >= 1.0 || !after(c, hi, 1)?;
-            if starts && ends {
-                n += i64::from(c.sign.as_i8());
-            }
+    let mut n = 0;
+    for (t, sign, single) in crossings {
+        let starts = after(t, sign, single, lo, 0)?;
+        let ends = hi >= 1.0 || !after(t, sign, single, hi, 1)?;
+        if starts && ends {
+            n += i64::from(sign.as_i8());
         }
-        Ok(n)
     }
+    Ok(n)
 }
 
 /// A point against a dyadic point of a face of the other operand,
@@ -430,12 +459,6 @@ impl<G: SideGeometry> SpanRates for LineOf<'_, G> {
     }
 }
 
-/// `t` as an `f64`, if exactly.
-fn exact_f64(t: Dyadic) -> Option<f64> {
-    let [lo, hi] = t.bounds();
-    (lo == hi).then_some(lo)
-}
-
 /// Decides a line's record as a curved edge span's, its ends from their
 /// dyadic points' records.
 fn decide_side<G: SideGeometry>(
@@ -478,7 +501,7 @@ fn decide_side<G: SideGeometry>(
             SpanCurve::Stored(&span)
         }
         SideLine::Inner(l) => {
-            let (Some(n), Some(at)) = (geom.tile_net(l.operand, l.face, l.tile), exact_f64(l.at))
+            let (Some(n), Some(at)) = (geom.tile_net(l.operand, l.face, l.tile), l.at.to_f64())
             else {
                 return internal;
             };
@@ -535,7 +558,7 @@ fn decide_side<G: SideGeometry>(
         curve,
         sides,
         |j| rates[j].clone().expect("both ends read"),
-        geom.point(key.q),
+        QueryPoint::Flat(geom.point(key.q)),
         key.q.operand,
         &LineOf { geom, key },
         band,
@@ -544,16 +567,15 @@ fn decide_side<G: SideGeometry>(
     (
         rec.map(|r| SideRec {
             crossings: r
-                .rec
                 .crossings
                 .iter()
-                .zip(&r.single)
-                .map(|(c, &single)| SideCrossing {
+                .map(|c| SideCrossing {
                     t: c.t,
                     sign: c.sign,
-                    single,
+                    single: c.single,
                 })
                 .collect(),
+            touches: r.touches,
         }),
         cost,
     )

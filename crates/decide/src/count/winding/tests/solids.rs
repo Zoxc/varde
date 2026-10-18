@@ -29,7 +29,7 @@ use crate::records::height::{Heights, LayerTable, Records};
 use crate::records::keys::{RayKey, VvKey, XKey};
 use crate::records::shadow::{ShadowGeometry, Shadows};
 use crate::records::side::Sides;
-use crate::records::xrec::{EdgeRays, XCurve, XPair, XTerms, x_count};
+use crate::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms, x_count};
 
 use Operand::{A, B};
 
@@ -503,8 +503,17 @@ fn s11s(w: &World, r: &Recs, t: &Truth) -> BTreeMap<(EdgeId, EdgeId), i64> {
                 },
                 shared: false,
             };
-            let out_c = clusters(&w.order, XKey { e, g }, &pair, [BAND; 2], &first())
-                .unwrap_or_else(|err| panic!("{e:?} {g:?}: {err:?}"));
+            // Straight edges: one cell with outer sides only, no side
+            // record read.
+            let out_c = clusters(
+                &w.order,
+                XKey { e, g },
+                &pair,
+                [BAND; 2],
+                &XSides::new(),
+                &first(),
+            )
+            .unwrap_or_else(|err| panic!("{e:?} {g:?}: {err:?}"));
             assert_eq!(out_c.rec.degree(), x_count(&pair.terms));
             let z = t.above.get(&(e, g)).copied();
             assert_eq!(

@@ -284,7 +284,7 @@ pub(crate) fn global(i: i64, t: Dyadic) -> Rational {
 /// A dyadic point of `[0, 1]` as an `f64`, exactly (a box's sides and
 /// centre have denominators at most `2⁵³`).
 pub(crate) fn dy(t: Dyadic) -> f64 {
-    float(t.num(), t.exp())
+    t.to_f64().expect("a box's dyadic is a float")
 }
 
 /// A box of a face: one tile cut to two dyadic extents (module docs). Its
@@ -1308,25 +1308,7 @@ pub fn iso_off<S: Scalar>(
 /// The iso line of `patch` where the coordinate in `dir` is `at`, running
 /// along the other coordinate, in space.
 pub(crate) fn iso_line<S: Scalar>(patch: &HomPatch<S>, dir: Dir, at: Dyadic) -> HomCurve<S, 3> {
-    let (m, n) = patch.degrees();
-    let like = patch.weights().coefs()[0].clone();
-    // The patch whose first row (in `dir`) is the line, and that row's index.
-    let (cut, row) = if at == Dyadic::ZERO {
-        (patch.clone(), 0)
-    } else if at == Dyadic::ONE {
-        (patch.clone(), if dir == Dir::U { m } else { n })
-    } else {
-        let [_, r] = patch.split_at(dir, &S::from_f64(dy(at), &like));
-        (r, 0)
-    };
-    let [x, y, z, w] = cut.tensors();
-    let len = if dir == Dir::U { n } else { m };
-    let at_k = |t: &crate::bezier::Tensor<S>, k: usize| match dir {
-        Dir::U => t.get(row, k).clone(),
-        Dir::V => t.get(k, row).clone(),
-    };
-    HomCurve::new((0..=len).map(|k| ([at_k(x, k), at_k(y, k), at_k(z, k)], at_k(w, k))))
-        .expect("a patch's line")
+    patch.iso_line(dir, dy(at))
 }
 
 /// Visits the pieces of `c` (over the aligned dyadic interval

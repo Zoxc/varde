@@ -849,6 +849,7 @@ fn count_over_orders_cuts_inside_crossings() {
         ]
         .into_iter()
         .collect(),
+        touches: [[0.125, 0.1875]].into_iter().collect(),
     };
     let none = [None, None];
     assert_eq!(rec.count(), 0);
@@ -875,6 +876,15 @@ fn count_over_orders_cuts_inside_crossings() {
         rec.count_over(B, [0.0, 0.8125], [None, left]),
         Err(Over::Unordered)
     );
+    // Nor is a tangency whose two crossings cancel: a cut inside it holds
+    // one of them, whichever side the cut's point is on.
+    for cut in [left, right] {
+        assert_eq!(
+            rec.count_over(B, [0.15625, 1.0], [cut, None]),
+            Err(Over::Unordered)
+        );
+    }
+    assert_eq!(rec.count_over(B, [0.0, 0.25], none), Ok(1));
 }
 
 #[test]

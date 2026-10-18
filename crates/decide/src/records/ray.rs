@@ -167,7 +167,7 @@ use malachite::Rational;
 use smallvec::SmallVec;
 
 use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
-use crate::bezier::{Dir, HomCurve, Poly, Scalar};
+use crate::bezier::{Dir, HomCurve, HomPatch, Poly, Scalar};
 use crate::ids::EdgeId;
 use crate::num::bigf::BigF;
 use crate::num::bounded::{Bounded, add_up, down, mul_up};
@@ -175,8 +175,8 @@ use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::ORDERS;
 use crate::perturb::{
-    Curved, HomLineShadow, HomPoint, LineShadow, Moving, MovingAt, NU, R_HAT, Rate, Seg,
-    curve_point, curve_shadow, decide_flat,
+    Curved, HomLineShadow, HomPoint, HomPointLineShadow, LineShadow, Moving, MovingAt, NU,
+    QueryPoint, R_HAT, Rate, Seg, curve_point, curve_shadow, decide_flat,
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
@@ -213,6 +213,12 @@ pub struct Crossing {
     /// `sign(ρ × T)` seen from above, `ρ` the ray's actual direction, `T`
     /// the span's tangent in its stored direction.
     pub sign: Sign,
+    /// Whether it is the one crossing of a piece whose ends lie on either
+    /// side of the ray's line (so it lies before a point of the piece
+    /// exactly where that point is on the side the span crosses to),
+    /// rather than the one of a tangency's pair the moved configuration
+    /// puts on the ray.
+    pub single: bool,
 }
 
 /// A point's ray against one span of a curved edge of the other operand
@@ -221,6 +227,12 @@ pub struct Crossing {
 pub struct SpanRec {
     /// The crossings, in increasing parameter.
     pub crossings: SmallVec<[Crossing; 2]>,
+    /// The enclosures `[lo, hi]` of the span's tangencies with the ray's
+    /// line ahead of `q` (module docs, a cluster whose ends agree, `q`
+    /// away from it): the moved configuration crosses the ray twice there
+    /// with opposite signs, which cancel in the count, so no crossing is
+    /// listed; but a part of the span cut inside one holds one of the two.
+    pub touches: SmallVec<[[f64; 2]; 1]>,
 }
 
 impl SpanRec {
@@ -249,6 +261,9 @@ pub struct ChainCrossing {
 pub struct ChainRec {
     /// The crossings, along the edge's stored direction.
     pub crossings: SmallVec<[ChainCrossing; 2]>,
+    /// The spans' tangencies with the ray's line ahead of the point
+    /// ([`SpanRec::touches`]), each with its span, along the edge.
+    pub touches: SmallVec<[(u32, [f64; 2]); 1]>,
 }
 
 impl ChainRec {
@@ -532,6 +547,7 @@ fn decide_chain<G: CurveGeometry>(
                 .iter()
                 .map(|&crossing| ChainCrossing { span: i, crossing }),
         );
+        rec.touches.extend(r.touches.iter().map(|&t| (i, t)));
     }
     (Ok(rec), Cost::default())
 }
@@ -633,24 +649,8 @@ impl SpanCurve<'_> {
                 if !(at > 0.0 && at < 1.0) {
                     return None;
                 }
-                // The Bernstein values at `at`.
-                let a = S::from_f64(at, like);
-                let b = S::from_f64(1.0, like).sub(&a);
-                let two = S::int(2, like);
-                let basis = [b.mul(&b), two.mul(&a).mul(&b), a.mul(&a)];
-                let pts = (0..3).map(|k| {
-                    let col = Self::column(net, fixed, k);
-                    let mut x: [S; 3] = std::array::from_fn(|_| S::int(0, like));
-                    let mut w = S::int(0, like);
-                    for (p, c) in col.iter().zip(&basis) {
-                        for (d, xd) in x.iter_mut().enumerate() {
-                            *xd = xd.add(&c.mul(&S::product(p[d], p[3], like)));
-                        }
-                        w = w.add(&c.mul(&S::from_f64(p[3], like)));
-                    }
-                    (x, w)
-                });
-                HomCurve::new(pts)
+                let patch = HomPatch::from_affine(2, 2, net.iter().copied(), like)?;
+                Some(patch.iso_line(fixed, at))
             }
         }
     }
@@ -684,7 +684,7 @@ impl SpanCurve<'_> {
     /// Whether `q` is within the curved band of end `j` (`0` the start, `1`
     /// the end) in both shadow directions, or not certainly beyond
     /// ([`near_end`]).
-    fn near_end(&self, j: usize, q: glam::DVec3, band: Band) -> bool {
+    fn near_end(&self, j: usize, q: &[Bounded<f64>; 3], band: Band) -> bool {
         match *self {
             SpanCurve::Stored(span) => {
                 let p = span[2 * j];
@@ -709,12 +709,12 @@ impl SpanCurve<'_> {
     fn end_row(
         &self,
         j: usize,
-        q: &Moving,
+        q: &QueryPoint,
         rates: [Rate; ORDERS],
         tie: TieKey,
     ) -> (Result<Sign, Fail>, crate::num::exact::Work) {
-        match *self {
-            SpanCurve::Stored(span) => {
+        match (*self, q) {
+            (SpanCurve::Stored(span), QueryPoint::Flat(q)) => {
                 let line = Seg {
                     a: point_of(&span[j]),
                     b: point_of(&span[j + 1]),
@@ -722,13 +722,18 @@ impl SpanCurve<'_> {
                 };
                 decide_flat(&LineShadow { q: q.clone(), line }, tie)
             }
-            SpanCurve::Iso { .. } => {
+            (_, q) => {
                 let (Some(a), Some(b)) =
                     (self.control(j, rates.clone()), self.control(j + 1, rates))
                 else {
                     return (Err(Fail::Internal { key: tie }), Default::default());
                 };
-                decide_flat(&HomLineShadow { q: q.clone(), a, b }, tie)
+                match q {
+                    QueryPoint::Flat(q) => decide_flat(&HomLineShadow { q: q.clone(), a, b }, tie),
+                    QueryPoint::Hom(q) => {
+                        decide_flat(&HomPointLineShadow { q: q.clone(), a, b }, tie)
+                    }
+                }
             }
         }
     }
@@ -738,19 +743,6 @@ impl SpanCurve<'_> {
 pub(super) fn bernstein(t: &Rational) -> [Rational; 3] {
     let s = Rational::from(1u32) - t;
     [&s * &s, Rational::from(2u32) * t * &s, t * t]
-}
-
-/// A span record with, per crossing, whether it is the one crossing of a
-/// piece whose ends lie on either side of the ray's line (so it lies
-/// before a point of the piece exactly where that point is on the side
-/// the piece crosses to), rather than one of a pair the piece's tangency
-/// gives.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Spanned {
-    /// The record.
-    pub(super) rec: SpanRec,
-    /// Per crossing, whether it is a piece's one crossing.
-    pub(super) single: SmallVec<[bool; 2]>,
 }
 
 /// A span record's inputs, read once for every level.
@@ -763,7 +755,7 @@ struct SpanCtx<'a, R> {
     /// At each end `q` is within the band of (in both shadow directions,
     /// or not certainly beyond), the row there ([`EndRow`]).
     near: [Option<EndRow>; 2],
-    q: Moving,
+    q: QueryPoint,
     rates: &'a R,
     band: Band,
     tie: TieKey,
@@ -875,17 +867,17 @@ fn decide_span<G: CurveGeometry>(
         SpanCurve::Stored(span),
         [e0, e1],
         end_rates,
-        geom.point(key.q),
+        QueryPoint::Flat(geom.point(key.q)),
         key.q.operand,
         &rates,
         band,
         tie,
     );
-    (r.map(|r| r.rec), cost)
+    (r, cost)
 }
 
 /// The crossings of `span`'s shadow by the ray of the point `q` (of
-/// `operand`), decided at each level in turn until one decides them
+/// `operand`; a stored point, or a dyadic point of a curve), decided at each level in turn until one decides them
 /// (module docs): `ends` the side of each end against `q`'s `r̂` line and
 /// whether it is on the ray, from the end's own record; `end_rates(j)`
 /// the rates of end `j`'s point (for the row at an end `q` is near);
@@ -896,16 +888,17 @@ pub(super) fn span_crossings<R: SpanRates>(
     curve: SpanCurve<'_>,
     ends: [(Sign, bool); 2],
     end_rates: impl Fn(usize) -> [Rate; ORDERS],
-    q: Moving,
+    q: QueryPoint,
     operand: Operand,
     rates: &R,
     band: Band,
     tie: TieKey,
-) -> Decided<Spanned> {
+) -> Decided<SpanRec> {
     let mut cost = Cost::default();
+    let q_at = q.at_level(&Bounded::<f64>::exact(0.0)).at;
     // The rows at the ends `q` is near, decided once for every level.
     let near = [0, 1].map(|j| {
-        if !curve.near_end(j, q.at, band) {
+        if !curve.near_end(j, &q_at, band) {
             return None;
         }
         let (side, w) = curve.end_row(j, &q, end_rates(j), tie);
@@ -930,7 +923,7 @@ pub(super) fn span_crossings<R: SpanRates>(
 }
 
 impl<R: SpanRates> AtLevel for SpanCtx<'_, R> {
-    type Out = Result<Spanned, Fail>;
+    type Out = Result<SpanRec, Fail>;
 
     fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
         SpanCtx::at(self, like, work, level + 1 == LEVELS)
@@ -945,7 +938,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// The record at the level of `like`, or why this level doesn't
     /// decide it; `last` at the last level, where a piece's sign along
     /// the ray and `q`'s foot on the span are also sought by halving.
-    fn at<S: RayLevel>(&self, like: &S, work: &mut LevelWork, last: bool) -> Result<Spanned, Fail> {
+    fn at<S: RayLevel>(&self, like: &S, work: &mut LevelWork, last: bool) -> Result<SpanRec, Fail> {
         let f = |x: f64| S::from_f64(x, like);
         let v3 = |v: glam::DVec3| [f(v.x), f(v.y), f(v.z)];
         let Some(c) = self.curve.hom(like) else {
@@ -954,7 +947,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         if !c.weights_positive() {
             return Err(Fail::Internal { key: self.tie });
         }
-        let q = v3(self.q.at);
+        let q = self.q.at_level(like).at;
         let line = |a: glam::DVec3| {
             let a = v3(a);
             let off = dot3(&a, &q).neg();
@@ -1041,7 +1034,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
 
         let ahead = ray_ahead(self.operand);
         let mut crossings = SmallVec::new();
-        let mut single = SmallVec::new();
+        let mut touches = SmallVec::new();
         for p in &pieces {
             // `ρ × T` seen from above: `ν·T` along `+r̂`, the sign of the
             // side crossed to; negated along `−r̂`.
@@ -1071,7 +1064,12 @@ impl<R: SpanRates> SpanCtx<'_, R> {
             }
             let sign = match (settled, net) {
                 (Some(on), Some(c)) => on.then_some(c),
-                (Some(_), None) => None,
+                (Some(on), None) => {
+                    if on {
+                        touches.push(if p.rev { mirrored(t) } else { t });
+                    }
+                    None
+                }
                 (None, net) => {
                     let pc = if p.rev { &cr } else { &c };
                     let mut row = self.row(pc, t, p.rev, NU, like, work);
@@ -1107,14 +1105,14 @@ impl<R: SpanRates> SpanCtx<'_, R> {
             };
             if let Some(sign) = sign {
                 let t = if p.rev { mirrored(t) } else { t };
-                crossings.push(Crossing { t, sign });
-                single.push(net.is_some());
+                crossings.push(Crossing {
+                    t,
+                    sign,
+                    single: net.is_some(),
+                });
             }
         }
-        Ok(Spanned {
-            rec: SpanRec { crossings },
-            single,
-        })
+        Ok(SpanRec { crossings, touches })
     }
 
     /// Whether the crossing of the piece `p`, of sign `c`, is on the ray,
@@ -1196,13 +1194,9 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         work: &mut LevelWork,
     ) -> Option<[S; 2]> {
         let f = |x: f64| S::from_f64(x, like);
-        let q = self.q.at;
+        let q = self.q.at_level(like).at;
         let nu = [f(axis.x), f(axis.y), f(axis.z)];
-        let off = f(axis.x)
-            .mul(&f(q.x))
-            .add(&f(axis.y).mul(&f(q.y)))
-            .add(&f(axis.z).mul(&f(q.z)))
-            .neg();
+        let off = dot3(&nu, &q).neg();
         let g = c.compose_linear(&nu, &off);
         let sign = |x: &S| g.eval(x).sign().and_then(Sign::of);
         let (mut lo, mut hi) = (f(t[0]), f(t[1]));
@@ -1266,7 +1260,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         };
         let rates = self.rates.rates_at(&ts);
         let foot = MovingAt { at, rates };
-        let q = MovingAt::from_flat(&self.q, like);
+        let q = self.q.at_level(like);
         let row = curve_shadow(&q, &foot, &tangent);
         // Within the band: a tie if `decide` answers (at its target).
         let tie = row.g.beyond(self.band.tau()).is_none();
@@ -1300,10 +1294,10 @@ fn within<S: Scalar>([g, h, w]: [&Poly<S>; 3], to: f64, band: Band, like: &S) ->
 /// in both shadow directions, or not certainly beyond it: `|ν·(k − q)|`
 /// and `|r̂·(k − q)|` against the band times each axis's 1-norm (at least
 /// its length), at `f64` with certified errors.
-fn near_end(q: glam::DVec3, k: [Bounded<f64>; 3], band: Band) -> bool {
+fn near_end(q: &[Bounded<f64>; 3], k: [Bounded<f64>; 3], band: Band) -> bool {
     let reach = add_up(band.tau(), band.tau_sign());
     let b = |x: f64| Bounded::<f64>::from(x);
-    let d = [k[0] - b(q.x), k[1] - b(q.y), k[2] - b(q.z)];
+    let d = [k[0] - q[0], k[1] - q[1], k[2] - q[2]];
     [NU, R_HAT].iter().all(|v| {
         let dot = b(v.x) * d[0] + b(v.y) * d[1] + b(v.z) * d[2];
         let norm = v.x.abs() + v.y.abs() + v.z.abs();

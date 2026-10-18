@@ -428,6 +428,33 @@ impl<S: Scalar> HomPatch<S> {
         self.split(|h| h.split_at(dir, t))
     }
 
+    /// The iso line where the coordinate in `dir` is `at` (in `[0, 1]`,
+    /// an `f64` exactly), running along the other coordinate: the row of
+    /// the patch split there (none split at `0` or `1`, whose row is the
+    /// patch's own boundary).
+    pub fn iso_line(&self, dir: Dir, at: f64) -> super::HomCurve<S, 3> {
+        let (m, n) = self.degrees();
+        let like = self.weights().coefs()[0].clone();
+        // The patch whose first row (in `dir`) is the line, and that row's
+        // index.
+        let (cut, row) = if at <= 0.0 {
+            (self.clone(), 0)
+        } else if at >= 1.0 {
+            (self.clone(), if dir == Dir::U { m } else { n })
+        } else {
+            let [_, r] = self.split_at(dir, &S::from_f64(at, &like));
+            (r, 0)
+        };
+        let [x, y, z, w] = cut.tensors();
+        let len = if dir == Dir::U { n } else { m };
+        let at_k = |t: &Tensor<S>, k: usize| match dir {
+            Dir::U => t.get(row, k).clone(),
+            Dir::V => t.get(k, row).clone(),
+        };
+        super::HomCurve::new((0..=len).map(|k| ([at_k(x, k), at_k(y, k), at_k(z, k)], at_k(w, k))))
+            .expect("a patch's line")
+    }
+
     /// Whether every weight is certified positive (its enclosure's lower
     /// end above zero): then `W > 0` on `[0, 1]²` and the patch lies in
     /// the convex hull of its projected control points.

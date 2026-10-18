@@ -31,15 +31,21 @@
 //!
 //! The boxes of the square and their degrees, and the refinement that
 //! cuts the square into clusters, are counting's
-//! ([`crate::count::xrec`]).
+//! ([`crate::count::xrec`]). A box side inside the square that the level
+//! can't certify off 0 reads a side record kept here: the held point of
+//! one edge (a knot, or a box line's dyadic point) against the other
+//! edge, `(e, g, dyadic side)`, and the corner records of the two edges'
+//! points, a knot against a knot where their shadows coincide
+//! ([`XSides`], module `sides`).
 //!
 //! **Clusters** ([`XCluster`]). A box of non-zero degree refines until
 //! the z-order of its two pieces is clear (the heights `ê·x` of the two
 //! pieces certified apart over the box) or both pieces are within their
 //! edges' bands in 3D; it is then one cluster, of the box's degree, in
-//! the record's list ([`XRec`]) by its index ([`XClusterIx`]). `s11(e,
-//! g)` is the sum of the degrees of the clusters with `g` above `e`
-//! ([`XRec::s11`]).
+//! the record's list ([`XRec`]) by its index ([`XClusterIx`]), the list
+//! stored with the precision level that formed it, which its order
+//! depends on. `s11(e, g)` is the sum of the degrees of the clusters with
+//! `g` above `e` ([`XRec::s11`]).
 //!
 //! **The z-order key** ([`zorder_key`]). A cluster whose z-order isn't
 //! clear reads a height record anchored at `g`, keyed by one rule: if an
@@ -316,11 +322,17 @@ pub struct XCluster {
 }
 
 /// The crossing record of an edge pair: its clusters, in the order their
-/// boxes were keyed ([`XClusterIx`] is the index here).
+/// boxes were keyed ([`XClusterIx`] is the index here), and the precision
+/// level they were formed at, on which that order depends: the record is
+/// checked again at that level only
+/// ([`replay`](crate::count::xrec::replay)). A shared-curve pair's
+/// clusters are the records' alone, level 0.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct XRec {
     /// The clusters.
     pub clusters: Vec<XCluster>,
+    /// The level the clusters were formed at (`0` for `f64`).
+    pub level: usize,
 }
 
 impl XRec {
@@ -651,6 +663,11 @@ pub fn cut_point(curve: &XCurve<'_>, part: &XPart) -> Option<[f64; 3]> {
     let out = num.map(|n| f64::rounding_from(&(n / &den), Nearest).0);
     out.iter().all(|x| x.is_finite()).then_some(out)
 }
+
+mod sides;
+
+pub(crate) use sides::from_held;
+pub use sides::{XBase, XGeometry, XSideCrossing, XSideRec, XSides, XWant};
 
 #[cfg(test)]
 mod tests;

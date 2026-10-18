@@ -182,6 +182,7 @@ fn rational_rays(c: &[Span], q: [f64; 3]) -> ChainRec {
                 crossing: Crossing {
                     t: [t - 1e-12, t + 1e-12],
                     sign,
+                    single: true,
                 },
             });
         }

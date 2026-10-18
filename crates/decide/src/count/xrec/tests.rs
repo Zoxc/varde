@@ -7,6 +7,7 @@
 //! further splits keep the sum; a box apart from both edges' shadows has
 //! degree 0 from every ray; data that doesn't fit is refused.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use glam::DVec3;
@@ -20,7 +21,7 @@ use crate::num::bounded::Bounded;
 use crate::num::decide::{Band, Fail, Sign};
 use crate::num::exact::ORDERS;
 use crate::perturb::{Curved, Moving, R_HAT, Rate, Seg, T, UP, rates_a};
-use crate::records::keys::{Operand, Point, RayKey};
+use crate::records::keys::{EdgeAt, Operand, Point, RayKey, XKey};
 use crate::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span};
 use crate::records::shadow::{Cost, Decided, Pass, ShadowGeometry, Shadows};
 use crate::records::table::Fresh;
@@ -170,6 +171,53 @@ impl CurveGeometry for Geom {
     }
 }
 
+impl XGeometry for Geom {
+    fn x_curve(&self, operand: Operand, g: EdgeId) -> XCurve<'_> {
+        self.curve_of(operand, g.0)
+    }
+
+    fn edge_point_rates(&self, operand: Operand, g: EdgeId, at: EdgeAt) -> [Rate; ORDERS] {
+        let (ends, spans) = &self.edges[&(operand, g)];
+        let n = u32::try_from(spans.len().max(1)).expect("few spans");
+        if let Some(i) = at.end(n) {
+            return self.point(Point::vert(operand, ends[i])).rates;
+        }
+        if spans.is_empty() {
+            // A straight edge's point: the field there.
+            let [a, b] = ends.map(|v| self.pos[&Point::vert(operand, v)]);
+            let t = dy(at.at);
+            return self.rates_at(operand, a + (b - a) * t);
+        }
+        // Knots and inner points as the curved records read them.
+        self.rates(operand)
+    }
+
+    fn edge_rates<S: Curved>(
+        &self,
+        operand: Operand,
+        _: EdgeId,
+        _: u32,
+        t: &S,
+    ) -> [[S; 3]; ORDERS] {
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
+        match operand {
+            A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
+            B => std::array::from_fn(|_| lit(DVec3::ZERO)),
+        }
+    }
+
+    fn edge_line(&self, operand: Operand, g: EdgeId, near: DVec3) -> Seg {
+        let [a, b] = self.edges[&(operand, g)]
+            .0
+            .map(|v| self.pos[&Point::vert(operand, v)]);
+        Seg {
+            a,
+            b,
+            rates: self.rates_at(operand, near),
+        }
+    }
+}
+
 /// A pass deciding in order on one thread.
 #[derive(Default)]
 struct Seq {
@@ -224,14 +272,25 @@ fn cp(x: DVec3, w: f64) -> [f64; 4] {
     [x.x, x.y, x.z, w]
 }
 
-/// The four records of edge `e` of `A` against edge `g` of `B`, decided.
+/// The four records of edge `e` of `A` against edge `g` of `B`, decided,
+/// and the square's side records, filled as box degrees ask for them.
 struct Recs {
     shadows: Shadows,
     curved: CurvedRays,
+    sides: RefCell<XSides>,
 }
 
 const E: u32 = 1;
 const G: u32 = 2;
+const X: XKey = XKey {
+    e: EdgeId(E),
+    g: EdgeId(G),
+};
+
+/// The curved band the records are decided at.
+fn band() -> Band {
+    Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band")
+}
 
 fn decide(geom: &Geom) -> Recs {
     try_decide(geom).expect("decided")
@@ -241,7 +300,7 @@ fn decide(geom: &Geom) -> Recs {
 fn try_decide(geom: &Geom) -> Option<Recs> {
     let mut shadows = Shadows::new();
     let mut curved = CurvedRays::new();
-    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band");
+    let band = band();
     for (op, id) in [(A, E), (B, G)] {
         let spans = &geom.edges[&(op, EdgeId(id))].1;
         // The other edge's ends ask against this one.
@@ -263,7 +322,11 @@ fn try_decide(geom: &Geom) -> Option<Recs> {
                 .ok()?;
         }
     }
-    Some(Recs { shadows, curved })
+    Some(Recs {
+        shadows,
+        curved,
+        sides: RefCell::new(XSides::new()),
+    })
 }
 
 impl Recs {
@@ -288,6 +351,65 @@ impl Recs {
                 g1_e: self.rays(geom, g1, EdgeId(E)),
             },
             shared: false,
+        }
+    }
+
+    /// Fills the side or corner record `k`; `false` if it isn't decided
+    /// at the records' levels.
+    fn fill(&self, geom: &Geom, k: XWant) -> bool {
+        let base = XBase {
+            shadows: &self.shadows,
+            curved: &self.curved,
+        };
+        let r = self
+            .sides
+            .borrow_mut()
+            .fill([k], base, geom, band(), &mut Seq::default());
+        r.is_ok()
+    }
+
+    /// Box `b`'s degree at `like`'s level, the side records it asks for
+    /// filled.
+    fn degree<S: Scalar>(
+        &self,
+        geom: &Geom,
+        pair: &XPair<'_>,
+        b: &XBox,
+        like: &S,
+    ) -> Result<XDegree, XDegreeError> {
+        loop {
+            let r = box_degree(X, pair, &self.sides.borrow(), b, like);
+            match r {
+                Err(XDegreeError::Need(k)) => {
+                    if !self.fill(geom, *k) {
+                        return Err(XDegreeError::Unsettled);
+                    }
+                }
+                r => return r,
+            }
+        }
+    }
+
+    /// The pair's clusters at level 0, the side records they ask for
+    /// filled.
+    fn clusters(
+        &self,
+        geom: &Geom,
+        pair: &XPair<'_>,
+        beta: [f64; 2],
+    ) -> Result<XClusters, XClusterError> {
+        loop {
+            let r = clusters_at(geom, X, pair, beta, &self.sides.borrow(), 0);
+            match r {
+                Err(XClusterError::Need(ks)) => {
+                    for k in &ks {
+                        if !self.fill(geom, *k) {
+                            return Err(XClusterError::Need(ks));
+                        }
+                    }
+                }
+                r => return r,
+            }
         }
     }
 }
@@ -326,10 +448,10 @@ fn partition(rng: &mut Rng, spans: [u32; 2], splits: usize) -> Vec<XBox> {
 }
 
 /// The degrees of `boxes` summed, `None` if one isn't settled here.
-fn sum(pair: &XPair<'_>, boxes: &[XBox]) -> Option<i64> {
+fn sum(recs: &Recs, geom: &Geom, pair: &XPair<'_>, boxes: &[XBox]) -> Option<i64> {
     boxes
         .iter()
-        .map(|b| box_degree(pair, b, &like()).ok().map(|d| d.degree))
+        .map(|b| recs.degree(geom, pair, b, &like()).ok().map(|d| d.degree))
         .sum()
 }
 
@@ -427,14 +549,14 @@ fn straight_edges_count_their_moved_crossing() {
         let params = moved_params(&geom);
         for splits in [0, 1, 3, 8] {
             let boxes = partition(&mut rng, [1, 1], splits);
-            if let Some(s) = sum(&pair, &boxes) {
+            if let Some(s) = sum(&recs, &geom, &pair, &boxes) {
                 assert_eq!(s, x, "seed {seed}, {splits} splits");
                 summed += 1;
             }
             // Box by box: the crossing's sign in the box holding it.
             let Some([t, s]) = &params else { continue };
             for b in &boxes {
-                let Ok(d) = box_degree(&pair, b, &like()) else {
+                let Ok(d) = recs.degree(&geom, &pair, b, &like()) else {
                     continue;
                 };
                 if let (Some(it), Some(is)) = (in_extent(t, b.t), in_extent(s, b.s)) {
@@ -467,7 +589,7 @@ fn a_cross_counts_minus_one_and_apart_zero() {
         let pair = recs.pair(&geom);
         assert_eq!(x_count(&pair.terms), want);
         let whole = XBox::cells([1, 1]).next().expect("a cell");
-        let d = box_degree(&pair, &whole, &like()).expect("settled");
+        let d = recs.degree(&geom, &pair, &whole, &like()).expect("settled");
         assert_eq!(d.degree, want);
         // Cut through the crossing's surroundings, away from it.
         let [l, r] = whole
@@ -479,7 +601,11 @@ fn a_cross_counts_minus_one_and_apart_zero() {
         let parts = [l, rl, rh];
         let degrees: Vec<i64> = parts
             .iter()
-            .map(|b| box_degree(&pair, b, &like()).expect("settled").degree)
+            .map(|b| {
+                recs.degree(&geom, &pair, b, &like())
+                    .expect("settled")
+                    .degree
+            })
             .collect();
         assert_eq!(degrees.iter().sum::<i64>(), want);
         if want != 0 {
@@ -533,7 +659,7 @@ fn curved_partitions_sum_to_the_four_terms() {
         let x = x_count(&pair.terms);
         for splits in [0, 4, 16, 48] {
             trials += 1;
-            if let Some(s) = sum(&pair, &partition(&mut rng, [2, 2], splits)) {
+            if let Some(s) = sum(&recs, &geom, &pair, &partition(&mut rng, [2, 2], splits)) {
                 assert_eq!(s, x, "seed {seed}, {splits} splits");
                 summed += 1;
                 if x != 0 {
@@ -574,7 +700,7 @@ fn splits_keep_a_box_degree() {
         decided += 1;
         let pair = recs.pair(&geom);
         for b in partition(&mut rng, [1, 1], 6) {
-            let Ok(d) = box_degree(&pair, &b, &like()) else {
+            let Ok(d) = recs.degree(&geom, &pair, &b, &like()) else {
                 continue;
             };
             for dir in [Dir::U, Dir::V] {
@@ -583,7 +709,7 @@ fn splits_keep_a_box_degree() {
                 let Some(halves) = b.split_at(dir, at) else {
                     continue;
                 };
-                if let Some(s) = sum(&pair, &halves) {
+                if let Some(s) = sum(&recs, &geom, &pair, &halves) {
                     assert_eq!(s, d.degree, "seed {seed}: {b:?} at {at:?}");
                     kept += 1;
                 }
@@ -632,10 +758,16 @@ fn an_inner_box_apart_has_degree_zero() {
         t: quarter(1, 2).expect("t"),
         s: quarter(1, 2).expect("s"),
     };
-    let d = box_degree(&pair, &b, &like()).expect("settled");
+    let d = recs.degree(&geom, &pair, &b, &like()).expect("settled");
     assert_eq!(d.degree, 0);
-    let dd =
-        box_degree(&pair, &b, &Bounded::exact(crate::num::dd::Dd::from(0.0))).expect("settled");
+    let dd = recs
+        .degree(
+            &geom,
+            &pair,
+            &b,
+            &Bounded::exact(crate::num::dd::Dd::from(0.0)),
+        )
+        .expect("settled");
     assert_eq!(dd.degree, 0);
 }
 
@@ -652,11 +784,17 @@ fn data_that_does_not_fit_is_refused() {
         t: Extent::WHOLE,
         s: Extent::WHOLE,
     };
-    assert_eq!(box_degree(&pair, &out, &like()), Err(XDegreeError::Shape));
+    assert_eq!(
+        recs.degree(&geom, &pair, &out, &like()),
+        Err(XDegreeError::Shape)
+    );
     let chain = ChainRec::default();
     pair.terms.b_g = EdgeRays::Chain(&chain);
     let whole = XBox::cells([1, 1]).next().expect("a cell");
-    assert_eq!(box_degree(&pair, &whole, &like()), Err(XDegreeError::Shape));
+    assert_eq!(
+        recs.degree(&geom, &pair, &whole, &like()),
+        Err(XDegreeError::Shape)
+    );
 }
 
 /// Reverses a chain of spans: the same curve run backwards.
@@ -714,7 +852,7 @@ fn knot_ties_never_give_a_wrong_degree() {
             xs.push(x);
             let mut rng = Rng::new(seed ^ 0x99);
             for splits in [0, 3, 12, 40] {
-                if let Some(s) = sum(&pair, &partition(&mut rng, [2, 2], splits)) {
+                if let Some(s) = sum(&recs, &geom, &pair, &partition(&mut rng, [2, 2], splits)) {
                     assert_eq!(s, x, "seed {seed} {re} {rg}, {splits} splits");
                     summed += 1;
                 }
@@ -735,12 +873,14 @@ fn straight(p: DVec3, q: DVec3, w: f64) -> Span {
 }
 
 /// Two-span chains of straight spans on a small lattice, `g`'s knot
-/// often on `e`'s knot's shadow (and ends on its `r̂` line): every
-/// settled whole cell's degree is the moved crossing of its two spans.
+/// often on `e`'s knot's shadow (and ends and knots on each other's `r̂`
+/// lines, weights skewed): every whole cell settles, its common corner
+/// read from the knots' corner record and its inner sides from the
+/// knots' side records, its degree the moved crossing of its two spans,
+/// and the four cells sum to the four terms.
 #[test]
 fn cells_at_coinciding_knots_count_their_moved_crossing() {
-    let mut cells = 0;
-    let mut at_knot = 0;
+    let (mut cells, mut at_knot, mut read) = (0, 0, 0);
     for seed in varde_testing::seeds(400, 6000) {
         let mut rng = Rng::new(seed);
         let mut int = |n: u64| (rng.next_u64() % (2 * n + 1)) as f64 - n as f64;
@@ -770,6 +910,11 @@ fn cells_at_coinciding_knots_count_their_moved_crossing() {
         let (es, gs) = ([(a, k), (k, b)], [(g0, h), (h, g1)]);
         let mut total = 0;
         for c in XBox::cells([2, 2]) {
+            let got = recs
+                .degree(&geom, &pair, &c, &like())
+                .unwrap_or_else(|e| panic!("seed {seed}: cell {:?}: {e:?}", c.cell));
+            total += got.degree;
+            cells += 1;
             let ([p, q], [r, s]) = (
                 <[DVec3; 2]>::from(es[c.cell[0] as usize]),
                 <[DVec3; 2]>::from(gs[c.cell[1] as usize]),
@@ -780,28 +925,20 @@ fn cells_at_coinciding_knots_count_their_moved_crossing() {
             };
             seg.segment(A, E, (0, p), (1, q));
             seg.segment(B, G, (2, r), (3, s));
-            let Some(want) = moved_crossing(&seg) else {
-                total = i64::MIN;
-                continue;
-            };
-            total = total.saturating_add(want);
-            let Ok(got) = box_degree(&pair, &c, &like()) else {
-                continue;
-            };
-            assert_eq!(got.degree, want, "seed {seed}: cell {:?}", c.cell);
-            cells += 1;
-            if seed % 4 != 3 && want != 0 {
-                at_knot += 1;
+            if let Some(want) = moved_crossing(&seg) {
+                assert_eq!(got.degree, want, "seed {seed}: cell {:?}", c.cell);
+                if seed % 4 != 3 && want != 0 {
+                    at_knot += 1;
+                }
             }
         }
-        if total != i64::MIN {
-            assert_eq!(total, x_count(&pair.terms), "seed {seed}");
-        }
+        assert_eq!(total, x_count(&pair.terms), "seed {seed}");
+        read += usize::from(!recs.sides.borrow().side_table().is_empty());
     }
-    // The cells meeting at coinciding knots are refused for now (their
-    // common corner is a 0 of `D` no record covers), never counted
-    // wrongly.
-    assert!(cells > 0, "{cells} cells, {at_knot} at a knot");
+    assert!(
+        cells > 0 && at_knot > 0 && read > 0,
+        "{cells} cells, {at_knot} crossing at a knot, {read} reading side records"
+    );
 }
 
 /// Near the coordinate limit (`2¹⁹`, lattice steps of `2¹⁷`) and with
@@ -843,18 +980,18 @@ fn far_and_negative_zero_coordinates_count_alike() {
         let mut rng = Rng::new(seed ^ 0xfa);
         for splits in [0, 2, 6] {
             let boxes = partition(&mut rng, [1, 1], splits);
-            if let Some(s) = sum(&pair, &boxes) {
+            if let Some(s) = sum(&recs, &geom, &pair, &boxes) {
                 assert_eq!(s, x, "seed {seed}, {splits} splits");
                 summed += 1;
             }
             let Some([t, s]) = &params else { continue };
             for b in &boxes {
-                let Ok(dg) = box_degree(&pair, b, &like()) else {
+                let Ok(dg) = recs.degree(&geom, &pair, b, &like()) else {
                     continue;
                 };
                 // The double-double level agrees where it settles.
                 let dd = Bounded::exact(crate::num::dd::Dd::from(0.0));
-                if let Ok(hi) = box_degree(&pair, b, &dd) {
+                if let Ok(hi) = recs.degree(&geom, &pair, b, &dd) {
                     assert_eq!(hi.degree, dg.degree, "seed {seed}: {b:?} at dd");
                 }
                 if let (Some(it), Some(is)) = (in_extent(t, b.t), in_extent(s, b.s)) {
@@ -890,7 +1027,7 @@ fn far_and_negative_zero_coordinates_count_alike() {
         let pair = recs.pair(&geom);
         let x = x_count(&pair.terms);
         for splits in [0, 4, 12] {
-            if let Some(s) = sum(&pair, &partition(&mut rng, [1, 1], splits)) {
+            if let Some(s) = sum(&recs, &geom, &pair, &partition(&mut rng, [1, 1], splits)) {
                 assert_eq!(s, x, "seed {seed} curved, {splits} splits");
                 summed += 1;
             }
