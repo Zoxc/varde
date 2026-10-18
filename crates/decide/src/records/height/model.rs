@@ -1,6 +1,7 @@
 //! The height geometry of the operands ([`ModelHeights`]): which value a
 //! height key is decided from and which row an anchor's orders are, read
-//! from the operands' points, planes and curved faces ([`HeightModel`]).
+//! from the operands' points, planes, edges and curved faces
+//! ([`HeightModel`]).
 //!
 //! **Values** (order 0, oriented as the key's stored answer):
 //!
@@ -11,20 +12,26 @@
 //!   ([`HeightModel::foot_point`]), exact; on a curved edge the same as a
 //!   length (`UP` normalised) at the level, `x` the model's
 //!   ([`HeightModel::curved_target`]);
-//! - a point–face key `Face(q, f, l)`: on a plane the plane's height above
-//!   `q` ([`PlaneHeight`], exact); on a curved face
-//!   `n_f·(x_h − q)·sign(n_f·ê)` ([`face_height`]) at the hit `x_h` of `q`'s
-//!   column on the layer, which the model finds, and the normal there;
-//! - a crossing key: not read here (the crossing records' own geometry).
+//! - a hit key `Hit(q, f, sheet, i)` on a face whose hits are exact
+//!   ([`HeightModel::flat_face`], a plane face): the hit's height by its
+//!   sign conditions at the roots of the hit's polynomials on the stored
+//!   tile and ribbon ([`super::hit`]); on a curved face
+//!   `n_f·(x_h − q)·sign(n_f·ê)` ([`face_height`]) at the hit `x_h`, which
+//!   the model finds, and the normal there;
+//! - an edge–edge key `X(e, g, c)` of two straight edges: the edge–edge
+//!   height of their lines, exact ([`EdgeEdge`]); of curved edges the
+//!   curved decider's (not here).
 //!
-//! **Rows** (an anchor face's orders): the tangent plane of the face at
-//! the key's **target point** (the vertex of a point–vertex key, the
-//! foot's point, the hit), against the key's moving point: on a plane the
-//! plane itself moving at its rates there ([`PlaneHeight`]'s orders), on
-//! a curved face [`layer_height`] with the model's normal and rates. A
+//! **Rows** (an anchor's orders): at a face, the tangent plane of the
+//! face at the key's **target point** (the vertex of a point–vertex key,
+//! the foot's point, the hit), against the key's moving point: on a plane
+//! the plane itself moving at its rates there ([`PlaneHeight`]'s orders),
+//! at a hit the stored tile's or the ribbon's tangent plane there, exactly
+//! ([`super::hit::Hit::orders`]), on a curved
+//! face [`tangent_plane_row`] with the model's normal and rates. A
 //! point–vertex key read at a face of `A` (whose point the key holds as
-//! `a`) is the plane's height above `b`, negated: the key's answer is
-//! `b` above `a`.
+//! `a`) is the plane's height above `b`, negated: the key's answer is `b`
+//! above `a`. At an edge (an edge–edge key's anchor) the edge–edge row.
 //!
 //! **The fold rule.** Where a curved anchor's facing `sign(n_f·ê)` is
 //! certified at no level, its target point is on a silhouette inside the
@@ -37,12 +44,15 @@
 //! `−n_f·S_êê` ([`FaceAt::bend`]), whatever side the point asks from.
 
 use glam::DVec3;
+use malachite::Rational;
 
 use crate::ids::{EdgeId, FaceId};
-use crate::num::exact::{Num, ORDERS, Pred};
+use crate::num::exact::{ExactSign, NotFinite, Num, ORDERS, Pred};
 use crate::perturb::{
-    Curved, Moving, MovingAt, PlaneHeight, PointHeight, Rate, UP, face_height, layer_height,
+    Curved, EdgeEdge, Moving, MovingAt, PlaneHeight, PointHeight, Rate, Seg, UP, face_height,
+    rate_rational, tangent_plane_row,
 };
+use crate::records::height::hit::{FlatFace, hit_on};
 use crate::records::height::{AnchorRow, HeightGeometry, KeyValue};
 use crate::records::keys::{Anchor, FootId, HKey, HeightKey, Operand, Point, Query};
 use crate::records::shadow::ShadowGeometry;
@@ -69,16 +79,31 @@ pub trait HeightModel: ShadowGeometry {
     fn plane(&self, operand: Operand, f: FaceId) -> Option<(DVec3, f64)>;
 
     /// Planar face `f`'s rates at its point `x`, for `q`'s record: the
-    /// direction field there on `A`, zero on `B`.
+    /// direction field there on `A`, zero on `B`. Also the rates of its
+    /// ribbons' points there.
     fn plane_rates(&self, q: Point, f: FaceId, x: DVec3) -> [Rate; ORDERS];
+
+    /// Face `f` of `operand` as its column hits read it, where they are
+    /// exact (a plane face, [`super::hit`]); `None` for a curved face.
+    fn flat_face(&self, operand: Operand, f: FaceId) -> Option<FlatFace<'_>> {
+        let _ = (operand, f);
+        None
+    }
+
+    /// Straight edge `g` of `operand` as a segment along its stored
+    /// direction with its rates at a crossing; `None` for a curved edge.
+    fn edge_seg(&self, operand: Operand, g: EdgeId) -> Option<Seg> {
+        let _ = (operand, g);
+        None
+    }
 
     /// The point of straight edge `g` at foot `foot` of `q` the height is
     /// read at, with its rates; `None` for a curved edge.
     fn foot_point(&self, q: Point, g: EdgeId, foot: FootId) -> Option<Moving>;
 
-    /// The target point of a curved point–curve or point–face key at the
-    /// level of `like` (the foot's point, the hit of `q`'s column on the
-    /// layer); `None` where the level can't certify it.
+    /// The target point of a curved point–curve or hit key at the level
+    /// of `like` (the foot's point, the hit of `q`'s column on the
+    /// face); `None` where the level can't certify it.
     fn curved_target<S: Curved>(&self, h: HKey, like: &S) -> Option<[S; 3]>;
 
     /// Curved face `f` (of the operand other than `q`'s) at its point
@@ -101,6 +126,9 @@ pub enum FlatHeight {
     Plane(PlaneHeight),
     /// A point's height above a plane: [`FlatHeight::Plane`] negated.
     Below(PlaneHeight),
+    /// The height of the edge of `B` above the edge of `A` at their
+    /// shadows' crossing.
+    EdgeEdge(EdgeEdge),
 }
 
 impl Pred for FlatHeight {
@@ -109,6 +137,7 @@ impl Pred for FlatHeight {
             FlatHeight::Point(p) => p.eval(),
             FlatHeight::Plane(p) => p.eval(),
             FlatHeight::Below(p) => p.eval::<N>().neg(),
+            FlatHeight::EdgeEdge(p) => p.eval(),
         }
     }
 }
@@ -141,24 +170,17 @@ impl<M: HeightModel> ModelHeights<'_, M> {
                 Operand::B => (point_of(Operand::A, a), false),
                 Operand::A => (point_of(Operand::B, b), true),
             }),
-            HKey::Curve { q, .. } | HKey::Face { q, .. } => Some((q, false)),
+            HKey::Curve { q, .. } | HKey::Hit { q, .. } => Some((q, false)),
             HKey::X { .. } => None,
         }
     }
 
-    /// A point–curve or point–face key's target point, flat: a straight
-    /// edge's foot point, a plane's hit.
+    /// A point–curve key's target point, flat: a straight edge's foot
+    /// point.
     fn flat_target(&self, h: HKey) -> Option<DVec3> {
         match h {
-            HKey::VV { .. } => None,
             HKey::Curve { q, g, foot } => self.model.foot_point(q, g, foot).map(|m| m.at),
-            HKey::Face { q, f, .. } => {
-                let (n, c) = self.model.plane(q.operand.other(), f)?;
-                let at = self.point(q).at;
-                let t = (c - n.dot(at)) / n.dot(UP);
-                t.is_finite().then(|| at + t * UP)
-            }
-            HKey::X { .. } => None,
+            HKey::VV { .. } | HKey::Hit { .. } | HKey::X { .. } => None,
         }
     }
 
@@ -184,11 +206,7 @@ impl<M: HeightModel> ModelHeights<'_, M> {
                 let x = self.flat_target(h)?;
                 Some([x.x, x.y, x.z].map(|c| S::from_f64(c, like)))
             }
-            HKey::Face { q, f, .. } if self.model.plane(q.operand.other(), f).is_some() => {
-                let x = self.flat_target(h)?;
-                Some([x.x, x.y, x.z].map(|c| S::from_f64(c, like)))
-            }
-            HKey::Curve { .. } | HKey::Face { .. } => self.model.curved_target(h, like),
+            HKey::Curve { .. } | HKey::Hit { .. } => self.model.curved_target(h, like),
             HKey::X { .. } => None,
         }
     }
@@ -209,7 +227,22 @@ impl<M: HeightModel> ModelHeights<'_, M> {
         let q = MovingAt::from_flat(&self.point(p), like);
         Some((face, q, neg))
     }
+
+    /// The two straight edges of an edge–edge key, each at its rates.
+    fn edge_pair(&self, h: HKey) -> Option<EdgeEdge> {
+        let HKey::X { e, g, .. } = h else {
+            return None;
+        };
+        Some(EdgeEdge {
+            e: self.model.edge_seg(Operand::A, e)?,
+            g: self.model.edge_seg(Operand::B, g)?,
+        })
+    }
 }
+
+/// An exact sign that can't be formed: the key names no hit there, a
+/// caller's bug the decider refuses.
+const NO_HIT: ExactSign = Err(NotFinite);
 
 impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
     type Flat = FlatHeight;
@@ -227,19 +260,20 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
                 })),
                 None => KeyValue::Curved,
             },
-            HKey::Face { q, f, .. } => match self.model.plane(q.operand.other(), f) {
-                Some((normal, offset)) => {
-                    let face = FlatHeight::Plane(PlaneHeight {
-                        normal,
-                        offset,
-                        rates: [Rate::ZERO, Rate::ZERO, Rate::ZERO, Rate::ZERO],
-                        q: self.point(q),
-                    });
-                    KeyValue::Flat(face)
-                }
+            HKey::Hit { q, f, sheet, i } => {
+                let Some(face) = self.model.flat_face(q.operand.other(), f) else {
+                    return KeyValue::Curved;
+                };
+                let at = self.point(q).at.to_array();
+                KeyValue::Exact(match hit_on(&face, sheet, i, at) {
+                    Ok(Some(hit)) => Ok(hit.height),
+                    _ => NO_HIT,
+                })
+            }
+            HKey::X { .. } => match self.edge_pair(h) {
+                Some(p) => KeyValue::Flat(FlatHeight::EdgeEdge(p)),
                 None => KeyValue::Curved,
             },
-            HKey::X { .. } => KeyValue::Curved,
         }
     }
 
@@ -256,7 +290,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
                 let d = (0..3).fold(S::int(0, like), |s, i| s.add(&up[i].mul(&x[i].sub(&at[i]))));
                 Some(d.div(&len))
             }
-            HKey::Face { q, f, .. } => {
+            HKey::Hit { q, f, .. } => {
                 let x = self.model.curved_target(h, like)?;
                 let face = self.model.face_at(q, f, &x, like)?;
                 let at = MovingAt::from_flat(&self.point(q), like).at;
@@ -267,10 +301,10 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
     }
 
     fn facing_only<S: Curved>(&self, h: HKey, like: &S) -> bool {
-        let HKey::Face { q, f, .. } = h else {
+        let HKey::Hit { q, f, .. } = h else {
             return false;
         };
-        self.model.plane(q.operand.other(), f).is_none()
+        self.model.flat_face(q.operand.other(), f).is_none()
             && self
                 .model
                 .curved_target(h, like)
@@ -278,9 +312,33 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
     }
 
     fn row(&self, k: HeightKey) -> AnchorRow<FlatHeight> {
-        let Anchor::Face(op, f) = k.anchor else {
-            return AnchorRow::Curved;
+        let (op, f) = match k.anchor {
+            Anchor::Face(op, f) => (op, f),
+            Anchor::Edge(..) => {
+                return match self.edge_pair(k.h) {
+                    Some(p) => AnchorRow::Flat(FlatHeight::EdgeEdge(p)),
+                    None => AnchorRow::Curved,
+                };
+            }
         };
+        if let HKey::Hit { q, sheet, i, .. } = k.h {
+            let Some(face) = self.model.flat_face(op, f) else {
+                return AnchorRow::Curved;
+            };
+            let at = self.point(q).at.to_array();
+            let Ok(Some(hit)) = hit_on(&face, sheet, i, at) else {
+                return AnchorRow::Exact([NO_HIT; ORDERS]);
+            };
+            // The sheet's rates at the hit (the field's value there) less
+            // the point's.
+            let rates = self.model.plane_rates(q, f, DVec3::from_array(at));
+            let qr = self.point(q).rates;
+            let deltas: [[Rational; 3]; ORDERS] = std::array::from_fn(|n| {
+                let (r, d) = (rate_rational(&rates[n]), rate_rational(&qr[n]));
+                std::array::from_fn(|c| &r[c] - &d[c])
+            });
+            return AnchorRow::Exact(hit.orders(&face, at, &deltas).unwrap_or([NO_HIT; ORDERS]));
+        }
         let (Some((p, neg)), Some((normal, offset))) = (self.asker(k), self.model.plane(op, f))
         else {
             return AnchorRow::Curved;
@@ -303,7 +361,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
 
     fn curved_row<S: Curved>(&self, k: HeightKey, like: &S) -> Option<[S; ORDERS]> {
         let (face, q, neg) = self.curved_anchor(k, like)?;
-        let ord = layer_height(&face.normal, &face.rates, &q)?;
+        let ord = tangent_plane_row(&face.normal, &face.rates, &q)?;
         Some(if neg { ord.map(|x| x.neg()) } else { ord })
     }
 

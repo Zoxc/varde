@@ -8,8 +8,8 @@
 //! [`SEAM_OPS`] rounded operations of unit roundoff `u = 2⁻⁵³` each, so
 //! `ρ_op = 50·u·M` (5.5·10⁻⁹ mm at `M = 10⁶` mm). It is computed once,
 //! when the operation starts, from the operands alone. Every band, near
-//! radius and key reads it (the edges' bands, near radii, feet, layers,
-//! the point–vertex records' `near`), never a precision level's own
+//! radius and key reads it (the edges' bands, near radii, feet, the
+//! point–vertex records' `near`), never a precision level's own
 //! rounding, which stays in the values' errors: so the key sets are the
 //! same at every precision level, and the precision steps refine values,
 //! not which records exist.

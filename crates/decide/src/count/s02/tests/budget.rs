@@ -141,8 +141,8 @@ fn a_settled_count_charges_the_first_level_alone() {
                 feet: &NearFeet::default(),
                 order: &Order::default(),
             },
-            &LayerTable::new(),
             &Heights::new(),
+            &[],
         );
         assert_eq!(got, Ok(want), "z = {z}");
         let units = p.pieces * UNITS.count_piece[0];
@@ -182,6 +182,7 @@ impl<R: HeightReads> AtLevel for EveryLevel<'_, '_, '_, R> {
             point: f.point,
             at: f.at,
             eps_tie: f.eps_tie,
+            nets: f.nets,
         };
         let r = face_pieces(&fq, &Sides::new(), self.reads).map(|p| (p.above, p.below, p.degree()));
         self.got.push(r);

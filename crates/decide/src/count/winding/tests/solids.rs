@@ -10,23 +10,29 @@
 //! operand's boxes, and the windings carried from them. Checked against
 //! the geometry: each crossing count is the edge's signed crossings with
 //! the face, each winding whether the vertex lies inside the other box,
-//! and equals its own column's count. Placements within `GAP` of a tie
-//! are skipped; where the z-order of a crossing isn't clear the test
-//! reads it from the geometry (no crossing-height record is decided yet).
+//! and equals its own column's count. The faces are plane tiles whose
+//! column hits are exact, so a piece near a point reads its hits' height
+//! records, decided on them. Placements within `GAP` of a tie are skipped; where
+//! the z-order of a crossing isn't clear the test reads it from the
+//! geometry.
 
 use glam::{DQuat, DVec3};
 
 use super::*;
 use crate::count::cross::{Coedge, x12, x21};
 use crate::count::s02::line_chain;
-use crate::count::testing::{FaceData, Patch, Seq, TrimData, first, line, pline, whole};
+use crate::count::testing::{FaceData, Patch, Seq, TrimData, first, line, nets_of, pline, whole};
 use crate::count::xrec::clusters;
 use crate::ids::{CoedgeId, FaceId};
+use crate::num::decide::Band;
 use crate::num::decide::Sign;
-use crate::perturb::{Moving, NU, R_HAT, Seg, UP};
+use crate::num::exact::ORDERS;
+use crate::perturb::{Curved, Moving, NU, R_HAT, Rate, Seg, UP, rates_a};
 use crate::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
-use crate::records::height::{Heights, LayerTable, Records};
-use crate::records::keys::{RayKey, VvKey, XKey};
+use crate::records::height::hit::FlatFace;
+use crate::records::height::model::{FaceAt, HeightModel, ModelHeights};
+use crate::records::height::{Heights, Records};
+use crate::records::keys::{FootId, HKey, RayKey, VvKey, XKey};
 use crate::records::shadow::{ShadowGeometry, Shadows};
 use crate::records::side::Sides;
 use crate::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms, x_count};
@@ -38,7 +44,7 @@ const BAND: f64 = 1.0 / 4096.0;
 
 /// Closer than this to a tie (relative to the boxes' unit size), a
 /// placement is skipped: well past the near radii, so no column meets a
-/// layer near its point.
+/// face near its point.
 const GAP: f64 = 4e-3;
 
 /// The size a box is cleared by from the other operand.
@@ -161,11 +167,13 @@ impl Solid {
                 }
             })
             .collect();
+        let patches = vec![patch];
         FaceData {
             operand: self.op,
             id: FaceId(f as u32),
             tiles: [0..1, 0..1],
-            patches: vec![patch],
+            nets: Some(nets_of(&patches)),
+            patches,
             flipped: false,
             trims,
         }
@@ -330,6 +338,57 @@ impl FeetGeometry for World {
     }
 }
 
+/// The planes by their faces' frames and outward normals, straight edges
+/// at the point nearest the asking one's column.
+impl HeightModel for World {
+    fn plane(&self, operand: Operand, f: FaceId) -> Option<(DVec3, f64)> {
+        let s = self.solid(operand);
+        let [p0, p1, _, p3] = s.loops[f.index()].map(|v| s.pos[v.index()]);
+        let n = (p1 - p0).cross(p3 - p0);
+        Some((n, n.dot(p0)))
+    }
+
+    fn plane_rates(&self, q: Point, _: FaceId, _: DVec3) -> [Rate; ORDERS] {
+        match q.operand.other() {
+            A => rates_a(Sign::Pos, self.d),
+            B => [Rate::ZERO, Rate::ZERO, Rate::ZERO, Rate::ZERO],
+        }
+    }
+
+    fn flat_face(&self, operand: Operand, f: FaceId) -> Option<FlatFace<'_>> {
+        self.solid(operand).faces[f.index()].flat(&self.order)
+    }
+
+    fn edge_seg(&self, operand: Operand, g: EdgeId) -> Option<Seg> {
+        let s = self.solid(operand);
+        let [a, b] = s.edges[g.index()].map(|v| s.pos[v.index()]);
+        Some(match operand {
+            A => Seg::of_a(a, b, Sign::Pos, self.d),
+            B => Seg::fixed(a, b),
+        })
+    }
+
+    fn foot_point(&self, q: Point, g: EdgeId, _: FootId) -> Option<Moving> {
+        let s = self.solid(q.operand.other());
+        let [a, b] = s.edges[g.index()].map(|v| s.pos[v.index()]);
+        let x = self.pos(q);
+        let t = ((x - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+        let at = a + (b - a) * t;
+        Some(match s.op {
+            A => Moving::of_a(at, Sign::Pos, self.d),
+            B => Moving::fixed(at),
+        })
+    }
+
+    fn curved_target<S: Curved>(&self, _: HKey, _: &S) -> Option<[S; 3]> {
+        None
+    }
+
+    fn face_at<S: Curved>(&self, _: Point, _: FaceId, _: &[S; 3], _: &S) -> Option<FaceAt<S>> {
+        None
+    }
+}
+
 /// A random rotation, from a random unit quaternion.
 fn rotation(rng: &mut Rng) -> DQuat {
     loop {
@@ -452,8 +511,8 @@ fn face_counts(w: &World, r: &Recs, s: &Solid, o: &Solid) -> Vec<Vec<i64>> {
         feet: &r.feet,
         order: &w.order,
     };
-    let mut layers = LayerTable::new();
-    let heights = Heights::new();
+    let mut heights = Heights::new();
+    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band");
     let corners: Vec<_> = o.faces.iter().map(|f| f.corners(&w.order)).collect();
     let mut out = Vec::new();
     for v in 0..s.pos.len() as u32 {
@@ -469,10 +528,11 @@ fn face_counts(w: &World, r: &Recs, s: &Solid, o: &Solid) -> Vec<Vec<i64>> {
             let p = f
                 .pieces_with(Some(c), &w.order, q, at, &chain, &reads, &Sides::new())
                 .unwrap_or_else(|e| panic!("{q:?} face {:?}: {e:?}", f.id));
-            layers.insert(q, f.id, p.layers(&reads).expect("layers"));
-            // Clear of every tie by `GAP`: no layer near the point.
-            assert_eq!(p.wanted(&reads, &layers), Ok(Vec::new()));
-            row.push(p.count(&reads, &layers, &heights).expect("a count"));
+            let wanted = p.wanted(&reads, &[]).expect("hit keys");
+            heights
+                .fill(wanted, &ModelHeights { model: w }, band, &mut Seq)
+                .expect("heights");
+            row.push(p.count(&reads, &heights, &[]).expect("a count"));
         }
         out.push(row);
     }

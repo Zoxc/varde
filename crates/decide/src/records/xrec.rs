@@ -48,18 +48,11 @@
 //! `g` above `e` ([`XRec::s11`]).
 //!
 //! **The z-order key** ([`zorder_key`]). A cluster whose z-order isn't
-//! clear reads a height record anchored at `g`, keyed by one rule: if an
-//! end of `e` lies within `r_g` of the cluster's piece of `g` (one of its
-//! feet on `g` meets the piece), the height key of the geometrically
-//! lesser such end against `g` at that foot; else, if an end of `g` lies
-//! within `r_e` of the piece of `e`, the same for the lesser end of `g`
-//! against `e`, negated (it is `e`'s height above that end); else the
-//! edge–edge key of the cluster itself, `HKey::X(e, g, c)`. The ends are
-//! chosen by their places in the geometric order, never by their ids, so
-//! the stored start of an edge (its lower-id end) has no say; a foot
-//! among several on one edge likewise by its rank from the edge's lesser
-//! end. At a shared corner this is the corner's point–vertex key, the one
-//! the point's own count reads.
+//! clear reads a height record anchored at `g`, keyed by the cluster
+//! itself, the edge–edge key `HKey::X(e, g, c)`, always: its value is the
+//! edges' height at the crossing (exact on straight edges), and an end of
+//! `e` lying exactly on `g` (a shared corner) makes it exactly 0, so the
+//! orders decide. No end's feet or near key choose it.
 //!
 //! **Degenerate z-order** ([`ZRow`]). Where the shadows' tangents can't
 //! be certified apart at the crossing (`T_e`, `T_g` and `ê` coplanar, so
@@ -104,19 +97,18 @@ use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use crate::bezier::{Dyadic, HomCurve, Scalar};
-use crate::ids::{EdgeId, VertId};
+use crate::ids::EdgeId;
 use crate::num::bounded::Bounded;
 use crate::num::decide::Sign;
-use crate::order::{Along, EntityOrder, first};
+use crate::order::{EntityOrder, first};
 use crate::perturb::NU;
-use crate::records::feet::{Feet, Foot};
-use crate::records::height::{HeightReads, HeightRec, KeyError, LayerTable, height_key};
+use crate::records::feet::Foot;
+use crate::records::height::{HeightReads, HeightRec};
 use crate::records::keys::{
-    Anchor, FootId, HKey, HeightKey, Operand, Oriented, Point, RayKey, RecordKey, Target,
-    XClusterIx, XKey,
+    Anchor, HKey, HeightKey, Operand, Oriented, Point, RayKey, RecordKey, XClusterIx, XKey,
 };
 use crate::records::ray::{ChainRec, Span};
-use crate::records::shadow::{RayRec, neg};
+use crate::records::shadow::RayRec;
 
 /// An edge's curve along its stored direction, from its lower-id end.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -375,16 +367,13 @@ impl XRec {
     }
 }
 
-/// A cluster's z-order key (module docs): the height key as its point
-/// asked it, and whether the key's height is `e`'s above an end of `g`,
-/// so that "`g` above `e`" is its negation. The record is anchored at
-/// `g` ([`ZKey::anchor`]).
+/// A cluster's z-order key (module docs): the edge–edge key as the
+/// cluster's `A` edge asks it. The record is anchored at `g`
+/// ([`ZKey::anchor`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ZKey {
     /// The height key, oriented as its point asked it.
     pub key: Oriented<HKey>,
-    /// The key is an end of `g`'s height against `e`.
-    pub negated: bool,
 }
 
 impl ZKey {
@@ -405,73 +394,19 @@ impl ZKey {
     /// [`Heights::get`](super::height::Heights::get) with [`key`](Self::key)):
     /// `Pos` for `g` above `e`.
     pub fn above(&self, rec: &HeightRec) -> Sign {
-        if self.negated {
-            neg(rec.above)
-        } else {
-            rec.above
-        }
+        rec.above
     }
 }
 
-/// The z-order key of cluster `c` of the pair `x` (module docs), from the
-/// feet of the edges' ends on the other edge and the geometric order.
-/// The rule never reads which end of an edge is its stored start.
-pub fn zorder_key<R: HeightReads>(
-    reads: &R,
-    x: XKey,
-    c: XClusterIx,
-    cl: &XCluster,
-    spans: [u32; 2],
-) -> Result<ZKey, KeyError> {
-    let none = LayerTable::new();
-    for (of, edge, other, part, n, negated) in [
-        (Operand::A, x.e, x.g, &cl.g, spans[1], false),
-        (Operand::B, x.g, x.e, &cl.e, spans[0], true),
-    ] {
-        let mut near: Vec<_> = Vec::new();
-        for w in distinct(reads.ends(of, edge)) {
-            let q = Point::vert(of, w);
-            let feet = reads
-                .feet(q, other)
-                .ok_or(KeyError::Missing(RecordKey::Ray(RayKey { q, g: other })))?;
-            if let Some(k) = meeting(reads, of.other(), other, feet, part, n) {
-                near.push((reads.vert_key(of, w), (w, k)));
-            }
-        }
-        if let Some((w, k)) = first(near) {
-            let key = height_key(reads, &none, Point::vert(of, w), Target::Edge(other, k))?;
-            return Ok(ZKey { key, negated });
-        }
-    }
-    Ok(ZKey {
+/// The z-order key of cluster `c` of the pair `x` (module docs): the
+/// cluster's own edge–edge key.
+pub fn zorder_key(x: XKey, c: XClusterIx) -> ZKey {
+    ZKey {
         key: Oriented {
             key: HKey::X { e: x.e, g: x.g, c },
             swapped: false,
         },
-        negated: false,
-    })
-}
-
-/// An edge's ends, a closed edge's one vertex once.
-fn distinct(ends: [VertId; 2]) -> impl Iterator<Item = VertId> {
-    let n = if ends[0] == ends[1] { 1 } else { 2 };
-    ends.into_iter().take(n)
-}
-
-/// The first foot (by rank from the lesser end of edge `g` of `of`) in
-/// `feet` meeting `part` of `g`, which has `spans` spans.
-fn meeting<R: HeightReads>(
-    reads: &R,
-    of: Operand,
-    g: EdgeId,
-    feet: &Feet,
-    part: &XPart,
-    spans: u32,
-) -> Option<FootId> {
-    let [s, e] = reads.ends(of, g);
-    let along = Along::of(&reads.vert_key(of, s), &reads.vert_key(of, e));
-    feet.in_order(along)
-        .find(|&k| feet.get(k).is_some_and(|f| part.meets(f, spans, s == e)))
+    }
 }
 
 /// For two straight edges whose shadows are exactly parallel (module

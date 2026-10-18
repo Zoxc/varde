@@ -1193,16 +1193,14 @@ impl crate::order::EntityOrder for Geom {
 }
 
 /// The height keys read through the decided tables: a point near one end
-/// of an arc reads that end's vertex key for its foot on the arc, and for
-/// a layer whose feature is the foot; the tables' reads are the stored
-/// records.
+/// of an arc reads the edge rule's key there (that end's vertex key for
+/// its foot on the arc) and its own point–curve key against the arc, the
+/// point not being at the end; the tables' reads are the stored records.
 #[test]
 fn height_keys_read_the_decided_tables() {
     use crate::records::feet::NearFeet;
-    use crate::records::height::{
-        Feature, HeightReads, LayerPieces, LayerTable, Records, height_key,
-    };
-    use crate::records::keys::{FootId, HKey, LayerId, Target};
+    use crate::records::height::{HeightReads, Records, edge_rule_key, height_key};
+    use crate::records::keys::{FootId, HKey, Target};
 
     let mut g = Geom::with(DIRECTIONS[0], Sign::Pos);
     g.r_g = 0.125;
@@ -1228,15 +1226,10 @@ fn height_keys_read_the_decided_tables() {
     assert!(!reads.vv(q, v1).expect("decided").near);
     assert_eq!(reads.feet(q, e), feet.get(q, e));
     let k = FootId(0);
-    let want = HKey::vv(q, v0);
-    let mut layers = LayerTable::new();
-    assert_eq!(height_key(&reads, &layers, q, Target::Edge(e, k)), Ok(want));
-    let mut pieces = LayerPieces::new();
-    pieces.piece([Feature::Foot(e, k)], None);
-    let f = crate::ids::FaceId(3);
-    layers.insert(q, f, pieces.layers(&reads, q, f).expect("layers"));
+    assert_eq!(edge_rule_key(&reads, q, e, k), Ok(HKey::vv(q, v0)));
+    let own = HKey::Curve { q, g: e, foot: k };
     assert_eq!(
-        height_key(&reads, &layers, q, Target::Layer(f, LayerId(0))),
-        Ok(want)
+        height_key(&reads, q, Target::Edge(e, k)).map(|o| o.key),
+        Ok(own)
     );
 }

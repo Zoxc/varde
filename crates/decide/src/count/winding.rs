@@ -36,12 +36,28 @@
 //! changes in `i64` overflows, so a winding however large is only
 //! outside `{0, 1}`, and never hides a disagreement found later.
 //!
+//! **Lobes** ([`windings_lobed`]). Inside an edge's join zone the
+//! counting surfaces of its two faces can overshoot each other by a seam
+//! so that their union isn't embedded there (a **lobe**): the exact column
+//! hits then give a point a winding of −1 or 2, which no closed solid
+//! has, and no exact record set fits. On a winding outside `{0, 1}` at a
+//! point `q` lying within the near radius of an edge `g` of the other
+//! operand (its feet on `g` not empty; every edge is taken as without a
+//! certificate that its join zone has no lobe), `q`'s hits near `g` on
+//! `g`'s faces are re-read by the **edge rule** (the edge's key at `q`'s
+//! foot, [`crate::records::height::edge_rule_key`]), only `q`'s records
+//! change, and the windings are carried again. Each `(q, g)` falls back
+//! once, the edges in the caller's geometric order; a winding the
+//! fallbacks don't bring into `{0, 1}` stays the signal. The fallbacks
+//! are counted ([`Lobes::count`]): the edge rule is a convention at the
+//! scale of the seam, not a truth of the moved configuration.
+//!
 //! **Budget.** Each clearance test costs what its certificate reports,
 //! charged against the share the search is given; past it the search
 //! stops, [`SeedError::OutOfBudget`] keyed by the vertex being tested.
 //! Propagation and its checks are integer sums, one per edge.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use crate::bezier::HullBox;
 use crate::count::s02::Exhausted;
@@ -322,6 +338,9 @@ pub enum WindingError<E> {
         /// Its winding.
         w: i128,
     },
+    /// Counting the changes or seeds again after a lobe fallback failed
+    /// ([`windings_lobed`]).
+    Recount(E),
 }
 
 impl<E> WindingError<E> {
@@ -410,6 +429,110 @@ pub fn windings<O: EntityOrder, E>(
     Ok(w.into_iter()
         .map(|w| i64::try_from(w).expect("0 or 1"))
         .collect())
+}
+
+/// The lobe fallbacks of one operand's windings (module docs, "Lobes"):
+/// which `(q, g)` fell back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Lobes {
+    taken: BTreeSet<(Point, EdgeId)>,
+}
+
+impl Lobes {
+    /// None taken.
+    pub fn new() -> Lobes {
+        Lobes::default()
+    }
+
+    /// The edges point `q` fell back at, by id.
+    pub fn at(&self, q: Point) -> Vec<EdgeId> {
+        self.taken
+            .iter()
+            .filter(|(p, _)| *p == q)
+            .map(|&(_, g)| g)
+            .collect()
+    }
+
+    /// The points that fell back, each once, by key.
+    pub fn points(&self) -> Vec<Point> {
+        let mut out: Vec<Point> = self.taken.iter().map(|&(p, _)| p).collect();
+        out.dedup();
+        out
+    }
+
+    /// The fallbacks taken.
+    pub fn count(&self) -> usize {
+        self.taken.len()
+    }
+
+    /// The first of `near` (edges in geometric order) `q` hasn't fallen
+    /// back at, taken.
+    fn take(&mut self, q: Point, near: &[EdgeId]) -> Option<EdgeId> {
+        let g = *near.iter().find(|&&g| !self.taken.contains(&(q, g)))?;
+        self.taken.insert((q, g));
+        Some(g)
+    }
+}
+
+/// The seeds' windings and each edge's change, by id, as
+/// [`windings_lobed`]'s `counts` gives them.
+pub type Counted = (Vec<(VertId, i64)>, Vec<i64>);
+
+/// [`windings`] with the lobe fallback (module docs, "Lobes"): `counts`
+/// gives the seeds' windings and each edge's change (one per edge, by
+/// id) with the fallbacks `lobes` holds; `join_zone(q)` the edges of the other
+/// operand within whose near radius `q` lies, in geometric order. On a
+/// winding outside `{0, 1}` at `q` the first of them `q` hasn't fallen
+/// back at is taken and everything counted and carried again; where none
+/// is left, the signal stands.
+pub fn windings_lobed<O: EntityOrder, E>(
+    order: &O,
+    graph: &Graph<'_>,
+    lobes: &mut Lobes,
+    mut counts: impl FnMut(&Lobes) -> Result<Counted, E>,
+    mut join_zone: impl FnMut(Point) -> Result<Vec<EdgeId>, E>,
+) -> Result<Vec<i64>, WindingError<E>> {
+    loop {
+        let (seeds, dw) = counts(lobes).map_err(WindingError::Recount)?;
+        if dw.len() != graph.edges.len() {
+            return Err(WindingError::Graph(GraphError::SizeLimit));
+        }
+        let r = windings(order, graph, &seeds, |e| {
+            Ok::<i64, std::convert::Infallible>(dw[e.index()])
+        });
+        match r {
+            Ok(w) => return Ok(w),
+            Err(WindingError::Outside { point, w }) => {
+                let near = join_zone(point).map_err(WindingError::Recount)?;
+                if lobes.take(point, &near).is_none() {
+                    return Err(WindingError::Outside { point, w });
+                }
+            }
+            Err(e) => return Err(widen(e)),
+        }
+    }
+}
+
+/// A winding error whose reads can't fail, as one whose can.
+fn widen<E>(e: WindingError<std::convert::Infallible>) -> WindingError<E> {
+    match e {
+        WindingError::Graph(g) => WindingError::Graph(g),
+        WindingError::Read { error, .. } | WindingError::Recount(error) => match error {},
+        WindingError::Seed(p) => WindingError::Seed(p),
+        WindingError::Unseeded(p) => WindingError::Unseeded(p),
+        WindingError::Disagree {
+            operand,
+            edge,
+            w,
+            change,
+        } => WindingError::Disagree {
+            operand,
+            edge,
+            w,
+            change,
+        },
+        WindingError::Outside { point, w } => WindingError::Outside { point, w },
+    }
 }
 
 #[cfg(test)]

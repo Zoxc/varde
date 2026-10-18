@@ -254,14 +254,13 @@ pub(super) enum Outcome {
     /// between the counting's flat records (vertices, key planes) and
     /// the tiles the oracle casts against.
     TieScale(String),
-    /// The counting's answer differs from the oracle's (with its tie
-    /// shift, or at `2^-28·d` or `−2^-28·d`) only at vertices whose
-    /// column meets a layer decided by the height of an edge of the face,
-    /// at the vertex's foot on it, and on the edges from them: in the
-    /// edge's band the counting takes the edge's height as the face's,
-    /// which the true face, folding through the vertex's column there,
-    /// needn't follow. Known, and counted apart from mismatches.
-    EdgeHeight(String),
+    /// The oracle's winding of a vertex lies outside `{0, 1}`: the
+    /// operand's own ribbon-closed faces aren't embedded at it (a lobe,
+    /// where two faces at an edge overshoot each other by a seam), so no
+    /// exact answer is a solid's. The counting took the lobe fallback
+    /// (the edge rule for the vertex's hits near the edge) and answered.
+    /// Counted apart from mismatches.
+    OperandLobe(String),
 }
 
 /// Where the counting's answers differ from the oracle's, if anywhere.
@@ -291,33 +290,10 @@ pub(super) fn compare(c: &Answers, t: &Truth) -> Option<String> {
     (!out.is_empty()).then(|| out.join("; "))
 }
 
-/// Whether every difference between the counting's answers and the
-/// oracle's lies where a layer was decided by an edge's height
-/// ([`Answers::edge_height`]): a winding or a column at such a vertex,
-/// and a crossing count of an edge from such a vertex with that face.
-/// Windings are carried from a seed along the edges, but a column and
-/// the crossing counts of the edges from its vertex move together, so
-/// the windings at the other vertices keep the oracle's.
-pub(super) fn by_edge_height(c: &Answers, t: &Truth, a: &Solid, b: &Solid) -> bool {
-    let eh = &c.edge_height;
-    for k in 0..2 {
-        for (v, o) in t.winding[k].iter().enumerate() {
-            let differs = c.winding[k][v] != *o || c.column[k][v] != *o;
-            if differs && !eh[k][v].iter().any(|&x| x) {
-                return false;
-            }
-        }
-    }
-    for (k, s, cx, tx) in [(0, a, &c.x12, &t.x12), (1, b, &c.x21, &t.x21)] {
-        for (e, (cr, tr)) in s.edges().into_iter().zip(cx.iter().zip(tx)) {
-            for (f, (x, y)) in cr.iter().zip(tr).enumerate() {
-                if x != y && !s.brep.ends(e).iter().any(|v| eh[k][v.index()][f]) {
-                    return false;
-                }
-            }
-        }
-    }
-    true
+/// Whether some winding of the oracle's lies outside `{0, 1}`: an
+/// operand lobe ([`Outcome::OperandLobe`]).
+pub(super) fn lobed(t: &Truth) -> bool {
+    t.winding.iter().flatten().any(|w| !(0..=1).contains(w))
 }
 
 /// The counting run again with `A` moving along `−d`, checked against
@@ -445,7 +421,19 @@ fn judge<'n>(
         Err(e) => return Outcome::Unresolved(e),
         Ok(t) => t,
     };
-    let Some(m) = compare(answers, &t) else {
+    let differs = compare(answers, &t);
+    // An operand lobe: no exact answer is a solid's; the counting must
+    // have taken the lobe fallback there.
+    if lobed(&t) {
+        return match (answers.lobes, differs) {
+            (0, Some(m)) => Outcome::Mismatch(format!("operand lobe without a lobe fallback: {m}")),
+            (n, m) => Outcome::OperandLobe(format!(
+                "{n} fallbacks; {}",
+                m.unwrap_or_else(|| "agrees".into())
+            )),
+        };
+    }
+    let Some(m) = differs else {
         return Outcome::Agreed { ties: t.ties };
     };
     // Within the faces' rounding misfit the counting surface the oracle
@@ -466,11 +454,6 @@ fn judge<'n>(
             "(no oracle tie)"
         };
         Outcome::TieScale(format!("{tie} {m}"))
-    } else if [&t, up, down]
-        .iter()
-        .any(|t| by_edge_height(answers, t, a, b))
-    {
-        Outcome::EdgeHeight(m)
     } else {
         let near = if same(up, down) {
             ""
@@ -494,7 +477,8 @@ pub(super) struct FlipTally {
     pub sides: u64,
     /// Where the counting flips and the oracle doesn't, or the other way
     /// round: the seed, whether the placement's outcome is
-    /// [`Outcome::EdgeHeight`] (known), and which flipped.
+    /// [`Outcome::OperandLobe`] (known: no exact answer there), and which
+    /// flipped.
     pub differ: Vec<(u64, bool, String)>,
     /// The counting refused with `−d`, by cause.
     pub refused: BTreeMap<String, u64>,
@@ -527,7 +511,7 @@ impl FlipTally {
         }
     }
 
-    /// The disagreements not known from the edge-height rule.
+    /// The disagreements not at operand lobes.
     pub(super) fn unknown(&self) -> impl Iterator<Item = &(u64, bool, String)> {
         self.differ.iter().filter(|x| !x.1)
     }
@@ -536,7 +520,7 @@ impl FlipTally {
         let known = self.differ.iter().filter(|x| x.1).count();
         let seeds: Vec<u64> = self.unknown().take(12).map(|x| x.0).collect();
         let mut s = format!(
-            "±d check: counted both ways {}; answers flip with d: counted {}, oracle at ±2^-28·d {}; agree {}, differ {} (edge-height known {known}, others at seeds {seeds:?}); both sides equal the oracle's {}; refused with −d {:?}; oracle unresolved {}\n",
+            "±d check: counted both ways {}; answers flip with d: counted {}, oracle at ±2^-28·d {}; agree {}, differ {} (at operand lobes {known}, others at seeds {seeds:?}); both sides equal the oracle's {}; refused with −d {:?}; oracle unresolved {}\n",
             self.both,
             self.counted,
             self.truth,
@@ -566,9 +550,8 @@ pub(super) struct Report {
     pub first_at: BTreeMap<String, String>,
     pub unresolved: Vec<(u64, String)>,
     pub tie_scale: Vec<(u64, String)>,
-    /// Placements differing from the oracle by the edge-height rule only
-    /// ([`Outcome::EdgeHeight`]).
-    pub edge_height: Vec<(u64, String)>,
+    /// Placements at an operand lobe ([`Outcome::OperandLobe`]).
+    pub operand_lobe: Vec<(u64, String)>,
     /// The `±d` checks, where the run asked for them.
     pub flip: Option<FlipTally>,
     pub stats: Stats,
@@ -591,14 +574,14 @@ impl Report {
             }
             Outcome::Unresolved(u) => self.unresolved.push((seed, u)),
             Outcome::TieScale(m) => self.tie_scale.push((seed, m)),
-            Outcome::EdgeHeight(m) => self.edge_height.push((seed, m)),
+            Outcome::OperandLobe(m) => self.operand_lobe.push((seed, m)),
         }
     }
 
     /// [`Report::add`] with the placement's `±d` check.
     pub(super) fn add_checked(&mut self, seed: u64, c: Checked) {
         if let Some(f) = c.flip {
-            let known = matches!(c.outcome, Outcome::EdgeHeight(_));
+            let known = matches!(c.outcome, Outcome::OperandLobe(_));
             self.flip.get_or_insert_default().add(seed, f, known);
         }
         self.add(seed, c.outcome);
@@ -609,13 +592,13 @@ impl Report {
         let mut s = String::new();
         let pct = |n: u64| 100.0 * n as f64 / self.placements.max(1) as f64;
         s += &format!(
-            "placements {}  agreed {} ({:.2}%)  with oracle ties {}  tie-scale only {}  edge-height known {}  mismatches {}  oracle unresolved {}  time {:.0} s\n",
+            "placements {}  agreed {} ({:.2}%)  with oracle ties {}  tie-scale only {}  operand lobes {}  mismatches {}  oracle unresolved {}  time {:.0} s\n",
             self.placements,
             self.agreed,
             pct(self.agreed),
             self.tied,
             self.tie_scale.len(),
-            self.edge_height.len(),
+            self.operand_lobe.len(),
             self.mismatches.len(),
             self.unresolved.len(),
             self.seconds
@@ -635,8 +618,8 @@ impl Report {
         for (seed, m) in self.mismatches.iter().take(20) {
             s += &format!("MISMATCH seed {seed}: {m}\n");
         }
-        for (seed, m) in self.edge_height.iter().take(5) {
-            s += &format!("edge-height known seed {seed}: {m}\n");
+        for (seed, m) in self.operand_lobe.iter().take(5) {
+            s += &format!("operand lobe seed {seed}: {m}\n");
         }
         for (seed, m) in self.tie_scale.iter().take(5) {
             s += &format!("tie-scale seed {seed}: {m}\n");
@@ -652,8 +635,15 @@ impl Report {
             );
         }
         s += &format!(
-            "face counts by top level {:?}; edge pairs' clusters by level {:?}; clear clusters {}, z-order stand-ins {}; seeds cleared {} / uncleared {}\n",
-            st.counts, st.clusters, st.clear, st.standins, st.cleared_seeds, st.uncleared_seeds
+            "face counts by top level {:?}; edge pairs' clusters by level {:?}; clear clusters {}, z-order records {}, z-order stand-ins {}; seeds cleared {} / uncleared {}; lobe fallbacks {}\n",
+            st.counts,
+            st.clusters,
+            st.clear,
+            st.zorder_records,
+            st.standins,
+            st.cleared_seeds,
+            st.uncleared_seeds,
+            st.lobes
         );
         s += &format!(
             "edge pairs on one curve {}; every edge pair's refusals by cause {:?}\n",

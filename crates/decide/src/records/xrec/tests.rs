@@ -1,16 +1,15 @@
-//! Cluster records on hand-made feet and orders: the z-order key from an
-//! end of `e`, of `g` (negated) or the crossing itself, the end chosen by
-//! position whatever the ids and stored directions; a shared corner's
-//! point–vertex key; feet that miss the cluster's piece; `s11` from clear
-//! and read z-orders; the end a parallel pair's tie came from; a
+//! Cluster records on hand-made feet and orders: the z-order key, the
+//! crossing itself whatever lies near it; `s11` from clear and read
+//! z-orders; the end a parallel pair's tie came from; a
 //! shared-curve pair's clusters from its ends' ties alone; cut points'
 //! stored positions.
 
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::ids::VertId;
 use crate::order::{EdgeKey, VertKey};
-use crate::records::feet::{EndKind, FootEnd};
+use crate::records::feet::{EndKind, Feet, FootEnd};
 use crate::records::height::HeightReads;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing};
 use crate::records::shadow::{RayRec, VvRec};
@@ -149,112 +148,40 @@ fn stored(r: &Reads, op: Operand, g: EdgeId, from: VertId, t: f64) -> f64 {
     }
 }
 
+/// Every cluster reads its own crossing key, whatever lies near it: both
+/// ends of `e` within `r_g` of the cluster's piece of `g`, the ends of `g`
+/// near `e`, a shared corner's point–vertex record near, feet missing.
 #[test]
-fn both_ends_of_e_near_choose_the_lesser_by_position_whatever_the_ids() {
+fn a_cluster_reads_its_crossing_key_whatever_lies_near() {
     for ids in [[10, 11, 20, 21], [11, 10, 21, 20]] {
-        let (mut r, x, [a, b, g0, _]) = pair(ids);
-        // Both ends of `e` lie within `r_g` of `g`'s middle stretch.
+        let (mut r, x, [a, b, g0, g1]) = pair(ids);
         for w in [a, b] {
             let lo = stored(&r, B, x.g, g0, 0.4);
             let hi = stored(&r, B, x.g, g0, 0.6);
             r.foot(Point::vert(A, w), x.g, between(lo, hi));
         }
-        let mid = stored(&r, B, x.g, g0, 0.5);
-        let cl = cluster([0.25, 0.75], [mid - 0.125, mid + 0.125]);
-        let z = zorder_key(&r, x, XClusterIx(0), &cl, [1, 1]).expect("a key");
-        // `a` at the origin is the lesser by position, whichever id it has.
-        let want = HKey::Curve {
-            q: Point::vert(A, a),
-            g: x.g,
-            foot: FootId(0),
-        };
-        assert_eq!(z.key.key, want, "ids {ids:?}");
-        assert!(!z.negated);
-        assert_eq!(z.height_key(x.g).anchor, Anchor::Edge(B, x.g));
-    }
-}
-
-#[test]
-fn an_end_of_g_near_e_reads_negated() {
-    for ids in [[10, 11, 20, 21], [11, 10, 21, 20]] {
-        let (mut r, x, [a, _, g0, g1]) = pair(ids);
-        let lo = stored(&r, A, x.e, a, 0.45);
-        let hi = stored(&r, A, x.e, a, 0.55);
         for w in [g0, g1] {
-            r.foot(Point::vert(B, w), x.e, between(lo, hi));
+            r.foot(Point::vert(B, w), x.e, foot(0.0, 1.0));
         }
-        let cl = cluster([0.25, 0.75], [0.25, 0.75]);
-        let z = zorder_key(&r, x, XClusterIx(3), &cl, [1, 1]).expect("a key");
-        // `g0` at `y = −2` is the lesser.
-        assert_eq!(
-            z.key,
-            Oriented {
-                key: HKey::Curve {
-                    q: Point::vert(B, g0),
-                    g: x.e,
-                    foot: FootId(0)
-                },
-                swapped: false
-            },
-            "ids {ids:?}"
-        );
-        assert!(z.negated);
-        let rec = HeightRec {
-            above: Sign::Pos,
-            by_orders: false,
-            fold: false,
-        };
-        // `e` above `g0`: `g` below `e`.
-        assert_eq!(z.above(&rec), Sign::Neg);
+        r.near.insert((Point::vert(A, a), g0), true);
+        for c in [0, 3] {
+            let z = zorder_key(x, XClusterIx(c));
+            let want = HKey::X {
+                e: x.e,
+                g: x.g,
+                c: XClusterIx(c),
+            };
+            assert_eq!(z.key.key, want, "ids {ids:?}");
+            assert!(!z.key.swapped);
+            assert_eq!(z.height_key(x.g).anchor, Anchor::Edge(B, x.g));
+            let rec = HeightRec {
+                above: Sign::Pos,
+                by_orders: false,
+                fold: false,
+            };
+            assert_eq!(z.above(&rec), Sign::Pos);
+        }
     }
-}
-
-#[test]
-fn feet_missing_the_piece_give_the_crossing_key() {
-    let (mut r, x, [a, b, g0, g1]) = pair([10, 11, 20, 21]);
-    // Feet on the far stretches only.
-    r.foot(Point::vert(A, a), x.g, foot(0.0, 0.1));
-    r.foot(Point::vert(A, b), x.g, foot(0.9, 1.0));
-    r.foot(Point::vert(B, g0), x.e, foot(0.0, 0.2));
-    r.foot(Point::vert(B, g1), x.e, foot(0.8, 1.0));
-    let cl = cluster([0.375, 0.625], [0.375, 0.625]);
-    let z = zorder_key(&r, x, XClusterIx(2), &cl, [1, 1]).expect("a key");
-    assert_eq!(
-        z.key.key,
-        HKey::X {
-            e: x.e,
-            g: x.g,
-            c: XClusterIx(2)
-        }
-    );
-    assert!(!z.negated && !z.key.swapped);
-    // A foot whose bracket touches the piece meets it.
-    r.feet
-        .get_mut(&(Point::vert(A, b), x.g))
-        .expect("feet")
-        .feet[0] = foot(0.625, 1.0);
-    // It holds `g1`, not near `b`.
-    r.near.insert((Point::vert(A, b), g1), false);
-    let z = zorder_key(&r, x, XClusterIx(2), &cl, [1, 1]).expect("a key");
-    assert_eq!(
-        z.key.key,
-        HKey::Curve {
-            q: Point::vert(A, b),
-            g: x.g,
-            foot: FootId(0)
-        }
-    );
-}
-
-#[test]
-fn a_shared_corner_reads_its_point_vertex_key() {
-    let (mut r, x, [a, _, g0, _]) = pair([10, 11, 20, 21]);
-    // `a`'s foot on `g` holds `g0`, and the two are near.
-    r.foot(Point::vert(A, a), x.g, foot(0.0, 0.2));
-    r.near.insert((Point::vert(A, a), g0), true);
-    let cl = cluster([0.0, 0.125], [0.0, 0.125]);
-    let z = zorder_key(&r, x, XClusterIx(0), &cl, [1, 1]).expect("a key");
-    assert_eq!(z.key, HKey::vv(Point::vert(A, a), g0));
 }
 
 #[test]
@@ -332,20 +259,6 @@ fn a_foot_ending_at_a_knot_meets_the_next_span() {
     assert!(at(&from_knot, 1, [0.5, 1.0]));
     assert!(!at(&from_knot, 1, [0.5, 0.75]));
     assert!(!at(&to_knot, 2, [0.0, 0.5]));
-}
-
-#[test]
-fn missing_feet_are_reported() {
-    let (mut r, x, [a, ..]) = pair([10, 11, 20, 21]);
-    r.feet.remove(&(Point::vert(A, a), x.g));
-    let cl = cluster([0.0, 1.0], [0.0, 1.0]);
-    assert_eq!(
-        zorder_key(&r, x, XClusterIx(0), &cl, [1, 1]),
-        Err(KeyError::Missing(RecordKey::Ray(RayKey {
-            q: Point::vert(A, a),
-            g: x.g
-        })))
-    );
 }
 
 #[test]

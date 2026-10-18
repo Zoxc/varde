@@ -587,14 +587,16 @@ fn on_cube_face(rng: &mut Rng, k: usize) -> [f64; 3] {
 /// - a corner of `A` on a face of `B` and an edge of `A` in its plane
 ///   (crossing `B`'s edges in it where it leaves the face);
 /// - a corner of `A` whose upward ray passes through a point of an edge
-///   of `B` (a ray record's tie).
+///   of `B` (a ray record's tie);
+/// - a corner of `A` exactly on an edge of `B` (its column hits on the
+///   two faces there read the edge's germ key).
 ///
 /// Moving `A` by `δ·d` settles each; counting with `d` and `−d` must
 /// differ exactly where the oracle's answers at `±2^-28·d` do.
 fn kernel_exact(seed: u64) -> Placement {
     let mut rng = Rng::new(seed);
     let k = int(&mut rng, 0, 2) as usize;
-    let (a, b) = match seed % 4 {
+    let (a, b) = match seed % 5 {
         0 | 2 => {
             let o = on_cube_face(&mut rng, k);
             let axes = exact_axes(&mut rng, (seed % 4 == 2).then_some(k), o);
@@ -605,13 +607,21 @@ fn kernel_exact(seed: u64) -> Placement {
             let axes = exact_axes(&mut rng, None, o);
             (cube(), Shape::Box { o, axes })
         }
-        _ => {
+        3 => {
             // A point of an edge of the cube along axis `k`, and a corner
             // of `A` below it along `UP` by `s·UP`.
             let mut p = [0, 1, 2].map(|_| 2.0 * int(&mut rng, 0, 1) as f64);
             p[k] = int(&mut rng, 3, 13) as f64 / 8.0;
             let s = [1.0 / 32.0, 1.0 / 64.0][int(&mut rng, 0, 1) as usize];
             let o = (DVec3::from_array(p) - UP * s).to_array();
+            let axes = exact_axes(&mut rng, None, o);
+            (Shape::Box { o, axes }, cube())
+        }
+        _ => {
+            // A corner of `A` at a point of an edge of the cube along axis
+            // `k`.
+            let mut o = [0, 1, 2].map(|_| 2.0 * int(&mut rng, 0, 1) as f64);
+            o[k] = int(&mut rng, 3, 13) as f64 / 8.0;
             let axes = exact_axes(&mut rng, None, o);
             (Shape::Box { o, axes }, cube())
         }

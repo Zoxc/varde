@@ -196,9 +196,9 @@ pub enum Row {
     VertexVertexShadow,
     /// The shadow side of a vertex against a curve.
     VertexCurveShadow,
-    /// A height above or below a face's layer, moved against the face's
-    /// tangent plane.
-    LayerHeight,
+    /// The height of a column hit on a face (or of a vertex or an edge
+    /// the hit lies on exactly), moved against the sheet's tangent plane.
+    ColumnHit,
     /// The z-order of two edges at a crossing of their shadows.
     ZOrder,
     /// The z-order of edges along a shared curve.

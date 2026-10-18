@@ -143,19 +143,19 @@ fn ridge(v_at: DVec3, d: DVec3) -> Geo {
     g
 }
 
-/// `v`'s keys against the layers of `f1` and `f2` that hold `w`: one
-/// layer each, its feature `w` (near `v`), so each reads `VV(v, w)`.
+/// `v`'s keys against its column hits on `f1` and `f2` at `w`: `v` lies
+/// exactly at `w`, so each reads `VV(v, w)` (the germ rule).
 fn ridge_keys() -> [Oriented<HKey>; 2] {
-    let mut r = Reads::default();
-    r.vert(B, W.0, [0.0, 0.0, 0.0]);
-    r.near.insert((pv(), W), true);
-    let mut t = LayerTable::new();
-    for f in [F1, F2] {
-        let mut p = LayerPieces::new();
-        p.piece([Feature::Vert(W)], None);
-        t.insert(pv(), f, p.layers(&r, pv(), f).unwrap());
-    }
-    [F1, F2].map(|f| height_key(&r, &t, pv(), Target::Layer(f, LayerId(0))).unwrap())
+    let r = Reads::default();
+    [F1, F2].map(|f| {
+        let t = Target::Hit {
+            f,
+            sheet: crate::records::keys::Sheet::Tile([0, 0]),
+            i: crate::records::keys::HitIx(0),
+            inc: Some(Incidence::Vert(W)),
+        };
+        height_key(&r, pv(), t).unwrap()
+    })
 }
 
 fn at(h: HKey, f: FaceId) -> HeightKey {
@@ -257,10 +257,11 @@ fn the_b_point_reads_the_stored_value_negated() {
 }
 
 fn face_key() -> HKey {
-    HKey::Face {
+    HKey::Hit {
         q: pv(),
         f: F1,
-        layer: LayerId(0),
+        sheet: crate::records::keys::Sheet::Tile([0, 0]),
+        i: crate::records::keys::HitIx(0),
     }
 }
 
@@ -307,7 +308,7 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
     hs.fill([at(h, F1)], &g, band(), &mut Seq::default())
         .unwrap();
     assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, Sign::Pos);
-    // Never formed: a point–face value is a tie at the last level, so
+    // Never formed: a hit's value is a tie at the last level, so
     // the anchor's orders decide; with none either (and no fold rule
     // here), the row's escalation stands past the last level.
     let g = Geo {
@@ -356,7 +357,7 @@ fn a_key_is_geometric_only_when_every_anchor_is() {
 }
 
 #[test]
-fn a_face_key_read_at_another_face_is_refused() {
+fn a_hit_key_read_at_another_face_is_refused() {
     let g = Geo {
         curved: Some((0.0, 0)),
         rows: Some([1.0, 0.0, 0.0, 0.0]),
@@ -369,13 +370,65 @@ fn a_face_key_read_at_another_face_is_refused() {
     );
 }
 
+/// Exact values and orders worked out on flat data otherwise (a ribbon
+/// hit's): the value decides where it isn't zero, else the first order
+/// that isn't.
 #[test]
-fn a_lone_core_layer_needs_its_key() {
-    let r = Reads::default();
-    let mut p = LayerPieces::new();
-    p.piece([], None);
-    assert_eq!(
-        p.layers(&r, pv(), F1),
-        Err(KeyError::NoCore { q: pv(), f: F1 })
-    );
+fn exact_signs_decide_as_flat_predicates_do() {
+    struct Exact {
+        value: ExactSign,
+        orders: [ExactSign; ORDERS],
+    }
+    impl HeightGeometry for Exact {
+        type Flat = Flat;
+        fn value(&self, _: HKey) -> KeyValue<Flat> {
+            KeyValue::Exact(self.value)
+        }
+        fn curved_value<S: Curved>(&self, _: HKey, _: &S) -> Option<S> {
+            None
+        }
+        fn row(&self, _: HeightKey) -> AnchorRow<Flat> {
+            AnchorRow::Exact(self.orders)
+        }
+        fn curved_row<S: Curved>(&self, _: HeightKey, _: &S) -> Option<[S; ORDERS]> {
+            None
+        }
+        fn geometric(&self, _: HeightKey) -> bool {
+            false
+        }
+    }
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let own = Oriented {
+        key: face_key(),
+        swapped: false,
+    };
+    for (value, orders, want) in [
+        (Ok(Less), [Ok(Greater); ORDERS], Ok(Sign::Neg)),
+        (
+            Ok(Equal),
+            [Ok(Equal), Ok(Greater), Ok(Less), Ok(Less)],
+            Ok(Sign::Pos),
+        ),
+        (
+            Ok(Equal),
+            [Ok(Less), Ok(Greater), Ok(Equal), Ok(Equal)],
+            Ok(Sign::Neg),
+        ),
+        (Ok(Equal), [Ok(Equal); ORDERS], Err(())),
+    ] {
+        let g = Exact { value, orders };
+        let mut hs = Heights::new();
+        let got = hs.fill([at(face_key(), F1)], &g, band(), &mut Seq::default());
+        match want {
+            Ok(s) => {
+                got.unwrap();
+                assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, s);
+                assert_eq!(hs.key(face_key()).unwrap().kind, BandKind::Flat);
+            }
+            Err(()) => assert!(
+                matches!(got, Err(HeightError::Pass(Fail::Internal { .. }))),
+                "{got:?}"
+            ),
+        }
+    }
 }

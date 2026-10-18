@@ -1,18 +1,21 @@
-//! The count of a face's layers above or below a point, on whole faces:
-//! a half-cylinder overhanging its own edge (the column near the edge's
-//! shadow hits only the far sheet, whose own height counts), a cube's
-//! faces at a vertex of the other operand on the cube's corner (every
-//! face at the corner reads the one point–vertex record, and the count
-//! over the cube is the moved point's winding), the fold rule and the
-//! straight edges' ray records.
+//! The count of a face's column hits above or below a point, on whole
+//! faces: a half-cylinder overhanging its own edge (the column near the
+//! edge's shadow hits only the far sheet, whose own height counts), a
+//! cube's faces at a vertex of the other operand on the cube's corner
+//! (every face at the corner reads the one point–vertex record, and the
+//! count over the cube is the moved point's winding), plane faces whose
+//! hits are exact (on a huge tile, next to their edges, under other
+//! refinements one key per hit), runs the trims miss, the fold rule's
+//! records and the straight edges' ray records.
 
 use std::collections::BTreeMap;
 
 use glam::DVec3;
 
 use super::*;
+use crate::bezier::Dyadic;
 use crate::bezier::HomPatch;
-use crate::count::boxes::UvSpan;
+use crate::count::boxes::{Extent, UvSpan};
 use crate::count::testing::*;
 use crate::ids::{EdgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
@@ -20,7 +23,7 @@ use crate::num::decide::Sign;
 use crate::num::trig;
 use crate::records::feet::NearFeet;
 use crate::records::height::Records;
-use crate::records::keys::{Operand, Query};
+use crate::records::keys::{HKey, HeightKey, Operand, Query};
 use crate::records::ray::Span;
 use crate::records::shadow::Shadows;
 
@@ -250,6 +253,7 @@ fn half_cylinder(band: f64) -> FaceData {
         patches,
         flipped: true,
         trims,
+        nets: None,
     }
 }
 
@@ -280,13 +284,13 @@ fn s02_cylinder(f: &FaceData, q: [f64; 3]) -> i64 {
     let p = f
         .pieces(&order, point, q, &rays, &reads, &Sides::new())
         .expect("certified");
-    assert!(p.near.is_empty(), "no layer near the point");
-    p.count(&reads, &LayerTable::new(), &Heights::new())
+    assert!(p.near.is_empty(), "no piece near the point");
+    p.count(&reads, &Heights::new(), &[])
         .expect("no record read")
 }
 
 #[test]
-fn an_overhanging_layer_counts_by_its_own_height() {
+fn an_overhanging_sheet_counts_by_its_own_height() {
     let band = 1.0 / 1024.0;
     let f = half_cylinder(band);
     // The edge at −80° and the point across the axis plane from it, half
@@ -360,6 +364,9 @@ fn triangle(band: f64, tri: [[f64; 2]; 3]) -> FaceData {
         patches,
         flipped: false,
         trims: vec![tri(1, 0, 1, false), tri(2, 1, 2, false), tri(3, 0, 2, true)],
+        // Counted as a curved face is: refined till height-clear or small
+        // (the corner pieces' rules under test, no hit records read).
+        nets: None,
     }
 }
 
@@ -448,9 +455,7 @@ fn check_triangle(tri: [[f64; 2]; 3]) {
             .pieces(&order, point, q, &rays, &reads, &Sides::new())
             .unwrap_or_else(|e| panic!("q = {q:?}: {e:?}"));
         let want = i64::from(truth && q[2] < 0.0);
-        let got = p
-            .count(&reads, &LayerTable::new(), &Heights::new())
-            .unwrap();
+        let got = p.count(&reads, &Heights::new(), &[]).unwrap();
         assert_eq!(got, want, "q = {q:?}");
     }
     assert!(inside > 5, "{inside} of {all} inside");
@@ -537,11 +542,13 @@ fn huge_tile_square(c: [f64; 2], a3: DVec3, b3: DVec3, band: f64, order: &mut Or
             }
         })
         .collect();
+    let patches = vec![patch];
     let f = FaceData {
         operand: Operand::B,
         id: FaceId(1),
         tiles: [0..1, 0..1],
-        patches: vec![patch],
+        nets: Some(nets_of(&patches)),
+        patches,
         flipped: false,
         trims,
     };
@@ -559,8 +566,9 @@ fn huge_tile_square(c: [f64; 2], a3: DVec3, b3: DVec3, band: f64, order: &mut Or
 /// A planar face of `B` with straight edges (`n·x = c`, `n` its
 /// outward normal) and a vertex of `A` at `q`, for the records the
 /// vertex's count reads: its feet on the edges (its near radius and the
-/// edges' `3·band`), its point–vertex records and its layers' heights.
+/// edges' `3·band`), its point–vertex records and its hits' heights.
 struct Planar<'a> {
+    face: &'a FaceData,
     order: &'a Order,
     plane: (DVec3, f64),
     q: [f64; 3],
@@ -613,6 +621,14 @@ impl crate::records::feet::FeetGeometry for Planar<'_> {
 impl crate::records::height::model::HeightModel for Planar<'_> {
     fn plane(&self, _: Operand, _: FaceId) -> Option<(DVec3, f64)> {
         Some(self.plane)
+    }
+
+    fn flat_face(
+        &self,
+        _: Operand,
+        _: FaceId,
+    ) -> Option<crate::records::height::hit::FlatFace<'_>> {
+        self.face.flat(self.order)
     }
 
     fn plane_rates(
@@ -668,8 +684,25 @@ fn huge_tile_count(
     band: f64,
     ladder: bool,
 ) -> i64 {
+    planar_count(f, order, plane, q, band, ladder, [1.0, 1.0]).0
+}
+
+/// [`huge_tile_count`] with the box splits at `scale` (another
+/// partition), and the height keys it read: the hits' own, `q` lying
+/// exactly on none of the face's vertices or edges (no foot or near
+/// vertex keys a height).
+fn planar_count(
+    f: &FaceData,
+    order: &Order,
+    plane: (DVec3, f64),
+    q: [f64; 3],
+    band: f64,
+    ladder: bool,
+    scale: [f64; 2],
+) -> (i64, Vec<HeightKey>) {
     let point = Point::vert(Operand::A, VertId(7));
     let geom = Planar {
+        face: f,
         order,
         plane,
         q,
@@ -696,23 +729,55 @@ fn huge_tile_count(
     let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
     let sides = Sides::new();
     let p = if ladder {
-        f.query(order, point, q, &rays, &|fq, _| {
+        f.query_scaled(scale, None, order, point, q, &rays, &|fq, _| {
             count_pieces(fq, &sides, &reads, &Charge::new(u64::MAX)).0
         })
     } else {
-        f.pieces(order, point, q, &rays, &reads, &sides)
+        f.query_scaled(scale, None, order, point, q, &rays, &|fq, edges| {
+            let out = face_pieces(fq, &sides, &reads)?;
+            assert_eq!(out.degree(), ray_degree(fq.face, edges).unwrap());
+            Ok(out)
+        })
     };
     let p = p.unwrap_or_else(|e| panic!("q = {q:?}: {e:?}"));
-    let mut layers = LayerTable::new();
-    layers.insert(point, f.id, p.layers(&reads).expect("layers"));
-    let wanted = p.wanted(&reads, &layers).expect("keys");
+    let wanted = p.wanted(&reads, &[]).expect("keys");
+    for k in &wanted {
+        assert!(matches!(k.h, HKey::Hit { .. }), "q = {q:?}: {k:?}");
+    }
     let mut heights = Heights::new();
     let model = crate::records::height::model::ModelHeights { model: &geom };
     let band = crate::num::decide::Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
     heights
-        .fill(wanted, &model, band, &mut Seq)
+        .fill(wanted.clone(), &model, band, &mut Seq)
         .expect("heights");
-    p.count(&reads, &layers, &heights).expect("records filled")
+    let n = p.count(&reads, &heights, &[]).expect("records filled");
+    (n, wanted)
+}
+
+/// Columns `10⁻⁸` from an edge of a small face on a huge plane tile, a
+/// hair below and above it: under another partition of the face (its
+/// boxes split along other sides first) the count and the hit keys it
+/// reads are the same: a hit is a point of the stored data, whatever
+/// boxes found it.
+#[test]
+fn two_refinements_give_one_hit_key() {
+    let up = UP.normalize();
+    let a3 = R_HAT.cross(UP).normalize();
+    let b3 = (up + a3.cross(up).normalize() * 0.3).normalize();
+    let n = a3.cross(b3).normalize();
+    let c = [0.0371, 0.0529];
+    let mut order = Order::default();
+    let f = huge_tile_square(c, a3, b3, 1e-6, &mut order);
+    let mut read = 0;
+    for (t, z) in [(0.03, 2e-6), (0.07, -2e-6), (0.1, 3e-7), (0.04, -1e-6)] {
+        let hit = a3 * (c[0] + 0.125 - 1e-8) + b3 * (c[1] + t);
+        let q = (hit + up * z).to_array();
+        let (n1, k1) = planar_count(&f, &order, (n, 0.0), q, 1e-6, true, [1.0, 1.0]);
+        let (n2, k2) = planar_count(&f, &order, (n, 0.0), q, 1e-6, true, [7.0, 1.0 / 7.0]);
+        assert_eq!((n1, &k1), (n2, &k2), "q = {q:?}");
+        read += k1.len();
+    }
+    assert!(read > 0, "some piece near the column read a hit");
 }
 
 /// A square face `1/8` wide trimmed from a plane tile `4·10⁶` wide (a
@@ -835,8 +900,8 @@ fn runs_with_cuts_next_to_the_column_settle_on_a_huge_tile() {
 /// both: the strip's boxes holding the crossing are height-clear (below
 /// the upper point, above the lower one) next to near ones whose cut no
 /// window settles. Their degree is the crossing's, so it must count by
-/// their own height, not by the near layer's, which the corner's vertex
-/// names (above the upper point while the plane is below it).
+/// their own height, not by a key the corner's vertex names (above the
+/// upper point while the plane is below it).
 #[test]
 fn clear_boxes_holding_the_crossing_next_to_a_near_run_count_by_their_height() {
     let up = UP.normalize();
@@ -886,4 +951,56 @@ fn joining_dropped_boxes_one_by_one_settles() {
             "(s, t) ({s}, {t})"
         );
     }
+}
+
+/// A box whose p-span's control points reach over it while the span
+/// itself passes below or above (boxes the hulls don't separate): the
+/// trims miss it exactly, and it is core or outside by their winding
+/// about its centre; a box the span crosses, or touches, is not clear.
+#[test]
+fn a_box_the_trims_miss_is_core_or_outside() {
+    // The triangle's first side bowed up: from (1.25, 1.125) to (1.75,
+    // 1.125) through the control point (1.5, 1.625), its top `(1.5,
+    // 1.375)`; over `u ∈ [1.4375, 1.5625]` it runs at `v ∈ [1.359, 1.375]`.
+    let tri = [[1.25, 1.125], [1.75, 1.125], [1.5, 1.9]];
+    let mut f = triangle(1.0 / 4096.0, tri);
+    f.trims[0].spans = vec![[[1.25, 1.125, 1.0], [1.5, 1.625, 1.0], [1.75, 1.125, 1.0]]];
+    let mut order = Order::default();
+    for (k, p) in tri.iter().enumerate() {
+        order
+            .pos
+            .insert((Operand::B, VertId(k as u32 + 1)), [p[0], p[1], 0.0]);
+    }
+    for t in &f.trims {
+        order.edges.insert((Operand::B, t.edge), t.ends);
+    }
+    let met = [SpanRef {
+        coedge: f.trims[0].coedge,
+        span: 0,
+    }];
+    let dy = |n: u64, e: u32| Dyadic::new(n, e).unwrap();
+    // Tile `[1, 1]`'s local `u ∈ [7/16, 9/16]`, `v` in sixty-fourths.
+    let b = |v0: u64, v1: u64| {
+        BoxKey::new(
+            Operand::B,
+            f.id,
+            [1, 1],
+            Extent::new(dy(7, 4), dy(9, 4)).unwrap(),
+            Extent::new(dy(v0, 6), dy(v1, 6)).unwrap(),
+        )
+    };
+    let point = Point::vert(Operand::A, VertId(7));
+    let rays = |t: &TrimData| chain(&t.curve, [0.0; 3], Operand::A);
+    let class = |bx: BoxKey| {
+        f.query(&order, point, [1.5, 1.5, 1.0], &rays, &|fq, _| {
+            clear_class(fq.face, &bx, &met)
+        })
+    };
+    // Above the bow, inside the face; below it, outside.
+    assert_eq!(class(b(26, 30)), Ok(Some(true)));
+    assert_eq!(class(b(10, 14)), Ok(Some(false)));
+    // Across the bow, and touching its top from below and from above.
+    assert_eq!(class(b(22, 26)), Ok(None));
+    assert_eq!(class(b(16, 24)), Ok(None));
+    assert_eq!(class(b(24, 28)), Ok(None));
 }

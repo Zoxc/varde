@@ -6,12 +6,19 @@
 //! `x12` and `x21` by identity, the seeds and the windings carried from
 //! them. `A` moves along a constant direction `d` (`σ_A = +1`).
 //!
+//! A plane face's column hits are exact (its stored tiles, trims and
+//! edges as the hits read them); a vertex whose winding the hits leave outside
+//! `{0, 1}` within an edge's near radius takes the lobe fallback there
+//! (the edge rule for its hits near the edge), counted.
+//!
 //! What the counting can't answer yet is a [`Refusal`] with its cause,
-//! never a guess: a layer near a point reads a height record (no store-
-//! backed height model decides those yet), a crossing cluster whose
-//! z-order isn't clear reads one too (no decider for edge–edge keys), a
-//! side record a piece asks for, a record or count that runs past the
-//! last precision level, a ladder signal from the windings.
+//! never a guess: a hit near a point on a curved face (no curved hits are
+//! formed here), a crossing cluster of a curved edge whose z-order isn't
+//! clear (no decider for curved edge–edge keys: a stand-in reads it from
+//! the geometry, refusing where that isn't clear; two straight edges'
+//! clusters read their exact edge–edge records), a side record a piece asks for, a record
+//! or count that runs past the last precision level, a ladder signal
+//! from the windings.
 
 use std::cmp::Ordering;
 
@@ -26,18 +33,20 @@ use varde_decide::bezier::{HomPatch, HullBox};
 use varde_decide::count::boxes::{BoxError, Corners, FaceUv, Trim};
 use varde_decide::count::cross::{Coedge, x12, x21};
 use varde_decide::count::pieces::{Ribbon, SpanMap};
+use varde_decide::count::s02::FacePieces;
 use varde_decide::count::s02::{Charge, CountError, FaceQuery, TrimEdge, count_pieces, line_chain};
-use varde_decide::count::winding::{Graph, WindingError, clear_of, seeds, windings};
+use varde_decide::count::winding::{Graph, Lobes, WindingError, clear_of, seeds, windings_lobed};
 use varde_decide::count::xrec::{XClusterError, form};
 use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::ORDERS;
-use varde_decide::order::{EdgeKey, EntityOrder, VertKey};
+use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
 use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rates_a};
 use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
+use varde_decide::records::height::hit::{FlatFace, FlatTrim};
 use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights};
-use varde_decide::records::height::{HeightError, Heights, LayerTable, Records};
+use varde_decide::records::height::{HeightError, Heights, Records};
 use varde_decide::records::keys::{EdgeAt, Operand, Point, Query, RayKey, VvKey, XKey};
 use varde_decide::records::keys::{FootId, HKey};
 use varde_decide::records::keys::{SideLine, TileCorner, TileEdge, TilePoint};
@@ -46,7 +55,9 @@ use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span, Tile
 use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry, Shadows};
 use varde_decide::records::side::{SideGeometry, Sides};
 use varde_decide::records::table::Fresh;
-use varde_decide::records::xrec::{EdgeRays, XBase, XCurve, XGeometry, XPair, XSides, XTerms};
+use varde_decide::records::xrec::{
+    EdgeRays, XBase, XCurve, XGeometry, XPair, XSides, XTerms, ZKey, ZRow, zorder_key,
+};
 
 use super::solids::Solid;
 
@@ -90,8 +101,8 @@ pub(super) enum Cause {
     OutOfBudget(String),
     /// A face count's side record can't be decided, or it kept asking.
     Side(String),
-    /// A face count's layer near the point reads a height record the
-    /// flat model can't decide (a curved face's or edge's: no curved
+    /// A face count's hit near the point reads a height record the flat
+    /// model can't decide (a curved face's or edge's: no curved hits or
     /// height model here).
     Height,
     /// A face count failed otherwise.
@@ -139,8 +150,11 @@ pub(super) struct Stats {
     /// Edge pairs' side and corner records filled at the clusters'
     /// request.
     pub x_side_fills: u64,
-    /// Face counts whose layers read height records.
+    /// Face counts whose hits read height records.
     pub height_fills: u64,
+    /// Lobe fallbacks taken: `(q, g)` whose hits near `g` were re-read
+    /// by the edge rule.
+    pub lobes: u64,
     /// Edge pairs on one curve.
     pub shared: u64,
     /// Every edge pair's refusal, by cause (not only a placement's
@@ -148,8 +162,11 @@ pub(super) struct Stats {
     pub pair_causes: std::collections::BTreeMap<String, u64>,
     /// Clusters whose z-order was clear.
     pub clear: u64,
-    /// Clusters whose z-order wasn't, read from the geometry instead
-    /// ([`zorder_standin`]).
+    /// Clusters whose z-order wasn't, of two straight edges: read from
+    /// their edge–edge height records.
+    pub zorder_records: u64,
+    /// Clusters whose z-order wasn't, of a curved edge: read from the
+    /// geometry instead ([`zorder_standin`]).
     pub standins: u64,
     /// Seeds certified clear of the other operand.
     pub cleared_seeds: u64,
@@ -191,7 +208,9 @@ impl Stats {
         self.side_fills += o.side_fills;
         self.x_side_fills += o.x_side_fills;
         self.height_fills += o.height_fills;
+        self.lobes += o.lobes;
         self.standins += o.standins;
+        self.zorder_records += o.zorder_records;
         self.cleared_seeds += o.cleared_seeds;
         for k in 0..3 {
             self.time[k] += o.time[k];
@@ -277,6 +296,26 @@ impl EntityOrder for Order {
     }
 }
 
+/// One trim of a plane face as its hits read it, beside the store's
+/// spans.
+struct FlatTrimData {
+    coedge: CoedgeId,
+    edge: EdgeId,
+    reversed: bool,
+    ends: [VertId; 2],
+    along: Along,
+    band: f64,
+    map: Vec<SpanMap>,
+}
+
+/// A plane face as its hits read it.
+struct FlatData {
+    tiles: [std::ops::Range<i64>; 2],
+    nets: Vec<TileNet>,
+    inside: i64,
+    trims: Vec<FlatTrimData>,
+}
+
 /// The two solids as the records read them.
 pub(super) struct World<'s> {
     solids: [&'s Solid; 2],
@@ -284,6 +323,8 @@ pub(super) struct World<'s> {
     bands: OpBands,
     vert_near: [Vec<f64>; 2],
     order: Order,
+    /// Per operand and face, a plane face's hit data.
+    flats: [Vec<Option<FlatData>>; 2],
 }
 
 impl<'s> World<'s> {
@@ -307,13 +348,60 @@ impl<'s> World<'s> {
                     .collect()
             }),
         };
-        World {
+        let mut w = World {
             solids,
             d,
             bands,
             vert_near,
             order,
+            flats: [Vec::new(), Vec::new()],
+        };
+        w.flats = [A, B].map(|op| {
+            let s = w.solid(op);
+            s.faces().into_iter().map(|f| w.flat_data(op, f)).collect()
+        });
+        w
+    }
+
+    /// Plane face `f` of `op`'s hit data; `None` for a curved face or one
+    /// whose p-curves don't fit their edges' spans.
+    fn flat_data(&self, op: Operand, f: FaceId) -> Option<FlatData> {
+        let b = &self.solid(op).brep;
+        let surf = b.surface(f);
+        let lat = surf.lattice();
+        if !matches!(lat.key(), crate::geom::form::FormKey::Plane(_)) {
+            return None;
         }
+        let mut trims = Vec::new();
+        for l in b.loops(f) {
+            for c in b.loop_coedges(l) {
+                let e = b.edge(c);
+                let map = span_map(b.pcurve(c).knots(), b.curve(e).knots(), b.t_range(e))?;
+                let [s0, s1] = b.ends(e);
+                trims.push(FlatTrimData {
+                    coedge: c,
+                    edge: e,
+                    reversed: b.reversed(c),
+                    ends: [s0, s1],
+                    along: Along::of(&self.order.vert_key(op, s0), &self.order.vert_key(op, s1)),
+                    band: self.band(op, e),
+                    map,
+                });
+            }
+        }
+        let r = surf.rect();
+        let mut nets = Vec::new();
+        for i in r.u.clone() {
+            for j in r.v.clone() {
+                nets.push(*surf.tile(i, j)?.net());
+            }
+        }
+        Some(FlatData {
+            tiles: [r.u.clone(), r.v.clone()],
+            nets,
+            inside: if b.flipped(f) { -1 } else { 1 },
+            trims,
+        })
     }
 
     fn solid(&self, op: Operand) -> &'s Solid {
@@ -342,6 +430,9 @@ impl<'s> World<'s> {
         }
     }
 }
+
+/// An operand's windings, its crossing counts and the lobe fallbacks taken.
+type Windings = (Vec<i64>, Vec<Vec<i64>>, u64);
 
 fn vert(p: Point) -> VertId {
     match p.q {
@@ -539,11 +630,12 @@ impl SideGeometry for World<'_> {
     }
 }
 
-/// The height model of the flat elements: plane faces by their keys'
-/// planes (the face's outward normal), straight edges at the point whose
-/// shadow is nearest the asking point's. Curved faces and edges have no
-/// model here (no store-backed one exists yet): their keys escalate and
-/// the count is refused.
+/// The height model of the flat elements: plane faces by their stored
+/// tiles (column hits, exactly) and their keys' planes (the face's
+/// outward normal, the germ keys' rows), straight edges at the point whose
+/// shadow is nearest the asking point's and as segments (edge–edge
+/// keys). Curved faces and edges have no model here (no store-backed
+/// one exists yet): their keys escalate and the count is refused.
 impl HeightModel for World<'_> {
     fn plane(&self, operand: Operand, f: FaceId) -> Option<(DVec3, f64)> {
         let b = &self.solid(operand).brep;
@@ -552,6 +644,44 @@ impl HeightModel for World<'_> {
 
     fn plane_rates(&self, q: Point, _: FaceId, _: DVec3) -> [Rate; ORDERS] {
         self.rates(q.operand.other())
+    }
+
+    fn flat_face(&self, operand: Operand, f: FaceId) -> Option<FlatFace<'_>> {
+        let d = self.flats[ix(operand)].get(f.index())?.as_ref()?;
+        let b = &self.solid(operand).brep;
+        Some(FlatFace {
+            operand,
+            face: f,
+            tiles: d.tiles.clone(),
+            nets: &d.nets,
+            inside: d.inside,
+            trims: d
+                .trims
+                .iter()
+                .map(|t| FlatTrim {
+                    coedge: t.coedge,
+                    edge: t.edge,
+                    reversed: t.reversed,
+                    ends: t.ends,
+                    along: t.along,
+                    band: t.band,
+                    pspans: b.pcurve(t.coedge).spans(),
+                    curve: b.edge_spans(t.edge),
+                    map: &t.map,
+                })
+                .collect(),
+        })
+    }
+
+    fn edge_seg(&self, operand: Operand, g: EdgeId) -> Option<Seg> {
+        if !self.straight(operand, g) {
+            return None;
+        }
+        let [a, b] = self.edge_points(operand, g).map(DVec3::from_array);
+        Some(match operand {
+            A => Seg::of_a(a, b, Sign::Pos, Rate::Float(self.d)),
+            B => Seg::fixed(a, b),
+        })
     }
 
     fn foot_point(&self, q: Point, g: EdgeId, _: FootId) -> Option<Moving> {
@@ -641,17 +771,18 @@ pub(super) struct Answers {
     pub x12: Vec<Vec<i64>>,
     /// `x21[g][f]`, `g` of `B`, `f` of `A`.
     pub x21: Vec<Vec<i64>>,
-    /// Per operand, per vertex and face of the other: whether a layer of
-    /// the face at the vertex's column was decided by the height of an
-    /// edge of the face at the vertex's foot on it (a point–curve key:
-    /// inside the edge's band the edge's height is the defined answer,
-    /// even where the face itself lies on the other side of the point).
-    pub edge_height: [Vec<Vec<bool>>; 2],
+    /// Lobe fallbacks the windings took, both operands.
+    pub lobes: u64,
 }
 
-/// Per vertex and face, the face counts, and whether a layer was
-/// decided by an edge's height ([`World::face_counts`]).
-type FaceCounts = (Vec<Vec<i64>>, Vec<Vec<bool>>);
+/// One operand's vertices counted against the other's faces
+/// ([`World::face_counts`]): per vertex and face its count and pieces, and
+/// the height records they read.
+struct FaceCounts {
+    counts: Vec<Vec<i64>>,
+    pieces: Vec<Vec<FacePieces>>,
+    heights: Heights,
+}
 
 /// The records of a placement.
 struct Recs {
@@ -747,9 +878,8 @@ impl World<'_> {
     }
 
     /// `s02(v, f)` (`s20`) for every vertex `v` of `op` and face `f` of
-    /// the other, by vertex then face, and whether a layer of `f` at
-    /// `v`'s column was decided by a point–curve height record (by the
-    /// height of an edge of `f` at `v`'s foot on it).
+    /// the other, by vertex then face, with the pieces and the height
+    /// records they read.
     fn face_counts(
         &self,
         r: &Recs,
@@ -766,11 +896,10 @@ impl World<'_> {
         let mut sides = Sides::new();
         let mut heights = Heights::new();
         let band = Band::curved(0.0, cfg.target).expect("a band");
-        let mut layers = LayerTable::new();
         let charge = Charge::new(u64::MAX / 4);
         let verts = s.verts();
         let mut out = vec![Vec::new(); verts.len()];
-        let mut by_edge = vec![Vec::new(); verts.len()];
+        let mut kept = vec![Vec::new(); verts.len()];
         for f in o.faces() {
             let face = FaceSetup::new(self, op.other(), f)?;
             let views = face.views();
@@ -779,6 +908,9 @@ impl World<'_> {
             let corners = Corners::new(&uv, &face.patches, &face.order)
                 .map_err(|e| refused(Cause::Other(format!("corners {e:?}")), format!("{f:?}")))?;
             stats.corners += t.elapsed().as_secs_f64();
+            let nets = self.flats[ix(op.other())][f.index()]
+                .as_ref()
+                .map(|d| d.nets.as_slice());
             for &v in &verts {
                 let q = Point::vert(op, v);
                 let at = s.brep.pos(v);
@@ -809,6 +941,7 @@ impl World<'_> {
                     point: q,
                     at,
                     eps_tie: cfg.eps_tie,
+                    nets,
                 };
                 let here = || format!("{q:?} face {f:?}");
                 // Side and dyadic point records asked for are filled, one
@@ -836,52 +969,56 @@ impl World<'_> {
                     }
                 };
                 stats.counts[top_level(&cost)] += 1;
-                let p = res.map_err(|e| {
+                let p = res.map_err(|e| refused(count_cause(e), here()))?;
+                let n = self.recount(&reads, &p, &[], &mut heights, band, stats)?;
+                out[v.index()].push(n);
+                kept[v.index()].push(p);
+            }
+        }
+        Ok(FaceCounts {
+            counts: out,
+            pieces: kept,
+            heights,
+        })
+    }
+
+    /// The count of `p`, its hits near the edges `lobe` by the edge rule,
+    /// the height records it reads filled first.
+    fn recount(
+        &self,
+        reads: &Records<'_, Order>,
+        p: &FacePieces,
+        lobe: &[EdgeId],
+        heights: &mut Heights,
+        band: Band,
+        stats: &mut Stats,
+    ) -> Result<i64, Refusal> {
+        let here = || format!("{:?} face {:?}", p.point, p.face);
+        let wanted = p
+            .wanted(reads, lobe)
+            .map_err(|e| refused(count_cause(e), here()))?;
+        if !wanted.is_empty() {
+            stats.height_fills += 1;
+            heights
+                .fill(
+                    wanted,
+                    &ModelHeights { model: self },
+                    band,
+                    &mut Tally {
+                        kind: "height",
+                        stats,
+                    },
+                )
+                .map_err(|e| {
                     let cause = match e {
-                        CountError::Need(_) => Cause::Side("asked again".into()),
-                        CountError::NeedHeight(_) => Cause::Height,
-                        CountError::OutOfBudget { cause, .. } => {
-                            Cause::OutOfBudget(format!("{cause:?}"))
-                        }
-                        e => Cause::Count(short(&e)),
+                        HeightError::Pass(Fail::Escalate { .. }) => Cause::Height,
+                        e => Cause::Count(format!("heights {e:?}")),
                     };
                     refused(cause, here())
                 })?;
-                let ls = p
-                    .layers(&reads)
-                    .map_err(|e| refused(Cause::Count(format!("layers {e:?}")), here()))?;
-                layers.insert(q, f, ls);
-                let wanted = p
-                    .wanted(&reads, &layers)
-                    .map_err(|e| refused(Cause::Count(format!("keys {e:?}")), here()))?;
-                by_edge[v.index()].push(wanted.iter().any(|k| matches!(k.h, HKey::Curve { .. })));
-                if !wanted.is_empty() {
-                    stats.height_fills += 1;
-                    heights
-                        .fill(
-                            wanted,
-                            &ModelHeights { model: self },
-                            band,
-                            &mut Tally {
-                                kind: "height",
-                                stats,
-                            },
-                        )
-                        .map_err(|e| {
-                            let cause = match e {
-                                HeightError::Pass(Fail::Escalate { .. }) => Cause::Height,
-                                e => Cause::Count(format!("heights {e:?}")),
-                            };
-                            refused(cause, here())
-                        })?;
-                }
-                let n = p
-                    .count(&reads, &layers, &heights)
-                    .map_err(|e| refused(Cause::Count(short(&e)), here()))?;
-                out[v.index()].push(n);
-            }
         }
-        Ok((out, by_edge))
+        p.count(reads, heights, lobe)
+            .map_err(|e| refused(count_cause(e), here()))
     }
 
     /// `s11(e, g)` for every edge pair, `[e][g]`.
@@ -892,6 +1029,7 @@ impl World<'_> {
             curved: &r.curved,
         };
         let mut sides = XSides::new();
+        let mut heights = Heights::new();
         let (a, b) = (self.solid(A), self.solid(B));
         let curve = |op: Operand, e: EdgeId| {
             if self.straight(op, e) {
@@ -1007,9 +1145,30 @@ impl World<'_> {
                     stats.clusters[c.rec.level] += 1;
                     stats.clear +=
                         c.rec.clusters.iter().filter(|c| c.clear.is_some()).count() as u64;
+                    // A cluster of two straight edges reads its edge–edge
+                    // record (exact); others the stand-in.
+                    let flat = self.straight(A, e) && self.straight(B, g);
                     let s = c
                         .rec
-                        .s11(|_, cl| {
+                        .s11(|ci, cl| {
+                            if flat && cl.row == ZRow::EdgeEdge {
+                                let z = zorder_key(x, ci);
+                                let k = z.height_key(g);
+                                stats.zorder_records += 1;
+                                heights
+                                    .fill(
+                                        [k],
+                                        &ModelHeights { model: self },
+                                        band,
+                                        &mut Tally {
+                                            kind: "z-order",
+                                            stats,
+                                        },
+                                    )
+                                    .map_err(|_| ())?;
+                                let rec = heights.get(z.key, ZKey::anchor(g)).ok_or(())?;
+                                return Ok(z.above(&rec));
+                            }
                             stats.standins += 1;
                             zorder_standin(se, sg, cl).ok_or(())
                         })
@@ -1033,16 +1192,75 @@ impl World<'_> {
         }
     }
 
-    /// The windings of `op`'s vertices: seeded at its first cleared
-    /// vertex, carried by `x`'s rows summed.
-    fn windings_of(
+    /// The faces of `op` with a coedge on edge `g`.
+    fn faces_of(&self, op: Operand, g: EdgeId) -> Vec<FaceId> {
+        let b = &self.solid(op).brep;
+        self.solid(op)
+            .faces()
+            .into_iter()
+            .filter(|&f| {
+                b.loops(f)
+                    .any(|l| b.loop_coedges(l).any(|c| b.edge(c) == g))
+            })
+            .collect()
+    }
+
+    /// `x12[e][f]` (`op` = `A`) or `x21[g][f]` (`op` = `B`) from the face
+    /// counts of `op`'s vertices and `s11`.
+    fn cross_counts(
         &self,
         op: Operand,
         counts: &[Vec<i64>],
-        x: &[Vec<i64>],
+        s11: &[Vec<i64>],
+    ) -> Result<Vec<Vec<i64>>, Refusal> {
+        let (s, o) = (self.solid(op), self.solid(op.other()));
+        let boundary = |f: FaceId| -> Vec<Coedge> {
+            o.brep
+                .loops(f)
+                .flat_map(|l| o.brep.loop_coedges(l))
+                .map(|c| Coedge {
+                    edge: o.brep.edge(c),
+                    forward: !o.brep.reversed(c),
+                })
+                .collect()
+        };
+        let bad = |e| refused(Cause::Other(format!("cross {e:?}")), "x");
+        let mut out = Vec::new();
+        for e in s.edges() {
+            let [p, q] = s.brep.ends(e);
+            let mut row = Vec::new();
+            for f in o.faces() {
+                let ends = [counts[p.index()][f.index()], counts[q.index()][f.index()]];
+                let x = match op {
+                    A => x12(ends, &boundary(f), |g| {
+                        Ok::<_, ()>(s11[e.index()][g.index()])
+                    }),
+                    B => x21(ends, &boundary(f), |a| {
+                        Ok::<_, ()>(s11[a.index()][e.index()])
+                    }),
+                }
+                .map_err(bad)?;
+                row.push(x);
+            }
+            out.push(row);
+        }
+        Ok(out)
+    }
+
+    /// The windings of `op`'s vertices: seeded at its first cleared
+    /// vertex, carried by the crossing counts' rows summed, with the lobe
+    /// fallback at a winding outside `{0, 1}` (the vertex's hits near an
+    /// edge within whose near radius it lies re-read by the edge rule).
+    /// With the crossing counts as last counted and the fallbacks taken.
+    fn windings_of(
+        &self,
+        op: Operand,
+        r: &Recs,
+        fc: &mut FaceCounts,
+        s11: &[Vec<i64>],
         cfg: &Config,
         stats: &mut Stats,
-    ) -> Result<Vec<i64>, Refusal> {
+    ) -> Result<Windings, Refusal> {
         let (s, o) = (self.solid(op), self.solid(op.other()));
         let hulls: Vec<HullBox> = o
             .faces()
@@ -1062,33 +1280,95 @@ impl World<'_> {
             verts: s.brep.vert_count() as u32,
             edges: &ends,
         };
-        let (r, _) = seeds(&self.order, &graph, 1 << 20, |v| {
+        let (sr, _) = seeds(&self.order, &graph, 1 << 20, |v| {
             (Ok::<_, ()>(clear_of(s.brep.pos(v), cfg.eps_tie, &hulls)), 1)
         });
-        let sd = r.map_err(|e| refused(Cause::Seeds(format!("{e:?}")), format!("{op:?}")))?;
-        let mut seeded = Vec::new();
+        let sd = sr.map_err(|e| refused(Cause::Seeds(format!("{e:?}")), format!("{op:?}")))?;
         for seed in &sd {
             if seed.cleared {
                 stats.cleared_seeds += 1;
             } else {
                 stats.uncleared_seeds += 1;
             }
-            seeded.push((seed.vert, counts[seed.vert.index()].iter().sum()));
         }
-        windings(&self.order, &graph, &seeded, |e| {
-            Ok::<_, ()>(x[e.index()].iter().sum())
-        })
-        .map_err(|e| {
-            let cause = if e.is_signal() {
-                Cause::Signal(match e {
-                    WindingError::Disagree { .. } => "Disagree".into(),
-                    _ => "Outside".into(),
-                })
-            } else {
-                Cause::Other(format!("{e:?}"))
-            };
-            refused(cause, format!("{op:?}: {e:?}"))
-        })
+        // Per vertex, the edges of the other operand within whose near
+        // radius it lies and near which one of its pieces holds a hit, in
+        // geometric order.
+        let faces_at: Vec<Vec<FaceId>> = o
+            .edges()
+            .into_iter()
+            .map(|g| self.faces_of(op.other(), g))
+            .collect();
+        let zones: Vec<Vec<EdgeId>> = s
+            .verts()
+            .into_iter()
+            .map(|v| {
+                let q = Point::vert(op, v);
+                let mut es: Vec<_> = o
+                    .edges()
+                    .into_iter()
+                    .filter(|&g| {
+                        r.feet.get(q, g).is_some_and(|ft| !ft.feet.is_empty())
+                            && faces_at[g.index()]
+                                .iter()
+                                .any(|f| fc.pieces[v.index()][f.index()].near_edge(g))
+                    })
+                    .map(|g| (self.order.edge_key(op.other(), g), g))
+                    .collect();
+                es.sort();
+                es.into_iter().map(|(_, g)| g).collect()
+            })
+            .collect();
+        let reads = Records {
+            shadows: &r.shadows,
+            feet: &r.feet,
+            order: &self.order,
+        };
+        let band = Band::curved(0.0, cfg.target).expect("a band");
+        let mut lobes = Lobes::new();
+        let w = windings_lobed(
+            &self.order,
+            &graph,
+            &mut lobes,
+            |lobes| {
+                for q in lobes.points() {
+                    let v = vert(q);
+                    let at = lobes.at(q);
+                    for f in o.faces() {
+                        if !at.iter().any(|g| faces_at[g.index()].contains(&f)) {
+                            continue;
+                        }
+                        let p = &fc.pieces[v.index()][f.index()];
+                        let n = self.recount(&reads, p, &at, &mut fc.heights, band, stats)?;
+                        fc.counts[v.index()][f.index()] = n;
+                    }
+                }
+                let x = self.cross_counts(op, &fc.counts, s11)?;
+                let seeded = sd
+                    .iter()
+                    .map(|seed| (seed.vert, fc.counts[seed.vert.index()].iter().sum()))
+                    .collect();
+                let dw = x.iter().map(|row| row.iter().sum()).collect();
+                Ok((seeded, dw))
+            },
+            |q| Ok(zones[vert(q).index()].clone()),
+        )
+        .map_err(|e| match e {
+            WindingError::Recount(r) => r,
+            e => {
+                let cause = if e.is_signal() {
+                    Cause::Signal(match e {
+                        WindingError::Disagree { .. } => "Disagree".into(),
+                        _ => "Outside".into(),
+                    })
+                } else {
+                    Cause::Other(format!("{e:?}"))
+                };
+                refused(cause, format!("{op:?}: {e:?}"))
+            }
+        })?;
+        let x = self.cross_counts(op, &fc.counts, s11)?;
+        Ok((w, x, lobes.count() as u64))
     }
 
     /// The counting's answers, or why it has none.
@@ -1100,62 +1380,31 @@ impl World<'_> {
         let s11 = self.s11s(&r, cfg, stats);
         stats.time[2] += t.elapsed().as_secs_f64();
         let t = std::time::Instant::now();
-        let (s02, ea) = self.face_counts(&r, A, cfg, stats)?;
-        let (s20, eb) = self.face_counts(&r, B, cfg, stats)?;
+        let mut fa = self.face_counts(&r, A, cfg, stats)?;
+        let mut fb = self.face_counts(&r, B, cfg, stats)?;
         stats.time[1] += t.elapsed().as_secs_f64();
         let s11 = s11?;
-        let (a, b) = (self.solid(A), self.solid(B));
-        let boundary = |s: &Solid, f: FaceId| -> Vec<Coedge> {
-            s.brep
-                .loops(f)
-                .flat_map(|l| s.brep.loop_coedges(l))
-                .map(|c| Coedge {
-                    edge: s.brep.edge(c),
-                    forward: !s.brep.reversed(c),
-                })
-                .collect()
-        };
-        let bad = |e| refused(Cause::Other(format!("cross {e:?}")), "x");
-        let mut x12s = Vec::new();
-        for e in a.edges() {
-            let [p, q] = a.brep.ends(e);
-            let mut row = Vec::new();
-            for f in b.faces() {
-                let x = x12(
-                    [s02[p.index()][f.index()], s02[q.index()][f.index()]],
-                    &boundary(b, f),
-                    |g| Ok::<_, ()>(s11[e.index()][g.index()]),
-                )
-                .map_err(bad)?;
-                row.push(x);
-            }
-            x12s.push(row);
-        }
-        let mut x21s = Vec::new();
-        for g in b.edges() {
-            let [g0, g1] = b.brep.ends(g);
-            let mut row = Vec::new();
-            for f in a.faces() {
-                let x = x21(
-                    [s20[g0.index()][f.index()], s20[g1.index()][f.index()]],
-                    &boundary(a, f),
-                    |e| Ok::<_, ()>(s11[e.index()][g.index()]),
-                )
-                .map_err(bad)?;
-                row.push(x);
-            }
-            x21s.push(row);
-        }
-        let wa = self.windings_of(A, &s02, &x12s, cfg, stats)?;
-        let wb = self.windings_of(B, &s20, &x21s, cfg, stats)?;
+        let (wa, x12s, la) = self.windings_of(A, &r, &mut fa, &s11, cfg, stats)?;
+        let (wb, x21s, lb) = self.windings_of(B, &r, &mut fb, &s11, cfg, stats)?;
+        stats.lobes += la + lb;
         let column = |c: &[Vec<i64>]| c.iter().map(|r| r.iter().sum()).collect();
         Ok(Answers {
             winding: [wa, wb],
-            column: [column(&s02), column(&s20)],
+            column: [column(&fa.counts), column(&fb.counts)],
             x12: x12s,
             x21: x21s,
-            edge_height: [ea, eb],
+            lobes: la + lb,
         })
+    }
+}
+
+/// The refusal cause of a count error.
+fn count_cause(e: CountError) -> Cause {
+    match e {
+        CountError::Need(_) => Cause::Side("asked again".into()),
+        CountError::NeedHeight(_) | CountError::CurvedHit { .. } => Cause::Height,
+        CountError::OutOfBudget { cause, .. } => Cause::OutOfBudget(format!("{cause:?}")),
+        e => Cause::Count(short(&e)),
     }
 }
 
@@ -1164,6 +1413,11 @@ fn short(e: &CountError) -> String {
     match e {
         CountError::Box(b) => format!("Box({})", box_kind(b)),
         CountError::Piece(p) => format!("Piece({p:?})"),
+        CountError::Hits(h) => {
+            let s = format!("{h:?}");
+            let k = s.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("");
+            format!("Hits({k})")
+        }
         e => {
             let s = format!("{e:?}");
             s.split(|c: char| !c.is_alphanumeric())

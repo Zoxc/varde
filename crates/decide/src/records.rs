@@ -9,9 +9,10 @@
 //! of an edge near a point, [`cusp`] the certificate of a sharp corner
 //! (how its two curves come apart, where its spike is cut), [`side`] a point's ray against a box side on a
 //! tile line the counting can't certify off the point, [`height`] the
-//! height keys a point reads against a vertex, an edge or a face's layer,
-//! the layers themselves and the height records (and, in
-//! [`height::model`], the geometry they are decided from), [`near`] the
+//! height keys a point reads against a vertex, an edge or a column hit on
+//! a face, the column hits themselves (in [`height::hit`]) and the height
+//! records (and, in [`height::model`], the geometry they are decided
+//! from), [`near`] the
 //! operation's bands and near radii they read, and [`xrec`] the count of
 //! an edge pair's shadow crossings from four ray records and the degrees
 //! of the boxes of their parameter square.

@@ -2,10 +2,12 @@
 //! foot of point `q` on edge `g` is a 3D component of
 //! `{s : ‖C_g(s) − q‖ ≤ r}`, `r` the edge's near radius `r_g`, three
 //! times its band ([`super::near`]). Feet are part of the point's ray record
-//! against the edge; they name the point–curve height key (a foot whose
-//! edge ends are not near the point reads its own height), a face layer's
-//! feature, and the end the height key shares when an edge end lies in
-//! the foot ([`Foot::ends`], [`Foot::end_vertices`]). They are functions of the operands alone,
+//! against the edge; they name the point–curve height key where the point
+//! lies exactly on the edge (and the vertex key where it lies exactly at
+//! an edge end in the foot), the edge rule's key of the lobe fallback
+//! (the first near end in the foot, else the foot's own), and the
+//! neighbourhood the fallback re-reads ([`Foot::ends`],
+//! [`Foot::end_vertices`]). They are functions of the operands alone,
 //! decided once per record.
 //!
 //! **The polynomial.** On a span with homogeneous point `(P, W)`, `W > 0`

@@ -1,10 +1,11 @@
 //! A vertex of `A` on a corner of the cube `B = [0, 1]³`,
 //! `A` a box with that corner rotated about it. Each cube face at the
 //! corner counts its pieces' degrees to its ray records' winding (an
-//! integer, the records at the corner read once), its near layer reads
-//! the one point–vertex height `VV(v, w)`, decided per face by the face's
-//! own plane at the tie, and the counts over the cube are the winding of
-//! the moved point: 1 where `A`'s vertex direction points into the cube,
+//! integer, the records at the corner read once), its hit at the corner
+//! (the point exactly at the vertex: the germ rule) reads the one
+//! point–vertex height `VV(v, w)`, decided per face by the face's own
+//! plane at the tie, and the counts over the cube are the winding of the
+//! moved point: 1 where `A`'s vertex direction points into the cube,
 //! else 0.
 
 use varde_testkit::rng::Rng;
@@ -62,6 +63,8 @@ struct Cube {
     edges: BTreeMap<EdgeId, [VertId; 2]>,
     /// `A`'s vertex direction at the corner.
     d: DVec3,
+    /// `A`'s vertex.
+    at: DVec3,
 }
 
 /// How a cube face's square sits in its tiles.
@@ -165,6 +168,7 @@ impl Cube {
                 operand: Operand::B,
                 id: FaceId(n as u32 + 1),
                 tiles: [tiling.tiles(), tiling.tiles()],
+                nets: Some(crate::count::testing::nets_of(&patches)),
                 patches,
                 flipped: false,
                 trims,
@@ -175,6 +179,7 @@ impl Cube {
             order.pos.insert((Operand::B, VertId(k)), vpos(VertId(k)));
         }
         order.pos.insert((Operand::A, VertId(1)), [0.0; 3]);
+        let at = DVec3::ZERO;
         let edges: BTreeMap<EdgeId, [VertId; 2]> =
             edges.into_iter().map(|((a, b), e)| (e, [a, b])).collect();
         for (&e, &ends) in &edges {
@@ -185,7 +190,17 @@ impl Cube {
             order,
             edges,
             d,
+            at,
         }
+    }
+
+    /// The cube with `A`'s vertex at `at` instead.
+    fn with_vertex_at(mut self, at: DVec3) -> Cube {
+        self.at = at;
+        self.order
+            .pos
+            .insert((Operand::A, VertId(1)), at.to_array());
+        self
     }
 
     fn plane(&self, f: FaceId) -> (DVec3, f64) {
@@ -204,7 +219,7 @@ fn v() -> Point {
 impl ShadowGeometry for Cube {
     fn point(&self, p: Point) -> Moving {
         match (p.operand, p.q) {
-            (Operand::A, Query::Vert(VertId(1))) => Moving::of_a(DVec3::ZERO, Sign::Pos, self.d),
+            (Operand::A, Query::Vert(VertId(1))) => Moving::of_a(self.at, Sign::Pos, self.d),
             (Operand::B, Query::Vert(w)) => Moving::fixed(DVec3::from_array(vpos(w))),
             _ => panic!("no such point {p:?}"),
         }
@@ -239,13 +254,24 @@ impl HeightModel for Cube {
         Some(Cube::plane(self, f))
     }
 
+    fn flat_face(
+        &self,
+        _: Operand,
+        f: FaceId,
+    ) -> Option<crate::records::height::hit::FlatFace<'_>> {
+        self.faces[f.0 as usize - 1].flat(&self.order)
+    }
+
     fn plane_rates(&self, _: Point, _: FaceId, _: DVec3) -> [Rate; ORDERS] {
         [Rate::ZERO, Rate::ZERO, Rate::ZERO, Rate::ZERO]
     }
 
     fn foot_point(&self, _: Point, g: EdgeId, _: FootId) -> Option<Moving> {
-        // The point of the edge nearest the corner: its lesser end.
-        Some(Moving::fixed(DVec3::from_array(vpos(self.edges[&g][0]))))
+        // The point of the edge nearest `A`'s vertex (the edges are along
+        // the axes: exactly).
+        let [a, b] = self.edges[&g].map(|v| DVec3::from_array(vpos(v)));
+        let t = ((self.at - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+        Some(Moving::fixed(a + (b - a) * t))
     }
 
     fn curved_target<S: Curved>(&self, _: HKey, _: &S) -> Option<[S; 3]> {
@@ -263,6 +289,11 @@ use crate::perturb::Curved;
 /// The counts of `A`'s vertex at the corner against every cube face,
 /// filling the records they read.
 fn counts(cube: &Cube) -> Vec<i64> {
+    counts_keys(cube).0
+}
+
+/// [`counts`] and the height keys they read.
+fn counts_keys(cube: &Cube) -> (Vec<i64>, Vec<HKey>) {
     let q = v();
     let mut shadows = Shadows::new();
     let mut feet = NearFeet::new();
@@ -281,23 +312,30 @@ fn counts(cube: &Cube) -> Vec<i64> {
     let chain_of = |t: &TrimData| {
         let rec = shadows.ray(q, t.edge).expect("filled");
         let [a, b] = t.ends.map(vpos);
-        line_chain(&rec, a, b, [0.0; 3])
+        line_chain(&rec, a, b, cube.at.to_array())
     };
-    let mut layers = LayerTable::new();
     let mut heights = Heights::new();
+    let mut keys = Vec::new();
     let geom = ModelHeights { model: cube };
     let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
     let mut out = Vec::new();
     for f in &cube.faces {
         let p = f
-            .pieces(&cube.order, q, [0.0; 3], &chain_of, &reads, &Sides::new())
+            .pieces(
+                &cube.order,
+                q,
+                cube.at.to_array(),
+                &chain_of,
+                &reads,
+                &Sides::new(),
+            )
             .unwrap_or_else(|e| panic!("face {:?}: {e:?}", f.id));
-        layers.insert(q, f.id, p.layers(&reads).unwrap());
-        let wanted = p.wanted(&reads, &layers).unwrap();
+        let wanted = p.wanted(&reads, &[]).unwrap();
+        keys.extend(wanted.iter().map(|k| k.h));
         heights.fill(wanted, &geom, band, &mut Seq).unwrap();
-        out.push(p.count(&reads, &layers, &heights).unwrap());
+        out.push(p.count(&reads, &heights, &[]).unwrap());
     }
-    out
+    (out, keys)
 }
 
 /// A random rotation, from a random unit quaternion.
@@ -394,6 +432,39 @@ fn a_corner_on_a_tile_corner_with_its_sides_on_tile_lines() {
         let c = counts(&Cube::tiled(d, Tiling::Lines));
         assert_eq!(c.iter().sum::<i64>(), i64::from(inside), "d = {d:?}: {c:?}");
         seen[usize::from(inside)] += 1;
+    }
+    assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
+}
+
+/// `A`'s vertex exactly on an edge of the cube, inside it: the two faces
+/// at the edge read the edge's germ key `Curve(v, g, k)` (no hit's own
+/// key: its value would be zero on one sheet only), decided by each
+/// face's own plane at the tie, and the counts over the cube are the
+/// moved point's winding, flipping with the direction.
+#[test]
+fn a_point_on_a_cube_edge_reads_the_edge_s_germ_key() {
+    let mut rng = Rng::new(0x5c2d);
+    let mut seen = [0usize; 2];
+    let at = DVec3::new(0.375, 0.0, 0.0);
+    let mut dirs = vec![
+        DVec3::new(0.1, 1.0, 2.0),
+        DVec3::new(-0.3, -1.0, 2.0),
+        DVec3::new(0.2, 1.0, -0.5),
+    ];
+    for _ in 0..varde_testing::pick(4, 12) {
+        dirs.push(rng.direction());
+    }
+    for d in dirs {
+        for d in [d, -d] {
+            let inside = d.y > 0.0 && d.z > 0.0;
+            let (c, keys) = counts_keys(&Cube::new(d).with_vertex_at(at));
+            assert_eq!(c.iter().sum::<i64>(), i64::from(inside), "d = {d:?}: {c:?}");
+            assert!(
+                keys.iter().any(|k| matches!(k, HKey::Curve { .. })),
+                "d = {d:?}: {keys:?}"
+            );
+            seen[usize::from(inside)] += 1;
+        }
     }
     assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
 }

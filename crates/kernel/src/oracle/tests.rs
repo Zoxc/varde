@@ -4,8 +4,8 @@ use varde_testkit::rng::Rng;
 
 use super::families::{FAMILIES, KERNEL_EXACT};
 use super::runs::{
-    Counting, Outcome, Placement, Report, Truth, by_edge_height, check_answers, check_with,
-    counting, near_shift, oracle_faces, par, run, run_counted, truth, truths_near,
+    Counting, Outcome, Placement, Report, check_answers, check_with, counting, near_shift,
+    oracle_faces, par, run, run_counted, truth, truths_near,
 };
 use super::solids::{Shape, Solid, Turn};
 use super::world::{Answers, Config, Refusal, Stats};
@@ -227,7 +227,7 @@ fn counts_are_invariant() {
         });
         for (i, ((o, ans), (bo, bans))) in outs.iter().zip(&bases).enumerate() {
             match o {
-                Outcome::Agreed { .. } | Outcome::TieScale(_) | Outcome::EdgeHeight(_) => {
+                Outcome::Agreed { .. } | Outcome::TieScale(_) | Outcome::OperandLobe(_) => {
                     agreed += 1
                 }
                 Outcome::Mismatch(m) => {
@@ -325,18 +325,36 @@ fn placements_once_refused_agree() {
     }
 }
 
-/// Adversarial placements the runs once miscounted, each since fixed in
-/// the runs' height model (a stand-in for the store-backed one): a
+/// Adversarial placements the runs once miscounted, each since fixed: a
 /// vertex of `A` on an edge of `B` (exactly in the exact ties' seed 31,
 /// at a rounded point of the edge in the band family's seed 84), whose
 /// height against the edge read a rounded foot point a hair off the
-/// exact foot, of the other sign or none (a tie, decided by `A`'s
-/// motion). Seed 31 only by default (each takes seconds).
+/// exact foot, of the other sign or none; vertices within an edge's band
+/// whose near pieces took the edge's height for the faces' (band seeds
+/// 11, 66, 93, 97: a face's sheet on the other side of the vertex from
+/// the edge; roof-ridge seeds 63 and 88: a face's tile and ribbon on
+/// either side of it), now counted by their column hits' own heights;
+/// roof-ridge seeds 2 and 44, a vertex `10⁻¹⁷` off the ridge, where the
+/// ridge's stored curve (its middle control point a rounded midpoint)
+/// bent off the chord the edge–edge records read, so the faces' crossings
+/// split the other way (the edges are straight exactly since).
+/// Seed 31 only by default (each takes seconds).
 #[test]
 fn adversarial_placements_once_miscounted_agree() {
     let cases: &[(&str, u64)] = varde_testing::pick(
         &[("half grid", 31)],
-        &[("half grid", 31), ("band of an edge", 84)],
+        &[
+            ("half grid", 31),
+            ("band of an edge", 84),
+            ("band of an edge", 11),
+            ("band of an edge", 66),
+            ("band of an edge", 93),
+            ("band of an edge", 97),
+            ("roof-ridge", 63),
+            ("roof-ridge", 88),
+            ("roof-ridge", 2),
+            ("roof-ridge", 44),
+        ],
     );
     let outs = par(cases.len() as u64, threads(), &|i| {
         let (family, seed) = cases[i as usize];
@@ -352,9 +370,140 @@ fn adversarial_placements_once_miscounted_agree() {
     }
 }
 
+/// A line span is straight only where its middle control point is the
+/// exact midpoint: a rounded one bends the stored curve (which the
+/// counting surface ends on) off the chord (which a straight edge's
+/// records read), by up to half an ulp.
+#[test]
+fn a_rounded_midpoint_is_no_line() {
+    use super::solids::{is_line, line, snap};
+    // `a + b` exact: straight.
+    assert!(is_line(&[line([0.5, 1.0, 2.0], [0.25, 3.0, -1.0])]));
+    // `0.1 + 0.7` rounds: the midpoint is a hair off the chord.
+    let (a, b) = ([0.1, 0.0, 0.0], [0.7, 0.0, 0.0]);
+    assert_ne!(
+        num_rational(0.1) + num_rational(0.7),
+        num_rational(0.1 + 0.7)
+    );
+    assert!(!is_line(&[line(a, b)]));
+    // Snapped, every pair's line is straight.
+    let vs = snap(&[a, b, [-0.3, 1.0 / 3.0, 1.9], [1.7, -0.123, 0.456]]);
+    for p in &vs {
+        for q in &vs {
+            assert!(is_line(&[line(*p, *q)]), "{p:?} {q:?}");
+        }
+    }
+    // Snapping moves a coordinate by at most an ulp of the largest.
+    for (p, q) in vs
+        .iter()
+        .zip([a, b, [-0.3, 1.0 / 3.0, 1.9], [1.7, -0.123, 0.456]])
+    {
+        for k in 0..3 {
+            assert!((p[k] - q[k]).abs() <= 2.0 * f64::EPSILON, "{p:?} {q:?}");
+        }
+    }
+}
+
+/// Every edge of the polyhedra the families build is straight exactly.
+#[test]
+fn polyhedra_edges_are_straight_exactly() {
+    for seed in 0..placements(8, 64) {
+        for family in ["roof-ridge", "band of an edge", "shared corner"] {
+            let p = family_named(family)(seed);
+            for (shape, make) in [(&p.a, &p.make_a), (&p.b, &p.make_b)] {
+                if !matches!(shape, Shape::Box { .. } | Shape::Poly { .. }) {
+                    continue;
+                }
+                let s = shape.build(make);
+                assert!(
+                    s.straight.iter().all(|&x| x),
+                    "{family} seed {seed}: {shape:?}"
+                );
+            }
+        }
+    }
+}
+
+fn num_rational(x: f64) -> malachite::Rational {
+    malachite::Rational::try_from(x).expect("finite")
+}
+
+/// A shared corner whose count once ran out of precision: `B`'s vertex 3
+/// on `A`'s vertex, against `A`'s plane face 4, a strip's cut next to the
+/// vertex no level certified off the vertex's ray; the corner's piece now
+/// takes its curves' near strip leaves, so its cuts lie past them.
+/// `VARDE_TESTS=full` only (seconds).
+#[test]
+fn a_shared_corner_s_counts_settle() {
+    let cases: &[(&str, u64)] = varde_testing::pick(&[], &[("shared corner", 1)]);
+    for &(family, seed) in cases {
+        let o = check_answers(
+            &family_named(family)(seed),
+            &Config::RUNS,
+            &mut Stats::default(),
+        )
+        .0;
+        assert!(
+            !matches!(&o, Outcome::Refused(super::world::Cause::OutOfBudget(_), _)),
+            "{family} seed {seed}: {o:?}"
+        );
+    }
+}
+
+/// Placements whose column passes within rounding of an edge, or
+/// through it exactly: their boxes once ran out of precision (roof-ridge
+/// seeds 9 and 15, a vertex `3·10⁻¹⁷` off the ridge) or read both faces
+/// at a cube edge as holding the moved column (kernel-exact seeds 9, 19
+/// and 24, a corner of `A` exactly on the edge); a plane face is now
+/// counted by its exact hits where its boxes don't settle or disagree
+/// with them, and a box holding a hit at `q`'s height stops at its last
+/// split. Each agrees, the exact ones with `±d` too. `VARDE_TESTS=full`
+/// only (seconds).
+#[test]
+fn columns_at_an_edge_count_by_their_hits() {
+    let cases: &[(&str, u64)] = varde_testing::pick(
+        &[],
+        &[
+            ("roof-ridge", 9),
+            ("roof-ridge", 15),
+            (KERNEL_EXACT, 9),
+            (KERNEL_EXACT, 19),
+            (KERNEL_EXACT, 24),
+        ],
+    );
+    let outs = par(cases.len() as u64, threads(), &|i| {
+        let (family, seed) = cases[i as usize];
+        let c = check_with(
+            &family_named(family)(seed),
+            &Config::RUNS,
+            &mut Stats::default(),
+            family == KERNEL_EXACT,
+        );
+        (family, seed, c.outcome, c.flip)
+    });
+    for (family, seed, o, flip) in outs {
+        assert!(
+            matches!(o, Outcome::Agreed { .. }),
+            "{family} seed {seed}: {o:?}"
+        );
+        if family == KERNEL_EXACT {
+            assert!(
+                matches!(
+                    flip,
+                    Some(super::runs::Flip::Checked {
+                        sides: [true, true],
+                        ..
+                    })
+                ),
+                "{family} seed {seed}: {flip:?}"
+            );
+        }
+    }
+}
+
 /// Ties exact in the counting's own records ([`KERNEL_EXACT`]): every
 /// placement the counting answers agrees with the oracle (its tie shift
-/// along `d`, no tie-scale or edge-height allowance), with `−d` it
+/// along `d`, no tie-scale allowance, no operand lobe), with `−d` it
 /// agrees with the oracle at `−2^-28·d`, and the two counts differ
 /// exactly where the oracle's answers at `±2^-28·d` do, some placements
 /// flipping. Two placements by default (a corner of `A` on a face of
@@ -404,7 +553,7 @@ fn kernel_exact_violations(r: &Report) -> Vec<&'static str> {
         (r.mismatches.is_empty(), "mismatches"),
         (r.unresolved.is_empty(), "oracle unresolved"),
         (r.tie_scale.is_empty(), "tie-scale results"),
-        (r.edge_height.is_empty(), "edge-height results"),
+        (r.operand_lobe.is_empty(), "operand lobes"),
     ] {
         if !x {
             bad.push(what);
@@ -480,74 +629,6 @@ fn the_kernel_exact_check_catches_a_broken_counting() {
     }
 }
 
-/// The edge-height class explains a difference from the oracle only at
-/// a vertex whose layer of a face an edge's height decided: its winding
-/// and column, and its edges' crossing counts with that face; anything
-/// else stays a mismatch.
-#[test]
-fn edge_height_explains_only_its_vertex() {
-    let p = family_named(KERNEL_EXACT)(0);
-    let (a, b) = (p.a.build(&p.make_a), p.b.build(&p.make_b));
-    let zeros = |n: usize, m: usize| vec![vec![0; m]; n];
-    let (na, nb) = (a.verts().len(), b.verts().len());
-    let (ea, eb) = (a.edges(), b.edges());
-    let (fa, fb) = (a.faces().len(), b.faces().len());
-    let t = Truth {
-        winding: [vec![0; na], vec![0; nb]],
-        x12: zeros(ea.len(), fb),
-        x21: zeros(eb.len(), fa),
-        ties: 0,
-    };
-    let mut base = Answers {
-        winding: t.winding.clone(),
-        column: t.winding.clone(),
-        x12: t.x12.clone(),
-        x21: t.x21.clone(),
-        edge_height: [vec![vec![false; fb]; na], vec![vec![false; fa]; nb]],
-    };
-    // Vertex 0 of `A`: its layer of `B`'s face 1 decided by an edge.
-    base.edge_height[0][0][1] = true;
-    let from = |v: usize| {
-        ea.iter()
-            .position(|&e| a.brep.ends(e).iter().any(|u| u.index() == v))
-    };
-    let not_from = ea
-        .iter()
-        .position(|&e| a.brep.ends(e).iter().all(|u| u.index() != 0));
-    let (e0, e1) = (
-        from(0).expect("an edge from v0"),
-        not_from.expect("an edge"),
-    );
-    type Mutation = (&'static str, fn(&mut Answers, usize, usize), bool);
-    let cases: [Mutation; 7] = [
-        ("winding at v0", |c, _, _| c.winding[0][0] = 1, true),
-        ("column at v0", |c, _, _| c.column[0][0] = 1, true),
-        (
-            "x12 of an edge from v0, face 1",
-            |c, e0, _| c.x12[e0][1] = 1,
-            true,
-        ),
-        ("winding at v1", |c, _, _| c.winding[0][1] = 1, false),
-        (
-            "x12 of an edge from v0, face 0",
-            |c, e0, _| c.x12[e0][0] = 1,
-            false,
-        ),
-        (
-            "x12 of an edge not from v0",
-            |c, _, e1| c.x12[e1][1] = 1,
-            false,
-        ),
-        ("winding of B's v0", |c, _, _| c.winding[1][0] = 1, false),
-    ];
-    assert!(by_edge_height(&base, &t, &a, &b));
-    for (name, m, ok) in cases {
-        let mut c = base.clone();
-        m(&mut c, e0, e1);
-        assert_eq!(by_edge_height(&c, &t, &a, &b), ok, "{name}");
-    }
-}
-
 /// Placements whose oracle answers once ran past the shifted count's
 /// box cap: in the exact-ties grid's seed 0 two boxes share a corner,
 /// and an edge from it, moved by the tie shift, crosses the other's face
@@ -566,39 +647,26 @@ fn the_oracle_settles_placements_it_once_gave_up_on() {
     }
 }
 
-/// Adversarial placements whose difference from the oracle is known:
-/// a vertex within an edge's band whose layer the edge's height decides
-/// though the face lies on the other side of it (band of an edge seed
-/// 11, roof ridge seed 82, where the oracle's own answer with its tie
-/// shift sits in the faces' rounding misfit and the edge-height rule
-/// explains the difference from its answer at `2^-28·d`); and a vertex
-/// on a ridge whose counting equals the oracle's at both `±2^-28·d`
-/// while its answer with the tie shift, in the misfit, differs from
-/// both (roof ridge seeds 63 and 88: tie-scale, not a mismatch; the
-/// oracle's answer about the vertex changes only within about `2^-32`
-/// of it, along `±d` and other directions alike, so the sheets meeting
-/// there straddle it only within the misfit).
-/// `VARDE_TESTS=full` only (seconds each).
+/// Adversarial placements at an operand lobe: the oracle's winding of a
+/// vertex lies outside `{0, 1}` (the faces at an edge overshoot each
+/// other by their perturbed p-curves' seam, so their counting surfaces
+/// aren't embedded at the vertex), the counting takes the lobe fallback
+/// there and answers (roof ridge seed 82). `VARDE_TESTS=full` only
+/// (seconds each).
 #[test]
-fn known_differences_are_classified() {
-    type Case = (&'static str, u64, fn(&Outcome) -> bool);
-    let cases: &[Case] = varde_testing::pick(
-        &[],
-        &[
-            ("band of an edge", 11, |o| {
-                matches!(o, Outcome::EdgeHeight(_))
-            }),
-            ("roof-ridge", 82, |o| matches!(o, Outcome::EdgeHeight(_))),
-            ("roof-ridge", 63, |o| matches!(o, Outcome::TieScale(_))),
-            ("roof-ridge", 88, |o| matches!(o, Outcome::TieScale(_))),
-        ],
-    );
+fn operand_lobes_take_the_fallback() {
+    let cases: &[(&str, u64)] = varde_testing::pick(&[], &[("roof-ridge", 82)]);
     let outs = par(cases.len() as u64, threads(), &|i| {
-        let (family, seed, _) = cases[i as usize];
+        let (family, seed) = cases[i as usize];
         let f = family_named(family);
-        check_answers(&f(seed), &Config::RUNS, &mut Stats::default()).0
+        check_answers(&f(seed), &Config::RUNS, &mut Stats::default())
     });
-    for ((family, seed, ok), o) in cases.iter().zip(outs) {
-        assert!(ok(&o), "{family} seed {seed}: {o:?}");
+    for ((family, seed), (o, answers)) in cases.iter().zip(outs) {
+        assert!(
+            matches!(o, Outcome::OperandLobe(_)),
+            "{family} seed {seed}: {o:?}"
+        );
+        let lobes = answers.map_or(0, |a| a.lobes);
+        assert!(lobes > 0, "{family} seed {seed}: no lobe fallback");
     }
 }

@@ -1,8 +1,8 @@
-//! The layers of a face above or below a point: `s02(q, f)`, `q` a point
-//! of `A` and `f` a face of `B`, the winding of an upward ray from `q`
-//! through `f`'s counting surface (`+1` per up-facing layer above `q`,
+//! The column hits of a face above or below a point: `s02(q, f)`, `q` a
+//! point of `A` and `f` a face of `B`, the winding of an upward ray from
+//! `q` through `f`'s counting surface (`+1` per up-facing hit above `q`,
 //! `−1` per down-facing one), and `s20(q, f)`, `q` of `B` and `f` of `A`,
-//! the downward ray's (`+1` per down-facing layer below `q`, `−1` per
+//! the downward ray's (`+1` per down-facing hit below `q`, `−1` per
 //! up-facing one).
 //!
 //! **Pieces.** The face's tiles are refined into boxes ([`role`]): an
@@ -12,16 +12,28 @@
 //! a thin box always refines. The others refine until **height-clear**,
 //! their (padded) hull certified above or below `q` along `UP`, or small:
 //! a strip or corner box within its curves' least band across, a core box
-//! within `ε_tie` ([`FaceQuery::eps_tie`]). A core leaf is a piece of its
-//! own, its degree its box's ([`box_degree_sided`]); where the level
-//! doesn't certify that (a side inside a tile not certified off `q_xy`,
-//! too long for its turn or through it), it refines. The strip and corner
-//! leaves form **runs**: the leaves of one strip (one coedge, or a slit's)
-//! or one corner, of one height class (above, below, near), joined where
-//! they share a side; each run with its curves' ribbons is a piece
+//! within `ε_tie` ([`FaceQuery::eps_tie`]). The size is no stop for the
+//! heights: on a plane face the **column hits** are exact points on the
+//! stored tiles and ribbons ([`hit`](crate::records::height::hit)), which
+//! need no box size to hold them apart, and boxes refined that far are
+//! mostly height-clear, which costs less than their hits (on a curved
+//! face the hits are isolated by a later stage). A core
+//! leaf is a piece of its own, its degree its box's
+//! ([`box_degree_sided`]); where the level doesn't certify that (a side
+//! inside a tile not certified off `q_xy`, too long for its turn or
+//! through it), it refines. The strip and corner leaves form **runs**:
+//! the leaves of one strip (one coedge, or a slit's) or one corner, of one
+//! height class (above, below, near), joined where they share a side;
+//! each run with its curves' ribbons is a piece
 //! ([`strip_degree`](super::pieces::strip_degree)), a corner's run with
 //! every coedge of the corner. A run passing a point twice is taken box
-//! by box.
+//! by box. A near piece counts each hit it holds by its own height and
+//! facing where every hit lies strictly inside its boxes, none on the
+//! face's boundary at `q` (which the moved column may miss), and their
+//! facings sum to its degree; else its degree by one hit where they are
+//! at one exact side of `q` (or all at `q`); else it is taken box by box
+//! (degrees are additive, so any grouping of a run's boxes partitions its
+//! piece), and a box that still doesn't settle refines.
 //!
 //! **Refining runs.** A run the level can't settle (a cut next to the
 //! ray, a run the curve doesn't cut and nothing on its boundary places,
@@ -30,19 +42,19 @@
 //! (a cut's window, a side's stretch, a curve's end, the uncut loop:
 //! [`strip_degree_near`]), or all of them where the piece names none, and
 //! the runs are built again. So a long run refines next to its cut, not
-//! along its length.
+//! along its length. A run whose boxes the trims miss altogether (checked
+//! exactly, [`span_meets`]) is no strip: its boxes are core or outside
+//! by the trims' winding about a point of them, exactly
+//! ([`winding_of`]).
 //!
 //! **Runs near `q`.** A cut between a near run and dropped leaves of its
 //! owner next to it that no window certifies off the ray stays there
 //! however the boxes refine: a dropped box's parts are dropped, and the
 //! near run's boxes are within their size already. So the dropped leaves
-//! there join the near run (their degree, ribbons included, is 0), and
-//! its cut moves past them, away from `q`. A joined leaf is near; it
-//! doesn't name the layer: the piece's features, key and touching are
-//! its other leaves'. A height-clear leaf never joins: it may hold the
-//! column's crossing, whose degree counts by the leaf's height, and the
-//! record naming a near layer (a vertex, a foot) can lie on the other
-//! side of `q` from it (a steep face); a cut next to one refines as any
+//! there join the near run (their degree, ribbons included, is 0, and
+//! they hold no hit), and its cut moves past them, away from `q`. A
+//! height-clear leaf never joins: it may hold the column's hit, whose
+//! degree counts by the leaf's height; a cut next to one refines as any
 //! other.
 //!
 //! **Around a vertex.** A corner's vertex lying on a box side (on a tile
@@ -53,50 +65,70 @@
 //! corner), a run that doesn't hold every box around it has cuts next to
 //! `q` that no level certifies off its ray. So the corner's leaves
 //! holding one of its vertices (in their closed UV box) are one run,
-//! whatever their heights: their class
-//! is the one class of those not dropped, or, where they differ, near,
-//! once each is within the band (a dropped one joins: its degree, ribbons
-//! included, is 0). Such a run lies within a band or two of the vertex:
-//! where it is near, the vertex is near `q` and names the layer.
+//! whatever their heights: their class is the one class of those not
+//! dropped, or, where they differ, near, once each is settled (a dropped
+//! one joins: its degree, ribbons included, is 0).
 //!
 //! **Heights.** A height-clear piece is geometric: `s02` sums the degrees
-//! of the pieces above `q`, `s20` the negated degrees of those below. The
-//! near pieces lie within `q`'s near radius and are found as layers
-//! ([`LayerPieces`]): a near piece holds the corner's vertices where it
-//! is a corner's run around them, and `q`'s feet on its ribbons' edges
-//! whose stretch meets the p-curve spans its boxes meet; near pieces
-//! touching in UV are joined; a piece without features is keyed by its
-//! first box's hull centre. A layer of near pieces reads its height
-//! record ([`height_key`] against the layer, anchored at the face) once:
-//! above (below for `s20`), its pieces' degrees count. So an overhanging
-//! layer away from `q` (a face overhanging its own edge in the shadow)
-//! is height-clear and counts by its own height, and every face at a
-//! shared vertex reads the one point–vertex record.
+//! of the pieces above `q`, `s20` the negated degrees of those below. A
+//! near piece reads its hits' height records ([`height_key`] against the
+//! hit, anchored at the face: the hit's own key `Hit(q, f, sheet, i)`
+//! but where the hit lies exactly on a vertex or edge of the face at
+//! `q`'s height, the germ key): each hit above (below for `s20`) counts
+//! its facing, or the piece's degree where it counts by one hit (a piece
+//! of degree 0 so counting reads nothing). So an overhanging sheet
+//! (a face overhanging its own edge in the shadow) counts by its own
+//! height, the tile and ribbon of one face straddling `q` count each by
+//! its own, and every face at a shared vertex reads the one point–vertex
+//! record. A near piece of non-zero degree holding no hit is
+//! [`CountError::NoHit`] (on a plane face only where its hits can't be
+//! counted alone, below); on a curved face it is [`CountError::CurvedHit`].
 //!
-//! **The fold rule.** A layer none of whose pieces has a non-zero degree
-//! contributes nothing and reads no record (the column doesn't enter it).
-//! A layer whose record is a fold's (its anchor's facing certified at no
-//! level, [`HeightRec::fold`]) contributes the fold's upper sheet's
-//! facing (`+1` up), for `s02` and `s20` alike: `q` lies between the two
-//! sheets, the upper one above it and the lower below.
+//! **By the hits.** On a plane face the column's hits are exact, and
+//! their facings sum to the degree of the face's pieces. Where the hits
+//! were found and the pieces disagree with them (their degrees summing to
+//! another value, or a near piece of non-zero degree holding none: a
+//! column within rounding of an edge, where the boxes' records decide at
+//! a level the hits are exact past), and where the boxes don't settle at
+//! any level, the face is counted by its hits alone: each hit clear of
+//! `q`'s height and of every edge's near radius by its exact height, the
+//! others as one near piece counting each by its record and facing. A
+//! hit whose facing isn't formed, or on the face's boundary at `q` (which
+//! the moved column may miss), leaves the pieces' answer.
+//!
+//! **The lobe fallback** ([`FacePieces::count`]'s `lobe`). Where the
+//! winding the hits give leaves `{0, 1}` at a point within an edge `g`'s
+//! near radius (the faces at `g` overshooting each other there, so their
+//! counting surfaces aren't embedded: a lobe; [`crate::count::winding`]),
+//! the point's hits near `g` (each
+//! hit records the edges whose near radius holds it, with the point's
+//! foot there) read the edge rule's key
+//! ([`edge_rule_key`]) instead.
+//!
+//! **The fold rule.** A piece whose record is a fold's (its anchor's
+//! facing certified at no level, [`HeightRec::fold`]) contributes the
+//! fold's upper sheet's facing (`+1` up), for `s02` and `s20` alike: `q`
+//! lies between the two sheets, the upper one above it and the lower
+//! below.
 //!
 //! **What the caller gives** ([`FaceQuery`]): the face's boxes' data
 //! ([`FaceUv`], its [`Corners`], its tiles' patches at the level worked
 //! at), per trim its edge and ribbon ([`TrimEdge`]: the edge's curve, the
 //! p-spans' places on it, the query point's ray record against it,
-//! [`line_chain`] for a straight edge), the query point and `ε_tie`. The
-//! counting asks for records it reads and doesn't find
-//! ([`CountError::Need`], [`CountError::NeedHeight`]): fill them and ask
-//! again.
+//! [`line_chain`] for a straight edge), a plane face's stored tile nets,
+//! the query point and `ε_tie`. The counting asks for records it reads and
+//! doesn't find ([`CountError::Need`], [`CountError::NeedHeight`]): fill
+//! them and ask again.
 //!
 //! **Termination** ([`count_pieces`]). Refinement is in space first: a
 //! box splits at most [`MAX_SUBDIV_DEPTH`] times from its tile in each of `u`
 //! and `v` (halvings of its sides, as the cap counts them), and a
 //! piece the level doesn't settle by then (or at the boxes' own depth
-//! limit) leaves the level unsettled. Then in precision: the whole count
-//! runs again at the next level of the schedule ([`LEVELS`]: `f64`,
-//! double-double, the big-float widths), the patches lifted exactly. A
-//! count still unsettled at the last level is
+//! limit) leaves the level unsettled: a plane face is then counted by its
+//! hits (above), a curved one runs again in precision: at the next level
+//! of the schedule ([`LEVELS`]: `f64`, double-double, the big-float
+//! widths), the patches lifted exactly. A count still unsettled at the
+//! last level is
 //! [`CountError::OutOfBudget`] with [`Exhausted::Precision`], keyed by
 //! the point and the face, never a loop. Every piece tested is charged,
 //! at its level's units ([`Charge`]), against the share of the budget the
@@ -105,6 +137,7 @@
 //! above it. [`MAX_LEAVES`] and [`MAX_ROUNDS`] are fixed limits,
 //! [`Exhausted::SizeLimit`].
 
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
@@ -121,15 +154,18 @@ use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::{Bounded, add_up, mul_up, up};
 use crate::num::decide::Sign;
-use crate::order::Pos;
+use crate::order::{Along, EntityOrder};
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::feet::Foot;
-use crate::records::height::{
-    Feature, HeightReads, Heights, KeyError, LayerPieces, LayerTable, Layers, height_key,
+use crate::records::height::hit::{
+    FlatFace, FlatTrim, Hit, HitAt, HitError, edge_t, face_hits, span_meets, winding_of,
 };
-use crate::records::keys::{Anchor, HeightKey, LayerId, Operand, Point, Target};
+use crate::records::height::{HeightReads, Heights, KeyError, edge_rule_key, height_key};
+use crate::records::keys::{
+    Anchor, FootId, HKey, HeightKey, Incidence, Operand, Oriented, Point, RayKey, RecordKey, Target,
+};
 use crate::records::ray::RayLevel;
-use crate::records::ray::{ChainCrossing, ChainRec, Crossing};
+use crate::records::ray::{ChainCrossing, ChainRec, Crossing, TileNet};
 use crate::records::shadow::{
     AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, UNITS, ladder,
 };
@@ -212,8 +248,13 @@ pub struct FaceQuery<'a, 'f, S> {
     pub point: Point,
     /// Its stored position.
     pub at: [f64; 3],
-    /// The size a core box near `q` refines to, finite and positive.
+    /// The size a core box near `q` refines to on a curved face, finite
+    /// and positive.
     pub eps_tie: f64,
+    /// A plane face's tiles' stored nets, one per tile in
+    /// [`FaceUv::tile_boxes`]' order (module docs, "Pieces"): its column
+    /// hits are exact on them; `None` for a curved face.
+    pub nets: Option<&'a [TileNet]>,
 }
 
 /// Why a face's count isn't certified.
@@ -225,12 +266,30 @@ pub enum CountError {
     /// A piece reads this side or dyadic point record, not yet decided:
     /// fill it and ask again.
     Need(Want),
-    /// A layer reads this height record, not yet decided: fill it (with
+    /// A piece reads this height record, not yet decided: fill it (with
     /// every anchor of its key) and ask again.
     NeedHeight(HeightKey),
-    /// A record a layer's key reads is missing, or the layers aren't
-    /// stored ([`FacePieces::layers`]).
+    /// A record a hit's key reads is missing.
     Key(KeyError),
+    /// The column's hits on the plane face can't be formed (the column in
+    /// the plane, along a radial, tangent to a ribbon at `q`'s height).
+    Hits(HitError),
+    /// A near piece of non-zero degree holds no hit of the column: the
+    /// exact hits and the boxes' records disagree.
+    NoHit {
+        /// The query point.
+        point: Point,
+        /// The face.
+        face: FaceId,
+    },
+    /// A near piece of a curved face holds the column (non-zero degree):
+    /// its hit's height needs the curved hits, which aren't formed here.
+    CurvedHit {
+        /// The query point.
+        point: Point,
+        /// The face.
+        face: FaceId,
+    },
     /// A strip or corner piece is refused (a ribbon that doesn't fit, a
     /// corner missing a coedge's ribbon).
     Piece(PieceError),
@@ -306,19 +365,64 @@ struct Leaf {
     met: SmallVec<[SpanRef; 8]>,
     /// The splits from its tile, in `u` and in `v`.
     splits: [u32; 2],
+    /// The column's hits in its closed box, by index (on a plane face,
+    /// found for a near leaf; `None` until asked for).
+    hits: Option<SmallVec<[u32; 2]>>,
 }
 
-/// A near piece: its degree and what names its layer.
+/// Whether a set of hits is settled for one piece: at most one, or all at
+/// one exact side of `q`, or all at `q` itself (one point, on several
+/// sheets: a vertex or an edge of the face there, the germ rule's; module
+/// docs, "Pieces").
+fn settled(hits: &[Hit], ix: &[u32]) -> bool {
+    match ix {
+        [] | [_] => true,
+        [first, rest @ ..] => {
+            let h = hits[*first as usize].height;
+            rest.iter().all(|&k| hits[k as usize].height == h)
+        }
+    }
+}
+
+/// The union of index sets, ascending.
+fn union<'i>(sets: impl IntoIterator<Item = &'i SmallVec<[u32; 2]>>) -> SmallVec<[u32; 2]> {
+    let mut out: SmallVec<[u32; 2]> = sets.into_iter().flatten().copied().collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// A near piece: its degree and the column's hits it holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NearPiece {
     /// Its degree.
     pub degree: i64,
-    /// Its features: the corner's vertices, `q`'s feet on its edges.
-    pub features: SmallVec<[Feature; 2]>,
-    /// Its geometric key, for a layer without features: its first box's
-    /// hull centre.
-    pub core: Option<Pos>,
-    boxes: Vec<BoxKey>,
+    /// The hits in its boxes (closed), by index into [`FacePieces::hits`],
+    /// ascending.
+    pub hits: SmallVec<[u32; 2]>,
+    /// Whether it counts each of its hits by its own height and facing
+    /// (each strictly inside its boxes, their facings summing to its
+    /// degree); else its degree counts by one hit's height (at most one
+    /// hit, or all at one exact side of `q` or at `q`).
+    pub each: bool,
+}
+
+/// A column hit of the point on the face, as the counting reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HitTarget {
+    /// The target its height key is read against (its incidence
+    /// resolved to the point's foot).
+    pub target: Target,
+    /// Its height above the point, exactly (`Equal`: a tie the record's
+    /// orders decide).
+    pub height: Ordering,
+    /// The sheet's facing there as an upward ray counts it, `Pos` facing
+    /// up (`None` at a radial of no length at the point).
+    pub facing: Option<Sign>,
+    /// The face's edges whose near radius holds the hit, with the point's
+    /// foot on each that the edge rule reads ([`edge_rule_key`]); an edge
+    /// on which the point has no foot is left out.
+    pub near: SmallVec<[(EdgeId, FootId); 2]>,
 }
 
 /// A face's pieces against a point (module docs): the height-clear
@@ -335,7 +439,10 @@ pub struct FacePieces {
     pub below: i64,
     /// The near pieces.
     pub near: Vec<NearPiece>,
-    joins: Vec<(usize, usize)>,
+    /// The column's hits on a plane face; empty on a curved one.
+    pub hits: Vec<HitTarget>,
+    /// Whether the face is curved: its hits aren't formed.
+    pub curved: bool,
     /// The pieces tested (boxes, span pieces, sides).
     pub pieces: u64,
 }
@@ -510,19 +617,39 @@ fn components(n: usize, linked: impl Fn(usize, usize) -> bool) -> Vec<Vec<usize>
     out.into_values().collect()
 }
 
-struct Ctx<'q, 'a, 'f, S, R> {
+/// A plane face's exact data and the column's hits on it, found when
+/// first asked for (a face whose leaves are all clear or dropped asks
+/// none).
+struct Flat<'a> {
+    face: FlatFace<'a>,
+    at: [f64; 3],
+    hits: OnceCell<Result<Vec<Hit>, HitError>>,
+}
+
+impl Flat<'_> {
+    /// The column's hits on the face.
+    fn hits(&self) -> Result<&[Hit], CountError> {
+        self.hits
+            .get_or_init(|| face_hits(&self.face, self.at))
+            .as_deref()
+            .map_err(|e| CountError::Hits(*e))
+    }
+}
+
+struct Ctx<'q, 'a, 'f, S> {
     fq: &'q FaceQuery<'a, 'f, S>,
     sides: &'q Sides,
-    reads: &'q R,
     q: QShadow,
     up_q: [f64; 2],
     like: S,
     pieces: u64,
     /// The most pieces the count may test.
     limit: u64,
+    /// On a plane face, its hits.
+    flat: Option<Flat<'a>>,
 }
 
-impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
+impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
     fn patch(&self, b: &BoxKey) -> Result<&'a HomPatch<S>, CountError> {
         self.fq
             .face
@@ -629,6 +756,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                         joined: false,
                         met: r.met,
                         splits,
+                        hits: None,
                     });
                 }
                 continue;
@@ -642,12 +770,36 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                 Some(Ordering::Less) => Some(Height::Below),
                 _ => None,
             };
+            // Settled for its hits (module docs, "Pieces"): on a plane
+            // face a near box holding at most one, or several at one
+            // exact side of `q`; on a curved face a box within its size.
+            // Small: a strip or corner box within its curves' least band
+            // across, a core box within `ε_tie`. A plane face's hits are
+            // exact points, which need no box size to hold them apart; its
+            // near boxes still refine to that size, as height-clear boxes
+            // cost less than hits (module docs, "Pieces").
             let size = if owner == Owner::Core {
                 self.fq.eps_tie
             } else {
                 pad
             };
-            let small = box_hull(patch, &b).is_some_and(|hb| within_band(&hb, size));
+            let mut small = box_hull(patch, &b).is_some_and(|hb| within_band(&hb, size));
+            // On a plane face a near box at its last split holding settled
+            // hits (a hit at `q`'s height, which no box size clears) stops
+            // there as a small one.
+            if !small
+                && !thin
+                && h.is_none()
+                && splits.iter().any(|&s| s + 1 >= MAX_SUBDIV_DEPTH)
+                && let Some(f) = &self.flat
+            {
+                let ix = self.hits_in(&b)?;
+                small = settled(f.hits()?, &ix);
+            }
+            let hits = match &self.flat {
+                Some(_) if h.is_none() && small && !thin => Some(self.hits_in(&b)?),
+                _ => None,
+            };
             if !thin && (h.is_some() || small) {
                 out.push(Leaf {
                     b,
@@ -657,6 +809,7 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
                     joined: false,
                     met: r.met,
                     splits,
+                    hits,
                 });
                 continue;
             }
@@ -741,48 +894,189 @@ impl<'a, S: Scalar, R: HeightReads> Ctx<'_, 'a, '_, S, R> {
             .collect()
     }
 
-    /// `q`'s feet on the run's edges whose stretch meets the p-spans its
-    /// boxes meet.
-    fn feet(&self, owner: &Owner, run: &[&Leaf]) -> Result<SmallVec<[Feature; 2]>, CountError> {
-        let mut out: SmallVec<[Feature; 2]> = SmallVec::new();
-        let ribbons = self.ribbons(owner)?;
-        for r in &ribbons {
-            let e = find_edge(self.fq.edges, r.coedge)?;
-            let spans: SmallVec<[u32; 8]> = run
-                .iter()
-                .flat_map(|l| l.met.iter())
-                .filter(|s| s.coedge == r.coedge)
-                .map(|s| s.span)
-                .collect();
-            if spans.is_empty() {
+    /// The near piece of the leaves `run` of degree `degree` with the
+    /// hits they hold (module docs, "Heights"): counting each hit where
+    /// all lie strictly inside its boxes and their facings sum to its
+    /// degree, else by one hit where they are settled; `None` where
+    /// neither holds (the piece is taken apart, or refined). A curved
+    /// face's pieces hold no hits.
+    fn near_piece(
+        &self,
+        leaves: &[Leaf],
+        run: &[usize],
+        degree: i64,
+    ) -> Result<Option<NearPiece>, CountError> {
+        let Some(f) = &self.flat else {
+            return Ok(Some(NearPiece {
+                degree,
+                hits: SmallVec::new(),
+                each: false,
+            }));
+        };
+        let mut sets = Vec::with_capacity(run.len());
+        for &k in run {
+            sets.push(match &leaves[k].hits {
+                Some(h) => h.clone(),
+                None => self.hits_in(&leaves[k].b)?,
+            });
+        }
+        let hits = union(&sets);
+        let all = f.hits()?;
+        let inside = hits.iter().all(|&h| {
+            let hit = &all[h as usize];
+            run.iter()
+                .any(|&k| hit.in_rect_open(&f.face, &rect(&leaves[k].b)))
+        });
+        let facings: Option<i64> = hits
+            .iter()
+            .map(|&h| all[h as usize].facing.map(|s| i64::from(s.as_i8())))
+            .sum();
+        // A hit on the face's boundary at `q` counts by the side of the
+        // moved column the boxes' degree reads, not by its own facing.
+        let clear = hits.iter().all(|&h| all[h as usize].inc.is_none());
+        if hits.len() > 1 && inside && clear && facings == Some(degree) {
+            return Ok(Some(NearPiece {
+                degree,
+                hits,
+                each: true,
+            }));
+        }
+        Ok(settled(all, &hits).then_some(NearPiece {
+            degree,
+            hits,
+            each: false,
+        }))
+    }
+
+    /// The column's hits in `b`'s closed box, by index (a plane face).
+    fn hits_in(&self, b: &BoxKey) -> Result<SmallVec<[u32; 2]>, CountError> {
+        let Some(f) = &self.flat else {
+            return Ok(SmallVec::new());
+        };
+        let r = rect(b);
+        Ok((0u32..)
+            .zip(f.hits()?)
+            .filter(|(_, h)| h.in_rect(&f.face, &r))
+            .map(|(k, _)| k)
+            .collect())
+    }
+}
+
+/// Box `b` of `face` against the trims, where the spans `met` (the ones
+/// not separated from it) miss its closed box exactly (module docs,
+/// "Refining runs"): `Some(true)` core, `Some(false)` outside, by the
+/// trims' winding about its centre; `None` where a span meets it.
+pub(crate) fn clear_class(
+    face: &FaceUv<'_>,
+    b: &BoxKey,
+    met: &[SpanRef],
+) -> Result<Option<bool>, CountError> {
+    let r = rect(b);
+    for s in met {
+        let t = face
+            .trims()
+            .iter()
+            .find(|t| t.coedge == s.coedge)
+            .ok_or(CountError::Edge { coedge: s.coedge })?;
+        let sp = t
+            .spans
+            .get(s.span as usize)
+            .ok_or(CountError::Edge { coedge: s.coedge })?;
+        if span_meets(sp, &r) {
+            return Ok(None);
+        }
+    }
+    let two = Rational::from(2u32);
+    let c = [0, 1].map(|k| (&r[k][0] + &r[k][1]) / &two);
+    let trims = face.trims().iter().map(|t| (t.spans, t.reversed));
+    match winding_of(trims, &c) {
+        Ok(0) => Ok(Some(false)),
+        Ok(w) if w == face.inside_winding() => Ok(Some(true)),
+        Ok(w) => Err(CountError::Box(BoxError::Winding(w))),
+        // The centre on a trim: some span meets the box after all.
+        Err(_) => Ok(None),
+    }
+}
+
+/// The hits of a plane face as the counting reads them: each with its
+/// target (the incidence resolved to the point's foot) and the face's
+/// edges whose near radius holds it (module docs, "The lobe fallback").
+fn hit_targets<R: HeightReads>(
+    reads: &R,
+    q: Point,
+    flat: &Flat<'_>,
+) -> Result<Vec<HitTarget>, CountError> {
+    let f = &flat.face;
+    let missing = |g: EdgeId| CountError::Key(KeyError::Missing(RecordKey::Ray(RayKey { q, g })));
+    let Some(hits) = flat.hits.get() else {
+        return Ok(Vec::new());
+    };
+    let hits = hits.as_deref().map_err(|e| CountError::Hits(*e))?;
+    let mut out = Vec::with_capacity(hits.len());
+    for h in hits {
+        let inc = match h.inc {
+            None => None,
+            Some(inc) => {
+                let feet = reads.feet(q, inc.edge).ok_or(missing(inc.edge))?;
+                let along = along_of(reads, q.operand.other(), inc.edge);
+                let k = feet
+                    .in_order(along)
+                    .find(|&k| {
+                        feet.get(k)
+                            .is_some_and(|ft| foot_meets(ft, inc.span, inc.t))
+                    })
+                    .ok_or(CountError::NoHit {
+                        point: q,
+                        face: f.face,
+                    })?;
+                Some(Incidence::Edge(inc.edge, k))
+            }
+        };
+        let mut near: SmallVec<[(EdgeId, FootId); 2]> = SmallVec::new();
+        let mut edges: SmallVec<[EdgeId; 4]> = f.trims.iter().map(|t| t.edge).collect();
+        edges.sort_unstable();
+        edges.dedup();
+        for g in edges {
+            if !h.near_edge(f, g) {
                 continue;
             }
-            let feet = self
-                .reads
-                .feet(self.fq.point, e.edge)
-                .ok_or(CountError::Key(KeyError::Missing(
-                    crate::records::keys::RecordKey::Ray(crate::records::keys::RayKey {
-                        q: self.fq.point,
-                        g: e.edge,
-                    }),
-                )))?;
-            for (k, foot) in feet.feet.iter().enumerate() {
-                let meets = spans.iter().any(|&s| {
-                    r.map
-                        .get(s as usize)
-                        .is_some_and(|m| foot_meets(foot, m.span, m.t))
-                });
-                if meets {
-                    let id = crate::records::keys::FootId(u32::try_from(k).expect("few feet"));
-                    let x = Feature::Foot(e.edge, id);
-                    if !out.contains(&x) {
-                        out.push(x);
-                    }
+            let feet = reads.feet(q, g).ok_or(missing(g))?;
+            let along = along_of(reads, q.operand.other(), g);
+            // A ribbon hit's own foot where one meets it, else (and for a
+            // tile hit) the first in geometric order.
+            let own = match &h.at {
+                HitAt::Ribbon { trim, span, tau } if f.trims[*trim].edge == g => {
+                    let t = &f.trims[*trim];
+                    let at = edge_t(t, *span, tau);
+                    let s = t.map[*span].span;
+                    feet.in_order(along)
+                        .find(|&k| feet.get(k).is_some_and(|ft| foot_meets(ft, s, at)))
                 }
+                _ => None,
+            };
+            if let Some(k) = own.or_else(|| feet.in_order(along).next()) {
+                near.push((g, k));
             }
         }
-        Ok(out)
+        out.push(HitTarget {
+            target: Target::Hit {
+                f: f.face,
+                sheet: h.sheet,
+                i: h.i,
+                inc,
+            },
+            height: h.height,
+            facing: h.facing,
+            near,
+        });
     }
+    Ok(out)
+}
+
+/// The way edge `g` of `of`'s stored parameter runs from its lesser end.
+fn along_of<O: EntityOrder>(order: &O, of: Operand, g: EdgeId) -> Along {
+    let [s, e] = order.ends(of, g);
+    Along::of(&order.vert_key(of, s), &order.vert_key(of, e))
 }
 
 /// Whether foot `f` meets the stretch `[t0, t1]` of span `span`.
@@ -877,6 +1171,7 @@ impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
             point: f.point,
             at: f.at,
             eps_tie: f.eps_tie,
+            nets: f.nets,
         };
         let mut pieces = 0;
         let r = pieces_within(&fq, self.sides, self.reads, limit, &mut pieces);
@@ -952,25 +1247,152 @@ fn pieces_within<S: Scalar, R: HeightReads>(
         .weights()
         .coefs()[0]
         .clone();
+    let flat = match fq.nets {
+        None => None,
+        Some(nets) => Some(Flat {
+            face: flat_face(fq, nets, reads)?,
+            at: fq.at,
+            hits: OnceCell::new(),
+        }),
+    };
     let mut ctx = Ctx {
         fq,
         sides,
-        reads,
         q,
         up_q,
         like,
         pieces: 0,
         limit,
+        flat,
     };
     let r = rounds(&mut ctx);
     *pieces = ctx.pieces;
-    r
+    let Some(f) = &ctx.flat else {
+        return r;
+    };
+    let mut out = match r {
+        Ok(out) => out,
+        // Boxes the levels don't settle: the face's hits decide it.
+        Err(CountError::Unsettled) => {
+            return by_hits(reads, fq.point, f, Err(CountError::Unsettled));
+        }
+        Err(e) => return Err(e),
+    };
+    out.hits = hit_targets(reads, fq.point, f)?;
+    // Where the column's hits were found, the pieces' degrees sum to their
+    // facings, and a near piece of non-zero degree holds one; else the
+    // boxes and the hits disagree (a column within rounding of an edge,
+    // the boxes' records at a level the hits are exact past) and the
+    // hits decide.
+    if let Some(Ok(hits)) = f.hits.get() {
+        let facings: Option<i64> = hits
+            .iter()
+            .map(|h| h.facing.map(|s| i64::from(s.as_i8())))
+            .sum();
+        let degrees = out.above + out.below + out.near.iter().map(|p| p.degree).sum::<i64>();
+        let empty = out.near.iter().any(|p| p.degree != 0 && p.hits.is_empty());
+        if empty || facings != Some(degrees) {
+            return by_hits(reads, fq.point, f, Ok(out));
+        }
+    }
+    Ok(out)
+}
+
+/// The face's count by its hits alone (module docs, "By the hits"): each
+/// hit clear of `q`'s height and of every edge's near radius counted by
+/// its exact height, the others read as one piece counting each by its
+/// facing. `boxes` (the pieces' answer) where a hit's facing is unformed.
+fn by_hits<R: HeightReads>(
+    reads: &R,
+    q: Point,
+    flat: &Flat<'_>,
+    boxes: Result<FacePieces, CountError>,
+) -> Result<FacePieces, CountError> {
+    let all = flat.hits()?;
+    // A hit on the face's boundary at `q` (on its edge or vertex) counts
+    // by the side of the moved column the boxes' records read, which the
+    // hits don't.
+    if all.iter().any(|h| h.facing.is_none() || h.inc.is_some()) {
+        return boxes;
+    }
+    let hits = hit_targets(reads, q, flat)?;
+    let mut out = FacePieces {
+        point: q,
+        face: flat.face.face,
+        above: 0,
+        below: 0,
+        near: Vec::new(),
+        hits,
+        curved: false,
+        pieces: boxes.as_ref().map_or(0, |p| p.pieces),
+    };
+    let mut near = NearPiece {
+        degree: 0,
+        hits: SmallVec::new(),
+        each: true,
+    };
+    for (k, h) in (0u32..).zip(&out.hits) {
+        let f = h.facing.map_or(0, |s| i64::from(s.as_i8()));
+        match h.height {
+            Ordering::Greater if h.near.is_empty() => out.above += f,
+            Ordering::Less if h.near.is_empty() => out.below += f,
+            _ => {
+                near.degree += f;
+                near.hits.push(k);
+            }
+        }
+    }
+    if !near.hits.is_empty() {
+        out.near.push(near);
+    }
+    Ok(out)
+}
+
+/// The face of `fq` as its hits read it, its tiles' nets `nets`.
+fn flat_face<'a, S, O: EntityOrder>(
+    fq: &FaceQuery<'a, '_, S>,
+    nets: &'a [TileNet],
+    order: &O,
+) -> Result<FlatFace<'a>, CountError> {
+    if !fq.face.patches_fit(nets) {
+        return Err(CountError::Box(BoxError::Patches));
+    }
+    let face = fq.face;
+    let first = face
+        .tile_boxes()
+        .next()
+        .ok_or(CountError::Box(BoxError::Grid))?;
+    let mut trims = Vec::new();
+    for t in face.trims() {
+        if t.spans.is_empty() {
+            continue;
+        }
+        let e = find_edge(fq.edges, t.coedge)?;
+        let of = first.operand();
+        trims.push(FlatTrim {
+            coedge: t.coedge,
+            edge: e.edge,
+            reversed: t.reversed,
+            ends: t.ends,
+            along: along_of(order, of, e.edge),
+            band: t.band,
+            pspans: t.spans,
+            curve: e.ribbon.curve,
+            map: e.ribbon.map,
+        });
+    }
+    Ok(FlatFace {
+        operand: first.operand(),
+        face: first.face(),
+        tiles: face.tiles().clone(),
+        nets,
+        inside: face.inside_winding(),
+        trims,
+    })
 }
 
 /// The leaves refined, then the rounds until the pieces settle.
-fn rounds<S: Scalar, R: HeightReads>(
-    ctx: &mut Ctx<'_, '_, '_, S, R>,
-) -> Result<FacePieces, CountError> {
+fn rounds<S: Scalar>(ctx: &mut Ctx<'_, '_, '_, S>) -> Result<FacePieces, CountError> {
     let mut leaves: Vec<Leaf> = Vec::new();
     for b in ctx.fq.face.tile_boxes() {
         ctx.refine(b, None, [0, 0], &mut leaves)?;
@@ -1004,8 +1426,8 @@ enum Round {
 }
 
 /// One round over the leaves (module docs).
-fn round<S: Scalar, R: HeightReads>(
-    ctx: &mut Ctx<'_, '_, '_, S, R>,
+fn round<S: Scalar>(
+    ctx: &mut Ctx<'_, '_, '_, S>,
     leaves: &mut Vec<Leaf>,
     cache: &mut Cache,
 ) -> Result<Round, CountError> {
@@ -1062,7 +1484,8 @@ fn round<S: Scalar, R: HeightReads>(
         above: 0,
         below: 0,
         near: Vec::new(),
-        joins: Vec::new(),
+        hits: Vec::new(),
+        curved: ctx.flat.is_none(),
         pieces: 0,
     };
     let add = |out: &mut FacePieces, h: Height, degree: i64, near: Option<NearPiece>| match h {
@@ -1090,12 +1513,17 @@ fn round<S: Scalar, R: HeightReads>(
             Err(SidedError::Need(k)) => return Err(CountError::Need(k)),
         };
         ctx.charge(d.pieces)?;
-        let near = (h == Height::Near).then(|| NearPiece {
-            degree: d.degree,
-            features: SmallVec::new(),
-            core: core_key(patch, &l.b),
-            boxes: vec![l.b],
-        });
+        let near = if h == Height::Near {
+            match ctx.near_piece(leaves, &[k], d.degree)? {
+                Some(p) => Some(p),
+                None => {
+                    refine.push(k);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         add(&mut out, h, d.degree, near);
     }
 
@@ -1107,13 +1535,51 @@ fn round<S: Scalar, R: HeightReads>(
             None => leaves[k].height,
         })
         .collect();
+    // Where `q`'s column lies at a corner (its leaves round a vertex
+    // near), the near strip leaves of its curves joined to them along
+    // shared sides are of the corner's piece too, so its cuts lie past
+    // them, not next to `q` (module docs, "Around a vertex").
+    let mut owner_of: Vec<Owner> = leaves.iter().map(|l| l.owner.clone()).collect();
+    let near_corners: Vec<VertId> = {
+        let mut v: Vec<VertId> = forced
+            .iter()
+            .filter(|(_, c)| **c == Some(Height::Near))
+            .filter_map(|(&k, _)| match leaves[k].owner {
+                Owner::Corner(v) => Some(v),
+                _ => None,
+            })
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    for v in near_corners {
+        let Some(c) = fq.corners.corner(v) else {
+            continue;
+        };
+        let mut queue: Vec<usize> = (0..leaves.len())
+            .filter(|&k| owner_of[k] == Owner::Corner(v) && class[k] == Some(Height::Near))
+            .collect();
+        while let Some(k) = queue.pop() {
+            for j in 0..leaves.len() {
+                let absorbs = match &owner_of[j] {
+                    Owner::Strip(cs) => cs.iter().all(|x| c.curves.contains(x)),
+                    _ => false,
+                };
+                if absorbs && class[j] == Some(Height::Near) && share_side(&rects[k], &rects[j]) {
+                    owner_of[j] = Owner::Corner(v);
+                    queue.push(j);
+                }
+            }
+        }
+    }
     let mut groups: BTreeMap<(Owner, Height), Vec<usize>> = BTreeMap::new();
-    for (k, l) in leaves.iter().enumerate() {
-        if l.owner == Owner::Core {
+    for (k, o) in owner_of.iter().enumerate() {
+        if *o == Owner::Core {
             continue;
         }
         if let Some(h) = class[k] {
-            groups.entry((l.owner.clone(), h)).or_default().push(k);
+            groups.entry((o.clone(), h)).or_default().push(k);
         }
     }
     // The runs left unsettled, with where, and whether at a side through
@@ -1124,6 +1590,11 @@ fn round<S: Scalar, R: HeightReads>(
         for part in parts {
             let idx: Vec<usize> = part.iter().map(|&i| ks[i]).collect();
             let runs: Vec<Vec<usize>> = match run_degree(ctx, &owner, leaves, &idx, cache)? {
+                // A near run whose hits don't settle it: box by box
+                // (module docs, "Pieces").
+                (Ok(d), _) if h == Height::Near && ctx.near_piece(leaves, &idx, d)?.is_none() => {
+                    idx.iter().map(|&k| vec![k]).collect()
+                }
                 (Ok(_), _) => vec![idx.clone()],
                 (Err(PieceError::Pinch), _) => idx.iter().map(|&k| vec![k]).collect(),
                 (Err(PieceError::Unsettled), near) => {
@@ -1156,32 +1627,15 @@ fn round<S: Scalar, R: HeightReads>(
                     (Err(e), _) => return Err(e.into()),
                 };
                 let near = if h == Height::Near {
-                    // A joined leaf moves the run's cut, it doesn't name
-                    // the layer: the features, the key and the touching
-                    // are the run's own leaves' (so a layer's feature
-                    // doesn't depend on whether a cut was moved), the
-                    // joined ones' only in a run of nothing else.
-                    let own: Vec<usize> =
-                        run.iter().copied().filter(|&k| !leaves[k].joined).collect();
-                    let named = if own.is_empty() { &run } else { &own };
-                    let ls: Vec<&Leaf> = named.iter().map(|&k| &leaves[k]).collect();
-                    let mut features = ctx.feet(&owner, &ls)?;
-                    if let Owner::Corner(v) = owner
-                        && run.iter().any(|k| forced.contains_key(k))
-                        && let Some(c) = fq.corners.corner(v)
-                    {
-                        for &w in &c.vertices {
-                            features.push(Feature::Vert(w));
+                    match ctx.near_piece(leaves, &run, d)? {
+                        Some(p) => Some(p),
+                        None => {
+                            // One box whose hits don't settle it: it
+                            // refines, holding them apart.
+                            refine.extend(run.iter().copied());
+                            continue;
                         }
                     }
-                    let first = &leaves[named[0]].b;
-                    let patch = ctx.patch(first)?;
-                    Some(NearPiece {
-                        degree: d,
-                        features,
-                        core: core_key(patch, first),
-                        boxes: named.iter().map(|&k| leaves[k].b).collect(),
-                    })
                 } else {
                     None
                 };
@@ -1189,6 +1643,40 @@ fn round<S: Scalar, R: HeightReads>(
             }
         }
     }
+    // A run the trims miss altogether is no strip: its boxes are core or
+    // outside by the trims' winding about their centres (module docs,
+    // "Refining runs").
+    let mut reclass: Vec<(usize, bool)> = Vec::new();
+    for (_, run, _, through) in &failed {
+        if *through {
+            continue;
+        }
+        let mut classes = Vec::with_capacity(run.len());
+        for &k in run {
+            match clear_class(fq.face, &leaves[k].b, &leaves[k].met)? {
+                Some(core) => classes.push((k, core)),
+                None => break,
+            }
+        }
+        if classes.len() == run.len() {
+            reclass.extend(classes);
+        }
+    }
+    if !reclass.is_empty() {
+        reclass.sort_unstable();
+        for &(k, core) in reclass.iter().rev() {
+            if core {
+                let l = &mut leaves[k];
+                l.owner = Owner::Core;
+                l.met.clear();
+                l.joined = false;
+            } else {
+                leaves.remove(k);
+            }
+        }
+        return Ok(Round::Refined);
+    }
+
     // An unsettled cut between a near run and dropped leaves of the same
     // owner: those join the near run (module docs, "Runs near `q`"); any
     // other unsettled run refines there, but for the leaves joining.
@@ -1204,8 +1692,20 @@ fn round<S: Scalar, R: HeightReads>(
             elsewhere.extend(near_leaves(&rects, &run, &rq));
             continue;
         }
+        // A corner's run takes its curves' strip leaves too.
+        let curves = match &owner {
+            Owner::Corner(v) => fq.corners.corner(*v).map(|c| c.curves.clone()),
+            _ => None,
+        };
+        let ours = |k: usize| {
+            owner_of[k] == owner
+                || match (&curves, &leaves[k].owner) {
+                    (Some(c), Owner::Strip(cs)) => cs.iter().all(|x| c.contains(x)),
+                    _ => false,
+                }
+        };
         let there: Vec<usize> = (0..leaves.len())
-            .filter(|&k| leaves[k].owner == owner && touch(&rects[k], &rq))
+            .filter(|&k| ours(k) && touch(&rects[k], &rq))
             .collect();
         let near_there = there.iter().any(|&k| class[k] == Some(Height::Near));
         // Dropped there (degree 0, ribbons included: they join any run),
@@ -1239,22 +1739,6 @@ fn round<S: Scalar, R: HeightReads>(
         return Ok(Round::Joined);
     }
 
-    // Near pieces touching in UV are of one layer.
-    let near_rects: Vec<Vec<ExactRect>> = out
-        .near
-        .iter()
-        .map(|p| p.boxes.iter().map(rect).collect())
-        .collect();
-    for i in 0..out.near.len() {
-        for j in 0..i {
-            let meet = near_rects[i]
-                .iter()
-                .any(|a| near_rects[j].iter().any(|b| touch(a, b)));
-            if meet {
-                out.joins.push((j, i));
-            }
-        }
-    }
     out.pieces = ctx.pieces;
     Ok(Round::Settled(out))
 }
@@ -1265,8 +1749,8 @@ type Cache = BTreeMap<(Owner, Vec<BoxKey>), (Result<i64, PieceError>, Option<UvR
 
 /// The degree of the run `idx` of `owner`'s leaves, cached, with where it
 /// is unsettled as far as known.
-fn run_degree<S: Scalar, R: HeightReads>(
-    ctx: &mut Ctx<'_, '_, '_, S, R>,
+fn run_degree<S: Scalar>(
+    ctx: &mut Ctx<'_, '_, '_, S>,
     owner: &Owner,
     leaves: &[Leaf],
     idx: &[usize],
@@ -1294,7 +1778,7 @@ fn run_degree<S: Scalar, R: HeightReads>(
 }
 
 /// The leaves of `idx` to refine where their run is unsettled near `r`
-/// (exactly, [`exact_rect`](super::pieces::exact_rect)): those whose closed box meets it, or all
+/// (exactly, [`exact_rect`]): those whose closed box meets it, or all
 /// where none does (module docs, "Refining runs").
 fn near_leaves(rects: &[ExactRect], idx: &[usize], r: &ExactRect) -> Vec<usize> {
     let some: Vec<usize> = idx
@@ -1305,12 +1789,6 @@ fn near_leaves(rects: &[ExactRect], idx: &[usize], r: &ExactRect) -> Vec<usize> 
     if some.is_empty() { idx.to_vec() } else { some }
 }
 
-/// A box's hull centre, its layer's key where the layer has no feature.
-fn core_key<S: Scalar>(patch: &HomPatch<S>, b: &BoxKey) -> Option<Pos> {
-    let h = box_hull(patch, b)?;
-    Pos::new(std::array::from_fn(|k| h.lo[k] / 2.0 + h.hi[k] / 2.0)).ok()
-}
-
 impl FacePieces {
     /// The degrees of all the pieces summed: the shadow winding of the
     /// face's counting surface about `q` ([`ray_degree`]).
@@ -1318,110 +1796,142 @@ impl FacePieces {
         self.above + self.below + self.near.iter().map(|p| p.degree).sum::<i64>()
     }
 
-    fn layer_pieces(&self) -> LayerPieces {
-        let mut lp = LayerPieces::new();
-        for p in &self.near {
-            lp.piece(p.features.iter().copied(), p.core);
-        }
-        for &(a, b) in &self.joins {
-            lp.join(a, b);
-        }
-        lp
-    }
-
-    /// The face's layers at the point from its near pieces, to store in
-    /// the [`LayerTable`] the counting reads.
-    pub fn layers<R: HeightReads>(&self, reads: &R) -> Result<Layers, KeyError> {
-        self.layer_pieces().layers(reads, self.point, self.face)
-    }
-
-    /// Per layer the column enters, its pieces' degrees summed. The
-    /// layers stored in `table` must be these pieces' own: layers found
-    /// from another refinement may number core layers differently, and a
-    /// record read through them could be another layer's.
-    fn layer_degrees<R: HeightReads>(
-        &self,
-        reads: &R,
-        table: &LayerTable,
-    ) -> Result<Vec<(LayerId, i64)>, KeyError> {
-        let (layers, of) = self
-            .layer_pieces()
-            .layers_of(reads, self.point, self.face)?;
-        let entered = self.near.iter().any(|p| p.degree != 0);
-        if entered && table.get(self.point, self.face) != Some(&layers) {
-            return Err(KeyError::NoLayer {
-                q: self.point,
-                f: self.face,
-                layer: LayerId(0),
-            });
-        }
-        let mut sums: Vec<(i64, bool)> = vec![(0, false); layers.len()];
-        for (p, l) in self.near.iter().zip(of) {
-            let s = &mut sums[l.0 as usize];
-            s.0 += p.degree;
-            s.1 |= p.degree != 0;
-        }
-        Ok(layers
-            .iter()
-            .zip(sums)
-            .filter(|(_, (_, entered))| *entered)
-            .map(|((id, _), (d, _))| (id, d))
-            .collect())
-    }
-
-    /// The anchor the layers' records are read at.
+    /// The anchor the hits' records are read at.
     fn anchor(&self) -> Anchor {
         Anchor::Face(self.point.operand.other(), self.face)
     }
 
-    /// The height records the count reads (module docs): one per layer
-    /// the column enters.
+    /// The height key hit `k` reads (module docs, "Heights"), by the edge
+    /// rule where it lies near an edge of `lobe` (module docs, "The lobe
+    /// fallback").
+    fn hit_key<R: HeightReads>(
+        &self,
+        reads: &R,
+        k: u32,
+        lobe: &[EdgeId],
+    ) -> Result<Oriented<HKey>, CountError> {
+        let h = &self.hits[k as usize];
+        if let Some(&(g, foot)) = h.near.iter().find(|(g, _)| lobe.contains(g)) {
+            return Ok(edge_rule_key(reads, self.point, g, foot)?);
+        }
+        Ok(height_key(reads, self.point, h.target)?)
+    }
+
+    /// The hits near piece `p` reads, each with the weight its record's
+    /// side counts by: its facing where the piece counts each hit, else
+    /// one hit (a germ hit first) by the piece's degree; none for a piece
+    /// of degree 0 counting by one hit.
+    fn piece_reads(&self, p: &NearPiece) -> Result<Vec<(u32, i64)>, CountError> {
+        if p.each {
+            return Ok(p
+                .hits
+                .iter()
+                .map(|&k| {
+                    let f = self.hits[k as usize]
+                        .facing
+                        .map_or(0, |s| i64::from(s.as_i8()));
+                    (k, f)
+                })
+                .collect());
+        }
+        if p.degree == 0 {
+            return Ok(Vec::new());
+        }
+        if self.curved {
+            return Err(CountError::CurvedHit {
+                point: self.point,
+                face: self.face,
+            });
+        }
+        // The piece's hits are at one side of the point, or all at it: a
+        // hit on a vertex or edge of the face there reads its germ key
+        // first, else the first hit.
+        let first = p
+            .hits
+            .iter()
+            .copied()
+            .find(|&k| {
+                matches!(
+                    self.hits[k as usize].target,
+                    Target::Hit { inc: Some(_), .. }
+                )
+            })
+            .or(p.hits.first().copied());
+        match first {
+            Some(k) => Ok(vec![(k, p.degree)]),
+            None => Err(CountError::NoHit {
+                point: self.point,
+                face: self.face,
+            }),
+        }
+    }
+
+    /// The height records the count reads (module docs): its near pieces'
+    /// hits', those near an edge of `lobe` by the edge rule.
     pub fn wanted<R: HeightReads>(
         &self,
         reads: &R,
-        layers: &LayerTable,
-    ) -> Result<Vec<HeightKey>, KeyError> {
+        lobe: &[EdgeId],
+    ) -> Result<Vec<HeightKey>, CountError> {
         let mut out = Vec::new();
-        for (l, _) in self.layer_degrees(reads, layers)? {
-            let h = height_key(reads, layers, self.point, Target::Layer(self.face, l))?;
-            out.push(HeightKey {
-                h: h.key,
-                anchor: self.anchor(),
-            });
+        for p in &self.near {
+            for (k, _) in self.piece_reads(p)? {
+                let h = self.hit_key(reads, k, lobe)?;
+                let k = HeightKey {
+                    h: h.key,
+                    anchor: self.anchor(),
+                };
+                if !out.contains(&k) {
+                    out.push(k);
+                }
+            }
         }
         Ok(out)
     }
 
     /// `s02(q, f)` for a point of `A`, `s20(q, f)` for one of `B` (module
-    /// docs), the layers read from `layers` and their records from
-    /// `heights`.
+    /// docs), the hits' records from `heights`, those near an edge of
+    /// `lobe` by the edge rule.
     pub fn count<R: HeightReads>(
         &self,
         reads: &R,
-        layers: &LayerTable,
         heights: &Heights,
+        lobe: &[EdgeId],
     ) -> Result<i64, CountError> {
         let a = self.point.operand == Operand::A;
         let mut s = if a { self.above } else { -self.below };
-        for (l, d) in self.layer_degrees(reads, layers)? {
-            let h = height_key(reads, layers, self.point, Target::Layer(self.face, l))?;
-            let rec = heights
-                .get(h, self.anchor())
-                .ok_or(CountError::NeedHeight(HeightKey {
-                    h: h.key,
-                    anchor: self.anchor(),
-                }))?;
-            s += if rec.fold {
-                i64::from(rec.above.as_i8())
-            } else {
-                match (a, rec.above) {
-                    (true, Sign::Pos) => d,
-                    (false, Sign::Neg) => -d,
-                    _ => 0,
-                }
-            };
+        for p in &self.near {
+            for (k, weight) in self.piece_reads(p)? {
+                let h = self.hit_key(reads, k, lobe)?;
+                let rec =
+                    heights
+                        .get(h, self.anchor())
+                        .ok_or(CountError::NeedHeight(HeightKey {
+                            h: h.key,
+                            anchor: self.anchor(),
+                        }))?;
+                s += if rec.fold {
+                    i64::from(rec.above.as_i8())
+                } else {
+                    match (a, rec.above) {
+                        (true, Sign::Pos) => weight,
+                        (false, Sign::Neg) => -weight,
+                        _ => 0,
+                    }
+                };
+            }
         }
         Ok(s)
+    }
+
+    /// Whether some near piece of non-zero degree holds a hit near edge
+    /// `g` (the lobe fallback would re-read it).
+    pub fn near_edge(&self, g: EdgeId) -> bool {
+        self.near.iter().filter(|p| p.degree != 0).any(|p| {
+            p.hits
+                .iter()
+                .any(|&k| self.hits[k as usize].near.iter().any(|(e, _)| *e == g))
+        })
     }
 }
 

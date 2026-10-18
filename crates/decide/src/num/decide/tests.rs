@@ -17,17 +17,18 @@ use crate::ids::{FaceId, VertId};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::ETA;
 use crate::num::exact::{Num, Pred, moved_point, sign};
-use crate::records::keys::{Anchor, HKey, HeightKey, LayerId, Operand, Point};
+use crate::records::keys::{Anchor, HKey, HeightKey, HitIx, Operand, Point, Sheet};
 
 fn key() -> TieKey {
     let q = Point::vert(Operand::A, VertId(3));
     TieKey {
-        row: Row::LayerHeight,
+        row: Row::ColumnHit,
         record: RecordKey::HeightAt(HeightKey {
-            h: HKey::Face {
+            h: HKey::Hit {
                 q,
                 f: FaceId(7),
-                layer: LayerId(0),
+                sheet: Sheet::Tile([0, 0]),
+                i: HitIx(0),
             },
             anchor: Anchor::Face(Operand::B, FaceId(7)),
         }),

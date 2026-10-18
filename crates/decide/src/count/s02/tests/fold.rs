@@ -1,16 +1,16 @@
-//! The fold rule: a core layer on a silhouette inside its face, `q` on
-//! it, so the face's height and its facing are certified at no level.
-//! Its record is the fold's, the upper sheet's facing from how the face
-//! bends, and the layer contributes that facing where the column enters
-//! it (some piece of non-zero degree), the same for `s02` and `s20`;
-//! where it doesn't, the layer reads no record and counts nothing.
+//! The fold rule: a hit on a silhouette inside its (curved) face, `q` on
+//! it, so the hit's height and the face's facing are certified at no
+//! level. Its record is the fold's, the upper sheet's facing from how the
+//! face bends, the same for either operand's point; a piece of non-zero
+//! degree reading it contributes that facing, for `s02` and `s20` alike;
+//! a hit formed at no level stores no tie.
 
 use super::*;
 use crate::num::decide::Band;
 use crate::num::exact::ORDERS;
 use crate::perturb::{Curved, Moving, Rate, Seg};
 use crate::records::height::model::{FaceAt, HeightModel, ModelHeights};
-use crate::records::keys::{FootId, HKey};
+use crate::records::keys::{FootId, HKey, HitIx, Sheet};
 use crate::records::shadow::ShadowGeometry;
 
 /// A curved face whose normal at the hit is horizontal (`r̂`, exactly
@@ -67,89 +67,64 @@ impl HeightModel for Silhouette {
     }
 }
 
-/// A face's pieces at `q`: two near pieces of the given degrees, joined,
-/// with no feature (one core layer).
-fn pieces(q: Point, degrees: [i64; 2]) -> FacePieces {
-    let key = Pos::new([1.0, 2.0, 3.0]).unwrap();
-    FacePieces {
-        point: q,
-        face: FaceId(5),
-        above: 0,
-        below: 0,
-        near: degrees
-            .into_iter()
-            .map(|degree| NearPiece {
-                degree,
-                features: SmallVec::new(),
-                core: Some(key),
-                boxes: Vec::new(),
-            })
-            .collect(),
-        joins: vec![(0, 1)],
-        pieces: 0,
+const FACE: FaceId = FaceId(5);
+
+/// The hit key of `q` on the face's one tile.
+fn key(q: Point) -> HeightKey {
+    HeightKey {
+        h: HKey::Hit {
+            q,
+            f: FACE,
+            sheet: Sheet::Tile([0, 0]),
+            i: HitIx(0),
+        },
+        anchor: Anchor::Face(q.operand.other(), FACE),
     }
 }
 
-/// The count of `p` with its records filled on `geom`.
-fn count(p: &FacePieces, geom: &Silhouette) -> (i64, usize) {
-    let order = Order::default();
-    let (sh, ft, o) = no_reads(&order);
-    let reads = Records {
-        shadows: &sh,
-        feet: &ft,
-        order: o,
-    };
-    let mut layers = LayerTable::new();
-    layers.insert(p.point, p.face, p.layers(&reads).unwrap());
-    let wanted = p.wanted(&reads, &layers).unwrap();
+/// The hit's record filled on `geom`.
+fn fill(q: Point, geom: &Silhouette) -> (Heights, Result<(), String>) {
     let mut heights = Heights::new();
     let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
-    heights
-        .fill(
-            wanted.clone(),
-            &ModelHeights { model: geom },
-            band,
-            &mut Seq,
-        )
-        .unwrap();
-    for k in &wanted {
-        let r = heights.table().get(k).expect("decided");
-        assert!(r.fold && r.by_orders, "{r:?}");
+    let r = heights
+        .fill([key(q)], &ModelHeights { model: geom }, band, &mut Seq)
+        .map_err(|e| format!("{e:?}"));
+    (heights, r)
+}
+
+/// A face's pieces at `q` as a plane face's would be: one near piece of
+/// degree `degree` holding the one hit.
+fn pieces(q: Point, degree: i64) -> FacePieces {
+    FacePieces {
+        point: q,
+        face: FACE,
+        above: 0,
+        below: 0,
+        near: vec![NearPiece {
+            degree,
+            hits: smallvec::smallvec![0],
+            each: false,
+        }],
+        hits: vec![HitTarget {
+            target: Target::Hit {
+                f: FACE,
+                sheet: Sheet::Tile([0, 0]),
+                i: HitIx(0),
+                inc: None,
+            },
+            height: Ordering::Equal,
+            facing: Some(Sign::Pos),
+            near: SmallVec::new(),
+        }],
+        curved: false,
+        pieces: 0,
     }
-    (p.count(&reads, &layers, &heights).unwrap(), wanted.len())
 }
 
 #[test]
 fn the_fold_contributes_its_upper_sheet_s_facing() {
     // Bending away from the normal going up: the upper sheet faces up.
     // Bending towards it: down. For both operands' points alike.
-    for (bend, facing) in [(-1.0, 1), (1.0, -1)] {
-        for op in [Operand::A, Operand::B] {
-            let q = Point::vert(op, VertId(9));
-            let (n, read) = count(&pieces(q, [1, -1]), &Silhouette { bend, hit: true });
-            assert_eq!((n, read), (facing, 1), "bend {bend}, {op:?}");
-        }
-    }
-}
-
-#[test]
-fn a_layer_the_column_misses_reads_nothing() {
-    let q = Point::vert(Operand::A, VertId(9));
-    let (n, read) = count(
-        &pieces(q, [0, 0]),
-        &Silhouette {
-            bend: -1.0,
-            hit: true,
-        },
-    );
-    assert_eq!((n, read), (0, 0));
-}
-
-#[test]
-fn layers_of_another_refinement_are_refused() {
-    // The same layer found from other boxes keys its core elsewhere: its
-    // stored layers aren't these pieces', and no record is read by them.
-    let q = Point::vert(Operand::A, VertId(9));
     let order = Order::default();
     let (sh, ft, o) = no_reads(&order);
     let reads = Records {
@@ -157,23 +132,26 @@ fn layers_of_another_refinement_are_refused() {
         feet: &ft,
         order: o,
     };
-    let p = pieces(q, [1, -1]);
-    let mut other = p.clone();
-    for n in &mut other.near {
-        n.core = Some(Pos::new([1.0, 2.0, 4.0]).unwrap());
+    for (bend, facing) in [(-1.0, 1), (1.0, -1)] {
+        for op in [Operand::A, Operand::B] {
+            let q = Point::vert(op, VertId(9));
+            let (heights, r) = fill(q, &Silhouette { bend, hit: true });
+            r.unwrap();
+            let rec = heights.table().get(&key(q)).expect("decided");
+            assert!(rec.fold && rec.by_orders, "{rec:?}");
+            let p = pieces(q, 1);
+            assert_eq!(p.wanted(&reads, &[]), Ok(vec![key(q)]));
+            assert_eq!(
+                p.count(&reads, &heights, &[]),
+                Ok(facing),
+                "bend {bend}, {op:?}"
+            );
+            // A piece of degree 0 reads nothing and counts nothing.
+            let p = pieces(q, 0);
+            assert_eq!(p.wanted(&reads, &[]), Ok(Vec::new()));
+            assert_eq!(p.count(&reads, &Heights::new(), &[]), Ok(0));
+        }
     }
-    let mut layers = LayerTable::new();
-    layers.insert(q, p.face, other.layers(&reads).unwrap());
-    let stale = KeyError::NoLayer {
-        q,
-        f: p.face,
-        layer: LayerId(0),
-    };
-    assert_eq!(p.wanted(&reads, &layers), Err(stale));
-    assert_eq!(
-        p.count(&reads, &layers, &Heights::new()),
-        Err(CountError::Key(stale))
-    );
 }
 
 #[test]
@@ -182,7 +160,21 @@ fn a_hit_formed_at_no_level_is_not_a_tie() {
     // isn't formed: the value escalates and no tie is stored for the key
     // (a later fill, with the hit formed, decides it from its value).
     let q = Point::vert(Operand::A, VertId(9));
-    let p = pieces(q, [1, -1]);
+    let geom = Silhouette {
+        bend: -1.0,
+        hit: false,
+    };
+    let (heights, r) = fill(q, &geom);
+    assert!(r.is_err(), "{r:?}");
+    let k = key(q);
+    assert_eq!(heights.key(k.h), None, "no tie stored for {k:?}");
+    assert_eq!(heights.table().get(&k), None);
+}
+
+#[test]
+fn a_curved_face_s_piece_holding_the_column_is_refused() {
+    // Its hit isn't formed here: the count says so, never a guess.
+    let q = Point::vert(Operand::A, VertId(9));
     let order = Order::default();
     let (sh, ft, o) = no_reads(&order);
     let reads = Records {
@@ -190,24 +182,24 @@ fn a_hit_formed_at_no_level_is_not_a_tie() {
         feet: &ft,
         order: o,
     };
-    let mut layers = LayerTable::new();
-    layers.insert(q, p.face, p.layers(&reads).unwrap());
-    let wanted = p.wanted(&reads, &layers).unwrap();
-    let geom = Silhouette {
-        bend: -1.0,
-        hit: false,
+    let mut p = pieces(q, 1);
+    p.curved = true;
+    p.hits.clear();
+    p.near[0].hits.clear();
+    let refused = CountError::CurvedHit {
+        point: q,
+        face: FACE,
     };
-    let mut heights = Heights::new();
-    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
-    let r = heights.fill(
-        wanted.clone(),
-        &ModelHeights { model: &geom },
-        band,
-        &mut Seq,
+    assert_eq!(p.wanted(&reads, &[]), Err(refused.clone()));
+    assert_eq!(p.count(&reads, &Heights::new(), &[]), Err(refused));
+    // A plane face's piece of non-zero degree with no hit: a mismatch of
+    // the hits and the boxes, refused too.
+    p.curved = false;
+    assert_eq!(
+        p.count(&reads, &Heights::new(), &[]),
+        Err(CountError::NoHit {
+            point: q,
+            face: FACE
+        })
     );
-    assert!(r.is_err(), "{r:?}");
-    for k in &wanted {
-        assert_eq!(heights.key(k.h), None, "no tie stored for {k:?}");
-        assert_eq!(heights.table().get(k), None);
-    }
 }

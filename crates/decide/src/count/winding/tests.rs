@@ -631,3 +631,54 @@ fn an_edge_that_disagrees_is_named_before_a_winding_too_large() {
         }
     );
 }
+
+/// The lobe fallback on the path `0 — 1 — 2`: vertex 1's winding 2 (its
+/// hits near an edge `g` of the other operand counting a lobe) until it
+/// falls back at `g`, then 1; each `(q, g)` once, the first edge in the
+/// order given; with no edge left the signal stands.
+#[test]
+fn a_lobe_falls_back_once_per_edge_and_carries_again() {
+    let (order, edges) = path();
+    let graph = Graph {
+        operand: Operand::B,
+        verts: 4,
+        edges: &edges,
+    };
+    let q = Point::vert(Operand::B, VertId(1));
+    let (g, h) = (EdgeId(7), EdgeId(9));
+    // Vertex 1's change in from 0 and out to 2, by the edges it fell back
+    // at: only `h` clears the lobe.
+    let counts = |lobes: &Lobes| -> Result<Counted, ()> {
+        let w1 = if lobes.at(q).contains(&h) { 1 } else { 2 };
+        Ok((vec![(VertId(0), 0), (VertId(3), 0)], vec![w1, -w1]))
+    };
+    let mut lobes = Lobes::new();
+    let mut asked = 0;
+    let w = windings_lobed(&order, &graph, &mut lobes, counts, |p| {
+        asked += 1;
+        assert_eq!(p, q);
+        Ok(vec![g, h])
+    })
+    .expect("settled by the fallback");
+    assert_eq!(w, [0, 1, 0, 0]);
+    // `g` first (it didn't clear the lobe), then `h`.
+    assert_eq!(lobes.at(q), [g, h]);
+    assert_eq!((lobes.count(), lobes.points(), asked), (2, vec![q], 2));
+    // No join-zone edge: the signal stands.
+    let mut lobes = Lobes::new();
+    let err = windings_lobed(&order, &graph, &mut lobes, counts, |_| Ok(Vec::new()))
+        .expect_err("no fallback");
+    assert_eq!(err, WindingError::Outside { point: q, w: 2 });
+    assert_eq!(lobes.count(), 0);
+    // A failing recount is the caller's error, not a signal.
+    let err = windings_lobed(
+        &order,
+        &graph,
+        &mut Lobes::new(),
+        |_| Err(()),
+        |_| Ok(vec![g]),
+    )
+    .expect_err("recount failed");
+    assert_eq!(err, WindingError::Recount(()));
+    assert!(!err.is_signal());
+}

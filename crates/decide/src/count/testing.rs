@@ -1,6 +1,7 @@
 //! Test support shared by the counting's tests: test faces of planar or
-//! curved patches with their trims ([`FaceData`]), counted against a
-//! point through [`face_pieces`]; the geometric order of test operands
+//! curved patches with their trims ([`FaceData`]; a plane face with its
+//! exact frame, whose column hits are exact), counted against a point
+//! through [`face_pieces`]; the geometric order of test operands
 //! ([`Order`]); a pass deciding records in order on one thread ([`Seq`]);
 //! straight spans and p-spans.
 
@@ -14,8 +15,9 @@ use crate::count::s02::{CountError, FacePieces, FaceQuery, TrimEdge, face_pieces
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::num::decide::Fail;
-use crate::order::{EdgeKey, EntityOrder, VertKey};
+use crate::order::{Along, EdgeKey, EntityOrder, VertKey};
 use crate::records::height::HeightReads;
+use crate::records::height::hit::{FlatFace, FlatTrim};
 use crate::records::keys::{Operand, Point};
 use crate::records::ray::{ChainRec, Span, TileNet};
 use crate::records::shadow::{Decided, Pass};
@@ -85,6 +87,9 @@ pub(crate) struct FaceData {
     pub(crate) patches: Vec<Patch>,
     pub(crate) flipped: bool,
     pub(crate) trims: Vec<TrimData>,
+    /// A plane face's tiles' nets, one per patch (its column hits exact
+    /// on them); `None` for a curved face.
+    pub(crate) nets: Option<Vec<TileNet>>,
 }
 
 /// The geometric order of a test operand's vertices and edges.
@@ -114,6 +119,41 @@ impl EntityOrder for Order {
 }
 
 impl FaceData {
+    /// A plane face as its hits read it; `None` for a curved face.
+    pub(crate) fn flat(&self, order: &Order) -> Option<FlatFace<'_>> {
+        let nets = self.nets.as_deref()?;
+        let trims = self
+            .trims
+            .iter()
+            .map(|t| {
+                let [s, e] = t.ends;
+                let along = Along::of(
+                    &order.vert_key(self.operand, s),
+                    &order.vert_key(self.operand, e),
+                );
+                FlatTrim {
+                    coedge: t.coedge,
+                    edge: t.edge,
+                    reversed: t.reversed,
+                    ends: t.ends,
+                    along,
+                    band: t.band,
+                    pspans: &t.spans,
+                    curve: &t.curve,
+                    map: &t.maps,
+                }
+            })
+            .collect();
+        Some(FlatFace {
+            operand: self.operand,
+            face: self.id,
+            tiles: self.tiles.clone(),
+            nets,
+            inside: if self.flipped { -1 } else { 1 },
+            trims,
+        })
+    }
+
     /// The face's vertices in geometric order.
     pub(crate) fn order(&self, order: &Order) -> Vec<VertId> {
         let mut vs: Vec<VertId> = self.trims.iter().flat_map(|t| t.ends).collect();
@@ -202,11 +242,17 @@ impl FaceData {
 
     /// The face's UV domain over `trims` ([`FaceData::uv_trims`]).
     fn uv<'t>(&self, trims: &'t [Trim<'t>]) -> FaceUv<'t> {
+        self.uv_scaled(trims, [1.0, 1.0])
+    }
+
+    /// [`FaceData::uv`] with the splits comparing the sides at `scale`
+    /// (another partition of the face).
+    fn uv_scaled<'t>(&self, trims: &'t [Trim<'t>], scale: [f64; 2]) -> FaceUv<'t> {
         FaceUv::new(
             self.operand,
             self.id,
             self.tiles.clone(),
-            [1.0, 1.0],
+            scale,
             trims,
             self.flipped,
         )
@@ -224,8 +270,24 @@ impl FaceData {
         rays: &dyn Fn(&TrimData) -> ChainRec,
         f: &dyn Fn(&FirstQuery<'_>, &[TrimEdge<'_>]) -> T,
     ) -> T {
+        self.query_scaled([1.0, 1.0], corners, order, point, at, rays, f)
+    }
+
+    /// [`FaceData::query_with`] with the splits comparing the box sides
+    /// at `scale`: another partition of the face.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn query_scaled<T>(
+        &self,
+        scale: [f64; 2],
+        corners: Option<&Corners>,
+        order: &Order,
+        point: Point,
+        at: [f64; 3],
+        rays: &dyn Fn(&TrimData) -> ChainRec,
+        f: &dyn Fn(&FirstQuery<'_>, &[TrimEdge<'_>]) -> T,
+    ) -> T {
         let trims = self.uv_trims();
-        let face = self.uv(&trims);
+        let face = self.uv_scaled(&trims, scale);
         let built;
         let corners = match corners {
             Some(c) => c,
@@ -257,9 +319,25 @@ impl FaceData {
             point,
             at,
             eps_tie: 1e-9,
+            nets: self.nets.as_deref(),
         };
         f(&fq, &edges)
     }
+}
+
+/// The nets of patches as `Patch::from_affine` takes them, back from
+/// the patches' exact first-level values (weights one).
+pub(crate) fn nets_of(patches: &[Patch]) -> Vec<TileNet> {
+    patches
+        .iter()
+        .map(|p| {
+            let [x, y, z, w] = p.tensors().each_ref().map(|t| t.coefs());
+            std::array::from_fn(|k| {
+                let wk = w[k].v;
+                [x[k].v / wk, y[k].v / wk, z[k].v / wk, wk]
+            })
+        })
+        .collect()
 }
 
 /// A straight span from `a` to `b`.

@@ -48,7 +48,8 @@
 //! |---|---|---|
 //! | vertex–vertex shadow ([`VvShadow`], [`HomShadow`], [`vv_shadow`]) | `ν·(w − q)`, ahead/behind `r̂·(w − q)` | `ν·(Δw − Δq)`, likewise `r̂` |
 //! | vertex–curve shadow, box side ([`LineShadow`], [`HomLineShadow`], [`curve_shadow`]) | `ν·(q − C(s*))`, `ν = ê × T` at the foot | `ν·(Δq − ΔC(s*))` |
-//! | layer height, anchor `f` ([`PlaneHeight`], [`layer_height`]) | from the record's height key ([`PointHeight`], [`PlaneHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
+//! | column hit on a tile, germ keys, anchor `f` ([`PlaneHeight`], [`tangent_plane_row`]) | from the record's height key (the hit's own, [`crate::records::height::hit`]; [`PointHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
+//! | column hit on a ribbon, anchor `f` ([`ribbon_row`], [`ribbon_row_signs`]) | the hit's height, a sign condition at a root ([`crate::records::height::hit`]) | `(n_R·ΔR − n_R·Δq)·sign(n_R·ê)`, `n_R = R_t × R_λ`: the tangent plane of the ribbon at the hit |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
 //!
 //! The height and z-order rows are per anchor: their order 0 is the value
@@ -77,7 +78,10 @@ use crate::num::bigf::BigF;
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Fail, Sign, TieKey, decide, exact_orders};
-use crate::num::exact::{self, Num, ORDERS, Pred, V3, Work, cross, dot, moved_point, point, sub};
+use crate::num::exact::{
+    self, ExactSign, Num, ORDERS, Pred, V3, Work, cross, dot, moved_point, point, rat, sub,
+};
+use crate::num::poly::{self, Poly, Root};
 
 pub mod dir;
 
@@ -333,12 +337,11 @@ impl Pred for LineShadow {
     }
 }
 
-/// The layer-height row on a plane, flat: `(c − n·q)·(n·UP)` for the plane
-/// `n·x = c`, the plane's height above `q` along `UP` times `(n·UP)²/|UP|`.
-/// Its orders are the tangent-plane row, `(n·Δf − n·Δq)·(n·UP)`, `Δf` the
-/// plane's rates at the anchor (its offset moves by `n·Δf`); its value is
-/// the height key's for a point–face key on the plane. Zero, orders too,
-/// on a vertical plane, where the fold rule decides instead.
+/// The plane-height row, flat: `(c − n·q)·(n·UP)` for the plane `n·x = c`,
+/// the plane's height above `q` along `UP` times `(n·UP)²/|UP|`. Its
+/// orders are the tangent-plane row, `(n·Δf − n·Δq)·(n·UP)`, `Δf` the
+/// plane's rates at the anchor (its offset moves by `n·Δf`): a germ key's
+/// rows on a plane face. Zero, orders too, on a vertical plane.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaneHeight {
     /// The plane's normal `n`, oriented as its face (scaled freely: a
@@ -699,13 +702,13 @@ pub fn curve_shadow<S: Curved>(q: &MovingAt<S>, foot: &MovingAt<S>, tangent: &[S
     along(&nu, q, foot)
 }
 
-/// The layer-height orders, curved: the tangent plane of the anchor face
+/// The column-hit orders, curved: the tangent plane of the anchor face
 /// `f`, `(n·Δf − n·Δq)·sign(n·ê)` with `n` the unit normal at the anchor
 /// (from `normal`, any positive multiple, oriented as the face) and `Δf`
 /// the face's rates there. `None` when the facing `sign(n·ê)` isn't
 /// certified: the in-face fold rule decides instead. Order 0 is the height
 /// key's.
-pub fn layer_height<S: Curved>(
+pub fn tangent_plane_row<S: Curved>(
     normal: &[S; 3],
     face_rates: &[[S; 3]; ORDERS],
     q: &MovingAt<S>,
@@ -714,6 +717,64 @@ pub fn layer_height<S: Curved>(
     Some(std::array::from_fn(|k| {
         dot3(&n, &sub3(&face_rates[k], &q.rates[k]))
     }))
+}
+
+/// The column-hit orders on a ribbon, curved: the tangent plane of the
+/// ribbon at the hit, `(n_R·ΔR − n_R·Δq)·sign(n_R·ê)` with `n_R` the unit
+/// normal `R_t × R_λ` from the ribbon's partials `rt`, `rl` there and
+/// `ΔR` the ribbon point's rates (the moving operand's field there, zero
+/// on `B`): the height's derivative along each motion times `|n_R·ê|`.
+/// `None` when `sign(n_R·ê)` isn't certified (the column tangent to the
+/// ribbon). Order 0 is the hit's height.
+pub fn ribbon_row<S: Curved>(
+    rt: &[S; 3],
+    rl: &[S; 3],
+    ribbon_rates: &[[S; 3]; ORDERS],
+    q: &MovingAt<S>,
+) -> Option<[S; ORDERS]> {
+    tangent_plane_row(&cross3(rt, rl), ribbon_rates, q)
+}
+
+/// [`ribbon_row`] exactly at a hit on flat data, the ribbon's parameter
+/// the root `at` of the hit polynomial: the signs of `(N·Δₖ)·(N·UP)`,
+/// `N = rt × rl` from polynomial numerators in the parameter whose cross
+/// product is `n_R` times a non-zero factor of either sign (which the
+/// product cancels), `Δₖ = ΔR − Δq` per motion. A sign is `Equal` where
+/// the motion moves the height to no first order (or the column is
+/// tangent to the ribbon there, `N·UP = 0`).
+pub fn ribbon_row_signs(
+    rt: &[Poly; 3],
+    rl: &[Poly; 3],
+    at: &Root,
+    deltas: &[[Rational; 3]; ORDERS],
+) -> [ExactSign; ORDERS] {
+    let n = [
+        poly::sub(&poly::mul(&rt[1], &rl[2]), &poly::mul(&rt[2], &rl[1])),
+        poly::sub(&poly::mul(&rt[2], &rl[0]), &poly::mul(&rt[0], &rl[2])),
+        poly::sub(&poly::mul(&rt[0], &rl[1]), &poly::mul(&rt[1], &rl[0])),
+    ];
+    let along = |d: &[Rational; 3]| -> Poly {
+        (0..3).fold(Vec::new(), |acc, k| {
+            poly::add(&acc, &poly::scale(&n[k], &d[k]))
+        })
+    };
+    let facing = at.sign_of(&along(&[UP.x, UP.y, UP.z].map(rat)));
+    deltas.each_ref().map(|d| {
+        let s = at.sign_of(&along(d));
+        Ok(match facing {
+            Ordering::Less => s.reverse(),
+            Ordering::Equal => Ordering::Equal,
+            Ordering::Greater => s,
+        })
+    })
+}
+
+/// A rate as exact components.
+pub fn rate_rational(r: &Rate) -> [Rational; 3] {
+    match r {
+        Rate::Float(v) => [v.x, v.y, v.z].map(rat),
+        Rate::Exact(d) => (**d).clone(),
+    }
 }
 
 /// The point–face height key's value, curved: `n_f·(x_h − q)·sign(n_f·ê)`

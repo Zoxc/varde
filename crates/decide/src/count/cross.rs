@@ -11,7 +11,7 @@
 //! **Conventions.** Each edge runs along its stored direction (from its
 //! lower-id end), and `sgn(c)` is `+1` exactly when coedge `c` runs that
 //! way ([`Coedge::sgn`]). `s02` is the upward ray's winding through the
-//! face, `s20` the downward ray's (`+1` per down-facing layer below the
+//! face, `s20` the downward ray's (`+1` per down-facing hit below the
 //! point, [`crate::count::s02`]). `s11(e, g)` is the sum of the degrees
 //! of the edge pair's clusters with `g` above `e`
 //! ([`XRec::s11`](crate::records::xrec::XRec::s11)), the **same** value
@@ -21,7 +21,7 @@
 //! or both) fail on random geometry; the tests check them.
 //!
 //! **Why it holds.** The column of a point running along `e` from `a` to
-//! `b` changes its layer count through `f` exactly where `e` crosses `f`
+//! `b` changes its hit count through `f` exactly where `e` crosses `f`
 //! or where the column sweeps past `f`'s boundary, i.e. where `e`'s
 //! shadow crosses a trim `g_c` with `g_c` above `e`; the sum of those
 //! sweeps is `Σ sgn(c)·s11(e, g_c)`. For `x21` the ray points down and

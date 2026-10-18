@@ -421,6 +421,7 @@ fn with_count<R>(
         point: Point::vert(Operand::A, VertId(7)),
         at: q,
         eps_tie: 1e-9,
+        nets: None,
     };
     let (shadows, feet) = (Shadows::new(), NearFeet::new());
     let reads = Records {

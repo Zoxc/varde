@@ -30,12 +30,13 @@
 //!
 //! **Heights.** A height record's value is decided once per height key
 //! ([`HKey`], the plan's `height_key(q, target)`): the point–point,
-//! edge–edge, point–curve or point–face geometry the height is read
-//! from, shared by every anchor that reads it. Its perturbed orders are
-//! the anchor's own, so the per-anchor record is keyed by both
-//! ([`HeightKey`]). Which height key a query and target read (a near
-//! vertex, a foot, a layer's feature, in geometric order) is worked out
-//! from other records; the keys here are what it yields.
+//! edge–edge or point–curve geometry the height is read from, or a
+//! column hit of the point on a sheet of a face ([`HKey::Hit`]), shared
+//! by every anchor that reads it. Its perturbed orders are the anchor's
+//! own, so the per-anchor record is keyed by both ([`HeightKey`]). Which
+//! height key a query and target read (a hit, or the vertex or edge it
+//! lies on exactly) is worked out from the hit's exact incidence; the
+//! keys here are what it yields.
 //!
 //! [`RecordKey`] is any record's key, for evidence: what
 //! [`Fail::Internal`](crate::num::decide::Fail::Internal) names.
@@ -44,7 +45,7 @@
 //! them in. Ids order work only; no answer reads that order.
 
 use crate::bezier::{Dir, Dyadic};
-use crate::ids::{EdgeId, FaceId, VertId};
+use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 
 /// One of the two operands of a boolean.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -82,11 +83,35 @@ pub struct XClusterIx(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FootId(pub u32);
 
-/// A layer of a face at a point: a 3D component of the face's counting
-/// surface within the point's near radius, by its index among the
-/// face's layers at that point.
+/// The sheet of a face's counting surface a column hit lies on: a tile
+/// of the face (the hit's UV inside the trim), or the ribbon of one span
+/// of a coedge's p-curve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LayerId(pub u32);
+pub enum Sheet {
+    /// The tile `[i, j]` of the face's global UV.
+    Tile([i64; 2]),
+    /// The ribbon of span `span` (along the edge's stored direction) of
+    /// the coedge's p-curve.
+    Ribbon(CoedgeId, u32),
+}
+
+/// A column hit's ordinal on its sheet: its place along the sheet's
+/// parameter in geometric order (from the edge's geometrically lesser
+/// end on a ribbon; a plane tile has one hit at most).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HitIx(pub u32);
+
+/// Where a column hit lies exactly on an element of the hit's face,
+/// decided on the stored data: at a vertex of the face, or on an edge's
+/// curve at one of the point's feet on it (the germ rule: the hit then
+/// reads the vertex's or edge's key).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Incidence {
+    /// At this vertex.
+    Vert(VertId),
+    /// On this edge's curve, at this foot of the point on it.
+    Edge(EdgeId, FootId),
+}
 
 /// A point a record is asked of, on its operand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -127,8 +152,18 @@ pub enum Target {
     Vert(VertId),
     /// An edge, at one of the point's feet on it.
     Edge(EdgeId, FootId),
-    /// A face, at one of its layers at the point.
-    Layer(FaceId, LayerId),
+    /// A face, at a column hit of the point on one of its sheets, with
+    /// where the hit lies exactly on the face's vertices or edges.
+    Hit {
+        /// The face.
+        f: FaceId,
+        /// The sheet.
+        sheet: Sheet,
+        /// The hit's ordinal on it.
+        i: HitIx,
+        /// Its exact incidence, if any.
+        inc: Option<Incidence>,
+    },
 }
 
 /// A key as a reader asked for it: the canonical key and whether the
@@ -601,15 +636,18 @@ pub enum HKey {
         /// The foot.
         foot: FootId,
     },
-    /// A point against a face of the other operand at one of its layers
-    /// there, the layer having no feature (a core layer).
-    Face {
+    /// A point against a face of the other operand at a column hit of
+    /// the point on one of the face's sheets: the hit's own height,
+    /// whatever boxes or pieces found it.
+    Hit {
         /// The point.
         q: Point,
         /// The face.
         f: FaceId,
-        /// The layer.
-        layer: LayerId,
+        /// The sheet.
+        sheet: Sheet,
+        /// The hit's ordinal on it.
+        i: HitIx,
     },
 }
 
@@ -646,8 +684,8 @@ impl HKey {
     }
 }
 
-/// What a height record is anchored at: a face whose layer is above or
-/// below the point, or the edge of a crossing whose z-order it is.
+/// What a height record is anchored at: a face whose column hit is above
+/// or below the point, or the edge of a crossing whose z-order it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Anchor {
     /// A face of this operand.

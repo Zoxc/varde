@@ -139,8 +139,10 @@ fn pt(p: [f64; 3], w: f64) -> [f64; 4] {
     [p[0], p[1], p[2], w]
 }
 
-/// A line span from `a` to `b`, its middle control point on the chord
-/// (the counting's straight edge).
+/// A line span from `a` to `b`, its middle control point the rounded
+/// midpoint: on the chord exactly where `a + b` is exact in each
+/// coordinate (as [`snap`] makes it), else a hair off it, a curve
+/// ([`is_line`]).
 pub(super) fn line(a: [f64; 3], b: [f64; 3]) -> Span3 {
     let m = [0, 1, 2].map(|k| 0.5 * (a[k] + b[k]));
     [pt(a, 1.0), pt(m, 1.0), pt(b, 1.0)]
@@ -194,11 +196,48 @@ fn uv_chain(pieces: &[([f64; 2], [f64; 2])]) -> PCurve {
     PCurve::new(spans, knots).expect("a p-curve")
 }
 
-/// Whether a chain is one line span as [`line`] makes it.
-fn is_line(spans: &[Span3]) -> bool {
+/// Whether a chain is one line span, its middle control point on the
+/// chord exactly (the midpoint, `a + b` exact): the straight edge the
+/// counting reads by its end points. A rounded midpoint bends the stored
+/// curve off the chord (by up to half an ulp), and the counting surface
+/// ends on the stored curve.
+pub(super) fn is_line(spans: &[Span3]) -> bool {
     let [s] = spans else { return false };
     s.iter().all(|p| p[3] == 1.0)
-        && (0..3).all(|k| (0.5 * (s[0][k] + s[2][k])).to_bits() == s[1][k].to_bits())
+        && (0..3).all(|k| {
+            let (a, b) = (s[0][k], s[2][k]);
+            let sum = a + b;
+            // The rounding error of `a + b` (Knuth's two-sum).
+            let bb = sum - a;
+            let err = (a - (sum - bb)) + (b - bb);
+            err == 0.0 && (0.5 * sum).to_bits() == s[1][k].to_bits() && 2.0 * s[1][k] == sum
+        })
+}
+
+/// `verts` with every coordinate rounded to a multiple of `2^(E − 52)`,
+/// `2^E` above the largest magnitude among them (at most one ulp of the
+/// largest binade): so the sum of any two coordinates is exact and a
+/// [`line`] between two of them is straight exactly.
+pub(super) fn snap(verts: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    let m = verts
+        .iter()
+        .flatten()
+        .fold(0.0f64, |m, x| if x.abs() > m { x.abs() } else { m });
+    if m == 0.0 || !m.is_finite() {
+        return verts.to_vec();
+    }
+    // `2^E > m`, from the exponent bits of `m`.
+    let e = ((m.to_bits() >> 52) & 0x7ff) as i64 - 1023 + 1;
+    let q = pow2_signed(e - 52);
+    verts
+        .iter()
+        .map(|p| p.map(|x| (x / q).round() * q))
+        .collect()
+}
+
+/// `2^k`, exact, for `k` within the normal range.
+fn pow2_signed(k: i64) -> f64 {
+    f64::from_bits(((k + 1023) as u64) << 52)
 }
 
 /// The p-curve on a plane of a chain's spans at the plane surface's
@@ -706,9 +745,11 @@ fn cuboid(o: [f64; 3], axes: [[f64; 3]; 3], make: &Make) -> Solid {
     polyhedron(&verts, &faces, make)
 }
 
-/// A polyhedron: its vertices and its faces as loops of vertex indices
-/// running round their outward normals, each face planar.
+/// A polyhedron: its vertices (snapped, [`snap`], so its edges are
+/// straight exactly) and its faces as loops of vertex indices running
+/// round their outward normals, each face planar.
 fn polyhedron(verts: &[[f64; 3]], loops: &[Vec<usize>], make: &Make) -> Solid {
+    let verts = &snap(verts)[..];
     let mut edges: Vec<(Vec<Span3>, Vec<f64>, [usize; 2])> = Vec::new();
     let mut faces = Vec::new();
     for l in loops {
@@ -762,14 +803,17 @@ fn half_cylinder(
     let z = [z[0] + off, z[1] + off];
     let d = [0, 1, 2].map(|k| quarter(&lat, first + k));
     let at = |dir: [f64; 3], h: f64| add(add(foot, scale(dir, r)), scale(a, h));
-    let verts = vec![
+    // Snapped ([`snap`]): the lines between them straight exactly, the
+    // arcs ending on them.
+    let verts = snap(&[
         at(d[0], z[0]),
         at(d[2], z[0]),
         at(d[0], z[1]),
         at(d[2], z[1]),
-    ];
-    // A half circle at height h: two quarters, `d0` to `d1` to `d2`.
-    let arc = |h: f64| -> Vec<Span3> {
+    ]);
+    // A half circle at height h from vertex `v0` to `v1`: two quarters,
+    // `d0` to `d1` to `d2`.
+    let arc = |h: f64, v0: [f64; 3], v1: [f64; 3]| -> Vec<Span3> {
         let quarter = |from: [f64; 3], to: [f64; 3]| -> Span3 {
             [
                 pt(at(from, h), 1.0),
@@ -777,11 +821,14 @@ fn half_cylinder(
                 pt(at(to, h), 1.0),
             ]
         };
-        vec![quarter(d[0], d[1]), quarter(d[1], d[2])]
+        let (mut q0, mut q1) = (quarter(d[0], d[1]), quarter(d[1], d[2]));
+        q0[0] = pt(v0, 1.0);
+        q1[2] = pt(v1, 1.0);
+        vec![q0, q1]
     };
     let edges = vec![
-        (arc(z[0]), vec![0.0, 1.0, 2.0], [0, 1]),
-        (arc(z[1]), vec![0.0, 1.0, 2.0], [2, 3]),
+        (arc(z[0], verts[0], verts[1]), vec![0.0, 1.0, 2.0], [0, 1]),
+        (arc(z[1], verts[2], verts[3]), vec![0.0, 1.0, 2.0], [2, 3]),
         (vec![line(verts[0], verts[2])], vec![0.0, 1.0], [0, 2]),
         (vec![line(verts[1], verts[3])], vec![0.0, 1.0], [1, 3]),
         (vec![line(verts[0], verts[1])], vec![0.0, 1.0], [0, 1]),

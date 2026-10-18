@@ -594,7 +594,7 @@ fn patch_height(face: &HomPatch<B>, q: &[B; 3], uv: &[B; 2]) -> B {
 /// or the face moving. The height moves by the row over the facing
 /// `|n·ê|`, at any `q`.
 #[test]
-fn layer_height_rows_are_the_derivatives() {
+fn tangent_plane_row_rows_are_the_derivatives() {
     for seed in varde_testing::seeds(6, 128) {
         let mut r = Rng::new(seed);
         let net = random_patch(&mut r);
@@ -619,8 +619,11 @@ fn layer_height_rows_are_the_derivatives() {
         };
         // Either orientation of the face gives the same row.
         let flipped = normal.clone().map(|x| x.neg());
-        let ord = layer_height(&normal, &face_rates, &qm).expect("a facing");
-        assert_eq!(layer_height(&flipped, &face_rates, &qm), Some(ord.clone()));
+        let ord = tangent_plane_row(&normal, &face_rates, &qm).expect("a facing");
+        assert_eq!(
+            tangent_plane_row(&flipped, &face_rates, &qm),
+            Some(ord.clone())
+        );
         let facing = dot3(&unit3(&normal), &up()).abs();
         for k in 1..=ORDERS {
             let row = ord[k - 1].div(&facing);
@@ -741,7 +744,7 @@ fn flat_rows_decide_ties_by_the_first_motion_that_moves_them() {
         rates: rates_a(Sign::Pos, DVec3::Z),
         q: Moving::fixed(DVec3::new(0.0, 0.0, 1.0)),
     };
-    let k = key(Row::LayerHeight);
+    let k = key(Row::ColumnHit);
     let (s, work) = decide_flat_orders(Ordering::Less, &plane, k);
     assert_eq!((s, work.filters), (Ok(Sign::Neg), 0));
     // At a tie the face of `A` moving up along its normal puts it above.
@@ -836,7 +839,7 @@ fn curved_rows_refuse_an_uncertified_orientation() {
     let at = MovingAt::fixed([z; 3]);
     let edge_on = lit3(UP.cross(DVec3::X), &z);
     let rates = MovingAt::fixed([z; 3]).rates;
-    assert_eq!(layer_height(&edge_on, &rates, &at), None);
+    assert_eq!(tangent_plane_row(&edge_on, &rates, &at), None);
     assert_eq!(face_height(&edge_on, &at.at, &at.at), None);
     let t = lit3(DVec3::X, &z);
     assert_eq!(z_order(&at, &t, &at, &t), None);
@@ -881,7 +884,7 @@ fn curved_rows_certify_their_errors_at_every_level() {
         out.push(cs.g);
         out.extend(cs.ord);
         let (_, n) = patch_point(&surface, &lit(0.625), &s);
-        if let Some(ord) = layer_height(&n, &MovingAt::fixed(p.clone()).rates, &qa) {
+        if let Some(ord) = tangent_plane_row(&n, &MovingAt::fixed(p.clone()).rates, &qa) {
             out.extend(ord);
         }
         let mut t2 = t.clone();
@@ -1122,7 +1125,7 @@ fn flat_rows_are_the_spatial_values_exactly() {
         agrees_exactly(
             &pred,
             (!vertical).then_some(&h as &dyn Fn(usize) -> Q),
-            Row::LayerHeight,
+            Row::ColumnHit,
         );
         // Two edges, `g` straight above or below a point of `e`, or not.
         let e0 = r.ints(6) * s;
@@ -1220,7 +1223,7 @@ fn curved_rows_stay_sound_near_degenerate_data() {
         };
         let mut out = all(curve_shadow(&qa, &foot, &t));
         let (_, n) = patch_point(&surface, &lit(at.1[0]), &lit(at.1[1]));
-        let height = layer_height(&n, &foot.rates, &qa);
+        let height = tangent_plane_row(&n, &foot.rates, &qa);
         out.extend(height.map_or(vec![None; ORDERS], |o| o.map(Some).to_vec()));
         let tg = [0, 1, 2].map(|k| t[k].add(&lit(nudge[k])));
         let z = z_order(&qa, &tg, &foot, &t);
