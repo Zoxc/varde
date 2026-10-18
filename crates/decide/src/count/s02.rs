@@ -13,11 +13,11 @@
 //! their (padded) hull certified above or below `q` along `UP`, or small:
 //! a strip or corner box within its curves' least band across, a core box
 //! within `ε_tie` ([`FaceQuery::eps_tie`]). The size is no stop for the
-//! heights: on a plane face the **column hits** are exact points on the
-//! stored tiles and ribbons ([`hit`](crate::records::height::hit)), which
-//! need no box size to hold them apart, and boxes refined that far are
-//! mostly height-clear, which costs less than their hits (on a curved
-//! face the hits are isolated by a later stage). A core
+//! heights: on a face given its stored nets, plane or curved, the
+//! **column hits** are exact points on the stored tiles and ribbons
+//! ([`hit`](crate::records::height::hit)), which need no box size to
+//! hold them apart, and boxes refined that far are mostly height-clear,
+//! which costs less than their hits. A core
 //! leaf is a piece of its own, its degree its box's
 //! ([`box_degree_sided`]); where the level doesn't certify that (a side
 //! inside a tile not certified off `q_xy`, too long for its turn or
@@ -81,10 +81,11 @@
 //! height, the tile and ribbon of one face straddling `q` count each by
 //! its own, and every face at a shared vertex reads the one point–vertex
 //! record. A near piece of non-zero degree holding no hit is
-//! [`CountError::NoHit`] (on a plane face only where its hits can't be
-//! counted alone, below); on a curved face it is [`CountError::CurvedHit`].
+//! [`CountError::NoHit`] (only where its hits can't be counted alone,
+//! below); on a face counted without its nets it is
+//! [`CountError::HitsUnformed`].
 //!
-//! **By the hits.** On a plane face the column's hits are exact, and
+//! **By the hits.** The column's hits are exact, and
 //! their facings sum to the degree of the face's pieces. Where the hits
 //! were found and the pieces disagree with them (their degrees summing to
 //! another value, or a near piece of non-zero degree holding none: a
@@ -115,8 +116,9 @@
 //! ([`FaceUv`], its [`Corners`], its tiles' patches at the level worked
 //! at), per trim its edge and ribbon ([`TrimEdge`]: the edge's curve, the
 //! p-spans' places on it, the query point's ray record against it,
-//! [`line_chain`] for a straight edge), a plane face's stored tile nets,
-//! the query point and `ε_tie`. The counting asks for records it reads and
+//! [`line_chain`] for a straight edge), the face's stored tile nets, the
+//! query point, its motion against the face (the fold rule's side) and
+//! `ε_tie`. The counting asks for records it reads and
 //! doesn't find ([`CountError::Need`], [`CountError::NeedHeight`]): fill
 //! them and ask again.
 //!
@@ -124,8 +126,9 @@
 //! box splits at most [`MAX_SUBDIV_DEPTH`] times from its tile in each of `u`
 //! and `v` (halvings of its sides, as the cap counts them), and a
 //! piece the level doesn't settle by then (or at the boxes' own depth
-//! limit) leaves the level unsettled: a plane face is then counted by its
-//! hits (above), a curved one runs again in precision: at the next level
+//! limit) leaves the level unsettled: a face with its nets is then
+//! counted by its hits (above), one without runs again in precision: at
+//! the next level
 //! of the schedule ([`LEVELS`]: `f64`, double-double, the big-float
 //! widths), the patches lifted exactly. A count still unsettled at the
 //! last level is
@@ -158,7 +161,7 @@ use crate::order::{Along, EntityOrder};
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::feet::Foot;
 use crate::records::height::hit::{
-    FlatFace, FlatTrim, Hit, HitAt, HitError, edge_t, face_hits, span_meets, winding_of,
+    Hit, HitAt, HitError, HitFace, HitTrim, Motion, edge_t, face_hits, span_meets, winding_of,
 };
 use crate::records::height::{HeightReads, Heights, KeyError, edge_rule_key, height_key};
 use crate::records::keys::{
@@ -248,13 +251,16 @@ pub struct FaceQuery<'a, 'f, S> {
     pub point: Point,
     /// Its stored position.
     pub at: [f64; 3],
-    /// The size a core box near `q` refines to on a curved face, finite
-    /// and positive.
+    /// The size a core box near `q` refines to, finite and positive.
     pub eps_tie: f64,
-    /// A plane face's tiles' stored nets, one per tile in
+    /// The face's tiles' stored nets, one per tile in
     /// [`FaceUv::tile_boxes`]' order (module docs, "Pieces"): its column
-    /// hits are exact on them; `None` for a curved face.
+    /// hits are exact on them; `None` for a face counted without its hits
+    /// (a near piece of non-zero degree is then refused).
     pub nets: Option<&'a [TileNet]>,
+    /// The face's rates less the query point's at its column, per motion
+    /// (the fold rule's side, [`Motion`]).
+    pub motion: &'a Motion,
 }
 
 /// Why a face's count isn't certified.
@@ -271,8 +277,9 @@ pub enum CountError {
     NeedHeight(HeightKey),
     /// A record a hit's key reads is missing.
     Key(KeyError),
-    /// The column's hits on the plane face can't be formed (the column in
-    /// the plane, along a radial, tangent to a ribbon at `q`'s height).
+    /// The column's hits on the face can't be formed (the column in a
+    /// planar tile, along a radial, tangent to a ribbon at `q`'s height, a
+    /// fold the rule doesn't decide).
     Hits(HitError),
     /// A near piece of non-zero degree holds no hit of the column: the
     /// exact hits and the boxes' records disagree.
@@ -282,9 +289,10 @@ pub enum CountError {
         /// The face.
         face: FaceId,
     },
-    /// A near piece of a curved face holds the column (non-zero degree):
-    /// its hit's height needs the curved hits, which aren't formed here.
-    CurvedHit {
+    /// A near piece of a face counted without its nets holds the column
+    /// (non-zero degree): its hit's height needs the hits, which aren't
+    /// formed then.
+    HitsUnformed {
         /// The query point.
         point: Point,
         /// The face.
@@ -365,7 +373,7 @@ struct Leaf {
     met: SmallVec<[SpanRef; 8]>,
     /// The splits from its tile, in `u` and in `v`.
     splits: [u32; 2],
-    /// The column's hits in its closed box, by index (on a plane face,
+    /// The column's hits in its closed box, by index (with the face's nets,
     /// found for a near leaf; `None` until asked for).
     hits: Option<SmallVec<[u32; 2]>>,
 }
@@ -405,6 +413,12 @@ pub struct NearPiece {
     /// degree); else its degree counts by one hit's height (at most one
     /// hit, or all at one exact side of `q` or at `q`).
     pub each: bool,
+    /// Where it counts each hit: the first of its hits at `q` on the
+    /// face's boundary (a vertex or an edge of the face there), which
+    /// reads its germ key for the piece's degree less the other hits'
+    /// facings, those hits at `q` counted so and not each (module docs,
+    /// "Heights").
+    pub germ: Option<u32>,
 }
 
 /// A column hit of the point on the face, as the counting reads it.
@@ -439,10 +453,12 @@ pub struct FacePieces {
     pub below: i64,
     /// The near pieces.
     pub near: Vec<NearPiece>,
-    /// The column's hits on a plane face; empty on a curved one.
+    /// The column's hits on the face; empty where it is counted without
+    /// its nets.
     pub hits: Vec<HitTarget>,
-    /// Whether the face is curved: its hits aren't formed.
-    pub curved: bool,
+    /// Whether the face is counted without its nets: its hits aren't
+    /// formed.
+    pub unformed: bool,
     /// The pieces tested (boxes, span pieces, sides).
     pub pieces: u64,
 }
@@ -617,12 +633,13 @@ fn components(n: usize, linked: impl Fn(usize, usize) -> bool) -> Vec<Vec<usize>
     out.into_values().collect()
 }
 
-/// A plane face's exact data and the column's hits on it, found when
+/// A face's exact data and the column's hits on it, found when
 /// first asked for (a face whose leaves are all clear or dropped asks
 /// none).
 struct Flat<'a> {
-    face: FlatFace<'a>,
+    face: HitFace<'a>,
     at: [f64; 3],
+    motion: &'a Motion,
     hits: OnceCell<Result<Vec<Hit>, HitError>>,
 }
 
@@ -630,7 +647,7 @@ impl Flat<'_> {
     /// The column's hits on the face.
     fn hits(&self) -> Result<&[Hit], CountError> {
         self.hits
-            .get_or_init(|| face_hits(&self.face, self.at))
+            .get_or_init(|| face_hits(&self.face, self.at, self.motion))
             .as_deref()
             .map_err(|e| CountError::Hits(*e))
     }
@@ -645,7 +662,7 @@ struct Ctx<'q, 'a, 'f, S> {
     pieces: u64,
     /// The most pieces the count may test.
     limit: u64,
-    /// On a plane face, its hits.
+    /// With the face's nets, its hits.
     flat: Option<Flat<'a>>,
 }
 
@@ -770,12 +787,11 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 Some(Ordering::Less) => Some(Height::Below),
                 _ => None,
             };
-            // Settled for its hits (module docs, "Pieces"): on a plane
-            // face a near box holding at most one, or several at one
-            // exact side of `q`; on a curved face a box within its size.
+            // Settled for its hits (module docs, "Pieces"): with the
+            // face's nets a near box holding at most one, or several at
+            // one exact side of `q`; without, a box within its size.
             // Small: a strip or corner box within its curves' least band
-            // across, a core box within `ε_tie`. A plane face's hits are
-            // exact points, which need no box size to hold them apart; its
+            // across, a core box within `ε_tie`. The hits are exact points, which need no box size to hold them apart; its
             // near boxes still refine to that size, as height-clear boxes
             // cost less than hits (module docs, "Pieces").
             let size = if owner == Owner::Core {
@@ -784,7 +800,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 pad
             };
             let mut small = box_hull(patch, &b).is_some_and(|hb| within_band(&hb, size));
-            // On a plane face a near box at its last split holding settled
+            // With the face's nets a near box at its last split holding settled
             // hits (a hit at `q`'s height, which no box size clears) stops
             // there as a small one.
             if !small
@@ -911,6 +927,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 degree,
                 hits: SmallVec::new(),
                 each: false,
+                germ: None,
             }));
         };
         let mut sets = Vec::with_capacity(run.len());
@@ -939,16 +956,43 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 degree,
                 hits,
                 each: true,
+                germ: None,
             }));
         }
-        Ok(settled(all, &hits).then_some(NearPiece {
-            degree,
-            hits,
-            each: false,
-        }))
+        if settled(all, &hits) {
+            return Ok(Some(NearPiece {
+                degree,
+                hits,
+                each: false,
+                germ: None,
+            }));
+        }
+        // Hits at `q` on the face's boundary beside others that are not:
+        // the others, strictly inside the boxes and of formed facing, count
+        // each by its own height, the rest of the degree (degrees are
+        // additive) by the germ key at `q`.
+        let (at_q, others): (Vec<u32>, Vec<u32>) =
+            hits.iter().partition(|&&h| all[h as usize].inc.is_some());
+        let others_ok = others.iter().all(|&h| {
+            let hit = &all[h as usize];
+            hit.facing.is_some()
+                && run
+                    .iter()
+                    .any(|&k| hit.in_rect_open(&f.face, &rect(&leaves[k].b)))
+        });
+        if let (Some(&g), false, true) = (at_q.first(), others.is_empty(), others_ok) {
+            return Ok(Some(NearPiece {
+                degree,
+                hits,
+                each: true,
+                germ: Some(g),
+            }));
+        }
+        Ok(None)
     }
 
-    /// The column's hits in `b`'s closed box, by index (a plane face).
+    /// The column's hits in `b`'s closed box, by index (with the face's
+    /// nets).
     fn hits_in(&self, b: &BoxKey) -> Result<SmallVec<[u32; 2]>, CountError> {
         let Some(f) = &self.flat else {
             return Ok(SmallVec::new());
@@ -998,7 +1042,7 @@ pub(crate) fn clear_class(
     }
 }
 
-/// The hits of a plane face as the counting reads them: each with its
+/// The hits of a face as the counting reads them: each with its
 /// target (the incidence resolved to the point's foot) and the face's
 /// edges whose near radius holds it (module docs, "The lobe fallback").
 fn hit_targets<R: HeightReads>(
@@ -1172,6 +1216,7 @@ impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
             at: f.at,
             eps_tie: f.eps_tie,
             nets: f.nets,
+            motion: f.motion,
         };
         let mut pieces = 0;
         let r = pieces_within(&fq, self.sides, self.reads, limit, &mut pieces);
@@ -1250,8 +1295,9 @@ fn pieces_within<S: Scalar, R: HeightReads>(
     let flat = match fq.nets {
         None => None,
         Some(nets) => Some(Flat {
-            face: flat_face(fq, nets, reads)?,
+            face: hit_face(fq, nets, reads)?,
             at: fq.at,
+            motion: fq.motion,
             hits: OnceCell::new(),
         }),
     };
@@ -1323,13 +1369,14 @@ fn by_hits<R: HeightReads>(
         below: 0,
         near: Vec::new(),
         hits,
-        curved: false,
+        unformed: false,
         pieces: boxes.as_ref().map_or(0, |p| p.pieces),
     };
     let mut near = NearPiece {
         degree: 0,
         hits: SmallVec::new(),
         each: true,
+        germ: None,
     };
     for (k, h) in (0u32..).zip(&out.hits) {
         let f = h.facing.map_or(0, |s| i64::from(s.as_i8()));
@@ -1349,11 +1396,11 @@ fn by_hits<R: HeightReads>(
 }
 
 /// The face of `fq` as its hits read it, its tiles' nets `nets`.
-fn flat_face<'a, S, O: EntityOrder>(
+fn hit_face<'a, S, O: EntityOrder>(
     fq: &FaceQuery<'a, '_, S>,
     nets: &'a [TileNet],
     order: &O,
-) -> Result<FlatFace<'a>, CountError> {
+) -> Result<HitFace<'a>, CountError> {
     if !fq.face.patches_fit(nets) {
         return Err(CountError::Box(BoxError::Patches));
     }
@@ -1369,7 +1416,7 @@ fn flat_face<'a, S, O: EntityOrder>(
         }
         let e = find_edge(fq.edges, t.coedge)?;
         let of = first.operand();
-        trims.push(FlatTrim {
+        trims.push(HitTrim {
             coedge: t.coedge,
             edge: e.edge,
             reversed: t.reversed,
@@ -1381,7 +1428,7 @@ fn flat_face<'a, S, O: EntityOrder>(
             map: e.ribbon.map,
         });
     }
-    Ok(FlatFace {
+    Ok(HitFace {
         operand: first.operand(),
         face: first.face(),
         tiles: face.tiles().clone(),
@@ -1485,7 +1532,7 @@ fn round<S: Scalar>(
         below: 0,
         near: Vec::new(),
         hits: Vec::new(),
-        curved: ctx.flat.is_none(),
+        unformed: ctx.flat.is_none(),
         pieces: 0,
     };
     let add = |out: &mut FacePieces, h: Height, degree: i64, near: Option<NearPiece>| match h {
@@ -1823,22 +1870,36 @@ impl FacePieces {
     /// of degree 0 counting by one hit.
     fn piece_reads(&self, p: &NearPiece) -> Result<Vec<(u32, i64)>, CountError> {
         if p.each {
-            return Ok(p
+            let at_q = |k: u32| {
+                matches!(
+                    self.hits[k as usize].target,
+                    Target::Hit { inc: Some(_), .. }
+                )
+            };
+            let mut out: Vec<(u32, i64)> = p
                 .hits
                 .iter()
+                .filter(|&&k| p.germ.is_none() || !at_q(k))
                 .map(|&k| {
                     let f = self.hits[k as usize]
                         .facing
                         .map_or(0, |s| i64::from(s.as_i8()));
                     (k, f)
                 })
-                .collect());
+                .collect();
+            if let Some(g) = p.germ {
+                let rest = p.degree - out.iter().map(|(_, f)| f).sum::<i64>();
+                if rest != 0 {
+                    out.push((g, rest));
+                }
+            }
+            return Ok(out);
         }
         if p.degree == 0 {
             return Ok(Vec::new());
         }
-        if self.curved {
-            return Err(CountError::CurvedHit {
+        if self.unformed {
+            return Err(CountError::HitsUnformed {
                 point: self.point,
                 face: self.face,
             });

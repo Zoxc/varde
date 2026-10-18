@@ -6,14 +6,17 @@
 //! `x12` and `x21` by identity, the seeds and the windings carried from
 //! them. `A` moves along a constant direction `d` (`σ_A = +1`).
 //!
-//! A plane face's column hits are exact (its stored tiles, trims and
-//! edges as the hits read them); a vertex whose winding the hits leave outside
+//! Every face's column hits are exact, plane or curved (its stored tiles,
+//! trims and edges as the hits read them), the face's germ keys' rows
+//! too; a vertex whose winding the hits leave outside
 //! `{0, 1}` within an edge's near radius takes the lobe fallback there
 //! (the edge rule for its hits near the edge), counted.
 //!
 //! What the counting can't answer yet is a [`Refusal`] with its cause,
-//! never a guess: a hit near a point on a curved face (no curved hits are
-//! formed here), a crossing cluster of a curved edge whose z-order isn't
+//! never a guess: a hit the exact hits don't form (a fold they don't
+//! decide, a column in a planar tile), a height key of a curved edge
+//! away from exact incidence (the lobe fallback's edge rule there: no
+//! curved height model), a crossing cluster of a curved edge whose z-order isn't
 //! clear (no decider for curved edge–edge keys: a stand-in reads it from
 //! the geometry, refusing where that isn't clear; two straight edges'
 //! clusters read their exact edge–edge records), a side record a piece asks for, a record
@@ -42,9 +45,9 @@ use varde_decide::num::bounded::Bounded;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::ORDERS;
 use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
-use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rates_a};
+use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rate_rational, rates_a};
 use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
-use varde_decide::records::height::hit::{FlatFace, FlatTrim};
+use varde_decide::records::height::hit::{HitFace, HitTrim, Motion};
 use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights};
 use varde_decide::records::height::{HeightError, Heights, Records};
 use varde_decide::records::keys::{EdgeAt, Operand, Point, Query, RayKey, VvKey, XKey};
@@ -101,9 +104,9 @@ pub(super) enum Cause {
     OutOfBudget(String),
     /// A face count's side record can't be decided, or it kept asking.
     Side(String),
-    /// A face count's hit near the point reads a height record the flat
-    /// model can't decide (a curved face's or edge's: no curved hits or
-    /// height model here).
+    /// A face count's hit near the point reads a height record the model
+    /// can't decide (a curved edge's away from exact incidence: no curved
+    /// height model here), or a face's hits aren't formed.
     Height,
     /// A face count failed otherwise.
     Count(String),
@@ -296,9 +299,9 @@ impl EntityOrder for Order {
     }
 }
 
-/// One trim of a plane face as its hits read it, beside the store's
+/// One trim of a face as its hits read it, beside the store's
 /// spans.
-struct FlatTrimData {
+struct HitTrimData {
     coedge: CoedgeId,
     edge: EdgeId,
     reversed: bool,
@@ -308,12 +311,12 @@ struct FlatTrimData {
     map: Vec<SpanMap>,
 }
 
-/// A plane face as its hits read it.
-struct FlatData {
+/// A face, plane or curved, as its hits read it.
+struct HitData {
     tiles: [std::ops::Range<i64>; 2],
     nets: Vec<TileNet>,
     inside: i64,
-    trims: Vec<FlatTrimData>,
+    trims: Vec<HitTrimData>,
 }
 
 /// The two solids as the records read them.
@@ -323,8 +326,8 @@ pub(super) struct World<'s> {
     bands: OpBands,
     vert_near: [Vec<f64>; 2],
     order: Order,
-    /// Per operand and face, a plane face's hit data.
-    flats: [Vec<Option<FlatData>>; 2],
+    /// Per operand and face, its hit data.
+    flats: [Vec<Option<HitData>>; 2],
 }
 
 impl<'s> World<'s> {
@@ -358,27 +361,23 @@ impl<'s> World<'s> {
         };
         w.flats = [A, B].map(|op| {
             let s = w.solid(op);
-            s.faces().into_iter().map(|f| w.flat_data(op, f)).collect()
+            s.faces().into_iter().map(|f| w.hit_data(op, f)).collect()
         });
         w
     }
 
-    /// Plane face `f` of `op`'s hit data; `None` for a curved face or one
-    /// whose p-curves don't fit their edges' spans.
-    fn flat_data(&self, op: Operand, f: FaceId) -> Option<FlatData> {
+    /// Face `f` of `op`'s hit data, plane or curved; `None` for one whose
+    /// p-curves don't fit their edges' spans.
+    fn hit_data(&self, op: Operand, f: FaceId) -> Option<HitData> {
         let b = &self.solid(op).brep;
         let surf = b.surface(f);
-        let lat = surf.lattice();
-        if !matches!(lat.key(), crate::geom::form::FormKey::Plane(_)) {
-            return None;
-        }
         let mut trims = Vec::new();
         for l in b.loops(f) {
             for c in b.loop_coedges(l) {
                 let e = b.edge(c);
                 let map = span_map(b.pcurve(c).knots(), b.curve(e).knots(), b.t_range(e))?;
                 let [s0, s1] = b.ends(e);
-                trims.push(FlatTrimData {
+                trims.push(HitTrimData {
                     coedge: c,
                     edge: e,
                     reversed: b.reversed(c),
@@ -396,7 +395,7 @@ impl<'s> World<'s> {
                 nets.push(*surf.tile(i, j)?.net());
             }
         }
-        Some(FlatData {
+        Some(HitData {
             tiles: [r.u.clone(), r.v.clone()],
             nets,
             inside: if b.flipped(f) { -1 } else { 1 },
@@ -630,12 +629,12 @@ impl SideGeometry for World<'_> {
     }
 }
 
-/// The height model of the flat elements: plane faces by their stored
-/// tiles (column hits, exactly) and their keys' planes (the face's
-/// outward normal, the germ keys' rows), straight edges at the point whose
-/// shadow is nearest the asking point's and as segments (edge–edge
-/// keys). Curved faces and edges have no model here (no store-backed
-/// one exists yet): their keys escalate and the count is refused.
+/// The height model: every face by its stored tiles (column hits and
+/// the germ keys' rows on a curved face, exactly), a plane face's keys
+/// by its plane (the face's outward normal), straight edges at the point
+/// whose shadow is nearest the asking point's and as segments (edge–edge
+/// keys). A curved edge's key away from exact incidence has no model
+/// here: it escalates and the count is refused.
 impl HeightModel for World<'_> {
     fn plane(&self, operand: Operand, f: FaceId) -> Option<(DVec3, f64)> {
         let b = &self.solid(operand).brep;
@@ -646,10 +645,10 @@ impl HeightModel for World<'_> {
         self.rates(q.operand.other())
     }
 
-    fn flat_face(&self, operand: Operand, f: FaceId) -> Option<FlatFace<'_>> {
+    fn hit_face(&self, operand: Operand, f: FaceId) -> Option<HitFace<'_>> {
         let d = self.flats[ix(operand)].get(f.index())?.as_ref()?;
         let b = &self.solid(operand).brep;
-        Some(FlatFace {
+        Some(HitFace {
             operand,
             face: f,
             tiles: d.tiles.clone(),
@@ -658,7 +657,7 @@ impl HeightModel for World<'_> {
             trims: d
                 .trims
                 .iter()
-                .map(|t| FlatTrim {
+                .map(|t| HitTrim {
                     coedge: t.coedge,
                     edge: t.edge,
                     reversed: t.reversed,
@@ -671,6 +670,10 @@ impl HeightModel for World<'_> {
                 })
                 .collect(),
         })
+    }
+
+    fn edge_spans(&self, operand: Operand, g: EdgeId) -> Option<&[Span]> {
+        Some(self.solid(operand).brep.edge_spans(g))
     }
 
     fn edge_seg(&self, operand: Operand, g: EdgeId) -> Option<Seg> {
@@ -911,6 +914,14 @@ impl World<'_> {
             let nets = self.flats[ix(op.other())][f.index()]
                 .as_ref()
                 .map(|d| d.nets.as_slice());
+            // The face's rates less the vertices' (`A` moves along `d`).
+            let motion: Motion = {
+                let (fr, qr) = (self.rates(op.other()), self.rates(op));
+                std::array::from_fn(|n| {
+                    let (r, d) = (rate_rational(&fr[n]), rate_rational(&qr[n]));
+                    std::array::from_fn(|c| &r[c] - &d[c])
+                })
+            };
             for &v in &verts {
                 let q = Point::vert(op, v);
                 let at = s.brep.pos(v);
@@ -942,6 +953,7 @@ impl World<'_> {
                     at,
                     eps_tie: cfg.eps_tie,
                     nets,
+                    motion: &motion,
                 };
                 let here = || format!("{q:?} face {f:?}");
                 // Side and dyadic point records asked for are filled, one
@@ -1402,7 +1414,7 @@ impl World<'_> {
 fn count_cause(e: CountError) -> Cause {
     match e {
         CountError::Need(_) => Cause::Side("asked again".into()),
-        CountError::NeedHeight(_) | CountError::CurvedHit { .. } => Cause::Height,
+        CountError::NeedHeight(_) | CountError::HitsUnformed { .. } => Cause::Height,
         CountError::OutOfBudget { cause, .. } => Cause::OutOfBudget(format!("{cause:?}")),
         e => Cause::Count(short(&e)),
     }

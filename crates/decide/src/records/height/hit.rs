@@ -1,14 +1,15 @@
 //! Column hits on stored data, exactly: where the column of a point `q`
 //! (the line through `q` along [`UP`]) meets the counting surface of a
-//! face, its tiles inside the trim and the ribbons of its coedges, each
+//! face, plane or curved, its tiles inside the trim and the ribbons of
+//! its coedges, each
 //! hit decided on the stored `f64`s as rationals, by sign conditions at
 //! the roots of univariate polynomials ([`crate::num::poly`]).
 //!
-//! **The face** ([`FlatFace`]). Its tiles' stored nets (rational
+//! **The face** ([`HitFace`]). Its tiles' stored nets (rational
 //! biquadratic, affine control points with weights, [`TileNet`]) and its
 //! trims as the counting reads them: per coedge the p-curve's rational
 //! quadratic spans in global UV, the edge's spans and where each p-span
-//! lies on them ([`FlatTrim`]). These are the stored surface itself: no
+//! lies on them ([`HitTrim`]). These are the stored surface itself: no
 //! frame or key plane stands in for a tile.
 //!
 //! **Tile hits** ([`tile_hits`]). On tile `[i, j]`, with local `(u, v)`
@@ -53,6 +54,29 @@
 //! found once. A ribbon of no width (`S∘p` the edge's curve exactly) has
 //! no hits.
 //!
+//! **Folds.** Where the column touches a tile (`(x_u × x_v)·UP = 0` at a
+//! double root) away from `q`'s height its two hits, of opposite facing
+//! at one height, cancel and none is listed. At `q`'s height (`q` on the
+//! tile's silhouette inside the face) the moved column decides: the tile
+//! there folds over in the shadow, covering the side of the silhouette
+//! its normal curvature along `ê` points to (`sign(n·S_êê)·n`), and the
+//! moved column enters the fold exactly where the first motion's `n·(Δq
+//! − Δx)` has that sign ([`Motion`]: the face's rates less the point's).
+//! Entering, the column meets the fold's two sheets, which part as the
+//! square root of the motion while `q` moves along its column linearly:
+//! `q` lies between them. So the fold is two hits at the root, the lower
+//! sheet's below `q` and the upper's above it, the upper facing
+//! `−sign(n_f·S_êê)` (`n_f` the face's normal: the sheet bending away
+//! from its normal going up faces up); missing it, none. A fold whose
+//! bend or first-order side is zero, or on a trim at `q`, isn't formed
+//! ([`HitError::Tile`]).
+//!
+//! **Curved faces.** Nothing above asks for a plane: a curved face's
+//! tiles, p-curves and edges are rational quadratic data stored as `f64`s
+//! too, so its hits are the same exact algebraic points, isolated by the
+//! same root isolation ([`crate::num::poly`]), and a height or facing at
+//! one is exactly zero or certified, never a tie of the precision.
+//!
 //! **Incidence** (the germ rule). A hit at `q`'s own height on the
 //! edge's curve (`λ = 1`, `q` exactly on `C`) records where it lies on
 //! the edge ([`HitInc`]); so does a tile hit at `q` on a trim of no
@@ -61,6 +85,7 @@
 //! **Order.** A sheet's hits are numbered ([`HitIx`]) along the edge
 //! from its geometrically lesser end ([`Along`]), a tile's along `u`.
 
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::ops::Range;
 
@@ -82,9 +107,14 @@ use crate::records::ray::{Span, TileNet};
 
 type Q3 = [Rational; 3];
 
+/// The rates of a face's points less the asking point's, per motion, at
+/// the point's column (`Δx − Δq`): what the fold rule's side reads
+/// (module docs, "Folds").
+pub type Motion = [Q3; ORDERS];
+
 /// One trim of a face as its hits read it.
 #[derive(Clone, Copy, Debug)]
-pub struct FlatTrim<'a> {
+pub struct HitTrim<'a> {
     /// The coedge.
     pub coedge: CoedgeId,
     /// Its edge.
@@ -107,7 +137,7 @@ pub struct FlatTrim<'a> {
     pub map: &'a [SpanMap],
 }
 
-impl FlatTrim<'_> {
+impl HitTrim<'_> {
     /// The edge's near radius `r_g = 3·β_g`, rounded up.
     pub fn near_radius(&self) -> f64 {
         mul_up(3.0, self.band)
@@ -116,7 +146,7 @@ impl FlatTrim<'_> {
 
 /// A face as its hits read it (module docs).
 #[derive(Clone, Debug)]
-pub struct FlatFace<'a> {
+pub struct HitFace<'a> {
     /// The face's operand.
     pub operand: Operand,
     /// The face.
@@ -131,10 +161,10 @@ pub struct FlatFace<'a> {
     /// else `+1`.
     pub inside: i64,
     /// Every trim of positive length.
-    pub trims: Vec<FlatTrim<'a>>,
+    pub trims: Vec<HitTrim<'a>>,
 }
 
-impl FlatFace<'_> {
+impl HitFace<'_> {
     /// Tile `[i, j]`'s net; `None` for a tile not the face's.
     fn net(&self, [i, j]: [i64; 2]) -> Option<&TileNet> {
         let [us, vs] = &self.tiles;
@@ -225,7 +255,7 @@ pub enum HitAt {
     /// On a tile.
     Tile(Box<TileRoot>),
     /// On the ribbon of span `span` of trim `trim` (an index into
-    /// [`FlatFace::trims`]), at this root of the hit polynomial in the
+    /// [`HitFace::trims`]), at this root of the hit polynomial in the
     /// span's parameter.
     Ribbon {
         /// The trim.
@@ -587,12 +617,17 @@ fn one_sign(c: &[[Rational; 3]; 3]) -> bool {
 /// The hits of the column of `q` on the tiles of the face, by tile (`u`
 /// index first) and then along `u` (module docs, "Tile hits"); `ribbons`
 /// the face's ribbon hits, whose hits at `λ = 0` lie on the trims.
-pub fn tile_hits(face: &FlatFace<'_>, q: [f64; 3], ribbons: &[Hit]) -> Result<Vec<Hit>, HitError> {
+pub fn tile_hits(
+    face: &HitFace<'_>,
+    q: [f64; 3],
+    ribbons: &[Hit],
+    motion: &Motion,
+) -> Result<Vec<Hit>, HitError> {
     let mut out = Vec::new();
     let [us, vs] = face.tiles.clone();
     for i in us {
         for j in vs.clone() {
-            out.extend(on_tile(face, [i, j], q, ribbons)?);
+            out.extend(on_tile(face, [i, j], q, ribbons, motion)?);
         }
     }
     Ok(out)
@@ -723,11 +758,104 @@ fn planar_normal(net: &TileNet) -> Option<Q3> {
         .then_some(n)
 }
 
+/// A tile's homogeneous partials `X_u·W − X·W_u`, `X_v·W − X·W_v`
+/// (`W²` times `x_u`, `x_v`) and their cross product `n`, `W⁴` times the
+/// normal `x_u × x_v`.
+struct Tangents {
+    tu: [Poly2; 3],
+    tv: [Poly2; 3],
+    n: [Poly2; 3],
+}
+
+impl Tangents {
+    fn of(x: &[Poly2; 3], w: &Poly2) -> Tangents {
+        let (wu, wv) = (du2(w), dv2(w));
+        let tu: [Poly2; 3] =
+            std::array::from_fn(|k| sub2(&mul2(&du2(&x[k]), w), &mul2(&x[k], &wu)));
+        let tv: [Poly2; 3] =
+            std::array::from_fn(|k| sub2(&mul2(&dv2(&x[k]), w), &mul2(&x[k], &wv)));
+        let n = cross2(&tu, &tv);
+        Tangents { tu, tv, n }
+    }
+}
+
+fn cross2(a: &[Poly2; 3], b: &[Poly2; 3]) -> [Poly2; 3] {
+    [
+        sub2(&mul2(&a[1], &b[2]), &mul2(&a[2], &b[1])),
+        sub2(&mul2(&a[2], &b[0]), &mul2(&a[0], &b[2])),
+        sub2(&mul2(&a[0], &b[1]), &mul2(&a[1], &b[0])),
+    ]
+}
+
+/// `a·d`, `d` a constant vector.
+fn dot2(a: &[Poly2; 3], d: &Q3) -> Poly2 {
+    (0..3).fold(Vec::new(), |acc, k| add2(&acc, &scale2(&a[k], &d[k])))
+}
+
+/// `a·b` of two vectors of polynomials.
+fn dot2v(a: &[Poly2; 3], b: &[Poly2; 3]) -> Poly2 {
+    (0..3).fold(Vec::new(), |acc, k| add2(&acc, &mul2(&a[k], &b[k])))
+}
+
+/// The fold rule at a tile root where the column is tangent to the tile
+/// at `q`'s height (module docs, "Folds"): `Some(Some(upper))`, the upper
+/// sheet's facing as an upward ray counts it, where the moved column
+/// enters the fold, `Some(None)` where it misses it; `None` where the
+/// rule doesn't decide (the tile not bending along `ê` there, or the
+/// motion's first order along the tile's normal zero).
+fn fold(
+    x: &[Poly2; 3],
+    w: &Poly2,
+    t: &Tangents,
+    root: &TileRoot,
+    inside: i64,
+    motion: &Motion,
+) -> Option<Option<Sign>> {
+    let up: Q3 = [UP.x, UP.y, UP.z].map(rat);
+    // The parameter direction `(a, b)` along which the tile runs along
+    // `ê`: `a·x_u + b·x_v ∥ ê` (`|n|²/W²` times `ê`).
+    let upv: [Poly2; 3] = up.clone().map(|c| vec![poly::constant(c)]);
+    let a = dot2v(&cross2(&upv, &t.tv), &t.n);
+    let b = dot2v(&cross2(&t.tu, &upv), &t.n);
+    // `n·x_ij ∝ n·(X_ij·W − X·W_ij)`, the tangential parts dropped.
+    let second = |xij: &[Poly2; 3], wij: &Poly2| -> Poly2 {
+        let v: [Poly2; 3] = std::array::from_fn(|k| sub2(&mul2(&xij[k], w), &mul2(&x[k], wij)));
+        dot2v(&t.n, &v)
+    };
+    let xuu: [Poly2; 3] = std::array::from_fn(|k| du2(&du2(&x[k])));
+    let xuv: [Poly2; 3] = std::array::from_fn(|k| du2(&dv2(&x[k])));
+    let xvv: [Poly2; 3] = std::array::from_fn(|k| dv2(&dv2(&x[k])));
+    let (huu, huv, hvv) = (
+        second(&xuu, &du2(&du2(w))),
+        second(&xuv, &du2(&dv2(w))),
+        second(&xvv, &dv2(&dv2(w))),
+    );
+    let two = Rational::from(2u32);
+    let bend = add2(
+        &add2(
+            &mul2(&mul2(&a, &a), &huu),
+            &scale2(&mul2(&mul2(&a, &b), &huv), &two),
+        ),
+        &mul2(&mul2(&b, &b), &hvv),
+    );
+    let bend = sign_of(sign_at_tile(&bend, root)?)?;
+    // The moved column's side of the silhouette along `n`: the first
+    // motion's `n·(Δq − Δx)`; the fold covers the side `n·S_êê` points
+    // to.
+    let side = sign_of(sign_at_tile(&dot2(&t.n, &motion[0]), root)?)?;
+    let enters = side != bend;
+    // The upper sheet faces up where the tile bends away from its normal
+    // going up: `−sign(n_f·S_êê)`, `n_f` the face's normal.
+    let upper = if inside < 0 { bend } else { neg(bend) };
+    Some(enters.then_some(upper))
+}
+
 fn on_tile(
-    face: &FlatFace<'_>,
+    face: &HitFace<'_>,
     tile: [i64; 2],
     q: [f64; 3],
     ribbons: &[Hit],
+    motion: &Motion,
 ) -> Result<Vec<Hit>, HitError> {
     let Some(net) = face.net(tile) else {
         return Ok(Vec::new());
@@ -789,20 +917,16 @@ fn on_tile(
         }
     };
     let h = bern2(&net_coefs(net, &up, &qv));
-    // The facing: `(x_u × x_v)·UP`, `W⁴` times it from the homogeneous
-    // partials.
-    let normal_up = {
-        let (wu, wv) = (du2(&w), dv2(&w));
-        let tu: [Poly2; 3] =
-            std::array::from_fn(|k| sub2(&mul2(&du2(&x[k]), &w), &mul2(&x[k], &wu)));
-        let tv: [Poly2; 3] =
-            std::array::from_fn(|k| sub2(&mul2(&dv2(&x[k]), &w), &mul2(&x[k], &wv)));
-        let n: [Poly2; 3] = [
-            sub2(&mul2(&tu[1], &tv[2]), &mul2(&tu[2], &tv[1])),
-            sub2(&mul2(&tu[2], &tv[0]), &mul2(&tu[0], &tv[2])),
-            sub2(&mul2(&tu[0], &tv[1]), &mul2(&tu[1], &tv[0])),
-        ];
-        (0..3).fold(Vec::new(), |acc, k| add2(&acc, &scale2(&n[k], &up[k])))
+    // The facing: `(x_u × x_v)·UP`. On a planar tile `W⁴` times it from
+    // the homogeneous partials, read anywhere; at a hit on another the
+    // Jacobian of the column's equations, `det ∂(F₁, F₂)/∂(u, v) =
+    // W²·|r̂|²·(x_u × x_v)·UP` there (`r̂·(x − q) = ν·(x − q) = 0` at the
+    // hit, `r̂ × ν = |r̂|²·UP`), of far lower degree.
+    let tangents = OnceCell::new();
+    let tangents = || tangents.get_or_init(|| Tangents::of(&x, &w));
+    let jacobian = || {
+        let (f1, f2) = (bern2(&c1), bern2(&c2));
+        sub2(&mul2(&du2(&f1), &dv2(&f2)), &mul2(&dv2(&f1), &du2(&f2)))
     };
     let (zero, one, half) = (Rational::ZERO, Rational::ONE, Rational::from_signeds(1, 2));
     // The local coordinates' half-open ranges: `(0, 1]`, `[0, 1]` at the
@@ -836,14 +960,46 @@ fn on_tile(
         // parametrisation regular), read at its middle. Else the column
         // touches the tile, two hits of opposite facing at one height.
         let facing = match &planar {
-            Some(_) => sign_of(eval2(&normal_up, &half, &half).sign()),
-            None => sign_of(sign_at_tile(&normal_up, &root).ok_or(bad)?),
+            Some(_) => sign_of(eval2(&dot2(&tangents().n, &up), &half, &half).sign()),
+            None => sign_of(sign_at_tile(&jacobian(), &root).ok_or(bad)?),
         };
         let Some(facing) = facing else {
             if height != Ordering::Equal && mult % 2 == 0 {
                 continue;
             }
-            return Err(bad);
+            // The column tangent to the tile at `q`'s height: the fold
+            // rule (module docs, "Folds").
+            if height != Ordering::Equal || mult % 2 == 1 {
+                return Err(bad);
+            }
+            let Some(upper) = fold(&x, &w, tangents(), &root, face.inside, motion).ok_or(bad)?
+            else {
+                continue;
+            };
+            let Some((wn, inc)) = in_trim(face, &root, height, ribbons)? else {
+                continue;
+            };
+            if wn != face.inside {
+                return Err(HitError::Winding(wn));
+            }
+            if inc.is_some() {
+                // A fold on the face's boundary at `q`.
+                return Err(bad);
+            }
+            let near = tile_space_box(net, &root);
+            for (height, facing) in [(Ordering::Less, neg(upper)), (Ordering::Greater, upper)] {
+                out.push(Hit {
+                    sheet: Sheet::Tile(tile),
+                    i: HitIx(0),
+                    at: HitAt::Tile(Box::new(root.clone())),
+                    facing: Some(facing),
+                    height,
+                    inc: None,
+                    near: near.clone(),
+                    on_surface: false,
+                });
+            }
+            continue;
         };
         let facing = if face.inside < 0 { neg(facing) } else { facing };
         let Some((wn, inc)) = in_trim(face, &root, height, ribbons)? else {
@@ -875,7 +1031,7 @@ fn on_tile(
 /// docs, "Tile hits"): about a rational point of a box round the hit that
 /// no trim meets; where a trim meets every box tried, the point is on it.
 fn in_trim(
-    face: &FlatFace<'_>,
+    face: &HitFace<'_>,
     root: &TileRoot,
     height: Ordering,
     ribbons: &[Hit],
@@ -1019,7 +1175,7 @@ fn tile_space_box(net: &TileNet, r: &TileRoot) -> [[Rational; 2]; 3] {
 
 /// The incidence of a point at parameter `tau` of p-span `span` of `t`
 /// on the edge.
-fn inc_of(t: &FlatTrim<'_>, span: usize, tau: &Root) -> HitInc {
+fn inc_of(t: &HitTrim<'_>, span: usize, tau: &Root) -> HitInc {
     HitInc {
         edge: t.edge,
         span: t.map[span].span,
@@ -1030,7 +1186,7 @@ fn inc_of(t: &FlatTrim<'_>, span: usize, tau: &Root) -> HitInc {
 /// The edge's parameter on its span at parameter `tau` of p-span `span`
 /// of `t`, enclosed: the root narrowed to `2⁻⁶⁰`, mapped, widened by a
 /// few ulps of the map's rounding, inside `[0, 1]`.
-pub fn edge_t(t: &FlatTrim<'_>, span: usize, tau: &Root) -> [f64; 2] {
+pub fn edge_t(t: &HitTrim<'_>, span: usize, tau: &Root) -> [f64; 2] {
     let m = t.map[span];
     let mut r = tau.clone();
     r.narrow(&half_pow(60));
@@ -1066,7 +1222,7 @@ struct RibbonPolys {
     wc: Poly,
 }
 
-fn ribbon_polys(face: &FlatFace<'_>, t: &FlatTrim<'_>, span: usize) -> Option<RibbonPolys> {
+fn ribbon_polys(face: &HitFace<'_>, t: &HitTrim<'_>, span: usize) -> Option<RibbonPolys> {
     let sp = &t.pspans[span];
     let tile = face.tile_of_span(sp);
     let net = face.net(tile)?;
@@ -1107,7 +1263,7 @@ fn ribbon_polys(face: &FlatFace<'_>, t: &FlatTrim<'_>, span: usize) -> Option<Ri
 /// Whether the ribbon of p-span `span` of `t` has no area: `S∘p` is the
 /// edge's curve there exactly, or the ribbon's normal `R_t × R_λ`
 /// vanishes all over it (its radials and both curves on one line).
-fn ribbon_flat(face: &FlatFace<'_>, t: &FlatTrim<'_>, span: usize) -> bool {
+fn ribbon_flat(face: &HitFace<'_>, t: &HitTrim<'_>, span: usize) -> bool {
     ribbon_polys(face, t, span).is_some_and(|r| no_area(&r))
 }
 
@@ -1145,7 +1301,7 @@ fn vdot(v: &[Poly; 3], d: &Q3) -> Poly {
 /// The hits of the column of `q` on the ribbon of p-span `span` of trim
 /// `trim`, in ordinal order (module docs, "Ribbon hits").
 pub fn ribbon_hits(
-    face: &FlatFace<'_>,
+    face: &HitFace<'_>,
     trim: usize,
     span: usize,
     q: [f64; 3],
@@ -1155,16 +1311,32 @@ pub fn ribbon_hits(
         coedge: t.coedge,
         span: span as u32,
     };
+    let qv = q.map(rat);
+    let [a, b, u] = frame_dirs();
+    // The ribbon within the control points of its tile and of its edge's
+    // span (positive weights): away from the column in the shadow, no
+    // hit, before the ribbon's polynomials are formed.
+    let Some(net) = face.net(face.tile_of_span(&t.pspans[span])) else {
+        return Err(degenerate);
+    };
+    let ctrl: Vec<[f64; 3]> = net
+        .iter()
+        .chain(&t.curve[t.map[span].span as usize])
+        .map(|p| [p[0], p[1], p[2]])
+        .collect();
+    let hull: [[Rational; 2]; 3] =
+        std::array::from_fn(|k| min_max(&ctrl.iter().map(|p| rat(p[k])).collect::<Vec<_>>()));
+    if shadow_misses(&hull, &qv, &a) || shadow_misses(&hull, &qv, &b) {
+        return Ok(Vec::new());
+    }
     let Some(r) = ribbon_polys(face, t, span) else {
         return Err(degenerate);
     };
     if no_area(&r) {
         return Ok(Vec::new());
     }
-    let qv = q.map(rat);
     let near = ribbon_box(&r);
     // Away from the column in the shadow: no hit.
-    let [a, b, u] = frame_dirs();
     if shadow_misses(&near, &qv, &a) || shadow_misses(&near, &qv, &b) {
         return Ok(Vec::new());
     }
@@ -1293,14 +1465,14 @@ fn ribbon_box(r: &RibbonPolys) -> [[Rational; 2]; 3] {
 
 /// Every hit of the column of `q` on the face: its tiles' hits, then the
 /// ribbons' by trim and span (module docs).
-pub fn face_hits(face: &FlatFace<'_>, q: [f64; 3]) -> Result<Vec<Hit>, HitError> {
+pub fn face_hits(face: &HitFace<'_>, q: [f64; 3], motion: &Motion) -> Result<Vec<Hit>, HitError> {
     let ribbons = all_ribbon_hits(face, q)?;
-    let mut out = tile_hits(face, q, &ribbons)?;
+    let mut out = tile_hits(face, q, &ribbons, motion)?;
     out.extend(ribbons);
     Ok(out)
 }
 
-fn all_ribbon_hits(face: &FlatFace<'_>, q: [f64; 3]) -> Result<Vec<Hit>, HitError> {
+fn all_ribbon_hits(face: &HitFace<'_>, q: [f64; 3]) -> Result<Vec<Hit>, HitError> {
     let mut out = Vec::new();
     for (k, t) in face.trims.iter().enumerate() {
         for s in 0..t.pspans.len() {
@@ -1313,17 +1485,18 @@ fn all_ribbon_hits(face: &FlatFace<'_>, q: [f64; 3]) -> Result<Vec<Hit>, HitErro
 /// The hit of the column of `q` on `sheet` with ordinal `i`, as
 /// [`face_hits`] numbers it; `None` if there is none.
 pub fn hit_on(
-    face: &FlatFace<'_>,
+    face: &HitFace<'_>,
     sheet: Sheet,
     i: HitIx,
     q: [f64; 3],
+    motion: &Motion,
 ) -> Result<Option<Hit>, HitError> {
     match sheet {
         Sheet::Tile(tile) => {
             // The trims' ribbon hits at `λ = 0` say which tile points lie
             // on the trims.
             let ribbons = all_ribbon_hits(face, q)?;
-            let hits = on_tile(face, tile, q, &ribbons)?;
+            let hits = on_tile(face, tile, q, &ribbons, motion)?;
             Ok(hits.into_iter().find(|h| h.i == i))
         }
         Sheet::Ribbon(c, span) => {
@@ -1344,7 +1517,7 @@ pub fn hit_on(
 
 /// The winding of the face's trims round the UV point `p`, exactly
 /// (module docs, "Tile hits"), or where `p` lies on a trim.
-pub fn winding(face: &FlatFace<'_>, p: &[Rational; 2]) -> Result<i64, OnTrim> {
+pub fn winding(face: &HitFace<'_>, p: &[Rational; 2]) -> Result<i64, OnTrim> {
     winding_of(face.trims.iter().map(|t| (t.pspans, t.reversed)), p)
 }
 
@@ -1464,22 +1637,163 @@ pub fn span_meets(sp: &UvSpan, r: &ExactRect) -> bool {
 }
 
 // ---------------------------------------------------------------------
+// Germ keys' rows.
+
+/// Where a germ key's anchor point lies on a face's boundary
+/// ([`HitFace::germ_orders`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GermAt {
+    /// At the face's vertex.
+    Vertex(VertId),
+    /// At the asking point itself, exactly on the edge's curve.
+    Curve(EdgeId),
+}
+
+/// `f(l_u/w, l_v/w)·w^(d_u + d_v)`, `d_u`, `d_v` `f`'s degrees in `u`
+/// and `v`: a tile polynomial along a p-span, homogeneous in its weight
+/// `w` (positive, so of the sign of `f` there).
+fn along_span(f: &Poly2, lu: &Poly, lv: &Poly, w: &Poly) -> Poly {
+    let du = f
+        .iter()
+        .map(|c| c.len())
+        .max()
+        .unwrap_or(1)
+        .saturating_sub(1);
+    let dv = f.len().saturating_sub(1);
+    let pow =
+        |p: &Poly, n: usize| (0..n).fold(poly::constant(Rational::ONE), |a, _| poly::mul(&a, p));
+    let mut out: Poly = Vec::new();
+    for (j, cj) in f.iter().enumerate() {
+        for (i, c) in cj.iter().enumerate() {
+            if *c == 0u32 {
+                continue;
+            }
+            let t = poly::mul(
+                &poly::mul(&pow(lu, i), &pow(lv, j)),
+                &pow(w, du - i + dv - j),
+            );
+            out = poly::add(&out, &poly::scale(&t, c));
+        }
+    }
+    out
+}
+
+impl HitFace<'_> {
+    /// The exact orders of a germ key's row at this face (§ "Rows" in
+    /// [`crate::perturb`]): the face's tangent plane at the anchor point
+    /// against the moving point, `(n·Δₖ)·sign(n·UP)`, `deltas` the face's
+    /// rates less the point's; the anchor point the vertex `w` (its UV
+    /// the p-curve's end there), or `q` itself on the edge's curve (its UV
+    /// the p-curve's point where the curve passes through `q`, exactly).
+    /// `None` where the point isn't found on the face's trims, or the
+    /// face's facing there is zero (a silhouette through it).
+    pub fn germ_orders(
+        &self,
+        at: GermAt,
+        q: [f64; 3],
+        deltas: &Motion,
+    ) -> Option<[ExactSign; ORDERS]> {
+        let up: Q3 = [UP.x, UP.y, UP.z].map(rat);
+        let row = |n: &dyn Fn(&Q3) -> Ordering| -> Option<[ExactSign; ORDERS]> {
+            let facing = n(&up);
+            if facing == Ordering::Equal {
+                return None;
+            }
+            Some(deltas.each_ref().map(|d| Ok(mul_ord(n(d), facing))))
+        };
+        match at {
+            GermAt::Vertex(w) => {
+                let (sp, uv) = self.trims.iter().find_map(|t| {
+                    let last = t.pspans.len().checked_sub(1)?;
+                    if t.ends[0] == w {
+                        Some((&t.pspans[0], t.pspans[0][0]))
+                    } else if t.ends[1] == w {
+                        Some((&t.pspans[last], t.pspans[last][2]))
+                    } else {
+                        None
+                    }
+                })?;
+                let tile = self.tile_of_span(sp);
+                let (x, wt) = net_polys(self.net(tile)?);
+                let n = Tangents::of(&x, &wt).n;
+                let local = [0, 1].map(|k| rat(uv[k]) - Rational::from(tile[k]));
+                let nv: Q3 = n.each_ref().map(|c| eval2(c, &local[0], &local[1]));
+                row(&|d| dot(&nv, d).sign())
+            }
+            GermAt::Curve(g) => {
+                let qv = q.map(rat);
+                for t in self.trims.iter().filter(|t| t.edge == g) {
+                    for si in 0..t.pspans.len() {
+                        let Some(tau) = through(t, si, &qv) else {
+                            continue;
+                        };
+                        let sp = &t.pspans[si];
+                        let tile = self.tile_of_span(sp);
+                        let (x, wt) = net_polys(self.net(tile)?);
+                        let n = Tangents::of(&x, &wt).n;
+                        let (uvw, w) = hom(sp);
+                        let lu = poly::sub(&uvw[0], &poly::scale(&w, &Rational::from(tile[0])));
+                        let lv = poly::sub(&uvw[1], &poly::scale(&w, &Rational::from(tile[1])));
+                        let nt: [Poly; 3] = n.each_ref().map(|c| along_span(c, &lu, &lv, &w));
+                        return row(&|d| tau.sign_of(&vdot(&nt, d)));
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+/// The first parameter of p-span `span` of `t` where the edge's curve
+/// passes through `q` exactly, if it does.
+fn through(t: &HitTrim<'_>, span: usize, q: &Q3) -> Option<Root> {
+    let m = t.map[span];
+    let (cs, wc) = hom(t.curve.get(m.span as usize)?);
+    let (a, b) = (rat(m.t[0]), rat(m.t[1]) - rat(m.t[0]));
+    let wc = poly::compose_affine(&wc, &a, &b);
+    let h: Vec<Poly> = (0..3)
+        .map(|k| {
+            poly::sub(
+                &poly::compose_affine(&cs[k], &a, &b),
+                &poly::scale(&wc, &q[k]),
+            )
+        })
+        .collect();
+    let mut g: Poly = Vec::new();
+    for hk in &h {
+        g = poly::gcd(&g, hk);
+    }
+    if poly::degree(&g).unwrap_or(0) == 0 {
+        return None;
+    }
+    poly::roots(&g, &Rational::ZERO, &Rational::ONE)
+        .into_iter()
+        .next()
+        .map(|(r, _)| r)
+}
+
+/// `a·b`, exactly.
+fn dot(a: &Q3, b: &Q3) -> Rational {
+    &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
+}
+
+// ---------------------------------------------------------------------
 // Membership, nearness, orders.
 
 impl Hit {
     /// The hit's UV point against the closed rectangle `r`: whether it
     /// lies in it, exactly.
-    pub fn in_rect(&self, face: &FlatFace<'_>, r: &ExactRect) -> bool {
+    pub fn in_rect(&self, face: &HitFace<'_>, r: &ExactRect) -> bool {
         self.in_rect_as(face, r, false)
     }
 
     /// Whether the hit's UV point lies strictly inside the rectangle `r`,
     /// exactly.
-    pub fn in_rect_open(&self, face: &FlatFace<'_>, r: &ExactRect) -> bool {
+    pub fn in_rect_open(&self, face: &HitFace<'_>, r: &ExactRect) -> bool {
         self.in_rect_as(face, r, true)
     }
 
-    fn in_rect_as(&self, face: &FlatFace<'_>, r: &ExactRect, open: bool) -> bool {
+    fn in_rect_as(&self, face: &HitFace<'_>, r: &ExactRect, open: bool) -> bool {
         // `lo ≤ x ≤ hi`, or `lo < x < hi` where open, by the signs of
         // `x − lo` and `x − hi`.
         let fits = |lo: Ordering, hi: Ordering| {
@@ -1526,7 +1840,7 @@ impl Hit {
     /// (the lobe fallback's neighbourhood): a hit on a ribbon of `g`
     /// always; another where its box of space reaches within the radius
     /// of the curve's control box, a superset.
-    pub fn near_edge(&self, face: &FlatFace<'_>, g: EdgeId) -> bool {
+    pub fn near_edge(&self, face: &HitFace<'_>, g: EdgeId) -> bool {
         if let HitAt::Ribbon { trim, .. } = &self.at
             && face.trims[*trim].edge == g
         {
@@ -1551,7 +1865,7 @@ impl Hit {
     /// ribbon isn't the face's.
     pub fn orders(
         &self,
-        face: &FlatFace<'_>,
+        face: &HitFace<'_>,
         q: [f64; 3],
         deltas: &[Q3; ORDERS],
     ) -> Option<[ExactSign; ORDERS]> {
@@ -1573,19 +1887,8 @@ impl Hit {
                 let (x, w) = net_polys(net);
                 // `n ∝ (X_u·W − X·W_u) × (X_v·W − X·W_v)`, `W⁴` times the
                 // normal `x_u × x_v`.
-                let (wu, wv) = (du2(&w), dv2(&w));
-                let tu: [Poly2; 3] =
-                    std::array::from_fn(|k| sub2(&mul2(&du2(&x[k]), &w), &mul2(&x[k], &wu)));
-                let tv: [Poly2; 3] =
-                    std::array::from_fn(|k| sub2(&mul2(&dv2(&x[k]), &w), &mul2(&x[k], &wv)));
-                let n: [Poly2; 3] = [
-                    sub2(&mul2(&tu[1], &tv[2]), &mul2(&tu[2], &tv[1])),
-                    sub2(&mul2(&tu[2], &tv[0]), &mul2(&tu[0], &tv[2])),
-                    sub2(&mul2(&tu[0], &tv[1]), &mul2(&tu[1], &tv[0])),
-                ];
-                let along = |d: &Q3| -> Poly2 {
-                    (0..3).fold(Vec::new(), |acc, k| add2(&acc, &scale2(&n[k], &d[k])))
-                };
+                let n = Tangents::of(&x, &w).n;
+                let along = |d: &Q3| -> Poly2 { dot2(&n, d) };
                 let facing = sign_at_tile(&along(&up), t)?;
                 let mut out = [Ok(Ordering::Equal); ORDERS];
                 for (o, d) in out.iter_mut().zip(deltas) {
@@ -1602,7 +1905,7 @@ impl Hit {
     /// `q`'s per motion. `None` for a tile hit.
     pub fn ribbon_orders(
         &self,
-        face: &FlatFace<'_>,
+        face: &HitFace<'_>,
         q: [f64; 3],
         deltas: &[Q3; ORDERS],
     ) -> Option<[ExactSign; ORDERS]> {

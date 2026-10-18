@@ -27,4 +27,4 @@ pub mod winding;
 pub mod xrec;
 
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;

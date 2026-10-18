@@ -1,9 +1,11 @@
-//! The fold rule: a hit on a silhouette inside its (curved) face, `q` on
-//! it, so the hit's height and the face's facing are certified at no
-//! level. Its record is the fold's, the upper sheet's facing from how the
-//! face bends, the same for either operand's point; a piece of non-zero
-//! degree reading it contributes that facing, for `s02` and `s20` alike;
-//! a hit formed at no level stores no tie.
+//! The fold rule on a face known only at the precision levels (a model
+//! of a curved face, no stored nets): a hit on a silhouette inside it,
+//! `q` on it, so the hit's height and the face's facing are certified at
+//! no level. Its record is the fold's, the upper sheet's facing from how
+//! the face bends, the same for either operand's point; a piece of
+//! non-zero degree reading it contributes that facing, for `s02` and
+//! `s20` alike; a hit formed at no level stores no tie. (On stored nets
+//! the fold rule is exact: [`crate::records::height::hit`].)
 
 use super::*;
 use crate::num::decide::Band;
@@ -104,6 +106,7 @@ fn pieces(q: Point, degree: i64) -> FacePieces {
             degree,
             hits: smallvec::smallvec![0],
             each: false,
+            germ: None,
         }],
         hits: vec![HitTarget {
             target: Target::Hit {
@@ -116,7 +119,7 @@ fn pieces(q: Point, degree: i64) -> FacePieces {
             facing: Some(Sign::Pos),
             near: SmallVec::new(),
         }],
-        curved: false,
+        unformed: false,
         pieces: 0,
     }
 }
@@ -172,8 +175,9 @@ fn a_hit_formed_at_no_level_is_not_a_tie() {
 }
 
 #[test]
-fn a_curved_face_s_piece_holding_the_column_is_refused() {
-    // Its hit isn't formed here: the count says so, never a guess.
+fn a_piece_of_a_face_without_its_hits_holding_the_column_is_refused() {
+    // The face is counted without its nets, so its hit isn't formed:
+    // the count says so, never a guess.
     let q = Point::vert(Operand::A, VertId(9));
     let order = Order::default();
     let (sh, ft, o) = no_reads(&order);
@@ -183,10 +187,10 @@ fn a_curved_face_s_piece_holding_the_column_is_refused() {
         order: o,
     };
     let mut p = pieces(q, 1);
-    p.curved = true;
+    p.unformed = true;
     p.hits.clear();
     p.near[0].hits.clear();
-    let refused = CountError::CurvedHit {
+    let refused = CountError::HitsUnformed {
         point: q,
         face: FACE,
     };
@@ -194,7 +198,7 @@ fn a_curved_face_s_piece_holding_the_column_is_refused() {
     assert_eq!(p.count(&reads, &Heights::new(), &[]), Err(refused));
     // A plane face's piece of non-zero degree with no hit: a mismatch of
     // the hits and the boxes, refused too.
-    p.curved = false;
+    p.unformed = false;
     assert_eq!(
         p.count(&reads, &Heights::new(), &[]),
         Err(CountError::NoHit {

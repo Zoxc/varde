@@ -183,6 +183,7 @@ impl<R: HeightReads> AtLevel for EveryLevel<'_, '_, '_, R> {
             at: f.at,
             eps_tie: f.eps_tie,
             nets: f.nets,
+            motion: f.motion,
         };
         let r = face_pieces(&fq, &Sides::new(), self.reads).map(|p| (p.above, p.below, p.degree()));
         self.got.push(r);

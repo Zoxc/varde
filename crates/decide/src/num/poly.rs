@@ -363,6 +363,17 @@ impl Root {
         if let Some(x) = self.rational() {
             return sign_at(&q, x);
         }
+        // `q` and its remainder by `s` agree at every root of `s`: a
+        // polynomial of high degree (a sign substituted into a tile's
+        // resultant) is read at `s`'s degree.
+        let q = if degree(&q) >= degree(&self.s) {
+            rem(&q, &self.s)
+        } else {
+            q
+        };
+        if q.is_empty() {
+            return Ordering::Equal;
+        }
         // First `q` over the interval, by its Bernstein coefficients there,
         // halving it a few times: most signs settle so, far from a zero of
         // `q`.

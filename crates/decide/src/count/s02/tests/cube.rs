@@ -254,12 +254,8 @@ impl HeightModel for Cube {
         Some(Cube::plane(self, f))
     }
 
-    fn flat_face(
-        &self,
-        _: Operand,
-        f: FaceId,
-    ) -> Option<crate::records::height::hit::FlatFace<'_>> {
-        self.faces[f.0 as usize - 1].flat(&self.order)
+    fn hit_face(&self, _: Operand, f: FaceId) -> Option<crate::records::height::hit::HitFace<'_>> {
+        self.faces[f.0 as usize - 1].hit_face(&self.order)
     }
 
     fn plane_rates(&self, _: Point, _: FaceId, _: DVec3) -> [Rate; ORDERS] {

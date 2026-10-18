@@ -159,9 +159,11 @@ fn arc(i: usize, y: f64) -> Span {
 /// The half-cylinder face of `B`: tiles `[0, 3) × [0, 1)`, `u` the arcs,
 /// `v` the axis over `[0, LENGTH]`; trimmed to `u ∈ [u_a, u_b]` (−80° to
 /// 100°), `v ∈ [0.3, 0.7]`; its outward normal points away from the
-/// axis, against the patch's, so it is flipped.
-fn half_cylinder(band: f64) -> FaceData {
+/// axis, against the patch's, so it is flipped. With `with_nets` its
+/// column hits are exact on its tiles' nets, else not formed.
+fn half_cylinder(band: f64, with_nets: bool) -> FaceData {
     let mut patches = Vec::new();
+    let mut nets = Vec::new();
     for i in 0..3 {
         let rows: Vec<Span> = [0.0, 0.5, 1.0].map(|v| arc(i, LENGTH * v)).to_vec();
         let mut net = Vec::new();
@@ -170,6 +172,7 @@ fn half_cylinder(band: f64) -> FaceData {
                 net.push(row[a]);
             }
         }
+        nets.push(std::array::from_fn(|k| net[k]));
         patches.push(Patch::from_affine(2, 2, net, &first()).unwrap());
     }
     let (ua, ub) = (local_of(15.0), 2.0 + local_of(15.0));
@@ -253,7 +256,7 @@ fn half_cylinder(band: f64) -> FaceData {
         patches,
         flipped: true,
         trims,
-        nets: None,
+        nets: with_nets.then_some(nets),
     }
 }
 
@@ -292,7 +295,7 @@ fn s02_cylinder(f: &FaceData, q: [f64; 3]) -> i64 {
 #[test]
 fn an_overhanging_sheet_counts_by_its_own_height() {
     let band = 1.0 / 1024.0;
-    let f = half_cylinder(band);
+    let f = half_cylinder(band, false);
     // The edge at −80° and the point across the axis plane from it, half
     // a band inside and outside its shadow.
     let [e1, e2, _] = frame();
@@ -307,7 +310,7 @@ fn an_overhanging_sheet_counts_by_its_own_height() {
 
 #[test]
 fn columns_past_the_edge_count_the_sheets_above() {
-    let f = half_cylinder(1.0 / 1024.0);
+    let f = half_cylinder(1.0 / 1024.0, false);
     let [e1, e2, e3] = frame();
     // Beside the cylinder: nothing. Above it: nothing. Below it, across
     // the axis from the edge: the lower sheet there (at −95.7°) is past
@@ -570,7 +573,9 @@ fn huge_tile_square(c: [f64; 2], a3: DVec3, b3: DVec3, band: f64, order: &mut Or
 struct Planar<'a> {
     face: &'a FaceData,
     order: &'a Order,
-    plane: (DVec3, f64),
+    /// The face's plane; `None` for a curved face (its hits exact on its
+    /// nets all the same).
+    plane: Option<(DVec3, f64)>,
     q: [f64; 3],
     band: f64,
 }
@@ -620,15 +625,11 @@ impl crate::records::feet::FeetGeometry for Planar<'_> {
 
 impl crate::records::height::model::HeightModel for Planar<'_> {
     fn plane(&self, _: Operand, _: FaceId) -> Option<(DVec3, f64)> {
-        Some(self.plane)
+        self.plane
     }
 
-    fn flat_face(
-        &self,
-        _: Operand,
-        _: FaceId,
-    ) -> Option<crate::records::height::hit::FlatFace<'_>> {
-        self.face.flat(self.order)
+    fn hit_face(&self, _: Operand, _: FaceId) -> Option<crate::records::height::hit::HitFace<'_>> {
+        self.face.hit_face(self.order)
     }
 
     fn plane_rates(
@@ -700,40 +701,65 @@ fn planar_count(
     ladder: bool,
     scale: [f64; 2],
 ) -> (i64, Vec<HeightKey>) {
-    let point = Point::vert(Operand::A, VertId(7));
     let geom = Planar {
         face: f,
         order,
-        plane,
+        plane: Some(plane),
         q,
         band,
     };
+    model_count(f, &geom, ladder, scale)
+}
+
+/// The count of `f` on `geom` against a vertex of `A` at `geom.q`
+/// ([`planar_count`]), and the height keys it read.
+fn model_count(
+    f: &FaceData,
+    geom: &Planar<'_>,
+    ladder: bool,
+    scale: [f64; 2],
+) -> (i64, Vec<HeightKey>) {
+    let q = geom.q;
+    model_count_with(f, geom, ladder, scale, &|t: &TrimData| {
+        chain(&t.curve, q, Operand::A)
+    })
+}
+
+/// [`model_count`] with the edges' ray records from `rays`.
+fn model_count_with(
+    f: &FaceData,
+    geom: &Planar<'_>,
+    ladder: bool,
+    scale: [f64; 2],
+    rays: &dyn Fn(&TrimData) -> ChainRec,
+) -> (i64, Vec<HeightKey>) {
+    let (order, q) = (geom.order, geom.q);
+    let point = Point::vert(Operand::A, VertId(7));
     let mut feet = NearFeet::new();
     let keys = f.trims.iter().map(|t| crate::records::keys::RayKey {
         q: point,
         g: t.edge,
     });
-    feet.fill(keys, &geom, &mut Seq).expect("feet");
+    feet.fill(keys, geom, &mut Seq).expect("feet");
     let mut sh = Shadows::new();
     let vv = order
         .pos
         .keys()
         .map(|&(_, w)| crate::records::keys::VvKey::of(point, w).key);
-    sh.fill_vv(vv, &geom, &mut Seq)
+    sh.fill_vv(vv, geom, &mut Seq)
         .expect("point-vertex records");
     let reads = Records {
         shadows: &sh,
         feet: &feet,
         order,
     };
-    let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
     let sides = Sides::new();
     let p = if ladder {
-        f.query_scaled(scale, None, order, point, q, &rays, &|fq, _| {
+        f.query_scaled(scale, None, order, point, q, rays, &|fq, _| {
             count_pieces(fq, &sides, &reads, &Charge::new(u64::MAX)).0
         })
     } else {
-        f.query_scaled(scale, None, order, point, q, &rays, &|fq, edges| {
+        f.query_scaled(scale, None, order, point, q, rays, &|fq, edges| {
             let out = face_pieces(fq, &sides, &reads)?;
             assert_eq!(out.degree(), ray_degree(fq.face, edges).unwrap());
             Ok(out)
@@ -745,7 +771,7 @@ fn planar_count(
         assert!(matches!(k.h, HKey::Hit { .. }), "q = {q:?}: {k:?}");
     }
     let mut heights = Heights::new();
-    let model = crate::records::height::model::ModelHeights { model: &geom };
+    let model = crate::records::height::model::ModelHeights { model: geom };
     let band = crate::num::decide::Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
     heights
         .fill(wanted.clone(), &model, band, &mut Seq)
@@ -776,6 +802,53 @@ fn two_refinements_give_one_hit_key() {
         let (n2, k2) = planar_count(&f, &order, (n, 0.0), q, 1e-6, true, [7.0, 1.0 / 7.0]);
         assert_eq!((n1, &k1), (n2, &k2), "q = {q:?}");
         read += k1.len();
+    }
+    assert!(read > 0, "some piece near the column read a hit");
+}
+
+/// Columns a hair above and below the half-cylinder's upper sheet, on
+/// two of its tiles, with its column hits exact on its tiles:
+/// under another partition the count and the hit keys it reads are the
+/// same, each the hit's own (a point of the stored tiles, whatever boxes
+/// found it); the counts are the sheets above.
+#[test]
+fn two_refinements_give_one_hit_key_on_a_curved_tile() {
+    let band = 1.0 / 1024.0;
+    let f = half_cylinder(band, true);
+    let order = cylinder_order(&f);
+    let [e1, e2, e3] = frame();
+    let mut read = 0;
+    // At 30° and 60° (tile 1) and at 95° (tile 2), the upper sheet
+    // facing up; `z` along `ê` from it.
+    for (deg, z) in [
+        (30.0, 1e-13),
+        (30.0, -1e-13),
+        (60.0, -2e-13),
+        (95.0, 3e-13),
+        (95.0, -1e-7),
+    ] {
+        let t = f64::to_radians(deg);
+        let (sin, cos) = trig::sin_cos(t);
+        let on = e1 * (RADIUS * cos) + e3 * (RADIUS * sin) + e2 * (LENGTH / 2.0);
+        let q = (on + UP.normalize() * z).to_array();
+        let geom = Planar {
+            face: &f,
+            order: &order,
+            plane: None,
+            q,
+            band,
+        };
+        let (n1, k1) = model_count(&f, &geom, true, [1.0, 1.0]);
+        let (n2, k2) = model_count(&f, &geom, true, [7.0, 1.0 / 7.0]);
+        // One count, and whichever partition's near piece reads the hit
+        // (the other's boxes may end clear of `q`'s height), one key.
+        assert_eq!(n1, n2, "q = {q:?}");
+        let mut keys: Vec<HeightKey> = k1.iter().chain(&k2).copied().collect();
+        keys.dedup();
+        assert!(keys.len() <= 1, "q = {q:?}: {keys:?}");
+        // Below the upper sheet, which faces up, it counts; above it not.
+        assert_eq!(n1, i64::from(z < 0.0), "deg {deg}, z {z}");
+        read += k1.len().min(k2.len());
     }
     assert!(read > 0, "some piece near the column read a hit");
 }
@@ -1003,4 +1076,96 @@ fn a_box_the_trims_miss_is_core_or_outside() {
     assert_eq!(class(b(22, 26)), Ok(None));
     assert_eq!(class(b(16, 24)), Ok(None));
     assert_eq!(class(b(24, 28)), Ok(None));
+}
+
+/// The triangle face with its first side bowed up (a parabola), its
+/// edge's curve the p-curve's image exactly (no ribbon), tilted so that
+/// its shadow at its parameter `½` runs along `r̂`; the column of a point
+/// of `A` passing just inside the bow there, a hair above or below the
+/// plane, the point's ray line tangent to the bow's shadow a little
+/// ahead of it, as the curved ray records keep it: a tangency whose two
+/// moved crossings cancel, no crossing listed. The strip runs round the
+/// column are cut next to the tangency, each cut ordered against it
+/// (a cut inside it is unordered and moves:
+/// `a_cut_inside_a_cancelled_tangency_is_unordered` in the pieces'
+/// tests), and the face's count is the oracle's.
+#[test]
+fn a_cancelled_tangency_next_to_the_column_counts_as_the_oracle() {
+    use varde_testkit::ray_oracle::{Chain, Coedge, ExactFace, Face, Shift, UvChain};
+    // `P₂ − P₀ ∥ (514, 3)`, so `ν·C′(½) = −3·514 + 514·3 = 0`, up to
+    // the rounding of `P₂`.
+    let p2 = [1.75, 1.125 + 1.5 / 514.0];
+    let tri = [[1.25, 1.125], p2, [1.5, 1.9]];
+    let mut f = triangle(1.0 / 4096.0, tri);
+    let bow: UvSpan = [[1.25, 1.125, 1.0], [1.5, 1.625, 1.0], [p2[0], p2[1], 1.0]];
+    f.trims[0].spans = vec![bow];
+    f.trims[0].curve = vec![bow.map(|p| [p[0], p[1], 0.0, 1.0])];
+    f.nets = Some(nets_of(&f.patches));
+    let mut order = Order::default();
+    for (k, p) in tri.iter().enumerate() {
+        order
+            .pos
+            .insert((Operand::B, VertId(k as u32 + 1)), [p[0], p[1], 0.0]);
+    }
+    for t in &f.trims {
+        order.edges.insert((Operand::B, t.edge), t.ends);
+    }
+    let c = DVec3::new(
+        (1.25 + 2.0 * 1.5 + p2[0]) / 4.0,
+        (1.125 + 2.0 * 1.625 + p2[1]) / 4.0,
+        0.0,
+    );
+    let oracle = ExactFace::new(&Face {
+        tiles: (0..2)
+            .flat_map(|i| (0..2).map(move |j| [i, j]))
+            .zip(f.nets.clone().unwrap())
+            .collect(),
+        loops: vec![
+            f.trims
+                .iter()
+                .map(|t| Coedge {
+                    pcurve: UvChain {
+                        spans: t.spans.clone(),
+                        knots: vec![0.0, 1.0],
+                    },
+                    curve: Chain {
+                        spans: t.curve.clone(),
+                        knots: vec![0.0, 1.0],
+                    },
+                    t_range: [0.0, 1.0],
+                    reversed: t.reversed,
+                })
+                .collect(),
+        ],
+    });
+    let up = [UP.x, UP.y, UP.z];
+    let mut counted = 0;
+    for s in [1e-7, 3e-8, 3e-7] {
+        for lambda in [1e-8, -1e-8] {
+            let q = (c + R_HAT * s + UP * lambda).to_array();
+            let rays = |t: &TrimData| {
+                let mut r = chain(&t.curve, q, Operand::A);
+                if t.coedge == CoedgeId(1) {
+                    r.crossings.clear();
+                    r.touches.push((0, [0.5 - 1e-9, 0.5 + 1e-9]));
+                }
+                r
+            };
+            let geom = Planar {
+                face: &f,
+                order: &order,
+                plane: Some((DVec3::Z, 0.0)),
+                q,
+                band: 1.0 / 4096.0,
+            };
+            let (n, _) = model_count_with(&f, &geom, true, [1.0, 1.0], &rays);
+            let truth = oracle
+                .ray(&Shift::NONE, q, &Shift::NONE, up)
+                .expect("settled");
+            assert!(!truth.tie);
+            assert_eq!(n, truth.count, "s {s}, λ {lambda}");
+            counted += usize::from(n != 0);
+        }
+    }
+    assert_eq!(counted, 3, "the columns pass inside the face");
 }

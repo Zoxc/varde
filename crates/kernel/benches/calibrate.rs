@@ -24,6 +24,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use glam::DVec3;
+use malachite::Rational;
+use malachite::base::num::basic::traits::Zero as _;
 use varde_decide::bezier::{HomPatch, Poly, Scalar};
 use varde_decide::count::boxes::{Corners, FaceUv, Trim, UvSpan};
 use varde_decide::count::pieces::{Ribbon, SpanMap};
@@ -422,6 +424,8 @@ fn with_count<R>(
         at: q,
         eps_tie: 1e-9,
         nets: None,
+        // Without nets no hit is read, so the fold rule's motion is unused.
+        motion: &std::array::from_fn(|_| std::array::from_fn(|_| Rational::ZERO)),
     };
     let (shadows, feet) = (Shadows::new(), NearFeet::new());
     let reads = Records {

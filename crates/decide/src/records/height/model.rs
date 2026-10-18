@@ -9,15 +9,17 @@
 //!   points ([`PointHeight`]): the height of `B`'s point above `A`'s;
 //! - a point–curve key `Curve(q, g, k)`: on a straight edge `UP·(x − q)`,
 //!   `x` the edge's point the model reads the foot at
-//!   ([`HeightModel::foot_point`]), exact; on a curved edge the same as a
-//!   length (`UP` normalised) at the level, `x` the model's
+//!   ([`HeightModel::foot_point`]), exact; on a curved edge exactly 0
+//!   where `q` lies on its stored curve (the germ rule's key,
+//!   [`HeightModel::edge_spans`]), else the same as a length (`UP`
+//!   normalised) at the level, `x` the model's
 //!   ([`HeightModel::curved_target`]);
-//! - a hit key `Hit(q, f, sheet, i)` on a face whose hits are exact
-//!   ([`HeightModel::flat_face`], a plane face): the hit's height by its
+//! - a hit key `Hit(q, f, sheet, i)` on a face with its stored tiles
+//!   ([`HeightModel::hit_face`], plane or curved): the hit's height by its
 //!   sign conditions at the roots of the hit's polynomials on the stored
-//!   tile and ribbon ([`super::hit`]); on a curved face
-//!   `n_f·(x_h − q)·sign(n_f·ê)` ([`face_height`]) at the hit `x_h`, which
-//!   the model finds, and the normal there;
+//!   tile and ribbon ([`super::hit`]); on a face the model gives only at
+//!   the levels `n_f·(x_h − q)·sign(n_f·ê)` ([`face_height`]) at the hit
+//!   `x_h`, which the model finds, and the normal there;
 //! - an edge–edge key `X(e, g, c)` of two straight edges: the edge–edge
 //!   height of their lines, exact ([`EdgeEdge`]); of curved edges the
 //!   curved decider's (not here).
@@ -27,14 +29,17 @@
 //! the foot's point, the hit), against the key's moving point: on a plane
 //! the plane itself moving at its rates there ([`PlaneHeight`]'s orders),
 //! at a hit the stored tile's or the ribbon's tangent plane there, exactly
-//! ([`super::hit::Hit::orders`]), on a curved
-//! face [`tangent_plane_row`] with the model's normal and rates. A
+//! ([`super::hit::Hit::orders`]), at a germ key's point on a curved face
+//! with its stored tiles the tile's tangent plane there, exactly
+//! ([`HitFace::germ_orders`]), on a face given only at the levels
+//! [`tangent_plane_row`] with the model's normal and rates. A
 //! point–vertex key read at a face of `A` (whose point the key holds as
 //! `a`) is the plane's height above `b`, negated: the key's answer is `b`
 //! above `a`. At an edge (an edge–edge key's anchor) the edge–edge row.
 //!
-//! **The fold rule.** Where a curved anchor's facing `sign(n_f·ê)` is
-//! certified at no level, its target point is on a silhouette inside the
+//! **The fold rule.** On stored tiles it is exact ([`super::hit`],
+//! "Folds"). On a face given only at the levels, where a curved anchor's
+//! facing `sign(n_f·ê)` is certified at no level, its target point is on a silhouette inside the
 //! face: there `ê` lies in the tangent plane and the face folds over in
 //! the shadow. Near the fold the face is two sheets, joined at the
 //! silhouette, both on the side of it the face bends away from its
@@ -43,18 +48,23 @@
 //! `ê`). So the fold's upper sheet's facing is the sign of
 //! `−n_f·S_êê` ([`FaceAt::bend`]), whatever side the point asks from.
 
+use std::cmp::Ordering;
+
 use glam::DVec3;
 use malachite::Rational;
+use malachite::base::num::basic::traits::{One as _, Zero as _};
 
-use crate::ids::{EdgeId, FaceId};
-use crate::num::exact::{ExactSign, NotFinite, Num, ORDERS, Pred};
+use crate::ids::{EdgeId, FaceId, VertId};
+use crate::num::exact::{ExactSign, NotFinite, Num, ORDERS, Pred, rat};
+use crate::num::poly::{self, Poly};
 use crate::perturb::{
     Curved, EdgeEdge, Moving, MovingAt, PlaneHeight, PointHeight, Rate, Seg, UP, face_height,
     rate_rational, tangent_plane_row,
 };
-use crate::records::height::hit::{FlatFace, hit_on};
+use crate::records::height::hit::{GermAt, HitFace, Motion, hit_on};
 use crate::records::height::{AnchorRow, HeightGeometry, KeyValue};
 use crate::records::keys::{Anchor, FootId, HKey, HeightKey, Operand, Point, Query};
+use crate::records::ray::Span;
 use crate::records::shadow::ShadowGeometry;
 
 /// A curved face at a point, as its rows read it.
@@ -78,15 +88,26 @@ pub trait HeightModel: ShadowGeometry {
     /// the face; `None` for a curved face.
     fn plane(&self, operand: Operand, f: FaceId) -> Option<(DVec3, f64)>;
 
-    /// Planar face `f`'s rates at its point `x`, for `q`'s record: the
-    /// direction field there on `A`, zero on `B`. Also the rates of its
-    /// ribbons' points there.
+    /// Face `f`'s rates at its point `x`, for `q`'s record: the direction
+    /// field there on `A`, zero on `B`. Also the rates of its ribbons'
+    /// points there, and of a curved face's points (hits, germ keys'
+    /// points and folds on its stored tiles).
     fn plane_rates(&self, q: Point, f: FaceId, x: DVec3) -> [Rate; ORDERS];
 
-    /// Face `f` of `operand` as its column hits read it, where they are
-    /// exact (a plane face, [`super::hit`]); `None` for a curved face.
-    fn flat_face(&self, operand: Operand, f: FaceId) -> Option<FlatFace<'_>> {
+    /// Face `f` of `operand` as its column hits read it, exactly on its
+    /// stored tiles, plane or curved ([`super::hit`]); `None` for a face
+    /// the model gives only at the levels ([`HeightModel::face_at`]).
+    fn hit_face(&self, operand: Operand, f: FaceId) -> Option<HitFace<'_>> {
         let _ = (operand, f);
+        None
+    }
+
+    /// Edge `g` of `operand`'s stored spans (rational quadratic, affine
+    /// points and weights), along its stored direction, where the model
+    /// has them: a curved edge's germ key at exact incidence reads them
+    /// (whether `q` lies on the curve, exactly). By default none.
+    fn edge_spans(&self, operand: Operand, g: EdgeId) -> Option<&[Span]> {
+        let _ = (operand, g);
         None
     }
 
@@ -228,6 +249,52 @@ impl<M: HeightModel> ModelHeights<'_, M> {
         Some((face, q, neg))
     }
 
+    /// Face `f`'s rates at `q`'s column less `q`'s, per motion
+    /// ([`Motion`]): the field's value at `q`'s position (the hit lies on
+    /// its column), less the point's.
+    fn motion(&self, q: Point, f: FaceId) -> Motion {
+        let p = self.point(q);
+        let rates = self.model.plane_rates(q, f, p.at);
+        std::array::from_fn(|n| {
+            let (r, d) = (rate_rational(&rates[n]), rate_rational(&p.rates[n]));
+            std::array::from_fn(|c| &r[c] - &d[c])
+        })
+    }
+
+    /// Whether `q` lies exactly on edge `g`'s stored curve (of the other
+    /// operand).
+    fn on_curve(&self, q: Point, g: EdgeId) -> bool {
+        let Some(spans) = self.model.edge_spans(q.operand.other(), g) else {
+            return false;
+        };
+        let at = self.point(q).at.to_array();
+        spans.iter().any(|sp| on_span(sp, at))
+    }
+
+    /// A germ key's row at curved face anchor `k` for its moving point
+    /// `p` (negated where `neg`), exactly on the face's stored tiles;
+    /// `None` where the face has no hit data or the row isn't formed.
+    fn germ_row(&self, k: HeightKey, p: Point, neg: bool) -> Option<AnchorRow<FlatHeight>> {
+        let Anchor::Face(op, f) = k.anchor else {
+            return None;
+        };
+        let face = self.model.hit_face(op, f)?;
+        let at = match k.h {
+            HKey::VV { a, b } => GermAt::Vertex(match op {
+                Operand::A => vert_of(a)?,
+                Operand::B => vert_of(b)?,
+            }),
+            HKey::Curve { g, .. } => GermAt::Curve(g),
+            HKey::Hit { .. } | HKey::X { .. } => return None,
+        };
+        let ord = face.germ_orders(at, self.point(p).at.to_array(), &self.motion(p, f))?;
+        Some(AnchorRow::Exact(if neg {
+            ord.map(|o| o.map(Ordering::reverse))
+        } else {
+            ord
+        }))
+    }
+
     /// The two straight edges of an edge–edge key, each at its rates.
     fn edge_pair(&self, h: HKey) -> Option<EdgeEdge> {
         let HKey::X { e, g, .. } = h else {
@@ -238,6 +305,34 @@ impl<M: HeightModel> ModelHeights<'_, M> {
             g: self.model.edge_seg(Operand::B, g)?,
         })
     }
+}
+
+/// The vertex a query names; `None` for a cut point.
+fn vert_of(q: Query) -> Option<VertId> {
+    match q {
+        Query::Vert(v) => Some(v),
+        Query::Cut(..) => None,
+    }
+}
+
+/// Whether the rational quadratic span `sp` passes through `x`, exactly.
+fn on_span(sp: &Span, x: [f64; 3]) -> bool {
+    let w = sp.map(|p| rat(p[3]));
+    let h: Vec<Poly> = (0..3)
+        .map(|k| {
+            let c: Vec<Rational> = (0..3)
+                .map(|i| &w[i] * (rat(sp[i][k]) - rat(x[k])))
+                .collect();
+            poly::from_bernstein(&c)
+        })
+        .collect();
+    let g = h.iter().fold(Vec::new(), |g: Poly, hk| poly::gcd(&g, hk));
+    if g.is_empty() {
+        // The span one point, `x`.
+        return true;
+    }
+    poly::degree(&g).unwrap_or(0) > 0
+        && !poly::roots(&g, &Rational::ZERO, &Rational::ONE).is_empty()
 }
 
 /// An exact sign that can't be formed: the key names no hit there, a
@@ -258,14 +353,17 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
                     q: self.point(q),
                     w,
                 })),
+                // `q` exactly on the curve (the germ rule's key): its
+                // height there is exactly 0.
+                None if self.on_curve(q, g) => KeyValue::Exact(Ok(std::cmp::Ordering::Equal)),
                 None => KeyValue::Curved,
             },
             HKey::Hit { q, f, sheet, i } => {
-                let Some(face) = self.model.flat_face(q.operand.other(), f) else {
+                let Some(face) = self.model.hit_face(q.operand.other(), f) else {
                     return KeyValue::Curved;
                 };
                 let at = self.point(q).at.to_array();
-                KeyValue::Exact(match hit_on(&face, sheet, i, at) {
+                KeyValue::Exact(match hit_on(&face, sheet, i, at, &self.motion(q, f)) {
                     Ok(Some(hit)) => Ok(hit.height),
                     _ => NO_HIT,
                 })
@@ -304,7 +402,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
         let HKey::Hit { q, f, .. } = h else {
             return false;
         };
-        self.model.flat_face(q.operand.other(), f).is_none()
+        self.model.hit_face(q.operand.other(), f).is_none()
             && self
                 .model
                 .curved_target(h, like)
@@ -322,26 +420,24 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
             }
         };
         if let HKey::Hit { q, sheet, i, .. } = k.h {
-            let Some(face) = self.model.flat_face(op, f) else {
+            let Some(face) = self.model.hit_face(op, f) else {
                 return AnchorRow::Curved;
             };
             let at = self.point(q).at.to_array();
-            let Ok(Some(hit)) = hit_on(&face, sheet, i, at) else {
+            let deltas = self.motion(q, f);
+            let Ok(Some(hit)) = hit_on(&face, sheet, i, at, &deltas) else {
                 return AnchorRow::Exact([NO_HIT; ORDERS]);
             };
-            // The sheet's rates at the hit (the field's value there) less
-            // the point's.
-            let rates = self.model.plane_rates(q, f, DVec3::from_array(at));
-            let qr = self.point(q).rates;
-            let deltas: [[Rational; 3]; ORDERS] = std::array::from_fn(|n| {
-                let (r, d) = (rate_rational(&rates[n]), rate_rational(&qr[n]));
-                std::array::from_fn(|c| &r[c] - &d[c])
-            });
             return AnchorRow::Exact(hit.orders(&face, at, &deltas).unwrap_or([NO_HIT; ORDERS]));
         }
-        let (Some((p, neg)), Some((normal, offset))) = (self.asker(k), self.model.plane(op, f))
-        else {
+        let Some((p, neg)) = self.asker(k) else {
             return AnchorRow::Curved;
+        };
+        let Some((normal, offset)) = self.model.plane(op, f) else {
+            // A curved face: the germ key's row is its tangent plane at
+            // the vertex or at `q` on the edge's curve, exactly on its
+            // stored tiles (module docs, "Rows").
+            return self.germ_row(k, p, neg).unwrap_or(AnchorRow::Curved);
         };
         let Some(x) = self.vertex_on(k.h, op) else {
             return AnchorRow::Curved;

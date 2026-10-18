@@ -285,8 +285,24 @@ impl Setup {
         boxes: &[BoxKey],
         q: [f64; 3],
     ) -> Result<PieceDegree, PieceError> {
+        self.degree_touching(trims, flipped, coedges, boxes, q, None)
+    }
+
+    /// [`Setup::degree`] with the ray record also listing a tangency of
+    /// the edge's shadow with the ray's line at `touch` (an enclosure of
+    /// the edge's one span's parameter): two moved crossings that cancel.
+    fn degree_touching(
+        &self,
+        trims: &[Trim<'_>],
+        flipped: bool,
+        coedges: &[u32],
+        boxes: &[BoxKey],
+        q: [f64; 3],
+        touch: Option<[f64; 2]>,
+    ) -> Result<PieceDegree, PieceError> {
         let face = FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], trims, flipped).unwrap();
-        let rec = rays(&self.curve, q);
+        let mut rec = rays(&self.curve, q);
+        rec.touches.extend(touch.map(|t| (0, t)));
         let ribbons: Vec<Ribbon<'_>> = coedges
             .iter()
             .map(|&c| Ribbon {
@@ -789,6 +805,36 @@ fn a_query_on_the_cut_is_unsettled() {
         s.degree(&trims, false, &[1], &run(), q),
         Err(PieceError::Unsettled)
     );
+}
+
+#[test]
+fn a_cut_inside_a_cancelled_tangency_is_unordered() {
+    // The run's cuts lie at `u = ½` and `u = 3/2`, the edge's parameters
+    // `t = 2/9` and `7/9` (`u = U0 + 1.8t`). A tangency of the edge's
+    // shadow with the ray's line whose two moved crossings cancel holds
+    // one of them in a piece cut inside it: no record orders that, so the
+    // run is unsettled there; one between the cuts changes nothing.
+    let s = Setup::new(-DELTA);
+    let trims = [trim(&s.spans, 1, false)];
+    let q = [4.0, SV * V0 + 0.005, 0.0];
+    let deg = |touch| {
+        s.degree_touching(&trims, false, &[1], &run(), q, touch)
+            .map(|d| d.degree)
+    };
+    assert_eq!(deg(None), Ok(1));
+    assert_eq!(deg(Some([0.5, 0.5 + 1e-9])), Ok(1));
+    for t in [2.0 / 9.0, 7.0 / 9.0] {
+        assert_eq!(
+            deg(Some([t - 1e-3, t + 1e-3])),
+            Err(PieceError::Unsettled),
+            "t {t}"
+        );
+        assert_eq!(
+            deg(Some([t - 1e-12, t + 1e-12])),
+            Err(PieceError::Unsettled),
+            "t {t}"
+        );
+    }
 }
 
 #[test]

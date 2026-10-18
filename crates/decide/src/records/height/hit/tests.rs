@@ -7,8 +7,11 @@ use varde_testkit::rng::Rng;
 
 use super::*;
 use crate::count::pieces::SpanMap;
+use crate::count::testing::motion_of;
 use crate::num::bounded::Bounded;
 use crate::perturb::{MovingAt, ribbon_row};
+
+mod curved;
 
 /// A plane's map of the UV, `origin + u·du + v·dv`, exact on dyadic data.
 #[derive(Clone, Copy, Debug)]
@@ -117,15 +120,15 @@ impl TestFace {
         }
     }
 
-    fn flat(&self) -> FlatFace<'_> {
-        FlatFace {
+    fn flat(&self) -> HitFace<'_> {
+        HitFace {
             operand: Operand::B,
             face: FaceId(0),
             tiles: [0..1, 0..1],
             nets: &self.nets,
             inside: 1,
             trims: (0..4)
-                .map(|k| FlatTrim {
+                .map(|k| HitTrim {
                     coedge: CoedgeId(k as u32),
                     edge: EdgeId(k as u32),
                     reversed: self.reversed[k],
@@ -206,7 +209,7 @@ fn hits_count_as_the_oracle_near_and_away_from_edges() {
                 let k = (rng.next_u64() % 4) as usize;
                 tf.edge_point(k, rng.range(0.05, 0.95)) + rng.direction() * rng.range(0.0, 0.03)
             };
-            let hits = face_hits(&face, q.to_array()).expect("hits");
+            let hits = face_hits(&face, q.to_array(), &motion_of(Operand::A)).expect("hits");
             let Some(mine) = count_up(&hits) else {
                 continue;
             };
@@ -240,7 +243,7 @@ fn a_tile_and_its_ribbon_straddling_the_point_count_each_by_its_height() {
         let up = UP.normalize() * rng.range(-0.02, 0.02);
         let side = rng.direction() * rng.range(0.0, 0.03);
         let q = tf.edge_point(k, rng.range(0.2, 0.8)) + side + up;
-        let hits = face_hits(&face, q.to_array()).expect("hits");
+        let hits = face_hits(&face, q.to_array(), &motion_of(Operand::A)).expect("hits");
         let above = hits
             .iter()
             .filter(|h| h.height == Ordering::Greater)

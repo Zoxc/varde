@@ -29,7 +29,7 @@ use crate::num::decide::Sign;
 use crate::num::exact::ORDERS;
 use crate::perturb::{Curved, Moving, NU, R_HAT, Rate, Seg, UP, rates_a};
 use crate::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
-use crate::records::height::hit::FlatFace;
+use crate::records::height::hit::HitFace;
 use crate::records::height::model::{FaceAt, HeightModel, ModelHeights};
 use crate::records::height::{Heights, Records};
 use crate::records::keys::{FootId, HKey, RayKey, VvKey, XKey};
@@ -355,8 +355,8 @@ impl HeightModel for World {
         }
     }
 
-    fn flat_face(&self, operand: Operand, f: FaceId) -> Option<FlatFace<'_>> {
-        self.solid(operand).faces[f.index()].flat(&self.order)
+    fn hit_face(&self, operand: Operand, f: FaceId) -> Option<HitFace<'_>> {
+        self.solid(operand).faces[f.index()].hit_face(&self.order)
     }
 
     fn edge_seg(&self, operand: Operand, g: EdgeId) -> Option<Seg> {

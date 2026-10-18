@@ -15,9 +15,11 @@ use crate::count::s02::{CountError, FacePieces, FaceQuery, TrimEdge, face_pieces
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::num::decide::Fail;
+use crate::num::decide::Sign;
 use crate::order::{Along, EdgeKey, EntityOrder, VertKey};
+use crate::perturb::{R_HAT, rate_rational, rates_a};
 use crate::records::height::HeightReads;
-use crate::records::height::hit::{FlatFace, FlatTrim};
+use crate::records::height::hit::{HitFace, HitTrim, Motion};
 use crate::records::keys::{Operand, Point};
 use crate::records::ray::{ChainRec, Span, TileNet};
 use crate::records::shadow::{Decided, Pass};
@@ -119,8 +121,8 @@ impl EntityOrder for Order {
 }
 
 impl FaceData {
-    /// A plane face as its hits read it; `None` for a curved face.
-    pub(crate) fn flat(&self, order: &Order) -> Option<FlatFace<'_>> {
+    /// The face as its hits read it; `None` for a face given no nets.
+    pub(crate) fn hit_face(&self, order: &Order) -> Option<HitFace<'_>> {
         let nets = self.nets.as_deref()?;
         let trims = self
             .trims
@@ -131,7 +133,7 @@ impl FaceData {
                     &order.vert_key(self.operand, s),
                     &order.vert_key(self.operand, e),
                 );
-                FlatTrim {
+                HitTrim {
                     coedge: t.coedge,
                     edge: t.edge,
                     reversed: t.reversed,
@@ -144,7 +146,7 @@ impl FaceData {
                 }
             })
             .collect();
-        Some(FlatFace {
+        Some(HitFace {
             operand: self.operand,
             face: self.id,
             tiles: self.tiles.clone(),
@@ -320,9 +322,23 @@ impl FaceData {
             at,
             eps_tie: 1e-9,
             nets: self.nets.as_deref(),
+            motion: &motion_of(point.operand),
         };
         f(&fq, &edges)
     }
+}
+
+/// The test faces' motion against a point of `of` ([`Motion`]): a point
+/// of `A` moves along `r̂` (then the fixed `T₂ … T₄`), `B` stays.
+pub(crate) fn motion_of(of: Operand) -> Motion {
+    let rates = rates_a(Sign::Pos, R_HAT);
+    std::array::from_fn(|n| {
+        let r = rate_rational(&rates[n]);
+        match of {
+            Operand::A => r.map(|c| -c),
+            Operand::B => r,
+        }
+    })
 }
 
 /// The nets of patches as `Patch::from_affine` takes them, back from

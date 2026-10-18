@@ -69,7 +69,11 @@
 //! window and before the exit's; an enclosure reaching into a window lies
 //! on the window's side it reaches past (the window holds no crossing),
 //! one reaching across a whole window, or lying inside one, is
-//! `Unsettled`.
+//! `Unsettled`. A record's tangency with the ray's line (two moved
+//! crossings that cancel, [`ChainRec::touches`]) is unordered against a
+//! window its enclosure meets: a piece cut there would hold one of the
+//! two, which no record places, so that is `Unsettled` too and the cut
+//! moves.
 //!
 //! **Box lines read as `c + 0⁺`.** Box sides lie on UV lines (tile lines
 //! and dyadic lines), and trims may meet them exactly: a span along one
@@ -1614,6 +1618,18 @@ fn count_between(
         let inside = if wrap { a || !b } else { a && !b };
         if inside {
             count += i64::from(c.crossing.sign.as_i8());
+        }
+    }
+    // A tangency of the edge's shadow with the ray's line (two moved
+    // crossings that cancel, listed as none) holds one of them in a part
+    // cut inside it, which no record orders: the cut must lie off its
+    // enclosure, else it is unordered (module docs, "Cuts off the ray").
+    for &(span, t) in &rays.touches {
+        let pos = [EdgePos { span, t: t[0] }, EdgePos { span, t: t[1] }];
+        for w in [lo, hi].into_iter().flatten() {
+            if !(pos[1] < w[0] || pos[0] > w[1]) {
+                return Err(PieceError::Unsettled);
+            }
         }
     }
     Ok(count)

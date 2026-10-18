@@ -337,7 +337,9 @@ fn placements_once_refused_agree() {
 /// roof-ridge seeds 2 and 44, a vertex `10⁻¹⁷` off the ridge, where the
 /// ridge's stored curve (its middle control point a rounded midpoint)
 /// bent off the chord the edge–edge records read, so the faces' crossings
-/// split the other way (the edges are straight exactly since).
+/// split the other way (the edges are straight exactly since); band seed
+/// 58, a vertex whose count against a cylinder's face read a height no
+/// model gave, now its exact column hit's.
 /// Seed 31 only by default (each takes seconds).
 #[test]
 fn adversarial_placements_once_miscounted_agree() {
@@ -354,12 +356,52 @@ fn adversarial_placements_once_miscounted_agree() {
             ("roof-ridge", 88),
             ("roof-ridge", 2),
             ("roof-ridge", 44),
+            ("band of an edge", 58),
         ],
     );
     let outs = par(cases.len() as u64, threads(), &|i| {
         let (family, seed) = cases[i as usize];
         let f = family_named(family);
         let o = check_answers(&f(seed), &Config::RUNS, &mut Stats::default()).0;
+        (family, seed, o)
+    });
+    for (family, seed, o) in outs {
+        assert!(
+            matches!(o, Outcome::Agreed { .. }),
+            "{family} seed {seed}: {o:?}"
+        );
+    }
+}
+
+/// Vertices on a curved face's tile line, near a silhouette, at a
+/// cusp's corner, and under an overhanging or folding cylinder: their
+/// counts read the curved faces' exact column hits (once refused for a
+/// height no model gave), and each agrees with the oracle. Tile-line
+/// seed 0 by default (seconds), more with `VARDE_TESTS=full`.
+#[test]
+fn curved_faces_count_by_their_column_hits() {
+    let cases: &[(&str, u64)] = varde_testing::pick(
+        &[("tile line", 0)],
+        &[
+            ("tile line", 0),
+            ("tile line", 1),
+            ("tile line", 2),
+            ("tile line", 3),
+            ("silhouette", 1),
+            ("silhouette", 2),
+            ("folds inside", 0),
+            ("overhanging", 0),
+            ("overhanging", 1),
+        ],
+    );
+    let outs = par(cases.len() as u64, threads(), &|i| {
+        let (family, seed) = cases[i as usize];
+        let o = check_answers(
+            &family_named(family)(seed),
+            &Config::RUNS,
+            &mut Stats::default(),
+        )
+        .0;
         (family, seed, o)
     });
     for (family, seed, o) in outs {
