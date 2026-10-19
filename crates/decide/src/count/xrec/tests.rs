@@ -40,6 +40,18 @@ struct Geom {
     d: DVec3,
     /// A linear part of `A`'s direction field: `d + (field·p)·ν` at `p`.
     field: DVec3,
+    /// A moved-vertex blend of the field near a vertex.
+    blend: Option<Blend>,
+}
+
+/// A moved-vertex blend of `A`'s field near the vertex at `at`: the
+/// direction `d` within `r` of it, the field's own from `2r` on, linearly
+/// between (`λ = clamp(‖p − at‖/r − 1, 0, 1)`, not normalised).
+#[derive(Clone, Copy, Debug)]
+struct Blend {
+    at: DVec3,
+    d: DVec3,
+    r: f64,
 }
 
 impl Geom {
@@ -49,7 +61,14 @@ impl Geom {
 
     /// `A`'s direction field at `p`.
     fn d_at(&self, p: DVec3) -> DVec3 {
-        self.d + NU * self.field.dot(p)
+        let own = self.d + NU * self.field.dot(p);
+        match self.blend {
+            Some(b) => {
+                let l = ((p - b.at).length() / b.r - 1.0).clamp(0.0, 1.0);
+                b.d * (1.0 - l) + own * l
+            }
+            None => own,
+        }
     }
 
     fn rates_at(&self, op: Operand, p: DVec3) -> [Rate; ORDERS] {
@@ -202,15 +221,39 @@ impl XGeometry for Geom {
         let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
         match operand {
             A => {
-                // `d + (field·p)·ν` at the edge's point `p` there.
+                // `d + (field·p)·ν` at the edge's point `p` there, blended
+                // near the blend's vertex.
                 let mut d = lit(self.d);
-                if self.field != DVec3::ZERO {
+                if self.field != DVec3::ZERO || self.blend.is_some() {
                     let c = self.curve_of(operand, g.0).span(span, t).expect("a span");
                     let p = c.eval(t);
                     let f = lit(self.field);
                     let k = (0..3).fold(S::int(0, t), |s, i| s.add(&f[i].mul(&p[i])));
                     let nu = lit(NU);
                     d = [0, 1, 2].map(|i| d[i].add(&nu[i].mul(&k)));
+                    if let Some(b) = self.blend {
+                        // `λ` enclosed from the squared distance's
+                        // enclosure (its square root rounded outwards by
+                        // a part in 2⁴⁰).
+                        let at = lit(b.at);
+                        let v: [S; 3] = [0, 1, 2].map(|i| p[i].sub(&at[i]));
+                        let d2 = (0..3).fold(S::int(0, t), |s, i| s.add(&v[i].mul(&v[i])));
+                        let [lo2, hi2] = d2.enclose();
+                        let lam = |d2: f64, up: bool| {
+                            let k = 1.0 + if up { 1e-12 } else { -1e-12 };
+                            let d = if d2 > 0.0 { d2.sqrt() * k } else { 0.0 };
+                            (d / b.r - 1.0).clamp(0.0, 1.0)
+                        };
+                        let (lo, hi) = if hi2.is_finite() {
+                            (lam(lo2, false), lam(hi2, true))
+                        } else {
+                            (0.0, 1.0)
+                        };
+                        let l = crate::perturb::between(lo, hi, t);
+                        let one = S::int(1, t).sub(&l);
+                        let bd = lit(b.d);
+                        d = [0, 1, 2].map(|i| bd[i].mul(&one).add(&d[i].mul(&l)));
+                    }
                 }
                 [d, lit(T[0]), lit(T[1]), lit(T[2])]
             }
@@ -406,7 +449,7 @@ impl Recs {
     /// filled.
     fn clusters(&self, geom: &Geom, pair: &XPair<'_>) -> Result<XClusters, XClusterError> {
         loop {
-            let r = clusters_at(geom, X, pair, &self.sides.borrow(), 0);
+            let r = clusters_at(X, pair, &self.sides.borrow(), 0);
             match r {
                 Err(XClusterError::Need(ks)) => {
                     for k in &ks {

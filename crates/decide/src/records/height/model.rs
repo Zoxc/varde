@@ -21,9 +21,9 @@
 //!   the levels `n_f·(x_h − q)·sign(n_f·ê)` ([`face_height`]) at the hit
 //!   `x_h`, which the model finds, and the normal there;
 //! - an edge–edge key `X(e, g, c)` of two straight edges: the edge–edge
-//!   height of their lines, exact ([`EdgeEdge`]); of a curved edge, or
-//!   one reading the point–curve row, the z-order decider's, which reads
-//!   the pair's crossing record ([`XHeights`]).
+//!   height of their lines, exact ([`EdgeEdge`]); of a curved edge, the
+//!   z-order decider's, which reads the pair's crossing record
+//!   ([`XHeights`]); so is a shared-curve key `XRoot(e, g, c)`.
 //!
 //! **Rows** (an anchor's orders): at a face, the tangent plane of the
 //! face at the key's **target point** (the vertex of a point–vertex key,
@@ -196,7 +196,7 @@ impl<M: HeightModel> ModelHeights<'_, M> {
                 Operand::A => (point_of(Operand::B, b), true),
             }),
             HKey::Curve { q, .. } | HKey::Hit { q, .. } => Some((q, false)),
-            HKey::X { .. } => None,
+            HKey::X { .. } | HKey::XRoot { .. } => None,
         }
     }
 
@@ -205,7 +205,7 @@ impl<M: HeightModel> ModelHeights<'_, M> {
     fn flat_target(&self, h: HKey) -> Option<DVec3> {
         match h {
             HKey::Curve { q, g, foot } => self.model.foot_point(q, g, foot).map(|m| m.at),
-            HKey::VV { .. } | HKey::Hit { .. } | HKey::X { .. } => None,
+            HKey::VV { .. } | HKey::Hit { .. } | HKey::X { .. } | HKey::XRoot { .. } => None,
         }
     }
 
@@ -232,7 +232,7 @@ impl<M: HeightModel> ModelHeights<'_, M> {
                 Some([x.x, x.y, x.z].map(|c| S::from_f64(c, like)))
             }
             HKey::Curve { .. } | HKey::Hit { .. } => self.model.curved_target(h, like),
-            HKey::X { .. } => None,
+            HKey::X { .. } | HKey::XRoot { .. } => None,
         }
     }
 
@@ -289,7 +289,7 @@ impl<M: HeightModel> ModelHeights<'_, M> {
                 Operand::B => vert_of(b)?,
             }),
             HKey::Curve { g, .. } => GermAt::Curve(g),
-            HKey::Hit { .. } | HKey::X { .. } => return None,
+            HKey::Hit { .. } | HKey::X { .. } | HKey::XRoot { .. } => return None,
         };
         let ord = face.germ_orders(at, self.point(p).at.to_array(), &self.motion(p, f))?;
         Some(AnchorRow::Exact(if neg {
@@ -315,7 +315,7 @@ impl<M: HeightModel> ModelHeights<'_, M> {
 fn vert_of(q: Query) -> Option<VertId> {
     match q {
         Query::Vert(v) => Some(v),
-        Query::Cut(..) => None,
+        Query::Cut(..) | Query::Root(..) => None,
     }
 }
 
@@ -381,6 +381,8 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
                 Some(p) => KeyValue::Flat(FlatHeight::EdgeEdge(p)),
                 None => KeyValue::Curved,
             },
+            // The z-order decider's ([`XHeights`]).
+            HKey::XRoot { .. } => KeyValue::Curved,
         }
     }
 
@@ -403,7 +405,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
                 let at = MovingAt::from_flat(&self.point(q), like).at;
                 face_height(&face.normal, &x, &at)
             }
-            HKey::VV { .. } | HKey::X { .. } => None,
+            HKey::VV { .. } | HKey::X { .. } | HKey::XRoot { .. } => None,
         }
     }
 

@@ -60,7 +60,8 @@ use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry,
 use varde_decide::records::side::{SideGeometry, Sides};
 use varde_decide::records::table::Fresh;
 use varde_decide::records::xrec::{
-    EdgeRays, XBase, XCurve, XGeometry, XPair, XRec, XSides, XTerms, ZKey, zorder_key,
+    EdgeRays, SharedError, XBase, XCurve, XGeometry, XPair, XRec, XSides, XTerms, XWant, ZKey,
+    shared_clusters, zorder_key,
 };
 
 use super::solids::Solid;
@@ -114,15 +115,14 @@ pub(super) enum Cause {
     /// An edge pair's clusters can't be formed at any level.
     Clusters(String),
     /// A crossing cluster's z-order can't be decided: its height record
-    /// (edge–edge or point–curve) runs past the last level, or two
-    /// straight edges' collinear shadows aren't one sign in height over
-    /// their overlap (no cluster reads that until the crossings along it
-    /// are found).
+    /// (edge–edge or shared-curve) runs past the last level.
     ZOrder,
-    /// Edges on one curve whose `h = ê·(T × Δ)` changes sign along their
-    /// overlap: the moved edges cross there (refused with `Crossed`,
-    /// never a wrong answer).
-    Crossed,
+    /// Edges on one curve, or straight edges whose shadows lie on one
+    /// line, refused by the shared-curve rule: `h = ê·(T × Δ)` not settled
+    /// along the overlap at any level (`Unsettled`), the box search away
+    /// from it failing, or the clusters not summing to the four terms
+    /// (`Inconsistent`, a rule gap); never a wrong answer.
+    Shared(String),
     /// The seeds can't be found.
     Seeds(String),
     /// The windings disagree with the crossings (`Disagree`) or leave
@@ -163,10 +163,11 @@ pub(super) struct Stats {
     /// Lobe fallbacks taken: `(q, g)` whose hits near `g` were re-read
     /// by the edge rule.
     pub lobes: u64,
-    /// Edge pairs on one curve.
+    /// Edge pairs the shared-curve rule answered or refused: on one
+    /// curve, or straight with their shadows on one line.
     pub shared: u64,
     /// Every edge pair's refusal, by cause (not only a placement's
-    /// first): the rate of `Crossed` among shared pairs.
+    /// first): the rate of `Shared` among those pairs.
     pub pair_causes: std::collections::BTreeMap<String, u64>,
     /// Clusters whose z-order was clear.
     pub clear: u64,
@@ -436,7 +437,7 @@ type Windings = (Vec<i64>, Vec<Vec<i64>>, u64);
 fn vert(p: Point) -> VertId {
     match p.q {
         Query::Vert(v) => v,
-        Query::Cut(..) => panic!("no cut points here"),
+        Query::Cut(..) | Query::Root(..) => panic!("no cut points here"),
     }
 }
 
@@ -1090,72 +1091,61 @@ impl World<'_> {
                                 .rev()
                                 .zip(sg)
                                 .all(|(a, b)| [a[2], a[1], a[0]] == *b));
-                    if shared {
-                        stats.shared += 1;
-                        let pair = XPair {
-                            shared: true,
-                            ..pair
-                        };
-                        let reads = Records {
-                            shadows: &r.shadows,
-                            feet: &r.feet,
-                            order: &self.order,
-                        };
-                        let rec =
-                            varde_decide::records::xrec::shared_clusters(&reads, self, x, &pair)
-                                .map_err(|err| {
-                                    let cause = match err {
-                                        varde_decide::records::xrec::SharedError::Crossed => {
-                                            Cause::Crossed
-                                        }
-                                        err => Cause::Clusters(format!("shared {err:?}")),
-                                    };
-                                    refused(cause, format!("{e:?} {g:?}"))
-                                })?;
-                        return self.s11_of(x, &rec, &mut heights, band, stats);
-                    }
+                    let pair = XPair { shared, ..pair };
                     // The side and corner records the boxes ask for are
                     // filled, one at a time, and the clusters formed again.
                     let mut asked = 0;
-                    let c = loop {
-                        match form(&self.order, x, &pair, &sides) {
-                            Err(XClusterError::Need(ks)) if asked < 16 => {
-                                asked += 1;
-                                for k in ks {
-                                    stats.x_side_fills += 1;
-                                    sides
-                                        .fill(
-                                            [k],
-                                            base,
-                                            self,
-                                            band,
-                                            &mut Tally {
-                                                kind: "x side",
-                                                stats,
-                                            },
-                                        )
-                                        .map_err(|err| {
-                                            refused(
-                                                Cause::Side(format!("{err:?}")),
-                                                format!("{e:?} {g:?}"),
-                                            )
-                                        })?;
+                    let mut rule = shared;
+                    if !shared {
+                        let c = loop {
+                            match form(x, &pair, &sides) {
+                                Err(XClusterError::Need(ks)) if asked < 16 => {
+                                    asked += 1;
+                                    self.fill_x_sides(&mut sides, ks, base, band, stats, x)?;
                                 }
+                                r => break r,
+                            }
+                        };
+                        match c {
+                            // Straight edges whose shadows lie on one line:
+                            // the shared-curve rule's.
+                            Err(XClusterError::Collinear) => rule = true,
+                            c => {
+                                let c = c.map_err(|err| {
+                                    refused(
+                                        Cause::Clusters(format!("{err:?}")),
+                                        format!("{e:?} {g:?}"),
+                                    )
+                                })?;
+                                stats.clusters[c.rec.level] += 1;
+                                stats.clear +=
+                                    c.rec.clusters.iter().filter(|c| c.clear.is_some()).count()
+                                        as u64;
+                                return self.s11_of(x, &c.rec, &mut heights, band, stats);
+                            }
+                        }
+                    }
+                    debug_assert!(rule);
+                    stats.shared += 1;
+                    let reads = Records {
+                        shadows: &r.shadows,
+                        feet: &r.feet,
+                        order: &self.order,
+                    };
+                    let rec = loop {
+                        match shared_clusters(&reads, self, &sides, x, &pair) {
+                            Err(SharedError::Need(ks)) if asked < 16 => {
+                                asked += 1;
+                                self.fill_x_sides(&mut sides, ks, base, band, stats, x)?;
                             }
                             r => break r,
                         }
                     }
                     .map_err(|err| {
-                        let cause = match err {
-                            XClusterError::Collinear => Cause::ZOrder,
-                            err => Cause::Clusters(format!("{err:?}")),
-                        };
-                        refused(cause, format!("{e:?} {g:?}"))
+                        refused(Cause::Shared(format!("{err:?}")), format!("{e:?} {g:?}"))
                     })?;
-                    stats.clusters[c.rec.level] += 1;
-                    stats.clear +=
-                        c.rec.clusters.iter().filter(|c| c.clear.is_some()).count() as u64;
-                    self.s11_of(x, &c.rec, &mut heights, band, stats)
+                    stats.clear += rec.clusters.iter().filter(|c| c.clear.is_some()).count() as u64;
+                    self.s11_of(x, &rec, &mut heights, band, stats)
                 };
                 match one() {
                     Ok(s) => row.push(s),
@@ -1172,6 +1162,40 @@ impl World<'_> {
             Some(r) => Err(r),
             None => Ok(out),
         }
+    }
+
+    /// Fills the side and corner records `ks` of pair `x` the box search
+    /// asks for, one at a time.
+    fn fill_x_sides(
+        &self,
+        sides: &mut XSides,
+        ks: Vec<XWant>,
+        base: XBase<'_>,
+        band: Band,
+        stats: &mut Stats,
+        x: XKey,
+    ) -> Result<(), Refusal> {
+        for k in ks {
+            stats.x_side_fills += 1;
+            sides
+                .fill(
+                    [k],
+                    base,
+                    self,
+                    band,
+                    &mut Tally {
+                        kind: "x side",
+                        stats,
+                    },
+                )
+                .map_err(|err| {
+                    refused(
+                        Cause::Side(format!("{err:?}")),
+                        format!("{:?} {:?}", x.e, x.g),
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     /// `s11` of pair `x` from its crossing record `rec`: each cluster's
@@ -1192,8 +1216,8 @@ impl World<'_> {
             near: band.tau_sign(),
         };
         let here = || format!("{:?} {:?}", x.e, x.g);
-        rec.s11(|ci, _| {
-            let z = zorder_key(x, ci);
+        rec.s11(|ci, cl| {
+            let z = zorder_key(x, ci, cl.row);
             stats.zorder_records += 1;
             heights
                 .fill(

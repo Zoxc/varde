@@ -1504,3 +1504,97 @@ fn the_shared_curve_row_is_the_motion_across_the_shadow() {
     // A tangent that isn't certainly non-zero escalates.
     assert_eq!(row(zero, NU).ord[0].sign(), None);
 }
+
+/// The shared-curve crossing row exactly at a stored point: the signs of
+/// `ê·(T × Δₖ)`, the normalised row's where that is certified; `h₁`
+/// exactly 0 where the motion's shadow runs along the tangent's (orders
+/// 2–4 then the translations' own, not all 0); all 0 only for a vertical
+/// tangent. The unnormalised order 1 has the row's sign where certified.
+#[test]
+fn the_shared_curve_signs_are_the_rows_exactly() {
+    let like = Bounded::exact(0.0);
+    let v = |d: DVec3| lit3(d, &like);
+    let q = |d: DVec3| [d.x, d.y, d.z].map(rat);
+    let mut checked = 0;
+    for seed in varde_testing::seeds(64, 1024) {
+        let mut r = Rng::new(seed);
+        let t = r.ints(4);
+        let d = if seed % 3 == 0 {
+            // Along the tangent in the shadow: `h₁ = 0`.
+            t * r.int(3) + UP * r.int(2)
+        } else {
+            r.ints(4)
+        };
+        let rates = [d, T[0], T[1], T[2]];
+        let exact = shared_crossing_signs(&q(t), &rates.map(q));
+        let row = shared_crossing(&v(t), &rates.map(v));
+        for k in 0..ORDERS {
+            if let Some(s) = row.ord[k].sign().filter(|s| *s != Ordering::Equal) {
+                assert_eq!(exact[k], s, "seed {seed} order {}", k + 1);
+                checked += 1;
+            }
+        }
+        // The unnormalised order 1: the same sign where certified.
+        let vb = |d: DVec3| [d.x, d.y, d.z].map(big);
+        if let Some(o) = shared_crossing_h1(&vb(t), &vb(d)).sign() {
+            assert_eq!(o, exact[0], "seed {seed}");
+        }
+        let vertical = t.x == 0.0 && t.y == 0.0 && t.z == 0.0
+            || q(t)[0].clone() * rat(UP.y) == q(t)[1].clone() * rat(UP.x)
+                && q(t)[1].clone() * rat(UP.z) == q(t)[2].clone() * rat(UP.y)
+                && q(t)[0].clone() * rat(UP.z) == q(t)[2].clone() * rat(UP.x);
+        assert_eq!(
+            exact.iter().all(|s| *s == Ordering::Equal),
+            vertical,
+            "seed {seed}"
+        );
+    }
+    assert!(checked > 100, "{checked} checked");
+    assert_eq!(
+        shared_crossing_signs(&q(UP), &[DVec3::X, T[0], T[1], T[2]].map(q)),
+        [Ordering::Equal; ORDERS]
+    );
+}
+
+/// The shared-curve z-order row against the moved geometry: a curve
+/// through `q`'s foot with the tangent `T` there (fixed), `q` on it moved
+/// by `δ·Δₖ`; the curve's height above the moved `q`, its foot solved
+/// again (the foot slid along the curve to `q`'s shadow, the curve's
+/// second order dropping out at first order in `δ`), over `δ`: the row,
+/// within `δ`; a vertical tangent refused.
+#[test]
+fn the_shared_zorder_row_is_the_moved_height() {
+    let mut checked = 0;
+    for seed in varde_testing::seeds(64, 1024) {
+        let mut r = Rng::new(seed);
+        let mut v = || DVec3::new(r.range(-2.0, 2.0), r.range(-2.0, 2.0), r.range(-2.0, 2.0));
+        let (t, d) = (v(), v());
+        let e = UP.normalize();
+        let txy = t - e * e.dot(t);
+        if txy.length() < 1e-3 {
+            continue;
+        }
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(big);
+        let rates = [d, T[0], T[1], T[2]];
+        let row = shared_zorder(&lit(t), &rates.map(lit)).expect("not vertical");
+        for (k, dk) in rates.iter().enumerate() {
+            let delta = 1e-6;
+            let moved = *dk * delta;
+            // The foot on the line through 0 along `t` under the moved
+            // point's shadow, and the line's height above it there.
+            let s = (moved - e * e.dot(moved)).dot(txy) / txy.dot(txy);
+            let fd = e.dot(t * s - moved) / delta;
+            let got = f(&row[k]);
+            assert!(
+                (got - fd).abs() < 1e-6 * (1.0 + fd.abs()),
+                "seed {seed} order {}: {got} {fd}",
+                k + 1
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "{checked} checked");
+    let like = Bounded::exact(0.0);
+    let v = |d: DVec3| lit3(d, &like);
+    assert!(shared_zorder(&v(UP * 3.0), &[v(NU), v(T[0]), v(T[1]), v(T[2])]).is_none());
+}

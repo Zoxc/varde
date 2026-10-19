@@ -91,19 +91,22 @@
 //! ([`XClusterError::Boxes`]).
 //!
 //! **Two straight edges** hold at most one crossing, so their whole cell
-//! is the one cluster where `X ≠ 0`. Where their shadows are exactly
-//! parallel (decided on the stored points; with `X ≠ 0` they are then
-//! collinear, the crossing the four terms' ties put at an end), the
-//! cluster is at the end whose term counted the crossing ([`tie_point`])
-//! and reads the point–curve row there ([`ZRow::PointCurve`]), valid only
-//! where the z-order is one sign over the whole overlap of the two
-//! shadows: decided exactly at the overlap's two ends (the heights are
-//! linear along it), the cluster's z-order is then clear; else the pair
-//! is refused ([`XClusterError::Collinear`]: the edges meet in 3D, or
-//! cross in height, over the overlap). A pair on one curve is never
-//! searched ([`XClusterError::Shared`]): its record comes from the sign
-//! of `h` along the overlap
-//! ([`shared_clusters`](crate::records::xrec::shared_clusters)).
+//! is the one cluster where `X ≠ 0`. Where their shadows lie on one line
+//! (decided exactly on the stored points), they cross only along the
+//! overlap of the shadows, where no box settles: the pair is left to
+//! the shared-curve rule ([`XClusterError::Collinear`];
+//! [`shared_clusters`](crate::records::xrec::shared_clusters)), whatever
+//! its `X` (a `±1` pair of crossings of opposite z-orders counts `±1`).
+//!
+//! **Edges on one curve** ([`XPair::shared`]): their shadows coincide
+//! over the overlap, whose crossings are the shared-curve rule's. The
+//! search here finds those **away** from it: a box of the **diagonal
+//! band**, whose two pieces lie on one stretch of the curve (one span, or
+//! two sharing a knot) with an injective shadow there (every control point
+//! difference of the stretch, oriented along it, certified on the positive
+//! side of the sum of the stretch's chords), holds no other crossing and
+//! is skipped; every other box is searched as above. Two lines on one line
+//! have no crossing away from the overlap.
 //!
 //! **Levels.** The clusters are listed in their boxes' key order, so each
 //! cluster's index is a function of the pair and the precision level the
@@ -128,14 +131,13 @@ use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::Sign;
-use crate::order::EntityOrder;
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::keys::{EdgeAt, Operand, XKey, XSideKey, XTieKey};
+use crate::records::ray::Span;
 use crate::records::shadow::{LEVELS, SideAhead};
 use crate::records::side::Over;
 use crate::records::xrec::{
     EdgeRays, XCluster, XCurve, XPair, XPart, XRec, XSides, XWant, ZRow, from_held, line_param,
-    tie_point,
 };
 
 /// The most boxes one search of an edge pair's clusters tests at a level
@@ -748,6 +750,93 @@ pub(crate) fn cut_part<S: Scalar>(
     }
 }
 
+/// Whether box `b` of a pair on one curve lies in the diagonal band
+/// (module docs, "Edges on one curve"): its two pieces on one stretch of
+/// the curve, one span (bitwise the same, either way round) or two
+/// sharing exactly one end control point, whose shadow is certified
+/// injective: every control point difference of the stretch's pieces,
+/// turned along the stretch, certified on the positive side of the sum of
+/// their chords. Adds the pieces tested.
+fn in_band<S: Scalar>(pair: &XPair<'_>, b: &XBox, like: &S, pieces: &mut u64) -> bool {
+    let (XCurve::Spans(es), XCurve::Spans(gs)) = (pair.e, pair.g) else {
+        return false;
+    };
+    let (Some(se), Some(sg)) = (
+        usize::try_from(b.cell[0]).ok().and_then(|i| es.get(i)),
+        usize::try_from(b.cell[1]).ok().and_then(|j| gs.get(j)),
+    ) else {
+        return false;
+    };
+    let (te, ts) = ([dy(b.t.lo()), dy(b.t.hi())], [dy(b.s.lo()), dy(b.s.hi())]);
+    let lower = |a: f64, b: f64| if b < a { b } else { a };
+    let upper = |a: f64, b: f64| if b > a { b } else { a };
+    let back = [sg[2], sg[1], sg[0]];
+    // Each piece of the stretch: a span, its parameter range, and whether
+    // it runs against the stretch.
+    let mut parts: Vec<(&Span, [f64; 2], bool)> = Vec::new();
+    if *sg == *se {
+        parts.push((se, [lower(te[0], ts[0]), upper(te[1], ts[1])], false));
+    } else if back == *se {
+        // `g`'s `s` is `e`'s `1 − s`.
+        let (a, c) = (1.0 - ts[1], 1.0 - ts[0]);
+        parts.push((se, [lower(te[0], a), upper(te[1], c)], false));
+    } else {
+        let ends = |sp: &Span| [sp[0], sp[2]];
+        let mut shared = None;
+        let mut count = 0;
+        for (i, pe) in ends(se).iter().enumerate() {
+            for (j, pg) in ends(sg).iter().enumerate() {
+                if pe[..3] == pg[..3] {
+                    count += 1;
+                    shared = Some((i, j));
+                }
+            }
+        }
+        let (Some((i, j)), 1) = (shared, count) else {
+            return false;
+        };
+        // From `e`'s piece into the knot, then out along `g`'s.
+        let e_part = if i == 1 { [te[0], 1.0] } else { [0.0, te[1]] };
+        let g_part = if j == 0 { [0.0, ts[1]] } else { [ts[0], 1.0] };
+        parts.push((se, e_part, i == 0));
+        parts.push((sg, g_part, j == 1));
+    }
+    let v = |d: glam::DVec3| [d.x, d.y, d.z].map(|c| S::from_f64(c, like));
+    let (ex, ey) = (v(R_HAT), v(NU));
+    let mut diffs: Vec<[S; 2]> = Vec::new();
+    let mut chord = [S::int(0, like), S::int(0, like)];
+    for (sp, t, against) in parts {
+        *pieces = pieces.saturating_add(1);
+        let Some(c) = HomCurve::from_affine(sp.iter().map(|p| ([p[0], p[1], p[2]], p[3])), like)
+        else {
+            return false;
+        };
+        let c = cut_part(&c, t, like);
+        if !c.weights_positive() {
+            return false;
+        }
+        let sh = c.shadow(&ex, &ey);
+        let w = sh.weights().coefs();
+        let pts: Vec<[S; 2]> = (0..w.len())
+            .map(|i| [0, 1].map(|k| sh.coords()[k].coefs()[i].div(&w[i])))
+            .collect();
+        let turn = |d: [S; 2]| if against { d.map(|x| x.neg()) } else { d };
+        for i in 0..pts.len() {
+            for j in i + 1..pts.len() {
+                diffs.push(turn([pts[j][0].sub(&pts[i][0]), pts[j][1].sub(&pts[i][1])]));
+            }
+        }
+        let (Some(first), Some(last)) = (pts.first(), pts.last()) else {
+            return false;
+        };
+        let c = turn([last[0].sub(&first[0]), last[1].sub(&first[1])]);
+        chord = [chord[0].add(&c[0]), chord[1].add(&c[1])];
+    }
+    diffs
+        .iter()
+        .all(|d| d[0].mul(&chord[0]).add(&d[1].mul(&chord[1])).sign() == Some(Ordering::Greater))
+}
+
 /// The laps of an outer side of `b`, counter-clockwise round the box,
 /// against `+r̂`: the crossings of its term's record over the side's part
 /// of the edge (module docs); [`XDegreeError::Unsettled`] where a
@@ -836,16 +925,12 @@ pub enum XClusterError {
     Sided(XBox),
     /// More than [`MAX_LEAVES`] boxes at once.
     SizeLimit,
-    /// Two straight edges with collinear shadows whose z-order isn't one
-    /// sign over the overlap of their shadows (they meet in 3D there, or
-    /// cross in height): no cluster reads it until the crossings along
-    /// the overlap are found (module docs, "Two straight edges"). Exact,
-    /// so no level does better.
+    /// Two straight edges whose shadows lie on one line: their record is
+    /// the shared-curve rule's on the overlap of their shadows
+    /// ([`shared_clusters`](crate::records::xrec::shared_clusters);
+    /// module docs, "Two straight edges"). Exact, so no level does
+    /// better.
     Collinear,
-    /// The pair's edges lie on one curve: no geometric search, its
-    /// record is from the sign of `h` along the overlap
-    /// ([`shared_clusters`](crate::records::xrec::shared_clusters)).
-    Shared,
 }
 
 impl XClusterError {
@@ -924,28 +1009,21 @@ fn need(mut wants: Vec<XWant>) -> XClusterError {
 /// square's side records) at precision level `level` ([`LEVELS`]: `f64`,
 /// double-double, then the big-float widths); the record stores the
 /// level.
-pub fn clusters_at<O: EntityOrder>(
-    order: &O,
+pub fn clusters_at(
     x: XKey,
     pair: &XPair<'_>,
     sides: &XSides,
     level: usize,
 ) -> Result<XClusters, XClusterError> {
     let mut out = match level {
-        0 => clusters(order, x, pair, sides, &Bounded::exact(0.0)),
-        1 => clusters(order, x, pair, sides, &Bounded::exact(Dd::from_f64(0.0))),
+        0 => clusters(x, pair, sides, &Bounded::exact(0.0)),
+        1 => clusters(x, pair, sides, &Bounded::exact(Dd::from_f64(0.0))),
         _ => {
             let w = Width::ALL
                 .get(level - 2)
                 .copied()
                 .ok_or(XClusterError::SizeLimit)?;
-            clusters(
-                order,
-                x,
-                pair,
-                sides,
-                &Bounded::exact(Big::from_f64(0.0, w)),
-            )
+            clusters(x, pair, sides, &Bounded::exact(Big::from_f64(0.0, w)))
         }
     }?;
     out.rec.level = level;
@@ -955,15 +1033,10 @@ pub fn clusters_at<O: EntityOrder>(
 /// The clusters of pair `x` at the first level that forms them
 /// ([`clusters_at`] from level 0, escalating where
 /// [`XClusterError::escalates`]); past the last level its error stands.
-pub fn form<O: EntityOrder>(
-    order: &O,
-    x: XKey,
-    pair: &XPair<'_>,
-    sides: &XSides,
-) -> Result<XClusters, XClusterError> {
+pub fn form(x: XKey, pair: &XPair<'_>, sides: &XSides) -> Result<XClusters, XClusterError> {
     let mut last = XClusterError::SizeLimit;
     for level in 0..LEVELS {
-        match clusters_at(order, x, pair, sides, level) {
+        match clusters_at(x, pair, sides, level) {
             Ok(c) => return Ok(c),
             Err(e) if e.escalates() => last = e,
             Err(e) => return Err(e),
@@ -983,15 +1056,11 @@ pub enum XReplayError {
 
 /// Forms the clusters of pair `x` again at the level stored with `rec`,
 /// never another (its cluster indices are that level's), and checks they
-/// are `rec`'s: a check that the record is a function of its key.
-pub fn replay<O: EntityOrder>(
-    order: &O,
-    x: XKey,
-    pair: &XPair<'_>,
-    sides: &XSides,
-    rec: &XRec,
-) -> Result<(), XReplayError> {
-    let again = clusters_at(order, x, pair, sides, rec.level).map_err(XReplayError::Form)?;
+/// are `rec`'s: a check that the record is a function of its key. A
+/// shared-curve pair's record holds root clusters too: it is formed again
+/// whole by [`shared_clusters`](crate::records::xrec::shared_clusters).
+pub fn replay(x: XKey, pair: &XPair<'_>, sides: &XSides, rec: &XRec) -> Result<(), XReplayError> {
+    let again = clusters_at(x, pair, sides, rec.level).map_err(XReplayError::Form)?;
     if again.rec == *rec {
         Ok(())
     } else {
@@ -1002,20 +1071,32 @@ pub fn replay<O: EntityOrder>(
 /// The clusters of pair `x` (`pair` its curves and terms, `sides` the
 /// square's side records) at `like`'s level (module docs). The record's
 /// level is the caller's to set ([`clusters_at`]).
-pub fn clusters<S: Scalar, O: EntityOrder>(
-    order: &O,
+pub fn clusters<S: Scalar>(
     x: XKey,
     pair: &XPair<'_>,
     sides: &XSides,
     like: &S,
 ) -> Result<XClusters, XClusterError> {
-    if pair.shared {
-        return Err(XClusterError::Shared);
-    }
     let spans = [pair.e.span_count(), pair.g.span_count()];
     let mut pieces = 0u64;
-    if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {
-        return straight_clusters(order, x, pair, [[a, b], [g0, g1]], sides, like);
+    if pair.shared {
+        match (pair.e, pair.g) {
+            // Two lines never cross away from their overlap.
+            (XCurve::Line(..), XCurve::Line(..)) => {
+                return Ok(XClusters {
+                    rec: XRec::default(),
+                    boxes: Vec::new(),
+                    pieces,
+                });
+            }
+            (XCurve::Spans(_), XCurve::Spans(_)) => {}
+            _ => {
+                let whole = XBox::cells([1, 1]).next().expect("a cell");
+                return Err(XClusterError::Degree(whole, XDegreeError::Shape));
+            }
+        }
+    } else if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {
+        return straight_clusters(x, pair, [[a, b], [g0, g1]], sides, like);
     }
     let mut work: Vec<(XBox, Option<i64>)> = XBox::cells(spans).map(|b| (b, None)).collect();
     work.reverse();
@@ -1038,6 +1119,11 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
         let shape = || XClusterError::Degree(b, XDegreeError::Shape);
         let ce = pair.e.span(b.cell[0], like).ok_or_else(shape)?;
         let cg = pair.g.span(b.cell[1], like).ok_or_else(shape)?;
+        // On one curve, a box of the diagonal band holds only the
+        // overlap's crossings: the shared-curve rule's.
+        if pair.shared && in_band(pair, &b, like, &mut pieces) {
+            continue;
+        }
         let (pe, pg) = (cut(&ce, b.t, like), cut(&cg, b.s, like));
         let h = hulls(&pe, &pg, like, &mut pieces).ok_or_else(shape)?;
         if h.apart() {
@@ -1106,25 +1192,24 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
 }
 
 /// The clusters of two straight edges `ends` (module docs, "Two straight
-/// edges"): their one cell, the one cluster where its degree isn't 0.
-fn straight_clusters<S: Scalar, O: EntityOrder>(
-    order: &O,
+/// edges"): their one cell, the one cluster where its degree isn't 0;
+/// [`XClusterError::Collinear`] where their shadows lie on one line.
+fn straight_clusters<S: Scalar>(
     x: XKey,
     pair: &XPair<'_>,
     ends: [[[f64; 3]; 2]; 2],
     sides: &XSides,
     like: &S,
 ) -> Result<XClusters, XClusterError> {
+    let [e, g] = ends;
+    if collinear(e, g) {
+        return Err(XClusterError::Collinear);
+    }
     let mut pieces = 0u64;
     let whole = XBox {
         cell: [0, 0],
         t: Extent::WHOLE,
         s: Extent::WHOLE,
-    };
-    let none = |pieces| XClusters {
-        rec: XRec::default(),
-        boxes: Vec::new(),
-        pieces,
     };
     let mut wants = Vec::new();
     let degree = match cluster_degree(
@@ -1141,25 +1226,24 @@ fn straight_clusters<S: Scalar, O: EntityOrder>(
         Found::Split => return Err(XClusterError::Degree(whole, XDegreeError::Unsettled)),
     };
     if degree == 0 {
-        return Ok(none(pieces));
+        return Ok(XClusters {
+            rec: XRec::default(),
+            boxes: Vec::new(),
+            pieces,
+        });
     }
-    let [e, g] = ends;
-    let (row, clear) = if parallel(e, g) {
-        let Some(p) = tie_point(order, x, &pair.terms) else {
-            return Ok(none(pieces));
-        };
-        let z = collinear_z(e, g).ok_or(XClusterError::Collinear)?;
-        (ZRow::PointCurve(p), Some(z))
-    } else {
-        let shape = || XClusterError::Degree(whole, XDegreeError::Shape);
-        let pe = pair.e.span(0, like).ok_or_else(shape)?;
-        let pg = pair.g.span(0, like).ok_or_else(shape)?;
-        let clear = hulls(&pe, &pg, like, &mut pieces).and_then(|h| h.z_order());
-        (ZRow::EdgeEdge, clear)
-    };
+    if parallel(e, g) {
+        // Parallel shadows on two lines, or a shadow that is a point: no
+        // crossing in any moved configuration, so the terms contradict.
+        return Err(XClusterError::Degree(whole, XDegreeError::Unsettled));
+    }
+    let shape = || XClusterError::Degree(whole, XDegreeError::Shape);
+    let pe = pair.e.span(0, like).ok_or_else(shape)?;
+    let pg = pair.g.span(0, like).ok_or_else(shape)?;
+    let clear = hulls(&pe, &pg, like, &mut pieces).and_then(|h| h.z_order());
     Ok(XClusters {
         rec: XRec {
-            clusters: vec![cluster(&whole, degree, clear, row)],
+            clusters: vec![cluster(&whole, degree, clear, ZRow::EdgeEdge)],
             level: 0,
         },
         boxes: vec![whole],
@@ -1387,97 +1471,38 @@ fn transversal<S: Scalar>(
     sign.is_some()
 }
 
-/// The z-order of two straight edges whose shadows are exactly parallel,
-/// over the overlap of their shadows (module docs, "Two straight edges"),
-/// exactly on the stored points: `Pos` where `g` is above `e` at both of
-/// the overlap's ends (so all along it: the heights are linear there),
-/// `Neg` where below at both. An edge whose shadow is a point (an edge
-/// along `ê`) is all its heights at that point. `None` where it isn't
-/// one strict sign (the edges meet in 3D over the overlap, or cross in
-/// height), where the shadows aren't collinear or don't overlap, or a
-/// coordinate isn't finite.
-fn collinear_z(e: [[f64; 3]; 2], g: [[f64; 3]; 2]) -> Option<Sign> {
-    let q = |p: [f64; 3]| -> Option<[Rational; 3]> {
-        Some([
-            Rational::try_from(p[0]).ok()?,
-            Rational::try_from(p[1]).ok()?,
-            Rational::try_from(p[2]).ok()?,
-        ])
+/// Whether two straight edges' shadows lie on one line, neither a point,
+/// exactly on the stored points.
+fn collinear(e: [[f64; 3]; 2], g: [[f64; 3]; 2]) -> bool {
+    let axis = |v: glam::DVec3| [v.x, v.y, v.z].map(|c| Rational::try_from(c).ok());
+    let (Some(r), Some(n)) = (
+        axis(R_HAT).into_iter().collect::<Option<Vec<_>>>(),
+        axis(NU).into_iter().collect::<Option<Vec<_>>>(),
+    ) else {
+        return false;
     };
-    let axis = |v: glam::DVec3| [v.x, v.y, v.z].map(|c| Rational::try_from(c).expect("finite"));
-    let (r, n, up) = (axis(R_HAT), axis(NU), axis(UP));
-    let dot = |a: &[Rational; 3], b: &[Rational; 3]| -> Rational {
-        &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
+    let sh = |p: [f64; 3]| -> Option<[Rational; 2]> {
+        let p: Vec<Rational> = p
+            .iter()
+            .map(|&c| Rational::try_from(c).ok())
+            .collect::<Option<_>>()?;
+        let dot = |a: &[Rational]| (0..3).fold(Rational::from(0u32), |s, i| s + &a[i] * &p[i]);
+        Some([dot(&r), dot(&n)])
     };
-    let pts = [q(e[0])?, q(e[1])?, q(g[0])?, q(g[1])?];
-    // Shadow coordinates and heights.
-    let sh: Vec<[Rational; 2]> = pts.iter().map(|p| [dot(&r, p), dot(&n, p)]).collect();
-    let ht: Vec<Rational> = pts.iter().map(|p| dot(&up, p)).collect();
-    let diff = |i: usize, j: usize| [&sh[j][0] - &sh[i][0], &sh[j][1] - &sh[i][1]];
+    let (Some(a), Some(b), Some(g0), Some(g1)) = (sh(e[0]), sh(e[1]), sh(g[0]), sh(g[1])) else {
+        return false;
+    };
+    let d = |p: &[Rational; 2], o: &[Rational; 2]| [&p[0] - &o[0], &p[1] - &o[1]];
+    let cross = |u: &[Rational; 2], v: &[Rational; 2]| &u[0] * &v[1] - &u[1] * &v[0];
     let zero = Rational::from(0u32);
-    let dir = [diff(0, 1), diff(2, 3)]
-        .into_iter()
-        .find(|d| d[0] != zero || d[1] != zero)?;
-    let cross = |a: &[Rational; 2], b: &[Rational; 2]| &a[0] * &b[1] - &a[1] * &b[0];
-    if [diff(0, 1), diff(0, 2), diff(0, 3)]
-        .iter()
-        .any(|d| cross(&dir, d) != zero)
-    {
-        return None;
-    }
-    let pos: Vec<Rational> = sh
-        .iter()
-        .map(|s| &dir[0] * &s[0] + &dir[1] * &s[1])
-        .collect();
-    let span = |i: usize| {
-        if pos[i] <= pos[i + 1] {
-            [pos[i].clone(), pos[i + 1].clone()]
-        } else {
-            [pos[i + 1].clone(), pos[i].clone()]
-        }
-    };
-    let ([e0, e1], [g0, g1]) = (span(0), span(2));
-    let lo = if e0 > g0 { e0 } else { g0 };
-    let hi = if e1 < g1 { e1 } else { g1 };
-    if lo > hi {
-        return None;
-    }
-    // The heights of edge `i` (its ends `i`, `i + 1`) at position `x` in
-    // its range.
-    let at = |i: usize, x: &Rational| -> [Rational; 2] {
-        let (pa, pb) = (&pos[i], &pos[i + 1]);
-        let (ha, hb) = (&ht[i], &ht[i + 1]);
-        if pa == pb {
-            if ha <= hb {
-                [ha.clone(), hb.clone()]
-            } else {
-                [hb.clone(), ha.clone()]
-            }
-        } else {
-            let v = ha + (x - pa) / (pb - pa) * (hb - ha);
-            [v.clone(), v]
-        }
-    };
-    let mut sign = None;
-    for x in [&lo, &hi] {
-        let ([el, eh], [gl, gh]) = (at(0, x), at(2, x));
-        let here = if gl > eh {
-            Sign::Pos
-        } else if gh < el {
-            Sign::Neg
-        } else {
-            return None;
-        };
-        if sign.is_some_and(|s| s != here) {
-            return None;
-        }
-        sign = Some(here);
-    }
-    sign
+    let (de, dg) = (d(&b, &a), d(&g1, &g0));
+    let point = |v: &[Rational; 2]| v[0] == zero && v[1] == zero;
+    !point(&de) && !point(&dg) && cross(&de, &d(&g0, &a)) == zero && cross(&de, &d(&g1, &a)) == zero
 }
 
 /// Whether two straight edges' shadows are exactly parallel: `(T_e ×
-/// T_g)·ê = 0` on the stored points, exactly.
+/// T_g)·ê = 0` on the stored points, exactly (also where one's shadow is
+/// a point).
 fn parallel(e: [[f64; 3]; 2], g: [[f64; 3]; 2]) -> bool {
     let q = |x: f64| Rational::try_from(x).ok();
     let d = |p: [[f64; 3]; 2]| -> Option<[Rational; 3]> {

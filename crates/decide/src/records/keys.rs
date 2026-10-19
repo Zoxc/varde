@@ -11,7 +11,9 @@
 //!
 //! **Query points.** A record about a point asks it of a [`Query`]: a
 //! vertex, or a **cut point**, the point of an edge at one cluster of its
-//! crossing record with an edge of the other operand ([`Query::Cut`]).
+//! crossing record with an edge of the other operand ([`Query::Cut`]; on
+//! two edges of one curve, at a root of their crossing rule,
+//! [`Query::Root`]).
 //! [`Point`] is a query with its operand.
 //!
 //! **One fact, one key.** Rays from `A` points go `−r̂`, from `B` points
@@ -123,6 +125,12 @@ pub enum Query {
     /// edge of the other operand), the record keyed by `A`'s edge first
     /// whichever operand `e` is of.
     Cut(EdgeId, EdgeId, XClusterIx),
+    /// A shared-curve cut point `Root(e, g, c)`: the point of edge `e` (of
+    /// the query's operand) at the root cluster `c` of the crossing record
+    /// of `e` and `g`, two edges on one curve, keyed by the pair and the
+    /// root's index along the curve, never by its rounded position; the
+    /// record keyed by `A`'s edge first whichever operand `e` is of.
+    Root(EdgeId, EdgeId, XClusterIx),
 }
 
 /// A query point with its operand.
@@ -626,6 +634,18 @@ pub enum HKey {
         /// The cluster.
         c: XClusterIx,
     },
+    /// Two edges on one curve at a root cluster of their crossing record
+    /// (a sign change of `h = ê·(T × Δ)` along their overlap): the
+    /// shared-curve z-order there, exactly 0 at order 0, also the height
+    /// of the cut point there ([`Query::Root`]).
+    XRoot {
+        /// The edge of `A`.
+        e: EdgeId,
+        /// The edge of `B`.
+        g: EdgeId,
+        /// The root cluster.
+        c: XClusterIx,
+    },
     /// A point against an edge of the other operand, at one of its feet
     /// on it.
     Curve {
@@ -664,11 +684,15 @@ impl HKey {
 
     /// The height key of a cut point against the edge it was cut at, its
     /// own crossing: `Cut(e, g, c)` against `g` is the crossing record's
-    /// cluster `c` itself, keyed `A`'s edge first, whichever edge the
-    /// point is on. `None` unless `q` is a cut point at edge `h`.
+    /// cluster `c` itself, `X(e, g, c)`, and a shared-curve cut point
+    /// `Root(e, g, c)` its root cluster's `XRoot(e, g, c)`, keyed `A`'s
+    /// edge first, whichever edge the point is on. `None` unless `q` is a
+    /// cut point at edge `h`.
     pub fn x(q: Point, h: EdgeId) -> Option<Oriented<HKey>> {
-        let Query::Cut(on, at, c) = q.q else {
-            return None;
+        let (on, at, c, root) = match q.q {
+            Query::Cut(on, at, c) => (on, at, c, false),
+            Query::Root(on, at, c) => (on, at, c, true),
+            Query::Vert(_) => return None,
         };
         if at != h {
             return None;
@@ -678,7 +702,11 @@ impl HKey {
             Operand::B => (at, on),
         };
         Some(Oriented {
-            key: HKey::X { e, g, c },
+            key: if root {
+                HKey::XRoot { e, g, c }
+            } else {
+                HKey::X { e, g, c }
+            },
             swapped: q.operand == Operand::B,
         })
     }

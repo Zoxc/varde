@@ -568,7 +568,7 @@ fn s11s(w: &World, r: &Recs, t: &Truth) -> BTreeMap<(EdgeId, EdgeId), i64> {
             };
             // Straight edges: one cell with outer sides only, no side
             // record read.
-            let out_c = clusters(&w.order, XKey { e, g }, &pair, &XSides::new(), &first())
+            let out_c = clusters(XKey { e, g }, &pair, &XSides::new(), &first())
                 .unwrap_or_else(|err| panic!("{e:?} {g:?}: {err:?}"));
             assert_eq!(out_c.rec.degree(), x_count(&pair.terms));
             let z = t.above.get(&(e, g)).copied();
@@ -579,8 +579,8 @@ fn s11s(w: &World, r: &Recs, t: &Truth) -> BTreeMap<(EdgeId, EdgeId), i64> {
             );
             let s = out_c
                 .rec
-                .s11(|c, _| {
-                    let k = zorder_key(XKey { e, g }, c);
+                .s11(|c, cl| {
+                    let k = zorder_key(XKey { e, g }, c, cl.row);
                     heights
                         .fill(
                             [k.height_key(g)],

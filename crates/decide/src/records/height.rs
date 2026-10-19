@@ -499,7 +499,7 @@ fn anchor_fits(k: HeightKey) -> bool {
         Anchor::Edge(op, _) => (op, None),
     };
     match k.h {
-        HKey::VV { .. } | HKey::X { .. } => true,
+        HKey::VV { .. } | HKey::X { .. } | HKey::XRoot { .. } => true,
         HKey::Curve { q, .. } => op == q.operand.other(),
         HKey::Hit { q, f, .. } => op == q.operand.other() && face == Some(f),
     }

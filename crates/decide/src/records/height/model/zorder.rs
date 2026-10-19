@@ -1,5 +1,6 @@
-//! The z-order decider: the edge–edge keys `X(e, g, c)` of a model's
-//! crossing records, at their anchor `g` ([`XHeights`]).
+//! The z-order decider: the edge–edge keys `X(e, g, c)` and the
+//! shared-curve keys `XRoot(e, g, c)` of a model's crossing records, at
+//! their anchor `g` ([`XHeights`]).
 //!
 //! **The row a key reads** is the cluster's, fixed with it when the
 //! crossing record was formed ([`ZRow`]):
@@ -22,13 +23,13 @@
 //!   the narrower of the two. The **orders** `m·(Δg − Δe)`
 //!   are enclosed over the kept sub-boxes from the cones of their control
 //!   point differences ([`z_order_cone`]), the rates the model's there;
-//! - **point–curve** at a point `q` (an end of one edge) lying exactly on
-//!   the other edge's stored curve: the value exactly 0, the orders the
-//!   point–curve row's exact signs at `q` ([`point_curve_signs`]), from
-//!   the tangent there (a straight edge's direction, or the chord to the
-//!   middle control point at a span's end; at a knot both sides', which
-//!   must agree). A `q` off the curve, or inside a span, has no model
-//!   here: it escalates.
+//! - **shared-curve z-order** of a root cluster (`XRoot(e, g, c)`, a sign
+//!   change of `h` along the overlap of two edges on one curve,
+//!   [`ZRow::Root`]): the value exactly 0 (the heights coincide there),
+//!   the orders the shared-curve row ([`shared_zorder`]) at the level over
+//!   the cluster's piece of `e`, from the curve's tangent and `e`'s rates
+//!   there; decided only where order 1 is certified one sign over the
+//!   piece (the root clusters are formed only so), else it escalates.
 //!
 //! **Near ties.** A curved edge–edge value is exactly 0 only where an end
 //! of one edge in the cluster's box lies exactly on the other edge's
@@ -58,15 +59,13 @@ use glam::DVec3;
 use malachite::Rational;
 
 use super::{FlatHeight, HeightModel, ModelHeights, on_span_in};
-use crate::bezier::{Dyadic, HomCurve, Scalar};
+use crate::bezier::{HomCurve, Scalar};
 use crate::count::xrec::cut_part;
 use crate::num::bounded::up;
-use crate::num::exact::{ExactSign, ORDERS, rat};
-use crate::perturb::{
-    Curved, NU, R_HAT, UP, between, point_curve_signs, rate_rational, z_order_cone,
-};
+use crate::num::exact::{ORDERS, rat};
+use crate::perturb::{Curved, NU, R_HAT, UP, between, curve_point, shared_zorder, z_order_cone};
 use crate::records::height::{AnchorRow, HeightGeometry, KeyValue};
-use crate::records::keys::{Anchor, EdgeAt, HKey, HeightKey, Operand, Point, XKey};
+use crate::records::keys::{Anchor, HKey, HeightKey, Operand, XKey};
 use crate::records::xrec::{XCluster, XCurve, XGeometry, XRec, ZRow};
 
 /// An edge pair's crossing record as its z-order keys read it.
@@ -107,7 +106,7 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
 
     /// The cluster key `h` names, where its pair's record is here.
     fn cluster(&self, h: HKey) -> Option<ZAt<'a>> {
-        let HKey::X { e, g, c } = h else {
+        let (HKey::X { e, g, c } | HKey::XRoot { e, g, c }) = h else {
             return None;
         };
         let x = XKey { e, g };
@@ -174,69 +173,16 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
         matches!((z.e, z.g), (XCurve::Line(..), XCurve::Line(..)))
     }
 
-    /// The point–curve row at `q` (module docs): the exact signs of its
-    /// orders, oriented as the key (`g` above `e`); `None` where `q` isn't
-    /// exactly on a point of the other edge the row has a tangent at.
-    fn point_curve(&self, z: &ZAt<'_>, q: Point) -> Option<[ExactSign; ORDERS]> {
-        let (other, edge) = match q.operand {
-            Operand::A => (&z.g, z.x.g),
-            Operand::B => (&z.e, z.x.e),
-        };
-        let op = q.operand.other();
-        let p = self.model.point(q);
-        let at = p.at.to_array().map(rat);
-        let (tangent, rates) = match other {
-            XCurve::Line(a, b) => {
-                let (a, b) = (a.map(rat), b.map(rat));
-                let t: [Rational; 3] = std::array::from_fn(|k| &b[k] - &a[k]);
-                let w: [Rational; 3] = std::array::from_fn(|k| &at[k] - &a[k]);
-                let c = qcross(&t, &w);
-                let zero = Rational::from(0u32);
-                let (tw, tt) = (qdot(&t, &w), qdot(&t, &t));
-                if c.iter().any(|x| *x != zero) || tw < zero || tw > tt {
-                    return None;
-                }
-                (t, self.model.edge_line(op, edge, p.at).rates)
-            }
-            XCurve::Spans(spans) => {
-                let mut found: Option<([Rational; 3], EdgeAt)> = None;
-                for (k, sp) in (0u32..).zip(spans.iter()) {
-                    for (end, from, to) in [(Dyadic::ZERO, 0, 1), (Dyadic::ONE, 1, 2)] {
-                        let c = if end == Dyadic::ZERO { sp[0] } else { sp[2] };
-                        if [c[0], c[1], c[2]].map(rat) != at {
-                            continue;
-                        }
-                        let t: [Rational; 3] =
-                            std::array::from_fn(|i| rat(sp[to][i]) - rat(sp[from][i]));
-                        let here = EdgeAt::new(k, end)?;
-                        match &found {
-                            None => found = Some((t, here)),
-                            // Both sides of a knot: one tangent direction.
-                            Some((t0, _)) => {
-                                let zero = Rational::from(0u32);
-                                if qcross(t0, &t).iter().any(|x| *x != zero) || qdot(t0, &t) <= zero
-                                {
-                                    return None;
-                                }
-                            }
-                        }
-                    }
-                }
-                let (t, here) = found?;
-                (t, self.model.edge_point_rates(op, edge, here))
-            }
-        };
-        // `Δq − ΔC` along each motion.
-        let deltas: [[Rational; 3]; ORDERS] = std::array::from_fn(|k| {
-            let (dq, dc) = (rate_rational(&p.rates[k]), rate_rational(&rates[k]));
-            std::array::from_fn(|i| &dq[i] - &dc[i])
-        });
-        let signs = point_curve_signs(&tangent, &deltas);
-        // The curve above `q`: `g` above `e` where `q` is `e`'s.
-        Some(match q.operand {
-            Operand::A => signs,
-            Operand::B => signs.map(|s| s.map(Ordering::reverse)),
-        })
+    /// The shared-curve z-order orders of a root cluster at `like`'s
+    /// level over its piece of `e` (module docs); `None` where order 1
+    /// isn't certified one sign there.
+    fn root_orders<S: Curved>(&self, z: &ZAt<'_>, like: &S) -> Option<[S; ORDERS]> {
+        let c = z.e.span(z.cl.e.span, like)?;
+        let t = between(z.cl.e.t[0], z.cl.e.t[1], like);
+        let (_, tangent) = curve_point(&c, &t);
+        let rates = self.model.edge_rates(Operand::A, z.x.e, z.cl.e.span, &t);
+        let ord = shared_zorder(&tangent, &rates)?;
+        matches!(ord[0].sign(), Some(Ordering::Greater | Ordering::Less)).then_some(ord)
     }
 
     /// The kept sub-boxes of a curved cluster at `like`'s level and the
@@ -651,11 +597,8 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
             return self.base().value(h);
         };
         match z.cl.row {
-            ZRow::PointCurve(q) => match self.point_curve(&z, q) {
-                // `q` on the other edge's curve: exactly 0.
-                Some(_) => KeyValue::Exact(Ok(Ordering::Equal)),
-                None => KeyValue::Curved,
-            },
+            // Both edges on the curve at the root: exactly 0.
+            ZRow::Root { .. } => KeyValue::Exact(Ok(Ordering::Equal)),
             ZRow::EdgeEdge if Self::flat(&z) => self.base().value(h),
             // A vertex on a vertex: no model here (module docs, "Shared
             // corners").
@@ -694,12 +637,8 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
             _ => return self.base().row(k),
         };
         match z.cl.row {
-            ZRow::PointCurve(q) => match self.point_curve(&z, q) {
-                Some(s) => AnchorRow::Exact(s),
-                None => AnchorRow::Curved,
-            },
             ZRow::EdgeEdge if Self::flat(&z) => self.base().row(k),
-            ZRow::EdgeEdge => AnchorRow::Curved,
+            ZRow::EdgeEdge | ZRow::Root { .. } => AnchorRow::Curved,
         }
     }
 
@@ -708,10 +647,11 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
             (Anchor::Edge(..), Some(z)) => z,
             _ => return self.base().curved_row(k, like),
         };
-        if z.cl.row != ZRow::EdgeEdge || Self::flat(&z) {
-            return None;
+        match z.cl.row {
+            ZRow::Root { .. } => self.root_orders(&z, like),
+            ZRow::EdgeEdge if Self::flat(&z) => None,
+            ZRow::EdgeEdge => self.curved_orders(&z, like),
         }
-        self.curved_orders(&z, like)
     }
 
     fn facing_only<S: Curved>(&self, h: HKey, like: &S) -> bool {
@@ -729,6 +669,8 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
             Some(z) if z.cl.row == ZRow::EdgeEdge && !Self::flat(&z) => {
                 Self::corner(&z) || !Self::incident(&z)
             }
+            // An exact 0 at the root, the orders deciding: never a truth.
+            Some(z) if matches!(z.cl.row, ZRow::Root { .. }) => false,
             _ => self.base().geometric(k),
         }
     }

@@ -1,15 +1,18 @@
-//! Edge pairs on one curve: no geometric search, no clusters at their
-//! ends' ties. A pair whose `h = ê·(T × Δ)` is one sign over the overlap
-//! has no clusters and four terms counting 0; one where `h` changes sign
-//! (the moved edges cross there) is refused `Crossed`; never a record
-//! whose `s11` differs from the moved configuration's. Checked against
-//! the shared-curve model of two arcs on one circle (the moved shadows
-//! cross exactly at the sign changes of `h` in the overlap), on its
-//! presets and on random arcs, and on straight edges against their moved
-//! crossing.
+//! Edge pairs on one curve, and straight edges whose shadows lie on one
+//! line: a cluster at each sign change of `h = ê·(T × Δ)` along the
+//! overlap, none at the ends' ties, its z-order read at the root; the
+//! box search away from the overlap off the diagonal band; the clusters
+//! summing to the four terms. Checked against really moved geometry: the
+//! two arcs on one circle of the shared-curve model (its presets and
+//! random arcs, the moved arcs sampled densely), straight edges under a
+//! linear field (their moved crossing exactly), a straight line in a
+//! vertex's blend zone and a chain whose shadow crosses itself (both
+//! sampled); the clusters' order along the curve under either stored
+//! direction.
 
+use super::clusters::z_orders;
 use super::*;
-use crate::num::trig::{cos, sin};
+use crate::num::trig::{atan2, cos, sin};
 use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::feet::{EdgeCurve, Feet, decide_feet};
 use crate::records::height::HeightReads;
@@ -58,7 +61,7 @@ fn shared_reads(geom: &Geom) -> SharedReads<'_> {
         } else {
             EdgeCurve::Spans {
                 spans,
-                closed: false,
+                closed: ends[0] == ends[1],
             }
         };
         for v in geom.edges[&(op, EdgeId(own))].0 {
@@ -74,15 +77,49 @@ fn shared_reads(geom: &Geom) -> SharedReads<'_> {
     SharedReads { geom, feet }
 }
 
-/// The pair's record under the shared-curve rule, and its `X`.
-fn shared(geom: &Geom) -> Option<(Result<XRec, SharedError>, i64)> {
+/// A pair's record under the shared-curve rule (`one_curve`: the edges
+/// on one curve), the side records the box search away from the overlap
+/// asks for filled, with its `X`; `None` where the four terms aren't
+/// decided.
+fn shared_rec(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedError>, i64)> {
     let recs = try_decide(geom)?;
     let mut pair = recs.pair(geom);
-    pair.shared = true;
-    assert_eq!(recs.clusters(geom, &pair), Err(XClusterError::Shared));
+    pair.shared = one_curve;
+    if !one_curve {
+        assert_eq!(recs.clusters(geom, &pair), Err(XClusterError::Collinear));
+    }
     let reads = shared_reads(geom);
     let x = x_count(&pair.terms);
-    Some((shared_clusters(&reads, geom, X, &pair), x))
+    for _ in 0..32 {
+        let r = {
+            let sides = recs.sides.borrow();
+            shared_clusters(&reads, geom, &sides, X, &pair)
+        };
+        match r {
+            Err(SharedError::Need(ks)) => {
+                for k in ks {
+                    if !recs.fill(geom, k) {
+                        return Some((Err(SharedError::Need(vec![k])), x));
+                    }
+                }
+            }
+            r => return Some((r, x)),
+        }
+    }
+    None
+}
+
+/// `s11` of a record: its clusters with `g` above, the z-orders clear or
+/// read from their height records; `None` where one isn't decided.
+fn s11(geom: &Geom, rec: &XRec) -> Option<i64> {
+    let z = z_orders(geom, rec);
+    let mut s = 0;
+    for (cl, z) in rec.clusters.iter().zip(z) {
+        if z? == Sign::Pos {
+            s += cl.degree;
+        }
+    }
+    Some(s)
 }
 
 fn qcross(a: &[Q; 3], b: &[Q; 3]) -> [Q; 3] {
@@ -93,14 +130,42 @@ fn qcross(a: &[Q; 3], b: &[Q; 3]) -> [Q; 3] {
     ]
 }
 
-/// Straight edges on one line, overlapping, abutting or apart, moved by
-/// a translation: the moved shadows are parallel, so they never cross.
-/// No clusters (the former end-tie clusters came in cancelling pairs) and
-/// `X = 0`; refused only where `h` is exactly 0 (the motion's shadow
-/// along the line), which no level settles.
+/// `s11` of two straight edges in the moved configuration, exactly (the
+/// field is linear, so the moved edges are straight): the moved crossing's
+/// sign where the moved `g` is above the moved `e` there, else 0; `None`
+/// at a tie the moved configuration keeps.
+fn moved_s11(geom: &Geom) -> Option<i64> {
+    let x = moved_crossing(geom)?;
+    if x == 0 {
+        return Some(0);
+    }
+    let [t, s] = moved_params(geom)?;
+    let height = |op: Operand, id: u32, at: &Q| {
+        let [p, q] = geom.edges[&(op, EdgeId(id))].0.map(|v| {
+            let p = geom.pos[&Point::vert(op, v)];
+            let o = geom.offset(op, p);
+            let at = q3(p);
+            let x: [Q; 3] = [0, 1, 2].map(|i| &at[i] + &o[i]);
+            qdot(&q3(UP), &x)
+        });
+        &p + at * (q - &p)
+    };
+    let gap = sgn(&(height(B, G, &s) - height(A, E, &t)));
+    match gap {
+        0 => None,
+        1 => Some(x),
+        _ => Some(0),
+    }
+}
+
+/// Straight edges on one line moved by a translation: the moved shadows
+/// are parallel, so they never cross. No clusters and `X = 0`, also where
+/// `h` is exactly 0 (the motion's shadow along the line: orders 2–4,
+/// constant along a line, give one sign); refused only where the motion
+/// runs along the line in 3D, so no order of the z-order row reads.
 #[test]
 fn edges_on_one_line_moved_apart_have_no_clusters() {
-    let (mut formed, mut overlapping, mut flat) = (0, 0, 0);
+    let (mut formed, mut overlapping, mut flat, mut along) = (0, 0, 0, 0);
     for seed in varde_testing::seeds(200, 4000) {
         let mut rng = Rng::new(seed);
         let mut int = |n: u64| (rng.next_u64() % (2 * n + 1)) as f64 - n as f64;
@@ -120,77 +185,96 @@ fn edges_on_one_line_moved_apart_have_no_clusters() {
         let (g0, g1) = if t[2] < t[3] { (2, 3) } else { (3, 2) };
         geom.segment(A, E, (0, at(e0)), (1, at(e1)));
         geom.segment(B, G, (2, at(g0)), (3, at(g1)));
-        let (r, x) = shared(&geom).expect("decided");
+        let (r, x) = shared_rec(&geom, true).expect("decided");
         if let Some(want) = moved_crossing(&geom) {
             assert_eq!(x, want, "seed {seed}");
         }
-        // The two ranges meet: each starts no later than the other ends.
         let sorted = |a: f64, b: f64| if a < b { [a, b] } else { [b, a] };
         let ([e0, e1], [g0, g1]) = (sorted(t[0], t[1]), sorted(t[2], t[3]));
-        let meet = e0 <= g1 && g0 <= e1;
+        let meet = e0 < g1 && g0 < e1;
         let h0 = qdot(&q3(UP), &qcross(&q3(dir), &q3(d))) == 0u32;
+        let parallel = qcross(&q3(dir), &q3(d)).iter().all(|c| *c == 0u32);
         match r {
             Ok(rec) => {
                 assert!(rec.clusters.is_empty(), "seed {seed}");
                 assert_eq!(x, 0, "seed {seed}");
-                assert!(!(meet && h0), "seed {seed}: h is 0 on the overlap");
                 formed += 1;
                 overlapping += i32::from(meet);
+                flat += i32::from(meet && h0);
             }
             Err(SharedError::Unsettled) => {
-                assert!(meet && h0, "seed {seed}");
-                flat += 1;
+                assert!(meet && parallel, "seed {seed}");
+                along += 1;
             }
             Err(e) => panic!("seed {seed}: {e:?}"),
         }
     }
     assert!(
-        formed > 0 && overlapping > 0,
-        "{formed} {overlapping} {flat}"
+        formed > 0 && overlapping > 0 && flat > 0,
+        "{formed} formed, {overlapping} overlapping, {flat} with h = 0, {along} along"
     );
 }
 
-/// Edges on one line under a direction field varying along it (linear,
-/// so straight edges stay straight, `d = (field·p)·ν`): `h` changes sign
-/// where `field·p` does. With that point inside the overlap the moved
-/// edges cross there and the pair is refused `Crossed`; outside it the
-/// pair has no clusters and `X = 0`. The four terms count the moved
-/// crossing either way.
+/// Straight edges whose shadows lie on one line, under a direction field
+/// varying linearly along them (so they stay straight), `d = dir/2 +
+/// ê/4 + (field·p)·ν`: `h` changes sign where `field·p` does, at `t = 0`, and
+/// the moved edges cross there. The edges on one line (one curve), or in
+/// one vertical plane, apart in height, crossing in height over the
+/// overlap (at `t = 1`) or meeting at an end (`t = −1`, also an end of
+/// `e` for one of them): one cluster where the root lies inside the
+/// overlap, at it, of the moved crossing's degree, and `s11` the moved
+/// configuration's.
 #[test]
-fn a_varying_field_on_one_line_is_refused_where_h_changes_sign() {
-    let (mut crossed, mut formed) = (0, 0);
-    for dir in [lat(1.0, 0.0, 0.0), lat(1.0, 2.0, 0.0), lat(0.0, 1.0, 1.0)] {
+fn lines_on_one_shadow_line_cross_at_the_root_of_h() {
+    let (mut crossed, mut checked) = (0, 0);
+    for dir in [lat(1.0, 0.0, 0.0), lat(1.0, 2.0, 0.0), lat(1.0, 1.0, 1.0)] {
         for k in [1.0, -1.0] {
             for (t0, t1) in [(-1.0, 2.0), (0.5, 2.0), (-2.0, -0.25)] {
-                let at = |t: f64| dir * t;
-                let mut geom = Geom {
-                    field: dir * k,
-                    ..Geom::default()
-                };
-                geom.segment(A, E, (0, at(t0)), (1, at(t1)));
-                geom.segment(B, G, (2, at(-3.0)), (3, at(3.0)));
-                let (r, x) = shared(&geom).expect("decided");
-                assert_eq!(Some(x), moved_crossing(&geom), "{dir} {k} {t0}");
-                // `h ∝ ê·(dir × ν)·(field·p)`: identically 0 where the
-                // line's shadow is along `ν`.
-                let h0 = qdot(&q3(UP), &qcross(&q3(dir), &q3(NU))) == 0u32;
-                match r {
-                    Ok(rec) => {
-                        assert!(t0 > 0.0 || t1 < 0.0, "{dir} {k} {t0}");
-                        assert!(rec.clusters.is_empty() && x == 0, "{dir} {k} {t0}");
-                        formed += 1;
+                // `g` lifted by `h0` at its start and `h1` at its end
+                // along `UP`, `None` on `e`'s line.
+                for lift in [
+                    None,
+                    Some((1.0, 1.0)),
+                    Some((-2.0, -1.0)),
+                    Some((-1.0, 1.0)),
+                    Some((0.0, 2.0)),
+                ] {
+                    let at = |t: f64| dir * t;
+                    let mut geom = Geom {
+                        d: dir * 0.5 + UP * 0.25,
+                        field: dir * k,
+                        ..Geom::default()
+                    };
+                    geom.segment(A, E, (0, at(t0)), (1, at(t1)));
+                    let (h0, h1) = lift.unwrap_or((0.0, 0.0));
+                    geom.segment(B, G, (2, at(-1.0) + UP * h0), (3, at(3.0) + UP * h1));
+                    let (r, x) = shared_rec(&geom, lift.is_none()).expect("decided");
+                    let here = format!("{dir} {k} {t0} {lift:?}");
+                    assert_eq!(Some(x), moved_crossing(&geom), "{here}");
+                    let rec = r.unwrap_or_else(|e| panic!("{here}: {e:?}"));
+                    let inside = t0 < 0.0 && 0.0 < t1;
+                    assert_eq!(rec.clusters.len(), usize::from(inside), "{here}");
+                    assert_eq!(rec.degree(), x, "{here}");
+                    if let Some(c) = rec.clusters.first() {
+                        // The root `t = 0` on `e`'s parameter.
+                        let root = -t0 / (t1 - t0);
+                        assert!(c.e.t[0] <= root && root <= c.e.t[1], "{here}: {c:?}");
+                        assert!(matches!(c.row, ZRow::Root { .. }), "{here}");
+                        assert_eq!(c.clear.is_some(), lift.is_some(), "{here}");
+                        crossed += 1;
                     }
-                    Err(SharedError::Crossed) => {
-                        assert!(t0 < 0.0 && 0.0 < t1, "{dir} {k} {t0}");
-                        crossed += i32::from(x != 0);
+                    if let Some(want) = moved_s11(&geom) {
+                        assert_eq!(s11(&geom, &rec), Some(want), "{here}");
+                        checked += 1;
                     }
-                    Err(SharedError::Unsettled) => assert!(h0, "{dir} {k} {t0}"),
-                    Err(e) => panic!("{dir} {k} {t0}: {e:?}"),
                 }
             }
         }
     }
-    assert!(crossed > 0 && formed > 0, "{crossed} {formed}");
+    assert!(
+        crossed > 20 && checked > 40,
+        "{crossed} crossed, {checked} checked"
+    );
 }
 
 /// The shared-curve model's circle (its explainer's interactive view):
@@ -224,7 +308,8 @@ fn model_motion(phi: f64, rho: f64, vz: f64) -> DVec3 {
 }
 
 /// One pair of the model: `e` over the knots `ei.0..ei.1` of the chain,
-/// `g` over `gi`, `g` stored backwards if `back`.
+/// `g` over `gi`, `e` or `g` stored backwards if `back_e`, `back_g`.
+#[derive(Clone)]
 struct Model {
     knots: Vec<f64>,
     ei: (usize, usize),
@@ -233,8 +318,18 @@ struct Model {
     rho: f64,
     vz: f64,
     tilt: f64,
-    back: bool,
+    back_e: bool,
+    back_g: bool,
     w: Vec<f64>,
+}
+
+/// A crossing of the moved arcs, sampled: its angle on the circle, its
+/// degree and whether the moved `g` is above the moved `e` there.
+#[derive(Clone, Copy, Debug)]
+struct Moved {
+    at: f64,
+    degree: i64,
+    above: bool,
 }
 
 impl Model {
@@ -242,7 +337,8 @@ impl Model {
         let arcs = model_arcs(&self.knots, self.rho, self.tilt, &self.w);
         let e = arcs[self.ei.0..self.ei.1].to_vec();
         let g = arcs[self.gi.0..self.gi.1].to_vec();
-        let g = if self.back { reversed(&g) } else { g };
+        let e = if self.back_e { reversed(&e) } else { e };
+        let g = if self.back_g { reversed(&g) } else { g };
         let mut geom = Geom {
             d: model_motion(self.phi, self.rho, self.vz),
             ..Geom::default()
@@ -252,31 +348,102 @@ impl Model {
         geom
     }
 
-    /// The overlap `[lo, hi]` of the two arcs (model angles), if they
-    /// meet.
-    fn overlap(&self) -> Option<[f64; 2]> {
-        let lo = self.knots[self.ei.0.max(self.gi.0)];
-        let hi = self.knots[self.ei.1.min(self.gi.1)];
-        (lo <= hi).then_some([lo, hi])
+    /// The edges' angle ranges.
+    fn ranges(&self) -> [[f64; 2]; 2] {
+        let r = |i: (usize, usize)| [self.knots[i.0], self.knots[i.1]];
+        [r(self.ei), r(self.gi)]
     }
 
-    /// The roots of `h = T × v = −cos(s − phi)` (the model's, in its
-    /// angles) in the overlap, as their distance inside it from its
-    /// nearer end (negative outside): the moved arcs cross at each root
-    /// strictly inside.
-    fn roots(&self) -> Vec<f64> {
-        let Some([lo, hi]) = self.overlap() else {
-            return Vec::new();
+    /// The model's height at angle `s`.
+    fn z(&self, s: f64) -> f64 {
+        let psi = 40f64.to_radians();
+        self.tilt * (cos(psi) * cos(s) + sin(psi) * sin(s))
+    }
+
+    /// The crossings of the moved arcs (`e` moved by `δ = 10⁻⁷` along the
+    /// motion), sampled densely along `e` and narrowed by halving: where
+    /// the moved `e` passes from inside the circle to outside or back at
+    /// an angle of `g`. `None` where one lies within `10⁻⁵` of an edge's
+    /// end or its z-order within `10⁻³·δ` of 0: a tie the sampling can't
+    /// tell (an end tie, decided by the perturbation's orders).
+    fn moved(&self) -> Option<Vec<Moved>> {
+        let delta = 1e-7;
+        let v = [cos(self.phi), sin(self.phi), self.vz];
+        let [[e0, e1], [g0, g1]] = self.ranges();
+        let moved = |s: f64| [cos(s) + delta * v[0], sin(s) + delta * v[1]];
+        let f = |s: f64| {
+            let p = moved(s);
+            p[0] * p[0] + p[1] * p[1] - 1.0
         };
+        let n = 4096;
         let mut out = Vec::new();
-        for k in -8..=8 {
-            let s = self.phi + std::f64::consts::FRAC_PI_2 + f64::from(k) * std::f64::consts::PI;
-            let inside = if s - lo < hi - s { s - lo } else { hi - s };
-            if inside > -0.1 {
-                out.push(inside);
+        let mut prev = (e0, f(e0));
+        for i in 1..=n {
+            let s = e0 + (e1 - e0) * f64::from(i) / f64::from(n);
+            let fs = f(s);
+            if (prev.1 < 0.0) != (fs < 0.0) {
+                let (mut lo, mut hi) = (prev.0, s);
+                for _ in 0..60 {
+                    let m = 0.5 * (lo + hi);
+                    if (f(m) < 0.0) == (prev.1 < 0.0) {
+                        lo = m;
+                    } else {
+                        hi = m;
+                    }
+                }
+                let at = 0.5 * (lo + hi);
+                let p = moved(at);
+                let mut psi = atan2(p[1], p[0]);
+                while psi < g0 {
+                    psi += std::f64::consts::TAU;
+                }
+                while psi > g0 + std::f64::consts::TAU {
+                    psi -= std::f64::consts::TAU;
+                }
+                let near = |a: f64, b: f64| (a - b).abs() < 1e-5;
+                if near(at, e0) || near(at, e1) || near(psi, g0) || near(psi, g1) {
+                    return None;
+                }
+                if psi < g1 {
+                    let gap = self.z(psi) - (self.z(at) + delta * v[2]);
+                    if gap.abs() < 1e-3 * delta {
+                        return None;
+                    }
+                    // Outward along `e`'s increasing angle: from the left
+                    // of `g` running the same way to its right, `T_g × T_e
+                    // < 0`.
+                    let out_ward = fs > 0.0;
+                    let mut degree = if out_ward { -1 } else { 1 };
+                    if self.back_e != self.back_g {
+                        degree = -degree;
+                    }
+                    out.push(Moved {
+                        at,
+                        degree,
+                        above: gap > 0.0,
+                    });
+                }
             }
+            prev = (s, fs);
         }
-        out
+        Some(out)
+    }
+
+    /// The angle on the circle of the point at parameter `t` of `e`'s span
+    /// `span` (along its stored direction): a circle's conic of weights
+    /// `(1, cos h, 1)` over the half angle `h` runs with `tan((θ − m)/2) =
+    /// (2t − 1)·tan(h/2)` about its middle angle `m`.
+    fn e_angle(&self, span: u32, t: f64) -> f64 {
+        let n = self.ei.1 - self.ei.0;
+        let (k, t) = if self.back_e {
+            (n - 1 - span as usize, 1.0 - t)
+        } else {
+            (span as usize, t)
+        };
+        let (a, b) = (self.knots[self.ei.0 + k], self.knots[self.ei.0 + k + 1]);
+        let h = (b - a) / 2.0;
+        let x = (2.0 * t - 1.0) * crate::num::trig::tan(h / 2.0);
+        a + h + 2.0 * atan2(x, 1.0)
     }
 }
 
@@ -302,16 +469,50 @@ fn model_knots(ends: &[f64]) -> Vec<f64> {
     out
 }
 
-/// The presets of the shared-curve explainer, the motion of each
-/// (`e` and `g` from and to in degrees, motion angle, ray angle), height
-/// `0.8` tilted, motion up `0.2`. "cancel" (no crossing; the former rule
-/// formed a cancelling pair of end clusters whose z-orders differ, a
-/// wrong `s11`) has no clusters; "booked" (a crossing inside the overlap,
-/// formerly booked at an end and reading the z-order there) is refused;
-/// the others as `h` says. Abutting quarters (`a`'s ray exactly through
-/// `g1`): `X = 0`, no clusters.
+/// One answered model pair against its moved arcs: the clusters are the
+/// sampled crossings (as many, of their degrees, in order along `e`, each
+/// cluster's piece holding its crossing's angle), and `s11` theirs.
+fn check_model(m: &Model, rec: &XRec, x: i64, moved: &[Moved], here: &str) {
+    let geom = m.geom();
+    assert_eq!(rec.degree(), x, "{here}");
+    assert_eq!(moved.iter().map(|c| c.degree).sum::<i64>(), x, "{here}");
+    assert_eq!(rec.clusters.len(), moved.len(), "{here}: {rec:?} {moved:?}");
+    // Along `e` from its geometrically lesser end: the stored direction
+    // or against it.
+    let mut by_angle: Vec<&Moved> = moved.iter().collect();
+    let lesser_first = {
+        let [s, e] = geom.edges[&(A, EdgeId(E))].0;
+        geom.vert_key(A, s) <= geom.vert_key(A, e)
+    };
+    // `e` runs along increasing angle unless stored backwards.
+    if m.back_e == lesser_first {
+        by_angle.reverse();
+    }
+    for (c, want) in rec.clusters.iter().zip(&by_angle) {
+        assert_eq!(c.degree, want.degree, "{here}: {c:?} {want:?}");
+        let [lo, hi] = [c.e.t[0], c.e.t[1]].map(|t| m.e_angle(c.e.span, t));
+        let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+        assert!(
+            lo - 1e-6 <= want.at && want.at <= hi + 1e-6,
+            "{here}: {c:?} at {} not in [{lo}, {hi}]",
+            want.at
+        );
+    }
+    let want: i64 = moved.iter().filter(|c| c.above).map(|c| c.degree).sum();
+    assert_eq!(s11(&geom, rec), Some(want), "{here}");
+}
+
+/// The presets of the shared-curve explainer (`e` and `g` from and to in
+/// degrees, motion angle, ray angle), height `0.8` tilted, motion up
+/// `0.2`, under each stored direction of either edge: a cluster at each
+/// crossing of the moved arcs, none at an end. "cancel" has `h = 0` at
+/// `e`'s end (150°), its moved sign there from orders 2–4 (the former
+/// rule formed a cancelling pair of end clusters whose z-orders differ);
+/// "booked" crosses inside the overlap (formerly booked at an end and
+/// reading the z-order there); abutting quarters, `a`'s ray exactly
+/// through `g1`: `X = 0`, no clusters.
 #[test]
-fn the_explainers_presets_follow_the_sign_of_h() {
+fn the_explainers_presets_cross_at_the_roots_of_h() {
     let presets = [
         ("equal", [40.0, 160.0, 40.0, 160.0], 190.0, 15.0),
         ("overlap", [30.0, 150.0, 90.0, 230.0], 210.0, 15.0),
@@ -322,10 +523,11 @@ fn the_explainers_presets_follow_the_sign_of_h() {
         ("cancel", [70.0, 150.0, 20.0, 220.0], 60.0, 65.0),
         ("booked", [70.0, 150.0, 20.0, 220.0], 40.0, 65.0),
     ];
+    let mut crossings = 0;
     for (name, ends, phi, rho) in presets {
         let knots = model_knots(&ends);
         let ix = |a: f64| knots.iter().position(|&k| k == deg(a)).expect("a knot");
-        for back in [false, true] {
+        for (back_e, back_g) in [(false, false), (false, true), (true, false), (true, true)] {
             let m = Model {
                 ei: (ix(ends[0]), ix(ends[1])),
                 gi: (ix(ends[2]), ix(ends[3])),
@@ -334,42 +536,46 @@ fn the_explainers_presets_follow_the_sign_of_h() {
                 rho: deg(rho),
                 vz: 0.2,
                 tilt: 0.8,
-                back,
+                back_e,
+                back_g,
                 w: vec![1.0],
             };
-            let geom = m.geom();
-            let (r, x) = shared(&geom).expect("decided");
-            let roots = m.roots();
-            let crossing = roots.iter().any(|&d| d > 1e-9);
-            let near = roots.iter().any(|d| d.abs() < 1e-9);
-            match (name, r) {
-                ("booked", r) => assert_eq!(r, Err(SharedError::Crossed), "{back}"),
-                // A root of `h` at the overlap's end: no level settles it.
-                ("cancel", r) => assert_eq!(r, Err(SharedError::Unsettled), "{back}"),
-                (_, Err(SharedError::Unsettled)) if near => {}
-                (_, Ok(rec)) if !crossing => {
-                    assert!(rec.clusters.is_empty(), "{name} {back}");
-                    assert_eq!(x, 0, "{name} {back}");
-                }
-                (_, Err(SharedError::Crossed)) if crossing => {}
-                (_, r) => panic!("{name} {back}: {r:?}, crossing {crossing}"),
-            }
+            let here = format!("{name} {back_e} {back_g}");
+            let (r, x) = shared_rec(&m.geom(), true).expect("decided");
+            let rec = r.unwrap_or_else(|e| panic!("{here}: {e:?}"));
             if name == "cancel" {
-                assert!(near && !crossing);
+                // The root at `e`'s end, which the stored knot misses by
+                // its rounding either way: no crossing inside by more.
+                assert!(rec.clusters.len() <= 1, "{here}: {rec:?}");
+                for c in &rec.clusters {
+                    assert!(c.e.t[0] < 1e-9 || c.e.t[1] > 1.0 - 1e-9, "{here}: {c:?}");
+                }
+                assert_eq!(rec.degree(), x, "{here}");
+                continue;
             }
+            let moved = m.moved().expect("no tie");
+            crossings += moved.len();
+            if matches!(name, "abut" | "apart") {
+                assert!(rec.clusters.is_empty() && x == 0, "{here}");
+            }
+            if name == "booked" {
+                assert_eq!(moved.len(), 1, "{here}");
+            }
+            check_model(&m, &rec, x, &moved, &here);
         }
     }
+    assert!(crossings > 8, "{crossings} crossings");
 }
 
 /// Abutting quarter circles under motions all round, `a`'s ray through
-/// `g`'s far end: the overlap is their common end, where `h` isn't 0, so
-/// `X = 0` and no clusters, never `Crossed`.
+/// `g`'s far end: the overlap is their common end, so `X = 0` and no
+/// clusters.
 #[test]
 fn abutting_quarters_have_no_clusters() {
     let knots = [0.0, 90.0, 180.0].map(deg).to_vec();
     for phi in (0..24).map(|k| 7.5 + 15.0 * f64::from(k)) {
         for (vz, tilt) in [(0.2, 0.8), (-0.5, 0.0), (1.0, 1.5)] {
-            for back in [false, true] {
+            for back_g in [false, true] {
                 let m = Model {
                     knots: knots.clone(),
                     ei: (0, 1),
@@ -378,27 +584,27 @@ fn abutting_quarters_have_no_clusters() {
                     rho: 0.0,
                     vz,
                     tilt,
-                    back,
+                    back_e: false,
+                    back_g,
                     w: vec![1.0, 3.0],
                 };
-                let (r, x) = shared(&m.geom()).expect("decided");
-                assert_eq!(r, Ok(XRec::default()), "{phi} {vz} {back}");
-                assert_eq!(x, 0, "{phi} {vz} {back}");
+                let (r, x) = shared_rec(&m.geom(), true).expect("decided");
+                assert_eq!(r, Ok(XRec::default()), "{phi} {vz} {back_g}");
+                assert_eq!(x, 0, "{phi} {vz} {back_g}");
             }
         }
     }
 }
 
 /// Random arcs of one circle (equal, overlapping, nested, abutting,
-/// apart; either stored direction; weights 1/64 to 64), random motions
-/// and frames, against the model: a pair answered has no clusters, and
-/// no root of `h` in its overlap, so its `s11` (0) is the moved arcs';
-/// one refused `Crossed` has a root inside; `Unsettled` only with a root
-/// within `10⁻³` of the overlap's ends; nothing else refused.
+/// apart; either stored direction of either; weights 1/64 to 64), random
+/// motions and frames, against the moved arcs sampled densely: every pair
+/// answered with the moved arcs' crossings and `s11`, none refused but at
+/// a tie the sampling can't tell (a crossing at an end).
 #[test]
-fn random_shared_arcs_never_answer_a_wrong_s11() {
-    let (mut formed, mut crossed, mut unsettled, mut trials) = (0, 0, 0, 0);
-    for seed in varde_testing::seeds(300, 20_000) {
+fn random_shared_arcs_cross_at_the_roots_of_h() {
+    let (mut answered, mut crossing, mut tied, mut refused, mut trials) = (0, 0, 0, 0, 0);
+    for seed in varde_testing::seeds(1000, 20_000) {
         let mut rng = Rng::new(seed);
         let mut f = || (rng.next_u64() % 1_000_000) as f64 / 1_000_000.0;
         let mut knots = vec![f() * 6.0];
@@ -428,52 +634,44 @@ fn random_shared_arcs_never_answer_a_wrong_s11() {
             rho,
             vz,
             tilt,
-            back: seed % 2 == 1,
+            back_e: seed % 4 >= 2,
+            back_g: seed % 2 == 1,
             w,
         };
-        let Some((r, x)) = shared(&m.geom()) else {
+        let Some((r, x)) = shared_rec(&m.geom(), true) else {
             continue;
         };
         trials += 1;
-        let roots = m.roots();
-        let near = roots.iter().any(|d| d.abs() < 1e-3);
-        // Inside by more than the stored spans' rounding moves a root.
-        let inside = roots.iter().any(|&d| d > 1e-9);
-        match r {
-            Ok(rec) => {
-                assert!(!inside, "seed {seed}: a crossing answered");
-                assert!(rec.clusters.is_empty() && x == 0, "seed {seed}");
-                formed += 1;
+        let moved = m.moved();
+        match (r, moved) {
+            (Ok(rec), Some(moved)) => {
+                check_model(&m, &rec, x, &moved, &format!("seed {seed}"));
+                answered += 1;
+                crossing += usize::from(!moved.is_empty());
             }
-            Err(SharedError::Crossed) => {
-                assert!(inside, "seed {seed}: refused without a crossing");
-                crossed += 1;
+            // A tie at an end: the record decides it by the orders, the
+            // sampling can't; still summing to the four terms.
+            (Ok(rec), None) => {
+                assert_eq!(rec.degree(), x, "seed {seed}");
+                tied += 1;
             }
-            Err(SharedError::Unsettled) => {
-                assert!(
-                    near,
-                    "seed {seed}: unsettled away from a root: {roots:?} {:?} {:?} {:?}",
-                    m.ei,
-                    m.gi,
-                    m.overlap()
-                );
-                unsettled += 1;
-            }
-            Err(e) => panic!("seed {seed}: {e:?}"),
+            (Err(SharedError::Unsettled), None) => refused += 1,
+            (Err(e), _) => panic!("seed {seed}: {e:?}"),
         }
     }
-    eprintln!("{formed} formed, {crossed} crossed, {unsettled} unsettled of {trials}");
+    eprintln!(
+        "{answered} answered ({crossing} crossing), {tied} tied, {refused} refused of {trials}"
+    );
     assert!(
-        formed > 0 && crossed > 0 && unsettled * 50 <= trials,
-        "{formed} formed, {crossed} crossed, {unsettled} unsettled of {trials}"
+        answered * 10 > trials * 9 && crossing > 0 && refused * 200 <= trials,
+        "{answered} answered ({crossing} crossing), {tied} tied, {refused} refused of {trials}"
     );
 }
 
 /// What the rule can't read is refused, never answered: terms counting a
-/// crossing though `h` is one sign over the overlap (here made by hand:
-/// a crossing away from the overlap) `Away`; an end of one chain inside
-/// a span of the other (the overlap not whole spans) `Unaligned`; a line
-/// against a chain `Shape`.
+/// crossing the clusters don't hold (made by hand) `Inconsistent`; an end
+/// of one chain inside a span of the other (the overlap not whole spans)
+/// `Unaligned`; a line against a chain `Shape`.
 #[test]
 fn shared_pairs_the_rule_cannot_read_are_refused() {
     let mut geom = Geom {
@@ -486,8 +684,9 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     let mut pair = recs.pair(&geom);
     pair.shared = true;
     let reads = shared_reads(&geom);
+    let sides = XSides::new();
     assert_eq!(
-        shared_clusters(&reads, &geom, X, &pair),
+        shared_clusters(&reads, &geom, &sides, X, &pair),
         Ok(XRec::default())
     );
     let ray = |k| EdgeRays::Line(crate::records::shadow::RayRec { crossing: k });
@@ -496,8 +695,8 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     let x = x_count(&pair.terms);
     assert_ne!(x, 0);
     assert_eq!(
-        shared_clusters(&reads, &geom, X, &pair),
-        Err(SharedError::Away(x))
+        shared_clusters(&reads, &geom, &sides, X, &pair),
+        Err(SharedError::Inconsistent { clusters: 0, x })
     );
 
     // `g` from 45° to 135° against `e` from 0° to 90°: `g`'s start lies
@@ -511,7 +710,7 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     };
     geom.curve(A, E, 0, 1, e);
     geom.curve(B, G, 2, 3, g);
-    let (r, _) = shared(&geom).expect("decided");
+    let (r, _) = shared_rec(&geom, true).expect("decided");
     assert_eq!(r, Err(SharedError::Unaligned(Point::vert(B, VertId(2)))));
 
     let mut geom = Geom::default();
@@ -524,7 +723,334 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     pair.shared = true;
     let reads = shared_reads(&geom);
     assert_eq!(
-        shared_clusters(&reads, &geom, X, &pair),
+        shared_clusters(&reads, &geom, &XSides::new(), X, &pair),
         Err(SharedError::Shape)
     );
+}
+
+/// The point at `t` of the straight edge from `a` to `b` moved by `δ`
+/// along the geometry's field, in the shadow frame `(r̂·x, ν·x)` and its
+/// height `ê·x` (`f64`).
+fn moved_line_point(geom: &Geom, a: DVec3, b: DVec3, t: f64, delta: f64) -> ([f64; 2], f64) {
+    let p = a + (b - a) * t;
+    let m = p + geom.d_at(p) * delta;
+    ([m.dot(R_HAT), m.dot(NU)], m.dot(UP))
+}
+
+/// A straight shared line from a vertex `a` of `A` whose blend zone (the
+/// vertex's direction within `r` of it, the field's own from `2r` on)
+/// turns the motion's shadow across the line: `h` changes sign inside the
+/// zone, and the moved edges cross there, at the root (sampled densely on
+/// the moved line, `δ = 10⁻⁷`): one cluster holding it, of its degree,
+/// `s11` the moved crossing's z-order.
+#[test]
+fn a_straight_shared_line_in_a_blend_zone_crosses_at_its_root() {
+    let mut checked = 0;
+    for (d_vertex, d_far) in [
+        (lat(0.5, 1.0, 0.25), lat(0.5, -1.0, 0.5)),
+        (lat(-0.5, -1.0, 0.75), lat(0.25, 1.0, -0.5)),
+        (lat(1.0, 0.5, -0.25), lat(1.0, -2.0, 0.0)),
+    ] {
+        for back in [false, true] {
+            let (a, b) = (lat(0.0, 0.0, 0.0), lat(4.0, 0.0, 1.0));
+            let mut geom = Geom {
+                d: d_far,
+                blend: Some(Blend {
+                    at: a,
+                    d: d_vertex,
+                    r: (b - a).length() / 4.0,
+                }),
+                ..Geom::default()
+            };
+            // `e` from `a` (vertex 0) or to it (stored backwards).
+            if back {
+                geom.segment(A, E, (0, b), (1, a));
+            } else {
+                geom.segment(A, E, (0, a), (1, b));
+            }
+            geom.segment(B, G, (2, a), (3, b));
+            let (r, x) = shared_rec(&geom, true).expect("decided");
+            let here = format!("{d_vertex} {back}");
+            let rec = r.unwrap_or_else(|e| panic!("{here}: {e:?}"));
+            // The moved line sampled: its offset across the line's shadow
+            // changes sign at the crossing.
+            let delta = 1e-7;
+            let (e0, e1) = if back { (b, a) } else { (a, b) };
+            let across = |t: f64| {
+                let ([u, v], _) = moved_line_point(&geom, e0, e1, t, delta);
+                let ([u0, v0], _) = moved_line_point(&geom, e0, e1, 0.0, 0.0);
+                let ([u1, v1], _) = moved_line_point(&geom, e0, e1, 1.0, 0.0);
+                (u1 - u0) * (v - v0) - (v1 - v0) * (u - u0)
+            };
+            let mut moved = Vec::new();
+            let n = 4000;
+            for i in 0..n {
+                let (s, t) = (f64::from(i) / f64::from(n), f64::from(i + 1) / f64::from(n));
+                if (across(s) < 0.0) != (across(t) < 0.0) {
+                    let (mut lo, mut hi) = (s, t);
+                    for _ in 0..60 {
+                        let m = 0.5 * (lo + hi);
+                        if (across(m) < 0.0) == (across(s) < 0.0) {
+                            lo = m;
+                        } else {
+                            hi = m;
+                        }
+                    }
+                    // `e` from the right of `g` (same way) to its left:
+                    // `T_g × T_e > 0` (read off the root, where the
+                    // rounding can't flip it).
+                    let at = 0.5 * (lo + hi);
+                    let up = across(at + 1e-3) > 0.0;
+                    let degree = if up { 1 } else { -1 };
+                    // The moved `e`'s height against the line's there.
+                    let ([u, v], z) = moved_line_point(&geom, e0, e1, at, delta);
+                    let ([u0, v0], z0) = moved_line_point(&geom, a, b, 0.0, 0.0);
+                    let ([u1, v1], z1) = moved_line_point(&geom, a, b, 1.0, 0.0);
+                    let s = ((u - u0) * (u1 - u0) + (v - v0) * (v1 - v0))
+                        / ((u1 - u0) * (u1 - u0) + (v1 - v0) * (v1 - v0));
+                    let gap = z0 + s * (z1 - z0) - z;
+                    moved.push((at, degree * if back { -1 } else { 1 }, gap > 0.0));
+                }
+            }
+            assert_eq!(moved.len(), 1, "{here}: {moved:?}");
+            let (at, degree, above) = moved[0];
+            assert_eq!(x, degree, "{here}");
+            assert_eq!(rec.clusters.len(), 1, "{here}: {rec:?}");
+            let c = rec.clusters[0];
+            assert_eq!(c.degree, degree, "{here}");
+            assert!(
+                c.e.t[0] - 1e-6 <= at && at <= c.e.t[1] + 1e-6,
+                "{here}: {c:?} {at}"
+            );
+            // Inside the blend zone, `r` to `2r` from `a`.
+            let from_a = if back { 1.0 - at } else { at };
+            assert!(0.25 < from_a && from_a < 0.5, "{here}: {at}");
+            assert_eq!(
+                s11(&geom, &rec),
+                Some(if above { degree } else { 0 }),
+                "{here}"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 6);
+}
+
+/// A straight span from `p` to `q` (middle at the midpoint, weight 1).
+fn line_span(p: DVec3, q: DVec3) -> Span {
+    [cp(p, 1.0), cp((p + q) * 0.5, 1.0), cp(q, 1.0)]
+}
+
+/// A chain whose shadow crosses itself (a straight run, a loop of three
+/// quarter circles, a straight run down across the first: a crossing at
+/// `x = −1` with the second run a unit above), shared whole by `e` and
+/// `g`: two crossings away from the overlap, of opposite degrees and
+/// z-orders, found by the box search off the diagonal band (`X` alone
+/// can't see them: they cancel), and the roots of `h` on the loop. Each
+/// cluster against the moved chain: the away crossings by their
+/// geometry, `s11` all of them.
+#[test]
+fn a_chain_crossing_itself_has_crossings_away_from_the_overlap() {
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let p = |x: f64, y: f64, z: f64| lat(x, y, z);
+    // The loop: a circle of radius 1 about (0, 1), from −90° round to
+    // 180°, rising from height 0 to 1.
+    let chain = vec![
+        line_span(p(-3.0, 0.0, 0.0), p(0.0, 0.0, 0.0)),
+        [
+            cp(p(0.0, 0.0, 0.0), 1.0),
+            cp(p(1.0, 0.0, 0.25), w),
+            cp(p(1.0, 1.0, 0.25), 1.0),
+        ],
+        [
+            cp(p(1.0, 1.0, 0.25), 1.0),
+            cp(p(1.0, 2.0, 0.5), w),
+            cp(p(0.0, 2.0, 0.5), 1.0),
+        ],
+        [
+            cp(p(0.0, 2.0, 0.5), 1.0),
+            cp(p(-1.0, 2.0, 0.75), w),
+            cp(p(-1.0, 1.0, 1.0), 1.0),
+        ],
+        line_span(p(-1.0, 1.0, 1.0), p(-1.0, -2.0, 1.0)),
+    ];
+    let mut done = 0;
+    // The roots of `h` on the loop: where its tangent runs along the
+    // motion's shadow, at −16.7° and 163.3° for the first (on the first
+    // and third arcs), at 78.7° for the second (on the second).
+    for (d, arcs) in [
+        (lat(0.3, 1.0, 0.2), vec![1, 3]),
+        (lat(-1.0, 0.2, -0.3), vec![2]),
+    ] {
+        for (back_e, back_g) in [(false, false), (true, false), (false, true)] {
+            let mut geom = Geom {
+                d,
+                ..Geom::default()
+            };
+            let flip = |b: bool| if b { reversed(&chain) } else { chain.clone() };
+            geom.curve(A, E, 0, 1, flip(back_e));
+            geom.curve(B, G, 2, 3, flip(back_g));
+            let here = format!("{d} {back_e} {back_g}");
+            let (r, x) = shared_rec(&geom, true).expect("decided");
+            let rec = r.unwrap_or_else(|e| panic!("{here}: {e:?}"));
+            assert_eq!(rec.degree(), x, "{here}");
+            let away: Vec<&XCluster> = rec
+                .clusters
+                .iter()
+                .filter(|c| c.row == ZRow::EdgeEdge)
+                .collect();
+            assert_eq!(away.len(), 2, "{here}: {rec:?}");
+            assert_eq!(away[0].degree + away[1].degree, 0, "{here}");
+            // The first run of `e` against the last of `g` and back: the
+            // crossing at `x = −1`, `g`'s last run above where it is `g`'s.
+            let first = |back: bool| if back { 4 } else { 0 };
+            let last = |back: bool| if back { 0 } else { 4 };
+            let mut s11_away = 0;
+            for c in &away {
+                let e_first = c.e.span == first(back_e);
+                let g_last = c.g.span == last(back_g);
+                assert!(
+                    e_first == g_last && (e_first || c.e.span == last(back_e)),
+                    "{here}: {c:?}"
+                );
+                // `T_g × T_e` of the runs, each along its stored way.
+                let dir = |run_first: bool, back: bool| {
+                    let v = if run_first { (1.0, 0.0) } else { (0.0, -1.0) };
+                    if back { (-v.0, -v.1) } else { v }
+                };
+                let te = dir(e_first, back_e);
+                let tg = dir(!e_first, back_g);
+                let want = if tg.0 * te.1 - tg.1 * te.0 > 0.0 {
+                    1
+                } else {
+                    -1
+                };
+                assert_eq!(c.degree, want, "{here}: {c:?}");
+                if g_last {
+                    s11_away += c.degree;
+                }
+            }
+            // The roots of `h` on the loop: one cluster each, on an arc.
+            let roots: Vec<&XCluster> = rec
+                .clusters
+                .iter()
+                .filter(|c| matches!(c.row, ZRow::Root { .. }))
+                .collect();
+            let mut on: Vec<u32> = roots
+                .iter()
+                .map(|c| if back_e { 4 - c.e.span } else { c.e.span })
+                .collect();
+            on.sort_unstable();
+            assert_eq!(on, arcs, "{here}: {rec:?}");
+            // The roots' z-orders by the model's sampled moved loop: the
+            // z-order row's sign at the root, read by the record.
+            let z = z_orders(&geom, &rec);
+            assert!(z.iter().all(Option::is_some), "{here}");
+            let s = s11(&geom, &rec).expect("decided");
+            let s_roots: i64 = rec
+                .clusters
+                .iter()
+                .zip(&z)
+                .filter(|(c, z)| matches!(c.row, ZRow::Root { .. }) && **z == Some(Sign::Pos))
+                .map(|(c, _)| c.degree)
+                .sum();
+            assert_eq!(s, s_roots + s11_away, "{here}");
+            done += 1;
+        }
+    }
+    assert_eq!(done, 6);
+}
+
+/// The cut points of a pair with two roots inside the overlap, against
+/// the knots of `e`'s curve: ordered by the sign of `h` there, and the
+/// same under the other stored direction of `e` (an id permutation),
+/// read along the curve from `e`'s geometrically lesser end; the root
+/// clusters' indices follow that order, the same roots either way.
+#[test]
+fn cut_points_order_by_h_whatever_the_stored_direction() {
+    let knots = model_knots(&[0.0, 250.0]);
+    let mut checked = 0;
+    // Roots at a knot (100°), inside spans, two inside the overlap.
+    for phi in [10.0, 47.0, 95.0, 130.0] {
+        let mut ordered = Vec::new();
+        for back_e in [false, true] {
+            let m = Model {
+                knots: knots.clone(),
+                ei: (0, knots.len() - 1),
+                gi: (0, knots.len() - 1),
+                phi: deg(phi),
+                rho: deg(15.0),
+                vz: 0.2,
+                tilt: 0.8,
+                back_e,
+                back_g: false,
+                w: vec![1.0, 3.0],
+            };
+            let geom = m.geom();
+            let (r, _) = shared_rec(&geom, true).expect("decided");
+            let rec = r.expect("answered");
+            let moved = m.moved().expect("no tie");
+            assert_eq!(rec.clusters.len(), moved.len(), "{phi}");
+            let pair = decide(&geom);
+            let pair = pair.pair(&geom);
+            // Each cluster against each knot of `e`, as the angle of the
+            // knot against the root's angle along the curve.
+            let mut row = Vec::new();
+            for c in &rec.clusters {
+                let mut against = Vec::new();
+                let n = pair.e.span_count();
+                for k in 0..=n {
+                    // Each span's start, and the last one's end.
+                    let w = if k < n {
+                        CurveAt { span: k, t: 0.0 }
+                    } else {
+                        CurveAt {
+                            span: n - 1,
+                            t: 1.0,
+                        }
+                    };
+                    let o = root_order(&geom, &geom, X, &pair.e, c, w).expect("ordered");
+                    // In stored order; along increasing angle where `e`
+                    // isn't stored backwards.
+                    let o = if back_e { o.reverse() } else { o };
+                    // Rounded to tell the knots apart, whichever way
+                    // their angles were worked out.
+                    let angle = (m.e_angle(w.span, w.t) * 1e6).round() / 1e6;
+                    against.push((angle, o));
+                }
+                against.sort_by(|a, b| a.0.total_cmp(&b.0));
+                row.push((c.degree * if back_e { -1 } else { 1 }, against));
+            }
+            // The roots in order of angle: the record's order along the
+            // curve from the lesser end, reversed where that is the far
+            // end.
+            ordered.push(row);
+            checked += 1;
+        }
+        // The same roots in the same order, each against each knot.
+        let [fwd, back] = [&ordered[0], &ordered[1]];
+        assert_eq!(fwd.len(), back.len(), "{phi}");
+        for (a, b) in fwd.iter().zip(back.iter()) {
+            assert_eq!(a, b, "{phi}");
+        }
+        assert!(!fwd.is_empty(), "{phi}");
+        // Against the knots in angle order: after all knots before the
+        // root, before all after it.
+        for (_, against) in fwd {
+            let firsts: Vec<Ordering> = against.iter().map(|x| x.1).collect();
+            let switch = firsts
+                .iter()
+                .position(|o| *o == Ordering::Less)
+                .unwrap_or(firsts.len());
+            assert!(
+                firsts[..switch].iter().all(|o| *o == Ordering::Greater),
+                "{phi}: {firsts:?}"
+            );
+            assert!(
+                firsts[switch..].iter().all(|o| *o == Ordering::Less),
+                "{phi}: {firsts:?}"
+            );
+        }
+    }
+    assert_eq!(checked, 8);
 }

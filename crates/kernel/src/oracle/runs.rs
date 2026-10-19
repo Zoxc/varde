@@ -645,7 +645,7 @@ impl Report {
             st.lobes
         );
         s += &format!(
-            "edge pairs on one curve {}; every edge pair's refusals by cause {:?}\n",
+            "edge pairs by the shared-curve rule {}; every edge pair's refusals by cause {:?}\n",
             st.shared, st.pair_causes
         );
         s += &format!(

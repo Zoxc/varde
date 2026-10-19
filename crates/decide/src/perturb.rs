@@ -51,7 +51,8 @@
 //! | column hit on a tile, germ keys, anchor `f` ([`PlaneHeight`], [`tangent_plane_row`]) | from the record's height key (the hit's own, [`crate::records::height::hit`]; [`PointHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
 //! | column hit on a ribbon, anchor `f` ([`ribbon_row`], [`ribbon_row_signs`]) | the hit's height, a sign condition at a root ([`crate::records::height::hit`]) | `(n_R·ΔR − n_R·Δq)·sign(n_R·ê)`, `n_R = R_t × R_λ`: the tangent plane of the ribbon at the hit |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
-//! | shared-curve crossing ([`shared_crossing`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
+//! | shared-curve crossing ([`shared_crossing`], exactly at a stored point [`shared_crossing_signs`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
+//! | shared-curve z-order at a root of `h`, anchor `g` ([`shared_zorder`]) | `ê·(C_g − C_e)`: exactly 0 | `ê·(ΔC − Δq) + (ê·T)·ṡ`, `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`, `q` the moving edge's point, `ΔC = 0` |
 //!
 //! The height and z-order rows are per anchor: their order 0 is the value
 //! of the record's height key, decided once for every anchor reading it,
@@ -170,7 +171,7 @@ impl Rate {
 
     /// The vector at a precision level, certified (exact where the level
     /// is).
-    fn at<S: Scalar>(&self, like: &S) -> [S; 3] {
+    pub fn at<S: Scalar>(&self, like: &S) -> [S; 3] {
         match self {
             Rate::Float(v) => lit3(*v, like),
             Rate::Exact(d) => d.each_ref().map(|x| rational_at(x, like)),
@@ -935,6 +936,66 @@ pub fn shared_crossing<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) ->
         g: S::int(0, like),
         ord: std::array::from_fn(|k| dot3(&up, &cross3(&t, &rates[k]))),
     }
+}
+
+/// The shared-curve crossing row's order 1 up to a positive factor,
+/// `ê·(T × Δ₁)` with `ê` = [`UP`] and `T` as given, unnormalised (over a
+/// parameter box where the tangent and the rate are enclosures over it):
+/// its sign is `h₁`'s, without the normalisations' spread.
+pub fn shared_crossing_h1<S: Scalar>(tangent: &[S; 3], rate: &[S; 3]) -> S {
+    dot3(&lit3(UP, &tangent[0]), &cross3(tangent, rate))
+}
+
+/// The shared-curve crossing row's orders, exactly, at a stored point of
+/// the overlap (an end of it, a knot): the signs of `hₖ = ê·(T × Δₖ)`
+/// with `T` the exact tangent there (any positive multiple: at a span's
+/// end the chord to its middle control point) and `Δₖ` the moving edge's
+/// exact rates there. The first that isn't `Equal` is the sign of `h` in
+/// the moved configuration at that point (orders 2–4 decide an exact zero
+/// of `h₁`); all are `Equal` only where `T` is along `ê` (a vertical
+/// shadow tangent).
+pub fn shared_crossing_signs(
+    tangent: &[Rational; 3],
+    rates: &[[Rational; 3]; ORDERS],
+) -> [Ordering; ORDERS] {
+    let u = [UP.x, UP.y, UP.z].map(rat);
+    let zero = Rational::from(0u32);
+    rates.each_ref().map(|d| {
+        let c = [
+            &tangent[1] * &d[2] - &tangent[2] * &d[1],
+            &tangent[2] * &d[0] - &tangent[0] * &d[2],
+            &tangent[0] * &d[1] - &tangent[1] * &d[0],
+        ];
+        (&u[0] * &c[0] + &u[1] * &c[1] + &u[2] * &c[2]).cmp(&zero)
+    })
+}
+
+/// The shared-curve z-order row, curved: the point–curve row read at a
+/// root of `h` ([`shared_crossing`]), the moving edge's point `q` on the
+/// fixed edge's curve `C` (the same curve) with the curve's tangent
+/// `tangent` there (any non-zero multiple, either way) and `q`'s rates
+/// `rates`. Order `k` is the derivative of the fixed curve's height above
+/// the moved `q` along motion `k`, `ê·(ΔC − Δq) + (ê·T)·ṡ` with `ΔC = 0`
+/// and `ṡ = T_xy·Δq_xy/‖T_xy‖²` (the foot sliding along the curve to stay
+/// under `q`), with `ê` and `T` unit: `((ê·T)(T·Δₖ) − ê·Δₖ)/(1 −
+/// (ê·T)²)`, a length per unit motion, `+` with the fixed curve above.
+/// At a root of `h₁` the shadow of `Δ₁` runs along the curve's, so the
+/// slide is the moved crossing's. The value (order 0) is exactly 0: both
+/// edges are on the curve. `None` where `T` isn't certified off `ê` (a
+/// vertical shadow tangent, which this row doesn't decide).
+pub fn shared_zorder<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) -> Option<[S; ORDERS]> {
+    let like = &tangent[0];
+    let up = unit3(&lit3(UP, like));
+    let t = unit3(tangent);
+    let a = dot3(&up, &t);
+    let den = S::int(1, like).sub(&a.mul(&a));
+    if den.sign() != Some(Ordering::Greater) {
+        return None;
+    }
+    Some(std::array::from_fn(|k| {
+        let d = &rates[k];
+        a.mul(&dot3(&t, d)).sub(&dot3(&up, d)).div(&den)
+    }))
 }
 
 /// The point–curve z-order orders, exactly, at a point `q` lying on a

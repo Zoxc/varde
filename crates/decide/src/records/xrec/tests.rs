@@ -1,16 +1,17 @@
 //! Cluster records on hand-made feet and orders: the z-order key, the
-//! crossing itself whatever lies near it; `s11` from clear and read
-//! z-orders; the end a parallel pair's tie came from; cut points'
+//! crossing itself whatever lies near it, a root cluster's the
+//! shared-curve key; `s11` from clear and read z-orders; cut points'
 //! stored positions.
 
 use std::collections::BTreeMap;
 
 use super::*;
 use crate::ids::VertId;
-use crate::order::{EdgeKey, VertKey};
+use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::feet::{EndKind, Feet, Foot, FootEnd};
 use crate::records::height::HeightReads;
-use crate::records::shadow::{RayRec, VvRec};
+use crate::records::keys::{Point, Query};
+use crate::records::shadow::VvRec;
 
 use Operand::{A, B};
 
@@ -162,7 +163,7 @@ fn a_cluster_reads_its_crossing_key_whatever_lies_near() {
         }
         r.near.insert((Point::vert(A, a), g0), true);
         for c in [0, 3] {
-            let z = zorder_key(x, XClusterIx(c));
+            let z = zorder_key(x, XClusterIx(c), ZRow::EdgeEdge);
             let want = HKey::X {
                 e: x.e,
                 g: x.g,
@@ -205,40 +206,37 @@ fn s11_sums_the_clusters_with_g_above() {
     assert_eq!(rec.s11(|_, _| Err::<Sign, _>(7)), Err(7));
 }
 
+/// A root cluster of a shared-curve pair reads the shared-curve key
+/// `XRoot(e, g, c)` at its anchor `g`, as does its cut point against
+/// `g` from either side; an edge–edge cluster's cut point reads `X`.
 #[test]
-fn a_parallel_pairs_tie_comes_from_a_counting_end() {
-    let (r, x, [a, b, g0, _]) = pair([10, 11, 20, 21]);
-    let rays = |k: i8| {
-        EdgeRays::Line(RayRec {
-            crossing: match k {
-                0 => None,
-                1 => Some(Sign::Pos),
-                _ => Some(Sign::Neg),
-            },
-        })
+fn a_root_cluster_reads_its_shared_curve_key() {
+    let (_, x, _) = pair([10, 11, 20, 21]);
+    let c = XClusterIx(2);
+    let z = zorder_key(x, c, ZRow::Root { before: Sign::Neg });
+    let want = HKey::XRoot { e: x.e, g: x.g, c };
+    assert_eq!(z.key.key, want);
+    assert!(!z.key.swapped);
+    assert_eq!(z.height_key(x.g).anchor, Anchor::Edge(B, x.g));
+    let on_e = Point {
+        operand: A,
+        q: Query::Root(x.e, x.g, c),
     };
-    let terms = |ag, bg, g0e, g1e| XTerms {
-        a_g: rays(ag),
-        b_g: rays(bg),
-        g0_e: rays(g0e),
-        g1_e: rays(g1e),
+    let on_g = Point {
+        operand: B,
+        q: Query::Root(x.g, x.e, c),
     };
-    assert_eq!(tie_point(&r, x, &terms(0, 0, 0, 0)), None);
+    let k = HKey::x(on_e, x.g).expect("its own crossing");
+    assert_eq!((k.key, k.swapped), (want, false));
+    let k = HKey::x(on_g, x.e).expect("its own crossing");
+    assert_eq!((k.key, k.swapped), (want, true));
+    let cut = Point {
+        operand: A,
+        q: Query::Cut(x.e, x.g, c),
+    };
     assert_eq!(
-        tie_point(&r, x, &terms(0, 1, 0, 0)),
-        Some(Point::vert(A, b))
-    );
-    // `−RayRec(a, g)` and `−RayRec(g1, e)` count `+1`: `a` at the origin
-    // is the lesser.
-    assert_eq!(
-        tie_point(&r, x, &terms(-1, 0, 0, -1)),
-        Some(Point::vert(A, a))
-    );
-    // `X = +1` from `b` and `g0` (`+1`) against `g1` (`−1`): the lesser of
-    // `b` and `g0`, `g0` at `x = 2`.
-    assert_eq!(
-        tie_point(&r, x, &terms(0, 1, 1, 1)),
-        Some(Point::vert(B, g0))
+        HKey::x(cut, x.g).map(|k| k.key),
+        Some(HKey::X { e: x.e, g: x.g, c })
     );
 }
 
