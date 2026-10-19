@@ -123,7 +123,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   ("chamfering Body 1 is too complex to work out" for `TooComplex`,
   "chamfering Body 1 isn't supported yet" for `NotImplemented`,
   `message::blending`), the evidence's faces on the body.
-- **Kernel stand-in**: `varde_kernel_compat::chamfer` (`kernel/src/blend.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::chamfer` (`kernel-compat/src/blend.rs`,
   with `ChamferChain`, `ChamferCut`, `BlendError`) isn't built yet: it
   has its planned signature and fails with `NotImplemented`. So every
   chamfer that finds its edges fails today with "chamfering Body 1
@@ -318,7 +318,7 @@ alone; cache warm and cold alike; edits, bytes and the wire;
 `VARDE_TESTS=full`), `io/src/vrdp/tests.rs` (through a file, a
 tampered edge point refused, a damaged chamfers' record refused or
 checked, edges out of order, repeated, on another body, none or past
-the limit and values disagreeing refused as read), `view/src/chamfer/tests.rs` (the notes),
+the limit and values disagreeing refused as read), `view/src/feature_text/chamfer/tests.rs` (the notes),
 `view/src/motion/tests.rs` (the chamfer's panel: its order for each
 type, the rows' measures beside them, no Flip sides for Equal, the
 status text), `rail/tests.rs` (Chamfer's `C` in the Modify set) and

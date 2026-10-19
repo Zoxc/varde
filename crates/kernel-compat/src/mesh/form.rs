@@ -16,9 +16,8 @@ use crate::patch::{Conic2, Conic3};
 /// subtracted solid's with its tags. Only a plane's says which way the
 /// face faces (its normal points out of the solid, as its tag's does); a
 /// curved form is the same surface either way, and which side is out is
-/// the patches' normals'. Debug builds check every triangle against its
-/// face's form within the fit tolerance times the face's
-/// [`slack`](super::Face::slack).
+/// the patches' normals'. A face's patches lie on its form within the
+/// fit tolerance times its [`slack`](super::Face::slack).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Form {
     /// No known surface.

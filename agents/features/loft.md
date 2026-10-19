@@ -103,7 +103,7 @@ before it in `Run::sketches`), in history order:
   out", "lofting isn't supported yet" for `NotImplemented`, else as an extrude's tool with the verb "loft"). Then the tool
   goes on as an extrude's: a new body, or touches and booleans (a join
   touching several bodies merges them).
-- **Kernel stand-in**: `varde_kernel_compat::loft::loft` (`kernel/src/loft.rs`)
+- **Kernel stand-in**: `varde_kernel_compat::loft::loft` (`kernel-compat/src/loft.rs`)
   isn't built: it fails with `NotImplemented`, so every loft that gets as
   far as the kernel fails today with "lofting isn't supported yet",
   making no body, and the rest of the history
@@ -115,8 +115,10 @@ before it in `Run::sketches`), in history order:
   the first extruded to the second, faces named as an extrude's; a
   second start other than the first's moved is `LoftError::Twists`;
   anything else too complex. The planned analytic tests of the
-  kernel's loft are written and `#[ignore = "kernel: feature"]`
-  (`kernel/src/loft/tests.rs`).
+  kernel's loft (ruled and smooth lofts' volumes) were written against
+  the old kernel's signature and went with it: they are at the tag
+  `varde-kernel-legacy` (`kernel-compat/src/loft/tests.rs`), for the
+  Varde kernel's loft to build again.
 - The draft's reply carries nothing new; the wire carries the loft as
   any kind (postcard, validated by `Document::check`).
 
@@ -272,4 +274,4 @@ drafted, edits reopening as stored; `VARDE_TESTS=full`),
 hover worked out again as the camera moves),
 `regen/src/wire/tests.rs` (a loft and its draft round trip),
 `io/src/vrdp/tests.rs` (round trip, tampered and damaged records, a
-loft's parts refused as read), `view/src/loft/tests.rs` (the notes).
+loft's parts refused as read), `view/src/feature_text/loft/tests.rs` (the notes).

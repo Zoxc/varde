@@ -99,4 +99,4 @@ the distance to it), spheres and tori, and first order for the conic forms
 (`|F|/|∇F|` of `λ1² − 4w²·λ0·λ2` on the conic's control triangle, along
 the cylinder or in the meridian half-plane) and quadrics, 0 for
 `Unknown`. `slack` is how many fit tolerances a fitted face may stray from
-its form (1 as built; a scale up multiplies it).
+its form (1 as built; the facade keeps it as set).

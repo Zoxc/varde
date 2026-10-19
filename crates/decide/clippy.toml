@@ -23,7 +23,22 @@
 #   came first, which no ban can catch: collect with `par_map`, then look
 #   for the first failure in order);
 # - spade's bulk loads insert in their own order, and its `AngleLimit`
-#   from an angle and natural-neighbour gradients use std's maths.
+#   from an angle and natural-neighbour gradients use std's maths;
+# - glam's `f32` types compute with SSE2 natively and scalar code on wasm,
+#   which may differ in the last bit: the kernel computes in `f64`
+#   (`DVec2`, `DVec3`, ...);
+# - rayon's own scheduling (`join`, `scope`, `spawn`, pools) and its
+#   thread counts and indices let a result follow the threads: every
+#   parallel step goes through varde-kernel's `infra::par`, which alone
+#   allows them;
+# - the clock (`Instant::now`, `SystemTime::now`) differs on every run:
+#   only `infra::par`'s hand-off to the pool and timings for reports and
+#   benchmarks read it.
+#
+# Clippy can't tell when a path to a method of a primitive (`f64::sin`)
+# names nothing, so a misspelt one would ban nothing in silence:
+# tools/ci.sh checks each has its line in crates/kernel/tests/ban_probe.rs,
+# which only builds if the method exists.
 #
 # Code where a banned call can't change a result (a test using std as an
 # independent reference, a min of values known to be non-zero) allows
@@ -215,9 +230,37 @@ disallowed-methods = [
     { path = "spade::AngleLimit::from_deg", reason = "platform trig; use AngleLimit::from_radius_to_shortest_edge_ratio(0.5 / varde_decide::num::trig::sin(angle))" },
     { path = "spade::AngleLimit::from_rad", reason = "platform trig; use AngleLimit::from_radius_to_shortest_edge_ratio(0.5 / varde_decide::num::trig::sin(angle))" },
     { path = "spade::NaturalNeighbor::interpolate_gradient", reason = "platform powf; interpolate with libm" },
+    { path = "rayon::join", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::join_context", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::scope", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::scope_fifo", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::in_place_scope", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::in_place_scope_fifo", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::spawn", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::spawn_fifo", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::broadcast", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::spawn_broadcast", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::current_num_threads", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::current_thread_index", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::max_num_threads", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "std::time::Instant::now", reason = "the clock differs on every run; results must not read it (timings for reports only, allowed where they are taken)" },
+    { path = "std::time::SystemTime::now", reason = "the clock differs on every run; results must not read it (timings for reports only, allowed where they are taken)" },
 ]
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "iteration order is random per process (RandomState); use BTreeMap/BTreeSet, a sorted Vec, or an ordered map filled in key order" },
     { path = "std::collections::HashSet", reason = "iteration order is random per process (RandomState); use BTreeMap/BTreeSet, a sorted Vec, or an ordered map filled in key order" },
     { path = "std::collections::hash_map::RandomState", reason = "iteration order is random per process (RandomState); use BTreeMap/BTreeSet, a sorted Vec, or an ordered map filled in key order" },
+    { path = "rayon::ThreadPoolBuilder", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "rayon::ThreadPool", reason = "rayon's own scheduling or thread numbers; map with varde-kernel's infra::par (par_map)" },
+    { path = "glam::Vec2", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Vec3", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Vec3A", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Vec4", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Quat", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Mat2", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Mat3", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Mat3A", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Mat4", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Affine2", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
+    { path = "glam::Affine3A", reason = "f32 maths: SSE2 natively, scalar on wasm, may differ in the last bit; use the f64 types (DVec2, DVec3, DQuat, ...)" },
 ]

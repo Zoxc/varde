@@ -10,6 +10,15 @@
 //! to the bit whatever the number of threads or how the work was split,
 //! natively (rayon) and on the web, where the worker runs the same maps
 //! sequentially. This is the only module that knows about rayon.
+//!
+//! So it is also the only one allowed rayon's own scheduling, its thread
+//! numbers and the clock (clippy.toml bans them everywhere else): the
+//! clock only decides where an item runs, never what it gives.
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "the kernel's one parallel primitive: rayon and the hand-off's clock live here"
+)]
 
 /// `items.map(f)`, collected in the order of `items`: on rayon's pool
 /// natively, sequentially on the web. `f` must be a pure function of its
@@ -40,11 +49,11 @@ where
     R: Send,
     F: Fn(usize, &T) -> R + Sync + Send,
 {
-    use rayon::prelude::*;
     #[cfg(test)]
     match MODE.get() {
         Mode::AsUsual => {}
         Mode::AllOnPool => {
+            use rayon::prelude::*;
             return items
                 .par_iter()
                 .enumerate()
@@ -63,9 +72,23 @@ where
         }
     }
     let start = std::time::Instant::now();
+    map_then_hand_off(items, f, |_| start.elapsed() > HAND_OFF)
+}
+
+/// [`par_map_indexed`] given when to hand the rest to the pool:
+/// `hand_off(i)`, asked before each item `i` but the first, which always
+/// runs here (so a thread preempted before it still makes progress).
+#[cfg(not(target_arch = "wasm32"))]
+fn map_then_hand_off<T, R, F>(items: &[T], f: F, mut hand_off: impl FnMut(usize) -> bool) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(usize, &T) -> R + Sync + Send,
+{
+    use rayon::prelude::*;
     let mut out = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
-        if start.elapsed() > HAND_OFF {
+        if i > 0 && hand_off(i) {
             out.par_extend(
                 items[i..]
                     .par_iter()
@@ -193,10 +216,30 @@ mod tests {
     }
 
     #[test]
-    fn slow_items_are_handed_to_the_pool_in_order() {
-        // Items of 20 µs each: the first few run on the calling thread,
-        // the rest on the pool's, collected in order all the same, each
-        // with its own position.
+    fn the_rest_is_handed_to_the_pool_in_order() {
+        // Handing off before item 5: items 0 to 4 run on the calling
+        // thread (not one of the pool's), the rest on the pool's,
+        // collected in order all the same, each with its own position.
+        let items: Vec<usize> = (0..64).collect();
+        let ran = map_then_hand_off(
+            &items,
+            |i, &x| (i, x, rayon::current_thread_index().is_some()),
+            |i| i == 5,
+        );
+        assert!(
+            ran.iter()
+                .enumerate()
+                .all(|(k, &(i, x, on_pool))| i == k && x == k && on_pool == (k >= 5)),
+            "{ran:?}"
+        );
+    }
+
+    #[test]
+    fn the_first_item_runs_here_and_slow_items_reach_the_pool() {
+        // Items of 20 µs each: past HAND_OFF, the rest go to the pool,
+        // whose last item runs there however long the calling thread was
+        // preempted; the first runs here even if the clock has already
+        // passed HAND_OFF before it.
         let items: Vec<usize> = (0..64).collect();
         let ran = par_map_indexed(&items, |i, &x| {
             let start = std::time::Instant::now();
@@ -209,6 +252,11 @@ mod tests {
                 .all(|(k, &(i, x, _))| i == k && x == k)
         );
         assert!(!ran[0].2 && ran[63].2, "{ran:?}");
+        let ran = map_then_hand_off(&items, |_, _| rayon::current_thread_index(), |_| true);
+        assert!(
+            ran[0].is_none() && ran[1..].iter().all(Option::is_some),
+            "{ran:?}"
+        );
     }
 
     #[test]

@@ -1146,6 +1146,10 @@ fn ties_at_a_vertex_are_one_configuration() {
 
 #[test]
 #[ignore = "timing: run by hand with --release -- --ignored --nocapture"]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "times the oracle for a report: no result reads the clock"
+)]
 fn timing() {
     use std::time::Instant;
     let mut rng = Rng::new(9);

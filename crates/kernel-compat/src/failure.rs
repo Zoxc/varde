@@ -1,24 +1,22 @@
 //! What the public operations give back when they fail: the
 //! [`KernelError`] and the geometry it is about.
 //!
-//! Inside the kernel, steps return the small `Copy` [`KernelError`] and
-//! match on it (retries, the boolean's naming of a pinch); the operations
-//! that make or combine solids ([`extrude`](crate::extrude()),
-//! [`revolve`](crate::revolve()), [`boolean`](crate::boolean()),
-//! [`touches`](crate::touches), [`assemble`](crate::assemble),
+//! The operations that make or combine solids
+//! ([`extrude`](crate::extrude()), [`revolve`](crate::revolve()),
+//! [`boolean`](crate::boolean()), [`touches`](crate::touches),
+//! [`assemble`](crate::assemble),
 //! [`Solid::transformed`](crate::Solid::transformed)) return a
-//! [`Failure`], whose [`Evidence`] only the steps holding both the error
-//! and its geometry fill.
+//! [`Failure`]: the error, and the [`Evidence`] it is about. The facade's
+//! stubs give none (a [`Failure`] from a bare [`KernelError`]); the
+//! regeneration lane fills its own for the errors it finds itself.
 //!
 //! Evidence never changes an outcome: no result becomes an error or the
 //! reverse, and the error is the one the operation would return without
 //! it. It is bounded ([`MAX_EVIDENCE`] items of each kind, then
 //! [`Evidence::truncated`]), gathered from its own allowance
 //! ([`EVIDENCE_WORK`]) rather than the operation's budget, so finding it
-//! can't turn an error into [`KernelError::TooComplex`], deterministic as
-//! everything the kernel returns, and goes with the error returned: where
-//! an operation retries and returns an earlier try's error, it returns
-//! that try's evidence.
+//! can't turn an error into [`KernelError::TooComplex`], and is
+//! deterministic as everything the kernel returns.
 
 use glam::DVec3;
 

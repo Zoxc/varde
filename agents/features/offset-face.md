@@ -67,7 +67,7 @@ pub struct OffsetFace {
   Body 1 isn't supported yet" for `NotImplemented`,
   `message::offsetting`); an empty
   result "offsetting faces of Body 1 leaves nothing of it".
-- **Kernel stand-in**: `varde_kernel_compat::offset_faces` (`kernel/src/shell.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::offset_faces` (`kernel-compat/src/shell.rs`,
   beside `shell`, with `OffsetError`) isn't built: it fails with
   `NotImplemented`, so every offset that finds its faces fails today
   with "offsetting faces of Body 1 isn't supported yet", the body left
@@ -201,7 +201,7 @@ refused without them, the same bits twice), `io/src/vrdp/tests.rs`
 (through a file, tampered points and distances refused, damaged 2 000
 ways refused or checked, faces out of order, repeated, none, on two
 bodies, past the limit, named by the offset or later, and a distance
-refused as read), `view/src/offset_face/tests.rs` (the notes),
+refused as read), `view/src/feature_text/offset/tests.rs` (the notes),
 `view/src/motion/tests.rs` (the panel's order, no Bodies or Direction,
 the status text), `view/src/viewport/motion/tests.rs` (the handle drawn
 only while there's one and the document can be changed; the knob

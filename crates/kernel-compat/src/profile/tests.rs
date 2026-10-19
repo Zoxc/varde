@@ -112,6 +112,25 @@ fn check_refuses_bad_profiles() {
     open.segments[2].conic.p1.x += 1e-12;
     assert_eq!(one(open).check(), Err(ProfileError::Open(0, 2)));
 
+    // Closed to the bit: a loop ending at (-0, 0) doesn't join one
+    // starting at (0, 0), though the two are equal as numbers.
+    let signed_zero = |end: DVec2| {
+        let corners = [DVec2::ZERO, DVec2::X, DVec2::Y];
+        let mut lp = polygon(&corners, 0);
+        lp.segments[2].conic.p1 = end;
+        lp.segments[2].conic.c = (lp.segments[2].conic.p0 + end) * 0.5;
+        one(lp).check()
+    };
+    assert_eq!(
+        signed_zero(DVec2::new(-0.0, 0.0)),
+        Err(ProfileError::Open(0, 2))
+    );
+    assert_eq!(
+        signed_zero(DVec2::new(0.0, -0.0)),
+        Err(ProfileError::Open(0, 2))
+    );
+    assert_eq!(signed_zero(DVec2::ZERO), Ok(()));
+
     let mut far = good.clone();
     far.segments[1].conic.p1.y = 2e6;
     far.segments[2].conic.p0.y = 2e6;

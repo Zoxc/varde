@@ -128,4 +128,38 @@ mod tests {
         }
         assert_eq!(Rng::new(2).range(5.0, 5.0), 5.0);
     }
+
+    /// The inputs the property tests draw are the same bits natively and
+    /// on wasm (tools/ci.sh runs this test on both): every draw of one
+    /// seed, pinned.
+    #[test]
+    fn draws_are_the_same_bits_everywhere() {
+        let mut rng = Rng::new(0x5eed);
+        let mut got = vec![rng.next_u64(), rng.next_u64()];
+        got.push(rng.unit().to_bits());
+        got.push(rng.range(-3.0, 5.0).to_bits());
+        got.push(rng.range(-f64::MAX, f64::MAX).to_bits());
+        got.push(rng.log_range(1e-3, 1e3).to_bits());
+        for v in [rng.point(10.0), rng.direction(), rng.bary()] {
+            got.extend([v.x, v.y, v.z].map(f64::to_bits));
+        }
+        let want: [u64; 15] = [
+            0x09f1_fd9d_03f0_a9b4,
+            0x5532_7416_1bbf_8475,
+            0x3fd7_56f2_91a5_acd0,
+            0x3fe0_d29b_6c7d_2250,
+            0xffed_0352_3a41_9bab,
+            0x3fc5_3dbc_a962_b6de,
+            0xc01b_0dfe_b423_56ca,
+            0xc021_1a7d_f83f_19d3,
+            0x401c_52c7_e9c4_5fa0,
+            0xbfe9_d4ba_ec78_462c,
+            0xbfdf_3016_4dc4_0343,
+            0xbfd5_50d4_ce5b_989b,
+            0x3fc1_57b5_7554_4744,
+            0x3fc6_95d7_3232_055c,
+            0x3fe6_049c_d61e_6cd8,
+        ];
+        assert_eq!(got, want, "{got:#018x?}");
+    }
 }

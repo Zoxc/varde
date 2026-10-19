@@ -155,7 +155,7 @@ body", the uncut note).
   `Making::Sweep`: too complex is "sweeping its regions along its path
   is too complex to work out", not built "sweeping along a path isn't
   supported yet").
-- **Kernel stand-in**: the kernel's sweep (`kernel/src/sweep/path.rs`)
+- **Kernel stand-in**: the kernel's sweep (`kernel-compat/src/sweep.rs`)
   isn't built yet: it fails with `NotImplemented`. So every sweep whose
   path regen builds fails today with "sweeping along a path isn't
   supported yet", making no body (its new

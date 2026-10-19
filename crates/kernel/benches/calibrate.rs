@@ -71,6 +71,11 @@ fn max_pass_seconds() -> f64 {
     MAX_WORK as f64 * UNIT_NS * 1e-9 * DRIFT
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "a benchmark: it sets up its own one-thread pool and reports its size"
+)]
 fn main() -> ExitCode {
     // `cargo bench` passes `--bench`; nothing else is taken.
     let quick = std::env::var("VARDE_CALIBRATE").is_ok_and(|v| v == "quick");
@@ -148,6 +153,7 @@ struct Row {
 
 /// The time of one computation of `f`, which does some and gives their
 /// number: the least over rounds of repeating it for `budget`.
+#[allow(clippy::disallowed_methods, reason = "a benchmark: it reads the clock")]
 fn time(budget: Duration, mut f: impl FnMut() -> u64) -> f64 {
     // Warm up.
     black_box(f());
@@ -190,6 +196,7 @@ fn seam_cells(budget: Duration, rows: &mut Vec<Row>) {
 /// The seconds of a seam pass that runs out at `MAX_WORK` on the current
 /// pool, and the units it used: the arcs' bounds towards targets they
 /// can't all meet, repeated past the budget.
+#[allow(clippy::disallowed_methods, reason = "a benchmark: it reads the clock")]
 fn seam_pass_at_max_work() -> (f64, u64) {
     let s = base_plane();
     let one = arcs(&s);

@@ -690,6 +690,10 @@ pub(super) fn run(
 }
 
 /// [`run`] with the placements counted by `count`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "times its steps for the report: no result reads the clock"
+)]
 pub(super) fn run_counted(
     n: u64,
     threads: usize,

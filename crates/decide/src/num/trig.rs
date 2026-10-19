@@ -231,20 +231,20 @@ mod tests {
     ];
 
     #[test]
-    fn sin_cos_tan_golden_bits() {
+    fn sin_cos_tan_are_the_same_bits_everywhere() {
         check("sin", sin, SIN);
         check("cos", cos, COS);
         check("tan", tan, TAN);
     }
 
     #[test]
-    fn asin_acos_golden_bits() {
+    fn asin_acos_are_the_same_bits_everywhere() {
         check("asin", asin, ASIN);
         check("acos", acos, ACOS);
     }
 
     #[test]
-    fn atan2_golden_bits() {
+    fn atan2_is_the_same_bits_everywhere() {
         for &(y, x, bits) in ATAN2 {
             let got = atan2(y, x).to_bits();
             assert_eq!(
@@ -257,7 +257,7 @@ mod tests {
     /// [`sin_cos`] and [`unit`] give the bits of [`sin`] and [`cos`],
     /// and [`angle`] those of [`atan2`].
     #[test]
-    fn sin_cos_unit_angle_golden_bits() {
+    fn sin_cos_unit_angle_are_the_same_bits_everywhere() {
         for (&(x, sin_bits), &(x_cos, cos_bits)) in SIN.iter().zip(COS) {
             assert_eq!(x.to_bits(), x_cos.to_bits());
             let (s, c) = sin_cos(x);

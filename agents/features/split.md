@@ -148,7 +148,7 @@ pub enum SplitTool {
   when `original` is switched and the face goes to the body. Switching
   `original` swaps which body later features work on.
 - **Kernel stand-in**: the kernel's `split`, `half_space`,
-  `surface_tool` and `chain_tool` (`kernel/src/boolean/split.rs`) are
+  `surface_tool` and `chain_tool` (`kernel-compat/src/boolean/split.rs`) are
   not built yet: each has its planned signature and fails with
   `NotImplemented`. So every split fails today with the not-built
   message (a plane's, a face's or a line's tool first, as "its tool past

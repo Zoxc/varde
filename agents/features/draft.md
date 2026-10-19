@@ -87,7 +87,7 @@ pub struct FaceDraft {
   work out" for `TooComplex`, "drafting faces of Body 1 isn't supported
   yet" for `NotImplemented`, `message::drafting`); an empty result
   "drafting faces of Body 1 leaves nothing of it".
-- **Kernel stand-in**: `varde_kernel_compat::draft_faces` (`kernel/src/shell.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::draft_faces` (`kernel-compat/src/shell.rs`,
   beside `offset_faces`, with `DraftError`) isn't built: it fails with
   `NotImplemented`, so every draft that finds its faces and neutral
   plane fails today with "drafting faces of Body 1 isn't supported
@@ -140,7 +140,7 @@ cache warm and cold, bytes and wire; `VARDE_TESTS=full`), `io/src/vrdp/tests.rs`
 angles refused, damaged 2 000 ways refused or checked, faces out of
 order, repeated, none, on two bodies, past the limit, named by the
 draft or later, the neutral face named by the draft or on a body not
-there, angles of 0 and 90° refused as read), `view/src/face_draft/tests.rs`
+there, angles of 0 and 90° refused as read), `view/src/feature_text/draft/tests.rs`
 (the notes).
 
 The Timeline shows the icon mock's draft icon (`Icon::Draft`) and note

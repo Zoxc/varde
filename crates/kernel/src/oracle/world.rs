@@ -904,6 +904,10 @@ impl World<'_> {
     /// `s02(v, f)` (`s20`) for every vertex `v` of `op` and face `f` of
     /// the other, by vertex then face, with the pieces and the height
     /// records they read.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "times its steps for the report: no result reads the clock"
+    )]
     fn face_counts(
         &self,
         r: &Recs,
@@ -1450,6 +1454,10 @@ impl World<'_> {
     }
 
     /// The counting's answers, or why it has none.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "times its steps for the report: no result reads the clock"
+    )]
     pub(super) fn count(&self, cfg: &Config, stats: &mut Stats) -> Result<Answers, Refusal> {
         let t = std::time::Instant::now();
         let r = self.records(cfg, stats)?;

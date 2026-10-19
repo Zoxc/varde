@@ -76,7 +76,7 @@ are `history/in_place.rs`'s `InPlace`; the stand-ins' `box_sides` is in
   boolean's ("shelling Body 1 is too complex to work out" for
   `TooComplex`, "shelling Body 1 isn't supported yet" for
   `NotImplemented`, `message::shelling`), the evidence's faces on the body.
-- **Kernel stand-in**: `varde_kernel_compat::shell` (`kernel/src/shell.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::shell` (`kernel-compat/src/shell.rs`,
   with `ShellError`) isn't built yet: it has its planned signature and
   fails with `NotImplemented`. So every shell that finds its faces fails
   today with "shelling Body 1 isn't supported yet", its body left
@@ -239,7 +239,7 @@ too thick, determinism), `io/src/vrdp/tests.rs` (through a file, a
 tampered face point and thickness refused, a record's shells damaged
 2 000 ways refused or checked, faces out of order, repeated, on another
 body, past the limit, named by the shell or later, a body made later
-and a thickness refused as read), `view/src/shell/tests.rs`
+and a thickness refused as read), `view/src/feature_text/shell/tests.rs`
 (the notes), `view/src/motion/tests.rs` (the shell's panel: its order,
 the rows' kinds beside them, the place to click, the closed warning in
 the foot, the status text), `rail/tests.rs` (Shell in the Modify set)

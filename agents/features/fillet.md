@@ -57,7 +57,7 @@ pub struct Fillet {
   its failures as a boolean's ("filleting Body 1 is too complex to work
   out" for `TooComplex`, "filleting Body 1 isn't supported yet" for
   `NotImplemented`, `message::blending`).
-- **Kernel stand-in**: `varde_kernel_compat::fillet` (`kernel/src/blend.rs`,
+- **Kernel stand-in**: `varde_kernel_compat::fillet` (`kernel-compat/src/blend.rs`,
   with `FilletChain`) isn't built yet: it has its planned signature and
   fails with `NotImplemented`. So every fillet that finds its edges
   fails today with "filleting Body 1 isn't supported yet", its body
@@ -184,7 +184,7 @@ alone and leaving a round of its radius; `VARDE_TESTS=full`),
 file, a tampered edge point and radius refused, a record's fillets
 damaged 2 000 ways refused or checked, edges out of order, repeated, on
 another body, none or past the limit, named by the fillet or later and
-a radius refused as read), `view/src/fillet/tests.rs` (the notes),
+a radius refused as read), `view/src/feature_text/fillet/tests.rs` (the notes),
 `view/src/motion/tests.rs` (the fillet's panel: its order, the rows'
 measures, no Type or Flip sides, the status text), `rail/tests.rs`
 (Fillet's `F` first in the Modify set) and

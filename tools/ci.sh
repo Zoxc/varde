@@ -13,14 +13,19 @@
 # KERNEL_LANDED (below) or given after it.
 # `test` runs the workspace's tests, then the kernel crates' again on
 # one rayon thread (their results must not depend on the thread count),
-# then varde-decide's with hardware FMA on (x86_64; the same bits).
-# `wasm` builds for the browser, then runs varde-decide's same-bits tests
-# on wasm32-wasip1 under Node's WASI (tools/wasi_run.mjs): its results must
-# be the bits the native run pins. It needs the wasm32-unknown-unknown and
+# then varde-decide's with hardware FMA on (x86_64 CPUs with FMA; the
+# same bits).
+# `wasm` builds for the browser, then runs the same-bits tests of
+# varde-decide (trig, double-double, big floats, expansions) and
+# varde-testkit (the tests' generator) on wasm32-wasip1 under Node's WASI
+# (tools/wasi_run.mjs): their results must be the bits the native run
+# pins, and each test in SAME_BITS must have run. It needs the wasm32-unknown-unknown and
 # wasm32-wasip1 targets (`rustup target add`) and Node.js.
 # `bans` checks clippy refuses each banned call in
-# crates/kernel/tests/ban_probe.rs and that the kernel crates' clippy.toml
-# copies agree. `deny` needs cargo-deny (`cargo install cargo-deny`) and
+# crates/kernel/tests/ban_probe.rs, that the probe names every ban on a
+# primitive's method (clippy can't report a misspelt one), that every
+# other path resolves, and that the kernel crates' clippy.toml copies
+# agree. `deny` needs cargo-deny (`cargo install cargo-deny`) and
 # `reuse` needs reuse (`pipx install reuse`); set CARGO_DENY or REUSE to
 # use other binaries. Cargo's own variables apply, e.g. CARGO_BUILD_JOBS=4
 # on a shared machine.
@@ -33,6 +38,20 @@ KERNEL_CRATES=(-p varde-decide -p varde-kernel -p varde-testkit)
 # be ignored waiting on one. Add a capability when it lands, e.g.
 # KERNEL_LANDED=(solids extrude "curved boolean").
 KERNEL_LANDED=()
+# The tests pinning bits the web must reproduce, in varde-decide's and
+# varde-testkit's libraries: the `wasm` step runs each on wasm32-wasip1
+# (by the name filter `same_bits_everywhere`) and fails unless every one
+# here passed there.
+SAME_BITS=(
+    num::trig::tests::sin_cos_tan_are_the_same_bits_everywhere
+    num::trig::tests::asin_acos_are_the_same_bits_everywhere
+    num::trig::tests::atan2_is_the_same_bits_everywhere
+    num::trig::tests::sin_cos_unit_angle_are_the_same_bits_everywhere
+    num::dd::tests::results_are_the_same_bits_everywhere
+    num::bigf::tests::results_are_the_same_bits_everywhere
+    num::expansion::tests::expansions_are_the_same_bits_everywhere
+    rng::tests::draws_are_the_same_bits_everywhere
+)
 CARGO_DENY=${CARGO_DENY:-cargo-deny}
 REUSE=${REUSE:-reuse}
 
@@ -54,6 +73,19 @@ step_bans() {
     done
     local probe=crates/kernel/tests/ban_probe.rs
     local want out got
+    # Clippy can't tell when a ban's path to a method of a primitive
+    # (`f64::sin`) names nothing. The probe names each by its path, and
+    # only builds if they exist: each must have its line there.
+    local path missing=()
+    for path in $(sed -En 's/.*path = "((f32|f64|[iu](8|16|32|64|128|size)|bool|char|str)::[a-z0-9_]+)".*/\1/p' \
+            crates/decide/clippy.toml); do
+        grep -qxF "    let _ = $path; // banned" "$probe" || missing+=("$path")
+    done
+    if ((${#missing[@]})); then
+        echo "bans: no line in $probe names ${missing[*]}" >&2
+        echo "bans: add \`let _ = <path>; // banned\` to its primitive_paths, or fix the path" >&2
+        return 1
+    fi
     want=$(grep -n '// banned$' "$probe" | cut -d: -f1 | sort -n | uniq)
     # The probe only builds with --cfg ban_probe. Clippy's lints are
     # warnings here, so a failing run is a build error: show it.
@@ -90,11 +122,21 @@ step_test() {
     RAYON_NUM_THREADS=1 cargo test --locked "${KERNEL_CRATES[@]}"
     # The decision layer's results must be the same bits with hardware
     # FMA: its tests pin them (in their own target directory, as the flag
-    # rebuilds everything).
+    # rebuilds everything). A CPU without FMA can't run that build
+    # (SIGILL): there the run is skipped, and said so.
     if [[ $(uname -m) == x86_64 ]]; then
-        RUSTFLAGS="${RUSTFLAGS-} -C target-feature=+fma" \
-            cargo test --locked -p varde-decide --target-dir target/fma
+        if host_has_fma; then
+            RUSTFLAGS="${RUSTFLAGS-} -C target-feature=+fma" \
+                cargo test --locked -p varde-decide --target-dir target/fma
+        else
+            echo "test: this CPU has no FMA: skipping varde-decide's run with +fma" >&2
+        fi
     fi
+}
+
+# Whether this machine's CPU has fused multiply-add, as rustc sees it.
+host_has_fma() {
+    "${RUSTC:-rustc}" --print cfg -C target-cpu=native | grep -qx 'target_feature="fma"'
 }
 
 step_wasm() {
@@ -103,8 +145,23 @@ step_wasm() {
     need node Node.js "install Node.js 22 or later"
     # Node 22 can collect garbage inside a WASI fast API call (fd_write's
     # allocation) and crash with SIGSEGV; the slow call path is safe.
-    CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings --no-turbo-fast-api-calls $PWD/tools/wasi_run.mjs" \
-        cargo test --locked -p varde-decide --target wasm32-wasip1 -- same_bits_everywhere
+    local out t missing=()
+    out=$(CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings --no-turbo-fast-api-calls $PWD/tools/wasi_run.mjs" \
+        cargo test --locked -p varde-decide -p varde-testkit --lib --target wasm32-wasip1 \
+        -- same_bits_everywhere 2>&1) || {
+        echo "$out" >&2
+        return 1
+    }
+    grep -E '^(test |  +Running )' <<< "$out" || true
+    # A renamed or lost test would otherwise check nothing in silence.
+    for t in "${SAME_BITS[@]}"; do
+        grep -qxF "test $t ... ok" <<< "$out" || missing+=("$t")
+    done
+    if ((${#missing[@]})); then
+        echo "wasm: these same-bits tests didn't run: ${missing[*]}" >&2
+        return 1
+    fi
+    echo "wasm: all ${#SAME_BITS[@]} same-bits tests passed on wasm32-wasip1"
 }
 
 need() {

@@ -194,7 +194,7 @@ impl Profile {
             }
             let segs = &lp.segments;
             for s in 0..segs.len() {
-                if segs[s].conic.p1 != segs[(s + 1) % segs.len()].conic.p0 {
+                if !same_bits(segs[s].conic.p1, segs[(s + 1) % segs.len()].conic.p0) {
                     return Err(ProfileError::Open(l, s));
                 }
             }
@@ -232,6 +232,12 @@ impl Loop {
         }
         sum
     }
+}
+
+/// Whether `a` and `b` are the same point to the bit: `-0.0` and `+0.0`
+/// differ, where `==` would join them.
+fn same_bits(a: DVec2, b: DVec2) -> bool {
+    a.x.to_bits() == b.x.to_bits() && a.y.to_bits() == b.y.to_bits()
 }
 
 /// The signed area between a conic and its chord, `½∫ (P − p0) × P' dt`:

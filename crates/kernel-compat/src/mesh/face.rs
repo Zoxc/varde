@@ -11,15 +11,9 @@ pub struct Face {
     pub surface: Surface,
     pub form: Form,
     /// How many fit tolerances the face's patches may stray from its
-    /// form: 1 as built (fitted patches start within one), multiplied by
-    /// the largest stretch of every scale up
-    /// ([`Solid::transformed`](crate::Solid::transformed)), since a
-    /// scale maps a fitted patch exactly but stretches its distance from
-    /// the form with it, and one more for each boolean that cuts a
-    /// fitted face (claiming no surface), whose pieces along a cut stray
-    /// from the patch they are cut from by up to the fit tolerance. The
-    /// debug form check allows `slack × fit`, and a later fit against the
-    /// form starts that far from it.
+    /// form: 1 for a face as built. A field of the facade's value type,
+    /// kept as callers set it: nothing here reads or changes it (every
+    /// solid is empty until the Varde kernel's operations land).
     pub slack: f64,
 }
 
