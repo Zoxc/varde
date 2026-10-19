@@ -7,7 +7,7 @@ use super::runs::{
     Counting, Outcome, Placement, Report, check_answers, check_with, counting, near_shift,
     oracle_faces, par, run, run_counted, truth, truths_near,
 };
-use super::solids::{Shape, Solid, Turn};
+use super::solids::{Make, Shape, Solid, Turn};
 use super::world::{Answers, Config, Refusal, Stats};
 
 type Counted = Result<Answers, Refusal>;
@@ -293,6 +293,68 @@ fn the_oracle_agrees_with_the_ideal_shapes() {
     .into_iter()
     .sum();
     assert!(checked > 0);
+}
+
+/// Two plane boxes, `A` turned, scaled and moved at random to overlap
+/// `B` and moving along a random direction, vertex ids shuffled, every
+/// vertex clear of the other box by a gap (`4·10⁻³`): the counting
+/// agrees with the oracle and with the ideal boxes, and each operand's
+/// seed is cleared. The faces are planes on one huge tile each, whose
+/// whole box holds every vertex near it: only its pieces clear them.
+#[test]
+fn moving_boxes_count_from_cleared_seeds() {
+    const GAP: f64 = 4e-3;
+    let mut rng = Rng::new(0x3a5);
+    let (mut trials, mut skipped, mut inside) = (0, 0, 0);
+    while trials < varde_testing::pick(3, 40) {
+        let mut at = |e: f64| DVec3::new(rng.range(-e, e), rng.range(-e, e), rng.range(-e, e));
+        let (at_b, at_a) = (at(0.5), at(1.5));
+        let b = Shape::random(&mut rng, 0, at_b, 2.0);
+        let a = Shape::random(&mut rng, 0, at_a, 2.0);
+        let mut make = || Make {
+            ids: Some(rng.next_u64()),
+            ..Make::PLAIN
+        };
+        let (make_a, make_b) = (make(), make());
+        let p = Placement {
+            a,
+            b,
+            make_a,
+            make_b,
+            d: rng.direction(),
+        };
+        let (sa, sb) = (p.a.build(&p.make_a), p.b.build(&p.make_b));
+        let ideal: Option<Vec<Vec<i64>>> = [(&sa, &p.b), (&sb, &p.a)]
+            .into_iter()
+            .map(|(s, o)| {
+                s.verts()
+                    .into_iter()
+                    .map(|v| o.inside(s.brep.pos(v), GAP).map(i64::from))
+                    .collect()
+            })
+            .collect();
+        let Some(ideal) = ideal else {
+            skipped += 1;
+            assert!(skipped < 100, "too many placements near a tie");
+            continue;
+        };
+        trials += 1;
+        let mut stats = Stats::default();
+        let (outcome, answers) = check_answers(&p, &Config::RUNS, &mut stats);
+        assert!(
+            matches!(outcome, Outcome::Agreed { .. }),
+            "{p:?}: {outcome:?}"
+        );
+        let answers = answers.expect("answered");
+        assert_eq!(answers.winding.to_vec(), ideal, "{p:?}");
+        assert_eq!(
+            (stats.cleared_seeds, stats.uncleared_seeds),
+            (2, 0),
+            "{p:?}"
+        );
+        inside += ideal.iter().flatten().filter(|&&w| w == 1).count();
+    }
+    assert!(inside > 0, "{skipped} skipped, none inside");
 }
 
 /// Placements the counting once refused, each since fixed: boxes split

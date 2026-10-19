@@ -33,13 +33,15 @@ use malachite::base::num::basic::traits::{One as _, Zero as _};
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::Nearest;
 use varde_decide::bezier::Dir;
-use varde_decide::bezier::{HomPatch, HullBox};
+use varde_decide::bezier::HomPatch;
 use varde_decide::count::boxes::{BoxError, Corners, FaceUv, Trim};
 use varde_decide::count::cross::{Coedge, x12, x21};
 use varde_decide::count::pieces::{Ribbon, SpanMap};
 use varde_decide::count::s02::FacePieces;
 use varde_decide::count::s02::{Charge, CountError, FaceQuery, TrimEdge, count_pieces, line_chain};
-use varde_decide::count::winding::{Graph, Lobes, WindingError, clear_of, seeds, windings_lobed};
+use varde_decide::count::winding::{
+    ClearFace, Graph, Lobes, WindingError, clear_of_pieces, seeds, windings_lobed,
+};
 use varde_decide::count::xrec::{XClusterError, form};
 use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use varde_decide::num::bounded::Bounded;
@@ -180,6 +182,8 @@ pub(super) struct Stats {
     pub cleared_seeds: u64,
     /// Seeds not cleared (the first vertex taken).
     pub uncleared_seeds: u64,
+    /// Units the seeds' clearance tests spent.
+    pub seed_units: u64,
     /// Seconds spent: records, face counts (with their corners),
     /// clusters.
     pub time: [f64; 3],
@@ -224,6 +228,7 @@ impl Stats {
         }
         self.corners += o.corners;
         self.uncleared_seeds += o.uncleared_seeds;
+        self.seed_units += o.seed_units;
     }
 }
 
@@ -1324,16 +1329,26 @@ impl World<'_> {
         stats: &mut Stats,
     ) -> Result<Windings, Refusal> {
         let (s, o) = (self.solid(op), self.solid(op.other()));
-        let hulls: Vec<HullBox> = o
+        // Every face of the other operand (no broad phase here): its
+        // tiles, refined to its pieces where a tile isn't clear.
+        let setups = o
             .faces()
             .into_iter()
-            .flat_map(|f| {
-                let surf = o.brep.surface(f);
-                let r = surf.rect().clone();
-                r.u.clone()
-                    .flat_map(move |i| r.v.clone().map(move |j| (i, j)))
-                    .map(|(i, j)| surf.tile(i, j).expect("a tile").hull_box())
-                    .collect::<Vec<_>>()
+            .map(|f| FaceSetup::new(self, op.other(), f))
+            .collect::<Result<Vec<_>, _>>()?;
+        let views: Vec<Vec<Trim<'_>>> = setups.iter().map(FaceSetup::views).collect();
+        let uvs = o
+            .faces()
+            .into_iter()
+            .zip(&views)
+            .map(|(f, v)| setups[f.index()].uv(op.other(), f, v, cfg.scale))
+            .collect::<Result<Vec<_>, _>>()?;
+        let near: Vec<ClearFace<'_, '_>> = uvs
+            .iter()
+            .zip(&setups)
+            .map(|(face, setup)| ClearFace {
+                face,
+                patches: &setup.patches,
             })
             .collect();
         let ends: Vec<[VertId; 2]> = s.edges().into_iter().map(|e| s.brep.ends(e)).collect();
@@ -1342,9 +1357,10 @@ impl World<'_> {
             verts: s.brep.vert_count() as u32,
             edges: &ends,
         };
-        let (sr, _) = seeds(&self.order, &graph, 1 << 20, |v| {
-            (Ok::<_, ()>(clear_of(s.brep.pos(v), cfg.eps_tie, &hulls)), 1)
+        let (sr, spent) = seeds(&self.order, &graph, u64::MAX / 4, |v, left| {
+            clear_of_pieces(s.brep.pos(v), cfg.eps_tie, &near, &Charge::new(left))
         });
+        stats.seed_units += spent;
         let sd = sr.map_err(|e| refused(Cause::Seeds(format!("{e:?}")), format!("{op:?}")))?;
         for seed in &sd {
             if seed.cleared {

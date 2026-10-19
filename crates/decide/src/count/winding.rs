@@ -5,13 +5,28 @@
 //!
 //! **Seeds** ([`seeds`]). Per component, the first vertex in geometric
 //! order ([`EntityOrder::vert_key`], ids only on exact ties) whose
-//! certified 3D clearance from the other operand exceeds `ε_tie`
-//! ([`clear_of`] over the boxes near it); if none has clearance, the
-//! first vertex, marked uncleared. The caller counts the seed's winding
+//! certified 3D clearance from the other operand exceeds `ε_tie`; if none
+//! has clearance, the first vertex, marked uncleared. The caller counts the seed's winding
 //! `w(v0) = Σ_f s02(v0, f)` (`s20` for a vertex of `B`) over every face
 //! of the other operand, from the same records and the same decisions as
 //! the crossings ([`crate::count::s02`]), so one ray suffices: a tie at
 //! the seed is decided once and read by both.
+//!
+//! **Clearance** ([`clear_of_pieces`]). A vertex is tested against the
+//! other operand's faces near it, each from its whole tiles (the leaves a
+//! broad phase returns): a tile's hull box clear of the vertex by more
+//! than `ε_tie` (padded by the face's widest band) clears the whole tile;
+//! one not clear refines to its pieces, the face's dyadic boxes
+//! ([`crate::count::boxes`]). A box certified outside the trim is no part
+//! of the face; a core box's hull, or a mixed box's padded by the bands of
+//! the trims it meets (which its ribbons stay within), clear of the vertex
+//! clears it; any other box splits. So a vertex near a tile but clear of
+//! the face's surface is cleared. A box whose hull lies within `ε_tie` of
+//! the vertex, or is itself within a quarter of `ε_tie` across, ends the
+//! test uncleared, as does anything the level can't certify (a hull, a
+//! classification, a split past the boxes' depth) and a test past
+//! [`MAX_CLEAR_BOXES`] boxes: an uncertified test is no clearance, never
+//! an error.
 //!
 //! **Propagation** ([`windings`]). Along an edge `e = a→b` the winding
 //! changes by its crossings with every face of the other operand,
@@ -52,17 +67,26 @@
 //! are counted ([`Lobes::count`]): the edge rule is a convention at the
 //! scale of the seam, not a truth of the moved configuration.
 //!
-//! **Budget.** Each clearance test costs what its certificate reports,
-//! charged against the share the search is given; past it the search
-//! stops, [`SeedError::OutOfBudget`] keyed by the vertex being tested.
-//! Propagation and its checks are integer sums, one per edge.
+//! **Budget.** Each clearance test is given the share the search has
+//! left and costs what it reports: [`clear_of_pieces`] charges each box
+//! tested (a hull, a classification, a split, at the count's units per
+//! piece, [`Charge`]) and stops once past its share. Past the search's
+//! share the search stops, [`SeedError::OutOfBudget`] keyed by the vertex
+//! being tested. Propagation and its checks are integer sums, one per
+//! edge.
 
 use std::collections::{BTreeSet, VecDeque};
 
-use crate::bezier::HullBox;
-use crate::count::s02::Exhausted;
+use smallvec::SmallVec;
+
+use crate::bezier::{HomPatch, HullBox};
+use crate::count::boxes::{
+    BoxKey, Class, FaceUv, SpanRef, Trim, box_hull, classify, classify_among, split, within_band,
+    within_of,
+};
+use crate::count::s02::{Charge, Exhausted};
 use crate::ids::{EdgeId, VertId};
-use crate::num::bounded::{down, up};
+use crate::num::bounded::{Bounded, add_up, down, up};
 use crate::order::{self, EntityOrder};
 use crate::records::keys::{Operand, Point};
 
@@ -200,15 +224,16 @@ pub enum SeedError<E> {
 }
 
 /// The seeds of `graph`'s components (module docs), one per component,
-/// in the geometric order of their first vertices. `clear(v)` certifies
-/// vertex `v`'s clearance from the other operand (`Ok(true)` certified,
-/// `Ok(false)` not) with its cost in units, each charged against `share`.
-/// With the seeds, or the error, the units spent.
+/// in the geometric order of their first vertices. `clear(v, left)`
+/// certifies vertex `v`'s clearance from the other operand (`Ok(true)`
+/// certified, `Ok(false)` not, [`clear_of_pieces`]) given the `left` units
+/// of `share` not yet spent, with its cost in units, each charged against
+/// `share`. With the seeds, or the error, the units spent.
 pub fn seeds<O: EntityOrder, E>(
     order: &O,
     graph: &Graph<'_>,
     share: u64,
-    mut clear: impl FnMut(VertId) -> (Result<bool, E>, u64),
+    mut clear: impl FnMut(VertId, u64) -> (Result<bool, E>, u64),
 ) -> (Result<Vec<Seed>, SeedError<E>>, u64) {
     let mut spent = 0u64;
     if let Err(e) = graph.checked() {
@@ -231,7 +256,7 @@ pub fn seeds<O: EntityOrder, E>(
         };
         for &v in m {
             let point = Point::vert(graph.operand, v);
-            let (r, cost) = clear(v);
+            let (r, cost) = clear(v, share - spent);
             spent = spent.saturating_add(cost);
             if spent > share {
                 return (
@@ -265,7 +290,9 @@ pub fn seeds<O: EntityOrder, E>(
 /// or one axis's gap, bounded below, alone past `eps`.
 /// The boxes are the other operand's near `p` (a BVH's hits within
 /// `eps`): boxes farther away are clear of it by their own query. Never
-/// clear for a point or `eps` not finite, or a negative `eps`.
+/// clear for a point or `eps` not finite, or a negative `eps`. A seed's
+/// test refines boxes not clear to the face's pieces
+/// ([`clear_of_pieces`]).
 pub fn clear_of<'b>(p: [f64; 3], eps: f64, boxes: impl IntoIterator<Item = &'b HullBox>) -> bool {
     if !p.iter().all(|x| x.is_finite()) || !eps.is_finite() || eps < 0.0 {
         return false;
@@ -295,6 +322,153 @@ pub fn clear_of<'b>(p: [f64; 3], eps: f64, boxes: impl IntoIterator<Item = &'b H
         }
         d2 > limit
     })
+}
+
+/// The most boxes one clearance test ([`clear_of_pieces`]) tests, over
+/// all its faces; past them the point is not cleared. A point clear of a
+/// face by much more than `ε_tie` takes a few boxes per halving of the
+/// tile down to its distance, one nearer a few dozen more.
+pub const MAX_CLEAR_BOXES: u64 = 1 << 12;
+
+/// A face of the other operand as a clearance test reads it: its UV
+/// domain and its tiles' patches at the first level, one per tile in
+/// [`FaceUv::tile_boxes`]' order.
+#[derive(Clone, Copy, Debug)]
+pub struct ClearFace<'a, 'f> {
+    /// The face.
+    pub face: &'a FaceUv<'f>,
+    /// Its tiles' patches.
+    pub patches: &'a [HomPatch<Bounded<f64>>],
+}
+
+/// Whether point `p`'s distance from each of `faces` is certified greater
+/// than `eps` (module docs, "Clearance"): each face's whole tiles first,
+/// any not clear refined to its pieces' boxes. Each box tested is charged
+/// as a count's piece at the first level ([`Charge`]): its hull, and its
+/// classification's and split's pieces. With the answer, or
+/// [`Exhausted::Work`] once past `charge.share`, the units spent. Never
+/// cleared for a point or `eps` not finite, or a negative `eps`, nor where
+/// the level certifies no answer.
+pub fn clear_of_pieces(
+    p: [f64; 3],
+    eps: f64,
+    faces: &[ClearFace<'_, '_>],
+    charge: &Charge,
+) -> (Result<bool, Exhausted>, u64) {
+    let mut t = Clearance {
+        p,
+        eps,
+        charge,
+        pieces: 0,
+        boxes: 0,
+    };
+    let r = t.all(faces);
+    (r, t.spent())
+}
+
+/// One clearance test's state ([`clear_of_pieces`]).
+struct Clearance<'c> {
+    p: [f64; 3],
+    eps: f64,
+    charge: &'c Charge,
+    /// The pieces tested so far.
+    pieces: u64,
+    /// The boxes tested so far, against [`MAX_CLEAR_BOXES`].
+    boxes: u64,
+}
+
+impl Clearance<'_> {
+    fn spent(&self) -> u64 {
+        self.pieces.saturating_mul(self.charge.units[0])
+    }
+
+    /// Charges `n` pieces; past the share, out of budget.
+    fn take(&mut self, n: u64) -> Result<(), Exhausted> {
+        self.pieces = self.pieces.saturating_add(n);
+        if self.spent() > self.charge.share {
+            return Err(Exhausted::Work);
+        }
+        Ok(())
+    }
+
+    /// Whether `h`, padded by `pad`, is certified clear of the point.
+    fn clear(&self, h: &HullBox, pad: f64) -> bool {
+        clear_of(self.p, add_up(self.eps, pad), [h])
+    }
+
+    fn all(&mut self, faces: &[ClearFace<'_, '_>]) -> Result<bool, Exhausted> {
+        if !self.p.iter().all(|x| x.is_finite()) || !self.eps.is_finite() || self.eps < 0.0 {
+            return Ok(false);
+        }
+        for f in faces {
+            if !self.face(f)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether the point is cleared of face `f`, its tiles in key order,
+    /// each box's halves lower first.
+    fn face(&mut self, f: &ClearFace<'_, '_>) -> Result<bool, Exhausted> {
+        let like = Bounded::exact(0.0);
+        let trims = f.face.trims();
+        let face_band = widest(trims.iter());
+        let mut stack: Vec<(BoxKey, Option<SmallVec<[SpanRef; 8]>>)> =
+            f.face.tile_boxes().map(|b| (b, None)).collect();
+        stack.reverse();
+        while let Some((b, among)) = stack.pop() {
+            self.boxes += 1;
+            if self.boxes > MAX_CLEAR_BOXES {
+                return Ok(false);
+            }
+            let Some(patch) = f.face.patch_of(f.patches, b.tile()) else {
+                return Ok(false);
+            };
+            self.take(1)?;
+            let Some(hull) = box_hull(patch, &b) else {
+                return Ok(false);
+            };
+            // Clear with any ribbon of the face: no classification.
+            if self.clear(&hull, face_band) {
+                continue;
+            }
+            let c = match &among {
+                None => classify(f.face, &b, &like),
+                Some(m) => classify_among(f.face, &b, &like, m),
+            };
+            let Ok(c) = c else {
+                return Ok(false);
+            };
+            self.take(c.pieces)?;
+            let pad = match &c.class {
+                Class::Outside => continue,
+                Class::Core => 0.0,
+                Class::Mixed(cs) => widest(trims.iter().filter(|t| cs.contains(&t.coedge))),
+            };
+            if pad < face_band && self.clear(&hull, pad) {
+                continue;
+            }
+            // Within `eps` whole, or too small to separate further.
+            if within_of(&hull, self.p, self.eps) || within_band(&hull, self.eps / 4.0) {
+                return Ok(false);
+            }
+            let Ok(s) = split(f.face, &b, patch, None) else {
+                return Ok(false);
+            };
+            self.take(s.pieces)?;
+            let [lo, hi] = s.halves;
+            stack.push((hi, Some(c.met.clone())));
+            stack.push((lo, Some(c.met)));
+        }
+        Ok(true)
+    }
+}
+
+/// The widest band of `trims`, 0 for none (bands are finite and `≥ 0`,
+/// [`FaceUv::new`]).
+fn widest<'t>(trims: impl Iterator<Item = &'t Trim<'t>>) -> f64 {
+    trims.fold(0.0, |m, t| if t.band > m { t.band } else { m })
 }
 
 /// Why the windings aren't settled. [`WindingError::is_signal`] tells

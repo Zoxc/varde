@@ -7,16 +7,19 @@
 //! the first cleared vertex of each component in geometric order, or its
 //! first one; the search's budget and errors are keyed by the vertex.
 //! `clear_of` certifies distances from boxes, never for a point within
-//! `eps`.
+//! `eps`; `clear_of_pieces` refines a tile's box that isn't clear to the
+//! face's pieces, so a point near a tile but clear of its trimmed surface
+//! is cleared.
 
 use std::collections::BTreeMap;
 
 use varde_testkit::rng::Rng;
 
 use super::*;
-use crate::count::testing::Order;
-
-mod solids;
+use crate::count::boxes::{Trim, UvSpan};
+use crate::count::testing::{Order, Patch, first, mapped_net, pline};
+use crate::ids::{CoedgeId, FaceId};
+use crate::records::shadow::UNITS;
 
 /// A graph by geometric labels: vertex `i` at `pos[i]`, its winding
 /// `w[i]`; edges by labels.
@@ -474,7 +477,7 @@ fn seeds_are_the_first_cleared_vertex_of_each_component() {
         for _ in 0..3 {
             let ids = g.ids(&mut rng);
             let mut tested = 0u64;
-            let (r, spent) = seeds(&ids.order, &ids.graph(), u64::MAX, |v| {
+            let (r, spent) = seeds(&ids.order, &ids.graph(), u64::MAX, |v, _| {
                 tested += 1;
                 (Ok::<_, ()>(cleared[ids.vlabel[v.index()]]), 3)
             });
@@ -503,7 +506,7 @@ fn the_clearance_search_is_charged_and_keyed() {
     };
     let p = |v| Point::vert(Operand::B, VertId(v));
     // Nothing clear: every vertex tested, 2 units each.
-    let (r, spent) = seeds(&order, &graph, 8, |_| (Ok::<_, ()>(false), 2));
+    let (r, spent) = seeds(&order, &graph, 8, |_, _| (Ok::<_, ()>(false), 2));
     assert_eq!(spent, 8);
     assert_eq!(
         r,
@@ -519,7 +522,7 @@ fn the_clearance_search_is_charged_and_keyed() {
         ])
     );
     // One unit short: stopped at the last test.
-    let (r, spent) = seeds(&order, &graph, 7, |_| (Ok::<_, ()>(false), 2));
+    let (r, spent) = seeds(&order, &graph, 7, |_, _| (Ok::<_, ()>(false), 2));
     assert_eq!(spent, 8);
     assert_eq!(
         r,
@@ -528,8 +531,15 @@ fn the_clearance_search_is_charged_and_keyed() {
             point: p(3)
         })
     );
+    // Each test is given the share left.
+    let mut lefts = Vec::new();
+    let _ = seeds(&order, &graph, 8, |_, left| {
+        lefts.push(left);
+        (Ok::<_, ()>(false), 2)
+    });
+    assert_eq!(lefts, [8, 6, 4, 2]);
     // A failing test is keyed by its vertex.
-    let (r, _) = seeds(&order, &graph, 100, |v| {
+    let (r, _) = seeds(&order, &graph, 100, |v, _| {
         (if v == VertId(1) { Err(7) } else { Ok(false) }, 1)
     });
     assert_eq!(
@@ -589,6 +599,156 @@ fn clearance_from_boxes_is_certified() {
     assert!(clear_of([0.0; 3], 0.9e-200, [&tiny]));
     assert!(!clear_of([0.0; 3], 1.5e-200, [&tiny]));
     assert!(!clear_of([0.0; 3], 2e-200, [&tiny]));
+}
+
+/// The seeds' clearance in the runs (mm).
+const EPS_TIE: f64 = 1.25e-6;
+
+/// A face of one tile `[0, 1]²` mapped by `map` (its net at the half
+/// steps, so quadratic in each direction), trimmed to the square
+/// `[c − a, c + a]²` of UV, counter-clockwise, each trim's band `band`.
+struct TestFace {
+    patches: Vec<Patch>,
+    /// Per trim its one span.
+    spans: Vec<[UvSpan; 1]>,
+    band: f64,
+}
+
+impl TestFace {
+    fn new(map: impl Fn(f64, f64) -> [f64; 3], c: f64, a: f64, band: f64) -> TestFace {
+        let net = mapped_net([0, 0], map);
+        let patch = Patch::from_affine(2, 2, net, &first()).expect("a patch");
+        let sq = [
+            [c - a, c - a],
+            [c + a, c - a],
+            [c + a, c + a],
+            [c - a, c + a],
+        ];
+        let spans = (0..4).map(|k| [pline(sq[k], sq[(k + 1) % 4])]).collect();
+        TestFace {
+            patches: vec![patch],
+            spans,
+            band,
+        }
+    }
+
+    fn trims(&self) -> Vec<Trim<'_>> {
+        (0..4u32)
+            .map(|k| Trim {
+                coedge: CoedgeId(k),
+                reversed: false,
+                spans: &self.spans[k as usize],
+                ends: [VertId(k), VertId((k + 1) % 4)],
+                zero_length: false,
+                band: self.band,
+            })
+            .collect()
+    }
+
+    /// Whether `p` is cleared of the face by `eps`, with the units spent
+    /// (a share of `share`).
+    fn clear(&self, p: [f64; 3], eps: f64, share: u64) -> (Result<bool, Exhausted>, u64) {
+        let trims = self.trims();
+        let face = FaceUv::new(
+            Operand::B,
+            FaceId(0),
+            [0..1, 0..1],
+            [1.0, 1.0],
+            &trims,
+            false,
+        )
+        .expect("a face");
+        let faces = [ClearFace {
+            face: &face,
+            patches: &self.patches,
+        }];
+        clear_of_pieces(p, eps, &faces, &Charge::new(share))
+    }
+
+    /// The whole tile's hull box.
+    fn tile_hull(&self) -> HullBox {
+        self.patches[0].hull_box().expect("a hull")
+    }
+}
+
+#[test]
+fn clearance_refines_a_tile_to_its_pieces() {
+    // A tilted plane on a `4·10⁶`-mm tile, trimmed to a square about 2.6
+    // mm across in its middle: the tile's box holds everything near it.
+    let l = 4.0e6;
+    let map = |u: f64, v: f64| [l * u, l * v, 0.3 * l * u + 0.2 * l * v];
+    let f = TestFace::new(map, 0.5, 1.3 / l, 1e-6);
+    let n = {
+        let k = (0.09f64 + 0.04 + 1.0).sqrt();
+        [-0.3 / k, -0.2 / k, 1.0 / k]
+    };
+    let at = |p: [f64; 3], h: f64| [0, 1, 2].map(|k| p[k] + h * n[k]);
+    let c = map(0.5, 0.5);
+    let all = u64::MAX / 4;
+    let cleared = |p: [f64; 3]| {
+        let (r, spent) = f.clear(p, EPS_TIE, all);
+        assert_eq!(spent % UNITS.count_piece[0], 0);
+        assert!(spent <= MAX_CLEAR_BOXES * 64 * UNITS.count_piece[0]);
+        r.expect("within the share")
+    };
+    for (p, want) in [
+        // A millimetre above the face, and four `ε_tie` above it.
+        (at(c, 1e-3), true),
+        (at(c, 4.0 * EPS_TIE), true),
+        // On the plane, far outside the trims.
+        (map(0.25, 0.5), true),
+        (map(0.5, 0.5 + 3.0 / l), true),
+        // On the face, and within `ε_tie` of it.
+        (c, false),
+        (at(c, 0.5 * EPS_TIE), false),
+        // Next to a trim, within its band.
+        (map(0.5, 0.5 + 1.3 / l), false),
+    ] {
+        // The whole tile's box isn't clear of any.
+        assert!(!clear_of(p, EPS_TIE, [&f.tile_hull()]));
+        assert_eq!(cleared(p), want, "{p:?}");
+    }
+    // The share runs out: the test stops past it.
+    let (r, spent) = f.clear(at(c, 1e-3), EPS_TIE, 10 * UNITS.count_piece[0]);
+    assert_eq!(r, Err(Exhausted::Work));
+    assert!(spent > 10 * UNITS.count_piece[0]);
+    // Uncertified answers are no clearance.
+    assert_eq!(f.clear([f64::NAN, 0.0, 0.0], EPS_TIE, all).0, Ok(false));
+    assert_eq!(f.clear(at(c, 1e-3), -1.0, all).0, Ok(false));
+    let trims = f.trims();
+    let face =
+        FaceUv::new(Operand::B, FaceId(0), [0..1, 0..1], [1.0; 2], &trims, false).expect("a face");
+    let none = [ClearFace {
+        face: &face,
+        patches: &[],
+    }];
+    let r = clear_of_pieces(at(c, 1e-3), EPS_TIE, &none, &Charge::new(all));
+    assert_eq!(r.0, Ok(false));
+    // No faces near: cleared.
+    assert_eq!(
+        clear_of_pieces(c, EPS_TIE, &[], &Charge::new(all)),
+        (Ok(true), 0)
+    );
+}
+
+#[test]
+fn a_point_inside_a_curved_tile_s_box_clears_its_surface() {
+    // An arch of height 1 over the unit square (its middle net row at
+    // height 2), trimmed inside its tile: a point under it lies in the
+    // tile's box, 0.2 above the base and far below the arch's top.
+    let map = |u: f64, v: f64| {
+        let z = if u == 0.5 { 2.0 } else { 0.0 };
+        [u, v, z]
+    };
+    let f = TestFace::new(map, 0.5, 0.4, 1e-6);
+    let p = [0.5, 0.5, 0.2];
+    assert!(f.tile_hull().contains(p));
+    assert!(!clear_of(p, EPS_TIE, [&f.tile_hull()]));
+    let (r, _) = f.clear(p, EPS_TIE, u64::MAX / 4);
+    assert_eq!(r, Ok(true));
+    // On the arch's top: not cleared.
+    let (r, _) = f.clear([0.5, 0.5, 1.0], EPS_TIE, u64::MAX / 4);
+    assert_eq!(r, Ok(false));
 }
 
 #[test]

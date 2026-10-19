@@ -635,13 +635,14 @@ impl Report {
             );
         }
         s += &format!(
-            "face counts by top level {:?}; edge pairs' clusters by level {:?}; clear clusters {}, z-order records {}; seeds cleared {} / uncleared {}; lobe fallbacks {}\n",
+            "face counts by top level {:?}; edge pairs' clusters by level {:?}; clear clusters {}, z-order records {}; seeds cleared {} / uncleared {} ({} units); lobe fallbacks {}\n",
             st.counts,
             st.clusters,
             st.clear,
             st.zorder_records,
             st.cleared_seeds,
             st.uncleared_seeds,
+            st.seed_units,
             st.lobes
         );
         s += &format!(
