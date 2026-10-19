@@ -301,29 +301,15 @@ pub trait CurveGeometry: ShadowGeometry {
     fn span_rates<S: Curved>(&self, q: Point, g: EdgeId, span: u32, t: &S) -> [[S; 3]; ORDERS];
 }
 
-/// A precision level the curved ray records are decided at.
-pub trait RayLevel: Curved + Coeff {
-    /// The same value with its error widened by `by ≥ 0`.
-    fn widened(&self, by: f64) -> Self;
-}
+/// A precision level the curved ray records are decided at: a curved
+/// level whose values are decided as coefficients.
+pub trait RayLevel: Curved + Coeff {}
 
-impl RayLevel for Bounded<f64> {
-    fn widened(&self, by: f64) -> Self {
-        self.with_trunc(by)
-    }
-}
+impl RayLevel for Bounded<f64> {}
 
-impl RayLevel for Bounded<Dd> {
-    fn widened(&self, by: f64) -> Self {
-        self.with_trunc(by)
-    }
-}
+impl RayLevel for Bounded<Dd> {}
 
-impl<B: BigF> RayLevel for Bounded<B> {
-    fn widened(&self, by: f64) -> Self {
-        self.clone().with_trunc(by)
-    }
-}
+impl<B: BigF> RayLevel for Bounded<B> {}
 
 /// The curved ray records of a run and the knot records they read,
 /// decided once per key (module docs).

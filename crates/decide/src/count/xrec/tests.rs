@@ -392,14 +392,9 @@ impl Recs {
 
     /// The pair's clusters at level 0, the side records they ask for
     /// filled.
-    fn clusters(
-        &self,
-        geom: &Geom,
-        pair: &XPair<'_>,
-        beta: [f64; 2],
-    ) -> Result<XClusters, XClusterError> {
+    fn clusters(&self, geom: &Geom, pair: &XPair<'_>) -> Result<XClusters, XClusterError> {
         loop {
-            let r = clusters_at(geom, X, pair, beta, &self.sides.borrow(), 0);
+            let r = clusters_at(geom, X, pair, &self.sides.borrow(), 0);
             match r {
                 Err(XClusterError::Need(ks)) => {
                     for k in &ks {

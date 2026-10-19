@@ -12,9 +12,9 @@
 //! the face, each winding whether the vertex lies inside the other box,
 //! and equals its own column's count. The faces are plane tiles whose
 //! column hits are exact, so a piece near a point reads its hits' height
-//! records, decided on them. Placements within `GAP` of a tie are skipped; where
-//! the z-order of a crossing isn't clear the test reads it from the
-//! geometry.
+//! records, decided on them. Placements within `GAP` of a tie are skipped;
+//! a crossing whose z-order isn't clear reads its edge–edge height record,
+//! exact on the edges' segments, and agrees with the geometry's.
 
 use glam::{DQuat, DVec3};
 
@@ -35,7 +35,7 @@ use crate::records::height::{Heights, Records};
 use crate::records::keys::{FootId, HKey, RayKey, VvKey, XKey};
 use crate::records::shadow::{ShadowGeometry, Shadows};
 use crate::records::side::Sides;
-use crate::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms, x_count};
+use crate::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms, ZKey, x_count, zorder_key};
 
 use Operand::{A, B};
 
@@ -540,8 +540,11 @@ fn face_counts(w: &World, r: &Recs, s: &Solid, o: &Solid) -> Vec<Vec<i64>> {
 }
 
 /// `s11(e, g)` for every edge pair: the clusters of its crossing record,
-/// each unclear z-order read from the geometry.
+/// each unclear z-order read from its height record (and checked against
+/// the geometry's).
 fn s11s(w: &World, r: &Recs, t: &Truth) -> BTreeMap<(EdgeId, EdgeId), i64> {
+    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band");
+    let mut heights = Heights::new();
     let curve = |s: &Solid, e: EdgeId| {
         let [a, b] = s.edges[e.index()].map(|v| s.at(v));
         XCurve::Line(a, b)
@@ -565,15 +568,8 @@ fn s11s(w: &World, r: &Recs, t: &Truth) -> BTreeMap<(EdgeId, EdgeId), i64> {
             };
             // Straight edges: one cell with outer sides only, no side
             // record read.
-            let out_c = clusters(
-                &w.order,
-                XKey { e, g },
-                &pair,
-                [BAND; 2],
-                &XSides::new(),
-                &first(),
-            )
-            .unwrap_or_else(|err| panic!("{e:?} {g:?}: {err:?}"));
+            let out_c = clusters(&w.order, XKey { e, g }, &pair, &XSides::new(), &first())
+                .unwrap_or_else(|err| panic!("{e:?} {g:?}: {err:?}"));
             assert_eq!(out_c.rec.degree(), x_count(&pair.terms));
             let z = t.above.get(&(e, g)).copied();
             assert_eq!(
@@ -583,7 +579,20 @@ fn s11s(w: &World, r: &Recs, t: &Truth) -> BTreeMap<(EdgeId, EdgeId), i64> {
             );
             let s = out_c
                 .rec
-                .s11(|_, _| z.ok_or("a cluster where the shadows don't cross"))
+                .s11(|c, _| {
+                    let k = zorder_key(XKey { e, g }, c);
+                    heights
+                        .fill(
+                            [k.height_key(g)],
+                            &ModelHeights { model: w },
+                            band,
+                            &mut Seq,
+                        )
+                        .expect("a z-order record");
+                    let read = k.above(&heights.get(k.key, ZKey::anchor(g)).expect("decided"));
+                    assert_eq!(Some(read), z, "{e:?} {g:?}");
+                    Ok::<_, ()>(read)
+                })
                 .expect("s11");
             out.insert((e, g), s);
         }

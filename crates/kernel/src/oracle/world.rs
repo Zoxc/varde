@@ -16,12 +16,13 @@
 //! never a guess: a hit the exact hits don't form (a fold they don't
 //! decide, a column in a planar tile), a height key of a curved edge
 //! away from exact incidence (the lobe fallback's edge rule there: no
-//! curved height model), a crossing cluster of a curved edge whose z-order isn't
-//! clear (no decider for curved edge–edge keys: a stand-in reads it from
-//! the geometry, refusing where that isn't clear; two straight edges'
-//! clusters read their exact edge–edge records), a side record a piece asks for, a record
-//! or count that runs past the last precision level, a ladder signal
-//! from the windings.
+//! curved height model), a crossing cluster whose z-order record runs
+//! past the last precision level (every unclear cluster reads its
+//! edge–edge or point–curve record, decided on the crossing record's
+//! clusters: exact on straight edges, at the levels on curved ones), two
+//! straight edges with collinear shadows not one sign in height over
+//! their overlap, a side record a piece asks for, a record or count that
+//! runs past the last precision level, a ladder signal from the windings.
 
 use std::cmp::Ordering;
 
@@ -48,7 +49,7 @@ use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
 use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rate_rational, rates_a};
 use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
 use varde_decide::records::height::hit::{HitFace, HitTrim, Motion};
-use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights};
+use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights, XAt, XHeights};
 use varde_decide::records::height::{HeightError, Heights, Records};
 use varde_decide::records::keys::{EdgeAt, Operand, Point, Query, RayKey, VvKey, XKey};
 use varde_decide::records::keys::{FootId, HKey};
@@ -59,7 +60,7 @@ use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry,
 use varde_decide::records::side::{SideGeometry, Sides};
 use varde_decide::records::table::Fresh;
 use varde_decide::records::xrec::{
-    EdgeRays, XBase, XCurve, XGeometry, XPair, XSides, XTerms, ZKey, ZRow, zorder_key,
+    EdgeRays, XBase, XCurve, XGeometry, XPair, XRec, XSides, XTerms, ZKey, zorder_key,
 };
 
 use super::solids::Solid;
@@ -112,8 +113,11 @@ pub(super) enum Cause {
     Count(String),
     /// An edge pair's clusters can't be formed at any level.
     Clusters(String),
-    /// A crossing cluster's z-order isn't clear: it reads an edge–edge
-    /// or point–curve height record.
+    /// A crossing cluster's z-order can't be decided: its height record
+    /// (edge–edge or point–curve) runs past the last level, or two
+    /// straight edges' collinear shadows aren't one sign in height over
+    /// their overlap (no cluster reads that until the crossings along it
+    /// are found).
     ZOrder,
     /// Edges on one curve whose crossing lies away from their ends' feet
     /// (refused with `Crossed`, never a wrong total).
@@ -165,12 +169,8 @@ pub(super) struct Stats {
     pub pair_causes: std::collections::BTreeMap<String, u64>,
     /// Clusters whose z-order was clear.
     pub clear: u64,
-    /// Clusters whose z-order wasn't, of two straight edges: read from
-    /// their edge–edge height records.
+    /// Clusters whose z-order wasn't: read from their height records.
     pub zorder_records: u64,
-    /// Clusters whose z-order wasn't, of a curved edge: read from the
-    /// geometry instead ([`zorder_standin`]).
-    pub standins: u64,
     /// Seeds certified clear of the other operand.
     pub cleared_seeds: u64,
     /// Seeds not cleared (the first vertex taken).
@@ -212,7 +212,6 @@ impl Stats {
         self.x_side_fills += o.x_side_fills;
         self.height_fills += o.height_fills;
         self.lobes += o.lobes;
-        self.standins += o.standins;
         self.zorder_records += o.zorder_records;
         self.cleared_seeds += o.cleared_seeds;
         for k in 0..3 {
@@ -1111,20 +1110,13 @@ impl World<'_> {
                                 };
                                 refused(cause, format!("{e:?} {g:?}"))
                             })?;
-                        let s = rec
-                            .s11(|_, cl| {
-                                stats.standins += 1;
-                                zorder_standin(se, sg, cl).ok_or(())
-                            })
-                            .map_err(|()| refused(Cause::ZOrder, format!("shared {e:?} {g:?}")))?;
-                        return Ok(s);
+                        return self.s11_of(x, &rec, &mut heights, band, stats);
                     }
-                    let beta = [self.band(A, e), self.band(B, g)];
                     // The side and corner records the boxes ask for are
                     // filled, one at a time, and the clusters formed again.
                     let mut asked = 0;
                     let c = loop {
-                        match form(&self.order, x, &pair, beta, &sides) {
+                        match form(&self.order, x, &pair, &sides) {
                             Err(XClusterError::Need(ks)) if asked < 16 => {
                                 asked += 1;
                                 for k in ks {
@@ -1152,40 +1144,16 @@ impl World<'_> {
                         }
                     }
                     .map_err(|err| {
-                        refused(Cause::Clusters(format!("{err:?}")), format!("{e:?} {g:?}"))
+                        let cause = match err {
+                            XClusterError::Collinear => Cause::ZOrder,
+                            err => Cause::Clusters(format!("{err:?}")),
+                        };
+                        refused(cause, format!("{e:?} {g:?}"))
                     })?;
                     stats.clusters[c.rec.level] += 1;
                     stats.clear +=
                         c.rec.clusters.iter().filter(|c| c.clear.is_some()).count() as u64;
-                    // A cluster of two straight edges reads its edge–edge
-                    // record (exact); others the stand-in.
-                    let flat = self.straight(A, e) && self.straight(B, g);
-                    let s = c
-                        .rec
-                        .s11(|ci, cl| {
-                            if flat && cl.row == ZRow::EdgeEdge {
-                                let z = zorder_key(x, ci);
-                                let k = z.height_key(g);
-                                stats.zorder_records += 1;
-                                heights
-                                    .fill(
-                                        [k],
-                                        &ModelHeights { model: self },
-                                        band,
-                                        &mut Tally {
-                                            kind: "z-order",
-                                            stats,
-                                        },
-                                    )
-                                    .map_err(|_| ())?;
-                                let rec = heights.get(z.key, ZKey::anchor(g)).ok_or(())?;
-                                return Ok(z.above(&rec));
-                            }
-                            stats.standins += 1;
-                            zorder_standin(se, sg, cl).ok_or(())
-                        })
-                        .map_err(|()| refused(Cause::ZOrder, format!("{e:?} {g:?}")))?;
-                    Ok(s)
+                    self.s11_of(x, &c.rec, &mut heights, band, stats)
                 };
                 match one() {
                     Ok(s) => row.push(s),
@@ -1202,6 +1170,45 @@ impl World<'_> {
             Some(r) => Err(r),
             None => Ok(out),
         }
+    }
+
+    /// `s11` of pair `x` from its crossing record `rec`: each cluster's
+    /// z-order clear or read from its height record, decided on the
+    /// record's clusters ([`XHeights`]).
+    fn s11_of(
+        &self,
+        x: XKey,
+        rec: &XRec,
+        heights: &mut Heights,
+        band: Band,
+        stats: &mut Stats,
+    ) -> Result<i64, Refusal> {
+        let at = [XAt { x, rec }];
+        let geom = XHeights {
+            model: self,
+            recs: &at,
+            near: band.tau_sign(),
+        };
+        let here = || format!("{:?} {:?}", x.e, x.g);
+        rec.s11(|ci, _| {
+            let z = zorder_key(x, ci);
+            stats.zorder_records += 1;
+            heights
+                .fill(
+                    [z.height_key(x.g)],
+                    &geom,
+                    band,
+                    &mut Tally {
+                        kind: "z-order",
+                        stats,
+                    },
+                )
+                .map_err(|err| refused(Cause::ZOrder, format!("{} {ci:?}: {err:?}", here())))?;
+            let r = heights
+                .get(z.key, ZKey::anchor(x.g))
+                .ok_or_else(|| refused(Cause::ZOrder, here()))?;
+            Ok(z.above(&r))
+        })
     }
 
     /// The faces of `op` with a coedge on edge `g`.
@@ -1557,74 +1564,6 @@ impl<'s> FaceSetup<'s> {
         )
         .map_err(|e| refused(Cause::Other(format!("face {e:?}")), format!("{f:?}")))
     }
-}
-
-/// A span's point at `t` in `f64` (de Casteljau on the homogeneous
-/// points) and its derivative.
-fn span_at(s: &Span, t: f64) -> (DVec3, DVec3) {
-    let h = s.map(|p| [p[0] * p[3], p[1] * p[3], p[2] * p[3], p[3]]);
-    let b = [(1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t];
-    let db = [-2.0 * (1.0 - t), 2.0 - 4.0 * t, 2.0 * t];
-    let mut p = [0.0; 4];
-    let mut dp = [0.0; 4];
-    for i in 0..3 {
-        for k in 0..4 {
-            p[k] += b[i] * h[i][k];
-            dp[k] += db[i] * h[i][k];
-        }
-    }
-    let x = DVec3::new(p[0], p[1], p[2]) / p[3];
-    let dx = (DVec3::new(dp[0], dp[1], dp[2]) - x * dp[3]) / p[3];
-    (x, dx)
-}
-
-/// A crossing cluster's z-order read from the geometry, `Pos` for `g`
-/// above `e`: a stand-in for the edge–edge height record no decider
-/// decides yet. The shadows' crossing in the cluster's pieces by Newton
-/// in `f64` from their middles, then the heights there compared; `None`
-/// (a refusal) unless Newton lands inside the pieces and the heights
-/// differ by more than `10⁻⁹` of the edges' size.
-fn zorder_standin(
-    e: &[Span],
-    g: &[Span],
-    cl: &varde_decide::records::xrec::XCluster,
-) -> Option<Sign> {
-    use varde_decide::perturb::{NU, R_HAT, UP};
-    let (r, n, up) = (R_HAT.normalize(), NU.normalize(), UP.normalize());
-    let (se, sg) = (e.get(cl.e.span as usize)?, g.get(cl.g.span as usize)?);
-    let (mut t, mut u) = (0.5 * (cl.e.t[0] + cl.e.t[1]), 0.5 * (cl.g.t[0] + cl.g.t[1]));
-    for _ in 0..60 {
-        let ((pe, de), (pg, dg)) = (span_at(se, t), span_at(sg, u));
-        let f = [r.dot(pe - pg), n.dot(pe - pg)];
-        let j = [[r.dot(de), -r.dot(dg)], [n.dot(de), -n.dot(dg)]];
-        let det = j[0][0] * j[1][1] - j[0][1] * j[1][0];
-        if det == 0.0 || !det.is_finite() {
-            return None;
-        }
-        let dt = (f[0] * j[1][1] - f[1] * j[0][1]) / det;
-        let du = (j[0][0] * f[1] - j[1][0] * f[0]) / det;
-        t -= dt;
-        u -= du;
-        if dt.abs() < 1e-17 && du.abs() < 1e-17 {
-            break;
-        }
-    }
-    let slack = 1e-9;
-    let inside = |x: f64, p: [f64; 2]| p[0] - slack <= x && x <= p[1] + slack;
-    if !inside(t, cl.e.t) || !inside(u, cl.g.t) {
-        return None;
-    }
-    let ((pe, _), (pg, _)) = (span_at(se, t), span_at(sg, u));
-    let size = se
-        .iter()
-        .chain(sg)
-        .map(|p| DVec3::new(p[0], p[1], p[2]).length())
-        .fold(1.0, |m: f64, x| if x > m { x } else { m });
-    let gap = up.dot(pg - pe);
-    if gap.abs() <= 1e-9 * size {
-        return None;
-    }
-    Some(if gap > 0.0 { Sign::Pos } else { Sign::Neg })
 }
 
 /// A cause's name without its keys.

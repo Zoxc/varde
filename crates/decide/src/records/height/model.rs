@@ -21,8 +21,9 @@
 //!   the levels `n_f·(x_h − q)·sign(n_f·ê)` ([`face_height`]) at the hit
 //!   `x_h`, which the model finds, and the normal there;
 //! - an edge–edge key `X(e, g, c)` of two straight edges: the edge–edge
-//!   height of their lines, exact ([`EdgeEdge`]); of curved edges the
-//!   curved decider's (not here).
+//!   height of their lines, exact ([`EdgeEdge`]); of a curved edge, or
+//!   one reading the point–curve row, the z-order decider's, which reads
+//!   the pair's crossing record ([`XHeights`]).
 //!
 //! **Rows** (an anchor's orders): at a face, the tangent plane of the
 //! face at the key's **target point** (the vertex of a point–vertex key,
@@ -52,7 +53,6 @@ use std::cmp::Ordering;
 
 use glam::DVec3;
 use malachite::Rational;
-use malachite::base::num::basic::traits::{One as _, Zero as _};
 
 use crate::ids::{EdgeId, FaceId, VertId};
 use crate::num::exact::{ExactSign, NotFinite, Num, ORDERS, Pred, rat};
@@ -66,6 +66,10 @@ use crate::records::height::{AnchorRow, HeightGeometry, KeyValue};
 use crate::records::keys::{Anchor, FootId, HKey, HeightKey, Operand, Point, Query};
 use crate::records::ray::Span;
 use crate::records::shadow::ShadowGeometry;
+
+mod zorder;
+
+pub use zorder::{XAt, XHeights};
 
 /// A curved face at a point, as its rows read it.
 #[derive(Clone, Debug, PartialEq)]
@@ -317,6 +321,12 @@ fn vert_of(q: Query) -> Option<VertId> {
 
 /// Whether the rational quadratic span `sp` passes through `x`, exactly.
 fn on_span(sp: &Span, x: [f64; 3]) -> bool {
+    on_span_in(sp, x, [0.0, 1.0])
+}
+
+/// Whether the span `sp` passes through `x` at a parameter in `[lo, hi]`
+/// (finite, `lo ≤ hi`), exactly.
+pub(super) fn on_span_in(sp: &Span, x: [f64; 3], [lo, hi]: [f64; 2]) -> bool {
     let w = sp.map(|p| rat(p[3]));
     let h: Vec<Poly> = (0..3)
         .map(|k| {
@@ -331,8 +341,7 @@ fn on_span(sp: &Span, x: [f64; 3]) -> bool {
         // The span one point, `x`.
         return true;
     }
-    poly::degree(&g).unwrap_or(0) > 0
-        && !poly::roots(&g, &Rational::ZERO, &Rational::ONE).is_empty()
+    poly::degree(&g).unwrap_or(0) > 0 && !poly::roots(&g, &rat(lo), &rat(hi)).is_empty()
 }
 
 /// An exact sign that can't be formed: the key names no hit there, a

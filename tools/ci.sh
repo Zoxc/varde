@@ -101,7 +101,9 @@ step_wasm() {
     cargo build --locked --target wasm32-unknown-unknown -p varde-decide -p varde-kernel
     cargo check --workspace --locked --target wasm32-unknown-unknown
     need node Node.js "install Node.js 22 or later"
-    CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings $PWD/tools/wasi_run.mjs" \
+    # Node 22 can collect garbage inside a WASI fast API call (fd_write's
+    # allocation) and crash with SIGSEGV; the slow call path is safe.
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings --no-turbo-fast-api-calls $PWD/tools/wasi_run.mjs" \
         cargo test --locked -p varde-decide --target wasm32-wasip1 -- same_bits_everywhere
 }
 

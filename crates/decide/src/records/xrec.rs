@@ -38,21 +38,25 @@
 //! points, a knot against a knot where their shadows coincide
 //! ([`XSides`], module `sides`).
 //!
-//! **Clusters** ([`XCluster`]). A box of non-zero degree refines until
-//! the z-order of its two pieces is clear (the heights `ê·x` of the two
-//! pieces certified apart over the box) or both pieces are within their
-//! edges' bands in 3D; it is then one cluster, of the box's degree, in
-//! the record's list ([`XRec`]) by its index ([`XClusterIx`]), the list
-//! stored with the precision level that formed it, which its order
-//! depends on. `s11(e, g)` is the sum of the degrees of the clusters with
-//! `g` above `e` ([`XRec::s11`]).
+//! **Clusters** ([`XCluster`]). A box of any degree refines until the
+//! z-order of its two pieces is clear (the heights `ê·x` of the two
+//! pieces certified apart over the box) or their shadow tangents are
+//! certified transversal over it (so it holds at most one crossing),
+//! never stopping on size; a box of non-zero degree is then one cluster,
+//! of the box's degree, in the record's list ([`XRec`]) by its index
+//! ([`XClusterIx`]), the list stored with the precision level that formed
+//! it, which its order depends on. `s11(e, g)` is the sum of the degrees
+//! of the clusters with `g` above `e` ([`XRec::s11`]).
 //!
 //! **The z-order key** ([`zorder_key`]). A cluster whose z-order isn't
 //! clear reads a height record anchored at `g`, keyed by the cluster
 //! itself, the edge–edge key `HKey::X(e, g, c)`, always: its value is the
-//! edges' height at the crossing (exact on straight edges), and an end of
-//! `e` lying exactly on `g` (a shared corner) makes it exactly 0, so the
-//! orders decide. No end's feet or near key choose it.
+//! edges' height at the crossing (exact on straight edges, on curved ones
+//! at a level over the cluster's box), and an end of `e` lying exactly on
+//! `g` (a shared corner) makes it exactly 0, so the orders decide. No
+//! end's feet or near key choose it. The row it reads is fixed with the
+//! cluster ([`XCluster::row`]); the decider is the height model's
+//! ([`crate::records::height::model::XHeights`]).
 //!
 //! **Degenerate z-order** ([`ZRow`]). Where the shadows' tangents can't
 //! be certified apart at the crossing (`T_e`, `T_g` and `ê` coplanar, so
@@ -61,8 +65,10 @@
 //! parallel cross only where the four terms' ties put a crossing; their
 //! one cluster then reads the point–curve height row at the end whose
 //! term counted it ([`ZRow::PointCurve`]), never an edge–edge row with an
-//! undefined `m`. Curved pieces in that state refine, and escalate where
-//! no level certifies them.
+//! undefined `m`, and only where the z-order is one sign over the whole
+//! overlap of the shadows (then clear; else the pair is refused,
+//! [`crate::count::xrec`]). Curved pieces in that state refine, and
+//! escalate where no level certifies them.
 //!
 //! **Shared curves** ([`shared_clusters`]). Two edges on one curve (one
 //! curve object, or bitwise-equal canonical curves: the caller knows,

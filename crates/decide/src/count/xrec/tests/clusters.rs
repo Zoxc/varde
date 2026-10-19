@@ -1,11 +1,18 @@
 //! Clusters of edge pairs: a straight pair's one cluster (its row on
-//! exactly parallel shadows, its clear z-order against the moved
-//! crossing), curved pairs' clusters summing to the four terms, each
-//! clear or within the bands, the same on a second run; pieces far apart
-//! in height clear at once, pieces meeting in 3D refining to the bands.
+//! exactly parallel shadows, clear where the z-order is one sign over the
+//! overlap, else refused; its clear z-order against the moved crossing),
+//! curved pairs' clusters summing to the four terms, each clear or of one
+//! certified crossing, the same on a second run; pieces far apart in
+//! height clear at once, pieces meeting in 3D refining to one crossing;
+//! unclear clusters' z-orders read from their height records against the
+//! sampled and the moved crossings.
 
 use super::*;
+use crate::ids::FaceId;
 use crate::order::{EdgeKey, EntityOrder, VertKey};
+use crate::records::height::Heights;
+use crate::records::height::model::{FaceAt, HeightModel, XAt, XHeights};
+use crate::records::keys::{FootId, HKey};
 
 impl EntityOrder for Geom {
     type Key = ();
@@ -52,9 +59,7 @@ fn a_straight_pair_is_one_cluster() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         let x = x_count(&pair.terms);
-        let out = recs
-            .clusters(&geom, &pair, [1e-6; 2])
-            .expect("a straight pair");
+        let out = recs.clusters(&geom, &pair).expect("a straight pair");
         assert_eq!(out.rec.degree(), x, "seed {seed}");
         assert_eq!(out.rec.clusters.len(), usize::from(x != 0), "seed {seed}");
         let Some(c) = out.rec.clusters.first() else {
@@ -112,7 +117,7 @@ fn parallel_shadows_read_the_point_curve_row() {
             let recs = decide(&geom);
             let pair = recs.pair(&geom);
             assert_eq!(x_count(&pair.terms), 0);
-            let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
+            let out = recs.clusters(&geom, &pair).expect("formed");
             assert!(out.rec.clusters.is_empty(), "{d} {g0}");
         }
     }
@@ -132,16 +137,16 @@ fn parallel_shadows_read_the_point_curve_row() {
         shared: false,
     };
     // Two straight edges' one cell has only outer sides: no side record.
-    let out = clusters_at(&geom, X, &pair, [1e-6; 2], &XSides::new(), 0).expect("formed");
+    let out = clusters_at(&geom, X, &pair, &XSides::new(), 0).expect("formed");
     assert_eq!(out.rec.degree(), 1);
     assert_eq!(
         out.rec.clusters[0].row,
         ZRow::PointCurve(Point::vert(A, VertId(1)))
     );
+    // `g` is above `e` all over the overlap of their shadows (`x` from 1
+    // to 2): one sign, so the z-order is clear.
+    assert_eq!(out.rec.clusters[0].clear, Some(Sign::Pos));
 }
-
-/// The bands of the curved trials: a fraction of the lattice's scale.
-const BETA: [f64; 2] = [0.5, 0.25];
 
 #[test]
 fn curved_clusters_sum_to_the_four_terms() {
@@ -172,7 +177,7 @@ fn curved_clusters_sum_to_the_four_terms() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         trials += 1;
-        let Ok(out) = recs.clusters(&geom, &pair, BETA) else {
+        let Ok(out) = recs.clusters(&geom, &pair) else {
             continue;
         };
         formed += 1;
@@ -188,7 +193,7 @@ fn curved_clusters_sum_to_the_four_terms() {
         if out.rec.clusters.len() > 1 {
             several += 1;
         }
-        let again = recs.clusters(&geom, &pair, BETA).expect("formed once");
+        let again = recs.clusters(&geom, &pair).expect("formed once");
         assert_eq!(again, out, "seed {seed}");
     }
     assert!(
@@ -216,12 +221,12 @@ fn crossing_pair(dz: f64) -> Geom {
 }
 
 #[test]
-fn heights_apart_clear_at_once_and_meeting_pieces_refine_to_the_bands() {
+fn heights_apart_clear_at_once_and_meeting_pieces_refine_to_one_crossing() {
     let geom = crossing_pair(3.0);
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
     assert_eq!(x_count(&pair.terms), -1);
-    let out = recs.clusters(&geom, &pair, [1e-3; 2]).expect("formed");
+    let out = recs.clusters(&geom, &pair).expect("formed");
     assert_eq!(out.rec.clusters.len(), 1);
     assert_eq!(out.rec.clusters[0].clear, Some(Sign::Pos));
     assert_eq!(out.boxes[0], XBox::cells([1, 1]).next().expect("a cell"));
@@ -229,25 +234,28 @@ fn heights_apart_clear_at_once_and_meeting_pieces_refine_to_the_bands() {
     let geom = crossing_pair(-3.0);
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    let out = recs.clusters(&geom, &pair, [1e-3; 2]).expect("formed");
+    let out = recs.clusters(&geom, &pair).expect("formed");
     assert_eq!(out.rec.clusters[0].clear, Some(Sign::Neg));
 
-    // The two meet in 3D: the cluster's pieces shrink to the bands and
-    // read their record.
+    // The two meet in 3D: the cluster's box refines until its shadow
+    // tangents are certified transversal (one crossing), and reads its
+    // record.
     let geom = crossing_pair(0.0);
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    for beta in [1.0, 1e-3] {
-        let out = recs.clusters(&geom, &pair, [beta; 2]).expect("formed");
-        assert_eq!(out.rec.degree(), -1);
-        for (c, b) in out.rec.clusters.iter().zip(&out.boxes) {
-            if c.clear.is_none() {
-                let size = |x: Extent| dy(x.hi()) - dy(x.lo());
-                assert!(size(b.t) < 1.0 && size(b.s) < 1.0, "{beta}: {b:?}");
-            }
-        }
-        assert!(out.rec.clusters.iter().any(|c| c.clear.is_none()));
-    }
+    let out = recs.clusters(&geom, &pair).expect("formed");
+    assert_eq!(out.rec.degree(), -1);
+    assert_eq!(out.rec.clusters.len(), 1);
+    let (c, b) = (&out.rec.clusters[0], &out.boxes[0]);
+    assert_eq!((c.clear, c.degree), (None, -1));
+    let piece = |curve: &XCurve<'_>, span: u32, x: Extent| {
+        cut(&curve.span(span, &like()).expect("a span"), x, &like())
+    };
+    let (pe, pg) = (
+        piece(&pair.e, b.cell[0], b.t),
+        piece(&pair.g, b.cell[1], b.s),
+    );
+    assert!(transversal(&pe, &pg, &like(), &mut 0), "{b:?}");
 }
 
 #[test]
@@ -433,154 +441,242 @@ fn sampled_crossings(e: &[Span], g: &[Span]) -> Option<Vec<Sampled>> {
     Some(out)
 }
 
-/// Random curved pairs, weights 1/64 to 64, against the sampled oracle:
-/// each cluster holds the signed crossings of its box, a clear one all
-/// on its side in height, an unclear one exactly one crossing; `s11` is
-/// the oracle's sum over crossings with `g` above `e`.
-#[test]
-fn s11_matches_the_sampled_crossings() {
-    let (mut checked, mut unclear, mut crossings) = (0, 0, 0);
+/// The test model's heights: no faces; straight edges as segments at
+/// their rates where the record reads them.
+impl HeightModel for Geom {
+    fn plane(&self, _: Operand, _: FaceId) -> Option<(DVec3, f64)> {
+        None
+    }
+
+    fn plane_rates(&self, q: Point, _: FaceId, _: DVec3) -> [Rate; ORDERS] {
+        self.rates(q.operand.other())
+    }
+
+    fn edge_seg(&self, operand: Operand, g: EdgeId) -> Option<Seg> {
+        let (ends, spans) = &self.edges[&(operand, g)];
+        if !spans.is_empty() {
+            return None;
+        }
+        let [a, b] = ends.map(|v| self.pos[&Point::vert(operand, v)]);
+        Some(Seg {
+            a,
+            b,
+            rates: self.rates(operand),
+        })
+    }
+
+    fn foot_point(&self, _: Point, _: EdgeId, _: FootId) -> Option<Moving> {
+        None
+    }
+
+    fn curved_target<S: Curved>(&self, _: HKey, _: &S) -> Option<[S; 3]> {
+        None
+    }
+
+    fn face_at<S: Curved>(&self, _: Point, _: FaceId, _: &[S; 3], _: &S) -> Option<FaceAt<S>> {
+        None
+    }
+}
+
+/// The z-orders of `rec`'s clusters, `g` above `e` as `Pos`: clear, or
+/// read from their height records decided on the record ([`XHeights`]);
+/// `None` where a record isn't decided.
+fn z_orders(geom: &Geom, rec: &XRec) -> Vec<Option<Sign>> {
+    let at = [XAt { x: X, rec }];
+    let model = XHeights {
+        model: geom,
+        recs: &at,
+        near: 1.0 / 1_073_741_824.0,
+    };
+    let mut heights = Heights::new();
+    rec.iter()
+        .map(|(c, cl)| {
+            if cl.clear.is_some() {
+                return cl.clear;
+            }
+            let z = zorder_key(X, c);
+            heights
+                .fill([z.height_key(X.g)], &model, band(), &mut Seq::default())
+                .ok()?;
+            Some(z.above(&heights.get(z.key, ZKey::anchor(X.g))?))
+        })
+        .collect()
+}
+
+/// A random curved pair of the sampled trials (weights 1/64 to 64) and
+/// its crossings by the sampled oracle; `None` where the oracle can't
+/// tell or the records aren't decided.
+fn sampled_pair(seed: u64) -> Option<(Geom, Vec<Sampled>)> {
     let ws = [1.0 / 64.0, 1.0 / 8.0, 1.0, 8.0, 64.0];
-    for seed in varde_testing::seeds(80, 1200) {
-        let mut rng = Rng::new(seed);
-        let mut int = |n: u64| (rng.next_u64() % (2 * n + 1)) as f64 - n as f64;
-        let mut pt = || lat(int(8), int(8), int(2));
-        let (a, k, b, g0, h, g1) = (pt(), pt(), pt(), pt(), pt(), pt());
-        let mut w = || ws[(rng.next_u64() % 5) as usize];
-        let w: [f64; 6] = std::array::from_fn(|_| w());
-        let mut geom = Geom {
-            d: [DVec3::new(0.25, -0.5, 0.125), R_HAT, NU][seed as usize % 3],
-            ..Geom::default()
-        };
-        let mut rng = Rng::new(seed ^ 0x5e);
-        let e = vec![
-            conic(&mut rng, a, k, [w[0], w[1]]),
-            conic(&mut rng, k, b, [w[2], w[3]]),
-        ];
-        let g = vec![
-            conic(&mut rng, g0, h, [w[4], w[5]]),
-            conic(&mut rng, h, g1, [w[5], w[4]]),
-        ];
-        let Some(found) = sampled_crossings(&e, &g) else {
-            continue;
-        };
-        geom.curve(A, E, 0, 1, e);
-        geom.curve(B, G, 0, 1, g);
-        let Some(recs) = try_decide(&geom) else {
-            continue;
-        };
-        let pair = recs.pair(&geom);
-        let x = x_count(&pair.terms);
-        assert_eq!(found.iter().map(|c| c.sign).sum::<i64>(), x, "seed {seed}");
-        for beta in [1e-3, 20.0, 500.0] {
-            let Ok(out) = recs.clusters(&geom, &pair, [beta; 2]) else {
-                continue;
-            };
-            checked += 1;
-            crossings += found.len();
-            let inside = |c: &Sampled, b: &XBox| {
-                c.cell == b.cell
-                    && dy(b.t.lo()) <= c.at[0]
-                    && c.at[0] <= dy(b.t.hi())
-                    && dy(b.s.lo()) <= c.at[1]
-                    && c.at[1] <= dy(b.s.hi())
-            };
-            for (cl, bx) in out.rec.clusters.iter().zip(&out.boxes) {
-                let held: Vec<&Sampled> = found.iter().filter(|c| inside(c, bx)).collect();
-                let deg: i64 = held.iter().map(|c| c.sign).sum();
-                assert_eq!(deg, cl.degree, "seed {seed}: {bx:?}");
-                match cl.clear {
-                    Some(z) => {
-                        for c in &held {
-                            assert_eq!(c.gap > 0.0, z == Sign::Pos, "seed {seed}: {bx:?}");
-                        }
-                    }
-                    None => {
-                        unclear += 1;
-                        assert_eq!(held.len(), 1, "seed {seed}: {bx:?}");
-                    }
-                }
-            }
-            let want: i64 = found.iter().filter(|c| c.gap > 0.0).map(|c| c.sign).sum();
-            let got = out
-                .rec
-                .s11(|c, _| {
-                    let bx = &out.boxes[c.0 as usize];
-                    let c = found.iter().find(|c| inside(c, bx)).expect("one crossing");
-                    Ok::<_, ()>(if c.gap > 0.0 { Sign::Pos } else { Sign::Neg })
-                })
-                .expect("read");
-            // Within wide bands a pair of crossings of opposite signs and
-            // z-orders may share one box of degree 0, which carries nothing.
-            if beta < 100.0 {
-                assert_eq!(got, want, "seed {seed} beta {beta}: {out:?}");
-            }
+    let mut rng = Rng::new(seed);
+    let mut int = |n: u64| (rng.next_u64() % (2 * n + 1)) as f64 - n as f64;
+    let mut pt = || lat(int(8), int(8), int(2));
+    let (a, k, b, g0, h, g1) = (pt(), pt(), pt(), pt(), pt(), pt());
+    let mut w = || ws[(rng.next_u64() % 5) as usize];
+    let w: [f64; 6] = std::array::from_fn(|_| w());
+    let mut geom = Geom {
+        d: [DVec3::new(0.25, -0.5, 0.125), R_HAT, NU][seed as usize % 3],
+        ..Geom::default()
+    };
+    let mut rng = Rng::new(seed ^ 0x5e);
+    let e = vec![
+        conic(&mut rng, a, k, [w[0], w[1]]),
+        conic(&mut rng, k, b, [w[2], w[3]]),
+    ];
+    let g = vec![
+        conic(&mut rng, g0, h, [w[4], w[5]]),
+        conic(&mut rng, h, g1, [w[5], w[4]]),
+    ];
+    let found = sampled_crossings(&e, &g)?;
+    geom.curve(A, E, 0, 1, e);
+    geom.curve(B, G, 0, 1, g);
+    Some((geom, found))
+}
+
+/// What [`check_sampled`] saw.
+#[derive(Default)]
+struct SampledRun {
+    checked: usize,
+    crossings: usize,
+    unclear: usize,
+}
+
+/// Seed `seed`'s pair against the sampled oracle (see
+/// [`s11_matches_the_sampled_crossings`]), adding to `run`.
+fn check_sampled(seed: u64, run: &mut SampledRun) {
+    let Some((geom, found)) = sampled_pair(seed) else {
+        return;
+    };
+    let Some(recs) = try_decide(&geom) else {
+        return;
+    };
+    let pair = recs.pair(&geom);
+    let x = x_count(&pair.terms);
+    assert_eq!(found.iter().map(|c| c.sign).sum::<i64>(), x, "seed {seed}");
+    let Ok(out) = recs.clusters(&geom, &pair) else {
+        return;
+    };
+    run.checked += 1;
+    run.crossings += found.len();
+    let inside = |c: &Sampled, b: &XBox| {
+        c.cell == b.cell
+            && dy(b.t.lo()) <= c.at[0]
+            && c.at[0] <= dy(b.t.hi())
+            && dy(b.s.lo()) <= c.at[1]
+            && c.at[1] <= dy(b.s.hi())
+    };
+    let zs = z_orders(&geom, &out.rec);
+    for ((cl, bx), z) in out.rec.clusters.iter().zip(&out.boxes).zip(&zs) {
+        let held: Vec<&Sampled> = found.iter().filter(|c| inside(c, bx)).collect();
+        let deg: i64 = held.iter().map(|c| c.sign).sum();
+        assert_eq!(deg, cl.degree, "seed {seed}: {bx:?}");
+        if cl.clear.is_none() {
+            run.unclear += 1;
+            assert_eq!(held.len(), 1, "seed {seed}: {bx:?}");
+        }
+        // Clear or read from its record, the z-order is the oracle's.
+        let z = z.unwrap_or_else(|| panic!("seed {seed}: {bx:?} not decided"));
+        for c in &held {
+            assert_eq!(c.gap > 0.0, z == Sign::Pos, "seed {seed}: {bx:?}");
         }
     }
+    let want: i64 = found.iter().filter(|c| c.gap > 0.0).map(|c| c.sign).sum();
+    let got = out
+        .rec
+        .s11(|c, _| zs[c.0 as usize].ok_or(()))
+        .expect("read");
+    assert_eq!(got, want, "seed {seed}: {out:?}");
+}
+
+/// Random curved pairs, weights 1/64 to 64, against the sampled oracle:
+/// each cluster holds the signed crossings of its box, an unclear one
+/// exactly one crossing, its z-order (clear, or read from its height
+/// record) the oracle's at each; `s11` is the oracle's sum over crossings
+/// with `g` above `e`.
+#[test]
+fn s11_matches_the_sampled_crossings() {
+    let mut run = SampledRun::default();
+    for seed in varde_testing::seeds(80, 1200) {
+        check_sampled(seed, &mut run);
+    }
     assert!(
-        checked > 30 && crossings > 30,
-        "{checked} checked, {crossings} crossings, {unclear} unclear"
+        run.checked > 10 && run.crossings > 10 && run.unclear > 0,
+        "{} checked, {} crossings, {} unclear",
+        run.checked,
+        run.crossings,
+        run.unclear
     );
+}
+
+/// Seed 285 of the sampled trials: two crossings of opposite signs and
+/// z-orders close together, which a wide band once held in one box of
+/// degree 0 that carried nothing. No size stops the refinement, so they
+/// are two clusters and `s11` counts the one with `g` above.
+#[test]
+fn a_close_pair_of_opposite_z_orders_counts_one() {
+    let (_, found) = sampled_pair(285).expect("the oracle tells");
+    assert!(
+        found.iter().any(|c| c.gap > 0.0) && found.iter().any(|c| c.gap < 0.0),
+        "both z-orders"
+    );
+    let mut run = SampledRun::default();
+    check_sampled(285, &mut run);
+    assert_eq!(run.checked, 1);
 }
 
 /// `e`'s shadow a conic (middle weighted 1/64 to 64) touching `g`'s line
 /// at its middle, at the
 /// same height, `g` ending there: the motion leaves one crossing on `g`
-/// or none. A box of non-zero degree around the touching point never
-/// certifies its tangents apart nor its z-order: it escalates, never a
-/// cluster; with no crossing nothing is formed.
+/// or none. A box around the touching point never certifies its
+/// tangents apart nor its z-order, whatever its degree (a degree-0 box
+/// there may be two crossings of opposite z-orders): it escalates, never
+/// a cluster, never dropped. Each search runs to its box cap (seconds in
+/// debug builds): two motions by default, the twelve with
+/// `VARDE_TESTS=full`.
 #[test]
-fn a_shadow_tangency_with_a_crossing_escalates() {
-    let (mut escalated, mut empty) = (0, 0);
-    for d in [
+fn a_shadow_tangency_escalates() {
+    let (mut crossed, mut escalated) = (0, 0);
+    let all: Vec<(DVec3, f64)> = [
         NU,
         -NU,
         DVec3::new(0.25, -0.5, 0.125),
         DVec3::new(0.25, 0.5, 0.125),
-    ] {
-        for wm in [1.0 / 64.0, 1.0, 64.0] {
-            let mut geom = Geom {
-                d,
-                ..Geom::default()
-            };
-            let e = vec![[
-                cp(lat(-1.0, 1.0, 0.0), 1.0),
-                cp(lat(0.0, -1.0 / wm, 0.0), wm),
-                cp(lat(1.0, 1.0, 0.0), 1.0),
-            ]];
-            geom.curve(A, E, 0, 1, e);
-            let g = vec![straight(lat(-2.0, 0.0, 0.0), lat(0.0, 0.0, 0.0), 1.0)];
-            geom.curve(B, G, 0, 1, g);
-            let recs = decide(&geom);
-            let pair = recs.pair(&geom);
-            let x = x_count(&pair.terms);
-            for beta in [1e-3, 1.0, 1e3] {
-                match recs.clusters(&geom, &pair, [beta; 2]) {
-                    Err(XClusterError::Degenerate(_) | XClusterError::Depth(_)) => {
-                        assert_ne!(x, 0, "{d} {wm} {beta}");
-                        escalated += 1;
-                    }
-                    Err(XClusterError::Degree(..)) => {}
-                    Err(e) => panic!("{d} {wm} {beta}: {e:?}"),
-                    Ok(out) => {
-                        assert_eq!(x, 0, "{d} {wm} {beta}: {out:?}");
-                        assert!(out.rec.clusters.is_empty(), "{d} {wm} {beta}");
-                        empty += 1;
-                    }
-                }
-            }
+    ]
+    .into_iter()
+    .flat_map(|d| [1.0 / 64.0, 1.0, 64.0].map(|w| (d, w)))
+    .collect();
+    let cases = varde_testing::pick(vec![(NU, 1.0), (-NU, 1.0)], all);
+    for &(d, wm) in &cases {
+        let mut geom = Geom {
+            d,
+            ..Geom::default()
+        };
+        let e = vec![[
+            cp(lat(-1.0, 1.0, 0.0), 1.0),
+            cp(lat(0.0, -1.0 / wm, 0.0), wm),
+            cp(lat(1.0, 1.0, 0.0), 1.0),
+        ]];
+        geom.curve(A, E, 0, 1, e);
+        let g = vec![straight(lat(-2.0, 0.0, 0.0), lat(0.0, 0.0, 0.0), 1.0)];
+        geom.curve(B, G, 0, 1, g);
+        let recs = decide(&geom);
+        let pair = recs.pair(&geom);
+        crossed += usize::from(x_count(&pair.terms) != 0);
+        match recs.clusters(&geom, &pair) {
+            Err(e) if e.escalates() => escalated += 1,
+            r => panic!("{d} {wm}: {r:?}"),
         }
     }
     assert!(
-        escalated > 0 && empty > 0,
-        "{escalated} escalated, {empty} empty"
+        escalated == cases.len() && crossed > 0 && crossed < cases.len(),
+        "{escalated} escalated, {crossed} with a crossing"
     );
 }
 
 /// `e` a conic dipping under `g`'s straight line near its apex, rising in
 /// height across it: two crossings of opposite signs and z-orders, ever
-/// closer. Narrow bands split them into two clusters, `s11` the one with
-/// `g` above; in one band (a box of degree 0) they carry nothing.
+/// closer. They are two clusters however close (no size stops the
+/// refinement), `s11` the one with `g` above.
 #[test]
 fn close_crossings_of_opposite_z_orders() {
     for k in [2, 6, 10, 14] {
@@ -606,12 +702,10 @@ fn close_crossings_of_opposite_z_orders() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         assert_eq!(x_count(&pair.terms), 0);
-        let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
+        let out = recs.clusters(&geom, &pair).expect("formed");
         assert_eq!(out.rec.clusters.len(), 2, "{k}");
         let s11 = out.rec.s11(|_, _| Err(())).expect("both clear");
         assert_eq!(s11, want, "{k}");
-        let out = recs.clusters(&geom, &pair, [1e6; 2]).expect("formed");
-        assert!(out.rec.clusters.is_empty(), "{k}");
     }
 }
 
@@ -679,10 +773,7 @@ fn edges_on_one_line_cluster_at_their_ends_ties() {
         let recs = decide(&geom);
         let mut pair = recs.pair(&geom);
         pair.shared = true;
-        assert_eq!(
-            recs.clusters(&geom, &pair, [1e-6; 2]),
-            Err(XClusterError::Shared)
-        );
+        assert_eq!(recs.clusters(&geom, &pair), Err(XClusterError::Shared));
         let mut feet = BTreeMap::new();
         for (op, own, other) in [(A, E, G), (B, G, E)] {
             let [p, q] = geom.edges[&(op.other(), EdgeId(other))]
@@ -720,6 +811,181 @@ fn edges_on_one_line_cluster_at_their_ends_ties() {
     }
     // A run of a few seeds may hold no tie.
     assert!(runs < 20 || (checked > 0 && tied > 0), "{checked} {tied}");
+}
+
+/// Two straight edges in one vertical plane (their shadows collinear,
+/// not one curve) under a direction field varying along them, so the
+/// moved shadows cross along the overlap: apart in height all over it,
+/// the pair is one cluster of the moved crossing's degree whose z-order
+/// is clear, `s11` the moved configuration's; crossing in height over the
+/// overlap, or meeting at an end of it, the pair is refused (no cluster
+/// reads a z-order that changes along the overlap).
+#[test]
+fn lines_in_one_vertical_plane_cluster_where_apart_in_height() {
+    let (mut crossed, mut refused) = (0, 0);
+    for dir in [lat(1.0, 0.0, 0.0), lat(1.0, 2.0, 0.0), lat(0.0, 1.0, 1.0)] {
+        for k in [1.0, -1.0] {
+            // `g` lifted by `h0` at its start and `h1` at its end along `UP`.
+            for (h0, h1, apart) in [
+                (1.0, 1.0, Some(Sign::Pos)),
+                (-2.0, -1.0, Some(Sign::Neg)),
+                (-1.0, 1.0, None),
+                (0.0, 2.0, None),
+            ] {
+                let at = |t: f64| dir * t;
+                let mut geom = Geom {
+                    field: dir * k,
+                    ..Geom::default()
+                };
+                geom.segment(A, E, (0, at(-1.0)), (1, at(2.0)));
+                // `g`'s end at `t = −1` meets `e`'s start where `h0 = 0`.
+                geom.segment(B, G, (2, at(-1.0) + UP * h0), (3, at(3.0) + UP * h1));
+                let recs = decide(&geom);
+                let pair = recs.pair(&geom);
+                let x = x_count(&pair.terms);
+                assert_eq!(Some(x), moved_crossing(&geom), "{dir} {k} {h0}");
+                if x == 0 {
+                    continue;
+                }
+                crossed += 1;
+                match (recs.clusters(&geom, &pair), apart) {
+                    (Ok(out), Some(z)) => {
+                        assert_eq!(out.rec.degree(), x, "{dir} {k} {h0}");
+                        assert_eq!(out.rec.clusters.len(), 1);
+                        let c = &out.rec.clusters[0];
+                        assert!(matches!(c.row, ZRow::PointCurve(_)), "{c:?}");
+                        assert_eq!(c.clear, Some(z), "{dir} {k} {h0}");
+                        let s11 = out.rec.s11(|_, _| Err(())).expect("clear");
+                        assert_eq!(s11, if z == Sign::Pos { x } else { 0 });
+                    }
+                    (Err(XClusterError::Collinear), None) => refused += 1,
+                    (r, _) => panic!("{dir} {k} {h0}: {r:?}"),
+                }
+            }
+        }
+    }
+    assert!(
+        crossed > 0 && refused > 0,
+        "{crossed} crossed, {refused} refused"
+    );
+}
+
+/// A curved `e` (a conic through the origin at its middle) and a straight
+/// span `g` from there across it, lifted along `UP` by `lift` (the same
+/// shadows). Unlifted, `g`'s end lies exactly on `e`: the cluster's
+/// height is exactly 0 and the edge–edge orders decide it, the moved
+/// configuration's z-order (by finite differences of the moved crossing).
+/// Lifted apart, the value decides; lifted by less than the curved
+/// target, a near tie, no level decides it (refused, never a band tie).
+/// A motion either way: the crossing is there for one of `±d`.
+#[test]
+fn a_curved_cluster_at_an_end_on_the_other_edge_decides_by_its_orders() {
+    let e = vec![[
+        cp(lat(-1.0, -1.0, -1.0), 1.0),
+        cp(lat(0.0, 1.0, 1.0), 1.0),
+        cp(lat(1.0, -1.0, -1.0), 1.0),
+    ]];
+    let (mut by_orders, mut by_value, mut near) = (0, 0, 0);
+    for d in [
+        DVec3::new(0.25, -0.5, 0.125),
+        DVec3::new(-0.25, 0.5, -0.125),
+        NU,
+        -NU,
+        DVec3::new(1.0, 0.25, 0.0),
+        DVec3::new(-1.0, -0.25, 0.0),
+    ] {
+        for lift in [0.0, 1.0 / 1024.0, -1.0 / 1024.0, 1.0 / 1_099_511_627_776.0] {
+            let mut geom = Geom {
+                d,
+                ..Geom::default()
+            };
+            let g = vec![straight(UP * lift, lat(0.0, 2.0, 1.0) + UP * lift, 1.0)];
+            geom.curve(A, E, 0, 1, e.clone());
+            geom.curve(B, G, 0, 1, g.clone());
+            let recs = decide(&geom);
+            let pair = recs.pair(&geom);
+            if x_count(&pair.terms) == 0 {
+                continue;
+            }
+            let out = recs.clusters(&geom, &pair).expect("formed");
+            assert_eq!(out.rec.clusters.len(), 1);
+            let unclear = out.rec.clusters[0].clear.is_none();
+            let z = z_orders(&geom, &out.rec)[0];
+            if lift.abs() < 1e-9 && lift != 0.0 {
+                assert_eq!(z, None, "{d} {lift}: a near tie is refused");
+                near += 1;
+                continue;
+            }
+            let z = z.unwrap_or_else(|| panic!("{d} {lift}: decided"));
+            // The moved configuration, `A` by `δ·d`.
+            let delta = 1e-7;
+            let moved: Vec<Span> = e
+                .iter()
+                .map(|sp| {
+                    sp.map(|p| {
+                        let q = DVec3::new(p[0], p[1], p[2]) + d * delta;
+                        [q.x, q.y, q.z, p[3]]
+                    })
+                })
+                .collect();
+            let at = newton(&moved[0], &g[0], [0.5, 0.0]).expect("a crossing");
+            let gap = frame_at(&g[0], at[1])[2] - frame_at(&moved[0], at[0])[2];
+            assert_eq!(z == Sign::Pos, gap > 0.0, "{d} {lift}: gap {gap}");
+            match (lift == 0.0, unclear) {
+                (true, _) => by_orders += 1,
+                (false, true) => by_value += 1,
+                (false, false) => {}
+            }
+        }
+    }
+    assert!(
+        by_orders >= 3 && by_value > 0 && near >= 3,
+        "{by_orders} by orders, {by_value} by value, {near} near ties"
+    );
+}
+
+/// A curved `e` and a straight `g` from one vertex (a vertex on a vertex,
+/// exactly): their crossing's curved edge–edge key isn't decided at any
+/// level (module docs of the decider, "Shared corners").
+#[test]
+fn a_curved_cluster_at_a_shared_vertex_is_not_decided() {
+    let e = vec![[
+        cp(lat(0.0, 0.0, 0.0), 1.0),
+        cp(lat(1.0, 1.0, 1.0), 1.0),
+        cp(lat(2.0, -1.0, -1.0), 1.0),
+    ]];
+    let mut formed = 0;
+    for d in [
+        NU,
+        -NU,
+        DVec3::new(0.25, -0.5, 0.125),
+        DVec3::new(-0.25, 0.5, -0.125),
+    ] {
+        let mut geom = Geom {
+            d,
+            ..Geom::default()
+        };
+        geom.curve(A, E, 0, 1, e.clone());
+        geom.curve(
+            B,
+            G,
+            0,
+            1,
+            vec![straight(lat(0.0, 0.0, 0.0), lat(1.0, -2.0, 1.0), 1.0)],
+        );
+        let recs = decide(&geom);
+        let pair = recs.pair(&geom);
+        let Ok(out) = recs.clusters(&geom, &pair) else {
+            continue;
+        };
+        for (c, z) in out.rec.clusters.iter().zip(z_orders(&geom, &out.rec)) {
+            if c.clear.is_none() {
+                assert_eq!(z, None, "{d}: {c:?}");
+                formed += 1;
+            }
+        }
+    }
+    assert!(formed > 0, "no unclear cluster at the shared vertex");
 }
 
 /// Edges on one line under a direction field varying along it (linear,
@@ -845,10 +1111,7 @@ fn edges_on_one_circle_cluster_at_their_ends_ties() {
         };
         let mut pair = recs.pair(&geom);
         pair.shared = true;
-        assert_eq!(
-            recs.clusters(&geom, &pair, [1e-6; 2]),
-            Err(XClusterError::Shared)
-        );
+        assert_eq!(recs.clusters(&geom, &pair), Err(XClusterError::Shared));
         let mut feet = BTreeMap::new();
         for (op, own, other, spans) in [(A, E, G, &g), (B, G, E, &e)] {
             for v in geom.edges[&(op, EdgeId(own))].0 {
@@ -953,7 +1216,7 @@ fn a_knot_beside_the_other_edge_refines_its_cell() {
     geom.segment(B, G, (2, g0), (3, g1));
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
+    let out = recs.clusters(&geom, &pair).expect("formed");
     assert_eq!(out.rec.degree(), x_count(&pair.terms));
     assert!(out.boxes.len() == out.rec.clusters.len());
 }
@@ -1008,7 +1271,7 @@ fn clusters_at_coinciding_knots_read_the_side_records() {
         };
         let pair = recs.pair(&geom);
         trials += 1;
-        match recs.clusters(&geom, &pair, [1e-6; 2]) {
+        match recs.clusters(&geom, &pair) {
             Ok(out) => {
                 assert_eq!(out.rec.degree(), x_count(&pair.terms), "seed {seed}");
                 formed += 1;
@@ -1048,31 +1311,30 @@ fn a_record_replays_at_the_level_it_was_formed_at() {
     );
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    let beta = [1e3; 2];
     // One cell, its sides on the square: no side record read.
     let sides = XSides::new();
-    let whole = XBox::cells([1, 1]).next().expect("a cell");
-    assert_eq!(
-        clusters_at(&geom, X, &pair, beta, &sides, 0),
-        Err(XClusterError::Degenerate(whole))
+    let at0 = clusters_at(&geom, X, &pair, &sides, 0);
+    assert!(
+        matches!(&at0, Err(e) if e.escalates()),
+        "level 0 doesn't certify the tangents apart: {at0:?}"
     );
-    let out = form(&geom, X, &pair, beta, &sides).expect("formed");
+    let out = form(&geom, X, &pair, &sides).expect("formed");
     assert_eq!(out.rec.level, 1);
     assert_eq!(out.rec.degree(), x_count(&pair.terms));
     assert_eq!(out.rec.clusters.len(), 1);
-    assert_eq!(replay(&geom, X, &pair, beta, &sides, &out.rec), Ok(()));
+    assert_eq!(replay(&geom, X, &pair, &sides, &out.rec), Ok(()));
     let at_0 = XRec {
         level: 0,
         ..out.rec.clone()
     };
     assert_eq!(
-        replay(&geom, X, &pair, beta, &sides, &at_0),
-        Err(XReplayError::Form(XClusterError::Degenerate(whole)))
+        replay(&geom, X, &pair, &sides, &at_0),
+        Err(XReplayError::Form(at0.expect_err("escalates")))
     );
     let mut other = out.rec.clone();
     other.clusters[0].degree = -other.clusters[0].degree;
     assert_eq!(
-        replay(&geom, X, &pair, beta, &sides, &other),
+        replay(&geom, X, &pair, &sides, &other),
         Err(XReplayError::Differs)
     );
 }
@@ -1098,7 +1360,7 @@ fn cells_apart_are_charged() {
     );
     let recs = decide(&geom);
     let pair = recs.pair(&geom);
-    let out = recs.clusters(&geom, &pair, [1e-6; 2]).expect("formed");
+    let out = recs.clusters(&geom, &pair).expect("formed");
     assert!(out.rec.clusters.is_empty());
     // Two pieces' hulls per cell.
     assert!(out.pieces >= 8, "{} pieces", out.pieces);

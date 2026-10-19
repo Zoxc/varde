@@ -59,37 +59,48 @@
 //!
 //! **Clusters** ([`clusters`]). The cells are refined into the record's
 //! clusters ([`XRec`]): a box whose two pieces' shadows have certified
-//! disjoint hulls holds no crossing and is dropped; a box of non-zero
-//! degree whose z-order is clear (the pieces' heights along `ê` certified
-//! apart) or whose two pieces both lie within their bands (`β_e`, `β_g`,
-//! the hull's widths summed) is a cluster; a box of degree 0 whose
-//! z-order is clear or whose pieces are both that small is dropped (any
-//! crossings in it cancel and read one z-order); every other box splits.
-//! A box within the bands, or of clear z-order, is a leaf once its degree
-//! is known, so where the level doesn't certify its sides it reads the
-//! side records; any other box whose sides don't settle at its size
-//! without them splits too (its halves' may: a knot beside the other
-//! edge's shadow), as does a box the records leave unsettled while it is
-//! larger than the bands. The search goes on past the leaves whose
+//! disjoint hulls holds no crossing and is dropped. A box is a **leaf**
+//! once its z-order is clear (the pieces' heights along `ê` certified
+//! apart over it: its crossings, whatever their number, all read that
+//! one sign) or its shadow tangents are certified transversal over it
+//! (the cone of each piece's control point differences, which holds
+//! every tangent of a rational span with positive weights, of one strict
+//! sign of their cross product against the other's: the two shadows
+//! cross at most once in it). A leaf of non-zero degree is a cluster, of
+//! that degree, its z-order clear or read from its height record (a
+//! transversal leaf's degree is then `±1`); a leaf of degree 0 holds no
+//! crossing that counts and is dropped. Every other box splits, whatever
+//! its size and degree: no band stops the refinement, since a small box
+//! of degree 0 may hold a `±1` pair of crossings of opposite z-orders,
+//! which counts `±1`, not 0. Only a leaf's degree is read: where the
+//! level doesn't certify its sides it reads the side records, and a leaf
+//! the records leave unsettled (a cut inside a record's tangency with the
+//! ray's line) splits again. The search goes on past the leaves whose
 //! records aren't decided yet and asks for all of them at once
 //! ([`XClusterError::Need`]). A split cuts the larger piece's parameter
 //! (in 3D, by the hulls' summed widths; `e`'s on a tie), at the middle or
 //! the first shifted position (the face boxes' snapped positions) whose
-//! two halves both have degrees without the side records, else the other
-//! parameter likewise; where none does, at the first such position whose
-//! new corners are certified off the `+r̂` ray from 0 (no cut is made at a
-//! tangency of a record with the ray's line, which no record orders),
-//! else at the middle, the halves splitting again. A search testing more
-//! than [`MAX_BOXES`] boxes escalates ([`XClusterError::Boxes`]). A
-//! cluster of curved pieces whose shadow
-//! tangents aren't certified apart (the cone of the pieces' control
-//! point differences, which holds every tangent of a rational span with
-//! positive weights, against the other's) is a shadow tangency:
-//! [`XClusterError::Degenerate`], escalate. Two straight edges hold at
-//! most one crossing, so their whole cell is the one cluster where `X ≠
-//! 0`; if their shadows are exactly parallel (decided on the stored
-//! points) it reads the point–curve row at the end whose term counted
-//! the crossing ([`tie_point`]). A pair on one curve is never
+//! new corners are certified off the `+r̂` ray from 0 (no cut is made at
+//! a tangency of a record with the ray's line, which no record orders),
+//! else the other parameter likewise, else at the middle; an unsettled
+//! leaf's split takes the first such position whose two halves both have
+//! degrees without the side records where one does. Where the shadows
+//! are tangent or overlap, no box there ever
+//! becomes a leaf: the search escalates at the depth limit
+//! ([`XClusterError::Depth`]) or past [`MAX_BOXES`] boxes
+//! ([`XClusterError::Boxes`]).
+//!
+//! **Two straight edges** hold at most one crossing, so their whole cell
+//! is the one cluster where `X ≠ 0`. Where their shadows are exactly
+//! parallel (decided on the stored points; with `X ≠ 0` they are then
+//! collinear, the crossing the four terms' ties put at an end), the
+//! cluster is at the end whose term counted the crossing ([`tie_point`])
+//! and reads the point–curve row there ([`ZRow::PointCurve`]), valid only
+//! where the z-order is one sign over the whole overlap of the two
+//! shadows: decided exactly at the overlap's two ends (the heights are
+//! linear along it), the cluster's z-order is then clear; else the pair
+//! is refused ([`XClusterError::Collinear`]: the edges meet in 3D, or
+//! cross in height, over the overlap). A pair on one curve is never
 //! searched ([`XClusterError::Shared`]): its clusters come from the
 //! records alone ([`shared_clusters`](crate::records::xrec::shared_clusters)).
 //!
@@ -709,7 +720,16 @@ fn corner_off<S: Scalar>(pair: &XPair<'_>, cell: [u32; 2], t: Dyadic, s: Dyadic,
 
 /// The part of `c` over the extent `x`, cut at its exact dyadic ends.
 fn cut<S: Scalar>(c: &HomCurve<S, 3>, x: Extent, like: &S) -> HomCurve<S, 3> {
-    let (a, b) = (dy(x.lo()), dy(x.hi()));
+    cut_part(c, [dy(x.lo()), dy(x.hi())], like)
+}
+
+/// The part of `c` over `[a, b]` of its parameter, `0 ≤ a ≤ b ≤ 1`, cut
+/// at those values exactly.
+pub(crate) fn cut_part<S: Scalar>(
+    c: &HomCurve<S, 3>,
+    [a, b]: [f64; 2],
+    like: &S,
+) -> HomCurve<S, 3> {
     let fa = S::from_f64(a, like);
     let c = if a > 0.0 {
         let [_, r] = c.split_at(&fa);
@@ -795,20 +815,19 @@ fn within(at: [f64; 2], ext: Extent) -> Result<bool, XDegreeError> {
 /// Why an edge pair's clusters aren't formed at a level.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum XClusterError {
-    /// Boxes within the bands read these side and corner records, not
-    /// yet decided (every one the search met, in key order): fill them
+    /// Leaves read these side and corner records, not yet decided (every one the search met, in key order): fill them
     /// and form the clusters again.
     Need(Vec<XWant>),
     /// A box's degree isn't settled at this level, even with the side
     /// records: escalate.
     Degree(XBox, XDegreeError),
-    /// A cluster's shadow tangents aren't certified apart: a shadow
-    /// tangency of curved pieces, escalate (module docs).
-    Degenerate(XBox),
-    /// A box can't split further within the depth limit: escalate.
+    /// A box can't split further within the depth limit: escalate (a
+    /// shadow tangency, or shadows overlapping along a stretch; module
+    /// docs).
     Depth(XBox),
     /// The search tested more than [`MAX_BOXES`] boxes at this level
-    /// (pieces whose enclosures stay wider than the bands): escalate.
+    /// (shadows tangent or overlapping, where no box there is a leaf):
+    /// escalate.
     Boxes,
     /// More than [`MAX_SIDED`] boxes needed the side records (this one
     /// the next): the shadows overlap or nearly along a stretch, where no
@@ -816,6 +835,12 @@ pub enum XClusterError {
     Sided(XBox),
     /// More than [`MAX_LEAVES`] boxes at once.
     SizeLimit,
+    /// Two straight edges with collinear shadows whose z-order isn't one
+    /// sign over the overlap of their shadows (they meet in 3D there, or
+    /// cross in height): no cluster reads it until the crossings along
+    /// the overlap are found (module docs, "Two straight edges"). Exact,
+    /// so no level does better.
+    Collinear,
     /// The pair's edges lie on one curve: no geometric search, its
     /// clusters are the records'
     /// ([`shared_clusters`](crate::records::xrec::shared_clusters)).
@@ -828,7 +853,6 @@ impl XClusterError {
         matches!(
             self,
             XClusterError::Degree(..)
-                | XClusterError::Degenerate(_)
                 | XClusterError::Depth(_)
                 | XClusterError::Boxes
                 | XClusterError::Sided(_)
@@ -852,23 +876,19 @@ pub struct XClusters {
 enum Found {
     /// Its degree.
     Degree(i64),
-    /// Not certified without the side records, and the box is larger
-    /// than the bands: split it.
+    /// The side records leave it unsettled: split it.
     Split,
     /// It reads side records not yet decided, added to the wants.
     Wants,
 }
 
-/// A box's degree for the clusters: certified without the side records
-/// where it is, else [`Found::Split`] unless `sided`, which reads them,
-/// adding those it misses to `wants`.
-#[allow(clippy::too_many_arguments)]
+/// A leaf's degree for the clusters: certified without the side records
+/// where it is, else reading them, adding those it misses to `wants`.
 fn cluster_degree<S: Scalar>(
     x: XKey,
     pair: &XPair<'_>,
     sides: &XSides,
     b: &XBox,
-    (sided, small): (bool, bool),
     like: &S,
     (pieces, read): (&mut u64, &mut usize),
     wants: &mut Vec<XWant>,
@@ -876,16 +896,15 @@ fn cluster_degree<S: Scalar>(
     match plain_degree(pair, b, like, pieces) {
         Ok((d, _)) => Ok(Found::Degree(d)),
         Err(Plain::Shape) => Err(XClusterError::Degree(*b, XDegreeError::Shape)),
-        Err(Plain::Records) if !sided => Ok(Found::Split),
         Err(Plain::Records) if *read >= MAX_SIDED => Err(XClusterError::Sided(*b)),
         Err(Plain::Records) => {
             *read += 1;
             match sided_degree(x, pair, sides, b, like, pieces, wants) {
                 Ok(d) => Ok(Found::Degree(d)),
                 Err(XDegreeError::Need(_)) => Ok(Found::Wants),
-                // A box larger than the bands whose records don't settle
-                // it (a cut inside a tangency): its halves' may.
-                Err(XDegreeError::Unsettled) if !small => Ok(Found::Split),
+                // A leaf whose records don't settle it (a cut inside a
+                // tangency): its halves' may.
+                Err(XDegreeError::Unsettled) => Ok(Found::Split),
                 Err(e) => Err(XClusterError::Degree(*b, e)),
             }
         }
@@ -902,26 +921,18 @@ fn need(mut wants: Vec<XWant>) -> XClusterError {
 
 /// The clusters of pair `x` (`pair` its curves and terms, `sides` the
 /// square's side records) at precision level `level` ([`LEVELS`]: `f64`,
-/// double-double, then the big-float widths), `beta` the bands `[β_e,
-/// β_g]` (module docs); the record stores the level.
+/// double-double, then the big-float widths); the record stores the
+/// level.
 pub fn clusters_at<O: EntityOrder>(
     order: &O,
     x: XKey,
     pair: &XPair<'_>,
-    beta: [f64; 2],
     sides: &XSides,
     level: usize,
 ) -> Result<XClusters, XClusterError> {
     let mut out = match level {
-        0 => clusters(order, x, pair, beta, sides, &Bounded::exact(0.0)),
-        1 => clusters(
-            order,
-            x,
-            pair,
-            beta,
-            sides,
-            &Bounded::exact(Dd::from_f64(0.0)),
-        ),
+        0 => clusters(order, x, pair, sides, &Bounded::exact(0.0)),
+        1 => clusters(order, x, pair, sides, &Bounded::exact(Dd::from_f64(0.0))),
         _ => {
             let w = Width::ALL
                 .get(level - 2)
@@ -931,7 +942,6 @@ pub fn clusters_at<O: EntityOrder>(
                 order,
                 x,
                 pair,
-                beta,
                 sides,
                 &Bounded::exact(Big::from_f64(0.0, w)),
             )
@@ -948,12 +958,11 @@ pub fn form<O: EntityOrder>(
     order: &O,
     x: XKey,
     pair: &XPair<'_>,
-    beta: [f64; 2],
     sides: &XSides,
 ) -> Result<XClusters, XClusterError> {
     let mut last = XClusterError::SizeLimit;
     for level in 0..LEVELS {
-        match clusters_at(order, x, pair, beta, sides, level) {
+        match clusters_at(order, x, pair, sides, level) {
             Ok(c) => return Ok(c),
             Err(e) if e.escalates() => last = e,
             Err(e) => return Err(e),
@@ -978,11 +987,10 @@ pub fn replay<O: EntityOrder>(
     order: &O,
     x: XKey,
     pair: &XPair<'_>,
-    beta: [f64; 2],
     sides: &XSides,
     rec: &XRec,
 ) -> Result<(), XReplayError> {
-    let again = clusters_at(order, x, pair, beta, sides, rec.level).map_err(XReplayError::Form)?;
+    let again = clusters_at(order, x, pair, sides, rec.level).map_err(XReplayError::Form)?;
     if again.rec == *rec {
         Ok(())
     } else {
@@ -991,14 +999,12 @@ pub fn replay<O: EntityOrder>(
 }
 
 /// The clusters of pair `x` (`pair` its curves and terms, `sides` the
-/// square's side records) at `like`'s level, `beta` the bands `[β_e,
-/// β_g]` (module docs). The record's level is the caller's to set
-/// ([`clusters_at`]).
+/// square's side records) at `like`'s level (module docs). The record's
+/// level is the caller's to set ([`clusters_at`]).
 pub fn clusters<S: Scalar, O: EntityOrder>(
     order: &O,
     x: XKey,
     pair: &XPair<'_>,
-    beta: [f64; 2],
     sides: &XSides,
     like: &S,
 ) -> Result<XClusters, XClusterError> {
@@ -1008,66 +1014,14 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
     let spans = [pair.e.span_count(), pair.g.span_count()];
     let mut pieces = 0u64;
     if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {
-        let whole = XBox {
-            cell: [0, 0],
-            t: Extent::WHOLE,
-            s: Extent::WHOLE,
-        };
-        let mut wants = Vec::new();
-        let degree = match cluster_degree(
-            x,
-            pair,
-            sides,
-            &whole,
-            (true, true),
-            like,
-            (&mut pieces, &mut 0),
-            &mut wants,
-        )? {
-            Found::Degree(d) => d,
-            Found::Wants => return Err(need(wants)),
-            Found::Split => return Err(XClusterError::Degree(whole, XDegreeError::Unsettled)),
-        };
-        if degree == 0 {
-            return Ok(XClusters {
-                rec: XRec::default(),
-                boxes: Vec::new(),
-                pieces,
-            });
-        }
-        let row = if parallel([a, b], [g0, g1]) {
-            match tie_point(order, x, &pair.terms) {
-                Some(p) => ZRow::PointCurve(p),
-                None => {
-                    return Ok(XClusters {
-                        rec: XRec::default(),
-                        boxes: Vec::new(),
-                        pieces,
-                    });
-                }
-            }
-        } else {
-            ZRow::EdgeEdge
-        };
-        let shape = || XClusterError::Degree(whole, XDegreeError::Shape);
-        let pe = pair.e.span(0, like).ok_or_else(shape)?;
-        let pg = pair.g.span(0, like).ok_or_else(shape)?;
-        let clear = hulls(&pe, &pg, like, &mut pieces).and_then(|h| h.z_order());
-        return Ok(XClusters {
-            rec: XRec {
-                clusters: vec![cluster(&whole, degree, clear, row)],
-                level: 0,
-            },
-            boxes: vec![whole],
-            pieces,
-        });
+        return straight_clusters(order, x, pair, [[a, b], [g0, g1]], sides, like);
     }
     let mut work: Vec<(XBox, Option<i64>)> = XBox::cells(spans).map(|b| (b, None)).collect();
     work.reverse();
     let mut found: Vec<(XBox, XCluster)> = Vec::new();
-    // The records the boxes within the bands miss: such a box is a leaf
-    // whatever its degree, so the search goes on without it and asks for
-    // them all at once.
+    // The records the leaves miss: such a box is a leaf whatever its
+    // degree, so the search goes on without it and asks for them all at
+    // once.
     let mut wants = Vec::new();
     // The boxes that read the side records.
     let mut read = 0usize;
@@ -1089,24 +1043,31 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
             continue;
         }
         let clear = h.z_order();
-        let small = h.size[0] <= beta[0] && h.size[1] <= beta[1];
+        // A leaf: one z-order over the box, or at most one crossing in it.
+        let leaf = clear.is_some() || transversal(&pe, &pg, like, &mut pieces);
         let first = if h.size[1] > h.size[0] {
             Dir::V
         } else {
             Dir::U
         };
+        if !leaf {
+            // Its degree isn't read: it splits whatever it is, where no
+            // record would be read at the new corners.
+            let halves = split_off(pair, &b, first, like)?;
+            // Lower half processed first.
+            work.push((halves[1], None));
+            work.push((halves[0], None));
+            continue;
+        }
         let degree = match degree {
             Some(d) => d,
-            // A box within the bands, or of clear z-order, is a leaf once
-            // its degree is known: the side records settle it. Any other
-            // box whose sides (at the edges' knots, or a split's) the
-            // level doesn't certify splits: its halves' may be.
+            // A leaf is one once its degree is known: the side records
+            // settle it, or its halves' may.
             None => match cluster_degree(
                 x,
                 pair,
                 sides,
                 &b,
-                (small || clear.is_some(), small),
                 like,
                 (&mut pieces, &mut read),
                 &mut wants,
@@ -1121,20 +1082,15 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
                 }
             },
         };
-        if degree == 0 && (clear.is_some() || small) {
+        if degree == 0 {
             continue;
         }
-        if clear.is_some() || small {
-            if clear.is_none() && !transversal(&pe, &pg, like, &mut pieces) {
-                return Err(XClusterError::Degenerate(b));
-            }
-            found.push((b, cluster(&b, degree, clear, ZRow::EdgeEdge)));
-            continue;
+        if clear.is_none() && degree.abs() != 1 {
+            // Transversal shadows cross at most once: the sides contradict
+            // the cone at this level.
+            return Err(XClusterError::Degree(b, XDegreeError::Unsettled));
         }
-        let halves = split_box(pair, &b, first, like, &mut pieces)?;
-        // Lower half processed first.
-        work.push(halves[1]);
-        work.push(halves[0]);
+        found.push((b, cluster(&b, degree, clear, ZRow::EdgeEdge)));
     }
     if !wants.is_empty() {
         return Err(need(wants));
@@ -1144,6 +1100,68 @@ pub fn clusters<S: Scalar, O: EntityOrder>(
     Ok(XClusters {
         rec: XRec { clusters, level: 0 },
         boxes,
+        pieces,
+    })
+}
+
+/// The clusters of two straight edges `ends` (module docs, "Two straight
+/// edges"): their one cell, the one cluster where its degree isn't 0.
+fn straight_clusters<S: Scalar, O: EntityOrder>(
+    order: &O,
+    x: XKey,
+    pair: &XPair<'_>,
+    ends: [[[f64; 3]; 2]; 2],
+    sides: &XSides,
+    like: &S,
+) -> Result<XClusters, XClusterError> {
+    let mut pieces = 0u64;
+    let whole = XBox {
+        cell: [0, 0],
+        t: Extent::WHOLE,
+        s: Extent::WHOLE,
+    };
+    let none = |pieces| XClusters {
+        rec: XRec::default(),
+        boxes: Vec::new(),
+        pieces,
+    };
+    let mut wants = Vec::new();
+    let degree = match cluster_degree(
+        x,
+        pair,
+        sides,
+        &whole,
+        like,
+        (&mut pieces, &mut 0),
+        &mut wants,
+    )? {
+        Found::Degree(d) => d,
+        Found::Wants => return Err(need(wants)),
+        Found::Split => return Err(XClusterError::Degree(whole, XDegreeError::Unsettled)),
+    };
+    if degree == 0 {
+        return Ok(none(pieces));
+    }
+    let [e, g] = ends;
+    let (row, clear) = if parallel(e, g) {
+        let Some(p) = tie_point(order, x, &pair.terms) else {
+            return Ok(none(pieces));
+        };
+        let z = collinear_z(e, g).ok_or(XClusterError::Collinear)?;
+        (ZRow::PointCurve(p), Some(z))
+    } else {
+        let shape = || XClusterError::Degree(whole, XDegreeError::Shape);
+        let pe = pair.e.span(0, like).ok_or_else(shape)?;
+        let pg = pair.g.span(0, like).ok_or_else(shape)?;
+        let clear = hulls(&pe, &pg, like, &mut pieces).and_then(|h| h.z_order());
+        (ZRow::EdgeEdge, clear)
+    };
+    Ok(XClusters {
+        rec: XRec {
+            clusters: vec![cluster(&whole, degree, clear, row)],
+            level: 0,
+        },
+        boxes: vec![whole],
         pieces,
     })
 }
@@ -1163,12 +1181,48 @@ fn cluster(b: &XBox, degree: i64, clear: Option<Sign>, row: ZRow) -> XCluster {
     }
 }
 
+/// Splits a box that isn't a leaf (module docs), its halves' degrees not
+/// read: `first`'s parameter first, at the middle or the first shifted
+/// position whose new corners are certified off the `+r̂` ray from 0,
+/// else the other parameter likewise; where none is, at the middle of
+/// `first`'s parameter.
+fn split_off<S: Scalar>(
+    pair: &XPair<'_>,
+    b: &XBox,
+    first: Dir,
+    like: &S,
+) -> Result<[XBox; 2], XClusterError> {
+    let mut fallback = None;
+    for dir in [first, crate::count::boxes::other(first)] {
+        let (ext, across) = match dir {
+            Dir::U => (b.t, b.s),
+            Dir::V => (b.s, b.t),
+        };
+        for k in SPLIT_SIXTEENTHS {
+            let Some(at) = ext.snapped(k) else {
+                continue;
+            };
+            let Some(halves) = b.split_at(dir, at) else {
+                continue;
+            };
+            let off = [across.lo(), across.hi()].into_iter().all(|o| match dir {
+                Dir::U => corner_off(pair, b.cell, at, o, like),
+                Dir::V => corner_off(pair, b.cell, o, at, like),
+            });
+            if off {
+                return Ok(halves);
+            }
+            fallback.get_or_insert(halves);
+        }
+    }
+    fallback.ok_or(XClusterError::Depth(*b))
+}
+
 /// Splits `b` (module docs): `first`'s parameter first, at the middle or
 /// the first shifted position whose halves both have degrees without the
 /// side records, else the other parameter likewise; where no position
-/// does, at the middle of `first`'s parameter, the halves' degrees left
-/// to find (each splits again until its own degree settles or it is
-/// within the bands).
+/// does, at the first position whose new corners are certified off the
+/// `+r̂` ray from 0, else the middle, the halves' degrees left to find.
 fn split_box<S: Scalar>(
     pair: &XPair<'_>,
     b: &XBox,
@@ -1278,7 +1332,7 @@ fn hulls<S: Scalar>(
         let f = c.map_linear(&rows).control_box()?;
         let b = c.control_box()?;
         let size = b.iter().fold(0.0f64, |s, [lo, hi]| s + (hi - lo));
-        // Rounded up: a size within the band is certified.
+        // Rounded up: the larger piece is the one split.
         Some((f, crate::num::bounded::up(size)))
     };
     let (fe, se) = one(pe)?;
@@ -1330,6 +1384,95 @@ fn transversal<S: Scalar>(
         }
     }
     sign.is_some()
+}
+
+/// The z-order of two straight edges whose shadows are exactly parallel,
+/// over the overlap of their shadows (module docs, "Two straight edges"),
+/// exactly on the stored points: `Pos` where `g` is above `e` at both of
+/// the overlap's ends (so all along it: the heights are linear there),
+/// `Neg` where below at both. An edge whose shadow is a point (an edge
+/// along `ê`) is all its heights at that point. `None` where it isn't
+/// one strict sign (the edges meet in 3D over the overlap, or cross in
+/// height), where the shadows aren't collinear or don't overlap, or a
+/// coordinate isn't finite.
+fn collinear_z(e: [[f64; 3]; 2], g: [[f64; 3]; 2]) -> Option<Sign> {
+    let q = |p: [f64; 3]| -> Option<[Rational; 3]> {
+        Some([
+            Rational::try_from(p[0]).ok()?,
+            Rational::try_from(p[1]).ok()?,
+            Rational::try_from(p[2]).ok()?,
+        ])
+    };
+    let axis = |v: glam::DVec3| [v.x, v.y, v.z].map(|c| Rational::try_from(c).expect("finite"));
+    let (r, n, up) = (axis(R_HAT), axis(NU), axis(UP));
+    let dot = |a: &[Rational; 3], b: &[Rational; 3]| -> Rational {
+        &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
+    };
+    let pts = [q(e[0])?, q(e[1])?, q(g[0])?, q(g[1])?];
+    // Shadow coordinates and heights.
+    let sh: Vec<[Rational; 2]> = pts.iter().map(|p| [dot(&r, p), dot(&n, p)]).collect();
+    let ht: Vec<Rational> = pts.iter().map(|p| dot(&up, p)).collect();
+    let diff = |i: usize, j: usize| [&sh[j][0] - &sh[i][0], &sh[j][1] - &sh[i][1]];
+    let zero = Rational::from(0u32);
+    let dir = [diff(0, 1), diff(2, 3)]
+        .into_iter()
+        .find(|d| d[0] != zero || d[1] != zero)?;
+    let cross = |a: &[Rational; 2], b: &[Rational; 2]| &a[0] * &b[1] - &a[1] * &b[0];
+    if [diff(0, 1), diff(0, 2), diff(0, 3)]
+        .iter()
+        .any(|d| cross(&dir, d) != zero)
+    {
+        return None;
+    }
+    let pos: Vec<Rational> = sh
+        .iter()
+        .map(|s| &dir[0] * &s[0] + &dir[1] * &s[1])
+        .collect();
+    let span = |i: usize| {
+        if pos[i] <= pos[i + 1] {
+            [pos[i].clone(), pos[i + 1].clone()]
+        } else {
+            [pos[i + 1].clone(), pos[i].clone()]
+        }
+    };
+    let ([e0, e1], [g0, g1]) = (span(0), span(2));
+    let lo = if e0 > g0 { e0 } else { g0 };
+    let hi = if e1 < g1 { e1 } else { g1 };
+    if lo > hi {
+        return None;
+    }
+    // The heights of edge `i` (its ends `i`, `i + 1`) at position `x` in
+    // its range.
+    let at = |i: usize, x: &Rational| -> [Rational; 2] {
+        let (pa, pb) = (&pos[i], &pos[i + 1]);
+        let (ha, hb) = (&ht[i], &ht[i + 1]);
+        if pa == pb {
+            if ha <= hb {
+                [ha.clone(), hb.clone()]
+            } else {
+                [hb.clone(), ha.clone()]
+            }
+        } else {
+            let v = ha + (x - pa) / (pb - pa) * (hb - ha);
+            [v.clone(), v]
+        }
+    };
+    let mut sign = None;
+    for x in [&lo, &hi] {
+        let ([el, eh], [gl, gh]) = (at(0, x), at(2, x));
+        let here = if gl > eh {
+            Sign::Pos
+        } else if gh < el {
+            Sign::Neg
+        } else {
+            return None;
+        };
+        if sign.is_some_and(|s| s != here) {
+            return None;
+        }
+        sign = Some(here);
+    }
+    sign
 }
 
 /// Whether two straight edges' shadows are exactly parallel: `(T_e ×

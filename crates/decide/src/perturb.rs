@@ -614,11 +614,27 @@ pub fn decide_flat_orders(
 pub trait Curved: Scalar {
     /// `√self`.
     fn sqrt(&self) -> Self;
+
+    /// The same value with its error widened by `by ≥ 0`: a value known
+    /// only to within `by` of this one (an enclosure's half width).
+    fn widened(&self, by: f64) -> Self;
+
+    /// The value alone, as an exact one: a point inside its enclosure
+    /// (for a Newton step's centre).
+    fn center(&self) -> Self;
 }
 
 impl Curved for Bounded<f64> {
     fn sqrt(&self) -> Self {
         Bounded::<f64>::sqrt(*self)
+    }
+
+    fn widened(&self, by: f64) -> Self {
+        self.with_trunc(by)
+    }
+
+    fn center(&self) -> Self {
+        Bounded::exact(self.v)
     }
 }
 
@@ -626,12 +642,41 @@ impl Curved for Bounded<Dd> {
     fn sqrt(&self) -> Self {
         Bounded::<Dd>::sqrt(*self)
     }
+
+    fn widened(&self, by: f64) -> Self {
+        self.with_trunc(by)
+    }
+
+    fn center(&self) -> Self {
+        Bounded::exact(self.v)
+    }
 }
 
 impl<B: BigF> Curved for Bounded<B> {
     fn sqrt(&self) -> Self {
         Bounded::<B>::sqrt(self)
     }
+
+    fn widened(&self, by: f64) -> Self {
+        self.clone().with_trunc(by)
+    }
+
+    fn center(&self) -> Self {
+        Bounded::exact(self.v.clone())
+    }
+}
+
+/// A value known to lie in `[lo, hi]` at `like`'s level: their middle,
+/// widened by half their distance (rounded up); uncertified where a bound
+/// isn't finite.
+pub fn between<S: Curved>(lo: f64, hi: f64, like: &S) -> S {
+    if !(lo.is_finite() && hi.is_finite()) || lo > hi {
+        let one = S::int(1, like);
+        return one.div(&S::int(0, like));
+    }
+    let mid = S::from_f64(lo, like).mid(&S::from_f64(hi, like));
+    let half = crate::num::bounded::up(0.5 * crate::num::bounded::up(hi - lo));
+    if half == 0.0 { mid } else { mid.widened(half) }
 }
 
 /// A point at a precision level with its rates along the motions
@@ -803,6 +848,99 @@ pub fn z_order<S: Curved>(
 ) -> Option<Coeffs<S>> {
     let m = oriented(unit3(&cross3(te, tg)), &e.at[0])?;
     Some(along(&m, g, e))
+}
+
+/// The edge–edge z-order orders, curved, over a box of the two edges'
+/// parameters holding their shadows' crossing: an enclosure of `m·Δₖ`
+/// per motion for every `m = unit(T_e × T_g)` turned to `m·ê > 0` with
+/// `T_e` a positive combination of the vectors `de` and `T_g` of `dg`
+/// (the cones of the pieces' control point differences, which hold every
+/// tangent of a rational span with positive weights over the piece), and
+/// `deltas[k]` an enclosure of `Δg − Δe` there along motion `k`. With
+/// `cᵢⱼ = deᵢ × dgⱼ` and `vᵢⱼ = ±cᵢⱼ·Δ/|cᵢⱼ|` (the sign that turns
+/// `cᵢⱼ` up), `m·Δ` is a positive combination of the `vᵢⱼ` over a sum no
+/// smaller than its length, so it lies in `[min vᵢⱼ, |Δ|]` where every
+/// `vᵢⱼ` is certified positive (and `[−|Δ|, max vᵢⱼ]` negative), else in
+/// `[−|Δ|, |Δ|]`. `None` where a `cᵢⱼ`'s upward side isn't certified,
+/// one strict sign for all: the shadow tangents aren't certified
+/// transversal over the box.
+pub fn z_order_cone<S: Curved>(
+    de: &[[S; 3]],
+    dg: &[[S; 3]],
+    deltas: &[[S; 3]; ORDERS],
+) -> Option<[[f64; 2]; ORDERS]> {
+    let like = &de.first()?[0];
+    let up = lit3(UP, like);
+    let mut cs = Vec::new();
+    let mut side = None;
+    for a in de {
+        for b in dg {
+            let c = cross3(a, b);
+            let s = dot3(&c, &up).sign()?;
+            if s == Ordering::Equal || side.is_some_and(|x| x != s) {
+                return None;
+            }
+            side = Some(s);
+            cs.push(c);
+        }
+    }
+    let flip = side? == Ordering::Less;
+    Some(std::array::from_fn(|k| {
+        let d = &deltas[k];
+        let len = dot3(d, d).sqrt().enclose()[1];
+        let wide = [-len, len];
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut sign = None;
+        for c in &cs {
+            let v = dot3(&unit3(c), d);
+            let v = if flip { v.neg() } else { v };
+            let [vl, vh] = v.enclose();
+            let s = v.sign().filter(|&s| s != Ordering::Equal);
+            if s.is_none() || sign.is_some_and(|x| Some(x) != s) {
+                return wide;
+            }
+            sign = s;
+            if vl < lo {
+                lo = vl;
+            }
+            if vh > hi {
+                hi = vh;
+            }
+        }
+        match sign {
+            Some(Ordering::Greater) => [lo, len],
+            Some(Ordering::Less) => [-len, hi],
+            _ => wide,
+        }
+    }))
+}
+
+/// The point–curve z-order orders, exactly, at a point `q` lying on a
+/// curve with the tangent `tangent` there (any non-zero multiple): the
+/// signs of the derivatives of the curve's height above `q` along each
+/// motion, `ê·(ΔC − Δq) + (ê·T)·ṡ` with `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`
+/// (the foot sliding along the curve to stay under the moved `q`; §
+/// "Rows" in [`crate::records::height`]), `deltas[k] = Δq − ΔC` along
+/// motion `k`. Times `‖T_xy‖²·|ê|`-like positive factors that is
+/// `(u·T)(T·Δ) − (u·Δ)(T·T)`, `u` = [`UP`], which these are the exact
+/// signs of. All `Equal` where `T` is along `UP` (no foot to slide).
+pub fn point_curve_signs(
+    tangent: &[Rational; 3],
+    deltas: &[[Rational; 3]; ORDERS],
+) -> [ExactSign; ORDERS] {
+    let u = [UP.x, UP.y, UP.z].map(rat);
+    let d3 = |a: &[Rational; 3], b: &[Rational; 3]| -> Rational {
+        &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
+    };
+    let (a, tt) = (d3(&u, tangent), d3(tangent, tangent));
+    let vertical = &tt * d3(&u, &u) == &a * &a;
+    deltas.each_ref().map(|d| {
+        if vertical {
+            return Ok(Ordering::Equal);
+        }
+        let v = &a * d3(tangent, d) - d3(&u, d) * &tt;
+        Ok(v.cmp(&Rational::from(0u32)))
+    })
 }
 
 /// A curve's point at `s` and its tangent there, `W·P′ − W′·P` (`W²`

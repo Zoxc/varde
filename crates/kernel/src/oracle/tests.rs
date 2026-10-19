@@ -339,7 +339,9 @@ fn placements_once_refused_agree() {
 /// bent off the chord the edge–edge records read, so the faces' crossings
 /// split the other way (the edges are straight exactly since); band seed
 /// 58, a vertex whose count against a cylinder's face read a height no
-/// model gave, now its exact column hit's.
+/// model gave, now its exact column hit's; shared-corner seed 0, edge
+/// pairs at the shared corner whose crossing's z-order a stand-in once
+/// read from the geometry, now their edge–edge height records.
 /// Seed 31 only by default (each takes seconds).
 #[test]
 fn adversarial_placements_once_miscounted_agree() {
@@ -357,6 +359,7 @@ fn adversarial_placements_once_miscounted_agree() {
             ("roof-ridge", 2),
             ("roof-ridge", 44),
             ("band of an edge", 58),
+            ("shared corner", 0),
         ],
     );
     let outs = par(cases.len() as u64, threads(), &|i| {

@@ -693,6 +693,132 @@ fn z_order_rows_are_the_derivatives_at_ties() {
     }
 }
 
+/// The edge–edge z-order orders over a box: random rational quadratics
+/// through one point (a tie), cut to small pieces about it. The cone
+/// enclosure of each order holds the row at the crossing, and for small
+/// pieces it certifies the row's sign.
+#[test]
+fn z_order_cones_hold_the_row_over_a_box() {
+    let mut certified = 0;
+    for seed in varde_testing::seeds(8, 128) {
+        let mut r = Rng::new(seed);
+        let ctrl_e = random_span(&mut r);
+        let ctrl_g0 = random_span(&mut r);
+        let (s0, t0) = (r.range(0.3, 0.7), r.range(0.3, 0.7));
+        let (x, te) = curve_point(&span(&ctrl_e, |x| x.clone()), &big(t0));
+        let (y, _) = curve_point(&span(&ctrl_g0, |x| x.clone()), &big(s0));
+        let shift = sub3(&x, &y);
+        let ctrl_g: Ctrl = ctrl_g0
+            .iter()
+            .map(|(p, w)| (add3(p, &shift), w.clone()))
+            .collect();
+        let (xg, tg) = curve_point(&span(&ctrl_g, |x| x.clone()), &big(s0));
+        if f(&dot3(&unit3(&cross3(&te, &tg)), &up())).abs() < 0.1 {
+            continue;
+        }
+        let own = r.field();
+        let e = MovingAt {
+            at: x.clone(),
+            rates: Field::rates_big(&own, &x),
+        };
+        let g = MovingAt::fixed(xg);
+        let row = z_order(&e, &te, &g, &tg).expect("crossing shadows");
+        let deltas: [[B; 3]; ORDERS] = std::array::from_fn(|k| sub3(&g.rates[k], &e.rates[k]));
+        for h in [0.25, 1.0 / 64.0, 1.0 / 4096.0] {
+            let piece = |c: &Ctrl, at: f64| {
+                let full = span(c, |x| x.clone());
+                let [_, right] = full.split_at(&big(at - h));
+                let [left, _] = right.split_at(&big(2.0 * h).div(&big(1.0 - (at - h))));
+                let w = left.weights().coefs().to_vec();
+                let pts: Vec<[B; 3]> = (0..w.len())
+                    .map(|i| [0, 1, 2].map(|k| left.coords()[k].coefs()[i].div(&w[i])))
+                    .collect();
+                let mut out = Vec::new();
+                for i in 0..pts.len() {
+                    for j in i + 1..pts.len() {
+                        out.push(sub3(&pts[j], &pts[i]));
+                    }
+                }
+                out
+            };
+            let Some(cone) = z_order_cone(&piece(&ctrl_e, t0), &piece(&ctrl_g, s0), &deltas) else {
+                continue;
+            };
+            for k in 0..ORDERS {
+                let v = f(&row.ord[k]);
+                let [lo, hi] = cone[k];
+                assert!(
+                    lo <= v && v <= hi,
+                    "seed {seed} h {h} order {k}: {v} not in {:?}",
+                    cone[k]
+                );
+                if h < 0.001 && (lo > 0.0 || hi < 0.0) {
+                    certified += 1;
+                }
+            }
+        }
+    }
+    assert!(certified > 0);
+}
+
+/// The point–curve z-order row's signs at a point on a curve (a tie),
+/// the point or the curve moving: the curve's height above the moved
+/// point, its foot solved again, moves with those signs.
+#[test]
+fn point_curve_signs_are_the_derivatives_at_ties() {
+    let mut checked = 0;
+    for seed in varde_testing::seeds(8, 128) {
+        let mut r = Rng::new(seed);
+        let ctrl = random_span(&mut r);
+        let on_a = r.a_is_first();
+        let own = r.field();
+        // `q` at the span's start control point, the tangent there the
+        // chord to the middle one.
+        let q0 = ctrl[0].0.clone();
+        let tangent: [Q; 3] = std::array::from_fn(|i| {
+            Q::try_from(f(&ctrl[1].0[i])).expect("finite") - Q::try_from(f(&q0[i])).expect("finite")
+        });
+        let at = DVec3::new(f(&q0[0]), f(&q0[1]), f(&q0[2]));
+        // `q`'s rates less the curve's there.
+        let rates = Field::rates(&own, at);
+        let deltas: [[Q; 3]; ORDERS] = std::array::from_fn(|k| {
+            let d = rate_rational(&rates[k]);
+            if on_a { d } else { d.map(|x| -x) }
+        });
+        let signs = point_curve_signs(&tangent, &deltas);
+        for k in 1..=ORDERS {
+            let me = mover(true, &own, k);
+            let height = |d: &B| {
+                let (c, q) = if on_a {
+                    (span(&ctrl, |x| x.clone()), me(&q0, d))
+                } else {
+                    (span(&ctrl, |x| me(x, d)), q0.clone())
+                };
+                let s = solve1(big(0.0), |s| {
+                    let (p, t) = curve_point(&c, s);
+                    let [t0, t1] = shadow(&t);
+                    let [d0, d1] = shadow(&sub3(&q, &p));
+                    t0.mul(&d0).add(&t1.mul(&d1))
+                });
+                dot3(&up(), &sub3(&curve_point(&c, &s).0, &q))
+            };
+            let d = big(p2(-30));
+            let fd = f(&height(&d).sub(&height(&d.neg())).div(&d.add(&d)));
+            if fd.abs() < 1e-6 {
+                continue;
+            }
+            let want = if fd > 0.0 {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            };
+            assert_eq!(signs[k - 1], Ok(want), "seed {seed} order {k}: {fd}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 8, "{checked} checked");
+}
+
 fn key(row: Row) -> TieKey {
     TieKey {
         row,
