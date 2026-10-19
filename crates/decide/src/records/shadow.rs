@@ -83,20 +83,36 @@
 //! every order and [`decide`]'s guard is reached, [`Fail::Internal`].
 //! Curved edges have their own ray records ([`super::ray`]).
 //!
+//! **Along the ray line.** An edge whose shadow lies on `q`'s ray line
+//! exactly (both ends on it, by an exact flat predicate on the stored
+//! values) has no crossing of its own: the moved edge crosses the moved
+//! line where its side, the first-order row `ν·(ΔC − Δq)` along it (the
+//! next order where that one is 0), changes, from its start's record's
+//! side to its end's, one crossing per change, on the ray where the
+//! change lies ahead of `q` ([`along_changes`](super::ray::along_changes),
+//! the curved levels at the caller's band, the field along the edge from
+//! [`ShadowGeometry::straight_rates`]). The record is their sum. Where the
+//! field is constant along the edge the row has one sign: the ends'
+//! records decide as above. A change of side at `q`'s foot escalates.
+//!
 //! [`decide`]: crate::num::decide::decide
 
 use malachite::Rational;
+use smallvec::SmallVec;
 
 use crate::bezier::roots::Work as RootWork;
 use crate::ids::{EdgeId, VertId};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
-use crate::num::decide::{Fail, Row, Sign, TieKey};
-use crate::num::exact::{self, Num, Pred, Work, dot, point, sub};
-use crate::perturb::{LineShadow, Moving, Seg, ShadowAxis, VvShadow, decide_flat};
+use crate::num::decide::{Band, Fail, Row, Sign, TieKey, decide};
+use crate::num::exact::{self, Num, ORDERS, Pred, Work, dot, point, sub};
+use crate::perturb::{
+    Curved, LineShadow, Moving, MovingAt, R_HAT, Seg, ShadowAxis, VvShadow, between, decide_flat,
+    vv_shadow,
+};
 use crate::records::keys::{Operand, Point, RayKey, RecordKey, VvKey};
-use crate::records::ray::RayLevel;
+use crate::records::ray::{Crossing, RayLevel, along_changes};
 use crate::records::table::{FillError, Fresh, Table, TableError};
 
 /// A point against a vertex of the other operand, oriented from the
@@ -184,6 +200,16 @@ pub trait ShadowGeometry {
     /// on its shadow line (the direction field's value there; zero on
     /// `B`). Asked only of straight edges.
     fn line(&self, q: Point, g: EdgeId) -> Seg;
+
+    /// The rates of straight edge `g`'s point at the parameter `t` (from
+    /// its lower-id end, an enclosure at its level) for `q`'s record: the
+    /// direction field there on `A`, zero on `B`. Read only where the
+    /// edge's shadow lies on `q`'s ray line (module docs, "Along the ray
+    /// line"). By default [`line`](Self::line)'s rates, a field constant
+    /// along the edge.
+    fn straight_rates<S: Curved>(&self, q: Point, g: EdgeId, t: &S) -> [[S; 3]; ORDERS] {
+        self.line(q, g).rates.each_ref().map(|r| r.at(t))
+    }
 }
 
 /// A record decided, and what deciding it ran, for the pass to charge.
@@ -526,11 +552,14 @@ impl Shadows {
     /// Decides the ray records of `wanted` not yet stored: first the
     /// point–vertex records of their edges' ends not yet stored, in one
     /// pass, then the rays, in another. Every ray key's edge must be
-    /// straight ([`ShadowGeometry::line`]).
+    /// straight ([`ShadowGeometry::line`]). `band` is the rung's curved
+    /// band, read only by an edge lying on its point's ray line (module
+    /// docs, "Along the ray line").
     pub fn fill_rays<G, P>(
         &mut self,
         wanted: impl IntoIterator<Item = RayKey>,
         geom: &G,
+        band: Band,
         pass: &mut P,
     ) -> Result<(), ShadowError<P::Error>>
     where
@@ -548,7 +577,9 @@ impl Shadows {
         self.fill_vv(ends.collect::<Vec<_>>(), geom, pass)?;
         let vv = &self.vv;
         let values = pass
-            .run(batch.keys(), &|k: &Fresh<RayKey>| decide_ray(k, vv, geom))
+            .run(batch.keys(), &|k: &Fresh<RayKey>| {
+                decide_ray(k, vv, geom, band)
+            })
             .map_err(ShadowError::Pass)?;
         self.ray
             .insert(batch, values)
@@ -582,10 +613,15 @@ impl Shadows {
     /// the first whose answer differs (point–vertex records first, each
     /// table in key order): a check that the answers are functions of
     /// their keys. Ray records read their ends' stored records, which
-    /// counts as reads of those.
-    pub fn replay<G: ShadowGeometry>(&self, geom: &G) -> Result<(), RecordKey> {
+    /// counts as reads of those. `band` as in
+    /// [`fill_rays`](Self::fill_rays).
+    pub fn replay<G: ShadowGeometry>(&self, geom: &G, band: Band) -> Result<(), RecordKey> {
         replay(&self.vv, |k| decide_vv(k, geom), RecordKey::Vv)?;
-        replay(&self.ray, |k| decide_ray(k, &self.vv, geom), RecordKey::Ray)
+        replay(
+            &self.ray,
+            |k| decide_ray(k, &self.vv, geom, band),
+            RecordKey::Ray,
+        )
     }
 }
 
@@ -754,6 +790,7 @@ fn decide_ray<G: ShadowGeometry>(
     k: &Fresh<RayKey>,
     vv: &Table<VvKey, VvRec>,
     geom: &G,
+    band: Band,
 ) -> Decided<RayRec> {
     let key = *k.key();
     let q = key.q;
@@ -770,8 +807,43 @@ fn decide_ray<G: ShadowGeometry>(
         };
         return (Err(fail), Cost::default());
     };
+    let (on0, on1) = (r0.on_ray(q.operand), r1.on_ray(q.operand));
+    // An edge lying on `q`'s ray line, exactly: crossed where its side
+    // moved changes along it (module docs, "Along the ray line").
+    let line = geom.line(q, key.g);
+    let at = geom.point(q).at;
+    let (on_line, work) = on_ray_line(at, line.a, line.b);
+    let mut cost = Cost::exact(work);
+    if on_line {
+        let mut along = AlongLine {
+            geom,
+            key,
+            line: [line.a, line.b],
+            ends: [(r0.side, on0), (r1.side, on1)],
+            band,
+            tie: tie(Row::VertexCurveShadow),
+        };
+        let r = ladder(&mut along, 0, &mut cost).expect("the first level runs");
+        let rec = r.and_then(|cs| {
+            let n: i32 = cs.iter().map(|c| i32::from(c.sign.as_i8())).sum();
+            let crossing = match n {
+                0 => None,
+                1 => Some(Sign::Pos),
+                -1 => Some(Sign::Neg),
+                // The changes alternate: a sum past one is a bug.
+                _ => {
+                    return Err(Fail::Internal {
+                        key: tie(Row::VertexCurveShadow),
+                    });
+                }
+            };
+            Ok(RayRec { crossing })
+        });
+        return (rec, cost);
+    }
+    let cost = cost;
     if r0.side == r1.side {
-        return (Ok(RayRec { crossing: None }), Cost::default());
+        return (Ok(RayRec { crossing: None }), cost);
     }
     // `ρ × T_g` seen from above: `ν·T_g` along `+r̂`, which has the sign
     // of `s1` once the ends are on either side.
@@ -779,12 +851,10 @@ fn decide_ray<G: ShadowGeometry>(
         Operand::A => neg(r1.side),
         Operand::B => r1.side,
     };
-    let (on0, on1) = (r0.on_ray(q.operand), r1.on_ray(q.operand));
     if on0 == on1 {
         let crossing = on0.then_some(sign);
-        return (Ok(RayRec { crossing }), Cost::default());
+        return (Ok(RayRec { crossing }), cost);
     }
-    let line = geom.line(q, key.g);
     debug_assert!(
         line.a == geom.point(Point::vert(q.operand.other(), ends[0])).at
             && line.b == geom.point(Point::vert(q.operand.other(), ends[1])).at,
@@ -798,7 +868,79 @@ fn decide_ray<G: ShadowGeometry>(
     let rec = left.map(|left| RayRec {
         crossing: (left == sign).then_some(sign),
     });
-    (rec, Cost::exact(work))
+    (rec, cost.and(Cost::exact(work)))
+}
+
+/// Whether the segment from `a` to `b` lies on the `r̂` line of `q`,
+/// exactly: `ν·(a − q) = ν·(b − q) = 0` on the stored values, `b` tested
+/// only where `a` is on it; and the work.
+fn on_ray_line(q: glam::DVec3, a: glam::DVec3, b: glam::DVec3) -> (bool, Work) {
+    let mut work = Work::default();
+    for p in [a, b] {
+        let (s, w) = exact::value_sign(&VvShadow {
+            q: Moving::fixed(q),
+            w: Moving::fixed(p),
+            axis: ShadowAxis::Side,
+        });
+        work = work.and(w);
+        if s != Ok(std::cmp::Ordering::Equal) {
+            return (false, work);
+        }
+    }
+    (true, work)
+}
+
+/// A straight edge lying on a point's ray line, for [`ladder`]: its
+/// crossings at one level ([`along_changes`]).
+struct AlongLine<'a, G> {
+    geom: &'a G,
+    key: RayKey,
+    /// The edge's ends, lower id first.
+    line: [glam::DVec3; 2],
+    /// Each end's side and whether it is on the ray, from its record.
+    ends: [(Sign, bool); 2],
+    band: Band,
+    tie: TieKey,
+}
+
+impl<G: ShadowGeometry> AtLevel for AlongLine<'_, G> {
+    type Out = Result<SmallVec<[Crossing; 2]>, Fail>;
+
+    fn at<S: RayLevel>(&mut self, like: &S, _: usize, work: &mut LevelWork) -> Self::Out {
+        let f = |x: f64| S::from_f64(x, like);
+        let q = MovingAt::from_flat(&self.geom.point(self.key.q), like);
+        let side_over = |[a, b]: [f64; 2], work: &mut LevelWork| {
+            work.evals = work.evals.saturating_add(1);
+            let t = between(a, b, like);
+            let at = MovingAt {
+                at: q.at.clone(),
+                rates: self.geom.straight_rates(self.key.q, self.key.g, &t),
+            };
+            let row = vv_shadow(&q, &at, ShadowAxis::Side);
+            decide(row.g, row.ord, self.band, self.tie)
+        };
+        // `r̂·(C − q)` on the line, linear in its parameter: of one sign
+        // over `[a, b]` where certified at both.
+        let [p0, p1] = self.line.map(|p| [f(p.x), f(p.y), f(p.z)]);
+        let r = [f(R_HAT.x), f(R_HAT.y), f(R_HAT.z)];
+        let ahead_over = |[a, b]: [f64; 2], work: &mut LevelWork| {
+            work.evals = work.evals.saturating_add(1);
+            let at = |t: f64| {
+                let t = f(t);
+                (0..3).fold(S::int(0, like), |s, k| {
+                    let c = p0[k].add(&p1[k].sub(&p0[k]).mul(&t));
+                    s.add(&r[k].mul(&c.sub(&q.at[k])))
+                })
+            };
+            let (x, y) = (at(a).sign()?, at(b).sign()?);
+            (x == y).then_some(x).and_then(Sign::of)
+        };
+        along_changes(self.ends, self.key.q.operand, work, side_over, ahead_over)
+    }
+
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(Fail::Escalate { .. }))
+    }
 }
 
 #[cfg(test)]

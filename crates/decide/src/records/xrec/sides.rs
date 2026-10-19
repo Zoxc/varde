@@ -116,6 +116,11 @@ pub trait XGeometry: CurveGeometry {
     /// higher, moving at its rates at the foot of the shadow of a point at
     /// `near` (as [`line`](crate::records::shadow::ShadowGeometry::line)).
     fn edge_line(&self, operand: Operand, g: EdgeId, near: DVec3) -> Seg;
+
+    /// Edge `g` of `operand`'s near radius `r_g = 3·β_g` (finite, `≥ 0`):
+    /// a held point inside the edge takes it, so a third of it is the
+    /// held point's band (a vertex takes its own, `r_w`).
+    fn edge_near_radius(&self, operand: Operand, g: EdgeId) -> f64;
 }
 
 /// One crossing of an edge's shadow by a held point's ray (module docs).
@@ -545,6 +550,12 @@ fn decide_side<G: XGeometry>(
     let Some(q) = edge_point(geom, held, he, &hc, key.at) else {
         return internal;
     };
+    // The held point's band: a third of its near radius, its vertex's at
+    // an end of its edge, else its edge's.
+    let held_near = match key.at.end(hc.span_count()) {
+        Some(i) => geom.near_radius(Point::vert(held, geom.ends(held, he)[i])),
+        None => geom.edge_near_radius(held, he),
+    } / 3.0;
     let n = oc.span_count();
     // The other edge's point `span` (a vertex or knot) against the held
     // point's ray: its side and whether it is on the ray.
@@ -674,6 +685,7 @@ fn decide_side<G: XGeometry>(
                     held,
                     &rates,
                     band,
+                    held_near,
                     tie,
                 );
                 cost = cost.and(c);

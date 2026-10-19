@@ -494,7 +494,14 @@ fn records(w: &World) -> Recs {
         }
     }
     let mut shadows = Shadows::new();
-    shadows.fill_rays(rays.clone(), w, &mut Seq).expect("rays");
+    shadows
+        .fill_rays(
+            rays.clone(),
+            w,
+            crate::num::decide::Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band"),
+            &mut Seq,
+        )
+        .expect("rays");
     shadows
         .fill_vv(vv, w, &mut Seq)
         .expect("point–vertex records");

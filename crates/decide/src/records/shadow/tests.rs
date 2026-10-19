@@ -27,6 +27,12 @@ use crate::records::keys::{Query, XClusterIx};
 
 use Operand::{A, B};
 
+/// The curved band at the first rungs, which an edge lying on a point's
+/// ray line reads: no tie band, a target of `2⁻³⁰`.
+fn band() -> Band {
+    Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band")
+}
+
 /// One operand's chain or loop of edges, and points of both.
 #[derive(Default)]
 struct Geom {
@@ -281,7 +287,8 @@ fn winding_oracle(g: &Geom, q: Point, cycle: &[(EdgeId, bool)]) -> i32 {
 /// their sum with the senses: the winding number the counting reads.
 fn ray_sum(s: &mut Shadows, g: &Geom, q: Point, cycle: &[(EdgeId, bool)]) -> i32 {
     let keys: Vec<RayKey> = cycle.iter().map(|&(e, _)| RayKey { q, g: e }).collect();
-    s.fill_rays(keys, g, &mut Seq::default()).expect("decided");
+    s.fill_rays(keys, g, band(), &mut Seq::default())
+        .expect("decided");
     cycle
         .iter()
         .map(|&(e, forward)| {
@@ -340,7 +347,7 @@ fn the_check_frame_maps_the_review_direction_to_r_hat() {
 
 /// A ray record's count, filled on demand.
 fn ray(s: &mut Shadows, g: &Geom, q: Point, e: EdgeId) -> i32 {
-    s.fill_rays([RayKey { q, g: e }], g, &mut Seq::default())
+    s.fill_rays([RayKey { q, g: e }], g, band(), &mut Seq::default())
         .expect("decided");
     i32::from(s.ray(q, e).expect("stored").count())
 }
@@ -476,7 +483,7 @@ fn a_ray_through_a_shared_vertex_counts_once() {
                             let q = Point::vert(op, g.vert(op, 7, lat(0.0, 0.0, 0.0)));
                             let mut s = Shadows::new();
                             let keys = [RayKey { q, g: e0 }, RayKey { q, g: e1 }];
-                            s.fill_rays(keys, &g, &mut Seq::default()).unwrap();
+                            s.fill_rays(keys, &g, band(), &mut Seq::default()).unwrap();
                             let chain = [(e0, u < w), (e1, w < v)];
                             let sum: i32 = chain
                                 .iter()
@@ -592,7 +599,7 @@ fn records_on_lattice_loops_are_the_moved_configuration_s() {
                 }
             }
         }
-        assert_eq!(s.replay(&g), Ok(()));
+        assert_eq!(s.replay(&g, band()), Ok(()));
     }
 }
 
@@ -655,7 +662,7 @@ fn records_with_a_direction_per_vertex_are_the_moved_configuration_s() {
                 }
             }
         }
-        assert_eq!(s.replay(&g), Ok(()));
+        assert_eq!(s.replay(&g, band()), Ok(()));
     }
 }
 
@@ -776,7 +783,7 @@ fn records_are_decided_once_and_read_by_every_ray() {
         .collect();
     let mut s = Shadows::new();
     let mut pass = Seq::default();
-    s.fill_rays(keys.clone(), &g, &mut pass).unwrap();
+    s.fill_rays(keys.clone(), &g, band(), &mut pass).unwrap();
     assert_eq!(pass.decided, qs.len() * 4 + keys.len());
     assert_eq!(s.vv_table().len(), qs.len() * 4);
     assert_eq!(s.ray_table().len(), keys.len());
@@ -789,7 +796,7 @@ fn records_are_decided_once_and_read_by_every_ray() {
         .sum();
     assert_eq!(ray_sum, 1);
 
-    s.fill_rays(keys.clone(), &g, &mut pass).unwrap();
+    s.fill_rays(keys.clone(), &g, band(), &mut pass).unwrap();
     assert_eq!(pass.decided, qs.len() * 4 + keys.len());
     #[cfg(debug_assertions)]
     {
@@ -997,7 +1004,7 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
 
         let mut s = Shadows::new();
         let mut seq = Seq::default();
-        s.fill_rays(keys.clone(), &g, &mut seq)
+        s.fill_rays(keys.clone(), &g, band(), &mut seq)
             .unwrap_or_else(|e| panic!("seed {seed}: {e:?}"));
         let records = stored(&s);
         for &q in &qs {
@@ -1022,13 +1029,13 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
                 }
             }
         }
-        assert_eq!(s.replay(&g), Ok(()));
+        assert_eq!(s.replay(&g, band()), Ok(()));
 
         // The reads of a fresh table filled once, on one thread.
         #[cfg(debug_assertions)]
         let reads: Vec<Option<u64>> = {
             let mut s1 = Shadows::new();
-            s1.fill_rays(keys.clone(), &g, &mut Seq::default())
+            s1.fill_rays(keys.clone(), &g, band(), &mut Seq::default())
                 .expect("decided");
             records
                 .0
@@ -1047,7 +1054,7 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
                 work: Cost::default(),
             };
             let mut s2 = Shadows::new();
-            s2.fill_rays(wanted, &g, &mut par).expect("decided");
+            s2.fill_rays(wanted, &g, band(), &mut par).expect("decided");
             assert_eq!(
                 (par.decided, par.work),
                 (seq.decided, seq.work),
@@ -1070,13 +1077,13 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
         let mut s3 = Shadows::new();
         let mut out = OutAt { at, seen: 0 };
         assert_eq!(
-            s3.fill_rays(keys.clone(), &g, &mut out),
+            s3.fill_rays(keys.clone(), &g, band(), &mut out),
             Err(ShadowError::Pass("out"))
         );
         let (vv, rays) = stored(&s3);
         assert_eq!(vv.len(), if at < n_vv { 0 } else { n_vv }, "seed {seed}");
         assert!(rays.is_empty());
-        s3.fill_rays(keys.clone(), &g, &mut Seq::default())
+        s3.fill_rays(keys.clone(), &g, band(), &mut Seq::default())
             .expect("decided");
         assert_eq!(stored(&s3), records);
     }

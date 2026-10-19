@@ -907,9 +907,9 @@ fn coinciding_knots(seed: u64) -> Geom {
 /// Two-span conic chains, `g`'s knot under `e`'s (the knots' shadows
 /// one point), weights 1/64 to 64, narrow bands: the boxes at the knots
 /// read the side and corner records, so no box within the bands is
-/// refused for its degree; the clusters sum to the four terms. A held
-/// knot where the other chain's shadow leaves it vertically (a shadow
-/// cusp on the knot) has no side record at any level, a level whose
+/// refused for its degree; the clusters sum to the four terms. Every side
+/// record is decided, a held knot where the other chain's shadow leaves
+/// it vertically (a shadow cusp on the knot) too. A level whose
 /// enclosures stay wider than the bands runs out of boxes, and a long
 /// near-tangency of the two shadows takes too many boxes reading records:
 /// those are refused, never counted.
@@ -929,12 +929,12 @@ fn clusters_at_coinciding_knots_read_the_side_records() {
                 formed += 1;
                 read += usize::from(!recs.sides.borrow().side_table().is_empty());
             }
-            Err(XClusterError::Need(_) | XClusterError::Boxes | XClusterError::Sided(_)) => {}
+            Err(XClusterError::Boxes | XClusterError::Sided(_) | XClusterError::Depth(_)) => {}
             Err(e) => panic!("seed {seed}: {e:?}"),
         }
     }
     assert!(
-        formed * 5 > trials * 4 && read > 0,
+        formed * 50 > trials * 49 && read > 0,
         "{formed} formed of {trials}, {read} reading side records"
     );
 }

@@ -150,7 +150,7 @@ impl ShadowGeometry for Geom {
     }
 
     fn near_radius(&self, _: Point) -> f64 {
-        0.0
+        NEAR
     }
 
     fn ends(&self, operand: Operand, g: EdgeId) -> [VertId; 2] {
@@ -169,6 +169,10 @@ impl ShadowGeometry for Geom {
             b,
             rates: self.rates_at(op, self.pos[&q]),
         }
+    }
+
+    fn straight_rates<S: Curved>(&self, q: Point, g: EdgeId, t: &S) -> [[S; 3]; ORDERS] {
+        self.edge_rates(q.operand.other(), g, 0, t)
     }
 }
 
@@ -271,7 +275,15 @@ impl XGeometry for Geom {
             rates: self.rates_at(operand, near),
         }
     }
+
+    fn edge_near_radius(&self, _: Operand, _: EdgeId) -> f64 {
+        NEAR
+    }
 }
+
+/// Every point's and edge's near radius: a point's band `2⁻³⁰`, the
+/// curved target of [`band`].
+const NEAR: f64 = 3.0 / 1_073_741_824.0;
 
 /// A pass deciding in order on one thread.
 #[derive(Default)]
@@ -370,7 +382,9 @@ fn try_decide(geom: &Geom) -> Option<Recs> {
             })
             .collect();
         if spans.is_empty() {
-            shadows.fill_rays(keys, geom, &mut Seq::default()).ok()?;
+            shadows
+                .fill_rays(keys, geom, band, &mut Seq::default())
+                .ok()?;
         } else {
             curved
                 .fill_chains(keys, &mut shadows, geom, band, &mut Seq::default())

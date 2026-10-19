@@ -285,13 +285,14 @@ fn a_point_on_the_arc() {
     let [lo, hi] = extent(&got.feet[0]);
     assert!(hi - lo < 1e-9);
     // At a vertex, radius 0: just the vertex, a double root at the
-    // span's end.
+    // span's end, found exactly at the first level: the vertex on the
+    // sphere.
     let got = arc_check(DVec3::new(7.0, 24.0, 0.0), 0.0);
     assert_eq!(got.feet.len(), 1);
     let f = got.feet[0];
-    assert!(f.hull);
-    assert_eq!(f.lo.kind, EndKind::Hull);
-    assert!(f.lo.t[0] > 1.0 - 1e-9);
+    assert!(!f.hull);
+    assert_eq!(f.lo.kind, EndKind::OnSphere);
+    assert_eq!(f.lo.t, [1.0, 1.0]);
     assert_eq!(f.hi.kind, EndKind::Vertex);
     assert_eq!(f.ends(), [false, true]);
 }
@@ -843,3 +844,65 @@ fn a_small_radius_on_a_short_span_far_out() {
 }
 
 mod oracle;
+
+/// A sphere tangent to a span, from outside and from inside, a straight
+/// edge and the 3-4-5 arc: decided at the first level by the exact stage
+/// (no level past it runs), the touching point a hull foot; the radius a
+/// little larger or smaller decides at the first level by value.
+#[test]
+fn tangent_spheres_decide_at_the_first_level() {
+    let line = straight([-4.0, 3.0, 0.0], [4.0, 3.0, 0.0]);
+    // About the origin, radius 3: touching the line at `(0, 3)` from
+    // outside; the arc as in `spheres_tangent_to_the_arc`.
+    for (span, q, r, inside) in [
+        (line, DVec3::ZERO, 3.0, false),
+        (ARC, DVec3::new(40.0, 30.0, 0.0), 25.0, false),
+        (ARC, DVec3::new(-4.0, -3.0, 0.0), 30.0, true),
+    ] {
+        let (got, cost) = decide_feet(key(), q, spans(&[span]), r);
+        let got = got.expect("decided");
+        check_samples(&[&span[..]], q, r, &got, "tangent");
+        assert!(
+            cost.levels[1..].iter().all(|l| *l == LevelWork::default()),
+            "{cost:?}"
+        );
+        assert!(cost.exact.rationals > 0, "{cost:?}");
+        assert!(got.feet.iter().any(|f| f.hull), "{got:?}");
+        if !inside {
+            let f = got.feet[0];
+            assert!(f.hi.t[1] - f.lo.t[0] < 1e-15, "{f:?}");
+        }
+    }
+}
+
+/// A crossing near `t = 1` is bracketed on the span run backwards, as the
+/// same crossing near `t = 0` of the span stored the other way: the
+/// brackets of the two storage directions, mirrored, meet.
+#[test]
+fn brackets_near_the_end_mirror_those_near_the_start() {
+    let mut rng = varde_testkit::rng::Rng::new(7);
+    for _ in 0..64 {
+        let s = conic(&mut rng);
+        let rev: Span = [s[2], s[1], s[0]];
+        let t = 1.0 - rng.range(1e-12, 0.25);
+        let q = eval(&s, t) + DVec3::new(rng.range(-0.5, 0.5), rng.range(-0.5, 0.5), 0.25);
+        let r = (eval(&s, t) - q).length();
+        let a = feet(q, spans(&[s]), r);
+        let b = feet(q, spans(&[rev]), r);
+        let ends = |f: &Feet| -> Vec<[f64; 2]> {
+            f.feet
+                .iter()
+                .flat_map(|f| [f.lo, f.hi])
+                .filter(|e| e.kind == EndKind::Crossing)
+                .map(|e| e.t)
+                .collect()
+        };
+        let (ea, mut eb) = (ends(&a), ends(&b));
+        eb.reverse();
+        assert_eq!(ea.len(), eb.len(), "{a:?} {b:?}");
+        for (x, y) in ea.iter().zip(&eb) {
+            let m = crate::records::ray::mirrored(*y);
+            assert!(x[0] <= m[1] && m[0] <= x[1], "{x:?} against {m:?}");
+        }
+    }
+}

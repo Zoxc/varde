@@ -295,7 +295,14 @@ fn counts_keys(cube: &Cube) -> (Vec<i64>, Vec<HKey>) {
     let mut feet = NearFeet::new();
     let edges: Vec<EdgeId> = cube.edges.keys().copied().collect();
     let rays: Vec<RayKey> = edges.iter().map(|&g| RayKey { q, g }).collect();
-    shadows.fill_rays(rays.clone(), cube, &mut Seq).unwrap();
+    shadows
+        .fill_rays(
+            rays.clone(),
+            cube,
+            crate::num::decide::Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band"),
+            &mut Seq,
+        )
+        .unwrap();
     shadows
         .fill_vv((1..=8).map(|w| VvKey::of(q, VertId(w)).key), cube, &mut Seq)
         .unwrap();

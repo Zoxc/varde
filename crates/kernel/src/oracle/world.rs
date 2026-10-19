@@ -86,14 +86,15 @@ pub(super) struct Config {
 
 impl Config {
     /// The runs' settings: `ε_tie` an eighth of a `10⁻⁵` tolerance; the
-    /// curved records decide by value down to `2⁻³⁰` mm (about `10⁻⁹`),
+    /// curved records decide by value down to `2⁻⁴⁰` mm (about `10⁻¹²`),
     /// far below the plan's `ε_tie/4` so that only true ties (and values
-    /// within `10⁻⁹` of one) are perturbed, yet above what the first
-    /// levels can reach on a tile row `4·10⁶` mm long (a curved root's
-    /// parameter is an `f64`, `2⁻⁵³` of the row, ~`5·10⁻¹⁰` mm).
+    /// within `10⁻¹²` of one) are perturbed. On a tile row `4·10⁶` mm long
+    /// an `f64` parameter resolves positions only to ~`5·10⁻¹⁰` mm; the
+    /// records narrow their parameters past `f64` at the levels after the
+    /// first, which reach the target.
     pub(super) const RUNS: Config = Config {
         eps_tie: 1.25e-6,
-        target: 1.0 / 1_073_741_824.0,
+        target: 1.0 / 1_099_511_627_776.0,
         scale: [1.0, 1.0],
     };
 }
@@ -527,6 +528,10 @@ impl XGeometry for World<'_> {
             B => Seg::fixed(a, b),
         }
     }
+
+    fn edge_near_radius(&self, operand: Operand, g: EdgeId) -> f64 {
+        self.near_radius_of(operand, g)
+    }
 }
 
 impl FeetGeometry for World<'_> {
@@ -846,7 +851,7 @@ impl World<'_> {
             .fill_vv(vv, self, &mut Tally { kind: "vv", stats })
             .map_err(|e| record_fail("vv", e))?;
         shadows
-            .fill_rays(flat.clone(), self, &mut Tally { kind: "ray", stats })
+            .fill_rays(flat.clone(), self, band, &mut Tally { kind: "ray", stats })
             .map_err(|e| record_fail("ray", e))?;
         let mut rays = CurvedRays::new();
         rays.fill_chains(

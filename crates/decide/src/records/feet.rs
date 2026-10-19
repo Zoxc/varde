@@ -41,14 +41,29 @@
 //! the span beside it of the cluster's other side. Any other cluster (a
 //! tangency of the sphere and the curve, two crossings closer than the
 //! level separates, a curve lying on the sphere) leaves the span to the
-//! next level: double-double, then each big-float width. Past the last
-//! level such a cluster is taken **inside** the set as a whole, the
+//! exact stage at the first level (below), and where that can't form it,
+//! to the next level: double-double, then each big-float width. Past the
+//! last level such a cluster is taken **inside** the set as a whole, the
 //! closed hull of what the level can't separate: an exact tangency from
 //! outside gives a foot at the touching point (the true set there is that
 //! point), one from inside joins the stretches on both sides (the
 //! touching point belongs to the set), a curve on the sphere is one foot.
 //! A foot built so is marked [`Foot::hull`]. The near radius only shares
-//! records, so this is never an error.
+//! records, so this is never an error. A crossing in the span's second
+//! half is bracketed on `F` run backwards (`u = 1 − t`), so a span and
+//! the same span stored the other way bracket it alike.
+//!
+//! **Exactly at the first level.** A cluster the first level leaves (an
+//! exact tangency, two crossings closer than `f64` separates) is not
+//! carried through the levels: the span's `F` is formed in rationals from
+//! the stored values (degree 2 or 4), its distinct roots on `[0, 1]`
+//! isolated exactly with their multiplicities, and the set's side between
+//! them read at a rational point there. A root where the side changes is
+//! a crossing; one where it doesn't (an even multiplicity: the sphere
+//! touching the curve) is taken as the hull rule takes it, a foot of the
+//! touching point from outside, the stretches beside it joined from
+//! inside, marked [`Foot::hull`]; a root at a span end is that end's exact
+//! side. A span on the sphere (`F ≡ 0`) is one hull foot.
 //!
 //! **The feet** run along the edge's stored direction (from its lower-id
 //! end), each from a [`FootEnd`] to a [`FootEnd`]: a span and the bounds
@@ -91,7 +106,8 @@ use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact;
 use crate::order::Along;
 use crate::records::keys::{FootId, Operand, Point, RayKey, RecordKey};
-use crate::records::ray::{RayLevel, Span, bracket};
+use crate::records::ray::{RayLevel, Span, bracket, mirrored};
+use crate::records::shadow::neg;
 use crate::records::shadow::{
     AtLevel, Cost, Decided, LEVELS, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, ladder,
     replay, shadow_error,
@@ -475,12 +491,32 @@ fn span_feet(
     ends: [Ordering; 2],
     cost: &mut Cost,
 ) -> Option<Events> {
-    let mut at = SpanAt { pts, q, r, ends };
-    match ladder(&mut at, 0, cost) {
+    let mut at = SpanAt {
+        pts,
+        q,
+        r,
+        ends,
+        exact: false,
+    };
+    let out = ladder(&mut at, 0, cost);
+    if at.exact {
+        // `EXACT_RUNS` times the cube of the span's degree.
+        let n = u32::try_from(pts.len().saturating_sub(1)).unwrap_or(u32::MAX);
+        let runs = EXACT_RUNS.saturating_mul(n.saturating_mul(n).saturating_mul(n));
+        cost.exact.rationals = cost.exact.rationals.saturating_add(runs);
+    }
+    match out {
         Some(Step::Done(events)) => Some(events),
         _ => None,
     }
 }
+
+/// The rational runs an exact stage of a span of degree 1 is charged as
+/// ([`exact_events`]: the polynomial formed and made square-free, its
+/// roots isolated and bracketed, their sides read); a span of degree `n`
+/// is charged `n³` times as many, as measured on a straight span and the
+/// 3-4-5 arc (about 35 µs and 290 µs).
+const EXACT_RUNS: u32 = 8;
 
 /// A span's events at one level.
 struct SpanAt<'a> {
@@ -488,6 +524,8 @@ struct SpanAt<'a> {
     q: DVec3,
     r: f64,
     ends: [Ordering; 2],
+    /// Whether the first level ran the exact stage.
+    exact: bool,
 }
 
 impl AtLevel for SpanAt<'_> {
@@ -495,7 +533,16 @@ impl AtLevel for SpanAt<'_> {
 
     fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Step {
         let last = level + 1 == LEVELS;
-        span_at(self.pts, self.q, self.r, self.ends, like, work, last)
+        let step = span_at(self.pts, self.q, self.r, self.ends, like, work, last);
+        if level == 0 && matches!(step, Step::Escalate) {
+            // A cluster the first level leaves (a tangency, roots closer
+            // than it separates): the exact stage decides the span there.
+            self.exact = true;
+            if let Some(events) = exact_events(self.pts, self.q, self.r, self.ends) {
+                return Step::Done(events);
+            }
+        }
+        step
     }
 
     fn escalates(out: &Step) -> bool {
@@ -527,6 +574,9 @@ fn span_at<S: Scalar>(
     let Some(f) = foot_poly(pts, q, r, like) else {
         return Step::Bad;
     };
+    // The polynomial run backwards, `u = 1 − t`, for crossings in the
+    // span's second half.
+    let fr = f.reversed();
     work.feet = work.feet.saturating_add(1);
     let limits = Limits {
         max_depth: MAX_ROOT_DEPTH,
@@ -551,7 +601,7 @@ fn span_at<S: Scalar>(
         let cl = match found {
             Found::Root(root) => {
                 let kind = EndKind::Crossing;
-                let t = narrow(&f, root.near, root.dir.reverse(), like, work);
+                let t = narrow(&f, &fr, root.near, root.dir.reverse(), like, work);
                 events.push(if root.dir == Ordering::Greater {
                     Ev::Leave(t, kind)
                 } else {
@@ -591,7 +641,7 @@ fn span_at<S: Scalar>(
             (x, y) if x == y => (cl.mult <= 1).then(Events::new),
             // One crossing, an odd count of at most two.
             (x, y) => (cl.mult <= 2).then(|| {
-                let t = narrow(&f, t, x, like, work);
+                let t = narrow(&f, &fr, t, x, like, work);
                 smallvec::smallvec![if y == Ordering::Greater {
                     Ev::Leave(t, EndKind::Crossing)
                 } else {
@@ -627,18 +677,140 @@ fn hull(t: [f64; 2], s: Ordering, e: Ordering) -> Events {
 
 /// `[a, b]` holding one crossing of `f`, `f` of sign `start` before it
 /// and the other after, narrowed by [`bracket`] to where the level can't
-/// tell the sign.
+/// tell the sign: in the span's second half on `fr`, `f` run backwards
+/// (`u = 1 − t`), where `f64` parameters resolve a crossing near `t = 1`
+/// as finely as one near `t = 0`, the bounds mirrored back outwards.
 fn narrow<S: Scalar>(
     f: &Poly<S>,
+    fr: &Poly<S>,
     t: [f64; 2],
     start: Ordering,
     like: &S,
     work: &mut LevelWork,
 ) -> [f64; 2] {
     match Sign::of(start) {
+        Some(start) if t[0] < t[1] && t[0] >= 0.5 => {
+            let u = mirrored(t);
+            mirrored(bracket(fr, u, neg(start), like, work))
+        }
         Some(start) if t[0] < t[1] => bracket(f, t, start, like, work),
         _ => t,
     }
+}
+
+/// The most halvings [`enclose_root`] takes: a root's `f64` bounds are
+/// adjacent down to `t ≈ 2⁻⁷⁵`.
+const ROOT_HALVINGS: u32 = 128;
+
+/// An exact root's `f64` bounds, its interval halved until they are
+/// adjacent `f64`s (or one), at most [`ROOT_HALVINGS`] times.
+fn enclose_root(root: &crate::num::poly::Root) -> [f64; 2] {
+    let mut r = root.clone();
+    for _ in 0..ROOT_HALVINGS {
+        let [a, b] = r.enclose();
+        if b <= a.next_up() {
+            break;
+        }
+        let [lo, hi] = r.interval();
+        let half = (hi - lo) / Rational::from(2u32);
+        r.narrow(&half);
+    }
+    r.enclose()
+}
+
+/// A span's events from its foot polynomial in rationals (module docs,
+/// "Exactly at the first level"): its distinct roots on `[0, 1]` with
+/// their multiplicities, the set's side between them read at a rational
+/// point there, each root a crossing, or a touching point taken as a hull
+/// foot (from outside a foot of that point, from inside joining the
+/// stretches beside it), a root at an end the end's exact side. `None`
+/// where the span's values aren't finite.
+fn exact_events(pts: &[[f64; 4]], q: DVec3, r: f64, ends: [Ordering; 2]) -> Option<Events> {
+    use crate::num::poly;
+    let rat = |x: f64| Rational::try_from(x).ok();
+    let (zero, one) = (Rational::from(0u32), Rational::from(1u32));
+    // The Bernstein basis of the span's degree, power form.
+    let n = pts.len().checked_sub(1)?;
+    let basis: Vec<poly::Poly> = (0..=n)
+        .map(|i| {
+            let mut b = vec![zero.clone(); n + 1];
+            b[i] = one.clone();
+            poly::from_bernstein(&b)
+        })
+        .collect();
+    let q = q.to_array().map(rat);
+    let mut w: poly::Poly = Vec::new();
+    let mut x: [poly::Poly; 3] = std::array::from_fn(|_| Vec::new());
+    for (p, b) in pts.iter().zip(&basis) {
+        let wk = rat(p[3])?;
+        w = poly::add(&w, &poly::scale(b, &wk));
+        for k in 0..3 {
+            let d = (rat(p[k])? - q[k].as_ref()?) * &wk;
+            x[k] = poly::add(&x[k], &poly::scale(b, &d));
+        }
+    }
+    let rr = rat(r)?;
+    let mut f = poly::neg(&poly::scale(&poly::mul(&w, &w), &(&rr * &rr)));
+    for xk in &x {
+        f = poly::add(&f, &poly::mul(xk, xk));
+    }
+    let f = poly::trim(f);
+    if f.is_empty() {
+        // The span on the sphere: one foot of it, the hull's.
+        return Some(hull([0.0, 1.0], ends[0], ends[1]));
+    }
+    let roots = poly::roots(&f, &zero, &one);
+    // The side of the set at a rational point strictly between two
+    // roots' intervals (or at their common end, not a root).
+    let side_between = |a: &Rational, b: &Rational| {
+        let m = if a < b {
+            (a + b) / Rational::from(2u32)
+        } else {
+            a.clone()
+        };
+        poly::sign_at(&f, &m)
+    };
+    let mut events = Events::new();
+    let mut before = ends[0];
+    let mut from = zero.clone();
+    for (i, (root, _)) in roots.iter().enumerate() {
+        let [lo, hi] = root.interval().map(Clone::clone);
+        let next = roots
+            .get(i + 1)
+            .map_or_else(|| one.clone(), |(n, _)| n.interval()[0].clone());
+        // The side before the root and after it.
+        let at_start = root.rational() == Some(&zero);
+        let at_end = root.rational() == Some(&one);
+        if !at_start && from < lo {
+            before = side_between(&from, &lo);
+        }
+        let after = if at_end {
+            ends[1]
+        } else {
+            side_between(&hi, &next)
+        };
+        let t = enclose_root(root);
+        let out = |x: Ordering| x == Ordering::Greater;
+        if at_start {
+            if out(after) {
+                events.push(Ev::Leave([0.0, 0.0], EndKind::OnSphere));
+            }
+        } else if at_end {
+            if out(before) {
+                events.push(Ev::Enter([1.0, 1.0], EndKind::OnSphere));
+            }
+        } else {
+            match (out(before), out(after)) {
+                (true, false) => events.push(Ev::Enter(t, EndKind::Crossing)),
+                (false, true) => events.push(Ev::Leave(t, EndKind::Crossing)),
+                (true, true) => events.extend(hull(t, before, after)),
+                (false, false) => events.extend(hull(t, before, after)),
+            }
+        }
+        before = after;
+        from = hi;
+    }
+    Some(events)
 }
 
 /// The part of the cluster `[lo, hi]` of `f` that the level can't

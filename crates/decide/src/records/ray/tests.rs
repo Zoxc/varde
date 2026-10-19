@@ -34,15 +34,21 @@ struct Geom {
     /// `A`'s direction field: one vector, so `A` moves as a translation.
     d: DVec3,
     sigma: Option<Sign>,
-    /// Every edge's near radius, and every point's.
+    /// Every edge's near radius, and every point's: a point's band is a
+    /// third of it.
     r_g: f64,
 }
+
+/// The near radius of [`Geom::with`]: a point's band `2⁻³⁰`, the target
+/// of [`band`], which the rows beside an end reach at the first level.
+const R_G: f64 = 3.0 / 1_073_741_824.0;
 
 impl Geom {
     fn with(d: DVec3, sigma: Sign) -> Geom {
         Geom {
             d,
             sigma: Some(sigma),
+            r_g: R_G,
             ..Geom::default()
         }
     }
@@ -1170,6 +1176,7 @@ fn a_span_end_off_its_vertex_or_knot_is_refused() {
 }
 
 mod chains;
+mod ties;
 
 /// The geometric order of [`Geom`]'s edges: positions only, no face keys.
 impl crate::order::EntityOrder for Geom {

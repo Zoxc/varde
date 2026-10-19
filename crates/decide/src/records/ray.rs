@@ -83,31 +83,62 @@
 //!   Where `q` is away from it, both crossings are on the ray or both off
 //!   it, and they cancel.
 //!
-//! A span lying along `q`'s ray line (`g ≡ 0`, a conic in a vertical plane
-//! along `r̂`) is one cluster as wide as the span at every level, where the
-//! row over it never decides: at the last level `h`'s sign over a piece is
-//! also certified by halving it, and such a cluster's row is read at `q`'s
-//! foot, where `h` is 0 (`q` between the span's ends along `r̂`, or at
-//! one). In the moved configuration the line then misses the span, which
-//! the tangency rule gives.
+//! **Along the ray line.** A span lying on `q`'s ray line exactly (every
+//! control point on it, so `g ≡ 0`: a conic in a vertical plane along
+//! `r̂`, checked on the stored values where every coefficient of `g` may
+//! be 0) has no crossing of its own. The moved span crosses the moved
+//! line where its side, the first-order row `ν·(ΔC − Δq)` (the next order
+//! where that one is 0), changes along it ([`along_changes`]): from its
+//! start's record's side to its end's, one crossing per change, signed by
+//! its direction, on the ray where `h` there has the ray's sign, a change
+//! at an end where that end's record says. Where the span's motion is one
+//! translation the row has one sign, and the span adds nothing beyond its
+//! ends. A change of side no halving localises, or one at `q`'s foot,
+//! escalates. A span within a level's error of the line but not on it is
+//! one cluster as wide as the span at every level: at the last level `h`'s
+//! sign over a piece is also certified by halving it, and such a
+//! cluster's row is read at `q`'s foot, where `h` is 0.
+//!
+//! **A vertical tangent.** Where the span's tangent is along `UP` (`T_xy
+//! = 0`, a fold of its shadow; only a conic in a vertical plane has one,
+//! its shadow a segment, which is checked exactly on its control points:
+//! elsewhere a tangent whose shadow the level can't certify non-zero
+//! escalates), the row reads the second derivative `W·P″ − W″·P` in its
+//! place where that one's shadow is certified non-zero (else it
+//! escalates): the direction the shadow leaves the point along. At a
+//! span's end on `q`'s ray line exactly (a vertex or knot in the fold's
+//! column) `g` has a double root there, so a cluster there of two roots
+//! at most holds no other and is narrowed towards the end as one of a
+//! single root; its row reads `q` against the line the shadow leaves the
+//! end along, and the row at that end (below) is the chord to the far
+//! control point where the tangent line's shadow is a point. Inside a
+//! span the fold's two branches leave it along the same direction: a
+//! cluster there (`q` in the fold's column) is crossed by the moved line
+//! twice or not at all, both crossings at the same place along the ray,
+//! of opposite signs: no crossing, but a touch where they are on the ray
+//! (the side `q` moves to against the branches' line is the side they
+//! leave towards, for `+r̂`) and exist (the fold moves to the side away
+//! from them, by the point–vertex row at the fold).
 //!
 //! **Beside an end.** An end's record is exact data decided as a flat row
-//! (only an exact zero is a tie, decided by the motions), the span's row a
-//! curved one (a value within the band is a tie once its error reaches
-//! the target). With `q` within the band of an end, beside but not on its
-//! column, the record reads where `q` really is while the row at a
-//! crossing next to the end, a tie, answers for `q` moved onto the span
-//! there: a span's crossing at a knot could then be counted on the ray
-//! where the knot's record puts it behind `q`, its neighbour's not. So a
-//! once-crossed piece whose row is a tie, with the span certified within
-//! the band of `q` (in both shadow directions) from one end to past the
-//! piece, and not from the other end too, takes `s` from the
-//! **row at that end** instead: `q` against the span's tangent line there,
-//! through the end and the middle control point (a rational quadratic
-//! with positive weights leaves its end along that line), all stored
-//! points, so decided as a flat row, the line moving at the end's rates
-//! (as in its record); where that row has no answer (the tangent's shadow
-//! 0), the crossing is on the ray as the end's record is.
+//! (only an exact zero is a tie, decided by the motions), the span's row
+//! a curved one (a value within the band is a tie once its error reaches
+//! the target). "The band of `q`" here is a third of its near radius,
+//! fixed per operation like every band (never the rung's curved band), so
+//! the rule reads the same at every rung. With `q` within the band of an
+//! end, beside but not on its column, the record reads where `q` really
+//! is while the row at a crossing next to the end, a tie, answers for `q`
+//! moved onto the span there: a span's crossing at a knot could then be
+//! counted on the ray where the knot's record puts it behind `q`, its
+//! neighbour's not. So a once-crossed piece whose row is a tie, with the
+//! span certified within the band of `q` (in both shadow directions) from
+//! one end to past the piece, and not from the other end too, takes `s`
+//! from the **row at that end** instead: `q` against the span's tangent
+//! line there, through the end and the middle control point (a rational
+//! quadratic with positive weights leaves its end along that line), all
+//! stored points, so decided as a flat row, the line moving at the end's
+//! rates (as in its record); where that row has no answer (the tangent's
+//! shadow 0), the crossing is on the ray as the end's record is.
 //!
 //! *Each crossing at a vertex or knot is then counted once along the
 //! chain, consistently with its record.* (1) The side at a shared end is
@@ -137,13 +168,14 @@
 //! escalate: a row not yet decided at its band's target, a tangent or a
 //! side the level can't certify. Past the last level the record's
 //! [`Fail::Escalate`] stands. The curved band is the caller's, the
-//! current rung's. Pieces are `f64` parameters; where the row over one
-//! isn't at the target (a curve whose point moves more than the target
-//! over an `f64` step of its parameter, at coordinates far from 1), the
-//! piece is narrowed at the level itself, halving while `g`'s sign (`h`'s
-//! at `q`'s foot on a piece along the ray's line) is certified at the
-//! middle, and from both ends towards a middle where it is within its
-//! error, and the row read over that.
+//! current rung's; the band of `q` beside an end is the operation's.
+//! Pieces are `f64` parameters; where the row over one isn't at the
+//! target (a curve whose point moves more than the target over an `f64`
+//! step of its parameter, at coordinates far from 1), the piece is
+//! narrowed at the level itself, halving while `g`'s sign (`h`'s at `q`'s
+//! foot on a piece along the ray's line) is certified at the middle, and
+//! from both ends towards a middle where it is within its error, and the
+//! row read over that.
 //!
 //! **The whole edge.** A point's ray record against a curved edge
 //! ([`ChainRec`], keyed by its [`RayKey`]) lists the crossings of every
@@ -163,6 +195,8 @@
 //! which fills the span records of every span of its edges so, then
 //! gathers them in one more pass.
 
+use std::cell::OnceCell;
+
 use malachite::Rational;
 use smallvec::SmallVec;
 
@@ -170,13 +204,14 @@ use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
 use crate::bezier::{Dir, HomCurve, HomPatch, Poly, Scalar};
 use crate::ids::EdgeId;
 use crate::num::bigf::BigF;
-use crate::num::bounded::{Bounded, add_up, down, mul_up};
+use crate::num::bounded::{Bounded, down, mul_up};
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::ORDERS;
 use crate::perturb::{
     Curved, HomLineShadow, HomPoint, HomPointLineShadow, LineShadow, Moving, MovingAt, NU,
-    QueryPoint, R_HAT, Rate, Seg, curve_point, curve_shadow, decide_flat,
+    QueryPoint, R_HAT, Rate, Seg, ShadowAxis, UP, curve_point, curve_shadow, decide_flat,
+    vv_shadow,
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
@@ -667,14 +702,14 @@ impl SpanCurve<'_> {
         Some(HomPoint { terms, rates })
     }
 
-    /// Whether `q` is within the curved band of end `j` (`0` the start, `1`
-    /// the end) in both shadow directions, or not certainly beyond
+    /// Whether `q` is within `reach` of end `j` (`0` the start, `1` the
+    /// end) in both shadow directions, or not certainly beyond
     /// ([`near_end`]).
-    fn near_end(&self, j: usize, q: &[Bounded<f64>; 3], band: Band) -> bool {
+    fn near_end(&self, j: usize, q: &[Bounded<f64>; 3], reach: f64) -> bool {
         match *self {
             SpanCurve::Stored(span) => {
                 let p = span[2 * j];
-                near_end(q, [p[0], p[1], p[2]].map(Bounded::<f64>::from), band)
+                near_end(q, [p[0], p[1], p[2]].map(Bounded::<f64>::from), reach)
             }
             SpanCurve::Iso { .. } => {
                 let like = Bounded::<f64>::exact(0.0);
@@ -684,7 +719,7 @@ impl SpanCurve<'_> {
                 let i = 2 * j;
                 let w = c.weights().coefs()[i];
                 let k = [0, 1, 2].map(|d| c.coords()[d].coefs()[i] / w);
-                near_end(q, k, band)
+                near_end(q, k, reach)
             }
         }
     }
@@ -699,18 +734,29 @@ impl SpanCurve<'_> {
         rates: [Rate; ORDERS],
         tie: TieKey,
     ) -> (Result<Sign, Fail>, crate::num::exact::Work) {
+        // The tangent line, or where its shadow is 0 (the span leaving
+        // its end along `UP`) the chord, along which the shadow leaves
+        // the end then (module docs, "A vertical tangent").
+        let ix = |a: Option<[Rational; 3]>, b: Option<[Rational; 3]>| match (a, b) {
+            (Some(a), Some(b)) if vertical(&a, &b) => [0, 2],
+            _ => [j, j + 1],
+        };
         match (*self, q) {
             (SpanCurve::Stored(span), QueryPoint::Flat(q)) => {
+                let exact =
+                    |k: usize| affine(&HomPoint::of_moving(&Moving::fixed(point_of(&span[k]))));
+                let [a, b] = ix(exact(j), exact(j + 1));
                 let line = Seg {
-                    a: point_of(&span[j]),
-                    b: point_of(&span[j + 1]),
+                    a: point_of(&span[a]),
+                    b: point_of(&span[b]),
                     rates,
                 };
                 decide_flat(&LineShadow { q: q.clone(), line }, tie)
             }
             (_, q) => {
-                let (Some(a), Some(b)) =
-                    (self.control(j, rates.clone()), self.control(j + 1, rates))
+                let exact = |k: usize| affine(&self.control(k, [Rate::ZERO; ORDERS])?);
+                let [a, b] = ix(exact(j), exact(j + 1));
+                let (Some(a), Some(b)) = (self.control(a, rates.clone()), self.control(b, rates))
                 else {
                     return (Err(Fail::Internal { key: tie }), Default::default());
                 };
@@ -738,13 +784,25 @@ struct SpanCtx<'a, R> {
     curve: SpanCurve<'a>,
     /// The side of each end and whether it is on the ray, from its record.
     ends: [(Sign, bool); 2],
-    /// At each end `q` is within the band of (in both shadow directions,
+    /// At each end `q` is within its band of (in both shadow directions,
     /// or not certainly beyond), the row there ([`EndRow`]).
     near: [Option<EndRow>; 2],
+    /// The band of `q`: a third of its near radius, fixed per operation.
+    band_of_q: f64,
     q: QueryPoint,
     rates: &'a R,
     band: Band,
     tie: TieKey,
+    /// `ν·(Pₖ − q)` of the curve's three control points `Pₖ`, exactly
+    /// (each a positive multiple of `g`'s Bernstein coefficient), formed
+    /// the first time a level needs them ([`SpanCtx::exact_g`]); `None`
+    /// where they can't be formed.
+    exact: OnceCell<Option<[Rational; 3]>>,
+    /// Whether the curve's shadow lies on one line, exactly (its control
+    /// points and `UP` coplanar: a conic in a vertical plane, the only
+    /// one whose tangent can be along `UP`), formed the first time a
+    /// level needs it ([`SpanCtx::flat_shadow`]).
+    flat: OnceCell<bool>,
 }
 
 /// A stretch of the span holding some of `g`'s roots (module docs).
@@ -787,6 +845,10 @@ struct RowAt {
     /// Whether the row's value is within the band, so `s` is the
     /// perturbation's answer.
     tie: bool,
+    /// Whether the piece holds a fold of the shadow (a vertical tangent
+    /// inside the parameter): `s` is then read against the line the
+    /// fold's branches leave along, and `along` is that line's.
+    fold: bool,
 }
 
 /// Decides a span record, at each level in turn until one decides it.
@@ -857,18 +919,21 @@ fn decide_span<G: CurveGeometry>(
         key.q.operand,
         &rates,
         band,
+        geom.near_radius(key.q) / 3.0,
         tie,
     );
     (r, cost)
 }
 
 /// The crossings of `span`'s shadow by the ray of the point `q` (of
-/// `operand`; a stored point, or a dyadic point of a curve), decided at each level in turn until one decides them
-/// (module docs): `ends` the side of each end against `q`'s `r̂` line and
-/// whether it is on the ray, from the end's own record; `end_rates(j)`
-/// the rates of end `j`'s point (for the row at an end `q` is near);
-/// `rates` the span's points' rates; `tie` the key ties are reported
-/// under.
+/// `operand`; a stored point, or a dyadic point of a curve), decided at
+/// each level in turn until one decides them (module docs): `ends` the
+/// side of each end against `q`'s `r̂` line and whether it is on the ray,
+/// from the end's own record; `end_rates(j)` the rates of end `j`'s point
+/// (for the row at an end `q` is near); `rates` the span's points' rates;
+/// `band` the rung's curved band, `near` the band of `q` (a third of its
+/// near radius, fixed per operation: module docs, "Beside an end"); `tie`
+/// the key ties are reported under.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn span_crossings<R: SpanRates>(
     curve: SpanCurve<'_>,
@@ -878,13 +943,15 @@ pub(super) fn span_crossings<R: SpanRates>(
     operand: Operand,
     rates: &R,
     band: Band,
+    near: f64,
     tie: TieKey,
 ) -> Decided<SpanRec> {
     let mut cost = Cost::default();
     let q_at = q.at_level(&Bounded::<f64>::exact(0.0)).at;
     // The rows at the ends `q` is near, decided once for every level.
+    let band_of_q = near;
     let near = [0, 1].map(|j| {
-        if !curve.near_end(j, &q_at, band) {
+        if !curve.near_end(j, &q_at, band_of_q) {
             return None;
         }
         let (side, w) = curve.end_row(j, &q, end_rates(j), tie);
@@ -899,12 +966,17 @@ pub(super) fn span_crossings<R: SpanRates>(
         curve,
         ends,
         near,
+        band_of_q,
         q,
         rates,
         band,
         tie,
+        exact: OnceCell::new(),
+        flat: OnceCell::new(),
     };
     let r = ladder(&mut ctx, 0, &mut cost).expect("the first level runs");
+    let runs = u32::from(ctx.exact.get().is_some()) + u32::from(ctx.flat.get().is_some());
+    cost.exact.rationals = cost.exact.rationals.saturating_add(runs);
     (r, cost)
 }
 
@@ -940,6 +1012,16 @@ impl<R: SpanRates> SpanCtx<'_, R> {
             c.compose_linear(&a, &off)
         };
         let (g, h) = (line(NU), line(R_HAT));
+        // A span lying on `q`'s ray line, exactly (`g ≡ 0`): its side
+        // along it is the first-order row's (module docs, "Along the ray
+        // line"). Checked exactly only where every coefficient of `g` may
+        // be 0.
+        let maybe_zero = |x: &S| !matches!(x.sign(), Some(o) if o != std::cmp::Ordering::Equal);
+        if g.coefs().iter().all(maybe_zero)
+            && self.exact_g().is_some_and(|e| e.iter().all(|x| *x == 0u32))
+        {
+            return self.along_line(&h, like, work);
+        }
         // The span and its polynomials run backwards, `u = 1 − t`, for
         // the pieces in its second half.
         let (cr, gr, hr) = (c.reversed(), g.reversed(), h.reversed());
@@ -994,12 +1076,12 @@ impl<R: SpanRates> SpanCtx<'_, R> {
                         // At most one root, beside a record end: narrowed
                         // towards that end, on the span run backwards for
                         // the end at `t = 1`.
-                        (None, Some(e)) if cl.mult <= 1 => {
+                        (None, Some(e)) if cl.mult <= 1 || (cl.mult == 2 && self.double_at(0)) => {
                             let b = [lo.bounds()[0], hi.bounds()[1]][1];
                             let (b, split) = narrow(&g, b, e, like, work);
                             end_pieces(&mut pieces, b, split, (s0, on0), e, false);
                         }
-                        (Some(e), None) if cl.mult <= 1 => {
+                        (Some(e), None) if cl.mult <= 1 || (cl.mult == 2 && self.double_at(1)) => {
                             let d = mirror(lo).bounds()[1];
                             let (b, split) = narrow(&gr, d, e, like, work);
                             let mut at_end = SmallVec::<[Piece; 2]>::new();
@@ -1074,14 +1156,38 @@ impl<R: SpanRates> SpanCtx<'_, R> {
                             t = mirrored(t);
                         }
                     }
-                    let RowAt { s, along, tie } = row?;
+                    let RowAt {
+                        s,
+                        along,
+                        tie,
+                        fold,
+                    } = row?;
                     match net {
+                        // Inside a fold of the shadow only a cluster is
+                        // read (module docs, "A vertical tangent").
+                        Some(_) if fold => return Err(Fail::Escalate { order: 0 }),
                         // A tie beside an end: the row at that end, flat
                         // (module docs, "Beside an end").
                         Some(c) => match tie.then(|| self.at_end(p, c, polys, like, work)) {
                             Some(Some(on)) => on.then_some(c),
                             _ => (s == c).then_some(c),
                         },
+                        None if fold => {
+                            // The two crossings of the moved line, if
+                            // any, are on the ray together and cancel: a
+                            // touch where they are.
+                            let o = p.sides[0];
+                            let pc = if p.rev { &cr } else { &c };
+                            let apart = self.fold_side(pc, t, p.rev, like, work)? != o;
+                            let on = match self.operand {
+                                Operand::A => s != o,
+                                Operand::B => s == o,
+                            };
+                            if apart && on {
+                                touches.push(if p.rev { mirrored(t) } else { t });
+                            }
+                            None
+                        }
                         None => {
                             let along = along.ok_or(Fail::Escalate { order: 0 })?;
                             (times(s, along) == p.sides[0]).then_some(s)
@@ -1122,7 +1228,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         let mut ends = (0..2).filter(|&j| {
             self.near[j].is_some() && {
                 work.ends = work.ends.saturating_add(1);
-                within(polys[j], reach[j], self.band, like)
+                within(polys[j], reach[j], self.band_of_q, like)
             }
         });
         let j = ends.next()?;
@@ -1150,7 +1256,8 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         work: &mut LevelWork,
     ) -> Result<RowAt, Fail> {
         let f = |x: f64| S::from_f64(x, like);
-        let row = self.row_over(c, [f(t[0]), f(t[1])], rev, like, work);
+        let start = t[0] == 0.0;
+        let row = self.row_over(c, [f(t[0]), f(t[1])], rev, start, like, work);
         if t[0] == t[1] || !matches!(row, Err(Fail::Escalate { .. })) {
             return row;
         }
@@ -1161,7 +1268,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         // for `q`'s foot on a piece along the ray's line, `axis` `r̂`),
         // and the row read over that.
         match self.narrowed(c, t, axis, like, work) {
-            Some(ends) => self.row_over(c, ends, rev, like, work),
+            Some(ends) => self.row_over(c, ends, rev, start, like, work),
             None => row,
         }
     }
@@ -1221,26 +1328,50 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     }
 
     /// The vertex–curve shadow row over the parameters `[lo, hi]` of `c`
-    /// (the span, or the span run backwards if `rev`).
+    /// (the span, or the span run backwards if `rev`), `start` where `lo`
+    /// is that parameter's 0. Where the tangent's shadow isn't certified
+    /// non-zero (a vertical tangent, `T ∥ UP`), the second derivative's
+    /// takes its place where that one is (module docs, "A vertical
+    /// tangent"): the direction the curve leaves its start along, or,
+    /// inside the parameter, the one both branches of a fold leave along
+    /// (`fold`); else the row escalates.
     fn row_over<S: RayLevel>(
         &self,
         c: &HomCurve<S, 3>,
         [lo, hi]: [S; 2],
         rev: bool,
+        start: bool,
         like: &S,
         work: &mut LevelWork,
     ) -> Result<RowAt, Fail> {
         work.evals = work.evals.saturating_add(1);
         let f = |x: f64| S::from_f64(x, like);
         let width = hi.sub(&lo).enclose()[1];
-        let ts = if width <= 0.0 {
-            lo
-        } else {
-            lo.mid(&hi).widened(mul_up(width, 0.5))
-        };
+        let ts = enclosing(lo, &hi, width);
         let (at, tangent) = curve_point(c, &ts);
+        let (tangent, fold) = if shadow_certified(&tangent, like) {
+            (tangent, false)
+        } else {
+            // A tangent along `UP` exists only where the shadow is a
+            // segment; elsewhere the level is too coarse to see it isn't.
+            if !self.flat_shadow() {
+                return Err(Fail::Escalate { order: 0 });
+            }
+            let d2 = second(c, &ts);
+            if !shadow_certified(&d2, like) {
+                return Err(Fail::Escalate { order: 0 });
+            }
+            (d2, !start)
+        };
+        // The span's direction; a fold's branches leave along the second
+        // derivative whichever way the parameter runs.
         let (tangent, ts) = if rev {
-            (tangent.map(|x| x.neg()), f(1.0).sub(&ts))
+            let t = if fold {
+                tangent
+            } else {
+                tangent.map(|x| x.neg())
+            };
+            (t, f(1.0).sub(&ts))
         } else {
             (tangent, ts)
         };
@@ -1253,17 +1384,295 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         let s = decide(row.g, row.ord, self.band, self.tie)?;
         let r = [f(R_HAT.x), f(R_HAT.y), f(R_HAT.z)];
         let along = dot3(&tangent, &r).sign().and_then(Sign::of);
-        Ok(RowAt { s, along, tie })
+        Ok(RowAt {
+            s,
+            along,
+            tie,
+            fold,
+        })
+    }
+
+    /// The side of the fold point of `c` at the piece `t` (the span, or
+    /// the span run backwards if `rev`) against `q`'s `r̂` line, decided:
+    /// the flat point–vertex row with the fold point moving at the span's
+    /// rates there.
+    fn fold_side<S: RayLevel>(
+        &self,
+        c: &HomCurve<S, 3>,
+        t: [f64; 2],
+        rev: bool,
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Result<Sign, Fail> {
+        work.evals = work.evals.saturating_add(1);
+        let f = |x: f64| S::from_f64(x, like);
+        let width = crate::num::bounded::up(t[1] - t[0]);
+        let ts = enclosing(f(t[0]), &f(t[1]), width);
+        let at = c.eval(&ts);
+        let ts = if rev { f(1.0).sub(&ts) } else { ts };
+        let foot = MovingAt {
+            at,
+            rates: self.rates.rates_at(&ts),
+        };
+        let q = self.q.at_level(like);
+        let row = vv_shadow(&q, &foot, ShadowAxis::Side);
+        decide(row.g, row.ord, self.band, self.tie)
+    }
+
+    /// `ν·(Pₖ − q)` of the curve's control points, exactly ([`SpanCtx`]'s
+    /// `exact`), formed once.
+    fn exact_g(&self) -> Option<&[Rational; 3]> {
+        self.exact
+            .get_or_init(|| {
+                let q = affine(&self.q.hom())?;
+                let nu = [NU.x, NU.y, NU.z].map(|x| Rational::try_from(x).ok());
+                let mut out: [Rational; 3] = std::array::from_fn(|_| Rational::from(0u32));
+                for (k, o) in out.iter_mut().enumerate() {
+                    let p = affine(&self.curve.control(k, [Rate::ZERO; ORDERS])?)?;
+                    for d in 0..3 {
+                        *o += nu[d].as_ref()? * (&p[d] - &q[d]);
+                    }
+                }
+                Some(out)
+            })
+            .as_ref()
+    }
+
+    /// Whether the curve's shadow lies on one line, exactly ([`SpanCtx`]'s
+    /// `flat`), formed once.
+    fn flat_shadow(&self) -> bool {
+        *self.flat.get_or_init(|| {
+            let pts: Option<Vec<[Rational; 3]>> = (0..3)
+                .map(|k| affine(&self.curve.control(k, [Rate::ZERO; ORDERS])?))
+                .collect();
+            let Some(p) = pts else {
+                return false;
+            };
+            let Some(up) = [UP.x, UP.y, UP.z]
+                .iter()
+                .map(|&x| Rational::try_from(x).ok())
+                .collect::<Option<Vec<_>>>()
+            else {
+                return false;
+            };
+            let a: [Rational; 3] = [0, 1, 2].map(|k| &p[1][k] - &p[0][k]);
+            let b: [Rational; 3] = [0, 1, 2].map(|k| &p[2][k] - &p[0][k]);
+            let n = [
+                &a[1] * &b[2] - &a[2] * &b[1],
+                &a[2] * &b[0] - &a[0] * &b[2],
+                &a[0] * &b[1] - &a[1] * &b[0],
+            ];
+            &up[0] * &n[0] + &up[1] * &n[1] + &up[2] * &n[2] == 0u32
+        })
+    }
+
+    /// Whether `g` has an exact double root at end `j` (`0` the start, `1`
+    /// the end): the end on `q`'s ray line and the curve leaving it along
+    /// `UP` (its shadow's tangent 0 there), so a cluster there of two
+    /// roots at most holds no other.
+    fn double_at(&self, j: usize) -> bool {
+        self.exact_g().is_some_and(|e| {
+            let (end, other) = if j == 0 { (0, 2) } else { (2, 0) };
+            e[end] == 0u32 && e[1] == 0u32 && e[other] != 0u32
+        })
+    }
+
+    /// The record of a span lying on `q`'s ray line (module docs, "Along
+    /// the ray line"): no crossing of its own; it crosses the moved ray
+    /// line where the first-order row `ν·(ΔC − Δq)` (the next order where
+    /// that is 0) changes sign along it, from the side of its start's
+    /// record to its end's, each change on the ray where `h` there is of
+    /// the ray's sign, a change at an end where its record says. A change
+    /// inside the span that no halving localises, or one at `q`'s foot,
+    /// escalates.
+    fn along_line<S: RayLevel>(
+        &self,
+        h: &Poly<S>,
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Result<SpanRec, Fail> {
+        let f = |x: f64| S::from_f64(x, like);
+        let q = self.q.at_level(like);
+        // The row's sign over `[a, b]`, if decided there: the span's point
+        // taken at `q` itself (it is on `q`'s line, so the value is a tie)
+        // moving at the span's rates there, its orders decided in turn.
+        let side_over = |[a, b]: [f64; 2], work: &mut LevelWork| {
+            work.evals = work.evals.saturating_add(1);
+            let ts = enclosing(f(a), &f(b), crate::num::bounded::up(b - a));
+            let at = MovingAt {
+                at: q.at.clone(),
+                rates: self.rates.rates_at(&ts),
+            };
+            let row = vv_shadow(&q, &at, ShadowAxis::Side);
+            decide(row.g, row.ord, self.band, self.tie)
+        };
+        let ahead_over =
+            |t: [f64; 2], work: &mut LevelWork| split_sign(h, t, like, work, SETTLE_SPLITS);
+        let crossings = along_changes(self.ends, self.operand, work, side_over, ahead_over)?;
+        Ok(SpanRec {
+            crossings,
+            touches: SmallVec::new(),
+        })
     }
 }
 
-/// Whether the span is within the curved band (`τ + τ_sign`) of `q` in
-/// both shadow directions over `[0, to]`, certified: `R·W ± g` and
-/// `R'·W ± h` of one sign over it, for `g`, `h`, `W` (`[g, h, W]`), `R`,
-/// `R'` the band times the 1-norms of [`NU`], [`R_HAT`] (at least their
-/// lengths).
-fn within<S: Scalar>([g, h, w]: [&Poly<S>; 3], to: f64, band: Band, like: &S) -> bool {
-    let reach = add_up(band.tau(), band.tau_sign());
+/// The crossings of an edge's stretch lying on a point's ray line
+/// (module docs, "Along the ray line"), over its parameter `[0, 1]`: its
+/// side against the line moved, `side_over` over a part of it (the
+/// first-order row `ν·(ΔC − Δq)`, the next order where that one is 0; an
+/// escalation where the part is too wide to decide it), from the side
+/// of its start's record to its end's (`ends`, each with whether it is
+/// on the ray); each change of side a crossing of the ray of a point of
+/// `operand`, signed by its direction, on the ray where `ahead_over`, the
+/// sign of `r̂·(C − q)` over the change's enclosure, is the ray's, a
+/// change at an end where that end's record is. A part no halving decides
+/// is left out (the changes are counted between decided parts); a change
+/// whose place along the line isn't certified (at `q`'s foot) escalates.
+pub(super) fn along_changes(
+    [(s0, on0), (s1, on1)]: [(Sign, bool); 2],
+    operand: Operand,
+    work: &mut LevelWork,
+    mut side_over: impl FnMut([f64; 2], &mut LevelWork) -> Result<Sign, Fail>,
+    mut ahead_over: impl FnMut([f64; 2], &mut LevelWork) -> Option<Sign>,
+) -> Result<SmallVec<[Crossing; 2]>, Fail> {
+    // The leaves of `[0, 1]`, in order, each with its decided side or
+    // none at the deepest halving.
+    let mut leaves: SmallVec<[([f64; 2], Option<Sign>); 4]> = SmallVec::new();
+    let mut stack: SmallVec<[([f64; 2], u32); 8]> = SmallVec::new();
+    stack.push(([0.0, 1.0], 0));
+    while let Some(([a, b], depth)) = stack.pop() {
+        if leaves.len() >= ALONG_LEAVES {
+            return Err(Fail::Escalate { order: 0 });
+        }
+        let side = match side_over([a, b], work) {
+            Ok(s) => Some(s),
+            Err(Fail::Escalate { .. }) => None,
+            Err(e) => return Err(e),
+        };
+        let m = a + (b - a) * 0.5;
+        if side.is_some() || depth >= ALONG_DEPTH || !(a < m && m < b) {
+            leaves.push(([a, b], side));
+        } else {
+            stack.push(([m, b], depth + 1));
+            stack.push(([a, m], depth + 1));
+        }
+    }
+    let ahead = ray_ahead(operand);
+    let net = |after: Sign| match operand {
+        Operand::A => neg(after),
+        Operand::B => after,
+    };
+    let mut crossings = SmallVec::new();
+    let mut change = |to: Sign, at: [f64; 2], end: Option<bool>, work: &mut LevelWork| {
+        let on = match end {
+            Some(on) => on,
+            None => ahead_over(at, work).ok_or(Fail::Escalate { order: 0 })? == ahead,
+        };
+        if on {
+            crossings.push(Crossing {
+                t: at,
+                sign: net(to),
+                single: true,
+            });
+        }
+        Ok::<(), Fail>(())
+    };
+    // The side so far and where it was last decided.
+    let (mut side, mut from) = (s0, 0.0);
+    for ([a, b], x) in leaves {
+        let Some(x) = x else { continue };
+        if x != side {
+            let end = (from == 0.0 && a == 0.0).then_some(on0);
+            change(x, [from, a], end, work)?;
+            side = x;
+        }
+        from = b;
+    }
+    if side != s1 {
+        let end = (from == 1.0).then_some(on1);
+        change(s1, [from, 1.0], end, work)?;
+    }
+    Ok(crossings)
+}
+
+/// The most halvings of a stretch lying on the ray line its side is
+/// sought over ([`along_changes`]): a change of side is localised to
+/// `2⁻²⁴` of it.
+const ALONG_DEPTH: u32 = 24;
+
+/// The most parts of a stretch lying on the ray line its side is sought
+/// over ([`along_changes`]).
+const ALONG_LEAVES: usize = 256;
+
+/// A value over `[lo, hi]` (`width` at least `hi − lo`): `lo` where it is
+/// 0, else their middle widened by half of it.
+fn enclosing<S: Curved>(lo: S, hi: &S, width: f64) -> S {
+    if width <= 0.0 {
+        lo
+    } else {
+        lo.mid(hi).widened(mul_up(width, 0.5))
+    }
+}
+
+/// Whether the shadow of `v` (its part across [`UP`]) is certified
+/// non-zero: a component of `UP × v` certified non-zero.
+fn shadow_certified<S: Scalar>(v: &[S; 3], like: &S) -> bool {
+    let up = [UP.x, UP.y, UP.z].map(|x| S::from_f64(x, like));
+    let n = [
+        up[1].mul(&v[2]).sub(&up[2].mul(&v[1])),
+        up[2].mul(&v[0]).sub(&up[0].mul(&v[2])),
+        up[0].mul(&v[1]).sub(&up[1].mul(&v[0])),
+    ];
+    n.iter()
+        .any(|x| matches!(x.sign(), Some(o) if o != std::cmp::Ordering::Equal))
+}
+
+/// `W·P″ − W″·P` of `c` at `s`: where the tangent numerator `W·P′ − W′·P`
+/// is 0, `W²` times the point's second derivative, so of the direction a
+/// curve with positive weights leaves a point where its tangent vanishes.
+fn second<S: Scalar>(c: &HomCurve<S, 3>, s: &S) -> [S; 3] {
+    let (p, w) = c.eval_hom(s);
+    let (d2p, d2w) = c.derivative().derivative().eval_hom(s);
+    [0, 1, 2].map(|k| w.mul(&d2p[k]).sub(&d2w.mul(&p[k])))
+}
+
+/// Whether `b − a` is along [`UP`] (or 0), exactly: its shadow 0.
+fn vertical(a: &[Rational; 3], b: &[Rational; 3]) -> bool {
+    let Some(up) = [UP.x, UP.y, UP.z]
+        .iter()
+        .map(|&x| Rational::try_from(x).ok())
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let d: [Rational; 3] = [0, 1, 2].map(|k| &b[k] - &a[k]);
+    [(1, 2), (2, 0), (0, 1)]
+        .iter()
+        .all(|&(i, k)| &up[i] * &d[k] == &up[k] * &d[i])
+}
+
+/// A homogeneous point's affine point `X/W`, exactly; `None` for a weight
+/// sum of 0 or a coordinate that isn't finite.
+fn affine(h: &HomPoint) -> Option<[Rational; 3]> {
+    let mut x: [Rational; 3] = std::array::from_fn(|_| Rational::from(0u32));
+    let mut w = Rational::from(0u32);
+    for (p, c) in &h.terms {
+        for (xk, pk) in x.iter_mut().zip(p.to_array()) {
+            *xk += Rational::try_from(pk).ok()? * c;
+        }
+        w += c;
+    }
+    if w == 0u32 {
+        return None;
+    }
+    Some(x.map(|v| v / &w))
+}
+
+/// Whether the span is within `reach` of `q` in both shadow directions
+/// over `[0, to]`, certified: `R·W ± g` and `R'·W ± h` of one sign over
+/// it, for `g`, `h`, `W` (`[g, h, W]`), `R`, `R'` the reach times the
+/// 1-norms of [`NU`], [`R_HAT`] (at least their lengths).
+fn within<S: Scalar>([g, h, w]: [&Poly<S>; 3], to: f64, reach: f64, like: &S) -> bool {
     [(g, NU), (h, R_HAT)].iter().all(|(p, v)| {
         let r = S::from_f64(mul_up(reach, v.x.abs() + v.y.abs() + v.z.abs()), like);
         [false, true].iter().all(|&minus| {
@@ -1276,12 +1685,11 @@ fn within<S: Scalar>([g, h, w]: [&Poly<S>; 3], to: f64, band: Band, like: &S) ->
     })
 }
 
-/// Whether `q` is within the curved band (`τ + τ_sign`) of the point `k`
-/// in both shadow directions, or not certainly beyond it: `|ν·(k − q)|`
-/// and `|r̂·(k − q)|` against the band times each axis's 1-norm (at least
-/// its length), at `f64` with certified errors.
-fn near_end(q: &[Bounded<f64>; 3], k: [Bounded<f64>; 3], band: Band) -> bool {
-    let reach = add_up(band.tau(), band.tau_sign());
+/// Whether `q` is within `reach` of the point `k` in both shadow
+/// directions, or not certainly beyond it: `|ν·(k − q)|` and `|r̂·(k −
+/// q)|` against the reach times each axis's 1-norm (at least its length),
+/// at `f64` with certified errors.
+fn near_end(q: &[Bounded<f64>; 3], k: [Bounded<f64>; 3], reach: f64) -> bool {
     let b = |x: f64| Bounded::<f64>::from(x);
     let d = [k[0] - q[0], k[1] - q[1], k[2] - q[2]];
     [NU, R_HAT].iter().all(|v| {
@@ -1508,7 +1916,7 @@ pub(super) fn bracket<S: Scalar>(
 
 /// `[a, b]` on the span run backwards as bounds on the span, or the other
 /// way, `[1 − b, 1 − a]` rounded outwards.
-fn mirrored([a, b]: [f64; 2]) -> [f64; 2] {
+pub(super) fn mirrored([a, b]: [f64; 2]) -> [f64; 2] {
     [one_minus(b, false), one_minus(a, true)]
 }
 

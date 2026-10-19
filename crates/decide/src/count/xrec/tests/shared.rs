@@ -836,6 +836,79 @@ fn a_straight_shared_line_in_a_blend_zone_crosses_at_its_root() {
     assert_eq!(checked, 6);
 }
 
+/// A straight edge of `A` whose shadow lies on the ray line of points of
+/// `B` and runs through a vertex's blend zone, where the field turns its
+/// motion's shadow across the line and back (the ends outside the zone
+/// on one side, its middle on the other): each point's ray record counts
+/// the moved edge's crossings of the moved ray, sampled densely (each
+/// change of side along the edge a crossing, on the ray where it is
+/// ahead of the point), also where the ends' records agree and a point
+/// lies between the two changes.
+#[test]
+fn a_straight_edge_on_a_ray_line_in_a_blend_zone_counts_the_moved_crossings() {
+    let mut between = 0;
+    for (d_vertex, d_far) in [
+        (lat(0.5, 1.0, 0.25), lat(0.5, -1.0, 0.5)),
+        (lat(-0.5, -1.0, 0.75), lat(0.25, 1.0, -0.5)),
+        (lat(1.0, 0.5, -0.25), lat(1.0, -2.0, 0.0)),
+    ] {
+        for back in [false, true] {
+            let (a, b) = (lat(-4.0, 0.0, 0.0), lat(4.0, 0.0, 1.0));
+            let mut geom = Geom {
+                d: d_far,
+                blend: Some(Blend {
+                    at: (a + b) * 0.5,
+                    d: d_vertex,
+                    r: (b - a).length() / 8.0,
+                }),
+                ..Geom::default()
+            };
+            let (e0, e1) = if back { (b, a) } else { (a, b) };
+            geom.segment(A, E, (0, e0), (1, e1));
+            let xs = [-6.0, -2.5, -1.25, -0.25, 0.5, 1.25, 2.0, 4.0, 6.0];
+            let qs: Vec<Point> = xs
+                .iter()
+                .enumerate()
+                .map(|(i, &x)| {
+                    let p = Point::vert(B, VertId(10 + i as u32));
+                    geom.vertex(B, 10 + i as u32, lat(x, 0.0, 0.5 - x / 8.0));
+                    p
+                })
+                .collect();
+            let keys = qs.iter().map(|&q| RayKey { q, g: EdgeId(E) });
+            let mut shadows = Shadows::new();
+            shadows
+                .fill_rays(keys, &geom, band(), &mut Seq::default())
+                .expect("decided");
+            // The moved edge's side of the points' common ray line along
+            // it: `ν·d` at its point (its order 0 is 0), sampled.
+            let side = |t: f64| geom.d_at(e0 + (e1 - e0) * t).dot(NU) > 0.0;
+            let n = 4000;
+            let changes: Vec<(f64, bool)> = (0..n)
+                .filter_map(|i| {
+                    let (s, t) = (f64::from(i) / f64::from(n), f64::from(i + 1) / f64::from(n));
+                    (side(s) != side(t)).then(|| (0.5 * (s + t), side(t)))
+                })
+                .collect();
+            assert!(!changes.is_empty(), "{d_vertex} {back}");
+            for &q in &qs {
+                let at = geom.pos[&q];
+                let want: i8 = changes
+                    .iter()
+                    .filter(|(t, _)| (e0 + (e1 - e0) * *t - at).dot(R_HAT) > 0.0)
+                    .map(|&(_, to)| if to { 1 } else { -1 })
+                    .sum();
+                let got = shadows.ray(q, EdgeId(E)).expect("stored").count();
+                assert_eq!(got, want, "{d_vertex} {back} {at}");
+                let ends = [0, 1].map(|j| shadows.vv(q, VertId(j)).expect("stored").place.side);
+                between += usize::from(ends[0] == ends[1] && want != 0);
+            }
+            shadows.replay(&geom, band()).expect("replays");
+        }
+    }
+    assert!(between > 0);
+}
+
 /// A straight span from `p` to `q` (middle at the midpoint, weight 1).
 fn line_span(p: DVec3, q: DVec3) -> Span {
     [cp(p, 1.0), cp((p + q) * 0.5, 1.0), cp(q, 1.0)]

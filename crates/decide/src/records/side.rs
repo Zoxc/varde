@@ -562,6 +562,7 @@ fn decide_side<G: SideGeometry>(
         key.q.operand,
         &LineOf { geom, key },
         band,
+        geom.near_radius(key.q) / 3.0,
         tie,
     );
     (
