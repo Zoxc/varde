@@ -612,10 +612,15 @@ pub fn decide_flat_orders(
 
 /// A precision level curved rows are evaluated at: a [`Scalar`] with a
 /// certified square root (uncertified unless its argument is certainly
-/// `≥ 0`), so directions are normalised and values are lengths.
+/// `≥ 0`, or of a value non-negative by construction), so directions are
+/// normalised and values are lengths.
 pub trait Curved: Scalar {
     /// `√self`.
     fn sqrt(&self) -> Self;
+
+    /// `√self` of a value whose true value is `≥ 0` by construction (a
+    /// sum of squares): certified however near zero it rounds.
+    fn sqrt_nonneg(&self) -> Self;
 
     /// The same value with its error widened by `by ≥ 0`: a value known
     /// only to within `by` of this one (an enclosure's half width).
@@ -629,6 +634,10 @@ pub trait Curved: Scalar {
 impl Curved for Bounded<f64> {
     fn sqrt(&self) -> Self {
         Bounded::<f64>::sqrt(*self)
+    }
+
+    fn sqrt_nonneg(&self) -> Self {
+        Bounded::<f64>::sqrt_nonneg(*self)
     }
 
     fn widened(&self, by: f64) -> Self {
@@ -645,6 +654,10 @@ impl Curved for Bounded<Dd> {
         Bounded::<Dd>::sqrt(*self)
     }
 
+    fn sqrt_nonneg(&self) -> Self {
+        Bounded::<Dd>::sqrt_nonneg(*self)
+    }
+
     fn widened(&self, by: f64) -> Self {
         self.with_trunc(by)
     }
@@ -657,6 +670,10 @@ impl Curved for Bounded<Dd> {
 impl<B: BigF> Curved for Bounded<B> {
     fn sqrt(&self) -> Self {
         Bounded::<B>::sqrt(self)
+    }
+
+    fn sqrt_nonneg(&self) -> Self {
+        Bounded::<B>::sqrt_nonneg(self)
     }
 
     fn widened(&self, by: f64) -> Self {
@@ -745,7 +762,7 @@ pub fn vv_shadow<S: Curved>(q: &MovingAt<S>, w: &MovingAt<S>, axis: ShadowAxis) 
 /// carries the curve's rates at `C`. Uncertified (escalates) where `T` is
 /// too near `UP` to normalise `ν`.
 pub fn curve_shadow<S: Curved>(q: &MovingAt<S>, foot: &MovingAt<S>, tangent: &[S; 3]) -> Coeffs<S> {
-    let nu = unit3(&cross3(&lit3(UP, &q.at[0]), tangent));
+    let nu = unit3(&cross3(&lit3(UP, &q.at[0]), &rescaled(tangent)));
     along(&nu, q, foot)
 }
 
@@ -848,7 +865,7 @@ pub fn z_order<S: Curved>(
     g: &MovingAt<S>,
     tg: &[S; 3],
 ) -> Option<Coeffs<S>> {
-    let m = oriented(unit3(&cross3(te, tg)), &e.at[0])?;
+    let m = oriented(unit3(&cross3(&rescaled(te), &rescaled(tg))), &e.at[0])?;
     Some(along(&m, g, e))
 }
 
@@ -875,9 +892,11 @@ pub fn z_order_cone<S: Curved>(
     let up = lit3(UP, like);
     let mut cs = Vec::new();
     let mut side = None;
+    let dg: Vec<[S; 3]> = dg.iter().map(rescaled).collect();
     for a in de {
-        for b in dg {
-            let c = cross3(a, b);
+        let a = rescaled(a);
+        for b in &dg {
+            let c = cross3(&a, b);
             let s = dot3(&c, &up).sign()?;
             if s == Ordering::Equal || side.is_some_and(|x| x != s) {
                 return None;
@@ -889,7 +908,7 @@ pub fn z_order_cone<S: Curved>(
     let flip = side? == Ordering::Less;
     Some(std::array::from_fn(|k| {
         let d = &deltas[k];
-        let len = dot3(d, d).sqrt().enclose()[1];
+        let len = dot3(d, d).sqrt_nonneg().enclose()[1];
         let wide = [-len, len];
         let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut sign = None;
@@ -943,7 +962,7 @@ pub fn shared_crossing<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) ->
 /// parameter box where the tangent and the rate are enclosures over it):
 /// its sign is `h₁`'s, without the normalisations' spread.
 pub fn shared_crossing_h1<S: Scalar>(tangent: &[S; 3], rate: &[S; 3]) -> S {
-    dot3(&lit3(UP, &tangent[0]), &cross3(tangent, rate))
+    dot3(&lit3(UP, &tangent[0]), &cross3(&rescaled(tangent), rate))
 }
 
 /// The shared-curve crossing row's orders, exactly, at a stored point of
@@ -1037,11 +1056,13 @@ pub fn curve_point<S: Scalar>(c: &HomCurve<S, 3>, s: &S) -> ([S; 3], [S; 3]) {
     (at, tangent)
 }
 
-/// A patch's point at `(u, v)` and its normal there, `x_u × x_v` (the
-/// patch's orientation).
+/// A patch's point at `(u, v)` and its normal there, a positive multiple
+/// of `x_u × x_v` (the patch's orientation): of the partials each scaled
+/// by a power of two to a largest component near 1, so it neither
+/// overflows nor underflows for huge or tiny partials.
 pub fn patch_point<S: Scalar>(f: &HomPatch<S>, u: &S, v: &S) -> ([S; 3], [S; 3]) {
     let p = f.eval_partials(u, v);
-    let normal = cross3(&p.du, &p.dv);
+    let normal = cross3(&rescaled(&p.du), &rescaled(&p.dv));
     (p.p, normal)
 }
 
@@ -1103,17 +1124,29 @@ fn cross3<S: Scalar>(a: &[S; 3], b: &[S; 3]) -> [S; 3] {
     ]
 }
 
-/// `v / |v|`: uncertified where `|v|` isn't certainly non-zero.
+/// `v / |v|`: uncertified where `|v|` isn't certainly non-zero. Of `v`
+/// [`rescaled`] first: the same direction, but its squared length
+/// neither underflows (a tangent of a face at coordinates near `10⁻³⁰⁰`)
+/// nor overflows; the squared length is non-negative by construction.
 fn unit3<S: Curved>(v: &[S; 3]) -> [S; 3] {
-    // Scaled first by a power of two to a largest component near 1: the
-    // same direction, but its squared length neither underflows (a
-    // tangent of a face at coordinates near `10⁻³⁰⁰`) nor overflows.
+    let v = rescaled(v);
+    let len = dot3(&v, &v).sqrt_nonneg();
+    [0, 1, 2].map(|k| v[k].div(&len))
+}
+
+/// `v` times a power of two bringing its largest component (by its
+/// enclosure) near 1, exactly but for components it takes below the
+/// normal range (whose rounding the level carries): a positive multiple,
+/// the same direction, whose products (squared lengths, cross products
+/// of two such) neither overflow nor underflow. `v` itself where that
+/// largest bound is zero or not finite.
+fn rescaled<S: Scalar>(v: &[S; 3]) -> [S; 3] {
     let big = v
         .iter()
         .flat_map(|x| x.enclose())
         .map(f64::abs)
         .fold(0.0, |m: f64, x| if x > m { x } else { m });
-    let v = if big > 0.0 && big.is_finite() {
+    if big > 0.0 && big.is_finite() {
         // `2^−e` for `big` in `[2^e, 2^(e+1))`, exact, kept normal.
         let e = ((big.to_bits() >> 52) & 0x7ff) as i64 - 1023;
         let e = if big < f64::MIN_POSITIVE {
@@ -1126,9 +1159,7 @@ fn unit3<S: Curved>(v: &[S; 3]) -> [S; 3] {
         [0, 1, 2].map(|i| v[i].mul(&k))
     } else {
         v.clone()
-    };
-    let len = dot3(&v, &v).sqrt();
-    [0, 1, 2].map(|k| v[k].div(&len))
+    }
 }
 
 #[cfg(test)]

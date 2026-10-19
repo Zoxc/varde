@@ -33,7 +33,8 @@
 //! uncertified whatever its error parts say ([`Level::is_finite`]), and
 //! every operation's result is uncertified when an operand is.
 //!
-//! The operations of the first level are `+ − × ÷`, `√`, negation and
+//! The operations of the first level are `+ − × ÷`, `√` (also of a value
+//! non-negative by construction, [`Bounded::sqrt_nonneg`]), negation and
 //! `abs` on `Bounded<f64>`: each rounds its value once, adds its own
 //! rounding (at most `u·|v|`, or `η/2` below the normal range) to
 //! `err_round` and carries the operands' errors through, truncation into
@@ -271,10 +272,17 @@ impl Bounded<f64> {
         }
     }
 
-    /// An upper bound of the true value's magnitude, `|v| + err`.
+    /// An upper bound of the true value's magnitude, `|v| + err`: `|v|`
+    /// itself for an exact value (so the top float is its own bound),
+    /// else rounded up (`+∞` past the top float).
     #[inline]
     pub fn abs_bound(&self) -> f64 {
-        add_up(self.v.abs(), self.err())
+        let e = self.err();
+        if e == 0.0 {
+            self.v.abs()
+        } else {
+            add_up(self.v.abs(), e)
+        }
     }
 
     /// The absolute value: exact, the errors unchanged (`|·|` moves no
@@ -288,17 +296,41 @@ impl Bounded<f64> {
     }
 
     /// The square root. Uncertified unless the true value is certainly
-    /// `≥ 0` (`v ≥ err`, compared exactly). The true root is within
-    /// `e / (√x + √v) ≤ min(e / √v, √e)` of `√v` for an error `e`; each
-    /// part takes that bound of its own error (the bound is subadditive in
-    /// `e`, so the parts still sum to a bound).
+    /// `≥ 0` (`v ≥ err`, compared exactly); for a value non-negative by
+    /// construction see [`sqrt_nonneg`](Self::sqrt_nonneg).
     pub fn sqrt(self) -> Self {
-        let v = self.v.sqrt();
         // False for a NaN too.
         let non_negative = self.v >= self.err();
         if !non_negative {
-            return Bounded::new(v, f64::INFINITY, f64::INFINITY);
+            return Bounded::new(self.v.sqrt(), f64::INFINITY, f64::INFINITY);
         }
+        self.root()
+    }
+
+    /// The square root of a value whose true value is `≥ 0` by
+    /// construction (a sum of squares, a squared length), certified
+    /// whatever its error: a value below zero is taken as `+0`, which is
+    /// no further from the true value than the value itself, so the error
+    /// parts carry over (and `√` of `0 ± e` is `0 ± √e`). Uncertified only
+    /// for a value or error that isn't finite. The caller vouches for the
+    /// sign: of a value that may truly be negative the result is wrong.
+    pub fn sqrt_nonneg(self) -> Self {
+        // A value that isn't finite stays (uncertified); `−0` becomes `+0`.
+        let v = if self.v.is_finite() && self.v <= 0.0 {
+            0.0
+        } else {
+            self.v
+        };
+        Bounded { v, ..self }.root()
+    }
+
+    /// The root of `v ≥ 0` (or a NaN): the true root is within
+    /// `e / (√x + √v) ≤ min(e / √v, √e)` of `√v` for an error `e` and a
+    /// true value `x ≥ 0`; each part takes that bound of its own error
+    /// (the bound is subadditive in `e`, so the parts still sum to a
+    /// bound).
+    fn root(self) -> Self {
+        let v = self.v.sqrt();
         let root_lo = down(v);
         let part = |e: f64| {
             let by_root = up(e.sqrt());

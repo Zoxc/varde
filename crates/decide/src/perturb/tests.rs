@@ -1598,3 +1598,37 @@ fn the_shared_zorder_row_is_the_moved_height() {
     let v = |d: DVec3| lit3(d, &like);
     assert!(shared_zorder(&v(UP * 3.0), &[v(NU), v(T[0]), v(T[1]), v(T[2])]).is_none());
 }
+
+/// Curved rows normalise tangents and normals scaled first by a power of
+/// two: tangents of any magnitude (`~10¹⁶⁰`, whose cross products
+/// overflow, or `~10⁻¹⁶⁰`, whose underflow) give the rows of the same
+/// directions at unit scale, certified, with the same signs.
+#[test]
+fn curved_rows_take_tangents_of_any_magnitude() {
+    type L = Bounded<f64>;
+    let pt = |v: [f64; 3]| v.map(L::exact);
+    let scaled = |v: [f64; 3], s: f64| pt(v.map(|x| x * s));
+    let overlap = |a: &L, b: &L| {
+        let ([al, ah], [bl, bh]) = (a.enclose(), b.enclose());
+        a.is_certified() && al <= bh && bl <= ah && a.sign() == b.sign()
+    };
+    let (te, tg) = ([0.3, -0.7, 0.2], [0.8, 0.1, -0.4]);
+    let e = MovingAt::of_a(pt([1.0, 2.0, 3.0]), Sign::Pos, pt([0.1, 0.2, 0.3]));
+    let g = MovingAt::fixed(pt([1.25, 2.0, 3.5]));
+    let z0 = z_order(&e, &pt(te), &g, &pt(tg)).expect("crossing shadows");
+    let c0 = curve_shadow(&e, &g, &pt(te));
+    let h0 = shared_crossing_h1(&pt(te), &e.rates[0]);
+    for s in [p2(532), p2(-532), p2(1000), p2(-1000)] {
+        let z = z_order(&e, &scaled(te, s), &g, &scaled(tg, s)).expect("crossing shadows");
+        let c = curve_shadow(&e, &g, &scaled(te, s));
+        for (a, b) in [(&z.g, &z0.g), (&c.g, &c0.g)] {
+            assert!(overlap(a, b), "{s:e}: {a:?} vs {b:?}");
+        }
+        for k in 0..ORDERS {
+            assert!(overlap(&z.ord[k], &z0.ord[k]), "{s:e} {k}: {z:?}");
+            assert!(overlap(&c.ord[k], &c0.ord[k]), "{s:e} {k}: {c:?}");
+        }
+        let h = shared_crossing_h1(&scaled(te, s), &e.rates[0]);
+        assert!(h.sign().is_some() && h.sign() == h0.sign(), "{s:e}: {h:?}");
+    }
+}

@@ -577,3 +577,56 @@ fn hand_built_non_finite_values_are_uncertified() {
 fn negative_truncation_is_rejected() {
     let _ = Bounded::exact(1.0).with_trunc(-0.5);
 }
+
+/// The root of a value non-negative by construction is certified however
+/// near zero the value rounds: a squared length `0 ± η` (underflowed), or
+/// one rounding below zero within its error, where the general root is
+/// uncertified. Every true value `≥ 0` within the error has its root
+/// within the result's.
+#[test]
+fn roots_of_values_non_negative_by_construction_are_certified() {
+    // A squared length whose squares underflow: `0 ± η`-ish.
+    let a = Bounded::new(1e-170, 0.0, 1e-170);
+    let n2 = a * a + a * a;
+    assert!(n2.v == 0.0 && n2.err() > 0.0, "{n2:?}");
+    assert!(!n2.sqrt().is_certified(), "{n2:?}");
+    let r = n2.sqrt_nonneg();
+    assert!(r.is_certified(), "{r:?}");
+    for x in [q(0.0), q(2e-170) * q(2e-170) * q(2.0)] {
+        assert!(check_sqrt(r, &x), "{x}");
+    }
+    let cases = [
+        (0.0, ETA),
+        (-0.0, ETA),
+        (-ETA, 2.0 * ETA),
+        (ETA, 3.0 * ETA),
+        (1e-300, 1e-290),
+        (-1e-20, 1e-20),
+        (-1e-20, 3e-20),
+        (2.0, 1.0),
+        (4.0, 0.0),
+        (-0.0, 0.0),
+    ];
+    for (v, e) in cases {
+        for (t, r) in [(e, 0.0), (0.0, e)] {
+            let x = Bounded::new(v, t, r);
+            let root = x.sqrt_nonneg();
+            assert!(root.is_certified(), "{x:?}: {root:?}");
+            assert!(root.v >= 0.0 && root.v.is_sign_positive(), "{root:?}");
+            if v >= e && v.is_sign_positive() {
+                assert_eq!(bits(root), bits(x.sqrt()), "{x:?}");
+            }
+            let lo = if v - e > 0.0 { q(v) - q(e) } else { q(0.0) };
+            for x in [lo, qabs(q(v)), q(v) + q(e)] {
+                assert!(check_sqrt(root, &x), "{v} ± {e}: {x}");
+            }
+        }
+    }
+    for x in [
+        Bounded::new(f64::NAN, 0.0, 0.0),
+        Bounded::new(f64::NEG_INFINITY, 0.0, 0.0),
+        Bounded::new(0.0, f64::INFINITY, 0.0),
+    ] {
+        assert!(!x.sqrt_nonneg().is_certified(), "{x:?}");
+    }
+}

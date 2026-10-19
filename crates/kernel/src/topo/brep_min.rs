@@ -338,9 +338,7 @@ impl Brep {
                 },
                 Halt::OutOfBudget(error) => StoreError::Coedge {
                     index: match &error {
-                        KernelError::OutOfBudget { profile, .. } => {
-                            profile.stopped.at.item as usize
-                        }
+                        KernelError::OutOfBudget { profile, .. } => profile.stopped.at.item,
                         _ => 0,
                     },
                     why: CoedgeError::OutOfBudget(error),

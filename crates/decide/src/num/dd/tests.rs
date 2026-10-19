@@ -201,7 +201,7 @@ fn quotient(a: &Q, b: &Q) -> Option<Q> {
 
 /// The raw algorithms on exact operands, against the proven relative
 /// bounds of the paper (plus, for products and quotients, the dropped low
-/// parts' `2⁻⁸⁹⁸` and the scaling's `3η`): this checks they are the
+/// parts' `2⁻⁸⁹⁸` and the scaling's `η/2`): this checks they are the
 /// paper's algorithms, not just that the certified bounds hold.
 #[test]
 fn algorithms_meet_their_proven_bounds() {
@@ -211,7 +211,7 @@ fn algorithms_meet_their_proven_bounds() {
     let add_bound = q(3.0) * u2.clone() + q(13.0) * u3.clone();
     let mul_bound = q(7.0) * u2.clone() + q(pow2(-898));
     let div_bound = q(15.0) * u2 + q(56.0) * u3 + q(pow2(-898));
-    let abs = q(SCALE_ABS);
+    let abs = q(ETA) / q(2.0);
     let mut worst = [0f64; 3];
     for seed in varde_testing::seeds(1, 64) {
         let mut rng = Rng::new(seed);
@@ -628,7 +628,7 @@ fn results_are_the_same_bits_everywhere() {
     }
     println!("hash of the results: {:#018x}", h.0);
     assert_eq!(
-        h.0, 0xc72c_22cf_5fb2_b8b0,
+        h.0, 0xf904_86d1_41d2_8157,
         "results differ from the reference bits"
     );
 }
@@ -742,4 +742,119 @@ fn values_just_above_the_top_float_stay_certified() {
         assert!(check("after", r, Some(&x)), "{r:?}");
     }
     assert!(check_sqrt(p.sqrt(), &exact));
+}
+
+/// Promotion never loses a certified sign: on promoted operands every
+/// operation certifies each sign the first level certifies, also for
+/// products and quotients within a few `η` of zero, where the result is
+/// subnormal (the scaling back once added `3η` to their bound, more than
+/// the first level's `η`).
+#[test]
+fn promoted_operations_keep_the_first_levels_signs() {
+    // A product of about `−18η` with a small error on one factor.
+    let a = Bounded::new(
+        -1.0888031146629295e-161,
+        0.0,
+        1.0888031146629295e-161 * pow2(-20),
+    );
+    let b = Bounded::exact(8.358840000037525e-162);
+    let l0 = a * b;
+    assert_eq!(l0.sign(), Some(Ordering::Less), "{l0:?}");
+    let l1 = a.promote() * b.promote();
+    assert_eq!(l1.sign(), Some(Ordering::Less), "{l1:?}");
+    assert!(check("product", l1, Some(&(q(a.v) * q(b.v)))));
+    let mut rng = Rng::new(0x5167);
+    let mut certified = 0u32;
+    for case in 0..200_000 {
+        // Magnitudes whose products and quotients land near zero (most
+        // cases) or anywhere.
+        let (ea, eb) = match case % 4 {
+            0 => (1023 - 500 + rng.below(60), 1023 - 600 + rng.below(60)),
+            1 => (1023 - 1000 + rng.below(80), 1023 + rng.below(80)),
+            2 => (1023 - 40 + rng.below(80), 1023 - 40 + rng.below(80)),
+            _ => (rng.below(2047), rng.below(2047)),
+        };
+        let (ma, mb) = (rng.magnitude(ea, ea), rng.magnitude(eb, eb));
+        let (va, vb) = (rng.sign(ma), rng.sign(mb));
+        // Errors from none to about the value, so some signs are just
+        // certified and some just not.
+        let err = |rng: &mut Rng, v: f64| match rng.below(4) {
+            0 => 0.0,
+            1 => v.abs() * rng.magnitude(1023 - 60, 1023 - 1),
+            2 => rng.magnitude(0, 3),
+            _ => v.abs() * rng.magnitude(1023 - 3, 1023 - 1),
+        };
+        let a = Bounded::new(va, err(&mut rng, va), err(&mut rng, va));
+        let b = Bounded::new(vb, err(&mut rng, vb), err(&mut rng, vb));
+        let (pa, pb) = (a.promote(), b.promote());
+        let ops = [
+            ("+", a + b, pa + pb),
+            ("-", a - b, pa - pb),
+            ("*", a * b, pa * pb),
+            ("/", a / b, pa / pb),
+            ("√", a.abs().sqrt(), pa.abs().sqrt()),
+        ];
+        for (op, l0, l1) in ops {
+            if let Some(s) = l0.sign() {
+                certified += 1;
+                assert_eq!(l1.sign(), Some(s), "{op}: {a:?}, {b:?}: {l0:?} vs {l1:?}");
+            }
+        }
+    }
+    assert!(certified > 100_000, "{certified}");
+}
+
+/// The absolute value of either zero is `+0`, as at the first level, and
+/// an exact float is its own magnitude bound, the top float included.
+#[test]
+fn zeros_and_the_top_float_have_their_magnitudes() {
+    for z in [Dd::from_f64(-0.0), Dd::sum(-0.0, -0.0), Dd::from_f64(0.0)] {
+        let r = Bounded::<Dd>::exact(z).abs();
+        assert!(
+            r.v.hi.is_sign_positive() && r.v.lo.is_sign_positive(),
+            "{r:?}"
+        );
+        assert_eq!(bits(r), bits(Bounded::exact(Dd::from_f64(0.0))));
+    }
+    let max = Bounded::<Dd>::exact(Dd::from_f64(-f64::MAX));
+    assert_eq!(max.abs_bound(), f64::MAX);
+    assert_eq!(Bounded::exact(-f64::MAX).abs_bound(), f64::MAX);
+    // Past the top float no `f64` bounds the magnitude.
+    let past = Bounded::<Dd>::exact(Dd::sum(f64::MAX, pow2(960)));
+    assert_eq!(past.abs_bound(), f64::INFINITY);
+    assert!(past.is_certified());
+}
+
+/// The root of a value non-negative by construction is certified however
+/// near zero the value rounds, as at the first level.
+#[test]
+fn roots_of_values_non_negative_by_construction_are_certified() {
+    let a = Bounded::<Dd>::new(Dd::from_f64(1e-170), 0.0, 1e-170);
+    let n2 = a * a + a * a;
+    assert!(!n2.sqrt().is_certified(), "{n2:?}");
+    let r = n2.sqrt_nonneg();
+    for x in [q(0.0), q(2e-170) * q(2e-170) * q(2.0)] {
+        assert!(check_sqrt(r, &x), "{x}: {r:?}");
+    }
+    let cases = [
+        (Dd::from_f64(0.0), ETA),
+        (Dd::from_f64(-0.0), ETA),
+        (Dd::from_f64(-ETA), 2.0 * ETA),
+        (Dd::sum(1e-20, -1e-40), 2e-20),
+        (Dd::sum(-1e-20, 1e-40), 1e-20),
+        (Dd::sum(2.0, pow2(-60)), 1.0),
+    ];
+    for (v, e) in cases {
+        let x = Bounded::new(v, 0.0, e);
+        let root = x.sqrt_nonneg();
+        let lo = if qd(v) > q(e) { qd(v) - q(e) } else { q(0.0) };
+        for t in [lo, qabs(qd(v)), qd(v) + q(e)] {
+            assert!(check_sqrt(root, &t), "{v:?} ± {e}: {root:?}");
+        }
+        if x.sqrt().is_certified() {
+            assert_eq!(bits(root), bits(x.sqrt()), "{x:?}");
+        }
+    }
+    let inf = Bounded::<Dd>::new(Dd::from_f64(f64::INFINITY), 0.0, 0.0);
+    assert!(!inf.sqrt_nonneg().is_certified());
 }

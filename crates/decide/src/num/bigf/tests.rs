@@ -1150,3 +1150,30 @@ fn results_are_the_same_bits_everywhere() {
         "results differ from the reference bits"
     );
 }
+
+/// The root of a value non-negative by construction is certified however
+/// near zero the value rounds, as at the first level, at every width.
+#[test]
+fn roots_of_values_non_negative_by_construction_are_certified() {
+    for &w in &Width::ALL {
+        let a = Bounded::new(Big::from_f64(1e-170, w), 0.0, 1e-170);
+        let n2 = &(&a * &a) + &(&a * &a);
+        let r = n2.sqrt_nonneg();
+        for x in [q(0.0), q(2e-170) * q(2e-170) * q(2.0)] {
+            assert!(check_sqrt(&r, &x), "{w:?} {x}: {r:?}");
+        }
+        for (v, e) in [(0.0, ETA), (-0.0, ETA), (-ETA, 2.0 * ETA), (-1e-20, 3e-20)] {
+            let x = Bounded::new(Big::from_f64(v, w), 0.0, e);
+            assert!(!x.sqrt().is_certified(), "{x:?}");
+            let root = x.sqrt_nonneg();
+            let hi = q(v) + q(e);
+            for t in [q(0.0), qabs(q(v)), hi] {
+                assert!(check_sqrt(&root, &t), "{w:?} {v} ± {e}: {root:?}");
+            }
+        }
+        let x = Bounded::new(Big::from_f64(2.0, w), 0.0, 1.0);
+        assert_eq!(x.sqrt_nonneg(), x.sqrt());
+        let inf = Bounded::new(Big::from_f64(f64::INFINITY, w), 0.0, 0.0);
+        assert!(!inf.sqrt_nonneg().is_certified());
+    }
+}

@@ -783,3 +783,51 @@ fn products_near_overflow_hold_at_every_level() {
     products_near_overflow_hold::<Bounded<Dd>>(true);
     products_near_overflow_hold::<Bounded<Big>>(true);
 }
+
+/// Coefficients near the top of the range, where a midpoint's sum or an
+/// elevation's weighted numerator `i·bᵢ₋₁` overflows although the result
+/// is in range (coefficients near `MAX/i`): still certified, holding the
+/// exact result, and symmetric under reversal to the bit.
+fn near_the_top_holds<S: Level>() {
+    let max = f64::MAX;
+    let c = [0.9, 0.8, -0.7, 0.5, 0.99, 1.0, 0.3, -1.0, 0.6, 0.95].map(|x| x * max);
+    let truth: Vec<Q> = c.iter().map(|&x| q(x)).collect();
+    let p = Poly::new(c.iter().map(|&x| S::of(x, 0.0))).expect("degree 9");
+    let bits = |x: &Poly<S>| x.coefs().iter().map(Level::bits).collect::<Vec<_>>();
+    let mut t = truth.clone();
+    for by in 1..=6 {
+        t = elevate_q(&t);
+        let e = p.elevate(by).expect("in range");
+        for (k, (x, exact)) in e.coefs().iter().zip(&t).enumerate() {
+            assert!(holds("elevate", x, exact), "{} +{by} [{k}]: {x:?}", S::NAME);
+        }
+        let r = p.reversed().elevate(by).expect("in range");
+        assert_eq!(bits(&e.reversed()), bits(&r), "{} +{by}", S::NAME);
+    }
+    for (a, b) in [
+        (max, max),
+        (max, 0.5 * max),
+        (-max, -0.75 * max),
+        (max, -max),
+    ] {
+        let (x, y) = (S::of(a, 0.0), S::of(b, 0.0));
+        let m = x.mid(&y);
+        let exact = (q(a) + q(b)) / Q::from(2u32);
+        assert!(holds("mid", &m, &exact), "{} {a:e} {b:e}: {m:?}", S::NAME);
+        assert_eq!(m.bits(), y.mid(&x).bits(), "{} {a:e} {b:e}", S::NAME);
+    }
+    let [l, r] = p.split_half();
+    let [lt, rt] = split_q(&truth, &Q::from_signeds(1i32, 2));
+    for (half, exact) in [(&l, &lt), (&r, &rt)] {
+        for (x, e) in half.coefs().iter().zip(exact) {
+            assert!(holds("split", x, e), "{}: {x:?}", S::NAME);
+        }
+    }
+}
+
+#[test]
+fn coefficients_near_the_top_hold_at_every_level() {
+    near_the_top_holds::<Bounded<f64>>();
+    near_the_top_holds::<Bounded<Dd>>();
+    near_the_top_holds::<Bounded<Big>>();
+}

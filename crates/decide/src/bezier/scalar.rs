@@ -10,7 +10,7 @@ use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor};
 use smallvec::SmallVec;
 
 use crate::num::bigf::{BigF, Rounding};
-use crate::num::bounded::{Bounded, ETA, U, add_up, down, gamma_bound, mul_up};
+use crate::num::bounded::{Bounded, ETA, Level, U, add_up, down, gamma_bound, mul_up};
 use crate::num::dd::Dd;
 use crate::num::expansion::two_product;
 
@@ -212,9 +212,16 @@ impl Scalar for Bounded<f64> {
     }
 
     /// The sum halved: exact but below the normal range, where it rounds
-    /// by at most `η/2` (the `η` added).
+    /// by at most `η/2` (the `η` added). Where the sum overflows (both
+    /// operands near the top of the range, so each at least `2⁹⁷⁰`), the
+    /// sum of the halves (exact halving there).
     fn mid(&self, o: &Self) -> Self {
         let s = *self + *o;
+        if !s.v.is_finite() && self.v.is_finite() && o.v.is_finite() {
+            let half =
+                |x: &Self| Bounded::new(x.v * 0.5, half_up(x.err_trunc), half_up(x.err_round));
+            return half(self) + half(o);
+        }
         Bounded::new(
             s.v * 0.5,
             half_up(s.err_trunc),
@@ -337,14 +344,21 @@ impl Scalar for Bounded<Dd> {
 
     /// The sum halved part by part, then renormalised (exactly, by
     /// 2Sum): exact but below the normal range, where each part rounds by
-    /// at most `η/2` (the `η` added).
+    /// at most `η/2` (the `η` added). Where the sum overflows, the sum of
+    /// the halves, each halved so.
     fn mid(&self, o: &Self) -> Self {
+        let half = |s: &Self| {
+            Bounded::new(
+                Dd::sum(s.v.hi() * 0.5, s.v.lo() * 0.5),
+                half_up(s.err_trunc),
+                add_up(half_up(s.err_round), ETA),
+            )
+        };
         let s = *self + *o;
-        Bounded::new(
-            Dd::sum(s.v.hi() * 0.5, s.v.lo() * 0.5),
-            half_up(s.err_trunc),
-            add_up(half_up(s.err_round), ETA),
-        )
+        if !s.v.is_finite() && self.v.is_finite() && o.v.is_finite() {
+            return half(self) + half(o);
+        }
+        half(&s)
     }
 
     /// `hi + lo` bounded each way in two rounded steps, each pushed out.

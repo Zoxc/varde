@@ -185,18 +185,41 @@ pub(super) fn hull_of<S: Scalar>(c: &[S]) -> Hull {
 /// on its two neighbours alone (symmetrically): the elevation of the
 /// reversed polynomial is the reversed elevation, to the bit, also with
 /// big-float coefficients of mixed widths.
+///
+/// Where the numerator `i·bᵢ₋₁ + (n + 1 − i)·bᵢ` isn't bounded in `f64`
+/// (it overflows for coefficients near `MAX/i`), it is taken of the
+/// coefficients scaled by `2⁻⁷` (below `1/(n + 1)`) and the quotient
+/// scaled back, exactly but for subnormal coefficients (whose rounding
+/// the level carries): the result, a convex combination, is in range.
 fn elevate_once<S: Scalar>(c: &[S]) -> Coefs<S> {
     let n1 = u32::try_from(c.len()).expect("degree at most MAX_DEGREE");
+    let unbounded = |x: &S| x.enclose().iter().any(|e| !e.is_finite());
     let mut out = Coefs::with_capacity(c.len() + 1);
     out.push(c[0].clone());
     for i in 1..n1 {
         let (a, b) = (&c[i as usize - 1], &c[i as usize]);
         let num = S::int(i, a).mul(a).add(&S::int(n1 - i, b).mul(b));
-        out.push(num.div(&S::int(n1, &num)));
+        let q = if unbounded(&num) {
+            let down = |x: &S| x.mul(&S::from_f64(ELEVATE_DOWN, x));
+            let (a, b) = (down(a), down(b));
+            let num = S::int(i, &a).mul(&a).add(&S::int(n1 - i, &b).mul(&b));
+            let q = num.div(&S::int(n1, &num));
+            q.mul(&S::from_f64(ELEVATE_UP, &q))
+        } else {
+            num.div(&S::int(n1, &num))
+        };
+        out.push(q);
     }
     out.push(c[c.len() - 1].clone());
     out
 }
+
+/// `2⁻⁷`, below `1/(MAX_DEGREE + 1)`: an elevation's numerator of
+/// coefficients scaled by it stays below the top of the range.
+const ELEVATE_DOWN: f64 = 1.0 / 128.0;
+
+/// `2⁷`, scaling an elevated coefficient back.
+const ELEVATE_UP: f64 = 128.0;
 
 impl Poly<Bounded<f64>> {
     /// From exact `f64` coefficients ([`Poly::new`]'s limits).

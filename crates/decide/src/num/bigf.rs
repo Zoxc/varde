@@ -660,10 +660,38 @@ impl<B: BigF> Bounded<B> {
             } else {
                 !x.is_sign_negative() && x.cmp_abs(e) != Some(Ordering::Less)
             };
-        let r = x.sqrt(x.width());
         if !non_negative {
+            let r = x.sqrt(x.width());
             return Bounded::new(r.v, f64::INFINITY, f64::INFINITY);
         }
+        self.root()
+    }
+
+    /// The square root of a value whose true value is `≥ 0` by
+    /// construction (a sum of squares), certified whatever its error, as
+    /// at the first level ([`Bounded::<f64>::sqrt_nonneg`]): a value at or
+    /// below zero is taken as `+0`. Uncertified only for a value or error
+    /// that isn't finite.
+    pub fn sqrt_nonneg(&self) -> Self {
+        let x = &self.v;
+        if !x.is_finite() {
+            let r = x.sqrt(x.width());
+            return Bounded::new(r.v, f64::INFINITY, f64::INFINITY);
+        }
+        if x.is_zero() || x.is_sign_negative() {
+            let zero = Bounded {
+                v: B::from_f64(0.0, x.width()),
+                ..self.clone()
+            };
+            return zero.root();
+        }
+        self.root()
+    }
+
+    /// The root of a finite `v ≥ 0` (see [`sqrt`](Self::sqrt)).
+    fn root(&self) -> Self {
+        let x = &self.v;
+        let r = x.sqrt(x.width());
         let own = own(&r);
         let root_lo = mag_less_down(&r.v, own);
         let part = |e: f64| {

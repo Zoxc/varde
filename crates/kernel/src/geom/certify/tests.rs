@@ -716,7 +716,7 @@ fn budgets_at_each_coedge_s_end_run_out_at_the_next() {
         let (out, used) = assert_deterministic(|| pass(&s, &coedges, TARGET, end - 1));
         assert_eq!(used, end - 1);
         let (cause, profile) = ran_out(out);
-        assert_eq!(profile.stopped.at.item as usize, k);
+        assert_eq!(profile.stopped.at.item, k);
         let step = profile.stopped.step.expect("charged");
         let want = match step {
             Step::Work => Cause::Work,
@@ -736,7 +736,7 @@ fn budgets_at_each_coedge_s_end_run_out_at_the_next() {
         } else {
             let (cause, profile) = ran_out(out);
             assert_eq!(cause, Cause::Work);
-            assert_eq!(profile.stopped.at.item as usize, k + 1);
+            assert_eq!(profile.stopped.at.item, k + 1);
             assert_eq!(profile.stopped.step, Some(Step::Work));
             assert_eq!(profile.used, end);
         }

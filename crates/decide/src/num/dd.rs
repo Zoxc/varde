@@ -50,11 +50,23 @@
 //! partial product is exact, every rounded product and quotient is at
 //! least `2⁻⁹⁵⁴` (every quantity is a multiple of `2⁻⁹⁵³`), so no
 //! operation underflows or overflows, and the bound holds for the scaled
-//! operands. Scaling the result back is exact but for underflow (at most
-//! `η` per part: a step that rounds is followed only by steps that halve
-//! the error at least, or by none) and overflow (`±∞`, uncertified). So a
-//! product or quotient is within `rel·|hi| +` [`SCALE_ABS`] `= 3η` of the
-//! exact one, over the whole range.
+//! operands. Scaling the result back rounds to nearest once where it
+//! falls below the normal range: the low part alone while the high part
+//! stays normal, else the whole result to the nearest float (a subnormal
+//! high part, no low part). So it is within `η/2` of the scaled-back
+//! result, or overflows (`±∞`, uncertified), and a product or quotient is
+//! within `rel·|hi| + η/2` of the exact one over the whole range, which
+//! the floor `η` of [`up`] covers: the rounding term is `up(rel·|hi|)`,
+//! as the first level's is `up(u·|v|)`.
+//!
+//! **Promotion never loses a certified sign near zero.** On promoted
+//! operands (no low parts) a product is exact or, below the normal range,
+//! the nearest float, the first level's bits; a quotient below the normal
+//! range is the first level's own `fl(a/b)`. Their rounding terms are at
+//! most the first level's and the other terms the same, and
+//! [`Bounded::sign`] compares `|hi + lo|` with the error exactly, so a
+//! sign the first level certifies within a few `η` of zero stays
+//! certified.
 //!
 //! **Square root.** The paper has none: the root is one Newton step from
 //! the `f64` root, `r = s + (x − s²)/(2s)`, bounded afterwards from its
@@ -63,13 +75,14 @@
 //! of `x·2⁻⁶⁴` scaled back by `2³²`, so the residual's sum stays below
 //! [`RANGE`] and roots are certified over the whole range; below
 //! `hi < 2⁻⁹⁰⁰` it is the root of `x·2²⁰⁰` scaled back by `2⁻¹⁰⁰`, so the
-//! residual's absolute term (`SCALE_ABS`) doesn't swamp the root's own
+//! residual's absolute term (the floor `η`) doesn't swamp the root's own
 //! rounding, and tiny roots stay as tight as at the first level.
 
 use std::cmp::Ordering;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use super::bounded::{Bounded, ETA, Level, add_up, div_up, down, least, mul_up, up};
+use super::expansion::Exp;
 
 /// A double-double: the unevaluated sum `hi + lo`, `hi` the sum rounded to
 /// nearest (so `|lo| ≤ ulp(hi)/2`). Built from `f64`s ([`Dd::from_f64`],
@@ -91,11 +104,6 @@ pub const MUL_REL: f64 = pow2(-103);
 /// [`Bounded<Dd>`]'s relative rounding bound for `÷`: `16u²`, above
 /// DWDivDW2's proven `15u² + 56u³`.
 pub const DIV_REL: f64 = pow2(-102);
-
-/// [`Bounded<Dd>`]'s absolute rounding term for `×` and `÷`, `3η`: the
-/// result's two parts scaled back into the subnormal range, at most `η`
-/// each.
-pub const SCALE_ABS: f64 = 3.0 * ETA;
 
 /// The magnitude below which both operands' `hi` must be for a sum to run
 /// unscaled, `2¹⁰²⁰`: then nothing in the addition overflows.
@@ -295,11 +303,60 @@ fn normalise(x: Dd) -> (Dd, i32) {
     (Dd { hi, lo }, e)
 }
 
-/// `(h + l)·2ᵏ` as a double-double, each part within `η` (see [`scale`]).
+/// `x·2ᵏ` rounded to nearest once (for a finite `x`): every step but the
+/// last is exact, so it is within `η/2` of `x·2ᵏ`, or overflows.
+fn scale_rn(x: f64, k: i32) -> f64 {
+    if k >= -1022 || x == 0.0 {
+        // Steps up are exact; a single step down rounds once.
+        return scale(x, k);
+    }
+    if exponent(x) + k < -1076 {
+        // Below `2⁻¹⁰⁷⁶ < η/2`: the nearest float is zero.
+        return x * 0.0;
+    }
+    // `x·2^(k + 1022)` is normal (exact), then one rounding step.
+    x * pow2(k + 1022) * pow2(-1022)
+}
+
+/// `(h + l)·2ᵏ` as a double-double, for `h ≠ 0` and `|l| ≤ ulp(h)/2` (a
+/// scaled product or quotient), within `η/2` of it or overflowing. While
+/// `h·2ᵏ` is normal it scales exactly and only `l` rounds; below that the
+/// result is the float nearest to `(h + l)·2ᵏ`, ties to even, with no
+/// low part.
 fn rescale(h: f64, l: f64, k: i32) -> Dd {
-    // `|h| ≥ |l|` stays so, so Fast2Sum is exact and restores the form.
-    let (hi, lo) = fast_two_sum(scale(h, k), scale(l, k));
-    Dd { hi, lo }
+    let e = exponent(h);
+    if e + k >= -1022 {
+        // `|h| ≥ |l|` stays so, so Fast2Sum is exact and restores the form.
+        let (hi, lo) = fast_two_sum(scale(h, k), scale_rn(l, k));
+        return Dd { hi, lo };
+    }
+    if e + k < -1077 {
+        // `|h + l| < 2^(e + 1)`: below `2⁻¹⁰⁷⁶ < η/2`.
+        return Dd::from_f64(h * 0.0);
+    }
+    let hs = scale_rn(h, k);
+    // The rest at `h`'s scale, exactly: `hs·2⁻ᵏ` is within `η/2·2⁻ᵏ` of
+    // `h`, so within a factor 2 of it (Sterbenz) or zero; `two_sum` keeps
+    // the sum with `l` exact. `|rest| < η·2⁻ᵏ`: at most one step of `η`.
+    let r = h - scale(hs, -k);
+    let (rh, rl) = two_sum(r, l);
+    let half = pow2(-1075 - k);
+    let past = match rh.abs().partial_cmp(&half) {
+        Some(Ordering::Less) => Ordering::Less,
+        Some(Ordering::Greater) => Ordering::Greater,
+        _ if rl == 0.0 => Ordering::Equal,
+        _ if (rl < 0.0) == (rh < 0.0) => Ordering::Greater,
+        _ => Ordering::Less,
+    };
+    let step = if rh < 0.0 { -ETA } else { ETA };
+    let hi = match past {
+        Ordering::Less => hs,
+        Ordering::Greater => hs + step,
+        // A tie: the even one.
+        Ordering::Equal if hs.to_bits() & 1 == 0 => hs,
+        Ordering::Equal => hs + step,
+    };
+    Dd::from_f64(hi)
 }
 
 /// A double-double that isn't finite, for an operation with an operand
@@ -322,7 +379,8 @@ fn add(x: Dd, y: Dd) -> Dd {
 }
 
 /// `x·y` by DWTimesDW1 (JMP 2017, Alg. 10) on the scaled operands: within
-/// `7u²` relative plus [`SCALE_ABS`].
+/// `7u²` relative plus `η/2` (exact, or the nearest float, for operands
+/// without low parts).
 fn mul(x: Dd, y: Dd) -> Dd {
     if !(x.is_finite() && y.is_finite()) {
         return NAN;
@@ -351,13 +409,21 @@ fn mul_f64(x: Dd, y: f64) -> (f64, f64) {
 }
 
 /// `x / y` by DWDivDW2 (JMP 2017, Alg. 17) on the scaled operands: within
-/// `15u² + 56u³` relative plus [`SCALE_ABS`]. For `y ≠ 0`.
+/// `15u² + 56u³` relative plus `η/2`. For `y ≠ 0`. Of two floats with a
+/// quotient below the normal range, `fl(x/y)` itself (the first level's
+/// bits).
 fn div(x: Dd, y: Dd) -> Dd {
     if !(x.is_finite() && y.is_finite()) || y.hi == 0.0 {
         return NAN;
     }
     if x.hi == 0.0 {
         return Dd::from_f64(x.hi / y.hi);
+    }
+    if x.lo == 0.0 && y.lo == 0.0 {
+        let q = x.hi / y.hi;
+        if q.abs() < f64::MIN_POSITIVE {
+            return Dd::from_f64(q);
+        }
     }
     let (x, ex) = normalise(x);
     let (y, ey) = normalise(y);
@@ -444,13 +510,18 @@ fn root_and_distance(x: Dd) -> (Dd, f64) {
 }
 
 /// The rounding term of an operation: `rel·|hi| + abs`, rounded up; `+∞`
-/// unless the result is finite.
+/// unless the result is finite. With `abs = 0` it also covers a further
+/// `η/2` (the rounding of a result scaled back below the normal range):
+/// `up(t) ≥ t + η` for a subnormal `t`, `t + ulp(t)` for a normal one,
+/// and `rel·|hi|` loses at most `η/2` by underflow and nothing else.
 #[inline]
 fn rounding(z: Dd, rel: f64, abs: f64) -> f64 {
-    if z.is_finite() {
-        add_up(mul_up(rel, z.hi.abs()), abs)
-    } else {
+    if !z.is_finite() {
         f64::INFINITY
+    } else if abs == 0.0 {
+        up(rel * z.hi.abs())
+    } else {
+        add_up(mul_up(rel, z.hi.abs()), abs)
     }
 }
 
@@ -479,16 +550,24 @@ impl From<Dd> for Bounded<Dd> {
 
 impl Bounded<Dd> {
     /// The certified sign of the true value: `Some` when `|v| > err`,
-    /// `None` when the error doesn't settle it (and for a value that isn't
-    /// finite). `|v|` is bounded below by `|hi|` or the float before it
-    /// (exact when `lo` is zero or of `hi`'s sign).
+    /// compared exactly (`|hi + lo|` against the error, by an exact sum
+    /// where the low part decides), `None` when the error doesn't settle
+    /// it (and for a value that isn't finite).
     pub fn sign(&self) -> Option<Ordering> {
         let e = self.err();
+        let (hi, lo) = (self.v.hi, self.v.lo);
         let settled = self.v.is_finite()
             && if e == 0.0 {
-                self.v.hi != 0.0
+                hi != 0.0
+            } else if self.v.mag_down() > e {
+                true
+            } else if lo == 0.0 || self.v.mag_up() <= e {
+                false
             } else {
-                self.v.mag_down() > e
+                // `|hi| + lo·sign(hi) − e`, exactly.
+                let lo = if hi < 0.0 { -lo } else { lo };
+                let d = Exp::of_sum(hi.abs(), -e).sum(&Exp::from_f64(lo));
+                d.sign() == Ordering::Greater
             };
         settled.then_some({
             if self.v.hi > 0.0 {
@@ -499,23 +578,42 @@ impl Bounded<Dd> {
         })
     }
 
-    /// An upper bound of the true value's magnitude, `|v| + err`.
+    /// An upper bound of the true value's magnitude, `|v| + err`: `|hi|`
+    /// itself for an exact float (so the top float is its own bound),
+    /// else rounded up. `+∞` past the top float (`hi = ±MAX` with a low
+    /// part of its sign): no `f64` bounds that magnitude.
     #[inline]
     pub fn abs_bound(&self) -> f64 {
-        add_up(self.v.mag_up(), self.err())
+        let e = self.err();
+        if e == 0.0 && self.v.lo == 0.0 && self.v.is_finite() {
+            self.v.hi.abs()
+        } else {
+            add_up(self.v.mag_up(), e)
+        }
     }
 
-    /// The absolute value: exact, the errors unchanged.
+    /// The absolute value: exact, the errors unchanged; `+0` (both parts)
+    /// for a zero of either sign, as at the first level.
     #[inline]
     pub fn abs(self) -> Self {
-        if self.v.hi < 0.0 { -self } else { self }
+        if self.v.hi == 0.0 {
+            Bounded {
+                v: Dd::ZERO,
+                ..self
+            }
+        } else if self.v.hi < 0.0 {
+            -self
+        } else {
+            self
+        }
     }
 
     /// The square root. Uncertified unless the true value is certainly
     /// `≥ 0` (`v ≥ err`, with `v` bounded below as in
-    /// [`sign`](Self::sign)). The rounding part adds the candidate root's certified
-    /// distance from `√v`; each error part `e` takes
-    /// `min(e / √v, √e)`, as at the first level.
+    /// [`sign`](Self::sign)); for a value non-negative by construction see
+    /// [`sqrt_nonneg`](Self::sqrt_nonneg). The rounding part adds the
+    /// candidate root's certified distance from `√v`; each error part `e`
+    /// takes `min(e / √v, √e)`, as at the first level.
     pub fn sqrt(self) -> Self {
         let x = self.v;
         let e = self.err();
@@ -528,7 +626,25 @@ impl Bounded<Dd> {
         if !non_negative {
             return Bounded::new(NAN, f64::INFINITY, f64::INFINITY);
         }
-        let (r, dist) = root(x);
+        self.root()
+    }
+
+    /// The square root of a value whose true value is `≥ 0` by
+    /// construction (a sum of squares), certified whatever its error, as
+    /// at the first level ([`Bounded::<f64>::sqrt_nonneg`]): a value at or
+    /// below zero is taken as `+0`. Uncertified only for a value or error
+    /// that isn't finite.
+    pub fn sqrt_nonneg(self) -> Self {
+        if !self.v.is_finite() {
+            return Bounded::new(NAN, f64::INFINITY, f64::INFINITY);
+        }
+        let v = if self.v.hi > 0.0 { self.v } else { Dd::ZERO };
+        Bounded { v, ..self }.root()
+    }
+
+    /// The root of a finite `v ≥ 0` (see [`sqrt`](Self::sqrt)).
+    fn root(self) -> Self {
+        let (r, dist) = root(self.v);
         let r_lo = r.mag_down();
         let root_lo = down(r_lo - dist);
         let part = |e: f64| {
@@ -626,7 +742,7 @@ impl Mul for Bounded<Dd> {
         Bounded {
             v,
             err_trunc,
-            err_round: add_up(add_up(linear, cross), rounding(v, MUL_REL, SCALE_ABS)),
+            err_round: add_up(add_up(linear, cross), rounding(v, MUL_REL, 0.0)),
         }
     }
 }
@@ -646,10 +762,13 @@ impl Div for Bounded<Dd> {
         if !non_zero {
             return Bounded::new(v, f64::INFINITY, f64::INFINITY);
         }
-        let own = rounding(v, DIV_REL, SCALE_ABS);
+        let own = rounding(v, DIV_REL, 0.0);
         // `|va/vb|·eb`, `|va/vb|` the exact quotient of the values, at most
-        // `|v| + own` (term by term past the top float).
-        let q = add_up(v.mag_up(), own);
+        // `up(|hi|)` as at the first level: past `|hi + lo|` by at least
+        // `ulp(hi)/2`, which holds `rel·|hi| + η/2` (there is a low part
+        // only where `ulp(hi) ≥ 2η`); past the top float `|v| + own`, term
+        // by term.
+        let q = up(v.hi.abs());
         let q_times = |eb: f64| {
             if q < f64::INFINITY {
                 mul_up(q, eb)

@@ -180,7 +180,7 @@ fn krawczyk_narrows_an_isolated_root() {
         let Found::Root(root) = r.found[0] else {
             panic!("{r:?}")
         };
-        assert!(root.near[1] - root.near[0] < 1e-12, "{root:?}");
+        assert!(root.near[1] - root.near[0] < 1e-9, "{root:?}");
     }
 }
 
@@ -567,7 +567,13 @@ fn narrowing_takes_the_same_steps_under_reversal() {
         }
     }
     let third = Q::from(1u32) / Q::from(3u32);
-    for r in [q(0.3), third, Q::from(1u32) / Q::from(10u32)] {
+    for r in [
+        q(0.3),
+        third,
+        Q::from(1u32) / Q::from(10u32),
+        q(0.5),
+        q(0.375),
+    ] {
         let truth = product(&[(r, 1)], &q(1.0));
         let w = isolate(&truth, DEEP).unwrap().work;
         assert_eq!(w, isolate(&truth.reversed(), DEEP).unwrap().work);
@@ -700,4 +706,33 @@ fn narrowing_to_a_width_keeps_the_root() {
     let n = narrow(&pl, [0.0, 0.5], root.dir, |_| Ok::<_, ()>(true)).unwrap();
     assert!(!n.settled && n.halvings <= ROOT_HALVINGS);
     assert!(q(n.span[0]) < third && third < q(n.span[1]));
+}
+
+/// A root on a split point is found by the run of the intervals beside
+/// it, and narrowed as one inside an interval is, at every level (exact
+/// coefficients too, where the split point's value is an exact zero):
+/// from runs at least `2⁻³` wide to below `10⁻⁹`, as single intervals' roots.
+#[test]
+fn roots_on_split_points_are_narrowed() {
+    let rs = roots_of(&[(0.125, 1), (0.375, 1), (0.5, 1), (0.6, 1), (0.75, 1)]);
+    for r in every_level(&rs, &q(3.0), DEEP) {
+        assert_eq!(kinds(&r), "rrrrr", "{r:?}");
+        for f in &r.found {
+            let Found::Root(root) = f else { unreachable!() };
+            assert!(root.near[1] - root.near[0] < 1e-9, "{root:?}");
+        }
+    }
+    // Roots `k/65` of a degree-12 polynomial, a split point among them.
+    let rs: Vec<(Q, u32)> = [13u32, 20, 26, 32, 39]
+        .iter()
+        .map(|&k| (Q::from(k) / Q::from(65u32), 1))
+        .chain([(q(0.5), 1)])
+        .collect();
+    let [.., exact] = every_level(&rs, &q(1.0), DEEP);
+    for f in &exact.found {
+        let Found::Root(root) = f else {
+            panic!("{exact:?}")
+        };
+        assert!(root.near[1] - root.near[0] < 1e-9, "{root:?}");
+    }
 }

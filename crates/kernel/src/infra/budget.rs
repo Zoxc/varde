@@ -160,9 +160,9 @@ impl Cap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ItemAt {
     /// The pass, counted from 0 over the operation.
-    pub pass: u32,
-    /// The item's position in the pass.
-    pub item: u32,
+    pub pass: u64,
+    /// The item's position in the pass (as [`Halt::Failed`]'s).
+    pub item: usize,
 }
 
 /// Where an operation stopped: the item that decided its pass, and the
@@ -390,7 +390,7 @@ impl Frontier {
 pub(crate) struct Work {
     budget: u64,
     used: u64,
-    passes: u32,
+    passes: u64,
     work: u64,
     precision: Vec<u64>,
     stages: Vec<(&'static str, u64)>,
@@ -457,7 +457,7 @@ impl Work {
         for (i, (ledger, result)) in ran.into_iter().enumerate() {
             let at = ItemAt {
                 pass: index,
-                item: u32::try_from(i).unwrap_or(u32::MAX),
+                item: i,
             };
             let room = left - sum;
             let stopped = |step| Stopped {
@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(profile.stopped.step, Some(P1));
         assert_eq!(profile.stages, vec![("test", 10)]);
         assert_eq!(profile.rungs, vec![10]);
-        let hottest: Vec<(u32, u64)> = profile
+        let hottest: Vec<(usize, u64)> = profile
             .hottest
             .iter()
             .map(|(at, n)| (at.item, *n))
@@ -916,5 +916,27 @@ mod tests {
         assert!(matches!(out, Err(FillError::Decide(Halt::OutOfBudget(_)))));
         assert_eq!(work.used(), 3);
         assert_eq!(t.len(), 3);
+    }
+
+    /// Pass and item positions count past `2³²`: the pass counter is
+    /// 64-bit, the item position the index into the pass's items.
+    #[test]
+    fn positions_count_past_32_bits() {
+        let mut work = Work::new(&Budget::new(100));
+        work.passes = u64::from(u32::MAX);
+        work.pass(PASS, &[1], |&n, ledger| run(&[(W, n)], false, ledger))
+            .unwrap();
+        let halt = work
+            .pass(PASS, &[1, 200], |&n, ledger| run(&[(W, n)], false, ledger))
+            .unwrap_err();
+        let (_, profile) = out_of_budget(halt);
+        assert_eq!(
+            profile.stopped.at,
+            ItemAt {
+                pass: 1 << 32,
+                item: 1
+            }
+        );
+        assert_eq!(work.passes, (1 << 32) + 1);
     }
 }

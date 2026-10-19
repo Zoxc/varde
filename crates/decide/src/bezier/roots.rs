@@ -40,14 +40,18 @@
 //! intervals are all simple with the same derivative sign, that of the
 //! end, holds exactly one root, simple (two simple roots in a row cross
 //! zero in opposite directions): a [`Root`], on the open interval between
-//! the run's ends. A single interval's root is narrowed by Krawczyk's
+//! the run's ends. The root is narrowed by Krawczyk's
 //! operator, `K(X) = y − Y·p(y) + (1 − Y·p'(X))·(X − y)` with `Y` the
 //! inverse of the middle of `p'(X)`, which holds every root of `X` and
 //! contracts when `p'` is certified of one sign and its range narrow, and
 //! by halves at the certified sign of `p(y)` meanwhile; always where the
 //! root crosses upwards, on the mirrored interval for one crossing
-//! downwards, so the reversed polynomial takes the same steps. Anything
-//! else is a
+//! downwards, so the reversed polynomial takes the same steps. A single
+//! interval's root starts from that interval; a run's (a root on or
+//! beside a split point) from the run's span inside the smallest dyadic
+//! interval holding it, whose polynomial the same splits give again (a
+//! span whose ends that interval can't hold as floats isn't narrowed).
+//! Anything else is a
 //! [`Cluster`] (a tangential root, roots closer than the depth limit, an
 //! end root, a polynomial within its error of zero): its closed interval,
 //! a bound on its roots counted with multiplicity, and its end signs, from
@@ -88,8 +92,13 @@ use crate::num::bounded::down;
 /// `j/2ᵏ` with `j ≤ 2ᵏ` in a `u64`.
 pub const MAX_ROOT_DEPTH: u32 = 63;
 
-/// The most Krawczyk steps narrowing one root.
+/// The most Krawczyk steps narrowing one root found on one interval.
 const KRAWCZYK_STEPS: u32 = 8;
+
+/// The most Krawczyk steps narrowing one root found by a run of
+/// intervals: it starts from the run's span, which may reach across most
+/// of the interval holding it, so twice those of one interval.
+const RUN_KRAWCZYK_STEPS: u32 = 2 * KRAWCZYK_STEPS;
 
 /// The most halvings one [`narrow`] takes: a representation limit (an
 /// `f64` interval inside `[0, 1]` halves at most about this often before
@@ -185,8 +194,9 @@ pub struct Root {
     /// around the ends, `lo.bounds()[0] ≤ a` and `b ≤ hi.bounds()[1]`
     /// (inside `[lo, hi]` when the ends are floats; an end whose `num`
     /// passes `2⁵³` isn't, and the root may lie between it and the
-    /// nearest float): narrowed by Krawczyk's operator and halving for a
-    /// root found on one interval, else those bounds of `lo` and `hi`.
+    /// nearest float): narrowed by Krawczyk's operator and halving, else
+    /// (a run of intervals whose span isn't exact in floats inside the
+    /// smallest dyadic interval holding it) those bounds of `lo` and `hi`.
     pub near: [f64; 2],
 }
 
@@ -235,7 +245,7 @@ pub struct Work {
     /// Intervals tested (coefficient signs, maybe the derivative's).
     pub tests: u32,
     /// Krawczyk steps (an evaluation and two splits of the derivative
-    /// each).
+    /// each), and probes beside an uncertain middle (two evaluations).
     pub steps: u32,
 }
 
@@ -331,7 +341,7 @@ pub fn isolate<S: Scalar>(p: &Poly<S>, limits: Limits) -> Result<Roots, OutOfWor
         })
         .collect();
     let degree = u32::try_from(p.degree()).expect("degree at most MAX_DEGREE");
-    let found = runs(&mut leaves, degree, &mut work);
+    let found = runs(p, &mut leaves, degree, &mut work);
     Ok(Roots { found, work })
 }
 
@@ -590,7 +600,12 @@ fn max_variations(signs: &[Option<Ordering>]) -> u32 {
 
 /// The runs of leaves linked by uncertain split points, each a root or a
 /// cluster (module docs).
-fn runs<S: Scalar>(leaves: &mut [Leaf<S>], degree: u32, work: &mut Work) -> Vec<Found> {
+fn runs<S: Scalar>(
+    p: &Poly<S>,
+    leaves: &mut [Leaf<S>],
+    degree: u32,
+    work: &mut Work,
+) -> Vec<Found> {
     let m = leaves.len();
     // The sign at each leaf boundary: certified (the same bits on both
     // sides) or implied by either side.
@@ -632,14 +647,18 @@ fn runs<S: Scalar>(leaves: &mut [Leaf<S>], degree: u32, work: &mut Work) -> Vec<
                 let near = match run {
                     [l] => {
                         let q = l.q.as_ref().expect("a simple leaf keeps its polynomial");
-                        let x = if dir == Ordering::Greater {
-                            krawczyk(q, work)
-                        } else {
-                            mirror(krawczyk(&q.reversed(), work))
-                        };
+                        let x = krawczyk_dir(q, [0.0, 1.0], dir, KRAWCZYK_STEPS, work);
                         to_t(l.k, l.j, x)
                     }
-                    _ => [lo.bounds()[0], hi.bounds()[1]],
+                    _ => {
+                        let (first, last) = (&run[0], &run[run.len() - 1]);
+                        let (a, b) = (lo.bounds()[0], hi.bounds()[1]);
+                        match narrow_run(p, first, last, dir, work) {
+                            // Inside the run's own bounds, which hold the root.
+                            Some([x, y]) => [if x > a { x } else { a }, if y < b { y } else { b }],
+                            None => [a, b],
+                        }
+                    }
                 };
                 Found::Root(Root { lo, hi, dir, near })
             }
@@ -725,19 +744,81 @@ pub fn narrow<S: Scalar, E>(
     Ok(out)
 }
 
-/// The interval `X ⊆ [0, 1]` holding `q`'s one root, simple and crossing
-/// zero upwards, narrowed while steps shrink it: each step
+/// [`krawczyk`] for a root crossing towards `dir` in `x`: as is where it
+/// crosses upwards, else on the reversed polynomial and the mirrored
+/// interval (`x`'s ends exact under `1 − t`), mirrored back.
+fn krawczyk_dir<S: Scalar>(
+    q: &Poly<S>,
+    x: [f64; 2],
+    dir: Ordering,
+    steps: u32,
+    work: &mut Work,
+) -> [f64; 2] {
+    if dir == Ordering::Greater {
+        krawczyk(q, x, steps, work)
+    } else {
+        mirror(krawczyk(&q.reversed(), mirror(x), steps, work))
+    }
+}
+
+/// The narrowed root of a run of leaves from `first` to `last` holding
+/// exactly one root, simple, crossing towards `dir`: Krawczyk's operator
+/// on the polynomial of the smallest dyadic interval holding the run
+/// (split again from `p` along the same halves, so the same bits), from
+/// the run's span there. `None` where that span's ends aren't floats
+/// (more than 52 levels below that interval).
+fn narrow_run<S: Scalar>(
+    p: &Poly<S>,
+    first: &Leaf<S>,
+    last: &Leaf<S>,
+    dir: Ordering,
+    work: &mut Work,
+) -> Option<[f64; 2]> {
+    // The common ancestor `[a/2ᵏ, (a + 1)/2ᵏ]` of the two leaves.
+    let mut k = first.k.min(last.k);
+    let (mut a, mut b) = (first.j >> (first.k - k), last.j >> (last.k - k));
+    while a != b {
+        a >>= 1;
+        b >>= 1;
+        k -= 1;
+    }
+    // The run's ends relative to it, `[0, 1]` there.
+    let local = |j: u64, depth: u32| {
+        let d = depth - k;
+        if d > 52 {
+            return None;
+        }
+        Dyadic::new(j - (a << d), d).and_then(Dyadic::to_f64)
+    };
+    let x = [local(first.j, first.k)?, local(last.j + 1, last.k)?];
+    let mut q = p.clone();
+    for depth in (0..k).rev() {
+        work.splits = work.splits.saturating_add(1);
+        let [l, r] = q.split_half();
+        q = if (a >> depth) & 1 == 0 { l } else { r };
+    }
+    Some(to_t(
+        k,
+        a,
+        krawczyk_dir(&q, x, dir, RUN_KRAWCZYK_STEPS, work),
+    ))
+}
+
+/// The interval `X ⊆ [0, 1]`, from `x`, holding `q`'s one root, simple
+/// and crossing zero upwards, narrowed while steps shrink it, at most
+/// `steps` of them: each step
 /// takes `X ∩ K(X)` by Krawczyk's operator (every root of `X` lies in
 /// `K(X)` for any `y` in `X` and real `Y`, given an enclosure of `q'` on
 /// `X`, so the intersection still holds it), and the half of `X` beside
 /// `y` that the sign of `q(y)`, where certified, puts the root in (`q` is
 /// positive past the root and negative before), so it narrows by halves
-/// where the derivative's range is too wide for the operator.
-fn krawczyk<S: Scalar>(q: &Poly<S>, work: &mut Work) -> [f64; 2] {
+/// where the derivative's range is too wide for the operator. Where the
+/// sign of `q(y)` isn't certified, the middles of the two halves bound
+/// `X` by their signs instead (a further step).
+fn krawczyk<S: Scalar>(q: &Poly<S>, mut x: [f64; 2], steps: u32, work: &mut Work) -> [f64; 2] {
     let dq = q.derivative();
     let like = &q.coefs()[0];
-    let mut x = [0.0, 1.0];
-    for _ in 0..KRAWCZYK_STEPS {
+    for _ in 0..steps {
         work.steps = work.steps.saturating_add(1);
         // In `X`, as the operator needs (halving a subnormal end may
         // round it out).
@@ -750,11 +831,25 @@ fn krawczyk<S: Scalar>(q: &Poly<S>, work: &mut Work) -> [f64; 2] {
             m
         };
         let qy = q.eval(&S::from_f64(y, like));
-        let mut nx = match qy.sign() {
-            Some(Ordering::Greater) => [x[0], y],
-            Some(_) => [y, x[1]],
-            None => x,
+        let mut nx = x;
+        // Past the root `q` is positive, before it negative.
+        let mut bound_by = |z: f64, s: Option<Ordering>| match s {
+            Some(Ordering::Greater) if z < nx[1] => nx[1] = z,
+            Some(Ordering::Less) if z > nx[0] => nx[0] = z,
+            _ => {}
         };
+        bound_by(y, qy.sign());
+        if qy.sign().is_none() {
+            // The root may be at `y` itself (a split point's exact zero,
+            // where the operator alone stalls on a wide `X`): the middles
+            // either side, where certified, halve `X` around it.
+            work.steps = work.steps.saturating_add(1);
+            for z in [0.5 * x[0] + 0.5 * y, 0.5 * y + 0.5 * x[1]] {
+                if x[0] < z && z < x[1] {
+                    bound_by(z, q.eval(&S::from_f64(z, like)).sign());
+                }
+            }
+        }
         let d = derivative_range(&dq, x, like);
         let inv = 1.0 / (0.5 * d[0] + 0.5 * d[1]);
         if (d[0] > 0.0 || d[1] < 0.0) && inv.is_finite() {
