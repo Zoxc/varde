@@ -94,6 +94,17 @@ pub(super) struct Make {
     pub pert_seed: u64,
     /// The vertex ids' shuffle seed (`None`: in build order).
     pub ids: Option<u64>,
+    /// A common snapping grid ([`snap_to`]): `Some(e)` rounds the
+    /// vertices to multiples of `2^(e − 52)` at least, so two solids
+    /// built on one grid keep a vertex they share exactly (`None`: each
+    /// solid its own grid; a sphere zone's vertices are then its tiles'
+    /// corners, unsnapped).
+    pub grid: Option<i64>,
+    /// Whether a box's corner `o` (the polyhedron's first vertex) keeps
+    /// its exact place, unsnapped: a point of another solid it is put on
+    /// (a knot of a curve) then stays on it, the box's edges there a
+    /// rounding off straight (curves).
+    pub keep_first: bool,
 }
 
 impl Make {
@@ -103,6 +114,8 @@ impl Make {
         pert: 0.0,
         pert_seed: 0,
         ids: None,
+        grid: None,
+        keep_first: false,
     };
 }
 
@@ -219,6 +232,14 @@ pub(super) fn is_line(spans: &[Span3]) -> bool {
 /// largest binade): so the sum of any two coordinates is exact and a
 /// [`line`] between two of them is straight exactly.
 pub(super) fn snap(verts: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    snap_to(verts, None)
+}
+
+/// [`snap`] on the grid `2^(E − 52)` with `E` at least `grid` (where
+/// given): a coarser grid than the vertices need, which one shared by
+/// two solids keeps their common points exactly common (a point already
+/// on it stays).
+pub(super) fn snap_to(verts: &[[f64; 3]], grid: Option<i64>) -> Vec<[f64; 3]> {
     let m = verts
         .iter()
         .flatten()
@@ -228,6 +249,7 @@ pub(super) fn snap(verts: &[[f64; 3]]) -> Vec<[f64; 3]> {
     }
     // `2^E > m`, from the exponent bits of `m`.
     let e = ((m.to_bits() >> 52) & 0x7ff) as i64 - 1023 + 1;
+    let e = grid.map_or(e, |g| e.max(g));
     let q = pow2_signed(e - 52);
     verts
         .iter()
@@ -749,7 +771,13 @@ fn cuboid(o: [f64; 3], axes: [[f64; 3]; 3], make: &Make) -> Solid {
 /// straight exactly) and its faces as loops of vertex indices running
 /// round their outward normals, each face planar.
 fn polyhedron(verts: &[[f64; 3]], loops: &[Vec<usize>], make: &Make) -> Solid {
-    let verts = &snap(verts)[..];
+    let mut snapped = snap_to(verts, make.grid);
+    if make.keep_first
+        && let (Some(s), Some(v)) = (snapped.first_mut(), verts.first())
+    {
+        *s = *v;
+    }
+    let verts = &snapped[..];
     let mut edges: Vec<(Vec<Span3>, Vec<f64>, [usize; 2])> = Vec::new();
     let mut faces = Vec::new();
     for l in loops {
@@ -805,12 +833,15 @@ fn half_cylinder(
     let at = |dir: [f64; 3], h: f64| add(add(foot, scale(dir, r)), scale(a, h));
     // Snapped ([`snap`]): the lines between them straight exactly, the
     // arcs ending on them.
-    let verts = snap(&[
-        at(d[0], z[0]),
-        at(d[2], z[0]),
-        at(d[0], z[1]),
-        at(d[2], z[1]),
-    ]);
+    let verts = snap_to(
+        &[
+            at(d[0], z[0]),
+            at(d[2], z[0]),
+            at(d[0], z[1]),
+            at(d[2], z[1]),
+        ],
+        make.grid,
+    );
     // A half circle at height h from vertex `v0` to `v1`: two quarters,
     // `d0` to `d1` to `d2`.
     let arc = |h: f64, v0: [f64; 3], v1: [f64; 3]| -> Vec<Span3> {
@@ -1052,12 +1083,31 @@ fn sphere_zone(centre: [f64; 3], axis: [f64; 3], r: f64, first: i64, make: &Make
     let mer0 = column(rect.u.start, 0);
     let mer1 = column(ju, 2);
     let p3 = |s: &[f64; 4]| [s[0], s[1], s[2]];
-    let verts = vec![
+    let mut verts = vec![
         p3(&lat0[0][0]),
         p3(&lat0[lat0.len() - 1][2]),
         p3(&lat1[0][0]),
         p3(&lat1[lat1.len() - 1][2]),
     ];
+    let (mut lat0, mut lat1, mut mer0, mut mer1) = (lat0, lat1, mer0, mer1);
+    if make.grid.is_some() {
+        // On a common grid: the vertices snapped, the boundary rows and
+        // columns ending on them (a hair off the tiles' corners there),
+        // the straight edges straight exactly.
+        verts = snap_to(&verts, make.grid);
+        let end = |c: &mut Vec<Span3>, first: bool, v: [f64; 3]| {
+            let (s, k) = if first { (0, 0) } else { (c.len() - 1, 2) };
+            c[s][k] = pt(v, c[s][k][3]);
+        };
+        end(&mut lat0, true, verts[0]);
+        end(&mut lat0, false, verts[1]);
+        end(&mut lat1, true, verts[2]);
+        end(&mut lat1, false, verts[3]);
+        end(&mut mer0, true, verts[0]);
+        end(&mut mer0, false, verts[2]);
+        end(&mut mer1, true, verts[1]);
+        end(&mut mer1, false, verts[3]);
+    }
     let knots = |n: usize| (0..=n).map(|k| k as f64).collect::<Vec<f64>>();
     let (nu, nv) = (lat0.len(), mer0.len());
     let edges = vec![

@@ -409,7 +409,16 @@ fn placements_once_refused_agree() {
 /// 58, a vertex whose count against a cylinder's face read a height no
 /// model gave, now its exact column hit's; shared-corner seed 0, edge
 /// pairs at the shared corner whose crossing's z-order a stand-in once
-/// read from the geometry, now their edge–edge height records.
+/// read from the geometry, now their edge–edge height records;
+/// shared-corner seeds 42 and 44, faces at the shared vertex whose tile
+/// misses it by a rounding, its hit there counted by its own height
+/// beside the ribbons' hits read by the vertex's germ (now all by the
+/// germ). And placements once refused for want of precision: kernel-exact
+/// seeds 14, 29, 34 and 39 (a corner of `A` exactly on an edge of the
+/// cube, the near strip's cut next to it never certified off the ray
+/// however small the boxes beside it, all clear of its height: those
+/// join the near run once refined as far as they go) and half-grid seeds
+/// 1, 4 and 7 (corner pieces next to a face's vertex).
 /// Seed 31 only by default (each takes seconds).
 #[test]
 fn adversarial_placements_once_miscounted_agree() {
@@ -428,6 +437,15 @@ fn adversarial_placements_once_miscounted_agree() {
             ("roof-ridge", 44),
             ("band of an edge", 58),
             ("shared corner", 0),
+            ("shared corner", 42),
+            ("shared corner", 44),
+            (KERNEL_EXACT, 14),
+            (KERNEL_EXACT, 29),
+            (KERNEL_EXACT, 34),
+            (KERNEL_EXACT, 39),
+            ("half grid", 1),
+            ("half grid", 4),
+            ("half grid", 7),
         ],
     );
     let outs = par(cases.len() as u64, threads(), &|i| {
@@ -558,6 +576,70 @@ fn a_shared_corner_s_counts_settle() {
         .0;
         assert!(
             !matches!(&o, Outcome::Refused(super::world::Cause::OutOfBudget(_), _)),
+            "{family} seed {seed}: {o:?}"
+        );
+    }
+}
+
+/// Shared corners once miscounted (seeds 31, 50 and 60) or refused for a
+/// near tie (seed 1, its "shared" vertices an ulp apart before both
+/// solids were snapped to one grid): a face whose tile misses the shared
+/// vertex by a rounding reads its hit there by the vertex's germ with the
+/// ribbons' hits at it, as the ideal face through the vertex is read. So
+/// each answers as the oracle does past the misfit (at `2^-28·d` or
+/// `−2^-28·d`): tie-scale where the oracle's tie shift, inside the
+/// misfit, reads the rounding, or an operand lobe the rounding makes
+/// there (seed 60) without a fallback, the counting's winding staying
+/// in `{0, 1}`. `VARDE_TESTS=full` only (seconds each).
+#[test]
+fn shared_corners_count_as_the_ideal_faces() {
+    let seeds: &[u64] = varde_testing::pick(&[], &[1, 31, 50, 60]);
+    let outs = par(seeds.len() as u64, threads(), &|i| {
+        let seed = seeds[i as usize];
+        let p = family_named("shared corner")(seed);
+        let c = check_with(&p, &Config::RUNS, &mut Stats::default(), true);
+        (seed, c.outcome, c.flip)
+    });
+    for (seed, o, flip) in outs {
+        assert!(
+            matches!(
+                &o,
+                Outcome::Agreed { .. } | Outcome::TieScale(_) | Outcome::OperandLobe(_)
+            ),
+            "seed {seed}: {o:?}"
+        );
+        assert!(
+            matches!(
+                flip,
+                Some(super::runs::Flip::Checked {
+                    sides: [true, true],
+                    ..
+                })
+            ),
+            "seed {seed}: {flip:?}"
+        );
+    }
+}
+
+/// Stacked half cylinders (seed 18) where a straight edge of one meets an
+/// arc of the other at a shared vertex: the counting decides the corner's
+/// z-order by its orders (once refused), but the oracle's tie shift
+/// leaves the coincident arcs degenerate. Settled past the misfit along
+/// `d`, the oracle's answers equal the counting's: tie-scale, never an
+/// unchecked answer. `VARDE_TESTS=full` only (minutes: the oracle runs
+/// to its work cap at the tie shift).
+#[test]
+fn answers_the_oracle_settles_only_past_the_misfit_are_checked_there() {
+    let cases: &[(&str, u64)] = varde_testing::pick(&[], &[("stacked", 18)]);
+    for &(family, seed) in cases {
+        let o = check_answers(
+            &family_named(family)(seed),
+            &Config::RUNS,
+            &mut Stats::default(),
+        )
+        .0;
+        assert!(
+            matches!(&o, Outcome::TieScale(m) if m.contains("oracle unresolved")),
             "{family} seed {seed}: {o:?}"
         );
     }

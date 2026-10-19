@@ -11,6 +11,7 @@ use varde_testkit::rng::Rng;
 
 use super::runs::Placement;
 use super::solids::{Make, Shape, rotation};
+use crate::geom::curve::Span3;
 use crate::geom::form::{CylinderKey, SphereKey};
 use crate::geom::lattice::Lattice;
 
@@ -91,7 +92,11 @@ fn random_b(rng: &mut Rng) -> Shape {
 }
 
 /// A vertex of `A` at a point of an edge of `B` moved off it by up to a
-/// band (or not at all).
+/// band (or not at all). Not moved, on a curved edge, the point is the
+/// curve's inner knot nearest the drawn one: a control point, so exactly
+/// on the stored curve (a point evaluated there is a rounding off it, a
+/// near coincidence rather than the incidence meant), and `A`'s corner
+/// there is kept unsnapped ([`Make::keep_first`]).
 fn near_edge(seed: u64) -> Placement {
     let mut rng = Rng::new(seed);
     let b = random_b(&mut rng);
@@ -101,13 +106,34 @@ fn near_edge(seed: u64) -> Placement {
     let g = edges[(rng.next_u64() % edges.len() as u64) as usize];
     let [t0, t1] = sb.brep.t_range(g);
     let t = rng.range(t0, t1);
-    let p = sb.brep.curve(g).eval(t).expect("a point").map(|c| c.v);
+    let curve = sb.brep.curve(g);
+    let p = curve.eval(t).expect("a point").map(|c| c.v);
+    let along = [0.0, 0.25, 0.5, 0.999][(seed % 4) as usize];
+    let knot = if along == 0.0 && !sb.straight[g.index()] {
+        knot_nearest(curve.spans(), curve.knots(), t)
+    } else {
+        None
+    };
+    let p = knot.unwrap_or(p);
     let band = sb.brep.edge_tol(g) + 1e-12;
-    let off = rng.direction() * band * [0.0, 0.25, 0.5, 0.999][(seed % 4) as usize];
+    let off = rng.direction() * band * along;
     let a = box_at(&mut rng, DVec3::from_array(p) + off);
     let mut out = placement(&mut rng, a, b);
     out.make_b = mb;
+    // `A`'s corner on the knot exactly, not snapped off it.
+    out.make_a.keep_first = knot.is_some();
     out
+}
+
+/// The point of a chain's inner knot nearest the parameter `t`, its
+/// spans' shared control point; `None` for a chain of one span.
+fn knot_nearest(spans: &[Span3], knots: &[f64], t: f64) -> Option<[f64; 3]> {
+    (1..spans.len())
+        .min_by(|&i, &j| (knots[i] - t).abs().total_cmp(&(knots[j] - t).abs()))
+        .map(|k| {
+            let c = spans[k][0];
+            [c[0], c[1], c[2]]
+        })
 }
 
 /// `B` a half cylinder or sphere zone, a vertex of `A` on its outline as
@@ -377,15 +403,28 @@ fn cusp(seed: u64) -> Placement {
     placement(&mut rng, a, b)
 }
 
-/// A vertex of `A` exactly at a vertex of `B`.
+/// The snapping grid of [`shared_corner`]'s solids, `2^(4 − 52)`: every
+/// coordinate of both lies below `2^4`.
+const SHARED_GRID: Option<i64> = Some(4);
+
+/// A vertex of `A` exactly at a vertex of `B`: both solids snapped to one
+/// grid ([`Make::grid`]), so the vertex `A` is placed at stays where it
+/// is (on each solid's own grid a coarser one rounds it off `B`'s by an
+/// ulp, a near coincidence rather than the shared vertex meant).
 fn shared_corner(seed: u64) -> Placement {
     let mut rng = Rng::new(seed);
     let b = random_b(&mut rng);
-    let sb = b.build(&Make::PLAIN);
+    let sb = b.build(&Make {
+        grid: SHARED_GRID,
+        ..Make::PLAIN
+    });
     let v = sb.verts();
     let p = sb.brep.pos(v[(rng.next_u64() % v.len() as u64) as usize]);
     let a = box_at(&mut rng, DVec3::from_array(p));
-    placement(&mut rng, a, b)
+    let mut out = placement(&mut rng, a, b);
+    out.make_a.grid = SHARED_GRID;
+    out.make_b.grid = SHARED_GRID;
+    out
 }
 
 /// `B` a half cylinder with its axis across `UP` and its half facing

@@ -44,11 +44,15 @@
 //! refused, never answered from a mix.
 //!
 //! **Shared corners.** Where an end of each edge in the cluster's box is
-//! the same point (a vertex on a vertex), the curved edge–edge key isn't
-//! decided: the face counts at that vertex read mixed pieces (a tile
-//! missing the vertex by its rounding beside the ribbon through it) that
-//! the z-order can't be made to agree with, so the count is refused there
-//! rather than answered (the straight pair's exact row still decides).
+//! the same point (a vertex on a vertex) and one edge is straight, that
+//! end lies on the other edge's piece too: the value is exactly 0 and the
+//! orders decide, as at any end on the other edge. The face counts at
+//! that vertex agree with it: a face's hits within `ε_tie` of the vertex
+//! (a tile missing it by its rounding beside the ribbon through it) read
+//! the vertex's germ key there with the ribbon's hit
+//! ([`crate::count::s02`]). Two curves from one vertex (arcs on one
+//! circle, stacked) aren't decided here: refused, never answered
+//! unchecked.
 //!
 //! Every other key, and an edge–edge key whose pair has no record here,
 //! is [`ModelHeights`]'.
@@ -151,8 +155,12 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
     }
 
     /// Whether an end of each edge in the cluster's box is the same point,
-    /// exactly: a vertex on a vertex (module docs, "Shared corners").
-    fn corner(z: &ZAt<'_>) -> bool {
+    /// exactly, and both edges are curved: a vertex on a vertex of two
+    /// curves (module docs, "Shared corners").
+    fn curved_corner(z: &ZAt<'_>) -> bool {
+        if !matches!((z.e, z.g), (XCurve::Spans(_), XCurve::Spans(_))) {
+            return false;
+        }
         let ends = |c: &XCurve<'_>, part: &crate::records::xrec::XPart| -> Vec<[f64; 3]> {
             let last = c.span_count().saturating_sub(1);
             let mut out = Vec::new();
@@ -621,9 +629,9 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
             // Both edges on the curve at the root: exactly 0.
             ZRow::Root { .. } => KeyValue::Exact(Ok(Ordering::Equal)),
             ZRow::EdgeEdge if Self::flat(&z) => self.base().value(h),
-            // A vertex on a vertex: no model here (module docs, "Shared
-            // corners").
-            ZRow::EdgeEdge if Self::corner(&z) => KeyValue::Curved,
+            // A vertex on a vertex of two curves: not decided here
+            // (module docs, "Shared corners").
+            ZRow::EdgeEdge if Self::curved_corner(&z) => KeyValue::Curved,
             // An end on the other edge: exactly 0.
             ZRow::EdgeEdge if Self::incident(&z) => KeyValue::Exact(Ok(Ordering::Equal)),
             ZRow::EdgeEdge => KeyValue::Curved,
@@ -634,7 +642,7 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
         let Some(z) = self.cluster(h) else {
             return self.base().curved_value(h, like, work);
         };
-        if z.cl.row != ZRow::EdgeEdge || Self::flat(&z) || Self::corner(&z) {
+        if z.cl.row != ZRow::EdgeEdge || Self::flat(&z) || Self::curved_corner(&z) {
             return None;
         }
         let (subs, [lo, hi]) = self.crossing(&z, like, work)?;
@@ -693,7 +701,7 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
         // its sign, never a tie: the column hits it agrees with are exact.
         match self.cluster(k.h) {
             Some(z) if z.cl.row == ZRow::EdgeEdge && !Self::flat(&z) => {
-                Self::corner(&z) || !Self::incident(&z)
+                Self::curved_corner(&z) || !Self::incident(&z)
             }
             // An exact 0 at the root, the orders deciding: never a truth.
             Some(z) if matches!(z.cl.row, ZRow::Root { .. }) => false,

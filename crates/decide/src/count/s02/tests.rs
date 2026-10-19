@@ -684,6 +684,18 @@ fn model_count_with(
     scale: [f64; 2],
     rays: &dyn Fn(&TrimData) -> ChainRec,
 ) -> (i64, Vec<HeightKey>) {
+    let (n, wanted, _) = model_count_pieces(f, geom, ladder, scale, rays);
+    (n, wanted)
+}
+
+/// [`model_count_with`], with the pieces the count tested.
+fn model_count_pieces(
+    f: &FaceData,
+    geom: &Planar<'_>,
+    ladder: bool,
+    scale: [f64; 2],
+    rays: &dyn Fn(&TrimData) -> ChainRec,
+) -> (i64, Vec<HeightKey>, u64) {
     let (order, q) = (geom.order, geom.q);
     let point = Point::vert(Operand::A, VertId(7));
     let mut feet = NearFeet::new();
@@ -728,7 +740,7 @@ fn model_count_with(
         .fill(wanted.clone(), &model, band, &mut Seq)
         .expect("heights");
     let n = p.count(&reads, &heights, &[]).expect("records filled");
-    (n, wanted)
+    (n, wanted, p.pieces)
 }
 
 /// Columns `10⁻⁸` from an edge of a small face on a huge plane tile, a
@@ -1046,10 +1058,11 @@ fn a_box_the_trims_miss_is_core_or_outside() {
 /// plane, the point's ray line tangent to the bow's shadow a little
 /// ahead of it, as the curved ray records keep it: a tangency whose two
 /// moved crossings cancel, no crossing listed. The strip runs round the
-/// column are cut next to the tangency, each cut ordered against it
-/// (a cut inside it is unordered and moves:
-/// `a_cut_inside_a_cancelled_tangency_is_unordered` in the pieces'
-/// tests), and the face's count is the oracle's.
+/// column are cut next to the tangency, each cut ordered against it; with
+/// the tangency's enclosure wider, cuts land inside it, are unordered
+/// there and move (as `a_cut_inside_a_cancelled_tangency_is_unordered`
+/// in the pieces' tests has it for one piece), the count testing more
+/// pieces; either way the face's count is the oracle's.
 #[test]
 fn a_cancelled_tangency_next_to_the_column_counts_as_the_oracle() {
     use varde_testkit::ray_oracle::{Chain, Coedge, ExactFace, Face, Shift, UvChain};
@@ -1101,33 +1114,49 @@ fn a_cancelled_tangency_next_to_the_column_counts_as_the_oracle() {
     });
     let up = [UP.x, UP.y, UP.z];
     let mut counted = 0;
+    let mut moved = 0;
     for s in [1e-7, 3e-8, 3e-7] {
         for lambda in [1e-8, -1e-8] {
             let q = (c + R_HAT * s + UP * lambda).to_array();
-            let rays = |t: &TrimData| {
-                let mut r = chain(&t.curve, q, Operand::A);
-                if t.coedge == CoedgeId(1) {
-                    r.crossings.clear();
-                    r.touches.push((0, [0.5 - 1e-9, 0.5 + 1e-9]));
-                }
-                r
-            };
-            let geom = Planar {
-                face: &f,
-                order: &order,
-                plane: Some((DVec3::Z, 0.0)),
-                q,
-                band: 1.0 / 4096.0,
-                memo: None,
-            };
-            let (n, _) = model_count_with(&f, &geom, true, [1.0, 1.0], &rays);
             let truth = oracle
                 .ray(&Shift::NONE, q, &Shift::NONE, up)
                 .expect("settled");
             assert!(!truth.tie);
-            assert_eq!(n, truth.count, "s {s}, λ {lambda}");
-            counted += usize::from(n != 0);
+            // The tangency's enclosure as the record keeps it, and wider
+            // (still holding it): the strip cuts beside the column then
+            // land inside it, unordered, and move past it.
+            let mut tested = Vec::new();
+            for wide in [1e-9, WIDE_TOUCH] {
+                let rays = |t: &TrimData| {
+                    let mut r = chain(&t.curve, q, Operand::A);
+                    if t.coedge == CoedgeId(1) {
+                        r.crossings.clear();
+                        r.touches.push((0, [0.5 - wide, 0.5 + wide]));
+                    }
+                    r
+                };
+                let geom = Planar {
+                    face: &f,
+                    order: &order,
+                    plane: Some((DVec3::Z, 0.0)),
+                    q,
+                    band: 1.0 / 4096.0,
+                    memo: None,
+                };
+                let (n, _, pieces) = model_count_pieces(&f, &geom, true, [1.0, 1.0], &rays);
+                assert_eq!(n, truth.count, "s {s}, λ {lambda}, touch ±{wide}");
+                tested.push(pieces);
+                if wide == WIDE_TOUCH {
+                    counted += usize::from(n != 0);
+                }
+            }
+            moved += usize::from(tested[1] > tested[0]);
         }
     }
     assert_eq!(counted, 3, "the columns pass inside the face");
+    assert!(moved > 0, "no cut landed inside the wider tangency");
 }
+
+/// The half-width of the wider enclosure of the cancelled tangency in
+/// [`a_cancelled_tangency_next_to_the_column_counts_as_the_oracle`].
+const WIDE_TOUCH: f64 = 1.0 / 1024.0;

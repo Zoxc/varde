@@ -53,9 +53,16 @@
 //! near run's boxes are within their size already. So the dropped leaves
 //! there join the near run (their degree, ribbons included, is 0, and
 //! they hold no hit), and its cut moves past them, away from `q`. A
-//! height-clear leaf never joins: it may hold the column's hit, whose
-//! degree counts by the leaf's height; a cut next to one refines as any
-//! other.
+//! height-clear leaf may hold the column's hit, which counts by the
+//! leaf's height, so a cut next to one refines as any other; only where
+//! the run holds the column's hit at `q` on the face's boundary and its
+//! leaves there are refined as far as they go (one of them a split short
+//! of [`MAX_SUBDIV_DEPTH`] in `u` and in `v`) does a clear leaf there
+//! whose closed box holds no hit of the column, exactly (on a face with
+//! its nets), join. Where `q` lies on a trim of a steep face, every box
+//! beside the near one is clear of `q`'s height however small, so
+//! refining there never moves the cut off the ray; joining those
+//! hit-free clear boxes does.
 //!
 //! **Around a vertex.** A corner's vertex lying on a box side (on a tile
 //! line, or a dyadic line the splits couldn't move) lies in one box only
@@ -80,9 +87,15 @@
 //! (a face overhanging its own edge in the shadow) counts by its own
 //! height, the tile and ribbon of one face straddling `q` count each by
 //! its own, and every face at a shared vertex reads the one point–vertex
-//! record. A near piece of non-zero degree holding no hit is
-//! [`CountError::NoHit`] (only where its hits can't be counted alone,
-//! below); on a face counted without its nets it is
+//! record. Where `q` is a vertex of the face, the piece's hits within
+//! `ε_tie` of it read that vertex's germ key with the hit at it: the
+//! face's tiles pass within rounding of their vertices, not through
+//! them, so a tile's hit a rounding off the vertex is the vertex of the
+//! ideal face, whose first-order germ the key reads (its own height, of
+//! the rounding's sign, would mix that sign with the germ's); the piece
+//! counts its degree by the germ. A near piece of non-zero degree
+//! holding no hit is [`CountError::NoHit`] (only where its hits can't be
+//! counted alone, below); on a face counted without its nets it is
 //! [`CountError::HitsUnformed`].
 //!
 //! **By the hits.** The column's hits are exact, and
@@ -437,6 +450,31 @@ fn settled(hits: &[Hit], ix: &[u32]) -> bool {
             rest.iter().all(|&k| hits[k as usize].height == h)
         }
     }
+}
+
+/// Whether `at` is a vertex of `face`: an end of one of its trims'
+/// edges, exactly.
+fn at_vertex(face: &HitFace<'_>, at: [f64; 3]) -> bool {
+    face.trims.iter().any(|t| {
+        let ends = [t.curve.first().map(|s| s[0]), t.curve.last().map(|s| s[2])];
+        ends.into_iter()
+            .flatten()
+            .any(|p| p[0] == at[0] && p[1] == at[1] && p[2] == at[2])
+    })
+}
+
+/// Whether the closed box `b` lies within `r` of `at` along each axis,
+/// exactly.
+fn within(b: &[[Rational; 2]; 3], at: [f64; 3], r: f64) -> bool {
+    let (Ok(r), true) = (Rational::try_from(r), at.iter().all(|x| x.is_finite())) else {
+        return false;
+    };
+    (0..3).all(|k| {
+        let Ok(c) = Rational::try_from(at[k]) else {
+            return false;
+        };
+        b[k][0] >= &c - &r && b[k][1] <= &c + &r
+    })
 }
 
 /// The union of index sets, ascending.
@@ -1093,6 +1131,26 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
         // additive) by the germ key at `q`.
         let (at_q, others): (Vec<u32>, Vec<u32>) =
             hits.iter().partition(|&&h| all[h as usize].inc.is_some());
+        // But where `q` is a vertex of the face, hits within `ε_tie` of it
+        // are the vertex's: the face's tiles pass within rounding of their
+        // vertices, not through them, so a tile hit a rounding off the
+        // vertex beside the ribbon's hit at it is one point of the ideal
+        // face, which the germ key reads (its own height, of the rounding's
+        // sign, would mix that sign with the germ's first-order one). The
+        // piece's degree then counts by the germ hit.
+        if !at_q.is_empty()
+            && at_vertex(&f.face, f.at)
+            && others
+                .iter()
+                .all(|&h| within(&all[h as usize].near, f.at, self.fq.eps_tie))
+        {
+            return Ok(Some(NearPiece {
+                degree,
+                hits,
+                each: false,
+                germ: None,
+            }));
+        }
         let others_ok = others.iter().all(|&h| {
             let hit = &all[h as usize];
             hit.facing.is_some()
@@ -1109,6 +1167,43 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
             }));
         }
         Ok(None)
+    }
+
+    /// Whether the leaves `run` hold a hit of the column at `q` on the
+    /// face's boundary (`q` exactly on a trim or at a vertex), with the
+    /// face's nets.
+    fn holds_boundary_hit(&self, leaves: &[Leaf], run: &[usize]) -> Result<bool, CountError> {
+        let Some(f) = &self.flat else {
+            return Ok(false);
+        };
+        let Ok(all) = f.hits() else {
+            return Ok(false);
+        };
+        for &k in run {
+            let held = match &leaves[k].hits {
+                Some(h) => h.clone(),
+                None => self.hits_in(&leaves[k].b)?,
+            };
+            if held.iter().any(|&h| all[h as usize].inc.is_some()) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether the leaf's closed box holds no hit of the column, known
+    /// exactly: with the face's nets and its hits formed; `false` without.
+    fn holds_no_hit(&self, l: &Leaf) -> Result<bool, CountError> {
+        let Some(f) = &self.flat else {
+            return Ok(false);
+        };
+        if f.hits().is_err() {
+            return Ok(false);
+        }
+        Ok(match &l.hits {
+            Some(h) => h.is_empty(),
+            None => self.hits_in(&l.b)?.is_empty(),
+        })
     }
 
     /// The column's hits in `b`'s closed box, by index (with the face's
@@ -1944,13 +2039,29 @@ fn round<S: Scalar>(
         let near_there = there.iter().any(|&k| class[k] == Some(Height::Near));
         // Dropped there (degree 0, ribbons included: they join any run),
         // their class not fixed by a vertex they hold (joining wouldn't
-        // move the cut). A height-clear leaf never joins: it may hold the
-        // column's crossing, which counts by its own height.
-        let dropped: Vec<usize> = there
+        // move the cut). A height-clear leaf joins only where the run
+        // holds the column's hit at `q` on the face's boundary, its leaves
+        // there are refined as far as they go, and the leaf holds no hit
+        // of the column, exactly (its degree, ribbons included, is then 0
+        // too): one holding the column's crossing counts it by its own
+        // height. So a near run whose cut next to `q` no level certifies
+        // off the ray (`q` on a trim of a steep face, every box beside
+        // its own clear of `q`'s height however small) grows past the
+        // clear leaves round it, which refining only made smaller.
+        let spent = near_leaves(&rects, &run, &rq)
             .iter()
-            .copied()
-            .filter(|&k| class[k].is_none() && !forced.contains_key(&k))
-            .collect();
+            .any(|&k| leaves[k].splits.iter().all(|&n| n + 1 >= MAX_SUBDIV_DEPTH))
+            && ctx.holds_boundary_hit(leaves, &run)?;
+        let mut dropped: Vec<usize> = Vec::new();
+        for &k in &there {
+            if forced.contains_key(&k) {
+                continue;
+            }
+            let clear = matches!(class[k], Some(Height::Above | Height::Below));
+            if class[k].is_none() || (clear && spent && ctx.holds_no_hit(&leaves[k])?) {
+                dropped.push(k);
+            }
+        }
         if near_there && !dropped.is_empty() {
             join.extend(dropped);
         } else {

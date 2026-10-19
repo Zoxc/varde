@@ -522,7 +522,25 @@ fn judge<'n>(
     near: &dyn Fn() -> &'n Result<[Truth; 2], String>,
 ) -> (Outcome, Option<Truth>) {
     let t = match truth(a, b, p.d, fa, fb) {
-        Err(e) => return (Outcome::Unresolved(e), None),
+        // Unsettled at the tie shift (coincident curves the shift leaves
+        // degenerate) but settled past the misfit along `d`: the
+        // counting's answers there are checked, tie-scale.
+        Err(e) => {
+            let along = match near() {
+                Ok([up, _]) => compare(answers, up, turned).is_none(),
+                Err(_) => false,
+            };
+            return if along {
+                (
+                    Outcome::TieScale(format!(
+                        "(oracle unresolved at its tie shift, the oracle's at 2^-28·d) {e}"
+                    )),
+                    None,
+                )
+            } else {
+                (Outcome::Unresolved(e), None)
+            };
+        }
         Ok(t) => t,
     };
     let o = verdict(answers, &t, turned, near);
@@ -538,10 +556,27 @@ fn verdict<'n>(
 ) -> Outcome {
     let differs = compare(answers, t, turned);
     // An operand lobe: no exact answer is a solid's; the counting must
-    // have taken the lobe fallback there.
+    // have taken the lobe fallback there, or read the lobe's point as
+    // the ideal faces do (a lobe within the rounding misfit at a vertex
+    // the query point lies on exactly, which the counting reads by the
+    // vertex's germ), its answers then the oracle's past the misfit, at
+    // `2^-28·d` or `−2^-28·d`.
     if lobed(t) {
         return match (answers.lobes, differs) {
-            (0, Some(m)) => Outcome::Mismatch(format!("operand lobe without a lobe fallback: {m}")),
+            (0, Some(m)) => {
+                let past = match near() {
+                    Ok([up, down]) => {
+                        compare(answers, up, turned).is_none()
+                            || compare(answers, down, turned).is_none()
+                    }
+                    Err(_) => false,
+                };
+                if past {
+                    Outcome::OperandLobe(format!("0 fallbacks, the oracle's at ±2^-28·d; {m}"))
+                } else {
+                    Outcome::Mismatch(format!("operand lobe without a lobe fallback: {m}"))
+                }
+            }
             (n, m) => Outcome::OperandLobe(format!(
                 "{n} fallbacks; {}",
                 m.unwrap_or_else(|| "agrees".into())

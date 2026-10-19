@@ -25,6 +25,11 @@ const BAND: f64 = 1.0 / 4096.0;
 const LO: f64 = -0.3;
 const SPAN: f64 = 1.7;
 
+/// The map of a huge tile ([`Tiling::Huge`]): local `s ∈ [HUGE_LO,
+/// HUGE_LO + HUGE_SPAN]`.
+const HUGE_LO: f64 = -2_097_152.0;
+const HUGE_SPAN: f64 = 4_194_304.0;
+
 /// The local size of a tile where the square's sides lie on tile lines
 /// ([`Tiling::Lines`]).
 const LINES: f64 = 1.25;
@@ -72,6 +77,10 @@ struct Cube {
 enum Tiling {
     /// One tile, the square inside it at non-dyadic parameters.
     One,
+    /// One tile `2^22` long (a plane's tile at its key's lattice), the
+    /// square a speck inside it, its corner at the tile's middle `(½,
+    /// ½)`: boxes round the square's corners are as deep as boxes go.
+    Huge,
     /// Four tiles, the square's corner at the origin on their common
     /// corner `(1, 1)` and its sides there along the tile lines.
     Lines,
@@ -84,7 +93,7 @@ enum Tiling {
 impl Tiling {
     fn tiles(self) -> std::ops::Range<i64> {
         match self {
-            Tiling::One => 0..1,
+            Tiling::One | Tiling::Huge => 0..1,
             Tiling::Lines | Tiling::Skew => 0..2,
         }
     }
@@ -93,6 +102,7 @@ impl Tiling {
     fn st(self, w: [f64; 2]) -> [f64; 2] {
         match self {
             Tiling::One => w.map(|x| LO + SPAN * x),
+            Tiling::Huge => w.map(|x| HUGE_LO + HUGE_SPAN * x),
             Tiling::Lines => w.map(|x| LINES * (x - 1.0)),
             Tiling::Skew => {
                 let [[a, b], [c, d]] = SKEW;
@@ -107,6 +117,7 @@ impl Tiling {
     fn uv(self, st: [f64; 2]) -> [f64; 2] {
         match self {
             Tiling::One => st.map(|s| (s - LO) / SPAN),
+            Tiling::Huge => st.map(|s| (s - HUGE_LO) / HUGE_SPAN),
             Tiling::Lines => st.map(|s| 1.0 + s / LINES),
             Tiling::Skew => {
                 let [[a, b], [c, d]] = SKEW;
@@ -122,6 +133,14 @@ impl Cube {
     }
 
     fn tiled(d: DVec3, tiling: Tiling) -> Cube {
+        Cube::lifted(d, tiling, |_| 0.0)
+    }
+
+    /// [`Cube::tiled`] with face `n`'s patches moved by `lift(n)` along
+    /// its outward normal, its edges and vertices kept: a face missing
+    /// its vertices by that much (by a rounding, where it is one), its
+    /// ribbons closing the gap.
+    fn lifted(d: DVec3, tiling: Tiling, lift: impl Fn(usize) -> f64) -> Cube {
         let add = |p: [u8; 3], q: [u8; 3]| [0, 1, 2].map(|k| p[k] + q[k]);
         let mut edges: BTreeMap<(VertId, VertId), EdgeId> = BTreeMap::new();
         let mut out = Vec::new();
@@ -129,6 +148,7 @@ impl Cube {
             let corners = [o, add(o, a), add(add(o, a), b), add(o, b)];
             let st = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
             let [o3, a3, b3] = [o, a, b].map(|c| DVec3::from_array(c.map(f64::from)));
+            let off = a3.cross(b3) * lift(n);
             let patches: Vec<Patch> = tiling
                 .tiles()
                 .flat_map(|i| tiling.tiles().map(move |j| [i, j]))
@@ -138,7 +158,7 @@ impl Cube {
                         for b in 0..3 {
                             let w = [i as f64 + a as f64 / 2.0, j as f64 + b as f64 / 2.0];
                             let [s, t] = tiling.st(w);
-                            let p = o3 + a3 * s + b3 * t;
+                            let p = o3 + a3 * s + b3 * t + off;
                             net.push([p.x, p.y, p.z, 1.0]);
                         }
                     }
@@ -377,6 +397,41 @@ fn faces_at_a_shared_corner_count_the_moved_point() {
     assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
 }
 
+/// The cube's faces missing the corner by a rounding (each moved off its
+/// plane by `2^-50` outwards or inwards, the vertices and edges exact):
+/// a face's tile hit a rounding off the corner, beside its ribbons' hits
+/// at it, reads the corner's germ key with them, so each face counts as
+/// the ideal face through the corner does and the counts are the moved
+/// point's winding. (By the tile's own height, of the rounding's sign,
+/// beside the ribbons' germ, a face counted a hit the moved point
+/// doesn't have.)
+#[test]
+fn faces_missing_their_corner_by_a_rounding_count_the_moved_point() {
+    let mut rng = Rng::new(0x5c2e);
+    let mut seen = [0usize; 2];
+    let tiny = 1.0 / 1_125_899_906_842_624.0;
+    for k in 0..varde_testing::pick(8, 24) {
+        let r = rotation(&mut rng);
+        let d = -(r * DVec3::ONE);
+        let inside = d.x > 0.0 && d.y > 0.0 && d.z > 0.0;
+        for signs in [
+            0b000_000u32,
+            0b111_111,
+            0b010_101,
+            (k as u32 * 0x9e37) & 0b111_111,
+        ] {
+            let cube = Cube::lifted(d, Tiling::One, |n| {
+                if signs >> n & 1 == 1 { tiny } else { -tiny }
+            });
+            let c = counts(&cube);
+            let w: i64 = c.iter().sum();
+            assert_eq!(w, i64::from(inside), "d = {d:?}, lifts {signs:06b}: {c:?}");
+        }
+        seen[usize::from(inside)] += 1;
+    }
+    assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
+}
+
 #[test]
 fn the_axis_directions_into_and_out_of_the_cube() {
     for (d, want) in [
@@ -467,6 +522,57 @@ fn a_point_on_a_cube_edge_reads_the_edge_s_germ_key() {
                 "d = {d:?}: {keys:?}"
             );
             seen[usize::from(inside)] += 1;
+        }
+    }
+    assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
+}
+
+/// Points on the cube's edges along each axis, each face a speck on a
+/// huge tile (a plane's tile at its key's lattice, the square's corner on
+/// the tile's middle lines, as the oracle runs' cube lies): the boxes
+/// round the point are as deep as boxes go, and the faces at the edge
+/// (steep ones too, their normals across `UP`) count the moved point by
+/// the edge's germ key. (The kernel-exact runs' corners on cube edges,
+/// whose near strips joined the hit-free clear boxes beside them, are
+/// the oracle runs' regression.)
+#[test]
+fn points_on_cube_edges_on_a_huge_tile_count_the_moved_point() {
+    let mut rng = Rng::new(0x5c2f);
+    let mut seen = [0usize; 2];
+    let mut dirs = vec![
+        DVec3::new(1.0, 0.1, 2.0),
+        DVec3::new(-1.0, 0.3, 2.0),
+        DVec3::new(0.2, -0.5, -1.0),
+    ];
+    for _ in 0..varde_testing::pick(4, 12) {
+        dirs.push(rng.direction());
+    }
+    for (axis, at) in [
+        (2, 0.375),
+        (2, 0.5625),
+        (0, 0.375),
+        (0, 0.140625),
+        (1, 0.4375),
+    ] {
+        let mut p = [0.0; 3];
+        p[axis] = at;
+        let at = DVec3::from_array(p);
+        for &d in &dirs {
+            for d in [d, -d] {
+                let dd = d.to_array();
+                let inside = (0..3).filter(|&k| k != axis).all(|k| dd[k] > 0.0);
+                let (c, keys) = counts_keys(&Cube::tiled(d, Tiling::Huge).with_vertex_at(at));
+                assert_eq!(
+                    c.iter().sum::<i64>(),
+                    i64::from(inside),
+                    "at {at}, d = {d:?}: {c:?}"
+                );
+                assert!(
+                    keys.iter().any(|k| matches!(k, HKey::Curve { .. })),
+                    "at {at}, d = {d:?}: {keys:?}"
+                );
+                seen[usize::from(inside)] += 1;
+            }
         }
     }
     assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");

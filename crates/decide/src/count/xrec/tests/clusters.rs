@@ -761,47 +761,87 @@ fn a_curved_cluster_at_an_end_on_the_other_edge_decides_by_its_orders() {
 }
 
 /// A curved `e` and a straight `g` from one vertex (a vertex on a vertex,
-/// exactly): their crossing's curved edge–edge key isn't decided at any
-/// level (module docs of the decider, "Shared corners").
+/// exactly): the curved edge–edge value at their crossing is exactly 0
+/// (an end of each on the other) and the edge–edge orders decide it, the
+/// moved configuration's z-order (by finite differences of the moved
+/// crossing, `A` by `δ·d`). With `g` stored as a curve too (two curves
+/// from one vertex), the key isn't decided (refused, never answered
+/// unchecked; module docs of the decider, "Shared corners").
 #[test]
-fn a_curved_cluster_at_a_shared_vertex_is_not_decided() {
+fn a_curved_cluster_at_a_shared_vertex_decides_by_its_orders() {
     let e = vec![[
         cp(lat(0.0, 0.0, 0.0), 1.0),
         cp(lat(1.0, 1.0, 1.0), 1.0),
         cp(lat(2.0, -1.0, -1.0), 1.0),
     ]];
-    let mut formed = 0;
+    let g = vec![straight(lat(0.0, 0.0, 0.0), lat(1.0, -2.0, 1.0), 1.0)];
+    // Motions whose shadow lies in the cone of `g`'s leaving shadow
+    // tangent `(1, −2)` and `e`'s reversed `(−1, −1)`, so the moved
+    // shadows cross next to the vertex; none along `ν`: the tangents'
+    // plane there holds `ν` (`m ∝ 3r̂ − 3ê`), so order 1 would be exactly
+    // 0, a curved tie no cone of tangents certifies.
+    let (mut decided, mut undecided) = (0, 0);
     for d in [
-        NU,
-        -NU,
-        DVec3::new(0.25, -0.5, 0.125),
-        DVec3::new(-0.25, 0.5, -0.125),
+        lat(0.5, -2.5, 0.3),
+        lat(0.2, -1.0, -0.4),
+        lat(-0.3, -1.5, 0.2),
+        lat(-0.3, -1.5, -0.6),
     ] {
         let mut geom = Geom {
             d,
             ..Geom::default()
         };
         geom.curve(A, E, 0, 1, e.clone());
-        geom.curve(
-            B,
-            G,
-            0,
-            1,
-            vec![straight(lat(0.0, 0.0, 0.0), lat(1.0, -2.0, 1.0), 1.0)],
-        );
+        geom.segment(B, G, (0, lat(0.0, 0.0, 0.0)), (1, lat(1.0, -2.0, 1.0)));
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         let Ok(out) = recs.clusters(&geom, &pair) else {
             continue;
         };
-        for (c, z) in out.rec.clusters.iter().zip(z_orders(&geom, &out.rec)) {
+        // `g` as a curve: two curves from the vertex.
+        let mut curved = Geom {
+            d,
+            ..Geom::default()
+        };
+        curved.curve(A, E, 0, 1, e.clone());
+        curved.curve(B, G, 0, 1, g.clone());
+        let recs2 = decide(&curved);
+        let both = recs2.clusters(&curved, &recs2.pair(&curved));
+        for (c, z) in both
+            .iter()
+            .flat_map(|o| o.rec.clusters.iter().zip(z_orders(&curved, &o.rec)))
+        {
             if c.clear.is_none() {
-                assert_eq!(z, None, "{d}: {c:?}");
-                formed += 1;
+                assert_eq!(z, None, "{d}: {c:?} of two curves decided");
+                undecided += 1;
             }
         }
+        for (c, z) in out.rec.clusters.iter().zip(z_orders(&geom, &out.rec)) {
+            if c.clear.is_some() {
+                continue;
+            }
+            let z = z.unwrap_or_else(|| panic!("{d}: {c:?} decided"));
+            let delta = 1e-7;
+            let moved: Vec<Span> = e
+                .iter()
+                .map(|sp| {
+                    sp.map(|p| {
+                        let q = DVec3::new(p[0], p[1], p[2]) + d * delta;
+                        [q.x, q.y, q.z, p[3]]
+                    })
+                })
+                .collect();
+            let at = newton(&moved[0], &g[0], [1e-6, 1e-6]).expect("a crossing");
+            let gap = frame_at(&g[0], at[1])[2] - frame_at(&moved[0], at[0])[2];
+            assert_eq!(z == Sign::Pos, gap > 0.0, "{d}: gap {gap} at {at:?}");
+            decided += 1;
+        }
     }
-    assert!(formed > 0, "no unclear cluster at the shared vertex");
+    assert_eq!(
+        decided, 4,
+        "an unclear cluster at the shared vertex per motion"
+    );
+    assert!(undecided > 0, "no unclear cluster of the two curves");
 }
 
 /// A curved edge whose inner knot's shadow lies `10⁻⁴` beside a straight
