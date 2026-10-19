@@ -886,7 +886,7 @@ fn stored(s: &Shadows) -> Stored {
 /// Closed walks over a small pool of vertices of one operand, so a vertex
 /// is the end of many edges (a fan), a walk passes it more than once, and
 /// runs of edges lie along query points' ray lines; points on the
-/// vertices' columns and a cut point; ids up to `NONE`; coordinates scaled
+/// vertices' columns and a cut point; ids up to the highest, `NONE − 1`; coordinates scaled
 /// up near the input range or down to where the rational stage decides.
 /// Every record is the moved configuration's and every walk's ray records
 /// sum to its winding number. The records and the work are the same on 1
@@ -917,7 +917,7 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
         let vs: Vec<VertId> = (0..m)
             .map(|i| {
                 let id = if seed % 3 == 0 {
-                    NONE - i as u32
+                    NONE - 1 - i as u32
                 } else {
                     3 * i as u32 + 1
                 };
@@ -949,7 +949,7 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
                     .map(|i| {
                         let (v, w) = (vs[walk[i]], vs[walk[(i + 1) % len]]);
                         let id = if next_edge == 1 && seed % 2 == 0 {
-                            NONE
+                            NONE - 1
                         } else {
                             next_edge
                         };
@@ -970,10 +970,13 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
                 let q = if i == 4 {
                     Point {
                         operand: op,
-                        q: Query::Cut(EdgeId(NONE), EdgeId(NONE), XClusterIx(NONE)),
+                        q: Query::Cut(EdgeId(NONE - 1), EdgeId(NONE - 1), XClusterIx(NONE)),
                     }
                 } else {
-                    Point::vert(op, VertId(if seed % 4 == 1 { NONE - i } else { 100 + i }))
+                    Point::vert(
+                        op,
+                        VertId(if seed % 4 == 1 { NONE - 1 - i } else { 100 + i }),
+                    )
                 };
                 g.pos.insert(q, at);
                 q
@@ -1180,4 +1183,44 @@ fn the_unit_table_grows_with_the_level() {
     }
     assert!(r.filter > 0 && r.expansion > 0 && r.rational > 0 && r.hit > 0);
     const { assert!(UNITS.face_setup > 0) };
+}
+
+/// A key holding the id `NONE` (a vertex, an edge, or an edge of a cut
+/// point) is refused before any record is decided, naming the key; the
+/// highest id, `NONE − 1`, is decided like any.
+#[test]
+fn keys_holding_none_are_refused_before_deciding() {
+    let mut g = Geom::with(DVec3::ZERO, Sign::Pos);
+    let a = g.vert(A, NONE - 1, tenths(0, 0));
+    let b0 = g.vert(B, 0, tenths(-10, -10));
+    let b1 = g.vert(B, NONE - 1, tenths(-10, 10));
+    let e = g.edge(B, NONE - 1, b0, b1);
+    let q = Point::vert(A, a);
+    let none = Point::vert(A, VertId::NONE);
+    let cut = Point {
+        operand: A,
+        q: Query::Cut(EdgeId::NONE, e, XClusterIx(0)),
+    };
+    let mut s = Shadows::new();
+    let mut seq = Seq::default();
+    let vv = VvKey::of(none, b0).key;
+    assert_eq!(
+        s.fill_vv([VvKey::of(q, b0).key, vv], &g, &mut seq),
+        Err(ShadowError::Table(TableError::NoneId(RecordKey::Vv(vv))))
+    );
+    let at_cut = RayKey { q: cut, g: e };
+    assert_eq!(
+        s.fill_rays([RayKey { q, g: e }, at_cut], &g, band(), &mut seq),
+        Err(ShadowError::Table(TableError::NoneId(RecordKey::Ray(
+            at_cut
+        ))))
+    );
+    let edge = RayKey { q, g: EdgeId::NONE };
+    assert_eq!(
+        s.fill_rays([edge], &g, band(), &mut seq),
+        Err(ShadowError::Table(TableError::NoneId(RecordKey::Ray(edge))))
+    );
+    assert_eq!(seq.decided, 0);
+    assert!(s.vv_table().is_empty() && s.ray_table().is_empty());
+    assert_eq!(i32::from(ray_oracle(&g, q, e)), ray(&mut s, &g, q, e));
 }

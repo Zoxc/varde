@@ -312,7 +312,10 @@ impl Sides {
                 Want::Corner(k) => corners.push(k),
             }
         }
-        let batch = self.side.missing(lines);
+        let batch = self
+            .side
+            .missing(lines)
+            .map_err(|e| ShadowError::Table(table_error(e, RecordKey::Side)))?;
         for k in batch.keys() {
             let k = *k.key();
             // A line past the range of `i64` fails its own pass.

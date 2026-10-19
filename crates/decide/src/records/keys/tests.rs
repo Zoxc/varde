@@ -1,9 +1,12 @@
 //! One key per fact: a point–vertex key and a cut point's crossing key are
 //! the same whichever operand's point asks, the `B` reader told it asked
-//! from the other side.
+//! from the other side. A key names its record's operand entities, which
+//! is how evidence names it, and holds `NONE` exactly when one of them
+//! is `NONE`.
 
 use super::*;
-use crate::ids::FaceId;
+use crate::bezier::Dyadic;
+use crate::ids::{CoedgeId, FaceId, NONE};
 
 const E: EdgeId = EdgeId(4);
 const G: EdgeId = EdgeId(9);
@@ -121,4 +124,125 @@ fn a_tile_point_has_one_key() {
         TilePoint::new(Operand::B, face, [i64::MAX, 0], [Dyadic::ONE, Dyadic::ZERO]),
         None
     );
+}
+
+fn named(operand: Operand, entity: impl Into<Entity>) -> Named {
+    Named {
+        operand,
+        entity: entity.into(),
+    }
+}
+
+/// Each key names the entities it holds with their operands: a cut point
+/// its edge and the other operand's edge it was cut at, a `B` reader's
+/// point on `B`, a hit its face and ribbon coedge on the face's operand,
+/// an anchor its own; each entity once, places on them (ordinals, spans,
+/// tiles) not at all.
+#[test]
+fn keys_name_their_operand_entities() {
+    use Operand::{A, B};
+    let (v, w) = (VertId(5), VertId(2));
+    let cut_b = Point {
+        operand: B,
+        q: Query::Cut(G, E, C),
+    };
+    let names = |k: RecordKey| k.entities();
+    let vv = VvKey::of(Point::vert(A, v), w).key;
+    assert_eq!(names(vv.record()), [named(A, v), named(B, w)]);
+    // A cut point of `B` on `G` at `A`'s `E`, against `A`'s vertex.
+    let vv = VvKey::of(cut_b, v).key;
+    assert_eq!(names(vv.into()), [named(A, v), named(B, G), named(A, E)]);
+    // The ray of that cut point against `E` itself: `E` named once.
+    let ray = RayKey { q: cut_b, g: E };
+    assert_eq!(names(ray.record()), [named(B, G), named(A, E)]);
+    let span = SpanKey {
+        q: Point::vert(B, w),
+        g: E,
+        span: 3,
+    };
+    assert_eq!(names(span.record()), [named(B, w), named(A, E)]);
+    assert_eq!(
+        names(XKey { e: E, g: G }.record()),
+        [named(A, E), named(B, G)]
+    );
+    let hit = HKey::Hit {
+        q: Point::vert(A, v),
+        f: FaceId(7),
+        sheet: Sheet::Ribbon(CoedgeId(11), 0),
+        i: HitIx(2),
+    };
+    let at = HeightKey {
+        h: hit,
+        anchor: Anchor::Face(B, FaceId(7)),
+    };
+    assert_eq!(
+        names(at.record()),
+        [named(A, v), named(B, FaceId(7)), named(B, CoedgeId(11))]
+    );
+    let corner = CornerKey {
+        q: Point::vert(B, w),
+        corner: TilePoint {
+            operand: A,
+            face: FaceId(3),
+            tile: [-1, 4],
+            at: [Dyadic::ZERO; 2],
+        },
+    };
+    assert_eq!(names(corner.record()), [named(B, w), named(A, FaceId(3))]);
+    let tie = XTieKey {
+        x: XKey { e: E, g: G },
+        e: EdgeAt {
+            span: 0,
+            at: Dyadic::ZERO,
+        },
+        g: EdgeAt {
+            span: 1,
+            at: Dyadic::ZERO,
+        },
+    };
+    assert_eq!(names(tie.record()), [named(A, E), named(B, G)]);
+}
+
+/// A key holds `NONE` when an entity it names is `NONE`, never for an
+/// ordinal at `u32::MAX`.
+#[test]
+fn a_key_holds_none_only_for_an_entity() {
+    let q = Point::vert(Operand::A, VertId(NONE - 1));
+    assert!(!RayKey { q, g: E }.record().holds_none());
+    assert!(RayKey { q, g: EdgeId::NONE }.record().holds_none());
+    assert!(
+        RayKey {
+            q: Point::vert(Operand::B, VertId::NONE),
+            g: E
+        }
+        .record()
+        .holds_none()
+    );
+    let cut = |e, c| Point {
+        operand: Operand::A,
+        q: Query::Cut(e, G, c),
+    };
+    assert!(
+        !VvKey::of(cut(E, XClusterIx(NONE)), VertId(0))
+            .key
+            .record()
+            .holds_none()
+    );
+    assert!(
+        VvKey::of(cut(EdgeId::NONE, C), VertId(0))
+            .key
+            .record()
+            .holds_none()
+    );
+    let x = HKey::X {
+        e: E,
+        g: G,
+        c: XClusterIx(NONE),
+    };
+    assert!(!x.record().holds_none());
+    let at = HeightKey {
+        h: x,
+        anchor: Anchor::Edge(Operand::B, EdgeId::NONE),
+    };
+    assert!(at.record().holds_none());
 }

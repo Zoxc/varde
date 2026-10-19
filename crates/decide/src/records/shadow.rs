@@ -111,7 +111,7 @@ use crate::perturb::{
     Curved, LineShadow, Moving, MovingAt, R_HAT, Seg, ShadowAxis, VvShadow, between, decide_flat,
     vv_shadow,
 };
-use crate::records::keys::{Operand, Point, RayKey, RecordKey, VvKey};
+use crate::records::keys::{Key, Operand, Point, RayKey, RecordKey, VvKey};
 use crate::records::ray::{Crossing, RayLevel, along_changes};
 use crate::records::table::{FillError, Fresh, Table, TableError};
 
@@ -494,13 +494,14 @@ impl Cost {
 /// One charged pass over a batch of keys, the kernel's: it decides each
 /// key with the function it is handed, charges each key's [`Cost`],
 /// and gives the answers in the keys' order, or fails (a [`Fail`], or
-/// running out), in which case nothing of the batch is stored.
+/// running out, naming the record it ran out at by its key,
+/// [`Fresh::record`]), in which case nothing of the batch is stored.
 pub trait Pass {
     /// Why a pass failed.
     type Error;
 
     /// Decides `keys`, sorted, each with `decide`.
-    fn run<K: Sync, V: Send>(
+    fn run<K: Key, V: Send>(
         &mut self,
         keys: &[Fresh<K>],
         decide: &(dyn Fn(&Fresh<K>) -> Decided<V> + Sync),
@@ -566,7 +567,10 @@ impl Shadows {
         G: ShadowGeometry + Sync,
         P: Pass,
     {
-        let batch = self.ray.missing(wanted);
+        let batch = self
+            .ray
+            .missing(wanted)
+            .map_err(|e| ShadowError::Table(table_error(e, RecordKey::Ray)))?;
         if batch.is_empty() {
             return Ok(());
         }
@@ -627,7 +631,7 @@ impl Shadows {
 
 /// [`Table::replay`] with a deciding function that can fail: the key of
 /// the first record, in key order, deciding again fails or differs at.
-pub(super) fn replay<K: Ord + Clone, V: PartialEq + Clone>(
+pub(super) fn replay<K: Key, V: PartialEq + Clone>(
     t: &Table<K, V>,
     decide: impl Fn(&Fresh<K>) -> Decided<V>,
     wrap: impl Fn(K) -> RecordKey,
@@ -639,7 +643,7 @@ pub(super) fn replay<K: Ord + Clone, V: PartialEq + Clone>(
     let again = t.replay(|k| match decide(k).0 {
         Ok(v) => v,
         Err(_) => {
-            failed.borrow_mut().get_or_insert_with(|| k.key().clone());
+            failed.borrow_mut().get_or_insert_with(|| *k.key());
             t.get(k.key()).cloned().expect("a replayed key is stored")
         }
     });
@@ -677,7 +681,8 @@ pub(super) fn table_error<K>(
 ) -> TableError<RecordKey> {
     match e {
         TableError::Count { keys, values } => TableError::Count { keys, values },
-        TableError::Twice(k) => TableError::Twice(wrap(k)),
+        TableError::Foreign => TableError::Foreign,
+        TableError::NoneId(k) => TableError::NoneId(wrap(k)),
     }
 }
 

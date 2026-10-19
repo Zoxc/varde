@@ -26,11 +26,17 @@
 //! ran out at belongs to a precision step, [`Cause::Work`] otherwise.
 //! Reaching a fixed limit ([`Cap`]) is its own failure, never a budget
 //! crossing.
+//!
+//! A pass deciding records ([`Work::records`]) names each item by its
+//! record's key ([`ItemAt::record`]), so running out at a record names
+//! the operand entities its key holds, not only a pass and a position.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
+use varde_decide::records::keys::{Key, RecordKey};
 use varde_decide::records::shadow;
+use varde_decide::records::table::Fresh;
 
 use super::error::{Cause, KernelError};
 use super::par::par_map_indexed;
@@ -155,14 +161,19 @@ impl Cap {
 }
 
 /// One item of one pass of an operation: its position among the pass's
-/// key-sorted items. Positions follow from the keys, so they are the same
-/// on every run; the operation maps them back to its keys.
+/// key-sorted items, and the record it decides, if it decides one.
+/// Positions follow from the keys, so they are the same on every run;
+/// they number items, the record key names one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ItemAt {
     /// The pass, counted from 0 over the operation.
     pub pass: u64,
     /// The item's position in the pass (as [`Halt::Failed`]'s).
     pub item: usize,
+    /// The key of the record the item decides, in a pass deciding records
+    /// ([`Work::records`]): evidence names the item by its entities
+    /// ([`RecordKey::entities`]). `None` for other items.
+    pub record: Option<RecordKey>,
 }
 
 /// Where an operation stopped: the item that decided its pass, and the
@@ -442,6 +453,49 @@ impl Work {
         E: Send,
         F: Fn(&T, &mut Ledger<'_>) -> Result<R, Stop<E>> + Sync + Send,
     {
+        self.run(pass, items, |_| None, f)
+    }
+
+    /// [`Work::pass`] over a batch of a record table's keys, deciding
+    /// each: charged as any pass, and each item named by its record's key
+    /// in the profile ([`ItemAt::record`]), so running out at a record
+    /// names its key's entities.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the operations' record stages call it as they land"
+        )
+    )]
+    pub(crate) fn records<K, R, E, F>(
+        &mut self,
+        pass: Pass,
+        keys: &[Fresh<K>],
+        f: F,
+    ) -> Result<Vec<R>, Halt<E>>
+    where
+        K: Key,
+        R: Send,
+        E: Send,
+        F: Fn(&Fresh<K>, &mut Ledger<'_>) -> Result<R, Stop<E>> + Sync + Send,
+    {
+        self.run(pass, keys, |k| Some(k.record()), f)
+    }
+
+    /// [`Work::pass`], naming each item's record by `record`.
+    fn run<T, R, E, F>(
+        &mut self,
+        pass: Pass,
+        items: &[T],
+        record: impl Fn(&T) -> Option<RecordKey>,
+        f: F,
+    ) -> Result<Vec<R>, Halt<E>>
+    where
+        T: Sync,
+        R: Send,
+        E: Send,
+        F: Fn(&T, &mut Ledger<'_>) -> Result<R, Stop<E>> + Sync + Send,
+    {
         let index = self.passes;
         self.passes = self.passes.saturating_add(1);
         let left = self.left();
@@ -454,10 +508,11 @@ impl Work {
         });
         let mut out = Vec::with_capacity(ran.len());
         let mut sum = 0u64;
-        for (i, (ledger, result)) in ran.into_iter().enumerate() {
+        for (i, ((ledger, result), item)) in ran.into_iter().zip(items).enumerate() {
             let at = ItemAt {
                 pass: index,
                 item: i,
+                record: record(item),
             };
             let room = left - sum;
             let stopped = |step| Stopped {
@@ -577,6 +632,9 @@ impl Work {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use varde_decide::ids::{Entity, VertId};
+    use varde_decide::records::keys::{Named, Operand, Point, Query, VvKey};
+    use varde_decide::records::table::{FillError, Table};
 
     /// The schedule: `f64`, double-double and the big-float widths, the
     /// last at 848 bits.
@@ -651,7 +709,14 @@ mod tests {
         assert_eq!(profile.used, 10);
         // The third item is counted up to the crossing: 1 work, 1 precision.
         assert_eq!((profile.work, profile.precision.clone()), (9, vec![0, 1]));
-        assert_eq!(profile.stopped.at, ItemAt { pass: 0, item: 2 });
+        assert_eq!(
+            profile.stopped.at,
+            ItemAt {
+                pass: 0,
+                item: 2,
+                record: None
+            }
+        );
         assert_eq!(profile.stopped.step, Some(P1));
         assert_eq!(profile.stages, vec![("test", 10)]);
         assert_eq!(profile.rungs, vec![10]);
@@ -878,32 +943,52 @@ mod tests {
         }
     }
 
+    /// A test record key: point `i` of `A` against vertex 0 of `B`.
+    fn vv(i: u32) -> VvKey {
+        VvKey::of(Point::vert(Operand::A, VertId(i)), VertId(0)).key
+    }
+
+    /// Decides the keys of `wanted` not yet stored or in flight as one
+    /// record pass, a unit per key, and stores them.
+    fn decide(
+        work: &mut Work,
+        t: &mut Table<VvKey, u32>,
+        wanted: &[u32],
+    ) -> Result<(), FillError<VvKey, Halt<()>>> {
+        t.fill(wanted.iter().map(|&i| vv(i)), |keys| {
+            work.records(PASS, keys, |k, ledger| {
+                ledger.charge(W, 1)?;
+                Ok::<_, Stop<()>>(id(k) + 100)
+            })
+        })
+    }
+
+    /// The point id of a test key.
+    fn id(k: &VvKey) -> u32 {
+        match k.a {
+            Query::Vert(v) => v.0,
+            _ => unreachable!("test keys are vertex pairs"),
+        }
+    }
+
     /// A record table filled by passes: each batch of keys not yet stored
     /// is one pass over them in key order, a unit per key, so asking for
     /// stored keys again charges nothing; a pass that runs out stores
     /// nothing.
     #[test]
     fn record_tables_are_filled_by_charged_passes() {
-        use varde_decide::records::table::{FillError, Table};
-        let decide = |work: &mut Work, t: &mut Table<u32, u32>, wanted: &[u32]| {
-            t.fill(wanted.iter().copied(), |keys| {
-                work.pass(PASS, keys, |k, ledger| {
-                    ledger.charge(W, 1)?;
-                    Ok::<_, Stop<()>>(**k + 100)
-                })
-            })
-        };
         let mut work = Work::new(&Budget::new(6));
         let mut t = Table::new();
         decide(&mut work, &mut t, &[3, 1, 2, 3]).unwrap();
         assert_eq!(work.used(), 3);
         decide(&mut work, &mut t, &[1, 2, 3, 4]).unwrap();
         assert_eq!(work.used(), 4);
-        assert_eq!(t.get(&4), Some(&104));
+        assert_eq!(t.get(&vv(4)), Some(&104));
         let out = decide(&mut work, &mut t, &[5, 6, 7]);
         assert!(matches!(out, Err(FillError::Decide(Halt::OutOfBudget(_)))));
         assert_eq!(work.used(), 6);
         assert_eq!(t.len(), 4);
+        assert!(!t.in_flight(&vv(5)));
 
         // A batch that uses the budget up exactly is stored; stored keys
         // still read free; the next key runs out at its own pass.
@@ -916,6 +1001,93 @@ mod tests {
         assert!(matches!(out, Err(FillError::Decide(Halt::OutOfBudget(_)))));
         assert_eq!(work.used(), 3);
         assert_eq!(t.len(), 3);
+    }
+
+    /// Two batches requesting one key, made before either is stored: the
+    /// key is decided and charged once, in the first; the second waits
+    /// for it. The work, the answers and the profile of the pass that
+    /// runs out are the same on 1 and 8 threads.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn two_batches_requesting_one_key_decide_and_charge_it_once() {
+        use super::super::par::assert_deterministic;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let unit = |k: &Fresh<VvKey>, ledger: &mut Ledger, n: &AtomicU64| {
+            ledger.charge(W, 1 + u64::from(id(k) % 3))?;
+            n.fetch_add(1, Ordering::Relaxed);
+            Ok::<_, Stop<()>>(id(k) * 2)
+        };
+        for budget in [1000, 40] {
+            assert_deterministic(|| {
+                let decided = AtomicU64::new(0);
+                let mut work = Work::new(&Budget::new(budget));
+                let mut t: Table<VvKey, u32> = Table::new();
+                let first = t.missing((0..20).map(vv)).unwrap();
+                let second = t.missing((10..30).map(vv)).unwrap();
+                assert_eq!(second.waits(), (10..20).map(vv).collect::<Vec<_>>());
+                let a = work.records(PASS, first.keys(), |k, l| unit(k, l, &decided));
+                let b = work.records(PASS, second.keys(), |k, l| unit(k, l, &decided));
+                let mut out = Vec::new();
+                for (batch, values) in [(second, b), (first, a)] {
+                    match values {
+                        Ok(v) => t.insert(batch, v).unwrap(),
+                        Err(Halt::OutOfBudget(KernelError::OutOfBudget { profile, .. })) => {
+                            out.push(profile.stopped.at);
+                        }
+                        Err(other) => panic!("{other:?}"),
+                    }
+                }
+                let stored: Vec<(VvKey, u32)> = t.iter().map(|(k, v)| (*k, *v)).collect();
+                // Items past the key a pass runs out at may run on more
+                // threads; within the budget each key ran once.
+                let decided = decided.into_inner();
+                assert!(!out.is_empty() || decided == 30, "{decided} items run");
+                (work.used(), stored, out)
+            });
+        }
+        let mut work = Work::new(&Budget::new(1000));
+        let mut t: Table<VvKey, u32> = Table::new();
+        let first = t.missing((0..20).map(vv)).unwrap();
+        let second = t.missing((10..30).map(vv)).unwrap();
+        let b = work.records(PASS, second.keys(), |k, l| unit(k, l, &AtomicU64::new(0)));
+        t.insert(second, b.unwrap()).unwrap();
+        let a = work.records(PASS, first.keys(), |k, l| unit(k, l, &AtomicU64::new(0)));
+        t.insert(first, a.unwrap()).unwrap();
+        // 30 keys at 1, 2 or 3 units each, every key once.
+        let once: u64 = (0..30u64).map(|i| 1 + i % 3).sum();
+        assert_eq!(work.used(), once);
+        assert_eq!(t.len(), 30);
+        assert!(t.missing((0..30).map(vv)).unwrap().is_empty());
+    }
+
+    /// Running out at a record names the record by its key, and so the
+    /// operand entities the key holds; the hottest items too.
+    #[test]
+    fn running_out_at_a_record_names_its_key_s_entities() {
+        let mut work = Work::new(&Budget::new(2));
+        let mut t = Table::new();
+        let out = decide(&mut work, &mut t, &[7, 8, 9]);
+        let Err(FillError::Decide(Halt::OutOfBudget(KernelError::OutOfBudget { profile, .. }))) =
+            out
+        else {
+            panic!("{out:?}");
+        };
+        let at = profile.stopped.at;
+        assert_eq!((at.item, at.record), (2, Some(RecordKey::Vv(vv(9)))));
+        let named = |op, v| Named {
+            operand: op,
+            entity: Entity::Vert(VertId(v)),
+        };
+        assert_eq!(
+            at.record.map(|r| r.entities()),
+            Some(vec![named(Operand::A, 9), named(Operand::B, 0)])
+        );
+        assert!(
+            profile
+                .hottest
+                .iter()
+                .all(|(at, _)| matches!(at.record, Some(RecordKey::Vv(_))))
+        );
     }
 
     /// Pass and item positions count past `2³²`: the pass counter is
@@ -934,7 +1106,8 @@ mod tests {
             profile.stopped.at,
             ItemAt {
                 pass: 1 << 32,
-                item: 1
+                item: 1,
+                record: None
             }
         );
         assert_eq!(work.passes, (1 << 32) + 1);

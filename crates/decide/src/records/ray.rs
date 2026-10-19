@@ -380,7 +380,10 @@ impl CurvedRays {
         G: CurveGeometry + Sync,
         P: Pass,
     {
-        let batch = self.span.missing(wanted);
+        let batch = self
+            .span
+            .missing(wanted)
+            .map_err(|e| ShadowError::Table(table_error(e, RecordKey::RaySpan)))?;
         if batch.is_empty() {
             return Ok(());
         }
@@ -443,7 +446,10 @@ impl CurvedRays {
         G: CurveGeometry + Sync,
         P: Pass,
     {
-        let batch = self.chain.missing(wanted);
+        let batch = self
+            .chain
+            .missing(wanted)
+            .map_err(|e| ShadowError::Table(table_error(e, RecordKey::Ray)))?;
         if batch.is_empty() {
             return Ok(());
         }

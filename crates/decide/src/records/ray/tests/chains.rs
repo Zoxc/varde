@@ -625,7 +625,7 @@ fn stored(rays: &CurvedRays, feet: &NearFeet) -> Stored {
     )
 }
 
-/// Closed and open chains with ids up to `NONE` (the edge, its vertices
+/// Closed and open chains with ids up to the highest, `NONE − 1` (the edge, its vertices
 /// and the points): the whole-edge records and the feet are the same on
 /// 1 to 4 threads and for the wanted keys permuted and repeated, at the
 /// same cost; a pass running out at any key stores nothing of its
@@ -637,7 +637,7 @@ fn whole_edges_and_feet_on_any_threads_and_out_of_budget() {
         let mut rng = varde_testkit::rng::Rng::new(seed);
         let op = if seed % 2 == 0 { A } else { B };
         let high = seed % 3 != 2;
-        let id = |k: u32| if high { NONE - k } else { 10 + k };
+        let id = |k: u32| if high { NONE - 1 - k } else { 10 + k };
         let spans = circle(lat(0.0, 0.0, 0.0), 1.0 + rng.range(0.0, 1.0), 4, 0.25);
         let mut g = Geom::with(DIRECTIONS[(seed / 2) as usize % 5], sigmas(seed / 3));
         let e0 = g.edge(op, id(0), id(1), id(1), &spans);

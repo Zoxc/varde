@@ -41,13 +41,18 @@
 //! keys here are what it yields.
 //!
 //! [`RecordKey`] is any record's key, for evidence: what
-//! [`Fail::Internal`](crate::num::decide::Fail::Internal) names.
+//! [`Fail::Internal`](crate::num::decide::Fail::Internal) names, and what
+//! running out at a record names ([`RecordKey::entities`]: the operand
+//! entities the key holds), never a pass and an item position. A record
+//! table's keys are [`Key`]s, each naming its record so. No key holds an
+//! id [`NONE`](crate::ids::NONE): a table refuses one before deciding
+//! anything ([`RecordKey::holds_none`]).
 //!
 //! Keys order by their ids: the order a record table stores and decides
 //! them in. Ids order work only; no answer reads that order.
 
 use crate::bezier::{Dir, Dyadic};
-use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
+use crate::ids::{CoedgeId, EdgeId, Entity, FaceId, VertId};
 
 /// One of the two operands of a boolean.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -757,6 +762,168 @@ pub enum RecordKey {
     XSide(XSideKey),
     /// An edge pair's box corner.
     XTie(XTieKey),
+}
+
+/// An entity of one operand that a record key holds: what evidence names
+/// a record by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Named {
+    /// The operand the entity is of.
+    pub operand: Operand,
+    /// The entity.
+    pub entity: Entity,
+}
+
+/// A record table's key: names its record ([`RecordKey`]), for evidence
+/// and the table's checks.
+pub trait Key: Copy + Ord + Send + Sync {
+    /// The record the key is of.
+    fn record(self) -> RecordKey;
+}
+
+macro_rules! record_keys {
+    ($($key:ident => $kind:ident,)*) => {$(
+        impl Key for $key {
+            fn record(self) -> RecordKey {
+                RecordKey::$kind(self)
+            }
+        }
+
+        impl From<$key> for RecordKey {
+            fn from(k: $key) -> RecordKey {
+                RecordKey::$kind(k)
+            }
+        }
+    )*};
+}
+
+record_keys! {
+    VvKey => Vv,
+    RayKey => Ray,
+    SpanKey => RaySpan,
+    KnotKey => Knot,
+    HKey => Height,
+    HeightKey => HeightAt,
+    XKey => X,
+    SideKey => Side,
+    CornerKey => Corner,
+    XSideKey => XSide,
+    XTieKey => XTie,
+}
+
+impl Key for RecordKey {
+    fn record(self) -> RecordKey {
+        self
+    }
+}
+
+/// Collects the entities of keys, in the order the keys hold them, each
+/// once.
+#[derive(Default)]
+struct Names(Vec<Named>);
+
+impl Names {
+    fn add(&mut self, operand: Operand, entity: impl Into<Entity>) {
+        let n = Named {
+            operand,
+            entity: entity.into(),
+        };
+        if !self.0.contains(&n) {
+            self.0.push(n);
+        }
+    }
+
+    fn query(&mut self, operand: Operand, q: Query) {
+        match q {
+            Query::Vert(v) => self.add(operand, v),
+            Query::Cut(e, g, _) | Query::Root(e, g, _) => {
+                self.add(operand, e);
+                self.add(operand.other(), g);
+            }
+        }
+    }
+
+    fn point(&mut self, p: Point) {
+        self.query(p.operand, p.q);
+    }
+
+    fn pair(&mut self, x: XKey) {
+        self.add(Operand::A, x.e);
+        self.add(Operand::B, x.g);
+    }
+
+    fn hkey(&mut self, h: HKey) {
+        match h {
+            HKey::VV { a, b } => {
+                self.query(Operand::A, a);
+                self.query(Operand::B, b);
+            }
+            HKey::X { e, g, .. } | HKey::XRoot { e, g, .. } => self.pair(XKey { e, g }),
+            HKey::Curve { q, g, .. } => {
+                self.point(q);
+                self.add(q.operand.other(), g);
+            }
+            HKey::Hit { q, f, sheet, .. } => {
+                self.point(q);
+                let of = q.operand.other();
+                self.add(of, f);
+                if let Sheet::Ribbon(c, _) = sheet {
+                    self.add(of, c);
+                }
+            }
+        }
+    }
+}
+
+impl RecordKey {
+    /// The operand entities the key holds, in the order it holds them,
+    /// each once: what evidence names the record by (a cut point names
+    /// its two edges; ordinals, spans, tiles and parameters are places on
+    /// those entities, not entities).
+    pub fn entities(&self) -> Vec<Named> {
+        let mut n = Names::default();
+        match *self {
+            RecordKey::Vv(k) => {
+                n.query(Operand::A, k.a);
+                n.query(Operand::B, k.b);
+            }
+            RecordKey::Ray(RayKey { q, g })
+            | RecordKey::RaySpan(SpanKey { q, g, .. })
+            | RecordKey::Knot(KnotKey { q, g, .. }) => {
+                n.point(q);
+                n.add(q.operand.other(), g);
+            }
+            RecordKey::Height(h) => n.hkey(h),
+            RecordKey::HeightAt(k) => {
+                n.hkey(k.h);
+                match k.anchor {
+                    Anchor::Face(op, f) => n.add(op, f),
+                    Anchor::Edge(op, e) => n.add(op, e),
+                }
+            }
+            RecordKey::X(x) => n.pair(x),
+            RecordKey::Side(k) => {
+                n.point(k.q);
+                let (op, f) = match k.line {
+                    SideLine::Edge(e) => (e.operand, e.face),
+                    SideLine::Inner(l) => (l.operand, l.face),
+                };
+                n.add(op, f);
+            }
+            RecordKey::Corner(k) => {
+                n.point(k.q);
+                n.add(k.corner.operand, k.corner.face);
+            }
+            RecordKey::XSide(XSideKey { x, .. }) | RecordKey::XTie(XTieKey { x, .. }) => n.pair(x),
+        }
+        n.0
+    }
+
+    /// Whether the key holds the id [`NONE`](crate::ids::NONE) for an
+    /// entity: no record's key, refused by every table.
+    pub fn holds_none(&self) -> bool {
+        self.entities().iter().any(|n| n.entity.is_none())
+    }
 }
 
 #[cfg(test)]

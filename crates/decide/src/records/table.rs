@@ -7,15 +7,28 @@
 //! of [`Fresh`] keys; the kernel decides the batch in one charged pass
 //! over those key-sorted items (each item charging its own work, the
 //! costs summed in key order, so running out is the same on any number
-//! of threads), and [`Table::insert`] stores the answers, refusing a key
-//! already there. [`Table::fill`] does the three in one. A record's
-//! deciding function takes a [`Fresh`] key, which only a table makes and
-//! only for a key it doesn't hold, so a consumer holding the stage's
-//! table can't decide a stored record again: it reads the table
-//! ([`Table::get`], [`Table::range`]) and, for a key oriented the other
-//! way, reads the stored answer from its side. (A second, empty table
-//! would hand out the key again: the stage owning a kind's table keeps
-//! that kind's deciding function to itself.)
+//! of threads), and [`Table::insert`] stores the answers. [`Table::fill`]
+//! does the three in one. A record's deciding function takes a [`Fresh`]
+//! key, which only a table makes and only for a key it doesn't hold, so a
+//! consumer holding the stage's table can't decide a stored record again:
+//! it reads the table ([`Table::get`], [`Table::range`]) and, for a key
+//! oriented the other way, reads the stored answer from its side. (A
+//! second, empty table would hand out the key again: one table per kind
+//! lives for the whole operation, every rung, and the owner of a kind's
+//! table keeps that kind's deciding function to itself.)
+//!
+//! **In flight.** A key is decided and charged once, when first
+//! requested: a batch claims its keys until it is stored or dropped. A
+//! request made meanwhile for a claimed key doesn't decide (or charge)
+//! it again: its batch lists the key as one it waits for
+//! ([`Batch::waits`]), read once the claiming batch is stored. A batch
+//! dropped unstored (its pass failed or ran out) gives its keys back, so
+//! a later request decides them; a stored record is never decided again.
+//!
+//! **Keys.** A table's keys are record [`Key`]s; one holding the id
+//! [`NONE`](crate::ids::NONE) for an entity is no record's key, and a
+//! request holding one is refused whole ([`TableError::NoneId`]) before
+//! anything is claimed or decided.
 //!
 //! **Cost.** Keys and answers are two sorted vectors: a read is a binary
 //! search, a range a contiguous run. Storing a batch merges it in, linear
@@ -29,12 +42,16 @@
 //! consumer read the one stored answer, and that deciding happened once
 //! per key.
 //!
-//! A table belongs to one run of the stage that fills it; nothing in it
-//! depends on the order its batches were decided in, only on the keys.
+//! Nothing in a table depends on the order its batches were decided or
+//! stored in, only on the keys.
 
+use std::collections::BTreeSet;
 use std::ops::{Bound, Deref, RangeBounds};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use crate::records::keys::{Key, RecordKey};
 
 /// A key the table didn't hold when it was handed out: what a record's
 /// deciding function takes, so only a table's batches decide records.
@@ -49,6 +66,13 @@ impl<K> Fresh<K> {
     }
 }
 
+impl<K: Key> Fresh<K> {
+    /// The record the key is of: what evidence names.
+    pub fn record(&self) -> RecordKey {
+        self.0.record()
+    }
+}
+
 impl<K> Deref for Fresh<K> {
     type Target = K;
 
@@ -57,17 +81,31 @@ impl<K> Deref for Fresh<K> {
     }
 }
 
-/// The keys of one pass: sorted, without repeats, none in the table when
-/// made. Decide them in order and hand the answers to [`Table::insert`].
-#[derive(Debug, PartialEq, Eq)]
-pub struct Batch<K> {
+/// The keys a table's batches have claimed and not yet stored or given
+/// back, shared with the batches so a dropped one gives its keys back.
+type Flight<K> = Arc<Mutex<BTreeSet<K>>>;
+
+/// The keys of one pass: sorted, without repeats, none in the table or
+/// claimed by another batch when made; they stay claimed until the batch
+/// is stored or dropped. Decide them in order and hand the answers to
+/// [`Table::insert`].
+#[derive(Debug)]
+pub struct Batch<K: Ord> {
     keys: Vec<Fresh<K>>,
+    waits: Vec<K>,
+    flight: Flight<K>,
 }
 
-impl<K> Batch<K> {
+impl<K: Ord> Batch<K> {
     /// The keys, sorted: the pass's items.
     pub fn keys(&self) -> &[Fresh<K>] {
         &self.keys
+    }
+
+    /// The keys of the request another batch had claimed, sorted: being
+    /// decided there, not here; readable once that batch is stored.
+    pub fn waits(&self) -> &[K] {
+        &self.waits
     }
 
     /// The number of keys.
@@ -81,8 +119,21 @@ impl<K> Batch<K> {
     }
 }
 
-/// Why a batch's answers weren't stored. Either is a bug of the caller;
-/// the table is left as it was.
+impl<K: Ord> Drop for Batch<K> {
+    /// Gives back the keys of a batch dropped unstored.
+    fn drop(&mut self) {
+        if self.keys.is_empty() {
+            return;
+        }
+        let mut flight = self.flight.lock().unwrap_or_else(PoisonError::into_inner);
+        for k in &self.keys {
+            flight.remove(&k.0);
+        }
+    }
+}
+
+/// Why a request or a batch's answers were refused. Each is a bug of the
+/// caller; the table is left as it was and the batch's keys given back.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TableError<K> {
     /// The answers don't match the batch's keys one for one.
@@ -92,9 +143,10 @@ pub enum TableError<K> {
         /// The answers given.
         values: usize,
     },
-    /// The key was stored after the batch was made: it would be decided
-    /// twice.
-    Twice(K),
+    /// The batch was made by another table.
+    Foreign,
+    /// The key holds the id `NONE` for an entity: no record's key.
+    NoneId(K),
 }
 
 /// How [`Table::fill`] failed.
@@ -102,7 +154,7 @@ pub enum TableError<K> {
 pub enum FillError<K, E> {
     /// Deciding the batch failed: nothing was stored.
     Decide(E),
-    /// The answers couldn't be stored.
+    /// The request or the answers were refused.
     Table(TableError<K>),
 }
 
@@ -125,6 +177,8 @@ pub struct Table<K, V> {
     /// Each record's reads, in debug builds.
     #[cfg(debug_assertions)]
     reads: Vec<AtomicU64>,
+    /// The keys claimed by batches not yet stored or dropped.
+    flight: Flight<K>,
 }
 
 impl<K, V> Default for Table<K, V> {
@@ -134,11 +188,12 @@ impl<K, V> Default for Table<K, V> {
             values: Vec::new(),
             #[cfg(debug_assertions)]
             reads: Vec::new(),
+            flight: Flight::default(),
         }
     }
 }
 
-impl<K: Ord + Clone, V> Table<K, V> {
+impl<K: Key, V> Table<K, V> {
     /// An empty table.
     pub fn new() -> Self {
         Self::default()
@@ -160,42 +215,70 @@ impl<K: Ord + Clone, V> Table<K, V> {
         self.keys.binary_search(key).is_ok()
     }
 
-    /// The keys of `wanted` not yet stored, sorted, each once: the next
-    /// batch to decide.
-    pub fn missing(&self, wanted: impl IntoIterator<Item = K>) -> Batch<K> {
-        let mut keys: Vec<K> = wanted.into_iter().filter(|k| !self.contains(k)).collect();
-        keys.sort_unstable();
-        keys.dedup();
-        Batch {
-            keys: keys.into_iter().map(Fresh).collect(),
-        }
+    /// Whether `key` is claimed by a batch not yet stored or dropped:
+    /// being decided, and not to be decided again.
+    pub fn in_flight(&self, key: &K) -> bool {
+        self.flight().contains(key)
     }
 
-    /// Stores `values`, the answers to `batch`'s keys in order. Refused,
-    /// the table unchanged, unless there is one answer per key and no key
-    /// was stored since the batch was made.
-    pub fn insert(&mut self, batch: Batch<K>, values: Vec<V>) -> Result<(), TableError<K>> {
+    /// The keys of `wanted` neither stored nor claimed, sorted, each once:
+    /// the next batch to decide, its keys claimed until it is stored or
+    /// dropped; the claimed ones it [waits](Batch::waits) for. Refused,
+    /// nothing claimed, if a key holds the id `NONE`.
+    pub fn missing(
+        &mut self,
+        wanted: impl IntoIterator<Item = K>,
+    ) -> Result<Batch<K>, TableError<K>> {
+        let mut want: Vec<K> = wanted.into_iter().filter(|k| !self.contains(k)).collect();
+        if let Some(&k) = want.iter().find(|k| k.record().holds_none()) {
+            return Err(TableError::NoneId(k));
+        }
+        want.sort_unstable();
+        want.dedup();
+        let mut flight = self.flight();
+        let (waits, keys): (Vec<K>, Vec<K>) = want.into_iter().partition(|k| flight.contains(k));
+        flight.extend(keys.iter().copied());
+        drop(flight);
+        Ok(Batch {
+            keys: keys.into_iter().map(Fresh).collect(),
+            waits,
+            flight: Arc::clone(&self.flight),
+        })
+    }
+
+    /// Stores `values`, the answers to `batch`'s keys in order, and ends
+    /// their claim. Refused, the table unchanged and the keys given back,
+    /// unless there is one answer per key and the batch is this table's.
+    pub fn insert(&mut self, mut batch: Batch<K>, values: Vec<V>) -> Result<(), TableError<K>> {
+        if !Arc::ptr_eq(&batch.flight, &self.flight) {
+            return Err(TableError::Foreign);
+        }
         if batch.keys.len() != values.len() {
             return Err(TableError::Count {
                 keys: batch.keys.len(),
                 values: values.len(),
             });
         }
-        if let Some(k) = batch.keys.iter().find(|k| self.contains(k)) {
-            return Err(TableError::Twice(k.0.clone()));
-        }
         if batch.keys.is_empty() {
             return Ok(());
         }
-        // Merge the two sorted runs; no key is in both.
-        let n = self.keys.len() + batch.keys.len();
+        let batch_keys = std::mem::take(&mut batch.keys);
+        {
+            let mut flight = self.flight();
+            for k in &batch_keys {
+                flight.remove(&k.0);
+            }
+        }
+        // Merge the two sorted runs; no key is in both: the batch's were
+        // claimed, so no other batch stored them.
+        let n = self.keys.len() + batch_keys.len();
         let mut keys = Vec::with_capacity(n);
         let mut vals = Vec::with_capacity(n);
         let mut old = std::mem::take(&mut self.keys)
             .into_iter()
             .zip(std::mem::take(&mut self.values))
             .peekable();
-        let mut new = batch.keys.into_iter().map(|k| k.0).zip(values).peekable();
+        let mut new = batch_keys.into_iter().map(|k| k.0).zip(values).peekable();
         #[cfg(debug_assertions)]
         let mut old_reads = std::mem::take(&mut self.reads).into_iter();
         #[cfg(debug_assertions)]
@@ -227,16 +310,17 @@ impl<K: Ord + Clone, V> Table<K, V> {
         Ok(())
     }
 
-    /// Decides the keys of `wanted` not yet stored, as one batch, and
-    /// stores the answers: `decide` gets the batch's sorted keys (the
-    /// pass's items) and gives an answer per key in order, or fails, in
-    /// which case nothing is stored.
+    /// Decides the keys of `wanted` neither stored nor claimed, as one
+    /// batch, and stores the answers: `decide` gets the batch's sorted
+    /// keys (the pass's items) and gives an answer per key in order, or
+    /// fails, in which case nothing is stored and the keys are given
+    /// back. Keys claimed by another batch are left to it.
     pub fn fill<E>(
         &mut self,
         wanted: impl IntoIterator<Item = K>,
         decide: impl FnOnce(&[Fresh<K>]) -> Result<Vec<V>, E>,
     ) -> Result<(), FillError<K, E>> {
-        let batch = self.missing(wanted);
+        let batch = self.missing(wanted).map_err(FillError::Table)?;
         if batch.is_empty() {
             return Ok(());
         }
@@ -287,10 +371,10 @@ impl<K: Ord + Clone, V> Table<K, V> {
         V: PartialEq + Clone,
     {
         for (k, v) in self.keys.iter().zip(&self.values) {
-            let again = decide(&Fresh(k.clone()));
+            let again = decide(&Fresh(*k));
             if again != *v {
                 return Err(Mismatch {
-                    key: k.clone(),
+                    key: *k,
                     stored: v.clone(),
                     replayed: again,
                 });
@@ -305,6 +389,10 @@ impl<K: Ord + Clone, V> Table<K, V> {
     pub fn reads(&self, key: &K) -> Option<u64> {
         let i = self.keys.binary_search(key).ok()?;
         Some(self.reads[i].load(Ordering::Relaxed))
+    }
+
+    fn flight(&self) -> std::sync::MutexGuard<'_, BTreeSet<K>> {
+        self.flight.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     #[inline]

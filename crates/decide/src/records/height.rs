@@ -407,7 +407,10 @@ impl Heights {
         G: HeightGeometry + Sync,
         P: Pass,
     {
-        let batch = self.at.missing(wanted);
+        let batch = self
+            .at
+            .missing(wanted)
+            .map_err(|e| HeightError::Table(table_error(e, RecordKey::HeightAt)))?;
         if batch.is_empty() {
             return Ok(());
         }
@@ -425,7 +428,10 @@ impl Heights {
                 return Err(HeightError::Band(h));
             }
         }
-        let fresh = self.keys.missing(geometric.keys().copied());
+        let fresh = self
+            .keys
+            .missing(geometric.keys().copied())
+            .map_err(|e| HeightError::Table(table_error(e, RecordKey::Height)))?;
         if !fresh.is_empty() {
             let values = pass
                 .run(fresh.keys(), &|h: &Fresh<HKey>| {

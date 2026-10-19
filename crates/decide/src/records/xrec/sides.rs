@@ -266,7 +266,10 @@ impl XSides {
                 XWant::Tie(k) => ties.push(k),
             }
         }
-        let batch = self.side.missing(sides);
+        let batch = self
+            .side
+            .missing(sides)
+            .map_err(|e| ShadowError::Table(table_error(e, RecordKey::XSide)))?;
         for k in batch.keys() {
             let k = *k.key();
             let n = geom.x_curve(k.held.other(), other_edge(&k)).span_count();
