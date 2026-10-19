@@ -19,31 +19,45 @@
 //! `VARDE_CALIBRATE=quick` runs each kind for a tenth of the time: a
 //! smoke test, its numbers noisier.
 
+use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::process::ExitCode;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use glam::DVec3;
 use malachite::Rational;
 use malachite::base::num::basic::traits::Zero as _;
-use varde_decide::bezier::{HomPatch, Poly, Scalar};
-use varde_decide::count::boxes::{Corners, FaceUv, Trim, UvSpan};
+use varde_decide::bezier::{HomCurve, HomPatch, Poly, Scalar};
+use varde_decide::count::boxes::{CUSP_PIECES, Corners, FaceUv, Trim, UvSpan};
 use varde_decide::count::pieces::{Ribbon, SpanMap};
 use varde_decide::count::s02::{Charge, FaceQuery, TrimEdge, count_pieces};
+use varde_decide::count::xrec::clusters_at_charged;
 use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use varde_decide::num::bigf::{Big, BigF, Width};
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::dd::Dd;
-use varde_decide::num::decide::Sign;
-use varde_decide::num::exact::{self, Num, Pred, det3, point, sub};
-use varde_decide::order::{EdgeKey, EntityOrder, VertKey};
-use varde_decide::perturb::{NU, R_HAT, UP};
-use varde_decide::records::feet::NearFeet;
-use varde_decide::records::height::Records;
-use varde_decide::records::keys::{Operand, Point};
-use varde_decide::records::ray::{ChainCrossing, ChainRec, Crossing, Span};
-use varde_decide::records::shadow::{Cost, LEVELS, LevelWork, Shadows, UNIT_PARTS, UNITS};
+use varde_decide::num::decide::{Band, Fail, Sign};
+use varde_decide::num::exact::{self, Num, ORDERS, Pred, det3, point, sub};
+use varde_decide::num::trig;
+use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
+use varde_decide::perturb::{Curved, Moving, NU, R_HAT, Rate, Seg, UP};
+use varde_decide::records::cusp::{CuspSpan, Sharp, cusp_rec};
+use varde_decide::records::feet::{EdgeCurve, NearFeet, decide_feet};
+use varde_decide::records::height::hit::{HitFace, HitTrim, Motion, face_hits};
+use varde_decide::records::height::{AnchorRow, HeightGeometry, Heights, KeyValue, Records};
+use varde_decide::records::keys::{
+    Anchor, FootId, HKey, HeightKey, Operand, Point, Query, RayKey, SpanKey, XKey,
+};
+use varde_decide::records::ray::{
+    ChainCrossing, ChainRec, Crossing, CurveGeometry, CurvedRays, Span, TileNet,
+};
+use varde_decide::records::shadow::{
+    Cost, Decided, LEVELS, LevelWork, Pass, RayRec, ShadowGeometry, Shadows, UNIT_PARTS, UNITS,
+};
 use varde_decide::records::side::Sides;
+use varde_decide::records::table::Fresh;
+use varde_decide::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms};
 use varde_kernel::MAX_WORK;
 use varde_kernel::geom::certify::{SeamBound, calibration};
 use varde_kernel::geom::curve::{Curve3D, PCurve};
@@ -76,7 +90,11 @@ fn main() -> ExitCode {
         let mut rows = Vec::new();
         seam_cells(budget, &mut rows);
         count_piece_rows(budget, &mut rows);
+        setup_rows(budget, &mut rows);
+        xrec_rows(budget, &mut rows);
+        hit_rows(budget, &mut rows);
         record_rows(budget, &mut rows);
+        record_kind_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -341,6 +359,90 @@ fn column(x: f64, y: f64, z: f64) -> [f64; 3] {
     [x + z / UP.z * UP.x, y + z / UP.z * UP.y, z]
 }
 
+/// A polygon of `B` on the plane `z = 0` over the tiles `[0, 2)²`, its
+/// vertices `1, 2, …` in loop order, edge `k` from vertex `k` to the
+/// next: its tiles' patches and nets, its p-spans and its curves.
+struct Polygon {
+    patches: Vec<HomPatch<Bounded<f64>>>,
+    nets: Vec<TileNet>,
+    spans: Vec<[UvSpan; 1]>,
+    curves: Vec<[Span; 1]>,
+    order: Order,
+}
+
+/// The p-curve of a whole edge on its one curve span.
+const WHOLE: [SpanMap; 1] = [SpanMap {
+    span: 0,
+    t: [0.0, 1.0],
+}];
+
+impl Polygon {
+    fn new(pts: &[[f64; 2]]) -> Polygon {
+        let first = Bounded::exact(0.0);
+        let (mut patches, mut nets) = (Vec::new(), Vec::new());
+        for i in 0..2 {
+            for j in 0..2 {
+                let net: TileNet = std::array::from_fn(|ab| {
+                    let (a, b) = (ab / 3, ab % 3);
+                    [
+                        i as f64 + a as f64 / 2.0,
+                        j as f64 + b as f64 / 2.0,
+                        0.0,
+                        1.0,
+                    ]
+                });
+                patches.push(HomPatch::from_affine(2, 2, net, &first).unwrap());
+                nets.push(net);
+            }
+        }
+        let n = pts.len();
+        let p3 = |p: [f64; 2]| [p[0], p[1], 0.0];
+        Polygon {
+            patches,
+            nets,
+            spans: (0..n).map(|k| [pline(pts[k], pts[(k + 1) % n])]).collect(),
+            curves: (0..n)
+                .map(|k| [line(p3(pts[k]), p3(pts[(k + 1) % n]))])
+                .collect(),
+            order: Order {
+                pos: pts.to_vec(),
+                n,
+            },
+        }
+    }
+
+    /// `f` given the face (face 2 of `B`, its trims' band `1/4096`) and
+    /// its vertices in the geometric order.
+    fn with_face<R>(&self, f: impl FnOnce(&FaceUv<'_>, &[VertId]) -> R) -> R {
+        let n = self.order.n;
+        let trims: Vec<Trim<'_>> = (0..n)
+            .map(|k| Trim {
+                coedge: CoedgeId(k as u32 + 1),
+                reversed: false,
+                spans: &self.spans[k],
+                ends: self.order.ends(Operand::B, EdgeId(k as u32 + 1)),
+                zero_length: false,
+                band: BAND,
+            })
+            .collect();
+        let face = FaceUv::new(
+            Operand::B,
+            FaceId(2),
+            [0..2, 0..2],
+            [1.0, 1.0],
+            &trims,
+            false,
+        )
+        .expect("a valid face");
+        let mut verts: Vec<VertId> = (1..=n as u32).map(VertId).collect();
+        verts.sort_by_key(|&v| self.order.vert_key(Operand::B, v));
+        f(&face, &verts)
+    }
+}
+
+/// The trims' band of the polygons.
+const BAND: f64 = 1.0 / 4096.0;
+
 /// `f` given the count of the polygon `pts` (a face of `B` on the plane
 /// `z = 0` over the tiles `[0, 2)²`) against the point of `A` at `q`
 /// with a charge, giving its cost. The face and its corners are built
@@ -350,94 +452,53 @@ fn with_count<R>(
     q: [f64; 3],
     f: impl FnOnce(&dyn Fn(&Charge) -> Cost) -> R,
 ) -> R {
-    let band = 1.0 / 4096.0;
-    let first = Bounded::exact(0.0);
-    let mut patches = Vec::new();
-    for i in 0..2 {
-        for j in 0..2 {
-            let net = (0..9).map(|ab| {
-                let (a, b) = (ab / 3, ab % 3);
-                [
-                    i as f64 + a as f64 / 2.0,
-                    j as f64 + b as f64 / 2.0,
-                    0.0,
-                    1.0,
-                ]
-            });
-            patches.push(HomPatch::from_affine(2, 2, net, &first).unwrap());
-        }
-    }
-    let n = pts.len();
-    let p3 = |p: [f64; 2]| [p[0], p[1], 0.0];
-    let spans: Vec<[UvSpan; 1]> = (0..n).map(|k| [pline(pts[k], pts[(k + 1) % n])]).collect();
-    let curves: Vec<[Span; 1]> = (0..n)
-        .map(|k| [line(p3(pts[k]), p3(pts[(k + 1) % n]))])
-        .collect();
-    let maps = [SpanMap {
-        span: 0,
-        t: [0.0, 1.0],
-    }];
-    let order = Order {
-        pos: pts.to_vec(),
-        n,
-    };
-    let trims: Vec<Trim<'_>> = (0..n)
-        .map(|k| Trim {
-            coedge: CoedgeId(k as u32 + 1),
-            reversed: false,
-            spans: &spans[k],
-            ends: order.ends(Operand::B, EdgeId(k as u32 + 1)),
-            zero_length: false,
-            band,
-        })
-        .collect();
-    let face = FaceUv::new(
-        Operand::B,
-        FaceId(2),
-        [0..2, 0..2],
-        [1.0, 1.0],
-        &trims,
-        false,
-    )
-    .expect("a valid face");
-    let mut verts: Vec<VertId> = (1..=n as u32).map(VertId).collect();
-    verts.sort_by_key(|&v| order.vert_key(Operand::B, v));
-    let corners = Corners::new(&face, &patches, &verts).expect("corners");
-    let recs: Vec<ChainRec> = curves.iter().map(|c| chain(c, q)).collect();
-    let edges: Vec<TrimEdge<'_>> = (0..n)
-        .map(|k| TrimEdge {
-            edge: EdgeId(k as u32 + 1),
-            ribbon: Ribbon {
-                coedge: CoedgeId(k as u32 + 1),
-                curve: &curves[k],
-                map: &maps,
-                rays: &recs[k],
-            },
-        })
-        .collect();
-    let fq = FaceQuery {
-        face: &face,
-        corners: &corners,
-        patches: &patches,
-        edges: &edges,
-        point: Point::vert(Operand::A, VertId(7)),
-        at: q,
-        eps_tie: 1e-9,
-        nets: None,
-        // Without nets no hit is read, so the fold rule's motion is unused.
-        motion: &std::array::from_fn(|_| std::array::from_fn(|_| Rational::ZERO)),
-    };
-    let (shadows, feet) = (Shadows::new(), NearFeet::new());
-    let reads = Records {
-        shadows: &shadows,
-        feet: &feet,
-        order: &order,
-    };
-    let sides = Sides::new();
-    f(&|charge| count_pieces(&fq, &sides, &reads, charge).1)
+    let poly = Polygon::new(pts);
+    poly.with_face(|face, verts| {
+        let corners = Corners::new(face, &poly.patches, verts, &Charge::setup(u64::MAX))
+            .0
+            .expect("corners");
+        let recs: Vec<ChainRec> = poly.curves.iter().map(|c| chain(c, q)).collect();
+        let edges: Vec<TrimEdge<'_>> = (0..poly.order.n)
+            .map(|k| TrimEdge {
+                edge: EdgeId(k as u32 + 1),
+                ribbon: Ribbon {
+                    coedge: CoedgeId(k as u32 + 1),
+                    curve: &poly.curves[k],
+                    map: &WHOLE,
+                    rays: &recs[k],
+                },
+            })
+            .collect();
+        let fq = FaceQuery {
+            face,
+            corners: &corners,
+            patches: &poly.patches,
+            edges: &edges,
+            point: Point::vert(Operand::A, VertId(7)),
+            at: q,
+            eps_tie: 1e-9,
+            nets: None,
+            // Without nets no hit is read, so the fold rule's motion is
+            // unused.
+            motion: &zero_motion(),
+        };
+        let (shadows, feet) = (Shadows::new(), NearFeet::new());
+        let reads = Records {
+            shadows: &shadows,
+            feet: &feet,
+            order: &poly.order,
+        };
+        let sides = Sides::new();
+        f(&|charge| count_pieces(&fq, &sides, &reads, charge).1)
+    })
 }
 
-/// A unit a piece at every level, to count them.
+/// No motion of a face against a point.
+fn zero_motion() -> Motion {
+    std::array::from_fn(|_| std::array::from_fn(|_| Rational::ZERO))
+}
+
+/// A unit a piece at every level, to count a search's pieces.
 fn per_piece(share: u64) -> Charge {
     Charge {
         share,
@@ -676,5 +737,489 @@ fn record_rows(budget: Duration, rows: &mut Vec<Row>) {
     curved_rows(budget, 1, &Bounded::exact(Dd::from_f64(0.0)), rows);
     for (k, w) in Width::ALL.into_iter().enumerate() {
         curved_rows(budget, 2 + k, &Bounded::exact(Big::from_f64(0.0, w)), rows);
+    }
+}
+
+// ---------------------------------------------------------------------
+// A face's counting setup, edge pairs' cluster searches, column hits.
+
+/// A face's counting setup ([`Corners::new`]) per piece: a needle (a
+/// triangle `2⁻⁵⁰` high, whose runs reach along it, thousands of pieces)
+/// and a square (short runs at right angles). Then a sharp corner's
+/// record, charged as [`CUSP_PIECES`] setup pieces: two sides `1/50`
+/// rad apart.
+fn setup_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let h = 1.0 / (1u64 << 50) as f64;
+    let needle = vec![[1.25, 1.25], [1.75, 1.25], [1.5, 1.25 + h]];
+    let square = vec![[1.25, 1.25], [1.75, 1.25], [1.75, 1.75], [1.25, 1.75]];
+    for (kind, pts) in [
+        ("face setup, needle", needle),
+        ("face setup, square", square),
+    ] {
+        let poly = Polygon::new(&pts);
+        let ns = poly.with_face(|face, verts| {
+            let build = || {
+                let cost = Corners::new(face, &poly.patches, verts, &per_piece(u64::MAX)).1;
+                u64::from(cost.levels[0].evals)
+            };
+            let n = build();
+            time(budget, || {
+                black_box(build());
+                1
+            }) / n as f64
+        });
+        rows.push(Row {
+            kind: kind.into(),
+            ns,
+            units: UNITS.face_setup as f64,
+        });
+    }
+    // The sharp corner at `(1.25, 1.25)` between a side to `(1.75, 1.26)`
+    // (into the corner, run backwards) and one to `(1.75, 1.25)`, on the
+    // plane's tiles (unit partial derivatives).
+    let a: CuspSpan = [[1.25, 1.25, 1.0], [1.5, 1.255, 1.0], [1.75, 1.26, 1.0]];
+    let b: CuspSpan = [[1.25, 1.25, 1.0], [1.5, 1.25, 1.0], [1.75, 1.25, 1.0]];
+    let unit = |k: usize| std::array::from_fn(|i| Bounded::exact(if i == k { 1.0 } else { 0.0 }));
+    let (du, dv) = (unit(0), unit(1));
+    let bands = 2.0 * BAND;
+    assert!(
+        matches!(cusp_rec(&a, &b, &du, &dv, bands), Ok(Sharp::Cusp(_))),
+        "a sharp corner with its record"
+    );
+    let ns = time(budget, || {
+        black_box(cusp_rec(&a, &b, &du, &dv, bands).ok());
+        1
+    });
+    rows.push(Row {
+        kind: "cusp record".into(),
+        ns,
+        units: (CUSP_PIECES * UNITS.face_setup) as f64,
+    });
+}
+
+/// An edge pair's cluster search per piece at each level: a conic whose
+/// shadow touches a line's, where no box becomes a leaf, searched until
+/// a share of 4096 pieces runs out (the four terms' records empty: the
+/// search's work, not its answer, is timed).
+fn xrec_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let lat = |x: f64, y: f64, z: f64| (R_HAT * x + NU * y + UP * z).to_array();
+    let cp = |p: [f64; 3], w: f64| [p[0], p[1], p[2], w];
+    let e: [Span; 1] = [[
+        cp(lat(-1.0, 1.0, 0.0), 1.0),
+        cp(lat(0.0, -1.0, 0.0), 1.0),
+        cp(lat(1.0, 1.0, 0.0), 1.0),
+    ]];
+    let none = ChainRec::default();
+    let off = EdgeRays::Line(RayRec { crossing: None });
+    let pair = XPair {
+        e: XCurve::Spans(&e),
+        g: XCurve::Line(lat(-2.0, 0.0, 0.0), lat(0.0, 0.0, 0.0)),
+        terms: XTerms {
+            a_g: off,
+            b_g: off,
+            g0_e: EdgeRays::Chain(&none),
+            g1_e: EdgeRays::Chain(&none),
+        },
+        shared: false,
+    };
+    let sides = XSides::new();
+    let x = XKey {
+        e: EdgeId(0),
+        g: EdgeId(1),
+    };
+    for (level, units) in UNITS.xrec_piece.into_iter().enumerate() {
+        let run = || clusters_at_charged(x, &pair, &sides, level, &per_piece(4096)).1;
+        let n = run();
+        let ns = time(budget, || {
+            black_box(run());
+            1
+        });
+        rows.push(Row {
+            kind: format!("xrec piece L{level}"),
+            ns: ns / n as f64,
+            units: units as f64,
+        });
+    }
+}
+
+/// A column's hits on a face per tile and ribbon span searched: the
+/// square on its four tiles, a column inside it.
+fn hit_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let square = [[1.25, 1.25], [1.75, 1.25], [1.75, 1.75], [1.25, 1.75]];
+    let poly = Polygon::new(&square);
+    let n = poly.order.n;
+    let trims: Vec<HitTrim<'_>> = (0..n)
+        .map(|k| {
+            let edge = EdgeId(k as u32 + 1);
+            let ends = poly.order.ends(Operand::B, edge);
+            let [s, e] = ends.map(|v| poly.order.vert_key(Operand::B, v));
+            HitTrim {
+                coedge: CoedgeId(k as u32 + 1),
+                edge,
+                reversed: false,
+                ends,
+                along: Along::of(&s, &e),
+                band: BAND,
+                pspans: &poly.spans[k],
+                curve: &poly.curves[k],
+                map: &WHOLE,
+            }
+        })
+        .collect();
+    let face = HitFace {
+        operand: Operand::B,
+        face: FaceId(2),
+        tiles: [0..2, 0..2],
+        nets: &poly.nets,
+        inside: 1,
+        trims,
+    };
+    let searches = face.nets.len() + face.trims.iter().map(|t| t.pspans.len()).sum::<usize>();
+    let motion = zero_motion();
+    let q = column(1.5, 1.4, -0.01);
+    let found = face_hits(&face, q, &motion).expect("hits");
+    assert_eq!(found.len(), 1, "one hit");
+    let ns = time(budget, || {
+        black_box(face_hits(&face, q, &motion).ok());
+        1
+    });
+    rows.push(Row {
+        kind: "column hit search".into(),
+        ns: ns / searches as f64,
+        units: UNITS.record.hit as f64 / UNIT_PARTS as f64,
+    });
+}
+
+// ---------------------------------------------------------------------
+// Record-evaluation kinds, on real record computations.
+
+/// A pass deciding in order on one thread, summing the cost.
+#[derive(Default)]
+struct Seq {
+    decided: u64,
+    cost: Cost,
+}
+
+impl Pass for Seq {
+    type Error = Fail;
+
+    fn run<K: Sync, V: Send>(
+        &mut self,
+        keys: &[Fresh<K>],
+        decide: &(dyn Fn(&Fresh<K>) -> Decided<V> + Sync),
+    ) -> Result<Vec<V>, Fail> {
+        keys.iter()
+            .map(|k| {
+                self.decided += 1;
+                let (v, c) = decide(k);
+                self.cost = self.cost.and(c);
+                v
+            })
+            .collect()
+    }
+}
+
+/// A row for records of `kind` whose decisions took `ns` each and
+/// charged `cost` in all over `records`, and a line suggesting the
+/// kind's own price: its count `ops` in the cost, the rest of the cost
+/// at the table's prices taken off.
+fn record_kind_row(
+    rows: &mut Vec<Row>,
+    kind: &str,
+    ns: f64,
+    (cost, records): (&Cost, u64),
+    (ops, parts): (u64, u64),
+) {
+    let all = cost.parts(&UNITS.record) as f64 / UNIT_PARTS as f64 / records as f64;
+    let own = (ops * parts) as f64 / UNIT_PARTS as f64 / records as f64;
+    let per_op = (ns - (all - own) * UNIT_NS) / (ops as f64 / records as f64);
+    println!(
+        "  {kind}: {:.1} per record, {:.0} parts each now, about {:.0} parts measured",
+        ops as f64 / records as f64,
+        parts,
+        per_op / UNIT_NS * UNIT_PARTS as f64
+    );
+    rows.push(Row {
+        kind: format!("{kind} records"),
+        ns,
+        units: all,
+    });
+}
+
+/// Foot polynomials, curved key values and end tests at the first
+/// level, each on records that run them: the feet of points near an
+/// arc, the ray records of points beside a circle's joints, and
+/// point–curve heights read at a foot's parameter. (Their higher levels
+/// keep the table's ratios to the first: no fixture here escalates.)
+fn record_kind_rows(budget: Duration, rows: &mut Vec<Row>) {
+    feet_rows(budget, rows);
+    end_rows(budget, rows);
+    key_rows(budget, rows);
+}
+
+fn feet_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let arc = quarter(1.0);
+    let spans: Vec<Span> = arc.spans().to_vec();
+    let r = 1e-3;
+    let qs: Vec<DVec3> = (0..16)
+        .map(|k| {
+            let a = (k as f64 + 0.5) / 16.0 * std::f64::consts::FRAC_PI_2;
+            DVec3::new(trig::cos(a), trig::sin(a), 0.0) * (50.0 + r * 0.5)
+        })
+        .collect();
+    let key = |k: usize| RayKey {
+        q: Point::vert(Operand::A, VertId(k as u32)),
+        g: EdgeId(1),
+    };
+    let curve = EdgeCurve::Spans {
+        spans: &spans,
+        closed: false,
+    };
+    let mut cost = Cost::default();
+    for (k, &q) in qs.iter().enumerate() {
+        let (feet, c) = decide_feet(key(k), q, curve, r);
+        assert!(!feet.expect("feet").feet.is_empty());
+        cost = cost.and(c);
+    }
+    let ns = time(budget, || {
+        for (k, &q) in qs.iter().enumerate() {
+            black_box(decide_feet(key(k), q, curve, r).0.ok());
+        }
+        qs.len() as u64
+    });
+    let ops = u64::from(cost.levels[0].feet);
+    let parts = UNITS.record.foot_poly[0];
+    record_kind_row(
+        rows,
+        "foot_poly L0",
+        ns,
+        (&cost, qs.len() as u64),
+        (ops, parts),
+    );
+}
+
+/// Curved edges of `B` and points of `A` moving along `d`: the ray
+/// records' geometry.
+struct Rays {
+    pos: BTreeMap<Point, DVec3>,
+    edges: BTreeMap<EdgeId, ([VertId; 2], Vec<Span>)>,
+    d: DVec3,
+}
+
+impl ShadowGeometry for Rays {
+    fn point(&self, p: Point) -> Moving {
+        match p.operand {
+            Operand::A => Moving::of_a(self.pos[&p], Sign::Pos, self.d),
+            Operand::B => Moving::fixed(self.pos[&p]),
+        }
+    }
+
+    fn near_radius(&self, _: Point) -> f64 {
+        BAND
+    }
+
+    fn ends(&self, _: Operand, g: EdgeId) -> [VertId; 2] {
+        self.edges[&g].0
+    }
+
+    fn line(&self, _: Point, _: EdgeId) -> Seg {
+        unreachable!("only curved edges here")
+    }
+}
+
+impl CurveGeometry for Rays {
+    fn spans(&self, _: Operand, g: EdgeId) -> &[Span] {
+        &self.edges[&g].1
+    }
+
+    fn knot_rates(&self, _: Point, _: EdgeId, _: u32) -> [Rate; ORDERS] {
+        [Rate::ZERO; ORDERS]
+    }
+
+    fn span_rates<S: Curved>(&self, _: Point, _: EdgeId, _: u32, t: &S) -> [[S; 3]; ORDERS] {
+        std::array::from_fn(|_| [0.0; 3].map(|x| S::from_f64(x, t)))
+    }
+}
+
+/// A circle of radius 2 in the shadow frame, of two edges of two spans,
+/// and points of `A` beside its joints' columns and `r̂` lines: their
+/// ray records test the crossings beside the joints' ends.
+fn end_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let lat = |x: f64, y: f64| R_HAT * x + NU * y;
+    let cp = |p: DVec3, w: f64| [p.x, p.y, p.z, w];
+    // Squashed along `ν`, as an ellipse in the shadow.
+    let at = |a: f64, r: f64| lat(r * trig::cos(a), r * trig::sin(a) / 8.0);
+    let step = std::f64::consts::FRAC_PI_2;
+    let w = trig::cos(step / 2.0);
+    let start = 0.3;
+    let ends: Vec<[f64; 4]> = (0..=4)
+        .map(|k| {
+            // Dyadic joints, so the points beside them are exact.
+            let p = at(start + step * (k % 4) as f64, 2.0);
+            let r = |x: f64| (x * 64.0).round() / 64.0;
+            cp(DVec3::new(r(p.x), r(p.y), r(p.z)), 1.0)
+        })
+        .collect();
+    let spans: Vec<Span> = (0..4)
+        .map(|k| {
+            let mid = at(start + step * (k as f64 + 0.5), 2.0 / w);
+            [ends[k], cp(mid, w), ends[k + 1]]
+        })
+        .collect();
+    let joint = |s: &Span| DVec3::new(s[0][0], s[0][1], s[0][2]);
+    let mut geom = Rays {
+        pos: BTreeMap::new(),
+        edges: BTreeMap::new(),
+        d: DVec3::new(0.25, -0.5, 0.125),
+    };
+    geom.pos
+        .insert(Point::vert(Operand::B, VertId(1)), joint(&spans[0]));
+    geom.pos
+        .insert(Point::vert(Operand::B, VertId(2)), joint(&spans[2]));
+    geom.edges
+        .insert(EdgeId(0), ([VertId(1), VertId(2)], spans[0..2].to_vec()));
+    let back: Vec<Span> = spans[2..4]
+        .iter()
+        .rev()
+        .map(|s| [s[2], s[1], s[0]])
+        .collect();
+    geom.edges.insert(EdgeId(1), ([VertId(1), VertId(2)], back));
+    let mut qs = Vec::new();
+    for s in &spans {
+        for (l, m) in [(0.5, 0.0), (-0.5, 1.0), (0.0, 0.0), (0.0, -2.0), (3.0, 1.0)] {
+            let q = Point::vert(Operand::A, VertId(100 + qs.len() as u32));
+            geom.pos.insert(q, joint(s) + R_HAT * l + UP * m);
+            qs.push(q);
+        }
+    }
+    let keys: Vec<SpanKey> = qs
+        .iter()
+        .flat_map(|&q| {
+            [(EdgeId(0), 2), (EdgeId(1), 2)]
+                .into_iter()
+                .flat_map(move |(g, n)| (0..n).map(move |span| SpanKey { q, g, span }))
+        })
+        .collect();
+    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band");
+    let fill = |seq: &mut Seq| {
+        let (mut r, mut sh) = (CurvedRays::new(), Shadows::new());
+        r.fill(keys.iter().copied(), &mut sh, &geom, band, seq)
+            .expect("decided");
+    };
+    let mut seq = Seq::default();
+    fill(&mut seq);
+    let ops = u64::from(seq.cost.levels[0].ends);
+    assert!(ops > 0, "end tests ran");
+    let records = seq.decided;
+    let ns = time(budget, || {
+        fill(&mut Seq::default());
+        records
+    });
+    let parts = UNITS.record.at_end[0];
+    record_kind_row(rows, "at_end L0", ns, (&seq.cost, records), (ops, parts));
+}
+
+/// Points of `A` above an arc, each with the height key of its foot on
+/// it, the arc's point read at the foot's parameter at the level: a
+/// curved key's value, formed from level `from` on (the levels before
+/// escalate at once, each call counted per key).
+struct Keys {
+    arc: Span,
+    pts: Vec<(DVec3, f64)>,
+    from: usize,
+    calls: Mutex<BTreeMap<u32, usize>>,
+}
+
+impl HeightGeometry for Keys {
+    type Flat = Orient;
+
+    fn value(&self, _: HKey) -> KeyValue<Orient> {
+        KeyValue::Curved
+    }
+
+    fn curved_value<S: Curved>(&self, h: HKey, like: &S, _: &mut LevelWork) -> Option<S> {
+        let HKey::Curve { q, .. } = h else {
+            return None;
+        };
+        let Query::Vert(v) = q.q else {
+            return None;
+        };
+        let mut calls = self.calls.lock().expect("a lock");
+        let n = calls.entry(v.0).or_default();
+        *n += 1;
+        if *n <= self.from {
+            return None;
+        }
+        drop(calls);
+        let (at, t) = *self.pts.get(v.index())?;
+        let c = HomCurve::from_affine(self.arc.map(|p| ([p[0], p[1], p[2]], p[3])), like)?;
+        let x = c.eval(&S::from_f64(t, like));
+        let up = [UP.x, UP.y, UP.z].map(|u| S::from_f64(u, like));
+        let len = up
+            .iter()
+            .fold(S::int(0, like), |s, u| s.add(&u.mul(u)))
+            .sqrt();
+        let at = [at.x, at.y, at.z].map(|v| S::from_f64(v, like));
+        let d = (0..3).fold(S::int(0, like), |s, i| s.add(&up[i].mul(&x[i].sub(&at[i]))));
+        Some(d.div(&len))
+    }
+
+    fn row(&self, _: HeightKey) -> AnchorRow<Orient> {
+        AnchorRow::Curved
+    }
+
+    fn curved_row<S: Curved>(&self, _: HeightKey, _: &S, _: &mut LevelWork) -> Option<[S; ORDERS]> {
+        None
+    }
+
+    fn geometric(&self, _: HeightKey) -> bool {
+        false
+    }
+}
+
+fn key_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let arc = quarter(1.0).spans()[0];
+    let pts: Vec<(DVec3, f64)> = (0..16)
+        .map(|k| {
+            let t = (k as f64 + 0.5) / 16.0;
+            let a = t * std::f64::consts::FRAC_PI_2;
+            (DVec3::new(50.0 * trig::cos(a), 50.0 * trig::sin(a), 0.5), t)
+        })
+        .collect();
+    let keys: Vec<HeightKey> = (0..pts.len() as u32)
+        .map(|v| HeightKey {
+            h: HKey::Curve {
+                q: Point::vert(Operand::A, VertId(v)),
+                g: EdgeId(1),
+                foot: FootId(0),
+            },
+            anchor: Anchor::Edge(Operand::B, EdgeId(1)),
+        })
+        .collect();
+    let band = Band::curved(0.0, 1.0 / 1_073_741_824.0).expect("a band");
+    for level in 0..LEVELS {
+        let fill = |seq: &mut Seq| {
+            let geom = Keys {
+                arc,
+                pts: pts.clone(),
+                from: level,
+                calls: Mutex::new(BTreeMap::new()),
+            };
+            Heights::new()
+                .fill(keys.iter().copied(), &geom, band, seq)
+                .expect("decided");
+        };
+        let mut seq = Seq::default();
+        fill(&mut seq);
+        let ops = u64::from(seq.cost.levels[level].keys);
+        assert!(ops > 0, "values formed at level {level}");
+        let records = seq.decided;
+        let ns = time(budget, || {
+            fill(&mut Seq::default());
+            records
+        });
+        let parts = UNITS.record.key_at[level];
+        let kind = format!("key_at L{level}");
+        record_kind_row(rows, &kind, ns, (&seq.cost, records), (ops, parts));
     }
 }

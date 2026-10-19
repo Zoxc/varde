@@ -445,6 +445,30 @@ impl Recs {
         }
     }
 
+    /// The pair's clusters on `charge` from level 0 ([`form_charged`]),
+    /// the side records they ask for filled, with what the last search
+    /// spent.
+    fn clusters_on(
+        &self,
+        geom: &Geom,
+        pair: &XPair<'_>,
+        charge: &Charge,
+    ) -> (Result<XClusters, XClusterError>, Cost) {
+        loop {
+            let r = form_charged(X, pair, &self.sides.borrow(), charge);
+            match r {
+                (Err(XClusterError::Need(ks)), cost) => {
+                    for k in &ks {
+                        if !self.fill(geom, *k) {
+                            return (Err(XClusterError::Need(ks)), cost);
+                        }
+                    }
+                }
+                r => return r,
+            }
+        }
+    }
+
     /// The pair's clusters at level 0, the side records they ask for
     /// filled.
     fn clusters(&self, geom: &Geom, pair: &XPair<'_>) -> Result<XClusters, XClusterError> {

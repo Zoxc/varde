@@ -49,7 +49,9 @@ use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
 use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rate_rational, rates_a};
 use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
 use varde_decide::records::height::hit::{HitFace, HitTrim, Motion};
-use varde_decide::records::height::model::{FaceAt, HeightModel, ModelHeights, XAt, XHeights};
+use varde_decide::records::height::model::{
+    FaceAt, HeightModel, HitMemo, ModelHeights, XAt, XHeights,
+};
 use varde_decide::records::height::{HeightError, Heights, Records};
 use varde_decide::records::keys::{EdgeAt, Operand, Point, Query, RayKey, VvKey, XKey};
 use varde_decide::records::keys::{FootId, HKey};
@@ -329,6 +331,9 @@ pub(super) struct World<'s> {
     order: Order,
     /// Per operand and face, its hit data.
     flats: [Vec<Option<HitData>>; 2],
+    /// The column hits of points on faces, found once for every record
+    /// of the point on the face.
+    hits: HitMemo,
 }
 
 impl<'s> World<'s> {
@@ -359,6 +364,7 @@ impl<'s> World<'s> {
             vert_near,
             order,
             flats: [Vec::new(), Vec::new()],
+            hits: HitMemo::default(),
         };
         w.flats = [A, B].map(|op| {
             let s = w.solid(op);
@@ -646,6 +652,10 @@ impl HeightModel for World<'_> {
         self.rates(q.operand.other())
     }
 
+    fn hit_memo(&self) -> Option<&HitMemo> {
+        Some(&self.hits)
+    }
+
     fn hit_face(&self, operand: Operand, f: FaceId) -> Option<HitFace<'_>> {
         let d = self.flats[ix(operand)].get(f.index())?.as_ref()?;
         let b = &self.solid(operand).brep;
@@ -901,6 +911,7 @@ impl World<'_> {
         let mut heights = Heights::new();
         let band = Band::curved(0.0, cfg.target).expect("a band");
         let charge = Charge::new(u64::MAX / 4);
+        let setup = Charge::setup(u64::MAX / 4);
         let verts = s.verts();
         let mut out = vec![Vec::new(); verts.len()];
         let mut kept = vec![Vec::new(); verts.len()];
@@ -909,7 +920,8 @@ impl World<'_> {
             let views = face.views();
             let uv = face.uv(op.other(), f, &views, cfg.scale)?;
             let t = std::time::Instant::now();
-            let corners = Corners::new(&uv, &face.patches, &face.order)
+            let corners = Corners::new(&uv, &face.patches, &face.order, &setup)
+                .0
                 .map_err(|e| refused(Cause::Other(format!("corners {e:?}")), format!("{f:?}")))?;
             stats.corners += t.elapsed().as_secs_f64();
             let nets = self.flats[ix(op.other())][f.index()]

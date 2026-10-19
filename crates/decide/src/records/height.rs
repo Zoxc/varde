@@ -286,8 +286,9 @@ pub trait HeightGeometry {
 
     /// A curved key's value at the level of `like`; `None` where the
     /// level can't form it (a facing or a hit it can't certify), which
-    /// escalates.
-    fn curved_value<S: Curved>(&self, h: HKey, like: &S) -> Option<S>;
+    /// escalates. Work past the one evaluation the record charges (a
+    /// z-order localization's sub-boxes) is added to `work`.
+    fn curved_value<S: Curved>(&self, h: HKey, like: &S, work: &mut LevelWork) -> Option<S>;
 
     /// Anchor `k`'s perturbed orders: the anchor's tangent element against
     /// the key's moving point (§ "Rows" in [`crate::perturb`]).
@@ -296,7 +297,14 @@ pub trait HeightGeometry {
     /// A curved row's orders `g₁ … g₄` at the level of `like`; `None`
     /// where the level can't certify the anchor's facing, which
     /// escalates (where no level does, the fold rule is the consumer's).
-    fn curved_row<S: Curved>(&self, k: HeightKey, like: &S) -> Option<[S; ORDERS]>;
+    /// Work past the one evaluation the record charges is added to
+    /// `work`.
+    fn curved_row<S: Curved>(
+        &self,
+        k: HeightKey,
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Option<[S; ORDERS]>;
 
     /// Whether hit key `h`'s value, not formed at the level of `like`
     /// ([`curved_value`](Self::curved_value) `None`), fails only for the
@@ -579,10 +587,10 @@ impl<G: HeightGeometry> AtLevel for KeyAt<'_, G> {
     }
 
     fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
-        work.evals = work.evals.saturating_add(1);
+        work.keys = work.keys.saturating_add(1);
         let level = u8::try_from(level).expect("few levels");
         let escalate = Err(Fail::Escalate { order: 0 });
-        let Some(v) = self.geom.curved_value(self.h, like) else {
+        let Some(v) = self.geom.curved_value(self.h, like, work) else {
             // A hit's value can't be formed where the face's facing isn't
             // certified (a silhouette inside the face). At the last level
             // that alone is a tie (an unformed hit escalates): the
@@ -682,12 +690,12 @@ impl<G: HeightGeometry> AtLevel for RowAt<'_, G> {
     }
 
     fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
-        work.evals = work.evals.saturating_add(1);
-        let Some(ord) = self.geom.curved_row(self.k, like) else {
+        work.keys = work.keys.saturating_add(1);
+        let Some(ord) = self.geom.curved_row(self.k, like, work) else {
             // The facing isn't certified here. A later level may certify
             // it; at the last, the anchor is on a fold.
             if level + 1 == LEVELS {
-                work.evals = work.evals.saturating_add(1);
+                work.keys = work.keys.saturating_add(1);
                 if let Some(f) = self.geom.curved_fold(self.k, like)
                     && let Some(s) = f.beyond(0.0)
                 {

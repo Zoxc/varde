@@ -1121,7 +1121,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
         let reach = [hi, one_minus(lo, true)];
         let mut ends = (0..2).filter(|&j| {
             self.near[j].is_some() && {
-                work.evals = work.evals.saturating_add(4);
+                work.ends = work.ends.saturating_add(1);
                 within(polys[j], reach[j], self.band, like)
             }
         });

@@ -636,7 +636,7 @@ pub fn box_degree<S: Scalar>(
     patch: &HomPatch<S>,
     q: &QShadow,
 ) -> Result<Degree, DegreeError> {
-    box_degree_cut(face, b, patch, q, &mut Default::default())
+    box_degree_cut(face, b, patch, q, &mut Default::default(), &mut 0)
 }
 
 /// The sides' pieces of a box, counter-clockwise from the bottom, each
@@ -644,13 +644,15 @@ pub fn box_degree<S: Scalar>(
 type SideCuts<S> = [Option<Vec<HomCurve<S, 3>>>; 4];
 
 /// [`box_degree`], the sides cut into `cuts` (those cut already read
-/// from there).
+/// from there), adding the pieces tested to `total` whether the degree
+/// settles or not.
 fn box_degree_cut<S: Scalar>(
     face: &FaceUv<'_>,
     b: &BoxKey,
     patch: &HomPatch<S>,
     q: &QShadow,
     cuts: &mut SideCuts<S>,
+    total: &mut u64,
 ) -> Result<Degree, DegreeError> {
     if !face.owns(b) {
         return Err(DegreeError::Box(BoxError::Foreign));
@@ -659,12 +661,27 @@ fn box_degree_cut<S: Scalar>(
         return Err(DegreeError::Unsettled);
     }
     let mut pieces = 0u64;
+    let r = degree_cut(face, b, patch, q, cuts, &mut pieces);
+    *total = total.saturating_add(pieces);
+    r.map(|(degree, ray)| Degree {
+        degree,
+        ray,
+        pieces,
+    })
+}
+
+/// [`box_degree_cut`]'s degree and ray, past its checks.
+fn degree_cut<S: Scalar>(
+    face: &FaceUv<'_>,
+    b: &BoxKey,
+    patch: &HomPatch<S>,
+    q: &QShadow,
+    cuts: &mut SideCuts<S>,
+    pieces: &mut u64,
+) -> Result<(i64, Option<Ray>), DegreeError> {
+    *pieces = pieces.saturating_add(1);
     if hull_off(&sub_patch(patch, b), q) {
-        return Ok(Degree {
-            degree: 0,
-            ray: None,
-            pieces: 1,
-        });
+        return Ok((0, None));
     }
     let sign = face.inside_winding();
     for (k, ray) in Ray::ALL.into_iter().enumerate() {
@@ -672,7 +689,7 @@ fn box_degree_cut<S: Scalar>(
         for (cut, side) in cuts.iter_mut().zip(Side::CCW) {
             let (dir, at, along, back) = side.line(b);
             let cut = cut.get_or_insert_with(|| iso_pieces(patch, dir, at, along));
-            let turn = pieces_turn(cut, q, ray, [None, None], &mut pieces);
+            let turn = pieces_turn(cut, q, ray, [None, None], pieces);
             match turn.map(|t| if back { t.reversed() } else { t }) {
                 Ok(t) => laps = laps.map(|l| l + t.laps),
                 // An axis ray's pieces are the splits' certificate: a side
@@ -689,11 +706,7 @@ fn box_degree_cut<S: Scalar>(
             }
         }
         if let Some(l) = laps {
-            return Ok(Degree {
-                degree: sign * l,
-                ray: Some(ray),
-                pieces,
-            });
+            return Ok((sign * l, Some(ray)));
         }
     }
     Err(DegreeError::Unsettled)
@@ -839,13 +852,31 @@ pub fn box_degree_sided<S: Scalar>(
     point: Point,
     sides: &Sides,
 ) -> Result<Degree, SidedError> {
+    box_degree_counted(face, b, patch, q, point, sides, &mut 0)
+}
+
+/// [`box_degree_sided`], adding every piece tested to `total`, those of
+/// attempts that don't settle included (a failed attempt is work too);
+/// a degree's [`Degree::pieces`] are all its attempts'.
+pub(crate) fn box_degree_counted<S: Scalar>(
+    face: &FaceUv<'_>,
+    b: &BoxKey,
+    patch: &HomPatch<S>,
+    q: &QShadow,
+    point: Point,
+    sides: &Sides,
+    total: &mut u64,
+) -> Result<Degree, SidedError> {
     if point.operand == b.operand() {
         return Err(SidedError::Box(BoxError::Foreign));
     }
     // The plain degree's preconditions first: the box is the face's. Its
     // sides' pieces are kept for the records' turns.
     let mut cuts: SideCuts<S> = Default::default();
-    match box_degree_cut(face, b, patch, q, &mut cuts) {
+    let mut plain = 0u64;
+    let r = box_degree_cut(face, b, patch, q, &mut cuts, &mut plain);
+    *total = total.saturating_add(plain);
+    match r {
         Ok(d) => return Ok(d),
         Err(DegreeError::Box(e)) => return Err(SidedError::Box(e)),
         Err(DegreeError::Through(_) | DegreeError::Unsettled) => (),
@@ -857,8 +888,29 @@ pub fn box_degree_sided<S: Scalar>(
     }
     let ray = Ray::of_query(point.operand);
     let mut pieces = 0u64;
+    let r = sided_laps(b, patch, q, point, sides, &mut cuts, &mut pieces);
+    *total = total.saturating_add(pieces);
+    r.map(|laps| Degree {
+        degree: face.inside_winding() * laps,
+        ray: Some(ray),
+        pieces: plain.saturating_add(pieces),
+    })
+}
+
+/// The laps of `b`'s four sides against `point`'s ray, a side not
+/// certified off `q_xy` read from `sides` ([`box_degree_sided`]).
+#[allow(clippy::too_many_arguments)]
+fn sided_laps<S: Scalar>(
+    b: &BoxKey,
+    patch: &HomPatch<S>,
+    q: &QShadow,
+    point: Point,
+    sides: &Sides,
+    cuts: &mut SideCuts<S>,
+    pieces: &mut u64,
+) -> Result<i64, SidedError> {
     let mut laps = 0i64;
-    for (side, cut) in Side::CCW.into_iter().zip(&mut cuts) {
+    for (side, cut) in Side::CCW.into_iter().zip(cuts) {
         let (dir, at, along, back) = side.line(b);
         let cut = cut.get_or_insert_with(|| iso_pieces(patch, dir, at, along));
         let n = rec_turn_cut(
@@ -868,7 +920,7 @@ pub fn box_degree_sided<S: Scalar>(
             point,
             sides,
             [None, None],
-            &mut pieces,
+            pieces,
         )
         .map_err(|e| match e {
             RecTurnError::Need(k) => SidedError::Need(k),
@@ -877,11 +929,7 @@ pub fn box_degree_sided<S: Scalar>(
         })?;
         laps += if back { -n } else { n };
     }
-    Ok(Degree {
-        degree: face.inside_winding() * laps,
-        ray: Some(ray),
-        pieces,
-    })
+    Ok(laps)
 }
 
 /// Whether the shadow of the patch's coefficient hull is certified off

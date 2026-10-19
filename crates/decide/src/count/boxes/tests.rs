@@ -16,6 +16,7 @@ use malachite::Rational as Q;
 use varde_testkit::rng::Rng;
 
 use super::*;
+use crate::count::s02::Charge;
 use crate::num::dd::Dd;
 
 type Patch = HomPatch<Bounded<f64>>;
@@ -1466,7 +1467,9 @@ fn strips_and_corners_of_random_faces() {
         let mut order: Vec<VertId> = trims.iter().flat_map(|t| t.ends).collect();
         order.sort_unstable();
         order.dedup();
-        let corners = Corners::new(&face, &ps, &order).expect("corners");
+        let corners = Corners::new(&face, &ps, &order, &Charge::setup(u64::MAX))
+            .0
+            .expect("corners");
         let mut queue: VecDeque<(BoxKey, Option<SmallVec<[SpanRef; 8]>>)> =
             face.tile_boxes().map(|b| (b, None)).collect();
         let mut boxes = 0;

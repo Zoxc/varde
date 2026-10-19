@@ -83,7 +83,7 @@ impl HeightGeometry for Geo {
         }
     }
 
-    fn curved_value<S: Curved>(&self, _: HKey, like: &S) -> Option<S> {
+    fn curved_value<S: Curved>(&self, _: HKey, like: &S, _: &mut LevelWork) -> Option<S> {
         let (v, from) = self.curved.expect("a curved key");
         let n = self.calls.fetch_add(1, AtOrd::Relaxed);
         (n >= from).then(|| S::from_f64(v, like))
@@ -109,7 +109,12 @@ impl HeightGeometry for Geo {
         }
     }
 
-    fn curved_row<S: Curved>(&self, _: HeightKey, like: &S) -> Option<[S; ORDERS]> {
+    fn curved_row<S: Curved>(
+        &self,
+        _: HeightKey,
+        like: &S,
+        _: &mut LevelWork,
+    ) -> Option<[S; ORDERS]> {
         self.rows.map(|r| r.map(|x| S::from_f64(x, like)))
     }
 
@@ -285,7 +290,7 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
             level: 2
         })
     );
-    let ev = |w: &LevelWork| w.evals;
+    let ev = |w: &LevelWork| w.keys;
     assert_eq!(pass.work.levels.map(|w| ev(&w))[..3], [1, 1, 2]);
     let own = Oriented {
         key: h,
@@ -384,13 +389,18 @@ fn exact_signs_decide_as_flat_predicates_do() {
         fn value(&self, _: HKey) -> KeyValue<Flat> {
             KeyValue::Exact(self.value)
         }
-        fn curved_value<S: Curved>(&self, _: HKey, _: &S) -> Option<S> {
+        fn curved_value<S: Curved>(&self, _: HKey, _: &S, _: &mut LevelWork) -> Option<S> {
             None
         }
         fn row(&self, _: HeightKey) -> AnchorRow<Flat> {
             AnchorRow::Exact(self.orders)
         }
-        fn curved_row<S: Curved>(&self, _: HeightKey, _: &S) -> Option<[S; ORDERS]> {
+        fn curved_row<S: Curved>(
+            &self,
+            _: HeightKey,
+            _: &S,
+            _: &mut LevelWork,
+        ) -> Option<[S; ORDERS]> {
             None
         }
         fn geometric(&self, _: HeightKey) -> bool {

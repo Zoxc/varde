@@ -220,8 +220,18 @@ pub struct Units {
     /// A piece of a face's count tested
     /// ([`count_pieces`](crate::count::s02::count_pieces)) at each level:
     /// a box classified against the trims, split, or tested off the
-    /// query point's lines.
+    /// query point's lines, a side's or a run's degree attempted (settled
+    /// or not), a trim span scanned against a loop's side.
     pub count_piece: [u64; LEVELS],
+    /// A piece of a face's counting setup
+    /// ([`Corners::new`](crate::count::boxes::Corners::new), built once
+    /// per operation at the first level): a piece of a trimming curve
+    /// whose hull in space a corner's run search forms.
+    pub face_setup: u64,
+    /// A piece an edge pair's cluster search tests
+    /// ([`clusters`](crate::count::xrec::clusters)) at each level: a hull
+    /// of a box's two pieces, a tangent cone, a side's turn, a band test.
+    pub xrec_piece: [u64; LEVELS],
     /// The work a record's decision reports ([`Cost`]), in parts.
     pub record: RecordUnits,
 }
@@ -242,18 +252,49 @@ pub struct RecordUnits {
     /// A root isolation's split, interval test or Krawczyk step
     /// ([`LevelWork::roots`]), at each level.
     pub root: [u64; LEVELS],
+    /// A foot polynomial formed and its roots' first test
+    /// ([`LevelWork::feet`]), at each level: a span's distance to the
+    /// query point squared less the radius squared, degree 4.
+    pub foot_poly: [u64; LEVELS],
+    /// A curved height key's value or row formed at a parameter
+    /// ([`LevelWork::keys`]), at each level.
+    pub key_at: [u64; LEVELS],
+    /// An end test of a ray record's crossing beside an end
+    /// ([`LevelWork::ends`]), at each level: the span's three polynomials
+    /// bounded over the piece from the end.
+    pub at_end: [u64; LEVELS],
+    /// A sub-box of a curved z-order's crossing localization (a halving
+    /// tested apart, a Krawczyk step; [`LevelWork::boxes`]), at each
+    /// level.
+    pub zorder_box: [u64; LEVELS],
+    /// A tile or ribbon span whose column hits are found exactly
+    /// ([`Cost::hits`]): the column's equations eliminated to one
+    /// polynomial in rationals and its roots isolated.
+    pub hit: u64,
 }
 
 /// The unit costs ([`Units`]), as measured on the reference machine.
+/// The record-evaluation kinds are measured on real record computations
+/// at the first level (and a curved key's value at every level); where
+/// no fixture reaches a level they are set from a measured row: a foot
+/// polynomial at six evaluations, an end test at four, a z-order
+/// sub-box at an edge pair's search piece.
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     count_piece: [9, 10, 40, 40, 48],
+    face_setup: 32,
+    xrec_piece: [9, 10, 28, 30, 34],
     record: RecordUnits {
         filter: 190,
         expansion: 54,
         rational: 550,
         eval: [11, 180, 520, 550, 660],
         root: [130, 410, 1400, 1400, 1700],
+        foot_poly: [64, 1080, 3120, 3300, 3960],
+        key_at: [190, 460, 1240, 1360, 1600],
+        at_end: [44, 720, 2080, 2200, 2640],
+        zorder_box: [576, 640, 1792, 1920, 2176],
+        hit: 5504,
     },
 };
 
@@ -300,11 +341,15 @@ pub(crate) fn ladder<F: AtLevel>(f: &mut F, from: usize, cost: &mut Cost) -> Opt
 }
 
 /// What deciding one record ran, for the pass to charge: its exact
-/// predicates' work, and per precision level the curved work.
+/// predicates' work, the column hit searches, and per precision level
+/// the curved work.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cost {
     /// The exact predicates' runs.
     pub exact: Work,
+    /// The tiles and ribbon spans whose column hits were found exactly
+    /// ([`face_hits`](crate::records::height::hit::face_hits)).
+    pub hits: u32,
     /// The curved work at each level ([`LEVELS`]), first level first.
     pub levels: [LevelWork; LEVELS],
 }
@@ -316,8 +361,22 @@ pub struct LevelWork {
     pub roots: RootWork,
     /// Rows and polynomial pieces evaluated; in a face count's cost,
     /// the pieces tested
-    /// ([`count_pieces`](crate::count::s02::count_pieces)).
+    /// ([`count_pieces`](crate::count::s02::count_pieces)), in a face's
+    /// setup those of its corners
+    /// ([`Corners::new`](crate::count::boxes::Corners::new)), in an edge
+    /// pair's cluster search those of its boxes
+    /// ([`clusters`](crate::count::xrec::clusters)).
     pub evals: u32,
+    /// Foot polynomials formed ([`RecordUnits::foot_poly`]).
+    pub feet: u32,
+    /// Curved height key values and rows formed
+    /// ([`RecordUnits::key_at`]).
+    pub keys: u32,
+    /// End tests of ray records' crossings ([`RecordUnits::at_end`]).
+    pub ends: u32,
+    /// Sub-boxes of curved z-order localizations
+    /// ([`RecordUnits::zorder_box`]).
+    pub boxes: u32,
 }
 
 impl LevelWork {
@@ -326,6 +385,10 @@ impl LevelWork {
         LevelWork {
             roots: self.roots.and(o.roots),
             evals: self.evals.saturating_add(o.evals),
+            feet: self.feet.saturating_add(o.feet),
+            keys: self.keys.saturating_add(o.keys),
+            ends: self.ends.saturating_add(o.ends),
+            boxes: self.boxes.saturating_add(o.boxes),
         }
     }
 }
@@ -341,10 +404,11 @@ impl Cost {
     }
 
     /// This cost in parts of a unit ([`UNIT_PARTS`]) at `u`'s prices: the
-    /// exact predicates' runs ([`Cost::exact_parts`]) and each level's
-    /// curved work ([`Cost::level_parts`]).
+    /// exact predicates' runs ([`Cost::exact_parts`]), the column hit
+    /// searches and each level's curved work ([`Cost::level_parts`]).
     pub fn parts(&self, u: &RecordUnits) -> u64 {
-        (0..LEVELS).fold(self.exact_parts(u), |s, level| {
+        let hits = u64::from(self.hits).saturating_mul(u.hit);
+        (0..LEVELS).fold(self.exact_parts(u).saturating_add(hits), |s, level| {
             s.saturating_add(self.level_parts(level, u))
         })
     }
@@ -371,9 +435,16 @@ impl Cost {
         let roots = u64::from(r.splits)
             .saturating_add(u64::from(r.tests))
             .saturating_add(u64::from(r.steps));
-        u64::from(w.evals)
-            .saturating_mul(u.eval[level])
-            .saturating_add(roots.saturating_mul(u.root[level]))
+        [
+            (u64::from(w.evals), u.eval[level]),
+            (roots, u.root[level]),
+            (u64::from(w.feet), u.foot_poly[level]),
+            (u64::from(w.keys), u.key_at[level]),
+            (u64::from(w.ends), u.at_end[level]),
+            (u64::from(w.boxes), u.zorder_box[level]),
+        ]
+        .into_iter()
+        .fold(0u64, |s, (n, p)| s.saturating_add(n.saturating_mul(p)))
     }
 
     /// Exact work alone.
@@ -388,6 +459,7 @@ impl Cost {
     pub fn and(self, o: Cost) -> Cost {
         Cost {
             exact: self.exact.and(o.exact),
+            hits: self.hits.saturating_add(o.hits),
             levels: std::array::from_fn(|i| self.levels[i].and(o.levels[i])),
         }
     }

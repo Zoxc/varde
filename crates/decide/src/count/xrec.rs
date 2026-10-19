@@ -126,7 +126,7 @@ use malachite::Rational;
 use crate::bezier::{Dir, Dyadic, HomCurve, Scalar};
 use crate::count::boxes::{Extent, QShadow, SPLIT_SIXTEENTHS, dy};
 use crate::count::degree::{Ray, TurnError, pieces_turn};
-use crate::count::s02::MAX_LEAVES;
+use crate::count::s02::{Charge, Exhausted, MAX_LEAVES};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
@@ -134,7 +134,7 @@ use crate::num::decide::Sign;
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::keys::{EdgeAt, Operand, XKey, XSideKey, XTieKey};
 use crate::records::ray::Span;
-use crate::records::shadow::{LEVELS, SideAhead};
+use crate::records::shadow::{Cost, LEVELS, SideAhead};
 use crate::records::side::Over;
 use crate::records::xrec::{
     EdgeRays, XCluster, XCurve, XPair, XPart, XRec, XSides, XWant, ZRow, from_held, line_param,
@@ -925,6 +925,15 @@ pub enum XClusterError {
     Sided(XBox),
     /// More than [`MAX_LEAVES`] boxes at once.
     SizeLimit,
+    /// The search ran past the share it was given ([`form_charged`]):
+    /// [`Exhausted::Work`] at the first level, [`Exhausted::Precision`]
+    /// above it; `at` the last box tested (`None` before any).
+    OutOfBudget {
+        /// What ran out.
+        cause: Exhausted,
+        /// The last box tested.
+        at: Option<XBox>,
+    },
     /// Two straight edges whose shadows lie on one line: their record is
     /// the shared-curve rule's on the overlap of their shadows
     /// ([`shared_clusters`](crate::records::xrec::shared_clusters);
@@ -1015,15 +1024,56 @@ pub fn clusters_at(
     sides: &XSides,
     level: usize,
 ) -> Result<XClusters, XClusterError> {
+    clusters_level(x, pair, sides, level, Allow::FREE, &mut 0)
+}
+
+/// [`clusters_at`], every piece tested charged against `charge` at the
+/// level's unit: past the share [`XClusterError::OutOfBudget`] (as
+/// [`Exhausted::Work`], whatever the level). With the pieces tested, also
+/// on failure. For timing a level's search.
+pub fn clusters_at_charged(
+    x: XKey,
+    pair: &XPair<'_>,
+    sides: &XSides,
+    level: usize,
+    charge: &Charge,
+) -> (Result<XClusters, XClusterError>, u64) {
+    let allow = Allow {
+        unit: charge.units.get(level).copied().unwrap_or(0),
+        left: charge.share,
+    };
+    let mut pieces = 0;
+    let r = clusters_level(x, pair, sides, level, allow, &mut pieces);
+    (r, pieces)
+}
+
+/// [`clusters_at`], spending at most what `allow` gives, adding the
+/// pieces tested to `pieces` (also on failure).
+fn clusters_level(
+    x: XKey,
+    pair: &XPair<'_>,
+    sides: &XSides,
+    level: usize,
+    allow: Allow,
+    pieces: &mut u64,
+) -> Result<XClusters, XClusterError> {
     let mut out = match level {
-        0 => clusters(x, pair, sides, &Bounded::exact(0.0)),
-        1 => clusters(x, pair, sides, &Bounded::exact(Dd::from_f64(0.0))),
+        0 => clusters_in(x, pair, sides, &Bounded::exact(0.0), allow, pieces),
+        1 => clusters_in(
+            x,
+            pair,
+            sides,
+            &Bounded::exact(Dd::from_f64(0.0)),
+            allow,
+            pieces,
+        ),
         _ => {
             let w = Width::ALL
                 .get(level - 2)
                 .copied()
                 .ok_or(XClusterError::SizeLimit)?;
-            clusters(x, pair, sides, &Bounded::exact(Big::from_f64(0.0, w)))
+            let like = Bounded::exact(Big::from_f64(0.0, w));
+            clusters_in(x, pair, sides, &like, allow, pieces)
         }
     }?;
     out.rec.level = level;
@@ -1033,16 +1083,70 @@ pub fn clusters_at(
 /// The clusters of pair `x` at the first level that forms them
 /// ([`clusters_at`] from level 0, escalating where
 /// [`XClusterError::escalates`]); past the last level its error stands.
+/// Not charged: [`form_charged`] is.
 pub fn form(x: XKey, pair: &XPair<'_>, sides: &XSides) -> Result<XClusters, XClusterError> {
+    form_charged(x, pair, sides, &Charge::xrec(u64::MAX)).0
+}
+
+/// [`form`], every piece tested charged against `charge` at its level's
+/// unit ([`Charge::xrec`]): past the share the search stops at once,
+/// [`XClusterError::OutOfBudget`] ([`Exhausted::Work`] at the first
+/// level, [`Exhausted::Precision`] above it). With the clusters, or the
+/// error, the pieces tested per level
+/// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) for
+/// the pass to charge ([`Charge::spent`]).
+pub fn form_charged(
+    x: XKey,
+    pair: &XPair<'_>,
+    sides: &XSides,
+    charge: &Charge,
+) -> (Result<XClusters, XClusterError>, Cost) {
+    let mut cost = Cost::default();
+    let mut spent = 0u64;
     let mut last = XClusterError::SizeLimit;
     for level in 0..LEVELS {
-        match clusters_at(x, pair, sides, level) {
-            Ok(c) => return Ok(c),
+        let allow = Allow {
+            unit: charge.units[level],
+            left: charge.share.saturating_sub(spent),
+        };
+        let mut pieces = 0;
+        let r = clusters_level(x, pair, sides, level, allow, &mut pieces);
+        cost.levels[level].evals = u32::try_from(pieces).unwrap_or(u32::MAX);
+        spent = spent.saturating_add(pieces.saturating_mul(allow.unit));
+        match r {
+            Ok(c) => return (Ok(c), cost),
+            Err(XClusterError::OutOfBudget {
+                cause: Exhausted::Work,
+                at,
+            }) if level > 0 => {
+                let cause = Exhausted::Precision;
+                return (Err(XClusterError::OutOfBudget { cause, at }), cost);
+            }
             Err(e) if e.escalates() => last = e,
-            Err(e) => return Err(e),
+            Err(e) => return (Err(e), cost),
         }
     }
-    Err(last)
+    (Err(last), cost)
+}
+
+/// What a cluster search at one level may spend: `unit` units a piece,
+/// `left` units in all.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Allow {
+    pub(crate) unit: u64,
+    pub(crate) left: u64,
+}
+
+impl Allow {
+    pub(crate) const FREE: Allow = Allow {
+        unit: 0,
+        left: u64::MAX,
+    };
+
+    /// Whether `pieces` cost more than what is left.
+    pub(crate) fn over(&self, pieces: u64) -> bool {
+        pieces.saturating_mul(self.unit) > self.left
+    }
 }
 
 /// Why a stored crossing record doesn't replay.
@@ -1077,8 +1181,39 @@ pub fn clusters<S: Scalar>(
     sides: &XSides,
     like: &S,
 ) -> Result<XClusters, XClusterError> {
-    let spans = [pair.e.span_count(), pair.g.span_count()];
+    clusters_in(x, pair, sides, like, Allow::FREE, &mut 0)
+}
+
+/// [`clusters`], stopping once the pieces tested cost more than `allow`
+/// gives ([`XClusterError::OutOfBudget`]), the pieces added to `pieces`
+/// also on failure.
+fn clusters_in<S: Scalar>(
+    x: XKey,
+    pair: &XPair<'_>,
+    sides: &XSides,
+    like: &S,
+    allow: Allow,
+    total: &mut u64,
+) -> Result<XClusters, XClusterError> {
     let mut pieces = 0u64;
+    let r = search(x, pair, sides, like, allow, &mut pieces);
+    *total = total.saturating_add(pieces);
+    r.map(|mut c| {
+        c.pieces = pieces;
+        c
+    })
+}
+
+/// [`clusters_in`]'s search, adding the pieces tested to `pieces`.
+fn search<S: Scalar>(
+    x: XKey,
+    pair: &XPair<'_>,
+    sides: &XSides,
+    like: &S,
+    allow: Allow,
+    pieces: &mut u64,
+) -> Result<XClusters, XClusterError> {
+    let spans = [pair.e.span_count(), pair.g.span_count()];
     if pair.shared {
         match (pair.e, pair.g) {
             // Two lines never cross away from their overlap.
@@ -1086,7 +1221,7 @@ pub fn clusters<S: Scalar>(
                 return Ok(XClusters {
                     rec: XRec::default(),
                     boxes: Vec::new(),
-                    pieces,
+                    pieces: 0,
                 });
             }
             (XCurve::Spans(_), XCurve::Spans(_)) => {}
@@ -1096,7 +1231,12 @@ pub fn clusters<S: Scalar>(
             }
         }
     } else if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {
-        return straight_clusters(x, pair, [[a, b], [g0, g1]], sides, like);
+        let r = straight_clusters(x, pair, [[a, b], [g0, g1]], sides, like, pieces);
+        if allow.over(*pieces) {
+            let cause = Exhausted::Work;
+            return Err(XClusterError::OutOfBudget { cause, at: None });
+        }
+        return r;
     }
     let mut work: Vec<(XBox, Option<i64>)> = XBox::cells(spans).map(|b| (b, None)).collect();
     work.reverse();
@@ -1108,7 +1248,14 @@ pub fn clusters<S: Scalar>(
     // The boxes that read the side records.
     let mut read = 0usize;
     let mut seen = 0usize;
+    let mut last: Option<XBox> = None;
     while let Some((b, degree)) = work.pop() {
+        // The last box's work charged: past the share, the search stops.
+        if allow.over(*pieces) {
+            let cause = Exhausted::Work;
+            return Err(XClusterError::OutOfBudget { cause, at: last });
+        }
+        last = Some(b);
         seen += 1;
         if seen > MAX_BOXES {
             return Err(XClusterError::Boxes);
@@ -1121,17 +1268,17 @@ pub fn clusters<S: Scalar>(
         let cg = pair.g.span(b.cell[1], like).ok_or_else(shape)?;
         // On one curve, a box of the diagonal band holds only the
         // overlap's crossings: the shared-curve rule's.
-        if pair.shared && in_band(pair, &b, like, &mut pieces) {
+        if pair.shared && in_band(pair, &b, like, pieces) {
             continue;
         }
         let (pe, pg) = (cut(&ce, b.t, like), cut(&cg, b.s, like));
-        let h = hulls(&pe, &pg, like, &mut pieces).ok_or_else(shape)?;
+        let h = hulls(&pe, &pg, like, pieces).ok_or_else(shape)?;
         if h.apart() {
             continue;
         }
         let clear = h.z_order();
         // A leaf: one z-order over the box, or at most one crossing in it.
-        let leaf = clear.is_some() || transversal(&pe, &pg, like, &mut pieces);
+        let leaf = clear.is_some() || transversal(&pe, &pg, like, pieces);
         let first = if h.size[1] > h.size[0] {
             Dir::V
         } else {
@@ -1156,13 +1303,13 @@ pub fn clusters<S: Scalar>(
                 sides,
                 &b,
                 like,
-                (&mut pieces, &mut read),
+                (&mut *pieces, &mut read),
                 &mut wants,
             )? {
                 Found::Degree(d) => d,
                 Found::Wants => continue,
                 Found::Split => {
-                    let halves = split_box(pair, &b, first, like, &mut pieces)?;
+                    let halves = split_box(pair, &b, first, like, pieces)?;
                     work.push(halves[1]);
                     work.push(halves[0]);
                     continue;
@@ -1182,12 +1329,16 @@ pub fn clusters<S: Scalar>(
     if !wants.is_empty() {
         return Err(need(wants));
     }
+    if allow.over(*pieces) {
+        let cause = Exhausted::Work;
+        return Err(XClusterError::OutOfBudget { cause, at: last });
+    }
     found.sort_by_key(|x| x.0);
     let (boxes, clusters) = found.into_iter().unzip();
     Ok(XClusters {
         rec: XRec { clusters, level: 0 },
         boxes,
-        pieces,
+        pieces: *pieces,
     })
 }
 
@@ -1200,12 +1351,12 @@ fn straight_clusters<S: Scalar>(
     ends: [[[f64; 3]; 2]; 2],
     sides: &XSides,
     like: &S,
+    pieces: &mut u64,
 ) -> Result<XClusters, XClusterError> {
     let [e, g] = ends;
     if collinear(e, g) {
         return Err(XClusterError::Collinear);
     }
-    let mut pieces = 0u64;
     let whole = XBox {
         cell: [0, 0],
         t: Extent::WHOLE,
@@ -1218,7 +1369,7 @@ fn straight_clusters<S: Scalar>(
         sides,
         &whole,
         like,
-        (&mut pieces, &mut 0),
+        (&mut *pieces, &mut 0),
         &mut wants,
     )? {
         Found::Degree(d) => d,
@@ -1229,7 +1380,7 @@ fn straight_clusters<S: Scalar>(
         return Ok(XClusters {
             rec: XRec::default(),
             boxes: Vec::new(),
-            pieces,
+            pieces: *pieces,
         });
     }
     if parallel(e, g) {
@@ -1240,14 +1391,14 @@ fn straight_clusters<S: Scalar>(
     let shape = || XClusterError::Degree(whole, XDegreeError::Shape);
     let pe = pair.e.span(0, like).ok_or_else(shape)?;
     let pg = pair.g.span(0, like).ok_or_else(shape)?;
-    let clear = hulls(&pe, &pg, like, &mut pieces).and_then(|h| h.z_order());
+    let clear = hulls(&pe, &pg, like, pieces).and_then(|h| h.z_order());
     Ok(XClusters {
         rec: XRec {
             clusters: vec![cluster(&whole, degree, clear, ZRow::EdgeEdge)],
             level: 0,
         },
         boxes: vec![whole],
-        pieces,
+        pieces: *pieces,
     })
 }
 

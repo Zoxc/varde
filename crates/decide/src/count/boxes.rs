@@ -457,6 +457,9 @@ pub enum BoxError {
     /// The geometric order given doesn't list the face's vertices, each
     /// once.
     Order,
+    /// Building the face's corners ran past the share it was given
+    /// ([`Corners::new`]), at the run (or sharp corner) of this coedge.
+    OutOfBudget { coedge: CoedgeId },
 }
 
 /// A face as the counting reads it (module docs), validated.

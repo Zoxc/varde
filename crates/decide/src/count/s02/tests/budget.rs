@@ -89,7 +89,31 @@ fn out(cause: Exhausted) -> Result<FacePieces, CountError> {
         cause,
         point: Point::vert(Operand::A, VertId(7)),
         face: FaceId(2),
+        at: None,
     })
+}
+
+/// `r` with the box a share ran out at dropped: a crossing of the share
+/// names the box whose test crossed it, an unsettled last level none.
+fn keyed(r: &Result<FacePieces, CountError>) -> Result<FacePieces, CountError> {
+    match r {
+        Err(CountError::OutOfBudget {
+            cause,
+            point,
+            face,
+            at,
+        }) => {
+            let unsettled = *cause == Exhausted::Precision && at.is_none();
+            assert!(at.is_some() || unsettled, "{r:?}");
+            Err(CountError::OutOfBudget {
+                cause: *cause,
+                point: *point,
+                face: *face,
+                at: None,
+            })
+        }
+        r => r.clone(),
+    }
 }
 
 #[test]
@@ -97,7 +121,7 @@ fn a_thin_face_ends_out_of_budget_at_the_last_level_keyed() {
     let [(r, full)] = counts(&THIN, &[(on_thin(), Charge::new(u64::MAX))])
         .try_into()
         .unwrap();
-    assert_eq!(r, out(Exhausted::Precision));
+    assert_eq!(keyed(&r), out(Exhausted::Precision));
     assert!(
         full.levels.iter().all(|l| l.evals > 0),
         "every level ran: {full:?}"
@@ -114,10 +138,10 @@ fn a_thin_face_ends_out_of_budget_at_the_last_level_keyed() {
     for ((r, cost), (_, charge)) in counts(&THIN, &runs).into_iter().zip(&runs) {
         assert!(charge.spent(&cost) > charge.share, "{cost:?}");
         if charge.share < first {
-            assert_eq!(r, out(Exhausted::Work), "share {}", charge.share);
+            assert_eq!(keyed(&r), out(Exhausted::Work), "share {}", charge.share);
             assert!(cost.levels[1..].iter().all(|l| l.evals == 0), "{cost:?}");
         } else {
-            assert_eq!(r, out(Exhausted::Precision));
+            assert_eq!(keyed(&r), out(Exhausted::Precision));
             assert_eq!(cost.levels[0], full.levels[0]);
             assert!(cost.levels[1].evals > 0 && cost.levels[2].evals == 0);
         }
@@ -153,7 +177,7 @@ fn a_settled_count_charges_the_first_level_alone() {
         .try_into()
         .unwrap();
         assert_eq!(enough, Ok(p), "the share it spent is enough");
-        assert_eq!(short, out(Exhausted::Work));
+        assert_eq!(keyed(&short), out(Exhausted::Work));
     }
 }
 
@@ -298,7 +322,7 @@ fn each_share_of_a_settled_count_ends_the_same_way() {
             assert!(spent >= last, "work grows with the share");
             last = spent;
             if charge.share < n {
-                assert_eq!(r, out(Exhausted::Work), "share {}", charge.share);
+                assert_eq!(keyed(&r), out(Exhausted::Work), "share {}", charge.share);
                 assert!(spent > charge.share, "stops past the share");
             } else {
                 assert_eq!(r.as_ref(), Ok(&full), "share {}", charge.share);
@@ -359,7 +383,7 @@ fn shares_at_each_level_s_end_run_out_in_the_next_level() {
         } else {
             Exhausted::Precision
         };
-        assert_eq!(r, out(cause), "share {}", charge.share);
+        assert_eq!(keyed(&r), out(cause), "share {}", charge.share);
         assert_eq!(
             cost.levels[..at],
             full.levels[..at],
@@ -381,5 +405,130 @@ fn shares_at_each_level_s_end_run_out_in_the_next_level() {
         } else {
             assert_eq!(cost, full, "the full spend, unsettled at the top");
         }
+    }
+}
+
+/// A triangle `2⁻⁵⁰` high over a base of `½`: every point of each side
+/// is within the band of another, so each corner's run reaches along the
+/// whole sliver, thousands of pieces each.
+const NEEDLE: [[f64; 2]; 3] = [[1.25, 1.25], [1.75, 1.25], [1.5, 1.25 + H]];
+
+/// The needle's face and its corners built on a share of `share` units
+/// (the face's counting setup), with what they spent.
+fn needle_corners(share: u64) -> (Result<Corners, BoxError>, Cost) {
+    let f = polygon(1.0 / 4096.0, &NEEDLE);
+    let mut order = Order::default();
+    for (k, p) in NEEDLE.iter().enumerate() {
+        order
+            .pos
+            .insert((Operand::B, VertId(k as u32 + 1)), [p[0], p[1], 0.0]);
+    }
+    f.corners_on(&order, &Charge::setup(share))
+}
+
+/// The needle's setup on a share runs out at a coedge's run, its work
+/// past the share by one piece at most; it is the same on every run and
+/// thread (charged units are a function of the input and the share).
+/// The full setup (thousands of pieces, seconds in debug builds) only
+/// with `VARDE_TESTS=full`.
+#[test]
+fn a_needle_s_setup_runs_out_at_a_run() {
+    let unit = UNITS.face_setup;
+    let charge = Charge::setup(1 << 12);
+    let one = || needle_corners(charge.share);
+    let (r, cost) = one();
+    let Err(BoxError::OutOfBudget { coedge }) = r else {
+        panic!("{r:?}");
+    };
+    assert!((1..=3).contains(&coedge.0), "{coedge:?}");
+    let spent = charge.spent(&cost);
+    assert!(
+        spent > charge.share && spent <= charge.share + unit,
+        "{spent}"
+    );
+    // On other threads at once, the same.
+    let others: Vec<_> = std::thread::scope(|s| {
+        let hs: Vec<_> = (0..4).map(|_| s.spawn(one)).collect();
+        hs.into_iter()
+            .map(|h| h.join().expect("a thread"))
+            .collect()
+    });
+    for (r2, c2) in others {
+        assert_eq!(
+            (r2.err(), c2),
+            (Some(BoxError::OutOfBudget { coedge }), cost)
+        );
+    }
+    if varde_testing::pick(false, true) {
+        let (r, full) = needle_corners(u64::MAX);
+        let corners = r.expect("built on the whole budget");
+        assert_eq!(u64::from(full.levels[0].evals), corners.pieces());
+        assert!(Charge::setup(u64::MAX).spent(&full) > charge.share);
+    }
+}
+
+/// The needle counted with corners built on a share that suffices, on a
+/// share of its own: past it the count stops at the box whose test
+/// crossed it, at the first level.
+#[test]
+fn a_needle_s_count_runs_out_at_a_box() {
+    if !varde_testing::pick(false, true) {
+        return;
+    }
+    let f = polygon(1.0 / 4096.0, &NEEDLE);
+    let mut order = Order::default();
+    for (k, p) in NEEDLE.iter().enumerate() {
+        order
+            .pos
+            .insert((Operand::B, VertId(k as u32 + 1)), [p[0], p[1], 0.0]);
+    }
+    for t in &f.trims {
+        order.edges.insert((Operand::B, t.edge), t.ends);
+    }
+    let corners = f.corners(&order);
+    let (sh, ft, o) = no_reads(&order);
+    let reads = Records {
+        shadows: &sh,
+        feet: &ft,
+        order: o,
+    };
+    let q = column(1.5, 1.25, -0.01);
+    let point = Point::vert(Operand::A, VertId(7));
+    let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
+    let charge = Charge::new(1 << 10);
+    let (r, cost) = f.query_with(Some(&corners), &order, point, q, &rays, &|fq, _| {
+        count_pieces(fq, &Sides::new(), &reads, &charge)
+    });
+    let Err(CountError::OutOfBudget {
+        cause: Exhausted::Work,
+        at: Some(b),
+        ..
+    }) = r
+    else {
+        panic!("{r:?}");
+    };
+    assert_eq!(b.face(), FaceId(2));
+    assert!(charge.spent(&cost) > charge.share);
+    assert!(cost.levels[1..].iter().all(|l| l.evals == 0));
+}
+
+/// A count's charge is a function of its input and share: run alone or
+/// on several threads at once, each share stops at the same box with the
+/// same work.
+#[test]
+fn charges_are_the_same_on_every_thread() {
+    let runs: Vec<_> = [0, 500, 5000, u64::MAX]
+        .into_iter()
+        .map(|s| (on_thin(), Charge::new(s)))
+        .collect();
+    let alone = counts(&THIN, &runs);
+    let threads: Vec<_> = std::thread::scope(|s| {
+        let hs: Vec<_> = (0..4).map(|_| s.spawn(|| counts(&THIN, &runs))).collect();
+        hs.into_iter()
+            .map(|h| h.join().expect("a thread"))
+            .collect()
+    });
+    for t in threads {
+        assert_eq!(t, alone);
     }
 }

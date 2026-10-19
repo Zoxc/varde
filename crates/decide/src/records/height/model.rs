@@ -50,6 +50,8 @@
 //! `−n_f·S_êê` ([`FaceAt::bend`]), whatever side the point asks from.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use glam::DVec3;
 use malachite::Rational;
@@ -61,10 +63,11 @@ use crate::perturb::{
     Curved, EdgeEdge, Moving, MovingAt, PlaneHeight, PointHeight, Rate, Seg, UP, face_height,
     rate_rational, tangent_plane_row,
 };
-use crate::records::height::hit::{GermAt, HitFace, Motion, hit_on};
+use crate::records::height::hit::{GermAt, Hit, HitError, HitFace, Motion, face_hits, hit_on};
 use crate::records::height::{AnchorRow, HeightGeometry, KeyValue};
-use crate::records::keys::{Anchor, FootId, HKey, HeightKey, Operand, Point, Query};
+use crate::records::keys::{Anchor, FootId, HKey, HeightKey, HitIx, Operand, Point, Query, Sheet};
 use crate::records::ray::Span;
+use crate::records::shadow::LevelWork;
 use crate::records::shadow::ShadowGeometry;
 
 mod zorder;
@@ -103,6 +106,14 @@ pub trait HeightModel: ShadowGeometry {
     /// the model gives only at the levels ([`HeightModel::face_at`]).
     fn hit_face(&self, operand: Operand, f: FaceId) -> Option<HitFace<'_>> {
         let _ = (operand, f);
+        None
+    }
+
+    /// Where the model keeps the column hits of a point on a face once
+    /// found ([`HitMemo`]): the records of one point on one face (each
+    /// hit's value and rows) then find them once, not once per record.
+    /// By default none: each record finds its hit again.
+    fn hit_memo(&self) -> Option<&HitMemo> {
         None
     }
 
@@ -164,6 +175,43 @@ impl Pred for FlatHeight {
             FlatHeight::Below(p) => p.eval::<N>().neg(),
             FlatHeight::EdgeEdge(p) => p.eval(),
         }
+    }
+}
+
+/// The column hits of points on faces, each found once and kept for
+/// the records that read them ([`HeightModel::hit_memo`]). Found by
+/// [`face_hits`], a function of the point and the face, so what is kept
+/// is what any record would find; behind a lock, for records decided on
+/// several threads at once.
+#[derive(Debug, Default)]
+pub struct HitMemo {
+    hits: Mutex<BTreeMap<(Point, FaceId), Found>>,
+}
+
+/// The column hits of a point on a face, as found.
+type Found = Arc<Result<Vec<Hit>, HitError>>;
+
+impl HitMemo {
+    /// The hits of `q` on face `f`, `find` finding them the first time.
+    fn get(&self, q: Point, f: FaceId, find: impl FnOnce() -> Result<Vec<Hit>, HitError>) -> Found {
+        if let Some(h) = self.lock().get(&(q, f)) {
+            return h.clone();
+        }
+        // Found outside the lock: another thread may find them too, the
+        // same hits.
+        let found = Arc::new(find());
+        self.lock().entry((q, f)).or_insert(found).clone()
+    }
+
+    /// The points and faces whose hits are kept.
+    #[cfg(test)]
+    pub(crate) fn kept(&self) -> usize {
+        self.lock().len()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<(Point, FaceId), Found>> {
+        // A poisoned lock still holds whole entries.
+        self.hits.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -256,6 +304,29 @@ impl<M: HeightModel> ModelHeights<'_, M> {
     /// Face `f`'s rates at `q`'s column less `q`'s, per motion
     /// ([`Motion`]): the field's value at `q`'s position (the hit lies on
     /// its column), less the point's.
+    /// The hit of `q`'s column on face `f` (`face` its hit data) on
+    /// `sheet` with ordinal `i`, from the model's kept hits where it keeps
+    /// them (found once for the point and face), else found alone.
+    fn hit(
+        &self,
+        face: &HitFace<'_>,
+        q: Point,
+        f: FaceId,
+        (sheet, i): (Sheet, HitIx),
+    ) -> Result<Option<Hit>, HitError> {
+        let at = self.point(q).at.to_array();
+        let motion = self.motion(q, f);
+        if let Some(memo) = self.model.hit_memo() {
+            let all = memo.get(q, f, || face_hits(face, at, &motion));
+            // Where the face's hits as a whole can't be formed, this one
+            // still may be.
+            if let Ok(all) = &*all {
+                return Ok(all.iter().find(|h| h.sheet == sheet && h.i == i).cloned());
+            }
+        }
+        hit_on(face, sheet, i, at, &motion)
+    }
+
     fn motion(&self, q: Point, f: FaceId) -> Motion {
         let p = self.point(q);
         let rates = self.model.plane_rates(q, f, p.at);
@@ -371,8 +442,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
                 let Some(face) = self.model.hit_face(q.operand.other(), f) else {
                     return KeyValue::Curved;
                 };
-                let at = self.point(q).at.to_array();
-                KeyValue::Exact(match hit_on(&face, sheet, i, at, &self.motion(q, f)) {
+                KeyValue::Exact(match self.hit(&face, q, f, (sheet, i)) {
                     Ok(Some(hit)) => Ok(hit.height),
                     _ => NO_HIT,
                 })
@@ -386,7 +456,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
         }
     }
 
-    fn curved_value<S: Curved>(&self, h: HKey, like: &S) -> Option<S> {
+    fn curved_value<S: Curved>(&self, h: HKey, like: &S, _: &mut LevelWork) -> Option<S> {
         match h {
             HKey::Curve { q, .. } => {
                 let x = self.model.curved_target(h, like)?;
@@ -436,7 +506,7 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
             };
             let at = self.point(q).at.to_array();
             let deltas = self.motion(q, f);
-            let Ok(Some(hit)) = hit_on(&face, sheet, i, at, &deltas) else {
+            let Ok(Some(hit)) = self.hit(&face, q, f, (sheet, i)) else {
                 return AnchorRow::Exact([NO_HIT; ORDERS]);
             };
             return AnchorRow::Exact(hit.orders(&face, at, &deltas).unwrap_or([NO_HIT; ORDERS]));
@@ -466,7 +536,12 @@ impl<M: HeightModel> HeightGeometry for ModelHeights<'_, M> {
         })
     }
 
-    fn curved_row<S: Curved>(&self, k: HeightKey, like: &S) -> Option<[S; ORDERS]> {
+    fn curved_row<S: Curved>(
+        &self,
+        k: HeightKey,
+        like: &S,
+        _: &mut LevelWork,
+    ) -> Option<[S; ORDERS]> {
         let (face, q, neg) = self.curved_anchor(k, like)?;
         let ord = tangent_plane_row(&face.normal, &face.rates, &q)?;
         Some(if neg { ord.map(|x| x.neg()) } else { ord })

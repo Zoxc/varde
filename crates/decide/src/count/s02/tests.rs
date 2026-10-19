@@ -578,6 +578,8 @@ struct Planar<'a> {
     plane: Option<(DVec3, f64)>,
     q: [f64; 3],
     band: f64,
+    /// Where the records keep the column's hits, if they do.
+    memo: Option<&'a crate::records::height::model::HitMemo>,
 }
 
 impl Planar<'_> {
@@ -630,6 +632,10 @@ impl crate::records::height::model::HeightModel for Planar<'_> {
 
     fn hit_face(&self, _: Operand, _: FaceId) -> Option<crate::records::height::hit::HitFace<'_>> {
         self.face.hit_face(self.order)
+    }
+
+    fn hit_memo(&self) -> Option<&crate::records::height::model::HitMemo> {
+        self.memo
     }
 
     fn plane_rates(
@@ -707,6 +713,7 @@ fn planar_count(
         plane: Some(plane),
         q,
         band,
+        memo: None,
     };
     model_count(f, &geom, ladder, scale)
 }
@@ -837,9 +844,19 @@ fn two_refinements_give_one_hit_key_on_a_curved_tile() {
             plane: None,
             q,
             band,
+            memo: None,
         };
         let (n1, k1) = model_count(&f, &geom, true, [1.0, 1.0]);
         let (n2, k2) = model_count(&f, &geom, true, [7.0, 1.0 / 7.0]);
+        // The records reading the column's hits kept once for the point
+        // and face: the same records, the hits found once.
+        let memo = crate::records::height::model::HitMemo::default();
+        let kept = Planar {
+            memo: Some(&memo),
+            ..geom
+        };
+        assert_eq!(model_count(&f, &kept, true, [1.0, 1.0]), (n1, k1.clone()));
+        assert_eq!(memo.kept(), usize::from(!k1.is_empty()), "q = {q:?}");
         // One count, and whichever partition's near piece reads the hit
         // (the other's boxes may end clear of `q`'s height), one key.
         assert_eq!(n1, n2, "q = {q:?}");
@@ -1157,6 +1174,7 @@ fn a_cancelled_tangency_next_to_the_column_counts_as_the_oracle() {
                 plane: Some((DVec3::Z, 0.0)),
                 q,
                 band: 1.0 / 4096.0,
+                memo: None,
             };
             let (n, _) = model_count_with(&f, &geom, true, [1.0, 1.0], &rays);
             let truth = oracle

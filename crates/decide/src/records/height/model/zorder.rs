@@ -66,6 +66,7 @@ use crate::num::exact::{ORDERS, rat};
 use crate::perturb::{Curved, NU, R_HAT, UP, between, curve_point, shared_zorder, z_order_cone};
 use crate::records::height::{AnchorRow, HeightGeometry, KeyValue};
 use crate::records::keys::{Anchor, HKey, HeightKey, Operand, XKey};
+use crate::records::shadow::LevelWork;
 use crate::records::xrec::{XCluster, XCurve, XGeometry, XRec, ZRow};
 
 /// An edge pair's crossing record as its z-order keys read it.
@@ -188,7 +189,12 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
     /// The kept sub-boxes of a curved cluster at `like`'s level and the
     /// gap `UP·(C_g − C_e)` over them (module docs); `None` where the
     /// pieces can't be formed.
-    fn crossing<S: Curved>(&self, z: &ZAt<'_>, like: &S) -> Option<(Vec<Sub<S>>, [f64; 2])> {
+    fn crossing<S: Curved>(
+        &self,
+        z: &ZAt<'_>,
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Option<(Vec<Sub<S>>, [f64; 2])> {
         let piece = |c: &XCurve<'_>, span: u32, t: [f64; 2]| -> Option<Piece<S>> {
             let full = c.span(span, like)?;
             Some(Piece {
@@ -234,6 +240,7 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
                         .collect()
                 };
                 for sub in halves {
+                    work.boxes = work.boxes.saturating_add(1);
                     if !sub.apart(like)? {
                         let n = sub.e.size()? + sub.g.size()?;
                         if n > most {
@@ -247,6 +254,8 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
                 // Many kept: drop those whose Krawczyk image is certified
                 // apart from them (no crossing there; [`Self::newton`]).
                 if let Some(k) = Kraw::of(z, like) {
+                    let n = u32::try_from(next.len()).unwrap_or(u32::MAX);
+                    work.boxes = work.boxes.saturating_add(n);
                     next.retain(|sub| {
                         let x = sub.params(like);
                         k.step(&x, like).is_none_or(|n| !apart_params(&n, &x))
@@ -280,13 +289,20 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
     /// quadratically about it where the shadows are transversal; then the
     /// gap over what is kept, enclosed. `None` where nothing is narrower
     /// than the sub-boxes.
-    fn newton<S: Curved>(&self, z: &ZAt<'_>, subs: &[Sub<S>], like: &S) -> Option<S> {
+    fn newton<S: Curved>(
+        &self,
+        z: &ZAt<'_>,
+        subs: &[Sub<S>],
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Option<S> {
         let k = Kraw::of(z, like)?;
         let mut kept: Vec<[S; 2]> = Vec::new();
         for sub in subs {
             let mut x = sub.params(like);
             let mut root = true;
             for _ in 0..NEWTON_STEPS {
+                work.boxes = work.boxes.saturating_add(1);
                 let Some(next) = k.step(&x, like) else {
                     break;
                 };
@@ -318,8 +334,13 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
 
     /// The edge–edge orders of a curved cluster at `like`'s level, over
     /// its kept sub-boxes (module docs).
-    fn curved_orders<S: Curved>(&self, z: &ZAt<'_>, like: &S) -> Option<[S; ORDERS]> {
-        let (subs, _) = self.crossing(z, like)?;
+    fn curved_orders<S: Curved>(
+        &self,
+        z: &ZAt<'_>,
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Option<[S; ORDERS]> {
+        let (subs, _) = self.crossing(z, like, work)?;
         let mut out = [[f64::INFINITY, f64::NEG_INFINITY]; ORDERS];
         for s in &subs {
             let te = between(s.e.t[0], s.e.t[1], like);
@@ -609,19 +630,19 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
         }
     }
 
-    fn curved_value<S: Curved>(&self, h: HKey, like: &S) -> Option<S> {
+    fn curved_value<S: Curved>(&self, h: HKey, like: &S, work: &mut LevelWork) -> Option<S> {
         let Some(z) = self.cluster(h) else {
-            return self.base().curved_value(h, like);
+            return self.base().curved_value(h, like, work);
         };
         if z.cl.row != ZRow::EdgeEdge || Self::flat(&z) || Self::corner(&z) {
             return None;
         }
-        let (subs, [lo, hi]) = self.crossing(&z, like)?;
+        let (subs, [lo, hi]) = self.crossing(&z, like, work)?;
         let len = S::from_f64(UP.dot(UP), like).sqrt();
         let boxed = between(lo, hi, like);
         // Where the sub-boxes leave the sign open, Newton's steps at the
         // level may close it: the narrower enclosure.
-        let nv = self.newton(&z, &subs, like);
+        let nv = self.newton(&z, &subs, like, work);
         let v = match nv {
             Some(v) if width(&v) < width(&boxed) => v,
             _ => boxed,
@@ -642,15 +663,20 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
         }
     }
 
-    fn curved_row<S: Curved>(&self, k: HeightKey, like: &S) -> Option<[S; ORDERS]> {
+    fn curved_row<S: Curved>(
+        &self,
+        k: HeightKey,
+        like: &S,
+        work: &mut LevelWork,
+    ) -> Option<[S; ORDERS]> {
         let z = match (k.anchor, self.cluster(k.h)) {
             (Anchor::Edge(..), Some(z)) => z,
-            _ => return self.base().curved_row(k, like),
+            _ => return self.base().curved_row(k, like, work),
         };
         match z.cl.row {
             ZRow::Root { .. } => self.root_orders(&z, like),
             ZRow::EdgeEdge if Self::flat(&z) => None,
-            ZRow::EdgeEdge => self.curved_orders(&z, like),
+            ZRow::EdgeEdge => self.curved_orders(&z, like, work),
         }
     }
 

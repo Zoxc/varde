@@ -831,7 +831,7 @@ fn a_small_radius_on_a_short_span_far_out() {
     assert_eq!(got.feet.len(), 1);
     assert!(!got.feet[0].hull);
     assert!(
-        cost.levels[1..].iter().all(|l| l.evals == 0),
+        cost.levels[1..].iter().all(|l| l.evals == 0 && l.feet == 0),
         "{:?}",
         cost.levels
     );

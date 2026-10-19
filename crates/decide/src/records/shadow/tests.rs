@@ -1093,6 +1093,11 @@ fn a_record_s_cost_is_its_parts_rounded_up_once() {
         rational: 7,
         eval: [1, 2, 3, 4, 5],
         root: [10, 20, 30, 40, 50],
+        foot_poly: [100, 200, 300, 400, 500],
+        key_at: [1000, 2000, 3000, 4000, 5000],
+        at_end: [11, 12, 13, 14, 15],
+        zorder_box: [21, 22, 23, 24, 25],
+        hit: 77,
     };
     let mut cost = Cost::exact(Work {
         filters: 2,
@@ -1112,6 +1117,22 @@ fn a_record_s_cost_is_its_parts_rounded_up_once() {
     assert_eq!(cost.level_parts(3, &u), 4 + 6 * 40);
     let parts = 18 + 4 + 244;
     assert_eq!(cost.parts(&u), parts);
+    // Each record-evaluation kind at its own price, the hits at theirs.
+    let mut kinds = cost;
+    kinds.levels[1].feet = 2;
+    kinds.levels[1].keys = 1;
+    kinds.levels[2].ends = 3;
+    kinds.levels[4].boxes = 5;
+    kinds.hits = 2;
+    assert_eq!(kinds.level_parts(1, &u), 2 * 200 + 2000);
+    assert_eq!(kinds.level_parts(2, &u), 3 * 13);
+    assert_eq!(kinds.level_parts(4, &u), 5 * 25);
+    assert_eq!(
+        kinds.parts(&u),
+        parts + 2 * 200 + 2000 + 3 * 13 + 5 * 25 + 2 * 77
+    );
+    assert_eq!(kinds.and(Cost::default()), kinds);
+    assert_eq!(kinds.and(kinds).parts(&u), 2 * kinds.parts(&u));
     assert_eq!(cost.units(&u), parts.div_ceil(UNIT_PARTS));
     // Below a unit, a record costs one; nothing costs nothing.
     let one = Cost::exact(Work {
@@ -1141,9 +1162,15 @@ fn the_unit_table_grows_with_the_level() {
         ("count piece", UNITS.count_piece),
         ("record eval", r.eval),
         ("record root", r.root),
+        ("xrec piece", UNITS.xrec_piece),
+        ("foot polynomial", r.foot_poly),
+        ("key at", r.key_at),
+        ("at end", r.at_end),
+        ("z-order box", r.zorder_box),
     ] {
         assert!(row[0] > 0, "{kind}: {row:?}");
         assert!(row.windows(2).all(|w| w[0] <= w[1]), "{kind}: {row:?}");
     }
-    assert!(r.filter > 0 && r.expansion > 0 && r.rational > 0);
+    assert!(r.filter > 0 && r.expansion > 0 && r.rational > 0 && r.hit > 0);
+    const { assert!(UNITS.face_setup > 0) };
 }

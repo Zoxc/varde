@@ -176,7 +176,11 @@
 //! ([`SpanMap`]), the same `t` mapped linearly.
 //!
 //! Generic over the level, as the boxes are; each call reports the
-//! pieces it tested.
+//! pieces it tested (a degree's in it; the count charges those of a
+//! piece that doesn't settle too): the cuts' and windows' tests, and
+//! the trims' spans scanned against the outer sides (one piece per span
+//! tested exactly, one per `SCAN_SPANS` passed over in floats) and,
+//! for an uncut loop, against its sides and points.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -776,6 +780,11 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 || (*e == ahi && g.against(k, 1) == Ordering::Less)
         };
         let end_at = |e: &Rational| if *e == alo { elo } else { ehi };
+        // The spans scanned in floats, charged a piece per
+        // [`SCAN_SPANS`]; each tested exactly beyond, a piece.
+        self.pieces = self
+            .pieces
+            .saturating_add((t.spans.len() as u64).div_ceil(SCAN_SPANS));
         for (j, sp) in t.spans.iter().enumerate() {
             // Compare and select: the prefilter only (zeros' signs don't
             // matter against the ulp-wide margins).
@@ -793,6 +802,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             if kmax < lf.next_down() || kmin > lf.next_up() || omax < af || omin > bf {
                 continue;
             }
+            self.pieces = self.pieces.saturating_add(1);
             let fix: [Rational; 3] = sp.map(|p| rat(p[k]));
             let lo = fix.iter().min().expect("three");
             let hi = fix.iter().max().expect("three");
@@ -1025,8 +1035,17 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
     /// one of its sides, else from the face's sector at a curve's end or
     /// knot on it, a box corner of it a curve passes through or a point
     /// of a side a curve touches; `None`
-    /// where neither says.
-    fn uncut(&self, l: &[usize], segs: &[Seg]) -> Option<bool> {
+    /// where neither says. Its scans are charged a piece per span tested
+    /// exactly against a side or a point.
+    fn uncut(&mut self, l: &[usize], segs: &[Seg]) -> Option<bool> {
+        let mut n = 0u64;
+        let r = self.uncut_scan(l, segs, &mut n);
+        self.pieces = self.pieces.saturating_add(n);
+        r
+    }
+
+    /// [`Ctx::uncut`], adding the span tests to `n`.
+    fn uncut_scan(&self, l: &[usize], segs: &[Seg], n: &mut u64) -> Option<bool> {
         // A span along a side, the run on the side's high side (the span
         // lies below the side's moved line): the face's side of the span.
         let mut said: Option<bool> = None;
@@ -1043,6 +1062,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 global(seg.tile[o], seg.ext.hi()),
             );
             for t in self.face.trims() {
+                *n = n.saturating_add(t.spans.len() as u64);
                 for sp in t.spans {
                     let Some((c, n)) = on_line(sp, t.reversed, self.w) else {
                         continue;
@@ -1094,6 +1114,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                 global(seg.tile[o], seg.ext.hi()),
             );
             for sp in trims.iter().flat_map(|t| t.spans) {
+                *n = n.saturating_add(1);
                 if let Some(at) = tangency(sp, k, &line) {
                     let (p, _) = Leg::split(sp, &at);
                     if alo <= p[o] && p[o] <= ahi {
@@ -1107,7 +1128,10 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             .chain(corners)
             .chain(touch)
             .collect();
+        let spans = trims.iter().map(|t| t.spans.len() as u64).sum::<u64>();
         for wp in points {
+            // A point against the loop's sides, then against every span.
+            *n = n.saturating_add((l.len() as u64).div_ceil(SCAN_SPANS));
             // Per axis, whether the point lies on a side of that axis's
             // lines, and which way that line is moved.
             let mut on = [0i8; 2];
@@ -1128,6 +1152,7 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
             if on == [0, 0] {
                 continue;
             }
+            *n = n.saturating_add(spans);
             let toward = Toward { u: on[0], v: on[1] };
             // Every span leaving that point, with whether its coedge
             // leaves it: those ending there, and those passing through it,
@@ -1635,6 +1660,11 @@ fn count_between(
     Ok(count)
 }
 
+/// The spans one piece's charge covers where they are only scanned in
+/// floats (a span's control points against a side's line), not tested
+/// exactly.
+const SCAN_SPANS: u64 = 64;
+
 /// The degree of the piece of the run `boxes` of `face` with the ribbons
 /// `ribbons` about the query point `point`, whose shadow is `q` (module
 /// docs), `patches` the face's tiles' patches at the level worked at (one
@@ -1671,8 +1701,27 @@ pub fn strip_degree_near<S: Scalar>(
     point: Point,
     sides: &Sides,
 ) -> (Result<PieceDegree, PieceError>, Option<UvRect>) {
+    let mut pieces = 0;
+    strip_degree_counted(face, patches, boxes, ribbons, q, point, sides, &mut pieces)
+}
+
+/// [`strip_degree_near`], adding the pieces tested to `pieces` whether
+/// the piece settles or not (a failed attempt is work too).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn strip_degree_counted<S: Scalar>(
+    face: &FaceUv<'_>,
+    patches: &[HomPatch<S>],
+    boxes: &[BoxKey],
+    ribbons: &[Ribbon<'_>],
+    q: &QShadow,
+    point: Point,
+    sides: &Sides,
+    pieces: &mut u64,
+) -> (Result<PieceDegree, PieceError>, Option<UvRect>) {
     let mut near = None;
-    let r = piece_degree(face, patches, boxes, ribbons, q, point, sides, &mut near);
+    let r = piece_degree(
+        face, patches, boxes, ribbons, q, point, sides, &mut near, pieces,
+    );
     let near = if matches!(r, Err(PieceError::Unsettled | PieceError::Through)) {
         near
     } else {
@@ -1691,6 +1740,7 @@ fn piece_degree<S: Scalar>(
     point: Point,
     sides: &Sides,
     near: &mut Option<UvRect>,
+    pieces: &mut u64,
 ) -> Result<PieceDegree, PieceError> {
     if boxes.is_empty() {
         return Err(PieceError::Boxes);
@@ -1769,6 +1819,7 @@ fn piece_degree<S: Scalar>(
     };
     let r = run_degree(&mut ctx, boxes);
     *near = ctx.near;
+    *pieces = pieces.saturating_add(ctx.pieces);
     r
 }
 

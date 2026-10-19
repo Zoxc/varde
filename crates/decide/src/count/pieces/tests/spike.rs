@@ -13,6 +13,7 @@
 use super::*;
 use crate::count::boxes::{Corners, Role, box_hull, role, split};
 use crate::count::degree::{SidedError, box_degree_sided};
+use crate::count::s02::Charge;
 use crate::num::bounded::{down, up};
 use crate::perturb::UP;
 use crate::records::side::Sides;
@@ -457,7 +458,9 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
     let trims = shape.trims(beta);
     let face = FaceUv::new(Operand::A, FaceId(3), TILE, [1.0, 1.0], &trims, false).unwrap();
     let patches = tile_patch();
-    let corners = Corners::new(&face, &patches, &shape.order()).unwrap();
+    let corners = Corners::new(&face, &patches, &shape.order(), &Charge::setup(u64::MAX))
+        .0
+        .unwrap();
     assert!(
         corners.cusp(VertId(0)).is_some(),
         "the sharp corner's record"
@@ -593,7 +596,14 @@ fn check_shape(shape: &Shape, seed: u64, most: usize) {
     let s_beta = {
         let trims = shape.trims(beta);
         let face = FaceUv::new(Operand::A, FaceId(3), TILE, [1.0, 1.0], &trims, false).unwrap();
-        let c = Corners::new(&face, &tile_patch(), &shape.order()).unwrap();
+        let c = Corners::new(
+            &face,
+            &tile_patch(),
+            &shape.order(),
+            &Charge::setup(u64::MAX),
+        )
+        .0
+        .unwrap();
         c.cusp(VertId(0)).expect("a sharp corner").s_beta_f64()
     };
     // The shorter side's extent along `u`.

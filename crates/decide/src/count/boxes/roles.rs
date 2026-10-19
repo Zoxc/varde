@@ -110,11 +110,22 @@
 //! boxes then depends on their level only as [`classify`]'s mixed boxes
 //! do: a box's pieces separate further at a higher level.
 //!
+//! **Work.** Building the corners is the face's counting setup, done
+//! once per operation and charged as a kind of its own
+//! ([`Charge::setup`]): per piece whose hull a run's search forms, and a
+//! sharp corner's record as [`CUSP_PIECES`] pieces. The searches share
+//! one tree of the trims' pieces, so a piece another search (or the same
+//! one, from a neighbouring piece of the run) has visited costs nothing
+//! again: a run along a sliver visits each piece of the other curve a
+//! few times but forms its hull once. Past the share given the setup
+//! stops at once, [`BoxError::OutOfBudget`] at the coedge whose run it
+//! was building.
+//!
 //! **Thin.** Any other mixed box (two curves that are not one corner's,
 //! meeting a curve outside its runs, or one curve in several ranges) is
 //! **thin**: it refines in space, then in precision.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 
 use smallvec::SmallVec;
@@ -124,9 +135,11 @@ use super::{
     classify_in, cut, met_within, small, span_error, sub_patch, uv_curve, verdict,
 };
 use crate::bezier::{Dir, Dyadic, HomCurve, HomPatch, HullBox, Scalar};
+use crate::count::s02::Charge;
 use crate::ids::{CoedgeId, VertId};
 use crate::num::bounded::{Bounded, add_up, down, up};
 use crate::records::cusp::{CuspRec, CuspSpan, Sharp, cusp_rec};
+use crate::records::shadow::Cost;
 
 #[cfg(doc)]
 use super::classify;
@@ -147,9 +160,11 @@ pub const NEAR_PIECES: u32 = 256;
 /// spread over more is halved first.
 pub const HULL_TILES: u64 = 16;
 
-/// The pieces a sharp corner's record is charged as: a fixed count of
-/// exact polynomial tests, whatever the corner.
-pub const CUSP_PIECES: u64 = 64;
+/// The face setup pieces ([`Units::face_setup`](crate::records::shadow::Units::face_setup))
+/// a sharp corner's record is charged as: its exact polynomial tests,
+/// about four pieces' time whatever the corner (measured by the
+/// kernel's calibration benchmark).
+pub const CUSP_PIECES: u64 = 4;
 
 /// What a box is to the counting (module docs).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,11 +300,32 @@ impl Corners {
     /// patches of its tiles (one per tile, in
     /// [`FaceUv::tile_boxes`]' order); `order` lists the face's vertices
     /// in the geometric order (each once, lowest first), which decides
-    /// between corners.
+    /// between corners. The face's counting setup, charged against
+    /// `charge` (module docs, "Work"): with the corners, or the error,
+    /// the pieces tested ([`Cost`]'s first level's
+    /// [`evals`](crate::records::shadow::LevelWork::evals)), for the pass
+    /// to charge ([`Charge::spent`]); past the share
+    /// [`BoxError::OutOfBudget`].
     pub fn new(
         face: &FaceUv<'_>,
         patches: &[HomPatch<Bounded<f64>>],
         order: &[VertId],
+        charge: &Charge,
+    ) -> (Result<Corners, BoxError>, Cost) {
+        let mut meter = Meter {
+            charge,
+            pieces: 0,
+            site: CoedgeId::NONE,
+        };
+        let r = Corners::build(face, patches, order, &mut meter);
+        (r, meter.cost())
+    }
+
+    fn build(
+        face: &FaceUv<'_>,
+        patches: &[HomPatch<Bounded<f64>>],
+        order: &[VertId],
+        meter: &mut Meter<'_>,
     ) -> Result<Corners, BoxError> {
         if !face.patches_fit(patches) {
             return Err(BoxError::Patches);
@@ -380,7 +416,7 @@ impl Corners {
             patches,
             like: &like,
         };
-        let mut pieces = 0u64;
+        let mut tree = Tree::default();
         // Fits: the face checked the span counts fit a `u32`.
         let mut runs: Vec<[Run; 2]> = trims
             .iter()
@@ -396,7 +432,8 @@ impl Corners {
             let Some(pair) = curve_ends(trims, &ends, c as u32) else {
                 continue;
             };
-            pieces = pieces.saturating_add(CUSP_PIECES);
+            meter.site = trims[pair[0].0].coedge;
+            meter.add(CUSP_PIECES)?;
             let Some(rec) = sharp_corner(&ctx, pair)? else {
                 continue;
             };
@@ -441,9 +478,12 @@ impl Corners {
                 if others.is_empty() {
                     continue;
                 }
-                let (run, p) = run_from(&ctx, t, end, &others, limit)?;
-                runs[k][usize::from(end)] = run;
-                pieces = pieces.saturating_add(p);
+                meter.site = t.coedge;
+                let mut search = Search {
+                    tree: &mut tree,
+                    meter: &mut *meter,
+                };
+                runs[k][usize::from(end)] = run_from(&ctx, &mut search, k, end, &others, limit)?;
             }
         }
         Ok(Corners {
@@ -452,7 +492,7 @@ impl Corners {
             cusps,
             ends,
             runs,
-            pieces,
+            pieces: meter.pieces,
         })
     }
 
@@ -488,10 +528,127 @@ impl Corners {
         Some((&self.corners[self.ends[k][e] as usize], self.runs[k][e]))
     }
 
-    /// The pieces tested building the runs.
+    /// The pieces tested building the runs (each hull formed, and a
+    /// sharp corner's record as [`CUSP_PIECES`]).
     pub fn pieces(&self) -> u64 {
         self.pieces
     }
+}
+
+/// The pieces building the corners has tested, charged as they are
+/// (module docs, "Work").
+struct Meter<'c> {
+    charge: &'c Charge,
+    pieces: u64,
+    /// The coedge whose run (or sharp corner) is being built: the site of
+    /// a share run out.
+    site: CoedgeId,
+}
+
+impl Meter<'_> {
+    /// Counts `n` pieces tested, failing once past the share.
+    fn add(&mut self, n: u64) -> Result<(), BoxError> {
+        self.pieces = self.pieces.saturating_add(n);
+        if self.pieces.saturating_mul(self.charge.units[0]) > self.charge.share {
+            return Err(BoxError::OutOfBudget { coedge: self.site });
+        }
+        Ok(())
+    }
+
+    /// The pieces tested, as the first level's work.
+    fn cost(&self) -> Cost {
+        let mut c = Cost::default();
+        c.levels[0].evals = u32::try_from(self.pieces).unwrap_or(u32::MAX);
+        c
+    }
+}
+
+/// The pieces of the trims' p-curves the near searches have halved,
+/// each piece's hull formed once however many searches visit it (module
+/// docs, "Work").
+struct Tree<S> {
+    nodes: Vec<Node<S>>,
+    /// Per trim index and span, the node of the whole span.
+    roots: BTreeMap<(usize, usize), usize>,
+}
+
+impl<S> Default for Tree<S> {
+    fn default() -> Self {
+        Tree {
+            nodes: Vec::new(),
+            roots: BTreeMap::new(),
+        }
+    }
+}
+
+/// A piece of a p-curve's span in the [`Tree`].
+struct Node<S> {
+    c: HomCurve<S, 2>,
+    /// Its hull ([`piece_hull`]), once formed.
+    hull: Option<Option<HullBox>>,
+    /// Its halves, once split.
+    kids: Option<[usize; 2]>,
+}
+
+impl<S: Scalar> Tree<S> {
+    /// The node of span `k` of trim `o` (`t`) whole.
+    fn root(
+        &mut self,
+        ctx: &Space<'_, '_, '_, S>,
+        t: &Trim<'_>,
+        o: usize,
+        k: usize,
+    ) -> Result<usize, BoxError> {
+        if let Some(&n) = self.roots.get(&(o, k)) {
+            return Ok(n);
+        }
+        let c = uv_curve(&t.spans[k], ctx.like).ok_or(span_error(t, k))?;
+        let n = self.push(c);
+        self.roots.insert((o, k), n);
+        Ok(n)
+    }
+
+    fn push(&mut self, c: HomCurve<S, 2>) -> usize {
+        self.nodes.push(Node {
+            c,
+            hull: None,
+            kids: None,
+        });
+        self.nodes.len() - 1
+    }
+
+    /// Node `n`'s hull, formed and charged the first time.
+    fn hull(
+        &mut self,
+        ctx: &Space<'_, '_, '_, S>,
+        n: usize,
+        meter: &mut Meter<'_>,
+    ) -> Result<Option<HullBox>, BoxError> {
+        if let Some(h) = self.nodes[n].hull {
+            return Ok(h);
+        }
+        let h = piece_hull(ctx, &self.nodes[n].c);
+        self.nodes[n].hull = Some(h);
+        meter.add(1)?;
+        Ok(h)
+    }
+
+    /// Node `n`'s halves, the lower first.
+    fn kids(&mut self, n: usize) -> [usize; 2] {
+        if let Some(k) = self.nodes[n].kids {
+            return k;
+        }
+        let [l, r] = self.nodes[n].c.split_half();
+        let k = [self.push(l), self.push(r)];
+        self.nodes[n].kids = Some(k);
+        k
+    }
+}
+
+/// A run's or a tube's search: the pieces halved so far and the meter.
+struct Search<'s, 'c, S> {
+    tree: &'s mut Tree<S>,
+    meter: &'s mut Meter<'c>,
 }
 
 /// The two curve ends at corner `c` (trim index, end), the curve into
@@ -600,29 +757,35 @@ struct Space<'f, 'p, 'l, S> {
     like: &'l S,
 }
 
-/// The run of trim `t`'s curve from its end `end`, within the band of
+/// The run of trim `ti`'s curve from its end `end`, within the band of
 /// one of the trims `others` (each over a range of its spans) (module
-/// docs), over at most `limit` spans from the end, and the pieces tested.
+/// docs), over at most `limit` spans from the end. Its pieces are the
+/// tree's (`search`), so a piece another run's search visited is not
+/// formed again.
 fn run_from<S: Scalar>(
     ctx: &Space<'_, '_, '_, S>,
-    t: &Trim<'_>,
+    search: &mut Search<'_, '_, S>,
+    ti: usize,
     end: u8,
     others: &[(usize, Range<usize>)],
     limit: usize,
-) -> Result<(Run, u64), BoxError> {
+) -> Result<Run, BoxError> {
+    let t = &ctx.face.trims()[ti];
     let n = t.spans.len();
     let mut budget = RUN_PIECES;
-    let mut tested = 0u64;
     let order: Vec<usize> = if end == 0 {
         (0..limit).collect()
     } else {
         (n - limit..n).rev().collect()
     };
     for j in order {
-        let c = uv_curve(&t.spans[j], ctx.like).ok_or(span_error(t, j))?;
-        // The piece with the corner's end at its parameter 0.
-        let c = if end == 0 { c } else { c.reversed() };
-        if let Some((k, d)) = reach(ctx, &c, (0, 0), others, &mut budget, &mut tested)? {
+        let node = search.tree.root(ctx, t, ti, j)?;
+        // From the corner's end: from end 1 the halves come high first.
+        let from = Side {
+            node,
+            rev: end == 1,
+        };
+        if let Some((k, d)) = reach(ctx, search, from, (0, 0), others, &mut budget)? {
             let at = if end == 0 {
                 Dyadic::new(k, d)
             } else {
@@ -636,7 +799,7 @@ fn run_from<S: Scalar>(
                 span: j as u32,
                 at,
             };
-            return Ok((run, tested.saturating_add(u64::from(RUN_PIECES - budget))));
+            return Ok(run);
         }
     }
     // Fits: the face checked the span count.
@@ -653,7 +816,7 @@ fn run_from<S: Scalar>(
             at: Dyadic::ZERO,
         }
     };
-    Ok((run, tested.saturating_add(u64::from(RUN_PIECES - budget))))
+    Ok(run)
 }
 
 /// How far from its parameter 0 the piece `c`, `[k/2^d, (k + 1)/2^d]` of
@@ -662,23 +825,21 @@ fn run_from<S: Scalar>(
 /// run stops (module docs).
 fn reach<S: Scalar>(
     ctx: &Space<'_, '_, '_, S>,
-    c: &HomCurve<S, 2>,
+    search: &mut Search<'_, '_, S>,
+    c: Side,
     (k, d): (u64, u32),
     others: &[(usize, Range<usize>)],
     budget: &mut u32,
-    tested: &mut u64,
 ) -> Result<Option<(u64, u32)>, BoxError> {
     if *budget == 0 {
         return Ok(Some((k, d)));
     }
     *budget -= 1;
-    let h = piece_hull(ctx, c);
+    let h = search.tree.hull(ctx, c.node, search.meter)?;
     if let Some(h) = &h {
         for (o, spans) in others {
-            let t = &ctx.face.trims()[*o];
-            let (near, n) = near_curve(ctx, h, t, spans.clone(), t.band)?;
-            *tested = tested.saturating_add(n);
-            if near {
+            let band = ctx.face.trims()[*o].band;
+            if near_curve(ctx, search, h, *o, spans.clone(), band)? {
                 return Ok(None);
             }
         }
@@ -689,11 +850,21 @@ fn reach<S: Scalar>(
     if d >= RUN_DEPTH || fine {
         return Ok(Some((k, d)));
     }
-    let [l, r] = c.split_half();
-    if let Some(stop) = reach(ctx, &l, (2 * k, d + 1), others, budget, tested)? {
+    let [lo, hi] = search.tree.kids(c.node);
+    let [l, r] = if c.rev { [hi, lo] } else { [lo, hi] };
+    let half = |node| Side { node, rev: c.rev };
+    if let Some(stop) = reach(ctx, search, half(l), (2 * k, d + 1), others, budget)? {
         return Ok(Some(stop));
     }
-    reach(ctx, &r, (2 * k + 1, d + 1), others, budget, tested)
+    reach(ctx, search, half(r), (2 * k + 1, d + 1), others, budget)
+}
+
+/// A piece of a run in the tree, and whether the run goes against the
+/// span's direction (from its end 1).
+#[derive(Clone, Copy)]
+struct Side {
+    node: usize,
+    rev: bool,
 }
 
 /// The least band among the trims `others`.
@@ -704,49 +875,51 @@ fn least_band<S>(ctx: &Space<'_, '_, '_, S>, others: &[(usize, Range<usize>)]) -
         .fold(f64::INFINITY, |m, b| if b < m { b } else { m })
 }
 
-/// Whether the hull `h` lies within `beta` of trim `t`'s curve over its
-/// spans `spans` (module docs), and the pieces tested.
+/// Whether the hull `h` lies within `beta` of the curve of trim `o` over
+/// its spans `spans` (module docs), the pieces' hulls formed in
+/// `search`'s tree once.
 fn near_curve<S: Scalar>(
     ctx: &Space<'_, '_, '_, S>,
+    search: &mut Search<'_, '_, S>,
     h: &HullBox,
-    t: &Trim<'_>,
+    o: usize,
     spans: Range<usize>,
     beta: f64,
-) -> Result<(bool, u64), BoxError> {
+) -> Result<bool, BoxError> {
+    let t = &ctx.face.trims()[o];
     let b2 = [down(beta * beta), up(beta * beta)];
     // Breadth first, the spans in order and each piece's halves in order,
     // so the budget goes to the coarsest pieces first.
     let mut queue = VecDeque::new();
     for k in spans {
-        let s = &t.spans[k];
-        queue.push_back((uv_curve(s, ctx.like).ok_or(span_error(t, k))?, 0u32));
+        queue.push_back((search.tree.root(ctx, t, o, k)?, 0u32));
     }
-    let mut tested = 0u64;
-    while let Some((c, depth)) = queue.pop_front() {
-        if tested >= u64::from(NEAR_PIECES) {
+    let mut tested = 0u32;
+    while let Some((n, depth)) = queue.pop_front() {
+        if tested >= NEAR_PIECES {
             break;
         }
         tested += 1;
-        let q = piece_hull(ctx, &c);
+        let q = search.tree.hull(ctx, n, search.meter)?;
         if let Some(q) = &q {
             // No point of the piece has all of `h` within `β`.
             if centre_sq(h, q) > b2[1] {
                 continue;
             }
             if farthest_sq(h, q) <= b2[0] {
-                return Ok((true, tested));
+                return Ok(true);
             }
         }
         // A piece within a sixteenth of the band that doesn't certify:
         // its halves wouldn't by more.
         let fine = q.is_some_and(|q| within_band(&q, beta * 0.0625));
         if depth < NEAR_DEPTH && !fine {
-            let [l, r] = c.split_half();
+            let [l, r] = search.tree.kids(n);
             queue.push_back((l, depth + 1));
             queue.push_back((r, depth + 1));
         }
     }
-    Ok((false, tested))
+    Ok(false)
 }
 
 /// An upper bound of the exact value `x` was rounded from.
@@ -944,8 +1117,22 @@ pub fn in_tube<S: Scalar>(
         patches,
         like: &like,
     };
-    let (inside, pieces) = near_curve(&ctx, &h, t, 0..t.spans.len(), t.band)?;
-    Ok(Tube { inside, pieces })
+    let o = face.trim_index(coedge).expect("found above");
+    let charge = Charge::new(u64::MAX);
+    let mut meter = Meter {
+        charge: &charge,
+        pieces: 0,
+        site: coedge,
+    };
+    let mut search = Search {
+        tree: &mut Tree::default(),
+        meter: &mut meter,
+    };
+    let inside = near_curve(&ctx, &mut search, &h, o, 0..t.spans.len(), t.band)?;
+    Ok(Tube {
+        inside,
+        pieces: meter.pieces,
+    })
 }
 
 /// The role of box `b` of `face` at `like`'s level (module docs):

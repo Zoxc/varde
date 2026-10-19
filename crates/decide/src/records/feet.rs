@@ -527,7 +527,7 @@ fn span_at<S: Scalar>(
     let Some(f) = foot_poly(pts, q, r, like) else {
         return Step::Bad;
     };
-    work.evals = work.evals.saturating_add(1);
+    work.feet = work.feet.saturating_add(1);
     let limits = Limits {
         max_depth: MAX_ROOT_DEPTH,
         max_splits: MAX_SPLITS,

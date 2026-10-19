@@ -468,7 +468,9 @@ fn check_corner(case: Case, spiky: bool) {
     let built = Built::new(&case.loops, case.beta);
     let trims = built.trims();
     let face = face_uv(&trims);
-    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+        .0
+        .expect("corners");
     let corner = corners.corner(case.w).expect("the corner");
     assert!(corner.curves.contains(&case.into) && corner.curves.contains(&case.out));
     let span_of = |c: CoedgeId| &trims[c.index()].spans[0];
@@ -601,7 +603,9 @@ fn zero_length_edges_belong_to_the_corner() {
     let trims = built.trims();
     let face = face_uv(&trims);
     let ps = plane();
-    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+        .0
+        .expect("corners");
     let corner = corners
         .corner(VertId(0))
         .expect("one corner of both vertices");
@@ -654,7 +658,9 @@ fn slits_are_strips_of_both_sides() {
         let built = Built::new(&loops, BETA);
         let trims = built.trims();
         let face = face_uv(&trims);
-        let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+        let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+            .0
+            .expect("corners");
         let region = |b: &BoxKey| box_dist(b, [1.0, 0.75]) <= 0.4;
         let leaves = refine(&face, &corners, &ps, BETA, &region, 30);
         let (mut strips, mut feet) = (0, 0);
@@ -683,7 +689,9 @@ fn bad_corners_input_is_refused() {
     let face = face_uv(&trims);
     let ps = plane();
     assert_eq!(
-        Corners::new(&face, &ps[1..], &geo(&face)).err(),
+        Corners::new(&face, &ps[1..], &geo(&face), &Charge::setup(u64::MAX))
+            .0
+            .err(),
         Some(BoxError::Patches)
     );
     let b = face.tile_boxes().next().unwrap();
@@ -697,7 +705,14 @@ fn bad_corners_input_is_refused() {
     let other = Built::new(&reflex().loops, BETA);
     let other_trims = other.trims();
     let other_face = face_uv(&other_trims);
-    let corners = Corners::new(&other_face, &ps, &geo(&other_face)).unwrap();
+    let corners = Corners::new(
+        &other_face,
+        &ps,
+        &geo(&other_face),
+        &Charge::setup(u64::MAX),
+    )
+    .0
+    .unwrap();
     assert_eq!(
         role(&face, &corners, &b, &first(), None).err(),
         Some(BoxError::Foreign)
@@ -727,7 +742,9 @@ fn round_vertex(case: &Case) -> (usize, Vec<BoxKey>) {
     let built = Built::new(&case.loops, case.beta);
     let trims = built.trims();
     let face = face_uv(&trims);
-    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+        .0
+        .expect("corners");
     let r = 8.0 * case.beta;
     let region = |b: &BoxKey| box_dist(b, case.at) <= r;
     let leaves = refine(&face, &corners, &ps, case.beta, &region, MAX_BOX_DEPTH);
@@ -771,7 +788,9 @@ fn leaves_round(loops: &[Vec<Edge>], at: [f64; 2], r: f64) -> Vec<(BoxKey, Role)
     let built = Built::new(loops, BETA);
     let trims = built.trims();
     let face = face_uv(&trims);
-    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+        .0
+        .expect("corners");
     let region = |b: &BoxKey| box_dist(b, at) <= r;
     refine(&face, &corners, &ps, BETA, &region, 40)
 }
@@ -914,7 +933,9 @@ fn a_cusp_at_a_tight_band_is_one_record() {
     let trims = built.trims();
     let face = face_uv(&trims);
     let ps = plane();
-    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+        .0
+        .expect("corners");
     let rec = corners.cusp(case.w).expect("a sharp corner's record");
     assert_eq!(rec.m, 2);
     let s_beta = rec.s_beta_f64();
@@ -987,7 +1008,9 @@ fn a_box_in_two_corners_goes_to_the_lower_vertex() {
         let built = Built::new(&lens(ids), BETA);
         let trims = built.trims();
         let face = face_uv(&trims);
-        let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+        let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+            .0
+            .expect("corners");
         assert_eq!(corners.corners().len(), 2);
         let region = |b: &BoxKey| box_dist(b, [1.0, 0.5]) <= BETA;
         let leaves = refine(&face, &corners, &ps, BETA, &region, 30);
@@ -1016,7 +1039,9 @@ fn a_box_in_two_corners_goes_to_the_lower_vertex() {
         vec![VertId(0), VertId(5)],
     ] {
         assert_eq!(
-            Corners::new(&face, &ps, &order).err(),
+            Corners::new(&face, &ps, &order, &Charge::setup(u64::MAX))
+                .0
+                .err(),
             Some(BoxError::Order)
         );
     }
@@ -1050,7 +1075,9 @@ fn a_teardrop_is_a_strip_of_one_range_at_a_time() {
     let trims = built.trims();
     let face = face_uv(&trims);
     let ps = plane();
-    let corners = Corners::new(&face, &ps, &geo(&face)).expect("corners");
+    let corners = Corners::new(&face, &ps, &geo(&face), &Charge::setup(u64::MAX))
+        .0
+        .expect("corners");
     // A box an eighth wide just right of the vertex, a half high: both
     // spans cross it.
     let grid = |x: f64, up: bool| {

@@ -533,15 +533,40 @@ fn runs_of_any_partition_sum_to_the_whole() {
     }
 }
 
+/// A box inside the trim alone: its loop no cut settles. The work of
+/// finding so (the loop's scans of the trims) is reported all the same,
+/// for the count to charge.
 #[test]
 fn a_box_inside_the_trim_alone_is_unsettled() {
     let s = Setup::new(-DELTA);
     let trims = [trim(&s.spans, 1, false)];
     let r = run();
+    let q = [5.0, 4.0, 0.0];
     assert_eq!(
-        s.degree(&trims, false, &[1], &[r[3]], [5.0, 4.0, 0.0]),
+        s.degree(&trims, false, &[1], &[r[3]], q),
         Err(PieceError::Unsettled)
     );
+    let face = FaceUv::new(Operand::A, FaceId(3), TILES, [1.0, 1.0], &trims, false).unwrap();
+    let rec = rays(&s.curve, q);
+    let ribbons = [Ribbon {
+        coedge: CoedgeId(1),
+        curve: &s.curve,
+        map: &s.maps,
+        rays: &rec,
+    }];
+    let mut tested = 0;
+    let (got, _) = strip_degree_counted(
+        &face,
+        &s.patches,
+        &[r[3]],
+        &ribbons,
+        &QShadow::of(q).unwrap(),
+        point(),
+        &Sides::new(),
+        &mut tested,
+    );
+    assert_eq!(got, Err(PieceError::Unsettled));
+    assert!(tested > 0, "the scans are work");
 }
 
 #[test]

@@ -101,7 +101,8 @@ use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor};
 
 use crate::bezier::Dyadic;
 use crate::count::boxes::SPLIT_SIXTEENTHS;
-use crate::count::xrec::XClusterError;
+use crate::count::s02::{Charge, Exhausted};
+use crate::count::xrec::{Allow, XClusterError, form_charged};
 use crate::ids::EdgeId;
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
@@ -116,7 +117,7 @@ use crate::perturb::{
 use crate::records::height::HeightReads;
 use crate::records::keys::{EdgeAt, Operand, Point, RayKey, RecordKey, XKey};
 use crate::records::ray::Span;
-use crate::records::shadow::LEVELS;
+use crate::records::shadow::{Cost, LEVELS};
 
 use super::{XCluster, XCurve, XGeometry, XPair, XPart, XRec, XSides, XWant, ZRow, x_count};
 
@@ -144,6 +145,11 @@ pub enum SharedError {
     Need(Vec<XWant>),
     /// The box search away from the overlap failed so.
     Away(XClusterError),
+    /// The root search ran past the share it was given
+    /// ([`shared_clusters_charged`]): [`Exhausted::Work`] at the first
+    /// level, [`Exhausted::Precision`] above it. (The box search away from
+    /// the overlap runs out as [`SharedError::Away`].)
+    OutOfBudget(Exhausted),
     /// The clusters' degrees don't sum to the four terms' count: a gap in
     /// the rule, never answered.
     Inconsistent {
@@ -249,6 +255,38 @@ pub fn shared_clusters<R: HeightReads, G: XGeometry>(
     x: XKey,
     pair: &XPair<'_>,
 ) -> Result<XRec, SharedError> {
+    shared_clusters_charged(reads, geom, sides, x, pair, &Charge::xrec(u64::MAX)).0
+}
+
+/// [`shared_clusters`], charged against `charge` at its level's unit per
+/// piece ([`Charge::xrec`]): each evaluation of `h` the root search makes
+/// and every piece the box search away from the overlap tests (its
+/// diagonal band's included, [`form_charged`]), on what the roots left.
+/// With the record, or the error, the pieces per level
+/// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) for
+/// the pass to charge ([`Charge::spent`]).
+pub fn shared_clusters_charged<R: HeightReads, G: XGeometry>(
+    reads: &R,
+    geom: &G,
+    sides: &XSides,
+    x: XKey,
+    pair: &XPair<'_>,
+    charge: &Charge,
+) -> (Result<XRec, SharedError>, Cost) {
+    let mut cost = Cost::default();
+    let r = shared_in(reads, geom, sides, x, pair, charge, &mut cost);
+    (r, cost)
+}
+
+fn shared_in<R: HeightReads, G: XGeometry>(
+    reads: &R,
+    geom: &G,
+    sides: &XSides,
+    x: XKey,
+    pair: &XPair<'_>,
+    charge: &Charge,
+    cost: &mut Cost,
+) -> Result<XRec, SharedError> {
     if pair.e.span_count() == 0 || pair.g.span_count() == 0 {
         return Err(SharedError::Shape);
     }
@@ -273,14 +311,28 @@ pub fn shared_clusters<R: HeightReads, G: XGeometry>(
         mirror: along(reads, Operand::A, x.e) == Along::Reversed,
     };
     let mut leaves = None;
+    let mut spent = 0u64;
     for level in 0..LEVELS {
-        match roots_at(&ctx, level) {
+        let allow = Allow {
+            unit: charge.units[level],
+            left: charge.share.saturating_sub(spent),
+        };
+        let mut evals = 0u64;
+        let r = roots_at(&ctx, level, allow, &mut evals);
+        cost.levels[level].evals = cost.levels[level]
+            .evals
+            .saturating_add(u32::try_from(evals).unwrap_or(u32::MAX));
+        spent = spent.saturating_add(evals.saturating_mul(allow.unit));
+        match r {
             None => break,
             Some(Ok(l)) => {
                 leaves = Some(l);
                 break;
             }
             Some(Err(SharedError::Unsettled)) => {}
+            Some(Err(SharedError::OutOfBudget(Exhausted::Work))) if level > 0 => {
+                return Err(SharedError::OutOfBudget(Exhausted::Precision));
+            }
             Some(Err(e)) => return Err(e),
         }
     }
@@ -299,7 +351,13 @@ pub fn shared_clusters<R: HeightReads, G: XGeometry>(
     let mut clusters: Vec<XCluster> = leaves.iter().map(|l| ctx.cluster(l)).collect();
     let mut level = 0;
     if chains {
-        let away = crate::count::xrec::form(x, pair, sides).map_err(|e| match e {
+        let rest = Charge {
+            share: charge.share.saturating_sub(spent),
+            units: charge.units,
+        };
+        let (away, c) = form_charged(x, pair, sides, &rest);
+        *cost = cost.and(c);
+        let away = away.map_err(|e| match e {
             XClusterError::Need(ks) => SharedError::Need(ks),
             e => SharedError::Away(e),
         })?;
@@ -566,13 +624,15 @@ fn line_run<G: XGeometry>(
 fn roots_at<G: XGeometry>(
     ctx: &Ctx<'_, G>,
     level: usize,
+    allow: Allow,
+    evals: &mut u64,
 ) -> Option<Result<Vec<Leaf>, SharedError>> {
     Some(match level {
-        0 => roots(ctx, &Bounded::exact(0.0)),
-        1 => roots(ctx, &Bounded::exact(Dd::from_f64(0.0))),
+        0 => roots(ctx, &Bounded::exact(0.0), allow, evals),
+        1 => roots(ctx, &Bounded::exact(Dd::from_f64(0.0)), allow, evals),
         _ => {
             let w = *Width::ALL.get(level - 2)?;
-            roots(ctx, &Bounded::exact(Big::from_f64(0.0, w)))
+            roots(ctx, &Bounded::exact(Big::from_f64(0.0, w)), allow, evals)
         }
     })
 }
@@ -746,7 +806,14 @@ impl<G: XGeometry> Ctx<'_, G> {
 }
 
 /// The root clusters at `like`'s level (module docs, "Pieces").
-fn roots<S: Curved, G: XGeometry>(ctx: &Ctx<'_, G>, like: &S) -> Result<Vec<Leaf>, SharedError> {
+/// Each evaluation of `h` is added to `charged`, the search stopping
+/// once they cost more than `allow` gives.
+fn roots<S: Curved, G: XGeometry>(
+    ctx: &Ctx<'_, G>,
+    like: &S,
+    allow: Allow,
+    charged: &mut u64,
+) -> Result<Vec<Leaf>, SharedError> {
     // Breadth first, so every part of the overlap is looked at before
     // any is refined far.
     let mut work: VecDeque<Piece> = VecDeque::new();
@@ -790,6 +857,10 @@ fn roots<S: Curved, G: XGeometry>(ctx: &Ctx<'_, G>, like: &S) -> Result<Vec<Leaf
         evals += 1;
         if evals > MAX_H_PIECES {
             return Err(SharedError::Unsettled);
+        }
+        *charged = charged.saturating_add(1);
+        if allow.over(*charged) {
+            return Err(SharedError::OutOfBudget(Exhausted::Work));
         }
         let run = &ctx.runs[p.run];
         let span = run.segs[p.seg].0;

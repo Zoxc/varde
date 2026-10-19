@@ -135,10 +135,19 @@
 //! [`CountError::OutOfBudget`] with [`Exhausted::Precision`], keyed by
 //! the point and the face, never a loop. Every piece tested is charged,
 //! at its level's units ([`Charge`]), against the share of the budget the
-//! count is given: running past it stops the count at once,
-//! [`Exhausted::Work`] at the first level and [`Exhausted::Precision`]
-//! above it. [`MAX_LEAVES`] and [`MAX_ROUNDS`] are fixed limits,
-//! [`Exhausted::SizeLimit`].
+//! count is given: a box's classification and split (a split the cap
+//! then refuses included), a degree attempted whether it settles or not
+//! (a side or a run read again at a finer box is work again), a trim span
+//! scanned against a run's sides or a loop's points. The column's hits
+//! are found once for every level and charged when found, per tile and
+//! ribbon span searched, at their own row. A step is charged after it
+//! runs, so the one that crosses the share is the crossing: the count
+//! stops at once, [`Exhausted::Work`] at the first level and
+//! [`Exhausted::Precision`] above it, keyed by the box whose test
+//! crossed it (none where the hits did). [`MAX_LEAVES`] and
+//! [`MAX_ROUNDS`] are fixed limits, [`Exhausted::SizeLimit`]. The face's
+//! corners are its setup, built and charged once per operation
+//! ([`Corners::new`]).
 
 use std::cell::OnceCell;
 use std::cmp::Ordering;
@@ -151,8 +160,8 @@ use super::boxes::{
     BoxError, BoxKey, Corners, FaceUv, QShadow, Role, SpanRef, box_hull, global, role, split,
     sub_patch, within_band,
 };
-use super::degree::{SidedError, box_degree_sided};
-use super::pieces::{ExactRect, PieceError, Ribbon, UvRect, exact_rect, strip_degree_near};
+use super::degree::{SidedError, box_degree_counted};
+use super::pieces::{ExactRect, PieceError, Ribbon, UvRect, exact_rect, strip_degree_counted};
 use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::{Bounded, add_up, mul_up, up};
@@ -170,10 +179,12 @@ use crate::records::keys::{
 use crate::records::ray::RayLevel;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing, TileNet};
 use crate::records::shadow::{
-    AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, UNITS, ladder,
+    AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, UNIT_PARTS, UNITS, ladder,
 };
 use crate::records::side::{Sides, Want};
 
+#[cfg(doc)]
+use super::{degree::box_degree_sided, pieces::strip_degree_near};
 #[cfg(doc)]
 use crate::records::height::HeightRec;
 
@@ -184,11 +195,13 @@ pub const MAX_LEAVES: usize = 1 << 16;
 /// counting the times after only joining some to a near run).
 pub const MAX_ROUNDS: u32 = 64;
 
-/// What a count may spend (module docs): `share` units, a piece tested
-/// at level `k` costing `units[k]`.
+/// What a count (or another search charged per piece: a face's setup,
+/// an edge pair's clusters) may spend (module docs): `share` units, a
+/// piece tested at level `k` costing `units[k]`, a column hit search its
+/// own row ([`RecordUnits::hit`](crate::records::shadow::RecordUnits::hit)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Charge {
-    /// The units the count may spend, its share of the budget left.
+    /// The units the search may spend, its share of the budget left.
     pub share: u64,
     /// The units of one piece tested, per precision level.
     pub units: [u64; LEVELS],
@@ -204,12 +217,42 @@ impl Charge {
         }
     }
 
-    /// The units of `cost`'s pieces.
+    /// A share of `share` units for a face's counting setup
+    /// ([`Corners::new`]), at the table's unit for its pieces
+    /// ([`Units::face_setup`](crate::records::shadow::Units::face_setup)).
+    pub fn setup(share: u64) -> Charge {
+        Charge {
+            share,
+            units: [UNITS.face_setup; LEVELS],
+        }
+    }
+
+    /// A share of `share` units for an edge pair's cluster search
+    /// ([`clusters`](crate::count::xrec::clusters)), at the table's units
+    /// for its pieces
+    /// ([`Units::xrec_piece`](crate::records::shadow::Units::xrec_piece)).
+    pub fn xrec(share: u64) -> Charge {
+        Charge {
+            share,
+            units: UNITS.xrec_piece,
+        }
+    }
+
+    /// The units of `cost`'s pieces, and of its column hit searches
+    /// (rounded up to whole units).
     pub fn spent(&self, cost: &Cost) -> u64 {
-        cost.levels.iter().zip(self.units).fold(0u64, |s, (l, u)| {
+        let hits = hit_units(cost.hits);
+        cost.levels.iter().zip(self.units).fold(hits, |s, (l, u)| {
             s.saturating_add(u64::from(l.evals).saturating_mul(u))
         })
     }
+}
+
+/// The units of `n` column hit searches, rounded up.
+fn hit_units(n: u32) -> u64 {
+    u64::from(n)
+        .saturating_mul(UNITS.record.hit)
+        .div_ceil(UNIT_PARTS)
 }
 
 /// What a count ran out of ([`CountError::OutOfBudget`]).
@@ -315,6 +358,10 @@ pub enum CountError {
         point: Point,
         /// The face.
         face: FaceId,
+        /// Where the share ran out: the box whose test crossed it (`None`
+        /// past the share on the column's hits, and for the fixed limits
+        /// and the last level unsettled, which no one box reaches).
+        at: Option<BoxKey>,
     },
 }
 
@@ -633,24 +680,55 @@ fn components(n: usize, linked: impl Fn(usize, usize) -> bool) -> Vec<Vec<usize>
     out.into_values().collect()
 }
 
+/// The column's hits on a face, found when first asked for and kept
+/// for every level ([`count_pieces`]), with whether their search is
+/// charged yet.
+#[derive(Default)]
+struct HitCell {
+    hits: OnceCell<Result<Vec<Hit>, HitError>>,
+    charged: std::cell::Cell<bool>,
+}
+
 /// A face's exact data and the column's hits on it, found when
 /// first asked for (a face whose leaves are all clear or dropped asks
 /// none).
-struct Flat<'a> {
+struct Flat<'a, 'h> {
     face: HitFace<'a>,
     at: [f64; 3],
     motion: &'a Motion,
-    hits: OnceCell<Result<Vec<Hit>, HitError>>,
+    cell: &'h HitCell,
 }
 
-impl Flat<'_> {
+impl Flat<'_, '_> {
     /// The column's hits on the face.
     fn hits(&self) -> Result<&[Hit], CountError> {
-        self.hits
+        self.cell
+            .hits
             .get_or_init(|| face_hits(&self.face, self.at, self.motion))
             .as_deref()
             .map_err(|e| CountError::Hits(*e))
     }
+
+    /// The tiles and ribbon spans whose hits the column's search forms.
+    fn searches(&self) -> u32 {
+        let spans: usize = self.face.trims.iter().map(|t| t.pspans.len()).sum();
+        u32::try_from(self.face.nets.len().saturating_add(spans)).unwrap_or(u32::MAX)
+    }
+}
+
+/// What one level of a count may spend: `unit` units a piece, `left`
+/// units in all (module docs).
+#[derive(Clone, Copy, Debug)]
+struct Allowance {
+    unit: u64,
+    left: u64,
+}
+
+impl Allowance {
+    const FREE: Allowance = Allowance {
+        unit: 0,
+        left: u64::MAX,
+    };
 }
 
 struct Ctx<'q, 'a, 'f, S> {
@@ -660,10 +738,12 @@ struct Ctx<'q, 'a, 'f, S> {
     up_q: [f64; 2],
     like: S,
     pieces: u64,
-    /// The most pieces the count may test.
-    limit: u64,
+    /// The column hit searches charged at this level.
+    hits: u32,
+    /// What this level may spend.
+    allow: Allowance,
     /// With the face's nets, its hits.
-    flat: Option<Flat<'a>>,
+    flat: Option<Flat<'a, 'q>>,
 }
 
 impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
@@ -674,20 +754,55 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
             .ok_or(CountError::Box(BoxError::Patches))
     }
 
-    /// Counts `n` pieces tested, failing past the limit.
-    fn charge(&mut self, n: u64) -> Result<(), CountError> {
+    /// Counts `n` pieces tested at box `at` (and the column's hits
+    /// if found since), failing once past what the level may spend: a
+    /// step's work is charged after it runs, so the step that crosses is
+    /// the crossing (module docs).
+    fn charge(&mut self, n: u64, at: &BoxKey) -> Result<(), CountError> {
         self.pieces = self.pieces.saturating_add(n);
-        if self.pieces > self.limit {
-            return Err(self.out(Exhausted::Work));
+        self.take_hits();
+        if self.spent() > self.allow.left {
+            return Err(self.out_at(Exhausted::Work, Some(*at)));
         }
         Ok(())
     }
 
+    /// Charges the column's hits if they were found and aren't charged
+    /// yet, failing once past what the level may spend.
+    fn settle(&mut self) -> Result<(), CountError> {
+        self.take_hits();
+        if self.spent() > self.allow.left {
+            return Err(self.out_at(Exhausted::Work, None));
+        }
+        Ok(())
+    }
+
+    fn take_hits(&mut self) {
+        if let Some(f) = &self.flat
+            && f.cell.hits.get().is_some()
+            && !f.cell.charged.replace(true)
+        {
+            self.hits = self.hits.saturating_add(f.searches());
+        }
+    }
+
+    /// The units spent at this level.
+    fn spent(&self) -> u64 {
+        self.pieces
+            .saturating_mul(self.allow.unit)
+            .saturating_add(hit_units(self.hits))
+    }
+
     fn out(&self, cause: Exhausted) -> CountError {
+        self.out_at(cause, None)
+    }
+
+    fn out_at(&self, cause: Exhausted, at: Option<BoxKey>) -> CountError {
         CountError::OutOfBudget {
             cause,
             point: self.fq.point,
             face: self.fq.face.tile_boxes().next().expect("tiles").face(),
+            at,
         }
     }
 
@@ -700,16 +815,21 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
         b: &BoxKey,
         splits: [u32; 2],
     ) -> Result<([BoxKey; 2], [u32; 2]), CountError> {
+        // Both directions at the cap: no split is tried.
+        if splits.iter().all(|&n| n >= MAX_SUBDIV_DEPTH) {
+            return Err(CountError::Unsettled);
+        }
         let patch = self.patch(b)?;
         let s = split(self.fq.face, b, patch, Some(&self.q)).map_err(|e| match e {
             BoxError::Depth => CountError::Unsettled,
             e => CountError::Box(e),
         })?;
+        // Its work is done: charged, whether the cap takes it or not.
+        self.charge(s.pieces, b)?;
         let k = usize::from(s.halves[0].extent(Dir::U) == b.extent(Dir::U));
         if splits[k] >= MAX_SUBDIV_DEPTH {
             return Err(CountError::Unsettled);
         }
-        self.charge(s.pieces)?;
         let mut next = splits;
         next[k] += 1;
         Ok((s.halves, next))
@@ -744,7 +864,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 &self.like,
                 among.as_deref(),
             )?;
-            self.charge(r.pieces)?;
+            self.charge(r.pieces, &b)?;
             let (owner, pad, thin) = match &r.role {
                 Role::Outside => continue,
                 Role::Core => (Owner::Core, 0.0, false),
@@ -758,7 +878,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
             }
             let patch = self.patch(&b)?;
             let sub = sub_patch(patch, &b);
-            self.charge(1)?;
+            self.charge(1, &b)?;
             let r_hat = [R_HAT.x, R_HAT.y, R_HAT.z];
             let nu = [NU.x, NU.y, NU.z];
             let off = lin_side(&sub, r_hat, self.q.r, pad).is_some()
@@ -1048,11 +1168,11 @@ pub(crate) fn clear_class(
 fn hit_targets<R: HeightReads>(
     reads: &R,
     q: Point,
-    flat: &Flat<'_>,
+    flat: &Flat<'_, '_>,
 ) -> Result<Vec<HitTarget>, CountError> {
     let f = &flat.face;
     let missing = |g: EdgeId| CountError::Key(KeyError::Missing(RecordKey::Ray(RayKey { q, g })));
-    let Some(hits) = flat.hits.get() else {
+    let Some(hits) = flat.cell.hits.get() else {
         return Ok(Vec::new());
     };
     let hits = hits.as_deref().map_err(|e| CountError::Hits(*e))?;
@@ -1148,17 +1268,25 @@ pub fn face_pieces<S: Scalar, R: HeightReads>(
     sides: &Sides,
     reads: &R,
 ) -> Result<FacePieces, CountError> {
-    let mut pieces = 0;
-    pieces_within(fq, sides, reads, u64::MAX, &mut pieces)
+    let cell = HitCell::default();
+    pieces_within(
+        fq,
+        sides,
+        reads,
+        Allowance::FREE,
+        &cell,
+        &mut Spent::default(),
+    )
 }
 
 /// The pieces of `fq.face` against `fq.point` (module docs) at the
 /// first level, then at each next one while the level is unsettled,
 /// each level's patches lifted exactly from `fq.patches`;
-/// every piece tested charged against `charge`. With the pieces, or the
-/// error, the work per level ([`LevelWork::evals`]) for the pass to
-/// charge. Unsettled at the last level, or past the share:
-/// [`CountError::OutOfBudget`] (module docs).
+/// every piece tested charged against `charge`, and the column's hits
+/// (found once, for every level) at their own row. With the pieces, or
+/// the error, the work ([`LevelWork::evals`] per level, [`Cost::hits`])
+/// for the pass to charge ([`Charge::spent`]). Unsettled at the last
+/// level, or past the share: [`CountError::OutOfBudget`] (module docs).
 pub fn count_pieces<R: HeightReads>(
     fq: &FaceQuery<'_, '_, Bounded<f64>>,
     sides: &Sides,
@@ -1172,13 +1300,17 @@ pub fn count_pieces<R: HeightReads>(
         reads,
         charge,
         spent: 0,
+        cell: HitCell::default(),
+        hits: 0,
     };
     let r = ladder(&mut at, 0, &mut cost).expect("the first level runs");
+    cost.hits = at.hits;
     let r = match r {
         Err(CountError::Unsettled) => Err(CountError::OutOfBudget {
             cause: Exhausted::Precision,
             point: fq.point,
             face: fq.face.tile_boxes().next().expect("tiles").face(),
+            at: None,
         }),
         r => r,
     };
@@ -1193,6 +1325,17 @@ struct CountAt<'c, 'q, 'a, 'f, R> {
     charge: &'c Charge,
     /// The units the levels before spent.
     spent: u64,
+    /// The column's hits, for every level.
+    cell: HitCell,
+    /// Their searches charged.
+    hits: u32,
+}
+
+/// What one level of a count tested ([`pieces_within`]).
+#[derive(Clone, Copy, Debug, Default)]
+struct Spent {
+    pieces: u64,
+    hits: u32,
 }
 
 impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
@@ -1200,10 +1343,9 @@ impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
 
     fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
         let unit = self.charge.units[level];
-        // A level whose pieces cost nothing has no limit.
-        let limit = match unit {
-            0 => u64::MAX,
-            u => self.charge.share.saturating_sub(self.spent) / u,
+        let allow = Allowance {
+            unit,
+            left: self.charge.share.saturating_sub(self.spent),
         };
         let patches: Vec<HomPatch<S>> = self.fq.patches.iter().map(|p| lift(p, like)).collect();
         let f = self.fq;
@@ -1218,21 +1360,28 @@ impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
             nets: f.nets,
             motion: f.motion,
         };
-        let mut pieces = 0;
-        let r = pieces_within(&fq, self.sides, self.reads, limit, &mut pieces);
+        let mut done = Spent::default();
+        let r = pieces_within(&fq, self.sides, self.reads, allow, &self.cell, &mut done);
         work.evals = work
             .evals
-            .saturating_add(u32::try_from(pieces).unwrap_or(u32::MAX));
-        self.spent = self.spent.saturating_add(pieces.saturating_mul(unit));
+            .saturating_add(u32::try_from(done.pieces).unwrap_or(u32::MAX));
+        self.hits = self.hits.saturating_add(done.hits);
+        self.spent = self.spent.saturating_add(
+            done.pieces
+                .saturating_mul(unit)
+                .saturating_add(hit_units(done.hits)),
+        );
         match r {
             Err(CountError::OutOfBudget {
                 cause: Exhausted::Work,
                 point,
                 face,
+                at,
             }) if level > 0 => Err(CountError::OutOfBudget {
                 cause: Exhausted::Precision,
                 point,
                 face,
+                at,
             }),
             r => r,
         }
@@ -1260,14 +1409,15 @@ fn lift<S: RayLevel>(p: &HomPatch<Bounded<f64>>, like: &S) -> HomPatch<S> {
     .expect("the same degrees")
 }
 
-/// [`face_pieces`], testing at most `limit` pieces; `pieces` the pieces
-/// tested, also on failure.
+/// [`face_pieces`], spending at most what `allow` gives, the column's
+/// hits found once in `cell`; `done` what it tested, also on failure.
 fn pieces_within<S: Scalar, R: HeightReads>(
     fq: &FaceQuery<'_, '_, S>,
     sides: &Sides,
     reads: &R,
-    limit: u64,
-    pieces: &mut u64,
+    allow: Allowance,
+    cell: &HitCell,
+    done: &mut Spent,
 ) -> Result<FacePieces, CountError> {
     let face = fq.face;
     let first = face
@@ -1298,7 +1448,7 @@ fn pieces_within<S: Scalar, R: HeightReads>(
             face: hit_face(fq, nets, reads)?,
             at: fq.at,
             motion: fq.motion,
-            hits: OnceCell::new(),
+            cell,
         }),
     };
     let mut ctx = Ctx {
@@ -1308,11 +1458,37 @@ fn pieces_within<S: Scalar, R: HeightReads>(
         up_q,
         like,
         pieces: 0,
-        limit,
+        hits: 0,
+        allow,
         flat,
     };
     let r = rounds(&mut ctx);
-    *pieces = ctx.pieces;
+    let r = match r {
+        Err(e @ CountError::OutOfBudget { .. }) => Err(e),
+        r => by_hits_where(&ctx, reads, r),
+    };
+    // The column's hits, if found, are charged after: a crossing there is
+    // the count's (module docs).
+    let settled = ctx.settle();
+    *done = Spent {
+        pieces: ctx.pieces,
+        hits: ctx.hits,
+    };
+    match (r, settled) {
+        (Err(e @ CountError::OutOfBudget { .. }), _) | (_, Err(e)) => Err(e),
+        (r, Ok(())) => r,
+    }
+}
+
+/// The face's pieces from the rounds' answer `r`, checked against the
+/// column's hits where they were found, or by them where the boxes don't
+/// settle (module docs, "By the hits").
+fn by_hits_where<S, R: HeightReads>(
+    ctx: &Ctx<'_, '_, '_, S>,
+    reads: &R,
+    r: Result<FacePieces, CountError>,
+) -> Result<FacePieces, CountError> {
+    let fq = ctx.fq;
     let Some(f) = &ctx.flat else {
         return r;
     };
@@ -1330,7 +1506,7 @@ fn pieces_within<S: Scalar, R: HeightReads>(
     // boxes and the hits disagree (a column within rounding of an edge,
     // the boxes' records at a level the hits are exact past) and the
     // hits decide.
-    if let Some(Ok(hits)) = f.hits.get() {
+    if let Some(Ok(hits)) = f.cell.hits.get() {
         let facings: Option<i64> = hits
             .iter()
             .map(|h| h.facing.map(|s| i64::from(s.as_i8())))
@@ -1351,7 +1527,7 @@ fn pieces_within<S: Scalar, R: HeightReads>(
 fn by_hits<R: HeightReads>(
     reads: &R,
     q: Point,
-    flat: &Flat<'_>,
+    flat: &Flat<'_, '_>,
     boxes: Result<FacePieces, CountError>,
 ) -> Result<FacePieces, CountError> {
     let all = flat.hits()?;
@@ -1550,7 +1726,19 @@ fn round<S: Scalar>(
             continue;
         };
         let patch = ctx.patch(&l.b)?;
-        let d = match box_degree_sided(fq.face, &l.b, patch, &ctx.q, fq.point, ctx.sides) {
+        // Every attempt is charged, settled or not.
+        let mut tested = 0;
+        let r = box_degree_counted(
+            fq.face,
+            &l.b,
+            patch,
+            &ctx.q,
+            fq.point,
+            ctx.sides,
+            &mut tested,
+        );
+        ctx.charge(tested, &l.b)?;
+        let d = match r {
             Ok(d) => d,
             Err(SidedError::Through(_) | SidedError::Unsettled) => {
                 refine.push(k);
@@ -1559,7 +1747,6 @@ fn round<S: Scalar>(
             Err(SidedError::Box(e)) => return Err(CountError::Box(e)),
             Err(SidedError::Need(k)) => return Err(CountError::Need(k)),
         };
-        ctx.charge(d.pieces)?;
         let near = if h == Height::Near {
             match ctx.near_piece(leaves, &[k], d.degree)? {
                 Some(p) => Some(p),
@@ -1810,12 +1997,19 @@ fn run_degree<S: Scalar>(
     }
     let ribbons = ctx.ribbons(owner)?;
     let fq = ctx.fq;
-    let (r, near) = strip_degree_near(
-        fq.face, fq.patches, &key.1, &ribbons, &ctx.q, fq.point, ctx.sides,
+    // Every attempt is charged, settled or not.
+    let mut tested = 0;
+    let (r, near) = strip_degree_counted(
+        fq.face,
+        fq.patches,
+        &key.1,
+        &ribbons,
+        &ctx.q,
+        fq.point,
+        ctx.sides,
+        &mut tested,
     );
-    if let Ok(d) = &r {
-        ctx.charge(d.pieces)?;
-    }
+    ctx.charge(tested, &key.1[0])?;
     let r = (r.map(|d| d.degree), near);
     // A record not yet decided is asked for, not cached.
     if !matches!(r.0, Err(PieceError::Need(_))) {

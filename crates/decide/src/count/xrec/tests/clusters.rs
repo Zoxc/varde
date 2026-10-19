@@ -581,13 +581,15 @@ fn a_close_pair_of_opposite_z_orders_counts_one() {
 /// same height, `g` ending there: the motion leaves one crossing on `g`
 /// or none. A box around the touching point never certifies its
 /// tangents apart nor its z-order, whatever its degree (a degree-0 box
-/// there may be two crossings of opposite z-orders): it escalates, never
-/// a cluster, never dropped. Each search runs to its box cap (seconds in
-/// debug builds): two motions by default, the twelve with
-/// `VARDE_TESTS=full`.
+/// there may be two crossings of opposite z-orders): never a cluster,
+/// never dropped. Charged per piece, the search stops on its share, at
+/// the first level ([`Exhausted::Work`]), past it by one box's pieces at
+/// most and the same on every run. Uncharged it escalates at its box cap
+/// (a second in release builds per case and level): with
+/// `VARDE_TESTS=full`, as are the twelve motions (two by default).
 #[test]
 fn a_shadow_tangency_escalates() {
-    let (mut crossed, mut escalated) = (0, 0);
+    let (mut crossed, mut escalated, mut ran_out) = (0, 0, 0);
     let all: Vec<(DVec3, f64)> = [
         NU,
         -NU,
@@ -597,7 +599,10 @@ fn a_shadow_tangency_escalates() {
     .into_iter()
     .flat_map(|d| [1.0 / 64.0, 1.0, 64.0].map(|w| (d, w)))
     .collect();
+    let full = varde_testing::pick(false, true);
     let cases = varde_testing::pick(vec![(NU, 1.0), (-NU, 1.0)], all);
+    let charge = Charge::xrec(1 << 16);
+    let unit = charge.units[0];
     for &(d, wm) in &cases {
         let mut geom = Geom {
             d,
@@ -614,14 +619,34 @@ fn a_shadow_tangency_escalates() {
         let recs = decide(&geom);
         let pair = recs.pair(&geom);
         crossed += usize::from(x_count(&pair.terms) != 0);
-        match recs.clusters(&geom, &pair) {
-            Err(e) if e.escalates() => escalated += 1,
+        let (r, cost) = recs.clusters_on(&geom, &pair, &charge);
+        match r {
+            Err(XClusterError::OutOfBudget {
+                cause: Exhausted::Work,
+                at: Some(_),
+            }) => ran_out += 1,
             r => panic!("{d} {wm}: {r:?}"),
+        }
+        let spent = charge.spent(&cost);
+        assert!(
+            spent > charge.share && spent <= charge.share + 64 * unit,
+            "{d} {wm}: {spent}"
+        );
+        assert!(cost.levels[1..].iter().all(|l| l.evals == 0));
+        assert_eq!(recs.clusters_on(&geom, &pair, &charge).1, cost);
+        if full {
+            match recs.clusters(&geom, &pair) {
+                Err(e) if e.escalates() => escalated += 1,
+                r => panic!("{d} {wm}: {r:?}"),
+            }
         }
     }
     assert!(
-        escalated == cases.len() && crossed > 0 && crossed < cases.len(),
-        "{escalated} escalated, {crossed} with a crossing"
+        ran_out == cases.len()
+            && (!full || escalated == cases.len())
+            && crossed > 0
+            && crossed < cases.len(),
+        "{ran_out} ran out, {escalated} escalated, {crossed} with a crossing"
     );
 }
 

@@ -9,9 +9,11 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use crate::bezier::HomPatch;
-use crate::count::boxes::{Corners, FaceUv, Trim, UvSpan};
+use crate::count::boxes::{BoxError, Corners, FaceUv, Trim, UvSpan};
 use crate::count::pieces::{Ribbon, SpanMap};
-use crate::count::s02::{CountError, FacePieces, FaceQuery, TrimEdge, face_pieces, ray_degree};
+use crate::count::s02::{
+    Charge, CountError, FacePieces, FaceQuery, TrimEdge, face_pieces, ray_degree,
+};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::num::decide::Fail;
@@ -22,7 +24,7 @@ use crate::records::height::HeightReads;
 use crate::records::height::hit::{HitFace, HitTrim, Motion};
 use crate::records::keys::{Operand, Point};
 use crate::records::ray::{ChainRec, Span, TileNet};
-use crate::records::shadow::{Decided, Pass};
+use crate::records::shadow::{Cost, Decided, Pass};
 use crate::records::side::Sides;
 use crate::records::table::Fresh;
 
@@ -186,8 +188,19 @@ impl FaceData {
     /// The face's corners, to count it against many points
     /// ([`FaceData::pieces_with`]).
     pub(crate) fn corners(&self, order: &Order) -> Corners {
+        self.corners_on(order, &Charge::setup(u64::MAX))
+            .0
+            .expect("corners")
+    }
+
+    /// The face's corners built on `charge`, with what they spent.
+    pub(crate) fn corners_on(
+        &self,
+        order: &Order,
+        charge: &Charge,
+    ) -> (Result<Corners, BoxError>, Cost) {
         let trims = self.uv_trims();
-        Corners::new(&self.uv(&trims), &self.patches, &self.order(order)).expect("corners")
+        Corners::new(&self.uv(&trims), &self.patches, &self.order(order), charge)
     }
 
     /// [`FaceData::pieces`] with the face's `corners` if given (else
@@ -294,7 +307,14 @@ impl FaceData {
         let corners = match corners {
             Some(c) => c,
             None => {
-                built = Corners::new(&face, &self.patches, &self.order(order)).expect("corners");
+                built = Corners::new(
+                    &face,
+                    &self.patches,
+                    &self.order(order),
+                    &Charge::setup(u64::MAX),
+                )
+                .0
+                .expect("corners");
                 &built
             }
         };
