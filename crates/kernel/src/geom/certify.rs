@@ -50,10 +50,10 @@
 //!
 //! **Charges and limits.** Each cell's computation is charged before it
 //! runs, the unit table's units for a seam cell at its level
-//! (`UNITS.seam_cell`, about 190 at the first level, a cell taking about
-//! 95 µs): ordinary work at the first level, a precision step above it;
-//! running out of budget stops the coedge. A cell still open at the top
-//! level, or at [`MAX_SUBDIV_DEPTH`] halvings, is done with its bound, above the
+//! (`UNITS.seam_cell`, dearer at each level up): ordinary work at the
+//! first level, a precision step above it; running out of budget stops
+//! the coedge. A cell still open at the top level, or at
+//! [`MAX_SUBDIV_DEPTH`] halvings, is done with its bound, above the
 //! target; without a certified bound it stops the coedge at
 //! [`Cap::PrecisionBits`] or [`Cap::SubdivisionDepth`].
 //!
@@ -66,12 +66,12 @@
 //! no certified bound at a limit, fails.
 //!
 //! Biquadratic tiles and Q spans only. On a plane, whose one tile spans
-//! the coordinate box (4·10⁶ mm), the first level's rounding is about
-//! `10⁻⁹` mm for weights near 1, but it grows with the spread of a span's
+//! the coordinate box (4·10⁶ mm), the first level's bound on a whole 90°
+//! arc of radius 50 is about `5·10⁻⁹` mm for weights 1, though the arc
+//! lies exactly on the plane; it grows with the spread of a span's
 //! weights, as the bound divides the largest coefficients' rounding by
-//! the least denominator: a 90° arc with end weights 3 and ⅓ gets about
-//! `2·10⁻⁴` mm there, with end weights 64 and 1/64 about `3·10⁹` mm,
-//! though the arc lies exactly on the plane. Such cells escalate.
+//! the least denominator: with end weights 3 and ⅓ about `10⁻⁴` mm, with
+//! end weights 64 and 1/64 about `2·10⁹` mm. Such cells escalate.
 
 use varde_decide::bezier::{HomCurve, Poly, Scalar};
 use varde_decide::num::bigf::{Big, BigF, Width};
@@ -594,23 +594,45 @@ fn direct<S: Approx>(
 /// Hooks for the unit table's calibration benchmark
 /// (`crates/kernel/benches/calibrate.rs`), which times seam cells per
 /// precision level and whole seam passes against the units charged for
-/// them. Not part of the kernel's interface.
+/// them, and the fixtures it shares with this module's tests. Not part
+/// of the kernel's interface.
 #[doc(hidden)]
 pub mod calibration {
     use super::*;
+    use crate::geom::form::PlaneKey;
+    use crate::geom::lattice::{CELL, Lattice};
     use crate::infra::budget::{Budget, Pass, Work};
+
+    /// Why [`cells`] can't run.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum CellsError {
+        /// The coedge has no seam bound.
+        Seam(SeamError),
+        /// No precision level of this index: at least `LEVELS`.
+        Level(u8),
+        /// Deeper than the seam bound halves a piece: above
+        /// [`MAX_SUBDIV_DEPTH`].
+        Depth(u32),
+    }
 
     /// Evaluates every cell `depth` halvings deep of every piece of the
     /// coedge (`2^depth` per piece) at precision level `level`, as the
-    /// seam bound does; the number of cells.
+    /// seam bound does; the number of cells. A level the schedule doesn't
+    /// have, or a depth past [`MAX_SUBDIV_DEPTH`], is an error.
     pub fn cells(
         surface: &Surface,
         curve: &Curve3D,
         pcurve: &PCurve,
         level: u8,
         depth: u32,
-    ) -> Result<u64, SeamError> {
-        let pieces = pieces(surface, curve, pcurve)?;
+    ) -> Result<u64, CellsError> {
+        if level >= LEVELS {
+            return Err(CellsError::Level(level));
+        }
+        if depth > MAX_SUBDIV_DEPTH {
+            return Err(CellsError::Depth(depth));
+        }
+        let pieces = pieces(surface, curve, pcurve).map_err(CellsError::Seam)?;
         let mut n = 0u64;
         let mut lower = 0.0;
         for (piece, p) in pieces.iter().enumerate() {
@@ -651,6 +673,67 @@ pub mod calibration {
             seam_bound(surface, c, p, target, ledger)
         });
         (out.ok(), work.used())
+    }
+
+    /// The plane `z = 0` through the origin on its one base tile, 4·10⁶
+    /// mm across.
+    pub fn base_plane() -> Surface {
+        let key = PlaneKey::new([0.0, 0.0, 1.0], [0.0; 3]).expect("a plane");
+        let lat = Lattice::new(key.into()).expect("a lattice");
+        let rect = lat.half(0).expect("the base tile");
+        Surface::new(lat, rect).expect("a surface")
+    }
+
+    /// The p-curve of `c` on `s`, a plane on its base tile: each control
+    /// point mapped by the plane's frame, `(x − o)·axis / CELL + ½`, its
+    /// weight kept.
+    pub fn on_plane(s: &Surface, c: &Curve3D) -> PCurve {
+        let lat = s.lattice();
+        let (o, [u, v, _]) = (lat.origin(), lat.axes());
+        let spans = c
+            .spans()
+            .iter()
+            .map(|sp| {
+                sp.map(|h| {
+                    let d = [h[0] - o[0], h[1] - o[1], h[2] - o[2]];
+                    let along =
+                        |a: [f64; 3]| (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) / CELL + 0.5;
+                    [along(u), along(v), h[3]]
+                })
+            })
+            .collect();
+        PCurve::new(spans, c.knots().to_vec()).expect("a p-curve")
+    }
+
+    /// The quarter circle of radius 50 from `(50, 0, 0)` to `(0, 50, 0)`,
+    /// reparametrised to end weights `w` and `1/w` (the middle's `√2/2`).
+    pub fn quarter(w: f64) -> Curve3D {
+        let (r, mid) = (50.0, std::f64::consts::FRAC_1_SQRT_2);
+        Curve3D::new(
+            vec![[[r, 0.0, 0.0, w], [r, r, 0.0, mid], [0.0, r, 0.0, 1.0 / w]]],
+            vec![0.0, 1.0],
+        )
+        .expect("a curve")
+    }
+
+    /// The quarter circles with end weights 1, 3 and 64 on the base plane
+    /// `s` ([`base_plane`]), lying exactly on it, and the one with
+    /// weights 3 whose p-curve's middle control point is moved by
+    /// `2·10⁻⁷` of the tile each way.
+    pub fn arcs(s: &Surface) -> Vec<(Curve3D, PCurve)> {
+        let mut out: Vec<_> = [1.0, 3.0, 64.0]
+            .map(|w| {
+                let c = quarter(w);
+                let p = on_plane(s, &c);
+                (c, p)
+            })
+            .into();
+        let c = quarter(3.0);
+        let p = on_plane(s, &c)
+            .perturbed(&[[2e-7, -2e-7]])
+            .expect("a moved p-curve");
+        out.push((c, p));
+        out
     }
 }
 

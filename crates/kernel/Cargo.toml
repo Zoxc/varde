@@ -20,6 +20,8 @@ malachite.workspace = true
 rayon.workspace = true
 
 [dev-dependencies]
+# The counting's test faces, for benches/calibrate.rs.
+varde-decide = { workspace = true, features = ["testing"] }
 varde-testing.workspace = true
 varde-testkit.workspace = true
 # For tests/ban_probe.rs only, until the kernel depends on them itself.

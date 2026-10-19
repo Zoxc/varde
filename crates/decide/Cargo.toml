@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# The counting's test support (`count::testing`), for the kernel's
+# calibration benchmark.
+testing = []
+
 [dependencies]
 glam.workspace = true
 libm.workspace = true

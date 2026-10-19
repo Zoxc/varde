@@ -15,10 +15,11 @@ use malachite::base::rounding_modes::RoundingMode::Nearest;
 use varde_decide::bezier::HomCurve;
 use varde_testkit::rng::Rng;
 
+use super::calibration::{CellsError, arcs, base_plane, cells, on_plane, quarter};
 use super::*;
 use crate::geom::curve::{Curve3D, PCurve, Span2, Span3};
 use crate::geom::form::{CylinderKey, FormKey, PlaneKey, SphereKey};
-use crate::geom::lattice::{CELL, Lattice, Level, Rect};
+use crate::geom::lattice::{Lattice, Level, Rect};
 use crate::infra::budget::{Budget, Halt, Limit, MAX_WORK, Pass, Step, Work};
 use crate::infra::error::{Cause, KernelError};
 
@@ -463,55 +464,10 @@ fn seam_bounds_are_tight_on_a_constant_offset() {
     }
 }
 
-const ROOT_HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
-
-/// The plane `z = 0` through the origin on its one base tile, 4·10⁶ mm
-/// across.
-fn base_plane() -> Surface {
-    let lat = Lattice::new(PlaneKey::new([0.0, 0.0, 1.0], [0.0; 3]).unwrap().into()).unwrap();
-    let rect = lat.half(0).unwrap();
-    Surface::new(lat, rect).unwrap()
-}
-
-/// The p-curve of `c` on `s`, a plane on its base cell: each control
-/// point mapped by the plane's frame, `(x − o)·axis / CELL + ½`, its
-/// weight kept.
-fn on_plane(s: &Surface, c: &Curve3D) -> PCurve {
-    let lat = s.lattice();
-    let (o, [u, v, _]) = (lat.origin(), lat.axes());
-    let spans = c
-        .spans()
-        .iter()
-        .map(|sp| {
-            sp.map(|h| {
-                let d = [h[0] - o[0], h[1] - o[1], h[2] - o[2]];
-                let along = |a: [f64; 3]| (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) / CELL + 0.5;
-                [along(u), along(v), h[3]]
-            })
-        })
-        .collect();
-    PCurve::new(spans, c.knots().to_vec()).unwrap()
-}
-
-/// The quarter circle of radius 50 from `(50, 0, 0)` to `(0, 50, 0)`,
-/// reparametrised to end weights `w` and `1/w` (the middle's `√2/2`).
-fn quarter(w: f64) -> Curve3D {
-    let r = 50.0;
-    Curve3D::new(
-        vec![[
-            [r, 0.0, 0.0, w],
-            [r, r, 0.0, ROOT_HALF],
-            [0.0, r, 0.0, 1.0 / w],
-        ]],
-        vec![0.0, 1.0],
-    )
-    .unwrap()
-}
-
 #[test]
 fn weighted_arcs_escalate_to_their_target() {
     // The arcs lie exactly on the plane. In `f64` alone their bounds are
-    // about 7·10⁻⁹, 2·10⁻⁴ and 3·10⁹ mm, growing with the weights'
+    // about 5·10⁻⁹, 10⁻⁴ and 2·10⁹ mm, growing with the weights'
     // spread; escalated, each meets the target, weights 1 and 1 at the
     // first level.
     let s = base_plane();
@@ -580,21 +536,6 @@ fn pass(
         seam_bound(s, c, p, target, ledger)
     });
     (out, work.used())
-}
-
-/// The arcs with end weights 1, 3 and 64 and the moved one.
-fn arcs(s: &Surface) -> Vec<(Curve3D, PCurve)> {
-    let mut out: Vec<_> = [1.0, 3.0, 64.0]
-        .map(|w| {
-            let c = quarter(w);
-            let p = on_plane(s, &c);
-            (c, p)
-        })
-        .into();
-    let c = quarter(3.0);
-    let p = on_plane(s, &c).perturbed(&[[2e-7, -2e-7]]).unwrap();
-    out.push((c, p));
-    out
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -765,4 +706,22 @@ fn a_pass_past_its_budget_uses_it_up_on_any_number_of_threads() {
         assert_eq!(profile.used, budget);
         assert_eq!(profile.limit, Limit::Budget(budget));
     }
+}
+
+#[test]
+fn calibration_cells_refuse_a_level_or_depth_the_seam_bound_lacks() {
+    let s = base_plane();
+    let (c, p) = &arcs(&s)[0];
+    assert_eq!(cells(&s, c, p, LEVELS - 1, 2), Ok(4));
+    assert_eq!(cells(&s, c, p, LEVELS, 0), Err(CellsError::Level(LEVELS)));
+    assert_eq!(cells(&s, c, p, u8::MAX, 0), Err(CellsError::Level(u8::MAX)));
+    let deep = MAX_SUBDIV_DEPTH + 1;
+    assert_eq!(cells(&s, c, p, 0, deep), Err(CellsError::Depth(deep)));
+    assert_eq!(cells(&s, c, p, 0, 64), Err(CellsError::Depth(64)));
+    // A p-curve outside the curve's knots has no seam bound.
+    let short = Curve3D::new(c.spans().to_vec(), vec![0.0, 0.5]).unwrap();
+    assert_eq!(
+        cells(&s, &short, p, 0, 0),
+        Err(CellsError::Seam(SeamError::Range))
+    );
 }

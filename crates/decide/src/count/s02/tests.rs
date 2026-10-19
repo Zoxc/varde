@@ -31,62 +31,6 @@ mod budget;
 mod cube;
 mod fold;
 
-/// The signed crossings of the ray of a point of `of` at `q` with a
-/// chain of rational quadratic spans (affine points and weights): per
-/// span the roots of `ν·(P − q·W)`, a quadratic in closed form, ahead
-/// along the ray, signed `sign(ρ × T)`.
-fn chain(spans: &[Span], q: [f64; 3], of: Operand) -> ChainRec {
-    let dot = |a: [f64; 3], p: [f64; 4]| a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
-    let (r, n) = ([R_HAT.x, R_HAT.y, R_HAT.z], [NU.x, NU.y, NU.z]);
-    let rho = if of == Operand::A { -1.0 } else { 1.0 };
-    let mut out = ChainRec::default();
-    for (k, sp) in spans.iter().enumerate() {
-        // `a·(P − q·W)` in Bernstein form, then power form.
-        let bern = |a: [f64; 3]| {
-            let aq = a[0] * q[0] + a[1] * q[1] + a[2] * q[2];
-            sp.map(|p| p[3] * (dot(a, p) - aq))
-        };
-        let power = |[b0, b1, b2]: [f64; 3]| [b0, 2.0 * (b1 - b0), b0 - 2.0 * b1 + b2];
-        let [c0, b, a] = power(bern(n));
-        let mut ts: Vec<f64> = Vec::new();
-        if a == 0.0 {
-            if b != 0.0 {
-                ts.push(-c0 / b);
-            }
-        } else {
-            let disc = b * b - 4.0 * a * c0;
-            if disc > 0.0 {
-                let h = -(b + b.signum() * disc.sqrt()) / 2.0;
-                ts.extend([h / a, c0 / h]);
-            }
-        }
-        ts.sort_by(f64::total_cmp);
-        let [rc, rb, ra] = power(bern(r));
-        for t in ts {
-            if !(0.0..=1.0).contains(&t) || rho * (rc + rb * t + ra * t * t) <= 0.0 {
-                continue;
-            }
-            // `ρ × T` in the shadow frame `(r̂, ν)`: `ρ_r·T_ν`.
-            let tn = b + 2.0 * a * t;
-            let sign = if rho * tn > 0.0 { Sign::Pos } else { Sign::Neg };
-            out.crossings.push(ChainCrossing {
-                span: k as u32,
-                crossing: Crossing {
-                    t: [clamp(t - 1e-12), clamp(t + 1e-12)],
-                    sign,
-                    single: true,
-                },
-            });
-        }
-    }
-    out
-}
-
-/// `t` clamped to `[0, 1]`.
-fn clamp(t: f64) -> f64 {
-    t.clamp(0.0, 1.0)
-}
-
 /// The part `[a, b]` of a rational quadratic span (affine points and
 /// weights), by its blossom.
 fn sub_span(s: &Span, a: f64, b: f64) -> Span {

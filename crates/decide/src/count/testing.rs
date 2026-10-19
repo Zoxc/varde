@@ -1,9 +1,11 @@
-//! Test support shared by the counting's tests: test faces of planar or
+//! Test support shared by the counting's tests and the kernel's
+//! calibration benchmark (feature `testing`): test faces of planar or
 //! curved patches with their trims ([`FaceData`]; a plane face with its
-//! exact frame, whose column hits are exact), counted against a point
-//! through [`face_pieces`]; the geometric order of test operands
-//! ([`Order`]); a pass deciding records in order on one thread ([`Seq`]);
-//! straight spans and p-spans.
+//! exact frame, whose column hits are exact; [`polygon`]), counted
+//! against a point through [`face_pieces`]; the geometric order of test
+//! operands ([`Order`]); a pass deciding records in order on one thread
+//! ([`Seq`]); straight spans and p-spans, and the ray records of a chain
+//! of spans ([`chain`]). Not part of the crate's interface.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -19,21 +21,21 @@ use crate::num::bounded::Bounded;
 use crate::num::decide::Fail;
 use crate::num::decide::Sign;
 use crate::order::{Along, EdgeKey, EntityOrder, VertKey};
-use crate::perturb::{R_HAT, rate_rational, rates_a};
+use crate::perturb::{NU, R_HAT, rate_rational, rates_a};
 use crate::records::height::HeightReads;
 use crate::records::height::hit::{HitFace, HitTrim, Motion};
 use crate::records::keys::{Operand, Point};
-use crate::records::ray::{ChainRec, Span, TileNet};
+use crate::records::ray::{ChainCrossing, ChainRec, Crossing, Span, TileNet};
 use crate::records::shadow::{Cost, Decided, Pass};
 use crate::records::side::Sides;
 use crate::records::table::Fresh;
 
-pub(crate) type Patch = HomPatch<Bounded<f64>>;
+pub type Patch = HomPatch<Bounded<f64>>;
 
 /// The stored net of tile `[i, j]` of a face whose point at the global
 /// `(u, v)` is `map(u, v)`, an affine map: its nine points at the tile's
 /// half steps, weights 1.
-pub(crate) fn mapped_net([i, j]: [i64; 2], map: impl Fn(f64, f64) -> [f64; 3]) -> TileNet {
+pub fn mapped_net([i, j]: [i64; 2], map: impl Fn(f64, f64) -> [f64; 3]) -> TileNet {
     std::array::from_fn(|k| {
         let (u, v) = (
             i as f64 + (k / 3) as f64 / 2.0,
@@ -45,14 +47,14 @@ pub(crate) fn mapped_net([i, j]: [i64; 2], map: impl Fn(f64, f64) -> [f64; 3]) -
 }
 
 /// A face query at the first level.
-pub(crate) type FirstQuery<'a> = FaceQuery<'a, 'a, Bounded<f64>>;
+pub type FirstQuery<'a> = FaceQuery<'a, 'a, Bounded<f64>>;
 
-pub(crate) fn first() -> Bounded<f64> {
+pub fn first() -> Bounded<f64> {
     Bounded::exact(0.0)
 }
 
 /// A pass deciding in order on one thread.
-pub(crate) struct Seq;
+pub struct Seq;
 
 impl Pass for Seq {
     type Error = Fail;
@@ -68,39 +70,39 @@ impl Pass for Seq {
 
 /// One trim of a test face, with its edge's curve.
 #[derive(Clone, Debug)]
-pub(crate) struct TrimData {
-    pub(crate) coedge: CoedgeId,
-    pub(crate) edge: EdgeId,
-    pub(crate) reversed: bool,
+pub struct TrimData {
+    pub coedge: CoedgeId,
+    pub edge: EdgeId,
+    pub reversed: bool,
     /// The p-curve, along the edge's stored direction.
-    pub(crate) spans: Vec<UvSpan>,
+    pub spans: Vec<UvSpan>,
     /// The edge's stored ends.
-    pub(crate) ends: [VertId; 2],
-    pub(crate) band: f64,
+    pub ends: [VertId; 2],
+    pub band: f64,
     /// The edge's curve, along its stored direction.
-    pub(crate) curve: Vec<Span>,
-    pub(crate) maps: Vec<SpanMap>,
+    pub curve: Vec<Span>,
+    pub maps: Vec<SpanMap>,
 }
 
 /// A test face.
 #[derive(Clone, Debug)]
-pub(crate) struct FaceData {
-    pub(crate) operand: Operand,
-    pub(crate) id: FaceId,
-    pub(crate) tiles: [Range<i64>; 2],
-    pub(crate) patches: Vec<Patch>,
-    pub(crate) flipped: bool,
-    pub(crate) trims: Vec<TrimData>,
+pub struct FaceData {
+    pub operand: Operand,
+    pub id: FaceId,
+    pub tiles: [Range<i64>; 2],
+    pub patches: Vec<Patch>,
+    pub flipped: bool,
+    pub trims: Vec<TrimData>,
     /// A plane face's tiles' nets, one per patch (its column hits exact
     /// on them); `None` for a curved face.
-    pub(crate) nets: Option<Vec<TileNet>>,
+    pub nets: Option<Vec<TileNet>>,
 }
 
 /// The geometric order of a test operand's vertices and edges.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Order {
-    pub(crate) pos: BTreeMap<(Operand, VertId), [f64; 3]>,
-    pub(crate) edges: BTreeMap<(Operand, EdgeId), [VertId; 2]>,
+pub struct Order {
+    pub pos: BTreeMap<(Operand, VertId), [f64; 3]>,
+    pub edges: BTreeMap<(Operand, EdgeId), [VertId; 2]>,
 }
 
 impl EntityOrder for Order {
@@ -124,7 +126,7 @@ impl EntityOrder for Order {
 
 impl FaceData {
     /// The face as its hits read it; `None` for a face given no nets.
-    pub(crate) fn hit_face(&self, order: &Order) -> Option<HitFace<'_>> {
+    pub fn hit_face(&self, order: &Order) -> Option<HitFace<'_>> {
         let nets = self.nets.as_deref()?;
         let trims = self
             .trims
@@ -159,7 +161,7 @@ impl FaceData {
     }
 
     /// The face's vertices in geometric order.
-    pub(crate) fn order(&self, order: &Order) -> Vec<VertId> {
+    pub fn order(&self, order: &Order) -> Vec<VertId> {
         let mut vs: Vec<VertId> = self.trims.iter().flat_map(|t| t.ends).collect();
         vs.sort_unstable();
         vs.dedup();
@@ -173,7 +175,7 @@ impl FaceData {
 
     /// The face's pieces against `point` at `at`, the ray records of its
     /// edges from `rays`.
-    pub(crate) fn pieces<R: HeightReads>(
+    pub fn pieces<R: HeightReads>(
         &self,
         order: &Order,
         point: Point,
@@ -187,18 +189,14 @@ impl FaceData {
 
     /// The face's corners, to count it against many points
     /// ([`FaceData::pieces_with`]).
-    pub(crate) fn corners(&self, order: &Order) -> Corners {
+    pub fn corners(&self, order: &Order) -> Corners {
         self.corners_on(order, &Charge::setup(u64::MAX))
             .0
             .expect("corners")
     }
 
     /// The face's corners built on `charge`, with what they spent.
-    pub(crate) fn corners_on(
-        &self,
-        order: &Order,
-        charge: &Charge,
-    ) -> (Result<Corners, BoxError>, Cost) {
+    pub fn corners_on(&self, order: &Order, charge: &Charge) -> (Result<Corners, BoxError>, Cost) {
         let trims = self.uv_trims();
         Corners::new(&self.uv(&trims), &self.patches, &self.order(order), charge)
     }
@@ -206,7 +204,7 @@ impl FaceData {
     /// [`FaceData::pieces`] with the face's `corners` if given (else
     /// built here).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn pieces_with<R: HeightReads>(
+    pub fn pieces_with<R: HeightReads>(
         &self,
         corners: Option<&Corners>,
         order: &Order,
@@ -229,7 +227,7 @@ impl FaceData {
 
     /// `f` of the face's query against `point` at `at` and its trims'
     /// edges, the ray records of its edges from `rays`.
-    pub(crate) fn query<T>(
+    pub fn query<T>(
         &self,
         order: &Order,
         point: Point,
@@ -276,7 +274,7 @@ impl FaceData {
 
     /// [`FaceData::query`] with the face's `corners` if given (else built
     /// here).
-    pub(crate) fn query_with<T>(
+    pub fn query_with<T>(
         &self,
         corners: Option<&Corners>,
         order: &Order,
@@ -291,7 +289,7 @@ impl FaceData {
     /// [`FaceData::query_with`] with the splits comparing the box sides
     /// at `scale`: another partition of the face.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn query_scaled<T>(
+    pub fn query_scaled<T>(
         &self,
         scale: [f64; 2],
         corners: Option<&Corners>,
@@ -350,7 +348,7 @@ impl FaceData {
 
 /// The test faces' motion against a point of `of` ([`Motion`]): a point
 /// of `A` moves along `r̂` (then the fixed `T₂ … T₄`), `B` stays.
-pub(crate) fn motion_of(of: Operand) -> Motion {
+pub fn motion_of(of: Operand) -> Motion {
     let rates = rates_a(Sign::Pos, R_HAT);
     std::array::from_fn(|n| {
         let r = rate_rational(&rates[n]);
@@ -363,7 +361,7 @@ pub(crate) fn motion_of(of: Operand) -> Motion {
 
 /// The nets of patches as `Patch::from_affine` takes them, back from
 /// the patches' exact first-level values (weights one).
-pub(crate) fn nets_of(patches: &[Patch]) -> Vec<TileNet> {
+pub fn nets_of(patches: &[Patch]) -> Vec<TileNet> {
     patches
         .iter()
         .map(|p| {
@@ -377,7 +375,7 @@ pub(crate) fn nets_of(patches: &[Patch]) -> Vec<TileNet> {
 }
 
 /// A straight span from `a` to `b`.
-pub(crate) fn line(a: [f64; 3], b: [f64; 3]) -> Span {
+pub fn line(a: [f64; 3], b: [f64; 3]) -> Span {
     let m = [0, 1, 2].map(|k| 0.5 * (a[k] + b[k]));
     [
         [a[0], a[1], a[2], 1.0],
@@ -387,7 +385,7 @@ pub(crate) fn line(a: [f64; 3], b: [f64; 3]) -> Span {
 }
 
 /// A straight p-span.
-pub(crate) fn pline(a: [f64; 2], b: [f64; 2]) -> UvSpan {
+pub fn pline(a: [f64; 2], b: [f64; 2]) -> UvSpan {
     [
         [a[0], a[1], 1.0],
         [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 1.0],
@@ -395,11 +393,117 @@ pub(crate) fn pline(a: [f64; 2], b: [f64; 2]) -> UvSpan {
     ]
 }
 
-pub(crate) fn whole(n: u32) -> Vec<SpanMap> {
+pub fn whole(n: u32) -> Vec<SpanMap> {
     (0..n)
         .map(|span| SpanMap {
             span,
             t: [0.0, 1.0],
         })
         .collect()
+}
+
+/// The signed crossings of the ray of a point of `of` at `q` with a
+/// chain of rational quadratic spans (affine points and weights): per
+/// span the roots of `ν·(P − q·W)`, a quadratic in closed form, ahead
+/// along the ray, signed `sign(ρ × T)`.
+pub fn chain(spans: &[Span], q: [f64; 3], of: Operand) -> ChainRec {
+    let dot = |a: [f64; 3], p: [f64; 4]| a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
+    let (r, n) = ([R_HAT.x, R_HAT.y, R_HAT.z], [NU.x, NU.y, NU.z]);
+    let rho = if of == Operand::A { -1.0 } else { 1.0 };
+    let mut out = ChainRec::default();
+    for (k, sp) in spans.iter().enumerate() {
+        // `a·(P − q·W)` in Bernstein form, then power form.
+        let bern = |a: [f64; 3]| {
+            let aq = a[0] * q[0] + a[1] * q[1] + a[2] * q[2];
+            sp.map(|p| p[3] * (dot(a, p) - aq))
+        };
+        let power = |[b0, b1, b2]: [f64; 3]| [b0, 2.0 * (b1 - b0), b0 - 2.0 * b1 + b2];
+        let [c0, b, a] = power(bern(n));
+        let mut ts: Vec<f64> = Vec::new();
+        if a == 0.0 {
+            if b != 0.0 {
+                ts.push(-c0 / b);
+            }
+        } else {
+            let disc = b * b - 4.0 * a * c0;
+            if disc > 0.0 {
+                let h = -(b + b.signum() * disc.sqrt()) / 2.0;
+                ts.extend([h / a, c0 / h]);
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        let [rc, rb, ra] = power(bern(r));
+        for t in ts {
+            if !(0.0..=1.0).contains(&t) || rho * (rc + rb * t + ra * t * t) <= 0.0 {
+                continue;
+            }
+            // `ρ × T` in the shadow frame `(r̂, ν)`: `ρ_r·T_ν`.
+            let tn = b + 2.0 * a * t;
+            let sign = if rho * tn > 0.0 { Sign::Pos } else { Sign::Neg };
+            out.crossings.push(ChainCrossing {
+                span: k as u32,
+                crossing: Crossing {
+                    t: [clamp(t - 1e-12), clamp(t + 1e-12)],
+                    sign,
+                    single: true,
+                },
+            });
+        }
+    }
+    out
+}
+
+/// `t` clamped to `[0, 1]`.
+fn clamp(t: f64) -> f64 {
+    t.clamp(0.0, 1.0)
+}
+
+/// The polygon `pts` as face 2 of `B` on the plane `z = 0`, `(u, v) ↦
+/// (u, v, 0)`, over the tiles `[0, 2)²` with their nets: vertex `k + 1`
+/// at `pts[k]`, edge `k + 1` (and its coedge) a straight trim from it to
+/// the next vertex, along the loop, its band `band`. The vertices and
+/// edges go into `order`.
+pub fn polygon(pts: &[[f64; 2]], band: f64, order: &mut Order) -> FaceData {
+    let tiles = [[0, 0], [0, 1], [1, 0], [1, 1]];
+    let nets: Vec<TileNet> = tiles
+        .iter()
+        .map(|&t| mapped_net(t, |u, v| [u, v, 0.0]))
+        .collect();
+    let patches = nets
+        .iter()
+        .map(|net| Patch::from_affine(2, 2, *net, &first()).expect("a patch"))
+        .collect();
+    let n = pts.len();
+    let p3 = |p: [f64; 2]| [p[0], p[1], 0.0];
+    for (k, &p) in pts.iter().enumerate() {
+        let (v, e) = (VertId(k as u32 + 1), EdgeId(k as u32 + 1));
+        order.pos.insert((Operand::B, v), p3(p));
+        order
+            .edges
+            .insert((Operand::B, e), [v, VertId(((k + 1) % n) as u32 + 1)]);
+    }
+    let trims = (0..n)
+        .map(|k| {
+            let (a, b) = (pts[k], pts[(k + 1) % n]);
+            TrimData {
+                coedge: CoedgeId(k as u32 + 1),
+                edge: EdgeId(k as u32 + 1),
+                reversed: false,
+                spans: vec![pline(a, b)],
+                ends: order.edges[&(Operand::B, EdgeId(k as u32 + 1))],
+                band,
+                curve: vec![line(p3(a), p3(b))],
+                maps: whole(1),
+            }
+        })
+        .collect();
+    FaceData {
+        operand: Operand::B,
+        id: FaceId(2),
+        tiles: [0..2, 0..2],
+        patches,
+        flipped: false,
+        trims,
+        nets: Some(nets),
+    }
 }

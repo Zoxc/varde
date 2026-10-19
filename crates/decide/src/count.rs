@@ -26,5 +26,6 @@ pub mod s02;
 pub mod winding;
 pub mod xrec;
 
-#[cfg(test)]
-pub(crate) mod testing;
+#[cfg(any(test, feature = "testing"))]
+#[doc(hidden)]
+pub mod testing;

@@ -26,32 +26,27 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use glam::DVec3;
-use malachite::Rational;
-use malachite::base::num::basic::traits::Zero as _;
-use varde_decide::bezier::{HomCurve, HomPatch, Poly, Scalar};
-use varde_decide::count::boxes::{CUSP_PIECES, Corners, FaceUv, Trim, UvSpan};
-use varde_decide::count::pieces::{Ribbon, SpanMap};
-use varde_decide::count::s02::{Charge, FaceQuery, TrimEdge, count_pieces};
+use varde_decide::bezier::{HomCurve, Poly, Scalar};
+use varde_decide::count::boxes::CUSP_PIECES;
+use varde_decide::count::s02::{Charge, count_pieces};
+use varde_decide::count::testing::{FaceData, Order, chain, motion_of, polygon};
 use varde_decide::count::xrec::clusters_at_charged;
-use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
+use varde_decide::ids::{EdgeId, VertId};
 use varde_decide::num::bigf::{Big, BigF, Width};
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::dd::Dd;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::{self, Num, ORDERS, Pred, det3, point, sub};
 use varde_decide::num::trig;
-use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
 use varde_decide::perturb::{Curved, Moving, NU, R_HAT, Rate, Seg, UP};
 use varde_decide::records::cusp::{CuspSpan, Sharp, cusp_rec};
 use varde_decide::records::feet::{EdgeCurve, NearFeet, decide_feet};
-use varde_decide::records::height::hit::{HitFace, HitTrim, Motion, face_hits};
+use varde_decide::records::height::hit::face_hits;
 use varde_decide::records::height::{AnchorRow, HeightGeometry, Heights, KeyValue, Records};
 use varde_decide::records::keys::{
     Anchor, FootId, HKey, HeightKey, Operand, Point, Query, RayKey, SpanKey, XKey,
 };
-use varde_decide::records::ray::{
-    ChainCrossing, ChainRec, Crossing, CurveGeometry, CurvedRays, Span, TileNet,
-};
+use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span};
 use varde_decide::records::shadow::{
     Cost, Decided, LEVELS, LevelWork, Pass, RayRec, ShadowGeometry, Shadows, UNIT_PARTS, UNITS,
 };
@@ -59,11 +54,9 @@ use varde_decide::records::side::Sides;
 use varde_decide::records::table::Fresh;
 use varde_decide::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms};
 use varde_kernel::MAX_WORK;
-use varde_kernel::geom::certify::{SeamBound, calibration};
+use varde_kernel::geom::certify::SeamBound;
+use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
 use varde_kernel::geom::curve::{Curve3D, PCurve};
-use varde_kernel::geom::form::PlaneKey;
-use varde_kernel::geom::lattice::{CELL, Lattice};
-use varde_kernel::geom::surface::Surface;
 
 /// The time one unit stands for, in nanoseconds.
 const UNIT_NS: f64 = 500.0;
@@ -175,63 +168,6 @@ fn time(budget: Duration, mut f: impl FnMut() -> u64) -> f64 {
 // ---------------------------------------------------------------------
 // Seam cells.
 
-const ROOT_HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
-
-/// The plane `z = 0` on its one base tile, 4·10⁶ mm across.
-fn base_plane() -> Surface {
-    let lat = Lattice::new(PlaneKey::new([0.0, 0.0, 1.0], [0.0; 3]).unwrap().into()).unwrap();
-    let rect = lat.half(0).unwrap();
-    Surface::new(lat, rect).unwrap()
-}
-
-/// The p-curve of `c` on the base plane `s`.
-fn on_plane(s: &Surface, c: &Curve3D) -> PCurve {
-    let lat = s.lattice();
-    let (o, [u, v, _]) = (lat.origin(), lat.axes());
-    let spans = c
-        .spans()
-        .iter()
-        .map(|sp| {
-            sp.map(|h| {
-                let d = [h[0] - o[0], h[1] - o[1], h[2] - o[2]];
-                let along = |a: [f64; 3]| (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) / CELL + 0.5;
-                [along(u), along(v), h[3]]
-            })
-        })
-        .collect();
-    PCurve::new(spans, c.knots().to_vec()).unwrap()
-}
-
-/// The quarter circle of radius 50, end weights `w` and `1/w`.
-fn quarter(w: f64) -> Curve3D {
-    let r = 50.0;
-    Curve3D::new(
-        vec![[
-            [r, 0.0, 0.0, w],
-            [r, r, 0.0, ROOT_HALF],
-            [0.0, r, 0.0, 1.0 / w],
-        ]],
-        vec![0.0, 1.0],
-    )
-    .unwrap()
-}
-
-/// The arcs with end weights 1, 3 and 64 on the base plane, and the arc
-/// with weights 3 moved off it by `2·10⁻⁷` of the tile.
-fn arcs(s: &Surface) -> Vec<(Curve3D, PCurve)> {
-    let mut out: Vec<_> = [1.0, 3.0, 64.0]
-        .map(|w| {
-            let c = quarter(w);
-            let p = on_plane(s, &c);
-            (c, p)
-        })
-        .into();
-    let c = quarter(3.0);
-    let p = on_plane(s, &c).perturbed(&[[2e-7, -2e-7]]).unwrap();
-    out.push((c, p));
-    out
-}
-
 /// Seam cells at each level, 8 to a piece (a depth of 3 halvings) on the
 /// arcs.
 fn seam_cells(budget: Duration, rows: &mut Vec<Row>) {
@@ -276,226 +212,50 @@ fn seam_pass_at_max_work() -> (f64, u64) {
 // ---------------------------------------------------------------------
 // Count pieces.
 
-/// A straight span from `a` to `b`.
-fn line(a: [f64; 3], b: [f64; 3]) -> Span {
-    let m = [0, 1, 2].map(|k| 0.5 * (a[k] + b[k]));
-    [
-        [a[0], a[1], a[2], 1.0],
-        [m[0], m[1], m[2], 1.0],
-        [b[0], b[1], b[2], 1.0],
-    ]
-}
-
-/// A straight p-span.
-fn pline(a: [f64; 2], b: [f64; 2]) -> UvSpan {
-    [
-        [a[0], a[1], 1.0],
-        [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 1.0],
-        [b[0], b[1], 1.0],
-    ]
-}
-
-/// The crossings of the ray of a point of `A` at `q` (along `−r̂`) with
-/// straight spans: per span the root of `ν·(P − q)`, ahead along the ray,
-/// signed `sign(ρ × T)`.
-fn chain(spans: &[Span], q: [f64; 3]) -> ChainRec {
-    let dot =
-        |a: DVec3, p: [f64; 4]| a.x * (p[0] - q[0]) + a.y * (p[1] - q[1]) + a.z * (p[2] - q[2]);
-    let mut out = ChainRec::default();
-    for (k, sp) in spans.iter().enumerate() {
-        let (n0, n1) = (dot(NU, sp[0]), dot(NU, sp[2]));
-        if (n0 > 0.0) == (n1 > 0.0) || n0 == n1 {
-            continue;
-        }
-        let t = n0 / (n0 - n1);
-        let (r0, r1) = (dot(R_HAT, sp[0]), dot(R_HAT, sp[2]));
-        if -(r0 + (r1 - r0) * t) <= 0.0 {
-            continue;
-        }
-        // `ρ × T` with `ρ = −r̂`: the sign of `−ν·T`.
-        let sign = if n1 - n0 < 0.0 { Sign::Pos } else { Sign::Neg };
-        let clamp = |t: f64| t.clamp(0.0, 1.0);
-        out.crossings.push(ChainCrossing {
-            span: k as u32,
-            crossing: Crossing {
-                t: [clamp(t - 1e-12), clamp(t + 1e-12)],
-                sign,
-                single: true,
-            },
-        });
-    }
-    out
-}
-
-/// The geometric order of a face's vertices on `z = 0`.
-struct Order {
-    pos: Vec<[f64; 2]>,
-    n: usize,
-}
-
-impl EntityOrder for Order {
-    type Key = ();
-
-    fn ends(&self, _: Operand, g: EdgeId) -> [VertId; 2] {
-        let k = g.0 as usize - 1;
-        [VertId(k as u32 + 1), VertId(((k + 1) % self.n) as u32 + 1)]
-    }
-
-    fn vert_key(&self, _: Operand, v: VertId) -> VertKey<()> {
-        let p = self.pos[v.0 as usize - 1];
-        VertKey::new([p[0], p[1], 0.0], []).expect("no NaN")
-    }
-
-    fn edge_key(&self, operand: Operand, g: EdgeId) -> EdgeKey<()> {
-        let [s, e] = self.ends(operand, g);
-        let [a, b] = [s, e].map(|v| self.pos[v.0 as usize - 1]);
-        let mid = [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 0.0];
-        EdgeKey::new([s, e].map(|v| self.vert_key(operand, v)), mid, [(), ()]).expect("no NaN")
-    }
-}
-
 /// The column through `(x, y)` of `z = 0`, `z` above it.
 fn column(x: f64, y: f64, z: f64) -> [f64; 3] {
     [x + z / UP.z * UP.x, y + z / UP.z * UP.y, z]
-}
-
-/// A polygon of `B` on the plane `z = 0` over the tiles `[0, 2)²`, its
-/// vertices `1, 2, …` in loop order, edge `k` from vertex `k` to the
-/// next: its tiles' patches and nets, its p-spans and its curves.
-struct Polygon {
-    patches: Vec<HomPatch<Bounded<f64>>>,
-    nets: Vec<TileNet>,
-    spans: Vec<[UvSpan; 1]>,
-    curves: Vec<[Span; 1]>,
-    order: Order,
-}
-
-/// The p-curve of a whole edge on its one curve span.
-const WHOLE: [SpanMap; 1] = [SpanMap {
-    span: 0,
-    t: [0.0, 1.0],
-}];
-
-impl Polygon {
-    fn new(pts: &[[f64; 2]]) -> Polygon {
-        let first = Bounded::exact(0.0);
-        let (mut patches, mut nets) = (Vec::new(), Vec::new());
-        for i in 0..2 {
-            for j in 0..2 {
-                let net: TileNet = std::array::from_fn(|ab| {
-                    let (a, b) = (ab / 3, ab % 3);
-                    [
-                        i as f64 + a as f64 / 2.0,
-                        j as f64 + b as f64 / 2.0,
-                        0.0,
-                        1.0,
-                    ]
-                });
-                patches.push(HomPatch::from_affine(2, 2, net, &first).unwrap());
-                nets.push(net);
-            }
-        }
-        let n = pts.len();
-        let p3 = |p: [f64; 2]| [p[0], p[1], 0.0];
-        Polygon {
-            patches,
-            nets,
-            spans: (0..n).map(|k| [pline(pts[k], pts[(k + 1) % n])]).collect(),
-            curves: (0..n)
-                .map(|k| [line(p3(pts[k]), p3(pts[(k + 1) % n]))])
-                .collect(),
-            order: Order {
-                pos: pts.to_vec(),
-                n,
-            },
-        }
-    }
-
-    /// `f` given the face (face 2 of `B`, its trims' band `1/4096`) and
-    /// its vertices in the geometric order.
-    fn with_face<R>(&self, f: impl FnOnce(&FaceUv<'_>, &[VertId]) -> R) -> R {
-        let n = self.order.n;
-        let trims: Vec<Trim<'_>> = (0..n)
-            .map(|k| Trim {
-                coedge: CoedgeId(k as u32 + 1),
-                reversed: false,
-                spans: &self.spans[k],
-                ends: self.order.ends(Operand::B, EdgeId(k as u32 + 1)),
-                zero_length: false,
-                band: BAND,
-            })
-            .collect();
-        let face = FaceUv::new(
-            Operand::B,
-            FaceId(2),
-            [0..2, 0..2],
-            [1.0, 1.0],
-            &trims,
-            false,
-        )
-        .expect("a valid face");
-        let mut verts: Vec<VertId> = (1..=n as u32).map(VertId).collect();
-        verts.sort_by_key(|&v| self.order.vert_key(Operand::B, v));
-        f(&face, &verts)
-    }
 }
 
 /// The trims' band of the polygons.
 const BAND: f64 = 1.0 / 4096.0;
 
 /// `f` given the count of the polygon `pts` (a face of `B` on the plane
-/// `z = 0` over the tiles `[0, 2)²`) against the point of `A` at `q`
-/// with a charge, giving its cost. The face and its corners are built
-/// once, before `f` runs.
+/// `z = 0` over the tiles `[0, 2)²`, [`polygon`]) against the point of
+/// `A` at `q` with a charge, giving its cost. The face and its corners
+/// are built once, before `f` runs. The face is counted without its
+/// tiles' nets, as a curved face is: no hit is read.
 fn with_count<R>(
     pts: &[[f64; 2]],
     q: [f64; 3],
     f: impl FnOnce(&dyn Fn(&Charge) -> Cost) -> R,
 ) -> R {
-    let poly = Polygon::new(pts);
-    poly.with_face(|face, verts| {
-        let corners = Corners::new(face, &poly.patches, verts, &Charge::setup(u64::MAX))
-            .0
-            .expect("corners");
-        let recs: Vec<ChainRec> = poly.curves.iter().map(|c| chain(c, q)).collect();
-        let edges: Vec<TrimEdge<'_>> = (0..poly.order.n)
-            .map(|k| TrimEdge {
-                edge: EdgeId(k as u32 + 1),
-                ribbon: Ribbon {
-                    coedge: CoedgeId(k as u32 + 1),
-                    curve: &poly.curves[k],
-                    map: &WHOLE,
-                    rays: &recs[k],
-                },
-            })
-            .collect();
-        let fq = FaceQuery {
-            face,
-            corners: &corners,
-            patches: &poly.patches,
-            edges: &edges,
-            point: Point::vert(Operand::A, VertId(7)),
-            at: q,
-            eps_tie: 1e-9,
-            nets: None,
-            // Without nets no hit is read, so the fold rule's motion is
-            // unused.
-            motion: &zero_motion(),
-        };
-        let (shadows, feet) = (Shadows::new(), NearFeet::new());
-        let reads = Records {
-            shadows: &shadows,
-            feet: &feet,
-            order: &poly.order,
-        };
-        let sides = Sides::new();
-        f(&|charge| count_pieces(&fq, &sides, &reads, charge).1)
-    })
-}
-
-/// No motion of a face against a point.
-fn zero_motion() -> Motion {
-    std::array::from_fn(|_| std::array::from_fn(|_| Rational::ZERO))
+    let mut order = Order::default();
+    let face = FaceData {
+        nets: None,
+        ..polygon(pts, BAND, &mut order)
+    };
+    let corners = face.corners(&order);
+    let (shadows, feet) = (Shadows::new(), NearFeet::new());
+    let reads = Records {
+        shadows: &shadows,
+        feet: &feet,
+        order: &order,
+    };
+    let sides = Sides::new();
+    // `query_with` takes a `Fn`: `f` runs once.
+    let f = std::cell::Cell::new(Some(f));
+    face.query_with(
+        Some(&corners),
+        &order,
+        Point::vert(Operand::A, VertId(7)),
+        q,
+        &|t| chain(&t.curve, q, Operand::A),
+        &|fq, _| {
+            let f = f.take().expect("run once");
+            f(&|charge| count_pieces(fq, &sides, &reads, charge).1)
+        },
+    )
 }
 
 /// A unit a piece at every level, to count a search's pieces.
@@ -516,10 +276,13 @@ fn count_ns(budget: Duration, count: &dyn Fn(&Charge) -> Cost, charge: &Charge) 
 
 /// Count pieces at each level: a rectangle `2⁻⁵⁰` high and `½` long,
 /// against a point below its long side, refines at every level and is
-/// unsettled at the last. Run on shares that stop it one level later
-/// each, the time between two shares is the next level's (with a share
-/// of nothing a count stops at its first piece). Then the first level on
-/// a square that settles there.
+/// unsettled at the last. A count on a share of `n` units, a unit a
+/// piece, stops at its `n + 1`-th piece, before testing it. Run on
+/// shares that stop it at each level's last piece, the time between two
+/// shares is the level's own: its patches lifted to the level and its
+/// pieces, the level before's last piece counted as one of its (the
+/// first level's lift is timed with the count's setup, on a share of
+/// nothing). Then the first level on a square that settles there.
 fn count_piece_rows(budget: Duration, rows: &mut Vec<Row>) {
     let h = 1.0 / (1u64 << 50) as f64;
     let thin = [
@@ -531,15 +294,23 @@ fn count_piece_rows(budget: Duration, rows: &mut Vec<Row>) {
     with_count(&thin, column(1.375, 1.25, -0.01), |count| {
         let full = count(&per_piece(u64::MAX));
         let pieces: Vec<u64> = full.levels.iter().map(|l| u64::from(l.evals)).collect();
+        assert!(pieces.iter().all(|&n| n > 1), "{pieces:?}");
         let mut before = count_ns(budget, count, &per_piece(0));
         let mut through = 0u64;
         for level in 0..LEVELS {
             through += pieces[level];
-            // Through this level, and a piece of the next.
-            let ns = count_ns(budget, count, &per_piece(through));
+            // Up to this level's last piece: the next level not begun.
+            let ns = count_ns(budget, count, &per_piece(through - 1));
+            // Its last piece is timed with the next level, the level
+            // before's with it: the first level has one fewer.
+            let n = if level == 0 {
+                pieces[0] - 1
+            } else {
+                pieces[level]
+            };
             rows.push(Row {
                 kind: format!("count piece L{level}"),
-                ns: (ns - before) / pieces[level] as f64,
+                ns: (ns - before) / n as f64,
                 units: UNITS.count_piece[level] as f64,
             });
             before = ns;
@@ -756,18 +527,17 @@ fn setup_rows(budget: Duration, rows: &mut Vec<Row>) {
         ("face setup, needle", needle),
         ("face setup, square", square),
     ] {
-        let poly = Polygon::new(&pts);
-        let ns = poly.with_face(|face, verts| {
-            let build = || {
-                let cost = Corners::new(face, &poly.patches, verts, &per_piece(u64::MAX)).1;
-                u64::from(cost.levels[0].evals)
-            };
-            let n = build();
-            time(budget, || {
-                black_box(build());
-                1
-            }) / n as f64
-        });
+        let mut order = Order::default();
+        let face = polygon(&pts, BAND, &mut order);
+        let build = || {
+            let cost = face.corners_on(&order, &per_piece(u64::MAX)).1;
+            u64::from(cost.levels[0].evals)
+        };
+        let n = build();
+        let ns = time(budget, || {
+            black_box(build());
+            1
+        }) / n as f64;
         rows.push(Row {
             kind: kind.into(),
             ns,
@@ -846,36 +616,11 @@ fn xrec_rows(budget: Duration, rows: &mut Vec<Row>) {
 /// square on its four tiles, a column inside it.
 fn hit_rows(budget: Duration, rows: &mut Vec<Row>) {
     let square = [[1.25, 1.25], [1.75, 1.25], [1.75, 1.75], [1.25, 1.75]];
-    let poly = Polygon::new(&square);
-    let n = poly.order.n;
-    let trims: Vec<HitTrim<'_>> = (0..n)
-        .map(|k| {
-            let edge = EdgeId(k as u32 + 1);
-            let ends = poly.order.ends(Operand::B, edge);
-            let [s, e] = ends.map(|v| poly.order.vert_key(Operand::B, v));
-            HitTrim {
-                coedge: CoedgeId(k as u32 + 1),
-                edge,
-                reversed: false,
-                ends,
-                along: Along::of(&s, &e),
-                band: BAND,
-                pspans: &poly.spans[k],
-                curve: &poly.curves[k],
-                map: &WHOLE,
-            }
-        })
-        .collect();
-    let face = HitFace {
-        operand: Operand::B,
-        face: FaceId(2),
-        tiles: [0..2, 0..2],
-        nets: &poly.nets,
-        inside: 1,
-        trims,
-    };
+    let mut order = Order::default();
+    let data = polygon(&square, BAND, &mut order);
+    let face = data.hit_face(&order).expect("a plane face");
     let searches = face.nets.len() + face.trims.iter().map(|t| t.pspans.len()).sum::<usize>();
-    let motion = zero_motion();
+    let motion = motion_of(Operand::A);
     let q = column(1.5, 1.4, -0.01);
     let found = face_hits(&face, q, &motion).expect("hits");
     assert_eq!(found.len(), 1, "one hit");
