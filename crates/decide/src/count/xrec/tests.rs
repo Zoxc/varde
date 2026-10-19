@@ -195,13 +195,25 @@ impl XGeometry for Geom {
     fn edge_rates<S: Curved>(
         &self,
         operand: Operand,
-        _: EdgeId,
-        _: u32,
+        g: EdgeId,
+        span: u32,
         t: &S,
     ) -> [[S; 3]; ORDERS] {
         let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
         match operand {
-            A => [lit(self.d), lit(T[0]), lit(T[1]), lit(T[2])],
+            A => {
+                // `d + (field·p)·ν` at the edge's point `p` there.
+                let mut d = lit(self.d);
+                if self.field != DVec3::ZERO {
+                    let c = self.curve_of(operand, g.0).span(span, t).expect("a span");
+                    let p = c.eval(t);
+                    let f = lit(self.field);
+                    let k = (0..3).fold(S::int(0, t), |s, i| s.add(&f[i].mul(&p[i])));
+                    let nu = lit(NU);
+                    d = [0, 1, 2].map(|i| d[i].add(&nu[i].mul(&k)));
+                }
+                [d, lit(T[0]), lit(T[1]), lit(T[2])]
+            }
             B => std::array::from_fn(|_| lit(DVec3::ZERO)),
         }
     }
@@ -1032,3 +1044,4 @@ fn far_and_negative_zero_coordinates_count_alike() {
 }
 
 mod clusters;
+mod shared;

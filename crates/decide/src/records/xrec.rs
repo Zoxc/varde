@@ -74,17 +74,36 @@
 //! curve object, or bitwise-equal canonical curves: the caller knows,
 //! [`XPair::shared`]) have shadows that coincide wherever the edges
 //! overlap, so no box of their square ever settles: they get no
-//! geometric crossing search. `X` is the four terms', and each crossing
-//! is one the records' ties put at an end: a crossing of an end's ray
-//! record lying in one of that end's feet on the other edge (the end on
-//! the other edge's shadow, moved off it by the perturbation) is a
-//! cluster of its own, of the crossing's sign as the identity counts its
-//! term, its piece of the end's edge the end itself and of the other
-//! edge the crossing's parameter enclosure, reading the point–curve row
-//! at that end ([`ZRow::PointCurve`]). A closed edge's two ends are one
-//! vertex, whose two terms cancel. Crossings away from every end's feet
-//! (the curve's shadow crossing itself) are refused
-//! ([`SharedError::Crossed`]).
+//! geometric crossing search. With `e` moved by `δ·Δ` (its rates) and
+//! `g` fixed, the moved shadows meet near the overlap exactly where `h =
+//! ê·(T × Δ)` changes sign along it (`T` the curve's tangent: the shadow
+//! tangent parallel to the shadow of the motion;
+//! [`shared_crossing`](crate::perturb::shared_crossing)), and at an
+//! overlap end only where `h` is 0 there. The four terms are side terms
+//! of the parameter square, never crossings: a tie at a shared end, a ray
+//! through the other edge's far vertex, a cancelling `±1` pair at the two
+//! ends make no cluster (such a pair reads different z-orders at its two
+//! ends, so keeping it would be wrong). So a pair whose `h` is certified
+//! one sign over the closed overlap has no clusters, and its four terms
+//! must count `X = 0`; any other pair is refused, naming why
+//! ([`SharedError`]): `h` of both signs (a crossing, whose cluster at the
+//! root of `h` this rule doesn't form), `h` not settled by any level
+//! (a root at or near a point of the overlap, a vertical shadow tangent,
+//! `h ≡ 0`), or `X ≠ 0` (crossings away from the overlap, which no search
+//! here finds). It never answers wrong.
+//!
+//! **The overlap.** On one line it is the exact common range of the two
+//! segments on `e`'s parameter, rounded outwards (a point where they only
+//! abut). On one chain it is made of whole spans: those of `e` that are
+//! spans of `g` bit for bit (either way round), and the span ends of `e`
+//! that are span ends of `g` (abutting edges' common end). That holds
+//! where every end of either edge is a knot or end of the other or off it
+//! (no feet on it); an end lying on the other edge inside a span is
+//! refused ([`SharedError::Unaligned`]). `h` is evaluated at each
+//! precision level over the pieces, halved breadth first until each
+//! piece certifies a sign (down to [`MIN_H_PIECE`], at most
+//! [`MAX_H_PIECES`] evaluations a level, then the next level), at `e`'s
+//! rates there ([`XGeometry::edge_rates`]).
 //!
 //! **Cut points** ([`cut_point`]). The cut point `Cut(e, g, c)` is the
 //! point of `e` at cluster `c` ([`XCluster::part`]). Its records (against
@@ -97,24 +116,26 @@
 //! ([`HKey::x`]).
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
 use malachite::Rational;
 use malachite::base::num::conversion::traits::RoundingFrom;
-use malachite::base::rounding_modes::RoundingMode::Nearest;
+use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor, Nearest};
 
 use crate::bezier::{Dyadic, HomCurve, Scalar};
 use crate::ids::EdgeId;
+use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
+use crate::num::dd::Dd;
 use crate::num::decide::Sign;
 use crate::order::{EntityOrder, first};
-use crate::perturb::NU;
-use crate::records::feet::Foot;
+use crate::perturb::{Curved, NU, between, curve_point, shared_crossing};
 use crate::records::height::{HeightReads, HeightRec};
 use crate::records::keys::{
     Anchor, HKey, HeightKey, Operand, Oriented, Point, RayKey, RecordKey, XClusterIx, XKey,
 };
 use crate::records::ray::{ChainRec, Span};
-use crate::records::shadow::RayRec;
+use crate::records::shadow::{LEVELS, RayRec};
 
 /// An edge's curve along its stored direction, from its lower-id end.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,42 +265,6 @@ pub struct XPart {
     pub t: [f64; 2],
 }
 
-impl XPart {
-    /// Whether the piece meets foot `k`, as far as the foot's end
-    /// brackets tell (a bracket touching the piece counts as meeting). On
-    /// a closed edge (`closed`) the chain's start and end are one vertex,
-    /// so a piece or foot at one touches one at the other.
-    fn meets(&self, k: &Foot, spans: u32, closed: bool) -> bool {
-        let lo = (k.lo.span, k.lo.t[0]);
-        let hi = (k.hi.span, k.hi.t[1]);
-        let (a, b) = ((self.span, self.t[0]), (self.span, self.t[1]));
-        // A knot is the end of one span and the start of the next: named
-        // by the later span, so a foot ending there meets a piece starting
-        // there.
-        let at = |x: (u32, f64)| {
-            if x.1 >= 1.0 && x.0 + 1 < spans {
-                (x.0 + 1, 0.0)
-            } else {
-                x
-            }
-        };
-        let le = |x: (u32, f64), y: (u32, f64)| {
-            let (x, y) = (at(x), at(y));
-            x.0 < y.0 || (x.0 == y.0 && x.1 <= y.1)
-        };
-        let end = (spans.saturating_sub(1), 1.0);
-        if k.wraps {
-            // From `lo` to the chain's end, and from its start to `hi`.
-            (le(lo, b) && le(a, end)) || le(a, hi)
-        } else {
-            let start = (0, 0.0);
-            let through =
-                closed && ((le(end, b) && le(lo, start)) || (le(a, start) && le(end, hi)));
-            through || (le(lo, b) && le(a, hi))
-        }
-    }
-}
-
 impl XCluster {
     /// The piece of the edge of `of`: `e`'s for `A`, `g`'s for `B`.
     pub fn part(&self, of: Operand) -> &XPart {
@@ -324,7 +309,7 @@ pub struct XCluster {
 /// level they were formed at, on which that order depends: the record is
 /// checked again at that level only
 /// ([`replay`](crate::count::xrec::replay)). A shared-curve pair's
-/// clusters are the records' alone, level 0.
+/// record has no clusters, level 0.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct XRec {
     /// The clusters.
@@ -441,106 +426,275 @@ pub fn tie_point<O: EntityOrder>(order: &O, x: XKey, terms: &XTerms<'_>) -> Opti
     )
 }
 
-/// Why a shared-curve pair's clusters aren't formed (module docs,
-/// "Shared curves").
+/// Why a shared-curve pair isn't answered (module docs, "Shared
+/// curves"): never a wrong record, a refusal naming what it met.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SharedError {
     /// An end's feet on the other edge aren't decided.
     Missing(RecordKey),
-    /// A term's record is of the wrong kind for its edge, names a span
-    /// the edge doesn't have, or an edge has no spans.
+    /// An edge has no spans, one is straight and the other curved, or
+    /// two straight edges aren't on one line.
     Shape,
-    /// The four terms count this many crossings (as `X` sums them) away
-    /// from every end's feet: the curve's shadow crosses itself.
-    Crossed(i64),
+    /// This end of one edge lies on the other edge inside one of its
+    /// spans, not at a knot or vertex of it: the overlap isn't made of
+    /// whole spans of both, which the rule reads it as.
+    Unaligned(Point),
+    /// `h` is certified of both signs over the overlap: the moved edges
+    /// cross there.
+    Crossed,
+    /// No level certifies one sign of `h` over the overlap: a root of `h`
+    /// at or too near a point of it (the shadow tangent along the motion,
+    /// or vertical), or `h ≡ 0` there.
+    Unsettled,
+    /// `h` is one sign over the overlap, but the four terms count this
+    /// many crossings: crossings away from the overlap (the curve's
+    /// shadow crossing itself), which no search here finds.
+    Away(i64),
 }
 
-/// The clusters of a shared-curve pair `x` (module docs, "Shared
-/// curves"), from its four terms and its ends' feet on the other edge,
-/// with no geometric search: one cluster per crossing of an end's ray
-/// lying in its feet, in the order `a`, `b`, `g0`, `g1`, then along the
-/// other edge.
-pub fn shared_clusters<R: HeightReads>(
+/// The narrowest piece of a span's parameter `h` is halved to: below
+/// it, a level that hasn't certified `h` leaves it to the next (`2⁻⁴⁰`).
+pub const MIN_H_PIECE: f64 = 1.0 / 1_099_511_627_776.0;
+
+/// A piece of the overlap of a shared-curve pair, on `e`: a span of `e`
+/// and a parameter range of it (a point where its ends are equal).
+type Piece = (u32, [f64; 2]);
+
+/// The most evaluations of `h` one level makes over a pair's overlap
+/// before it is left to the next level.
+pub const MAX_H_PIECES: usize = 4096;
+
+/// The record of a shared-curve pair `x` (module docs, "Shared curves"):
+/// no clusters where `h = ê·(T × Δ)` (`T` the curve's tangent, `Δ` `e`'s
+/// rates, [`shared_crossing`]) is certified one sign over the edges'
+/// overlap and the four terms count no crossing; else refused. `geom`
+/// gives `e`'s rates along it; `reads` its ends and their feet.
+pub fn shared_clusters<R: HeightReads, G: XGeometry>(
     reads: &R,
+    geom: &G,
     x: XKey,
     pair: &XPair<'_>,
 ) -> Result<XRec, SharedError> {
-    let t = &pair.terms;
     if pair.e.span_count() == 0 || pair.g.span_count() == 0 {
         return Err(SharedError::Shape);
     }
-    let mut rec = XRec::default();
-    let mut placed = 0i64;
-    // (operand, edge, its curve, the other's, the end's term and sign,
-    // last end).
-    let ends = [
-        (Operand::A, x.e, x.g, &pair.e, &pair.g, t.a_g, -1, false),
-        (Operand::A, x.e, x.g, &pair.e, &pair.g, t.b_g, 1, true),
-        (Operand::B, x.g, x.e, &pair.g, &pair.e, t.g0_e, 1, false),
-        (Operand::B, x.g, x.e, &pair.g, &pair.e, t.g1_e, -1, true),
-    ];
-    for (of, edge, other, own, theirs, rays, sign, last) in ends {
-        let [v0, v1] = reads.ends(of, edge);
-        if v0 == v1 {
-            // A closed edge's two terms are one record, cancelling.
-            continue;
+    let pieces = overlap(reads, x, pair)?;
+    let mut settled = false;
+    for level in 0..LEVELS {
+        let over = match level {
+            0 => h_over(geom, x.e, &pair.e, &pieces, &Bounded::exact(0.0)),
+            1 => h_over(
+                geom,
+                x.e,
+                &pair.e,
+                &pieces,
+                &Bounded::exact(Dd::from_f64(0.0)),
+            ),
+            _ => match Width::ALL.get(level - 2) {
+                Some(&w) => h_over(
+                    geom,
+                    x.e,
+                    &pair.e,
+                    &pieces,
+                    &Bounded::exact(Big::from_f64(0.0, w)),
+                ),
+                None => break,
+            },
+        };
+        match over {
+            Ok(_) => {
+                settled = true;
+                break;
+            }
+            Err(SharedError::Unsettled) => {}
+            Err(e) => return Err(e),
         }
-        let q = Point::vert(of, if last { v1 } else { v0 });
-        let feet = reads
-            .feet(q, other)
-            .ok_or(SharedError::Missing(RecordKey::Ray(RayKey { q, g: other })))?;
-        let n_own = own.span_count();
-        let n_other = theirs.span_count();
-        let [o0, o1] = reads.ends(of.other(), other);
-        let at_end = XPart {
-            span: if last { n_own - 1 } else { 0 },
-            t: if last { [1.0, 1.0] } else { [0.0, 0.0] },
-        };
-        let mut found = |crossing: Sign, part: XPart| {
-            if feet.feet.iter().any(|k| part.meets(k, n_other, o0 == o1)) {
-                let degree = sign * i64::from(crossing.as_i8());
-                placed += degree;
-                let (e, g) = match of {
-                    Operand::A => (at_end, part),
-                    Operand::B => (part, at_end),
-                };
-                rec.clusters.push(XCluster {
-                    e,
-                    g,
-                    degree,
-                    clear: None,
-                    row: ZRow::PointCurve(q),
-                });
-            }
-        };
-        match (rays, theirs) {
-            (EdgeRays::Line(r), XCurve::Line(p0, p1)) => {
-                if let Some(c) = r.crossing {
-                    let p = own.end(last).ok_or(SharedError::Shape)?;
-                    let t = line_param(p, *p0, *p1).unwrap_or([0.0, 1.0]);
-                    found(c, XPart { span: 0, t });
-                }
-            }
-            (EdgeRays::Chain(r), XCurve::Spans(_)) => {
-                for c in &r.crossings {
-                    if c.span >= n_other {
-                        return Err(SharedError::Shape);
+    }
+    if !settled {
+        return Err(SharedError::Unsettled);
+    }
+    let n = x_count(&pair.terms);
+    if n != 0 {
+        return Err(SharedError::Away(n));
+    }
+    Ok(XRec::default())
+}
+
+/// The overlap of a shared-curve pair as pieces of `e` (module docs,
+/// "Shared curves"): on one line, the exact common range, rounded
+/// outwards to `f64`; on one chain, the spans of `e` that are spans of
+/// `g` (either way round) and the span ends of `e` that are span ends of
+/// `g` (a common end of abutting edges). Each end of either edge must be
+/// a span end of the other or have no feet on it.
+fn overlap<R: HeightReads>(
+    reads: &R,
+    x: XKey,
+    pair: &XPair<'_>,
+) -> Result<Vec<Piece>, SharedError> {
+    match (pair.e, pair.g) {
+        (XCurve::Line(a, b), XCurve::Line(g0, g1)) => line_overlap(a, b, g0, g1),
+        (XCurve::Spans(es), XCurve::Spans(gs)) => {
+            let ends = |s: &[Span]| -> Vec<[f64; 3]> {
+                s.iter()
+                    .flat_map(|sp| [sp[0], sp[2]])
+                    .map(|p| [p[0], p[1], p[2]])
+                    .collect()
+            };
+            let (e_pts, g_pts) = (ends(es), ends(gs));
+            for (of, edge, other, curve, theirs) in [
+                (Operand::A, x.e, x.g, &pair.e, &g_pts),
+                (Operand::B, x.g, x.e, &pair.g, &e_pts),
+            ] {
+                for (i, v) in reads.ends(of, edge).into_iter().enumerate() {
+                    let p = curve.end(i == 1).ok_or(SharedError::Shape)?;
+                    if theirs.contains(&p) {
+                        continue;
                     }
-                    let part = XPart {
-                        span: c.span,
-                        t: c.crossing.t,
-                    };
-                    found(c.crossing.sign, part);
+                    let q = Point::vert(of, v);
+                    let feet = reads
+                        .feet(q, other)
+                        .ok_or(SharedError::Missing(RecordKey::Ray(RayKey { q, g: other })))?;
+                    if !feet.feet.is_empty() {
+                        return Err(SharedError::Unaligned(q));
+                    }
                 }
             }
-            _ => return Err(SharedError::Shape),
+            let mut out = Vec::new();
+            for (k, sp) in (0u32..).zip(es) {
+                let back = [sp[2], sp[1], sp[0]];
+                if gs.iter().any(|g| *g == *sp || *g == back) {
+                    out.push((k, [0.0, 1.0]));
+                    continue;
+                }
+                for (end, at) in [(0, 0.0), (2, 1.0)] {
+                    let p = [sp[end][0], sp[end][1], sp[end][2]];
+                    if g_pts.contains(&p) {
+                        out.push((k, [at, at]));
+                    }
+                }
+            }
+            Ok(out)
+        }
+        _ => Err(SharedError::Shape),
+    }
+}
+
+/// The common range of the lines `a→b` and `g0→g1` on `a→b`'s parameter,
+/// exactly, rounded outwards: none where they don't meet, a point where
+/// they meet at an end. [`SharedError::Shape`] unless the four points are
+/// on one line and `a ≠ b`.
+fn line_overlap(
+    a: [f64; 3],
+    b: [f64; 3],
+    g0: [f64; 3],
+    g1: [f64; 3],
+) -> Result<Vec<Piece>, SharedError> {
+    let pt = |p: [f64; 3]| -> Result<[Rational; 3], SharedError> {
+        let [x, y, z] = p.map(|c| Rational::try_from(c).map_err(|_| SharedError::Shape));
+        Ok([x?, y?, z?])
+    };
+    let sub = |p: &[Rational; 3], o: &[Rational; 3]| -> [Rational; 3] {
+        [0, 1, 2].map(|i| &p[i] - &o[i])
+    };
+    let dot = |u: &[Rational; 3], v: &[Rational; 3]| -> Rational {
+        (0..3).fold(Rational::from(0u32), |s, i| s + &u[i] * &v[i])
+    };
+    let zero = Rational::from(0u32);
+    let a = pt(a)?;
+    let u = sub(&pt(b)?, &a);
+    let uu = dot(&u, &u);
+    if uu == zero {
+        return Err(SharedError::Shape);
+    }
+    let mut ts = Vec::new();
+    for g in [g0, g1] {
+        let w = sub(&pt(g)?, &a);
+        let c = [
+            &u[1] * &w[2] - &u[2] * &w[1],
+            &u[2] * &w[0] - &u[0] * &w[2],
+            &u[0] * &w[1] - &u[1] * &w[0],
+        ];
+        if c.iter().any(|x| *x != zero) {
+            return Err(SharedError::Shape);
+        }
+        ts.push(dot(&u, &w) / &uu);
+    }
+    let one = Rational::from(1u32);
+    let (lo, hi) = if ts[0] <= ts[1] {
+        (&ts[0], &ts[1])
+    } else {
+        (&ts[1], &ts[0])
+    };
+    let lo = if *lo > zero { lo.clone() } else { zero };
+    let hi = if *hi < one { hi.clone() } else { one };
+    if lo > hi {
+        return Ok(Vec::new());
+    }
+    let lo_f = f64::rounding_from(&lo, Floor).0;
+    let hi_f = f64::rounding_from(&hi, Ceiling).0;
+    Ok(vec![(0, [lo_f, hi_f])])
+}
+
+/// The sign of `h₁` over the pieces at `like`'s level: `Ok(None)` for no
+/// pieces, [`SharedError::Crossed`] where two pieces certify opposite
+/// signs, [`SharedError::Unsettled`] where a piece isn't certified within
+/// [`MAX_H_PIECES`] evaluations, halving each piece breadth first down
+/// to [`MIN_H_PIECE`].
+fn h_over<S: Curved, G: XGeometry>(
+    geom: &G,
+    e: EdgeId,
+    curve: &XCurve<'_>,
+    pieces: &[Piece],
+    like: &S,
+) -> Result<Option<Sign>, SharedError> {
+    // Breadth first, so both signs show over the whole overlap before any
+    // piece is refined far.
+    let mut work: VecDeque<Piece> = pieces.iter().copied().collect();
+    let mut sign = None;
+    let mut unsettled = false;
+    let mut evals = 0usize;
+    while let Some((k, [lo, hi])) = work.pop_front() {
+        evals += 1;
+        if evals > MAX_H_PIECES {
+            return Err(SharedError::Unsettled);
+        }
+        let c = curve.span(k, like).ok_or(SharedError::Shape)?;
+        let t = if lo == hi {
+            S::from_f64(lo, like)
+        } else {
+            between(lo, hi, like)
+        };
+        let (_, tangent) = curve_point(&c, &t);
+        let rates = geom.edge_rates(Operand::A, e, k, &t);
+        let h = shared_crossing(&tangent, &rates).ord[0].sign();
+        match h {
+            Some(o) if o != Ordering::Equal => {
+                let s = if o == Ordering::Greater {
+                    Sign::Pos
+                } else {
+                    Sign::Neg
+                };
+                if sign.is_some_and(|x| x != s) {
+                    return Err(SharedError::Crossed);
+                }
+                sign = Some(s);
+            }
+            _ => {
+                let m = lo + (hi - lo) * 0.5;
+                if hi - lo > MIN_H_PIECE && lo < m && m < hi {
+                    work.push_back((k, [lo, m]));
+                    work.push_back((k, [m, hi]));
+                } else {
+                    unsettled = true;
+                }
+            }
         }
     }
-    let rest = x_count(t) - placed;
-    if rest != 0 {
-        return Err(SharedError::Crossed(rest));
+    if unsettled {
+        Err(SharedError::Unsettled)
+    } else {
+        Ok(sign)
     }
-    Ok(rec)
 }
 
 /// The enclosure of the parameter where `q`'s `r̂` line meets the line

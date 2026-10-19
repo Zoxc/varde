@@ -1465,3 +1465,42 @@ fn face_height_refuses_degenerate_and_edge_on_normals() {
         None
     );
 }
+
+/// The shared-curve crossing row: `ê·(T × Δₖ)` with unit `ê` and `T`,
+/// the moved shadow's offset across the curve's shadow per unit motion
+/// (a length): `|ν|` for a tangent along `r̂` and a motion along `ν`, of
+/// either sign with either direction, 0 for a motion along the tangent
+/// or along `ê`, whatever the tangent's length; order 0 is 0.
+#[test]
+fn the_shared_curve_row_is_the_motion_across_the_shadow() {
+    let like = Bounded::exact(0.0);
+    let v = |d: DVec3| lit3(d, &like);
+    let zero = DVec3::ZERO;
+    let row = |t: DVec3, d: DVec3| shared_crossing(&v(t), &[v(d), v(T[0]), v(T[1]), v(T[2])]);
+    let r = row(R_HAT * 3.0, NU);
+    assert_eq!(r.g.enclose(), [0.0, 0.0]);
+    let [lo, hi] = r.ord[0].enclose();
+    assert!(
+        lo <= NU.length() && NU.length() <= hi && hi - lo < 1e-9,
+        "{lo} {hi}"
+    );
+    assert_eq!(row(-R_HAT, NU).ord[0].sign(), Some(Ordering::Less));
+    assert_eq!(row(R_HAT, -NU).ord[0].sign(), Some(Ordering::Less));
+    for d in [R_HAT * 5.0, UP, zero] {
+        let [lo, hi] = row(R_HAT, d).ord[0].enclose();
+        assert!(lo <= 0.0 && 0.0 <= hi && hi - lo < 1e-9, "{d}: {lo} {hi}");
+    }
+    // Orders 2 to 4 are the translations' own, `ê·(T × Tₖ)`.
+    let t = DVec3::new(1.0, -2.0, 0.5);
+    let r = row(t, zero);
+    for k in 0..3 {
+        let want = UP.normalize().dot(t.normalize().cross(T[k]));
+        let [lo, hi] = r.ord[k + 1].enclose();
+        assert!(
+            lo <= want + 1e-12 && want - 1e-12 <= hi,
+            "{k}: {want} {lo} {hi}"
+        );
+    }
+    // A tangent that isn't certainly non-zero escalates.
+    assert_eq!(row(zero, NU).ord[0].sign(), None);
+}

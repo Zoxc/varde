@@ -119,8 +119,9 @@ pub(super) enum Cause {
     /// their overlap (no cluster reads that until the crossings along it
     /// are found).
     ZOrder,
-    /// Edges on one curve whose crossing lies away from their ends' feet
-    /// (refused with `Crossed`, never a wrong total).
+    /// Edges on one curve whose `h = ê·(T × Δ)` changes sign along their
+    /// overlap: the moved edges cross there (refused with `Crossed`,
+    /// never a wrong answer).
     Crossed,
     /// The seeds can't be found.
     Seeds(String),
@@ -1100,16 +1101,17 @@ impl World<'_> {
                             feet: &r.feet,
                             order: &self.order,
                         };
-                        let rec = varde_decide::records::xrec::shared_clusters(&reads, x, &pair)
-                            .map_err(|err| {
-                                let cause = match err {
-                                    varde_decide::records::xrec::SharedError::Crossed(_) => {
-                                        Cause::Crossed
-                                    }
-                                    err => Cause::Clusters(format!("shared {err:?}")),
-                                };
-                                refused(cause, format!("{e:?} {g:?}"))
-                            })?;
+                        let rec =
+                            varde_decide::records::xrec::shared_clusters(&reads, self, x, &pair)
+                                .map_err(|err| {
+                                    let cause = match err {
+                                        varde_decide::records::xrec::SharedError::Crossed => {
+                                            Cause::Crossed
+                                        }
+                                        err => Cause::Clusters(format!("shared {err:?}")),
+                                    };
+                                    refused(cause, format!("{e:?} {g:?}"))
+                                })?;
                         return self.s11_of(x, &rec, &mut heights, band, stats);
                     }
                     // The side and corner records the boxes ask for are

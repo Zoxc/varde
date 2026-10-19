@@ -51,6 +51,7 @@
 //! | column hit on a tile, germ keys, anchor `f` ([`PlaneHeight`], [`tangent_plane_row`]) | from the record's height key (the hit's own, [`crate::records::height::hit`]; [`PointHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
 //! | column hit on a ribbon, anchor `f` ([`ribbon_row`], [`ribbon_row_signs`]) | the hit's height, a sign condition at a root ([`crate::records::height::hit`]) | `(n_R·ΔR − n_R·Δq)·sign(n_R·ê)`, `n_R = R_t × R_λ`: the tangent plane of the ribbon at the hit |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
+//! | shared-curve crossing ([`shared_crossing`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
 //!
 //! The height and z-order rows are per anchor: their order 0 is the value
 //! of the record's height key, decided once for every anchor reading it,
@@ -913,6 +914,27 @@ pub fn z_order_cone<S: Curved>(
             _ => wide,
         }
     }))
+}
+
+/// The shared-curve crossing row, curved: for two edges on one curve,
+/// the moving edge's point at a parameter of their overlap, with the
+/// curve's tangent `tangent` there (any positive multiple, along either
+/// stored direction) and the edge's rates `rates`. Its value is 0 (the
+/// shadows coincide); order `k` is `hₖ = ê·(T × Δₖ)`, `ê` and `T` unit:
+/// the component of the motion across the shadow, so the moved shadows
+/// meet near the overlap exactly where `h₁` changes sign (the shadow
+/// tangent parallel to the shadow of the motion). A length per unit
+/// motion. Uncertified (escalates) where `T` isn't certainly non-zero;
+/// zero where `T` is along `ê` (a vertical shadow tangent, which this
+/// row doesn't decide).
+pub fn shared_crossing<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) -> Coeffs<S> {
+    let like = &tangent[0];
+    let up = unit3(&lit3(UP, like));
+    let t = unit3(tangent);
+    Coeffs {
+        g: S::int(0, like),
+        ord: std::array::from_fn(|k| dot3(&up, &cross3(&t, &rates[k]))),
+    }
 }
 
 /// The point–curve z-order orders, exactly, at a point `q` lying on a

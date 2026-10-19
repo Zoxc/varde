@@ -101,8 +101,9 @@
 //! linear along it), the cluster's z-order is then clear; else the pair
 //! is refused ([`XClusterError::Collinear`]: the edges meet in 3D, or
 //! cross in height, over the overlap). A pair on one curve is never
-//! searched ([`XClusterError::Shared`]): its clusters come from the
-//! records alone ([`shared_clusters`](crate::records::xrec::shared_clusters)).
+//! searched ([`XClusterError::Shared`]): its record comes from the sign
+//! of `h` along the overlap
+//! ([`shared_clusters`](crate::records::xrec::shared_clusters)).
 //!
 //! **Levels.** The clusters are listed in their boxes' key order, so each
 //! cluster's index is a function of the pair and the precision level the
@@ -842,7 +843,7 @@ pub enum XClusterError {
     /// so no level does better.
     Collinear,
     /// The pair's edges lie on one curve: no geometric search, its
-    /// clusters are the records'
+    /// record is from the sign of `h` along the overlap
     /// ([`shared_clusters`](crate::records::xrec::shared_clusters)).
     Shared,
 }
