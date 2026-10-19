@@ -2,12 +2,13 @@ use glam::DVec3;
 use varde_testkit::ray_oracle::Shift;
 use varde_testkit::rng::Rng;
 
-use super::families::{FAMILIES, KERNEL_EXACT};
+use super::families::{FAMILIES, KERNEL_EXACT, kernel_exact_kind};
 use super::runs::{
-    Counting, Outcome, Placement, Report, check_answers, check_with, counting, near_shift,
-    oracle_faces, par, run, run_counted, truth, truths_near,
+    Checked, Counting, Flip, Outcome, Placement, Report, check_answers, check_counted, check_with,
+    counting, near_shift, oracle_faces, par, run, run_counted, truth, truths_near,
 };
 use super::solids::{Make, Shape, Solid, Turn};
+use super::turned::TurnedEdges;
 use super::world::{Answers, Config, Refusal, Stats};
 
 type Counted = Result<Answers, Refusal>;
@@ -116,7 +117,10 @@ fn adversarial_families_agree_with_the_oracle() {
         if only.as_deref().is_some_and(|o| !name.contains(o)) {
             continue;
         }
-        let r = run(n, threads(), &Config::RUNS, true, &|i| family(i));
+        let mut r = run(n, threads(), &Config::RUNS, true, &|i| family(i));
+        if name == KERNEL_EXACT {
+            r.kinds = Some(kernel_exact_kind);
+        }
         eprintln!("== {name}\n{}", r.text());
         if !r.mismatches.is_empty() || !r.unresolved.is_empty() {
             bad.push(name);
@@ -227,9 +231,11 @@ fn counts_are_invariant() {
         });
         for (i, ((o, ans), (bo, bans))) in outs.iter().zip(&bases).enumerate() {
             match o {
-                Outcome::Agreed { .. } | Outcome::TieScale(_) | Outcome::OperandLobe(_) => {
-                    agreed += 1
-                }
+                Outcome::Agreed { .. }
+                | Outcome::TieScale(_)
+                | Outcome::OperandLobe(_)
+                | Outcome::TurnedEdgeFaces(_)
+                | Outcome::OracleOnlyFlip => agreed += 1,
                 Outcome::Mismatch(m) => {
                     mismatch += 1;
                     text += &format!("{name}: seed {i}: MISMATCH {m}\n");
@@ -623,6 +629,7 @@ fn kernel_exact_ties_follow_the_direction() {
     eprintln!("{text}");
     let bad = kernel_exact_violations(&r);
     assert!(bad.is_empty(), "{bad:?}\n{text}");
+    assert!(text.contains("answered by kind: "), "{text}");
 }
 
 /// The `±2^-28·d` shift is relative to the data: `d` at max-norm 1,
@@ -650,7 +657,9 @@ fn the_near_shift_is_relative_to_the_data() {
 fn kernel_exact_run(count: Counting) -> Report {
     let n = placements(2, 40);
     let family = family_named(KERNEL_EXACT);
-    run_counted(n, threads(), &Config::RUNS, true, count, &|i| family(i))
+    let mut r = run_counted(n, threads(), &Config::RUNS, true, count, &|i| family(i));
+    r.kinds = Some(kernel_exact_kind);
+    r
 }
 
 /// What the kernel-exact family's check finds wrong with a run.
@@ -776,4 +785,256 @@ fn operand_lobes_take_the_fallback() {
         let lobes = answers.map_or(0, |a| a.lobes);
         assert!(lobes > 0, "{family} seed {seed}: no lobe fallback");
     }
+}
+
+/// A cube edge in a key plane crossing an edge of the turned box inside
+/// it (kernel-exact seed 42: the box's edge in the cube face's plane
+/// leaves the face across the cube's edge): the crossing lies on the
+/// turned faces' misfit-width ribbons, so its per-face counts in `x21`
+/// are tie-scale and only their sum over the box edge's two faces is
+/// checked. The counting agrees, with `±d` too; a counting moving the
+/// crossing to the edge's other face is reported tie-scale per face and
+/// still agrees; one changing the sum, or moving a crossing between two
+/// faces elsewhere, is a mismatch.
+#[test]
+fn crossed_turned_edges_are_checked_by_their_sum() {
+    const SEED: u64 = 42;
+    assert_eq!(kernel_exact_kind(SEED), "edge of A in a key plane");
+    let found = crossed_turned_edges(SEED + 1);
+    let (_, turned) = found.last().expect("a crossed turned edge");
+    let (g, group) = turned
+        .x21
+        .iter()
+        .enumerate()
+        .find_map(|(g, gs)| gs.first().map(|x| (g, x.clone())))
+        .expect("in x21");
+    assert_eq!((g, group.len()), (3, 2), "{turned:?}");
+    assert!(turned.x12.iter().all(Vec::is_empty), "{turned:?}");
+    assert_eq!(found.last().map(|x| x.0), Some(SEED));
+
+    /// The groups of the placement's crossed turned edges.
+    fn groups(a: &Solid, b: &Solid) -> TurnedEdges {
+        TurnedEdges::of(a, b, true)
+    }
+    /// The first crossing count of row `g` and face `f`'s neighbour
+    /// `h`, with `f` and `h` in one group (`within`) or not.
+    fn pick(a: &Solid, b: &Solid, within: bool) -> (usize, usize, usize) {
+        let t = groups(a, b);
+        let (g, x) = t
+            .x21
+            .iter()
+            .enumerate()
+            .find_map(|(g, gs)| gs.first().map(|x| (g, x.clone())))
+            .expect("a group");
+        if within {
+            (g, x[0], x[1])
+        } else {
+            let others: Vec<usize> = (0..a.faces().len()).filter(|f| !x.contains(f)).collect();
+            (g, others[0], others[1])
+        }
+    }
+    fn moved(a: &Solid, b: &Solid, d: DVec3, cfg: &Config, st: &mut Stats) -> Counted {
+        let mut c = counting(a, b, d, cfg, st)?;
+        let (g, f, h) = pick(a, b, true);
+        c.x21[g][f] -= 1;
+        c.x21[g][h] += 1;
+        Ok(c)
+    }
+    fn summed(a: &Solid, b: &Solid, d: DVec3, cfg: &Config, st: &mut Stats) -> Counted {
+        let mut c = counting(a, b, d, cfg, st)?;
+        let (g, f, _) = pick(a, b, true);
+        c.x21[g][f] += 1;
+        Ok(c)
+    }
+    fn elsewhere(a: &Solid, b: &Solid, d: DVec3, cfg: &Config, st: &mut Stats) -> Counted {
+        let mut c = counting(a, b, d, cfg, st)?;
+        let (g, f, h) = pick(a, b, false);
+        c.x21[g][f] -= 1;
+        c.x21[g][h] += 1;
+        Ok(c)
+    }
+    let cases: [Counting; 4] = [counting, moved, summed, elsewhere];
+    let p = family_named(KERNEL_EXACT)(SEED);
+    let outs: Vec<Checked> = par(4, threads(), &|i| {
+        check_counted(
+            &p,
+            &Config::RUNS,
+            &mut Stats::default(),
+            i < 2,
+            cases[i as usize],
+        )
+    });
+    let flip_ok = |c: &Checked| {
+        matches!(
+            c.flip,
+            Some(Flip::Checked {
+                counted: true,
+                truth: true,
+                sides: [true, true],
+            })
+        )
+    };
+    let [real, moved, summed, elsewhere] = &outs[..] else {
+        unreachable!()
+    };
+    assert_eq!(real.turned, 1);
+    assert!(
+        matches!(
+            real.outcome,
+            Outcome::Agreed { .. } | Outcome::TurnedEdgeFaces(_)
+        ),
+        "{real:?}"
+    );
+    assert!(flip_ok(real), "{real:?}");
+    let Outcome::TurnedEdgeFaces(m) = &moved.outcome else {
+        panic!("{moved:?}")
+    };
+    assert!(m.contains(&format!("x21 e{g} f")), "{m}");
+    assert!(flip_ok(moved), "{moved:?}");
+    let Outcome::Mismatch(m) = &summed.outcome else {
+        panic!("{summed:?}")
+    };
+    assert!(
+        m.contains(&format!("x21 e{g} faces {group:?} summed")),
+        "{m}"
+    );
+    assert!(
+        matches!(elsewhere.outcome, Outcome::Mismatch(_)),
+        "{elsewhere:?}"
+    );
+    // The report counts the per-face tie-scale result apart and the
+    // checked sums.
+    let mut r = Report::default();
+    for (i, c) in outs.iter().take(2).enumerate() {
+        r.add_checked(i as u64, c.clone());
+    }
+    assert_eq!((r.turned_checked, r.turned_edge.len()), (2, 1));
+    assert!(r.mismatches.is_empty() && r.tie_scale.is_empty());
+}
+
+/// Vertices of `A` on a silhouette of `B`'s half sphere zone (seeds 1,
+/// 3, 5, 7; on it, `10⁻⁹` above and below it, `10⁻⁶` above it along
+/// `UP`): the upward ray grazes the zone with a gap of about `4·10⁻¹³`,
+/// not 0, below the `±2^-28·d` probe (about `10⁻⁹`), so the oracle's
+/// answers at `±2^-28·d` differ while its answers at its tie shift don't
+/// flip with `d`. The counting's answers with `d` and `−d` both equal
+/// those: flip only in the oracle, gap below the probe, neither an
+/// agreement nor a `±d` disagreement. Seed 1 by default (seconds), all
+/// four with `VARDE_TESTS=full`.
+#[test]
+fn flips_below_the_probe_are_only_the_oracle_s() {
+    let seeds: &[u64] = varde_testing::pick(&[1], &[1, 3, 5, 7]);
+    let outs = par(seeds.len() as u64, threads(), &|i| {
+        let seed = seeds[i as usize];
+        let p = family_named("silhouette")(seed);
+        let c = check_with(&p, &Config::RUNS, &mut Stats::default(), true);
+        (seed, c)
+    });
+    let mut r = Report::default();
+    for (seed, c) in outs {
+        assert!(
+            matches!(c.outcome, Outcome::OracleOnlyFlip),
+            "seed {seed}: {c:?}"
+        );
+        assert!(
+            matches!(c.flip, Some(Flip::OracleOnly)),
+            "seed {seed}: {c:?}"
+        );
+        r.add_checked(seed, c);
+    }
+    let f = r.flip.as_ref().expect("the ±d check");
+    assert_eq!(r.oracle_only, seeds);
+    assert_eq!(f.oracle_only, seeds);
+    assert_eq!((r.agreed, f.both), (0, 0));
+    assert!(f.differ.is_empty() && r.mismatches.is_empty());
+    assert!(r.text().contains("flip only in the oracle"), "{}", r.text());
+}
+
+/// The kernel-exact family's kinds follow its placements' geometry, and
+/// the report gives the answered rate per kind.
+#[test]
+fn kernel_exact_kinds_are_reported_with_their_answered_rates() {
+    let family = family_named(KERNEL_EXACT);
+    let on = |x: f64| x == 0.0 || x == 2.0;
+    for seed in 0..placements(20, 200) {
+        let p = family(seed);
+        let (a, b) = (p.a.build(&p.make_a), p.b.build(&p.make_b));
+        let kind = kernel_exact_kind(seed);
+        let (turned, cube) = if kind == "corner of B on a face of A" {
+            (&b, &a)
+        } else {
+            (&a, &b)
+        };
+        assert!(
+            cube.verts()
+                .iter()
+                .all(|&v| cube.brep.pos(v).iter().all(|&x| on(x))),
+            "seed {seed}: {kind}"
+        );
+        // How many of the turned box's coordinates lie on the cube's
+        // planes, at its corner.
+        let corner = turned
+            .verts()
+            .into_iter()
+            .map(|v| turned.brep.pos(v).iter().filter(|&&x| on(x)).count())
+            .max()
+            .unwrap_or(0);
+        // An edge of the turned box in a cube plane: both ends on it.
+        let in_plane = turned.edges().into_iter().any(|e| {
+            let [s, t] = turned.brep.ends(e).map(|v| turned.brep.pos(v));
+            (0..3).any(|k| on(s[k]) && s[k] == t[k])
+        });
+        let want = match kind {
+            "edge of A in a key plane" => corner >= 1 && in_plane,
+            "corner of A on a face of B" | "corner of B on a face of A" => corner >= 1 && !in_plane,
+            "corner of A on an edge of B" => corner >= 2 && !in_plane,
+            "ray through an edge" => {
+                // A corner whose upward ray meets an edge of the cube.
+                let up = DVec3::new(2.0, 3.0, 32.0);
+                !in_plane
+                    && turned.verts().into_iter().any(|v| {
+                        [1.0 / 32.0, 1.0 / 64.0].iter().any(|&s| {
+                            let q = DVec3::from_array(turned.brep.pos(v)) + up * s;
+                            let q = q.to_array();
+                            q.iter().filter(|&&x| on(x)).count() == 2
+                                && q.iter().all(|&x| (0.0..=2.0).contains(&x))
+                        })
+                    })
+            }
+            k => panic!("unknown kind {k:?}"),
+        };
+        assert!(
+            want,
+            "seed {seed}: {kind}, corner {corner}, in plane {in_plane}"
+        );
+    }
+    let mut r = Report {
+        kinds: Some(kernel_exact_kind),
+        ..Report::default()
+    };
+    r.add(0, Outcome::Agreed { ties: 1 });
+    r.add(
+        5,
+        Outcome::Refused(super::world::Cause::Height, String::new()),
+    );
+    r.add(1, Outcome::Agreed { ties: 1 });
+    assert_eq!(
+        r.by_kind(kernel_exact_kind),
+        "answered by kind: corner of A on a face of B 1/2 (50.0%); corner of B on a face of A 1/1 (100.0%)\n"
+    );
+    assert!(r.text().contains("answered by kind: "));
+}
+
+/// The kernel-exact placements of seeds `0..n` whose cube edge crosses
+/// an edge of the turned box exactly inside it ([`TurnedEdges`]).
+fn crossed_turned_edges(n: u64) -> Vec<(u64, TurnedEdges)> {
+    let family = family_named(KERNEL_EXACT);
+    (0..n)
+        .filter_map(|seed| {
+            let p = family(seed);
+            let (a, b) = (p.a.build(&p.make_a), p.b.build(&p.make_b));
+            let t = TurnedEdges::of(&a, &b, p.unperturbed());
+            (t.count() > 0).then_some((seed, t))
+        })
+        .collect()
 }

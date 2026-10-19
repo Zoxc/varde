@@ -13,6 +13,7 @@ use varde_testkit::ray_oracle::{Chain, Coedge, ExactFace, Face, Shift, UvChain};
 use varde_testkit::rng::Rng;
 
 use super::solids::{Make, Shape, Solid};
+use super::turned::{TurnedEdges, fold, group_of};
 use super::world::{Answers, Cause, Config, Refusal, Stats, World};
 use crate::topo::brep_min::{EdgeId, FaceId};
 
@@ -52,6 +53,14 @@ impl Placement {
             make_b,
             d: rng.direction(),
         }
+    }
+
+    /// Whether both shapes' p-curves are unperturbed (the family of ties
+    /// exact in the counting's records): only then are the faces on
+    /// coordinate planes exact, tile, p-curves and edges agreeing bit for
+    /// bit ([`TurnedEdges`]).
+    pub(super) fn unperturbed(&self) -> bool {
+        self.make_a.pert == 0.0 && self.make_b.pert == 0.0
     }
 }
 
@@ -231,9 +240,21 @@ pub(super) fn near_shift(a: &Solid, b: &Solid, d: DVec3) -> Shift {
     Shift::always((d / n).to_array(), e - 28)
 }
 
-/// Whether two of the oracle's answers are the same (their ties aside).
-fn same(x: &Truth, y: &Truth) -> bool {
-    x.winding == y.winding && x.x12 == y.x12 && x.x21 == y.x21
+/// Whether two of the oracle's answers are the same (their ties aside),
+/// the crossing counts at crossed turned edges by their sums.
+fn same(x: &Truth, y: &Truth, turned: &TurnedEdges) -> bool {
+    x.winding == y.winding
+        && fold(&turned.x12, &x.x12) == fold(&turned.x12, &y.x12)
+        && fold(&turned.x21, &x.x21) == fold(&turned.x21, &y.x21)
+}
+
+/// Whether two of the counting's answers are the same, the crossing
+/// counts at crossed turned edges by their sums.
+fn same_answers(x: &Answers, y: &Answers, turned: &TurnedEdges) -> bool {
+    x.winding == y.winding
+        && x.column == y.column
+        && fold(&turned.x12, &x.x12) == fold(&turned.x12, &y.x12)
+        && fold(&turned.x21, &x.x21) == fold(&turned.x21, &y.x21)
 }
 
 /// How a placement went.
@@ -261,10 +282,26 @@ pub(super) enum Outcome {
     /// (the edge rule for the vertex's hits near the edge) and answered.
     /// Counted apart from mismatches.
     OperandLobe(String),
+    /// The counting's answers equal the oracle's but for per-face
+    /// crossing counts at an edge between rounded faces that an edge of
+    /// the other operand crosses exactly ([`TurnedEdges`]): those follow
+    /// the faces' misfit-width ribbons, not `d`, and are tie-scale; their
+    /// sums over the edge's faces agree. Counted apart from mismatches
+    /// and from the tie-scale results the family of exact ties forbids.
+    TurnedEdgeFaces(String),
+    /// The counting's answers with `d` and with `−d` both equal the
+    /// oracle's at its tie shift, which doesn't flip with `d`, while the
+    /// oracle's answers at `±2^-28·d` differ: the placement's exact gap
+    /// is non-zero and below that probe (a vertex on a silhouette, a hair
+    /// off it by rounding), so only the probe flips (found by the `±d`
+    /// check). Counted apart from agreements and disagreements.
+    OracleOnlyFlip,
 }
 
-/// Where the counting's answers differ from the oracle's, if anywhere.
-pub(super) fn compare(c: &Answers, t: &Truth) -> Option<String> {
+/// Where the counting's answers differ from the oracle's, if anywhere:
+/// the crossing counts at crossed turned edges ([`TurnedEdges`]) by their
+/// sum over the edge's faces.
+pub(super) fn compare(c: &Answers, t: &Truth, turned: &TurnedEdges) -> Option<String> {
     let mut out = Vec::new();
     for (k, op) in ["A", "B"].into_iter().enumerate() {
         for (v, (w, o)) in c.winding[k].iter().zip(&t.winding[k]).enumerate() {
@@ -278,9 +315,36 @@ pub(super) fn compare(c: &Answers, t: &Truth) -> Option<String> {
             }
         }
     }
-    for (name, cx, tx) in [("x12", &c.x12, &t.x12), ("x21", &c.x21, &t.x21)] {
-        for (e, (cr, tr)) in cx.iter().zip(tx).enumerate() {
+    for (name, cx, tx, groups) in [
+        ("x12", &c.x12, &t.x12, &turned.x12),
+        ("x21", &c.x21, &t.x21, &turned.x21),
+    ] {
+        let (cx, tx) = (fold(groups, cx), fold(groups, tx));
+        for (e, (cr, tr)) in cx.iter().zip(&tx).enumerate() {
             for (f, (x, y)) in cr.iter().zip(tr).enumerate() {
+                if x != y {
+                    let faces = group_of(groups, e, f)
+                        .map_or_else(|| format!("f{f}"), |g| format!("faces {g:?} summed"));
+                    out.push(format!("{name} e{e} {faces}: counted {x}, oracle {y}"));
+                }
+            }
+        }
+    }
+    (!out.is_empty()).then(|| out.join("; "))
+}
+
+/// Where the counting's per-face crossing counts at crossed turned edges
+/// differ from the oracle's, if anywhere (tie-scale: the sums are checked
+/// by [`compare`]).
+pub(super) fn per_face(c: &Answers, t: &Truth, turned: &TurnedEdges) -> Option<String> {
+    let mut out = Vec::new();
+    for (name, cx, tx, groups) in [
+        ("x12", &c.x12, &t.x12, &turned.x12),
+        ("x21", &c.x21, &t.x21, &turned.x21),
+    ] {
+        for (e, gs) in groups.iter().enumerate() {
+            for &f in gs.iter().flatten() {
+                let (x, y) = (cx[e][f], tx[e][f]);
                 if x != y {
                     out.push(format!("{name} e{e} f{f}: counted {x}, oracle {y}"));
                 }
@@ -315,15 +379,23 @@ pub(super) enum Flip {
         /// oracle's on their side.
         sides: [bool; 2],
     },
+    /// Flip only in the oracle, gap below the probe: the oracle's answers
+    /// at `±2^-28·d` differ, its answers at its tie shift along `d` and
+    /// along `−d` are the same (the exact gap isn't zero), and the
+    /// counting's answers with `d` and with `−d` both equal them.
+    OracleOnly,
 }
 
 /// A placement's check: its outcome, the counting's answers where it
-/// gave them, and the `±d` check where asked for and answered.
+/// gave them, the `±d` check where asked for and answered, and how many
+/// groups of faces at crossed turned edges ([`TurnedEdges`]) it checked
+/// by their sums.
 #[derive(Clone, Debug)]
 pub(super) struct Checked {
     pub outcome: Outcome,
     pub answers: Option<Answers>,
     pub flip: Option<Flip>,
+    pub turned: usize,
 }
 
 /// A placement's solids, its counting and its check, with the
@@ -369,6 +441,7 @@ pub(super) fn check_counted(
     count: Counting,
 ) -> Checked {
     let (a, b) = (p.a.build(&p.make_a), p.b.build(&p.make_b));
+    let turned = TurnedEdges::of(&a, &b, p.unperturbed());
     let answers = match count(&a, &b, p.d, cfg, stats) {
         Ok(x) => x,
         Err(r) => {
@@ -376,55 +449,97 @@ pub(super) fn check_counted(
                 outcome: Outcome::Refused(r.cause, r.at),
                 answers: None,
                 flip: None,
+                turned: turned.count(),
             };
         }
     };
     let (fa, fb) = (oracle_faces(&a), oracle_faces(&b));
     let near = OnceCell::new();
     let near = || near.get_or_init(|| truths_near(&a, &b, p.d, &fa, &fb));
-    let outcome = judge(p, &a, &b, &answers, &fa, &fb, &near);
+    let (mut outcome, t) = judge(p, &a, &b, &answers, &turned, &fa, &fb, &near);
     let flip = (flip && !matches!(outcome, Outcome::Unresolved(_))).then(|| {
         // Its own tallies: the run's are the base counts'.
         let minus = count(&a, &b, -p.d, cfg, &mut Stats::default());
         match (minus, near()) {
             (Err(r), _) => Flip::Refused(r.cause),
             (_, Err(e)) => Flip::Unresolved(e.clone()),
-            (Ok(m), Ok([up, down])) => Flip::Checked {
-                counted: answers.winding != m.winding
-                    || answers.column != m.column
-                    || answers.x12 != m.x12
-                    || answers.x21 != m.x21,
-                truth: !same(up, down),
-                sides: [compare(&answers, up).is_none(), compare(&m, down).is_none()],
-            },
+            (Ok(m), Ok([up, down])) => {
+                let counted = !same_answers(&answers, &m, &turned);
+                let truth = !same(up, down, &turned);
+                // Only the probe flips: the counting doesn't, both its
+                // answers are the oracle's at its tie shift, and that
+                // shift's answers don't flip with `d` (computed last: an
+                // oracle run more, needed only here).
+                let below = truth
+                    && !counted
+                    && t.as_ref().is_some_and(|t| {
+                        compare(&answers, t, &turned).is_none()
+                            && compare(&m, t, &turned).is_none()
+                            && truth_at(&a, &b, &Shift::tie((-p.d).to_array(), 1), &fa, &fb)
+                                .is_ok_and(|tm| same(t, &tm, &turned))
+                    });
+                if below {
+                    Flip::OracleOnly
+                } else {
+                    Flip::Checked {
+                        counted,
+                        truth,
+                        sides: [
+                            compare(&answers, up, &turned).is_none(),
+                            compare(&m, down, &turned).is_none(),
+                        ],
+                    }
+                }
+            }
         }
     });
+    if matches!(flip, Some(Flip::OracleOnly)) && matches!(outcome, Outcome::Agreed { .. }) {
+        outcome = Outcome::OracleOnlyFlip;
+    }
     Checked {
         outcome,
         answers: Some(answers),
         flip,
+        turned: turned.count(),
     }
 }
 
-/// The oracle's verdict on the counting's answers; `near` gives the
+/// The oracle's verdict on the counting's answers, and the oracle's
+/// answers (with its tie shift) where it settled them; `near` gives the
 /// oracle's answers at `±2^-28·d` ([`truths_near`]).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the placement, its solids and their oracle faces, the answers, and the lazy probe"
+)]
 fn judge<'n>(
     p: &Placement,
     a: &Solid,
     b: &Solid,
     answers: &Answers,
+    turned: &TurnedEdges,
     fa: &[ExactFace],
     fb: &[ExactFace],
     near: &dyn Fn() -> &'n Result<[Truth; 2], String>,
-) -> Outcome {
+) -> (Outcome, Option<Truth>) {
     let t = match truth(a, b, p.d, fa, fb) {
-        Err(e) => return Outcome::Unresolved(e),
+        Err(e) => return (Outcome::Unresolved(e), None),
         Ok(t) => t,
     };
-    let differs = compare(answers, &t);
+    let o = verdict(answers, &t, turned, near);
+    (o, Some(t))
+}
+
+/// [`judge`] given the oracle's answers `t`.
+fn verdict<'n>(
+    answers: &Answers,
+    t: &Truth,
+    turned: &TurnedEdges,
+    near: &dyn Fn() -> &'n Result<[Truth; 2], String>,
+) -> Outcome {
+    let differs = compare(answers, t, turned);
     // An operand lobe: no exact answer is a solid's; the counting must
     // have taken the lobe fallback there.
-    if lobed(&t) {
+    if lobed(t) {
         return match (answers.lobes, differs) {
             (0, Some(m)) => Outcome::Mismatch(format!("operand lobe without a lobe fallback: {m}")),
             (n, m) => Outcome::OperandLobe(format!(
@@ -434,7 +549,10 @@ fn judge<'n>(
         };
     }
     let Some(m) = differs else {
-        return Outcome::Agreed { ties: t.ties };
+        return match per_face(answers, t, turned) {
+            None => Outcome::Agreed { ties: t.ties },
+            Some(x) => Outcome::TurnedEdgeFaces(x),
+        };
     };
     // Within the faces' rounding misfit the counting surface the oracle
     // casts against and the records' flat geometry differ, and the
@@ -447,7 +565,7 @@ fn judge<'n>(
         Err(e) => return Outcome::Unresolved(e.clone()),
         Ok(x) => x,
     };
-    if compare(answers, up).is_none() || compare(answers, down).is_none() {
+    if compare(answers, up, turned).is_none() || compare(answers, down, turned).is_none() {
         let tie = if t.ties > 0 {
             "(oracle tie)"
         } else {
@@ -455,7 +573,7 @@ fn judge<'n>(
         };
         Outcome::TieScale(format!("{tie} {m}"))
     } else {
-        let near = if same(up, down) {
+        let near = if same(up, down, turned) {
             ""
         } else {
             "(within 2^-28 of a tie) "
@@ -480,6 +598,9 @@ pub(super) struct FlipTally {
     /// [`Outcome::OperandLobe`] (known: no exact answer there), and which
     /// flipped.
     pub differ: Vec<(u64, bool, String)>,
+    /// Flips only in the oracle, gap below the probe ([`Flip::OracleOnly`]),
+    /// by seed: not in `both` nor in `differ`.
+    pub oracle_only: Vec<u64>,
     /// The counting refused with `−d`, by cause.
     pub refused: BTreeMap<String, u64>,
     pub unresolved: Vec<(u64, String)>,
@@ -490,6 +611,7 @@ impl FlipTally {
         match f {
             Flip::Refused(c) => *self.refused.entry(cause_name(&c)).or_default() += 1,
             Flip::Unresolved(u) => self.unresolved.push((seed, u)),
+            Flip::OracleOnly => self.oracle_only.push(seed),
             Flip::Checked {
                 counted,
                 truth,
@@ -519,14 +641,16 @@ impl FlipTally {
     fn text(&self) -> String {
         let known = self.differ.iter().filter(|x| x.1).count();
         let seeds: Vec<u64> = self.unknown().take(12).map(|x| x.0).collect();
+        let only: Vec<u64> = self.oracle_only.iter().take(12).copied().collect();
         let mut s = format!(
-            "±d check: counted both ways {}; answers flip with d: counted {}, oracle at ±2^-28·d {}; agree {}, differ {} (at operand lobes {known}, others at seeds {seeds:?}); both sides equal the oracle's {}; refused with −d {:?}; oracle unresolved {}\n",
+            "±d check: counted both ways {}; answers flip with d: counted {}, oracle at ±2^-28·d {}; agree {}, differ {} (at operand lobes {known}, others at seeds {seeds:?}); both sides equal the oracle's {}; flip only in the oracle, gap below the probe {} (seeds {only:?}); refused with −d {:?}; oracle unresolved {}\n",
             self.both,
             self.counted,
             self.truth,
             self.both - self.differ.len() as u64,
             self.differ.len(),
             self.sides,
+            self.oracle_only.len(),
             self.refused,
             self.unresolved.len(),
         );
@@ -552,6 +676,21 @@ pub(super) struct Report {
     pub tie_scale: Vec<(u64, String)>,
     /// Placements at an operand lobe ([`Outcome::OperandLobe`]).
     pub operand_lobe: Vec<(u64, String)>,
+    /// Placements agreeing but for per-face crossing counts at crossed
+    /// turned edges ([`Outcome::TurnedEdgeFaces`]).
+    pub turned_edge: Vec<(u64, String)>,
+    /// Answered placements with a group of faces at a crossed turned
+    /// edge, whose crossing counts were checked by their sums.
+    pub turned_checked: u64,
+    /// Placements whose answers flip only in the oracle, gap below the
+    /// probe ([`Outcome::OracleOnlyFlip`]).
+    pub oracle_only: Vec<u64>,
+    /// Every placement's seed and whether the counting answered (not
+    /// refused).
+    pub answered: Vec<(u64, bool)>,
+    /// The placements' kinds, where the run's family has them: the
+    /// report then gives the answered rate per kind.
+    pub kinds: Option<fn(u64) -> &'static str>,
     /// The `±d` checks, where the run asked for them.
     pub flip: Option<FlipTally>,
     pub stats: Stats,
@@ -561,6 +700,8 @@ pub(super) struct Report {
 impl Report {
     pub(super) fn add(&mut self, seed: u64, o: Outcome) {
         self.placements += 1;
+        self.answered
+            .push((seed, !matches!(o, Outcome::Refused(..))));
         match o {
             Outcome::Agreed { ties } => {
                 self.agreed += 1;
@@ -575,6 +716,8 @@ impl Report {
             Outcome::Unresolved(u) => self.unresolved.push((seed, u)),
             Outcome::TieScale(m) => self.tie_scale.push((seed, m)),
             Outcome::OperandLobe(m) => self.operand_lobe.push((seed, m)),
+            Outcome::TurnedEdgeFaces(m) => self.turned_edge.push((seed, m)),
+            Outcome::OracleOnlyFlip => self.oracle_only.push(seed),
         }
     }
 
@@ -584,7 +727,35 @@ impl Report {
             let known = matches!(c.outcome, Outcome::OperandLobe(_));
             self.flip.get_or_insert_default().add(seed, f, known);
         }
+        if c.answers.is_some() && c.turned > 0 {
+            self.turned_checked += 1;
+        }
         self.add(seed, c.outcome);
+    }
+
+    /// The answered rate (placements not refused) per kind, kinds in the
+    /// order they first occur.
+    pub(super) fn by_kind(&self, kind: fn(u64) -> &'static str) -> String {
+        let mut rows: Vec<(&'static str, u64, u64)> = Vec::new();
+        for &(seed, answered) in &self.answered {
+            let k = kind(seed);
+            let i = match rows.iter().position(|r| r.0 == k) {
+                Some(i) => i,
+                None => {
+                    rows.push((k, 0, 0));
+                    rows.len() - 1
+                }
+            };
+            rows[i].1 += 1;
+            rows[i].2 += u64::from(answered);
+        }
+        let mut s = String::from("answered by kind:");
+        for (k, n, a) in rows {
+            let pct = 100.0 * a as f64 / n.max(1) as f64;
+            s += &format!(" {k} {a}/{n} ({pct:.1}%);");
+        }
+        s.pop();
+        s + "\n"
     }
 
     /// The report as text.
@@ -592,17 +763,23 @@ impl Report {
         let mut s = String::new();
         let pct = |n: u64| 100.0 * n as f64 / self.placements.max(1) as f64;
         s += &format!(
-            "placements {}  agreed {} ({:.2}%)  with oracle ties {}  tie-scale only {}  operand lobes {}  mismatches {}  oracle unresolved {}  time {:.0} s\n",
+            "placements {}  agreed {} ({:.2}%)  with oracle ties {}  tie-scale only {}  flip only in the oracle (gap below the probe) {}  per-face counts at crossed turned edges tie-scale {} (sums checked at {})  operand lobes {}  mismatches {}  oracle unresolved {}  time {:.0} s\n",
             self.placements,
             self.agreed,
             pct(self.agreed),
             self.tied,
             self.tie_scale.len(),
+            self.oracle_only.len(),
+            self.turned_edge.len(),
+            self.turned_checked,
             self.operand_lobe.len(),
             self.mismatches.len(),
             self.unresolved.len(),
             self.seconds
         );
+        if let Some(kind) = self.kinds {
+            s += &self.by_kind(kind);
+        }
         if let Some(f) = &self.flip {
             s += &f.text();
         }
@@ -623,6 +800,13 @@ impl Report {
         }
         for (seed, m) in self.tie_scale.iter().take(5) {
             s += &format!("tie-scale seed {seed}: {m}\n");
+        }
+        for (seed, m) in self.turned_edge.iter().take(5) {
+            s += &format!("per-face tie-scale at a crossed turned edge seed {seed}: {m}\n");
+        }
+        if !self.oracle_only.is_empty() {
+            let seeds: Vec<u64> = self.oracle_only.iter().take(12).copied().collect();
+            s += &format!("flip only in the oracle, gap below the probe: seeds {seeds:?}\n");
         }
         for (seed, m) in self.unresolved.iter().take(10) {
             s += &format!("unresolved seed {seed}: {m}\n");

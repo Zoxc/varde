@@ -596,18 +596,19 @@ fn on_cube_face(rng: &mut Rng, k: usize) -> [f64; 3] {
 fn kernel_exact(seed: u64) -> Placement {
     let mut rng = Rng::new(seed);
     let k = int(&mut rng, 0, 2) as usize;
-    let (a, b) = match seed % 5 {
-        0 | 2 => {
+    let kind = exact_kind(seed);
+    let (a, b) = match kind {
+        ExactKind::CornerOnFace | ExactKind::EdgeInPlane => {
             let o = on_cube_face(&mut rng, k);
-            let axes = exact_axes(&mut rng, (seed % 4 == 2).then_some(k), o);
+            let axes = exact_axes(&mut rng, (kind == ExactKind::EdgeInPlane).then_some(k), o);
             (Shape::Box { o, axes }, cube())
         }
-        1 => {
+        ExactKind::CubeCornerOnFace => {
             let o = on_cube_face(&mut rng, k);
             let axes = exact_axes(&mut rng, None, o);
             (cube(), Shape::Box { o, axes })
         }
-        3 => {
+        ExactKind::RayThroughEdge => {
             // A point of an edge of the cube along axis `k`, and a corner
             // of `A` below it along `UP` by `s·UP`.
             let mut p = [0, 1, 2].map(|_| 2.0 * int(&mut rng, 0, 1) as f64);
@@ -617,7 +618,7 @@ fn kernel_exact(seed: u64) -> Placement {
             let axes = exact_axes(&mut rng, None, o);
             (Shape::Box { o, axes }, cube())
         }
-        _ => {
+        ExactKind::CornerOnEdge => {
             // A corner of `A` at a point of an edge of the cube along axis
             // `k`.
             let mut o = [0, 1, 2].map(|_| 2.0 * int(&mut rng, 0, 1) as f64);
@@ -637,5 +638,41 @@ fn kernel_exact(seed: u64) -> Placement {
         make_a,
         make_b,
         d: rng.direction(),
+    }
+}
+
+/// The kinds of [`kernel_exact`]'s placements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExactKind {
+    /// A corner of `A` on a face of `B`.
+    CornerOnFace,
+    /// A corner of `A` on a face of `B`, an edge of `A` in its plane.
+    EdgeInPlane,
+    /// A corner of `B` on a face of `A`.
+    CubeCornerOnFace,
+    /// A corner of `A` whose upward ray passes through an edge of `B`.
+    RayThroughEdge,
+    /// A corner of `A` on an edge of `B`.
+    CornerOnEdge,
+}
+
+fn exact_kind(seed: u64) -> ExactKind {
+    match seed % 5 {
+        0 | 2 if seed % 4 == 2 => ExactKind::EdgeInPlane,
+        0 | 2 => ExactKind::CornerOnFace,
+        1 => ExactKind::CubeCornerOnFace,
+        3 => ExactKind::RayThroughEdge,
+        _ => ExactKind::CornerOnEdge,
+    }
+}
+
+/// The kind of [`KERNEL_EXACT`]'s placement of seed `seed`, by name.
+pub(super) fn kernel_exact_kind(seed: u64) -> &'static str {
+    match exact_kind(seed) {
+        ExactKind::CornerOnFace => "corner of A on a face of B",
+        ExactKind::EdgeInPlane => "edge of A in a key plane",
+        ExactKind::CubeCornerOnFace => "corner of B on a face of A",
+        ExactKind::RayThroughEdge => "ray through an edge",
+        ExactKind::CornerOnEdge => "corner of A on an edge of B",
     }
 }
