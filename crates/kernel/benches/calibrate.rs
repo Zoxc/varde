@@ -783,11 +783,11 @@ fn setup_rows(budget: Duration, rows: &mut Vec<Row>) {
     let (du, dv) = (unit(0), unit(1));
     let bands = 2.0 * BAND;
     assert!(
-        matches!(cusp_rec(&a, &b, &du, &dv, bands), Ok(Sharp::Cusp(_))),
+        matches!(cusp_rec(&[a], &[b], &du, &dv, bands), Ok(Sharp::Cusp(_))),
         "a sharp corner with its record"
     );
     let ns = time(budget, || {
-        black_box(cusp_rec(&a, &b, &du, &dv, bands).ok());
+        black_box(cusp_rec(&[a], &[b], &du, &dv, bands).ok());
         1
     });
     rows.push(Row {

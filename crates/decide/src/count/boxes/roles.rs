@@ -60,7 +60,9 @@
 //! ([`CuspRec`], [`Corners::cusp`]) bounds
 //! how the two curves come apart and cuts the spike where they are a band
 //! apart; each curve's run is its stretch up to the cut (the record's
-//! reach), however many bands long, at a fixed cost. Where the record
+//! reach, along any number of the curve's spans: a curve broken at a tile
+//! line reads on across it), however many bands long, at a cost of a few
+//! pieces per span the record reads. Where the record
 //! doesn't apply (the cut past the stretch its bounds hold over, the
 //! curves one curve, not graphs over one axis), the corner is searched as
 //! any other.
@@ -113,7 +115,8 @@
 //! **Work.** Building the corners is the face's counting setup, done
 //! once per operation and charged as a kind of its own
 //! ([`Charge::setup`]): per piece whose hull a run's search forms, and a
-//! sharp corner's record as [`CUSP_PIECES`] pieces. The searches share
+//! sharp corner's record as [`CUSP_PIECES`] pieces per two spans whose
+//! bounds it tests (one of each curve at least). The searches share
 //! one tree of the trims' pieces, so a piece another search (or the same
 //! one, from a neighbouring piece of the run) has visited costs nothing
 //! again: a run along a sliver visits each piece of the other curve a
@@ -138,7 +141,7 @@ use crate::bezier::{Dir, Dyadic, HomCurve, HomPatch, HullBox, Scalar};
 use crate::count::s02::Charge;
 use crate::ids::{CoedgeId, VertId};
 use crate::num::bounded::{Bounded, add_up, down, up};
-use crate::records::cusp::{CuspRec, CuspSpan, Sharp, cusp_rec};
+use crate::records::cusp::{CuspRec, CuspSpan, Sharp, cusp_rec_counted};
 use crate::records::shadow::Cost;
 
 #[cfg(doc)]
@@ -161,9 +164,9 @@ pub const NEAR_PIECES: u32 = 256;
 pub const HULL_TILES: u64 = 16;
 
 /// The face setup pieces ([`Units::face_setup`](crate::records::shadow::Units::face_setup))
-/// a sharp corner's record is charged as: its exact polynomial tests,
-/// about four pieces' time whatever the corner (measured by the
-/// kernel's calibration benchmark).
+/// a sharp corner's record is charged as per two spans whose bounds it
+/// tests: its exact polynomial tests, about four pieces' time for a
+/// span of each curve (measured by the kernel's calibration benchmark).
 pub const CUSP_PIECES: u64 = 4;
 
 /// What a box is to the counting (module docs).
@@ -434,7 +437,12 @@ impl Corners {
             };
             meter.site = trims[pair[0].0].coedge;
             meter.add(CUSP_PIECES)?;
-            let Some(rec) = sharp_corner(&ctx, pair)? else {
+            let (rec, tested) = sharp_corner(&ctx, pair)?;
+            // `CUSP_PIECES` per two spans tested, the first two charged
+            // above.
+            meter
+                .add(CUSP_PIECES.saturating_mul(u64::from(tested.div_ceil(2)).saturating_sub(1)))?;
+            let Some(rec) = rec else {
                 continue;
             };
             for ((k, end), reach) in pair.into_iter().zip(rec.reach) {
@@ -529,7 +537,7 @@ impl Corners {
     }
 
     /// The pieces tested building the runs (each hull formed, and a
-    /// sharp corner's record as [`CUSP_PIECES`]).
+    /// sharp corner's record as [`CUSP_PIECES`] per two spans it tests).
     pub fn pieces(&self) -> u64 {
         self.pieces
     }
@@ -680,38 +688,50 @@ fn curve_ends(trims: &[Trim<'_>], ends: &[[u32; 2]], c: u32) -> Option<[(usize, 
     Some(if !into(a) && into(b) { [b, a] } else { [a, b] })
 }
 
-/// The first span of trim `t` from its end `end`, run away from it.
-fn span_from(t: &Trim<'_>, end: u8) -> CuspSpan {
+/// The first `n` spans of trim `t` from its end `end`, run away from it.
+fn chain_from(t: &Trim<'_>, end: u8, n: usize) -> Vec<CuspSpan> {
     if end == 0 {
-        t.spans[0]
+        t.spans[..n].to_vec()
     } else {
-        let s = t.spans[t.spans.len() - 1];
-        [s[2], s[1], s[0]]
+        t.spans[t.spans.len() - n..]
+            .iter()
+            .rev()
+            .map(|s| [s[2], s[1], s[0]])
+            .collect()
     }
 }
 
 /// The sharp-corner record of the corner where the curve ends `pair`
 /// meet, if the corner is sharp and the record applies (its errors leave
-/// the corner to the runs' search).
+/// the corner to the runs' search), with the spans it tested. Each curve
+/// is read from the corner along all its spans, a curve closed at the
+/// corner (both ends there) along its own half.
 fn sharp_corner(
     ctx: &Space<'_, '_, '_, Bounded<f64>>,
     pair: [(usize, u8); 2],
-) -> Result<Option<CuspRec>, BoxError> {
+) -> Result<(Option<CuspRec>, u32), BoxError> {
     let trims = ctx.face.trims();
     let [(ka, ea), (kb, eb)] = pair;
-    let (a, b) = (span_from(&trims[ka], ea), span_from(&trims[kb], eb));
+    let len = |k: usize| {
+        let n = trims[k].spans.len();
+        if ka == kb && n > 1 { n / 2 } else { n }
+    };
+    let (a, b) = (
+        chain_from(&trims[ka], ea, len(ka)),
+        chain_from(&trims[kb], eb, len(kb)),
+    );
     // The surface's partial derivatives at the vertex's UV point, from the
     // patch of a tile holding it.
     let tiles = ctx.face.tiles();
     let mut tile = [0i64; 2];
     let mut local = [Bounded::exact(0.0); 2];
     for k in 0..2 {
-        let x = a[0][k];
+        let x = a[0][0][k];
         let r = &tiles[k];
         // Within the face's range: the conversions and the difference
         // are exact.
         if !(x >= r.start as f64 && x <= r.end as f64) {
-            return Ok(None);
+            return Ok((None, 0));
         }
         let i = (x.floor() as i64).clamp(r.start, r.end - 1);
         tile[k] = i;
@@ -723,19 +743,24 @@ fn sharp_corner(
         .ok_or(BoxError::Patches)?;
     let p = patch.eval_partials(&local[0], &local[1]);
     let bands = add_up(trims[ka].band, trims[kb].band);
-    Ok(match cusp_rec(&a, &b, &p.du, &p.dv, bands) {
-        Ok(Sharp::Cusp(r)) => Some(*r),
-        Ok(Sharp::Apart) | Err(_) => None,
-    })
+    let (r, tested) = cusp_rec_counted(&a, &b, &p.du, &p.dv, bands);
+    Ok((
+        match r {
+            Ok(Sharp::Cusp(r)) => Some(*r),
+            Ok(Sharp::Apart) | Err(_) => None,
+        },
+        tested,
+    ))
 }
 
-/// The run of a trim of `n` spans from its end `end` to the parameter
-/// `reach` of its first span from that end.
-fn reach_run(n: usize, end: u8, reach: Dyadic) -> Run {
+/// The run of a trim of `n` spans from its end `end` to the point
+/// `reach` of its chain from that end (a span counted from the end, and
+/// a parameter in it read from the end).
+fn reach_run(n: usize, end: u8, (j, reach): (u32, Dyadic)) -> Run {
     if end == 0 {
         Run {
             end,
-            span: 0,
+            span: j,
             at: reach,
         }
     } else {
@@ -743,8 +768,8 @@ fn reach_run(n: usize, end: u8, reach: Dyadic) -> Run {
             .expect("the complement of a point of [0, 1]");
         Run {
             end,
-            // Fits: the face checked the span count.
-            span: (n - 1) as u32,
+            // Fits: the face checked the span count; `j < n`.
+            span: (n - 1) as u32 - j,
             at: back,
         }
     }

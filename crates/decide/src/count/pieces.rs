@@ -194,7 +194,9 @@ use super::boxes::{
 };
 use super::degree::{Ray, RecTurnError, Side, low_edge, rec_turn};
 use crate::bezier::roots::MAX_ROOT_DEPTH;
-use crate::bezier::{Dir, Dyadic, Found, HomCurve, HomPatch, HullBox, Limits, Scalar, isolate};
+use crate::bezier::{
+    Dir, Dyadic, Found, HomCurve, HomPatch, HullBox, Limits, Scalar, isolate, narrow,
+};
 use crate::ids::{CoedgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::num::exact::rat;
@@ -211,9 +213,6 @@ use germ::{Germ, Leg, Toward, inside_toward};
 /// The most splits one root isolation of a p-span against a side line
 /// takes (a quadratic's isolation stays far below).
 pub const CUT_SPLITS: u32 = 4096;
-
-/// The most halvings of a root's interval placing it along a side.
-const ROOT_HALVINGS: u32 = 64;
 
 /// The finest window around a cut: `2^-WINDOW_DEPTH` of a tile.
 pub const WINDOW_DEPTH: u32 = 52;
@@ -947,42 +946,28 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                     }
                     Ok(local(box_o))
                 };
-                let mut span = span;
-                let mut p = place(span).map_err(|r| self.unsettled(r))?;
-                if p[1] < elo || p[0] > ehi {
+                let p0 = place(span).map_err(|r| self.unsettled(r))?;
+                if p0[1] < elo || p0[0] > ehi {
                     continue;
                 }
                 let Some(dir) = root else {
-                    return Err(self.unsettled(seg_rect(seg, p)));
+                    return Err(self.unsettled(seg_rect(seg, p0)));
                 };
                 let s: i8 = if dir == Ordering::Greater { 1 } else { -1 };
                 // A root narrowed less than the side needs (its
                 // derivative's range too wide for Krawczyk's operator):
-                // halve its interval by the certified sign of the side's
-                // equation at the middle, until its position is certified
-                // inside the side's extent or outside it.
-                let mut halvings = 0;
-                let mut stuck = false;
-                while !(p[0] > elo && p[1] < ehi) {
-                    let mid = 0.5 * span[0] + 0.5 * span[1];
-                    if halvings >= ROOT_HALVINGS || !(mid > span[0] && mid < span[1]) {
-                        stuck = true;
-                        break;
-                    }
-                    halvings += 1;
-                    let past = match g.eval(&S::from_f64(mid, &self.like)).sign() {
-                        Some(Ordering::Equal) | None => {
-                            stuck = true;
-                            break;
-                        }
-                        Some(x) => x == dir,
-                    };
-                    span = if past { [span[0], mid] } else { [mid, span[1]] };
-                    p = place(span).map_err(|r| self.unsettled(r))?;
-                    if p[1] < elo || p[0] > ehi {
-                        break;
-                    }
-                }
+                // narrowed until its position is certified inside the
+                // side's extent or outside it.
+                let mut p = p0;
+                let n = narrow(&g, span, dir, |sp| {
+                    p = place(sp)?;
+                    let inside = p[0] > elo && p[1] < ehi;
+                    let outside = p[1] < elo || p[0] > ehi;
+                    Ok(!inside && !outside)
+                })
+                .map_err(|r| self.unsettled(r))?;
+                self.pieces = self.pieces.saturating_add(u64::from(n.halvings));
+                let (span, stuck) = (n.span, !n.settled);
                 if stuck {
                     // Through an end of the side exactly: placed by its
                     // exact crossing there.

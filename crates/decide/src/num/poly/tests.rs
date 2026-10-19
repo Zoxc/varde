@@ -80,3 +80,23 @@ fn roots_at_the_ends_of_the_interval_are_found() {
     assert!(hi - lo <= q(1, 1 << 40));
     assert_eq!(r.sign_of(&int(&[-2, 0, 1])), Ordering::Equal);
 }
+
+/// Roots closer than the isolation's depth (`2⁻⁸⁰` apart) separate by
+/// isolating the cluster again on its own interval; a root on a split
+/// point is exact.
+#[test]
+fn roots_closer_than_the_depth_separate() {
+    let a = q(1, 3);
+    let b = &a + (Rational::from(1u32) >> 80u64);
+    let p = mul(
+        &mul(&[-a.clone(), q(1, 1)], &[-b.clone(), q(1, 1)]),
+        &[q(-1, 2), q(1, 1)],
+    );
+    let r = roots(&p, &q(0, 1), &q(1, 1));
+    assert_eq!(r.len(), 3);
+    assert_eq!(r[0].0.cmp_rational(&a), Ordering::Equal);
+    assert_eq!(r[1].0.cmp_rational(&b), Ordering::Equal);
+    assert!(r[0].0.interval()[1] <= r[1].0.interval()[0]);
+    assert_eq!(r[2].0.rational(), Some(&q(1, 2)));
+    assert!(r.iter().all(|(_, m)| *m == 1));
+}

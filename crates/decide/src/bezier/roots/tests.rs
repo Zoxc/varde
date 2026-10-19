@@ -591,3 +591,113 @@ fn the_work_cap_stops_it_the_same_way_reversed() {
         assert_eq!(a, b, "{max_splits}");
     }
 }
+
+/// Exact coefficients: roots at the ends and on split points are points,
+/// reported once, the intervals beside them apart; others isolate as
+/// single roots, which the bounded levels' rule would join into clusters.
+#[test]
+fn exact_zeros_are_points() {
+    let rs = [
+        (q(0.0), 1),
+        (q(0.25), 1),
+        (Q::from(1u32) / Q::from(3u32), 1),
+        (q(0.5), 1),
+        (q(1.0), 1),
+    ];
+    let p = product(&rs, &Q::from(3u32));
+    let r = isolate_exact(&p, DEEP).unwrap();
+    let points: Vec<Q> = r
+        .found
+        .iter()
+        .filter_map(|f| match f {
+            Exact::Point(d) => Some(dq(*d)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(points, [q(0.0), q(0.25), q(0.5), q(1.0)]);
+    let third = Q::from(1u32) / Q::from(3u32);
+    let inner: Vec<_> = r
+        .found
+        .iter()
+        .filter_map(|f| match f {
+            Exact::Root { lo, hi, dir } => Some((dq(*lo), dq(*hi), *dir)),
+            Exact::Cluster { .. } => panic!("{f:?}"),
+            Exact::Point(_) => None,
+        })
+        .collect();
+    assert_eq!(inner.len(), 1);
+    let (lo, hi, dir) = &inner[0];
+    assert!(*lo < third && third < *hi);
+    // `p` falls through `⅓` (an odd number of roots above it in `(0, 1]`
+    // and a positive scale): negative past it.
+    assert_eq!(
+        *dir,
+        if p.eval(&hi.clone()) > 0u32 {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }
+    );
+    // In increasing order, every result apart.
+    let key = |f: &Exact| match f {
+        Exact::Point(d) => [*d, *d],
+        Exact::Root { lo, hi, .. } | Exact::Cluster { lo, hi, .. } => [*lo, *hi],
+    };
+    for w in r.found.windows(2) {
+        assert!(key(&w[0])[1] <= key(&w[1])[0], "{:?}", r.found);
+    }
+    // The bounded rule over the same rationals joins them at the zeros.
+    let b = isolate(&p, DEEP).unwrap();
+    assert!(b.found.iter().any(|f| matches!(f, Found::Cluster(_))));
+}
+
+/// Roots closer than the depth limit stay one cluster, with the number
+/// of roots it may hold.
+#[test]
+fn exact_roots_closer_than_the_depth_cluster() {
+    let a = Q::from(1u32) / Q::from(3u32);
+    let b = &a + (Q::from(1u32) >> 70u64);
+    let p = product(&[(a, 1), (b, 1)], &Q::from(1u32));
+    let r = isolate_exact(&p, DEEP).unwrap();
+    assert!(
+        matches!(r.found.as_slice(), [Exact::Cluster { mult: 2, .. }]),
+        "{:?}",
+        r.found
+    );
+}
+
+/// Narrowing to the caller's width: the root stays inside, each halving
+/// counted; a caller error stops it; past the floats' resolution it
+/// stops unsettled.
+#[test]
+fn narrowing_to_a_width_keeps_the_root() {
+    let third = Q::from(1u32) / Q::from(3u32);
+    let p = product(&[(third.clone(), 1), (q(0.75), 1)], &Q::from(1u32));
+    let r = isolate(&level::<Bounded<f64>>(&p), DEEP).unwrap();
+    let Found::Root(root) = r.found[0] else {
+        panic!("{:?}", r.found)
+    };
+    let pl = level::<Bounded<f64>>(&p);
+    let n = narrow(&pl, [0.0, 0.5], root.dir, |s| {
+        Ok::<_, ()>(s[1] - s[0] > 1e-9)
+    })
+    .unwrap();
+    assert!(n.settled && n.span[1] - n.span[0] <= 1e-9);
+    assert!(q(n.span[0]) < third && third < q(n.span[1]));
+    assert_eq!(n.halvings, 29);
+    // Already narrow enough: no halving.
+    let n0 = narrow(&pl, [0.0, 0.5], root.dir, |_| Ok::<_, ()>(false)).unwrap();
+    assert_eq!((n0.halvings, n0.settled), (0, true));
+    // The caller's error.
+    let mut calls = 0;
+    let e = narrow(&pl, [0.0, 0.5], root.dir, |_| {
+        calls += 1;
+        if calls > 3 { Err("stop") } else { Ok(true) }
+    });
+    assert_eq!(e, Err("stop"));
+    // Never wide enough: stops where the floats run out, unsettled,
+    // still holding the root.
+    let n = narrow(&pl, [0.0, 0.5], root.dir, |_| Ok::<_, ()>(true)).unwrap();
+    assert!(!n.settled && n.halvings <= ROOT_HALVINGS);
+    assert!(q(n.span[0]) < third && third < q(n.span[1]));
+}

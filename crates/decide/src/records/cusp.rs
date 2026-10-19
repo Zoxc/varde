@@ -14,44 +14,59 @@
 //! a sharp corner of a wide angle only gets a short spike.
 //!
 //! **The frame.** The record is a certificate on the face's own trims, in
-//! its UV plane, exact: each curve is the first rational quadratic span of
-//! its p-curve oriented away from the vertex `w`, its control data the
-//! stored `f64`s read as rationals. The **axis** `k` is the UV coordinate
-//! along which the second curve's tangent is the larger (`u` on a tie), the
-//! spike runs towards `σ = ±1` along it, and both tangents must point that
-//! way. A curve's **offset** at `s ≥ 0` is its other coordinate minus
-//! `w`'s at the point where `σ·(k − w_k) = s`, as long as it is a graph
-//! over `k` (its `k` moves monotonically); the **gap** is the difference
-//! of the two offsets, signed so that it is positive near `w`.
+//! its UV plane, exact: each curve is its p-curve's chain of rational
+//! quadratic spans read from the vertex `w` (each span oriented away from
+//! it, at most [`MAX_SPANS`]; a curve broken at knots, a tile line among
+//! them, reads on across them), its control data the stored `f64`s read
+//! as rationals. The **axis** `k` is the UV coordinate along which the
+//! second curve's tangent is the larger (`u` on a tie), the spike runs
+//! towards `σ = ±1` along it, and both tangents must point that way. A
+//! curve's **offset** at `s ≥ 0` is its other coordinate minus `w`'s at
+//! the point where `σ·(k − w_k) = s`, as long as it is a graph over `k`
+//! (its `k` moves monotonically); the **gap** is the difference of the
+//! two offsets.
 //!
-//! **Contact order and bounds.** Each offset's power series in `s` is
-//! formed exactly (the span's coordinates as series in its parameter `t`,
-//! `t` as a series in `s` by reversion, composed). The **contact order**
-//! `m` is the least order at which the two series differ, `g_m` the
-//! difference there (`m = 1` at an acute corner, 2 at a cusp of different
-//! curvatures, higher where the curvatures agree); two different conics
-//! meet with multiplicity at most 4, so series agreeing up to
-//! [`MAX_ORDER`] are one curve ([`CuspError::Contact`]). With `δ = |g_m|/4`
-//! each offset stays within `δ·s^m` of its series' terms up to order `m`
-//! over a parameter stretch `[0, t_c]`: two polynomial inequalities in `t`
-//! (the offsets times `W^m`, divided by `t^m`), certified by the signs of
-//! their Bernstein coefficients over `[0, t_c]`, together with the
-//! monotonicity of `k` there; `t_c` is the first of `1, ½, ¼, …` (at most
-//! [`MAX_HALVINGS`] halvings) that certifies. So over `s ≤ s_c` (the lesser
-//! of the two curves' `s` at their `t_c`) the gap lies between `A_lo·s^m`
-//! and `A_hi·s^m`, `A_lo = |g_m|/2`, `A_hi = 3|g_m|/2`.
+//! **Orders and bounds.** Each offset's power series in `s` is formed
+//! exactly from the first span (its coordinates as series in its
+//! parameter `t`, `t` as a series in `s` by reversion, composed); `g_j`
+//! is the two series' difference at order `j`. The **contact order** is
+//! the least `j` with `g_j ≠ 0` (1 at an acute corner, 2 at a cusp of
+//! different curvatures, higher where the curvatures agree); two different
+//! conics meet with multiplicity at most 4, so series agreeing up to
+//! [`MAX_ORDER`] are one curve ([`CuspError::Contact`]). The record takes
+//! the least order `m` with `g_m ≠ 0` whose bounds reach a cut: the
+//! contact order, or a higher one where the contact order's term is so
+//! small that its bounds hold only next to the vertex (a tangency the
+//! stored data's rounding has turned into a tiny angle). With
+//! `δ = |g_m|/4` each offset stays within `δ·s^m` of its series' terms up
+//! to order `m` over a **stretch** of its chain: two polynomial
+//! inequalities in each span's parameter (the offsets times `W^m`, on the
+//! first span divided by `t^m`), certified by the signs of their
+//! Bernstein coefficients, together with the monotonicity of `k`; the
+//! stretch holds each whole span while it certifies, then the first of
+//! `1, ½, ¼, …` (at most [`MAX_HALVINGS`] halvings) of the next span that
+//! does. So over `s ≤ s_c` (the lesser of the two curves' `s` at their
+//! stretch's end), with the gap signed as its order-`m` term and `l_j` the
+//! lower orders' terms signed so, the gap lies between
+//! `Σ_{j<m} l_j·s^j + A_lo·s^m` and `Σ_{j<m} l_j·s^j + A_hi·s^m`,
+//! `A_lo = |g_m|/2`, `A_hi = 3|g_m|/2` (at the contact order every `l_j`
+//! is zero).
 //!
 //! **The cut.** The two bands `β_c + β_c′` (in space) are carried into the
 //! UV plane by the surface's least stretch at `w` (from the partial
 //! derivatives' midpoints, a fixed function of the stored patch): `β_uv`.
 //! The cut is an iso line `k = κ`, `κ` a dyadic of the coarsest depth (at
-//! most `2⁻⁵²`) whose `s_β = σ·(κ − w_k)` has `A_lo·s_β^m > β_uv`,
-//! `s_β ≤ s_c` and `s_β` at most twice the least such value on the finest
-//! grid (so the spike is no longer than about twice its threshold): beyond it the curves are band-apart and ordinary strip
-//! boxes take over ([`CuspError::Reach`] where `s_c` comes first). Each
-//! curve's **reach** is the greatest dyadic parameter (at most `2⁻⁵²` fine)
-//! of its first span whose `s` is at most `s_β`: the stretch of the curve
-//! that bounds the spike.
+//! most `2⁻⁵²`) whose `s_β = σ·(κ − w_k)` has
+//! `A_lo·s_β^m + Σ_{l_j < 0} l_j·s_β^j > β_uv` (the lower bound with the
+//! helping terms dropped, which grows with `s` once positive, so the
+//! curves stay band-apart from the cut to `s_c`), `s_β ≤ s_c` and `s_β`
+//! at most twice the least such value on the finest grid (so the spike is
+//! no longer than about twice its threshold): beyond it the curves are
+//! band-apart and ordinary strip boxes take over ([`CuspError::Reach`]
+//! where no order's `s_c` reaches a cut). Each curve's **reach** is the
+//! greatest dyadic point of its stretch (a span and a parameter at most
+//! `2⁻⁵²` fine) whose `s` is at most `s_β`: the stretch of the curve that
+//! bounds the spike.
 //!
 //! The record is a function of the stored trims, the patch at `w` and the
 //! bands: built once per operation, never perturbed, the same bits on
@@ -78,6 +93,9 @@ pub const MAX_HALVINGS: u32 = 40;
 
 /// The finest cut and reach: `2⁻⁵²`.
 pub const CUT_DEPTH: u32 = 52;
+
+/// The most spans of each curve from the vertex the record reads.
+pub const MAX_SPANS: usize = 64;
 
 /// A trimming curve's span: three affine control points with their
 /// weights, `(u, v, w)`.
@@ -106,11 +124,14 @@ pub enum CuspError {
 /// A sharp corner's certificate (module docs).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CuspRec {
-    /// The contact order `m ≥ 1`.
+    /// The order `m ≥ 1` whose term bounds the gap.
     pub m: u32,
-    /// `A_lo`: the gap is at least `A_lo·s^m` for `s ≤ s_c`.
+    /// The gap's terms of the orders below `m`, `l_j` for `j < m`, signed
+    /// as its order-`m` term (all zero at the contact order).
+    pub lower: Vec<Rational>,
+    /// `A_lo`: the gap is at least `Σ l_j·s^j + A_lo·s^m` for `s ≤ s_c`.
     pub a_lo: Rational,
-    /// `A_hi`: the gap is at most `A_hi·s^m` for `s ≤ s_c`.
+    /// `A_hi`: the gap is at most `Σ l_j·s^j + A_hi·s^m` for `s ≤ s_c`.
     pub a_hi: Rational,
     /// The axis the curves are graphs over.
     pub axis: Dir,
@@ -124,9 +145,9 @@ pub struct CuspRec {
     /// local dyadic in `[0, 1)`.
     pub cut: (i64, Dyadic),
     /// Per curve (the first given, then the second), the greatest dyadic
-    /// parameter of its first span from the vertex whose `s` is at most
-    /// `s_β`.
-    pub reach: [Dyadic; 2],
+    /// point of its chain whose `s` is at most `s_β`: the span (from the
+    /// vertex) and the parameter in it, both counted from the vertex.
+    pub reach: [(u32, Dyadic); 2],
 }
 
 /// Whether a corner is sharp, and its record where it is.
@@ -138,35 +159,70 @@ pub enum Sharp {
     Cusp(Box<CuspRec>),
 }
 
-/// The record of the corner at `w` between the curves whose first spans
-/// from `w` are `a` (the curve into `w`, run backwards) and `b` (the curve
-/// out of `w`), on a surface whose partial derivatives at `w` are `du` and
-/// `dv` (certified enclosures), with the two curves' bands summed in
-/// `bands` (module docs).
+/// The record of the corner at `w` between the curves whose spans from
+/// `w` are `a` (the curve into `w`, run backwards) and `b` (the curve out
+/// of `w`), each a chain oriented away from `w`, on a surface whose
+/// partial derivatives at `w` are `du` and `dv` (certified enclosures),
+/// with the two curves' bands summed in `bands` (module docs).
 pub fn cusp_rec(
-    a: &CuspSpan,
-    b: &CuspSpan,
+    a: &[CuspSpan],
+    b: &[CuspSpan],
     du: &[Bounded<f64>; 3],
     dv: &[Bounded<f64>; 3],
     bands: f64,
+) -> Result<Sharp, CuspError> {
+    cusp_rec_counted(a, b, du, dv, bands).0
+}
+
+/// [`cusp_rec`], with the spans whose bounds it tested (each a few
+/// exact polynomial tests), for the caller to charge.
+pub fn cusp_rec_counted(
+    a: &[CuspSpan],
+    b: &[CuspSpan],
+    du: &[Bounded<f64>; 3],
+    dv: &[Bounded<f64>; 3],
+    bands: f64,
+) -> (Result<Sharp, CuspError>, u32) {
+    let mut tested = 0u32;
+    let r = record(a, b, du, dv, bands, &mut tested);
+    (r, tested)
+}
+
+fn record(
+    a: &[CuspSpan],
+    b: &[CuspSpan],
+    du: &[Bounded<f64>; 3],
+    dv: &[Bounded<f64>; 3],
+    bands: f64,
+    tested: &mut u32,
 ) -> Result<Sharp, CuspError> {
     let ok = |s: &CuspSpan| {
         s.iter()
             .all(|p| p.iter().all(|x| x.is_finite()) && p[2] > 0.0)
     };
-    if !ok(a) || !ok(b) || !(bands.is_finite() && bands >= 0.0) {
+    // Chains: non-empty, finite, positive weights, each span starting
+    // where the one before ends.
+    let chain = |c: &[CuspSpan]| {
+        !c.is_empty()
+            && c.iter().all(ok)
+            && c.windows(2)
+                .all(|w| w[0][2][0] == w[1][0][0] && w[0][2][1] == w[1][0][1])
+    };
+    if !chain(a) || !chain(b) || !(bands.is_finite() && bands >= 0.0) {
         return Err(CuspError::Span);
     }
-    if a[0][0] != b[0][0] || a[0][1] != b[0][1] {
+    let (a, b) = (&a[..a.len().min(MAX_SPANS)], &b[..b.len().min(MAX_SPANS)]);
+    let (a0, b0) = (&a[0], &b[0]);
+    if a0[0][0] != b0[0][0] || a0[0][1] != b0[0][1] {
         return Err(CuspError::Span);
     }
     let tangent = |s: &CuspSpan| [rat(s[1][0]) - rat(s[0][0]), rat(s[1][1]) - rat(s[0][1])];
-    let (ta, tb) = (tangent(a), tangent(b));
+    let (ta, tb) = (tangent(a0), tangent(b0));
     let zero = |t: &[Rational; 2]| t[0] == 0 && t[1] == 0;
     if zero(&ta) || zero(&tb) {
         return Err(CuspError::Degenerate);
     }
-    if apart(a, b, du, dv) {
+    if apart(a0, b0, du, dv) {
         return Ok(Sharp::Apart);
     }
     // The axis: where the second tangent is the larger, `u` on a tie.
@@ -176,48 +232,67 @@ pub fn cusp_rec(
         return Err(CuspError::Graph);
     }
     let sigma: i8 = if toward == Ordering::Greater { 1 } else { -1 };
-    let curves = [Curve::new(a, k, sigma), Curve::new(b, k, sigma)];
+    let w = [rat(a0[0][0]), rat(a0[0][1])];
+    let curves = [Chain::new(a, &w, k, sigma), Chain::new(b, &w, k, sigma)];
     let series = [curves[0].offsets()?, curves[1].offsets()?];
-    let (m, gm) = (1..=MAX_ORDER)
-        .find_map(|j| {
-            let g = &series[1][j] - &series[0][j];
-            (g != 0).then_some((j, g))
-        })
-        .ok_or(CuspError::Contact)?;
-    let g_abs = (&gm).abs();
-    let delta = &g_abs / Rational::from(4);
-    let mut ends = Vec::with_capacity(2);
-    for (c, y) in curves.iter().zip(&series) {
-        ends.push(c.stretch(m, &y[..m], &y[m], &delta)?);
+    let g: Vec<Rational> = (0..=MAX_ORDER)
+        .map(|j| &series[1][j] - &series[0][j])
+        .collect();
+    if g.iter().all(|x| *x == 0) {
+        return Err(CuspError::Contact);
     }
-    let s_c = if ends[0].1 < ends[1].1 {
-        ends[0].1.clone()
-    } else {
-        ends[1].1.clone()
-    };
-    let a_lo = &g_abs / Rational::from(2);
-    let a_hi = &g_abs * Rational::from(3) / Rational::from(2);
     let beta = band_uv(du, dv, bands)?;
-    let (x, s_beta) = cut(&rat(a[0][k]), sigma, m, &a_lo, &beta, &s_c)?;
-    let reach = [0, 1].map(|i| curves[i].reach(&s_beta, ends[i].0));
-    // Fits: `|κ| < 2⁵³`, a tile index.
-    let kappa = if sigma > 0 { x } else { -x };
-    let tile = (&kappa).floor();
-    let local = &kappa - Rational::from(tile.clone());
-    let tile = i64::try_from(&tile).map_err(|_| CuspError::Reach)?;
-    let cut = (tile, dyadic_of(&local).ok_or(CuspError::Reach)?);
-    Ok(Sharp::Cusp(Box::new(CuspRec {
-        // Fits: at most `MAX_ORDER`.
-        m: m as u32,
-        a_lo,
-        a_hi,
-        axis: if k == 0 { Dir::U } else { Dir::V },
-        toward: sigma,
-        s_c,
-        s_beta,
-        cut,
-        reach,
-    })))
+    // The least order whose bounds hold far enough to place a cut.
+    for m in 1..=MAX_ORDER {
+        if g[m] == 0 {
+            continue;
+        }
+        let g_abs = (&g[m]).abs();
+        let delta = &g_abs / Rational::from(4);
+        let mut ends = Vec::with_capacity(2);
+        for (c, y) in curves.iter().zip(&series) {
+            ends.push(c.stretch(m, &y[..m], &y[m], &delta, tested));
+        }
+        let [Some(ea), Some(eb)] = [ends[0].take(), ends[1].take()] else {
+            continue;
+        };
+        let s_c = if ea.2 < eb.2 {
+            ea.2.clone()
+        } else {
+            eb.2.clone()
+        };
+        // The lower orders' terms, signed by the order's own.
+        let lower: Vec<Rational> = g[..m]
+            .iter()
+            .map(|x| if g[m] > 0 { x.clone() } else { -x })
+            .collect();
+        let a_lo = &g_abs / Rational::from(2);
+        let a_hi = &g_abs * Rational::from(3) / Rational::from(2);
+        let Ok((x, s_beta)) = cut(&w[k], sigma, m, &lower, &a_lo, &beta, &s_c) else {
+            continue;
+        };
+        let reach = [(0, &ea), (1, &eb)].map(|(i, e)| curves[i].reach(&s_beta, (e.0, e.1)));
+        // Fits: `|κ| < 2⁵³`, a tile index.
+        let kappa = if sigma > 0 { x } else { -x };
+        let tile = (&kappa).floor();
+        let local = &kappa - Rational::from(tile.clone());
+        let tile = i64::try_from(&tile).map_err(|_| CuspError::Reach)?;
+        let cut = (tile, dyadic_of(&local).ok_or(CuspError::Reach)?);
+        return Ok(Sharp::Cusp(Box::new(CuspRec {
+            // Fits: at most `MAX_ORDER`.
+            m: m as u32,
+            lower,
+            a_lo,
+            a_hi,
+            axis: if k == 0 { Dir::U } else { Dir::V },
+            toward: sigma,
+            s_c,
+            s_beta,
+            cut,
+            reach,
+        })));
+    }
+    Err(CuspError::Reach)
 }
 
 /// Whether the tangents of `a` and `b` at their start, carried by the
@@ -286,12 +361,16 @@ fn dyadic_of(x: &Rational) -> Option<Dyadic> {
 
 /// The cut (module docs) in the mirrored coordinate `x = σ·κ`: the
 /// coarsest dyadic `x` past `σ·w_k` whose `s = x − σ·w_k` has
-/// `A_lo·s^m > β`, `s ≤ s_c` and `s` at most twice the least such `s` on
-/// the finest grid, with that `s`.
+/// `A_lo·s^m + Σ_{j<m} min(l_j, 0)·s^j > β` (`l` the lower orders'
+/// signed terms), `s ≤ s_c` and `s` at most twice the least such `s` on
+/// the finest grid, with that `s`. Past a point where it holds it holds
+/// at every greater `s`: `s^m·(A_lo − Σ |l_j|·s^(j−m))` grows with `s`
+/// once positive.
 fn cut(
     wk: &Rational,
     sigma: i8,
     m: usize,
+    lower: &[Rational],
     a_lo: &Rational,
     beta: &Rational,
     s_c: &Rational,
@@ -299,7 +378,18 @@ fn cut(
     let w = if sigma > 0 { wk.clone() } else { -wk };
     let fine = Rational::power_of_2(-i64::from(CUT_DEPTH));
     let s_of = |n: &Integer, h: &Rational| Rational::from(n.clone()) * h - &w;
-    let ok = |s: &Rational| *s > 0 && a_lo * s.pow(m as u64) > *beta;
+    let ok = |s: &Rational| {
+        if *s <= 0 {
+            return false;
+        }
+        let mut v = a_lo * s.pow(m as u64);
+        for (j, l) in lower.iter().enumerate() {
+            if *l < 0 {
+                v += l * s.pow(j as u64);
+            }
+        }
+        v > *beta
+    };
     // The finest grid: the least `n` whose point is past the threshold,
     // by bisection between the point at `w` and the one at `s_c`.
     let mut lo = (&w / &fine).floor();
@@ -479,8 +569,8 @@ pub(crate) fn srevert(s: &[Rational]) -> Series {
     tau
 }
 
-/// One curve in the record's frame: from its span, the numerators of
-/// `s` and of the offset over the weight, in power form in `t`.
+/// One span in the record's frame: the numerators of `s` and of the
+/// offset over the weight, in power form in its parameter `t`.
 struct Curve {
     s: Poly,
     y: Poly,
@@ -488,7 +578,7 @@ struct Curve {
 }
 
 impl Curve {
-    fn new(sp: &CuspSpan, k: usize, sigma: i8) -> Curve {
+    fn new(sp: &CuspSpan, w0: &[Rational; 2], k: usize, sigma: i8) -> Curve {
         let o = 1 - k;
         let ws = [rat(sp[0][2]), rat(sp[1][2]), rat(sp[2][2])];
         // `Σ wᵢ·xᵢ·Bᵢ(t)` in power form.
@@ -501,88 +591,135 @@ impl Curve {
             ]
         };
         let w = hom([Rational::ONE, Rational::ONE, Rational::ONE]);
-        let (wk, wo) = (rat(sp[0][k]), rat(sp[0][o]));
         let xk = hom([rat(sp[0][k]), rat(sp[1][k]), rat(sp[2][k])]);
         let xo = hom([rat(sp[0][o]), rat(sp[1][o]), rat(sp[2][o])]);
         let sig = Rational::from(i64::from(sigma));
-        let s = pscale(&padd(&xk, &pscale(&w, &-&wk)), &sig);
-        let y = padd(&xo, &pscale(&w, &-&wo));
+        let s = pscale(&padd(&xk, &pscale(&w, &-&w0[k])), &sig);
+        let y = padd(&xo, &pscale(&w, &-&w0[o]));
         Curve { s, y, w }
     }
 
-    /// The offset's series in `s` (module docs).
+    /// `s` at the parameter `t`.
+    fn s_at(&self, t: &Rational) -> Rational {
+        peval(&self.s, t) / peval(&self.w, t)
+    }
+}
+
+/// A curve's chain of spans from the vertex in the record's frame.
+struct Chain(Vec<Curve>);
+
+impl Chain {
+    fn new(spans: &[CuspSpan], w0: &[Rational; 2], k: usize, sigma: i8) -> Chain {
+        Chain(
+            spans
+                .iter()
+                .map(|sp| Curve::new(sp, w0, k, sigma))
+                .collect(),
+        )
+    }
+
+    /// The offset's series in `s` at the vertex, from the first span
+    /// (module docs).
     fn offsets(&self) -> Result<Series, CuspError> {
-        let s = sdiv(&self.s, &self.w);
+        let c = &self.0[0];
+        let s = sdiv(&c.s, &c.w);
         if s[1] <= 0 {
             return Err(CuspError::Graph);
         }
-        let y = sdiv(&self.y, &self.w);
+        let y = sdiv(&c.y, &c.w);
         Ok(scompose(&y, &srevert(&s)))
     }
 
-    /// The stretch `[0, t_c]` over which the offset stays within `δ·s^m`
-    /// of `Σ_{j < m} p_j s^j + c·s^m` with `k` monotone, and the `s` at
-    /// `t_c` (module docs).
+    /// The stretch over which the offset stays within `δ·s^m` of
+    /// `Σ_{j < m} p_j s^j + c·s^m` with `k` increasing (module docs): the
+    /// last span it reaches into, the parameter `t_c` there, and the `s`
+    /// at it; `None` where it doesn't hold on any stretch of the first
+    /// span. Each span tested counts in `tested`.
     fn stretch(
         &self,
         m: usize,
         p: &[Rational],
         c: &Rational,
         delta: &Rational,
-    ) -> Result<(Dyadic, Rational), CuspError> {
-        // `Y·W^(m−1) − Σ p_j S^j W^(m−j) − (c ∓ δ) S^m`, over `t^m`.
-        let mut base = pmul(&self.y, &ppow(&self.w, m - 1));
-        for (j, pj) in p.iter().enumerate() {
-            let term = pmul(&ppow(&self.s, j), &ppow(&self.w, m - j));
-            base = padd(&base, &pscale(&term, &-pj));
-        }
-        let sm = ppow(&self.s, m);
-        let over_tm = |f: Poly| -> Result<Poly, CuspError> {
-            if f[..m].iter().any(|x| *x != 0) {
-                return Err(CuspError::Contact);
+        tested: &mut u32,
+    ) -> Option<(usize, Dyadic, Rational)> {
+        let mut last = None;
+        for (j, cv) in self.0.iter().enumerate() {
+            *tested = tested.saturating_add(1);
+            // `Y·W^(m−1) − Σ p_j S^j W^(m−j) − (c ∓ δ) S^m`; on the first
+            // span over `t^m` (it vanishes to that order at the vertex).
+            let mut base = pmul(&cv.y, &ppow(&cv.w, m - 1));
+            for (i, pi) in p.iter().enumerate() {
+                let term = pmul(&ppow(&cv.s, i), &ppow(&cv.w, m - i));
+                base = padd(&base, &pscale(&term, &-pi));
             }
-            Ok(f[m..].to_vec())
-        };
-        let lower = over_tm(padd(&base, &pscale(&sm, &-(c - delta))))?;
-        let upper = over_tm(padd(&base, &pscale(&sm, &-(c + delta))))?;
-        let neg_upper: Poly = upper.iter().map(|x| -x).collect();
-        let mono = padd(
-            &pmul(&pderiv(&self.s), &self.w),
-            &pscale(&pmul(&self.s, &pderiv(&self.w)), &Rational::from(-1)),
-        );
-        for j in 0..=MAX_HALVINGS {
-            let t = Rational::power_of_2(-i64::from(j));
-            if positive_on(&lower, &t) && positive_on(&neg_upper, &t) && positive_on(&mono, &t) {
-                let s = peval(&self.s, &t) / peval(&self.w, &t);
-                let d = Dyadic::new(1, j).ok_or(CuspError::Reach)?;
-                return Ok((d, s));
+            let sm = ppow(&cv.s, m);
+            let over_tm = |f: Poly| -> Option<Poly> {
+                if j > 0 {
+                    return Some(f);
+                }
+                if f[..m].iter().any(|x| *x != 0) {
+                    return None;
+                }
+                Some(f[m..].to_vec())
+            };
+            let lower = over_tm(padd(&base, &pscale(&sm, &-(c - delta))))?;
+            let upper = over_tm(padd(&base, &pscale(&sm, &-(c + delta))))?;
+            let neg_upper: Poly = upper.iter().map(|x| -x).collect();
+            let mono = padd(
+                &pmul(&pderiv(&cv.s), &cv.w),
+                &pscale(&pmul(&cv.s, &pderiv(&cv.w)), &Rational::from(-1)),
+            );
+            let held = (0..=MAX_HALVINGS).find_map(|h| {
+                let t = Rational::power_of_2(-i64::from(h));
+                (positive_on(&lower, &t) && positive_on(&neg_upper, &t) && positive_on(&mono, &t))
+                    .then(|| (Dyadic::new(1, h), t))
+            });
+            match held {
+                Some((Some(d), t)) => {
+                    last = Some((j, d, cv.s_at(&t)));
+                    if d != Dyadic::ONE {
+                        break;
+                    }
+                }
+                _ => break,
             }
         }
-        Err(CuspError::Reach)
+        last
     }
 
-    /// The greatest dyadic parameter in `[0, t_c]`, at most `2⁻⁵²` fine,
-    /// whose `s` is at most `s_β` (`s` increases over the stretch).
-    fn reach(&self, s_beta: &Rational, t_c: Dyadic) -> Dyadic {
-        let within = |n: u64, e: u32| {
-            let t = Rational::from(n) / Rational::power_of_2(i64::from(e));
-            peval(&self.s, &t) - s_beta * peval(&self.w, &t) <= 0
-        };
-        if within(t_c.num(), t_c.exp()) {
-            return t_c;
-        }
-        // Bisect on the grid `2^-CUT_DEPTH`: `lo` holds, `hi` doesn't.
-        let shift = CUT_DEPTH - t_c.exp();
-        let (mut lo, mut hi) = (0u64, t_c.num() << shift);
-        while hi - lo > 1 {
-            let mid = lo + (hi - lo) / 2;
-            if within(mid, CUT_DEPTH) {
-                lo = mid;
-            } else {
-                hi = mid;
+    /// The greatest dyadic point (a span and a parameter at most `2⁻⁵²`
+    /// fine) within the stretch ending at `(j_c, t_c)` whose `s` is at
+    /// most `s_β` (`s` increases over the stretch).
+    fn reach(&self, s_beta: &Rational, (jc, tc): (usize, Dyadic)) -> (u32, Dyadic) {
+        for (j, cv) in self.0.iter().enumerate().take(jc + 1) {
+            let t_end = if j == jc { tc } else { Dyadic::ONE };
+            let within = |n: u64, e: u32| {
+                let t = Rational::from(n) / Rational::power_of_2(i64::from(e));
+                peval(&cv.s, &t) - s_beta * peval(&cv.w, &t) <= 0
+            };
+            if within(t_end.num(), t_end.exp()) {
+                if j == jc {
+                    // Fits: at most `MAX_SPANS`.
+                    return (j as u32, t_end);
+                }
+                continue;
             }
+            // Bisect on the grid `2^-CUT_DEPTH`: `lo` holds (the span's
+            // start: the vertex, or a knot within the cut), `hi` doesn't.
+            let shift = CUT_DEPTH - t_end.exp();
+            let (mut lo, mut hi) = (0u64, t_end.num() << shift);
+            while hi - lo > 1 {
+                let mid = lo + (hi - lo) / 2;
+                if within(mid, CUT_DEPTH) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (j as u32, Dyadic::new(lo, CUT_DEPTH).expect("within [0, 1]"));
         }
-        Dyadic::new(lo, CUT_DEPTH).expect("within [0, 1]")
+        (jc as u32, tc)
     }
 }
 

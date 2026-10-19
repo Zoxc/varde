@@ -8,7 +8,10 @@
 //! the edges' ray records). The sum is the number of times the face lies
 //! above the query along `UP`, exactly; the boxes visited stay few
 //! whether the query is far from the spike, over it, or beside its tip,
-//! and nothing runs out.
+//! and nothing runs out. A spike may cross a tile line between two tiles
+//! of the face, its curves broken there: the sharp corner's record reads
+//! them on past the knot, and queries over the line count alike. The
+//! face's corners are built once per shape, as once per operation.
 
 use super::*;
 use crate::count::boxes::{Corners, Role, box_hull, role, split};
@@ -20,23 +23,33 @@ use crate::records::side::Sides;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
 use smallvec::SmallVec;
+use std::ops::Range;
 
-/// The surface: `(u, v) ↦ (u, v, u/4 + v/2)`, one tile `[1, 2] × [0, 1]`.
-const TILE: [std::ops::Range<i64>; 2] = [1..2, 0..1];
+/// The surface: `(u, v) ↦ (u, v, u/4 + v/2)`, over one tile
+/// `[1, 2] × [0, 1]` or two, `[1, 3] × [0, 1]`.
+const TILE: [Range<i64>; 2] = [1..2, 0..1];
+const TWO_TILES: [Range<i64>; 2] = [1..3, 0..1];
 
 fn map(u: f64, v: f64) -> [f64; 3] {
     [u, v, u * 0.25 + v * 0.5]
 }
 
-fn tile_patch() -> Vec<Patch> {
-    let mut net = Vec::new();
-    for a in 0..2 {
-        for b in 0..2 {
-            let [x, y, z] = map((1 + a) as f64, b as f64);
-            net.push([x, y, z, 1.0]);
+/// The surface's patches, one per tile in the face's order.
+fn tile_patches(tiles: &[Range<i64>; 2]) -> Vec<Patch> {
+    let mut out = Vec::new();
+    for i in tiles[0].clone() {
+        for j in tiles[1].clone() {
+            let mut net = Vec::new();
+            for a in 0..2 {
+                for b in 0..2 {
+                    let [x, y, z] = map((i + a) as f64, (j + b) as f64);
+                    net.push([x, y, z, 1.0]);
+                }
+            }
+            out.push(Patch::from_affine(1, 1, net, &first()).unwrap());
         }
     }
-    vec![Patch::from_affine(1, 1, net, &first()).unwrap()]
+    out
 }
 
 /// The cusp's vertex, off the dyadic lines of every box above the finest
@@ -47,10 +60,15 @@ const W: [f64; 2] = [
 ];
 const SIN60: f64 = 0.8660254037844386;
 
-/// A face of three edges along its loop (counter-clockwise), each one
-/// span monotone in `u`: a curve out of `W` (the spike's lower side), a
-/// line, a curve back into `W` leaving it the same way.
-struct Shape([UvSpan; 3]);
+/// A face of three edges along its loop (counter-clockwise), each a chain
+/// of spans monotone in `u`: a curve out of the vertex (the spike's lower
+/// side), a line, a curve back into the vertex leaving it the same way.
+struct Shape {
+    /// Per edge, its p-curve's spans along the loop.
+    e: [Vec<UvSpan>; 3],
+    /// The face's tiles.
+    tiles: [Range<i64>; 2],
+}
 
 fn mid(x: [f64; 2], y: [f64; 2]) -> [f64; 3] {
     [(x[0] + y[0]) * 0.5, (x[1] + y[1]) * 0.5, 1.0]
@@ -60,7 +78,20 @@ fn pt(x: [f64; 2]) -> [f64; 3] {
     [x[0], x[1], 1.0]
 }
 
+/// A span reversed.
+fn back(sp: &UvSpan) -> UvSpan {
+    [sp[2], sp[1], sp[0]]
+}
+
 impl Shape {
+    /// One span per edge, on one tile.
+    fn of(e: [UvSpan; 3]) -> Shape {
+        Shape {
+            e: e.map(|s| vec![s]),
+            tiles: TILE,
+        }
+    }
+
     /// The line out of `W` along `+u`, up the side, an arc of radius 1
     /// back into `W` tangent to the line (contact order 2).
     fn cusp() -> Shape {
@@ -70,7 +101,7 @@ impl Shape {
     /// The same with its vertex at `w`.
     fn cusp_at(w: [f64; 2]) -> Shape {
         let (a, p) = ([w[0] + SIN60, w[1]], [w[0] + SIN60, w[1] + 0.5]);
-        Shape([
+        Shape::of([
             [pt(w), mid(w, a), pt(a)],
             [pt(a), mid(a, p), pt(p)],
             [pt(p), [w[0] + 0.5773502691896257, w[1], SIN60], pt(w)],
@@ -86,7 +117,7 @@ impl Shape {
     fn acute_at(w: [f64; 2]) -> Shape {
         let slope = crate::num::trig::tan(1.0 / 64.0);
         let (a, b) = ([w[0] + 0.75, w[1]], [w[0] + 0.75, w[1] + 0.75 * slope]);
-        Shape([
+        Shape::of([
             [pt(w), mid(w, a), pt(a)],
             [pt(a), mid(a, b), pt(b)],
             [pt(b), mid(b, w), pt(w)],
@@ -103,23 +134,63 @@ impl Shape {
     fn equal_curvature_at(w: [f64; 2]) -> Shape {
         let at = |du: f64, dv: f64| [w[0] + du, w[1] + dv, 1.0];
         let (b, a) = ([w[0] + 0.875, w[1] + 0.7], [w[0] + 0.7, w[1] + 0.7]);
-        Shape([
+        Shape::of([
             [at(0.0, 0.0), at(0.35, 0.0), pt(b)],
             [pt(b), mid(b, a), pt(a)],
             [pt(a), at(0.35, 0.0), at(0.0, 0.0)],
         ])
     }
 
+    /// The shape on two tiles, `[1, 3] × [0, 1]`, its p-curves broken at
+    /// the tile line `u = 2` (a knot exactly on it, shared by the spans
+    /// either side).
+    fn across(self) -> Shape {
+        let e = self.e.map(|c| {
+            c.iter()
+                .flat_map(|sp| {
+                    if (sp[0][0] - 2.0) * (sp[2][0] - 2.0) < 0.0 {
+                        split_at_u(sp, 2.0).to_vec()
+                    } else {
+                        vec![*sp]
+                    }
+                })
+                .collect()
+        });
+        Shape {
+            e,
+            tiles: TWO_TILES,
+        }
+    }
+
     /// The edges' curves: the p-curves carried onto the plane, the same
-    /// weights.
+    /// weights, a span per p-span.
     fn curves(&self) -> Vec<Vec<Span>> {
-        self.0
+        self.e
             .iter()
-            .map(|s| {
-                vec![s.map(|p| {
-                    let [x, y, z] = map(p[0], p[1]);
-                    [x, y, z, p[2]]
-                })]
+            .map(|c| {
+                c.iter()
+                    .map(|s| {
+                        s.map(|p| {
+                            let [x, y, z] = map(p[0], p[1]);
+                            [x, y, z, p[2]]
+                        })
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Per edge, where its p-spans lie on its curve: one span each.
+    fn maps(&self) -> Vec<Vec<SpanMap>> {
+        self.e
+            .iter()
+            .map(|c| {
+                (0..c.len())
+                    .map(|j| SpanMap {
+                        span: j as u32,
+                        t: [0.0, 1.0],
+                    })
+                    .collect()
             })
             .collect()
     }
@@ -129,7 +200,7 @@ impl Shape {
             .map(|k| Trim {
                 coedge: CoedgeId(k as u32),
                 reversed: false,
-                spans: std::slice::from_ref(&self.0[k]),
+                spans: &self.e[k],
                 ends: [VertId(k as u32), VertId(((k + 1) % 3) as u32)],
                 zero_length: false,
                 band: beta,
@@ -137,42 +208,69 @@ impl Shape {
             .collect()
     }
 
+    fn face<'a>(&self, trims: &'a [Trim<'a>]) -> FaceUv<'a> {
+        FaceUv::new(
+            Operand::A,
+            FaceId(3),
+            self.tiles.clone(),
+            [1.0, 1.0],
+            trims,
+            false,
+        )
+        .unwrap()
+    }
+
     /// The vertices in the geometric order: by `x` (`u`), then `y`.
     fn order(&self) -> Vec<VertId> {
         let mut v: Vec<(VertId, [f64; 2])> = (0..3)
-            .map(|k| (VertId(k as u32), [self.0[k][0][0], self.0[k][0][1]]))
+            .map(|k| (VertId(k as u32), [self.e[k][0][0][0], self.e[k][0][0][1]]))
             .collect();
         v.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]).then(a.1[1].total_cmp(&b.1[1])));
         v.into_iter().map(|x| x.0).collect()
     }
 
-    /// The shape mirrored in `u` (`u ↦ 3 − u`) and in `v` (`v ↦ 1 − v`),
-    /// each keeping the tile, and its loop reversed (`rev`): the cusp's
-    /// vertex stays the first.
+    /// The shape mirrored in `u` and in `v` about the middle of its
+    /// tiles, each keeping them, and its loop reversed (`rev`): the
+    /// cusp's vertex stays the first.
     fn mirrored(&self, mu: bool, mv: bool, rev: bool) -> Shape {
+        let (cu, cv) = (
+            (self.tiles[0].start + self.tiles[0].end) as f64,
+            (self.tiles[1].start + self.tiles[1].end) as f64,
+        );
         let p = |x: [f64; 3]| {
             [
-                if mu { 3.0 - x[0] } else { x[0] },
-                if mv { 1.0 - x[1] } else { x[1] },
+                if mu { cu - x[0] } else { x[0] },
+                if mv { cv - x[1] } else { x[1] },
                 x[2],
             ]
         };
-        let s = self.0.map(|sp| sp.map(p));
-        let back = |sp: &UvSpan| [sp[2], sp[1], sp[0]];
-        Shape(if rev {
-            [back(&s[2]), back(&s[1]), back(&s[0])]
-        } else {
-            s
-        })
+        let e = self
+            .e
+            .clone()
+            .map(|c| c.iter().map(|sp| sp.map(p)).collect::<Vec<_>>());
+        let rc = |c: &Vec<UvSpan>| c.iter().rev().map(back).collect::<Vec<_>>();
+        Shape {
+            e: if rev {
+                [rc(&e[2]), rc(&e[1]), rc(&e[0])]
+            } else {
+                e
+            },
+            tiles: self.tiles.clone(),
+        }
     }
 
-    /// The same curves with span `k`'s weights scaled by `scale[k]` and
+    /// The same curves with edge `k`'s weights scaled by `scale[k]` and
     /// reparametrised by `r` (weights times `1, r, r²`).
     fn weighted(&self, scale: [f64; 3], r: f64) -> Shape {
-        let mut s = Shape(self.0);
-        for (sp, c) in s.0.iter_mut().zip(scale) {
-            for (i, p) in sp.iter_mut().enumerate() {
-                p[2] *= c * [1.0, r, r * r][i];
+        let mut s = Shape {
+            e: self.e.clone(),
+            tiles: self.tiles.clone(),
+        };
+        for (c, k) in s.e.iter_mut().zip(scale) {
+            for sp in c {
+                for (i, p) in sp.iter_mut().enumerate() {
+                    p[2] *= k * [1.0, r, r * r][i];
+                }
             }
         }
         s
@@ -180,31 +278,35 @@ impl Shape {
 
     /// The cusp's vertex.
     fn w(&self) -> [f64; 2] {
-        [self.0[0][0][0], self.0[0][0][1]]
+        [self.e[0][0][0][0], self.e[0][0][0][1]]
     }
 
     /// The `u` at `s` along the spike from the vertex.
     fn along(&self, s: f64) -> f64 {
         let w = self.w()[0];
-        if self.0[0][2][0] > w { w + s } else { w - s }
+        if self.e[0][self.e[0].len() - 1][2][0] > w {
+            w + s
+        } else {
+            w - s
+        }
     }
 
     /// The spike's lower and upper sides at `u = W_u + s`.
     fn sides_at(&self, s: f64) -> [f64; 2] {
-        let back = |sp: &UvSpan| [sp[2], sp[1], sp[0]];
+        let u = self.along(s);
         [
-            graph(&self.0[0], self.along(s)).expect("on the lower side"),
-            graph(&back(&self.0[2]), self.along(s)).expect("on the upper side"),
+            chain_graph(&self.e[0], u).expect("on the lower side"),
+            chain_graph(&self.e[2], u).expect("on the upper side"),
         ]
     }
 
     /// The winding of the face's loop about the UV point `x` (`None`
     /// within `m` of a curve along `v`), from the crossings of the ray
-    /// from `x` along `+v`: each edge, monotone in `u`, crosses the line
+    /// from `x` along `+v`: each span, monotone in `u`, crosses the line
     /// `u = x_u` at most once.
     fn winding(&self, x: [f64; 2], m: f64) -> Option<i64> {
         let mut w = 0i64;
-        for sp in &self.0 {
+        for sp in self.e.iter().flatten() {
             let (u0, u2) = (sp[0][0], sp[2][0]);
             if u0 == u2 {
                 if (x[0] - u0).abs() < m {
@@ -240,8 +342,8 @@ fn at_t(s: &UvSpan, t: f64) -> [f64; 2] {
     [c(0), c(1)]
 }
 
-/// The `v` of a span monotone in `u` where its `u` is `u`, by bisection.
-fn graph(sp: &UvSpan, u: f64) -> Option<f64> {
+/// The parameter where a span monotone in `u` has `u = u`, by bisection.
+fn param_at_u(sp: &UvSpan, u: f64) -> f64 {
     let inc = sp[2][0] > sp[0][0];
     let (mut lo, mut hi) = (0.0, 1.0);
     for _ in 0..200 {
@@ -252,8 +354,34 @@ fn graph(sp: &UvSpan, u: f64) -> Option<f64> {
             hi = mid;
         }
     }
-    let p = at_t(sp, 0.5 * (lo + hi));
+    0.5 * (lo + hi)
+}
+
+/// A span monotone in `u` split where `u = l` (homogeneous de Casteljau
+/// in floats, the knot's `u` set to `l` exactly and shared by both
+/// halves).
+fn split_at_u(sp: &UvSpan, l: f64) -> [UvSpan; 2] {
+    let t = param_at_u(sp, l);
+    let h = sp.map(|p| [p[0] * p[2], p[1] * p[2], p[2]]);
+    let lerp = |a: [f64; 3], b: [f64; 3]| [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t);
+    let (h01, h12) = (lerp(h[0], h[1]), lerp(h[1], h[2]));
+    let m = lerp(h01, h12);
+    let aff = |x: [f64; 3]| [x[0] / x[2], x[1] / x[2], x[2]];
+    let knot = [l, m[1] / m[2], m[2]];
+    [[sp[0], aff(h01), knot], [knot, aff(h12), sp[2]]]
+}
+
+/// The `v` of a span monotone in `u` where its `u` is `u`, by bisection.
+fn graph(sp: &UvSpan, u: f64) -> Option<f64> {
+    let p = at_t(sp, param_at_u(sp, u));
     ((p[0] - u).abs() < 1e-12).then_some(p[1])
+}
+
+/// The `v` of a chain of spans monotone in `u` where its `u` is `u`.
+fn chain_graph(c: &[UvSpan], u: f64) -> Option<f64> {
+    c.iter()
+        .find(|sp| (sp[0][0] - u) * (sp[2][0] - u) <= 0.0)
+        .and_then(|sp| graph(sp, u))
 }
 
 /// The ray record of the query `q` (of `B`, its ray `+r̂`) against a
@@ -450,26 +578,36 @@ fn lin_q(q: [f64; 3], a: DVec3) -> [f64; 2] {
     s.enclose()
 }
 
-/// The count of `shape` above `q` along `UP`, the boxes visited, and the
-/// corner boxes holding the vertex (in their closed UV box) whose piece
-/// didn't settle.
-fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
-    let cs = shape.curves();
+/// The corners of `shape`'s face at band `beta`, built once per
+/// operation (here per shape), with its sharp corner's record.
+fn corners_of(shape: &Shape, beta: f64) -> Corners {
     let trims = shape.trims(beta);
-    let face = FaceUv::new(Operand::A, FaceId(3), TILE, [1.0, 1.0], &trims, false).unwrap();
-    let patches = tile_patch();
-    let corners = Corners::new(&face, &patches, &shape.order(), &Charge::setup(u64::MAX))
-        .0
-        .unwrap();
+    let face = shape.face(&trims);
+    let corners = Corners::new(
+        &face,
+        &tile_patches(&shape.tiles),
+        &shape.order(),
+        &Charge::setup(u64::MAX),
+    )
+    .0
+    .unwrap();
     assert!(
         corners.cusp(VertId(0)).is_some(),
         "the sharp corner's record"
     );
+    corners
+}
+
+/// The count of `shape` above `q` along `UP`, the boxes visited, and the
+/// corner boxes holding the vertex (in their closed UV box) whose piece
+/// didn't settle; `corners` the face's ([`corners_of`]).
+fn count(shape: &Shape, corners: &Corners, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
+    let cs = shape.curves();
+    let trims = shape.trims(beta);
+    let face = shape.face(&trims);
+    let patches = tile_patches(&shape.tiles);
     let recs: Vec<ChainRec> = cs.iter().map(|c| rays_q(c, q)).collect();
-    let map1 = [SpanMap {
-        span: 0,
-        t: [0.0, 1.0],
-    }];
+    let maps = shape.maps();
     let qs = QShadow::of(q).unwrap();
     let (up_q, r_q, n_q) = (lin_q(q, UP), lin_q(q, R_HAT), lin_q(q, NU));
     let mut queue: Vec<(BoxKey, Option<SmallVec<[crate::count::boxes::SpanRef; 8]>>)> =
@@ -486,7 +624,7 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
     while let Some((b, among)) = queue.pop() {
         visited += 1;
         assert!(visited < 20_000, "refinement runs away at q = {q:?}");
-        let patch = &patches[0];
+        let patch = face.patch_of(&patches, b.tile()).expect("the box's tile");
         let mut h = box_hull(patch, &b).expect("positive weights");
         // The ribbons lie within a band of the box's hull.
         for k in 0..3 {
@@ -497,7 +635,7 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
         if r[1] < r_q[0] || r[0] > r_q[1] || n[1] < n_q[0] || n[0] > n_q[1] {
             continue;
         }
-        let rl = role(&face, &corners, &b, &first(), among.as_deref()).expect("a role");
+        let rl = role(&face, corners, &b, &first(), among.as_deref()).expect("a role");
         let z = lin(&h, UP);
         let above = z[0] > up_q[1];
         let clear = above || z[1] < up_q[0];
@@ -520,7 +658,7 @@ fn count(shape: &Shape, q: [f64; 3], beta: f64) -> (i64, usize, usize) {
                     .map(|c| Ribbon {
                         coedge: *c,
                         curve: &cs[c.index()],
-                        map: &map1,
+                        map: &maps[c.index()],
                         rays: &recs[c.index()],
                     })
                     .collect();
@@ -593,22 +731,15 @@ fn truth(shape: &Shape, q: [f64; 3]) -> Option<i64> {
 fn check_shape(shape: &Shape, seed: u64, most: usize) {
     let beta = 1e-8;
     let mut rng = Rng::new(seed);
-    let s_beta = {
-        let trims = shape.trims(beta);
-        let face = FaceUv::new(Operand::A, FaceId(3), TILE, [1.0, 1.0], &trims, false).unwrap();
-        let c = Corners::new(
-            &face,
-            &tile_patch(),
-            &shape.order(),
-            &Charge::setup(u64::MAX),
-        )
-        .0
-        .unwrap();
-        c.cusp(VertId(0)).expect("a sharp corner").s_beta_f64()
-    };
+    let corners = corners_of(shape, beta);
+    let s_beta = corners
+        .cusp(VertId(0))
+        .expect("a sharp corner")
+        .s_beta_f64();
     // The shorter side's extent along `u`.
     let w = shape.w()[0];
-    let (f0, f2) = ((shape.0[0][2][0] - w).abs(), (shape.0[2][0][0] - w).abs());
+    let last = &shape.e[0][shape.e[0].len() - 1];
+    let (f0, f2) = ((last[2][0] - w).abs(), (shape.e[2][0][0][0] - w).abs());
     let far = if f0 < f2 { f0 } else { f2 };
     let mut cases: Vec<([f64; 3], &str)> = Vec::new();
     let sign = |rng: &mut Rng| if rng.unit() < 0.5 { 1.0 } else { -1.0 };
@@ -638,12 +769,23 @@ fn check_shape(shape: &Shape, seed: u64, most: usize) {
         let x = [shape.along(s), lo - (hi - lo) * rng.range(0.2, 2.0)];
         cases.push((query_at(x, 1e-3), "beside"));
     }
+    // Over the tile line between two tiles, where the spike crosses it.
+    let l = shape.tiles[0].start as f64 + 1.0;
+    let s_line = (l - w).abs();
+    if shape.tiles[0].end - shape.tiles[0].start > 1 && s_line < 0.9 * far {
+        for _ in 0..6 {
+            let [lo, hi] = shape.sides_at(s_line);
+            let x = [l, lo + (hi - lo) * rng.range(0.1, 0.9)];
+            let d = rng.range(1e-4, 1e-2) * sign(&mut rng);
+            cases.push((query_at(x, d), "line"));
+        }
+    }
     let mut checked = 0;
     for (q, kind) in cases {
         let Some(want) = truth(shape, q) else {
             continue;
         };
-        let (got, visited, stuck) = count(shape, q, beta);
+        let (got, visited, stuck) = count(shape, &corners, q, beta);
         assert_eq!(got, want, "{kind} q = {q:?}");
         assert!(visited < most, "{kind} q = {q:?}: {visited} boxes");
         assert_eq!(stuck, 0, "{kind} q = {q:?}: corner boxes at the vertex");
@@ -723,4 +865,44 @@ fn spikes_with_their_vertex_on_box_corners_settle_at_once() {
         let s = shapes[0].mirrored(m & 1 != 0, m & 2 != 0, m & 4 != 0);
         check_shape(&s, 80 + m, 1000);
     }
+}
+
+/// The spikes with their vertex just short of the tile line `u = 2` of a
+/// face over two tiles, their curves broken there: the spike crosses the
+/// line, the record reads its curves on past the knot (each run ending
+/// in its second span), and the counts are exact on both tiles and over
+/// the line. The cusp also mirrored, its spike towards `−u` across it.
+#[test]
+fn spikes_across_a_tile_line_count_alike() {
+    // Off the dyadic lines of every box above the finest by far more than
+    // the level's rounding (a curve within a few ulps of a box line
+    // needs the next precision to place its crossings, which these
+    // counts at the first level don't take).
+    let near = |gap: f64| [2.0 - gap + 5.0 / 2_251_799_813_685_248.0, 0.3];
+    let shapes = [
+        Shape::cusp_at(near(1.0 / 16384.0)).across(),
+        Shape::acute_at(near(1.0 / 4_194_304.0)).across(),
+        Shape::equal_curvature_at(near(1.0 / 1024.0)).across(),
+    ];
+    for (k, s) in shapes.iter().enumerate() {
+        let trims = s.trims(1e-8);
+        let face = s.face(&trims);
+        let corners = corners_of(s, 1e-8);
+        let rec = corners.cusp(VertId(0)).expect("a sharp corner");
+        assert!(
+            rec.s_beta_f64() > 2.0 - s.w()[0],
+            "shape {k}: the cut short of the line"
+        );
+        for (c, end) in [(CoedgeId(0), 0u8), (CoedgeId(2), 1u8)] {
+            let (_, run) = corners.run(&face, c, end).expect("a run");
+            let first = if end == 0 { 0 } else { s.e[2].len() as u32 - 1 };
+            assert_ne!(
+                run.reach().0,
+                first,
+                "shape {k}: run of {c:?} within one span"
+            );
+        }
+        check_shape(s, 90 + k as u64, 1000);
+    }
+    check_shape(&shapes[0].mirrored(true, false, true), 95, 1000);
 }

@@ -34,7 +34,10 @@ pub use cone::NormalCone;
 pub use curve::HomCurve;
 pub use poly::{Hull, MAX_DEGREE, Poly};
 pub use product::{Form, cross, dot};
-pub use roots::{Cluster, Dyadic, Found, Limits, Root, Roots, isolate};
+pub use roots::{
+    Cluster, Dyadic, Exact, ExactRoots, Found, Limits, Narrowed, Root, Roots, isolate,
+    isolate_exact, narrow,
+};
 pub use scalar::Scalar;
 pub use tensor::{Dir, HomPatch, HullBox, Partials, Tensor};
 

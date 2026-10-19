@@ -18,7 +18,14 @@
 //!   two different conics through `P` meet there with multiplicity at
 //!   most 4, so legs agreeing that far are one curve;
 //! - a leg leaving `P` tangent to the line and curving up: `±√(c·δ)`, far
-//!   larger than any series term;
+//!   larger than any series term. Its series in `√δ` has irrational
+//!   coefficients past the first; two such legs leaving to one side are
+//!   ordered instead by their graphs over the line, `x_k = Σ g_j·o^j`
+//!   (`o` from `P` along the line, `g₁ = 0`, `g₂ = 1/c`), exact rationals:
+//!   the leg higher above the line next to `P` reaches the moved line
+//!   first, so the crossings' order is the graphs' at the first differing
+//!   term (two different conics tangent at `P` differ by order 4 at the
+//!   latest);
 //! - a straight leg (its middle control point at `P`): `(b₂/a₂)·δ`
 //!   exactly.
 //!
@@ -53,8 +60,9 @@ const ORDERS: usize = 4;
 /// leg's end, as the line's shift `δ → 0⁺` (module docs).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Germ {
-    /// `±√(sq·δ)`: `+` where `up`.
-    Root { up: bool, sq: Rational },
+    /// `±√(δ/g₂) + …`: `+` where `up`; `graph` the leg's `x_k` as a
+    /// series in `o` from `P` (module docs), `g₀ … g₅`.
+    Root { up: bool, graph: Vec<Rational> },
     /// `Σ fᵢ·δ^i`, `i = 1, 2, …`: the terms known, the first first. Two
     /// series agreeing on every term both know are not told apart.
     Series(Vec<Rational>),
@@ -65,11 +73,14 @@ impl Germ {
     /// told apart.
     pub(super) fn cmp(&self, other: &Germ) -> Option<Ordering> {
         match (self, other) {
-            (Germ::Root { up: a, sq: x }, Germ::Root { up: b, sq: y }) => match (a, b) {
+            (Germ::Root { up: a, graph: x }, Germ::Root { up: b, graph: y }) => match (a, b) {
                 (true, false) => Some(Ordering::Greater),
                 (false, true) => Some(Ordering::Less),
-                (true, true) => nonzero(x.cmp(y)),
-                (false, false) => nonzero(y.cmp(x)),
+                // Towards `+o`: the higher graph crosses nearer `P`.
+                (true, true) => first_differing(y, x, false),
+                // Towards `−o`: the higher graph crosses nearer `P`, at
+                // the greater `o`; the graphs read at `−o`.
+                (false, false) => first_differing(x, y, true),
             },
             (Germ::Root { up, .. }, Germ::Series(_)) => Some(if *up {
                 Ordering::Greater
@@ -117,8 +128,22 @@ impl Germ {
     }
 }
 
-fn nonzero(o: Ordering) -> Option<Ordering> {
-    (o != Ordering::Equal).then_some(o)
+/// The order of the series `x` and `y` at their first differing term,
+/// each term `j` negated for odd `j` where `odd_neg` (the series read at
+/// `−o`); `None` where they agree on every term.
+fn first_differing(x: &[Rational], y: &[Rational], odd_neg: bool) -> Option<Ordering> {
+    x.iter()
+        .zip(y)
+        .enumerate()
+        .map(|(j, (a, b))| {
+            let o = a.cmp(b);
+            if odd_neg && j % 2 == 1 {
+                o.reverse()
+            } else {
+                o
+            }
+        })
+        .find(|o| *o != Ordering::Equal)
 }
 
 /// A rational quadratic span read from one end `P` outwards: its other
@@ -228,18 +253,18 @@ impl Leg {
 /// across the line, `b` along it), weights `w` (module docs).
 fn germ_of(a: &[Rational; 2], b: &[Rational; 2], w: &[Rational; 3]) -> Option<Germ> {
     let two = Rational::from(2);
+    // `Σ wᵢ·xᵢ·Bᵢ(s)` over `Σ wᵢ·Bᵢ(s)`, in power form in `s`.
+    let num = |x: &[Rational; 2]| {
+        let one = &two * &w[1] * &x[0];
+        let sq = &w[2] * &x[1] - &one;
+        vec![Rational::ZERO, one, sq]
+    };
+    let den = vec![
+        w[0].clone(),
+        &two * (&w[1] - &w[0]),
+        &w[0] - &two * &w[1] + &w[2],
+    ];
     if a[0] > 0 {
-        // `Σ wᵢ·xᵢ·Bᵢ(s)` over `Σ wᵢ·Bᵢ(s)`, in power form in `s`.
-        let num = |x: &[Rational; 2]| {
-            let one = &two * &w[1] * &x[0];
-            let sq = &w[2] * &x[1] - &one;
-            vec![Rational::ZERO, one, sq]
-        };
-        let den = vec![
-            w[0].clone(),
-            &two * (&w[1] - &w[0]),
-            &w[0] - &two * &w[1] + &w[2],
-        ];
         let x = sdiv(&num(a), &den);
         let s = srevert(&x);
         let f = scompose(&sdiv(&num(b), &den), &s);
@@ -254,9 +279,14 @@ fn germ_of(a: &[Rational; 2], b: &[Rational; 2], w: &[Rational; 3]) -> Option<Ge
         f[0] = &b[1] / &a[1];
         return Some(Germ::Series(f));
     }
-    // Tangent to the line: `x_k ≈ (w₂a₂/w₀)·s²`, `x_o ≈ (2w₁b₁/w₀)·s`.
-    let sq = Rational::from(4) * &w[1] * &w[1] * &b[0] * &b[0] / (&w[0] * &w[2] * &a[1]);
-    Some(Germ::Root { up: b[0] > 0, sq })
+    // Tangent to the line: `x_k ≈ (w₂a₂/w₀)·s²`, `x_o ≈ (2w₁b₁/w₀)·s`;
+    // `x_k` as a series in `x_o` by reversion.
+    let o = sdiv(&num(b), &den);
+    let graph = scompose(&sdiv(&num(a), &den), &srevert(&o));
+    Some(Germ::Root {
+        up: b[0] > 0,
+        graph,
+    })
 }
 
 /// A direction from a vertex, `(u, v·√2)`, each `−1`, `0` or `1`, not both
@@ -405,6 +435,52 @@ mod tests {
         assert_eq!(g.against(1, 1), Ordering::Greater);
         // One curve against itself: not told apart.
         assert_eq!(a.cmp(&a.clone()), None);
+    }
+
+    /// Two different conics leaving one point tangent to a line with the
+    /// same curvature: `√δ` germs equal in their first term, ordered by
+    /// their graphs over the line, either way along it and the line
+    /// crossed from below or above.
+    #[test]
+    fn tangent_germs_of_equal_curvature_are_ordered() {
+        let p = span([[0.0, 0.0], [0.5, 0.0], [1.0, 1.0]], [1.0, 1.0, 1.0]);
+        let r = span([[0.0, 0.0], [0.25, 0.0], [2.0, 1.0]], [1.0, 2.0, 1.0]);
+        let (gp, gr) = (
+            Leg::new(&p, false).germ(1, false).unwrap(),
+            Leg::new(&r, false).germ(1, false).unwrap(),
+        );
+        let (Germ::Root { up: true, graph: a }, Germ::Root { up: true, graph: b }) = (&gp, &gr)
+        else {
+            panic!("{gp:?} {gr:?}");
+        };
+        // `v = u²` against `v = u² − 3u⁴ + …`: one curvature, contact of
+        // order 4.
+        assert_eq!((&a[2], &b[2]), (&q(1, 1), &q(1, 1)));
+        assert_eq!((&a[3], &b[3]), (&q(0, 1), &q(0, 1)));
+        assert_eq!((&a[4], &b[4]), (&q(0, 1), &q(-3, 1)));
+        // The parabola is higher for small `u > 0`: it reaches `v = δ`
+        // first, nearer the point.
+        assert_eq!(gp.cmp(&gr), Some(Ordering::Less));
+        assert_eq!(gr.cmp(&gp), Some(Ordering::Greater));
+        assert_eq!(gp.cmp(&gp.clone()), None);
+        // Mirrored to `−u`.
+        let m = |s: &UvSpan| s.map(|c| [-c[0], c[1], c[2]]);
+        let (gp, gr) = (
+            Leg::new(&m(&p), false).germ(1, false).unwrap(),
+            Leg::new(&m(&r), false).germ(1, false).unwrap(),
+        );
+        assert!(matches!(gp, Germ::Root { up: false, .. }), "{gp:?}");
+        // At `−u` the parabola is still the higher, crossing nearer the
+        // point, at the greater `u`.
+        assert_eq!(gp.cmp(&gr), Some(Ordering::Greater));
+        assert_eq!(gr.cmp(&gp), Some(Ordering::Less));
+        // A low edge (`v = −δ`) crossed by the curves mirrored in `v`.
+        let f = |s: &UvSpan| s.map(|c| [c[0], -c[1], c[2]]);
+        let (gp, gr) = (
+            Leg::new(&f(&p), false).germ(1, true).unwrap(),
+            Leg::new(&f(&r), false).germ(1, true).unwrap(),
+        );
+        assert_eq!(gp.cmp(&gr), Some(Ordering::Less));
     }
 
     #[test]

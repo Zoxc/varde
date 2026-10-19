@@ -91,6 +91,11 @@ pub const MAX_ROOT_DEPTH: u32 = 63;
 /// The most Krawczyk steps narrowing one root.
 const KRAWCZYK_STEPS: u32 = 8;
 
+/// The most halvings one [`narrow`] takes: a representation limit (an
+/// `f64` interval inside `[0, 1]` halves at most about this often before
+/// its middle is one of its ends).
+pub const ROOT_HALVINGS: u32 = 64;
+
 /// A dyadic point `num/2^exp` of `[0, 1]`, in lowest terms (`num` odd,
 /// or `0/2⁰`), so equal points are equal values; ordered by value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -313,22 +318,47 @@ impl<S> Leaf<S> {
 /// The roots of `p` on `[0, 1]` (module docs), or [`OutOfWork`] past
 /// `limits.max_splits` splits.
 pub fn isolate<S: Scalar>(p: &Poly<S>, limits: Limits) -> Result<Roots, OutOfWork> {
-    let max_depth = limits.max_depth.min(MAX_ROOT_DEPTH);
     let mut work = Work::default();
-    let mut leaves: Vec<Leaf<S>> = Vec::new();
+    let mut leaves: Vec<Leaf<S>> = subdivide(p, limits, &mut work, test)?
+        .into_iter()
+        .map(|(k, j, (kind, start, end), q)| Leaf {
+            k,
+            j,
+            kind,
+            start,
+            end,
+            q: matches!(kind, Kind::Simple(_)).then_some(q),
+        })
+        .collect();
+    let degree = u32::try_from(p.degree()).expect("degree at most MAX_DEGREE");
+    let found = runs(&mut leaves, degree, &mut work);
+    Ok(Roots { found, work })
+}
+
+/// A settled interval of [`subdivide`]: its depth `k`, index `j`
+/// (`[j/2ᵏ, (j + 1)/2ᵏ]`), verdict and polynomial there.
+type Settled<S, K> = (u32, u64, K, Poly<S>);
+
+/// The settled intervals of `p` by `test` (its verdict, or `None` to
+/// split; told whether a split is still allowed), depth first from the
+/// left, so in increasing `t`: each interval's depth `k`, index `j`,
+/// verdict and polynomial. Splits and tests counted in `work`; past
+/// `limits.max_splits` splits [`OutOfWork`]. The one subdivision both
+/// [`isolate`] and [`isolate_exact`] run.
+fn subdivide<S: Scalar, K>(
+    p: &Poly<S>,
+    limits: Limits,
+    work: &mut Work,
+    test: impl Fn(&Poly<S>, bool) -> Option<K>,
+) -> Result<Vec<Settled<S, K>>, OutOfWork> {
+    let max_depth = limits.max_depth.min(MAX_ROOT_DEPTH);
+    let mut leaves = Vec::new();
     // Depth first, left before right: leaves in increasing `t`.
     let mut stack = vec![(0u32, 0u64, p.clone())];
     while let Some((k, j, q)) = stack.pop() {
         work.tests = work.tests.saturating_add(1);
         match test(&q, k < max_depth) {
-            Some((kind, start, end)) => leaves.push(Leaf {
-                k,
-                j,
-                kind,
-                start,
-                end,
-                q: matches!(kind, Kind::Simple(_)).then_some(q),
-            }),
+            Some(kind) => leaves.push((k, j, kind, q)),
             None => {
                 if work.splits >= limits.max_splits {
                     let tests = limits.max_splits.saturating_mul(2).saturating_add(1);
@@ -347,9 +377,116 @@ pub fn isolate<S: Scalar>(p: &Poly<S>, limits: Limits) -> Result<Roots, OutOfWor
             }
         }
     }
-    let degree = u32::try_from(p.degree()).expect("degree at most MAX_DEGREE");
-    let found = runs(&mut leaves, degree, &mut work);
-    Ok(Roots { found, work })
+    Ok(leaves)
+}
+
+/// One result of [`isolate_exact`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exact {
+    /// A root exactly at this point.
+    Point(Dyadic),
+    /// Exactly one root strictly inside `(lo, hi)`, simple, the
+    /// polynomial non-zero at both ends and crossing zero towards `dir`
+    /// (`Greater` from negative to positive).
+    Root {
+        lo: Dyadic,
+        hi: Dyadic,
+        dir: Ordering,
+    },
+    /// At most `mult` roots strictly inside `(lo, hi)`, counted with
+    /// multiplicity, not separated at the depth limit; the polynomial
+    /// non-zero at both ends, or a [`Exact::Point`] there.
+    Cluster { lo: Dyadic, hi: Dyadic, mult: u32 },
+}
+
+/// The roots of an exact polynomial on `[0, 1]`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExactRoots {
+    /// In increasing `t`: every root is a [`Exact::Point`] or inside
+    /// exactly one interval.
+    pub found: Vec<Exact>,
+    pub work: Work,
+}
+
+/// An exact interval's verdict: no root inside, exactly one (simple,
+/// crossing towards the sign given), or at most this many at the depth
+/// limit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ExactKind {
+    Empty,
+    Simple(Ordering),
+    Open(u32),
+}
+
+/// The roots of `p`, not identically zero, on `[0, 1]` with exact
+/// coefficients: the subdivision of [`isolate`] with the **exact-zero
+/// rule**. A rational coefficient's sign is known even when it is zero,
+/// so a zero is not a sign either way (as an uncertain coefficient of a
+/// level is): Descartes' rule counts the variations of the non-zero
+/// coefficients, which bound the roots strictly inside the interval, and
+/// one variation with both ends non-zero is exactly one root there,
+/// simple. The value at each end and split point is exact (the end
+/// coefficients, the same at a shared split point on both sides): zero
+/// there is a root exactly there ([`Exact::Point`]), reported once, and
+/// the intervals beside it stay apart. So every root is either a point
+/// or inside one interval, never on a result's end, and results never
+/// join; only roots closer than `2^-max_depth` stay together, a
+/// [`Exact::Cluster`] the caller may isolate again on its own interval.
+/// [`OutOfWork`] past `limits.max_splits` splits.
+pub fn isolate_exact(p: &Poly<Rational>, limits: Limits) -> Result<ExactRoots, OutOfWork> {
+    let mut work = Work::default();
+    let leaves = subdivide(p, limits, &mut work, test_exact)?;
+    let dy = |j: u64, k: u32| Dyadic::new(j, k).expect("a leaf's end is in [0, 1]");
+    let mut found = Vec::new();
+    for (i, (k, j, kind, q)) in leaves.iter().enumerate() {
+        if i == 0 && q.coefs()[0] == 0u32 {
+            found.push(Exact::Point(Dyadic::ZERO));
+        }
+        let (lo, hi) = (dy(*j, *k), dy(j + 1, *k));
+        match kind {
+            ExactKind::Empty => {}
+            ExactKind::Simple(dir) => found.push(Exact::Root { lo, hi, dir: *dir }),
+            ExactKind::Open(mult) => found.push(Exact::Cluster {
+                lo,
+                hi,
+                mult: *mult,
+            }),
+        }
+        if q.coefs()[q.degree()] == 0u32 {
+            found.push(Exact::Point(hi));
+        }
+    }
+    Ok(ExactRoots { found, work })
+}
+
+/// An exact interval's verdict ([`isolate_exact`]), or `None` to split.
+fn test_exact(q: &Poly<Rational>, can_split: bool) -> Option<ExactKind> {
+    let c = q.coefs();
+    let mut last = Ordering::Equal;
+    let mut v = 0u32;
+    for x in c {
+        let s = x.partial_cmp(&0u32).expect("rationals are ordered");
+        if s != Ordering::Equal {
+            if last != Ordering::Equal && s != last {
+                v += 1;
+            }
+            last = s;
+        }
+    }
+    if last == Ordering::Equal {
+        // Identically zero: every point a root; the caller excludes it.
+        return Some(ExactKind::Open(
+            u32::try_from(q.degree()).unwrap_or(u32::MAX),
+        ));
+    }
+    if v == 0 {
+        return Some(ExactKind::Empty);
+    }
+    let ends = c[0] != 0u32 && c[c.len() - 1] != 0u32;
+    if v == 1 && ends {
+        return Some(ExactKind::Simple(last));
+    }
+    (!can_split).then_some(ExactKind::Open(v))
 }
 
 /// An interval's kind and its end signs (certified, or implied by
@@ -533,6 +670,59 @@ fn runs<S: Scalar>(leaves: &mut [Leaf<S>], degree: u32, work: &mut Work) -> Vec<
         i = last + 1;
     }
     found
+}
+
+/// A root's interval after [`narrow`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Narrowed {
+    /// `[a, b]`, `f64`s holding the root.
+    pub span: [f64; 2],
+    /// The halvings taken, each an evaluation of the polynomial, for the
+    /// caller to charge.
+    pub halvings: u32,
+    /// Whether the caller's test settled: `false` where the halving
+    /// stopped first (the polynomial's sign at a middle not certified,
+    /// the middle not strictly inside, or [`ROOT_HALVINGS`] taken).
+    pub settled: bool,
+}
+
+/// Narrows the interval `span` holding exactly one root of `p`, simple,
+/// `p` crossing zero in the direction `dir` there (a [`Root`]'s `near`
+/// and `dir`), to the width its caller needs ("narrow to width"):
+/// certified halving, each step keeping the half the certified sign of
+/// `p` at the middle puts the root in, while `wide` says the interval is
+/// still too wide for the caller (its own test: a width, or a position
+/// not yet certified on one side of something). At most
+/// [`ROOT_HALVINGS`] halvings; an error of `wide` stops it and is
+/// returned.
+pub fn narrow<S: Scalar, E>(
+    p: &Poly<S>,
+    span: [f64; 2],
+    dir: Ordering,
+    mut wide: impl FnMut([f64; 2]) -> Result<bool, E>,
+) -> Result<Narrowed, E> {
+    let like = &p.coefs()[0];
+    let mut out = Narrowed {
+        span,
+        halvings: 0,
+        settled: false,
+    };
+    while wide(out.span)? {
+        let [a, b] = out.span;
+        let mid = 0.5 * a + 0.5 * b;
+        if out.halvings >= ROOT_HALVINGS || !(mid > a && mid < b) {
+            return Ok(out);
+        }
+        out.halvings += 1;
+        // Past the root `p` has the sign `dir`.
+        let past = match p.eval(&S::from_f64(mid, like)).sign() {
+            Some(Ordering::Equal) | None => return Ok(out),
+            Some(x) => x == dir,
+        };
+        out.span = if past { [a, mid] } else { [mid, b] };
+    }
+    out.settled = true;
+    Ok(out)
 }
 
 /// The interval `X ⊆ [0, 1]` holding `q`'s one root, simple and crossing

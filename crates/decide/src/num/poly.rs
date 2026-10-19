@@ -10,9 +10,11 @@
 //!
 //! **Roots** ([`roots`]). The distinct real roots of `p` in a closed
 //! interval, in increasing order, each with its multiplicity: those of
-//! `p`'s square-free part `s = p / gcd(p, p′)`, isolated by Descartes'
-//! rule on `s`'s Bernstein coefficients over an interval (no sign change,
-//! no root inside; one, one root), halving where it doesn't settle. A
+//! `p`'s square-free part `s = p / gcd(p, p′)`, isolated by the Bernstein
+//! root isolation in its exact form ([`isolate_exact`]: Descartes' rule
+//! on `s`'s Bernstein coefficients over an interval, no sign change no
+//! root inside, one one root, halving where it doesn't settle, a zero at
+//! an end or a split point a root exactly there). A
 //! root ([`Root`]) is held either exactly (a rational root the halving
 //! met) or by an open interval `(lo, hi)` holding it alone, `s(lo)` and
 //! `s(hi)` of opposite signs.
@@ -31,6 +33,9 @@ use malachite::base::num::arithmetic::traits::Sign as _;
 use malachite::base::num::basic::traits::Zero as _;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor};
+
+use crate::bezier::roots::{Exact, MAX_ROOT_DEPTH, isolate_exact};
+use crate::bezier::{self, Dyadic, Limits};
 
 /// A polynomial, power basis, lowest coefficient first, no trailing
 /// zeros (the zero polynomial empty).
@@ -254,39 +259,6 @@ fn bernstein_on(p: &[Rational], a: &Rational, b: &Rational) -> Vec<Rational> {
     to_bernstein(&q, p.len().max(1))
 }
 
-/// The sign changes of `c`, zeros skipped.
-fn variations(c: &[Rational]) -> u32 {
-    let mut last = Ordering::Equal;
-    let mut n = 0;
-    for x in c {
-        let s = x.sign();
-        if s == Ordering::Equal {
-            continue;
-        }
-        if last != Ordering::Equal && s != last {
-            n += 1;
-        }
-        last = s;
-    }
-    n
-}
-
-/// The two halves' Bernstein coefficients of `c` (de Casteljau at `½`).
-fn halves(c: &[Rational]) -> (Vec<Rational>, Vec<Rational>) {
-    let n = c.len();
-    let two = Rational::from(2u32);
-    let mut row = c.to_vec();
-    let mut left = Vec::with_capacity(n);
-    let mut right = Vec::with_capacity(n);
-    for k in 0..n {
-        left.push(row[0].clone());
-        right.push(row[n - 1 - k].clone());
-        row = row.windows(2).map(|w| (&w[0] + &w[1]) / &two).collect();
-    }
-    right.reverse();
-    (left, right)
-}
-
 /// One strict sign of all of `c`, if they have one.
 fn one_sign(c: &[Rational]) -> Option<Ordering> {
     let s = c.first()?.sign();
@@ -439,8 +411,9 @@ pub fn enclose(p: &[Rational], lo: &Rational, hi: &Rational) -> [Rational; 2] {
     acc
 }
 
-/// The distinct real roots of `p` (not zero) in `[lo, hi]` (`lo ≤ hi`),
-/// increasing, each with its multiplicity in `p` (module docs).
+/// The distinct real roots of `p` (not zero, of degree at most
+/// [`MAX_DEGREE`](crate::bezier::MAX_DEGREE)) in `[lo, hi]` (`lo ≤ hi`), increasing, each with its
+/// multiplicity in `p` (module docs).
 pub fn roots(p: &[Rational], lo: &Rational, hi: &Rational) -> Vec<(Root, u32)> {
     let p = trim(p.to_vec());
     assert!(!p.is_empty(), "the zero polynomial has every root");
@@ -449,15 +422,12 @@ pub fn roots(p: &[Rational], lo: &Rational, hi: &Rational) -> Vec<(Root, u32)> {
     }
     let s = square_free(&p);
     let mut out = Vec::new();
-    if sign_at(&s, lo) == Ordering::Equal {
-        out.push(Root::exact(s.clone(), lo.clone()));
-    }
-    if lo < hi {
-        let c = bernstein_on(&s, lo, hi);
-        isolate(&s, lo.clone(), hi.clone(), c, &mut out);
-        if sign_at(&s, hi) == Ordering::Equal {
-            out.push(Root::exact(s.clone(), hi.clone()));
+    if lo == hi {
+        if sign_at(&s, lo) == Ordering::Equal {
+            out.push(Root::exact(s.clone(), lo.clone()));
         }
+    } else {
+        isolate(&s, lo, hi, true, &mut out);
     }
     out.into_iter()
         .map(|r| {
@@ -474,33 +444,44 @@ pub fn roots(p: &[Rational], lo: &Rational, hi: &Rational) -> Vec<(Root, u32)> {
         .collect()
 }
 
-/// The roots of the square-free `s` strictly inside `(a, b)`, `c` its
-/// Bernstein coefficients there, increasing: by Descartes' rule (the
-/// coefficients' sign changes bound the roots inside, one change one
-/// root), halving where it doesn't settle.
-fn isolate(s: &Poly, a: Rational, b: Rational, c: Vec<Rational>, out: &mut Vec<Root>) {
-    let v = variations(&c);
-    if v == 0 {
-        return;
+/// The roots of the square-free `s` in `[a, b]` (`a < b`; its ends only
+/// where `ends`), increasing: the Bernstein root isolation's exact form
+/// ([`isolate_exact`]) on `s`'s coefficients over `[a, b]`, a cluster it
+/// leaves at its depth (roots closer than `2⁻⁶³` of the interval)
+/// isolated again on its own interval.
+fn isolate(s: &Poly, a: &Rational, b: &Rational, ends: bool, out: &mut Vec<Root>) {
+    let c = bernstein_on(s, a, b);
+    let bp = bezier::Poly::new(c).expect("a degree at most MAX_DEGREE");
+    let limits = Limits {
+        max_depth: MAX_ROOT_DEPTH,
+        max_splits: MAX_SPLITS,
+    };
+    let found = isolate_exact(&bp, limits)
+        .expect("a square-free polynomial isolates within the splits")
+        .found;
+    let w = b - a;
+    let at = |d: Dyadic| a + &w * d.rational();
+    for f in found {
+        match f {
+            Exact::Point(d) => {
+                if ends || (d != Dyadic::ZERO && d != Dyadic::ONE) {
+                    out.push(Root::exact(s.clone(), at(d)));
+                }
+            }
+            Exact::Root { lo, hi, .. } => out.push(Root {
+                s: s.clone(),
+                lo: at(lo),
+                hi: at(hi),
+            }),
+            Exact::Cluster { lo, hi, .. } => isolate(s, &at(lo), &at(hi), false, out),
+        }
     }
-    let ends = c[0] != 0u32 && c[c.len() - 1] != 0u32;
-    if v == 1 && ends {
-        out.push(Root {
-            s: s.clone(),
-            lo: a,
-            hi: b,
-        });
-        return;
-    }
-    let m = (&a + &b) / Rational::from(2u32);
-    let (cl, cr) = halves(&c);
-    let at_m = cl[cl.len() - 1] == 0u32;
-    isolate(s, a, m.clone(), cl, out);
-    if at_m {
-        out.push(Root::exact(s.clone(), m.clone()));
-    }
-    isolate(s, m, b, cr, out);
 }
+
+/// The most splits of one exact isolation: far above what a square-free
+/// polynomial of degree [`MAX_DEGREE`](crate::bezier::MAX_DEGREE) takes (each depth holds fewer
+/// unsettled intervals than its degree).
+const MAX_SPLITS: u32 = 1 << 20;
 
 #[cfg(test)]
 mod tests;

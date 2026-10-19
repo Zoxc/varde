@@ -36,7 +36,13 @@ fn quarter() -> CuspSpan {
 
 fn sharp(a: &CuspSpan, b: &CuspSpan, bands: f64) -> Result<Sharp, CuspError> {
     let (du, dv) = id_jacobian();
-    cusp_rec(a, b, &du, &dv, bands)
+    cusp_rec(
+        std::slice::from_ref(a),
+        std::slice::from_ref(b),
+        &du,
+        &dv,
+        bands,
+    )
 }
 
 fn rec(a: &CuspSpan, b: &CuspSpan, bands: f64) -> CuspRec {
@@ -58,9 +64,24 @@ fn at(s: &CuspSpan, t: f64) -> [f64; 2] {
     [c(0), c(1)]
 }
 
-/// The offset (`v − W_v`) of a span from `W` that is a graph over `u`
-/// near it, at `u = W_u + s`, by bisection on its parameter.
-fn offset(sp: &CuspSpan, s: f64) -> f64 {
+/// The cut's global coordinate.
+fn kappa(r: &CuspRec) -> f64 {
+    r.cut.0 as f64 + r.cut.1.bounds()[0]
+}
+
+/// The common checks: the bounds against sampled offsets, the cut past
+/// the bands and as coarse as can be, the reaches within it.
+fn check(a: &CuspSpan, b: &CuspSpan, r: &CuspRec, bands: f64, slack: f64) {
+    check_chains(&[*a], &[*b], r, bands, slack);
+}
+
+/// The offset of a chain of spans from `W`, each a graph over `u` near
+/// it, at `u = W_u + s`: on the first span reaching that far.
+fn chain_offset(c: &[CuspSpan], s: f64) -> f64 {
+    let sp = c
+        .iter()
+        .find(|sp| sp[2][0] - W[0] >= s)
+        .unwrap_or(&c[c.len() - 1]);
     let (mut lo, mut hi) = (0.0, 1.0);
     for _ in 0..200 {
         let mid = 0.5 * (lo + hi);
@@ -73,28 +94,29 @@ fn offset(sp: &CuspSpan, s: f64) -> f64 {
     at(sp, 0.5 * (lo + hi))[1] - W[1]
 }
 
-/// The cut's global coordinate.
-fn kappa(r: &CuspRec) -> f64 {
-    r.cut.0 as f64 + r.cut.1.bounds()[0]
-}
-
-/// The common checks: the bounds against sampled offsets, the cut past
-/// the bands and as coarse as can be, the reaches within it.
-fn check(a: &CuspSpan, b: &CuspSpan, r: &CuspRec, bands: f64, slack: f64) {
+/// [`check`] on chains of spans.
+fn check_chains(a: &[CuspSpan], b: &[CuspSpan], r: &CuspRec, bands: f64, slack: f64) {
     let m = r.m as i32;
     let (lo, hi) = (f(&r.a_lo), f(&r.a_hi));
     let s_c = r.s_c_f64();
     assert!(s_c > 0.0);
+    // The gap signed as its order-`m` term: positive at `s_c`.
+    let sign = (chain_offset(b, s_c) - chain_offset(a, s_c)).signum();
     for i in 1..=200 {
         let s = s_c * i as f64 / 200.0;
         #[allow(clippy::disallowed_methods, reason = "a test reference")]
-        let sm = s.powi(m);
-        let gap = (offset(b, s) - offset(a, s)).abs();
+        let pw = |j: i32| s.powi(j);
+        let l: f64 = r
+            .lower
+            .iter()
+            .enumerate()
+            .map(|(j, x)| f(x) * pw(j as i32))
+            .sum();
+        let (low, high) = (l + lo * pw(m), l + hi * pw(m));
+        let gap = sign * (chain_offset(b, s) - chain_offset(a, s));
         assert!(
-            gap >= lo * sm * (1.0 - slack) && gap <= hi * sm * (1.0 + slack),
-            "gap {gap} at {s} outside [{}, {}]",
-            lo * sm,
-            hi * sm
+            gap >= low - slack * low.abs() - 1e-300 && gap <= high + slack * high.abs(),
+            "gap {gap} at {s} outside [{low}, {high}]"
         );
     }
     // The cut: past the bands, within `s_c`, on the grid of its depth
@@ -107,11 +129,15 @@ fn check(a: &CuspSpan, b: &CuspSpan, r: &CuspRec, bands: f64, slack: f64) {
     let k = kappa(r);
     assert!((k - W[0] - s_beta).abs() <= 1e-12 * (1.0 + k.abs()));
     assert!(r.cut.1.exp() <= CUT_DEPTH);
-    // Each reach: its point within the cut, the next grid point past it.
-    for (sp, reach) in [a, b].into_iter().zip(r.reach) {
+    // Each reach: its point within the cut, the span before it wholly
+    // within, the reach not short of the cut by more than its grid.
+    for (c, (span, reach)) in [a, b].into_iter().zip(r.reach) {
+        let sp = &c[span as usize];
         let t = reach.bounds()[0];
-        assert!(at(sp, t)[0] - W[0] <= s_beta * (1.0 + 1e-12) + 1e-15);
-        assert!(t > 0.0);
+        let u = at(sp, t)[0] - W[0];
+        assert!(u <= s_beta * (1.0 + 1e-12) + 1e-15);
+        assert!(sp[0][0] - W[0] <= s_beta);
+        assert!(span > 0 || t > 0.0);
     }
 }
 
@@ -203,7 +229,7 @@ fn angles_either_side_of_the_threshold() {
     let e = Bounded::exact;
     let (du, dv) = ([e(1.0), e(0.0), e(0.0)], [e(0.0), e(64.0), e(0.0)]);
     let a = line(W, [W[0] + 1.0, W[1] + 1.0 / 256.0]);
-    assert_eq!(cusp_rec(&a, &b, &du, &dv, 1e-8), Ok(Sharp::Apart));
+    assert_eq!(cusp_rec(&[a], &[b], &du, &dv, 1e-8), Ok(Sharp::Apart));
     assert!(matches!(sharp(&a, &b, 1e-8), Ok(Sharp::Cusp(_))));
 }
 
@@ -349,12 +375,96 @@ fn records_agree_under_symmetries_and_weights() {
 /// Each reach's point within the cut and not far short of it.
 fn check_c(a: &CuspSpan, b: &CuspSpan, r: &CuspRec, c: [f64; 2]) {
     let s_beta = r.s_beta_f64();
-    for (sp, reach) in [a, b].into_iter().zip(r.reach) {
+    for (sp, (span, reach)) in [a, b].into_iter().zip(r.reach) {
+        assert_eq!(span, 0);
         let t = reach.bounds()[0];
         let u = at(sp, t)[0] - c[0];
         assert!(
             u <= s_beta * (1.0 + 1e-9) && u >= 0.25 * s_beta,
             "reach {t} u {u} sb {s_beta}"
         );
+    }
+}
+
+/// A rational quadratic span split at the parameter `t` (homogeneous de
+/// Casteljau in floats; the knot computed once, so the halves meet
+/// bitwise).
+fn split_at(sp: &CuspSpan, t: f64) -> [CuspSpan; 2] {
+    let h = sp.map(|p| [p[0] * p[2], p[1] * p[2], p[2]]);
+    let lerp = |a: [f64; 3], b: [f64; 3]| [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t);
+    let (h01, h12) = (lerp(h[0], h[1]), lerp(h[1], h[2]));
+    let m = lerp(h01, h12);
+    let aff = |x: [f64; 3]| [x[0] / x[2], x[1] / x[2], x[2]];
+    let knot = aff(m);
+    [[sp[0], aff(h01), knot], [knot, aff(h12), sp[2]]]
+}
+
+/// A spike reaching past the first span of each curve (the curves broken
+/// at knots, as at a tile line): the record reads on along the chains,
+/// its reaches in a later span, and agrees with the one-span record of
+/// the same curves but for where the reaches are counted from.
+#[test]
+fn a_spike_reads_past_the_first_span() {
+    let b = line(W, [W[0] + 1.0, W[1]]);
+    let a = quarter();
+    let bands = 2e-5;
+    let whole = rec(&a, &b, bands);
+    // The spike is about `9·10⁻³` long; break both curves well inside it.
+    let lb = [
+        line(W, [W[0] + 1.0 / 256.0, W[1]]),
+        line([W[0] + 1.0 / 256.0, W[1]], [W[0] + 1.0, W[1]]),
+    ];
+    let la = split_at(&a, 1.0 / 512.0);
+    let (du, dv) = id_jacobian();
+    let r = match cusp_rec(&la, &lb, &du, &dv, bands) {
+        Ok(Sharp::Cusp(r)) => *r,
+        other => panic!("not a cusp: {other:?}"),
+    };
+    assert_eq!(r.m, 2);
+    assert!(r.reach.iter().all(|x| x.0 == 1), "{:?}", r.reach);
+    check_chains(&la, &lb, &r, bands, 1e-9);
+    // The order and coefficient as the whole spans', the cut within a
+    // factor of two of theirs (the split moves the weight's rounding).
+    assert_eq!(r.m, whole.m);
+    assert!((f(&r.a_lo) / f(&whole.a_lo) - 1.0).abs() < 1e-9);
+    let ratio = r.s_beta_f64() / whole.s_beta_f64();
+    assert!((0.5..=2.0).contains(&ratio), "{ratio}");
+    // Read from the first span only, the bounds don't reach the cut.
+    let (r1, tested) = cusp_rec_counted(&la[..1], &lb[..1], &du, &dv, bands);
+    assert_eq!(r1, Err(CuspError::Reach));
+    assert!(tested >= 2);
+    // The chains' tests are counted: at least a span of each.
+    let (_, tested) = cusp_rec_counted(&la, &lb, &du, &dv, bands);
+    assert!(tested >= 4, "{tested}");
+}
+
+/// Chains that don't meet end to end, or that are empty, are refused.
+#[test]
+fn broken_chains_are_refused() {
+    let b = line(W, [W[0] + 1.0, W[1]]);
+    let la = split_at(&quarter(), 0.25);
+    let mut gap = la;
+    gap[1][0][1] += 1e-9;
+    let (du, dv) = id_jacobian();
+    assert_eq!(cusp_rec(&gap, &[b], &du, &dv, 1e-8), Err(CuspError::Span));
+    assert_eq!(cusp_rec(&[], &[b], &du, &dv, 1e-8), Err(CuspError::Span));
+}
+
+/// A line meeting a circle almost tangentially (its slope `±10⁻¹²` off,
+/// as rounding leaves a stored tangency): order 1 with so small a
+/// coefficient that its bounds hold only next to the vertex, so the
+/// record takes order 2, the circle's, with the order-1 term carried
+/// below it, whether the curves part at once or cross first.
+#[test]
+fn a_rounded_tangency_takes_the_next_order() {
+    let a = quarter();
+    for slope in [1e-12, -1e-12] {
+        let b = line(W, [W[0] + 1.0, W[1] + slope]);
+        let r = rec(&a, &b, 1e-8);
+        assert_eq!(r.m, 2);
+        assert_eq!(r.lower.len(), 2);
+        assert_eq!(r.lower[0], 0);
+        assert!((f(&r.lower[1]).abs() - 1e-12).abs() < 1e-15);
+        check(&a, &b, &r, 1e-8, 1e-6);
     }
 }
