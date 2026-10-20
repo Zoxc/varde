@@ -16,11 +16,13 @@
 //! straight edge), and [`order`], the geometric order on vertices, points
 //! on edges, edges, faces and snap clusters that choices read in place of
 //! ids, and [`count`],
-//! the counting the records feed: so far the dyadic boxes of a face.
+//! the counting the records feed: so far the dyadic boxes of a face, and
+//! [`leaves`], the certified kinds of pairs of boxes of two faces.
 
 pub mod bezier;
 pub mod count;
 pub mod ids;
+pub mod leaves;
 pub mod num;
 pub mod order;
 pub mod perturb;

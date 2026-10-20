@@ -258,7 +258,7 @@ impl Extent {
     }
 
     /// The middle, exactly (denominator at most `2⁵³`).
-    fn mid(self) -> Dyadic {
+    pub(crate) fn mid(self) -> Dyadic {
         let (a, b, e) = self.nums();
         Dyadic::new(a + b, e + 1).expect("the middle of [0, 1] is in it")
     }

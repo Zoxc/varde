@@ -716,11 +716,11 @@ fn abs(x: &Rational) -> Rational {
     if *x < 0u32 { -x } else { x.clone() }
 }
 
-fn dot(a: &Q3, b: &Q3) -> Rational {
+pub(crate) fn dot(a: &Q3, b: &Q3) -> Rational {
     &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
 }
 
-fn cross(a: &Q3, b: &Q3) -> Q3 {
+pub(crate) fn cross(a: &Q3, b: &Q3) -> Q3 {
     [
         &a[1] * &b[2] - &a[2] * &b[1],
         &a[2] * &b[0] - &a[0] * &b[2],
