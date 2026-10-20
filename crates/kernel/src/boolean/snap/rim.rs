@@ -1532,6 +1532,27 @@ fn patch_of<'a>(face: &SnappedFace<'a>, tile: [i64; 2]) -> Option<&'a HomPatch<R
     face.tiles.iter().find(|(k, _)| *k == tile).map(|(_, p)| p)
 }
 
+/// Piece `p`'s curve on `S`, homogeneous in its parameter (`(X, Y, Z, W)`,
+/// `W > 0`), and the gap against `implicit` along it (module docs), as
+/// the rim certifies them; `None` if its face or tile isn't described or
+/// the patch doesn't fit.
+pub(super) fn piece_forms(
+    input: &RimInput<'_>,
+    p: &Piece,
+    implicit: &Implicit,
+) -> Option<([Poly<Q>; 4], Poly<Q>)> {
+    let face = input.faces.iter().find(|f| f.face == p.face)?;
+    let patch = patch_of(face, p.tile)?;
+    let origin = [Q::from(p.tile[0]), Q::from(p.tile[1])];
+    let (a, b) = (sub2(&p.ends[0], &origin), sub2(&p.ends[1], &origin));
+    let curve = curve_on(patch, &a, &b)?;
+    if !curve[3].coefs().iter().all(|w| *w > 0u32) {
+        return None;
+    }
+    let gap = gap_form(implicit, &curve)?;
+    Some((curve, gap))
+}
+
 // ---------------------------------------------------------------------
 // The gap along a piece.
 

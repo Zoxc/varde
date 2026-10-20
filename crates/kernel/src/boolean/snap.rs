@@ -4,10 +4,13 @@
 //! then reads. So far [`cluster`]: the clusters of such leaves, merged
 //! where their windows share an element, and their geometric order;
 //! [`target`]: the operand each cluster is rewritten onto and the map
-//! carrying the other sheet there; and [`rim`]: where a cluster ends on
+//! carrying the other sheet there; [`rim`]: where a cluster ends on
 //! the snapped side, the gap's sign along it, its branch vertices and
-//! its window.
+//! its window; and [`corner`]: where the vertices at the rim and in its
+//! window land, the root clusters the target's vertices carry, decided
+//! once by the corner rule.
 
 pub mod cluster;
+pub mod corner;
 pub mod rim;
 pub mod target;
