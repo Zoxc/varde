@@ -181,7 +181,7 @@ pub struct Moved {
 }
 
 impl Moved {
-    const STAYS: Moved = Moved {
+    pub(super) const STAYS: Moved = Moved {
         to: Placement::Stays,
         pos: None,
         displacement: 0.0,

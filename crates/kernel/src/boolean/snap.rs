@@ -6,11 +6,14 @@
 //! [`target`]: the operand each cluster is rewritten onto and the map
 //! carrying the other sheet there; [`rim`]: where a cluster ends on
 //! the snapped side, the gap's sign along it, its branch vertices and
-//! its window; and [`corner`]: where the vertices at the rim and in its
+//! its window; [`corner`]: where the vertices at the rim and in its
 //! window land, the root clusters the target's vertices carry, decided
-//! once by the corner rule.
+//! once by the corner rule; and [`rewrite`]: the snapped side's faces
+//! split along the rim, the inner pieces onto the target, with canonical
+//! keys from the operands' ids and the map back to the operands.
 
 pub mod cluster;
 pub mod corner;
+pub mod rewrite;
 pub mod rim;
 pub mod target;

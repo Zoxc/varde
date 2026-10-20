@@ -21,6 +21,10 @@
 //! crosses it at a vertex: with straight spans that is a transversal
 //! crossing by construction.
 //!
+//! The region's boundary on each face, before anything is cancelled
+//! across faces, is kept too ([`Rim::bounds`]): the rewrite reads a
+//! face's part of the region from it.
+//!
 //! **Across faces.** A piece along an `S` edge whose other side is also
 //! in the cluster (the edge between two faces of `S` the cluster covers,
 //! or a seam) isn't rim: the two faces run the edge in opposite
@@ -259,6 +263,18 @@ pub struct Branch {
     pub residual: f64,
 }
 
+/// A stretch of the boundary of the cluster's region on one face of `S`,
+/// the region on its left: the rim's pieces before the parts of own edges
+/// both sides cover are cancelled, so a face's stretches close round its
+/// part of the region.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bound {
+    /// The face of `S`.
+    pub face: FaceId,
+    /// Its start and end in the face's global UV.
+    pub ends: [P2; 2],
+}
+
 /// A cluster's rim (module docs).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rim {
@@ -274,6 +290,8 @@ pub struct Rim {
     pub branches: Vec<Branch>,
     /// The window's elements, sorted.
     pub window: Vec<Element>,
+    /// The region's boundary per face, sorted.
+    pub bounds: Vec<Bound>,
 }
 
 /// Why a rim can't be made.
@@ -376,6 +394,16 @@ pub(crate) fn rim<L: ClusterLeaf>(
     let faces = run(work, "snap rim: faces", &jobs, |job, ledger| {
         face_rim(job, input.snapped, ledger)
     })?;
+
+    let mut bounds: Vec<Bound> = faces
+        .iter()
+        .flat_map(|f| f.els.iter())
+        .map(|e| Bound {
+            face: e.face,
+            ends: [e.a.clone(), e.b.clone()],
+        })
+        .collect();
+    bounds.sort();
 
     // Cancel, link, merge and split, in one item.
     let linked = run(work, "snap rim: loops", &[()], |_, ledger| {
@@ -481,6 +509,7 @@ pub(crate) fn rim<L: ClusterLeaf>(
         clusters,
         branches,
         window: window.into_iter().collect(),
+        bounds,
     })
 }
 
@@ -565,9 +594,9 @@ struct Seg {
 /// A trim's span, exactly: its ends in the edge's direction and the
 /// edge's parameter there.
 #[derive(Clone)]
-struct ExactSpan {
-    p: [P2; 2],
-    t: [Q; 2],
+pub(super) struct ExactSpan {
+    pub(super) p: [P2; 2],
+    pub(super) t: [Q; 2],
 }
 
 /// A point's name on the rim across faces: an `S` vertex, a point of an
@@ -600,7 +629,10 @@ struct FaceRim {
 }
 
 /// The exact spans of `trims`, checked straight.
-fn exact_spans(face: FaceId, trims: &[RimTrim<'_>]) -> Result<Vec<Vec<ExactSpan>>, RimError> {
+pub(super) fn exact_spans(
+    face: FaceId,
+    trims: &[RimTrim<'_>],
+) -> Result<Vec<Vec<ExactSpan>>, RimError> {
     let mut out = Vec::with_capacity(trims.len());
     for t in trims {
         if t.knots.len() != t.spans.len() + 1 {
@@ -760,44 +792,55 @@ fn union_boundary(
 /// to `params`.
 fn meet(segs: &[Seg], i: usize, j: usize, params: &mut [Vec<Q>]) {
     let (s, t) = (&segs[i], &segs[j]);
+    let (si, tj) = meet_params([&s.a, &s.b], [&t.a, &t.b]);
+    params[i].extend(si);
+    params[j].extend(tj);
+}
+
+/// The parameters (`0` at the start, `1` at the end) where the straight
+/// segments `s` and `t` meet, on each: their crossing, or where
+/// collinear, each one's ends strictly inside the other.
+pub(super) fn meet_params(s: [&P2; 2], t: [&P2; 2]) -> (Vec<Q>, Vec<Q>) {
+    let (mut on_s, mut on_t) = (Vec::new(), Vec::new());
     // Boxes apart: nothing.
     for k in 0..2 {
-        let (slo, shi) = minmax(&s.a[k], &s.b[k]);
-        let (tlo, thi) = minmax(&t.a[k], &t.b[k]);
+        let (slo, shi) = minmax(&s[0][k], &s[1][k]);
+        let (tlo, thi) = minmax(&t[0][k], &t[1][k]);
         if shi < tlo || thi < slo {
-            return;
+            return (on_s, on_t);
         }
     }
-    let (d1, d2) = (sub2(&s.b, &s.a), sub2(&t.b, &t.a));
+    let (d1, d2) = (sub2(s[1], s[0]), sub2(t[1], t[0]));
     let den = cross2(&d1, &d2);
-    let w = sub2(&t.a, &s.a);
+    let w = sub2(t[0], s[0]);
     if den != 0u32 {
         let si = cross2(&w, &d2) / &den;
         let tj = cross2(&w, &d1) / &den;
         let unit = |x: &Q| *x >= 0u32 && *x <= 1u32;
         if unit(&si) && unit(&tj) {
-            params[i].push(si);
-            params[j].push(tj);
+            on_s.push(si);
+            on_t.push(tj);
         }
-        return;
+        return (on_s, on_t);
     }
     if cross2(&w, &d1) != 0u32 {
-        return;
+        return (on_s, on_t);
     }
     // Collinear: each one's ends inside the other.
     let along = |a: &P2, d: &P2, p: &P2| dot2(&sub2(p, a), d) / dot2(d, d);
-    for p in [&t.a, &t.b] {
-        let x = along(&s.a, &d1, p);
+    for p in t {
+        let x = along(s[0], &d1, p);
         if x > 0u32 && x < 1u32 {
-            params[i].push(x);
+            on_s.push(x);
         }
     }
-    for p in [&s.a, &s.b] {
-        let x = along(&t.a, &d2, p);
+    for p in s {
+        let x = along(t[0], &d2, p);
         if x > 0u32 && x < 1u32 {
-            params[j].push(x);
+            on_t.push(x);
         }
     }
+    (on_s, on_t)
 }
 
 fn minmax<'q>(a: &'q Q, b: &'q Q) -> (&'q Q, &'q Q) {
@@ -837,7 +880,7 @@ fn region_of(src: Src) -> Region {
 }
 
 /// The edge parameter of point `p` on `span`.
-fn param_on(span: &ExactSpan, p: &P2) -> Q {
+pub(super) fn param_on(span: &ExactSpan, p: &P2) -> Q {
     let d = sub2(&span.p[1], &span.p[0]);
     let s = dot2(&sub2(p, &span.p[0]), &d) / dot2(&d, &d);
     &span.t[0] + s * (&span.t[1] - &span.t[0])

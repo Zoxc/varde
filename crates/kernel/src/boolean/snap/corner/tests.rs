@@ -62,6 +62,7 @@ fn window_rim(window: &[Element]) -> Rim {
         clusters: Vec::new(),
         branches: Vec::new(),
         window,
+        bounds: Vec::new(),
     }
 }
 
