@@ -304,6 +304,7 @@ fn the_bowl_s_face_splits_into_a_kept_ring_and_a_snapped_square() {
         tiles: &tiles,
         own: &own,
         target: &[],
+        flipped: false,
     }];
     let leaves = centre_boxes(ids, &[0], &[0]);
     let (rm, out) = run_all(
@@ -431,6 +432,7 @@ fn cut_fixture(
         tiles: &tiles,
         own: &own,
         target: &[],
+        flipped: false,
     }];
     let right: &[u32] = if sides[0] == sides[1] { &[0] } else { &[0, 1] };
     let leaves = centre_boxes(ids, &[0], right);
@@ -732,6 +734,7 @@ fn fold(edit: impl FnOnce(&mut Corner)) -> Result<Rewrite, RewriteError> {
             tiles: &tiles[f],
             own: &trims[f],
             target: &[],
+            flipped: false,
         })
         .collect();
     let targets: Vec<(FaceId, Implicit)> = (0..pair.a.faces.len())
@@ -883,6 +886,7 @@ fn where_the_cluster_reaches_a_target_edge_the_rim_vertices_lie_on_it() {
         tiles: &tiles,
         own: &own,
         target: &target,
+        flipped: false,
     }];
     let mut g = bowl_geom(ids);
     for (k, p) in c.iter().enumerate() {
@@ -951,6 +955,7 @@ fn bad_input_is_refused() {
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let (_, out) = run_all(&leaves, &bare, &targets, &geom, &[], |_| {});
     assert_eq!(out, Err(RewriteError::Face(FaceId(0))));
@@ -959,6 +964,7 @@ fn bad_input_is_refused() {
         tiles: &tiles,
         own: &own,
         target: &[],
+        flipped: false,
     }];
     // Rim vertices that don't fit the rim.
     let (_, out) = run_all(&leaves, &faces, &targets, &geom, &[], |c| {
@@ -1122,6 +1128,7 @@ pub(crate) fn bowl_at_floor_edge() -> (Rim, Corner, Rewrite, Geometry, Curve3D, 
         tiles: &tiles,
         own: &own,
         target: &target,
+        flipped: false,
     }];
     let mut g = bowl_geom(ids);
     for (k, p) in c.iter().enumerate() {
@@ -1346,6 +1353,7 @@ fn tilted_with(
         tiles: &tiles,
         own: &own,
         target: &target,
+        flipped: false,
     }];
     let mut g = Geom::default();
     let s_pos = [[0.0, 0.0, G], [8.0, D, G], [8.0, 8.0 + D, G], [0.0, 8.0, G]];
@@ -1583,6 +1591,7 @@ pub(crate) fn snapped_bowl_with() -> (Rim, Corner, Rewrite, Geometry, HomPatch<R
         tiles: &tiles,
         own: &own,
         target: &[],
+        flipped: false,
     }];
     let leaves = centre_boxes(ids, &[0], &[0]);
     let g = bowl_geom(ids);
@@ -1637,6 +1646,7 @@ fn coincident_rim_vertices_are_joined_by_a_zero_length_edge() {
         tiles: &tiles,
         own: &own,
         target: &[],
+        flipped: false,
     }];
     let leaves = centre_boxes(ids, &[0], &[0]);
     let g = bowl_geom(ids);
@@ -1761,12 +1771,14 @@ fn an_edge_between_two_snapped_faces_is_fitted_to_the_target() {
             tiles: &t0,
             own: &trims[0],
             target: &[],
+            flipped: false,
         },
         SnappedFace {
             face: FaceId(1),
             tiles: &t1,
             own: &trims[1],
             target: &[],
+            flipped: false,
         },
     ];
     let mut g = Geom::default();

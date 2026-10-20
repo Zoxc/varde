@@ -37,6 +37,8 @@ pub mod cluster;
 pub mod corner;
 pub mod cuts;
 pub mod decide;
+#[cfg(test)]
+pub(crate) mod drive;
 pub mod escalate;
 pub mod join;
 pub mod rewrite;

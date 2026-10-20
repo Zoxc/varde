@@ -16,7 +16,10 @@
 //! A piece lying on a target trim **runs along that target edge**, else
 //! one on an own trim along that `S` edge, else it is a **box** piece,
 //! on a box side (the level-set part, the only one `b_K` moves). The rim
-//! is oriented with the region on its left. A trim crossing the rim cuts
+//! is oriented with the region on its left seen from outside: in the
+//! face's UV on its left, or on its right on a face flipped against its
+//! UV ([`SnappedFace::flipped`]), so loops run alike across faces whose
+//! UVs turn opposite ways. A trim crossing the rim cuts
 //! it there (a rim vertex), so every edge not running along the rim
 //! crosses it at a vertex: with straight spans that is a transversal
 //! crossing by construction.
@@ -27,9 +30,10 @@
 //!
 //! **Across faces.** A piece along an `S` edge whose other side is also
 //! in the cluster (the edge between two faces of `S` the cluster covers,
-//! or a seam) isn't rim: the two faces run the edge in opposite
-//! directions, and the parts of the edge's parameter range both cover
-//! cancel. Rim pieces are then linked into **loops** by their end points:
+//! or a seam) isn't rim: the parts of the edge's parameter range two
+//! sides cover cancel, a side being a face and the way its pieces run
+//! along the edge (two faces lie on the edge's two sides whichever way
+//! their UVs turn). Rim pieces are then linked into **loops** by their end points:
 //! a point on an `S` edge is that edge and parameter (an `S` vertex, the
 //! vertex) on every face, any other point is its face's UV point. Where
 //! several pieces leave one point, a piece arriving takes one on its face
@@ -78,7 +82,9 @@
 //! **The window** ([`Rim::window`]): the `S` edges and vertices of the
 //! own trims, and the target edges and vertices of the target trims,
 //! with a point in the closed region (inside the rim, or on it: a target
-//! edge under a rim piece). Elements within the corner rule's radius of
+//! edge under a rim piece); the target edges between two of the
+//! cluster's target faces, which no trim gives, are added the same way
+//! (`add_inner_target`). Elements within the corner rule's radius of
 //! a window element are the corner rule's to add.
 //!
 //! **Work.** Charged on the operation's budget in passes: the faces (an
@@ -145,6 +151,9 @@ pub struct SnappedFace<'a> {
     /// The boundary of the target faces' part carried into this face's
     /// UV, the target on the region's side; none: not cut.
     pub target: &'a [RimTrim<'a>],
+    /// Whether the face's outward side is against its UV's `x_u × x_v`:
+    /// its UV turns the other way about its outward normal.
+    pub flipped: bool,
 }
 
 /// A target face's surface as the gap reads it: its implicit equation,
@@ -198,7 +207,8 @@ pub struct Piece {
     pub face: FaceId,
     /// The tile it lies in.
     pub tile: [i64; 2],
-    /// Its start and end in the face's global UV, the region on its left.
+    /// Its start and end in the face's global UV, the region on its left
+    /// seen from outside (module docs).
     pub ends: [P2; 2],
     /// What it runs along.
     pub along: Along,
@@ -879,6 +889,74 @@ fn region_of(src: Src) -> Region {
     }
 }
 
+/// The closed region's boundary on face `face` holds `p`, or `p` lies
+/// inside it: by the winding of [`Rim::bounds`] there, exactly.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the boolean's snap calls it as it lands")
+)]
+fn in_closed_region(rim: &Rim, face: FaceId, p: &P2) -> bool {
+    let mut w = 0i64;
+    for b in rim.bounds.iter().filter(|b| b.face == face) {
+        let (a, c) = (&b.ends[0], &b.ends[1]);
+        let d = sub2(c, a);
+        let x = cross2(&d, &sub2(p, a));
+        if x == 0u32 && dot2(&sub2(p, a), &sub2(p, c)) <= 0u32 {
+            return true;
+        }
+        if a[1] <= p[1] && p[1] < c[1] && x > 0u32 {
+            w += 1;
+        } else if c[1] <= p[1] && p[1] < a[1] && x < 0u32 {
+            w -= 1;
+        }
+    }
+    w != 0
+}
+
+/// Adds to `rim`'s window the target edges inside the target faces' part
+/// (`inner`: per face of `S`, the edges between two of the cluster's
+/// target faces, carried into its UV as [`RimTrim`]s, `left` unread),
+/// those with a point in the closed region, and their vertices there.
+/// The rim's target trims bound that part, so they don't give its inner
+/// edges, which the window holds as well (module docs).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the boolean's snap calls it as it lands")
+)]
+pub(crate) fn add_inner_target(
+    rim: &mut Rim,
+    target: Operand,
+    inner: &[(FaceId, RimTrim<'_>)],
+) -> Result<(), RimError> {
+    let mut window: BTreeSet<Element> = rim.window.iter().copied().collect();
+    for (face, t) in inner {
+        let spans = exact_spans(*face, std::slice::from_ref(t))?;
+        let Some(ss) = spans.first() else { continue };
+        let mut meets = false;
+        for s in ss {
+            let ends_in = [&s.p[0], &s.p[1]].map(|p| in_closed_region(rim, *face, p));
+            let crosses = rim.bounds.iter().filter(|b| b.face == *face).any(|b| {
+                !meet_params([&s.p[0], &s.p[1]], [&b.ends[0], &b.ends[1]])
+                    .0
+                    .is_empty()
+            });
+            meets |= ends_in[0] || ends_in[1] || crosses;
+        }
+        if meets {
+            window.insert(Element::Edge(target, t.edge));
+        }
+        if let (Some(first), Some(last)) = (ss.first(), ss.last()) {
+            for (p, v) in [(&first.p[0], t.ends[0]), (&last.p[1], t.ends[1])] {
+                if in_closed_region(rim, *face, p) {
+                    window.insert(Element::Vert(target, v));
+                }
+            }
+        }
+    }
+    rim.window = window.into_iter().collect();
+    Ok(())
+}
+
 /// The edge parameter of point `p` on `span`.
 pub(super) fn param_on(span: &ExactSpan, p: &P2) -> Q {
     let d = sub2(&span.p[1], &span.p[0]);
@@ -1162,6 +1240,33 @@ fn loops(
         }
     }
     let links = cancel(links, &ends);
+    // Seen from outside: on a flipped face the region lies right of a
+    // piece in UV, so its pieces turn round to run as its neighbours'.
+    let flipped: BTreeSet<FaceId> = jobs
+        .iter()
+        .filter(|j| j.face.flipped)
+        .map(|j| j.face.face)
+        .collect();
+    let links: Vec<Link> = links
+        .into_iter()
+        .map(|l| {
+            if !flipped.contains(&l.el.face) {
+                return l;
+            }
+            Link {
+                from: l.to,
+                to: l.from,
+                hard: [l.hard[1], l.hard[0]],
+                el: El {
+                    face: l.el.face,
+                    a: l.el.b,
+                    b: l.el.a,
+                    along: l.el.along,
+                    params: l.el.params.map(|[p, q]| [q, p]),
+                },
+            }
+        })
+        .collect();
 
     // Link: at each node, the pieces arriving paired with those leaving.
     let mut links = links;
@@ -1192,7 +1297,14 @@ fn loops(
                     let same = |l: &Link| l.el.face != links[i].el.face;
                     same(lx).cmp(&same(ly)).then_with(|| {
                         if lx.el.face == links[i].el.face && ly.el.face == links[i].el.face {
-                            turn(&back, &sub2(&lx.el.b, &lx.el.a), &sub2(&ly.el.b, &ly.el.a))
+                            let t =
+                                turn(&back, &sub2(&lx.el.b, &lx.el.a), &sub2(&ly.el.b, &ly.el.a));
+                            // The rightmost turn seen from outside.
+                            if flipped.contains(&lx.el.face) {
+                                t.reverse()
+                            } else {
+                                t
+                            }
                         } else {
                             Ordering::Equal
                         }
@@ -1301,19 +1413,40 @@ fn turn(back: &P2, a: &P2, b: &P2) -> Ordering {
 }
 
 /// Removes the parts of own-edge pieces both sides of the edge cover.
+///
+/// A side is a face and the way its pieces run along the edge's
+/// parameter: the region lies on the face's side of the edge, so two
+/// faces sharing it cover its two sides whichever way their UVs run (a
+/// face flipped against its surface runs its pieces the same way as an
+/// unflipped neighbour does), and one face covering both ways is a slit.
 fn cancel(links: Vec<Link>, ends: &EdgeEnds) -> Vec<Link> {
-    // Per edge, the covered intervals running up and down its parameter.
-    let mut cover: BTreeMap<EdgeId, [Vec<(Q, Q)>; 2]> = BTreeMap::new();
+    // Per edge and side, the covered intervals.
+    type Sides = BTreeMap<(FaceId, bool), Vec<(Q, Q)>>;
+    let mut cover: BTreeMap<EdgeId, Sides> = BTreeMap::new();
     for l in &links {
         if let (Along::Own(e), Some([p, q])) = (l.el.along, &l.el.params) {
             let up = p < q;
             let (lo, hi) = if up { (p, q) } else { (q, p) };
-            cover.entry(e).or_default()[usize::from(!up)].push((lo.clone(), hi.clone()));
+            cover
+                .entry(e)
+                .or_default()
+                .entry((l.el.face, up))
+                .or_default()
+                .push((lo.clone(), hi.clone()));
         }
     }
     let both: BTreeMap<EdgeId, Vec<(Q, Q)>> = cover
         .into_iter()
-        .map(|(e, [ups, downs])| (e, intersect(&union(ups), &union(downs))))
+        .map(|(e, sides)| {
+            let sides: Vec<Vec<(Q, Q)>> = sides.into_values().map(union).collect();
+            let mut twice = Vec::new();
+            for i in 0..sides.len() {
+                for j in i + 1..sides.len() {
+                    twice.extend(intersect(&sides[i], &sides[j]));
+                }
+            }
+            (e, union(twice))
+        })
         .filter(|(_, v)| !v.is_empty())
         .collect();
     let mut out = Vec::new();

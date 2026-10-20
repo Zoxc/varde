@@ -559,6 +559,11 @@ impl Brep {
         &self.curves[self.edges.curve[e.index()].index()]
     }
 
+    /// The curve object an edge lies on (edges may share one).
+    pub fn curve_id(&self, e: EdgeId) -> CurveId {
+        self.edges.curve[e.index()]
+    }
+
     /// An edge's parameter range on its curve.
     pub fn t_range(&self, e: EdgeId) -> [f64; 2] {
         self.edges.t_range[e.index()]

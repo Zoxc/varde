@@ -1303,7 +1303,9 @@ fn arrange(
                 }
             },
             1 => {
-                let fwd = rim_dirs.contains(&true);
+                // A rim piece has the region on its left seen from the
+                // face's outward side: on the right in a flipped face's UV.
+                let fwd = rim_dirs.contains(&true) != f.face.flipped;
                 (fwd, !fwd)
             }
             _ => return fail(RewriteError::Slit(face)),

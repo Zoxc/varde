@@ -133,6 +133,7 @@ fn bowl_rim<L: ClusterLeaf>(
         tiles: &tiles,
         own: &[],
         target,
+        flipped: false,
     }];
     let input = RimInput {
         snapped: Operand::B,
@@ -271,6 +272,7 @@ fn refinement_is_in_space_to_the_depth_limit_never_a_halving() {
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let input = RimInput {
         snapped: Operand::B,
@@ -467,6 +469,7 @@ fn a_fold_flush_on_a_box_edge_has_one_rim_loop_round_both_faces() {
             tiles: &tiles[f],
             own: &trims[f],
             target: &[],
+            flipped: false,
         })
         .collect();
     let targets: Vec<(FaceId, Implicit)> = (0..pair.a.faces.len())
@@ -599,6 +602,7 @@ fn the_smooth_pair_through_the_cylinder_has_branches_where_its_gap_changes_sign(
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let surface = Implicit::Cylinder {
         quadric: cylinder(),
@@ -648,6 +652,63 @@ fn the_smooth_pair_through_the_cylinder_has_branches_where_its_gap_changes_sign(
 }
 
 #[test]
+fn the_smooth_pair_s_branch_vertices_agree_with_the_big_float_oracle() {
+    // The oracle's exact zeros of `D − r²` along each side of the sheet's
+    // box: one branch vertex per zero, and each branch vertex within its
+    // certified residual of the cylinder (`|√D − r| ≤ ρ` iff
+    // `|D − r²| ≤ ρ·(2r + ρ)`, exactly); at gap 0 no zero and none.
+    use varde_testkit::rational_oracle::{Line, SmoothOracle};
+    for gap in [-1e-4, 0.0] {
+        let ls = smooth_leaves(gap);
+        let sheet = sheets::smooth(gap);
+        let oracle = SmoothOracle::new(&sheet).expect("the oracle takes the pair");
+        let net = sheet.net.map(|p| p.map(q));
+        let tiles = [([0, 0], HomPatch::new(2, 2, net).expect("a net"))];
+        let faces = [SnappedFace {
+            face: FaceId(0),
+            tiles: &tiles,
+            own: &[],
+            target: &[],
+            flipped: false,
+        }];
+        let surface = Implicit::Cylinder {
+            quadric: cylinder(),
+            outward: true,
+        };
+        let input = RimInput {
+            snapped: Operand::B,
+            faces: &faces,
+            targets: &[(FaceId(0), surface), (FaceId(1), surface)],
+            band: &band,
+        };
+        let r = rim(&ls, &input, &mut work()).unwrap();
+        let (lo, hi) = (rat(63.0 / 128.0), rat(65.0 / 128.0));
+        let width = Rational::from(1) / Rational::from(1u64 << 40);
+        let mut zeros = 0;
+        for side in [&lo, &hi] {
+            for line in [
+                Line::AlongU { v: side.clone() },
+                Line::AlongV { u: side.clone() },
+            ] {
+                zeros += oracle
+                    .roots(&line, &width)
+                    .iter()
+                    .filter(|z| z.single && z.lo >= lo && z.hi <= hi)
+                    .count();
+            }
+        }
+        assert_eq!(r.branches.len(), zeros, "gap {gap}");
+        let radius = rat(SMOOTH_RADIUS);
+        for b in &r.branches {
+            let d = oracle.implicit(&b.uv[0], &b.uv[1]);
+            let rho = rat(b.residual);
+            let bound = &rho * (Rational::from(2) * &radius + &rho);
+            assert!(d <= bound && -d <= bound, "{b:?}");
+        }
+    }
+}
+
+#[test]
 fn bad_input_is_refused() {
     let h = 9.0 * C;
     let ls = bowl_leaves(h);
@@ -658,6 +719,7 @@ fn bad_input_is_refused() {
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let input = RimInput {
         snapped: Operand::B,
@@ -716,6 +778,7 @@ fn raised_rim(boxes: &[BoxKey], tiles: &[[i64; 2]]) -> Rim {
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let input = RimInput {
         snapped: Operand::B,

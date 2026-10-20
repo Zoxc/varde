@@ -392,6 +392,7 @@ fn a_root_cluster_within_r_on_of_a_target_vertex_is_carried_by_it() {
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let ri = RimInput {
         snapped: B,
@@ -454,6 +455,7 @@ fn two_anchors_closer_than_twice_r_on_cut_their_spans_or_the_first_carries_both(
             tiles: &tiles,
             own: &[],
             target: &[],
+            flipped: false,
         }];
         let ri = tilted_input(&faces);
         let mut r = rim(&square(1, 3), &ri, &mut work()).unwrap();
@@ -492,6 +494,7 @@ fn rim_vertices_join_the_first_anchor_they_are_on_never_each_other() {
         tiles: &tiles,
         own: &[],
         target: &[],
+        flipped: false,
     }];
     let ri = tilted_input(&faces);
     let mut r = rim(&square(1, 3), &ri, &mut work()).unwrap();
@@ -580,6 +583,7 @@ fn crossings_of_coincident_edges_are_one_point_joined_by_a_zero_length_edge() {
             tiles: &c.tiles[f],
             own: &trims[f],
             target: &[],
+            flipped: false,
         })
         .collect();
     let ri = RimInput {
