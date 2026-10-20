@@ -408,7 +408,7 @@ fn reused(class: EdgeClass, key: SnapEdge) -> Option<EdgeId> {
 
 /// A target face's plane: `T(u, v) = o + (u − i)·a + (v − j)·b` at global
 /// `(u, v)`, `(i, j)` its tile.
-struct Chart {
+pub(in crate::boolean::snap) struct Chart {
     tile: [i64; 2],
     o: P3,
     a: P3,
@@ -416,7 +416,7 @@ struct Chart {
 }
 
 /// The chart of `f`, if its patch is affine with one weight.
-fn chart(f: &TargetFace<'_>) -> Option<Chart> {
+pub(in crate::boolean::snap) fn chart(f: &TargetFace<'_>) -> Option<Chart> {
     let h = f.patch.tensors();
     let (m, n) = f.patch.degrees();
     if m == 0 || n == 0 {
@@ -459,7 +459,7 @@ pub(in crate::boolean::snap) fn plane(f: &TargetFace<'_>) -> Option<([Q; 3], [Q;
 
 impl Chart {
     /// The point at global `uv`.
-    fn point(&self, uv: &[Q; 2]) -> P3 {
+    pub(in crate::boolean::snap) fn point(&self, uv: &[Q; 2]) -> P3 {
         let u = &uv[0] - Q::from(self.tile[0]);
         let v = &uv[1] - Q::from(self.tile[1]);
         [0, 1, 2].map(|k| &self.o[k] + &u * &self.a[k] + &v * &self.b[k])

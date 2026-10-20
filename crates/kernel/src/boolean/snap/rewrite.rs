@@ -2074,11 +2074,11 @@ mod geometry;
     expect(unused_imports, reason = "the boolean's snap calls it as it lands")
 )]
 pub(crate) use geometry::geometry;
-pub(in crate::boolean::snap) use geometry::plane;
 pub use geometry::{
     Chain, Coedge, EdgeClass, EdgeCurve, EdgeGeom, GeomInput, Geometry, TargetEdge, TargetFace,
     VertGeom,
 };
+pub(in crate::boolean::snap) use geometry::{Chart, chart, plane};
 
 #[cfg(test)]
 pub(super) mod tests;

@@ -1097,14 +1097,11 @@ fn assert_joins(r: &Rewrite, g: &Geometry) {
     assert!(checked > 0);
 }
 
-#[test]
-fn a_rim_piece_along_a_target_edge_reuses_its_chain_split_where_its_vertices_store() {
-    // The floor ends at `u = 0.625` across the bowl's cluster: the rim
-    // piece along its edge reuses that edge's chain and p-curve, its ends
-    // storing their parameters on it, `0.25` and `0.75`; the chain is
-    // split there, its uncut span kept to the bit, and a split of the
-    // floor's edge from either stored parameter alone gives the vertex's
-    // bits (one evaluator). The rim's other edges lie on the mid-surface.
+/// The bowl's centre snapped onto the floor, which ends at `u = 0.625`
+/// across the cluster (its edge 21 up `x = 6.25`, in two spans, the first
+/// never cut): the rim, the corner rule, the rewrite, its geometry, and
+/// the floor's edge's curve and p-curve.
+pub(crate) fn bowl_at_floor_edge() -> (Rim, Corner, Rewrite, Geometry, Curve3D, PCurve) {
     let ids = SMALL;
     let tiles = [([0, 0], bowl())];
     let sq = Square::new(ids, 0);
@@ -1186,6 +1183,18 @@ fn a_rim_piece_along_a_target_edge_reuses_its_chain_split_where_its_vertices_sto
         eps_seam: 1e-5,
     };
     let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work()).expect("geometry");
+    (rm, cr, r, geo, curve, pc)
+}
+
+#[test]
+fn a_rim_piece_along_a_target_edge_reuses_its_chain_split_where_its_vertices_store() {
+    // The floor ends at `u = 0.625` across the bowl's cluster: the rim
+    // piece along its edge reuses that edge's chain and p-curve, its ends
+    // storing their parameters on it, `0.25` and `0.75`; the chain is
+    // split there, its uncut span kept to the bit, and a split of the
+    // floor's edge from either stored parameter alone gives the vertex's
+    // bits (one evaluator). The rim's other edges lie on the mid-surface.
+    let (_, _, r, geo, curve, pc) = bowl_at_floor_edge();
     assert_joins(&r, &geo);
 
     let cut = SnapEdge::Cut {
@@ -1558,6 +1567,13 @@ fn a_fit_beyond_half_the_seam_target_is_refused() {
 /// along box sides at the sheets' mid-surface. The rewrite, its geometry
 /// and the floor's patch.
 pub(crate) fn snapped_bowl() -> (Rewrite, Geometry, HomPatch<Rational>) {
+    let (_, _, r, geo, floor) = snapped_bowl_with();
+    (r, geo, floor)
+}
+
+/// [`snapped_bowl`] with its rim and the corner rule's decisions: the rim,
+/// the corner rule, the rewrite, its geometry and the floor's patch.
+pub(crate) fn snapped_bowl_with() -> (Rim, Corner, Rewrite, Geometry, HomPatch<Rational>) {
     let ids = SMALL;
     let tiles = [([0, 0], bowl())];
     let sq = Square::new(ids, 0);
@@ -1604,7 +1620,7 @@ pub(crate) fn snapped_bowl() -> (Rewrite, Geometry, HomPatch<Rational>) {
         eps_seam: 1e-5,
     };
     let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work()).expect("geometry");
-    (r, geo, floor)
+    (rm, cr, r, geo, floor)
 }
 
 #[test]

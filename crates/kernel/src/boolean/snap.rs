@@ -23,11 +23,15 @@
 //! merged into an earlier cluster where they join it, which then re-runs;
 //! and [`escalate`]: where a cluster's snap fails, the one routing of the
 //! failure, halving the gap bound only where it depends on it, and the
-//! rule gaps where halving stops helping.
+//! rule gaps where halving stops helping; and [`decide`]: once snapped,
+//! the zone's one-surface decision, the rim's records by the gap's sign
+//! with the corner records at its ties, the elements on the target read
+//! at their places there, and the band of records between two of them.
 
 pub mod along;
 pub mod cluster;
 pub mod corner;
+pub mod decide;
 pub mod escalate;
 pub mod join;
 pub mod rewrite;
