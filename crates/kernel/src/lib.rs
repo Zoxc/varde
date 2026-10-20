@@ -5,10 +5,12 @@
 //! ([`geom::tile`]), the forms' keys ([`geom::form`]: plane, cylinder,
 //! sphere) and their lattices of tiles ([`geom::lattice`]), tiled
 //! surfaces, edge and coedge curves and their seam bounds; and the
-//! minimal B-rep store counting reads ([`topo::brep_min`]).
+//! minimal B-rep store counting reads ([`topo::brep_min`]); and the
+//! boolean's first step, its tangency clusters ([`boolean::snap`]).
 //! The quadrature rules are public ([`measure::quadrature`]): the facade
 //! measures profiles' areas with them.
 
+pub mod boolean;
 pub mod geom;
 // Moved ahead of the code that calls them: the kernel's operations and
 // measures, as they land, are their first callers.
