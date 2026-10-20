@@ -15,11 +15,14 @@
 //! edges bit for bit where they run along them; and
 //! [`along`]: per pair of a snapped and a target edge, the brackets where
 //! the snapped edge runs along the target edge and reuses it, and its
-//! ordinary crossings of it.
+//! ordinary crossings of it; and [`join`]: once every cluster is snapped,
+//! the edges outside the clusters at the vertices they moved refit once,
+//! split where the refit meets the untouched rest.
 
 pub mod along;
 pub mod cluster;
 pub mod corner;
+pub mod join;
 pub mod rewrite;
 pub mod rim;
 pub mod target;
