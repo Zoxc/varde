@@ -1,8 +1,10 @@
 //! The geometric order: `−0` before `+0` in positions, the two one point
-//! as parameters, NaNs refused, ties only where the bits are equal; and on random sets with many exact ties, permuting
-//! the ids (which turns edges stored from their lower-id end round)
-//! changes neither the order nor the first entity, except among exact
-//! ties.
+//! as parameters, NaNs refused, ties only where the bits are equal; and
+//! on random sets with many exact ties, permuting the ids (which turns
+//! edges stored from their lower-id end round, starts loops at another
+//! vertex and lists leaves in another order) changes neither the order
+//! nor the first entity, except among exact ties. Vertices, edges, faces
+//! and clusters alike.
 
 use super::*;
 
@@ -444,6 +446,223 @@ fn points_on_a_reversed_edge_keep_their_order() {
         let key = |i: usize| fwd.param(ts[i]).unwrap();
         for (&i, &j) in a.iter().zip(&b) {
             assert_eq!(key(i), key(j), "{ts:?}");
+        }
+    }
+}
+
+#[test]
+fn faces_by_canonical_vertex_then_key_then_centre() {
+    let v = |p: [f64; 3], f: u8| VertKey::new(p, [f]).unwrap();
+    let face = |vs: &[([f64; 3], u8)], key: u8, centre: [f64; 3]| {
+        FaceOrderKey::new(vs.iter().map(|&(p, f)| v(p, f)), key, centre).unwrap()
+    };
+    let (o, x, y) = ([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    // The canonical vertex is the least of all loops', in any order and
+    // with repeats.
+    let a = face(&[(x, 0), (y, 0), (o, 0), (x, 0)], 5, [0.5, 0.5, 0.0]);
+    assert_eq!(a.canonical(), &v(o, 0));
+    assert_eq!(a, face(&[(o, 0), (x, 0), (y, 0)], 5, [0.5, 0.5, 0.0]));
+    // The canonical vertex first, whatever the keys and centres.
+    let b = face(&[(x, 0), (y, 0)], 0, [-9.0; 3]);
+    assert!(a < b);
+    // Its incident faces' keys are part of it.
+    assert!(face(&[(o, 0)], 9, [9.0; 3]) < face(&[(o, 1)], 0, [0.0; 3]));
+    // A shared canonical vertex: the face key, then the centre point
+    // (two faces on one pair of vertices, the two halves of a cylinder).
+    assert!(face(&[(o, 0), (x, 0)], 1, [9.0; 3]) < face(&[(o, 0), (y, 0)], 2, [0.0; 3]));
+    let half = |z: f64| face(&[(o, 0), (x, 0)], 1, [0.5, 0.0, z]);
+    assert!(half(-0.5) < half(0.5));
+    assert!(half(-0.0) < half(0.0));
+    assert_eq!(half(0.5).centre(), Pos::new([0.5, 0.0, 0.5]).unwrap());
+    assert_eq!(half(0.5).face(), &1);
+
+    let none: [VertKey<u8>; 0] = [];
+    assert_eq!(FaceOrderKey::new(none, 0u8, o), Err(KeyError::Empty));
+    let centre = [0.0, f64::NAN, 0.0];
+    assert_eq!(
+        FaceOrderKey::new([v(o, 0)], 0, centre),
+        Err(KeyError::NotANumber)
+    );
+}
+
+#[test]
+fn clusters_by_least_corner_then_target_then_pair() {
+    let c = |boxes: &[[[f64; 3]; 2]], targets: &[u8], pairs: &[[u8; 2]]| {
+        ClusterKey::new(
+            boxes.iter().copied(),
+            targets.iter().copied(),
+            pairs.iter().copied(),
+        )
+        .unwrap()
+    };
+    let unit = |lo: [f64; 3]| [lo, lo.map(|x| x + 1.0)];
+    // A box's corners in either order give one low corner.
+    let k = c(&[[[1.0, 0.0, 2.0], [0.0, 1.0, -1.0]]], &[0], &[[0, 0]]);
+    assert_eq!(k.corner(), Pos::new([0.0, 0.0, -1.0]).unwrap());
+    // The union's least corner is its lexicographically least point, not
+    // its bounding box's low corner: here (0, 5, 5), not (0, 0, 0).
+    let k = c(
+        &[unit([0.0, 5.0, 5.0]), unit([1.0, 0.0, 0.0])],
+        &[0],
+        &[[0, 0]],
+    );
+    assert_eq!(k.corner(), Pos::new([0.0, 5.0, 5.0]).unwrap());
+    // Boxes, targets and pairs in any order.
+    let k2 = c(
+        &[unit([1.0, 0.0, 0.0]), unit([0.0, 5.0, 5.0])],
+        &[0],
+        &[[0, 0]],
+    );
+    assert_eq!(k, k2);
+    let m = c(&[unit([0.0; 3])], &[3, 1, 2], &[[2, 0], [1, 9], [1, 3]]);
+    assert_eq!((m.target(), m.pair()), (&1, &[1, 3]));
+    assert_eq!(
+        m,
+        c(&[unit([0.0; 3])], &[2, 1, 3], &[[1, 3], [2, 0], [1, 9]])
+    );
+    // The corner first, whatever the targets and pairs.
+    let at = |x: f64, t: u8, p: [u8; 2]| c(&[unit([x, 0.0, 0.0])], &[t], &[p]);
+    assert!(at(0.0, 9, [9, 9]) < at(1.0, 0, [0, 0]));
+    assert!(at(-0.0, 9, [9, 9]) < at(0.0, 0, [0, 0]));
+    // Then the target, then the pair in operand order.
+    assert!(at(0.0, 1, [9, 9]) < at(0.0, 2, [0, 0]));
+    assert!(at(0.0, 1, [0, 9]) < at(0.0, 1, [1, 0]));
+    assert!(at(0.0, 1, [1, 0]) < at(0.0, 1, [1, 1]));
+    // A leaf is a cluster of one box, target and pair.
+    let leaf = ClusterKey::new([unit([0.0; 3])], [4u8], [[1, 2]]).unwrap();
+    assert_eq!(leaf, c(&[unit([0.0; 3])], &[4], &[[1, 2]]));
+
+    let b = [unit([0.0; 3])];
+    let no_boxes: [[[f64; 3]; 2]; 0] = [];
+    assert_eq!(
+        ClusterKey::new(no_boxes, [0u8], [[0, 0]]),
+        Err(KeyError::Empty)
+    );
+    assert_eq!(ClusterKey::<u8>::new(b, [], [[0, 0]]), Err(KeyError::Empty));
+    assert_eq!(ClusterKey::<u8>::new(b, [0], []), Err(KeyError::Empty));
+    let nan = [[0.0; 3], [1.0, 1.0, f64::NAN]];
+    assert_eq!(
+        ClusterKey::new([b[0], nan], [0u8], [[0, 0]]),
+        Err(KeyError::NotANumber)
+    );
+}
+
+/// Faces and clusters built the way ids would build them, checked against
+/// relabelled ids: a face's loops walked from their lowest-id vertex in
+/// stored order, a cluster's leaves listed by leaf id with each box's
+/// corners in a stored order; permuting the ids gives the same keys, and
+/// orders that agree up to exact ties. The keys also order as a slow
+/// reference on the raw values (coordinates by `total_cmp`'s integer
+/// order, the least elements found by hand).
+#[test]
+fn faces_and_clusters_permuted_and_against_the_reference() {
+    let bits = |x: f64| {
+        let b = x.to_bits() as i64;
+        b ^ (((b >> 63) as u64) >> 1) as i64
+    };
+    let pos_ref = |p: [f64; 3]| p.map(bits);
+    for seed in varde_testing::seeds(16, 256) {
+        let mut rng = Rng::new(seed);
+        let n = 2 + rng.below(12);
+        let verts = random_verts(&mut rng, n);
+        let keys: Vec<VertKey<u8>> = verts.iter().map(vert_key).collect();
+        let (ids, permuted) = (rng.perm(n), rng.perm(n));
+
+        // Faces: loops of vertices (closed ones of one vertex included),
+        // each stored from its lowest-id vertex, a face key and a centre.
+        let m = 1 + rng.below(16);
+        let faces: Vec<(Vec<Vec<usize>>, u8, [f64; 3])> = (0..m)
+            .map(|_| {
+                let loops = (0..1 + rng.below(2))
+                    .map(|_| (0..1 + rng.below(4)).map(|_| rng.below(n)).collect())
+                    .collect();
+                (loops, rng.below(3) as u8, rng.pos())
+            })
+            .collect();
+        let face_key = |vids: &[u32], (loops, key, centre): &(Vec<Vec<usize>>, u8, [f64; 3])| {
+            let walk = loops.iter().flat_map(|l: &Vec<usize>| {
+                let start = (0..l.len()).min_by_key(|&i| vids[l[i]]).unwrap();
+                (0..l.len()).map(move |i| l[(start + i) % l.len()])
+            });
+            FaceOrderKey::new(walk.map(|v| keys[v].clone()), *key, *centre).unwrap()
+        };
+        let fkeys: Vec<_> = faces.iter().map(|f| face_key(&ids, f)).collect();
+        let fkeys2: Vec<_> = faces.iter().map(|f| face_key(&permuted, f)).collect();
+        assert_eq!(fkeys, fkeys2);
+        let (fids, fperm) = (rng.perm(m), rng.perm(m));
+        agree(&fkeys, &ranked(&fkeys, &fids), &ranked(&fkeys, &fperm));
+        let vref = |v: usize| {
+            let mut f = verts[v].1.clone();
+            f.sort();
+            (pos_ref(verts[v].0), f)
+        };
+        let fref = |(loops, key, centre): &(Vec<Vec<usize>>, u8, [f64; 3])| {
+            let least = loops.iter().flatten().map(|&v| vref(v)).min().unwrap();
+            (least, *key, pos_ref(*centre))
+        };
+        for (i, fi) in faces.iter().enumerate() {
+            for (j, fj) in faces.iter().enumerate() {
+                assert_eq!(fkeys[i].cmp(&fkeys[j]), fref(fi).cmp(&fref(fj)));
+            }
+        }
+
+        // Clusters: leaves of a box (corners in a random stored order),
+        // a target face key and a face pair, listed by leaf id.
+        let leaves: Vec<([[f64; 3]; 2], u8, [u8; 2])> = (0..2 + rng.below(16))
+            .map(|_| {
+                let (mut lo, mut hi) = (rng.pos(), rng.pos());
+                for k in 0..3 {
+                    if hi[k].total_cmp(&lo[k]).is_lt() {
+                        std::mem::swap(&mut lo[k], &mut hi[k]);
+                    }
+                }
+                let mut f = || rng.below(3) as u8;
+                ([lo, hi], f(), [f(), f()])
+            })
+            .collect();
+        let l = leaves.len();
+        let clusters: Vec<Vec<usize>> = (0..1 + rng.below(8))
+            .map(|_| (0..1 + rng.below(3)).map(|_| rng.below(l)).collect())
+            .collect();
+        let (lids, lperm) = (rng.perm(l), rng.perm(l));
+        let cluster_key = |leaf_ids: &[u32], members: &[usize]| {
+            let mut ms = members.to_vec();
+            ms.sort_by_key(|&i| leaf_ids[i]);
+            // A leaf's box stored from the corner its id's parity picks.
+            let boxes = ms.iter().map(|&i| {
+                let [lo, hi] = leaves[i].0;
+                if leaf_ids[i] % 2 == 0 {
+                    [lo, hi]
+                } else {
+                    [hi, lo]
+                }
+            });
+            let targets = ms.iter().map(|&i| leaves[i].1);
+            ClusterKey::new(boxes, targets, ms.iter().map(|&i| leaves[i].2)).unwrap()
+        };
+        let ckeys: Vec<_> = clusters.iter().map(|c| cluster_key(&lids, c)).collect();
+        let ckeys2: Vec<_> = clusters.iter().map(|c| cluster_key(&lperm, c)).collect();
+        assert_eq!(ckeys, ckeys2);
+        let k = clusters.len();
+        let (cids, cperm) = (rng.perm(k), rng.perm(k));
+        agree(&ckeys, &ranked(&ckeys, &cids), &ranked(&ckeys, &cperm));
+        // Leaves within one cluster, each a cluster of one.
+        let lkeys: Vec<_> = (0..l).map(|i| cluster_key(&lids, &[i])).collect();
+        agree(&lkeys, &ranked(&lkeys, &lids), &ranked(&lkeys, &lperm));
+        let cref = |members: &[usize]| {
+            let corner = members
+                .iter()
+                .map(|&i| pos_ref(leaves[i].0[0]))
+                .min()
+                .unwrap();
+            let target = members.iter().map(|&i| leaves[i].1).min().unwrap();
+            let pair = members.iter().map(|&i| leaves[i].2).min().unwrap();
+            (corner, target, pair)
+        };
+        for (i, ci) in clusters.iter().enumerate() {
+            for (j, cj) in clusters.iter().enumerate() {
+                assert_eq!(ckeys[i].cmp(&ckeys[j]), cref(ci).cmp(&cref(cj)));
+            }
         }
     }
 }

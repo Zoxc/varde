@@ -1,8 +1,8 @@
-//! The geometric order: the one order on vertices, points on edges and
-//! edges that a choice among them reads, so that the choice doesn't
-//! depend on the entities' ids. Topology and names must not change when
-//! an operand's ids are permuted; ids may order work, and break the exact
-//! ties this order leaves, never anything else.
+//! The geometric order: the one order on vertices, points on edges,
+//! edges, faces and snap clusters that a choice among them reads, so that
+//! the choice doesn't depend on the entities' ids. Topology and names
+//! must not change when an operand's ids are permuted; ids may order
+//! work, and break the exact ties this order leaves, never anything else.
 //!
 //! **Coordinates.** Positions and parameters are stored or certified
 //! values rounded to `f64`, compared exactly by [`f64::total_cmp`]
@@ -32,11 +32,26 @@
 //!   middle of its parameter range, which tells apart two arcs between
 //!   one pair of vertices; then the sorted keys of its two faces.
 //!
+//! - A face ([`FaceOrderKey`]): its canonical vertex, the least of the
+//!   vertices of all its loops in the vertex order above; then its face
+//!   key; then its surface's point at the centre of its lattice rectangle,
+//!   which tells apart two faces sharing their least vertex and key.
+//! - A snap cluster, or a leaf within one ([`ClusterKey`]): the least
+//!   corner of the union of its leaf boxes in world coordinates (rounded
+//!   outward by whoever bounds them); then the least face key among its
+//!   target faces; then its least face pair, a leaf's pair of faces in
+//!   operand order (the first operand's face, then the second's), compared
+//!   lexicographically. The least corner of a union of axis-aligned boxes
+//!   is its lexicographically least point `(x, y, z)`: the least of the
+//!   boxes' low corners, a corner of the union (the union's bounding box's
+//!   low corner, taken coordinate by coordinate, needn't be in the union).
+//!
 //! Ids break only the ties of all of these ([`first`], [`sort`]: pairs of
 //! a key and an id, the id last): bitwise-equal vertices with equal face
 //! keys, coincident edges with the same middle point and face keys, points
-//! at bitwise-equal parameters. There the choice changes no geometry and
-//! no name.
+//! at bitwise-equal parameters, faces with the same canonical vertex, key
+//! and centre point, clusters with the same corner, least target and least
+//! pair. There the choice changes no geometry and no name.
 
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
@@ -49,6 +64,23 @@ use crate::records::keys::Operand;
 /// A coordinate or parameter that is a NaN, refused by the order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotANumber;
+
+/// Why a face's or cluster's key is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyError {
+    /// A coordinate is a NaN.
+    NotANumber,
+    /// A list the key takes its least element from is empty: a face
+    /// without a vertex, a cluster without a leaf box, target face or
+    /// face pair.
+    Empty,
+}
+
+impl From<NotANumber> for KeyError {
+    fn from(_: NotANumber) -> KeyError {
+        KeyError::NotANumber
+    }
+}
 
 /// An `f64` that isn't a NaN, ordered by [`f64::total_cmp`]: `−0` before
 /// `+0`, equal only when the bits are.
@@ -276,6 +308,108 @@ impl<K: Ord> EdgeKey<K> {
     /// The faces' keys, sorted.
     pub fn faces(&self) -> &[K; 2] {
         &self.faces
+    }
+}
+
+/// A face's place in the order: its canonical vertex (the least vertex
+/// of all its loops), its face key, then its surface's point at the
+/// centre of its lattice rectangle.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FaceOrderKey<K> {
+    canonical: VertKey<K>,
+    face: K,
+    centre: Pos,
+}
+
+impl<K: Ord> FaceOrderKey<K> {
+    /// The key of a face whose loops have the vertices `verts`, in any
+    /// order and with repeats (every loop's, a vertex listed once per
+    /// visit or once in all), whose own face key is `face` and whose
+    /// surface is at `centre` at the centre of its lattice rectangle.
+    /// Refused if `verts` is empty or a coordinate of `centre` is a NaN.
+    pub fn new(
+        verts: impl IntoIterator<Item = VertKey<K>>,
+        face: K,
+        centre: [f64; 3],
+    ) -> Result<Self, KeyError> {
+        let centre = Pos::new(centre)?;
+        let canonical = verts.into_iter().min().ok_or(KeyError::Empty)?;
+        Ok(FaceOrderKey {
+            canonical,
+            face,
+            centre,
+        })
+    }
+
+    /// The canonical vertex: the least vertex of all the face's loops.
+    pub fn canonical(&self) -> &VertKey<K> {
+        &self.canonical
+    }
+
+    /// The face's own face key.
+    pub fn face(&self) -> &K {
+        &self.face
+    }
+
+    /// The surface's point at the centre of the lattice rectangle.
+    pub fn centre(&self) -> Pos {
+        self.centre
+    }
+}
+
+/// A snap cluster's place in the order, or a leaf's within its cluster:
+/// the least corner of its leaf boxes' union, the least face key `K`
+/// among its target faces, then its least face pair (the first operand's
+/// face key, then the second's).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClusterKey<K> {
+    corner: Pos,
+    target: K,
+    pair: [K; 2],
+}
+
+impl<K: Ord> ClusterKey<K> {
+    /// The key of a cluster (or leaf) with world-space leaf boxes
+    /// `boxes`, each given by two opposite corners in either order and
+    /// rounded outward, target faces with keys `targets` and leaves'
+    /// face pairs `pairs`, each in operand order; all three in any order.
+    /// Refused if any of them is empty or a box coordinate is a NaN.
+    pub fn new(
+        boxes: impl IntoIterator<Item = [[f64; 3]; 2]>,
+        targets: impl IntoIterator<Item = K>,
+        pairs: impl IntoIterator<Item = [K; 2]>,
+    ) -> Result<Self, KeyError> {
+        let mut corner: Option<Pos> = None;
+        for [a, b] in boxes {
+            let (a, b) = (Pos::new(a)?, Pos::new(b)?);
+            // The box's low corner, coordinate by coordinate.
+            let low = Pos([0, 1, 2].map(|k| a.0[k].min(b.0[k])));
+            corner = Some(match corner {
+                Some(c) if c <= low => c,
+                _ => low,
+            });
+        }
+        Ok(ClusterKey {
+            corner: corner.ok_or(KeyError::Empty)?,
+            target: targets.into_iter().min().ok_or(KeyError::Empty)?,
+            pair: pairs.into_iter().min().ok_or(KeyError::Empty)?,
+        })
+    }
+
+    /// The least corner of the leaf boxes' union: its lexicographically
+    /// least point.
+    pub fn corner(&self) -> Pos {
+        self.corner
+    }
+
+    /// The least target face key.
+    pub fn target(&self) -> &K {
+        &self.target
+    }
+
+    /// The least face pair.
+    pub fn pair(&self) -> &[K; 2] {
+        &self.pair
     }
 }
 
