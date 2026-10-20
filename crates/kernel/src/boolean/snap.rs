@@ -26,11 +26,16 @@
 //! rule gaps where halving stops helping; and [`decide`]: once snapped,
 //! the zone's one-surface decision, the rim's records by the gap's sign
 //! with the corner records at its ties, the elements on the target read
-//! at their places there, and the band of records between two of them.
+//! at their places there, and the band of records between two of them;
+//! and [`cuts`]: the zone's trim boolean checked against its records'
+//! counts, per piece of each curve between its cut points, and the rim's
+//! corner records against its ties and branch vertices, a failure the
+//! escalation's signal.
 
 pub mod along;
 pub mod cluster;
 pub mod corner;
+pub mod cuts;
 pub mod decide;
 pub mod escalate;
 pub mod join;
