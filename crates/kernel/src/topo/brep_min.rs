@@ -1,9 +1,12 @@
 //! The minimal B-rep store: vertices, edges on rational quadratic space
 //! curves, coedges with Q p-curves and their seam bounds, loops and
 //! faces, as structure-of-arrays columns indexed by `u32` ids, `NONE`
-//! (`u32::MAX`) for "no entity". No shells, regions, contacts or names
-//! yet, and no `check` beyond the joins the ribbons need
-//! ([`Brep::check_ribbons`]).
+//! (`u32::MAX`) for "no entity", and the body's kind: a closed `Solid`
+//! or an open `Sheet` ([`BodyKind`]). No shells, regions, contacts or
+//! names yet; of `check`, the joins the ribbons need
+//! ([`Brep::check_ribbons`]) and the planar subset
+//! ([`Brep::check_planar`], [`planar`]), which also builds bodies of
+//! planar polygon faces.
 //!
 //! **Entities.**
 //! - A vertex: its position `pos` and tolerance `tol` (raised to the
@@ -65,6 +68,17 @@ use crate::infra::error::KernelError;
 use varde_decide::records::near::OpBands;
 
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
+
+/// What a body is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BodyKind {
+    /// A closed solid: every coedge has its pair.
+    #[default]
+    Solid,
+    /// An open sheet: a coedge on its boundary has none (`pair = NONE`).
+    /// Never a boolean operand.
+    Sheet,
+}
 
 /// Why an entity can't be added.
 #[derive(Clone, Debug, PartialEq)]
@@ -167,6 +181,7 @@ struct Faces {
 /// The minimal B-rep store (module docs).
 #[derive(Clone, Debug, Default)]
 pub struct Brep {
+    kind: BodyKind,
     surfaces: Vec<Surface>,
     curves: Vec<Curve3D>,
     verts: Verts,
@@ -189,9 +204,22 @@ fn same_bits<const N: usize>(a: &[f64; N], b: &[f64; N]) -> bool {
 }
 
 impl Brep {
-    /// An empty store.
+    /// An empty store of a solid.
     pub fn new() -> Brep {
         Brep::default()
+    }
+
+    /// An empty store of a body of kind `kind`.
+    pub fn with_kind(kind: BodyKind) -> Brep {
+        Brep {
+            kind,
+            ..Brep::default()
+        }
+    }
+
+    /// The body's kind.
+    pub fn kind(&self) -> BodyKind {
+        self.kind
     }
 
     /// Adds a surface.
@@ -511,6 +539,11 @@ impl Brep {
         self.faces.surface.len()
     }
 
+    /// The number of loops; their ids are `0..n`.
+    pub fn loop_count(&self) -> usize {
+        self.loops.face.len()
+    }
+
     /// A vertex's position.
     pub fn pos(&self, v: VertId) -> [f64; 3] {
         self.verts.pos[v.index()]
@@ -675,5 +708,9 @@ impl Brep {
     }
 }
 
+pub mod planar;
+
+#[cfg(test)]
+pub(crate) mod sheets;
 #[cfg(test)]
 mod tests;

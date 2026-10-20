@@ -17,7 +17,7 @@ use varde_testkit::rng::Rng;
 use super::*;
 use crate::geom::certify::{SeamError, seam_bound_alone};
 use crate::geom::curve::{CurveError, Span2, Span3};
-use crate::geom::form::{CylinderKey, PlaneKey};
+use crate::geom::form::{CylinderKey, FormKey, PlaneKey};
 use crate::geom::lattice::{CELL, Lattice};
 use crate::infra::budget::{Budget, Halt, MAX_WORK, Work};
 use crate::infra::error::KernelError;
@@ -1076,4 +1076,39 @@ fn edge_spans_magnitude_and_near_radii() {
     assert_eq!(b.edge_spans(e), &joined[1..]);
     assert_eq!(b.check_ribbons(), Ok(()));
     assert_eq!(b.max_coord(), 70.0);
+}
+
+/// The half cylinder passes the planar check; its caps' trims are arcs
+/// in UV, left unchecked, and its cylinder's and plane's are straight.
+/// The fixture leaves its plane faces unflipped, which the counting here
+/// doesn't read: they are flipped where their outward normals (`−e₂` on
+/// the plane through the axis, `∓a` on the caps) run against their
+/// planes'.
+#[test]
+fn the_half_cylinder_passes_the_planar_check() {
+    let mut f = half_cylinder(cylinder_pcurves());
+    let key = CylinderKey::new([0.0; 3], [0.0, 0.0, 1.0], R).unwrap();
+    let [_, e2, a] = Lattice::new(key.into()).unwrap().axes();
+    let outward = [scale(e2, -1.0), scale(a, -1.0), a];
+    for (k, out) in outward.iter().enumerate() {
+        let face = f.cylinder.index() + 1 + k;
+        let FormKey::Plane(p) = f.brep.surface(FaceId(face as u32)).lattice().key() else {
+            panic!("a plane face");
+        };
+        let n = p.normal();
+        f.brep.faces.flipped[face] = n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0.0;
+    }
+    let checked = f.brep.check_planar().unwrap_or_else(|e| panic!("{e:?}"));
+    let caps: Vec<FaceId> = (0..f.brep.face_count() as u32)
+        .map(FaceId)
+        .filter(|&id| id != f.cylinder && f.brep.loops(id).count() == 1)
+        .filter(|&id| {
+            f.brep
+                .loops(id)
+                .flat_map(|l| f.brep.loop_coedges(l))
+                .any(|c| f.brep.pcurve(c).spans().len() > 1)
+        })
+        .collect();
+    assert_eq!(checked.unchecked_trims, caps);
+    assert_eq!(caps.len(), 2);
 }
