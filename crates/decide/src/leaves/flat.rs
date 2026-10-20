@@ -54,20 +54,40 @@
 //! itself (Near, Contact) or the common line's direction (Simple), and it
 //! moves with the input under 90° rotations and mirrors of the axes.
 //!
-//! **The gap along `ℓ`** is bounded by the hulls: with `ℓ̂ = ℓ/|ℓ|`, every
-//! point over a common point of `ℓ⊥` has heights `h_a ∈ [min ℓ̂·p, max
-//! ℓ̂·p]` and `h_b` alike, so `|h_a − h_b| ≤ max(max ℓ̂·p − min ℓ̂·q, max ℓ̂·q −
-//! min ℓ̂·p)`, the signed gap of Contact included. Compared with `b_K`
-//! exactly: `s ≤ 0`, or `s² ≤ b_K²·|ℓ|²` for the unnormalised bound `s`,
-//! so no square root is taken. On two parallel planes along their
-//! normal it is their distance exactly; a bound still above `b_K` leaves
-//! the pair uncertified, and it splits.
+//! **The vertical gap along `ℓ`** ([`Cone::contains`]): both pieces are
+//! graphs over `ℓ⊥`, so the gap is `h_a − h_b` over their common
+//! projection, `h = x·ℓ̂` the height along `ℓ̂ = ℓ/|ℓ|`. It is bounded over
+//! pairs of sub-pieces, the pieces split dyadically: a pair whose
+//! projections onto `ℓ⊥` are disjoint has no common point and bounds
+//! nothing (decided exactly: the hulls of the projections are disjoint
+//! iff some direction is positive on every `(q − p) × ℓ`, a max–min
+//! program); on any other pair
+//! - two **parallel plane** pieces (each one graph vector, the same line)
+//!   have the constant gap `(c_b − c_a)/(n·ℓ̂)`, `n·x = c` their planes:
+//!   exact, so flush coplanar pieces have gap zero along every `ℓ` they
+//!   are graphs over, not only along their normal;
+//! - any other pair is bounded by its control hulls, `|h_a − h_b| ≤
+//!   max(max ℓ̂·p − min ℓ̂·q, max ℓ̂·q − min ℓ̂·p)` (the signed gap of
+//!   Contact included), and a pair above `b_K` splits its piece of the
+//!   wider extent along `ℓ` (the first's on a tie) at the middle of the
+//!   direction its net varies more in along `ℓ` (`u` on a tie), at most
+//!   [`GAP_SPLITS`] times a piece and [`MAX_GAP_PAIRS`] pairs a check.
+//!
+//! The gap is within `b_K` when every pair is; compared exactly (`s ≤ 0`,
+//! or `s² ≤ b_K²·|ℓ|²` for the unnormalised bound `s`), so no square root
+//! is taken. Along the shared normal of two parallel planes it is their
+//! distance exactly. A pair still above `b_K` that can't split fails the
+//! check: as the leaf's own direction the pair is uncertified, and it
+//! splits. Every sub-piece pair bounded is counted ([`LeafWork::gaps`]).
 //!
 //! **Admissible cone** ([`Cone`]): the directions a Near or Contact leaf
 //! accepts in place of its own `ℓ`: `ℓ·g > 0` on its (signed) graph
-//! vectors and the gap along `ℓ` at most `b_K`, both decided exactly by
-//! [`Cone::contains`]. The first condition is an open polyhedral cone,
-//! the second a cone (scaling `ℓ` keeps it) that need not be convex.
+//! vectors and the vertical gap along `ℓ` at most `b_K`, both decided
+//! exactly by [`Cone::contains`]. The first condition is an open
+//! polyhedral cone, the second a cone (scaling `ℓ` keeps it) that need
+//! not be convex. On parallel plane pieces it is `(c_b − c_a)² ≤
+//! b_K²·(n·ℓ̂)²` wherever the projections meet: the whole open hemisphere
+//! of the normal when the planes coincide.
 //!
 //! **Leaves** ([`leaves`]). From a pair of start boxes, depth first: the
 //! caller says per box whether to drop it (outside the trim), split it
@@ -112,6 +132,7 @@ pub struct FlatPiece {
     points: Vec<Q3>,
     graph: Vec<Q3>,
     world: [[f64; 3]; 2],
+    net: Net,
 }
 
 impl FlatPiece {
@@ -186,6 +207,11 @@ impl FlatPiece {
         }
         let graph = canonical(graph);
         let world = bounding(&points);
+        let net = Net {
+            deg: [m, n],
+            points: points.clone(),
+            splits: 0,
+        };
         let mut points = points;
         points.sort();
         points.dedup();
@@ -193,6 +219,7 @@ impl FlatPiece {
             points,
             graph,
             world,
+            net,
         })
     }
 
@@ -212,14 +239,101 @@ impl FlatPiece {
     pub fn world_box(&self) -> [[f64; 3]; 2] {
         self.world
     }
+
+    /// The normal of its plane, if it is a plane piece: its one graph
+    /// vector (non-zero; all control points then lie in one plane).
+    fn plane(&self) -> Option<&Q3> {
+        match &self.graph[..] {
+            [g] if !is_zero(g) => Some(g),
+            _ => None,
+        }
+    }
 }
+
+/// A control net in the vertical-gap check: its degrees, its points
+/// (row-major in `u`) and how often it was split.
+#[derive(Clone, Debug, PartialEq)]
+struct Net {
+    deg: [usize; 2],
+    points: Vec<Q3>,
+    splits: u32,
+}
+
+impl Net {
+    /// Its halves at the middle of the direction it varies more in along
+    /// `ell` (the larger `|ell·d|` over its hodograph vectors `d`, `u` on a
+    /// tie), exactly (de Casteljau at ½); `None` once split
+    /// [`GAP_SPLITS`] times.
+    fn halves(&self, ell: &Q3) -> Option<[Net; 2]> {
+        if self.splits >= GAP_SPLITS {
+            return None;
+        }
+        let [m, n] = self.deg;
+        let at = |i: usize, j: usize| &self.points[i * (n + 1) + j];
+        let abs = |x: Rational| if x < 0u32 { -x } else { x };
+        let mut vary = [Rational::from(0), Rational::from(0)];
+        for i in 0..=m {
+            for j in 0..=n {
+                if i < m {
+                    let d = abs(dot(&sub3(at(i + 1, j), at(i, j)), ell));
+                    vary[0] = Rational::max(d, vary[0].clone());
+                }
+                if j < n {
+                    let d = abs(dot(&sub3(at(i, j + 1), at(i, j)), ell));
+                    vary[1] = Rational::max(d, vary[1].clone());
+                }
+            }
+        }
+        let along_u = vary[0] >= vary[1];
+        let (len, count) = if along_u {
+            (m + 1, n + 1)
+        } else {
+            (n + 1, m + 1)
+        };
+        let at = |k: usize, c: usize| {
+            if along_u {
+                k * (n + 1) + c
+            } else {
+                c * (n + 1) + k
+            }
+        };
+        let mut lo = self.points.clone();
+        let mut hi = self.points.clone();
+        let half = Rational::from_signeds(1, 2);
+        for c in 0..count {
+            let mut row: Vec<Q3> = (0..len).map(|k| self.points[at(k, c)].clone()).collect();
+            lo[at(0, c)] = row[0].clone();
+            hi[at(len - 1, c)] = row[len - 1].clone();
+            for r in 1..len {
+                for k in 0..len - r {
+                    row[k] = [0, 1, 2].map(|i| (&row[k][i] + &row[k + 1][i]) * &half);
+                }
+                lo[at(r, c)] = row[0].clone();
+                hi[at(len - 1 - r, c)] = row[len - 1 - r].clone();
+            }
+        }
+        let splits = self.splits + 1;
+        let net = |points| Net {
+            deg: self.deg,
+            points,
+            splits,
+        };
+        Some([net(lo), net(hi)])
+    }
+}
+
+/// The most times the vertical-gap check splits a piece (module docs).
+pub const GAP_SPLITS: u32 = 12;
+
+/// The most sub-piece pairs one vertical-gap check bounds (module docs).
+pub const MAX_GAP_PAIRS: u32 = 1 << 12;
 
 /// The directions a Near or Contact leaf admits (module docs).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cone {
     gens: Vec<Q3>,
-    a: Vec<Q3>,
-    b: Vec<Q3>,
+    a: FlatPiece,
+    b: FlatPiece,
     b_k: Rational,
 }
 
@@ -237,9 +351,11 @@ impl Cone {
     }
 
     /// Whether `ell` is admitted: `ell·g > 0` for every generator and the
-    /// gap along `ell` at most `b_K`, exactly.
-    pub fn contains(&self, ell: &Q3) -> bool {
-        self.gens.iter().all(|g| dot(g, ell) > 0u32) && gap_within(&self.a, &self.b, ell, &self.b_k)
+    /// vertical gap along `ell` at most `b_K` (module docs), exactly; the
+    /// sub-piece pairs and programs run are counted in `work`.
+    pub fn contains(&self, ell: &Q3, work: &mut LeafWork) -> bool {
+        self.gens.iter().all(|g| dot(g, ell) > 0u32)
+            && gap_within(&self.a, &self.b, ell, &self.b_k, work)
     }
 }
 
@@ -280,6 +396,8 @@ pub struct LeafWork {
     pub pairs: u32,
     /// Exact linear programs solved (each a max–min direction).
     pub programs: u32,
+    /// Sub-piece pairs whose vertical gap was bounded (module docs).
+    pub gaps: u32,
 }
 
 /// Empty: a direction separating the hulls of `a` and `b`, if they are
@@ -387,15 +505,15 @@ fn tangent(
     );
     let gens = canonical(gens);
     let ell = direction(&gens, work)?;
-    if !gap_within(&a.points, &b.points, &ell, b_k) {
+    if !gap_within(a, b, &ell, b_k, work) {
         return None;
     }
     Some(Tangent {
         ell,
         cone: Cone {
             gens,
-            a: a.points.clone(),
-            b: b.points.clone(),
+            a: a.clone(),
+            b: b.clone(),
             b_k: b_k.clone(),
         },
     })
@@ -561,16 +679,89 @@ fn direction(vs: &[Q3], work: &mut LeafWork) -> Option<Q3> {
     (min > 0u32).then_some(d)
 }
 
-/// Whether the two-sided gap along `ell` between the hulls of `a` and `b`
-/// is at most `b_k` (module docs), exactly.
-fn gap_within(a: &[Q3], b: &[Q3], ell: &Q3, b_k: &Rational) -> bool {
-    let (lo_a, hi_a) = extent(a, ell);
-    let (lo_b, hi_b) = extent(b, ell);
-    let s = Rational::max(&hi_a - &lo_b, &hi_b - &lo_a);
-    if s <= 0u32 {
-        return true;
+/// Whether the vertical gap along `ell` between `a` and `b` is at most
+/// `b_k` (module docs), exactly; `ell` must be positive on both pieces'
+/// graph vectors (as signed for the leaf) for the gap to be a graph's.
+fn gap_within(a: &FlatPiece, b: &FlatPiece, ell: &Q3, b_k: &Rational, work: &mut LeafWork) -> bool {
+    let bound = b_k * b_k * dot(ell, ell);
+    // Within `b_k` for the unnormalised gap `s` along `ell`.
+    let within = |s: &Rational| *s <= 0u32 || s * s <= bound;
+    if let (Some(n), Some(m)) = (a.plane(), b.plane())
+        && is_zero(&cross(n, m))
+    {
+        // Parallel planes: `x_b = x_a + λ·ell` over a common point, `λ =
+        // (c_b − c_a)/(n·ell)`, so the gap `|λ|·|ell|` is `s/|ell|` with
+        // `s = |c_b − c_a|·|ell|²/|n·ell|`; compared as `(c_b − c_a)²·|ell|²
+        // ≤ b_k²·(n·ell)²`.
+        work.gaps = work.gaps.saturating_add(1);
+        let ne = dot(n, ell);
+        if ne == 0u32 {
+            return false;
+        }
+        let d = dot(n, &b.points[0]) - dot(n, &a.points[0]);
+        if &d * &d * dot(ell, ell) <= b_k * b_k * &ne * &ne {
+            return true;
+        }
+        return !overlap(&a.net.points, &b.net.points, ell, work);
     }
-    &s * &s <= b_k * b_k * dot(ell, ell)
+    let mut stack = vec![(a.net.clone(), b.net.clone())];
+    let mut pairs = 0u32;
+    while let Some((pa, pb)) = stack.pop() {
+        if pairs >= MAX_GAP_PAIRS {
+            return false;
+        }
+        pairs += 1;
+        work.gaps = work.gaps.saturating_add(1);
+        let (lo_a, hi_a) = extent(&pa.points, ell);
+        let (lo_b, hi_b) = extent(&pb.points, ell);
+        let s = Rational::max(&hi_a - &lo_b, &hi_b - &lo_a);
+        if within(&s) || !overlap(&pa.points, &pb.points, ell, work) {
+            continue;
+        }
+        // The wider piece along `ell` splits, else the other.
+        let a_first = &hi_a - &lo_a >= &hi_b - &lo_b;
+        let split = |p: &Net, q: &Net, p_is_a: bool| {
+            p.halves(ell).map(|hs| {
+                hs.map(|h| {
+                    if p_is_a {
+                        (h, q.clone())
+                    } else {
+                        (q.clone(), h)
+                    }
+                })
+            })
+        };
+        let halves = if a_first {
+            split(&pa, &pb, true).or_else(|| split(&pb, &pa, false))
+        } else {
+            split(&pb, &pa, false).or_else(|| split(&pa, &pb, true))
+        };
+        let Some([lo, hi]) = halves else {
+            return false;
+        };
+        stack.push(hi);
+        stack.push(lo);
+    }
+    true
+}
+
+/// Whether the projections along `ell` of the hulls of `a` and `b` share
+/// a point: no direction is positive on every `(q − p) × ell`, the
+/// projected differences turned a quarter in `ell⊥` (exact).
+fn overlap(a: &[Q3], b: &[Q3], ell: &Q3, work: &mut LeafWork) -> bool {
+    let mut diffs: Vec<Q3> = Vec::with_capacity(a.len() * b.len());
+    for p in a {
+        for q in b {
+            let w = cross(&sub3(q, p), ell);
+            if is_zero(&w) {
+                return true;
+            }
+            diffs.push(w);
+        }
+    }
+    let diffs = canonical(diffs);
+    work.programs = work.programs.saturating_add(1);
+    max_min(&diffs).1 <= 0u32
 }
 
 /// `(min, max)` of `d·p` over `ps` (non-empty).

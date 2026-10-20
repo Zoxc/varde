@@ -3,8 +3,9 @@
 //!
 //! **Clusters** ([`clusters`]). The input is every certified leaf of
 //! every face pair (a box of a face of the first operand against a box
-//! of a face of the second, [`Leaf`]). Only leaves certified Near
-//! (co-oriented) or Contact (opposed) take part; an Empty or Simple
+//! of a face of the second, [`ClusterLeaf`]: flat leaves and curved
+//! leaves against a quadric alike, or both in one run as `&dyn
+//! ClusterLeaf`). Only leaves certified Near (co-oriented) or Contact (opposed) take part; an Empty or Simple
 //! leaf is never snapped, and two disjoint flat pieces always certify
 //! Empty, however close, so faces apart form no cluster. A cluster is a
 //! connected component of the Near leaves, or of the Contact leaves,
@@ -54,7 +55,8 @@ use std::collections::BTreeMap;
 use varde_decide::bezier::{Dir, Dyadic};
 use varde_decide::count::boxes::{BoxKey, Extent, MAX_BOX_DEPTH};
 use varde_decide::ids::FaceId;
-use varde_decide::leaves::flat::{Kind, Leaf};
+use varde_decide::leaves::flat::{self, Kind};
+use varde_decide::leaves::near_quadric;
 use varde_decide::order::{ClusterKey, KeyError};
 use varde_decide::records::keys::Operand;
 
@@ -78,6 +80,77 @@ impl Tangency {
             Kind::Near(_) => Some(Tangency::Near),
             Kind::Contact(_) => Some(Tangency::Contact),
             Kind::Empty { .. } | Kind::Simple { .. } => None,
+        }
+    }
+}
+
+/// A certified leaf as [`clusters`] reads it.
+pub trait ClusterLeaf: Sync {
+    /// Its two boxes, the first operand's first (a leaf certified with
+    /// the second operand's box first reads them swapped).
+    fn boxes(&self) -> [BoxKey; 2];
+    /// Its pieces' world boxes (each `[lo, hi]`, rounded outward or
+    /// certified), in the order of [`ClusterLeaf::boxes`].
+    fn world(&self) -> [[[f64; 3]; 2]; 2];
+    /// Its tangency, if it is Near or Contact.
+    fn tangency(&self) -> Option<Tangency>;
+}
+
+impl ClusterLeaf for flat::Leaf {
+    fn boxes(&self) -> [BoxKey; 2] {
+        [self.a, self.b]
+    }
+
+    fn world(&self) -> [[[f64; 3]; 2]; 2] {
+        self.world
+    }
+
+    fn tangency(&self) -> Option<Tangency> {
+        Tangency::of(&self.kind)
+    }
+}
+
+/// A reference reads as its leaf, so `&dyn ClusterLeaf` mixes kinds.
+impl<T: ClusterLeaf + ?Sized> ClusterLeaf for &T {
+    fn boxes(&self) -> [BoxKey; 2] {
+        (**self).boxes()
+    }
+
+    fn world(&self) -> [[[f64; 3]; 2]; 2] {
+        (**self).world()
+    }
+
+    fn tangency(&self) -> Option<Tangency> {
+        (**self).tangency()
+    }
+}
+
+/// A leaf against a quadric: its boxes in the operands' order (the
+/// quadric face's box is the first operand's or the second's), its world
+/// boxes alike.
+impl<S: Sync> ClusterLeaf for near_quadric::Leaf<S> {
+    fn boxes(&self) -> [BoxKey; 2] {
+        if self.a.operand() == Operand::B && self.b.operand() == Operand::A {
+            [self.b, self.a]
+        } else {
+            [self.a, self.b]
+        }
+    }
+
+    fn world(&self) -> [[[f64; 3]; 2]; 2] {
+        let [wa, wb] = self.world;
+        if self.a.operand() == Operand::B && self.b.operand() == Operand::A {
+            [wb, wa]
+        } else {
+            [wa, wb]
+        }
+    }
+
+    fn tangency(&self) -> Option<Tangency> {
+        match self.kind {
+            near_quadric::Kind::Near(_) => Some(Tangency::Near),
+            near_quadric::Kind::Contact(_) => Some(Tangency::Contact),
+            near_quadric::Kind::Empty(_) | near_quadric::Kind::Simple { .. } => None,
         }
     }
 }
@@ -211,12 +284,13 @@ fn units(ledger: &mut Ledger<'_>, units: u64) -> Result<(), Stop<ClusterError>> 
     not(test),
     expect(dead_code, reason = "the boolean's snap calls it as it lands")
 )]
-pub(crate) fn clusters<K>(
-    leaves: &[Leaf],
+pub(crate) fn clusters<L, K>(
+    leaves: &[L],
     face_key: impl Fn(Operand, FaceId) -> K + Sync,
     work: &mut Work,
 ) -> Result<Vec<Cluster<K>>, ClusterError>
 where
+    L: ClusterLeaf,
     K: Ord + Clone + Send + Sync,
 {
     let Ok(n) = u32::try_from(leaves.len()) else {
@@ -227,26 +301,28 @@ where
     let checked = run(work, "snap clusters: leaves", &all, |&i, ledger| {
         units(ledger, 1)?;
         let l = &leaves[i as usize];
-        if l.a.operand() != Operand::A || l.b.operand() != Operand::B {
+        let [a, b] = l.boxes();
+        if a.operand() != Operand::A || b.operand() != Operand::B {
             return Err(Stop::Failed(ClusterError::Operands(i)));
         }
-        if l.world.iter().flatten().flatten().any(|x| x.is_nan()) {
+        let world = l.world();
+        if world.iter().flatten().flatten().any(|x| x.is_nan()) {
             return Err(Stop::Failed(ClusterError::NotANumber(i)));
         }
-        let Some(t) = Tangency::of(&l.kind) else {
+        let Some(t) = l.tangency() else {
             return Ok(None);
         };
         let (ka, kb) = (
-            face_key(Operand::A, l.a.face()),
-            face_key(Operand::B, l.b.face()),
+            face_key(Operand::A, a.face()),
+            face_key(Operand::B, b.face()),
         );
-        let key = ClusterKey::new(l.world, [ka.clone(), kb.clone()], [[ka, kb]]).map_err(|e| {
+        let key = ClusterKey::new(world, [ka.clone(), kb.clone()], [[ka, kb]]).map_err(|e| {
             debug_assert_eq!(e, KeyError::NotANumber, "a leaf has its boxes and faces");
             Stop::Failed(ClusterError::NotANumber(i))
         })?;
         let at = LeafAt {
             key,
-            boxes: [l.a, l.b],
+            boxes: [a, b],
             index: i,
         };
         Ok(Some((at, t)))

@@ -1,5 +1,5 @@
 use malachite::Rational;
-use varde_decide::bezier::HomPatch;
+use varde_decide::bezier::{Dir, HomPatch};
 use varde_decide::count::boxes::BoxKey;
 use varde_decide::ids::FaceId;
 use varde_decide::leaves::flat::BoxUse;
@@ -7,12 +7,13 @@ use varde_decide::leaves::flat::{self, FlatPiece, LeafWork, certify};
 use varde_decide::leaves::near_quadric::{self, QuadricFace, SheetFace};
 use varde_decide::num::bounded::Bounded;
 use varde_decide::records::keys::Operand;
-use varde_testkit::sheets::{self, SMOOTH_RADIUS};
+use varde_testkit::sheets::{self, Diagonals, SMOOTH_RADIUS, Wavy};
 
 use super::super::cluster::merge_sharing;
 use super::super::cluster::tests::{
-    B_K, ext, fixture_clusters, fixture_leaves, rat, rectangle, whole, work,
+    B_K, ext, fixture_clusters, fixture_leaves, parallelogram, rat, rectangle, whole, work,
 };
+use super::super::cluster::{ClusterLeaf, clusters};
 use super::*;
 
 const NONE: [Candidate<'static>; 2] = [
@@ -95,83 +96,149 @@ fn a_flush_quad_on_the_l_projects_along_the_normal_onto_the_first_operand() {
 
 #[test]
 fn a_common_direction_is_found_iff_one_exists() {
-    let b_k = rat(B_K);
-    // Two flush pairs facing up and towards `+y`, 10⁻⁴ wide: the max–min
-    // direction of `(0, 0, 1)` and `(0, 1, 0)` is `(0, 1, 1)`, and on
-    // pieces this small its gap stays within `b_K`.
-    let w = 1e-4;
-    let up = flush(0, 0, [0.0; 3], [w, 0.0, 0.0], [0.0, w, 0.0]);
-    let side = flush(1, 1, [0.0, w, 0.0], [0.0, 0.0, w], [w, 0.0, 0.0]);
-    let found = choose(Tangency::Near, &[&up, &side], NONE, &mut work()).unwrap();
-    let along = Some(Target {
-        operand: Operand::A,
-        map: Map::Along(q3([0, 1, 1])),
-    });
-    assert_eq!(found, along);
-    assert_eq!(
-        choose(Tangency::Near, &[&side, &up], NONE, &mut work()).unwrap(),
-        along
-    );
-    // No open hemisphere holds the normals (up and down): none.
-    let down = flush(2, 2, [0.0, 0.0, -1.0], [0.0, w, 0.0], [w, 0.0, 0.0]);
-    assert_eq!(
-        choose(Tangency::Near, &[&up, &down], NONE, &mut work()).unwrap(),
-        None
-    );
-    // 10⁻² wide, every direction the up pair admits is within 1/20 of
-    // `z` and every one the side pair admits within 1/20 of `y`: no
-    // common direction exists, though the max–min one is positive on
-    // every normal; the cones' gap condition refuses it.
-    let w = 1e-2;
-    let up = flush(0, 0, [0.0; 3], [w, 0.0, 0.0], [0.0, w, 0.0]);
-    let side = flush(1, 1, [0.0, w, 0.0], [0.0, 0.0, w], [w, 0.0, 0.0]);
-    let ell = q3([0, 1, 1]);
-    for l in [&up, &side] {
-        let flat::Kind::Near(t) = &l.kind else {
+    // Two flush pairs facing up and towards `+y`: the max–min direction
+    // of `(0, 0, 1)` and `(0, 1, 0)` is `(0, 1, 1)`. Flush pieces have a
+    // vertical gap of zero along every direction they are graphs over,
+    // so their cones are the open hemispheres of their normals, however
+    // wide the pieces.
+    for w in [1e-4, 1e-2, 20.0] {
+        let up = flush(0, 0, [0.0; 3], [w, 0.0, 0.0], [0.0, w, 0.0]);
+        let side = flush(1, 1, [0.0, w, 0.0], [0.0, 0.0, w], [w, 0.0, 0.0]);
+        let along = Some(Target {
+            operand: Operand::A,
+            map: Map::Along(q3([0, 1, 1])),
+        });
+        assert_eq!(
+            choose(Tangency::Near, &[&up, &side], NONE, &mut work()).unwrap(),
+            along,
+            "{w}"
+        );
+        assert_eq!(
+            choose(Tangency::Near, &[&side, &up], NONE, &mut work()).unwrap(),
+            along
+        );
+        // No open hemisphere holds the normals (up and down): none.
+        let down = flush(2, 2, [0.0, 0.0, -1.0], [0.0, w, 0.0], [w, 0.0, 0.0]);
+        assert_eq!(
+            choose(Tangency::Near, &[&up, &down], NONE, &mut work()).unwrap(),
+            None
+        );
+        let flat::Kind::Near(t) = &up.kind else {
             unreachable!()
         };
-        assert!(t.cone.gens().iter().all(|g| dot(g, &ell) > 0u32));
-        assert!(!t.cone.contains(&ell));
-        assert_eq!(t.cone.b_k(), &b_k);
+        let mut lw = LeafWork::default();
+        assert!(t.cone.contains(&q3([0, 1, 1]), &mut lw));
+        assert!(!t.cone.contains(&q3([0, 1, 0]), &mut lw));
+        assert_eq!(t.cone.b_k(), &rat(B_K));
     }
+}
+
+/// The merged cluster of `pair`'s flush leaves (every cluster sharing a
+/// window element), its leaves, and the leaf normals of each cluster
+/// before the merge, in order.
+fn merged_flush(pair: &sheets::Pair, ls: &[flat::Leaf]) -> (Vec<u32>, Vec<Option<Target>>) {
+    let cs = fixture_clusters(pair, ls);
+    let alone = cs
+        .iter()
+        .map(|c| choose(c.kind(), &picked(ls, c.leaves()), NONE, &mut work()).unwrap())
+        .collect();
+    let windows: Vec<Vec<u32>> = cs.iter().map(|_| vec![0]).collect();
+    let merged = merge_sharing(cs, &windows, &mut work()).unwrap();
+    let [m] = &merged[..] else {
+        panic!("{merged:?}")
+    };
+    (m.cluster.leaves().collect(), alone)
+}
+
+#[test]
+fn a_merged_flush_box_edge_fold_projects_along_a_tilted_direction() {
+    // The flush fold: a cluster on the box's front and one on its top,
+    // merged (their windows share the fold edge). Each alone projects
+    // along its normal; together along the max–min direction `(0, −1,
+    // 1)`, which every leaf admits (flush: no gap along it), though the
+    // pieces are wide. A creased target has no closest point, so `ℓ`.
+    let pair = sheets::box_edge_fold(0.0);
+    let ls = fixture_leaves(&pair, rectangle, 2);
+    let (held, alone) = merged_flush(&pair, &ls);
+    let along = |op, n| {
+        Some(Target {
+            operand: op,
+            map: Map::Along(q3(n)),
+        })
+    };
     assert_eq!(
-        choose(Tangency::Near, &[&up, &side], NONE, &mut work()).unwrap(),
-        None
+        alone,
+        [along(Operand::A, [0, -1, 0]), along(Operand::A, [0, 0, 1])]
+    );
+    let held = picked(&ls, held.into_iter());
+    let t = choose(Tangency::Near, &held, NONE, &mut work()).unwrap();
+    assert_eq!(t, along(Operand::A, [0, -1, 1]));
+    let mut rev = held.clone();
+    rev.reverse();
+    assert_eq!(choose(Tangency::Near, &rev, NONE, &mut work()).unwrap(), t);
+}
+
+#[test]
+fn a_merged_flush_l_corner_projects_along_the_diagonal() {
+    // The sheet in the L's reflex edge: clusters on the faces `y = 15` and
+    // `x = 15`, merged, project along `(1, 1, 0)`, into the corner.
+    let pair = sheets::l_corner(0.0);
+    let ls = fixture_leaves(&pair, rectangle, 2);
+    let (held, alone) = merged_flush(&pair, &ls);
+    let along = |n| {
+        Some(Target {
+            operand: Operand::A,
+            map: Map::Along(q3(n)),
+        })
+    };
+    assert_eq!(alone, [along([0, 1, 0]), along([1, 0, 0])]);
+    let held = picked(&ls, held.into_iter());
+    assert_eq!(
+        choose(Tangency::Near, &held, NONE, &mut work()).unwrap(),
+        along([1, 1, 0])
     );
 }
 
 #[test]
-fn a_sheet_over_a_box_edge_never_takes_the_closest_point() {
-    // The flush fold: a cluster on the box's front and one on its top,
-    // merged (their windows share the fold edge). Each alone projects
-    // along its normal; together the max–min direction `(0, −1, 1)`
-    // leaves the cones (the pieces are wide), and a creased target has no
-    // closest point: no candidate certifies, for the escalation.
-    let pair = sheets::box_edge_fold(0.0);
-    let ls = fixture_leaves(&pair, rectangle, 2);
+fn merged_flush_wavy_sheets_project_along_one_direction() {
+    // Two wavy sheets triangulated alike, flush: a cluster per triangle
+    // (neighbours aren't coplanar), merged into one of many normals; the
+    // max–min direction is positive on all and every flush leaf admits
+    // it.
+    let w = Wavy {
+        cells: 4,
+        waves: 1,
+        offset: 0.0,
+        diagonals_b: Diagonals::Rising,
+        ..Wavy::DEFAULT
+    };
+    let pair = sheets::wavy(&w);
+    let ls = fixture_leaves(&pair, parallelogram, 0);
     let cs = fixture_clusters(&pair, &ls);
-    assert_eq!(cs.len(), 2);
-    let normals = [q3([0, -1, 0]), q3([0, 0, 1])];
-    for (c, n) in cs.iter().zip(&normals) {
-        let held = picked(&ls, c.leaves());
-        let t = choose(c.kind(), &held, NONE, &mut work()).unwrap();
-        assert_eq!(
-            t,
-            Some(Target {
-                operand: Operand::A,
-                map: Map::Along(n.clone()),
-            })
-        );
-    }
-    let merged = merge_sharing(cs, &[vec![0u32], vec![0u32]], &mut work()).unwrap();
+    assert!(cs.len() > 1, "{cs:?}");
+    let windows: Vec<Vec<u32>> = cs.iter().map(|_| vec![0]).collect();
+    let merged = merge_sharing(cs, &windows, &mut work()).unwrap();
     let [m] = &merged[..] else {
         panic!("{merged:?}")
     };
     let held = picked(&ls, m.cluster.leaves());
-    assert_eq!(
-        choose(m.cluster.kind(), &held, NONE, &mut work()).unwrap(),
-        None
-    );
+    let normals: std::collections::BTreeSet<Q3> = held
+        .iter()
+        .flat_map(|l| TangentLeaf::normals(*l))
+        .map(|n| scaled(&n))
+        .collect();
+    assert!(normals.len() > 2, "{normals:?}");
+    match choose(Tangency::Near, &held, NONE, &mut work()).unwrap() {
+        Some(Target {
+            operand: Operand::A,
+            map: Map::Along(ell),
+        }) => {
+            assert!(normals.iter().all(|n| dot(n, &ell) > 0u32));
+            // Most leaves are tilted against it.
+            assert!(normals.iter().filter(|n| **n != scaled(&ell)).count() > 1);
+        }
+        t => panic!("{t:?}"),
+    }
 }
 
 #[test]
@@ -344,6 +411,62 @@ fn the_smooth_pair_takes_the_closest_point_onto_the_cylinder() {
     ];
     let t = choose(Tangency::Near, &held, singular, &mut work()).unwrap();
     assert_eq!(along(t, Operand::B), ell);
+}
+
+#[test]
+fn the_smooth_pair_clusters_and_takes_the_closest_point() {
+    // The curved leaves form their cluster as flat ones do: the sheet's
+    // boxes join the leaves on both of the cylinder's faces into one.
+    let ls = smooth_leaves();
+    let key = |op: Operand, f: FaceId| (op as u8, f.0);
+    let cs = clusters(&ls, key, &mut work()).unwrap();
+    let [c] = &cs[..] else { panic!("{cs:?}") };
+    assert_eq!(c.kind(), Tangency::Near);
+    assert_eq!(c.leaves().len(), ls.len());
+    let held: Vec<&near_quadric::Leaf<S>> = c.leaves().map(|i| &ls[i as usize]).collect();
+    let sheet = top_half(&[0, 1]);
+    let on_a = [
+        Candidate {
+            singular: false,
+            sheet: Some(&sheet),
+        },
+        NONE[1],
+    ];
+    assert_eq!(
+        choose(c.kind(), &held, on_a, &mut work()).unwrap(),
+        Some(Target {
+            operand: Operand::A,
+            map: Map::Closest,
+        })
+    );
+    // The cylinder as the second operand: each leaf's boxes read in the
+    // operands' order, the same clusters.
+    let swap =
+        |b: BoxKey, op| BoxKey::new(op, b.face(), b.tile(), b.extent(Dir::U), b.extent(Dir::V));
+    let swapped: Vec<near_quadric::Leaf<S>> = ls
+        .iter()
+        .map(|l| near_quadric::Leaf {
+            a: swap(l.a, Operand::B),
+            b: swap(l.b, Operand::A),
+            ..l.clone()
+        })
+        .collect();
+    let cs2 = clusters(&swapped, key, &mut work()).unwrap();
+    let [c2] = &cs2[..] else { panic!("{cs2:?}") };
+    assert_eq!(c2.leaves().len(), ls.len());
+    // With a flat flush pair elsewhere in one run: two clusters, the
+    // curved one unchanged.
+    let up = flush(7, 7, [100.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    let mut mixed: Vec<&dyn ClusterLeaf> = vec![&up];
+    mixed.extend(ls.iter().map(|l| l as &dyn ClusterLeaf));
+    let both = clusters(&mixed, key, &mut work()).unwrap();
+    assert_eq!(both.len(), 2);
+    let curved = both
+        .iter()
+        .find(|m| m.leaves().len() == ls.len())
+        .expect("the curved cluster");
+    let shifted: Vec<u32> = c.leaves().map(|i| i + 1).collect();
+    assert_eq!(curved.leaves().collect::<Vec<_>>(), shifted);
 }
 
 #[test]

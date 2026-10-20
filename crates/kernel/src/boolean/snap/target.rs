@@ -48,8 +48,10 @@
 //! leaves' cone generators, reversed on Contact for the second operand,
 //! each scaled to a largest component of 1, sorted, repeats dropped).
 //! It is accepted if its minimum is positive and it lies in every leaf's
-//! admissible cone (`Cone::contains`, which also checks the cone's gap
-//! condition, not convex). Leaves read at a precision level take
+//! admissible cone (`Cone::contains`, which also bounds the vertical gap
+//! along `ℓ` over the leaf's pieces: exact on parallel plane pieces, so on
+//! a flush cluster of several plane normals, a box edge or an L's
+//! corner, a tilted `ℓ` is admitted; the condition is not convex). Leaves read at a precision level take
 //! directions in `f64`: then `ℓ` is rounded to the nearest `f64`s and
 //! the minimum checked again, exactly, on the rounded one. The normals
 //! are a set, so no leaf order is read; `ℓ` doesn't depend on the target,
@@ -58,7 +60,8 @@
 //! **Work.** Charged on the operation's budget in passes: the leaves (an
 //! item per leaf, a unit per leaf and per normal), the linear program
 //! (one item, a unit per normal), each check over the leaves (an item per
-//! leaf, a unit each).
+//! leaf, a unit each, and on a flat leaf's cone a unit per sub-piece pair
+//! and per program).
 
 use std::cmp::Ordering;
 
@@ -66,14 +69,13 @@ use malachite::Rational;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::Nearest;
 use varde_decide::bezier::{Scalar, Tensor};
-use varde_decide::count::boxes::BoxKey;
 use varde_decide::ids::FaceId;
 use varde_decide::leaves::flat;
 use varde_decide::leaves::near_quadric::{self, Quadric, SheetPiece};
 use varde_decide::perturb::dir::{Q3, max_min};
 use varde_decide::records::keys::Operand;
 
-use super::cluster::Tangency;
+use super::cluster::{ClusterLeaf, Tangency};
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
 
@@ -149,18 +151,15 @@ impl CylinderSheet {
 }
 
 /// A leaf of a tangency cluster as [`choose`] reads it.
-pub trait TangentLeaf: Sync {
-    /// Its two boxes.
-    fn boxes(&self) -> [BoxKey; 2];
-    /// Its tangency, if it is Near or Contact.
-    fn tangency(&self) -> Option<Tangency>;
+pub trait TangentLeaf: ClusterLeaf {
     /// Whether it reads directions exactly (else in `f64`).
     fn exact(&self) -> bool;
     /// Its leaf normals, the generators of its admissible cone (the
     /// second operand's reversed on Contact).
     fn normals(&self) -> Vec<Q3>;
-    /// Whether `ell` lies in its admissible cone.
-    fn admits(&self, ell: &Q3) -> bool;
+    /// Whether `ell` lies in its admissible cone, and the units of work
+    /// the check took (at least one).
+    fn admits(&self, ell: &Q3) -> (bool, u64);
     /// Whether the closest-point map of its piece of the other operand
     /// onto `sheet`, a sheet of operand `target`, certifies on it (module
     /// docs; the face check is the caller's).
@@ -168,14 +167,6 @@ pub trait TangentLeaf: Sync {
 }
 
 impl TangentLeaf for flat::Leaf {
-    fn boxes(&self) -> [BoxKey; 2] {
-        [self.a, self.b]
-    }
-
-    fn tangency(&self) -> Option<Tangency> {
-        Tangency::of(&self.kind)
-    }
-
     fn exact(&self) -> bool {
         true
     }
@@ -187,10 +178,15 @@ impl TangentLeaf for flat::Leaf {
         }
     }
 
-    fn admits(&self, ell: &Q3) -> bool {
+    /// A unit per sub-piece pair bounded and per program run.
+    fn admits(&self, ell: &Q3) -> (bool, u64) {
         match &self.kind {
-            flat::Kind::Near(t) | flat::Kind::Contact(t) => t.cone.contains(ell),
-            flat::Kind::Empty { .. } | flat::Kind::Simple { .. } => false,
+            flat::Kind::Near(t) | flat::Kind::Contact(t) => {
+                let mut w = flat::LeafWork::default();
+                let ok = t.cone.contains(ell, &mut w);
+                (ok, 1 + u64::from(w.gaps) + u64::from(w.programs))
+            }
+            flat::Kind::Empty { .. } | flat::Kind::Simple { .. } => (false, 1),
         }
     }
 
@@ -207,18 +203,6 @@ fn curved_tangent<S>(kind: &near_quadric::Kind<S>) -> Option<&near_quadric::Tang
 }
 
 impl<S: Scalar + Sync> TangentLeaf for near_quadric::Leaf<S> {
-    fn boxes(&self) -> [BoxKey; 2] {
-        [self.a, self.b]
-    }
-
-    fn tangency(&self) -> Option<Tangency> {
-        match self.kind {
-            near_quadric::Kind::Near(_) => Some(Tangency::Near),
-            near_quadric::Kind::Contact(_) => Some(Tangency::Contact),
-            near_quadric::Kind::Empty(_) | near_quadric::Kind::Simple { .. } => None,
-        }
-    }
-
     fn exact(&self) -> bool {
         false
     }
@@ -237,11 +221,11 @@ impl<S: Scalar + Sync> TangentLeaf for near_quadric::Leaf<S> {
             .collect()
     }
 
-    fn admits(&self, ell: &Q3) -> bool {
+    fn admits(&self, ell: &Q3) -> (bool, u64) {
         let Some(t) = curved_tangent(&self.kind) else {
-            return false;
+            return (false, 1);
         };
-        t.cone.contains(&to_f64(ell))
+        (t.cone.contains(&to_f64(ell)), 1)
     }
 
     fn closest(&self, target: Operand, sheet: &CylinderSheet) -> bool {
@@ -473,7 +457,9 @@ fn common_direction<L: TangentLeaf>(
     };
     let admitted = run(work, "snap target: cones", leaves, |l, ledger| {
         units(ledger, 1)?;
-        Ok(l.admits(&ell))
+        let (ok, used) = l.admits(&ell);
+        units(ledger, used.saturating_sub(1))?;
+        Ok(ok)
     })?;
     Ok(admitted.into_iter().all(|x| x).then_some(ell))
 }

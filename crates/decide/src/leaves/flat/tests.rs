@@ -247,25 +247,84 @@ fn crossing_pieces_are_simple_at_any_angle() {
 }
 
 #[test]
-fn the_cone_admits_by_graph_vectors_and_by_the_gap() {
-    let h = B_K / 2.0;
+fn the_cone_admits_by_graph_vectors_and_by_the_vertical_gap() {
+    // Parallel unit squares `h = 2⁻¹²` apart, `b_K = 5h/3`: along `ℓ` the
+    // gap is `h·|ℓ|/ℓ_z`, within `b_K` while `|ℓ|²/ℓ_z² ≤ 25/9`.
+    let h = 1.0 / 4096.0;
+    let b_k = rat(h) * Rational::from_signeds(5, 3);
     let a = piece_of(&square(0.0, 0.0, 1.0, 0.0), false);
     let b = piece_of(&square(0.0, 0.0, 1.0, h), false);
-    let t = near(&a, &b, &rat(B_K), &mut work()).unwrap();
-    assert!(t.cone.contains(&t.ell));
-    // Any positive multiple.
-    assert!(t.cone.contains(&qi([0, 0, 7])));
-    assert!(!t.cone.contains(&qi([0, 0, -1])));
-    assert!(!t.cone.contains(&qi([1, 0, 0])));
-    // In the hemisphere but the gap along it too wide: over the unit
-    // square tilted by `e` along `x` the bound is `(e + h)/|ℓ|`, which is
-    // `b_K` exactly where `(e + h)² = b_K²·(1 + e²)`.
-    assert!(!t.cone.contains(&qi([1, 0, 1])));
-    let e = rat(B_K) - rat(h);
-    let ok = [e.clone(), Rational::from(0), Rational::from(1)];
-    assert!(t.cone.contains(&ok), "(e + h)² < b_K²·(1 + e²)");
-    let e2 = &e + Rational::from_signeds(1, 1i64 << 30);
-    assert!(!t.cone.contains(&[e2, Rational::from(0), Rational::from(1)]));
+    let t = near(&a, &b, &b_k, &mut work()).unwrap();
+    assert_eq!(t.ell, qi([0, 0, 1]));
+    let admits = |ell: [i64; 3]| t.cone.contains(&qi(ell), &mut work());
+    assert!(t.cone.contains(&t.ell, &mut work()));
+    // Any positive multiple; not against the normal or across it.
+    assert!(admits([0, 0, 7]));
+    assert!(!admits([0, 0, -1]));
+    assert!(!admits([1, 0, 0]));
+    // Tilted: the hull extents along `(1, 0, 1)` reach `(1 + h)/√2`, far
+    // above `b_K`, but the gap between the planes is `h·√2`.
+    assert!(admits([1, 0, 1]));
+    assert!(admits([0, -1, 1]));
+    // `(4, 0, 3)` is `b_K` exactly; a hair more tilt is above it.
+    assert!(admits([4, 0, 3]));
+    assert!(admits([0, 4, -3].map(|x| -x)));
+    let more = [
+        Rational::from(4) + Rational::from_signeds(1, 1i64 << 40),
+        Rational::from(0),
+        Rational::from(3),
+    ];
+    assert!(!t.cone.contains(&more, &mut work()));
+    assert!(!admits([2, 0, 1]));
+    // Tilted so far the projections along `ℓ` miss each other (`b`'s
+    // moves by `h·10⁴ > 1` against `a`'s): no common point, no gap to
+    // bound; a program decides it.
+    let mut w = work();
+    assert!(t.cone.contains(&qi([10_000, 0, 1]), &mut w));
+    assert_eq!((w.gaps, w.programs), (1, 1));
+    assert!(!admits([100, 0, 1]));
+}
+
+#[test]
+fn coplanar_pieces_admit_every_direction_they_are_graphs_over() {
+    let a = piece_of(&square(0.0, 0.0, 20.0, 3.0), false);
+    let b = piece_of(&square(5.0, -5.0, 20.0, 3.0), false);
+    let t = near(&a, &b, &Rational::from(0), &mut work()).unwrap();
+    for ell in [[0, 0, 1], [1, 1, 1], [-1000, 999, 1], [0, -1, 1]] {
+        let mut w = work();
+        assert!(t.cone.contains(&qi(ell), &mut w), "{ell:?}");
+        assert_eq!(w, LeafWork { gaps: 1, ..work() }, "exact, unsplit");
+    }
+    assert!(!t.cone.contains(&qi([1, 0, 0]), &mut work()));
+    // Opposed: Contact, the same along any direction about the first's
+    // normal.
+    let opp = piece_of(&square(5.0, -5.0, 20.0, 3.0), true);
+    let c = contact(&a, &opp, &Rational::from(0), &mut work()).unwrap();
+    assert!(c.cone.contains(&qi([3, -2, 1]), &mut work()));
+    assert!(!c.cone.contains(&qi([3, -2, -1]), &mut work()));
+}
+
+#[test]
+fn curved_pieces_bound_the_gap_over_sub_piece_pairs() {
+    // The dome `z = 4k·x(1 − x)`, `k = b_K/4`, on the plane along two
+    // edges: along `ℓ = (1, 0, 64)` the hulls' extents reach `1/64`, but
+    // over sub-piece pairs whose projections meet the bound tightens to
+    // within `b_K`.
+    let b_k = rat(B_K);
+    let plane = piece_of(&square(0.0, 0.0, 1.0, 0.0), false);
+    let d = piece_of(&dome(0.0, B_K / 4.0), false);
+    let t = near(&plane, &d, &b_k, &mut work()).expect("within b_K along z");
+    let ell = qi([1, 0, 64]);
+    assert!(t.cone.gens().iter().all(|g| dot(g, &ell) > 0u32));
+    let mut w = work();
+    assert!(t.cone.contains(&ell, &mut w));
+    assert!(w.gaps > 1 && w.gaps <= MAX_GAP_PAIRS, "{w:?}");
+    // A deeper dome is more than `b_K` above the plane in the middle,
+    // along every direction: no split helps.
+    let deep = piece_of(&dome(0.0, 2.0 * B_K), false);
+    let mut w = work();
+    assert_eq!(near(&plane, &deep, &b_k, &mut w), None);
+    assert!(w.gaps > 1);
 }
 
 /// `p` turned a quarter about `z`: a signed permutation of the axes.
@@ -392,11 +451,12 @@ fn dome(h: f64, k: f64) -> HomPatch<Rational> {
 
 #[test]
 fn leaves_split_until_every_pair_certifies() {
-    // The dome rests on the plane along two edges; its hull reaches `2k`
-    // while it reaches `k`: over the whole square the gap isn't
-    // certified, over halves it is.
-    let plane = square(0.0, 0.0, 1.0, 0.0);
-    let d = dome(0.0, 0.75 * B_K);
+    // The dome reaches `k = 2b_K`, the plane at `k − b_K/2` crosses it
+    // at `x = ¼` and `x = ¾`: over the whole square the gap isn't
+    // certified; boxes in the middle are Near, at the crossings Simple,
+    // at the edges (below the plane) Empty.
+    let plane = square(0.0, 0.0, 1.0, 1.5 * B_K);
+    let d = dome(0.0, 2.0 * B_K);
     let face = |patch| FlatFace {
         patch,
         flipped: false,
@@ -416,10 +476,11 @@ fn leaves_split_until_every_pair_certifies() {
     let (ls, w) = run();
     assert!(ls.len() > 1);
     assert!(w.pairs as usize > ls.len());
-    assert!(
-        ls.iter()
-            .all(|l| matches!(l.kind, Kind::Near(_) | Kind::Empty { .. }))
-    );
+    assert!(ls.iter().all(|l| matches!(
+        l.kind,
+        Kind::Near(_) | Kind::Simple { .. } | Kind::Empty { .. }
+    )));
+    assert!(ls.iter().any(|l| matches!(l.kind, Kind::Empty { .. })));
     assert!(ls.iter().any(|l| matches!(l.kind, Kind::Near(_))));
     // The leaves partition the pair: their area products sum to one.
     let area = |b: &BoxKey| {
