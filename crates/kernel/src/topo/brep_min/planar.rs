@@ -646,8 +646,9 @@ fn sign(p: &impl Pred) -> Option<Ordering> {
     value_sign(p).0.ok()
 }
 
-/// `orient(a, b, c)`: positive when `c` lies left of `a → b`.
-struct Orient([[f64; 2]; 3]);
+/// `orient(a, b, c)`: positive when `c` lies left of `a → b`. Also the
+/// face arrangements' one flat predicate ([`crate::topo::arrange2d`]).
+pub(crate) struct Orient(pub(crate) [[f64; 2]; 3]);
 
 impl Pred for Orient {
     fn eval<N: Num>(&self) -> N {
