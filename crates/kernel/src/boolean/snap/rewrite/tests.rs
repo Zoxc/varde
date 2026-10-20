@@ -11,7 +11,7 @@ use super::super::along::{AlongInput, snap_along};
 use super::super::cluster::tests::{B_K, ext, fixture_leaves, quad, rat, rectangle, whole, work};
 use super::super::cluster::{ClusterLeaf, Tangency};
 use super::super::corner::{CornerInput, Split, corner};
-use super::super::rim::{Along, Element, Implicit, SnappedFace, rim};
+use super::super::rim::{Along, Branch, Element, Implicit, SnappedFace, rim};
 use super::super::target::Map;
 use super::*;
 use crate::geom::curve::{Curve3D, PCurve};
@@ -1287,7 +1287,16 @@ const G: f64 = 1.0 / 16384.0;
 /// on the floor's edge 0 and leaving it at the slope `D/8`: the snap
 /// along gives that edge one `SnapAlong` piece from its start to where it
 /// leaves `b_K`. Rewritten, and its geometry with seam target `eps`.
-fn tilted(eps: f64) -> (Rewrite, Result<Geometry, RewriteError>, Curve3D) {
+pub(crate) fn tilted(eps: f64) -> (Rewrite, Result<Geometry, RewriteError>, Curve3D) {
+    tilted_with(eps, |_, _| {})
+}
+
+/// [`tilted`], the corner rule's decisions and the rewrite edited by
+/// `edit` before the geometry.
+fn tilted_with(
+    eps: f64,
+    edit: impl FnOnce(&mut Corner, &mut Rewrite),
+) -> (Rewrite, Result<Geometry, RewriteError>, Curve3D) {
     let s_tile = quad([0.0, 0.0, G], [8.0, D, G], [0.0, 8.0, G]);
     let tiles = [([0, 0], s_tile)];
     let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
@@ -1359,7 +1368,7 @@ fn tilted(eps: f64) -> (Rewrite, Result<Geometry, RewriteError>, Curve3D) {
         groups: &[],
         coincident: &[],
     };
-    let cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
+    let mut cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
     let map = along_z();
     let ai = AlongInput {
         b_k: B_K,
@@ -1369,7 +1378,8 @@ fn tilted(eps: f64) -> (Rewrite, Result<Geometry, RewriteError>, Curve3D) {
         same_form: &unrelated,
     };
     let al = snap_along(&rm, &input, &cr, &ai, &mut work()).expect("the snap along");
-    let r = rewrite(&rm, &input, &cr, &al, &[], &mut work()).expect("a rewrite");
+    let mut r = rewrite(&rm, &input, &cr, &al, &[], &mut work()).expect("a rewrite");
+    edit(&mut cr, &mut r);
     let floor = quad([-8.0, 0.0, 0.0], [16.0, 0.0, 0.0], [-8.0, 16.0, 0.0]);
     let t_faces = [TargetFace {
         face: FaceId(0),
@@ -1482,11 +1492,119 @@ fn a_snap_along_piece_merges_into_its_target_edge_and_the_rest_fits_the_target()
 }
 
 #[test]
+fn a_bracket_end_pinned_off_its_target_edge_is_bounded_where_it_lands() {
+    // The bracket's end said to join a branch vertex away from the floor's
+    // edge, its claimed move zero: as an end of the piece reusing that
+    // edge it lands on the edge's curve, and its displacement is bounded
+    // from there, at least the height `G` it drops.
+    let end = SnapVert::Bracket {
+        edge: EdgeId(0),
+        target: EdgeId(0),
+        index: 0,
+        end: EndKind::End,
+    };
+    let (r, geo, _) = tilted_with(1e-5, |cr, r| {
+        cr.branches.push(Branch {
+            piece: 0,
+            at: q(0.5),
+            uv: uv(0.5, 0.5),
+            targets: vec![FaceId(0)],
+            rising: true,
+            residual: 0.0,
+        });
+        let i = (cr.branches.len() - 1) as u32;
+        let v = r.verts.iter_mut().find(|v| v.key == end).expect("the end");
+        v.moved = Moved {
+            to: Placement::Branch(i),
+            ..Moved::STAYS
+        };
+    });
+    let geo = geo.expect("geometry");
+    let vg = vgeom(&geo, end);
+    assert_eq!(vg.pos[2], 0.0);
+    assert_eq!(vg.on.len(), 1);
+    let rv = r.verts.iter().find(|v| v.key == end).unwrap();
+    assert_eq!(rv.moved.displacement, 0.0);
+    assert!(vg.displacement >= G && vg.displacement <= B_K, "{vg:?}");
+    // Every vertex's bound holds from its pre-snap point; the floor's own
+    // vertices don't move.
+    for v in &geo.verts {
+        if let SnapVert::Vert(o, w) = v.key {
+            let pre = if o == A {
+                assert_eq!(v.displacement, 0.0);
+                continue;
+            } else {
+                [[0.0, 0.0, G], [8.0, D, G], [8.0, 8.0 + D, G], [0.0, 8.0, G]][w.0 as usize]
+            };
+            let d: f64 = (0..3)
+                .map(|k| (pre[k] - v.pos[k]) * (pre[k] - v.pos[k]))
+                .sum::<f64>()
+                .sqrt();
+            assert!(v.displacement >= d * (1.0 - 1e-12), "{v:?}");
+        }
+    }
+}
+
+#[test]
 fn a_fit_beyond_half_the_seam_target_is_refused() {
     // With no seam allowed at all, the edges fitted to the floor (whose
     // vertices' UVs on it are rounded) fail their fit.
     let (_, geo, _) = tilted(0.0);
     assert!(matches!(geo, Err(RewriteError::Fit(_))), "{geo:?}");
+}
+
+/// The bowl's centre snapped onto the floor (face 0 of `A`, the plane
+/// `z = 0` over `[−5, 15]²`): a kept ring and a snapped square, the rim
+/// along box sides at the sheets' mid-surface. The rewrite, its geometry
+/// and the floor's patch.
+pub(crate) fn snapped_bowl() -> (Rewrite, Geometry, HomPatch<Rational>) {
+    let ids = SMALL;
+    let tiles = [([0, 0], bowl())];
+    let sq = Square::new(ids, 0);
+    let own = sq.trims();
+    let faces = [SnappedFace {
+        face: FaceId(0),
+        tiles: &tiles,
+        own: &own,
+        target: &[],
+    }];
+    let leaves = centre_boxes(ids, &[0], &[0]);
+    let g = bowl_geom(ids);
+    let input = RimInput {
+        snapped: B,
+        faces: &faces,
+        targets: &[(FaceId(0), FLOOR)],
+        band: &band,
+    };
+    let rm = rim(&leaves, &input, &mut work()).expect("a rim");
+    let ci = CornerInput {
+        b_k: B_K,
+        order: &g,
+        band: &narrow,
+        candidates: &[],
+        fixed: &[],
+        groups: &[],
+        coincident: &[],
+    };
+    let cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
+    let none = SnapAlong::default();
+    let r = rewrite(&rm, &input, &cr, &none, &[], &mut work()).expect("a rewrite");
+    let floor = quad([-5.0, -5.0, 0.0], [15.0, -5.0, 0.0], [-5.0, 15.0, 0.0]);
+    let t_faces = [TargetFace {
+        face: FaceId(0),
+        tile: [0, 0],
+        patch: &floor,
+    }];
+    let map = along_z();
+    let gi = GeomInput {
+        order: &g,
+        map: &map,
+        faces: &t_faces,
+        edges: &[],
+        eps_seam: 1e-5,
+    };
+    let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work()).expect("geometry");
+    (r, geo, floor)
 }
 
 #[test]

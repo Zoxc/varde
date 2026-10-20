@@ -17,7 +17,10 @@
 //! the snapped edge runs along the target edge and reuses it, and its
 //! ordinary crossings of it; and [`join`]: once every cluster is snapped,
 //! the edges outside the clusters at the vertices they moved refit once,
-//! split where the refit meets the untouched rest.
+//! split where the refit meets the untouched rest; and [`stale`]: which
+//! elements of a rewrite lie on the target, and the order the snaps run
+//! in, the leaves each snap and the join pass leave stale recertified,
+//! merged into an earlier cluster where they join it, which then re-runs.
 
 pub mod along;
 pub mod cluster;
@@ -25,4 +28,5 @@ pub mod corner;
 pub mod join;
 pub mod rewrite;
 pub mod rim;
+pub mod stale;
 pub mod target;

@@ -195,6 +195,12 @@ impl<K: Ord + Clone> Cluster<K> {
         self.leaves.get(k).map(|l| &l.key)
     }
 
+    /// Whether one of its leaves is the pair of boxes `boxes` (the first
+    /// operand's first).
+    pub fn holds(&self, boxes: &[BoxKey; 2]) -> bool {
+        self.leaves.iter().any(|l| l.boxes == *boxes)
+    }
+
     /// The tie-broken order of clusters: the key, then the first leaf's
     /// boxes and position.
     fn order(&self) -> (&ClusterKey<K>, &[BoxKey; 2], u32) {
@@ -215,13 +221,16 @@ pub enum ClusterError {
     NotANumber(u32),
     /// The windows given aren't one per cluster.
     Windows,
+    /// There is no leaf at this position, or it isn't of the cluster's
+    /// kind.
+    Kind(u32),
     /// The budget ran out ([`KernelError::OutOfBudget`]).
     OutOfBudget(KernelError),
 }
 
 /// A box's sides in its face's global UV, exactly: `[[u_lo, u_hi],
 /// [v_lo, v_hi]]` as integers over `2^`[`MAX_BOX_DEPTH`].
-type UvBox = [[i128; 2]; 2];
+pub(super) type UvBox = [[i128; 2]; 2];
 
 /// The global coordinate of the local dyadic `t` in tile `i`, times
 /// `2^`[`MAX_BOX_DEPTH`]: exact, `|i| < 2⁶³` and the shift below `2⁵³`.
@@ -229,7 +238,7 @@ fn global(i: i64, t: Dyadic) -> i128 {
     (i128::from(i) << MAX_BOX_DEPTH) + (i128::from(t.num()) << (MAX_BOX_DEPTH - t.exp()))
 }
 
-fn uv_box(b: &BoxKey) -> UvBox {
+pub(super) fn uv_box(b: &BoxKey) -> UvBox {
     let side = |dir: Dir, i: i64| {
         let e: Extent = b.extent(dir);
         [global(i, e.lo()), global(i, e.hi())]
@@ -300,32 +309,7 @@ where
     let all: Vec<u32> = (0..n).collect();
     let checked = run(work, "snap clusters: leaves", &all, |&i, ledger| {
         units(ledger, 1)?;
-        let l = &leaves[i as usize];
-        let [a, b] = l.boxes();
-        if a.operand() != Operand::A || b.operand() != Operand::B {
-            return Err(Stop::Failed(ClusterError::Operands(i)));
-        }
-        let world = l.world();
-        if world.iter().flatten().flatten().any(|x| x.is_nan()) {
-            return Err(Stop::Failed(ClusterError::NotANumber(i)));
-        }
-        let Some(t) = l.tangency() else {
-            return Ok(None);
-        };
-        let (ka, kb) = (
-            face_key(Operand::A, a.face()),
-            face_key(Operand::B, b.face()),
-        );
-        let key = ClusterKey::new(world, [ka.clone(), kb.clone()], [[ka, kb]]).map_err(|e| {
-            debug_assert_eq!(e, KeyError::NotANumber, "a leaf has its boxes and faces");
-            Stop::Failed(ClusterError::NotANumber(i))
-        })?;
-        let at = LeafAt {
-            key,
-            boxes: [a, b],
-            index: i,
-        };
-        Ok(Some((at, t)))
+        leaf_at(i, &leaves[i as usize], &face_key).map_err(Stop::Failed)
     })?;
     let (at, kinds): (Vec<LeafAt<K>>, Vec<Tangency>) = checked.into_iter().flatten().unzip();
 
@@ -377,6 +361,65 @@ where
     })?;
     out.sort_unstable_by(|a, b| a.order().cmp(&b.order()));
     Ok(out)
+}
+
+/// The leaf `l` at position `i` checked, and its place in a cluster's
+/// order and its tangency if it is Near or Contact.
+fn leaf_at<L: ClusterLeaf, K: Ord + Clone>(
+    i: u32,
+    l: &L,
+    face_key: &(impl Fn(Operand, FaceId) -> K + ?Sized),
+) -> Result<Option<(LeafAt<K>, Tangency)>, ClusterError> {
+    let [a, b] = l.boxes();
+    if a.operand() != Operand::A || b.operand() != Operand::B {
+        return Err(ClusterError::Operands(i));
+    }
+    let world = l.world();
+    if world.iter().flatten().flatten().any(|x| x.is_nan()) {
+        return Err(ClusterError::NotANumber(i));
+    }
+    let Some(t) = l.tangency() else {
+        return Ok(None);
+    };
+    let (ka, kb) = (
+        face_key(Operand::A, a.face()),
+        face_key(Operand::B, b.face()),
+    );
+    let key = ClusterKey::new(world, [ka.clone(), kb.clone()], [[ka, kb]]).map_err(|e| {
+        debug_assert_eq!(e, KeyError::NotANumber, "a leaf has its boxes and faces");
+        ClusterError::NotANumber(i)
+    })?;
+    let at = LeafAt {
+        key,
+        boxes: [a, b],
+        index: i,
+    };
+    Ok(Some((at, t)))
+}
+
+/// The cluster of kind `kind` made of the leaves at `positions` of
+/// `leaves` (each of that kind; keys read by `face_key` as in
+/// [`clusters`]), its leaves in the geometric order; `None` if there are
+/// none. Not charged: the caller charges a unit per leaf.
+pub(crate) fn of_leaves<L, K>(
+    kind: Tangency,
+    positions: &[u32],
+    leaves: &[L],
+    face_key: &(impl Fn(Operand, FaceId) -> K + ?Sized),
+) -> Result<Option<Cluster<K>>, ClusterError>
+where
+    L: ClusterLeaf,
+    K: Ord + Clone,
+{
+    let mut at = Vec::with_capacity(positions.len());
+    for &i in positions {
+        let l = leaves.get(i as usize).ok_or(ClusterError::Kind(i))?;
+        match leaf_at(i, l, face_key)? {
+            Some((a, t)) if t == kind => at.push(a),
+            _ => return Err(ClusterError::Kind(i)),
+        }
+    }
+    Ok((!at.is_empty()).then(|| cluster(kind, at)))
 }
 
 /// The cluster of `leaves` (non-empty) of kind `kind`: its leaves sorted,

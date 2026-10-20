@@ -51,7 +51,9 @@
 //! `S` carried halfway along `ℓ`; one that also bounds an edge on the
 //! target (a snapped edge, an `S` edge along the rim), and an `S` vertex
 //! inside the rim, to its image on the target, where that edge's fit
-//! holds; the rest stay. A vertex's
+//! holds; the rest stay. Each vertex's displacement is bounded again
+//! from where it lands ([`VertGeom::displacement`]): a curve point of a
+//! reused edge wins over a placement off that edge. A vertex's
 //! UV on a target face is the target edge's p-curve's there where it
 //! stores a parameter on one, else its position carried onto the face's
 //! plane; on a face of `S`, the carried target edge's, else its exact UV
@@ -201,6 +203,11 @@ pub struct VertGeom {
     pub pos: [f64; 3],
     /// The parameters it stores on the target edges it lies on.
     pub on: Vec<(EdgeId, f64)>,
+    /// An upper bound of its distance from its pre-snap position to
+    /// [`pos`](Self::pos) (`0` for a target vertex): where a reused
+    /// edge's curve point wins over the corner rule's placement, this, not
+    /// [`Moved::displacement`](crate::boolean::snap::corner::Moved::displacement), bounds the move.
+    pub displacement: f64,
 }
 
 /// A reused target edge's chain, split at the parameters the vertices
@@ -440,6 +447,14 @@ fn chart(f: &TargetFace<'_>) -> Option<Chart> {
         a,
         b,
     })
+}
+
+/// The plane of target face `f`, exactly: a point of it and a normal
+/// (nonzero), if its patch is affine with one weight.
+pub(in crate::boolean::snap) fn plane(f: &TargetFace<'_>) -> Option<([Q; 3], [Q; 3])> {
+    let c = chart(f)?;
+    let n = cross3q(&c.a, &c.b);
+    Some((c.o, n))
 }
 
 impl Chart {
@@ -822,7 +837,8 @@ impl<O: EntityOrder> Geo<'_, O> {
         depth: u32,
         ledger: &mut Ledger<'_>,
     ) -> Res<VertGeom> {
-        units(ledger, 1)?;
+        // Its position and its displacement.
+        units(ledger, 2)?;
         let key = v.key;
         let bad = || Stop::Failed(RewriteError::Position(key));
         // The target edges it ends a reused edge of.
@@ -862,10 +878,12 @@ impl<O: EntityOrder> Geo<'_, O> {
             }
         }
         if let Some(a) = at {
+            let displacement = self.displacement(v, a.pos).ok_or_else(bad)?;
             return Ok(VertGeom {
                 key,
                 pos: a.pos,
                 on: a.on,
+                displacement,
             });
         }
         let pos = match key {
@@ -888,11 +906,23 @@ impl<O: EntityOrder> Geo<'_, O> {
                 }
             },
         };
+        let displacement = self.displacement(v, pos).ok_or_else(bad)?;
         Ok(VertGeom {
             key,
             pos,
             on: Vec::new(),
+            displacement,
         })
+    }
+
+    /// An upper bound of the distance from vertex `v`'s pre-snap point to
+    /// `pos`, exactly; `0` for a target vertex.
+    fn displacement(&self, v: &NewVert, pos: [f64; 3]) -> Option<f64> {
+        if matches!(v.key, SnapVert::Vert(o, _) if o != self.s_op) {
+            return Some(0.0);
+        }
+        let p = self.pre_snap(v)?;
+        Some(dist_up(&d2(&p, &exact3(pos))))
     }
 
     /// Where the corner rule (or a bracket end) pins vertex `v`, if it
