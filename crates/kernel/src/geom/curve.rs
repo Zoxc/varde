@@ -31,9 +31,25 @@
 //! A p-curve so far is Q spans only, rational quadratics in global UV;
 //! linear and iso spans are Q spans with their middle control point on
 //! the chord.
+//!
+//! **Canonical points and splits.** Where two edges share a chain and one
+//! of them ends inside it, both must see the same point there, to the
+//! bit. [`Curve3D::point_at`] is the one evaluator for that: the exact
+//! point of the stored span at `t` (rational arithmetic on the stored
+//! `f64`s), rounded to the nearest `f64` once per coordinate.
+//! [`Curve3D::split`] inserts knots: each new knot's control point is that
+//! point of the chain it is called on, so the bits there don't depend on
+//! which other knots are inserted with it, or by whom; the spans between
+//! are the exact sub-spans of the stored ones (their blossoms), rounded
+//! once per value, so a split moves the curve by at most that rounding,
+//! and the spans it doesn't cut keep their bits. [`Curve3D::slice`] takes
+//! the spans between two knots. The same for p-curves.
 
+use malachite::Rational;
 use varde_decide::bezier::{HomCurve, Scalar};
 use varde_decide::num::bounded::Bounded;
+
+use super::round::{nearest, q};
 
 /// The least weight of a span's control point.
 pub const MIN_WEIGHT: f64 = 1.0 / 64.0;
@@ -133,6 +149,27 @@ impl Curve3D {
     pub fn eval_at<S: Scalar>(&self, t: f64, like: &S) -> Option<[S; 3]> {
         eval_chain(&self.spans, &self.knots, t, like)
     }
+
+    /// The canonical point at `t` (module docs): exact, rounded to the
+    /// nearest `f64`s; at a knot its control point. `None` outside the
+    /// knots' range.
+    pub fn point_at(&self, t: f64) -> Option<[f64; 3]> {
+        point_chain(&self.spans, &self.knots, t)
+    }
+
+    /// The chain with knots inserted at `ts` (module docs): those inside
+    /// its range and not knots already; the rest are ignored. The new
+    /// chain validated as by [`new`](Self::new).
+    pub fn split(&self, ts: &[f64]) -> Result<Curve3D, CurveError> {
+        let (spans, knots) = split_chain(&self.spans, &self.knots, ts);
+        Curve3D::new(spans, knots)
+    }
+
+    /// The spans between knots `t0 < t1`, `None` unless both are knots.
+    pub fn slice(&self, t0: f64, t1: f64) -> Option<Curve3D> {
+        let (spans, knots) = slice_chain(&self.spans, &self.knots, t0, t1)?;
+        Some(Curve3D { spans, knots })
+    }
 }
 
 impl PCurve {
@@ -210,6 +247,129 @@ impl PCurve {
     pub fn eval_at<S: Scalar>(&self, t: f64, like: &S) -> Option<[S; 2]> {
         eval_chain(&self.spans, &self.knots, t, like)
     }
+
+    /// The canonical UV point at `t` (as [`Curve3D::point_at`]).
+    pub fn point_at(&self, t: f64) -> Option<[f64; 2]> {
+        point_chain(&self.spans, &self.knots, t)
+    }
+
+    /// The chain with knots inserted at `ts` (as [`Curve3D::split`]).
+    pub fn split(&self, ts: &[f64]) -> Result<PCurve, CurveError> {
+        let (spans, knots) = split_chain(&self.spans, &self.knots, ts);
+        PCurve::new(spans, knots)
+    }
+
+    /// The spans between knots `t0 < t1` (as [`Curve3D::slice`]).
+    pub fn slice(&self, t0: f64, t1: f64) -> Option<PCurve> {
+        let (spans, knots) = slice_chain(&self.spans, &self.knots, t0, t1)?;
+        Some(PCurve { spans, knots })
+    }
+}
+
+/// A chain's spans and knots.
+type Chain<const D: usize> = (Vec<[[f64; D]; 3]>, Vec<f64>);
+
+/// A span's control point in homogeneous form, exactly: `(w·x, w)`.
+fn hom_exact<const D: usize>(p: &[f64; D]) -> [Rational; D] {
+    let w = q(p[D - 1]);
+    std::array::from_fn(|k| if k + 1 == D { w.clone() } else { q(p[k]) * &w })
+}
+
+/// The blossom of a quadratic span's homogeneous control points at
+/// `(a, b)`: `(1 − a)(1 − b)·H₀ + ((1 − a)b + a(1 − b))·H₁ + ab·H₂`.
+fn blossom<const D: usize>(h: &[[Rational; D]; 3], a: &Rational, b: &Rational) -> [Rational; D] {
+    let one = Rational::from(1u32);
+    let (ma, mb) = (&one - a, &one - b);
+    let c0 = &ma * &mb;
+    let c1 = &ma * b + a * &mb;
+    let c2 = a * b;
+    std::array::from_fn(|k| &c0 * &h[0][k] + &c1 * &h[1][k] + &c2 * &h[2][k])
+}
+
+/// A homogeneous point as a stored control point, its point and weight
+/// rounded to the nearest `f64`s.
+fn affine_rounded<const D: usize>(h: &[Rational; D]) -> [f64; D] {
+    let w = &h[D - 1];
+    std::array::from_fn(|k| {
+        if k + 1 == D {
+            nearest(w)
+        } else {
+            nearest(&(&h[k] / w))
+        }
+    })
+}
+
+/// The local parameter of `t` on `[a, b]`, exactly.
+fn local_exact(t: f64, a: f64, b: f64) -> Rational {
+    (q(t) - q(a)) / (q(b) - q(a))
+}
+
+/// The canonical point of a chain at `t` (as [`Curve3D::point_at`]).
+fn point_chain<const D: usize, const N: usize>(
+    spans: &[[[f64; D]; 3]],
+    knots: &[f64],
+    t: f64,
+) -> Option<[f64; N]> {
+    debug_assert_eq!(N + 1, D);
+    let (k, at) = locate(knots, t)?;
+    let p = match at {
+        At::Start => spans[k][0],
+        At::End => spans[k][2],
+        At::Inside => {
+            let s = local_exact(t, knots[k], knots[k + 1]);
+            affine_rounded(&blossom(&spans[k].each_ref().map(hom_exact), &s, &s))
+        }
+    };
+    Some(std::array::from_fn(|c| p[c]))
+}
+
+/// A chain with knots inserted at `ts` (as [`Curve3D::split`]), unchecked.
+fn split_chain<const D: usize>(spans: &[[[f64; D]; 3]], knots: &[f64], ts: &[f64]) -> Chain<D> {
+    let mut out_spans = Vec::with_capacity(spans.len() + ts.len());
+    let mut out_knots = Vec::with_capacity(knots.len() + ts.len());
+    out_knots.push(knots[0]);
+    for (k, span) in spans.iter().enumerate() {
+        let (a, b) = (knots[k], knots[k + 1]);
+        let mut inner: Vec<f64> = ts.iter().copied().filter(|&t| a < t && t < b).collect();
+        inner.sort_by(f64::total_cmp);
+        inner.dedup();
+        if inner.is_empty() {
+            out_spans.push(*span);
+            out_knots.push(b);
+            continue;
+        }
+        let h = span.each_ref().map(hom_exact);
+        // The stored ends, and between them each new knot's canonical
+        // point, the same bits as `point_chain` gives there.
+        let mut cuts: Vec<(Rational, [f64; D])> = vec![(Rational::from(0u32), span[0])];
+        for &t in &inner {
+            let s = local_exact(t, a, b);
+            let p = affine_rounded(&blossom(&h, &s, &s));
+            cuts.push((s, p));
+        }
+        cuts.push((Rational::from(1u32), span[2]));
+        // The sub-span over `[s₀, s₁]`: the blossom's `(s₀, s₀)`, `(s₀, s₁)`
+        // and `(s₁, s₁)`, its ends the points (and weights) above.
+        for w in cuts.windows(2) {
+            let ((s0, p0), (s1, p1)) = (&w[0], &w[1]);
+            out_spans.push([*p0, affine_rounded(&blossom(&h, s0, s1)), *p1]);
+        }
+        out_knots.extend(inner);
+        out_knots.push(b);
+    }
+    (out_spans, out_knots)
+}
+
+/// The spans of a chain between its knots `t0 < t1`.
+fn slice_chain<const D: usize>(
+    spans: &[[[f64; D]; 3]],
+    knots: &[f64],
+    t0: f64,
+    t1: f64,
+) -> Option<Chain<D>> {
+    let i = knots.iter().position(|&k| k == t0)?;
+    let j = knots.iter().position(|&k| k == t1)?;
+    (i < j).then(|| (spans[i..j].to_vec(), knots[i..=j].to_vec()))
 }
 
 /// The span of `D − 1` coordinates and a weight in homogeneous form at
@@ -333,3 +493,6 @@ pub(crate) fn local<S: Scalar>(t: f64, a: f64, b: f64, like: &S) -> S {
             .div(&S::from_f64(b, like).sub(&a_s))
     }
 }
+
+#[cfg(test)]
+mod tests;

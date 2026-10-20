@@ -10,7 +10,9 @@
 //! window land, the root clusters the target's vertices carry, decided
 //! once by the corner rule; and [`rewrite`]: the snapped side's faces
 //! split along the rim, the inner pieces onto the target, with canonical
-//! keys from the operands' ids and the map back to the operands; and
+//! keys from the operands' ids and the map back to the operands, then
+//! where its vertices land and its edges' curves, reusing the target's
+//! edges bit for bit where they run along them; and
 //! [`along`]: per pair of a snapped and a target edge, the brackets where
 //! the snapped edge runs along the target edge and reuses it, and its
 //! ordinary crossings of it.

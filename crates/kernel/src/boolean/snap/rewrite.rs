@@ -5,9 +5,9 @@
 //! separate two different target faces. Every entity made gets a
 //! canonical key from the operands' ids ([`SnapVert`], [`SnapEdge`],
 //! [`SnapFace`]), never a fresh id, and the [`SnapMap`] records each one's
-//! operand parent and pre-image. Geometry (the edges' curves and
-//! p-curves on `T`, where the vertices land) is not made here: the
-//! vertices carry the corner rule's outcome ([`NewVert::moved`]).
+//! operand parent and pre-image. The vertices carry the corner rule's
+//! outcome ([`NewVert::moved`]); where they land and the edges' curves
+//! and p-curves are the [`geometry()`] pass's, on this topology.
 //!
 //! **A face's arrangement.** In each face's global UV, exactly (rational
 //! arithmetic): the face's own trims (its whole boundary, the face on
@@ -53,22 +53,31 @@
 //! keeps (`S` face id, piece index, its index among its piece's branch
 //! vertices along the piece); a split of an `S` edge at an anchor by the
 //! corner rule (edge id, anchor id; [`Corner::splits`], at the anchor's
-//! foot as a fraction of the edge's parameter range); a target edge's
+//! foot as a fraction of the edge's parameter range); an end of a
+//! `SnapAlong` piece of an `S` edge along a target edge (both ids, the
+//! piece's index, which end; [`SnapAlong`], at its fraction of the edge's
+//! parameter range); a target edge's
 //! end (a `T` vertex); a target edge crossing an `S` edge (both ids) or a
 //! rim piece (target edge id, piece index). A point on an `S` edge takes
 //! the first of these over every face the edge bounds, so the edge is cut
-//! at the same points with the same vertices on all its faces.
+//! at the same points with the same vertices on all its faces; the corner
+//! rule's points and the `SnapAlong` pieces' ends cut every segment they
+//! lie on (an own trim and a rim piece along it alike).
 //! Identification is not done here: a rim vertex the corner rule joins to
 //! an anchor keeps its own key, the anchor in its [`Moved`].
 //!
 //! **Edges** ([`SnapEdge`]). An `S` edge (or a rim piece along one) is cut
 //! at all its vertices over every face; its pieces are numbered from its
-//! stored start. A rim piece along box sides or a target edge is cut at
-//! its vertices (branch vertices, target edges crossing it), its parts
-//! numbered along it. A target edge's kept pieces in a face are numbered
-//! along it. An edge runs along its parent's direction: an `S` edge's
-//! parameter, the rim piece (region on the left), the target edge's
-//! parameter.
+//! stored start; an edge cut into more than one is listed with its pieces
+//! ([`Rewrite::replaced`]), for the faces using it outside the cluster
+//! too. A rim piece along box sides is cut at its vertices (branch
+//! vertices, target edges crossing it), its parts numbered along it. A
+//! target edge's pieces in a face, kept inside the region or a rim piece
+//! along it, are numbered along it. An edge runs along its parent's
+//! direction: an `S` edge's parameter, the rim piece (region on the left),
+//! the target edge's parameter. The corner rule's coincident rim vertices
+//! ([`Corner::zero_edges`]) are joined by a zero-length edge, used by no
+//! face here.
 //!
 //! **Faces** ([`SnapFace`]). A face's kept pieces and its snapped pieces on
 //! each target face are numbered in the order of their outer loops' least
@@ -95,8 +104,9 @@ use varde_decide::count::boxes::UvSpan;
 use varde_decide::ids::{EdgeId, Entity, FaceId, VertId};
 use varde_decide::records::keys::Operand;
 
+use super::along::{EndKind, SnapAlong};
 use super::corner::{Corner, Moved, Placement, RimVertKind};
-use super::rim::{self, ExactSpan, Rim, RimInput, RimTrim, SnappedFace};
+use super::rim::{self, Along, ExactSpan, Rim, RimInput, RimTrim, SnappedFace};
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
 
@@ -157,6 +167,14 @@ pub enum SnapVert {
     },
     /// This `S` edge split at this anchor by the corner rule.
     Split { edge: EdgeId, at: (Operand, VertId) },
+    /// An end of the `index`-th `SnapAlong` piece of this `S` edge along
+    /// this target edge.
+    Bracket {
+        edge: EdgeId,
+        target: EdgeId,
+        index: u32,
+        end: EndKind,
+    },
     /// This `S` edge crossing this target edge.
     Cross { edge: EdgeId, cut: EdgeId },
     /// This target edge crossing this rim piece.
@@ -169,14 +187,19 @@ pub enum SnapEdge {
     /// The `part`-th piece of this `S` edge from its stored start (the
     /// whole edge where it isn't cut).
     Piece { edge: EdgeId, part: u32 },
-    /// The `part`-th part of this rim piece (on this `S` face) along it.
+    /// The `part`-th part of this rim piece (on this `S` face) along it,
+    /// a piece along box sides.
     Rim { face: FaceId, piece: u32, part: u32 },
-    /// The `part`-th piece along it of this target edge in this `S` face.
+    /// The `part`-th piece along it of this target edge in this `S` face:
+    /// inside the region, or a rim piece along it.
     Cut {
         face: FaceId,
         edge: EdgeId,
         part: u32,
     },
+    /// The zero-length edge joining the rim vertices starting these two
+    /// pieces ([`Corner::zero_edges`]).
+    Zero { from: u32, to: u32 },
 }
 
 /// A face's canonical key (module docs).
@@ -206,6 +229,7 @@ impl SnapVert {
                 vec![(s, face.into())]
             }
             SnapVert::Split { edge, at } => vec![(s, edge.into()), (at.0, at.1.into())],
+            SnapVert::Bracket { edge, target, .. } => vec![(s, edge.into()), (t, target.into())],
             SnapVert::Cross { edge, cut } => vec![(s, edge.into()), (t, cut.into())],
             SnapVert::CutRim { cut, .. } => vec![(t, cut.into())],
         }
@@ -221,8 +245,9 @@ impl SnapVert {
             SnapVert::RimBox { .. } => 4,
             SnapVert::Branch { .. } => 5,
             SnapVert::Split { .. } => 6,
-            SnapVert::Cross { .. } => 7,
-            SnapVert::CutRim { .. } => 8,
+            SnapVert::Bracket { .. } => 7,
+            SnapVert::Cross { .. } => 8,
+            SnapVert::CutRim { .. } => 9,
         };
         (r, *self)
     }
@@ -238,6 +263,7 @@ impl SnapEdge {
             SnapEdge::Cut { face, edge, .. } => {
                 vec![(snapped, face.into()), (snapped.other(), edge.into())]
             }
+            SnapEdge::Zero { .. } => Vec::new(),
         }
     }
 }
@@ -321,6 +347,8 @@ pub struct NewEdge {
     pub key: SnapEdge,
     /// Its vertices at its start and its end.
     pub ends: [SnapVert; 2],
+    /// The rim piece it lies along, if any.
+    pub rim: Option<u32>,
 }
 
 /// A vertex of the rewrite.
@@ -331,6 +359,19 @@ pub struct NewVert {
     /// Where the corner rule sends it ([`Placement::Stays`] where it
     /// doesn't decide, or for an operand's vertex it doesn't move).
     pub moved: Moved,
+    /// Its points in the global UV of the faces of `S` it lies on, by
+    /// face.
+    pub at: Vec<(FaceId, P2)>,
+}
+
+/// An edge of `S` the rewrite cuts, and the pieces that replace it in
+/// every face using it, the faces the cluster doesn't reach included.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Replaced {
+    /// The edge.
+    pub edge: EdgeId,
+    /// Its pieces from its stored start, each running its way.
+    pub parts: Vec<SnapEdge>,
 }
 
 /// The rewrite of the faces of `S` a cluster reaches (module docs).
@@ -342,6 +383,8 @@ pub struct Rewrite {
     pub edges: Vec<NewEdge>,
     /// The edges' vertices, by key.
     pub verts: Vec<NewVert>,
+    /// The edges of `S` cut into more than one piece, by id.
+    pub replaced: Vec<Replaced>,
     /// Their parents and pre-images.
     pub map: SnapMap,
 }
@@ -369,6 +412,28 @@ pub enum RewriteError {
     /// Two entities with one key: the input names one point or stretch
     /// two ways.
     Key,
+    /// The map isn't along a direction, or carries a point along a
+    /// target face's plane, or `ε_seam` isn't finite and `≥ 0`.
+    Map,
+    /// This target face isn't described, or isn't a plane.
+    Chart(FaceId),
+    /// This target edge, which the rewrite reuses, isn't described, or
+    /// lacks a p-curve on a face using it (on a target face, or carried
+    /// into a face of `S`), or its chain doesn't split.
+    Reuse(EdgeId),
+    /// Two reused target edges put this vertex at different points.
+    Shared(SnapVert),
+    /// This vertex's position can't be found: its pre-image isn't
+    /// described, or the target faces round it carry it to different
+    /// points, or a zero-length edge's ends differ.
+    Position(SnapVert),
+    /// This edge's curve or p-curves can't be made: an end without a
+    /// parameter on the target edge it reuses, a rim edge not along an iso
+    /// line, or a value the curves refuse.
+    Curve(SnapEdge),
+    /// This fitted edge lies beyond `ε_seam/2` of the target composed
+    /// with its p-curve (a validity failure).
+    Fit(SnapEdge),
     /// The budget ran out ([`KernelError::OutOfBudget`]).
     OutOfBudget(KernelError),
 }
@@ -385,6 +450,7 @@ pub(crate) fn rewrite(
     rim: &Rim,
     rim_input: &RimInput<'_>,
     corner: &Corner,
+    along: &SnapAlong,
     cuts: &[TargetCut<'_>],
     work: &mut Work,
 ) -> Result<Rewrite, RewriteError> {
@@ -475,6 +541,26 @@ pub(crate) fn rewrite(
         ));
         *index += 1;
     }
+    // The ends of the `SnapAlong` pieces, where they split their edges.
+    let brackets: Vec<BracketAt> = along
+        .pairs
+        .iter()
+        .flat_map(|pair| {
+            pair.pieces.iter().flat_map(move |piece| {
+                piece.ends.iter().map(move |end| BracketAt {
+                    key: SnapVert::Bracket {
+                        edge: pair.h,
+                        target: pair.e,
+                        index: piece.index,
+                        end: end.which,
+                    },
+                    edge: pair.h,
+                    s: end.s.clone(),
+                    moved: end.moved,
+                })
+            })
+        })
+        .collect();
     let ctx = Ctx {
         rim,
         corner,
@@ -482,6 +568,7 @@ pub(crate) fn rewrite(
         next: &next,
         rim_names: &rim_names,
         branch_names: &branch_names,
+        brackets: &brackets,
         targets: rim_input.targets.iter().map(|t| t.0).collect(),
     };
 
@@ -500,16 +587,19 @@ pub(crate) fn rewrite(
     // Merge, each key once.
     let mut map = SnapMap::default();
     let mut edges: BTreeMap<SnapEdge, NewEdge> = BTreeMap::new();
+    let mut at: BTreeMap<SnapVert, Vec<(FaceId, P2)>> = BTreeMap::new();
     let mut out_faces = Vec::new();
-    for c in celled {
-        for (k, pre) in c.verts {
+    for (i, c) in celled.into_iter().enumerate() {
+        let face = faces[i].face.face;
+        for (p, (k, pre)) in c.verts {
+            at.entry(k).or_default().push((face, p));
             insert(&mut map.verts, k, pre)?;
         }
         for (e, pre) in c.edges {
             insert(&mut map.edges, e.key, pre)?;
-            match edges.get(&e.key) {
-                Some(old) if *old != e => return Err(RewriteError::Key),
-                Some(_) => {}
+            match edges.get_mut(&e.key) {
+                Some(old) if old.ends != e.ends => return Err(RewriteError::Key),
+                Some(old) => old.rim = old.rim.or(e.rim),
                 None => {
                     edges.insert(e.key, e);
                 }
@@ -521,20 +611,81 @@ pub(crate) fn rewrite(
         }
     }
     out_faces.sort_by_key(|f| f.key);
+
+    // The zero-length edges between coincident rim vertices, at the
+    // vertices the rim vertices became.
+    for &[i, j] in &corner.zero_edges {
+        let (Some(a), Some(b)) = (
+            rim_vertex(i, &rim_names, &on_edges),
+            rim_vertex(j, &rim_names, &on_edges),
+        ) else {
+            return Err(RewriteError::Corner);
+        };
+        if a == b || !map.verts.contains_key(&a) || !map.verts.contains_key(&b) {
+            continue;
+        }
+        let key = SnapEdge::Zero { from: i, to: j };
+        let piece = &rim.pieces[i as usize];
+        let pre = Pre {
+            parent: (s_op, piece.face.into()),
+            at: PreImage::Point(piece.ends[0].clone()),
+        };
+        insert(&mut map.edges, key, pre)?;
+        edges.insert(
+            key,
+            NewEdge {
+                key,
+                ends: [a, b],
+                rim: Some(i),
+            },
+        );
+    }
+
+    // The edges of `S` cut into pieces, for the faces using them.
+    let mut parts: BTreeMap<EdgeId, Vec<(u32, SnapEdge)>> = BTreeMap::new();
+    for k in edges.keys() {
+        if let SnapEdge::Piece { edge, part } = *k {
+            parts.entry(edge).or_default().push((part, *k));
+        }
+    }
+    let replaced = parts
+        .into_iter()
+        .filter(|(_, ps)| ps.len() > 1)
+        .map(|(edge, mut ps)| {
+            ps.sort();
+            Replaced {
+                edge,
+                parts: ps.into_iter().map(|p| p.1).collect(),
+            }
+        })
+        .collect();
+
     let verts = map
         .verts
         .keys()
         .map(|&key| NewVert {
             key,
-            moved: moved_of(key, corner, s_op),
+            moved: moved_of(key, &ctx),
+            at: at.remove(&key).unwrap_or_default(),
         })
         .collect();
     Ok(Rewrite {
         faces: out_faces,
         edges: edges.into_values().collect(),
         verts,
+        replaced,
         map,
     })
+}
+
+/// The vertex the rim vertex starting piece `k` became: on an edge of `S`
+/// the vertex there, else its own name.
+fn rim_vertex(k: u32, rim_names: &[(SnapVert, Pre)], on_edges: &OnEdges) -> Option<SnapVert> {
+    let (name, pre) = rim_names.get(k as usize)?;
+    if let (SnapVert::Rim { edge, .. }, PreImage::Param(t)) = (name, &pre.at) {
+        return on_edges.names.get(edge).and_then(|m| m.get(t)).map(|n| n.0);
+    }
+    Some(*name)
 }
 
 /// Inserts `pre` at `key`, refusing a different one already there.
@@ -549,8 +700,10 @@ fn insert<K: Ord>(map: &mut BTreeMap<K, Pre>, key: K, pre: Pre) -> Result<(), Re
     }
 }
 
-/// Where the corner rule sends the vertex `key`.
-fn moved_of(key: SnapVert, corner: &Corner, s_op: Operand) -> Moved {
+/// Where the corner rule (or a `SnapAlong` bracket end) sends the vertex
+/// `key`.
+fn moved_of(key: SnapVert, ctx: &Ctx<'_>) -> Moved {
+    let (corner, s_op) = (ctx.corner, ctx.s_op);
     match key {
         SnapVert::Vert(o, v) if o == s_op => corner
             .rim_verts
@@ -573,6 +726,11 @@ fn moved_of(key: SnapVert, corner: &Corner, s_op: Operand) -> Moved {
                 storage: 0.0,
             })
             .unwrap_or(Moved::STAYS),
+        SnapVert::Bracket { .. } => ctx
+            .brackets
+            .iter()
+            .find(|b| b.key == key)
+            .map_or(Moved::STAYS, |b| b.moved),
         _ => Moved::STAYS,
     }
 }
@@ -742,6 +900,15 @@ fn param_in(trims: &[RimTrim<'_>], spans: &[Vec<ExactSpan>], edge: EdgeId, p: &P
     })
 }
 
+/// An end of a `SnapAlong` piece, splitting its edge of `S`.
+struct BracketAt {
+    key: SnapVert,
+    /// The edge of `S` and the fraction along it from its stored start.
+    edge: EdgeId,
+    s: Q,
+    moved: Moved,
+}
+
 struct Ctx<'a> {
     rim: &'a Rim,
     corner: &'a Corner,
@@ -752,6 +919,8 @@ struct Ctx<'a> {
     rim_names: &'a [(SnapVert, Pre)],
     /// The corner rule's branch vertices, named.
     branch_names: &'a [(SnapVert, Pre)],
+    /// The `SnapAlong` pieces' ends.
+    brackets: &'a [BracketAt],
     /// The cluster's target faces.
     targets: BTreeSet<FaceId>,
 }
@@ -943,36 +1112,59 @@ fn arrange(
             params[j].extend(pj);
         }
     }
-    // The corner rule's points: branch vertices on rim pieces, splits on
-    // own edges.
-    for (i, s) in base.iter().enumerate() {
+    // The corner rule's points (branch vertices on rim pieces, splits on
+    // own edges) and the `SnapAlong` pieces' ends, cutting every segment
+    // they lie on (an own edge and a rim piece along it alike).
+    let mut extra: Vec<P2> = Vec::new();
+    for s in &base {
         match s.src {
             Src::Rim(k) => {
                 for b in ctx.corner.branches.iter().filter(|b| b.piece == k) {
                     if b.at > 0u32 && b.at < 1u32 {
-                        params[i].push(b.at.clone());
+                        extra.push(lerp(&s.a, &s.b, &b.at));
                     }
                 }
             }
             Src::Own(ti, si) => {
                 let trim = &f.face.own[ti as usize];
                 let span = &f.own[ti as usize][si as usize];
+                let mut ts: Vec<Q> = Vec::new();
                 for sp in ctx.corner.splits.iter().filter(|x| x.edge == trim.edge) {
                     let Some(t) = split_param(trim, sp.s) else {
                         return fail(RewriteError::Trim(face));
                     };
-                    let (lo, hi) = if span.t[0] <= span.t[1] {
-                        (&span.t[0], &span.t[1])
-                    } else {
-                        (&span.t[1], &span.t[0])
+                    ts.push(t);
+                }
+                for b in ctx.brackets.iter().filter(|b| b.edge == trim.edge) {
+                    let Some(t) = frac_param(trim, &b.s) else {
+                        return fail(RewriteError::Trim(face));
                     };
+                    ts.push(t);
+                }
+                let (lo, hi) = if span.t[0] <= span.t[1] {
+                    (&span.t[0], &span.t[1])
+                } else {
+                    (&span.t[1], &span.t[0])
+                };
+                for t in ts {
                     if t > *lo && t < *hi {
                         let x = (&t - &span.t[0]) / (&span.t[1] - &span.t[0]);
-                        params[i].push(if trim.left { x } else { Q::from(1u32) - x });
+                        extra.push(lerp(&span.p[0], &span.p[1], &x));
                     }
                 }
             }
             Src::Cut(..) => {}
+        }
+    }
+    extra.sort();
+    extra.dedup();
+    for (i, s) in base.iter().enumerate() {
+        units(ledger, extra.len() as u64)?;
+        let seg = [s.a.clone(), s.b.clone()];
+        for p in &extra {
+            if *p != s.a && *p != s.b && on_seg(p, &seg) {
+                params[i].push(frac(p, &s.a, &s.b));
+            }
         }
     }
 
@@ -1146,6 +1338,19 @@ fn arrange(
                 _ => {}
             }
         }
+        // A rim piece along a target edge is a piece of that edge.
+        if cut.is_none()
+            && let Some((k, ..)) = rim_on
+            && let Along::Target(g) = ctx.rim.pieces[k as usize].along
+        {
+            let (Some(tp), Some(tq)) = (
+                param_in(f.face.target, &f.target, g, p),
+                param_in(f.face.target, &f.target, g, q),
+            ) else {
+                return fail(RewriteError::Trim(face));
+            };
+            cut = Some((g, [tp, tq]));
+        }
         let side =
             |in_f: bool, in_r: bool, t: Option<FaceId>| -> Result<Side, Stop<RewriteError>> {
                 match (in_f, in_r) {
@@ -1275,9 +1480,14 @@ fn whole(o: Operand, v: VertId) -> (SnapVert, Pre) {
 /// The parameter of own trim `trim` the fraction `s` of the way along its
 /// parameter range.
 fn split_param(trim: &RimTrim<'_>, s: f64) -> Option<Q> {
+    frac_param(trim, &Q::try_from(s).ok()?)
+}
+
+/// The parameter of trim `trim` the exact fraction `s` of the way along
+/// its parameter range.
+fn frac_param(trim: &RimTrim<'_>, s: &Q) -> Option<Q> {
     let t0 = Q::try_from(*trim.knots.first()?).ok()?;
     let t1 = Q::try_from(*trim.knots.last()?).ok()?;
-    let s = Q::try_from(s).ok()?;
     Some(&t0 + s * (t1 - &t0))
 }
 
@@ -1341,6 +1551,34 @@ fn edge_vertices(
                 },
             ));
     }
+    // The `SnapAlong` pieces' ends, likewise.
+    for b in ctx.brackets {
+        units(ledger, 1)?;
+        let Some((face, trim)) = faces.iter().find_map(|f| {
+            f.face
+                .own
+                .iter()
+                .find(|t| t.edge == b.edge)
+                .map(|t| (f.face.face, t))
+        }) else {
+            continue;
+        };
+        let Some(t) = frac_param(trim, &b.s) else {
+            return fail(RewriteError::Trim(face));
+        };
+        cands
+            .entry(b.edge)
+            .or_default()
+            .entry(t.clone())
+            .or_default()
+            .push((
+                b.key,
+                Pre {
+                    parent: (ctx.s_op, b.edge.into()),
+                    at: PreImage::Param(t),
+                },
+            ));
+    }
     let mut names = BTreeMap::new();
     for (h, by_t) in cands {
         let mut out = BTreeMap::new();
@@ -1364,7 +1602,8 @@ fn edge_vertices(
 struct Celled {
     faces: Vec<(NewFace, Pre)>,
     edges: Vec<(NewEdge, Pre)>,
-    verts: Vec<(SnapVert, Pre)>,
+    /// The vertices at their points.
+    verts: Vec<(P2, (SnapVert, Pre))>,
 }
 
 /// An edge of a face's arrangement cut at its edge's vertices, keyed.
@@ -1474,6 +1713,7 @@ fn cells(
                     NewEdge {
                         key,
                         ends: [n0.0, n1.0],
+                        rim: e.rim.as_ref().map(|r| r.0),
                     },
                     Pre {
                         parent: (s_op, (*h).into()),
@@ -1495,21 +1735,7 @@ fn cells(
         }
         let idx = subs.len();
         let mut range = None;
-        let (key, forward, piece) = if let Some((k, fwd, [sa, sb])) = &e.rim {
-            rim_parts
-                .entry(*k)
-                .or_default()
-                .push((if sa < sb { sa.clone() } else { sb.clone() }, idx));
-            (
-                SnapEdge::Rim {
-                    face,
-                    piece: *k,
-                    part: 0,
-                },
-                *fwd,
-                Some(*k),
-            )
-        } else if let Some((c, [ta, tb])) = &e.cut {
+        let (key, forward, piece) = if let Some((c, [ta, tb])) = &e.cut {
             let r = if ta < tb {
                 [ta.clone(), tb.clone()]
             } else {
@@ -1524,7 +1750,21 @@ fn cells(
                     part: 0,
                 },
                 ta < tb,
-                None,
+                e.rim.as_ref().map(|r| r.0),
+            )
+        } else if let Some((k, fwd, [sa, sb])) = &e.rim {
+            rim_parts
+                .entry(*k)
+                .or_default()
+                .push((if sa < sb { sa.clone() } else { sb.clone() }, idx));
+            (
+                SnapEdge::Rim {
+                    face,
+                    piece: *k,
+                    part: 0,
+                },
+                *fwd,
+                Some(*k),
             )
         } else {
             return fail(RewriteError::Cells(face));
@@ -1546,13 +1786,13 @@ fn cells(
         for (part, (_, i)) in v.into_iter().enumerate() {
             match &mut subs[i].key {
                 SnapEdge::Rim { part: p, .. } | SnapEdge::Cut { part: p, .. } => *p = part as u32,
-                SnapEdge::Piece { .. } => {}
+                SnapEdge::Piece { .. } | SnapEdge::Zero { .. } => {}
             }
         }
     }
     for s in subs
         .iter()
-        .filter(|s| s.piece.is_some() || matches!(s.key, SnapEdge::Cut { .. }))
+        .filter(|s| !matches!(s.key, SnapEdge::Piece { .. }))
     {
         units(ledger, 1)?;
         let (start, end) = if s.forward {
@@ -1578,6 +1818,7 @@ fn cells(
             NewEdge {
                 key: s.key,
                 ends: [n0.0, n1.0],
+                rim: s.piece,
             },
             pre,
         ));
@@ -1817,7 +2058,7 @@ fn cells(
     Ok(Celled {
         faces: faces_out,
         edges,
-        verts: verts.into_values().collect(),
+        verts: verts.into_iter().collect(),
     })
 }
 
@@ -1825,6 +2066,18 @@ fn cells(
 fn verts_insert(verts: &mut BTreeMap<P2, (SnapVert, Pre)>, p: &P2, n: &(SnapVert, Pre)) {
     verts.entry(p.clone()).or_insert_with(|| n.clone());
 }
+
+mod geometry;
+
+#[cfg_attr(
+    not(test),
+    expect(unused_imports, reason = "the boolean's snap calls it as it lands")
+)]
+pub(crate) use geometry::geometry;
+pub use geometry::{
+    Chain, Coedge, EdgeClass, EdgeCurve, EdgeGeom, GeomInput, Geometry, TargetEdge, TargetFace,
+    VertGeom,
+};
 
 #[cfg(test)]
 mod tests;

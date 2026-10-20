@@ -7,11 +7,14 @@ use varde_decide::leaves::flat;
 use varde_decide::order::{EdgeKey, EntityOrder, VertKey};
 use varde_testkit::sheets::{self, Polygons};
 
-use super::super::cluster::tests::{B_K, ext, fixture_leaves, rat, rectangle, whole, work};
+use super::super::along::{AlongInput, snap_along};
+use super::super::cluster::tests::{B_K, ext, fixture_leaves, quad, rat, rectangle, whole, work};
 use super::super::cluster::{ClusterLeaf, Tangency};
 use super::super::corner::{CornerInput, Split, corner};
 use super::super::rim::{Along, Element, Implicit, SnappedFace, rim};
+use super::super::target::Map;
 use super::*;
+use crate::geom::curve::{Curve3D, PCurve};
 
 const A: Operand = Operand::A;
 const B: Operand = Operand::B;
@@ -246,7 +249,7 @@ fn run_all<L: ClusterLeaf>(
     };
     let mut c = corner(&r, &input, &ci, &mut work()).expect("the corner rule");
     edit(&mut c);
-    let out = rewrite(&r, &input, &c, cuts, &mut work());
+    let out = rewrite(&r, &input, &c, &SnapAlong::default(), cuts, &mut work());
     (r, out)
 }
 
@@ -354,7 +357,7 @@ fn the_bowl_s_face_splits_into_a_kept_ring_and_a_snapped_square() {
                 assert_eq!(us, [(kept, false), (snapped, true)], "{e:?}");
             }
             SnapEdge::Piece { .. } => assert_eq!(us, [(kept, true)]),
-            SnapEdge::Cut { .. } => panic!("{e:?}"),
+            SnapEdge::Cut { .. } | SnapEdge::Zero { .. } => panic!("{e:?}"),
         }
     }
     assert_closed(&r);
@@ -834,6 +837,14 @@ fn a_corner_rule_split_cuts_an_edge_on_every_face_it_bounds() {
     for f in &r.faces {
         assert_eq!(f.loops[0].len(), 5);
     }
+    // The fold edge's faces outside the cluster use its pieces too.
+    assert_eq!(
+        r.replaced,
+        [Replaced {
+            edge: EdgeId(0),
+            parts: pieces.iter().map(|p| p.key).collect(),
+        }]
+    );
     let v = r.verts.iter().find(|v| v.key == split).unwrap();
     assert_eq!(v.moved.to, Placement::Vert(A, VertId(99)));
     assert_eq!(v.moved.pos, Some(pos));
@@ -890,9 +901,9 @@ fn where_the_cluster_reaches_a_target_edge_the_rim_vertices_lie_on_it() {
         .iter()
         .position(|p| p.along == Along::Target(EdgeId(21)))
         .unwrap() as u32;
-    let along = SnapEdge::Rim {
+    let along = SnapEdge::Cut {
         face: FaceId(0),
-        piece: k,
+        edge: EdgeId(21),
         part: 0,
     };
     let e = edge(&r, along);
@@ -967,4 +978,734 @@ fn bad_input_is_refused() {
     let two = [(FaceId(0), FLOOR), (FaceId(1), FLOOR)];
     let (_, out) = run_all(&leaves, &faces, &two, &geom, &cut, |_| {});
     assert_eq!(out, Err(RewriteError::Cells(FaceId(0))));
+}
+
+// ---------------------------------------------------------------------
+// Geometry.
+
+/// The map along `z`.
+fn along_z() -> Map {
+    Map::Along([q(0.0), q(0.0), q(1.0)])
+}
+
+fn unrelated(_: EdgeId, _: EdgeId) -> bool {
+    false
+}
+
+/// A target edge's chain: the line from `a` to `b` in spans at `knots`
+/// (the parameter from 0 to 1), and its p-curve on a target face, the
+/// line from `ua` to `ub` likewise.
+fn line_chain(
+    a: [f64; 3],
+    b: [f64; 3],
+    ua: [f64; 2],
+    ub: [f64; 2],
+    knots: &[f64],
+) -> (Curve3D, PCurve) {
+    let at3 = |t: f64| [0, 1, 2].map(|k| a[k] + t * (b[k] - a[k]));
+    let at2 = |t: f64| [0, 1].map(|k| ua[k] + t * (ub[k] - ua[k]));
+    let mut spans = Vec::new();
+    let mut uvs = Vec::new();
+    for w in knots.windows(2) {
+        let (p, m, r) = (at3(w[0]), at3(0.5 * (w[0] + w[1])), at3(w[1]));
+        spans.push([
+            [p[0], p[1], p[2], 1.0],
+            [m[0], m[1], m[2], 1.0],
+            [r[0], r[1], r[2], 1.0],
+        ]);
+        let (p, m, r) = (at2(w[0]), at2(0.5 * (w[0] + w[1])), at2(w[1]));
+        uvs.push([[p[0], p[1], 1.0], [m[0], m[1], 1.0], [r[0], r[1], 1.0]]);
+    }
+    (
+        Curve3D::new(spans, knots.to_vec()).expect("a chain"),
+        PCurve::new(uvs, knots.to_vec()).expect("a p-curve"),
+    )
+}
+
+fn bits(p: [f64; 3]) -> [u64; 3] {
+    p.map(f64::to_bits)
+}
+
+fn vgeom(g: &Geometry, k: SnapVert) -> &VertGeom {
+    g.verts
+        .iter()
+        .find(|v| v.key == k)
+        .unwrap_or_else(|| panic!("vertex {k:?}"))
+}
+
+fn egeom(g: &Geometry, k: SnapEdge) -> &EdgeGeom {
+    g.edges
+        .iter()
+        .find(|e| e.key == k)
+        .unwrap_or_else(|| panic!("edge {k:?}"))
+}
+
+/// Each edge's curve ends at its vertices bit for bit, and in every
+/// loop whose edges all have p-curves on its face, each coedge's p-curve
+/// ends where the next one's starts, bit for bit (the ribbons' joins).
+fn assert_joins(r: &Rewrite, g: &Geometry) {
+    let chain = |e: EdgeId| g.chains.iter().find(|c| c.edge == e).expect("a chain");
+    for e in &r.edges {
+        let eg = egeom(g, e.key);
+        let [a, b] = e.ends.map(|k| vgeom(g, k).pos);
+        match &eg.curve {
+            EdgeCurve::New(c) => {
+                assert_eq!(bits(c.knot_point(0).unwrap()), bits(a), "{:?}", e.key);
+                assert_eq!(bits(c.knot_point(1).unwrap()), bits(b), "{:?}", e.key);
+            }
+            EdgeCurve::Reused { edge, t } => {
+                let c = &chain(*edge).curve;
+                for (t, p) in t.iter().zip([a, b]) {
+                    let k = c.knots().iter().position(|x| x == t).expect("a knot");
+                    assert_eq!(bits(c.knot_point(k).unwrap()), bits(p), "{:?}", e.key);
+                }
+            }
+            EdgeCurve::Point => assert_eq!(bits(a), bits(b)),
+            EdgeCurve::Kept => {}
+        }
+    }
+    let mut checked = 0;
+    for f in &r.faces {
+        'l: for l in &f.loops {
+            let mut ends = Vec::new();
+            for u in l {
+                let eg = egeom(g, u.edge);
+                let Some(c) = eg.coedges.iter().find(|c| c.face == f.key) else {
+                    continue 'l;
+                };
+                let p = &c.pcurve;
+                let n = p.knots().len() - 1;
+                // Whether the p-curve runs from the edge's start.
+                let from_start = match eg.curve {
+                    EdgeCurve::Reused { t, .. } => t[0] < t[1],
+                    _ => true,
+                };
+                let (s, e) = (p.knot_point(0).unwrap(), p.knot_point(n).unwrap());
+                ends.push(if u.forward == from_start {
+                    (s, e)
+                } else {
+                    (e, s)
+                });
+            }
+            for i in 0..ends.len() {
+                let next = ends[(i + 1) % ends.len()].0;
+                assert_eq!(ends[i].1.map(f64::to_bits), next.map(f64::to_bits), "{f:?}");
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn a_rim_piece_along_a_target_edge_reuses_its_chain_split_where_its_vertices_store() {
+    // The floor ends at `u = 0.625` across the bowl's cluster: the rim
+    // piece along its edge reuses that edge's chain and p-curve, its ends
+    // storing their parameters on it, `0.25` and `0.75`; the chain is
+    // split there, its uncut span kept to the bit, and a split of the
+    // floor's edge from either stored parameter alone gives the vertex's
+    // bits (one evaluator). The rim's other edges lie on the mid-surface.
+    let ids = SMALL;
+    let tiles = [([0, 0], bowl())];
+    let sq = Square::new(ids, 0);
+    let own = sq.trims();
+    let c = [[0.0, 0.0], [0.625, 0.0], [0.625, 1.0], [0.0, 1.0]];
+    let spans: Vec<UvSpan> = (0..4).map(|k| span(c[k], c[(k + 1) % 4])).collect();
+    let target: Vec<RimTrim<'_>> = (0..4)
+        .map(|k| RimTrim {
+            edge: EdgeId(20 + k as u32),
+            ends: [VertId(20 + k as u32), VertId(20 + ((k + 1) % 4) as u32)],
+            spans: &spans[k..k + 1],
+            knots: &KNOTS,
+            left: true,
+        })
+        .collect();
+    let faces = [SnappedFace {
+        face: FaceId(0),
+        tiles: &tiles,
+        own: &own,
+        target: &target,
+    }];
+    let mut g = bowl_geom(ids);
+    for (k, p) in c.iter().enumerate() {
+        g.verts
+            .insert((A, VertId(20 + k as u32)), [10.0 * p[0], 10.0 * p[1], 0.0]);
+        g.edges.insert(
+            (A, EdgeId(20 + k as u32)),
+            [VertId(20 + k as u32), VertId(20 + ((k + 1) % 4) as u32)],
+        );
+    }
+    let leaves = centre_boxes(ids, &[0], &[0]);
+    let input = RimInput {
+        snapped: B,
+        faces: &faces,
+        targets: &[(FaceId(0), FLOOR)],
+        band: &band,
+    };
+    let rm = rim(&leaves, &input, &mut work()).expect("a rim");
+    let ci = CornerInput {
+        b_k: B_K,
+        order: &g,
+        band: &narrow,
+        candidates: &[],
+        fixed: &[],
+        groups: &[],
+        coincident: &[],
+    };
+    let cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
+    let none = SnapAlong::default();
+    let r = rewrite(&rm, &input, &cr, &none, &[], &mut work()).expect("a rewrite");
+    // The floor: its plane's tile over `[−5, 15]²`, and its edge 21 up
+    // `x = 6.25` in two spans, the first never cut.
+    let floor = quad([-5.0, -5.0, 0.0], [15.0, -5.0, 0.0], [-5.0, 15.0, 0.0]);
+    let t_faces = [TargetFace {
+        face: FaceId(0),
+        tile: [0, 0],
+        patch: &floor,
+    }];
+    let (curve, pc) = line_chain(
+        [6.25, 0.0, 0.0],
+        [6.25, 10.0, 0.0],
+        [0.5625, 0.25],
+        [0.5625, 0.75],
+        &[0.0, 0.125, 1.0],
+    );
+    let pcs = [(FaceId(0), pc.clone())];
+    let edges = [TargetEdge {
+        edge: EdgeId(21),
+        curve: &curve,
+        range: [0.0, 1.0],
+        pcurves: &pcs,
+    }];
+    let map = along_z();
+    let gi = GeomInput {
+        order: &g,
+        map: &map,
+        faces: &t_faces,
+        edges: &edges,
+        eps_seam: 1e-5,
+    };
+    let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work()).expect("geometry");
+    assert_joins(&r, &geo);
+
+    let cut = SnapEdge::Cut {
+        face: FaceId(0),
+        edge: EdgeId(21),
+        part: 0,
+    };
+    let eg = egeom(&geo, cut);
+    assert_eq!(eg.class, EdgeClass::Target);
+    assert_eq!(
+        eg.curve,
+        EdgeCurve::Reused {
+            edge: EdgeId(21),
+            t: [0.25, 0.75]
+        }
+    );
+    let [start, end] = edge(&r, cut).ends;
+    let ch = &geo.chains[0];
+    assert_eq!(geo.chains.len(), 1);
+    assert_eq!(ch.splits, [(0.25, start), (0.75, end)]);
+    assert_eq!(ch.curve.knots(), [0.0, 0.125, 0.25, 0.75, 1.0]);
+    assert_eq!(ch.curve.spans()[0], curve.spans()[0]);
+    assert_eq!(ch.curve, curve.split(&[0.75, 0.25]).unwrap());
+    for (v, t) in [(start, 0.25), (end, 0.75)] {
+        let vg = vgeom(&geo, v);
+        assert_eq!(vg.on, [(EdgeId(21), t)]);
+        // The other operand's split from the stored parameter alone.
+        let other = curve.split(&[t]).unwrap();
+        let k = other.knots().iter().position(|&x| x == t).unwrap();
+        assert_eq!(bits(other.knot_point(k).unwrap()), bits(vg.pos), "{t}");
+        assert_eq!(bits(curve.point_at(t).unwrap()), bits(vg.pos));
+    }
+    // Its coedges: on the floor the floor's p-curve, split and sliced; on
+    // the bowl's kept ring the floor's edge as carried into its UV.
+    let snapped = SnapFace::Snapped {
+        face: FaceId(0),
+        target: FaceId(0),
+        part: 0,
+    };
+    let kept = SnapFace::Kept {
+        face: FaceId(0),
+        part: 0,
+    };
+    let on = |f: SnapFace| &eg.coedges.iter().find(|c| c.face == f).unwrap().pcurve;
+    assert_eq!(
+        *on(snapped),
+        pc.split(&[0.25, 0.75]).unwrap().slice(0.25, 0.75).unwrap()
+    );
+    assert_eq!(on(kept).knots(), [0.25, 0.75]);
+    assert_eq!(on(kept).knot_point(0), Some([0.625, 0.25]));
+    assert_eq!(on(kept).knot_point(1), Some([0.625, 0.75]));
+    // The rim edges along box sides: on the mid-surface between the bowl
+    // and the floor, their corners there too.
+    for e in &r.edges {
+        let SnapEdge::Rim { .. } = e.key else {
+            continue;
+        };
+        let eg = egeom(&geo, e.key);
+        assert_eq!(eg.class, EdgeClass::Rim);
+        let EdgeCurve::New(c) = &eg.curve else {
+            panic!("{eg:?}");
+        };
+        assert_eq!(eg.coedges.len(), 2);
+        // Its middle control point on the mid-surface: with the ends
+        // there too, the curve's middle would be at half the bowl's height
+        // at the middle of the rim piece.
+        let s_mid = eg.coedges.iter().find(|c| c.face == kept).unwrap();
+        let height = |t: f64| {
+            let [u, v] = s_mid.pcurve.eval(t).unwrap().map(|x| x.v);
+            let (x, y) = (10.0 * u, 10.0 * v);
+            C * ((x - 5.0) * (x - 5.0) + (y - 5.0) * (y - 5.0)) - 9.0 * C
+        };
+        let m = c.spans()[0][1][2];
+        let at_mid = 0.125 * height(0.0) + 0.5 * m + 0.125 * height(1.0);
+        assert!((at_mid - 0.5 * height(0.5)).abs() < 1e-15, "{:?}", e.key);
+    }
+    for v in &r.verts {
+        if let SnapVert::RimBox { .. } = v.key {
+            let p = vgeom(&geo, v.key).pos;
+            let z = C * ((p[0] - 5.0) * (p[0] - 5.0) + (p[1] - 5.0) * (p[1] - 5.0)) - 9.0 * C;
+            assert!((p[2] - 0.5 * z).abs() < 1e-15, "{v:?}");
+        }
+    }
+    // The kept ring's own edges keep their curves.
+    for e in &geo.edges {
+        if let SnapEdge::Piece { .. } = e.key {
+            assert_eq!((e.class, &e.curve), (EdgeClass::Kept, &EdgeCurve::Kept));
+        }
+    }
+}
+
+/// The tilted fixture's scale: `S` is `(8u, 8v + D·u, G)` over the unit
+/// square, its edge 0 rising by `D` from the floor's edge 0 at its start.
+const D: f64 = 1.0 / 512.0;
+const G: f64 = 1.0 / 16384.0;
+
+/// A flat sheet `S` (operand `B`) over the floor (operand `A`, the plane
+/// `z = 0` over `[−8, 16] × [0, 16]`), `G` above it, its edge 0 starting
+/// on the floor's edge 0 and leaving it at the slope `D/8`: the snap
+/// along gives that edge one `SnapAlong` piece from its start to where it
+/// leaves `b_K`. Rewritten, and its geometry with seam target `eps`.
+fn tilted(eps: f64) -> (Rewrite, Result<Geometry, RewriteError>, Curve3D) {
+    let s_tile = quad([0.0, 0.0, G], [8.0, D, G], [0.0, 8.0, G]);
+    let tiles = [([0, 0], s_tile)];
+    let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let s_spans: Vec<UvSpan> = (0..4)
+        .map(|k| span(corners[k], corners[(k + 1) % 4]))
+        .collect();
+    let own: Vec<RimTrim<'_>> = (0..4)
+        .map(|k| RimTrim {
+            edge: EdgeId(k as u32),
+            ends: [VertId(k as u32), VertId(((k + 1) % 4) as u32)],
+            spans: &s_spans[k..k + 1],
+            knots: &KNOTS,
+            left: true,
+        })
+        .collect();
+    // The floor's corners in `S`'s UV, exactly: `u = x/8`,
+    // `v = (y − D·u)/8`.
+    let t_xy = [[-8.0, 0.0], [16.0, 0.0], [16.0, 16.0], [-8.0, 16.0]];
+    let t_uv: Vec<[f64; 2]> = t_xy
+        .iter()
+        .map(|p| {
+            let u = p[0] / 8.0;
+            [u, (p[1] - D * u) / 8.0]
+        })
+        .collect();
+    let t_spans: Vec<UvSpan> = (0..4).map(|k| span(t_uv[k], t_uv[(k + 1) % 4])).collect();
+    let target: Vec<RimTrim<'_>> = (0..4)
+        .map(|k| RimTrim {
+            edge: EdgeId(k as u32),
+            ends: [VertId(k as u32), VertId(((k + 1) % 4) as u32)],
+            spans: &t_spans[k..k + 1],
+            knots: &KNOTS,
+            left: true,
+        })
+        .collect();
+    let faces = [SnappedFace {
+        face: FaceId(0),
+        tiles: &tiles,
+        own: &own,
+        target: &target,
+    }];
+    let mut g = Geom::default();
+    let s_pos = [[0.0, 0.0, G], [8.0, D, G], [8.0, 8.0 + D, G], [0.0, 8.0, G]];
+    for k in 0..4u32 {
+        g.verts.insert((B, VertId(k)), s_pos[k as usize]);
+        g.verts.insert(
+            (A, VertId(k)),
+            [t_xy[k as usize][0], t_xy[k as usize][1], 0.0],
+        );
+        for o in [A, B] {
+            g.edges
+                .insert((o, EdgeId(k)), [VertId(k), VertId((k + 1) % 4)]);
+        }
+    }
+    let leaves = [Boxes([whole(A, 0, [0, 0]), whole(B, 0, [0, 0])])];
+    let input = RimInput {
+        snapped: B,
+        faces: &faces,
+        targets: &[(FaceId(0), FLOOR)],
+        band: &band,
+    };
+    let rm = rim(&leaves, &input, &mut work()).expect("a rim");
+    let ci = CornerInput {
+        b_k: B_K,
+        order: &g,
+        band: &narrow,
+        candidates: &[],
+        fixed: &[],
+        groups: &[],
+        coincident: &[],
+    };
+    let cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
+    let map = along_z();
+    let ai = AlongInput {
+        b_k: B_K,
+        order: &g,
+        band: &narrow,
+        map: &map,
+        same_form: &unrelated,
+    };
+    let al = snap_along(&rm, &input, &cr, &ai, &mut work()).expect("the snap along");
+    let r = rewrite(&rm, &input, &cr, &al, &[], &mut work()).expect("a rewrite");
+    let floor = quad([-8.0, 0.0, 0.0], [16.0, 0.0, 0.0], [-8.0, 16.0, 0.0]);
+    let t_faces = [TargetFace {
+        face: FaceId(0),
+        tile: [0, 0],
+        patch: &floor,
+    }];
+    let (curve, pc) = line_chain(
+        [-8.0, 0.0, 0.0],
+        [16.0, 0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 0.0],
+        &KNOTS,
+    );
+    let pcs = [(FaceId(0), pc)];
+    let edges = [TargetEdge {
+        edge: EdgeId(0),
+        curve: &curve,
+        range: [0.0, 1.0],
+        pcurves: &pcs,
+    }];
+    let gi = GeomInput {
+        order: &g,
+        map: &map,
+        faces: &t_faces,
+        edges: &edges,
+        eps_seam: eps,
+    };
+    let geo = geometry(&r, &rm, &input, &cr, &al, &[], &gi, &mut work());
+    (r, geo, curve)
+}
+
+#[test]
+fn a_snap_along_piece_merges_into_its_target_edge_and_the_rest_fits_the_target() {
+    // `S`'s edge 0 runs along the floor's edge 0 from its start until it
+    // leaves `b_K`: that piece reuses the floor's edge, from where the
+    // corner rule placed `S`'s vertex 0 on it to the bracket's end (a new
+    // vertex, keyed by the two edges and the piece); the rest of the edge,
+    // and `S`'s other edges, along the rim, fit the floor. The vertices
+    // on the floor's edge store their parameters, and the floor's edge
+    // split there from them alone has their bits.
+    let (r, geo, curve) = tilted(1e-5);
+    let geo = geo.expect("geometry");
+    assert_joins(&r, &geo);
+    assert_eq!(r.faces.len(), 1);
+    let end = SnapVert::Bracket {
+        edge: EdgeId(0),
+        target: EdgeId(0),
+        index: 0,
+        end: EndKind::End,
+    };
+    let first = SnapEdge::Piece {
+        edge: EdgeId(0),
+        part: 0,
+    };
+    let rest = SnapEdge::Piece {
+        edge: EdgeId(0),
+        part: 1,
+    };
+    assert_eq!(edge(&r, first).ends, [SnapVert::Vert(B, VertId(0)), end]);
+    assert_eq!(edge(&r, rest).ends, [end, SnapVert::Vert(B, VertId(1))]);
+    assert_eq!(
+        r.replaced,
+        [Replaced {
+            edge: EdgeId(0),
+            parts: vec![first, rest],
+        }]
+    );
+    let m = egeom(&geo, first);
+    assert_eq!(m.class, EdgeClass::Merged(EdgeId(0)));
+    let EdgeCurve::Reused { edge: e, t } = m.curve else {
+        panic!("{m:?}");
+    };
+    assert_eq!(e, EdgeId(0));
+    // `S`'s vertex 0 at a third of the floor's edge, the bracket's end
+    // past it.
+    assert_eq!(t[0], 1.0 / 3.0);
+    assert!(t[1] > t[0] && t[1] < 0.5, "{t:?}");
+    let ch = &geo.chains[0];
+    assert_eq!(
+        ch.splits,
+        [(t[0], SnapVert::Vert(B, VertId(0))), (t[1], end)]
+    );
+    for (k, v) in [SnapVert::Vert(B, VertId(0)), end].into_iter().enumerate() {
+        let vg = vgeom(&geo, v);
+        assert_eq!(vg.on, [(EdgeId(0), t[k])]);
+        let other = curve.split(&[t[k]]).unwrap();
+        assert_eq!(bits(other.knot_point(1).unwrap()), bits(vg.pos), "{v:?}");
+        assert_eq!(vg.pos[2], 0.0);
+    }
+    // The bracket's end moved by at most `b_K` from `S`'s edge.
+    let rv = r.verts.iter().find(|v| v.key == end).unwrap();
+    assert!(rv.moved.displacement <= B_K, "{rv:?}");
+    // The rest fits the floor: on it, within half the seam target.
+    for k in [rest].into_iter().chain((1..4).map(|h| SnapEdge::Piece {
+        edge: EdgeId(h),
+        part: 0,
+    })) {
+        let eg = egeom(&geo, k);
+        assert_eq!(eg.class, EdgeClass::AlongRim, "{k:?}");
+        assert!(eg.fit <= 0.5e-5, "{eg:?}");
+        let EdgeCurve::New(c) = &eg.curve else {
+            panic!("{eg:?}");
+        };
+        assert!(c.spans()[0].iter().all(|p| p[2] == 0.0), "{k:?}");
+    }
+    for v in 1..4 {
+        let p = vgeom(&geo, SnapVert::Vert(B, VertId(v))).pos;
+        assert_eq!(p[2], 0.0);
+    }
+}
+
+#[test]
+fn a_fit_beyond_half_the_seam_target_is_refused() {
+    // With no seam allowed at all, the edges fitted to the floor (whose
+    // vertices' UVs on it are rounded) fail their fit.
+    let (_, geo, _) = tilted(0.0);
+    assert!(matches!(geo, Err(RewriteError::Fit(_))), "{geo:?}");
+}
+
+#[test]
+fn coincident_rim_vertices_are_joined_by_a_zero_length_edge() {
+    // Two of the bowl's rim corners made one by the corner rule (the
+    // second with the first, as on coincident edges): a zero-length edge
+    // joins them, used by no face, its ends at one point to the bit.
+    let ids = SMALL;
+    let tiles = [([0, 0], bowl())];
+    let sq = Square::new(ids, 0);
+    let own = sq.trims();
+    let faces = [SnappedFace {
+        face: FaceId(0),
+        tiles: &tiles,
+        own: &own,
+        target: &[],
+    }];
+    let leaves = centre_boxes(ids, &[0], &[0]);
+    let g = bowl_geom(ids);
+    let input = RimInput {
+        snapped: B,
+        faces: &faces,
+        targets: &[(FaceId(0), FLOOR)],
+        band: &band,
+    };
+    let rm = rim(&leaves, &input, &mut work()).expect("a rim");
+    let ci = CornerInput {
+        b_k: B_K,
+        order: &g,
+        band: &narrow,
+        candidates: &[],
+        fixed: &[],
+        groups: &[],
+        coincident: &[],
+    };
+    let mut cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
+    cr.rim_verts[1].moved = Moved {
+        to: Placement::With(0),
+        ..Moved::STAYS
+    };
+    cr.zero_edges.push([0, 1]);
+    let none = SnapAlong::default();
+    let r = rewrite(&rm, &input, &cr, &none, &[], &mut work()).expect("a rewrite");
+    let zero = SnapEdge::Zero { from: 0, to: 1 };
+    let corner_of = |k: u32| SnapVert::RimBox {
+        face: FaceId(0),
+        piece: k,
+    };
+    assert_eq!(edge(&r, zero).ends, [corner_of(0), corner_of(1)]);
+    assert!(!uses(&r).contains_key(&zero));
+    assert!(r.map.edges.contains_key(&zero));
+    let floor = quad([-5.0, -5.0, 0.0], [15.0, -5.0, 0.0], [-5.0, 15.0, 0.0]);
+    let t_faces = [TargetFace {
+        face: FaceId(0),
+        tile: [0, 0],
+        patch: &floor,
+    }];
+    let map = along_z();
+    let gi = GeomInput {
+        order: &g,
+        map: &map,
+        faces: &t_faces,
+        edges: &[],
+        eps_seam: 1e-5,
+    };
+    let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work()).expect("geometry");
+    assert_eq!(egeom(&geo, zero).curve, EdgeCurve::Point);
+    assert_eq!(
+        bits(vgeom(&geo, corner_of(0)).pos),
+        bits(vgeom(&geo, corner_of(1)).pos)
+    );
+    assert_joins(&r, &geo);
+    // Left at its own point, the follower can't be joined.
+    cr.rim_verts[1].moved = Moved::STAYS;
+    let r = rewrite(&rm, &input, &cr, &none, &[], &mut work()).expect("a rewrite");
+    let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work());
+    assert_eq!(geo, Err(RewriteError::Position(corner_of(1))));
+}
+
+#[test]
+fn an_edge_between_two_snapped_faces_is_fitted_to_the_target() {
+    // A flat sheet of two faces sharing the edge `x = 4`, `G` above a
+    // larger floor, all of it in the cluster: both faces go onto the
+    // floor, the shared edge a snapped edge on it (both its coedges on the
+    // floor, one p-curve), the sheet's boundary edges along the rim.
+    let f0 = quad([0.0, 0.0, G], [4.0, 0.0, G], [0.0, 8.0, G]);
+    let f1 = quad([4.0, 0.0, G], [8.0, 0.0, G], [4.0, 8.0, G]);
+    let t0 = [([0, 0], f0)];
+    let t1 = [([0, 0], f1)];
+    // Vertices `0..6`: (0, 0), (4, 0), (8, 0), (8, 8), (4, 8), (0, 8);
+    // edges `k` from vertex `k` to `k + 1`, and 6 from 1 to 4.
+    let xy = [
+        [0.0, 0.0],
+        [4.0, 0.0],
+        [8.0, 0.0],
+        [8.0, 8.0],
+        [4.0, 8.0],
+        [0.0, 8.0],
+    ];
+    let ends = |k: u32| -> [u32; 2] { if k == 6 { [1, 4] } else { [k, (k + 1) % 6] } };
+    let uv0 = |v: u32| [xy[v as usize][0] / 4.0, xy[v as usize][1] / 8.0];
+    let uv1 = |v: u32| [(xy[v as usize][0] - 4.0) / 4.0, xy[v as usize][1] / 8.0];
+    type Uv<'a> = &'a dyn Fn(u32) -> [f64; 2];
+    let loops: [(&[(u32, bool)], Uv<'_>); 2] = [
+        (&[(0, true), (6, true), (4, true), (5, true)], &uv0),
+        (&[(1, true), (2, true), (3, true), (6, false)], &uv1),
+    ];
+    let spans: Vec<Vec<UvSpan>> = loops
+        .iter()
+        .map(|(l, uv)| {
+            l.iter()
+                .map(|&(e, _)| {
+                    let [a, b] = ends(e);
+                    span(uv(a), uv(b))
+                })
+                .collect()
+        })
+        .collect();
+    let trims: Vec<Vec<RimTrim<'_>>> = loops
+        .iter()
+        .zip(&spans)
+        .map(|((l, _), ss)| {
+            l.iter()
+                .enumerate()
+                .map(|(i, &(e, left))| RimTrim {
+                    edge: EdgeId(e),
+                    ends: ends(e).map(VertId),
+                    spans: &ss[i..i + 1],
+                    knots: &KNOTS,
+                    left,
+                })
+                .collect()
+        })
+        .collect();
+    let faces = [
+        SnappedFace {
+            face: FaceId(0),
+            tiles: &t0,
+            own: &trims[0],
+            target: &[],
+        },
+        SnappedFace {
+            face: FaceId(1),
+            tiles: &t1,
+            own: &trims[1],
+            target: &[],
+        },
+    ];
+    let mut g = Geom::default();
+    for (v, p) in xy.iter().enumerate() {
+        g.verts.insert((B, VertId(v as u32)), [p[0], p[1], G]);
+    }
+    for e in 0..7 {
+        g.edges.insert((B, EdgeId(e)), ends(e).map(VertId));
+    }
+    let leaves = [
+        Boxes([whole(A, 0, [0, 0]), whole(B, 0, [0, 0])]),
+        Boxes([whole(A, 0, [0, 0]), whole(B, 1, [0, 0])]),
+    ];
+    let input = RimInput {
+        snapped: B,
+        faces: &faces,
+        targets: &[(FaceId(0), FLOOR)],
+        band: &band,
+    };
+    let rm = rim(&leaves, &input, &mut work()).expect("a rim");
+    let ci = CornerInput {
+        b_k: B_K,
+        order: &g,
+        band: &narrow,
+        candidates: &[],
+        fixed: &[],
+        groups: &[],
+        coincident: &[],
+    };
+    let cr = corner(&rm, &input, &ci, &mut work()).expect("the corner rule");
+    let none = SnapAlong::default();
+    let r = rewrite(&rm, &input, &cr, &none, &[], &mut work()).expect("a rewrite");
+    let floor = quad([-8.0, -8.0, 0.0], [16.0, -8.0, 0.0], [-8.0, 16.0, 0.0]);
+    let t_faces = [TargetFace {
+        face: FaceId(0),
+        tile: [0, 0],
+        patch: &floor,
+    }];
+    let map = along_z();
+    let gi = GeomInput {
+        order: &g,
+        map: &map,
+        faces: &t_faces,
+        edges: &[],
+        eps_seam: 1e-5,
+    };
+    let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work()).expect("geometry");
+    assert_joins(&r, &geo);
+    assert_eq!(r.faces.len(), 2);
+    let shared = egeom(
+        &geo,
+        SnapEdge::Piece {
+            edge: EdgeId(6),
+            part: 0,
+        },
+    );
+    assert_eq!(shared.class, EdgeClass::Snapped);
+    let EdgeCurve::New(c) = &shared.curve else {
+        panic!("{shared:?}");
+    };
+    assert_eq!(c.knot_point(0), Some([4.0, 0.0, 0.0]));
+    assert_eq!(c.knot_point(1), Some([4.0, 8.0, 0.0]));
+    assert_eq!(shared.coedges.len(), 2);
+    assert_eq!(shared.coedges[0].pcurve, shared.coedges[1].pcurve);
+    assert!(shared.fit <= 0.5e-5);
+    for e in &geo.edges {
+        if e.key != shared.key {
+            assert_eq!(e.class, EdgeClass::AlongRim, "{e:?}");
+            assert_eq!(e.coedges.len(), 1);
+        }
+    }
+    // A target face without its plane described.
+    let gi = GeomInput { faces: &[], ..gi };
+    let geo = geometry(&r, &rm, &input, &cr, &none, &[], &gi, &mut work());
+    assert_eq!(geo, Err(RewriteError::Chart(FaceId(0))));
 }
