@@ -786,7 +786,7 @@ pub(super) fn larger(a: f64, b: f64) -> f64 {
 }
 
 /// `R_on = max(b_K, β_x + β_y)`, the sum rounded up.
-fn r_on(b_k: f64, bx: f64, by: f64) -> f64 {
+pub(super) fn r_on(b_k: f64, bx: f64, by: f64) -> f64 {
     larger(b_k, up(bx + by))
 }
 

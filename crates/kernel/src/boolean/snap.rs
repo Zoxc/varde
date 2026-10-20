@@ -20,11 +20,15 @@
 //! split where the refit meets the untouched rest; and [`stale`]: which
 //! elements of a rewrite lie on the target, and the order the snaps run
 //! in, the leaves each snap and the join pass leave stale recertified,
-//! merged into an earlier cluster where they join it, which then re-runs.
+//! merged into an earlier cluster where they join it, which then re-runs;
+//! and [`escalate`]: where a cluster's snap fails, the one routing of the
+//! failure, halving the gap bound only where it depends on it, and the
+//! rule gaps where halving stops helping.
 
 pub mod along;
 pub mod cluster;
 pub mod corner;
+pub mod escalate;
 pub mod join;
 pub mod rewrite;
 pub mod rim;
