@@ -152,6 +152,21 @@ impl Quadric {
             .sub(&rho.mul(&rho).mul(&aa))
     }
 
+    /// A point of the axis, as stored.
+    pub fn foot(&self) -> [f64; 3] {
+        self.foot
+    }
+
+    /// The axis's direction, as stored (any length).
+    pub fn axis(&self) -> [f64; 3] {
+        self.axis
+    }
+
+    /// The radius.
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
     /// `∇F(p) = 2(|a|²·r − (r·a)·a)` in `f64`, for proposals only.
     fn gradient(&self, p: [f64; 3]) -> [f64; 3] {
         let a = self.axis;
@@ -339,6 +354,22 @@ impl<S: Scalar> SheetPiece<S> {
     pub fn graph(&self) -> &[[S; 3]] {
         &self.graph
     }
+
+    /// The sheet's homogeneous net over the box relative to the
+    /// quadric's foot: `R = X − c·W` and `W` (module docs).
+    pub fn net(&self) -> (&[Tensor<S>; 3], &Tensor<S>) {
+        (&self.r, &self.w)
+    }
+
+    /// The quadric it was made against.
+    pub fn quadric(&self) -> &Quadric {
+        &self.quadric
+    }
+
+    /// Whether the quadric face's outward normal is `∇F` (`σ_A = +1`).
+    pub fn outward(&self) -> bool {
+        self.outward
+    }
 }
 
 /// Why a pair is Empty.
@@ -372,6 +403,16 @@ impl<S: Scalar> Cone<S> {
     /// The gap bound it was certified with.
     pub fn b_k(&self) -> f64 {
         self.b_k
+    }
+
+    /// The sheet's piece the leaf was certified on.
+    pub fn sheet(&self) -> &SheetPiece<S> {
+        &self.sheet
+    }
+
+    /// Whether the leaf is Contact: the sheet's normals reversed.
+    pub fn opposed(&self) -> bool {
+        self.opposed
     }
 
     /// Whether `ell` is admitted, certified at the leaf's level: the

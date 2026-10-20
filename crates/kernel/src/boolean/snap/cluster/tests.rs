@@ -15,11 +15,11 @@ use crate::geom::form::{FormKey, PlaneKey};
 use crate::infra::budget::{Budget, Work};
 
 /// The gap bound of the snap at the default tolerance, `ε/2 = 5·10⁻⁴`.
-const B_K: f64 = 5e-4;
+pub(crate) const B_K: f64 = 5e-4;
 
-type Key = FaceOrd<FormKey, ()>;
+pub(crate) type Key = FaceOrd<FormKey, ()>;
 
-fn rat(x: f64) -> Rational {
+pub(crate) fn rat(x: f64) -> Rational {
     Rational::try_from(x).expect("finite")
 }
 
@@ -28,7 +28,7 @@ fn h(p: [f64; 3]) -> [Rational; 4] {
 }
 
 /// The parallelogram `p0 + u·(pu − p0) + v·(pv − p0)` as a bilinear tile.
-fn quad(p0: [f64; 3], pu: [f64; 3], pv: [f64; 3]) -> HomPatch<Rational> {
+pub(crate) fn quad(p0: [f64; 3], pu: [f64; 3], pv: [f64; 3]) -> HomPatch<Rational> {
     let p11 = [0, 1, 2].map(|k| pu[k] + pv[k] - p0[k]);
     HomPatch::new(1, 1, [h(p0), h(pv), h(pu), h(p11)]).expect("a bilinear net")
 }
@@ -64,7 +64,7 @@ fn newell(body: &Polygons, f: usize) -> [f64; 3] {
 }
 
 /// Face `f`'s key: its plane's.
-fn face_key(body: &Polygons, f: usize) -> Key {
+pub(crate) fn face_key(body: &Polygons, f: usize) -> Key {
     let p = body.verts[body.faces[f][0] as usize];
     FaceOrd {
         form: Some(FormKey::Plane(
@@ -75,12 +75,12 @@ fn face_key(body: &Polygons, f: usize) -> Key {
 }
 
 /// A face's tile and whether the face is flipped against it.
-type TileOf = fn(&Polygons, usize) -> (HomPatch<Rational>, bool);
+pub(crate) type TileOf = fn(&Polygons, usize) -> (HomPatch<Rational>, bool);
 
 /// The tile of an axis-aligned face: its bounding rectangle in its
 /// plane, from the least corner along the other two axes in order, so it
 /// doesn't depend on the vertex ids or where the loop starts.
-fn rectangle(body: &Polygons, f: usize) -> (HomPatch<Rational>, bool) {
+pub(crate) fn rectangle(body: &Polygons, f: usize) -> (HomPatch<Rational>, bool) {
     let n = newell(body, f);
     let k = (0..3).find(|&k| n[k] != 0.0).expect("a face has a normal");
     assert!((0..3).all(|j| j == k || n[j] == 0.0), "axis-aligned");
@@ -108,7 +108,7 @@ fn rectangle(body: &Polygons, f: usize) -> (HomPatch<Rational>, bool) {
 
 /// The tile of any polygon face: the parallelogram on its first corner
 /// and the corners after and before it, facing as the loop does.
-fn parallelogram(body: &Polygons, f: usize) -> (HomPatch<Rational>, bool) {
+pub(crate) fn parallelogram(body: &Polygons, f: usize) -> (HomPatch<Rational>, bool) {
     let l = &body.faces[f];
     let v = |k: u32| body.verts[k as usize];
     (quad(v(l[0]), v(l[1]), v(l[l.len() - 1])), false)
@@ -116,7 +116,7 @@ fn parallelogram(body: &Polygons, f: usize) -> (HomPatch<Rational>, bool) {
 
 /// Every leaf of every face pair of `pair`, each face's tile split
 /// `depth` times in each direction before testing.
-fn fixture_leaves(pair: &Pair, tile_of: TileOf, depth: u32) -> Vec<Leaf> {
+pub(crate) fn fixture_leaves(pair: &Pair, tile_of: TileOf, depth: u32) -> Vec<Leaf> {
     let ta: Vec<_> = (0..pair.a.faces.len())
         .map(|f| tile_of(&pair.a, f))
         .collect();
@@ -154,12 +154,12 @@ fn fixture_leaves(pair: &Pair, tile_of: TileOf, depth: u32) -> Vec<Leaf> {
     out
 }
 
-fn work() -> Work {
+pub(crate) fn work() -> Work {
     Work::new(&Budget::DEFAULT)
 }
 
 /// The clusters of a fixture's leaves, faces keyed by their planes.
-fn fixture_clusters(pair: &Pair, leaves: &[Leaf]) -> Vec<Cluster<Key>> {
+pub(crate) fn fixture_clusters(pair: &Pair, leaves: &[Leaf]) -> Vec<Cluster<Key>> {
     clusters(
         leaves,
         |op, f| match op {
@@ -321,12 +321,12 @@ fn kinds() -> (Kind, Kind) {
     (near, contact)
 }
 
-fn whole(op: Operand, face: u32, tile: [i64; 2]) -> BoxKey {
+pub(crate) fn whole(op: Operand, face: u32, tile: [i64; 2]) -> BoxKey {
     BoxKey::new(op, FaceId(face), tile, Extent::WHOLE, Extent::WHOLE)
 }
 
 /// The extent `[a, b]/2^e`.
-fn ext(a: u64, b: u64, e: u32) -> Extent {
+pub(crate) fn ext(a: u64, b: u64, e: u32) -> Extent {
     Extent::new(Dyadic::new(a, e).unwrap(), Dyadic::new(b, e).unwrap()).unwrap()
 }
 
