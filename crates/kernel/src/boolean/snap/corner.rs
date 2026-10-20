@@ -781,7 +781,7 @@ fn op_of(e: Element) -> Operand {
 }
 
 /// The larger of two bands (neither a NaN), by comparison.
-fn larger(a: f64, b: f64) -> f64 {
+pub(super) fn larger(a: f64, b: f64) -> f64 {
     if b > a { b } else { a }
 }
 
@@ -792,7 +792,7 @@ fn r_on(b_k: f64, bx: f64, by: f64) -> f64 {
 
 /// Whether squared distance `dd` certifies on (module docs); else it
 /// certifies off.
-fn on_q(dd: &Q, b_k: f64, bx: f64, by: f64) -> bool {
+pub(super) fn on_q(dd: &Q, b_k: f64, bx: f64, by: f64) -> bool {
     let r = Q::try_from(r_on(b_k, bx, by)).expect("a finite threshold");
     let r2 = &r * &r;
     if *dd <= r2 {
@@ -802,16 +802,16 @@ fn on_q(dd: &Q, b_k: f64, bx: f64, by: f64) -> bool {
     false
 }
 
-fn exact3(p: [f64; 3]) -> P3 {
+pub(super) fn exact3(p: [f64; 3]) -> P3 {
     p.map(|x| Q::try_from(x).expect("a finite position"))
 }
 
-fn to_f64(x: &Q) -> f64 {
+pub(super) fn to_f64(x: &Q) -> f64 {
     f64::rounding_from(x, Nearest).0
 }
 
 /// An upper bound of `√dd`.
-fn dist_up(dd: &Q) -> f64 {
+pub(super) fn dist_up(dd: &Q) -> f64 {
     if *dd == 0u32 {
         return 0.0;
     }
@@ -822,22 +822,22 @@ fn rounded_pos(p: &P3) -> Result<Pos, CornerError> {
     Pos::new(p.each_ref().map(to_f64)).map_err(|_| CornerError::Position)
 }
 
-fn sub3(a: &P3, b: &P3) -> P3 {
+pub(super) fn sub3(a: &P3, b: &P3) -> P3 {
     [&a[0] - &b[0], &a[1] - &b[1], &a[2] - &b[2]]
 }
 
-fn dot3(a: &P3, b: &P3) -> Q {
+pub(super) fn dot3(a: &P3, b: &P3) -> Q {
     &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
 }
 
-fn d2(a: &P3, b: &P3) -> Q {
+pub(super) fn d2(a: &P3, b: &P3) -> Q {
     let d = sub3(a, b);
     dot3(&d, &d)
 }
 
 /// The squared distance from `p` to segment `[a, b]` and the clamped
 /// fraction of its foot.
-fn point_seg(p: &P3, a: &P3, b: &P3) -> (Q, Q) {
+pub(super) fn point_seg(p: &P3, a: &P3, b: &P3) -> (Q, Q) {
     let e = sub3(b, a);
     let ee = dot3(&e, &e);
     if ee == 0u32 {
@@ -961,7 +961,12 @@ fn rim_band(input: &RimInput<'_>, a: Along) -> Result<f64, CornerError> {
 }
 
 /// The point of face `face`'s tile `tile` at global UV `uv`, exactly.
-fn point_on(input: &RimInput<'_>, face: FaceId, tile: [i64; 2], uv: &[Q; 2]) -> Option<P3> {
+pub(super) fn point_on(
+    input: &RimInput<'_>,
+    face: FaceId,
+    tile: [i64; 2],
+    uv: &[Q; 2],
+) -> Option<P3> {
     let f = input.faces.iter().find(|f| f.face == face)?;
     let (_, patch) = f.tiles.iter().find(|(k, _)| *k == tile)?;
     let u = &uv[0] - Q::from(tile[0]);
