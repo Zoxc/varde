@@ -21,7 +21,7 @@
 //! every consumer.
 //!
 //! **The frame.** Shadows are taken along [`UP`](crate::perturb::UP) onto the shadow plane;
-//! the ray of a point of `A` goes `−r̂` ([`R_HAT`](crate::perturb::R_HAT)), of a point of `B`
+//! the ray of a point of `A` goes `−r̂` ([`R_HAT`]), of a point of `B`
 //! `+r̂`, so "`a`'s ray passes `b`" and "`b`'s ray passes `a`" are one
 //! fact, stored once ([`VvKey`], `A`'s point first).
 //!
@@ -34,7 +34,7 @@
 //! r_w)`, the points' near radii, compared exactly on the stored
 //! positions, never perturbed). It is stored oriented from `A`'s point to
 //! `B`'s; a reader whose point is the `B` one gets side and ahead negated
-//! ([`Shadows::vv`]), `near` and "the ray passes" ([`VvRec::on_ray`]) as
+//! ([`Shadows::vv`]), `near` and "the ray passes" ([`SideAhead::on_ray`]) as
 //! stored.
 //!
 //! **Ray record on a line.** [`RayRec`] holds the signed crossing of a
@@ -88,7 +88,7 @@
 //! line where its side, the first-order row `ν·(ΔC − Δq)` along it (the
 //! next order where that one is 0), changes, from its start's record's
 //! side to its end's, one crossing per change, on the ray where the
-//! change lies ahead of `q` ([`along_changes`](super::ray::along_changes),
+//! change lies ahead of `q` ([`along_changes`],
 //! the curved levels at the caller's band, the field along the edge from
 //! [`ShadowGeometry::straight_rates`]). The record is their sum. Where the
 //! field is constant along the edge the row has one sign: the ends'

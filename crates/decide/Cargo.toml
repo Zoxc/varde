@@ -22,3 +22,8 @@ geogram_predicates.workspace = true
 robust.workspace = true
 varde-testing.workspace = true
 varde-testkit.workspace = true
+
+[lints.rustdoc]
+# Docs cross-reference private helpers; the link check documents them
+# (`cargo doc --document-private-items`, AGENTS.md).
+private_intra_doc_links = "allow"

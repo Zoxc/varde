@@ -456,7 +456,7 @@ fn sqrt_candidate(x: Dd) -> Dd {
 const SQRT_SCALE_FROM: f64 = pow2(1000);
 
 /// `hi` below which a square root is taken of the value scaled by `2²⁰⁰`,
-/// `2⁻⁹⁰⁰`: the products' absolute rounding term ([`SCALE_ABS`]) in its
+/// `2⁻⁹⁰⁰`: the products' absolute rounding term (`η`, [`ETA`]) in its
 /// residual would otherwise swamp the root's own rounding (`√η` would be
 /// within about `5·√η` only).
 const SQRT_SCALE_BELOW: f64 = pow2(-900);

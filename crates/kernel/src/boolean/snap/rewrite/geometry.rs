@@ -537,7 +537,7 @@ fn line(a: [f64; 3], b: [f64; 3]) -> Option<Span3> {
     ])
 }
 
-/// The UV line span from `a` to `b`, as [`line`].
+/// The UV line span from `a` to `b`, as [`line()`].
 fn uv_line(a: [f64; 2], b: [f64; 2]) -> Option<Span2> {
     let m = midpoint(a, b)?;
     Some([[a[0], a[1], 1.0], [m[0], m[1], 1.0], [b[0], b[1], 1.0]])

@@ -3,7 +3,7 @@
 //! canonical key and read by every consumer.
 //!
 //! **The frame** is the flat records' ([`super::shadow`]): shadows along
-//! [`UP`](crate::perturb::UP), the ray of a point of `A` going `−r̂`, of a
+//! [`UP`], the ray of a point of `A` going `−r̂`, of a
 //! point of `B` `+r̂` ([`R_HAT`]), [`NU`] the normal of the `r̂` line, to
 //! its left seen from above.
 //!

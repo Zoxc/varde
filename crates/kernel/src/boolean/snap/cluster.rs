@@ -19,7 +19,7 @@
 //! in or on the faces' ids.
 //!
 //! **Order.** The geometric order of
-//! [`ClusterKey`](varde_decide::order::ClusterKey), never ids:
+//! [`ClusterKey`], never ids:
 //! - a leaf's key: the least corner of its two pieces' world boxes (each
 //!   rounded outward), then the lesser of its two faces' keys, then its
 //!   face pair (the first operand's face key, then the second's);

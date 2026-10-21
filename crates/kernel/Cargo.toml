@@ -37,3 +37,8 @@ harness = false
 [lints.rust]
 # tools/ci.sh builds tests/ban_probe.rs with `--cfg ban_probe`.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ban_probe)"] }
+
+[lints.rustdoc]
+# Docs cross-reference private helpers; the link check documents them
+# (`cargo doc --document-private-items`, AGENTS.md).
+private_intra_doc_links = "allow"

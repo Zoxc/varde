@@ -7,7 +7,7 @@
 //! frame) at the operation's largest operand coordinate magnitude `M`:
 //! [`SEAM_OPS`](crate::num::storage::SEAM_OPS) rounded operations of unit roundoff `u = 2⁻⁵³` each, so
 //! `ρ_op = 50·u·M` (5.5·10⁻⁹ mm at `M = 10⁶` mm;
-//! [`rho_op`](crate::num::storage::rho_op)). It is computed once,
+//! [`rho_op`]). It is computed once,
 //! when the operation starts, from the operands alone. Every band, near
 //! radius and key reads it (the edges' bands, near radii, feet, the
 //! point–vertex records' `near`), never a precision level's own

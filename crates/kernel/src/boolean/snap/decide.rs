@@ -62,7 +62,7 @@
 //! two elements are both on `T` is decided under the same-surface band
 //! ([`Band::same_surface`]) of the larger of their bands, at every rung:
 //! a flat value compared with it exactly, beyond it the value's sign,
-//! within it a tie decided by the perturbation's orders ([`decide`]), a
+//! within it a tie decided by the perturbation's orders ([`decide`](varde_decide::num::decide::decide)), a
 //! proxy at the band's scale. Never for a rim element against a target
 //! face beside it (the gap sign above).
 //!

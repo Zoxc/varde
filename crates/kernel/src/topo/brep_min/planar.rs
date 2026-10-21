@@ -640,7 +640,7 @@ pub(super) fn line(a: [f64; 3], b: [f64; 3]) -> Span3 {
     ]
 }
 
-/// The UV line span from `a` to `b`, as [`line`].
+/// The UV line span from `a` to `b`, as [`line()`].
 pub(super) fn uv_line(a: [f64; 2], b: [f64; 2]) -> Span2 {
     let m = [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])];
     [[a[0], a[1], 1.0], [m[0], m[1], 1.0], [b[0], b[1], 1.0]]

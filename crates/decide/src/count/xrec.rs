@@ -2,7 +2,7 @@
 //! that the records' four terms ([`x_count`](crate::records::xrec::x_count)) count in total.
 //!
 //! **Spans and boxes** ([`XBox`]). A curved edge is a chain of spans
-//! ([`Span`](crate::records::ray::Span)); the square is cut into one cell per pair of spans, each
+//! ([`Span`]); the square is cut into one cell per pair of spans, each
 //! with its own `[0, 1]²` in the two spans' parameters, and a box is a
 //! cell cut to two dyadic extents. A straight edge is one span. The
 //! sides between cells are inner sides like any other.
