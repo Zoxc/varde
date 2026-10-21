@@ -32,9 +32,6 @@ use varde_decide::records::near::OpBands;
 use super::super::along::{AlongError, AlongInput, SnapAlong, snap_along};
 use super::super::cluster::{Cluster, ClusterLeaf, Tangency, clusters};
 use super::super::corner::{Corner, CornerError, CornerInput, corner};
-use super::super::cuts::{
-    Count, Curve, CurvePiece, Cut, CutError, CutFailure, CutInput, ZoneCurve, check,
-};
 use super::super::decide::{DecideError, DecideInput, Zone, decide_zone};
 use super::super::rewrite::{
     GeomInput, Geometry, Rewrite, RewriteError, TargetCut, TargetEdge, TargetFace, geometry,
@@ -111,7 +108,7 @@ impl<'a> Setup<'a> {
         }
     }
 
-    fn coedges_of(&self, o: Operand, e: EdgeId) -> &[(FaceId, CoedgeId)] {
+    pub(crate) fn coedges_of(&self, o: Operand, e: EdgeId) -> &[(FaceId, CoedgeId)] {
         &self.coedges[o as usize][e.index()]
     }
 
@@ -582,51 +579,4 @@ pub(crate) fn snap_leaves(
         b_k,
         work: w.used(),
     })
-}
-
-/// The zone's cut-point check on its rim records (the corner records at
-/// its ties and its branch vertices): the trim boolean's cells are not
-/// given, the sheets' regions having no winding in the other operand.
-pub(crate) fn rim_cut_points(z: &Snap) -> Result<Option<CutFailure<u32>>, CutError> {
-    // Each rim edge with records: a zone curve of one piece, end to end.
-    let pieces: Vec<[CurvePiece<'_>; 1]> = z
-        .zone
-        .rim
-        .edges
-        .iter()
-        .filter_map(|r| {
-            let e = z.rewrite.edges.iter().find(|e| e.key == r.edge)?;
-            Some([CurvePiece {
-                from: Cut::Vert(e.ends[0]),
-                to: Cut::Vert(e.ends[1]),
-                trim: &[],
-                count: Count::Rim {
-                    target: *r.targets.first()?,
-                },
-            }])
-        })
-        .collect();
-    let mut curves: Vec<ZoneCurve<'_>> = z
-        .zone
-        .rim
-        .edges
-        .iter()
-        .zip(&pieces)
-        .map(|(r, p)| ZoneCurve {
-            curve: Curve::Snap(r.edge),
-            pieces: p,
-        })
-        .collect();
-    curves.sort_by_key(|c| c.curve);
-    curves.dedup_by_key(|c| c.curve);
-    check(
-        &0u32,
-        &CutInput {
-            rim: &z.zone.rim,
-            faces: &[],
-            curves: &curves,
-            rung: 0,
-        },
-        &mut work(),
-    )
 }

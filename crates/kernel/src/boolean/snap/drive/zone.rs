@@ -22,6 +22,12 @@
 //! Operand edges: each line the target edge it lies on, each arc the
 //! snapped edge it is a piece of, none for the rim's and the cuts' arcs;
 //! the fold reads from the stores whether they lie on an open boundary.
+//!
+//! **Cut points** ([`cut_points`]). The zone's cut-point check on the faces
+//! folded: the rim records and the cells, each cell labelled by the snapped
+//! sheet's coverage (the sheets' regions have no winding in the other
+//! operand), each edge of the snapped sheet's open boundary counting its
+//! coverage step from the store.
 
 use std::collections::BTreeMap;
 
@@ -29,10 +35,15 @@ use varde_decide::ids::{EdgeId, FaceId, VertId};
 use varde_decide::records::keys::Operand;
 
 use super::super::corner::Placement;
+use super::super::cuts::{
+    Count, Curve, CurvePiece, Cut, CutError, CutFace, CutFailure, CutInput, TrimAt, ZoneCurve,
+    check,
+};
 use super::super::rewrite::{EdgeCurve, SnapEdge, SnapVert};
 use super::run::{Setup, Snap, work};
 use crate::boolean::arrange::coincident::{
-    Along as LineAlong, Arc, Coincident, CoincidentError, FaceInput, Line, Place, ZeroOf, realise,
+    Along as LineAlong, Arc, Coincident, CoincidentError, FaceInput, Line, PieceOf, Place, ZeroOf,
+    realise,
 };
 use crate::boolean::arrange::fold::{
     Fate, Fold, FoldError, FoldInput, Operand as FoldOperand, OperandEdge, Source, fold,
@@ -51,6 +62,8 @@ pub(crate) struct FaceZone {
     /// The rewrite edges given as arcs, their target edge where they run
     /// along one.
     pub(crate) arcs: Vec<Option<EdgeId>>,
+    /// Per arc, the rewrite edge it is; none for a zero-length join.
+    pub(crate) arc_keys: Vec<Option<SnapEdge>>,
 }
 
 impl FaceZone {
@@ -182,6 +195,7 @@ pub(crate) fn faces(
         let mut arcs_data: Vec<ArcData> = Vec::new();
         let mut arc_edges: Vec<Option<EdgeId>> = Vec::new();
         let mut arc_on: Vec<Option<OperandEdge>> = Vec::new();
+        let mut arc_keys: Vec<Option<SnapEdge>> = Vec::new();
         for k in &order {
             let e = z
                 .rewrite
@@ -252,6 +266,7 @@ pub(crate) fn faces(
                 _ => None,
             };
             arcs_data.push((ix, along, wind[k]));
+            arc_keys.push(Some(*k));
             arc_edges.push(along.map(|(li, _)| lines_data[li as usize].0));
             arc_on.push(match k {
                 SnapEdge::Piece { edge, .. } => Some((s_op, *edge)),
@@ -268,6 +283,7 @@ pub(crate) fn faces(
             {
                 joins.push(arcs_data.len() as u32);
                 arcs_data.push(([m, n], None, 0));
+                arc_keys.push(None);
                 arc_edges.push(None);
                 arc_on.push(None);
             }
@@ -359,6 +375,7 @@ pub(crate) fn faces(
             fold: fd,
             line_edges: lines_data.iter().map(|l| l.0).collect(),
             arcs: arc_edges,
+            arc_keys,
         });
     }
     Ok(out)
@@ -379,4 +396,209 @@ fn faces_of(s: &Setup<'_>, o: Operand, e: EdgeId) -> usize {
 /// Point `p`'s UV on face `f` of `o`.
 fn uv_of(s: &Setup<'_>, o: Operand, f: FaceId, p: [f64; 3]) -> [f64; 2] {
     super::run::uv_on(s.body(o), f, p)
+}
+
+/// A zone curve as the cut-point check's cells part reads it on the
+/// sheets (module docs of [`cut_points`]): its ends, its count, and the
+/// trim boolean's pieces it is realised as.
+#[derive(Clone, Debug)]
+pub(crate) struct CellCurve {
+    pub(crate) curve: Curve,
+    pub(crate) ends: [SnapVert; 2],
+    pub(crate) count: i64,
+    pub(crate) trim: Vec<TrimAt>,
+}
+
+/// Why a zone's curves can't be counted on the sheets.
+#[derive(Debug)]
+#[allow(dead_code, reason = "read through `Debug` in the test reports")]
+pub(crate) enum CellsError {
+    /// A rim piece along box sides: the label beyond it is the gap's, which
+    /// the sheets' coverage doesn't give.
+    BoxSide(SnapEdge),
+    /// A trim piece of no rewrite edge, or a rewrite edge not in the
+    /// rewrite.
+    Unknown(u32, u32),
+    /// More than `u32` faces or pieces.
+    TooMany,
+}
+
+/// The coverage step across the open-boundary edge `e` of the snapped
+/// sheet on target face `t`, from the store: `+1` where its one face lies
+/// on its left in `t`'s UV (along its stored direction), `−1` on its
+/// right; `0` for an edge with two faces.
+fn open_step(s: &Setup<'_>, z: &Snap, e: EdgeId, t: FaceId) -> i64 {
+    let t_op = z.target.operand;
+    let s_op = t_op.other();
+    let [(sf, c)] = s.coedges_of(s_op, e) else {
+        return 0;
+    };
+    let br = &s.body(s_op).brep;
+    let left_s = br.reversed(*c) == br.flipped(*sf);
+    if left_s == same_turn(s, z, (s_op, *sf), (t_op, t)) {
+        1
+    } else {
+        -1
+    }
+}
+
+/// The zone curves of `z` on its target faces `faces` as realised, each
+/// counted (module docs of [`cut_points`]).
+pub(crate) fn cell_curves(
+    s: &Setup<'_>,
+    z: &Snap,
+    faces: &[FaceZone],
+) -> Result<Vec<CellCurve>, CellsError> {
+    let t_op = z.target.operand;
+    let br = &s.body(t_op).brep;
+    let mut out: Vec<CellCurve> = Vec::new();
+    let mut at: BTreeMap<Curve, usize> = BTreeMap::new();
+    for (fi, fz) in faces.iter().enumerate() {
+        let fi = u32::try_from(fi).map_err(|_| CellsError::TooMany)?;
+        for (pi, p) in fz.realised.pieces.iter().enumerate() {
+            let pi = u32::try_from(pi).map_err(|_| CellsError::TooMany)?;
+            let (curve, ends, count) = match p.of {
+                PieceOf::Line { line, .. } => {
+                    let e = fz.line_edges[line as usize];
+                    let ends = br.ends(e).map(|v| SnapVert::Vert(t_op, v));
+                    (Curve::Operand(t_op, e), ends, 0)
+                }
+                PieceOf::Arc { arc, .. } => {
+                    let key = fz.arc_keys[arc as usize].ok_or(CellsError::Unknown(fi, pi))?;
+                    let edge = z
+                        .rewrite
+                        .edges
+                        .iter()
+                        .find(|e| e.key == key)
+                        .ok_or(CellsError::Unknown(fi, pi))?;
+                    let step = match key {
+                        SnapEdge::Piece { edge, .. } => open_step(s, z, edge, fz.face),
+                        SnapEdge::Rim { .. } => return Err(CellsError::BoxSide(key)),
+                        SnapEdge::Cut { .. } | SnapEdge::Zero { .. } => 0,
+                    };
+                    let records = i64::from(z.zone.rim.x21(key, fz.face));
+                    (Curve::Snap(key), edge.ends, records + step)
+                }
+            };
+            let trim = TrimAt {
+                face: fi,
+                piece: pi,
+                forward: true,
+            };
+            match at.get(&curve) {
+                Some(&k) => out[k].trim.push(trim),
+                None => {
+                    at.insert(curve, out.len());
+                    out.push(CellCurve {
+                        curve,
+                        ends,
+                        count,
+                        trim: vec![trim],
+                    });
+                }
+            }
+        }
+    }
+    // The rim edges with records the faces don't hold (no length there).
+    for r in &z.zone.rim.edges {
+        let curve = Curve::Snap(r.edge);
+        if at.contains_key(&curve) {
+            continue;
+        }
+        let Some(e) = z.rewrite.edges.iter().find(|e| e.key == r.edge) else {
+            continue;
+        };
+        at.insert(curve, out.len());
+        out.push(CellCurve {
+            curve,
+            ends: e.ends,
+            count: r.corners.iter().map(|c| i64::from(c.degree)).sum(),
+            trim: Vec::new(),
+        });
+    }
+    Ok(out)
+}
+
+/// The zone's cut-point check ([`check`]) on the sheets, both parts: the
+/// rim records (the corner records at its ties, its branch vertices) and
+/// the cells of the trim boolean on `faces`.
+///
+/// **Labels** (an interim for sheets, whose regions have no winding in
+/// the other operand): a cell's label is the snapped sheet's coverage of
+/// it, the snapped faces on the target face covering it, each counted
+/// `+1` where its UV turns as the target face's along `ℓ` and `−1` where
+/// not: the region's winding less the target face's own. The region
+/// outside the face is no cell of the zone.
+///
+/// **Counts.** Each zone curve is one piece end to end. Its records count:
+/// nothing crosses an element on the target once the perturbation moves
+/// `A` off it, so `0`, and a rim edge its corner records ([`super::super::decide::RimRecords::x21`]
+/// against the face it is on). An edge of the snapped sheet's open boundary
+/// adds its coverage step, read from the store (its one face's side, turned
+/// by the two UVs' turn): the coverage ends there with no surface crossed.
+/// Rim pieces along box sides are refused ([`CellsError::BoxSide`]).
+pub(crate) fn cut_points(
+    s: &Setup<'_>,
+    z: &Snap,
+    faces: &[FaceZone],
+) -> Result<Result<Option<CutFailure<u32>>, CutError>, CellsError> {
+    let curves = cell_curves(s, z, faces)?;
+    Ok(check_cells(z, faces, &curves))
+}
+
+/// [`check`] on `curves` (from [`cell_curves`]) and the cells of `faces`.
+pub(crate) fn check_cells(
+    z: &Snap,
+    faces: &[FaceZone],
+    curves: &[CellCurve],
+) -> Result<Option<CutFailure<u32>>, CutError> {
+    let labels: Vec<Vec<Option<i64>>> = faces
+        .iter()
+        .map(|f| {
+            f.realised
+                .arrangement
+                .regions()
+                .iter()
+                .enumerate()
+                .map(|(k, r)| (k > 0).then(|| r.winding - 1))
+                .collect()
+        })
+        .collect();
+    let cut_faces: Vec<CutFace<'_>> = faces
+        .iter()
+        .zip(&labels)
+        .map(|(f, l)| CutFace {
+            realised: &f.realised,
+            labels: l,
+        })
+        .collect();
+    let pieces: Vec<[CurvePiece<'_>; 1]> = curves
+        .iter()
+        .map(|c| {
+            [CurvePiece {
+                from: Cut::Vert(c.ends[0]),
+                to: Cut::Vert(c.ends[1]),
+                trim: &c.trim,
+                count: Count::Records(c.count),
+            }]
+        })
+        .collect();
+    let zc: Vec<ZoneCurve<'_>> = curves
+        .iter()
+        .zip(&pieces)
+        .map(|(c, p)| ZoneCurve {
+            curve: c.curve,
+            pieces: p,
+        })
+        .collect();
+    check(
+        &0u32,
+        &CutInput {
+            rim: &z.zone.rim,
+            faces: &cut_faces,
+            curves: &zc,
+            rung: 0,
+        },
+        &mut work(),
+    )
 }

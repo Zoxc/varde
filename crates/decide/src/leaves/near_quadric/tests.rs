@@ -345,3 +345,86 @@ fn rational_sheets_are_refused() {
         Err(PieceError::Weights)
     );
 }
+
+/// The smooth pair's leaves against the exact oracle
+/// ([`varde_testkit::rational_oracle::SmoothOracle`]): at every sample of a
+/// Near or Contact leaf's sheet box the sheet lies within `b_K` of the
+/// cylinder (`|√D − r| ≤ b_K` iff `|D − r²| ≤ b_K·(2r + b_K)`, exactly), at
+/// every sample of an Empty-by-implicit box strictly on one side of it,
+/// and the oracle's relation is the leaves': clear of the cylinder exactly
+/// where every leaf is Empty, else a tangent leaf holds its least point.
+#[test]
+fn the_smooth_pair_s_leaves_agree_with_the_exact_oracle() {
+    use malachite::base::num::arithmetic::traits::PowerOf2;
+    use varde_testkit::rational_oracle::{SmoothOracle, SmoothRelation};
+    let (l0, _) = levels();
+    let rat = |x: f64| Rational::try_from(x).expect("finite");
+    let r = rat(SMOOTH_RADIUS);
+    let bk = rat(B_K);
+    let near_bound = &bk * (Rational::from(2) * &r + &bk);
+    for (gap, flipped) in [
+        (-1e-4, false),
+        (0.0, false),
+        (0.0, true),
+        (1e-6, false),
+        (1e-4, false),
+        (2e-3, false),
+    ] {
+        let oracle = SmoothOracle::new(&sheets::smooth(gap)).expect("the oracle takes the pair");
+        let ls = smooth_leaves(&l0, gap, flipped);
+        let grid = |b: &BoxKey| {
+            let [u, v] = [Dir::U, Dir::V].map(|d| {
+                let e = b.extent(d);
+                let (lo, hi) = (e.lo().rational(), e.hi().rational());
+                (0..=4u32)
+                    .map(|k| &lo + (&hi - &lo) * Rational::from(k) / Rational::from(4u32))
+                    .collect::<Vec<_>>()
+            });
+            let mut out = Vec::new();
+            for s in &u {
+                for t in &v {
+                    out.push(oracle.implicit(s, t));
+                }
+            }
+            out
+        };
+        for l in &ls {
+            match &l.kind {
+                Kind::Near(_) | Kind::Contact(_) => {
+                    for d in grid(&l.b) {
+                        assert!(
+                            d <= near_bound && -d <= near_bound,
+                            "{gap} {flipped}: {:?}",
+                            l.b
+                        );
+                    }
+                }
+                Kind::Empty(Separation::Implicit) => {
+                    let ds = grid(&l.b);
+                    let pos = ds.iter().all(|d| *d > 0u32);
+                    let neg = ds.iter().all(|d| *d < 0u32);
+                    assert!(pos || neg, "{gap} {flipped}: {:?}", l.b);
+                }
+                Kind::Empty(Separation::Boxes) | Kind::Simple { .. } => {}
+            }
+        }
+        let tangent: Vec<&Leaf<_>> = ls
+            .iter()
+            .filter(|l| matches!(l.kind, Kind::Near(_) | Kind::Contact(_)))
+            .collect();
+        match oracle.relation(&Rational::power_of_2(-60i64), 4000) {
+            SmoothRelation::Clear(_) => {
+                assert!(ls.iter().all(|l| matches!(l.kind, Kind::Empty(_))), "{gap}");
+            }
+            SmoothRelation::Crossing(least) | SmoothRelation::Undecided(least) => {
+                let holds = |l: &&Leaf<_>| {
+                    [Dir::U, Dir::V].iter().zip(&least.at).all(|(&d, x)| {
+                        let e = l.b.extent(d);
+                        e.lo().rational() <= *x && *x <= e.hi().rational()
+                    })
+                };
+                assert!(tangent.iter().any(holds), "{gap} {flipped}");
+            }
+        }
+    }
+}

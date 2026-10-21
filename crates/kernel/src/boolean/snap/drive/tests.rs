@@ -10,7 +10,7 @@ use varde_testkit::sheets::{self, OFFSET, Pair, Wavy};
 use super::super::rewrite::{EdgeClass, SnapEdge};
 use super::super::rim::Along;
 use super::op::{Settled, operation};
-use super::run::{Setup, rim_cut_points};
+use super::run::Setup;
 use super::zone::ZoneError;
 use super::*;
 use crate::boolean::arrange::coincident::CoincidentError;
@@ -58,8 +58,9 @@ struct ZoneOut {
     merged: BTreeSet<([At; 2], [At; 2])>,
     /// The oracle's coincident pairs over the zone's faces.
     coincident: BTreeSet<([At; 2], [At; 2])>,
-    /// The cut-point check on the rim records passed.
-    p1: bool,
+    /// The cut-point check, its rim records and its trim boolean's cells
+    /// (coverage labels): its failure, or why it can't run.
+    cells: Result<(), String>,
     /// Per target face, the zero-area regions folded and dropped where
     /// regions of winding at least `keep` are kept, or why the fold
     /// refused.
@@ -127,7 +128,7 @@ fn run_fixture(p: &Pair, keep: i64) -> Outcome {
             .map(|(x, y)| (ids_at(sb, x), ids_at(tb, y)))
             .collect();
         let keep_rule = |w: i64| w >= keep;
-        let (fates, kept_faces) = match zone::faces(&s, z, &keep_rule) {
+        let (fates, kept_faces, cells) = match zone::faces(&s, z, &keep_rule) {
             Ok(fs) => (
                 fs.iter().map(|f| Ok(f.fates())).collect(),
                 fs.iter()
@@ -137,8 +138,18 @@ fn run_fixture(p: &Pair, keep: i64) -> Outcome {
                         k
                     })
                     .collect(),
+                match zone::cut_points(&s, z, &fs) {
+                    Ok(Ok(None)) => Ok(()),
+                    Ok(Ok(Some(f))) => Err(format!("{f:?}")),
+                    Ok(Err(e)) => Err(format!("{e:?}")),
+                    Err(e) => Err(format!("{e:?}")),
+                },
             ),
-            Err(ZoneError::Fold(_, e)) => (vec![Err(format!("{e:?}"))], Vec::new()),
+            Err(ZoneError::Fold(_, e)) => (
+                vec![Err(format!("{e:?}"))],
+                Vec::new(),
+                Err("no fold".into()),
+            ),
             Err(e) => panic!("{e:?}"),
         };
         zones.push(ZoneOut {
@@ -161,11 +172,9 @@ fn run_fixture(p: &Pair, keep: i64) -> Outcome {
             ],
             merged,
             coincident,
-            p1: rim_cut_points(z)
-                .expect("the check takes the zone")
-                .is_none(),
             fates,
             kept_faces,
+            cells,
         });
     }
     Outcome {
@@ -214,13 +223,17 @@ fn row(name: &str, o: &Outcome, k: usize) -> String {
     let z = &o.zones[k];
     let (kind, b_k, halvings, attempts) = o.settled[k];
     format!(
-        "| {name} | {k} | {kind:?} | {} | {b_k:e} | {halvings} | {attempts} | {} | {} | {} | {} | {:e} |",
+        "| {name} | {k} | {kind:?} | {} | {b_k:e} | {halvings} | {attempts} | {} | {} | {} | {} | {:e} | {} |",
         z.faces.len(),
         z.rim_pieces,
         z.rim_verts,
         z.box_pieces,
         z.branches,
-        z.rel
+        z.rel,
+        z.fates
+            .iter()
+            .map(|f| f.clone().map_or(0, |f| f[0]))
+            .sum::<usize>()
     )
 }
 
@@ -228,7 +241,8 @@ fn row(name: &str, o: &Outcome, k: usize) -> String {
 fn flush_fixtures_snap_end_to_end_as_the_oracle_says() {
     // Every flat fixture flush: the face pairs' kinds, each zone's area
     // and its coincident edges as the exact oracle gives them, the zone's
-    // rim records consistent with its ties, and every snap passing at the
+    // cut-point check passing (its rim records and its cells), its
+    // zero-area regions folded or dropped, and every snap passing at the
     // operation's bound.
     for (name, p) in flush() {
         let o = run_fixture(&p, 1);
@@ -245,7 +259,24 @@ fn flush_fixtures_snap_end_to_end_as_the_oracle_says() {
                 z.rel
             );
             assert_eq!(z.merged, z.coincident, "{name}");
-            assert!(z.p1, "{name}");
+            assert_eq!(z.cells, Ok(()), "{name}");
+            // Under the union's keep every zero-area region folds, its
+            // identified edges keeping two faces inside the sheets and one
+            // on their open boundary.
+            for f in &z.fates {
+                assert!(matches!(f, Ok([_, 0])), "{name}: {f:?}");
+            }
+            for k in z.kept_faces.iter().flatten() {
+                assert!(*k == 1 || *k == 2, "{name}: {:?}", z.kept_faces);
+            }
+        }
+        // Under the intersection's every one is dropped.
+        let both = run_fixture(&p, 2);
+        for (zu, zi) in o.zones.iter().zip(&both.zones) {
+            for (fu, fi) in zu.fates.iter().zip(&zi.fates) {
+                let n = fu.clone().map_or(0, |f| f[0]);
+                assert_eq!(fi, &Ok([0, n]), "{name}");
+            }
         }
         for &(_, b_k, halvings, _) in &o.settled {
             assert_eq!((b_k, halvings), (B_K, 0), "{name}");
@@ -358,7 +389,7 @@ fn relabelled_fixtures_snap_alike() {
                 assert_eq!(x.rewrite, y.rewrite, "{name}");
                 assert_eq!(x.merged, y.merged, "{name}");
                 assert_eq!(x.coincident, y.coincident, "{name}");
-                assert_eq!((x.p1, &x.fates), (y.p1, &y.fates), "{name}");
+                assert_eq!((&x.cells, &x.fates), (&y.cells, &y.fates), "{name}");
             }
             assert_eq!(o.settled, base.settled, "{name}");
             assert_eq!(o.mismatches, base.mismatches, "{name}");
@@ -384,5 +415,66 @@ fn offset_fixtures_form_no_zone() {
         let o = run_fixture(&p, 1);
         assert!(o.mismatches.is_empty(), "{:?}", o.mismatches);
         assert_eq!((o.clusters, o.zones.len()), (0, 0));
+    }
+}
+
+#[test]
+fn a_wrong_coverage_step_fails_the_cells_check() {
+    // Where the snapped sheet's open boundary crosses a target face, the
+    // cells on its two sides differ by its coverage step: the check passes
+    // with the steps the store gives and fails at the curve whose step is
+    // dropped. A step on the target face's own boundary borders no cell
+    // of the zone on its outer side and is not checked.
+    for (name, p) in [
+        ("L-corner quad", sheets::l_corner_quad(0.0)),
+        ("box-edge fold", sheets::box_edge_fold(0.0)),
+    ] {
+        let (a, b) = bodies(&p);
+        let s = Setup::new(&a, &b, B_K);
+        let op = operation(&s, leaves(&a, &b, B_K), Sign::Pos).unwrap_or_else(|e| panic!("{e:?}"));
+        let [z] = &op.driver.snaps.values().collect::<Vec<_>>()[..] else {
+            panic!("{name}: one zone")
+        };
+        let keep = |w: i64| w >= 1;
+        let fs = zone::faces(&s, z, &keep).unwrap_or_else(|e| panic!("{e:?}"));
+        let curves = zone::cell_curves(&s, z, &fs).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(zone::check_cells(z, &fs, &curves), Ok(None), "{name}");
+        // Whether a trim piece's bundle has a cell of the zone on both sides.
+        let inner = |t: &super::super::cuts::TrimAt| {
+            let c = &fs[t.face as usize].realised;
+            let bundle = c.pieces[t.piece as usize].bundle;
+            let a = &c.arrangement;
+            c.span_bundle
+                .iter()
+                .enumerate()
+                .filter(|&(_, &b)| b == bundle)
+                .all(|(e, _)| {
+                    let e = e as u32;
+                    a.cycle_region(a.cycle_of(2 * e)) > 0
+                        && a.cycle_region(a.cycle_of(2 * e + 1)) > 0
+                })
+        };
+        let mut failed = 0;
+        for k in 0..curves.len() {
+            if curves[k].count == 0 {
+                continue;
+            }
+            let mut wrong = curves.clone();
+            wrong[k].count = 0;
+            let out = zone::check_cells(z, &fs, &wrong).unwrap_or_else(|e| panic!("{e:?}"));
+            if curves[k].trim.iter().any(inner) {
+                let f = out.unwrap_or_else(|| panic!("{name}: {:?} passes", curves[k].curve));
+                assert_eq!(f.piece.curve, curves[k].curve, "{name}");
+                assert!(
+                    matches!(f.fault, super::super::cuts::Fault::Count { records: 0, .. }),
+                    "{name}: {:?}",
+                    f.fault
+                );
+                failed += 1;
+            } else {
+                assert_eq!(out, None, "{name}");
+            }
+        }
+        assert!(failed > 0, "{name}");
     }
 }

@@ -16,8 +16,8 @@
 //!
 //! One cluster's snap is in [`run`], the operation's (merges, stale
 //! leaves, escalation, join) in [`op`], a zone's trim boolean on its
-//! target faces in [`zone`], the comparison with the exact oracle in
-//! [`oracle`].
+//! target faces and its cut-point check in [`zone`], the comparison
+//! with the exact oracle in [`oracle`].
 
 use std::cmp::Ordering;
 
