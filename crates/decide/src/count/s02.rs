@@ -182,7 +182,8 @@ use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::{Bounded, add_up, mul_up, up};
 use crate::num::decide::Sign;
-use crate::num::schedule::{LEVELS, MAX_SUBDIV_DEPTH, UNIT_PARTS, UNITS};
+use crate::num::level::{AtLevel, LevelScalar, ladder};
+use crate::num::schedule::{LEVELS, Level, MAX_SUBDIV_DEPTH, UNIT_PARTS, UNITS};
 use crate::order::{Along, EntityOrder};
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::feet::Foot;
@@ -193,9 +194,8 @@ use crate::records::height::{HeightReads, Heights, KeyError, edge_rule_key, heig
 use crate::records::keys::{
     Anchor, FootId, HKey, HeightKey, Incidence, Operand, Oriented, Point, RayKey, RecordKey, Target,
 };
-use crate::records::ray::RayLevel;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing, TileNet};
-use crate::records::shadow::{AtLevel, Cost, LevelWork, RayRec, ladder};
+use crate::records::shadow::{Cost, LevelWork, RayRec};
 use crate::records::side::{Sides, Want};
 
 #[cfg(doc)]
@@ -1432,7 +1432,7 @@ pub fn count_pieces<R: HeightReads>(
         cell: HitCell::default(),
         hits: 0,
     };
-    let r = ladder(&mut at, 0, &mut cost).expect("the first level runs");
+    let r = ladder(&mut at, Level::L0, &mut cost.levels);
     cost.hits = at.hits;
     let r = match r {
         Err(CountError::Unsettled) => Err(CountError::OutOfBudget {
@@ -1467,11 +1467,12 @@ struct Spent {
     hits: u32,
 }
 
-impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
+impl<R: HeightReads> AtLevel<LevelWork> for CountAt<'_, '_, '_, '_, R> {
     type Out = Result<FacePieces, CountError>;
 
-    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
-        let unit = self.charge.units[level];
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Self::Out {
+        let level = like.level();
+        let unit = self.charge.units[level.index()];
         let allow = Allowance {
             unit,
             left: self.charge.share.saturating_sub(self.spent),
@@ -1506,7 +1507,7 @@ impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
                 point,
                 face,
                 at,
-            }) if level > 0 => Err(CountError::OutOfBudget {
+            }) if level > Level::L0 => Err(CountError::OutOfBudget {
                 cause: Exhausted::Precision,
                 point,
                 face,
@@ -1522,7 +1523,7 @@ impl<R: HeightReads> AtLevel for CountAt<'_, '_, '_, '_, R> {
 }
 
 /// `p` at the level of `like`: each value exactly, its error kept.
-fn lift<S: RayLevel>(p: &HomPatch<Bounded<f64>>, like: &S) -> HomPatch<S> {
+fn lift<S: LevelScalar>(p: &HomPatch<Bounded<f64>>, like: &S) -> HomPatch<S> {
     let [x, y, z, w] = p.tensors().each_ref().map(|t| t.coefs());
     let (m, n) = p.degrees();
     let at = |b: &Bounded<f64>| {

@@ -104,12 +104,10 @@ use crate::count::boxes::SPLIT_SIXTEENTHS;
 use crate::count::s02::{Charge, Exhausted};
 use crate::count::xrec::{Allow, XClusterError, form_charged};
 use crate::ids::EdgeId;
-use crate::num::bigf::{Big, BigF, Width};
-use crate::num::bounded::Bounded;
-use crate::num::dd::Dd;
 use crate::num::decide::Sign;
 use crate::num::exact::{ORDERS, rat};
-use crate::num::schedule::LEVELS;
+use crate::num::level::{AtLevel, LevelScalar, at_level, ladder};
+use crate::num::schedule::{LEVELS, Level};
 use crate::order::{Along, EntityOrder};
 use crate::perturb::{
     Curved, NU, R_HAT, UP, between, curve_point, rate_rational, shared_crossing_h1,
@@ -313,28 +311,28 @@ fn shared_in<R: HeightReads, G: XGeometry>(
     };
     let mut leaves = None;
     let mut spent = 0u64;
-    for level in 0..LEVELS {
+    for level in Level::ALL {
         let allow = Allow {
-            unit: charge.units[level],
+            unit: charge.units[level.index()],
             left: charge.share.saturating_sub(spent),
         };
         let mut evals = 0u64;
-        let r = roots_at(&ctx, level, allow, &mut evals);
-        cost.levels[level].evals = cost.levels[level]
+        let r = at_level(&mut RootsAt { ctx: &ctx, allow }, level, &mut evals);
+        let work = &mut cost.levels[level.index()];
+        work.evals = work
             .evals
             .saturating_add(u32::try_from(evals).unwrap_or(u32::MAX));
         spent = spent.saturating_add(evals.saturating_mul(allow.unit));
         match r {
-            None => break,
-            Some(Ok(l)) => {
+            Ok(l) => {
                 leaves = Some(l);
                 break;
             }
-            Some(Err(SharedError::Unsettled)) => {}
-            Some(Err(SharedError::OutOfBudget(Exhausted::Work))) if level > 0 => {
+            Err(SharedError::Unsettled) => {}
+            Err(SharedError::OutOfBudget(Exhausted::Work)) if level > Level::L0 => {
                 return Err(SharedError::OutOfBudget(Exhausted::Precision));
             }
-            Some(Err(e)) => return Err(e),
+            Err(e) => return Err(e),
         }
     }
     let mut leaves = leaves.ok_or(SharedError::Unsettled)?;
@@ -620,22 +618,42 @@ fn line_run<G: XGeometry>(
     }))
 }
 
-/// The root clusters at precision level `level` ([`LEVELS`]), `None`
-/// past the last.
-fn roots_at<G: XGeometry>(
-    ctx: &Ctx<'_, G>,
-    level: usize,
+/// The root clusters at one precision level, spending at most what
+/// `allow` gives; the work is the pieces evaluated ([`roots`]).
+struct RootsAt<'c, 'g, G> {
+    ctx: &'c Ctx<'g, G>,
     allow: Allow,
-    evals: &mut u64,
-) -> Option<Result<Vec<Leaf>, SharedError>> {
-    Some(match level {
-        0 => roots(ctx, &Bounded::exact(0.0), allow, evals),
-        1 => roots(ctx, &Bounded::exact(Dd::from_f64(0.0)), allow, evals),
-        _ => {
-            let w = *Width::ALL.get(level - 2)?;
-            roots(ctx, &Bounded::exact(Big::from_f64(0.0, w)), allow, evals)
-        }
-    })
+}
+
+impl<G: XGeometry> AtLevel<u64> for RootsAt<'_, '_, G> {
+    type Out = Result<Vec<Leaf>, SharedError>;
+
+    fn at<S: LevelScalar>(&mut self, like: &S, evals: &mut u64) -> Self::Out {
+        roots(self.ctx, like, self.allow, evals)
+    }
+
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(SharedError::Unsettled))
+    }
+}
+
+/// `h₁`'s certified sign at `x` on span `span`, at one precision level.
+struct SignAt<'c, 'g, G> {
+    ctx: &'c Ctx<'g, G>,
+    span: u32,
+    x: f64,
+}
+
+impl<G: XGeometry> AtLevel<()> for SignAt<'_, '_, G> {
+    type Out = Option<Sign>;
+
+    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) -> Self::Out {
+        self.ctx.sign_at(self.span, self.x, like).ok().flatten()
+    }
+
+    fn escalates(out: &Self::Out) -> bool {
+        out.is_none()
+    }
 }
 
 /// `h₁` and the curve's tangent and `e`'s rates at `t`, over span `span`
@@ -1029,19 +1047,12 @@ pub fn root_order<O: EntityOrder, G: XGeometry>(
             runs: Vec::new(),
             mirror: false,
         };
-        (0..LEVELS).find_map(|level| -> Option<Sign> {
-            match level {
-                0 => ctx.sign_at(w.span, w.t, &Bounded::exact(0.0)).ok()?,
-                1 => ctx
-                    .sign_at(w.span, w.t, &Bounded::exact(Dd::from_f64(0.0)))
-                    .ok()?,
-                _ => {
-                    let width = *Width::ALL.get(level - 2)?;
-                    ctx.sign_at(w.span, w.t, &Bounded::exact(Big::from_f64(0.0, width)))
-                        .ok()?
-                }
-            }
-        })?
+        let mut at = SignAt {
+            ctx: &ctx,
+            span: w.span,
+            x: w.t,
+        };
+        ladder(&mut at, Level::L0, &mut [(); LEVELS])?
     };
     // `w` before the root where `h(w)` has the sign before it: the cut
     // point after `w`.

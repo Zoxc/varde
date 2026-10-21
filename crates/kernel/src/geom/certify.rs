@@ -74,9 +74,10 @@
 //! end weights 64 and 1/64 about `2·10⁹` mm. Such cells escalate.
 
 use varde_decide::bezier::{HomCurve, Poly, Scalar};
-use varde_decide::num::bigf::{Big, BigF, Width};
-use varde_decide::num::bounded::{Bounded, add_up, div_up, down, mul_up, up};
-use varde_decide::num::dd::Dd;
+use varde_decide::num::bigf::Width;
+use varde_decide::num::bounded::{add_up, div_up, down, mul_up, up};
+use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
+use varde_decide::num::schedule::Level;
 
 use super::curve::{Curve3D, PCurve, Span2, local};
 use super::surface::Surface;
@@ -113,8 +114,6 @@ pub enum SeamError {
     /// Span `span` of the p-curve doesn't lie in one tile of the domain.
     Tile { span: usize },
 }
-
-type B = Bounded<f64>;
 
 /// A piece of the coedge: `[a, b]` of `t`, in span `sp` of the p-curve
 /// and span `sc` of the curve, on tile `(i, j)`.
@@ -302,52 +301,46 @@ struct Eval {
     lower: f64,
 }
 
-/// A level's scalar with its value as an `f64`.
-trait Approx: Scalar {
-    /// The value, rounded to an `f64`.
-    fn approx(&self) -> f64;
-}
-
-impl Approx for Bounded<f64> {
-    fn approx(&self) -> f64 {
-        self.v
-    }
-}
-
-impl Approx for Bounded<Dd> {
-    fn approx(&self) -> f64 {
-        self.v.hi()
-    }
-}
-
-impl Approx for Bounded<Big> {
-    fn approx(&self) -> f64 {
-        self.v.to_f64()
-    }
-}
-
 /// The cell's bounds at its level.
 fn eval(curve: &Curve3D, pcurve: &PCurve, piece: &Piece<'_>, cell: Cell) -> Eval {
-    match cell.level {
-        0 => eval_at(curve, pcurve, piece, cell, &B::exact(0.0)),
-        1 => eval_at(
-            curve,
-            pcurve,
-            piece,
-            cell,
-            &Bounded::exact(Dd::from_f64(0.0)),
-        ),
-        l => {
-            let w = Width::ALL[usize::from(l - 2)];
-            let like = Bounded::exact(Big::from_f64(0.0, w));
-            eval_at(curve, pcurve, piece, cell, &like)
-        }
+    debug_assert!(
+        cell.level < LEVELS,
+        "a cell's level is one of the schedule's"
+    );
+    let level = Level::from_index(usize::from(cell.level)).unwrap_or(Level::TOP);
+    let mut at = EvalAt {
+        curve,
+        pcurve,
+        piece,
+        cell,
+    };
+    at_level(&mut at, level, &mut ())
+}
+
+/// A cell's bounds at one precision level ([`eval_at`]).
+struct EvalAt<'c, 'p> {
+    curve: &'c Curve3D,
+    pcurve: &'c PCurve,
+    piece: &'c Piece<'p>,
+    cell: Cell,
+}
+
+impl AtLevel<()> for EvalAt<'_, '_> {
+    type Out = Eval;
+
+    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) -> Eval {
+        eval_at(self.curve, self.pcurve, self.piece, self.cell, like)
+    }
+
+    /// The seam bound escalates cell by cell ([`judge`]), not here.
+    fn escalates(_: &Eval) -> bool {
+        false
     }
 }
 
 /// The cell's bounds at `like`'s level: the spans restricted to the
 /// piece, halved down to the cell.
-fn eval_at<S: Approx>(
+fn eval_at<S: LevelScalar>(
     curve: &Curve3D,
     pcurve: &PCurve,
     piece: &Piece<'_>,
@@ -474,7 +467,7 @@ fn norm_down(a: [f64; 3]) -> f64 {
 }
 
 /// The bounds of `|S(p) − C|` on one cell (module docs).
-fn direct<S: Approx>(
+fn direct<S: LevelScalar>(
     tile: &Tile,
     i: i64,
     j: i64,
@@ -542,7 +535,7 @@ fn direct<S: Approx>(
     let least = den
         .coefs()
         .iter()
-        .map(Approx::approx)
+        .map(LevelScalar::approx)
         .fold(f64::INFINITY, |a, x| if x < a { x } else { a });
     let most = num.each_ref().map(|n| {
         n.coefs()
@@ -566,7 +559,7 @@ fn direct<S: Approx>(
     for at in [0, last] {
         let x = num.each_ref().map(|n| &n.coefs()[at]);
         let d = &den.coefs()[at];
-        let e = norm(x.map(Approx::approx)) / d.approx();
+        let e = norm(x.map(LevelScalar::approx)) / d.approx();
         if e > ends {
             ends = e;
         }

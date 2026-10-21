@@ -101,18 +101,16 @@ use smallvec::SmallVec;
 
 use crate::bezier::roots::Work as RootWork;
 use crate::ids::{EdgeId, VertId};
-use crate::num::bigf::{Big, BigF, Width};
-use crate::num::bounded::Bounded;
-use crate::num::dd::Dd;
 use crate::num::decide::{Band, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::{self, Num, ORDERS, Pred, Work, dot, point, sub};
-use crate::num::schedule::{LEVELS, PredKind, RecordUnits, UNIT_PARTS};
+use crate::num::level::{AtLevel, LevelScalar, ladder};
+use crate::num::schedule::{LEVELS, Level, PredKind, RecordUnits, UNIT_PARTS};
 use crate::perturb::{
     Curved, LineShadow, Moving, MovingAt, R_HAT, Seg, ShadowAxis, VvShadow, between, decide_flat,
     vv_shadow,
 };
 use crate::records::keys::{Key, Operand, Point, RayKey, RecordKey, VvKey};
-use crate::records::ray::{Crossing, RayLevel, along_changes};
+use crate::records::ray::{Crossing, along_changes};
 use crate::records::table::{FillError, Fresh, Table, TableError};
 
 /// A point against a vertex of the other operand, oriented from the
@@ -214,42 +212,6 @@ pub trait ShadowGeometry {
 
 /// A record decided, and what deciding it ran, for the pass to charge.
 pub type Decided<V> = (Result<V, Fail>, Cost);
-
-/// One step of a curved decision, run at a precision level by [`ladder`].
-pub(crate) trait AtLevel {
-    /// The step's answer.
-    type Out;
-
-    /// The step at level `level`, `like` a value of that level's scalar
-    /// and `work` the level's curved work.
-    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out;
-
-    /// Whether `out` asks for the next level.
-    fn escalates(out: &Self::Out) -> bool;
-}
-
-/// Runs `f` at each level from `from` in turn until one doesn't escalate;
-/// at the last level its answer stands, whatever it is. `None` when
-/// `from` is past the last level.
-pub(crate) fn ladder<F: AtLevel>(f: &mut F, from: usize, cost: &mut Cost) -> Option<F::Out> {
-    let mut out = None;
-    for (level, work) in cost.levels.iter_mut().enumerate().skip(from) {
-        let r = match level {
-            0 => f.at(&Bounded::exact(0.0), level, work),
-            1 => f.at(&Bounded::exact(Dd::from_f64(0.0)), level, work),
-            _ => {
-                let like = Bounded::exact(Big::from_f64(0.0, Width::ALL[level - 2]));
-                f.at(&like, level, work)
-            }
-        };
-        let escalates = F::escalates(&r);
-        out = Some(r);
-        if !escalates {
-            break;
-        }
-    }
-    out
-}
 
 /// What deciding one record ran, for the pass to charge: its exact
 /// predicates' work, its other exact runs, the column hit searches, and
@@ -715,7 +677,7 @@ fn decide_ray<G: ShadowGeometry>(
             band,
             tie: tie(Row::VertexCurveShadow),
         };
-        let r = ladder(&mut along, 0, &mut cost).expect("the first level runs");
+        let r = ladder(&mut along, Level::L0, &mut cost.levels);
         let rec = r.and_then(|cs| {
             let n: i32 = cs.iter().map(|c| i32::from(c.sign.as_i8())).sum();
             let crossing = match n {
@@ -795,10 +757,10 @@ struct AlongLine<'a, G> {
     tie: TieKey,
 }
 
-impl<G: ShadowGeometry> AtLevel for AlongLine<'_, G> {
+impl<G: ShadowGeometry> AtLevel<LevelWork> for AlongLine<'_, G> {
     type Out = Result<SmallVec<[Crossing; 2]>, Fail>;
 
-    fn at<S: RayLevel>(&mut self, like: &S, _: usize, work: &mut LevelWork) -> Self::Out {
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Self::Out {
         let f = |x: f64| S::from_f64(x, like);
         let q = MovingAt::from_flat(&self.geom.point(self.key.q), like);
         let side_over = |[a, b]: [f64; 2], work: &mut LevelWork| {

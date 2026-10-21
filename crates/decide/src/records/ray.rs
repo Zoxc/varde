@@ -203,12 +203,11 @@ use smallvec::SmallVec;
 use crate::bezier::roots::{Dyadic, Found, Limits, MAX_ROOT_DEPTH, isolate};
 use crate::bezier::{Dir, HomCurve, HomPatch, Poly, Scalar};
 use crate::ids::EdgeId;
-use crate::num::bigf::BigF;
 use crate::num::bounded::{Bounded, down, mul_up};
-use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::ORDERS;
-use crate::num::schedule::LEVELS;
+use crate::num::level::{AtLevel, LevelScalar, ladder};
+use crate::num::schedule::Level;
 use crate::perturb::{
     Curved, HomLineShadow, HomPoint, HomPointLineShadow, LineShadow, Moving, MovingAt, NU,
     QueryPoint, R_HAT, Rate, Seg, ShadowAxis, UP, curve_point, curve_shadow, decide_flat,
@@ -216,8 +215,8 @@ use crate::perturb::{
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, SideAhead,
-    ladder, neg, ray_ahead, read_vv, replay, shadow_error, side_and_ahead, table_error,
+    Cost, Decided, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, SideAhead, neg,
+    ray_ahead, read_vv, replay, shadow_error, side_and_ahead, table_error,
 };
 use crate::records::table::{Fresh, Table};
 
@@ -336,16 +335,6 @@ pub trait CurveGeometry: ShadowGeometry {
     /// point there on `A`, zero on `B`.
     fn span_rates<S: Curved>(&self, q: Point, g: EdgeId, span: u32, t: &S) -> [[S; 3]; ORDERS];
 }
-
-/// A precision level the curved ray records are decided at: a curved
-/// level whose values are decided as coefficients.
-pub trait RayLevel: Curved + Coeff {}
-
-impl RayLevel for Bounded<f64> {}
-
-impl RayLevel for Bounded<Dd> {}
-
-impl<B: BigF> RayLevel for Bounded<B> {}
 
 /// The curved ray records of a run and the knot records they read,
 /// decided once per key (module docs).
@@ -981,17 +970,17 @@ pub(super) fn span_crossings<R: SpanRates>(
         exact: OnceCell::new(),
         flat: OnceCell::new(),
     };
-    let r = ladder(&mut ctx, 0, &mut cost).expect("the first level runs");
+    let r = ladder(&mut ctx, Level::L0, &mut cost.levels);
     let runs = u32::from(ctx.exact.get().is_some()) + u32::from(ctx.flat.get().is_some());
     cost.rationals = cost.rationals.saturating_add(runs);
     (r, cost)
 }
 
-impl<R: SpanRates> AtLevel for SpanCtx<'_, R> {
+impl<R: SpanRates> AtLevel<LevelWork> for SpanCtx<'_, R> {
     type Out = Result<SpanRec, Fail>;
 
-    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
-        SpanCtx::at(self, like, work, level + 1 == LEVELS)
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Self::Out {
+        SpanCtx::at(self, like, work, like.level() == Level::TOP)
     }
 
     fn escalates(out: &Self::Out) -> bool {
@@ -1003,7 +992,12 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// The record at the level of `like`, or why this level doesn't
     /// decide it; `last` at the last level, where a piece's sign along
     /// the ray and `q`'s foot on the span are also sought by halving.
-    fn at<S: RayLevel>(&self, like: &S, work: &mut LevelWork, last: bool) -> Result<SpanRec, Fail> {
+    fn at<S: LevelScalar>(
+        &self,
+        like: &S,
+        work: &mut LevelWork,
+        last: bool,
+    ) -> Result<SpanRec, Fail> {
         let f = |x: f64| S::from_f64(x, like);
         let v3 = |v: glam::DVec3| [f(v.x), f(v.y), f(v.z)];
         let Some(c) = self.curve.hom(like) else {
@@ -1220,7 +1214,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// the row's side `s`, or as the end's record where that row has no
     /// answer. `None` if there is no such end, or two. `polys` are `g`,
     /// `h` and the weight `W` on the span and on the span run backwards.
-    fn at_end<S: RayLevel>(
+    fn at_end<S: LevelScalar>(
         &self,
         p: &Piece,
         c: Sign,
@@ -1253,7 +1247,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// the span run backwards if `rev`): the side of `q` against the span
     /// there, decided, and `sign(r̂·T)` of the span's tangent there if
     /// certified, `T` in the span's direction.
-    fn row<S: RayLevel>(
+    fn row<S: LevelScalar>(
         &self,
         c: &HomCurve<S, 3>,
         t: [f64; 2],
@@ -1285,7 +1279,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// different), halved at this level's midpoints while the sign at the
     /// middle is certified, at most [`NARROW_STEPS`] times; `None` unless
     /// the ends' signs are certified apart.
-    fn narrowed<S: RayLevel>(
+    fn narrowed<S: LevelScalar>(
         &self,
         c: &HomCurve<S, 3>,
         t: [f64; 2],
@@ -1342,7 +1336,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// tangent"): the direction the curve leaves its start along, or,
     /// inside the parameter, the one both branches of a fold leave along
     /// (`fold`); else the row escalates.
-    fn row_over<S: RayLevel>(
+    fn row_over<S: LevelScalar>(
         &self,
         c: &HomCurve<S, 3>,
         [lo, hi]: [S; 2],
@@ -1403,7 +1397,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// the span run backwards if `rev`) against `q`'s `r̂` line, decided:
     /// the flat point–vertex row with the fold point moving at the span's
     /// rates there.
-    fn fold_side<S: RayLevel>(
+    fn fold_side<S: LevelScalar>(
         &self,
         c: &HomCurve<S, 3>,
         t: [f64; 2],
@@ -1492,7 +1486,7 @@ impl<R: SpanRates> SpanCtx<'_, R> {
     /// the ray's sign, a change at an end where its record says. A change
     /// inside the span that no halving localises, or one at `q`'s foot,
     /// escalates.
-    fn along_line<S: RayLevel>(
+    fn along_line<S: LevelScalar>(
         &self,
         h: &Poly<S>,
         like: &S,

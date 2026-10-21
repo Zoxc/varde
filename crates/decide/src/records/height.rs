@@ -64,7 +64,8 @@ use std::collections::BTreeMap;
 use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Band, BandKind, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::{self, ExactSign, ORDERS, Pred};
-use crate::num::schedule::LEVELS;
+use crate::num::level::{AtLevel, LevelScalar, ladder};
+use crate::num::schedule::Level;
 use crate::order::{Along, EdgeKey, EntityOrder, VertKey};
 use crate::perturb::{Curved, decide_flat_orders};
 use crate::records::feet::{Feet, NearFeet};
@@ -72,9 +73,8 @@ use crate::records::keys::{
     Anchor, FootId, HKey, HeightKey, Incidence, Operand, Oriented, Point, Query, RayKey, RecordKey,
     Target, VvKey,
 };
-use crate::records::ray::RayLevel;
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LevelWork, Pass, Shadows, VvRec, ladder, neg, replay, table_error,
+    Cost, Decided, LevelWork, Pass, Shadows, VvRec, neg, replay, table_error,
 };
 use crate::records::table::{Fresh, Table, TableError};
 
@@ -572,7 +572,7 @@ fn decide_key<G: HeightGeometry>(
         None => {
             let b = if geometric { Band::GEOMETRIC } else { band };
             let mut at = KeyAt { h, geom, b };
-            let r = ladder(&mut at, 0, &mut cost).expect("the first level runs");
+            let r = ladder(&mut at, Level::L0, &mut cost.levels);
             (r, cost)
         }
     }
@@ -585,16 +585,17 @@ struct KeyAt<'a, G> {
     b: Band,
 }
 
-impl<G: HeightGeometry> AtLevel for KeyAt<'_, G> {
+impl<G: HeightGeometry> AtLevel<LevelWork> for KeyAt<'_, G> {
     type Out = Result<KeyRec, Fail>;
 
     fn escalates(out: &Self::Out) -> bool {
         matches!(out, Err(Fail::Escalate { .. }))
     }
 
-    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Self::Out {
         work.keys = work.keys.saturating_add(1);
-        let level = u8::try_from(level).expect("few levels");
+        let top = like.level() == Level::TOP;
+        let level = u8::try_from(like.level().index()).expect("few levels");
         let escalate = Err(Fail::Escalate { order: 0 });
         let Some(v) = self.geom.curved_value(self.h, like, work) else {
             // A hit's value can't be formed where the face's facing isn't
@@ -603,7 +604,7 @@ impl<G: HeightGeometry> AtLevel for KeyAt<'_, G> {
             // anchor's own orders decide, and where its facing isn't
             // certified either, the fold rule. A truth is never a tie.
             if matches!(self.h, HKey::Hit { .. })
-                && usize::from(level) + 1 == LEVELS
+                && top
                 && self.b.kind() != BandKind::Geometric
                 && self.geom.facing_only(self.h, like)
             {
@@ -667,8 +668,10 @@ fn decide_at<G: HeightGeometry>(
         }
         AnchorRow::Curved => {
             let mut at = RowAt { k, geom, band, tie };
-            ladder(&mut at, usize::from(key.level), &mut cost)
-                .unwrap_or(Err(Fail::Escalate { order: 0 }))
+            match Level::from_index(usize::from(key.level)) {
+                Some(from) => ladder(&mut at, from, &mut cost.levels),
+                None => Err(Fail::Escalate { order: 0 }),
+            }
         }
     };
     let rec = above.map(|(above, fold)| HeightRec {
@@ -687,7 +690,7 @@ struct RowAt<'a, G> {
     tie: TieKey,
 }
 
-impl<G: HeightGeometry> AtLevel for RowAt<'_, G> {
+impl<G: HeightGeometry> AtLevel<LevelWork> for RowAt<'_, G> {
     /// The sign, and whether the fold rule gave it.
     type Out = Result<(Sign, bool), Fail>;
 
@@ -695,12 +698,12 @@ impl<G: HeightGeometry> AtLevel for RowAt<'_, G> {
         matches!(out, Err(Fail::Escalate { .. }))
     }
 
-    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Self::Out {
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Self::Out {
         work.keys = work.keys.saturating_add(1);
         let Some(ord) = self.geom.curved_row(self.k, like, work) else {
             // The facing isn't certified here. A later level may certify
             // it; at the last, the anchor is on a fold.
-            if level + 1 == LEVELS {
+            if like.level() == Level::TOP {
                 work.keys = work.keys.saturating_add(1);
                 if let Some(f) = self.geom.curved_fold(self.k, like)
                     && let Some(s) = f.beyond(0.0)

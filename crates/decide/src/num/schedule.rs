@@ -8,7 +8,9 @@
 //! ([`super::dd`]), then big-float at 212, 424 and 848 bits
 //! ([`super::bigf`]). The sequence is the same for every item, on every
 //! thread count and platform. It stops at [`P_MAX_BITS`]: an item still
-//! open at [`Level::L4`] has reached the top of the schedule. Wider
+//! open at [`Level::L4`] has reached the top of the schedule. A
+//! computation is written once over the levels' common numeric trait and
+//! stepped through them by one runner ([`super::level`]). Wider
 //! widths would bound nothing tighter, as the error parts are `f64`
 //! (a width's own rounding shows only above about `2^(bits − 1074)`).
 //!
@@ -86,6 +88,15 @@ impl Level {
     /// The level an item escalates to from this one, `None` at the top.
     pub const fn next(self) -> Option<Level> {
         Level::from_index(self.index() + 1)
+    }
+
+    /// The level that computes in big-float at width `w`.
+    pub fn of_width(w: Width) -> Level {
+        match Width::ALL.iter().position(|x| *x == w) {
+            Some(0) => Level::L2,
+            Some(1) => Level::L3,
+            _ => Level::L4,
+        }
     }
 
     /// The big-float width the level computes at; `None` for `f64` and

@@ -104,14 +104,14 @@ use crate::bezier::{HomCurve, Poly, Scalar};
 use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact;
-use crate::num::schedule::LEVELS;
+use crate::num::level::{AtLevel, LevelScalar, ladder};
+use crate::num::schedule::Level;
 use crate::order::Along;
 use crate::records::keys::{FootId, Operand, Point, RayKey, RecordKey};
-use crate::records::ray::{RayLevel, Span, bracket, mirrored};
+use crate::records::ray::{Span, bracket, mirrored};
 use crate::records::shadow::neg;
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, ladder, replay,
-    shadow_error,
+    Cost, Decided, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, replay, shadow_error,
 };
 use crate::records::table::{Fresh, Table};
 
@@ -499,7 +499,7 @@ fn span_feet(
         ends,
         exact: false,
     };
-    let out = ladder(&mut at, 0, cost);
+    let out = ladder(&mut at, Level::L0, &mut cost.levels);
     if at.exact {
         // `EXACT_RUNS` times the cube of the span's degree.
         let n = u32::try_from(pts.len().saturating_sub(1)).unwrap_or(u32::MAX);
@@ -507,7 +507,7 @@ fn span_feet(
         cost.rationals = cost.rationals.saturating_add(runs);
     }
     match out {
-        Some(Step::Done(events)) => Some(events),
+        Step::Done(events) => Some(events),
         _ => None,
     }
 }
@@ -529,13 +529,13 @@ struct SpanAt<'a> {
     exact: bool,
 }
 
-impl AtLevel for SpanAt<'_> {
+impl AtLevel<LevelWork> for SpanAt<'_> {
     type Out = Step;
 
-    fn at<S: RayLevel>(&mut self, like: &S, level: usize, work: &mut LevelWork) -> Step {
-        let last = level + 1 == LEVELS;
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Step {
+        let last = like.level() == Level::TOP;
         let step = span_at(self.pts, self.q, self.r, self.ends, like, work, last);
-        if level == 0 && matches!(step, Step::Escalate) {
+        if like.level() == Level::L0 && matches!(step, Step::Escalate) {
             // A cluster the first level leaves (a tangency, roots closer
             // than it separates): the exact stage decides the span there.
             self.exact = true;

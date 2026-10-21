@@ -192,10 +192,10 @@ struct EveryLevel<'c, 'a, 'f, R> {
     got: Vec<Degrees>,
 }
 
-impl<R: HeightReads> AtLevel for EveryLevel<'_, '_, '_, R> {
+impl<R: HeightReads> AtLevel<LevelWork> for EveryLevel<'_, '_, '_, R> {
     type Out = ();
 
-    fn at<S: RayLevel>(&mut self, like: &S, _: usize, _: &mut LevelWork) {
+    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut LevelWork) {
         let patches: Vec<HomPatch<S>> = self.fq.patches.iter().map(|p| lift(p, like)).collect();
         let f = self.fq;
         let fq = FaceQuery {
@@ -246,7 +246,7 @@ fn every_level(pts: &[[f64; 2]], qs: &[[f64; 3]]) -> Vec<Vec<Degrees>> {
                     reads: &reads,
                     got: Vec::new(),
                 };
-                ladder(&mut e, 0, &mut Cost::default());
+                ladder(&mut e, Level::L0, &mut Cost::default().levels);
                 e.got
             })
         })

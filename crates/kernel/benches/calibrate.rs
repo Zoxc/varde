@@ -35,12 +35,11 @@ use varde_decide::count::s02::{Charge, count_pieces};
 use varde_decide::count::testing::{FaceData, Order, chain, motion_of, polygon};
 use varde_decide::count::xrec::clusters_at_charged;
 use varde_decide::ids::{EdgeId, VertId};
-use varde_decide::num::bigf::{Big, BigF, Width};
 use varde_decide::num::bounded::Bounded;
-use varde_decide::num::dd::Dd;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::{self, Num, ORDERS, Pred, det3, point, sub};
-use varde_decide::num::schedule::{LEVELS, PredKind, UNIT_PARTS, UNITS};
+use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
+use varde_decide::num::schedule::{LEVELS, Level, PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
 use varde_decide::perturb::{
     Curved, EdgeEdge, HomLineShadow, HomPairShadow, HomPoint, HomPointLineShadow, HomShadow,
@@ -905,7 +904,8 @@ fn to_bernstein(p: &[f64]) -> Vec<f64> {
 /// Curved record work at one level: rows evaluated (a quartic at a
 /// point, with its sign) and root isolation (its splits, tests and
 /// steps).
-fn curved_rows<S: Scalar>(budget: Duration, level: usize, like: &S, rows: &mut Vec<Row>) {
+fn curved_rows<S: LevelScalar>(budget: Duration, like: &S, rows: &mut Vec<Row>) {
+    let level = like.level().index();
     let polys = quartics(like);
     let ts: Vec<S> = (0..16)
         .map(|k| S::from_f64(k as f64 / 15.0, like))
@@ -954,10 +954,26 @@ fn curved_rows<S: Scalar>(budget: Duration, level: usize, like: &S, rows: &mut V
 
 fn record_rows(budget: Duration, rows: &mut Vec<Row>) {
     exact_rows(budget, rows);
-    curved_rows(budget, 0, &Bounded::exact(0.0), rows);
-    curved_rows(budget, 1, &Bounded::exact(Dd::from_f64(0.0)), rows);
-    for (k, w) in Width::ALL.into_iter().enumerate() {
-        curved_rows(budget, 2 + k, &Bounded::exact(Big::from_f64(0.0, w)), rows);
+    for level in Level::ALL {
+        at_level(&mut CurvedRows { budget, rows }, level, &mut ());
+    }
+}
+
+/// [`curved_rows`] at one level.
+struct CurvedRows<'r> {
+    budget: Duration,
+    rows: &'r mut Vec<Row>,
+}
+
+impl AtLevel<()> for CurvedRows<'_> {
+    type Out = ();
+
+    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) {
+        curved_rows(self.budget, like, self.rows);
+    }
+
+    fn escalates(_: &()) -> bool {
+        false
     }
 }
 

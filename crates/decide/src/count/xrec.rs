@@ -131,11 +131,10 @@ use crate::bezier::{Dir, Dyadic, HomCurve, Scalar};
 use crate::count::boxes::{Extent, QShadow, SPLIT_SIXTEENTHS, dy};
 use crate::count::degree::{Ray, TurnError, pieces_turn};
 use crate::count::s02::{Charge, Exhausted, MAX_LEAVES};
-use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
-use crate::num::dd::Dd;
 use crate::num::decide::Sign;
-use crate::num::schedule::LEVELS;
+use crate::num::level::{AtLevel, LevelScalar, at_level};
+use crate::num::schedule::{LEVELS, Level};
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::keys::{EdgeAt, Operand, XKey, XSideKey, XTieKey};
 use crate::records::ray::Span;
@@ -1075,27 +1074,37 @@ fn clusters_level(
     allow: Allow,
     pieces: &mut u64,
 ) -> Result<XClusters, XClusterError> {
-    let mut out = match level {
-        0 => clusters_in(x, pair, sides, &Bounded::exact(0.0), allow, pieces),
-        1 => clusters_in(
-            x,
-            pair,
-            sides,
-            &Bounded::exact(Dd::from_f64(0.0)),
-            allow,
-            pieces,
-        ),
-        _ => {
-            let w = Width::ALL
-                .get(level - 2)
-                .copied()
-                .ok_or(XClusterError::SizeLimit)?;
-            let like = Bounded::exact(Big::from_f64(0.0, w));
-            clusters_in(x, pair, sides, &like, allow, pieces)
-        }
-    }?;
+    let at = Level::from_index(level).ok_or(XClusterError::SizeLimit)?;
+    let mut search = ClustersAt {
+        x,
+        pair,
+        sides,
+        allow,
+    };
+    let mut out = at_level(&mut search, at, pieces)?;
     out.rec.level = level;
     Ok(out)
+}
+
+/// The clusters of a pair at one precision level ([`clusters_in`]); the
+/// work is the pieces tested.
+struct ClustersAt<'p, 'a> {
+    x: XKey,
+    pair: &'p XPair<'a>,
+    sides: &'p XSides,
+    allow: Allow,
+}
+
+impl AtLevel<u64> for ClustersAt<'_, '_> {
+    type Out = Result<XClusters, XClusterError>;
+
+    fn at<S: LevelScalar>(&mut self, like: &S, pieces: &mut u64) -> Self::Out {
+        clusters_in(self.x, self.pair, self.sides, like, self.allow, pieces)
+    }
+
+    fn escalates(out: &Self::Out) -> bool {
+        matches!(out, Err(e) if e.escalates())
+    }
 }
 
 /// The clusters of pair `x` at the first level that forms them
