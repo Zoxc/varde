@@ -133,6 +133,85 @@ fn a_common_direction_is_found_iff_one_exists() {
     }
 }
 
+/// A parallelogram `(p0, u, v)`.
+type Para = [[f64; 3]; 3];
+
+/// The common `ℓ` moves with the leaves under the cube's 48 symmetries
+/// (signed permutations of the axes: 90° rotations and mirrors): the
+/// least of the optimal directions, not a vertex the solver reaches. With
+/// two normals the optimal directions form a segment (`ℓ` free along
+/// their common perpendicular), with three a point.
+#[test]
+fn a_common_direction_moves_with_the_leaves_under_signed_axis_permutations() {
+    let perms = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    // Parallelograms `(p0, u, v)` facing along `u × v`, and their `ℓ`.
+    let w = 1e-2;
+    let cases: [(Vec<Para>, [i64; 3]); 2] = [
+        (
+            vec![
+                [[0.0; 3], [w, 0.0, 0.0], [0.0, w, 0.0]],
+                [[0.0, w, 0.0], [0.0, 0.0, w], [w, 0.0, 0.0]],
+            ],
+            [0, 1, 1],
+        ),
+        (
+            vec![
+                [[0.0; 3], [w, 0.0, 0.0], [0.0, w, 0.0]],
+                [[0.0, w, 0.0], [0.0, 0.0, w], [w, 0.0, 0.0]],
+                [[w, 0.0, 0.0], [0.0, w, 0.0], [0.0, 0.0, w]],
+            ],
+            [1, 1, 1],
+        ),
+    ];
+    for (pieces, ell) in &cases {
+        for p in perms {
+            for bits in 0..8u32 {
+                let s = [0, 1, 2].map(|i| if bits >> i & 1 == 1 { -1i64 } else { 1 });
+                let mv = |v: [f64; 3]| [0, 1, 2].map(|i| s[i] as f64 * v[p[i]]);
+                // A mirror turns `u × v` round; swapping `u` and `v`
+                // keeps the moved piece facing the moved normal.
+                let det = {
+                    let parity = if [[0, 1, 2], [1, 2, 0], [2, 0, 1]].contains(&p) {
+                        1
+                    } else {
+                        -1
+                    };
+                    parity * s[0] * s[1] * s[2]
+                };
+                let leaves: Vec<flat::Leaf> = pieces
+                    .iter()
+                    .enumerate()
+                    .map(|(k, [p0, u, v])| {
+                        let (u, v) = if det > 0 {
+                            (mv(*u), mv(*v))
+                        } else {
+                            (mv(*v), mv(*u))
+                        };
+                        flush(k as u32, k as u32, mv(*p0), u, v)
+                    })
+                    .collect();
+                let held: Vec<&flat::Leaf> = leaves.iter().collect();
+                let want = Some(Target {
+                    operand: Operand::A,
+                    map: Map::Along(q3([0, 1, 2].map(|i| s[i] * ell[p[i]]))),
+                });
+                assert_eq!(
+                    choose(Tangency::Near, &held, NONE, &mut work()).unwrap(),
+                    want,
+                    "{p:?} {s:?}"
+                );
+            }
+        }
+    }
+}
+
 /// The merged cluster of `pair`'s flush leaves (every cluster sharing a
 /// window element), its leaves, and the leaf normals of each cluster
 /// before the merge, in order.
