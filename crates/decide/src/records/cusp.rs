@@ -83,7 +83,7 @@ use malachite::{Integer, Rational};
 use crate::bezier::{Dir, Dyadic, Scalar};
 use crate::num::bounded::Bounded;
 use crate::num::exact::rat;
-use crate::num::poly;
+use crate::num::poly::{self, Poly};
 
 /// The highest contact order the record looks for: two different conics
 /// meet with multiplicity at most 4.
@@ -434,60 +434,13 @@ impl CeilingInt for Rational {
     }
 }
 
-/// A polynomial in power form, exact.
-pub(crate) type Poly = Vec<Rational>;
-
-fn padd(a: &[Rational], b: &[Rational]) -> Poly {
-    let n = a.len().max(b.len());
-    (0..n)
-        .map(|i| {
-            let x = a.get(i).cloned().unwrap_or(Rational::ZERO);
-            x + b.get(i).cloned().unwrap_or(Rational::ZERO)
-        })
-        .collect()
-}
-
-fn pscale(a: &[Rational], k: &Rational) -> Poly {
-    a.iter().map(|x| x * k).collect()
-}
-
-fn pmul(a: &[Rational], b: &[Rational]) -> Poly {
-    let mut out = vec![Rational::ZERO; a.len() + b.len() - 1];
-    for (i, x) in a.iter().enumerate() {
-        for (j, y) in b.iter().enumerate() {
-            out[i + j] += x * y;
-        }
-    }
-    out
-}
-
-fn ppow(a: &[Rational], n: usize) -> Poly {
-    let mut out = vec![Rational::ONE];
-    for _ in 0..n {
-        out = pmul(&out, a);
-    }
-    out
-}
-
-fn pderiv(a: &[Rational]) -> Poly {
-    if a.len() <= 1 {
-        return vec![Rational::ZERO];
-    }
-    a.iter()
-        .enumerate()
-        .skip(1)
-        .map(|(i, c)| c * Rational::from(i as u64))
-        .collect()
-}
-
-/// Whether every Bernstein coefficient of `p` over `[0, t]` is positive:
-/// then `p > 0` there.
-fn positive_on(p: &[Rational], t: &Rational) -> bool {
-    let n = p.len() - 1;
+/// Whether every Bernstein coefficient of `p`, taken at degree `n` (at
+/// least its own), over `[0, t]` is positive: then `p > 0` there.
+fn positive_on(p: &[Rational], n: usize, t: &Rational) -> bool {
     // `p(t·x)` in power form, then its Bernstein coefficients on `[0, 1]`
-    // of `p`'s length's degree.
+    // of degree `n`.
     let mut tj = Rational::ONE;
-    let mut a = Vec::with_capacity(n + 1);
+    let mut a = Vec::with_capacity(p.len());
     for c in p {
         a.push(c * &tj);
         tj *= t;
@@ -554,6 +507,14 @@ pub(crate) fn srevert(s: &[Rational]) -> Series {
     tau
 }
 
+/// The graph of a rational curve `(x/w, y/w)` through the origin at
+/// `t = 0`: `y/w` as a series in `x/w`, by reversion. `x` has no
+/// constant term and a non-zero linear one, `w(0) ≠ 0`; each a
+/// numerator in power form in `t`.
+pub(crate) fn graph(x: &[Rational], y: &[Rational], w: &[Rational]) -> Series {
+    scompose(&sdiv(y, w), &srevert(&sdiv(x, w)))
+}
+
 /// One span in the record's frame: the numerators of `s` and of the
 /// offset over the weight, in power form in its parameter `t`.
 struct Curve {
@@ -566,16 +527,12 @@ impl Curve {
     fn new(sp: &CuspSpan, w0: &[Rational; 2], k: usize, sigma: i8) -> Curve {
         let o = 1 - k;
         let ws = [rat(sp[0][2]), rat(sp[1][2]), rat(sp[2][2])];
-        // `Σ wᵢ·xᵢ·Bᵢ(t)` in power form, of degree 2.
-        let hom = |x: [Rational; 3]| -> Poly {
-            poly::from_bernstein_full(&[&ws[0] * &x[0], &ws[1] * &x[1], &ws[2] * &x[2]])
-        };
-        let w = hom([Rational::ONE, Rational::ONE, Rational::ONE]);
-        let xk = hom([rat(sp[0][k]), rat(sp[1][k]), rat(sp[2][k])]);
-        let xo = hom([rat(sp[0][o]), rat(sp[1][o]), rat(sp[2][o])]);
+        let hom = |c: usize| poly::from_bernstein(&[0, 1, 2].map(|i| &ws[i] * rat(sp[i][c])));
+        let w = poly::from_bernstein(&ws);
+        let (xk, xo) = (hom(k), hom(o));
         let sig = Rational::from(i64::from(sigma));
-        let s = pscale(&padd(&xk, &pscale(&w, &-&w0[k])), &sig);
-        let y = padd(&xo, &pscale(&w, &-&w0[o]));
+        let s = poly::scale(&poly::add(&xk, &poly::scale(&w, &-&w0[k])), &sig);
+        let y = poly::add(&xo, &poly::scale(&w, &-&w0[o]));
         Curve { s, y, w }
     }
 
@@ -606,8 +563,7 @@ impl Chain {
         if s[1] <= 0 {
             return Err(CuspError::Graph);
         }
-        let y = sdiv(&c.y, &c.w);
-        Ok(scompose(&y, &srevert(&s)))
+        Ok(graph(&c.s, &c.y, &c.w))
     }
 
     /// The stretch over which the offset stays within `δ·s^m` of
@@ -628,32 +584,37 @@ impl Chain {
             *tested = tested.saturating_add(1);
             // `Y·W^(m−1) − Σ p_j S^j W^(m−j) − (c ∓ δ) S^m`; on the first
             // span over `t^m` (it vanishes to that order at the vertex).
-            let mut base = pmul(&cv.y, &ppow(&cv.w, m - 1));
+            let mut base = poly::mul(&cv.y, &poly::pow(&cv.w, m - 1));
             for (i, pi) in p.iter().enumerate() {
-                let term = pmul(&ppow(&cv.s, i), &ppow(&cv.w, m - i));
-                base = padd(&base, &pscale(&term, &-pi));
+                let term = poly::mul(&poly::pow(&cv.s, i), &poly::pow(&cv.w, m - i));
+                base = poly::sub(&base, &poly::scale(&term, pi));
             }
-            let sm = ppow(&cv.s, m);
+            let sm = poly::pow(&cv.s, m);
+            // Degree `2m` in `t` (spans are quadratic), `m` over `t^m`.
+            let deg = if j > 0 { 2 * m } else { m };
             let over_tm = |f: Poly| -> Option<Poly> {
                 if j > 0 {
                     return Some(f);
                 }
-                if f[..m].iter().any(|x| *x != 0) {
+                if f.iter().take(m).any(|x| *x != 0) {
                     return None;
                 }
-                Some(f[m..].to_vec())
+                Some(f.get(m..).map_or_else(Vec::new, <[Rational]>::to_vec))
             };
-            let lower = over_tm(padd(&base, &pscale(&sm, &-(c - delta))))?;
-            let upper = over_tm(padd(&base, &pscale(&sm, &-(c + delta))))?;
-            let neg_upper: Poly = upper.iter().map(|x| -x).collect();
-            let mono = padd(
-                &pmul(&pderiv(&cv.s), &cv.w),
-                &pscale(&pmul(&cv.s, &pderiv(&cv.w)), &Rational::from(-1)),
+            let lower = over_tm(poly::sub(&base, &poly::scale(&sm, &(c - delta))))?;
+            let upper = over_tm(poly::sub(&base, &poly::scale(&sm, &(c + delta))))?;
+            let neg_upper = poly::neg(&upper);
+            // Degree 3.
+            let mono = poly::sub(
+                &poly::mul(&poly::deriv(&cv.s), &cv.w),
+                &poly::mul(&cv.s, &poly::deriv(&cv.w)),
             );
             let held = (0..=MAX_HALVINGS).find_map(|h| {
                 let t = Rational::power_of_2(-i64::from(h));
-                (positive_on(&lower, &t) && positive_on(&neg_upper, &t) && positive_on(&mono, &t))
-                    .then(|| (Dyadic::new(1, h), t))
+                (positive_on(&lower, deg, &t)
+                    && positive_on(&neg_upper, deg, &t)
+                    && positive_on(&mono, 3, &t))
+                .then(|| (Dyadic::new(1, h), t))
             });
             match held {
                 Some((Some(d), t)) => {

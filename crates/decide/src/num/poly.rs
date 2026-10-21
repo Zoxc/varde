@@ -102,6 +102,11 @@ pub fn mul(a: &[Rational], b: &[Rational]) -> Poly {
     trim(out)
 }
 
+/// `aⁿ`.
+pub fn pow(a: &[Rational], n: usize) -> Poly {
+    (0..n).fold(constant(Rational::from(1u32)), |out, _| mul(&out, a))
+}
+
 /// `p′`.
 pub fn deriv(p: &[Rational]) -> Poly {
     trim(

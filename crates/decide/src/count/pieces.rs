@@ -1541,13 +1541,13 @@ fn corner_pass(
 ) -> Option<Rational> {
     let o = 1 - k;
     let (pk, po) = (offset(sp, k, line), offset(sp, o, e));
-    top(&pk)?;
-    if top(&po).is_none() {
+    poly::degree(&pk)?;
+    if poly::degree(&po).is_none() {
         // Along the line `x_o = e`.
         return Some(Rational::from(0));
     }
-    let g = gcd(pk.clone(), po.clone());
-    let slope = match top(&g) {
+    let g = poly::gcd(&pk, &po);
+    let slope = match poly::degree(&g) {
         Some(1) => {
             let t = -&g[0] / &g[1];
             if t < rat(span[0]) || t > rat(span[1]) {
@@ -1581,7 +1581,7 @@ fn straight_cross(
         return None;
     }
     let pk = offset(sp, k, line);
-    if top(&pk)? != 1 {
+    if poly::degree(&pk)? != 1 {
         return None;
     }
     let t = -&pk[0] / &pk[1];
@@ -1638,23 +1638,13 @@ fn root_against(
     if (pa > 0) == (pb > 0) {
         return None;
     }
-    match top(&pk)? {
+    match poly::degree(&pk)? {
         0 => None,
         1 => Some(at(&(-&pk[0] / &pk[1]))),
         _ => {
             // `po mod pk`, of degree one at most, has `po`'s value at the
             // root.
-            let mut r = po.clone();
-            while let Some(dr) = top(&r) {
-                if dr < 2 {
-                    break;
-                }
-                let f = &r[dr] / &pk[2];
-                for i in 0..=2 {
-                    let x = &f * &pk[i];
-                    r[dr - 2 + i] -= x;
-                }
-            }
+            let r = poly::rem(&po, &pk);
             let r1 = r.get(1).cloned().unwrap_or_default();
             let r0 = r.first().cloned().unwrap_or_default();
             if r1 == 0 {
@@ -1687,9 +1677,9 @@ fn root_against(
 }
 
 /// `Σ wᵢ·(xᵢ − c)·Bᵢ(t)` of span `sp` along `axis` in power form: the
-/// weight times `x − c`, exactly.
+/// weight times `x − c`, exactly (trimmed: [`poly::degree`] is its degree).
 fn offset(sp: &UvSpan, axis: usize, c: &Rational) -> Poly {
-    poly::from_bernstein_full(&[0, 1, 2].map(|i| rat(sp[i][2]) * (rat(sp[i][axis]) - c)))
+    poly::from_bernstein(&[0, 1, 2].map(|i| rat(sp[i][2]) * (rat(sp[i][axis]) - c)))
 }
 
 /// Span `sp` (its weights positive) read from the point `p` it passes
@@ -1714,8 +1704,8 @@ fn legs_through(sp: &UvSpan, p: &[Rational; 2]) -> Option<[Leg; 2]> {
         }
     }
     let (pu, pv) = (offset(sp, 0, &p[0]), offset(sp, 1, &p[1]));
-    let g = gcd(pu.clone(), pv.clone());
-    match (top(&pu), top(&pv), top(&g)) {
+    let g = poly::gcd(&pu, &pv);
+    match (poly::degree(&pu), poly::degree(&pv), poly::degree(&g)) {
         (Some(_), Some(_), Some(1)) => {
             let t = -&g[0] / &g[1];
             (t > 0 && t < 1).then(|| Leg::split(sp, &t).1)
@@ -1733,7 +1723,7 @@ fn legs_through(sp: &UvSpan, p: &[Rational; 2]) -> Option<[Leg; 2]> {
                         || (a == &x[c] && &x[c] == b)
                 }) && x != &pts[0]
             };
-            let on = top(&pu).is_some() && top(&pv).is_some()
+            let on = poly::degree(&pu).is_some() && poly::degree(&pv).is_some()
                 || (0..2).any(|c| pts.iter().all(|x| x[c] == p[c]));
             (on && between(&pts[1]) && between(p))
                 .then(|| [Leg::straight(p, &pts[0]), Leg::straight(p, &pts[2])])
@@ -1747,36 +1737,11 @@ fn legs_through(sp: &UvSpan, p: &[Rational; 2]) -> Option<[Leg; 2]> {
 /// `None` where it doesn't.
 fn tangency(sp: &UvSpan, k: usize, line: &Rational) -> Option<Rational> {
     let p = offset(sp, k, line);
-    if p[2] == 0 || &p[1] * &p[1] != Rational::from(4) * &p[0] * &p[2] {
+    if poly::degree(&p) != Some(2) || &p[1] * &p[1] != Rational::from(4) * &p[0] * &p[2] {
         return None;
     }
     let t = -&p[1] / (Rational::from(2) * &p[2]);
     (t > 0 && t < 1).then_some(t)
-}
-
-/// The degree of `p`, `None` for zero.
-fn top(p: &[Rational]) -> Option<usize> {
-    p.iter().rposition(|x| *x != 0)
-}
-
-/// The greatest common divisor of two polynomials in power form, exact
-/// (up to a factor).
-fn gcd(mut a: Poly, mut b: Poly) -> Poly {
-    while let Some(db) = top(&b) {
-        // `a mod b`.
-        while let Some(da) = top(&a) {
-            if da < db {
-                break;
-            }
-            let f = &a[da] / &b[db];
-            for i in 0..=db {
-                let x = &f * &b[i];
-                a[da - db + i] -= x;
-            }
-        }
-        std::mem::swap(&mut a, &mut b);
-    }
-    a
 }
 
 /// The signed crossings of `rays` past the window `lo` and before `hi`

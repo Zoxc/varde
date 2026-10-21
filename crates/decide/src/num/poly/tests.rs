@@ -30,6 +30,8 @@ fn arithmetic_and_bernstein_form() {
     let a = mul(&mul(&int(&[-1, 1]), &int(&[-1, 1])), &int(&[2, 1]));
     assert_eq!(gcd(&a, &mul(&int(&[-1, 1]), &int(&[5, 1]))), int(&[-1, 1]));
     assert_eq!(square_free(&a), mul(&int(&[-1, 1]), &int(&[2, 1])));
+    assert_eq!(pow(&int(&[-1, 1]), 0), int(&[1]));
+    assert_eq!(pow(&int(&[-1, 1]), 2), int(&[1, -2, 1]));
 }
 
 #[test]

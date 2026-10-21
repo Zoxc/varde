@@ -52,7 +52,7 @@ use malachite::base::num::basic::traits::Zero;
 use super::rat;
 use crate::count::boxes::UvSpan;
 use crate::num::poly;
-use crate::records::cusp::{scompose, sdiv, srevert};
+use crate::records::cusp::graph;
 
 /// The series orders a germ is compared to.
 const ORDERS: usize = 4;
@@ -253,18 +253,12 @@ impl Leg {
 /// The germ of a leg whose control points are `(aᵢ, bᵢ)` from `P` (`a`
 /// across the line, `b` along it), weights `w` (module docs).
 fn germ_of(a: &[Rational; 2], b: &[Rational; 2], w: &[Rational; 3]) -> Option<Germ> {
-    let two = Rational::from(2);
-    // `Σ wᵢ·xᵢ·Bᵢ(s)` over `Σ wᵢ·Bᵢ(s)`, in power form in `s`.
-    let num = |x: &[Rational; 2]| {
-        let one = &two * &w[1] * &x[0];
-        let sq = &w[2] * &x[1] - &one;
-        vec![Rational::ZERO, one, sq]
-    };
-    let den = poly::from_bernstein_full(w);
+    // `Σ wᵢ·xᵢ·Bᵢ(s)` over `Σ wᵢ·Bᵢ(s)`, in power form in `s`, `x₀ = 0`.
+    let num =
+        |x: &[Rational; 2]| poly::from_bernstein(&[Rational::ZERO, &w[1] * &x[0], &w[2] * &x[1]]);
+    let den = poly::from_bernstein(w);
     if a[0] > 0 {
-        let x = sdiv(&num(a), &den);
-        let s = srevert(&x);
-        let f = scompose(&sdiv(&num(b), &den), &s);
+        let f = graph(&num(a), &num(b), &den);
         return Some(Germ::Series(f[1..=ORDERS].to_vec()));
     }
     if a[0] != 0 || a[1] <= 0 {
@@ -278,11 +272,9 @@ fn germ_of(a: &[Rational; 2], b: &[Rational; 2], w: &[Rational; 3]) -> Option<Ge
     }
     // Tangent to the line: `x_k ≈ (w₂a₂/w₀)·s²`, `x_o ≈ (2w₁b₁/w₀)·s`;
     // `x_k` as a series in `x_o` by reversion.
-    let o = sdiv(&num(b), &den);
-    let graph = scompose(&sdiv(&num(a), &den), &srevert(&o));
     Some(Germ::Root {
         up: b[0] > 0,
-        graph,
+        graph: graph(&num(b), &num(a), &den),
     })
 }
 
