@@ -88,7 +88,11 @@
 //! are tangent or overlap, no box there ever
 //! becomes a leaf: the search escalates at the depth limit
 //! ([`XClusterError::Depth`]) or past [`MAX_BOXES`] boxes
-//! ([`XClusterError::Boxes`]).
+//! ([`XClusterError::Boxes`]), and past the last level no level settles
+//! it ([`form`]: [`XClusterError::OutOfBudget`], [`Exhausted::Precision`]).
+//! A charged search ([`form_charged`]) runs within its share at every
+//! level; crossing it is [`Exhausted::Precision`] too, at the first level
+//! as above it: every piece tested is a step at a precision level.
 //!
 //! **Two straight edges** hold at most one crossing, so their whole cell
 //! is the one cluster where `X ≠ 0`. Where their shadows lie on one line
@@ -925,9 +929,11 @@ pub enum XClusterError {
     Sided(XBox),
     /// More than [`MAX_LEAVES`] boxes at once.
     SizeLimit,
-    /// The search ran past the share it was given ([`form_charged`]):
-    /// [`Exhausted::Work`] at the first level, [`Exhausted::Precision`]
-    /// above it; `at` the last box tested (`None` before any).
+    /// The search ran past the share it was given ([`form_charged`]), or
+    /// past the last level unsettled ([`form`]): [`Exhausted::Precision`]
+    /// at every level, the first included (every piece tested is a step
+    /// at a precision level); `at` the last box tested (`None` before
+    /// any, or where the last level's search didn't name one).
     OutOfBudget {
         /// What ran out.
         cause: Exhausted,
@@ -952,6 +958,17 @@ impl XClusterError {
                 | XClusterError::Boxes
                 | XClusterError::Sided(_)
         )
+    }
+
+    /// The box the search stopped at, where the error names one.
+    fn at(&self) -> Option<XBox> {
+        match self {
+            XClusterError::Degree(b, _) | XClusterError::Depth(b) | XClusterError::Sided(b) => {
+                Some(*b)
+            }
+            XClusterError::OutOfBudget { at, .. } => *at,
+            _ => None,
+        }
     }
 }
 
@@ -1029,8 +1046,8 @@ pub fn clusters_at(
 
 /// [`clusters_at`], every piece tested charged against `charge` at the
 /// level's unit: past the share [`XClusterError::OutOfBudget`] (as
-/// [`Exhausted::Work`], whatever the level). With the pieces tested, also
-/// on failure. For timing a level's search.
+/// [`Exhausted::Precision`], whatever the level). With the pieces
+/// tested, also on failure. For timing a level's search.
 pub fn clusters_at_charged(
     x: XKey,
     pair: &XPair<'_>,
@@ -1082,17 +1099,18 @@ fn clusters_level(
 
 /// The clusters of pair `x` at the first level that forms them
 /// ([`clusters_at`] from level 0, escalating where
-/// [`XClusterError::escalates`]); past the last level its error stands.
-/// Not charged: [`form_charged`] is.
+/// [`XClusterError::escalates`]); past the last level
+/// [`XClusterError::OutOfBudget`] ([`Exhausted::Precision`]). Not
+/// charged: [`form_charged`] is.
 pub fn form(x: XKey, pair: &XPair<'_>, sides: &XSides) -> Result<XClusters, XClusterError> {
     form_charged(x, pair, sides, &Charge::xrec(u64::MAX)).0
 }
 
 /// [`form`], every piece tested charged against `charge` at its level's
 /// unit ([`Charge::xrec`]): past the share the search stops at once,
-/// [`XClusterError::OutOfBudget`] ([`Exhausted::Work`] at the first
-/// level, [`Exhausted::Precision`] above it). With the clusters, or the
-/// error, the pieces tested per level
+/// [`XClusterError::OutOfBudget`] ([`Exhausted::Precision`] at every
+/// level, the first included), as past the last level unsettled. With
+/// the clusters, or the error, the pieces tested per level
 /// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) for
 /// the pass to charge ([`Charge::spent`]).
 pub fn form_charged(
@@ -1103,7 +1121,8 @@ pub fn form_charged(
 ) -> (Result<XClusters, XClusterError>, Cost) {
     let mut cost = Cost::default();
     let mut spent = 0u64;
-    let mut last = XClusterError::SizeLimit;
+    // The box the last escalating level stopped at.
+    let mut at = None;
     for level in 0..LEVELS {
         let allow = Allow {
             unit: charge.units[level],
@@ -1115,18 +1134,12 @@ pub fn form_charged(
         spent = spent.saturating_add(pieces.saturating_mul(allow.unit));
         match r {
             Ok(c) => return (Ok(c), cost),
-            Err(XClusterError::OutOfBudget {
-                cause: Exhausted::Work,
-                at,
-            }) if level > 0 => {
-                let cause = Exhausted::Precision;
-                return (Err(XClusterError::OutOfBudget { cause, at }), cost);
-            }
-            Err(e) if e.escalates() => last = e,
+            Err(e) if e.escalates() => at = e.at(),
             Err(e) => return (Err(e), cost),
         }
     }
-    (Err(last), cost)
+    let cause = Exhausted::Precision;
+    (Err(XClusterError::OutOfBudget { cause, at }), cost)
 }
 
 /// What a cluster search at one level may spend: `unit` units a piece,
@@ -1233,7 +1246,7 @@ fn search<S: Scalar>(
     } else if let (XCurve::Line(a, b), XCurve::Line(g0, g1)) = (pair.e, pair.g) {
         let r = straight_clusters(x, pair, [[a, b], [g0, g1]], sides, like, pieces);
         if allow.over(*pieces) {
-            let cause = Exhausted::Work;
+            let cause = Exhausted::Precision;
             return Err(XClusterError::OutOfBudget { cause, at: None });
         }
         return r;
@@ -1252,7 +1265,7 @@ fn search<S: Scalar>(
     while let Some((b, degree)) = work.pop() {
         // The last box's work charged: past the share, the search stops.
         if allow.over(*pieces) {
-            let cause = Exhausted::Work;
+            let cause = Exhausted::Precision;
             return Err(XClusterError::OutOfBudget { cause, at: last });
         }
         last = Some(b);
@@ -1330,7 +1343,7 @@ fn search<S: Scalar>(
         return Err(need(wants));
     }
     if allow.over(*pieces) {
-        let cause = Exhausted::Work;
+        let cause = Exhausted::Precision;
         return Err(XClusterError::OutOfBudget { cause, at: last });
     }
     found.sort_by_key(|x| x.0);

@@ -13,6 +13,7 @@ use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::height::Heights;
 use crate::records::height::model::{FaceAt, HeightModel, XAt, XHeights};
 use crate::records::keys::{FootId, HKey};
+use crate::records::shadow::LevelWork;
 
 impl EntityOrder for Geom {
     type Key = ();
@@ -583,10 +584,12 @@ fn a_close_pair_of_opposite_z_orders_counts_one() {
 /// tangents apart nor its z-order, whatever its degree (a degree-0 box
 /// there may be two crossings of opposite z-orders): never a cluster,
 /// never dropped. Charged per piece, the search stops on its share, at
-/// the first level ([`Exhausted::Work`]), past it by one box's pieces at
+/// the first level as above it ([`Exhausted::Precision`]: every piece is
+/// tested at a precision level), past it by one box's pieces at
 /// most and the same on every run. Uncharged it escalates at its box cap
-/// (a second in release builds per case and level): with
-/// `VARDE_TESTS=full`, as are the twelve motions (two by default).
+/// (a second in release builds per case at the first level) and every
+/// level after it, then ends out of precision: with `VARDE_TESTS=full`,
+/// as are the twelve motions (two by default).
 #[test]
 fn a_shadow_tangency_escalates() {
     let (mut crossed, mut escalated, mut ran_out) = (0, 0, 0);
@@ -622,7 +625,7 @@ fn a_shadow_tangency_escalates() {
         let (r, cost) = recs.clusters_on(&geom, &pair, &charge);
         match r {
             Err(XClusterError::OutOfBudget {
-                cause: Exhausted::Work,
+                cause: Exhausted::Precision,
                 at: Some(_),
             }) => ran_out += 1,
             r => panic!("{d} {wm}: {r:?}"),
@@ -635,8 +638,16 @@ fn a_shadow_tangency_escalates() {
         assert!(cost.levels[1..].iter().all(|l| l.evals == 0));
         assert_eq!(recs.clusters_on(&geom, &pair, &charge).1, cost);
         if full {
-            match recs.clusters(&geom, &pair) {
-                Err(e) if e.escalates() => escalated += 1,
+            // Uncharged ([`form`]): every level searched, past the last
+            // the pair is out of precision.
+            match recs.clusters_on(&geom, &pair, &Charge::xrec(u64::MAX)) {
+                (
+                    Err(XClusterError::OutOfBudget {
+                        cause: Exhausted::Precision,
+                        at: Some(_),
+                    }),
+                    cost,
+                ) if cost.levels.iter().all(|l| l.evals > 0) => escalated += 1,
                 r => panic!("{d} {wm}: {r:?}"),
             }
         }
@@ -648,6 +659,65 @@ fn a_shadow_tangency_escalates() {
             && crossed < cases.len(),
         "{ran_out} ran out, {escalated} escalated, {crossed} with a crossing"
     );
+}
+
+/// `e` and `g` one conic, two edges not marked as on one curve: their
+/// shadows overlap along the whole span, where no box at any level
+/// becomes a leaf. Uncharged ([`form`]) every level runs into its limit,
+/// and past the last the pair is out of precision. Charged, it runs
+/// within its share at every level: crossing it, at the first level or
+/// any after it, is out of precision too (every piece is tested at a
+/// precision level), the levels after the crossing untouched.
+#[test]
+fn overlapping_shadows_run_out_of_precision_at_every_level() {
+    let precision = |r: &Result<XClusters, XClusterError>| {
+        matches!(
+            r,
+            Err(XClusterError::OutOfBudget {
+                cause: Exhausted::Precision,
+                at: Some(_),
+            })
+        )
+    };
+    for d in [
+        NU,
+        -NU,
+        DVec3::new(0.25, -0.5, 0.125),
+        DVec3::new(0.25, 0.5, 0.125),
+    ] {
+        let mut geom = Geom {
+            d,
+            ..Geom::default()
+        };
+        let conic = || {
+            vec![[
+                cp(lat(-1.0, 1.0, 0.0), 1.0),
+                cp(lat(0.0, -1.0, 0.0), 1.0),
+                cp(lat(1.0, 1.0, 0.0), 1.0),
+            ]]
+        };
+        geom.curve(A, E, 0, 1, conic());
+        geom.curve(B, G, 2, 3, conic());
+        let recs = decide(&geom);
+        let pair = recs.pair(&geom);
+        let (r, all) = recs.clusters_on(&geom, &pair, &Charge::xrec(u64::MAX));
+        assert!(precision(&r), "{d}: {r:?}");
+        assert!(all.levels.iter().all(|l| l.evals > 0), "{d}: {all:?}");
+        for level in 0..LEVELS {
+            // A share that runs out at `level`: what the levels before it
+            // spent, and half of its own.
+            let units = Charge::xrec(0).units;
+            let spent = |l: &LevelWork, k: usize| u64::from(l.evals) * units[k];
+            let before: u64 = (0..level).map(|k| spent(&all.levels[k], k)).sum();
+            let charge = Charge::xrec(before + spent(&all.levels[level], level) / 2);
+            let (r, cost) = recs.clusters_on(&geom, &pair, &charge);
+            assert!(precision(&r), "{d} at {level}: {r:?}");
+            assert!(charge.spent(&cost) > charge.share, "{d} at {level}");
+            assert_eq!(cost.levels[..level], all.levels[..level], "{d} at {level}");
+            assert!(cost.levels[level].evals < all.levels[level].evals);
+            assert!(cost.levels[level + 1..].iter().all(|l| l.evals == 0));
+        }
+    }
 }
 
 /// `e` a conic dipping under `g`'s straight line near its apex, rising in
