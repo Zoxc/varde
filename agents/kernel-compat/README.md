@@ -36,7 +36,7 @@ intersection empty; the empty solid touches nothing). Queries answer for
 the empty solid: no bounds, volume or area, an empty `Topology` (nothing
 resolves), an empty `RenderMesh`, `ManifoldError::Empty`, `measure` and
 `distance` finding nothing, `face_section` no curves; `Display::flatten`
-draws a curve as its chord and `sample_patch` draws nothing. Nothing
+cuts a curve as an edge would be cut and `sample_patch` draws nothing. Nothing
 panics on a caller's data.
 
 So the app runs, but regenerates no geometry: every feature that makes

@@ -38,8 +38,10 @@ otherwise, through `from_parts`), in parts (`LinesPart`).
 `Display` holds how finely a solid is sampled (`Display::new(tol)`,
 `Display::for_view(tol, chord)`, `chord(diagonal)`), which the Varde
 kernel's tessellation will take. Loose geometry, a failure's evidence, is
-drawn by `Display::flatten` (for now a curve's chord) and
-`Display::sample_patch` (for now nothing).
+drawn by `Display::flatten` (equal parameter steps, chords within
+`chord(diagonal)` at their middles, at most `MAX_TURN_DEGREES` of turn
+each, up to `MAX_SEGMENTS`) and `Display::sample_patch` (for now
+nothing).
 
 ## Manifold meshes for export
 
