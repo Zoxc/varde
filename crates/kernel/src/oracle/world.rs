@@ -1447,7 +1447,27 @@ impl World<'_> {
                 } else {
                     Cause::Other(format!("{e:?}"))
                 };
-                refused(cause, format!("{op:?}: {e:?}"))
+                // For a replay to localise it: a winding outside
+                // `{0, 1}` with the vertex's column counts per face and
+                // the crossing counts of its edges, per face.
+                let detail = match &e {
+                    WindingError::Outside { point, .. } => {
+                        let v = vert(*point);
+                        let x = self.cross_counts(op, &fc.counts, s11).ok();
+                        let rows: Vec<_> = ends
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, ends)| ends.contains(&v))
+                            .map(|(k, ends)| (k, *ends, x.as_ref().map(|x| x[k].clone())))
+                            .collect();
+                        format!(
+                            "; column counts per face {:?}; edges at it (id, ends, crossings per face) {rows:?}",
+                            fc.counts[v.index()]
+                        )
+                    }
+                    _ => String::new(),
+                };
+                refused(cause, format!("{op:?}: {e:?}{detail}"))
             }
         })?;
         let x = self.cross_counts(op, &fc.counts, s11)?;
