@@ -623,6 +623,112 @@ impl crate::records::height::model::HeightModel for Planar<'_> {
     }
 }
 
+impl Planar<'_> {
+    /// Tile `[i, j]`'s stored net, `None` for a tile not the face's.
+    fn net(&self, [i, j]: [i64; 2]) -> Option<&TileNet> {
+        let [us, vs] = &self.face.tiles;
+        if !us.contains(&i) || !vs.contains(&j) {
+            return None;
+        }
+        let nv = usize::try_from(vs.end - vs.start).ok()?;
+        let k = usize::try_from(i - us.start).ok()? * nv + usize::try_from(j - vs.start).ok()?;
+        self.face.nets.as_deref()?.get(k)
+    }
+
+    /// The tile at or below lattice line `x` in `range` and the net row
+    /// of `x` in it (0 at its start, 2 at its end).
+    fn tile_at(x: i64, range: &std::ops::Range<i64>) -> Option<(i64, usize)> {
+        if range.contains(&x) {
+            Some((x, 0))
+        } else if range.contains(&(x - 1)) {
+            Some((x - 1, 2))
+        } else {
+            None
+        }
+    }
+}
+
+/// The face's tile edges, corners and points from its stored nets, as
+/// the side records read them; the face is fixed (`B`) or moves with `A`
+/// along `R_HAT`.
+impl crate::records::side::SideGeometry for Planar<'_> {
+    fn tile_edge(&self, e: &crate::records::keys::TileEdge) -> Option<Span> {
+        use crate::bezier::Dir;
+        if e.operand != self.face.operand || e.face != self.face.id {
+            return None;
+        }
+        let [us, vs] = &self.face.tiles;
+        match e.fixed {
+            Dir::U => {
+                if !vs.contains(&e.cell) {
+                    return None;
+                }
+                let (i, at) = Self::tile_at(e.line, us)?;
+                let n = self.net([i, e.cell])?;
+                Some([n[3 * at], n[3 * at + 1], n[3 * at + 2]])
+            }
+            Dir::V => {
+                if !us.contains(&e.cell) {
+                    return None;
+                }
+                let (j, at) = Self::tile_at(e.line, vs)?;
+                let n = self.net([e.cell, j])?;
+                Some([n[at], n[3 + at], n[6 + at]])
+            }
+        }
+    }
+
+    fn tile_net(&self, operand: Operand, face: FaceId, tile: [i64; 2]) -> Option<TileNet> {
+        if operand != self.face.operand || face != self.face.id {
+            return None;
+        }
+        self.net(tile).copied()
+    }
+
+    fn corner(
+        &self,
+        _: Point,
+        c: &crate::records::keys::TileCorner,
+    ) -> Option<crate::perturb::Moving> {
+        if c.operand != self.face.operand || c.face != self.face.id {
+            return None;
+        }
+        let [us, vs] = &self.face.tiles;
+        let ((i, a), (j, b)) = (Self::tile_at(c.at[0], us)?, Self::tile_at(c.at[1], vs)?);
+        let p = self.net([i, j])?[3 * a + b];
+        let at = DVec3::new(p[0], p[1], p[2]);
+        Some(match c.operand {
+            Operand::A => crate::perturb::Moving::of_a(at, Sign::Pos, R_HAT),
+            Operand::B => crate::perturb::Moving::fixed(at),
+        })
+    }
+
+    fn point_rates(
+        &self,
+        q: Point,
+        _: &crate::records::keys::TilePoint,
+    ) -> [crate::perturb::Rate; crate::num::exact::ORDERS] {
+        match q.operand.other() {
+            Operand::A => crate::perturb::rates_a(Sign::Pos, R_HAT),
+            Operand::B => [crate::perturb::Rate::ZERO; crate::num::exact::ORDERS],
+        }
+    }
+
+    fn line_rates<S: crate::perturb::Curved>(
+        &self,
+        q: Point,
+        _: &crate::records::keys::SideLine,
+        t: &S,
+    ) -> [[S; 3]; crate::num::exact::ORDERS] {
+        let lit = |v: DVec3| [v.x, v.y, v.z].map(|x| S::from_f64(x, t));
+        let tt = crate::perturb::T;
+        match q.operand.other() {
+            Operand::A => [lit(R_HAT), lit(tt[0]), lit(tt[1]), lit(tt[2])],
+            Operand::B => std::array::from_fn(|_| lit(DVec3::ZERO)),
+        }
+    }
+}
+
 /// The count of `f` (on the plane `n·x = c`, `n` its outward normal,
 /// its edges straight with bands `band`) against a vertex of `A` at `q`,
 /// which must settle (at the first level unless `ladder`, else at any),
@@ -716,19 +822,33 @@ fn model_count_pieces(
         feet: &feet,
         order,
     };
-    let sides = Sides::new();
-    let p = if ladder {
-        f.query_scaled(scale, None, order, point, q, rays, &|fq, _| {
-            count_pieces(fq, &sides, &reads, &Charge::new(u64::MAX)).0
-        })
-    } else {
-        f.query_scaled(scale, None, order, point, q, rays, &|fq, edges| {
-            let out = face_pieces(fq, &sides, &reads)?;
-            assert_eq!(out.degree(), ray_degree(fq.face, edges).unwrap());
-            Ok(out)
-        })
+    // The side records the count asks for, decided as it asks (a
+    // piece's corner on a tile line), then the count again.
+    let side_band = crate::num::decide::Band::curved(0.0, 1.0 / 1_073_741_824.0).unwrap();
+    let mut sides = Sides::new();
+    let mut asked = 0;
+    let p = loop {
+        let p = if ladder {
+            f.query_scaled(scale, None, order, point, q, rays, &|fq, _| {
+                count_pieces(fq, &sides, &reads, &Charge::new(u64::MAX)).0
+            })
+        } else {
+            f.query_scaled(scale, None, order, point, q, rays, &|fq, edges| {
+                let out = face_pieces(fq, &sides, &reads)?;
+                assert_eq!(out.degree(), ray_degree(fq.face, edges).unwrap());
+                Ok(out)
+            })
+        };
+        match p {
+            Err(CountError::Need(k)) if asked < 8 => {
+                asked += 1;
+                sides
+                    .fill([k], geom, side_band, &mut Seq)
+                    .unwrap_or_else(|e| panic!("q = {q:?}: side record {e:?}"));
+            }
+            p => break p.unwrap_or_else(|e| panic!("q = {q:?}: {e:?}")),
+        }
     };
-    let p = p.unwrap_or_else(|e| panic!("q = {q:?}: {e:?}"));
     let wanted = p.wanted(&reads, &[]).expect("keys");
     for k in &wanted {
         assert!(matches!(k.h, HKey::Hit { .. }), "q = {q:?}: {k:?}");
