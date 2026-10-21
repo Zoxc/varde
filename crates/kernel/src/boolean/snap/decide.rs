@@ -70,10 +70,11 @@
 //! rim edges along each piece by their exact place on it, surfaces by
 //! their first target face; ids break exact ties only.
 //!
-//! **Work.** Charged on the operation's budget in passes: the pieces (an
-//! item per piece, a unit per rim edge), the loops (an item per loop, a
-//! unit per rim edge and surface), the lifted edges and vertices (an item
-//! each, a unit per control point).
+//! **Work.** Charged on the operation's budget in passes: the lookups
+//! the passes read (one item, a unit per entry and per target face
+//! searched), the pieces (an item per piece, a unit per rim edge), the
+//! loops (an item per loop, a unit per rim edge and surface), the lifted
+//! edges and vertices (an item each, a unit per control point).
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -407,6 +408,11 @@ pub struct Zone {
 }
 
 impl Zone {
+    /// The elements of the rewrite on the target.
+    pub fn on(&self) -> &OnT {
+        &self.on
+    }
+
     /// Whether `x` is on the target: an element of the rewrite by
     /// [`OnT`], the target's own elements in the zone by construction.
     pub fn on_t(&self, x: ZoneEl) -> bool {
@@ -532,7 +538,7 @@ fn fail<T>(e: DecideError) -> Result<T, Stop<DecideError>> {
 
 /// The zone of a snapped cluster (module docs): `rim`, `corner`, `rewrite`
 /// and its `geometry` the snap's, `on` the rewrite's elements on the
-/// target ([`super::stale::on_t`]); charged to `work`.
+/// target ([`super::stale::on_t`]), kept by the zone; charged to `work`.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the boolean's snap calls it as it lands")
@@ -542,14 +548,33 @@ pub(crate) fn decide_zone(
     corner: &Corner,
     rewrite: &Rewrite,
     geometry: &Geometry,
-    on: &OnT,
+    on: OnT,
     input: &DecideInput<'_>,
     work: &mut Work,
 ) -> Result<Zone, DecideError> {
     let side = tie_side(input.kind, input.sigma_a, input.snapped);
     let t_op = input.snapped.other();
+    // The lookups the passes below build before their items: the rim's
+    // (surfaces by target face, gaps, edge classes, vertices, rim edges by
+    // piece), the lifted reads' (edges by key, ends, a chart per target
+    // face reached by an on-`T` coedge, found among the target faces) and
+    // the zone's own (window, targets).
+    let coedges: usize = geometry.edges.iter().map(|e| e.coedges.len()).sum();
+    let setup = [
+        2 * input.targets.len(),
+        rim.gaps.len(),
+        2 * geometry.edges.len(),
+        rewrite.verts.len(),
+        2 * rewrite.edges.len(),
+        coedges,
+        input.faces.len().saturating_mul(input.faces.len()),
+        corner.window.len(),
+    ]
+    .iter()
+    .fold(0u64, |acc, &n| acc.saturating_add(n as u64));
+    run(work, "snap decide: setup", &[()], |_, l| units(l, setup))?;
     let rim_records = rim_records(rim, corner, rewrite, geometry, input, side, work)?;
-    let lifted = lift(rewrite, geometry, on, input, work)?;
+    let lifted = lift(rewrite, geometry, &on, input, work)?;
     let mut window: Vec<Element> = corner
         .window
         .iter()
@@ -567,7 +592,7 @@ pub(crate) fn decide_zone(
         labels: zone_labels(input.kind, input.sigma_a),
         rim: rim_records,
         lifted,
-        on: on.clone(),
+        on,
         window,
         targets,
         t_op,

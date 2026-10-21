@@ -40,7 +40,7 @@ use super::super::rewrite::{
 use super::super::rim::{
     Along, Element, Implicit, Rim, RimError, RimInput, RimTrim, SnappedFace, add_inner_target, rim,
 };
-use super::super::stale::{OnT, OnTError, OnTInput, on_t};
+use super::super::stale::{OnTError, OnTInput, on_t};
 use super::super::target::{Candidate, Map, Target, TargetError, choose};
 use super::{Body, Key, Order, TARGET, q};
 use crate::geom::curve::PCurve;
@@ -244,7 +244,6 @@ pub(crate) struct Snap {
     pub(crate) along: SnapAlong,
     pub(crate) rewrite: Rewrite,
     pub(crate) geometry: Geometry,
-    pub(crate) on: OnT,
     pub(crate) zone: Zone,
     pub(crate) b_k: f64,
     pub(crate) work: u64,
@@ -553,7 +552,7 @@ pub(crate) fn snap_leaves(
         &cr,
         &rw,
         &geo,
-        &on,
+        on,
         &DecideInput {
             kind,
             sigma_a,
@@ -574,7 +573,6 @@ pub(crate) fn snap_leaves(
         along: al,
         rewrite: rw,
         geometry: geo,
-        on,
         zone,
         b_k,
         work: w.used(),

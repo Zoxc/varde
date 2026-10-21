@@ -262,11 +262,11 @@ fn zone(
         targets: &[(FaceId(0), FLOOR)],
         faces: &faces,
     };
-    decide_zone(rim, corner, r, geo, &on, &input, &mut work())
+    decide_zone(rim, corner, r, geo, on, &input, &mut work())
 }
 
 fn on_of(z: &Zone) -> &OnT {
-    &z.on
+    z.on()
 }
 
 /// Each rim record's crossing count worked out from the bowl's geometry
@@ -506,7 +506,7 @@ fn a_branch_vertex_the_rim_doesn_t_hold_or_signs_that_contradict_the_rim_are_ref
         targets: &[(FaceId(5), FLOOR)],
         faces: &faces,
     };
-    let z = decide_zone(&rm, &cr, &r, &geo, &OnT::default(), &input, &mut work());
+    let z = decide_zone(&rm, &cr, &r, &geo, OnT::default(), &input, &mut work());
     assert_eq!(z, Err(DecideError::Surface(FaceId(0))));
 }
 
