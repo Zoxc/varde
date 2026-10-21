@@ -549,6 +549,78 @@ fn the_smooth_pair_clusters_and_takes_the_closest_point() {
 }
 
 #[test]
+fn the_smooth_pair_s_store_cylinder_face_clusters_and_takes_the_closest_point() {
+    // The smooth pair as stored: the cylinder a one-face sheet on its
+    // lattice's tiles (angle cells −1 and 0, axial cell 0), its quadric
+    // and the sheet's wedge and axial range read from the store's key
+    // and frame, not built by hand. The leaves around the touch, on both
+    // tiles, form one cluster that takes the closest point.
+    let s = crate::topo::brep_min::sheets::smooth(0.0);
+    let surface = s.cylinder.surface(FaceId(0));
+    let lattice = surface.lattice();
+    let crate::geom::form::FormKey::Cylinder(k) = *lattice.key() else {
+        panic!("{:?}", lattice.key())
+    };
+    let q = Quadric::cylinder(k.foot(), k.axis(), k.radius()).expect("a cylinder");
+    let sheet = s.sheet.patch_at(&like());
+    let fb = SheetFace {
+        patch: &sheet,
+        flipped: false,
+    };
+    let b0 = BoxKey::new(
+        Operand::B,
+        FaceId(0),
+        [0, 0],
+        ext(63, 65, 7),
+        ext(63, 65, 7),
+    );
+    // The axial cell is `CELL = 2²²` mm, centred on the foot: `±0.5` mm
+    // about the touch is `v ∈ ½ ± 2⁻²³`.
+    let v = ext((1 << 22) - 1, (1 << 22) + 1, 23);
+    let mut ls = Vec::new();
+    for (cell, u) in [(-1, ext(15, 16, 4)), (0, ext(0, 1, 4))] {
+        let tile = surface.tile(cell, 0).expect("a tile").patch_at(&like());
+        let fa = QuadricFace {
+            quadric: &q,
+            patch: &tile,
+            flipped: false,
+        };
+        let a0 = BoxKey::new(Operand::A, FaceId(0), [cell, 0], u, v);
+        let (found, _) = near_quadric::leaves(fa, a0, fb, b0, B_K, 1 << 16, |_| BoxUse::Test)
+            .expect("the leaves certify");
+        let near: Vec<_> = found
+            .into_iter()
+            .filter(|l| l.tangency() == Some(Tangency::Near))
+            .collect();
+        assert!(!near.is_empty(), "tile {cell}");
+        ls.extend(near);
+    }
+    let key = |op: Operand, f: FaceId| (op as u8, f.0);
+    let cs = clusters(&ls, key, &mut work()).unwrap();
+    let [c] = &cs[..] else { panic!("{cs:?}") };
+    assert_eq!(c.leaves().len(), ls.len());
+    let held: Vec<&near_quadric::Leaf<S>> = c.leaves().map(|i| &ls[i as usize]).collect();
+    let [e1, e2, a] = lattice.axes();
+    assert_eq!((e1, a), ([0.0, 0.0, 1.0], k.axis()));
+    let wedge = [e2.map(|x| -x), e2];
+    let cylinder = CylinderSheet::new(q, [FaceId(0)], wedge, s.data.along).expect("a sheet");
+    let on_a = [
+        Candidate {
+            singular: false,
+            sheet: Some(&cylinder),
+        },
+        NONE[1],
+    ];
+    assert_eq!(
+        choose(c.kind(), &held, on_a, &mut work()).unwrap(),
+        Some(Target {
+            operand: Operand::A,
+            map: Map::Closest,
+        })
+    );
+}
+
+#[test]
 fn the_closest_point_needs_feet_inside_and_half_the_radius() {
     let ls = smooth_leaves();
     let held: Vec<&near_quadric::Leaf<S>> = ls.iter().collect();
