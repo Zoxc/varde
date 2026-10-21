@@ -104,9 +104,9 @@ use std::collections::VecDeque;
 use varde_decide::num::exact::{MAX_INPUT, Pred, value_sign};
 use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
-use super::brep_min::planar::Orient;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
+use varde_decide::num::preds::Orient2d;
 
 pub use varde_decide::ids::NONE;
 
@@ -541,7 +541,7 @@ impl Meter<'_, '_> {
     /// The exact sign of `orient(p[0], p[1], p[2])`, `p[0]` vertex `at`:
     /// its filter charged before, any further stage after.
     fn orient(&mut self, p: [[f64; 2]; 3], at: u32) -> Res<Ordering> {
-        let pred = Orient(p);
+        let pred = Orient2d(p);
         let filter = UNITS.record.of(pred.kind()).filter;
         self.parts(filter)?;
         let (s, w) = value_sign(&pred);

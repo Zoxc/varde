@@ -60,9 +60,10 @@
 //! their orders this anchor's own ([`decide_flat_orders`]).
 //!
 //! **Flat rows** (lines and planes) are exact predicates ([`Pred`]) over
-//! stored coordinates and rates, their orders the derivatives
-//! [`crate::num::exact`] works out, decided under [`Band::FLAT`]
-//! ([`decide_flat`]). Each is a positive multiple of the spatial value in
+//! stored coordinates and rates, their values the flat predicate
+//! library's forms ([`crate::num::preds`]) on the moving points, their
+//! orders the derivatives [`crate::num::exact`] works out, decided under
+//! [`Band::FLAT`] ([`decide_flat`]). Each is a positive multiple of the spatial value in
 //! the table (by a squared length or facing of its unmoved data), which
 //! keeps every sign. **Curved rows** are evaluated at a precision level
 //! ([`Curved`]) on the record's point and the tangent or normal there
@@ -82,9 +83,10 @@ use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Fail, Sign, TieKey, decide, exact_orders};
 use crate::num::exact::{
-    self, ExactSign, Num, ORDERS, Pred, V3, Work, cross, dot, moved_point, point, rat, sub,
+    self, ExactSign, Num, ORDERS, Pred, V3, Work, dot, moved_point, point, rat, sub,
 };
 use crate::num::poly::{self, Poly, Root};
+use crate::num::preds;
 use crate::num::schedule::PredKind;
 
 pub mod dir;
@@ -317,7 +319,7 @@ pub struct VvShadow {
 impl Pred for VvShadow {
     fn eval<N: Num>(&self) -> N {
         let l = point::<N>(self.axis.vector());
-        dot(&l, &sub(&self.w.eval(), &self.q.eval()))
+        preds::along(&l, &self.q.eval(), &self.w.eval())
     }
 
     fn kind(&self) -> PredKind {
@@ -340,8 +342,7 @@ pub struct LineShadow {
 impl Pred for LineShadow {
     fn eval<N: Num>(&self) -> N {
         let [a, b] = self.line.ends::<N>();
-        let nu = cross(&point(UP), &sub(&b, &a));
-        dot(&nu, &sub(&self.q.eval(), &a))
+        preds::shadow_side(&point(UP), &sub(&b, &a), &sub(&self.q.eval(), &a))
     }
 
     fn kind(&self) -> PredKind {
@@ -372,8 +373,7 @@ impl Pred for PlaneHeight {
         let n = point::<N>(self.normal);
         let shift = self.rates.each_ref().map(|r| dot(&n, &r.vec()));
         let c = N::lit(self.offset).moved_by(&shift);
-        let above = c.sub(&dot(&n, &self.q.eval()));
-        above.mul(&dot(&n, &point(UP)))
+        preds::plane_height(&n, &c, &self.q.eval(), &point(UP))
     }
 
     fn kind(&self) -> PredKind {
@@ -394,7 +394,7 @@ pub struct PointHeight {
 
 impl Pred for PointHeight {
     fn eval<N: Num>(&self) -> N {
-        dot(&point(UP), &sub(&self.w.eval(), &self.q.eval()))
+        preds::along(&point(UP), &self.q.eval(), &self.w.eval())
     }
 
     fn kind(&self) -> PredKind {
@@ -420,8 +420,7 @@ impl Pred for EdgeEdge {
     fn eval<N: Num>(&self) -> N {
         let [e0, e1] = self.e.ends::<N>();
         let [g0, g1] = self.g.ends::<N>();
-        let m = cross(&sub(&e1, &e0), &sub(&g1, &g0));
-        dot(&point(UP), &m).mul(&dot(&m, &sub(&g0, &e0)))
+        preds::crossing_height(&point(UP), [&e0, &e1], [&g0, &g1])
     }
 
     fn kind(&self) -> PredKind {
@@ -534,7 +533,7 @@ impl Pred for HomPairShadow {
     fn eval<N: Num>(&self) -> N {
         let (xq, wq) = self.q.eval::<N>();
         let (xw, ww) = self.w.eval::<N>();
-        let d = [0, 1, 2].map(|k| wq.mul(&xw[k]).sub(&ww.mul(&xq[k])));
+        let d = preds::hom_sub((&xw, &ww), (&xq, &wq));
         dot(&point::<N>(self.axis.vector()), &d)
     }
 
@@ -562,10 +561,9 @@ impl Pred for HomPointLineShadow {
         let (xa, wa) = self.a.eval::<N>();
         let (xb, wb) = self.b.eval::<N>();
         let (xq, wq) = self.q.eval::<N>();
-        let d = [0, 1, 2].map(|k| wa.mul(&xb[k]).sub(&wb.mul(&xa[k])));
-        let nu = cross(&point(UP), &d);
-        let off = [0, 1, 2].map(|k| wa.mul(&xq[k]).sub(&wq.mul(&xa[k])));
-        dot(&nu, &off)
+        let d = preds::hom_sub((&xb, &wb), (&xa, &wa));
+        let off = preds::hom_sub((&xq, &wq), (&xa, &wa));
+        preds::shadow_side(&point(UP), &d, &off)
     }
 
     fn kind(&self) -> PredKind {
@@ -616,10 +614,9 @@ impl Pred for HomLineShadow {
         let (xa, wa) = self.a.eval::<N>();
         let (xb, wb) = self.b.eval::<N>();
         let q = self.q.eval::<N>();
-        let d = [0, 1, 2].map(|k| wa.mul(&xb[k]).sub(&wb.mul(&xa[k])));
-        let nu = cross(&point(UP), &d);
+        let d = preds::hom_sub((&xb, &wb), (&xa, &wa));
         let off = [0, 1, 2].map(|k| wa.mul(&q[k]).sub(&xa[k]));
-        dot(&nu, &off)
+        preds::shadow_side(&point(UP), &d, &off)
     }
 
     fn kind(&self) -> PredKind {

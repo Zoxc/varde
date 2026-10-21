@@ -105,13 +105,14 @@ use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact;
 use crate::num::level::{AtLevel, LevelScalar, ladder};
+use crate::num::preds::NearGap;
 use crate::num::schedule::Level;
 use crate::order::Along;
 use crate::records::keys::{FootId, Operand, Point, RayKey, RecordKey};
 use crate::records::ray::{Span, bracket, mirrored};
 use crate::records::shadow::neg;
 use crate::records::shadow::{
-    Cost, Decided, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, replay, shadow_error,
+    Cost, Decided, LevelWork, Pass, ShadowError, ShadowGeometry, replay, shadow_error,
 };
 use crate::records::table::{Fresh, Table};
 

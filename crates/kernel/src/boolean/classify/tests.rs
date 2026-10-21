@@ -9,6 +9,7 @@
 //! and regions; refused input; and regions read off a face arrangement.
 
 use varde_decide::num::exact::rat;
+use varde_decide::num::schedule::PredKind;
 
 use super::*;
 use crate::geom::form::{FormKey, PlaneKey};

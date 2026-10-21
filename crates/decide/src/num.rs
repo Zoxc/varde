@@ -1,5 +1,6 @@
 //! Numerics: bounded evaluation, exact predicates ([`exact`], their
-//! expansion arithmetic in [`expansion`]), exact polynomials and their
+//! expansion arithmetic in [`expansion`], the flat predicates on lines
+//! and planes in [`preds`]), exact polynomials and their
 //! roots ([`poly`]), the precision levels (double-double in
 //! [`dd`], big-float in [`bigf`]) and their schedule with the unit table
 //! ([`schedule`]), the one numeric trait over the levels and the runner
@@ -14,5 +15,6 @@ pub mod exact;
 pub mod expansion;
 pub mod level;
 pub mod poly;
+pub mod preds;
 pub mod schedule;
 pub mod trig;

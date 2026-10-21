@@ -702,7 +702,7 @@ fn store_face_arranges_from_its_uvs() {
     ];
     // The island runs the way the face's loop does; the least corner is
     // convex, so the turn there gives the loop's way.
-    let turn = |p: [[f64; 2]; 3]| value_sign(&Orient(p)).0 == Ok(Ordering::Greater);
+    let turn = |p: [[f64; 2]; 3]| value_sign(&Orient2d(p)).0 == Ok(Ordering::Greater);
     let loop_ccw = turn(c);
     if turn(island) == loop_ccw {
         f.ring(&island, 1);

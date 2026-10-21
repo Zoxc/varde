@@ -71,6 +71,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use varde_decide::num::exact::{MAX_INPUT, Num, Pred, value_sign};
+use varde_decide::num::preds::{Dot2d, Orient2d};
 use varde_decide::num::schedule::PredKind;
 use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
@@ -669,39 +670,6 @@ fn sign(p: &impl Pred) -> Option<Ordering> {
     value_sign(p).0.ok()
 }
 
-/// `orient(a, b, c)`: positive when `c` lies left of `a → b`. Also the
-/// face arrangements' one flat predicate ([`crate::topo::arrange2d`]).
-pub(crate) struct Orient(pub(crate) [[f64; 2]; 3]);
-
-impl Pred for Orient {
-    fn eval<N: Num>(&self) -> N {
-        let [a, b, c] = self.0.map(|p| p.map(N::lit));
-        let (bx, by) = (b[0].sub(&a[0]), b[1].sub(&a[1]));
-        let (cx, cy) = (c[0].sub(&a[0]), c[1].sub(&a[1]));
-        bx.mul(&cy).sub(&by.mul(&cx))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient2
-    }
-}
-
-/// `(b − a)·(d − c)`.
-struct Dot([[f64; 2]; 4]);
-
-impl Pred for Dot {
-    fn eval<N: Num>(&self) -> N {
-        let [a, b, c, d] = self.0.map(|p| p.map(N::lit));
-        let (x, y) = (b[0].sub(&a[0]), b[1].sub(&a[1]));
-        let (z, w) = (d[0].sub(&c[0]), d[1].sub(&c[1]));
-        x.mul(&z).add(&y.mul(&w))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient2
-    }
-}
-
 /// Twice a polygon's signed area: positive when it runs
 /// counter-clockwise.
 struct Area<'a>(&'a [[f64; 2]]);
@@ -730,8 +698,8 @@ impl Pred for Area<'_> {
 /// Whether the segments `a → b` and `b → c`, consecutive, fold back:
 /// collinear with `c` not ahead of `b`.
 fn folds(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
-    match sign(&Orient([a, b, c])) {
-        Some(Ordering::Equal) => sign(&Dot([a, b, b, c])) != Some(Ordering::Greater),
+    match sign(&Orient2d([a, b, c])) {
+        Some(Ordering::Equal) => sign(&Dot2d([a, b, b, c])) != Some(Ordering::Greater),
         Some(_) => false,
         None => true,
     }
@@ -740,10 +708,10 @@ fn folds(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
 /// Whether the closed segments `a b` and `c d` share a point, exactly.
 fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
     let o = [
-        sign(&Orient([a, b, c])),
-        sign(&Orient([a, b, d])),
-        sign(&Orient([c, d, a])),
-        sign(&Orient([c, d, b])),
+        sign(&Orient2d([a, b, c])),
+        sign(&Orient2d([a, b, d])),
+        sign(&Orient2d([c, d, a])),
+        sign(&Orient2d([c, d, b])),
     ];
     let [Some(o1), Some(o2), Some(o3), Some(o4)] = o else {
         return true;
@@ -784,7 +752,7 @@ fn inside(p: [f64; 2], poly: &[[f64; 2]]) -> bool {
         }
         // The crossing lies right of `p` where `p` is left of the
         // upward-directed segment.
-        let o = sign(&Orient([*a, b, p]));
+        let o = sign(&Orient2d([*a, b, p]));
         let up = b[1] > a[1];
         if (up && o == Some(Ordering::Greater)) || (!up && o == Some(Ordering::Less)) {
             odd = !odd;

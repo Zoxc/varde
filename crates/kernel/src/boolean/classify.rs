@@ -111,8 +111,9 @@ use std::collections::BTreeSet;
 
 use glam::DVec3;
 use varde_decide::num::bounded::{Bounded, down, up};
-use varde_decide::num::exact::{self, MAX_INPUT, Num, Pred, value_sign};
-use varde_decide::num::schedule::{PredKind, UNIT_PARTS, UNITS};
+use varde_decide::num::exact::{self, MAX_INPUT, Pred, value_sign};
+use varde_decide::num::preds::{Orient2d, Orient3Dir, Orient3d};
+use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 use varde_decide::perturb::T;
 
 #[cfg(doc)]
@@ -123,7 +124,6 @@ use crate::geom::tile::Tile;
 use crate::infra::budget::{Cap, Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::{Internal, KernelError};
 use crate::topo::arrange2d::{Arrangement, NONE};
-use crate::topo::brep_min::planar::Orient;
 
 #[cfg(doc)]
 use crate::infra::error::Cause;
@@ -824,7 +824,7 @@ fn meets_region(
             let corners = [lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]];
             let mut sides = [false; 2];
             for q in corners {
-                match m.sign(&Orient([a, b, q]))? {
+                match m.sign(&Orient2d([a, b, q]))? {
                     Some(Ordering::Greater) => sides[0] = true,
                     Some(Ordering::Less) => sides[1] = true,
                     _ => {}
@@ -851,7 +851,7 @@ fn inside(region: &AuditRegion, p: [f64; 2], m: &mut Meter<'_, '_>) -> Res<bool>
             if (a[1] > p[1]) == (b[1] > p[1]) {
                 continue;
             }
-            let o = m.sign(&Orient([a, b, p]))?;
+            let o = m.sign(&Orient2d([a, b, p]))?;
             let rising = b[1] > a[1];
             if (rising && o == Some(Ordering::Greater)) || (!rising && o == Some(Ordering::Less)) {
                 odd = !odd;
@@ -868,20 +868,12 @@ fn winding(solid: &[Tri], p: [f64; 3], d: DVec3, m: &mut Meter<'_, '_>) -> Res<O
     let mut w = 0i64;
     for t in solid {
         let [a, b, c] = t.map(DVec3::from_array);
+        // The side of the ray's line each edge passes.
+        let across = |a, b| Orient3Dir { p: q, a, b, d };
         let s = [
-            m.sign(&Across { p: q, a, b, d })?,
-            m.sign(&Across {
-                p: q,
-                a: b,
-                b: c,
-                d,
-            })?,
-            m.sign(&Across {
-                p: q,
-                a: c,
-                b: a,
-                d,
-            })?,
+            m.sign(&across(a, b))?,
+            m.sign(&across(b, c))?,
+            m.sign(&across(c, a))?,
         ];
         let [Some(s0), Some(s1), Some(s2)] = s else {
             return Ok(None);
@@ -895,20 +887,15 @@ fn winding(solid: &[Tri], p: [f64; 3], d: DVec3, m: &mut Meter<'_, '_>) -> Res<O
             // Through an edge or a corner.
             return Ok(None);
         }
-        let facing = m.sign(&Facing {
-            a,
-            b,
-            c,
-            x: d,
-            point: false,
+        // `n·d` and `n·(q − a)`, `n = (b − a) × (c − a)` the triangle's
+        // outward normal.
+        let facing = m.sign(&Orient3Dir {
+            p: a,
+            a: b,
+            b: c,
+            d,
         })?;
-        let side = m.sign(&Facing {
-            a,
-            b,
-            c,
-            x: q,
-            point: true,
-        })?;
+        let side = m.sign(&Orient3d([a, b, c, q]))?;
         let (Some(facing), Some(side)) = (facing, side) else {
             return Ok(None);
         };
@@ -922,53 +909,6 @@ fn winding(solid: &[Tri], p: [f64; 3], d: DVec3, m: &mut Meter<'_, '_>) -> Res<O
         }
     }
     Ok(Some(w))
-}
-
-/// `det(a − p, b − p, d)`: the side of the line through `p` along `d` the
-/// segment `a → b` passes.
-struct Across {
-    p: DVec3,
-    a: DVec3,
-    b: DVec3,
-    d: DVec3,
-}
-
-impl Pred for Across {
-    fn eval<N: Num>(&self) -> N {
-        let p = exact::point::<N>(self.p);
-        let a = exact::sub(&exact::point(self.a), &p);
-        let b = exact::sub(&exact::point(self.b), &p);
-        exact::det3(&a, &b, &exact::point(self.d))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient3
-    }
-}
-
-/// `n·(x − a)` for a point `x`, or `n·x` for a direction, `n = (b − a) ×
-/// (c − a)` the triangle's outward normal.
-struct Facing {
-    a: DVec3,
-    b: DVec3,
-    c: DVec3,
-    x: DVec3,
-    point: bool,
-}
-
-impl Pred for Facing {
-    fn eval<N: Num>(&self) -> N {
-        let a = exact::point::<N>(self.a);
-        let e = exact::sub(&exact::point(self.b), &a);
-        let f = exact::sub(&exact::point(self.c), &a);
-        let x = exact::point(self.x);
-        let x = if self.point { exact::sub(&x, &a) } else { x };
-        exact::det3(&e, &f, &x)
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient3
-    }
 }
 
 type V = [Bounded<f64>; 3];

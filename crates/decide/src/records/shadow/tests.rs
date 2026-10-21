@@ -22,7 +22,7 @@ use malachite::base::num::arithmetic::traits::PowerOf2;
 use super::*;
 use crate::ids::{EdgeId, NONE};
 use crate::num::exact::{ORDERS, Runs};
-use crate::num::schedule::{ExactUnits, UNITS};
+use crate::num::schedule::{ExactUnits, PredKind, UNITS};
 use crate::perturb::{NU, R_HAT, Rate, T, UP, rates_a};
 use crate::records::keys::{Query, XClusterIx};
 

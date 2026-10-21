@@ -154,7 +154,8 @@ pub const UNIT_PARTS: u64 = 64;
 pub enum PredKind {
     /// A difference of two points along a fixed direction, `a·(w − q)`:
     /// a point's side of a shadow line or its place along it, its height
-    /// above another point.
+    /// above another point; also a point's side of a stored plane, `n·p −
+    /// c`, of the same degree and fewer terms.
     Side,
     /// A 2D orientation `orient(a, b, c)`, or another sum of a few
     /// products of two differences: a dot product of two segments, a
@@ -337,8 +338,8 @@ pub const UNITS: Units = Units {
     xrec_piece: [9, 10, 28, 30, 34],
     record: RecordUnits {
         exact: [
-            // Side; its rationals unmeasured (no stored floats reach them),
-            // priced as `Orient2`'s.
+            // Side; its rationals measured on a point's side of a stored
+            // plane, the one form of the kind stored floats take there.
             ExactUnits {
                 filter: 23,
                 expansion: 89,

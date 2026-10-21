@@ -37,8 +37,9 @@ use varde_decide::count::xrec::clusters_at_charged;
 use varde_decide::ids::{EdgeId, VertId};
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::decide::{Band, Fail, Sign};
-use varde_decide::num::exact::{self, Num, ORDERS, Pred, det3, point, sub};
+use varde_decide::num::exact::{self, ORDERS, Pred};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
+use varde_decide::num::preds::{Dot2d, NearGap, Orient2d, Orient3Dir, Orient3d, PlaneSide};
 use varde_decide::num::schedule::{LEVELS, Level, PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
 use varde_decide::perturb::{
@@ -346,40 +347,6 @@ fn count_piece_rows(budget: Duration, rows: &mut Vec<Row>) {
 // ---------------------------------------------------------------------
 // Records.
 
-/// The orientation of four points, `det(b − a, c − a, d − a)`.
-struct Orient([DVec3; 4]);
-
-impl Pred for Orient {
-    fn eval<N: Num>(&self) -> N {
-        let [a, b, c, d] = self.0.map(point::<N>);
-        det3(&sub(&b, &a), &sub(&c, &a), &sub(&d, &a))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient3
-    }
-}
-
-/// `r² − ‖w − q‖²`, the point–vertex records' near test (the shadow
-/// records' own is private to them).
-struct Near {
-    q: DVec3,
-    w: DVec3,
-    r: Rational,
-}
-
-impl Pred for Near {
-    fn eval<N: Num>(&self) -> N {
-        let d = sub(&point::<N>(self.w), &point(self.q));
-        let r = N::rational(&self.r);
-        r.mul(&r).sub(&exact::dot(&d, &d))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient2
-    }
-}
-
 /// The units a record is charged for `cost` alone, in parts of a unit.
 fn parts(cost: &Cost) -> f64 {
     cost.parts(&UNITS.record) as f64 / UNIT_PARTS as f64
@@ -570,6 +537,34 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         },
         rows,
     );
+    // A point's side of a stored plane, `n·p − c`: `c = n·p` exactly on
+    // the plane (10-bit grids); for the rationals all scaled by `2⁻⁶⁰⁰`.
+    let plane_side = |k: u64, scale: f64, zero: bool| {
+        let (nrm, p) = (grid(k) / 200.0 + DVec3::Z, grid(k + 5) * scale);
+        let c = if zero {
+            nrm.dot(p)
+        } else {
+            general(k).x * scale
+        };
+        PlaneSide {
+            normal: nrm * scale,
+            offset: c * scale,
+            p,
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "plane side",
+            kind: PredKind::Side,
+            stages: [
+                Some((0..n).map(|k| plane_side(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| plane_side(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| plane_side(k, pow2(-600), true)).collect()),
+            ],
+        },
+        rows,
+    );
     // Orient2: `orient(a, b, c)` with `c = a + ½(b − a)` on the line,
     // scaled by `2⁻⁶⁰⁰` for the rationals.
     let orient2 = |k: u64, scale: f64, zero: bool| {
@@ -584,7 +579,7 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
             let g = general(k) * scale;
             [g.x, g.y]
         };
-        Orient2([a, b, c])
+        Orient2d([a, b, c])
     };
     exact_pred_rows(
         budget,
@@ -599,8 +594,37 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         },
         rows,
     );
+    // `(b − a)·(d − c)` of 2D segments, square to each other for the
+    // expansions.
+    let dot2 = |k: u64, scale: f64, zero: bool| {
+        let p = |i: u64| {
+            let g = grid(4 * k + i) * scale;
+            [g.x, g.y]
+        };
+        let (a, b, c) = (p(0), p(1), p(2));
+        let d = if zero {
+            [c[0] - (b[1] - a[1]), c[1] + (b[0] - a[0])]
+        } else {
+            let g = general(k) * scale;
+            [g.x, g.y]
+        };
+        Dot2d([a, b, c, d])
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "dot 2D",
+            kind: PredKind::Orient2,
+            stages: [
+                Some((0..n).map(|k| dot2(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| dot2(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| dot2(k, pow2(-600), true)).collect()),
+            ],
+        },
+        rows,
+    );
     // A distance against a radius, `r² − ‖w − q‖²`, as the point–vertex
-    // records' near test forms it ([`Near`]): `r = ‖w − q‖` exactly for
+    // records' near test forms it ([`NearGap`]): `r = ‖w − q‖` exactly for
     // the expansions (`w − q = (3, 4, 12)·s`, `r = 13·s`).
     let near = |k: u64, zero: bool| {
         let (q, s) = (grid(k), dyadic(k + 3, 6) + 0.5);
@@ -609,7 +633,7 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         } else {
             (general(k + 1), dyadic(k + 5, 8) * 100.0)
         };
-        Near {
+        NearGap {
             q,
             w,
             r: Rational::try_from(r).expect("a finite radius"),
@@ -668,12 +692,12 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         } else {
             general(k)
         };
-        Orient([a, b, c, d])
+        Orient3d([a, b, c, d])
     };
     let tiny = |k: u64| {
         let t = (k + 1) as f64 * pow2(-400);
         let on = |x: f64, y: f64| DVec3::new(x, y, x + y);
-        Orient([
+        Orient3d([
             on(t, 0.0),
             on(0.0, t),
             on(2.0 * t, t),
@@ -689,6 +713,31 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
                 Some((0..n).map(|k| orient3(k, false)).collect()),
                 Some((0..n).map(|k| orient3(k, true)).collect()),
                 Some((0..16).map(tiny).collect()),
+            ],
+        },
+        rows,
+    );
+    // The side of a line through `p` along `d` a segment passes,
+    // `det(a − p, b − p, d)`: `d` in the plane of the three for the
+    // expansions, all scaled by `2⁻⁴⁰⁰` for the rationals.
+    let across = |k: u64, scale: f64, zero: bool| {
+        let [p, a, b] = [0, 1, 2].map(|i| grid(4 * k + i) * scale);
+        let d = if zero {
+            (a - p) * 0.5 + (b - p) * 0.25
+        } else {
+            general(k) * scale
+        };
+        Orient3Dir { p, a, b, d }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "orient 3D along",
+            kind: PredKind::Orient3,
+            stages: [
+                Some((0..n).map(|k| across(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| across(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| across(k, pow2(-400), true)).collect()),
             ],
         },
         rows,
@@ -1342,9 +1391,9 @@ struct Keys {
 }
 
 impl HeightGeometry for Keys {
-    type Flat = Orient;
+    type Flat = Orient3d;
 
-    fn value(&self, _: HKey) -> KeyValue<Orient> {
+    fn value(&self, _: HKey) -> KeyValue<Orient3d> {
         KeyValue::Curved
     }
 
@@ -1375,7 +1424,7 @@ impl HeightGeometry for Keys {
         Some(d.div(&len))
     }
 
-    fn row(&self, _: HeightKey) -> AnchorRow<Orient> {
+    fn row(&self, _: HeightKey) -> AnchorRow<Orient3d> {
         AnchorRow::Curved
     }
 
@@ -1454,23 +1503,6 @@ fn cuboid(lo: [f64; 3], hi: [f64; 3]) -> Vec<Tri> {
         .iter()
         .flat_map(|[a, b, c, d]| [[*a, *b, *c], [*a, *c, *d]])
         .collect()
-}
-
-/// `orient(a, b, c)` in the plane: positive when `c` lies left of `a →
-/// b`, as the audit's inside test asks it.
-struct Orient2([[f64; 2]; 3]);
-
-impl Pred for Orient2 {
-    fn eval<N: Num>(&self) -> N {
-        let [a, b, c] = self.0.map(|p| p.map(N::lit));
-        let (bx, by) = (b[0].sub(&a[0]), b[1].sub(&a[1]));
-        let (cx, cy) = (c[0].sub(&a[0]), c[1].sub(&a[1]));
-        bx.mul(&cy).sub(&by.mul(&cx))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient2
-    }
 }
 
 /// The near/far certificate of an audit square, per piece: 256 squares
@@ -1558,7 +1590,7 @@ fn audit_rows(budget: Duration, rows: &mut Vec<Row>) {
     let (base, base_units) = input(alone, &[], &[], &[]);
     // The square's own price: its inside test's predicates timed apart
     // and taken off (its loop tests are a few nanoseconds).
-    let preds: Vec<Orient2> = cells
+    let preds: Vec<Orient2d> = cells
         .iter()
         .flat_map(|&(level, i, j)| {
             let n = (1u64 << level) as f64;
@@ -1567,7 +1599,7 @@ fn audit_rows(budget: Duration, rows: &mut Vec<Row>) {
             (0..l.len())
                 .map(move |k| (l[k], l[(k + 1) % l.len()]))
                 .filter(move |(a, b)| (a[1] > c[1]) != (b[1] > c[1]))
-                .map(move |(a, b)| Orient2([a, b, c]))
+                .map(move |(a, b)| Orient2d([a, b, c]))
         })
         .collect();
     let per_square = preds.len() as f64 / cells.len() as f64;

@@ -102,9 +102,10 @@ use smallvec::SmallVec;
 use crate::bezier::roots::Work as RootWork;
 use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Band, Fail, Row, Sign, TieKey, decide};
-use crate::num::exact::{self, Num, ORDERS, Pred, Work, dot, point, sub};
+use crate::num::exact::{self, ORDERS, Pred, Work};
 use crate::num::level::{AtLevel, LevelScalar, ladder};
-use crate::num::schedule::{LEVELS, Level, PredKind, RecordUnits, UNIT_PARTS};
+use crate::num::preds::NearGap;
+use crate::num::schedule::{LEVELS, Level, RecordUnits, UNIT_PARTS};
 use crate::perturb::{
     Curved, LineShadow, Moving, MovingAt, R_HAT, Seg, ShadowAxis, VvShadow, between, decide_flat,
     vv_shadow,
@@ -538,27 +539,6 @@ pub(super) fn shadow_error<K, E>(
     match e {
         FillError::Decide(e) => ShadowError::Pass(e),
         FillError::Table(e) => ShadowError::Table(table_error(e, wrap)),
-    }
-}
-
-/// `r² − ‖w − q‖²`: at least zero when the points are within `r`. The
-/// radius is any finite `r ≥ 0`, so it enters as an exact rational, not
-/// bound by the coordinates' input range.
-pub(super) struct NearGap {
-    pub(super) q: glam::DVec3,
-    pub(super) w: glam::DVec3,
-    pub(super) r: Rational,
-}
-
-impl Pred for NearGap {
-    fn eval<N: Num>(&self) -> N {
-        let d = sub(&point::<N>(self.w), &point(self.q));
-        let r = N::rational(&self.r);
-        r.mul(&r).sub(&dot(&d, &d))
-    }
-
-    fn kind(&self) -> PredKind {
-        PredKind::Orient2
     }
 }
 
