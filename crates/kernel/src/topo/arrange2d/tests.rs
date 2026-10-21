@@ -379,6 +379,61 @@ fn coincident_directions_are_refused() {
 }
 
 #[test]
+fn collinear_overlaps_without_a_shared_vertex_are_refused() {
+    // A square sitting on another, its bottom edge along the lower one's
+    // top over half its length: no vertex in common.
+    let mut f = Fig::default();
+    f.ring(&square(0.0, 0.0, 2.0), 1);
+    f.ring(&square(1.0, 2.0, 2.0), 1);
+    assert_eq!(f.build(), Err(ArrangeError::Overlap { edges: [2, 4] }));
+    // A dangling edge inside a square's bottom edge, and one inside its
+    // left edge (a line of one `u`).
+    for (p, q, other) in [([0.5, 0.0], [1.5, 0.0], 0), ([0.0, 1.5], [0.0, 0.25], 3)] {
+        let mut f = Fig::default();
+        f.ring(&square(0.0, 0.0, 2.0), 1);
+        let (a, b) = (f.vert(p), f.vert(q));
+        f.edge(a, b, 0);
+        assert_eq!(
+            f.build(),
+            Err(ArrangeError::Overlap { edges: [other, 4] }),
+            "{p:?}"
+        );
+    }
+    // Along a diagonal, exactly collinear, each reaching past the other.
+    let mut f = Fig::default();
+    let v: Vec<u32> = [[0.0, 0.0], [3.0, 1.0], [6.0, 2.0], [9.0, 3.0]]
+        .map(|p| f.vert(p))
+        .to_vec();
+    f.edge(v[0], v[2], 0);
+    f.edge(v[3], v[1], 0);
+    assert_eq!(f.build(), Err(ArrangeError::Overlap { edges: [0, 1] }));
+}
+
+#[test]
+fn collinear_edges_apart_or_end_to_end_arrange() {
+    // A square with its bottom split at a vertex (two edges along one
+    // line, end to end), a collinear dangling edge beyond it, and two
+    // edges a bit apart, nearly along one diagonal, their boxes meeting.
+    let mut f = Fig::default();
+    let s = f.ring(
+        &[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]],
+        1,
+    );
+    let (a, b) = (f.vert([3.0, 0.0]), f.vert([4.0, 0.0]));
+    f.edge(a, b, 0);
+    let (c, d) = (
+        f.vert([3.0, 3.0]),
+        f.vert([4.0, f64::from_bits(4f64.to_bits() + 1)]),
+    );
+    f.edge(c, d, 0);
+    let (g, h) = (f.vert([3.5, 3.5]), f.vert([6.0, 6.0]));
+    f.edge(g, h, 0);
+    let arr = f.build().unwrap();
+    assert_eq!(arr.rotation(s[1]).len(), 2);
+    assert_eq!(arr.regions().len(), 2);
+}
+
+#[test]
 fn bad_input_is_refused_with_its_entity() {
     let e = |a, b| Edge {
         ends: [a, b],

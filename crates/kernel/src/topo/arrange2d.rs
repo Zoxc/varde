@@ -26,6 +26,18 @@
 //! coincident spans, which only a record may identify (they reach here as
 //! one edge), so they are refused ([`ArrangeError::Coincident`]).
 //!
+//! **Collinear overlaps.** Two edges sharing no vertex that run along
+//! one line over a positive length are coincident spans as well, met
+//! nowhere in the rotation order: a missed record, refused
+//! ([`ArrangeError::Overlap`]), never an arrangement. Each pair of edges
+//! whose closed UV boxes meet, found by a sweep along `u`, is tested
+//! exactly: both ends of one on the other's line (`orient` zero), and
+//! their ranges along the line (along `u`, or `v` for a line of constant
+//! `u`) overlapping in more than a point. Pairs sharing a vertex are
+//! the rotation order's: overlapping, they leave it in one direction.
+//! Edges touching at a point, or crossing, are not this test's (their
+//! disjointness is certified elsewhere).
+//!
 //! **Face cycles.** Edge `e` has the half-edges `2e`, from `ends[0]` to
 //! `ends[1]`, and `2e + 1` back; each half-edge bounds the face on its
 //! left. The half-edge after `h` leaves `h`'s end vertex next clockwise
@@ -76,13 +88,15 @@
 //! (around a vertex or along a dangling edge) are refused
 //! ([`ArrangeError::Winding`]).
 //!
-//! **Work.** Four passes on the operation's budget: the rotation order
-//! (an item per vertex), the face cycles (one item), the containment
+//! **Work.** Five passes on the operation's budget: the rotation order
+//! (an item per vertex), the collinear overlaps (one item), the face
+//! cycles (one item), the containment
 //! tests (an item per pair asked, in `(component, cycle)` order) and the
 //! regions (one item). Each orientation is charged at the record units of
 //! the stages it ran; each vertex sorted, edge, half-edge walked or
-//! counted and certificate read is charged a unit, and the containment
-//! boxes a unit per 64 tested.
+//! counted, pair of edges with meeting boxes and certificate read is
+//! charged a unit, and the containment boxes and the sweep's boxes a
+//! unit per 64 tested.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -151,6 +165,12 @@ pub enum ArrangeError {
     Coincident {
         /// The vertex.
         vertex: u32,
+        /// The edges.
+        edges: [u32; 2],
+    },
+    /// Two edges (ascending) sharing no vertex run along one line over a
+    /// positive length: coincident spans no record linked.
+    Overlap {
         /// The edges.
         edges: [u32; 2],
     },
@@ -268,6 +288,9 @@ pub(crate) fn arrange(
             rot_pos[h as usize] = i as u32;
         }
     }
+    run(work, "collinear overlaps", &[()], |_, m| {
+        overlaps(&input, m)
+    })?;
     let star = Star {
         rot_start: &rot_start,
         rot: &rot,
@@ -616,6 +639,102 @@ fn rotate(input: &Input<'_>, v: u32, out: &[u32], m: &mut Meter<'_, '_>) -> Res<
         sorted.insert(lo, h);
     }
     Ok(sorted)
+}
+
+/// The closed UV box of edge `e`, `[lo, hi]` per axis.
+fn edge_box(input: &Input<'_>, e: u32) -> [[f64; 2]; 2] {
+    let [a, b] = input.edges[e as usize].ends.map(|v| input.pos(v));
+    let mut lo = a;
+    let mut hi = a;
+    for k in 0..2 {
+        if b[k] < lo[k] {
+            lo[k] = b[k];
+        }
+        if b[k] > hi[k] {
+            hi[k] = b[k];
+        }
+    }
+    [lo, hi]
+}
+
+/// The collinear overlaps' pass (module docs): the first pair of edges
+/// sharing no vertex that overlap along one line, in sweep order (by
+/// their boxes' low `u`, then index), refused.
+fn overlaps(input: &Input<'_>, m: &mut Meter<'_, '_>) -> Res<()> {
+    let n = input.edges.len();
+    m.units(n as u64)?;
+    let boxes: Vec<[[f64; 2]; 2]> = (0..n as u32).map(|e| edge_box(input, e)).collect();
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_by(|&x, &y| {
+        boxes[x as usize][0][0]
+            .total_cmp(&boxes[y as usize][0][0])
+            .then(x.cmp(&y))
+    });
+    // The edges swept whose boxes reach the current one's low `u`.
+    let mut active: Vec<u32> = Vec::new();
+    for &e in &order {
+        let be = boxes[e as usize];
+        m.units(1 + active.len() as u64 / 64)?;
+        active.retain(|&f| boxes[f as usize][1][0] >= be[0][0]);
+        for &f in &active {
+            let bf = boxes[f as usize];
+            let lo = [0, 1].map(|k| {
+                if be[0][k] > bf[0][k] {
+                    be[0][k]
+                } else {
+                    bf[0][k]
+                }
+            });
+            let hi = [0, 1].map(|k| {
+                if be[1][k] < bf[1][k] {
+                    be[1][k]
+                } else {
+                    bf[1][k]
+                }
+            });
+            // Boxes apart in `v`, or meeting in one point only.
+            if lo[1] > hi[1] || (lo[0] == hi[0] && lo[1] == hi[1]) {
+                continue;
+            }
+            m.units(1)?;
+            let (ee, ef) = (input.edges[e as usize].ends, input.edges[f as usize].ends);
+            if ee.iter().any(|v| ef.contains(v)) {
+                continue;
+            }
+            if overlap(input, ee, ef, m)? {
+                let edges = if e < f { [e, f] } else { [f, e] };
+                return Err(Stop::Failed(ArrangeError::Overlap { edges }));
+            }
+        }
+        active.push(e);
+    }
+    Ok(())
+}
+
+/// Whether the spans `x` and `y` (vertex pairs) lie on one line and
+/// overlap along it over a positive length, exactly.
+fn overlap(input: &Input<'_>, x: [u32; 2], y: [u32; 2], m: &mut Meter<'_, '_>) -> Res<bool> {
+    let [a, b] = x.map(|v| input.pos(v));
+    let [c, d] = y.map(|v| input.pos(v));
+    for (p, v) in [(c, y[0]), (d, y[1])] {
+        if m.orient([a, b, p], v)? != Ordering::Equal {
+            return Ok(false);
+        }
+    }
+    // On one line, the order along it is the order along `u`, or along
+    // `v` where the line has one `u`.
+    let k = usize::from(a[0] == b[0]);
+    let range = |p: [f64; 2], q: [f64; 2]| {
+        if p[k] <= q[k] {
+            (p[k], q[k])
+        } else {
+            (q[k], p[k])
+        }
+    };
+    let ((xl, xh), (yl, yh)) = (range(a, b), range(c, d));
+    let lo = if xl > yl { xl } else { yl };
+    let hi = if xh < yh { xh } else { yh };
+    Ok(lo < hi)
 }
 
 /// The geometric order of vertices (module docs).

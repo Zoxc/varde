@@ -13,7 +13,9 @@ use super::op::{Settled, operation};
 use super::run::{Setup, rim_cut_points};
 use super::zone::ZoneError;
 use super::*;
+use crate::boolean::arrange::coincident::CoincidentError;
 use crate::boolean::arrange::fold::FoldError;
+use crate::topo::arrange2d::ArrangeError;
 
 fn bodies(p: &Pair) -> (Body, Body) {
     (Body::new(Operand::A, &p.a), Body::new(Operand::B, &p.b))
@@ -256,6 +258,27 @@ fn a_fold_over_a_box_edge_is_one_zone_across_both_faces() {
     assert_eq!(z.rim_pieces, 6);
     assert_eq!(z.merged.len(), 1);
     assert_eq!(z.fates, [Ok([1, 0]), Ok([1, 0])]);
+}
+
+#[test]
+fn a_fold_edge_on_the_box_edge_without_a_record_is_refused() {
+    // Without the target edges inside the target part in the window, the
+    // fold edge is fitted as a new edge along the box's edge, no record
+    // naming the two coincident: the box faces' trim boolean refuses the
+    // collinear overlap rather than arranging it.
+    let p = sheets::box_edge_fold(0.0);
+    let (a, b) = bodies(&p);
+    let mut s = Setup::new(&a, &b, B_K);
+    s.inner_target = false;
+    let op = operation(&s, leaves(&a, &b, B_K), Sign::Pos).unwrap_or_else(|e| panic!("{e:?}"));
+    let [z] = &op.driver.snaps.values().collect::<Vec<_>>()[..] else {
+        panic!("one zone")
+    };
+    let keep = |w: i64| w >= 1;
+    match zone::faces(&s, z, &keep) {
+        Err(ZoneError::Realise(_, CoincidentError::Arrange(ArrangeError::Overlap { .. }))) => {}
+        other => panic!("{:?}", other.map(|fs| fs.len())),
+    }
 }
 
 #[test]

@@ -357,6 +357,12 @@ fn as_bundles(e: ArrangeError, span_bundle: &[u32]) -> ArrangeError {
                 edges: if x <= y { [x, y] } else { [y, x] },
             }
         }
+        ArrangeError::Overlap { edges } => {
+            let (x, y) = (b(edges[0]), b(edges[1]));
+            ArrangeError::Overlap {
+                edges: if x <= y { [x, y] } else { [y, x] },
+            }
+        }
         e => e,
     }
 }

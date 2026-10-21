@@ -67,6 +67,11 @@ pub(crate) struct Setup<'a> {
     pub(crate) order: Order<'a>,
     pub(crate) bands: OpBands,
     pub(crate) b_k: f64,
+    /// Whether the rim's window takes the target edges inside the target
+    /// faces' part ([`add_inner_target`]); without them a snapped edge
+    /// lying on such an edge is fitted as a new edge along it, with no
+    /// record linking the two.
+    pub(crate) inner_target: bool,
     /// Per body, per edge, its coedges (face, coedge), in face order.
     coedges: [Vec<Vec<(FaceId, CoedgeId)>>; 2],
 }
@@ -94,6 +99,7 @@ impl<'a> Setup<'a> {
             order: Order { a, b },
             bands,
             b_k,
+            inner_target: true,
             coedges,
         }
     }
@@ -449,7 +455,9 @@ pub(crate) fn snap_leaves(
             )
         })
         .collect();
-    add_inner_target(&mut rm, t_op, &inner).map_err(Stop::Rim)?;
+    if s.inner_target {
+        add_inner_target(&mut rm, t_op, &inner).map_err(Stop::Rim)?;
+    }
     // The corner rule's candidates: the snapped faces' edges and vertices.
     let mut cands: BTreeSet<Element> = BTreeSet::new();
     for d in &data {
