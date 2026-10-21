@@ -50,6 +50,7 @@
 //! | vertex–curve shadow, box side ([`LineShadow`], [`HomLineShadow`], [`curve_shadow`]) | `ν·(q − C(s*))`, `ν = ê × T` at the foot | `ν·(Δq − ΔC(s*))` |
 //! | column hit on a tile, germ keys, anchor `f` ([`PlaneHeight`], [`tangent_plane_row`]) | from the record's height key (the hit's own, [`crate::records::height::hit`]; [`PointHeight`], [`face_height`]) | `(n_f·Δf − n_f·Δq)·sign(n_f·ê)`: the tangent plane of `f` at the anchor |
 //! | column hit on a ribbon, anchor `f` ([`ribbon_row`], [`ribbon_row_signs`]) | the hit's height, a sign condition at a root ([`crate::records::height::hit`]) | `(n_R·ΔR − n_R·Δq)·sign(n_R·ê)`, `n_R = R_t × R_λ`: the tangent plane of the ribbon at the hit |
+//! | fold of a tile at `q`'s height (the column tangent there; [`fold_side`]) | `0`: `q` on the silhouette | `n_f·(Δq − Δx)`: the side of the silhouette the moved column lies on |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
 //! | shared-curve crossing ([`shared_crossing`], exactly at a stored point [`shared_crossing_signs`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
 //! | shared-curve z-order at a root of `h`, anchor `g` ([`shared_zorder`]) | `ê·(C_g − C_e)`: exactly 0 | `ê·(ΔC − Δq) + (ê·T)·ṡ`, `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`, `q` the moving edge's point, `ΔC = 0` |
@@ -831,6 +832,30 @@ pub fn ribbon_row_signs(
             Ordering::Greater => s,
         })
     })
+}
+
+/// The fold row exactly at a tile root where the column is tangent to
+/// the tile at `q`'s height (`q` on the tile's silhouette: the value is
+/// exactly zero): the lateral row `n_f·(Δq − Δx)` per motion, `deltas`
+/// the face's rates less the point's (`Δx − Δq`, as the hits take them)
+/// and `along(d)` the sign of `n·d` at the root, `n` any positive
+/// multiple of the tile's normal there (`None` where it isn't formed).
+/// The side of the silhouette the moved column lies on along `n` is the
+/// sign of the first order that isn't zero, as [`decide`] reads a flat
+/// record at an exact zero value: so a motion along the silhouette at
+/// first order is decided by the fixed translations. `None` where a sign
+/// isn't formed, or every order is zero (the point and the face moving
+/// alike).
+pub fn fold_side(
+    along: impl Fn(&[Rational; 3]) -> Option<Ordering>,
+    deltas: &[[Rational; 3]; ORDERS],
+) -> Option<Sign> {
+    for d in deltas {
+        if let Some(s) = Sign::of(along(d)?.reverse()) {
+            return Some(s);
+        }
+    }
+    None
 }
 
 /// A rate as exact components.

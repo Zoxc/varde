@@ -281,9 +281,14 @@ fn fold_tile(bend: f64) -> TileNet {
 /// A face of one fold tile, trimmed to `[⅛, ⅞]²` by straight trims on
 /// the surface's own iso lines (the edges' curves the surface's there).
 fn fold_face(net: TileNet, flipped: bool) -> CurvedFace {
+    fold_face_over(net, flipped, 0.125)
+}
+
+/// [`fold_face`] trimmed to `[u0, ⅞] × [⅛, ⅞]`.
+fn fold_face_over(net: TileNet, flipped: bool, u0: f64) -> CurvedFace {
     let lo = 0.125;
     let hi = 0.875;
-    let mut corners = [[lo, lo], [hi, lo], [hi, hi], [lo, hi]];
+    let mut corners = [[u0, lo], [hi, lo], [hi, hi], [u0, hi]];
     if flipped {
         corners.reverse();
     }
@@ -349,16 +354,124 @@ fn a_column_tangent_to_a_cylinder_at_q_takes_the_fold_rule() {
                     assert_eq!(mine.abs(), 1);
                 }
             }
-            // A motion along the silhouette alone isn't decided by its
-            // first order.
-            let rates = rates_a(Sign::Pos, R_HAT + NU);
-            let motion: Motion = std::array::from_fn(|k| rate_rational(&rates[k]).map(|x| -x));
-            assert_eq!(
-                face_hits(&face, q.to_array(), &motion),
-                Err(HitError::Tile([0, 0]))
-            );
         }
     }
+}
+
+#[test]
+fn a_fold_moved_along_its_silhouette_is_decided_by_the_later_orders() {
+    // `q` on the silhouette ruling, moved along it at first order (the
+    // lateral row's order 1 exactly zero): the fixed translations decide
+    // whether the column enters, for `±d` alike, as the oracle counts the
+    // moved configuration, both in the limit and at the tie scale
+    // `2^-28` (the ruling straight, so the motion along it keeps `q` on
+    // the silhouette exactly).
+    let up = [UP.x, UP.y, UP.z];
+    let c = DVec3::new(0.25, -0.5, 0.125);
+    let d = R_HAT + NU;
+    let t = crate::perturb::T;
+    let mut entered = 0;
+    for bend in [1.0, -1.0] {
+        let net = fold_tile(bend);
+        let q = c + R_HAT * (2.0 * bend / 64.0) + (R_HAT + NU) * (1.0 / 1024.0);
+        for flipped in [false, true] {
+            let cf = fold_face(net, flipped);
+            let face = cf.hit_face();
+            let oracle = cf.oracle();
+            for (sigma, sign) in [(1i8, Sign::Pos), (-1, Sign::Neg)] {
+                let rates = rates_a(sign, d);
+                let motion: Motion = std::array::from_fn(|k| rate_rational(&rates[k]).map(|x| -x));
+                let hits = face_hits(&face, q.to_array(), &motion).expect("a fold");
+                assert!(hits.len() == 2 || hits.is_empty(), "{hits:#?}");
+                entered += usize::from(!hits.is_empty());
+                let mine = count_up(&hits).expect("heights");
+                let limit = oracle
+                    .ray(
+                        &Shift::NONE,
+                        q.to_array(),
+                        &Shift::tie(d.to_array(), sigma),
+                        up,
+                    )
+                    .expect("settled");
+                assert_eq!(
+                    mine, limit.count,
+                    "bend {bend}, flipped {flipped}, σ {sigma}"
+                );
+                // `±d + 2^-8·T₂ + 2^-16·T₃ + 2^-24·T₄`, times `2^-28`.
+                let v = d * f64::from(sigma) + t[0] / 256.0 + t[1] / 65536.0 + t[2] / 16777216.0;
+                let scaled = oracle
+                    .ray(
+                        &Shift::NONE,
+                        q.to_array(),
+                        &Shift::always(v.to_array(), -28),
+                        up,
+                    )
+                    .expect("settled");
+                assert_eq!(
+                    mine, scaled.count,
+                    "bend {bend}, flipped {flipped}, σ {sigma}"
+                );
+            }
+        }
+    }
+    // The arc bulging either way: the same translation enters one fold.
+    assert_eq!(entered, 4);
+}
+
+/// A tile through `c` (at `(½, ½)`) not bending along the column there:
+/// `(s, t) ↦ c + (t − s²)·r̂ + (s·t − t²)·ν + s·ê`, `s = u − ½`, `t = v −
+/// ½`, exactly (its Bernstein net). The column of `c` meets it there at a
+/// root of multiplicity three (`s³ − s⁴`), tangent to it (`x_u = ê`,
+/// `x_v = r̂`) with no bend (`x_uu = −2r̂`, along the tangent plane).
+fn flat_fold_tile(c: DVec3) -> TileNet {
+    let s = [-0.5, 0.0, 0.5];
+    let s2 = [0.25, -0.25, 0.25];
+    std::array::from_fn(|k| {
+        let (i, j) = (k / 3, k % 3);
+        let x = c + R_HAT * (s[j] - s2[i]) + NU * (s[i] * s[j] - s2[j]) + UP * s[i];
+        [x.x, x.y, x.z, 1.0]
+    })
+}
+
+#[test]
+fn a_column_tangent_to_a_tile_not_bending_there_forms_no_hit() {
+    let c = DVec3::new(0.25, -0.5, 0.125);
+    for flipped in [false, true] {
+        let cf = fold_face(flat_fold_tile(c), flipped);
+        let face = cf.hit_face();
+        for d in [R_HAT, -R_HAT, NU, R_HAT + NU] {
+            let rates = rates_a(Sign::Pos, d);
+            let motion: Motion = std::array::from_fn(|k| rate_rational(&rates[k]).map(|x| -x));
+            assert_eq!(
+                face_hits(&face, c.to_array(), &motion),
+                Err(HitError::Fold([0, 0])),
+                "flipped {flipped}, d {d:?}"
+            );
+        }
+        // A column beside it crosses the tile once (`s³ − s⁴ = k`).
+        for k in [1.0 / 4096.0, -1.0 / 4096.0] {
+            let q = c + NU * k;
+            let hits = face_hits(&face, q.to_array(), &motion_of(Operand::A)).expect("a hit");
+            assert_eq!(hits.len(), 1, "{hits:#?}");
+        }
+    }
+}
+
+#[test]
+fn a_fold_on_a_trim_at_q_forms_no_hit() {
+    // The face trimmed at the silhouette ruling, `u = ½`: the fold the
+    // moved column enters lies on the trim at `q`.
+    let c = DVec3::new(0.25, -0.5, 0.125);
+    let net = fold_tile(1.0);
+    let q = c + R_HAT * (2.0 / 64.0) + (R_HAT + NU) * (1.0 / 1024.0);
+    let cf = fold_face_over(net, false, 0.5);
+    let face = cf.hit_face();
+    let rates = rates_a(Sign::Pos, -R_HAT);
+    let motion: Motion = std::array::from_fn(|k| rate_rational(&rates[k]).map(|x| -x));
+    assert_eq!(
+        face_hits(&face, q.to_array(), &motion),
+        Err(HitError::Fold([0, 0]))
+    );
 }
 
 #[test]

@@ -335,7 +335,9 @@ pub enum CountError {
     Key(KeyError),
     /// The column's hits on the face can't be formed (the column in a
     /// planar tile, along a radial, tangent to a ribbon at `q`'s height, a
-    /// fold the rule doesn't decide).
+    /// fold whose signs aren't formed at its root). A fold that forms no
+    /// hit (a zero bend, or on a trim at `q`) is
+    /// [`CountError::OutOfBudget`] with [`Exhausted::Precision`] instead.
     Hits(HitError),
     /// A near piece of non-zero degree holds no hit of the column: the
     /// exact hits and the boxes' records disagree.
@@ -732,6 +734,7 @@ struct HitCell {
 /// none).
 struct Flat<'a, 'h> {
     face: HitFace<'a>,
+    point: Point,
     at: [f64; 3],
     motion: &'a Motion,
     cell: &'h HitCell,
@@ -744,7 +747,22 @@ impl Flat<'_, '_> {
             .hits
             .get_or_init(|| face_hits(&self.face, self.at, self.motion))
             .as_deref()
-            .map_err(|e| CountError::Hits(*e))
+            .map_err(|e| self.error(*e))
+    }
+
+    /// The count error of the column's hits not formed: a fold that forms
+    /// no hit (a zero bend, or on a trim at `q`) ends as a piece no level
+    /// certifies does, out of precision; the rest are the hits' own.
+    fn error(&self, e: HitError) -> CountError {
+        match e {
+            HitError::Fold(_) => CountError::OutOfBudget {
+                cause: Exhausted::Precision,
+                point: self.point,
+                face: self.face.face,
+                at: None,
+            },
+            e => CountError::Hits(e),
+        }
     }
 
     /// The tiles and ribbon spans whose hits the column's search forms.
@@ -1270,7 +1288,7 @@ fn hit_targets<R: HeightReads>(
     let Some(hits) = flat.cell.hits.get() else {
         return Ok(Vec::new());
     };
-    let hits = hits.as_deref().map_err(|e| CountError::Hits(*e))?;
+    let hits = hits.as_deref().map_err(|e| flat.error(*e))?;
     let mut out = Vec::with_capacity(hits.len());
     for h in hits {
         let inc = match h.inc {
@@ -1541,6 +1559,7 @@ fn pieces_within<S: Scalar, R: HeightReads>(
         None => None,
         Some(nets) => Some(Flat {
             face: hit_face(fq, nets, reads)?,
+            point: fq.point,
             at: fq.at,
             motion: fq.motion,
             cell,

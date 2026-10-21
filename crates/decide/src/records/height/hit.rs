@@ -60,16 +60,19 @@
 //! tile's silhouette inside the face) the moved column decides: the tile
 //! there folds over in the shadow, covering the side of the silhouette
 //! its normal curvature along `ê` points to (`sign(n·S_êê)·n`), and the
-//! moved column enters the fold exactly where the first motion's `n·(Δq
-//! − Δx)` has that sign ([`Motion`]: the face's rates less the point's).
+//! moved column enters the fold exactly where the lateral row `n·(Δq −
+//! Δx)` has that sign ([`Motion`]: the face's rates less the point's),
+//! its first order not zero deciding ([`fold_side`]: a motion along the
+//! silhouette at first order is decided by the fixed translations).
 //! Entering, the column meets the fold's two sheets, which part as the
 //! square root of the motion while `q` moves along its column linearly:
 //! `q` lies between them. So the fold is two hits at the root, the lower
 //! sheet's below `q` and the upper's above it, the upper facing
 //! `−sign(n_f·S_êê)` (`n_f` the face's normal: the sheet bending away
 //! from its normal going up faces up); missing it, none. A fold whose
-//! bend or first-order side is zero, or on a trim at `q`, isn't formed
-//! ([`HitError::Tile`]).
+//! bend is exactly zero (`n·S_êê = 0`), or on a trim at `q`, forms no hit
+//! ([`HitError::Fold`]): the counting ends there as for a hit no level
+//! certifies.
 //!
 //! **Curved faces.** Nothing above asks for a plane: a curved face's
 //! tiles, p-curves and edges are rational quadratic data stored as `f64`s
@@ -101,7 +104,7 @@ use crate::num::decide::Sign;
 use crate::num::exact::{ExactSign, ORDERS, rat};
 use crate::num::poly::{self, Poly, Root};
 use crate::order::Along;
-use crate::perturb::{NU, R_HAT, UP, ribbon_row_signs};
+use crate::perturb::{NU, R_HAT, UP, fold_side, ribbon_row_signs};
 use crate::records::keys::{HitIx, Operand, Sheet};
 use crate::records::ray::{Span, TileNet};
 
@@ -333,6 +336,10 @@ pub enum HitError {
     /// The trims wind round a point other than 0 or the face's inside
     /// winding (not a valid face).
     Winding(i64),
+    /// The column touches tile `[i, j]` at `q`'s height where the tile
+    /// doesn't bend along the column (`n·S_êê = 0` exactly), or the fold
+    /// there lies on a trim at `q`: no hit forms (module docs, "Folds").
+    Fold([i64; 2]),
 }
 
 /// A UV point lies on a trim: this span of this trim (an index into the
@@ -800,9 +807,10 @@ fn dot2v(a: &[Poly2; 3], b: &[Poly2; 3]) -> Poly2 {
 /// The fold rule at a tile root where the column is tangent to the tile
 /// at `q`'s height (module docs, "Folds"): `Some(Some(upper))`, the upper
 /// sheet's facing as an upward ray counts it, where the moved column
-/// enters the fold, `Some(None)` where it misses it; `None` where the
-/// rule doesn't decide (the tile not bending along `ê` there, or the
-/// motion's first order along the tile's normal zero).
+/// enters the fold, `Ok(None)` where it misses it; [`HitError::Fold`]
+/// where the tile doesn't bend along `ê` there, [`HitError::Tile`] where
+/// a sign isn't formed at the root or no motion moves the column off the
+/// silhouette.
 fn fold(
     x: &[Poly2; 3],
     w: &Poly2,
@@ -810,7 +818,8 @@ fn fold(
     root: &TileRoot,
     inside: i64,
     motion: &Motion,
-) -> Option<Option<Sign>> {
+) -> Result<Option<Sign>, HitError> {
+    let bad = HitError::Tile(root.tile);
     let up: Q3 = [UP.x, UP.y, UP.z].map(rat);
     // The parameter direction `(a, b)` along which the tile runs along
     // `ê`: `a·x_u + b·x_v ∥ ê` (`|n|²/W²` times `ê`).
@@ -838,16 +847,16 @@ fn fold(
         ),
         &mul2(&mul2(&b, &b), &hvv),
     );
-    let bend = sign_of(sign_at_tile(&bend, root)?)?;
-    // The moved column's side of the silhouette along `n`: the first
-    // motion's `n·(Δq − Δx)`; the fold covers the side `n·S_êê` points
-    // to.
-    let side = sign_of(sign_at_tile(&dot2(&t.n, &motion[0]), root)?)?;
-    let enters = side != bend;
+    let bend = sign_of(sign_at_tile(&bend, root).ok_or(bad)?).ok_or(HitError::Fold(root.tile))?;
+    // The moved column's side of the silhouette along `n`: the lateral
+    // row `n·(Δq − Δx)`, its first order not zero; the fold covers the
+    // side `n·S_êê` points to.
+    let side = fold_side(|d| sign_at_tile(&dot2(&t.n, d), root), motion).ok_or(bad)?;
+    let enters = side == bend;
     // The upper sheet faces up where the tile bends away from its normal
     // going up: `−sign(n_f·S_êê)`, `n_f` the face's normal.
     let upper = if inside < 0 { bend } else { neg(bend) };
-    Some(enters.then_some(upper))
+    Ok(enters.then_some(upper))
 }
 
 fn on_tile(
@@ -967,13 +976,17 @@ fn on_tile(
             if height != Ordering::Equal && mult % 2 == 0 {
                 continue;
             }
-            // The column tangent to the tile at `q`'s height: the fold
-            // rule (module docs, "Folds").
-            if height != Ordering::Equal || mult % 2 == 1 {
+            if height != Ordering::Equal {
                 return Err(bad);
             }
-            let Some(upper) = fold(&x, &w, tangents(), &root, face.inside, motion).ok_or(bad)?
-            else {
+            // The column tangent to the tile at `q`'s height: the fold
+            // rule (module docs, "Folds"). A root of odd multiplicity
+            // there is a tile not bending along `ê` (no hit forms).
+            let fold = fold(&x, &w, tangents(), &root, face.inside, motion)?;
+            if mult % 2 == 1 {
+                return Err(bad);
+            }
+            let Some(upper) = fold else {
                 continue;
             };
             let Some((wn, inc)) = in_trim(face, &root, height, ribbons)? else {
@@ -983,8 +996,8 @@ fn on_tile(
                 return Err(HitError::Winding(wn));
             }
             if inc.is_some() {
-                // A fold on the face's boundary at `q`.
-                return Err(bad);
+                // A fold on the face's boundary at `q`: no hit forms.
+                return Err(HitError::Fold(tile));
             }
             let near = tile_space_box(net, &root);
             for (height, facing) in [(Ordering::Less, neg(upper)), (Ordering::Greater, upper)] {

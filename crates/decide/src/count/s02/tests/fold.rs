@@ -207,3 +207,41 @@ fn a_piece_of_a_face_without_its_hits_holding_the_column_is_refused() {
         })
     );
 }
+
+#[test]
+fn a_fold_forming_no_hit_on_stored_nets_runs_out_of_precision() {
+    // A column tangent to a tile at `q`'s height that forms no hit (the
+    // tile not bending along `ê` there, or the fold on a trim at `q`):
+    // the face's count ends as a piece no level certifies does, never as
+    // a hit refused.
+    let mut order = Order::default();
+    let data = polygon(&[[0.25, 0.25], [1.75, 0.25], [1.0, 1.5]], 1e-3, &mut order);
+    let face = data.hit_face(&order).expect("nets");
+    let q = Point::vert(Operand::A, VertId(9));
+    let motion = motion_of(Operand::A);
+    let flat = |e: HitError| {
+        let cell = HitCell::default();
+        let _ = cell.hits.set(Err(e));
+        let f = Flat {
+            face: face.clone(),
+            point: q,
+            at: [1.0, 0.5, 0.0],
+            motion: &motion,
+            cell: &cell,
+        };
+        f.hits().map(<[Hit]>::len)
+    };
+    assert_eq!(
+        flat(HitError::Fold([0, 1])),
+        Err(CountError::OutOfBudget {
+            cause: Exhausted::Precision,
+            point: q,
+            face: data.id,
+            at: None,
+        })
+    );
+    assert_eq!(
+        flat(HitError::Tile([0, 1])),
+        Err(CountError::Hits(HitError::Tile([0, 1])))
+    );
+}
