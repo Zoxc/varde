@@ -43,7 +43,9 @@
 //! found exactly or certified: a root of the p-span in the side's line
 //! equation (isolated, then halved at the certified sign of the equation
 //! until its position along the side is certified inside the side's open
-//! extent or outside it), or a knot of the p-curve exactly on the line (a
+//! extent or outside it; where no halving does, next to an end of the
+//! side, its place against the ends exactly, from the span's stored
+//! values, or its exact pass through the end), or a knot of the p-curve exactly on the line (a
 //! p-curve is broken at every tile line), crossing where the middle
 //! control points of the two spans meeting there lie on opposite sides.
 //! The crossing's direction against the side (`σ = sign(T × d)`, `T` the
@@ -932,6 +934,38 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                         ([cl.lo.bounds()[0], cl.hi.bounds()[1]], None)
                     }
                 };
+                // A straight span (flat data): its line equation linear in
+                // the parameter, the crossing at a rational parameter, its
+                // place along the side exact on the stored values.
+                if let (Some(dir), Some((a, f1))) = (root, straight_cross(sp, k, &line, span)) {
+                    if a < alo || a > ahi {
+                        continue;
+                    }
+                    let g = Germ::first(f1, down);
+                    let pos = if a == alo || a == ahi {
+                        if !past_end(&a, &g) {
+                            continue;
+                        }
+                        let at = end_at(&a);
+                        [at, at]
+                    } else {
+                        local(a.enclose())
+                    };
+                    let mut point = [line.clone(), line.clone()];
+                    point[o] = a.clone();
+                    out.push(Hit {
+                        member: m,
+                        seg: si,
+                        pos,
+                        exact: Some((a, g)),
+                        point: Some(point),
+                        pspan: ju,
+                        t: span,
+                        sigma: sigma(if dir == Ordering::Greater { 1 } else { -1 }),
+                        window: None,
+                    });
+                    continue;
+                }
                 let whole = seg_rect(seg, [elo, ehi]);
                 let place = |span: [f64; 2]| -> Result<[f64; 2], UvRect> {
                     let mut box_o = [f64::INFINITY, f64::NEG_INFINITY];
@@ -976,7 +1010,34 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
                             .map(|f1| (e.clone(), Germ::first(f1, down)))
                     });
                     let Some((e, g)) = pass else {
-                        return Err(self.unsettled(seg_rect(seg, p)));
+                        // Next to an end but not through it: on the side
+                        // or off it by the crossing's exact place against
+                        // the ends (flat values, never the rounded
+                        // enclosure).
+                        let at = |e: &Rational| root_against(sp, k, &line, e, span);
+                        match (at(&alo), at(&ahi)) {
+                            (Some(Ordering::Greater), Some(Ordering::Less)) => {}
+                            (Some(Ordering::Less), _) | (_, Some(Ordering::Greater)) => continue,
+                            _ => return Err(self.unsettled(seg_rect(seg, p))),
+                        }
+                        // Strictly inside: the enclosure clipped to the
+                        // side.
+                        let p = [
+                            if p[0] < elo { elo } else { p[0] },
+                            if p[1] > ehi { ehi } else { p[1] },
+                        ];
+                        out.push(Hit {
+                            member: m,
+                            seg: si,
+                            pos: p,
+                            exact: None,
+                            point: None,
+                            pspan: ju,
+                            t: span,
+                            sigma: sigma(s),
+                            window: None,
+                        });
+                        continue;
                     };
                     if past_end(&e, &g) {
                         let at = end_at(&e);
@@ -1331,11 +1392,17 @@ impl<S: Scalar> Ctx<'_, '_, '_, S> {
 }
 
 /// Sorts the hits `on` of one segment along it (increasing local
-/// position): hits at one exact point by their germs. Whether they are
-/// apart: no two enclosures overlap but at one exact point with germs
-/// told apart.
-fn along_side(hits: &[Hit], on: &mut [usize]) -> bool {
-    on.sort_by(|&a, &b| hits[a].pos[0].total_cmp(&hits[b].pos[0]));
+/// position; the segment's cell along it `cell`): hits at one exact point
+/// by their germs. Whether they are apart: two exact places in order (at
+/// one exact point with germs told apart), else their enclosures apart.
+fn along_side(hits: &[Hit], on: &mut [usize], cell: i64) -> bool {
+    // Exact places by their exact local position (flat values within a
+    // rounding of each other), the rest by their enclosures' low ends.
+    let c = Rational::from(cell);
+    on.sort_by_cached_key(|&k| match &hits[k].exact {
+        Some((x, _)) => x - &c,
+        None => rat(hits[k].pos[0]),
+    });
     let same = |a: &Hit, b: &Hit| match (&a.exact, &b.exact) {
         (Some((x, _)), Some((y, _))) => x == y,
         _ => false,
@@ -1367,7 +1434,10 @@ fn along_side(hits: &[Hit], on: &mut [usize]) -> bool {
     }
     on.windows(2).all(|p| {
         let (a, b) = (&hits[p[0]], &hits[p[1]]);
-        a.pos[1] < b.pos[0] || same(a, b)
+        match (&a.exact, &b.exact) {
+            (Some((x, _)), Some((y, _))) => x <= y,
+            _ => a.pos[1] < b.pos[0],
+        }
     })
 }
 
@@ -1494,6 +1564,126 @@ fn corner_pass(
         _ => return None,
     };
     Some(slope)
+}
+
+/// Where span `sp` crosses the line `x_k = line` at its root in `span`,
+/// where its line equation is linear in the parameter (a straight span,
+/// flat data): the crossing's other coordinate `x_o` and the tangent's
+/// slope `dx_o/dx_k` there, exactly. `None` where the equation isn't
+/// linear, its root lies outside `span`, or a weight isn't positive.
+fn straight_cross(
+    sp: &UvSpan,
+    k: usize,
+    line: &Rational,
+    span: [f64; 2],
+) -> Option<(Rational, Rational)> {
+    if !sp.iter().all(|x| x[2] > 0.0) {
+        return None;
+    }
+    let pk = offset(sp, k, line);
+    if top(&pk)? != 1 {
+        return None;
+    }
+    let t = -&pk[0] / &pk[1];
+    if t < rat(span[0]) || t > rat(span[1]) {
+        return None;
+    }
+    let o = 1 - k;
+    let one = Rational::from(1);
+    let two = Rational::from(2);
+    let b = [(&one - &t) * (&one - &t), &two * &t * (&one - &t), &t * &t];
+    let (mut num, mut den) = (Rational::from(0), Rational::from(0));
+    for (i, bi) in b.iter().enumerate() {
+        let w = rat(sp[i][2]);
+        num += &w * rat(sp[i][o]) * bi;
+        den += w * bi;
+    }
+    let a = num / den;
+    let dk = peval(&pderiv(&pk), &t);
+    if dk == 0 {
+        return None;
+    }
+    let slope = peval(&pderiv(&offset(sp, o, &a)), &t) / dk;
+    Some((a, slope))
+}
+
+/// Where span `sp` crosses the line `x_k = line`, at its one simple root
+/// in the parameter interval `span`, against the point `x_o = e` of the
+/// line: the sign of `x_o − e` there, exactly (the root as the sign change
+/// of the span's line equation, `x_o − e` reduced modulo it). `None` where
+/// the span's weights aren't positive or the equation doesn't change sign
+/// over `span`.
+fn root_against(
+    sp: &UvSpan,
+    k: usize,
+    line: &Rational,
+    e: &Rational,
+    span: [f64; 2],
+) -> Option<Ordering> {
+    if !sp.iter().all(|x| x[2] > 0.0) {
+        return None;
+    }
+    let zero = Rational::from(0);
+    let (pk, po) = (offset(sp, k, line), offset(sp, 1 - k, e));
+    let (a, b) = (rat(span[0]), rat(span[1]));
+    let (pa, pb) = (peval(&pk, &a), peval(&pk, &b));
+    // The weight is positive: `x_o − e` has the sign of `po`.
+    let at = |t: &Rational| peval(&po, t).cmp(&zero);
+    if pa == 0 {
+        return Some(at(&a));
+    }
+    if pb == 0 {
+        return Some(at(&b));
+    }
+    if (pa > 0) == (pb > 0) {
+        return None;
+    }
+    match top(&pk)? {
+        0 => None,
+        1 => Some(at(&(-&pk[0] / &pk[1]))),
+        _ => {
+            // `po mod pk`, of degree one at most, has `po`'s value at the
+            // root.
+            let mut r = po.clone();
+            while let Some(dr) = top(&r) {
+                if dr < 2 {
+                    break;
+                }
+                let f = &r[dr] / &pk[2];
+                for i in 0..=2 {
+                    let x = &f * &pk[i];
+                    r[dr - 2 + i] -= x;
+                }
+            }
+            let r1 = r.get(1).cloned().unwrap_or_default();
+            let r0 = r.first().cloned().unwrap_or_default();
+            if r1 == 0 {
+                return Some(r0.cmp(&zero));
+            }
+            // `r = r1·(t − c)`: the root against `c`, by `pk`'s sign there
+            // (the one root in `[a, b]`, `pk` of `pb`'s sign past it).
+            let c = -&r0 / &r1;
+            let root_vs_c = if c <= a {
+                Ordering::Greater
+            } else if c >= b {
+                Ordering::Less
+            } else {
+                let pc = peval(&pk, &c);
+                if pc == 0 {
+                    Ordering::Equal
+                } else if (pc > 0) == (pb > 0) {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            };
+            Some(if r1 > 0 {
+                root_vs_c
+            } else {
+                root_vs_c.reverse()
+            })
+        }
+    }
 }
 
 /// `Σ wᵢ·(xᵢ − c)·Bᵢ(t)` of span `sp` along `axis` in power form: the
@@ -1897,7 +2087,8 @@ fn run_degree<S: Scalar>(
         let mut order: Vec<(usize, Vec<usize>)> = Vec::new();
         for &s in l {
             let mut on: Vec<usize> = (0..hits.len()).filter(|&k| hits[k].seg == s).collect();
-            if !along_side(&hits, &mut on) && single {
+            let cell = segs[s].tile[1 - fixed(segs[s].dir)];
+            if !along_side(&hits, &mut on, cell) && single {
                 let r = on
                     .iter()
                     .map(|&k| seg_rect(&segs[s], hits[k].pos))

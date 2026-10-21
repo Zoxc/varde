@@ -31,7 +31,10 @@
 //! facing where every hit lies strictly inside its boxes, none on the
 //! face's boundary at `q` (which the moved column may miss), and their
 //! facings sum to its degree; else its degree by one hit where they are
-//! at one exact side of `q` (or all at `q`); else it is taken box by box
+//! at one exact side of `q` (or all at `q`), or where `q` is a vertex of
+//! the face and they are hits at `q` on its boundary beside hits within
+//! `ε_tie` of it (the vertex's, one point of the ideal face: a box at its
+//! last split holding such stops there too); else it is taken box by box
 //! (degrees are additive, so any grouping of a run's boxes partitions its
 //! piece), and a box that still doesn't settle refines.
 //!
@@ -977,8 +980,9 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
             };
             let mut small = box_hull(patch, &b).is_some_and(|hb| within_band(&hb, size));
             // With the face's nets a near box at its last split holding settled
-            // hits (a hit at `q`'s height, which no box size clears) stops
-            // there as a small one.
+            // hits (a hit at `q`'s height, which no box size clears), or a
+            // vertex's hits (one point of the ideal face, which the near
+            // piece reads by the germ key), stops there as a small one.
             if !small
                 && !thin
                 && h.is_none()
@@ -986,7 +990,8 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 && let Some(f) = &self.flat
             {
                 let ix = self.hits_in(&b)?;
-                small = settled(f.hits()?, &ix);
+                let all = f.hits()?;
+                small = settled(all, &ix) || self.at_vertex_hits(all, &ix);
             }
             let hits = match &self.flat {
                 Some(_) if h.is_none() && small && !thin => Some(self.hits_in(&b)?),
@@ -1156,12 +1161,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
         // face, which the germ key reads (its own height, of the rounding's
         // sign, would mix that sign with the germ's first-order one). The
         // piece's degree then counts by the germ hit.
-        if !at_q.is_empty()
-            && at_vertex(&f.face, f.at)
-            && others
-                .iter()
-                .all(|&h| within(&all[h as usize].near, f.at, self.fq.eps_tie))
-        {
+        if self.at_vertex_hits(all, &hits) {
             return Ok(Some(NearPiece {
                 degree,
                 hits,
@@ -1222,6 +1222,23 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
             Some(h) => h.is_empty(),
             None => self.hits_in(&l.b)?.is_empty(),
         })
+    }
+
+    /// Whether the hits `ix` are a vertex's (module docs, "Pieces"): `q`
+    /// a vertex of the face, some of them at `q` on the face's boundary
+    /// and the rest within `ε_tie` of `q`, exactly; one point of the ideal
+    /// face, read by the germ key.
+    fn at_vertex_hits(&self, all: &[Hit], ix: &[u32]) -> bool {
+        let Some(f) = &self.flat else {
+            return false;
+        };
+        let (at_q, others): (Vec<u32>, Vec<u32>) =
+            ix.iter().partition(|&&h| all[h as usize].inc.is_some());
+        !at_q.is_empty()
+            && at_vertex(&f.face, f.at)
+            && others
+                .iter()
+                .all(|&h| within(&all[h as usize].near, f.at, self.fq.eps_tie))
     }
 
     /// The column's hits in `b`'s closed box, by index (with the face's

@@ -1696,5 +1696,77 @@ fn ends_in_corner_pieces_are_the_vertex_only_near_it() {
     assert_eq!(corner_end::<u32>(&open, w, 1.0, &[]), None);
 }
 
+/// A crossing of a side line next to the side's end, within an `f64`
+/// enclosure of it, is placed against the end exactly: a straight span
+/// (flat data) a hair off the end on either side, or through it; and a
+/// curved span at one of its two roots.
+#[test]
+fn crossings_next_to_a_side_end_are_placed_exactly() {
+    let r = |x: f64| crate::num::exact::rat(x);
+    let tiny = f64::EPSILON;
+    // `v = (1 + 2^-52)·u` crosses `u = 1/2` at `v = 1/2 + 2^-53`.
+    let sp: UvSpan = [
+        [0.0, 0.0, 1.0],
+        [0.5, 0.5 + tiny / 2.0, 1.0],
+        [1.0, 1.0 + tiny, 1.0],
+    ];
+    let line = r(0.5);
+    let at = |e: f64| root_against(&sp, 0, &line, &r(e), [0.0, 1.0]);
+    assert_eq!(at(0.5), Some(Ordering::Greater));
+    assert_eq!(at(0.5 + tiny), Some(Ordering::Less));
+    // Through the end exactly: the corner rule's case.
+    let half =
+        Rational::from(1) / Rational::from(2) + Rational::from(1) / Rational::from(1u64 << 53);
+    assert_eq!(
+        root_against(&sp, 0, &line, &half, [0.25, 0.75]),
+        Some(Ordering::Equal)
+    );
+    // Weights scale nothing of the place: the same line, weighted.
+    let w: UvSpan = sp.map(|p| [p[0], p[1], 3.0]);
+    assert_eq!(
+        root_against(&w, 0, &line, &r(0.5), [0.0, 1.0]),
+        Some(Ordering::Greater)
+    );
+    // Along `v` lines too: `u = (1 − 2^-52)·v` crosses `v = 1/2` below
+    // `u = 1/2`.
+    let sv: UvSpan = [
+        [0.0, 0.0, 1.0],
+        [0.5 - tiny / 4.0, 0.5, 1.0],
+        [1.0 - tiny / 2.0, 1.0, 1.0],
+    ];
+    assert_eq!(
+        root_against(&sv, 1, &line, &r(0.5), [0.0, 1.0]),
+        Some(Ordering::Less)
+    );
+    // A curved span, `u = 2t(1 − t)`, `v = t`, crosses `u = 3/8` at
+    // `t = 1/4` and `3/4`: each root placed by its own interval.
+    let c: UvSpan = [[0.0, 0.0, 1.0], [1.0, 0.5, 1.0], [0.0, 1.0, 1.0]];
+    let l = r(0.375);
+    for (span, v) in [([0.0, 0.5], 0.25), ([0.5, 1.0], 0.75)] {
+        assert_eq!(root_against(&c, 0, &l, &r(v), span), Some(Ordering::Equal));
+        assert_eq!(
+            root_against(&c, 0, &l, &r(v + tiny), span),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            root_against(&c, 0, &l, &r(v - tiny), span),
+            Some(Ordering::Greater)
+        );
+    }
+    // A straight span's crossing: its place and slope as exact values.
+    let (a, slope) = straight_cross(&sp, 0, &line, [0.0, 1.0]).expect("straight");
+    assert_eq!(a, half);
+    assert_eq!(
+        slope,
+        Rational::from(1) + Rational::from(1) / Rational::from(1u64 << 52)
+    );
+    assert_eq!(straight_cross(&sp, 0, &line, [0.75, 1.0]), None);
+    assert_eq!(straight_cross(&c, 0, &l, [0.0, 0.5]), None);
+    // No sign change over the interval, or a weight not positive: none.
+    assert_eq!(root_against(&c, 0, &l, &r(0.25), [0.4, 0.6]), None);
+    let neg: UvSpan = [[0.0, 0.0, 1.0], [0.5, 0.5, -1.0], [1.0, 1.0, 1.0]];
+    assert_eq!(root_against(&neg, 0, &line, &r(0.5), [0.0, 1.0]), None);
+}
+
 mod lines;
 mod spike;

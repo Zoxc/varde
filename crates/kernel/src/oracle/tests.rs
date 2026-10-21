@@ -562,20 +562,47 @@ fn num_rational(x: f64) -> malachite::Rational {
 /// A shared corner whose count once ran out of precision: `B`'s vertex 3
 /// on `A`'s vertex, against `A`'s plane face 4, a strip's cut next to the
 /// vertex no level certified off the vertex's ray; the corner's piece now
-/// takes its curves' near strip leaves, so its cuts lie past them.
-/// `VARDE_TESTS=full` only (seconds).
+/// takes its curves' near strip leaves, so its cuts lie past them (seed
+/// 1). Shared-corner seeds 12, 46, 68, 71 and 98 and stacked seed 54: a
+/// trim crossing a box side within an `f64` rounding of the side's end
+/// next to the shared vertex, its place against the end once read from
+/// the rounded root enclosure, now exact on the stored values.
+/// Shared-corner seeds 12 and 43: boxes at the shared vertex refined to
+/// the depth cap, or out of refining rounds, over a tile hit within
+/// `ε_tie` of the vertex beside the ribbon's hit at it, now settled there
+/// as the near piece reads them (by the vertex's germ). Half-grid seeds
+/// 56 and 93, once out of refining rounds, too. `VARDE_TESTS=full` only
+/// (minutes: the oracle's, on stacked seed 54).
 #[test]
 fn a_shared_corner_s_counts_settle() {
-    let cases: &[(&str, u64)] = varde_testing::pick(&[], &[("shared corner", 1)]);
-    for &(family, seed) in cases {
+    let cases: &[(&str, u64)] = varde_testing::pick(
+        &[],
+        &[
+            ("shared corner", 1),
+            ("shared corner", 12),
+            ("shared corner", 43),
+            ("shared corner", 46),
+            ("shared corner", 68),
+            ("shared corner", 71),
+            ("shared corner", 98),
+            ("stacked", 54),
+            ("half grid", 56),
+            ("half grid", 93),
+        ],
+    );
+    let outs = par(cases.len() as u64, threads(), &|i| {
+        let (family, seed) = cases[i as usize];
         let o = check_answers(
             &family_named(family)(seed),
             &Config::RUNS,
             &mut Stats::default(),
         )
         .0;
+        (family, seed, o)
+    });
+    for (family, seed, o) in outs {
         assert!(
-            !matches!(&o, Outcome::Refused(super::world::Cause::OutOfBudget(_), _)),
+            !matches!(&o, Outcome::Refused(..)),
             "{family} seed {seed}: {o:?}"
         );
     }
