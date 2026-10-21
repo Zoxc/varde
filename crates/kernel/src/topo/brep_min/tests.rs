@@ -209,18 +209,27 @@ fn half_cylinder(cyl: [PCurve; 4]) -> Fixture {
         let rect = lat.half(0).unwrap();
         Surface::new(lat, rect).unwrap()
     };
+    // Each with its outward normal: a face is flipped where its plane
+    // key's normal points the other way.
     let faces = [
         (
             plane(e2, [0.0; 3]),
+            scale(e2, -1.0),
             vec![(rul0, false), (dia1, false), (rul1, true), (dia0, true)],
         ),
-        (plane(a, [0.0; 3]), vec![(arc0, true), (dia0, false)]),
-        (plane(a, scale(a, H)), vec![(arc1, false), (dia1, true)]),
+        (
+            plane(a, [0.0; 3]),
+            scale(a, -1.0),
+            vec![(arc0, true), (dia0, false)],
+        ),
+        (plane(a, scale(a, H)), a, vec![(arc1, false), (dia1, true)]),
     ];
-    for (s, uses) in faces {
+    for (s, out, uses) in faces {
         let lat = s.lattice().clone();
+        let k = lat.axes()[2];
+        let flipped = k[0] * out[0] + k[1] * out[1] + k[2] * out[2] < 0.0;
         let id = b.add_surface(s).unwrap();
-        let f = b.add_face(id, false).unwrap();
+        let f = b.add_face(id, flipped).unwrap();
         let uses = uses
             .into_iter()
             .map(|(e, r)| (e, r, on_plane(&lat, b.curve(e))))
@@ -311,6 +320,12 @@ fn exact_half_cylinder_has_well_defined_ribbons() {
     let f = half_cylinder(cylinder_pcurves());
     let b = &f.brep;
     assert_eq!(b.check_ribbons(), Ok(()));
+    // The planar check holds too: every loop with straight p-curves runs
+    // counter-clockwise in its face's orientation (the plane faces
+    // flipped where their keys' normals point in); the caps, trimmed by
+    // the arcs' rational p-curves, are left unchecked.
+    let checked = b.check_planar().unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(checked.unchecked_trims, [FaceId(2), FaceId(3)]);
     assert_eq!(
         (
             b.vert_count(),
