@@ -106,6 +106,7 @@ use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::{self, Num, ORDERS, Pred, Work, dot, point, sub};
+use crate::num::schedule::{LEVELS, PredKind, RecordUnits, UNIT_PARTS};
 use crate::perturb::{
     Curved, LineShadow, Moving, MovingAt, R_HAT, Seg, ShadowAxis, VvShadow, between, decide_flat,
     vv_shadow,
@@ -214,152 +215,6 @@ pub trait ShadowGeometry {
 /// A record decided, and what deciding it ran, for the pass to charge.
 pub type Decided<V> = (Result<V, Fail>, Cost);
 
-/// The precision levels a curved record is decided at, in order: the
-/// first (`f64`), double-double, then the big-float widths
-/// ([`Width::ALL`]).
-pub const LEVELS: usize = 2 + Width::ALL.len();
-
-/// The parts of a unit a [`Cost`] is counted in: the kinds a record runs
-/// many of ([`RecordUnits`]) take less than a unit each, so they are
-/// priced in parts, summed per record and rounded up to whole units
-/// ([`Cost::units`]).
-pub const UNIT_PARTS: u64 = 64;
-
-/// The units of one computation of each kind the kernel charges: the one
-/// table of unit costs. A unit is about half a microsecond on one thread
-/// of the reference machine (an AMD Ryzen 7 5700X3D), each kind's value
-/// measured by the kernel's calibration benchmark
-/// (`crates/kernel/benches/calibrate.rs`), which fails when a kind's time
-/// per unit drifts more than 4× from it; the kernel's `MAX_WORK` is set
-/// from the same measurement. The values are constants, so charges are
-/// the same on every run, thread count and platform; changing one
-/// changes where operations run out, a versioned change like one to the
-/// precision schedule. A kind gets its row with the loop that charges it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Units {
-    /// A seam-bound cell (the kernel's `geom::certify`) at each precision
-    /// level ([`LEVELS`]): its spans restricted and halved down to it, the
-    /// tile composed with the p-curve (degree 8) and the bound formed
-    /// against the curve (degree 10).
-    pub seam_cell: [u64; LEVELS],
-    /// A piece of a face's count tested
-    /// ([`count_pieces`](crate::count::s02::count_pieces)) at each level:
-    /// a box classified against the trims, split, or tested off the
-    /// query point's lines, a side's or a run's degree attempted (settled
-    /// or not), a trim span scanned against a loop's side.
-    pub count_piece: [u64; LEVELS],
-    /// A piece of a face's counting setup
-    /// ([`Corners::new`](crate::count::boxes::Corners::new), built once
-    /// per operation at the first level): a piece of a trimming curve
-    /// whose hull in space a corner's run search forms.
-    pub face_setup: u64,
-    /// A piece an edge pair's cluster search tests
-    /// ([`clusters`](crate::count::xrec::clusters)) at each level: a hull
-    /// of a box's two pieces, a tangent cone, a side's turn, a band test.
-    pub xrec_piece: [u64; LEVELS],
-    /// The work a record's decision reports ([`Cost`]), in parts.
-    pub record: RecordUnits,
-    /// The near/far distance certificate of a square of the kernel's
-    /// label audit, in parts.
-    pub audit: AuditUnits,
-}
-
-/// The parts of a unit ([`UNIT_PARTS`]) of each piece of the near/far
-/// distance certificate of one square of a planar face's label audit
-/// (the kernel's `boolean::classify`). Its exact predicates (the square
-/// against the region's loops, and the queries at far squares' centres)
-/// are charged as records' are ([`RecordUnits`]), not here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AuditUnits {
-    /// The square itself: its centre evaluated on the face's tile and
-    /// certified, and the reach of the square from it.
-    pub square: u64,
-    /// A segment of the region's loops or a leaf's box tested against
-    /// the square's extent.
-    pub test: u64,
-    /// The distance from the square's centre to a triangle of the other
-    /// operand's boundary bounded below and above.
-    pub triangle: u64,
-    /// The distance from the square's centre to a coedge's ribbon piece
-    /// bounded below.
-    pub ribbon: u64,
-}
-
-/// The parts of a unit ([`UNIT_PARTS`]) of each kind of work a record's
-/// decision reports in its [`Cost`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RecordUnits {
-    /// An exact predicate's filter run ([`Work::filters`]).
-    pub filter: u64,
-    /// An exact run in expansions ([`Work::expansions`]).
-    pub expansion: u64,
-    /// A run in rationals ([`Work::rationals`]).
-    pub rational: u64,
-    /// A row or polynomial piece evaluated ([`LevelWork::evals`]), at each
-    /// level.
-    pub eval: [u64; LEVELS],
-    /// A root isolation's split, interval test or Krawczyk step
-    /// ([`LevelWork::roots`]), at each level.
-    pub root: [u64; LEVELS],
-    /// A foot polynomial formed and its roots' first test
-    /// ([`LevelWork::feet`]), at each level: a span's distance to the
-    /// query point squared less the radius squared, degree 4.
-    pub foot_poly: [u64; LEVELS],
-    /// A curved height key's value or row formed at a parameter
-    /// ([`LevelWork::keys`]), at each level.
-    pub key_at: [u64; LEVELS],
-    /// An end test of a ray record's crossing beside an end
-    /// ([`LevelWork::ends`]), at each level: the span's three polynomials
-    /// bounded over the piece from the end.
-    pub at_end: [u64; LEVELS],
-    /// A sub-box of a curved z-order's crossing localization (a halving
-    /// tested apart, a Krawczyk step; [`LevelWork::boxes`]), at each
-    /// level.
-    pub zorder_box: [u64; LEVELS],
-    /// A tile or ribbon span whose column hits are found exactly
-    /// ([`Cost::hits`]): the column's equations eliminated to one
-    /// polynomial in rationals and its roots isolated.
-    pub hit: u64,
-}
-
-/// The unit costs ([`Units`]), as measured on the reference machine.
-/// The record-evaluation kinds are measured on real record computations
-/// at the first level (and a curved key's value at every level); where
-/// no fixture reaches a level they are set from a measured row: a foot
-/// polynomial at six evaluations, an end test at four, a z-order
-/// sub-box at an edge pair's search piece. The label audit's pieces are
-/// measured on squares of a plane face against cuboids' triangles.
-pub const UNITS: Units = Units {
-    seam_cell: [190, 310, 840, 890, 1060],
-    count_piece: [9, 10, 40, 40, 48],
-    face_setup: 32,
-    xrec_piece: [9, 10, 28, 30, 34],
-    record: RecordUnits {
-        filter: 190,
-        expansion: 54,
-        rational: 550,
-        eval: [11, 180, 520, 550, 660],
-        root: [130, 410, 1400, 1400, 1700],
-        foot_poly: [64, 1080, 3120, 3300, 3960],
-        key_at: [190, 460, 1240, 1360, 1600],
-        at_end: [44, 720, 2080, 2200, 2640],
-        zorder_box: [576, 640, 1792, 1920, 2176],
-        hit: 5504,
-    },
-    audit: AuditUnits {
-        square: 320,
-        test: 1,
-        triangle: 840,
-        ribbon: 192,
-    },
-};
-
-/// The most halvings of one item, counted from the item's own start (a
-/// seam span, a profile pair, a box from its tile): refinement in space
-/// stops there. 48 halvings take the 4·10⁶ mm base tile down to about
-/// 10⁻⁸ mm, the kernel's resolution.
-pub const MAX_SUBDIV_DEPTH: u32 = 48;
-
 /// One step of a curved decision, run at a precision level by [`ladder`].
 pub(crate) trait AtLevel {
     /// The step's answer.
@@ -397,12 +252,15 @@ pub(crate) fn ladder<F: AtLevel>(f: &mut F, from: usize, cost: &mut Cost) -> Opt
 }
 
 /// What deciding one record ran, for the pass to charge: its exact
-/// predicates' work, the column hit searches, and per precision level
-/// the curved work.
+/// predicates' work, its other exact runs, the column hit searches, and
+/// per precision level the curved work.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cost {
     /// The exact predicates' runs.
     pub exact: Work,
+    /// Runs in rationals outside a flat predicate: exact polynomials
+    /// formed and their roots isolated ([`RecordUnits::rational`]).
+    pub rationals: u32,
     /// The tiles and ribbon spans whose column hits were found exactly
     /// ([`face_hits`](crate::records::height::hit::face_hits)).
     pub hits: u32,
@@ -460,8 +318,8 @@ impl Cost {
     }
 
     /// This cost in parts of a unit ([`UNIT_PARTS`]) at `u`'s prices: the
-    /// exact predicates' runs ([`Cost::exact_parts`]), the column hit
-    /// searches and each level's curved work ([`Cost::level_parts`]).
+    /// exact runs ([`Cost::exact_parts`]), the column hit searches and
+    /// each level's curved work ([`Cost::level_parts`]).
     pub fn parts(&self, u: &RecordUnits) -> u64 {
         let hits = u64::from(self.hits).saturating_mul(u.hit);
         (0..LEVELS).fold(self.exact_parts(u).saturating_add(hits), |s, level| {
@@ -469,18 +327,12 @@ impl Cost {
         })
     }
 
-    /// The exact predicates' runs in parts of a unit at `u`'s prices.
+    /// The exact runs in parts of a unit at `u`'s prices: the exact
+    /// predicates' at their kinds' rows ([`Work::parts`]), the other
+    /// runs in rationals at [`RecordUnits::rational`].
     pub fn exact_parts(&self, u: &RecordUnits) -> u64 {
-        let w = &self.exact;
-        [
-            (w.filters, u.filter),
-            (w.expansions, u.expansion),
-            (w.rationals, u.rational),
-        ]
-        .into_iter()
-        .fold(0u64, |s, (n, p)| {
-            s.saturating_add(u64::from(n).saturating_mul(p))
-        })
+        let others = u64::from(self.rationals).saturating_mul(u.rational);
+        self.exact.parts(u).saturating_add(others)
     }
 
     /// The curved work at precision level `level` (below [`LEVELS`]) in
@@ -515,6 +367,7 @@ impl Cost {
     pub fn and(self, o: Cost) -> Cost {
         Cost {
             exact: self.exact.and(o.exact),
+            rationals: self.rationals.saturating_add(o.rationals),
             hits: self.hits.saturating_add(o.hits),
             levels: std::array::from_fn(|i| self.levels[i].and(o.levels[i])),
         }
@@ -740,6 +593,10 @@ impl Pred for NearGap {
         let d = sub(&point::<N>(self.w), &point(self.q));
         let r = N::rational(&self.r);
         r.mul(&r).sub(&dot(&d, &d))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
     }
 }
 

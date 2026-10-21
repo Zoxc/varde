@@ -111,6 +111,10 @@ impl Pred for Orient3d {
         });
         det3(&sub(&a, &d), &sub(&b, &d), &sub(&c, &d))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
+    }
 }
 
 /// `det[a − c, b − c]` of the points' `x, y`, `robust::orient2d`'s value:
@@ -122,6 +126,10 @@ impl Pred for Orient2d {
         let [a, b, c] = self.0.map(point::<N>);
         let (u, v) = (sub(&a, &c), sub(&b, &c));
         det2([&u[0], &u[1]], [&v[0], &v[1]])
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
     }
 }
 
@@ -183,8 +191,8 @@ fn orientations_match_robust() {
             assert_eq!(value_sign(&Orient3d::fixed(p)).0, Ok(want), "{p:?}");
             let zero = [DVec3::ZERO; 4];
             assert_eq!(want, sign_q(&orient3d_q(&p, &zero, 0)), "{p:?}");
-            assert_eq!(s.work.rationals, 0, "{p:?}");
-            if s.work.expansions == 0 {
+            assert_eq!(s.work.rationals(), 0, "{p:?}");
+            if s.work.expansions() == 0 {
                 filtered += 1;
             } else {
                 exact += 1;
@@ -229,7 +237,7 @@ fn tiny_coordinates_take_the_rationals() {
             let want = sign_q(&orient3d_q(&p, &zero, 0));
             let (s, work) = value_sign(&Orient3d::fixed(p));
             assert_eq!(s, Ok(want), "{p:?}");
-            rationals += work.rationals;
+            rationals += work.rationals();
             // Swapping two points flips the sign, through whichever stage.
             let swapped = [p[1], p[0], p[2], p[3]];
             assert_eq!(value_sign(&Orient3d::fixed(swapped)).0, Ok(want.reverse()));
@@ -246,6 +254,10 @@ impl Pred for Product {
         self.0.iter().fold(N::lit(1.0), |acc, &(x, y)| {
             acc.mul(&N::lit(x).sub(&N::lit(y)))
         })
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
     }
 }
 
@@ -279,7 +291,7 @@ fn products_beyond_the_range_take_the_rationals() {
                 });
             let (s, work) = value_sign(&Product(factors));
             assert_eq!(s, Ok(want));
-            assert_eq!(work.rationals > 0, rational, "{lo} {hi} {work:?}");
+            assert_eq!(work.rationals() > 0, rational, "{lo} {hi} {work:?}");
         }
     }
 }
@@ -395,6 +407,10 @@ fn rates_from_expressions_move_as_numbers() {
             let dir = sub(&point::<N>(self.to), &point(self.from));
             N::lit(self.p.z).moved_by(&[0, 1, 2, 3].map(|_| dir[2].clone()))
         }
+
+        fn kind(&self) -> PredKind {
+            PredKind::Orient3
+        }
     }
     let mut rng = Rng::new(5);
     for _ in 0..200 {
@@ -427,18 +443,14 @@ fn stages_are_reported() {
     ];
     let (s, work) = value_sign(&Orient3d::fixed(p));
     assert_eq!(s, Ok(Ordering::Greater));
-    assert_eq!(
-        work,
-        Work {
-            filters: 1,
-            ..Work::default()
-        }
-    );
+    let mut one = Work::default();
+    one.runs[PredKind::Orient3.index()].filters = 1;
+    assert_eq!(work, one, "one filter run, of the predicate's kind");
 
     let repeated = [p[0], p[1], p[0], p[3]];
     let (s, work) = value_sign(&Orient3d::fixed(repeated));
     assert_eq!(
-        (s, work.filters, work.expansions),
+        (s, work.filters(), work.expansions()),
         (Ok(Ordering::Equal), 1, 0)
     );
 
@@ -451,7 +463,10 @@ fn stages_are_reported() {
     ];
     let (s, work) = value_sign(&Orient3d::fixed(coplanar));
     assert_eq!(s, Ok(Ordering::Equal));
-    assert_eq!((work.filters, work.expansions, work.rationals), (1, 1, 0));
+    assert_eq!(
+        (work.filters(), work.expansions(), work.rationals()),
+        (1, 1, 0)
+    );
     assert!(work.longest >= 1);
 
     // Moved off the plane by the second motion only: the filter proves
@@ -467,7 +482,7 @@ fn stages_are_reported() {
         s.first,
         Some((2, Ok(Ordering::Less | Ordering::Greater)))
     ));
-    assert_eq!((s.work.filters, s.work.expansions), (3, 1));
+    assert_eq!((s.work.filters(), s.work.expansions()), (3, 1));
 }
 
 /// Debug builds assert every rate in range, also the rates of motions
@@ -518,6 +533,10 @@ impl Pred for ZeroTimes {
         let zero = N::lit(self.x).sub(&N::lit(self.x));
         zero.mul(&N::lit(self.y)).add(&N::lit(self.z))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
 }
 
 /// An input that isn't finite gives no sign, in every build: not a zero
@@ -531,7 +550,7 @@ fn inputs_that_arent_finite_have_no_sign() {
         assert_eq!(sign(&Orient3d::fixed(p)).first, Some((0, Err(NotFinite))));
         for z in [0.0, 1.0] {
             let (s, work) = value_sign(&ZeroTimes { x: 3.0, y: bad, z });
-            assert_eq!((s, work.rationals), (Err(NotFinite), 1), "{bad} {z}");
+            assert_eq!((s, work.rationals()), (Err(NotFinite), 1), "{bad} {z}");
         }
         assert_eq!(
             value_sign(&ZeroTimes {
@@ -574,6 +593,10 @@ impl Pred for Scaled {
             .mul(&N::lit(self.x))
             .add(&N::lit(self.b))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Side
+    }
 }
 
 /// Exact rational inputs, of any size: their signs are exact at every
@@ -605,8 +628,8 @@ fn rational_inputs_are_exact() {
         let (s, work) = value_sign(&Scaled { a: a.clone(), x, b });
         assert_eq!(s, Ok(want), "{a} {x} {b}");
         let in_range = super::dyadic(&a).is_some();
-        if work.expansions > 0 {
-            assert_eq!(work.rationals > 0, !in_range, "{a} {work:?}");
+        if work.expansions() > 0 {
+            assert_eq!(work.rationals() > 0, !in_range, "{a} {work:?}");
             taken[usize::from(in_range)] += 1;
         }
     }

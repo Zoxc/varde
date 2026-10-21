@@ -17,6 +17,7 @@ use crate::ids::{FaceId, VertId};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::ETA;
 use crate::num::exact::{Num, Pred, moved_point, sign};
+use crate::num::schedule::PredKind;
 use crate::records::keys::{Anchor, HKey, HeightKey, HitIx, Operand, Point, Sheet};
 
 fn key() -> TieKey {
@@ -233,6 +234,10 @@ impl Pred for Above {
     fn eval<N: Num>(&self) -> N {
         let [_, _, z] = moved_point::<N>(self.q, self.rows);
         z
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Side
     }
 }
 

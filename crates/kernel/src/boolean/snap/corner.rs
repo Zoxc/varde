@@ -107,9 +107,9 @@ use malachite::base::rounding_modes::RoundingMode::{Ceiling, Nearest};
 use varde_decide::bezier::{Dyadic, Poly};
 use varde_decide::ids::{EdgeId, FaceId, VertId};
 use varde_decide::num::bounded::up;
+use varde_decide::num::schedule::MAX_SUBDIV_DEPTH;
 use varde_decide::order::{self, EdgeKey, EntityOrder, Pos, VertKey};
 use varde_decide::records::keys::Operand;
-use varde_decide::records::shadow::MAX_SUBDIV_DEPTH;
 
 use super::rim::{self, Along, Branch, Element, Gap, Implicit, Piece, Rim, RimInput, RootCluster};
 use crate::infra::budget::{Cap, Halt, Ledger, Pass, Step, Stop, Work};

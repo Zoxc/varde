@@ -72,8 +72,9 @@
 //!
 //! **Work.** `varde-decide` has no work budget; each evaluation reports
 //! the stages it ran ([`Work`]: filter runs, exact runs and the longest
-//! expansion they formed, rational runs), and the caller charges them to
-//! its budget, an exact or rational run as one expansion stage.
+//! expansion they formed, rational runs), by the predicate's kind
+//! ([`Pred::kind`]), and the caller charges them to its budget, each
+//! stage at its kind's price ([`Work::parts`]).
 //!
 //! **Same bits everywhere.** The filter rounds every operation to nearest
 //! and bounds the error upwards as [`super::bounded`] does, without
@@ -94,6 +95,7 @@ use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use super::bounded::{U, add_up, mul_up, up};
 use super::expansion::{Exp, bit_span, two_sum};
+use super::schedule::{PredKind, RecordUnits};
 
 /// The number of perturbation motions after the unperturbed value: the
 /// element's own direction, then the three generic translations.
@@ -146,20 +148,43 @@ pub trait Pred {
     /// The value, built from the inputs with [`Num::lit`] and
     /// [`Num::moved`] and the operations of [`Num`].
     fn eval<N: Num>(&self) -> N;
+
+    /// The predicate's kind, for the price of its runs ([`Work`]).
+    fn kind(&self) -> PredKind;
 }
 
-/// What an evaluation ran, for the caller to charge to its budget.
+/// The stages one kind of predicate ran.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Work {
+pub struct Runs {
     /// Filter runs, one per order tried.
     pub filters: u32,
     /// Exact runs in expansions, one per order the filter left undecided.
     pub expansions: u32,
-    /// The most components of any expansion those runs formed.
-    pub longest: u32,
     /// Runs in rationals, after an exact run that would have left the
     /// expansions' range.
     pub rationals: u32,
+}
+
+impl Runs {
+    /// These runs and `o`'s together.
+    pub fn and(self, o: Runs) -> Runs {
+        Runs {
+            filters: self.filters.saturating_add(o.filters),
+            expansions: self.expansions.saturating_add(o.expansions),
+            rationals: self.rationals.saturating_add(o.rationals),
+        }
+    }
+}
+
+/// What evaluations ran, for the caller to charge to its budget: the
+/// stages by predicate kind, each priced at its kind's row of the unit
+/// table ([`RecordUnits::exact`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Work {
+    /// The stages run, by the predicates' kinds ([`PredKind::index`]).
+    pub runs: [Runs; PredKind::COUNT],
+    /// The most components of any expansion the exact runs formed.
+    pub longest: u32,
 }
 
 impl Work {
@@ -167,15 +192,55 @@ impl Work {
     /// longest expansion the longer.
     pub fn and(self, o: Work) -> Work {
         Work {
-            filters: self.filters.saturating_add(o.filters),
-            expansions: self.expansions.saturating_add(o.expansions),
+            runs: std::array::from_fn(|k| self.runs[k].and(o.runs[k])),
             longest: if o.longest > self.longest {
                 o.longest
             } else {
                 self.longest
             },
-            rationals: self.rationals.saturating_add(o.rationals),
         }
+    }
+
+    /// The runs of predicates of `kind`.
+    pub fn of(&self, kind: PredKind) -> Runs {
+        self.runs[kind.index()]
+    }
+
+    /// The runs of every kind together.
+    pub fn total(&self) -> Runs {
+        self.runs.iter().fold(Runs::default(), |s, r| s.and(*r))
+    }
+
+    /// The filter runs of every kind.
+    pub fn filters(&self) -> u32 {
+        self.total().filters
+    }
+
+    /// The exact runs in expansions of every kind.
+    pub fn expansions(&self) -> u32 {
+        self.total().expansions
+    }
+
+    /// The runs in rationals of every kind.
+    pub fn rationals(&self) -> u32 {
+        self.total().rationals
+    }
+
+    /// These runs in parts of a unit ([`UNIT_PARTS`](super::schedule::UNIT_PARTS))
+    /// at `u`'s prices, each kind at its own row.
+    pub fn parts(&self, u: &RecordUnits) -> u64 {
+        PredKind::ALL.iter().fold(0u64, |s, &k| {
+            let (r, p) = (self.of(k), u.of(k));
+            [
+                (r.filters, p.filter),
+                (r.expansions, p.expansion),
+                (r.rationals, p.rational),
+            ]
+            .into_iter()
+            .fold(s, |s, (n, p)| {
+                s.saturating_add(u64::from(n).saturating_mul(p))
+            })
+        })
     }
 }
 
@@ -213,6 +278,7 @@ pub fn value_sign(pred: &impl Pred) -> (ExactSign, Work) {
     let mut work = Work::default();
     let s = staged(
         &mut work,
+        pred.kind(),
         || pred.eval::<Approx>(),
         || pred.eval::<Exact>(),
         || pred.eval::<Rat>(),
@@ -256,6 +322,7 @@ pub fn order_signs<'a, P: Pred>(
 fn order<P: Pred, const K: usize>(pred: &P, work: &mut Work) -> ExactSign {
     staged(
         work,
+        pred.kind(),
         || pred.eval::<Dual<Approx, K>>().d,
         || pred.eval::<Dual<Exact, K>>().d,
         || pred.eval::<Dual<Rat, K>>().d,
@@ -281,15 +348,17 @@ pub(crate) fn value(pred: &impl Pred) -> Rational {
 /// the rationals without a value: [`NotFinite`].
 fn staged(
     work: &mut Work,
+    kind: PredKind,
     filter: impl FnOnce() -> Approx,
     exact: impl FnOnce() -> Exact,
     rational: impl FnOnce() -> Rat,
 ) -> ExactSign {
-    work.filters += 1;
+    let runs = &mut work.runs[kind.index()];
+    runs.filters += 1;
     if let Some(s) = filter().sign() {
         return Ok(s);
     }
-    work.expansions += 1;
+    runs.expansions += 1;
     let e = exact();
     if e.longest > work.longest {
         work.longest = e.longest;
@@ -297,7 +366,7 @@ fn staged(
     if e.in_range {
         return Ok(e.e.sign());
     }
-    work.rationals += 1;
+    work.runs[kind.index()].rationals += 1;
     rational().0.map(|r| r.sign()).ok_or(NotFinite)
 }
 

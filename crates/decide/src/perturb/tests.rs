@@ -861,7 +861,7 @@ fn flat_rows_decide_ties_by_the_first_motion_that_moves_them() {
         let want = if t2 > 0.0 { Sign::Pos } else { Sign::Neg };
         let (s, work) = decide_flat(&along, k);
         assert_eq!(s, Ok(want), "{d}");
-        assert_eq!(work.filters, 3, "the value, then motions 1 and 2");
+        assert_eq!(work.filters(), 3, "the value, then motions 1 and 2");
     }
     // A height record: the key's sign decides, its orders unread.
     let plane = PlaneHeight {
@@ -872,10 +872,10 @@ fn flat_rows_decide_ties_by_the_first_motion_that_moves_them() {
     };
     let k = key(Row::ColumnHit);
     let (s, work) = decide_flat_orders(Ordering::Less, &plane, k);
-    assert_eq!((s, work.filters), (Ok(Sign::Neg), 0));
+    assert_eq!((s, work.filters()), (Ok(Sign::Neg), 0));
     // At a tie the face of `A` moving up along its normal puts it above.
     let (s, work) = decide_flat_orders(Ordering::Equal, &plane, k);
-    assert_eq!((s, work.filters), (Ok(Sign::Pos), 1));
+    assert_eq!((s, work.filters()), (Ok(Sign::Pos), 1));
     // On a vertical plane every order is zero: the guard.
     let vertical = PlaneHeight {
         normal: R_HAT,

@@ -99,9 +99,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use malachite::Rational;
 use varde_decide::bezier::Dyadic;
 use varde_decide::ids::{EdgeId, FaceId, VertId};
+use varde_decide::num::schedule::MAX_SUBDIV_DEPTH;
 use varde_decide::order::{self, EdgeKey, EntityOrder, Pos, VertKey};
 use varde_decide::records::keys::Operand;
-use varde_decide::records::shadow::MAX_SUBDIV_DEPTH;
 
 use super::corner::{
     Corner, Moved, Placement, d2, dist_up, dot3, exact3, larger, on_q, point_on, point_seg, sub3,

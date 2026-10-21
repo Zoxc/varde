@@ -135,10 +135,11 @@ use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::Sign;
+use crate::num::schedule::LEVELS;
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::keys::{EdgeAt, Operand, XKey, XSideKey, XTieKey};
 use crate::records::ray::Span;
-use crate::records::shadow::{Cost, LEVELS, SideAhead};
+use crate::records::shadow::{Cost, SideAhead};
 use crate::records::side::Over;
 use crate::records::xrec::{
     EdgeRays, XCluster, XCurve, XPair, XPart, XRec, XSides, XWant, ZRow, from_held, line_param,

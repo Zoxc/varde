@@ -208,6 +208,7 @@ use crate::num::bounded::{Bounded, down, mul_up};
 use crate::num::dd::Dd;
 use crate::num::decide::{Band, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::ORDERS;
+use crate::num::schedule::LEVELS;
 use crate::perturb::{
     Curved, HomLineShadow, HomPoint, HomPointLineShadow, LineShadow, Moving, MovingAt, NU,
     QueryPoint, R_HAT, Rate, Seg, ShadowAxis, UP, curve_point, curve_shadow, decide_flat,
@@ -215,8 +216,8 @@ use crate::perturb::{
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LEVELS, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows,
-    SideAhead, ladder, neg, ray_ahead, read_vv, replay, shadow_error, side_and_ahead, table_error,
+    AtLevel, Cost, Decided, LevelWork, Pass, ShadowError, ShadowGeometry, Shadows, SideAhead,
+    ladder, neg, ray_ahead, read_vv, replay, shadow_error, side_and_ahead, table_error,
 };
 use crate::records::table::{Fresh, Table};
 
@@ -982,7 +983,7 @@ pub(super) fn span_crossings<R: SpanRates>(
     };
     let r = ladder(&mut ctx, 0, &mut cost).expect("the first level runs");
     let runs = u32::from(ctx.exact.get().is_some()) + u32::from(ctx.flat.get().is_some());
-    cost.exact.rationals = cost.exact.rationals.saturating_add(runs);
+    cost.rationals = cost.rationals.saturating_add(runs);
     (r, cost)
 }
 

@@ -59,6 +59,7 @@ use malachite::Rational;
 use crate::ids::{EdgeId, FaceId, VertId};
 use crate::num::exact::{ExactSign, NotFinite, Num, ORDERS, Pred, rat};
 use crate::num::poly::{self, Poly};
+use crate::num::schedule::PredKind;
 use crate::perturb::{
     Curved, EdgeEdge, Moving, MovingAt, PlaneHeight, PointHeight, Rate, Seg, UP, face_height,
     rate_rational, tangent_plane_row,
@@ -174,6 +175,14 @@ impl Pred for FlatHeight {
             FlatHeight::Plane(p) => p.eval(),
             FlatHeight::Below(p) => p.eval::<N>().neg(),
             FlatHeight::EdgeEdge(p) => p.eval(),
+        }
+    }
+
+    fn kind(&self) -> PredKind {
+        match self {
+            FlatHeight::Point(p) => p.kind(),
+            FlatHeight::Plane(p) | FlatHeight::Below(p) => p.kind(),
+            FlatHeight::EdgeEdge(p) => p.kind(),
         }
     }
 }

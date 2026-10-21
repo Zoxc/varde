@@ -85,6 +85,7 @@ use crate::num::exact::{
     self, ExactSign, Num, ORDERS, Pred, V3, Work, cross, dot, moved_point, point, rat, sub,
 };
 use crate::num::poly::{self, Poly, Root};
+use crate::num::schedule::PredKind;
 
 pub mod dir;
 
@@ -318,6 +319,10 @@ impl Pred for VvShadow {
         let l = point::<N>(self.axis.vector());
         dot(&l, &sub(&self.w.eval(), &self.q.eval()))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Side
+    }
 }
 
 /// The vertex–curve shadow row on a straight curve, flat, also a box
@@ -337,6 +342,10 @@ impl Pred for LineShadow {
         let [a, b] = self.line.ends::<N>();
         let nu = cross(&point(UP), &sub(&b, &a));
         dot(&nu, &sub(&self.q.eval(), &a))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
     }
 }
 
@@ -366,6 +375,10 @@ impl Pred for PlaneHeight {
         let above = c.sub(&dot(&n, &self.q.eval()));
         above.mul(&dot(&n, &point(UP)))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
+    }
 }
 
 /// The point–point height, flat: `UP·(w − q)`, the height of `w` above
@@ -382,6 +395,10 @@ pub struct PointHeight {
 impl Pred for PointHeight {
     fn eval<N: Num>(&self) -> N {
         dot(&point(UP), &sub(&self.w.eval(), &self.q.eval()))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Side
     }
 }
 
@@ -405,6 +422,10 @@ impl Pred for EdgeEdge {
         let [g0, g1] = self.g.ends::<N>();
         let m = cross(&sub(&e1, &e0), &sub(&g1, &g0));
         dot(&point(UP), &m).mul(&dot(&m, &sub(&g0, &e0)))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Crossing
     }
 }
 
@@ -516,6 +537,10 @@ impl Pred for HomPairShadow {
         let d = [0, 1, 2].map(|k| wq.mul(&xw[k]).sub(&ww.mul(&xq[k])));
         dot(&point::<N>(self.axis.vector()), &d)
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Hom
+    }
 }
 
 /// The vertex–curve shadow row of a homogeneous query point on the line
@@ -542,6 +567,10 @@ impl Pred for HomPointLineShadow {
         let off = [0, 1, 2].map(|k| wa.mul(&xq[k]).sub(&wq.mul(&xa[k])));
         dot(&nu, &off)
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Hom
+    }
 }
 
 /// The vertex–vertex shadow row against a homogeneous point, flat:
@@ -562,6 +591,10 @@ impl Pred for HomShadow {
         let q = self.q.eval::<N>();
         let wq = [0, 1, 2].map(|k| w.mul(&q[k]));
         dot(&point::<N>(self.axis.vector()), &sub(&x, &wq))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Hom
     }
 }
 
@@ -587,6 +620,10 @@ impl Pred for HomLineShadow {
         let nu = cross(&point(UP), &d);
         let off = [0, 1, 2].map(|k| wa.mul(&q[k]).sub(&xa[k]));
         dot(&nu, &off)
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Hom
     }
 }
 

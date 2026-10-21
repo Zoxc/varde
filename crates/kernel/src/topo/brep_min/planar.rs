@@ -71,7 +71,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use varde_decide::num::exact::{MAX_INPUT, Num, Pred, value_sign};
-use varde_decide::records::shadow::UNITS;
+use varde_decide::num::schedule::PredKind;
+use varde_decide::num::schedule::UNITS;
 
 use super::{BodyKind, Brep, CoedgeId, EdgeId, FaceId, LoopId, RibbonFault, StoreError, VertId};
 use crate::geom::curve::{Curve3D, CurveError, PCurve, Span2, Span3};
@@ -657,6 +658,10 @@ impl Pred for Orient {
         let (cx, cy) = (c[0].sub(&a[0]), c[1].sub(&a[1]));
         bx.mul(&cy).sub(&by.mul(&cx))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
 }
 
 /// `(b − a)·(d − c)`.
@@ -668,6 +673,10 @@ impl Pred for Dot {
         let (x, y) = (b[0].sub(&a[0]), b[1].sub(&a[1]));
         let (z, w) = (d[0].sub(&c[0]), d[1].sub(&c[1]));
         x.mul(&z).add(&y.mul(&w))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
     }
 }
 
@@ -687,6 +696,12 @@ impl Pred for Area<'_> {
             sum = sum.add(&term);
         }
         sum
+    }
+
+    /// Of any length, so no kind's price fits it: the check charges no
+    /// budget.
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
     }
 }
 

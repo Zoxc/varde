@@ -109,6 +109,7 @@ use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 use crate::num::decide::Sign;
 use crate::num::exact::{ORDERS, rat};
+use crate::num::schedule::LEVELS;
 use crate::order::{Along, EntityOrder};
 use crate::perturb::{
     Curved, NU, R_HAT, UP, between, curve_point, rate_rational, shared_crossing_h1,
@@ -117,7 +118,7 @@ use crate::perturb::{
 use crate::records::height::HeightReads;
 use crate::records::keys::{EdgeAt, Operand, Point, RayKey, RecordKey, XKey};
 use crate::records::ray::Span;
-use crate::records::shadow::{Cost, LEVELS};
+use crate::records::shadow::Cost;
 
 use super::{XCluster, XCurve, XGeometry, XPair, XPart, XRec, XSides, XWant, ZRow, x_count};
 

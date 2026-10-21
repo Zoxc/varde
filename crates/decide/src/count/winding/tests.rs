@@ -19,7 +19,7 @@ use super::*;
 use crate::count::boxes::{Trim, UvSpan};
 use crate::count::testing::{Order, Patch, first, mapped_net, pline};
 use crate::ids::{CoedgeId, FaceId};
-use crate::records::shadow::UNITS;
+use crate::num::schedule::UNITS;
 
 /// A graph by geometric labels: vertex `i` at `pos[i]`, its winding
 /// `w[i]`; edges by labels.

@@ -104,13 +104,14 @@ use crate::bezier::{HomCurve, Poly, Scalar};
 use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Fail, Row, Sign, TieKey};
 use crate::num::exact;
+use crate::num::schedule::LEVELS;
 use crate::order::Along;
 use crate::records::keys::{FootId, Operand, Point, RayKey, RecordKey};
 use crate::records::ray::{RayLevel, Span, bracket, mirrored};
 use crate::records::shadow::neg;
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LEVELS, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, ladder,
-    replay, shadow_error,
+    AtLevel, Cost, Decided, LevelWork, NearGap, Pass, ShadowError, ShadowGeometry, ladder, replay,
+    shadow_error,
 };
 use crate::records::table::{Fresh, Table};
 
@@ -503,7 +504,7 @@ fn span_feet(
         // `EXACT_RUNS` times the cube of the span's degree.
         let n = u32::try_from(pts.len().saturating_sub(1)).unwrap_or(u32::MAX);
         let runs = EXACT_RUNS.saturating_mul(n.saturating_mul(n).saturating_mul(n));
-        cost.exact.rationals = cost.exact.rationals.saturating_add(runs);
+        cost.rationals = cost.rationals.saturating_add(runs);
     }
     match out {
         Some(Step::Done(events)) => Some(events),

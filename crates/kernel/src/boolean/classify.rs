@@ -112,11 +112,11 @@ use std::collections::BTreeSet;
 use glam::DVec3;
 use varde_decide::num::bounded::{Bounded, down, up};
 use varde_decide::num::exact::{self, MAX_INPUT, Num, Pred, value_sign};
+use varde_decide::num::schedule::{PredKind, UNIT_PARTS, UNITS};
 use varde_decide::perturb::T;
-use varde_decide::records::shadow::{Cost, UNIT_PARTS, UNITS};
 
 #[cfg(doc)]
-use varde_decide::records::shadow::AuditUnits;
+use varde_decide::num::schedule::AuditUnits;
 
 use crate::geom::lattice::MAX_LEVEL;
 use crate::geom::tile::Tile;
@@ -701,15 +701,10 @@ impl Meter<'_, '_> {
     /// further stage after; `None` for an input that isn't finite (never
     /// on validated input).
     fn sign(&mut self, pred: &impl Pred) -> Res<Option<Ordering>> {
-        let filter = UNITS.record.filter;
+        let filter = UNITS.record.of(pred.kind()).filter;
         self.parts(filter)?;
         let (s, w) = value_sign(pred);
-        let cost = Cost {
-            exact: w,
-            ..Cost::default()
-        }
-        .exact_parts(&UNITS.record);
-        self.parts(cost.saturating_sub(filter))?;
+        self.parts(w.parts(&UNITS.record).saturating_sub(filter))?;
         Ok(s.ok())
     }
 }
@@ -945,6 +940,10 @@ impl Pred for Across {
         let b = exact::sub(&exact::point(self.b), &p);
         exact::det3(&a, &b, &exact::point(self.d))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
+    }
 }
 
 /// `n·(x − a)` for a point `x`, or `n·x` for a direction, `n = (b − a) ×
@@ -965,6 +964,10 @@ impl Pred for Facing {
         let x = exact::point(self.x);
         let x = if self.point { exact::sub(&x, &a) } else { x };
         exact::det3(&e, &f, &x)
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
     }
 }
 

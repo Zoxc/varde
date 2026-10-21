@@ -12,6 +12,7 @@ use glam::DVec3;
 
 use super::*;
 use crate::num::exact::Num;
+use crate::num::schedule::PredKind;
 use crate::perturb::{Moving, PlaneHeight, PointHeight};
 use crate::records::shadow::LevelWork;
 
@@ -54,6 +55,10 @@ impl Pred for Flat {
             Flat::Point(p) => p.eval(),
             Flat::Plane(p) => p.eval(),
         }
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Side
     }
 }
 
@@ -332,7 +337,7 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
     let mut hs = Heights::new();
     hs.fill([at(h, F1)], &g, band(), &mut Seq::default())
         .unwrap();
-    let last = u8::try_from(crate::records::shadow::LEVELS - 1).unwrap();
+    let last = u8::try_from(crate::num::schedule::LEVELS - 1).unwrap();
     assert_eq!(hs.key(h).map(|r| (r.value, r.level)), Some((None, last)));
     assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, Sign::Pos);
 }

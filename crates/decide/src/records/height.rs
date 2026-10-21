@@ -64,6 +64,7 @@ use std::collections::BTreeMap;
 use crate::ids::{EdgeId, VertId};
 use crate::num::decide::{Band, BandKind, Coeff, Fail, Row, Sign, TieKey, decide};
 use crate::num::exact::{self, ExactSign, ORDERS, Pred};
+use crate::num::schedule::LEVELS;
 use crate::order::{Along, EdgeKey, EntityOrder, VertKey};
 use crate::perturb::{Curved, decide_flat_orders};
 use crate::records::feet::{Feet, NearFeet};
@@ -73,8 +74,7 @@ use crate::records::keys::{
 };
 use crate::records::ray::RayLevel;
 use crate::records::shadow::{
-    AtLevel, Cost, Decided, LEVELS, LevelWork, Pass, Shadows, VvRec, ladder, neg, replay,
-    table_error,
+    AtLevel, Cost, Decided, LevelWork, Pass, Shadows, VvRec, ladder, neg, replay, table_error,
 };
 use crate::records::table::{Fresh, Table, TableError};
 

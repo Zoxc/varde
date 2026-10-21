@@ -866,7 +866,7 @@ fn tangent_spheres_decide_at_the_first_level() {
             cost.levels[1..].iter().all(|l| *l == LevelWork::default()),
             "{cost:?}"
         );
-        assert!(cost.exact.rationals > 0, "{cost:?}");
+        assert!(cost.rationals > 0, "{cost:?}");
         assert!(got.feet.iter().any(|f| f.hull), "{got:?}");
         if !inside {
             let f = got.feet[0];

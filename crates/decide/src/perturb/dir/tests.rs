@@ -499,7 +499,7 @@ fn rows_read_exact_directions() {
                 assert!(matches!(first, Some((k, Ok(_))) if k > 1), "{s:?} {n}");
                 ties += 1;
             }
-            assert_eq!(work.rationals, 0, "{s:?} {n}");
+            assert_eq!(work.rationals(), 0, "{s:?} {n}");
         }
     }
     assert!(decided > 20 && ties > 5, "{decided} {ties}");

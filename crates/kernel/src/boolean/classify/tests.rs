@@ -457,7 +457,7 @@ fn running_out_of_budget_stops_the_audit() {
 /// unit table, per piece, its parts rounded up once: the square, its
 /// eight loop tests (four apart from it, four of the inside test) and the
 /// leaves', each triangle of both boundaries and each ribbon, and the
-/// inside test's two predicates at the exact filter's price.
+/// inside test's two predicates at the 2D orientation's filter price.
 #[test]
 fn a_square_is_charged_its_certificate_at_the_audit_s_row() {
     let p = plane();
@@ -471,7 +471,7 @@ fn a_square_is_charged_its_certificate_at_the_audit_s_row() {
     }; 3];
     let leaves = [p.leaf(&[[40.0, 40.0], [41.0, 41.0]], Cover::Near, 0); 5];
     let u = UNITS.audit;
-    let filters = 2 * UNITS.record.filter;
+    let filters = 2 * UNITS.record.of(PredKind::Orient2).filter;
     for (leaves, ribbons, solid, before) in [
         (&[][..], &[][..], &[][..], &[][..]),
         (&leaves[..], &[][..], &[][..], &[][..]),
@@ -516,8 +516,10 @@ fn a_query_is_charged_its_predicates_alone() {
     let (w, both) = calibration::query(&twice, [0.25, 0.125, 0.0], 0);
     assert_eq!(w, Some(2));
     assert!((2 * once - 1..=2 * once).contains(&both), "{once} {both}");
-    // Each triangle's three edges at least, each at the filter's price.
-    assert!(once * UNIT_PARTS >= 12 * 3 * UNITS.record.filter, "{once}");
+    // Each triangle's three edges at least, each at the 3D
+    // determinant's filter price.
+    let filter = UNITS.record.of(PredKind::Orient3).filter;
+    assert!(once * UNIT_PARTS >= 12 * 3 * filter, "{once}");
 }
 
 #[test]

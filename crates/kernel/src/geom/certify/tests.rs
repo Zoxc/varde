@@ -562,6 +562,58 @@ fn seam_bounds_are_charged_the_same_on_any_number_of_threads() {
     }
 }
 
+/// Each coedge's escalation, its ledger's steps in order (consecutive
+/// steps at one level merged), is the same on any number of threads:
+/// the weighted arcs climb the schedule level by level to their target,
+/// the cells of one level charged at its row, the weight-1 arc at the
+/// first level alone for the usual target.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn escalation_sequences_are_the_same_on_any_number_of_threads() {
+    use crate::infra::par::assert_deterministic;
+    let s = base_plane();
+    let coedges = arcs(&s);
+    for target in [TARGET, 1e-12] {
+        let seqs = assert_deterministic(|| {
+            let mut work = Work::new(&Budget::new(MAX_WORK));
+            let pass = Pass {
+                stage: "seam",
+                rung: 0,
+            };
+            work.pass(pass, &coedges, |(c, p), ledger| {
+                let b = seam_bound(&s, c, p, target, ledger)?;
+                Ok::<_, Stop<SeamError>>((b.level, ledger.steps().to_vec()))
+            })
+            .expect("within the budget")
+        });
+        let level = |step: Step| match step {
+            Step::Work => 0,
+            Step::Precision { level } => level,
+        };
+        for (i, (top, steps)) in seqs.iter().enumerate() {
+            // A level is reached only from the one below it, and the
+            // highest charged is the bound's.
+            let levels: Vec<u8> = steps.iter().map(|&(step, _)| level(step)).collect();
+            let mut seen = 0u8;
+            for &l in &levels {
+                assert!(l <= seen + 1, "coedge {i}, target {target}: {levels:?}");
+                seen = seen.max(l);
+            }
+            assert_eq!(seen, *top, "coedge {i}, target {target}: {levels:?}");
+            for &(step, units) in steps {
+                assert_eq!(units % seam_cell_units(level(step)), 0, "{step:?}");
+            }
+        }
+        let tops: Vec<u8> = seqs.iter().map(|(top, _)| *top).collect();
+        if target == TARGET {
+            assert_eq!(tops[0], 0, "the weight-1 arc at the first level");
+        } else {
+            assert!(tops.contains(&2), "past double-double: {tops:?}");
+        }
+        assert!(tops[1..3].iter().all(|&top| top > 0), "{tops:?}");
+    }
+}
+
 /// The cause and profile of running out.
 fn ran_out(out: Result<Vec<SeamBound>, Halt<SeamError>>) -> (Cause, crate::BudgetProfile) {
     match out {

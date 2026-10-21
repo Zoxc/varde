@@ -182,6 +182,7 @@ use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::{Bounded, add_up, mul_up, up};
 use crate::num::decide::Sign;
+use crate::num::schedule::{LEVELS, MAX_SUBDIV_DEPTH, UNIT_PARTS, UNITS};
 use crate::order::{Along, EntityOrder};
 use crate::perturb::{NU, R_HAT, UP};
 use crate::records::feet::Foot;
@@ -194,9 +195,7 @@ use crate::records::keys::{
 };
 use crate::records::ray::RayLevel;
 use crate::records::ray::{ChainCrossing, ChainRec, Crossing, TileNet};
-use crate::records::shadow::{
-    AtLevel, Cost, LEVELS, LevelWork, MAX_SUBDIV_DEPTH, RayRec, UNIT_PARTS, UNITS, ladder,
-};
+use crate::records::shadow::{AtLevel, Cost, LevelWork, RayRec, ladder};
 use crate::records::side::{Sides, Want};
 
 #[cfg(doc)]
@@ -214,7 +213,7 @@ pub const MAX_ROUNDS: u32 = 64;
 /// What a count (or another search charged per piece: a face's setup,
 /// an edge pair's clusters) may spend (module docs): `share` units, a
 /// piece tested at level `k` costing `units[k]`, a column hit search its
-/// own row ([`RecordUnits::hit`](crate::records::shadow::RecordUnits::hit)).
+/// own row ([`RecordUnits::hit`](crate::num::schedule::RecordUnits::hit)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Charge {
     /// The units the search may spend, its share of the budget left.
@@ -225,7 +224,7 @@ pub struct Charge {
 
 impl Charge {
     /// A share of `share` units at the table's units for count pieces
-    /// ([`Units::count_piece`](crate::records::shadow::Units::count_piece)).
+    /// ([`Units::count_piece`](crate::num::schedule::Units::count_piece)).
     pub fn new(share: u64) -> Charge {
         Charge {
             share,
@@ -235,7 +234,7 @@ impl Charge {
 
     /// A share of `share` units for a face's counting setup
     /// ([`Corners::new`]), at the table's unit for its pieces
-    /// ([`Units::face_setup`](crate::records::shadow::Units::face_setup)).
+    /// ([`Units::face_setup`](crate::num::schedule::Units::face_setup)).
     pub fn setup(share: u64) -> Charge {
         Charge {
             share,
@@ -246,7 +245,7 @@ impl Charge {
     /// A share of `share` units for an edge pair's cluster search
     /// ([`clusters`](crate::count::xrec::clusters)), at the table's units
     /// for its pieces
-    /// ([`Units::xrec_piece`](crate::records::shadow::Units::xrec_piece)).
+    /// ([`Units::xrec_piece`](crate::num::schedule::Units::xrec_piece)).
     pub fn xrec(share: u64) -> Charge {
         Charge {
             share,

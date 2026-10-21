@@ -1,6 +1,8 @@
 //! Calibration of the kernel's unit table
-//! (`varde_decide::records::shadow::UNITS`): times each computation kind
-//! the kernel charges, per precision level where it has levels, and
+//! (`varde_decide::num::schedule::UNITS`): times each computation kind
+//! the kernel charges, per precision level where it has levels (an exact
+//! predicate per predicate kind and stage, on each of the kind's
+//! predicates), and
 //! compares the time per unit charged with the target of half a
 //! microsecond per unit. A kind more than 4× off fails the run, so a
 //! change that makes a kind much cheaper or dearer, or a machine much
@@ -13,7 +15,7 @@
 //! value the measurement suggests (the time over half a microsecond,
 //! rounded, at least 1). The reference machine is an AMD Ryzen 7 5700X3D.
 //! Kinds below a unit are measured in parts of a unit
-//! (`shadow::UNIT_PARTS`): a record charges the sum of its parts,
+//! (`schedule::UNIT_PARTS`): a record charges the sum of its parts,
 //! rounded up to whole units.
 //!
 //! `VARDE_CALIBRATE=quick` runs each kind for a tenth of the time: a
@@ -26,6 +28,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use glam::DVec3;
+use malachite::Rational;
 use varde_decide::bezier::{HomCurve, Poly, Scalar};
 use varde_decide::count::boxes::CUSP_PIECES;
 use varde_decide::count::s02::{Charge, count_pieces};
@@ -37,8 +40,12 @@ use varde_decide::num::bounded::Bounded;
 use varde_decide::num::dd::Dd;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::{self, Num, ORDERS, Pred, det3, point, sub};
+use varde_decide::num::schedule::{LEVELS, PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
-use varde_decide::perturb::{Curved, Moving, NU, R_HAT, Rate, Seg, UP};
+use varde_decide::perturb::{
+    Curved, EdgeEdge, HomLineShadow, HomPairShadow, HomPoint, HomPointLineShadow, HomShadow,
+    LineShadow, Moving, NU, PlaneHeight, PointHeight, R_HAT, Rate, Seg, ShadowAxis, UP, VvShadow,
+};
 use varde_decide::records::cusp::{CuspSpan, Sharp, cusp_rec};
 use varde_decide::records::feet::{EdgeCurve, NearFeet, decide_feet};
 use varde_decide::records::height::hit::face_hits;
@@ -48,7 +55,7 @@ use varde_decide::records::keys::{
 };
 use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span};
 use varde_decide::records::shadow::{
-    Cost, Decided, LEVELS, LevelWork, Pass, RayRec, ShadowGeometry, Shadows, UNIT_PARTS, UNITS,
+    Cost, Decided, LevelWork, Pass, RayRec, ShadowGeometry, Shadows,
 };
 use varde_decide::records::side::Sides;
 use varde_decide::records::table::Fresh;
@@ -348,6 +355,30 @@ impl Pred for Orient {
         let [a, b, c, d] = self.0.map(point::<N>);
         det3(&sub(&b, &a), &sub(&c, &a), &sub(&d, &a))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
+    }
+}
+
+/// `r² − ‖w − q‖²`, the point–vertex records' near test (the shadow
+/// records' own is private to them).
+struct Near {
+    q: DVec3,
+    w: DVec3,
+    r: Rational,
+}
+
+impl Pred for Near {
+    fn eval<N: Num>(&self) -> N {
+        let d = sub(&point::<N>(self.w), &point(self.q));
+        let r = N::rational(&self.r);
+        r.mul(&r).sub(&exact::dot(&d, &d))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
 }
 
 /// The units a record is charged for `cost` alone, in parts of a unit.
@@ -355,76 +386,485 @@ fn parts(cost: &Cost) -> f64 {
     cost.parts(&UNITS.record) as f64 / UNIT_PARTS as f64
 }
 
-/// Exact predicate stages: the filter deciding, an exact zero the
-/// expansions find, and one the rationals do (a coordinate's lowest set
-/// bit far below the expansions' range).
-fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
-    let pts = |k: u64| {
-        let f =
-            |x: u64| ((x.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 11) as f64) / (1u64 << 53) as f64;
-        let p = |i: u64| {
-            DVec3::new(
-                f(4 * k + i) * 200.0,
-                f(97 * k + i) * 200.0,
-                f(31 * k + i) * 200.0,
-            )
-        };
-        [p(0), p(1), p(2), p(3)]
-    };
-    let general: Vec<Orient> = (0..64).map(|k| Orient(pts(k))).collect();
-    // `d = a + ½(b − a) + ¼(c − a)`, exactly: coplanar, so the filter
-    // can't decide.
-    let planar: Vec<Orient> = (0..64)
-        .map(|k| {
-            let [a, b, c, _] = pts(k).map(|p| (p * 1024.0).floor());
-            Orient([a, b, c, a + (b - a) * 0.5 + (c - a) * 0.25])
-        })
-        .collect();
-    // Points on the plane `z = x + y`, exactly, with coordinates as small
-    // as `2⁻⁴⁰⁰`: the orientation's products fall below the expansions'
-    // range.
-    let tiny: Vec<Orient> = (0..16)
-        .map(|k| {
-            let t = (k + 1) as f64 * f64::from_bits(((1023 - 400) as u64) << 52);
-            let on = |x: f64, y: f64| DVec3::new(x, y, x + y);
-            Orient([
-                on(t, 0.0),
-                on(0.0, t),
-                on(2.0 * t, t),
-                on(1.0 + k as f64, 1.0),
-            ])
-        })
-        .collect();
-    for (kind, preds, stage) in [
-        ("exact filter", &general, 0),
-        ("exact expansion", &planar, 1),
-        ("exact rational", &tiny, 2),
-    ] {
+/// A pseudo-random dyadic number in `[0, 1)` with `bits` bits after the
+/// point, the `k`-th of a sequence: sums and halvings of a few stay
+/// exact.
+fn dyadic(k: u64, bits: u32) -> f64 {
+    let x = (k.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 11) as f64 / (1u64 << 53) as f64;
+    let s = (1u64 << bits) as f64;
+    (x * s).floor() / s
+}
+
+/// A pseudo-random point of `[0, 200)³` at full precision.
+fn general(k: u64) -> DVec3 {
+    let f = |x: u64| ((x.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 11) as f64) / (1u64 << 53) as f64;
+    DVec3::new(
+        f(4 * k) * 200.0,
+        f(97 * k + 1) * 200.0,
+        f(31 * k + 2) * 200.0,
+    )
+}
+
+/// A pseudo-random dyadic point of `[0, 200)³`, 10 bits after the point.
+fn grid(k: u64) -> DVec3 {
+    DVec3::new(
+        dyadic(4 * k, 10) * 200.0,
+        dyadic(97 * k + 1, 10) * 200.0,
+        dyadic(31 * k + 2, 10) * 200.0,
+    )
+}
+
+/// `2^e`, exactly.
+fn pow2(e: i32) -> f64 {
+    let mut x = 1.0;
+    for _ in 0..e.unsigned_abs() {
+        x = if e < 0 { x * 0.5 } else { x * 2.0 };
+    }
+    x
+}
+
+/// One predicate's fixtures for each exact stage it can reach: general
+/// positions the filter decides, exact zeros the expansions find, and
+/// exact zeros so small the rationals do (`None` where its inputs can't
+/// leave the expansions' range: a predicate of degree 1 in stored
+/// floats).
+struct Fixtures<P> {
+    name: &'static str,
+    kind: PredKind,
+    stages: [Option<Vec<P>>; 3],
+}
+
+/// The stages' names, in [`Fixtures::stages`]' order.
+const STAGES: [&str; 3] = ["filter", "expansion", "rational"];
+
+/// The rows of one predicate's stages, each priced at its kind's row:
+/// the time of one evaluation against the units its runs (the stages
+/// before included) are charged.
+fn exact_pred_rows<P: Pred>(budget: Duration, f: Fixtures<P>, rows: &mut Vec<Row>) {
+    for (stage, preds) in f.stages.iter().enumerate() {
+        let Some(preds) = preds else { continue };
         let mut work = exact::Work::default();
-        for p in preds.iter() {
+        for p in preds {
+            assert_eq!(p.kind(), f.kind, "{}", f.name);
             work = work.and(exact::value_sign(p).1);
         }
-        let ran = [work.filters, work.expansions, work.rationals];
-        assert!(ran[stage] as usize == preds.len(), "{kind}: {work:?}");
+        let r = work.of(f.kind);
+        let ran = [r.filters, r.expansions, r.rationals];
+        assert!(
+            ran[stage] as usize == preds.len() && ran[stage + 1..].iter().all(|&n| n == 0),
+            "{} {}: {work:?}",
+            f.name,
+            STAGES[stage]
+        );
         let ns = time(budget, || {
-            for p in preds.iter() {
+            for p in preds {
                 let _ = black_box(exact::value_sign(p));
             }
             preds.len() as u64
         });
-        // The stages before this one ran too: charged with it.
-        let cost = Cost::exact(exact::Work {
-            filters: work.filters,
-            expansions: work.expansions,
-            longest: work.longest,
-            rationals: work.rationals,
-        });
         rows.push(Row {
-            kind: kind.into(),
+            kind: format!("exact {:?} {}, {}", f.kind, STAGES[stage], f.name),
             ns,
-            units: parts(&cost) / preds.len() as f64,
+            units: parts(&Cost::exact(work)) / preds.len() as f64,
         });
     }
+}
+
+/// A homogeneous point of a weighted quadratic at `t = ½`: control
+/// points `p + e`, `p`, `p − e`, weights 1, `w`, 1, so `X = W·p`
+/// exactly, the point `p`.
+fn hom_at(p: DVec3, e: DVec3, w: u32) -> HomPoint {
+    let q = |n: u32, d: u32| Rational::from(n) / Rational::from(d);
+    HomPoint {
+        terms: vec![(p + e, q(1, 4)), (p, q(w, 2)), (p - e, q(1, 4))],
+        rates: [Rate::ZERO; ORDERS],
+    }
+}
+
+/// Exact predicate stages per predicate kind, on the kind's own
+/// predicates: the shadow rows of the records and the 2D and 3D
+/// orientations of the planar checks and the label audit.
+fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let n = 64u64;
+    let fixed = Moving::fixed;
+    // Side: `a·(w − q)` along `r̂` (`w − q = (a, b, 16a)`), along `ν`
+    // (`(514m − 48n, 3m, 3n)`) and up (`(16a, b·0, −a)`).
+    let side = |k: u64, scale: f64, zero: bool| {
+        let (q, a, b) = (
+            grid(k) * scale,
+            dyadic(k + 7, 8) * scale,
+            dyadic(k + 9, 8) * scale,
+        );
+        let along = if zero {
+            DVec3::new(a, b, 16.0 * a)
+        } else {
+            general(k + 3) * scale
+        };
+        VvShadow {
+            q: fixed(q),
+            w: fixed(q + along),
+            axis: ShadowAxis::Along,
+        }
+    };
+    let side_nu = |k: u64, zero: bool| {
+        let q = grid(k);
+        let (m, n) = (dyadic(k + 7, 6), dyadic(k + 9, 6));
+        let d = if zero {
+            DVec3::new(514.0 * m - 48.0 * n, 3.0 * m, 3.0 * n)
+        } else {
+            general(k + 3)
+        };
+        VvShadow {
+            q: fixed(q),
+            w: fixed(q + d),
+            axis: ShadowAxis::Side,
+        }
+    };
+    let up = |k: u64, zero: bool| {
+        let (q, a) = (grid(k), dyadic(k + 7, 8));
+        let d = if zero {
+            DVec3::new(16.0 * a, 0.0, -a)
+        } else {
+            general(k + 3)
+        };
+        PointHeight {
+            q: fixed(q),
+            w: fixed(q + d),
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "vv shadow along",
+            kind: PredKind::Side,
+            stages: [
+                Some((0..n).map(|k| side(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| side(k, 1.0, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "vv shadow side",
+            kind: PredKind::Side,
+            stages: [
+                Some((0..n).map(|k| side_nu(k, false)).collect()),
+                Some((0..n).map(|k| side_nu(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "point height",
+            kind: PredKind::Side,
+            stages: [
+                Some((0..n).map(|k| up(k, false)).collect()),
+                Some((0..n).map(|k| up(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    // Orient2: `orient(a, b, c)` with `c = a + ½(b − a)` on the line,
+    // scaled by `2⁻⁶⁰⁰` for the rationals.
+    let orient2 = |k: u64, scale: f64, zero: bool| {
+        let p = |i: u64| {
+            let g = grid(3 * k + i) * scale;
+            [g.x, g.y]
+        };
+        let (a, b) = (p(0), p(1));
+        let c = if zero {
+            [a[0] + 0.5 * (b[0] - a[0]), a[1] + 0.5 * (b[1] - a[1])]
+        } else {
+            let g = general(k) * scale;
+            [g.x, g.y]
+        };
+        Orient2([a, b, c])
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "orient 2D",
+            kind: PredKind::Orient2,
+            stages: [
+                Some((0..n).map(|k| orient2(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| orient2(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| orient2(k, pow2(-600), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // A distance against a radius, `r² − ‖w − q‖²`, as the point–vertex
+    // records' near test forms it ([`Near`]): `r = ‖w − q‖` exactly for
+    // the expansions (`w − q = (3, 4, 12)·s`, `r = 13·s`).
+    let near = |k: u64, zero: bool| {
+        let (q, s) = (grid(k), dyadic(k + 3, 6) + 0.5);
+        let (w, r) = if zero {
+            (q + DVec3::new(3.0, 4.0, 12.0) * s, 13.0 * s)
+        } else {
+            (general(k + 1), dyadic(k + 5, 8) * 100.0)
+        };
+        Near {
+            q,
+            w,
+            r: Rational::try_from(r).expect("a finite radius"),
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "near gap",
+            kind: PredKind::Orient2,
+            stages: [
+                Some((0..n).map(|k| near(k, false)).collect()),
+                Some((0..n).map(|k| near(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    // A point against a line's shadow: `q = a + ½(b − a) + c·UP`.
+    let line = |k: u64, scale: f64, zero: bool| {
+        let (a, b) = (grid(3 * k) * scale, grid(3 * k + 1) * scale);
+        let q = if zero {
+            a + (b - a) * 0.5 + UP * (dyadic(k, 4) * scale)
+        } else {
+            general(k) * scale
+        };
+        LineShadow {
+            q: fixed(q),
+            line: Seg {
+                a,
+                b,
+                rates: [Rate::ZERO; ORDERS],
+            },
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "line shadow",
+            kind: PredKind::Orient3,
+            stages: [
+                Some((0..n).map(|k| line(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| line(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| line(k, pow2(-600), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // Orient3: four points, `d = a + ½(b − a) + ¼(c − a)` on the
+    // plane; for the rationals points on `z = x + y` as small as
+    // `2⁻⁴⁰⁰`.
+    let orient3 = |k: u64, zero: bool| {
+        let [a, b, c] = [0, 1, 2].map(|i| grid(4 * k + i));
+        let d = if zero {
+            a + (b - a) * 0.5 + (c - a) * 0.25
+        } else {
+            general(k)
+        };
+        Orient([a, b, c, d])
+    };
+    let tiny = |k: u64| {
+        let t = (k + 1) as f64 * pow2(-400);
+        let on = |x: f64, y: f64| DVec3::new(x, y, x + y);
+        Orient([
+            on(t, 0.0),
+            on(0.0, t),
+            on(2.0 * t, t),
+            on(1.0 + k as f64, 1.0),
+        ])
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "orient 3D",
+            kind: PredKind::Orient3,
+            stages: [
+                Some((0..n).map(|k| orient3(k, false)).collect()),
+                Some((0..n).map(|k| orient3(k, true)).collect()),
+                Some((0..16).map(tiny).collect()),
+            ],
+        },
+        rows,
+    );
+    // A plane's height above a point: `c = n·q` exactly on the plane.
+    let plane = |k: u64, zero: bool| {
+        let (nrm, q) = (grid(k) / 200.0 + DVec3::Z, grid(k + 5));
+        let c = if zero { nrm.dot(q) } else { general(k).x };
+        PlaneHeight {
+            normal: nrm,
+            offset: c,
+            rates: [Rate::ZERO; ORDERS],
+            q: fixed(q),
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "plane height",
+            kind: PredKind::Orient3,
+            stages: [
+                Some((0..n).map(|k| plane(k, false)).collect()),
+                Some((0..n).map(|k| plane(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    // Crossing: `g₀ = e₀ + ½(e₁ − e₀) + ¼·dg` in the plane of `e` and
+    // `dg`; for the rationals scaled by `2⁻⁴⁰⁰`.
+    let crossing = |k: u64, scale: f64, zero: bool| {
+        let (e0, e1, dg) = (
+            grid(4 * k) * scale,
+            grid(4 * k + 1) * scale,
+            grid(4 * k + 2) * scale,
+        );
+        let g0 = if zero {
+            e0 + (e1 - e0) * 0.5 + dg * 0.25
+        } else {
+            general(k) * scale
+        };
+        let seg = |a, b| Seg {
+            a,
+            b,
+            rates: [Rate::ZERO; ORDERS],
+        };
+        EdgeEdge {
+            e: seg(e0, e1),
+            g: seg(g0, g0 + dg),
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "edge-edge",
+            kind: PredKind::Crossing,
+            stages: [
+                Some((0..n).map(|k| crossing(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| crossing(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| crossing(k, pow2(-400), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // Hom: the shadow rows against points of weighted quadratics at
+    // their middle ([`hom_at`]), each placed on its zero for the
+    // expansions.
+    let hom = |k: u64, zero: bool| {
+        let (p, e) = (grid(k), grid(k + 3) / 8.0);
+        let a = dyadic(k + 7, 8);
+        let q = if zero {
+            p + DVec3::new(a, 0.5, 16.0 * a)
+        } else {
+            general(k)
+        };
+        HomShadow {
+            q: fixed(q),
+            w: hom_at(p, e, 3),
+            axis: ShadowAxis::Along,
+        }
+    };
+    let pair = |k: u64, zero: bool| {
+        let (p, e) = (grid(k), grid(k + 3) / 8.0);
+        let a = dyadic(k + 7, 8);
+        let d = if zero {
+            DVec3::new(a, 0.5, 16.0 * a)
+        } else {
+            general(k) - p
+        };
+        HomPairShadow {
+            q: hom_at(p, e, 3),
+            w: hom_at(p + d, e, 3),
+            axis: ShadowAxis::Along,
+        }
+    };
+    let hline = |k: u64, scale: f64, zero: bool| {
+        let (pa, pb) = (grid(3 * k) * scale, grid(3 * k + 1) * scale);
+        let e = grid(k + 5) / 8.0 * scale;
+        let q = if zero {
+            pa + (pb - pa) * 0.5 + UP * (dyadic(k, 4) * scale)
+        } else {
+            general(k) * scale
+        };
+        HomLineShadow {
+            q: fixed(q),
+            a: hom_at(pa, e, 3),
+            b: hom_at(pb, e, 5),
+        }
+    };
+    let hpoint_line = |k: u64, zero: bool| {
+        let (pa, pb) = (grid(3 * k), grid(3 * k + 1));
+        let e = grid(k + 5) / 8.0;
+        let pq = if zero {
+            pa + (pb - pa) * 0.5 + UP * dyadic(k, 4)
+        } else {
+            general(k)
+        };
+        HomPointLineShadow {
+            q: hom_at(pq, e, 7),
+            a: hom_at(pa, e, 3),
+            b: hom_at(pb, e, 5),
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "hom shadow",
+            kind: PredKind::Hom,
+            stages: [
+                Some((0..n).map(|k| hom(k, false)).collect()),
+                Some((0..n).map(|k| hom(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "hom pair shadow",
+            kind: PredKind::Hom,
+            stages: [
+                Some((0..n).map(|k| pair(k, false)).collect()),
+                Some((0..n).map(|k| pair(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "hom line shadow",
+            kind: PredKind::Hom,
+            stages: [
+                Some((0..n).map(|k| hline(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| hline(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| hline(k, pow2(-560), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "hom point-line shadow",
+            kind: PredKind::Hom,
+            stages: [
+                Some((0..n).map(|k| hpoint_line(k, false)).collect()),
+                Some((0..n).map(|k| hpoint_line(k, true)).collect()),
+                None,
+            ],
+        },
+        rows,
+    );
 }
 
 /// Polynomials of degree 4 on `[0, 1]`, their roots near `¼` and `¾`
@@ -1011,6 +1451,10 @@ impl Pred for Orient2 {
         let (cx, cy) = (c[0].sub(&a[0]), c[1].sub(&a[1]));
         bx.mul(&cy).sub(&by.mul(&cx))
     }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
 }
 
 /// The near/far certificate of an audit square, per piece: 256 squares
@@ -1021,8 +1465,8 @@ impl Pred for Orient2 {
 /// others), 256 ribbons, and a region of 1024 sides with 1024 leaves
 /// apart from the squares: each piece's time is the difference over its
 /// count. Then queries at a square's centre against the cuboids, timed
-/// whole against their predicates' units: printed, not a row, as a query
-/// is charged at the exact stages' rows.
+/// whole against their predicates' units: the 3D determinants' row on
+/// the audit's own predicates.
 fn audit_rows(budget: Duration, rows: &mut Vec<Row>) {
     let (tile, uv) = audit::plane();
     let region = |pts: &[[f64; 2]]| AuditRegion {
@@ -1173,12 +1617,12 @@ fn audit_rows(budget: Duration, rows: &mut Vec<Row>) {
             3
         });
         // Not a kind of its own: a query costs its predicates, charged at
-        // the exact stages' rows, measured on other predicates.
-        let units = units as f64 / 3.0;
-        println!(
-            "  {kind}: {ns:.0} ns, {units:.1} units at the exact stages' prices, \
-             {:.0} ns per unit",
-            ns / units
-        );
+        // their kinds' rows, so the row checks those prices on the
+        // audit's own predicates.
+        rows.push(Row {
+            kind: kind.into(),
+            ns,
+            units: units as f64 / 3.0,
+        });
     }
 }

@@ -163,7 +163,7 @@ pub const NEAR_PIECES: u32 = 256;
 /// spread over more is halved first.
 pub const HULL_TILES: u64 = 16;
 
-/// The face setup pieces ([`Units::face_setup`](crate::records::shadow::Units::face_setup))
+/// The face setup pieces ([`Units::face_setup`](crate::num::schedule::Units::face_setup))
 /// a sharp corner's record is charged as per two spans whose bounds it
 /// tests: its exact polynomial tests, about four pieces' time for a
 /// span of each curve (measured by the kernel's calibration benchmark).

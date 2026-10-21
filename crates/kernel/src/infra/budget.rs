@@ -34,8 +34,8 @@
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
+use varde_decide::num::schedule;
 use varde_decide::records::keys::{Key, RecordKey};
-use varde_decide::records::shadow;
 use varde_decide::records::table::Fresh;
 
 use super::error::{Cause, KernelError};
@@ -44,13 +44,13 @@ use super::par::par_map_indexed;
 /// The most work one operation may do, in the units of [`Budget`]: about
 /// two seconds of work on one thread of the reference machine, less on
 /// several. A unit is about half a microsecond, each computation kind
-/// charged its own units from the unit table ([`shadow::UNITS`]); the
+/// charged its own units from the unit table ([`schedule::UNITS`]); the
 /// calibration benchmark (`benches/calibrate.rs`) measures a seam pass
 /// that uses it up at 2.1 s on one thread, and fails past four times the
 /// two seconds.
 pub const MAX_WORK: u64 = 1 << 22;
 
-pub use varde_decide::records::shadow::MAX_SUBDIV_DEPTH;
+pub use varde_decide::num::schedule::MAX_SUBDIV_DEPTH;
 
 /// How much work one kernel operation may do, in units of about half a
 /// microsecond of work ([`MAX_WORK`]). Running out gives
@@ -101,7 +101,7 @@ pub enum Step {
 /// double-double (1), then big-float at 212, 424 and 848 bits (2 to 4).
 /// The top level's width is the highest precision there is: an item still
 /// open there reaches [`Cap::PrecisionBits`].
-pub(crate) const LEVELS: u8 = shadow::LEVELS as u8;
+pub(crate) const LEVELS: u8 = schedule::LEVELS as u8;
 
 /// The step of one computation at precision level `level`: ordinary work
 /// at the first level, a precision step above it.
@@ -113,9 +113,9 @@ pub(crate) fn level_step(level: u8) -> Step {
 }
 
 /// The units of one seam-bound cell at precision level `level`, from the
-/// unit table ([`shadow::UNITS`]).
+/// unit table ([`schedule::UNITS`]).
 pub(crate) fn seam_cell_units(level: u8) -> u64 {
-    shadow::UNITS.seam_cell[usize::from(level)]
+    schedule::UNITS.seam_cell[usize::from(level)]
 }
 
 /// What [`KernelError::OutOfBudget`] reached.
@@ -316,6 +316,13 @@ impl<'p> Ledger<'p> {
         } else {
             Ok(())
         }
+    }
+
+    /// The item's steps so far, in its order, consecutive steps of a kind
+    /// merged with their units: its escalation sequence, for tests.
+    #[cfg(test)]
+    pub(crate) fn steps(&self) -> &[(Step, u64)] {
+        &self.steps
     }
 
     /// The step holding unit `offset` (from 0) of the item's charges.

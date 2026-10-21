@@ -21,7 +21,8 @@ use malachite::base::num::arithmetic::traits::PowerOf2;
 
 use super::*;
 use crate::ids::{EdgeId, NONE};
-use crate::num::exact::ORDERS;
+use crate::num::exact::{ORDERS, Runs};
+use crate::num::schedule::{ExactUnits, UNITS};
 use crate::perturb::{NU, R_HAT, Rate, T, UP, rates_a};
 use crate::records::keys::{Query, XClusterIx};
 
@@ -1094,13 +1095,18 @@ fn records_of_walks_through_fans_are_the_moved_configuration_s_on_any_threads() 
 
 /// A record's cost in units: each kind of work at its price in parts,
 /// summed over the exact stages and the levels, rounded up to whole units
-/// once for the record, not per kind.
+/// once for the record, not per kind; each exact predicate's runs at its
+/// own kind's row.
 #[test]
 fn a_record_s_cost_is_its_parts_rounded_up_once() {
+    let row = |k: u64| ExactUnits {
+        filter: 3 * k,
+        expansion: 5 * k,
+        rational: 7 * k,
+    };
     let u = RecordUnits {
-        filter: 3,
-        expansion: 5,
-        rational: 7,
+        exact: [row(1), row(2), row(3), row(4), row(5)],
+        rational: 9,
         eval: [1, 2, 3, 4, 5],
         root: [10, 20, 30, 40, 50],
         foot_poly: [100, 200, 300, 400, 500],
@@ -1109,13 +1115,27 @@ fn a_record_s_cost_is_its_parts_rounded_up_once() {
         zorder_box: [21, 22, 23, 24, 25],
         hit: 77,
     };
-    let mut cost = Cost::exact(Work {
+    let mut work = Work {
+        longest: 9,
+        ..Work::default()
+    };
+    work.runs[PredKind::Side.index()] = Runs {
         filters: 2,
         expansions: 1,
-        longest: 9,
         rationals: 1,
-    });
+    };
+    let mut cost = Cost::exact(work);
     assert_eq!(cost.exact_parts(&u), 2 * 3 + 5 + 7);
+    // The same runs of a dearer kind at its row; runs in rationals
+    // outside a predicate at theirs.
+    let mut dearer = cost;
+    dearer
+        .exact
+        .runs
+        .swap(PredKind::Side.index(), PredKind::Orient3.index());
+    dearer.rationals = 2;
+    assert_eq!(dearer.exact_parts(&u), 3 * (2 * 3 + 5 + 7) + 2 * 9);
+    assert_eq!(dearer.exact.total(), cost.exact.total());
     cost.levels[0].evals = 4;
     cost.levels[3].evals = 1;
     cost.levels[3].roots = RootWork {
@@ -1134,22 +1154,21 @@ fn a_record_s_cost_is_its_parts_rounded_up_once() {
     kinds.levels[2].ends = 3;
     kinds.levels[4].boxes = 5;
     kinds.hits = 2;
+    kinds.rationals = 1;
     assert_eq!(kinds.level_parts(1, &u), 2 * 200 + 2000);
     assert_eq!(kinds.level_parts(2, &u), 3 * 13);
     assert_eq!(kinds.level_parts(4, &u), 5 * 25);
     assert_eq!(
         kinds.parts(&u),
-        parts + 2 * 200 + 2000 + 3 * 13 + 5 * 25 + 2 * 77
+        parts + 2 * 200 + 2000 + 3 * 13 + 5 * 25 + 2 * 77 + 9
     );
     assert_eq!(kinds.and(Cost::default()), kinds);
     assert_eq!(kinds.and(kinds).parts(&u), 2 * kinds.parts(&u));
     assert_eq!(cost.units(&u), parts.div_ceil(UNIT_PARTS));
     // Below a unit, a record costs one; nothing costs nothing.
-    let one = Cost::exact(Work {
-        filters: 1,
-        ..Work::default()
-    });
-    assert_eq!(one.units(&u), 1);
+    let mut one = Work::default();
+    one.runs[PredKind::Hom.index()].filters = 1;
+    assert_eq!(Cost::exact(one).units(&u), 1);
     assert_eq!(Cost::default().units(&UNITS.record), 0);
     // Counts past `u32` per kind saturate, never wrap.
     let mut huge = Cost::default();
@@ -1159,30 +1178,6 @@ fn a_record_s_cost_is_its_parts_rounded_up_once() {
         ..u
     };
     assert_eq!(huge.parts(&dear), u64::MAX);
-}
-
-/// Every kind with levels costs at least as much at a level as at the one
-/// below, and something at each: a precision step is never free, nor
-/// cheaper than the computation it repeats.
-#[test]
-fn the_unit_table_grows_with_the_level() {
-    let r = &UNITS.record;
-    for (kind, row) in [
-        ("seam cell", UNITS.seam_cell),
-        ("count piece", UNITS.count_piece),
-        ("record eval", r.eval),
-        ("record root", r.root),
-        ("xrec piece", UNITS.xrec_piece),
-        ("foot polynomial", r.foot_poly),
-        ("key at", r.key_at),
-        ("at end", r.at_end),
-        ("z-order box", r.zorder_box),
-    ] {
-        assert!(row[0] > 0, "{kind}: {row:?}");
-        assert!(row.windows(2).all(|w| w[0] <= w[1]), "{kind}: {row:?}");
-    }
-    assert!(r.filter > 0 && r.expansion > 0 && r.rational > 0 && r.hit > 0);
-    const { assert!(UNITS.face_setup > 0) };
 }
 
 /// A key holding the id `NONE` (a vertex, an edge, or an edge of a cut

@@ -92,8 +92,8 @@
 //! (an item per vertex), the collinear overlaps (one item), the face
 //! cycles (one item), the containment
 //! tests (an item per pair asked, in `(component, cycle)` order) and the
-//! regions (one item). Each orientation is charged at the record units of
-//! the stages it ran; each vertex sorted, edge, half-edge walked or
+//! regions (one item). Each orientation is charged at the 2D
+//! orientation's row of the unit table for the stages it ran; each vertex sorted, edge, half-edge walked or
 //! counted, pair of edges with meeting boxes and certificate read is
 //! charged a unit, and the containment boxes and the sweep's boxes a
 //! unit per 64 tested.
@@ -101,8 +101,8 @@
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 
-use varde_decide::num::exact::{MAX_INPUT, value_sign};
-use varde_decide::records::shadow::{Cost, UNIT_PARTS, UNITS};
+use varde_decide::num::exact::{MAX_INPUT, Pred, value_sign};
+use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
 use super::brep_min::planar::Orient;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
@@ -541,15 +541,11 @@ impl Meter<'_, '_> {
     /// The exact sign of `orient(p[0], p[1], p[2])`, `p[0]` vertex `at`:
     /// its filter charged before, any further stage after.
     fn orient(&mut self, p: [[f64; 2]; 3], at: u32) -> Res<Ordering> {
-        let filter = UNITS.record.filter;
+        let pred = Orient(p);
+        let filter = UNITS.record.of(pred.kind()).filter;
         self.parts(filter)?;
-        let (s, w) = value_sign(&Orient(p));
-        let cost = Cost {
-            exact: w,
-            ..Cost::default()
-        }
-        .exact_parts(&UNITS.record);
-        self.parts(cost.saturating_sub(filter))?;
+        let (s, w) = value_sign(&pred);
+        self.parts(w.parts(&UNITS.record).saturating_sub(filter))?;
         // Validated coordinates are finite.
         s.map_err(|_| Stop::Failed(ArrangeError::Coord(at)))
     }

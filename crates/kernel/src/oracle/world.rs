@@ -47,6 +47,7 @@ use varde_decide::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::ORDERS;
+use varde_decide::num::schedule::LEVELS;
 use varde_decide::order::{Along, EdgeKey, EntityOrder, VertKey};
 use varde_decide::perturb::{Curved, Moving, Rate, Seg, T, rate_rational, rates_a};
 use varde_decide::records::feet::{EdgeCurve, FeetGeometry, NearFeet};
@@ -60,7 +61,7 @@ use varde_decide::records::keys::{FootId, HKey};
 use varde_decide::records::keys::{SideLine, TileCorner, TileEdge, TilePoint};
 use varde_decide::records::near::OpBands;
 use varde_decide::records::ray::{ChainRec, CurveGeometry, CurvedRays, Span, TileNet};
-use varde_decide::records::shadow::{Cost, Decided, LEVELS, Pass, ShadowGeometry, Shadows};
+use varde_decide::records::shadow::{Cost, Decided, Pass, ShadowGeometry, Shadows};
 use varde_decide::records::side::{SideGeometry, Sides};
 use varde_decide::records::table::Fresh;
 use varde_decide::records::xrec::{
@@ -263,7 +264,7 @@ impl Pass for Tally<'_> {
                 let (v, c) = decide(k);
                 s.decided += 1;
                 s.levels[top_level(&c)] += 1;
-                if c.exact.rationals > 0 {
+                if c.exact.rationals() > 0 || c.rationals > 0 {
                     s.rationals += 1;
                 }
                 v
