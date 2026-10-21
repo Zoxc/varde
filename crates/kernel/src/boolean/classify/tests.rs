@@ -4,9 +4,9 @@
 //! without transversal squares, and the tie bound; a query whose first
 //! direction runs through a vertex; the wedges, fin and ledge slivers
 //! within the depth the hysteresis needs; the cap where the hysteresis
-//! can't settle; running out of budget; the same verdicts whatever the
-//! order of the triangles, loops and regions; refused input; and regions
-//! read off a face arrangement.
+//! can't settle; running out of budget; the charges of a square and of a
+//! query; the same verdicts whatever the order of the triangles, loops
+//! and regions; refused input; and regions read off a face arrangement.
 
 use varde_decide::num::exact::rat;
 
@@ -451,6 +451,73 @@ fn running_out_of_budget_stops_the_audit() {
         ),
         "{e:?}"
     );
+}
+
+/// A square's near/far certificate is charged at the audit's row of the
+/// unit table, per piece, its parts rounded up once: the square, its
+/// eight loop tests (four apart from it, four of the inside test) and the
+/// leaves', each triangle of both boundaries and each ribbon, and the
+/// inside test's two predicates at the exact filter's price.
+#[test]
+fn a_square_is_charged_its_certificate_at_the_audit_s_row() {
+    let p = plane();
+    let region = p.region(&square(-64.0, -64.0, 128.0), 0);
+    let cell = calibration::cell_at(p.uv([1.0, 1.0]), 22);
+    let solid = cuboid([-1.0, -1.0, 2.0], [3.0, 3.0, 4.0]);
+    let before = cuboid([8.0, 8.0, 1.0], [9.0, 9.0, 2.0]);
+    let ribbons = [Ribbon {
+        ends: [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+        beta: 1e-6,
+    }; 3];
+    let leaves = [p.leaf(&[[40.0, 40.0], [41.0, 41.0]], Cover::Near, 0); 5];
+    let u = UNITS.audit;
+    let filters = 2 * UNITS.record.filter;
+    for (leaves, ribbons, solid, before) in [
+        (&[][..], &[][..], &[][..], &[][..]),
+        (&leaves[..], &[][..], &[][..], &[][..]),
+        (&[][..], &ribbons[..], &solid[..], &[][..]),
+        (&leaves[..], &ribbons[..], &solid[..], &before[..]),
+    ] {
+        let input = AuditInput {
+            tile: &p.tile,
+            regions: std::slice::from_ref(&region),
+            leaves,
+            ribbons,
+            solid,
+            before,
+            bands: BANDS,
+        };
+        let parts = u.square
+            + (8 + leaves.len() as u64) * u.test
+            + (solid.len() + before.len()) as u64 * u.triangle
+            + ribbons.len() as u64 * u.ribbon
+            + filters;
+        assert_eq!(
+            calibration::squares(&input, 0, &[cell]),
+            Some(parts.div_ceil(UNIT_PARTS)),
+            "{} leaves, {} ribbons, {} triangles",
+            leaves.len(),
+            ribbons.len(),
+            solid.len() + before.len()
+        );
+    }
+}
+
+/// A query at a far square's centre is charged its predicates alone: a
+/// solid it misses costs no square's row, and twice the solid's
+/// triangles cost twice the predicates, within the one unit rounded up.
+#[test]
+fn a_query_is_charged_its_predicates_alone() {
+    let solid = cuboid([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]);
+    assert_eq!(calibration::query(&[], [5.0, 5.0, 0.0], 0), (Some(0), 0));
+    let (w, once) = calibration::query(&solid, [0.25, 0.125, 0.0], 0);
+    assert_eq!(w, Some(1));
+    let twice: Vec<Tri> = [solid.clone(), solid].concat();
+    let (w, both) = calibration::query(&twice, [0.25, 0.125, 0.0], 0);
+    assert_eq!(w, Some(2));
+    assert!((2 * once - 1..=2 * once).contains(&both), "{once} {both}");
+    // Each triangle's three edges at least, each at the filter's price.
+    assert!(once * UNIT_PARTS >= 12 * 3 * UNITS.record.filter, "{once}");
 }
 
 #[test]

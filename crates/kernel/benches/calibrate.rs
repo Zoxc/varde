@@ -54,6 +54,8 @@ use varde_decide::records::side::Sides;
 use varde_decide::records::table::Fresh;
 use varde_decide::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms};
 use varde_kernel::MAX_WORK;
+use varde_kernel::boolean::classify::calibration as audit;
+use varde_kernel::boolean::classify::{AuditInput, AuditRegion, Bands, Cover, Leaf, Ribbon, Tri};
 use varde_kernel::geom::certify::SeamBound;
 use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
 use varde_kernel::geom::curve::{Curve3D, PCurve};
@@ -93,6 +95,7 @@ fn main() -> ExitCode {
         hit_rows(budget, &mut rows);
         record_rows(budget, &mut rows);
         record_kind_rows(budget, &mut rows);
+        audit_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -973,5 +976,209 @@ fn key_rows(budget: Duration, rows: &mut Vec<Row>) {
         let parts = UNITS.record.key_at[level];
         let kind = format!("key_at L{level}");
         record_kind_row(rows, &kind, ns, (&seq.cost, records), (ops, parts));
+    }
+}
+
+// ---------------------------------------------------------------------
+// The label audit.
+
+/// The cuboid `[lo, hi]` as twelve triangles facing out.
+fn cuboid(lo: [f64; 3], hi: [f64; 3]) -> Vec<Tri> {
+    let c =
+        |x: usize, y: usize, z: usize| [[lo[0], hi[0]][x], [lo[1], hi[1]][y], [lo[2], hi[2]][z]];
+    let quads = [
+        [c(0, 0, 0), c(0, 0, 1), c(0, 1, 1), c(0, 1, 0)],
+        [c(1, 0, 0), c(1, 1, 0), c(1, 1, 1), c(1, 0, 1)],
+        [c(0, 0, 0), c(1, 0, 0), c(1, 0, 1), c(0, 0, 1)],
+        [c(0, 1, 0), c(0, 1, 1), c(1, 1, 1), c(1, 1, 0)],
+        [c(0, 0, 0), c(0, 1, 0), c(1, 1, 0), c(1, 0, 0)],
+        [c(0, 0, 1), c(1, 0, 1), c(1, 1, 1), c(0, 1, 1)],
+    ];
+    quads
+        .iter()
+        .flat_map(|[a, b, c, d]| [[*a, *b, *c], [*a, *c, *d]])
+        .collect()
+}
+
+/// `orient(a, b, c)` in the plane: positive when `c` lies left of `a →
+/// b`, as the audit's inside test asks it.
+struct Orient2([[f64; 2]; 3]);
+
+impl Pred for Orient2 {
+    fn eval<N: Num>(&self) -> N {
+        let [a, b, c] = self.0.map(|p| p.map(N::lit));
+        let (bx, by) = (b[0].sub(&a[0]), b[1].sub(&a[1]));
+        let (cx, cy) = (c[0].sub(&a[0]), c[1].sub(&a[1]));
+        bx.mul(&cy).sub(&by.mul(&cx))
+    }
+}
+
+/// The near/far certificate of an audit square, per piece: 256 squares
+/// 1 mm across inside a square region 2048 mm across on the plane `z =
+/// 0`, classified alone (the square row, its loop tests and the exact
+/// predicates of its inside test included), then against 192 triangles
+/// (16 cuboids above and beside the squares: feet inside some, outside
+/// others), 256 ribbons, and a region of 1024 sides with 1024 leaves
+/// apart from the squares: each piece's time is the difference over its
+/// count. Then queries at a square's centre against the cuboids, timed
+/// whole against their predicates' units: printed, not a row, as a query
+/// is charged at the exact stages' rows.
+fn audit_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let (tile, uv) = audit::plane();
+    let region = |pts: &[[f64; 2]]| AuditRegion {
+        loops: vec![pts.iter().map(|&p| uv(p)).collect()],
+        winding: 0,
+    };
+    let s = 1024.0;
+    let square = region(&[[-s, -s], [s, -s], [s, s], [-s, s]]);
+    let gon: Vec<[f64; 2]> = (0..1024)
+        .map(|k| {
+            let a = k as f64 / 1024.0 * std::f64::consts::TAU;
+            [s * trig::cos(a), s * trig::sin(a)]
+        })
+        .collect();
+    let many = region(&gon);
+    let solid: Vec<Tri> = (0..16)
+        .flat_map(|k| {
+            let (x, y) = ((k % 4) as f64 * 8.0 - 12.0, (k / 4) as f64 * 8.0 - 12.0);
+            cuboid([x, y, 2.0 + k as f64], [x + 6.0, y + 6.0, 4.0 + k as f64])
+        })
+        .collect();
+    let ribbons: Vec<Ribbon> = (0..256)
+        .map(|k| {
+            let (x, y) = ((k % 16) as f64 - 8.0, (k / 16) as f64 - 8.0);
+            Ribbon {
+                ends: [[x, y, 1.0], [x + 0.5, y + 0.25, 1.5]],
+                beta: 1e-6,
+            }
+        })
+        .collect();
+    let apart: Vec<Leaf> = (0..1024)
+        .map(|k| {
+            let [p, q] = [
+                uv([1100.0 + k as f64, 1100.0]),
+                uv([1100.5 + k as f64, 1100.5]),
+            ];
+            let lo = |k: usize| if q[k] < p[k] { q[k] } else { p[k] };
+            let hi = |k: usize| if q[k] > p[k] { q[k] } else { p[k] };
+            Leaf {
+                uv: [[lo(0), lo(1)], [hi(0), hi(1)]],
+                cover: Cover::Near,
+                partner: k,
+            }
+        })
+        .collect();
+    let cells: Vec<(u32, u64, u64)> = (0..256)
+        .map(|k| audit::cell_at(uv([(k % 16) as f64 - 8.0, (k / 16) as f64 - 8.0]), 22))
+        .collect();
+    let bands = Bands {
+        eps_aud: 1.0 / 2048.0,
+        rho_tie: 1.0 / 16384.0,
+    };
+    let input = |regions: &[AuditRegion], leaves: &[Leaf], ribbons: &[Ribbon], solid: &[Tri]| {
+        // Each fixture's squares classified: the time per square and
+        // the units per square.
+        let input = AuditInput {
+            tile: &tile,
+            regions,
+            leaves,
+            ribbons,
+            solid,
+            before: &[],
+            bands,
+        };
+        let units = audit::squares(&input, 0, &cells).expect("classified");
+        let ns = time(budget, || {
+            black_box(audit::squares(&input, 0, &cells));
+            cells.len() as u64
+        });
+        (ns, units as f64 / cells.len() as f64)
+    };
+    let alone = std::slice::from_ref(&square);
+    let (base, base_units) = input(alone, &[], &[], &[]);
+    // The square's own price: its inside test's predicates timed apart
+    // and taken off (its loop tests are a few nanoseconds).
+    let preds: Vec<Orient2> = cells
+        .iter()
+        .flat_map(|&(level, i, j)| {
+            let n = (1u64 << level) as f64;
+            let c = [(i as f64 + 0.5) / n, (j as f64 + 0.5) / n];
+            let l = &square.loops[0];
+            (0..l.len())
+                .map(move |k| (l[k], l[(k + 1) % l.len()]))
+                .filter(move |(a, b)| (a[1] > c[1]) != (b[1] > c[1]))
+                .map(move |(a, b)| Orient2([a, b, c]))
+        })
+        .collect();
+    let per_square = preds.len() as f64 / cells.len() as f64;
+    let pred_ns = time(budget, || {
+        for p in &preds {
+            let _ = black_box(exact::value_sign(p));
+        }
+        preds.len() as u64
+    });
+    println!(
+        "  audit square: {} parts each now, about {:.0} parts measured \
+         ({per_square} inside-test predicates of {pred_ns:.0} ns each taken off)",
+        UNITS.audit.square,
+        (base - per_square * pred_ns) / UNIT_NS * UNIT_PARTS as f64
+    );
+    rows.push(Row {
+        kind: "audit square".into(),
+        ns: base,
+        units: base_units,
+    });
+    let part = |n: usize, p: u64| (n as f64, p as f64 / UNIT_PARTS as f64);
+    let u = UNITS.audit;
+    let tests = 2 * (gon.len() - 4) + apart.len();
+    for (kind, (ns, _), (n, units)) in [
+        (
+            "audit triangle",
+            input(alone, &[], &[], &solid),
+            part(solid.len(), u.triangle),
+        ),
+        (
+            "audit ribbon",
+            input(alone, &[], &ribbons, &[]),
+            part(ribbons.len(), u.ribbon),
+        ),
+        (
+            "audit test",
+            input(std::slice::from_ref(&many), &apart, &[], &[]),
+            part(tests, u.test),
+        ),
+    ] {
+        rows.push(Row {
+            kind: kind.into(),
+            ns: (ns - base) / n,
+            units,
+        });
+    }
+    // Queries from inside the third cuboid's column, and from between the
+    // cuboids, each along every direction.
+    for (kind, p) in [
+        ("audit query, inside", [-12.0 + 3.0 * 8.0 / 8.0, -10.0, 4.5]),
+        ("audit query, outside", [-13.0, -13.0, 0.0]),
+    ] {
+        let mut units = 0;
+        for k in 0..3 {
+            let (w, n) = audit::query(&solid, p, k);
+            assert!(w.is_some(), "{kind}: settled along direction {k}");
+            units += n;
+        }
+        let ns = time(budget, || {
+            for k in 0..3 {
+                black_box(audit::query(&solid, p, k));
+            }
+            3
+        });
+        // Not a kind of its own: a query costs its predicates, charged at
+        // the exact stages' rows, measured on other predicates.
+        let units = units as f64 / 3.0;
+        println!(
+            "  {kind}: {ns:.0} ns, {units:.1} units at the exact stages' prices, \
+             {:.0} ns per unit",
+            ns / units
+        );
     }
 }

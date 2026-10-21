@@ -260,6 +260,30 @@ pub struct Units {
     pub xrec_piece: [u64; LEVELS],
     /// The work a record's decision reports ([`Cost`]), in parts.
     pub record: RecordUnits,
+    /// The near/far distance certificate of a square of the kernel's
+    /// label audit, in parts.
+    pub audit: AuditUnits,
+}
+
+/// The parts of a unit ([`UNIT_PARTS`]) of each piece of the near/far
+/// distance certificate of one square of a planar face's label audit
+/// (the kernel's `boolean::classify`). Its exact predicates (the square
+/// against the region's loops, and the queries at far squares' centres)
+/// are charged as records' are ([`RecordUnits`]), not here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuditUnits {
+    /// The square itself: its centre evaluated on the face's tile and
+    /// certified, and the reach of the square from it.
+    pub square: u64,
+    /// A segment of the region's loops or a leaf's box tested against
+    /// the square's extent.
+    pub test: u64,
+    /// The distance from the square's centre to a triangle of the other
+    /// operand's boundary bounded below and above.
+    pub triangle: u64,
+    /// The distance from the square's centre to a coedge's ribbon piece
+    /// bounded below.
+    pub ribbon: u64,
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of each kind of work a record's
@@ -304,7 +328,8 @@ pub struct RecordUnits {
 /// at the first level (and a curved key's value at every level); where
 /// no fixture reaches a level they are set from a measured row: a foot
 /// polynomial at six evaluations, an end test at four, a z-order
-/// sub-box at an edge pair's search piece.
+/// sub-box at an edge pair's search piece. The label audit's pieces are
+/// measured on squares of a plane face against cuboids' triangles.
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     count_piece: [9, 10, 40, 40, 48],
@@ -321,6 +346,12 @@ pub const UNITS: Units = Units {
         at_end: [44, 720, 2080, 2200, 2640],
         zorder_box: [576, 640, 1792, 1920, 2176],
         hit: 5504,
+    },
+    audit: AuditUnits {
+        square: 320,
+        test: 1,
+        triangle: 840,
+        ribbon: 192,
     },
 };
 

@@ -95,10 +95,14 @@
 //! **Order and work.** The regions are searched together, one pass per
 //! depth over every region's squares in key order (region, then the
 //! square's key), then one pass over the regions with far squares at that
-//! depth, each querying its squares in turn. Each square tested is a
-//! unit, each segment, leaf and ribbon tested against it a part
-//! ([`UNIT_PARTS`]), each distance bounded a row evaluation, each exact
-//! predicate at the record units of the stages it ran. Each region's
+//! depth, each querying its squares in turn. A square's near/far
+//! certificate is its own kind in the unit table ([`AuditUnits`]): each
+//! loop segment tested against the square, then, unless it is dropped,
+//! the square itself, each leaf tested against it, each triangle and
+//! ribbon whose distance it bounds, in parts of a unit ([`UNIT_PARTS`])
+//! rounded up once per square. Its exact predicates, and
+//! a query's (a query costs its predicates alone), are charged as
+//! records' are, at the units of the stages they ran. Each region's
 //! verdict depends on its own geometry alone; of several mismatches, the
 //! one reported is the first region's in the caller's order.
 
@@ -110,6 +114,9 @@ use varde_decide::num::bounded::{Bounded, down, up};
 use varde_decide::num::exact::{self, MAX_INPUT, Num, Pred, value_sign};
 use varde_decide::perturb::T;
 use varde_decide::records::shadow::{Cost, UNIT_PARTS, UNITS};
+
+#[cfg(doc)]
+use varde_decide::records::shadow::AuditUnits;
 
 use crate::geom::lattice::MAX_LEVEL;
 use crate::geom::tile::Tile;
@@ -667,24 +674,27 @@ struct Meter<'l, 'p> {
 }
 
 impl Meter<'_, '_> {
-    fn units(&mut self, n: u64) -> Res<()> {
-        self.ledger.charge(Step::Work, n)?;
-        Ok(())
-    }
-
+    /// Charges `p` parts of a unit before the work they stand for: the
+    /// whole units they complete now, the rest with the next parts or at
+    /// the item's end ([`Meter::finish`]).
     fn parts(&mut self, p: u64) -> Res<()> {
         self.parts = self.parts.saturating_add(p);
         let whole = self.parts / UNIT_PARTS;
         self.parts %= UNIT_PARTS;
         if whole > 0 {
-            self.units(whole)?;
+            self.ledger.charge(Step::Work, whole)?;
         }
         Ok(())
     }
 
-    /// A distance bounded: one row evaluation.
-    fn row(&mut self) -> Res<()> {
-        self.parts(UNITS.record.eval[0])
+    /// The item's parts left over, rounded up to a unit: an item is
+    /// charged its parts rounded up once.
+    fn finish(&mut self) -> Res<()> {
+        if self.parts > 0 {
+            self.parts = 0;
+            self.ledger.charge(Step::Work, 1)?;
+        }
+        Ok(())
     }
 
     /// The exact sign of `pred`, its filter charged before and any
@@ -717,7 +727,10 @@ where
     F: Fn(&T, &mut Meter<'_, '_>) -> Res<R> + Sync + Send,
 {
     work.pass(Pass { stage, rung: 0 }, items, |item, ledger| {
-        f(item, &mut Meter { ledger, parts: 0 })
+        let mut m = Meter { ledger, parts: 0 };
+        let out = f(item, &mut m)?;
+        m.finish()?;
+        Ok(out)
     })
     .map_err(|halt| match halt {
         Halt::Failed { error, .. } => error,
@@ -732,11 +745,13 @@ fn classify(
     cell: Cell,
     m: &mut Meter<'_, '_>,
 ) -> Res<Class> {
-    m.units(1)?;
     let [lo, hi] = cell.bounds();
     if !meets_region(region, lo, hi, m)? && !inside(region, cell.centre(), m)? {
         return Ok(Class::Drop);
     }
+    // Then the square's near/far certificate, at the audit's own row.
+    let units = &UNITS.audit;
+    m.parts(units.square)?;
     let input = face.input;
     let [u, v] = cell.centre();
     let at = input.tile.eval(u, v);
@@ -752,7 +767,7 @@ fn classify(
     let reach = up(up(face.lip[0] * h) + up(face.lip[1] * h) + e);
     let (mut near_lo, mut near_hi) = (f64::INFINITY, f64::INFINITY);
     for t in input.solid.iter().chain(input.before) {
-        m.row()?;
+        m.parts(units.triangle)?;
         let [l, h] = tri_dist(p, t);
         near_lo = least(near_lo, l);
         near_hi = least(near_hi, h);
@@ -760,7 +775,7 @@ fn classify(
     // Parallel where a Near or Contact leaf meets the square.
     let mut partners = Vec::new();
     for l in input.leaves {
-        m.parts(1)?;
+        m.parts(units.test)?;
         let meets = (0..2).all(|k| l.uv[0][k] <= hi[k] && lo[k] <= l.uv[1][k]);
         if meets && l.cover != Cover::Simple {
             partners.push(Partner {
@@ -775,7 +790,7 @@ fn classify(
     } else {
         let mut band = input.bands.rho_tie;
         for r in input.ribbons {
-            m.row()?;
+            m.parts(units.ribbon)?;
             let [l, _] = seg_dist(bv(p), r.ends[0], r.ends[1]);
             let clear = down(l - reach) > r.beta;
             if !clear && r.beta > band {
@@ -806,7 +821,7 @@ fn meets_region(
     for l in &region.loops {
         for (k, &a) in l.iter().enumerate() {
             let b = l[(k + 1) % l.len()];
-            m.parts(1)?;
+            m.parts(UNITS.audit.test)?;
             let apart = (0..2).any(|c| least(a[c], b[c]) >= hi[c] || most(a[c], b[c]) <= lo[c]);
             if apart {
                 continue;
@@ -837,7 +852,7 @@ fn inside(region: &AuditRegion, p: [f64; 2], m: &mut Meter<'_, '_>) -> Res<bool>
     for l in &region.loops {
         for (k, &a) in l.iter().enumerate() {
             let b = l[(k + 1) % l.len()];
-            m.parts(1)?;
+            m.parts(UNITS.audit.test)?;
             if (a[1] > p[1]) == (b[1] > p[1]) {
                 continue;
             }
@@ -1080,6 +1095,80 @@ fn least(a: f64, b: f64) -> f64 {
 /// The greater of two values, by compare and select.
 fn most(a: f64, b: f64) -> f64 {
     if b > a { b } else { a }
+}
+
+/// Hooks for the unit table's calibration benchmark
+/// (`crates/kernel/benches/calibrate.rs`), which times squares of the
+/// audit and queries at their centres against the units charged for
+/// them. Not part of the kernel's interface.
+#[doc(hidden)]
+pub mod calibration {
+    use super::*;
+    use crate::geom::form::{FormKey, PlaneKey};
+    use crate::geom::lattice::{CELL, Lattice};
+    use crate::infra::budget::Budget;
+
+    /// The plane `z = 0` on its base tile, and the UV of its point `(x,
+    /// y, 0)` (exact for dyadic coordinates).
+    pub fn plane() -> (Tile, impl Fn([f64; 2]) -> [f64; 2]) {
+        let key = PlaneKey::new([0.0, 0.0, 1.0], [0.0; 3]).expect("a plane");
+        let lattice = Lattice::new(FormKey::Plane(key)).expect("its lattice");
+        let tile = lattice.base_tile(0, 0).expect("its tile");
+        let (o, [u, v, _]) = (lattice.origin(), lattice.axes());
+        let uv = move |[x, y]: [f64; 2]| {
+            let d = [x - o[0], y - o[1], -o[2]];
+            let along = |a: [f64; 3]| (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) / CELL + 0.5;
+            [along(u), along(v)]
+        };
+        (tile, uv)
+    }
+
+    /// The square of the face's UV at `level` and indices `(i, j)` that
+    /// holds the UV point `uv`.
+    pub fn cell_at(uv: [f64; 2], level: u32) -> (u32, u64, u64) {
+        let n = (1u64 << level) as f64;
+        (
+            level,
+            (uv[0] * n).floor() as u64,
+            (uv[1] * n).floor() as u64,
+        )
+    }
+
+    /// Classifies the squares `cells` (level, `u` index, `v` index) of
+    /// region `region` of `input`, as the audit does, in one pass on a
+    /// fresh budget: the units charged, or `None` if the input isn't
+    /// taken or the pass doesn't finish.
+    pub fn squares(
+        input: &AuditInput<'_>,
+        region: usize,
+        cells: &[(u32, u64, u64)],
+    ) -> Option<u64> {
+        validate(input).ok()?;
+        let face = Face::new(input)?;
+        let r = input.regions.get(region)?;
+        let cells: Vec<Cell> = cells
+            .iter()
+            .map(|&(level, i, j)| Cell { level, i, j })
+            .collect();
+        let mut work = Work::new(&Budget::DEFAULT);
+        run(&mut work, "label audit", &cells, |&c, m| {
+            classify(&face, r, c, m)
+        })
+        .ok()?;
+        Some(work.used())
+    }
+
+    /// The other operand's winding number at `p` along direction `k` of
+    /// [`T`] by `solid`, as a far square's query, in a pass of its own on
+    /// a fresh budget: the winding (`None` where a sign needs the
+    /// perturbation) and the units charged.
+    pub fn query(solid: &[Tri], p: [f64; 3], k: usize) -> (Option<i64>, u64) {
+        let mut work = Work::new(&Budget::DEFAULT);
+        let out = run(&mut work, "label audit queries", &[()], |_, m| {
+            winding(solid, p, T[k % DIRECTIONS], m)
+        });
+        (out.ok().and_then(|w| w[0]), work.used())
+    }
 }
 
 #[cfg(test)]
