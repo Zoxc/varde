@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0
 // SPDX-FileCopyrightText: 2021 The Manifold Authors
 //
-// Derived from Manifold (https://github.com/elalish/manifold),
-//   commit 3ad9216b2b62f4faaf3ea5342b4c99cdca70dbd2, file src/boolean3.cpp,
+// Derived from Manifold (https://github.com/elalish/manifold), commit 3ad9216b2b62f4faaf3ea5342b4c99cdca70dbd2, file src/boolean3.cpp,
 //   function `Shadow01` (lines 53-83),
 //   Copyright 2021 The Manifold Authors,
 //   licensed under the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt).

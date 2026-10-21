@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2017 The Spade Developers
 // SPDX-FileCopyrightText: 2020 The GeoRust Project Developers
 //
-// Derived from robust (https://github.com/georust/robust), crates.io release 1.2.0
-//   (robust-1.2.0.crate, sha256 4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839),
-//   file src/lib.rs, lines 53, 1966-2030, 2061-2074 and 2176-2186 (`SPLITTER`,
+// Derived from robust (https://github.com/georust/robust), commit 654f34cb8cdb3ae21bf59ef3472f92652942cd74, file src/lib.rs,
+//   as released on crates.io as 1.2.0 (robust-1.2.0.crate, sha256
+//   4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839, packaged
+//   from that commit), lines 53, 1966-2030, 2061-2074 and 2176-2186 (`SPLITTER`,
 //   `scale_expansion_zeroelim`, `two_product`, `two_product_tail`, `split`,
 //   `two_product_presplit`, `two_sum`, `two_sum_tail`, `fast_two_sum_tail`,
 //   `fast_two_sum`), itself a transcript of J. R. Shewchuk's public-domain predicates.c,
@@ -16,9 +17,8 @@
 //   two-sum tails inlined; the floating-point operations and their order unchanged.
 // See THIRD_PARTY.md, row L4.
 //
-// Derived from Shewchuk's Robust Predicates (https://www.cs.cmu.edu/~quake/robust.html),
-//   predicates.c of May 18, 1996, retrieved 2026-10-13, sha256
-//   f8662c3f407d1c1c5dcd4dd49ea8b8ddd801a71827d65734206ddc3741792029,
+// Derived from Shewchuk's Robust Predicates (https://www.cs.cmu.edu/~quake/robust.html), sha256 f8662c3f407d1c1c5dcd4dd49ea8b8ddd801a71827d65734206ddc3741792029, file predicates.c,
+//   dated May 18, 1996, retrieved 2026-10-13 (unversioned: its sha256 pins it),
 //   function `linear_expansion_sum_zeroelim` (with its macros `Two_Sum`, `Fast_Two_Sum`),
 //   by Jonathan Richard Shewchuk, placed in the public domain by its author.
 // Translated to Rust and modified: an `Exp` value instead of caller arrays and
