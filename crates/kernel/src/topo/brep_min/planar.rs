@@ -25,9 +25,9 @@
 //!
 //! Vertex ids are the input's indices, edges are numbered as the faces'
 //! corners first reach them, in input order. The planes are made in one
-//! pass over the faces, each charged as one rational run of the record
-//! units; the seam bounds as [`Brep::add_loop`] charges them, a pass per
-//! face.
+//! pass over the faces, each one rational run of the record units in
+//! parts of a unit, summed over the faces and rounded up once; the seam
+//! bounds as [`Brep::add_loop`] charges them, a pass per face.
 //!
 //! **The planar check** ([`Brep::check_planar`]): the invariants of
 //! `check` that a body of planar faces needs, in order, the first fault
@@ -72,7 +72,7 @@ use std::collections::BTreeMap;
 
 use varde_decide::num::exact::{MAX_INPUT, Num, Pred, value_sign};
 use varde_decide::num::schedule::PredKind;
-use varde_decide::num::schedule::UNITS;
+use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
 use super::{BodyKind, Brep, CoedgeId, EdgeId, FaceId, LoopId, RibbonFault, StoreError, VertId};
 use crate::geom::curve::{Curve3D, CurveError, PCurve, Span2, Span3};
@@ -222,8 +222,11 @@ impl Brep {
             stage: "planes",
             rung: 0,
         };
+        let items: Vec<(usize, &Vec<u32>)> = faces.iter().enumerate().collect();
         let planes = work
-            .pass(pass, faces, |f, ledger| plane_of(verts, f, ledger))
+            .pass(pass, &items, |&(face, f), ledger| {
+                plane_of(verts, face, f, ledger)
+            })
             .map_err(|halt| match halt {
                 Halt::Failed { item, error } => PolygonError::Face {
                     face: item,
@@ -556,13 +559,15 @@ impl Brep {
     }
 }
 
-/// The plane of face `f` (module docs), charged as one rational run.
+/// The plane of face `face`, its corners `f` (module docs), charged its
+/// share of the planes' parts ([`plane_units`]).
 fn plane_of(
     verts: &[[f64; 3]],
+    face: usize,
     f: &[u32],
     ledger: &mut Ledger<'_>,
 ) -> Result<Plane, Stop<FaceError>> {
-    ledger.charge(Step::Work, UNITS.record.rational)?;
+    ledger.charge(Step::Work, plane_units(face))?;
     let pts: Vec<[f64; 3]> = f.iter().map(|&v| verts[v as usize]).collect();
     let n = newell(&pts);
     let key = PlaneKey::new(n, pts[0]).map_err(|e| Stop::Failed(FaceError::Plane(e)))?;
@@ -580,6 +585,23 @@ fn plane_of(
         flipped,
         uv,
     })
+}
+
+/// The units face `face`'s plane is charged: each plane costs one
+/// rational run of the record units, in parts of a unit
+/// ([`UNIT_PARTS`]), and the planes' parts are summed in face order and
+/// rounded up once, so the faces before and including `face` charge
+/// together their parts rounded up. Face `k` takes the difference of
+/// those roundings up to `k + 1` faces and up to `k`: a share fixed by
+/// its index, charged before its work, the pass's total the rounded-up
+/// sum whichever face it runs out at.
+fn plane_units(face: usize) -> u64 {
+    let upto = |n: usize| {
+        (n as u64)
+            .saturating_mul(UNITS.record.rational)
+            .div_ceil(UNIT_PARTS)
+    };
+    upto(face + 1) - upto(face)
 }
 
 /// The Newell normal of a polygon (twice its vector area): along the

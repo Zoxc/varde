@@ -5,10 +5,11 @@
 //! surface yet). Every body passes the planar check, relabelled too;
 //! each fault the check names is found on a store broken for it.
 
+use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 use varde_testkit::rng::Rng;
 use varde_testkit::sheets::{self, Diagonals, OFFSET, Pair, Polygons, SmoothPair, Wavy};
 
-use super::planar::{CheckFault, FaceError, PolygonError, line, plane_uv, uv_line};
+use super::planar::{CheckFault, FaceError, PlanarCheck, PolygonError, line, plane_uv, uv_line};
 use super::*;
 use crate::geom::curve::{Span2, Span3};
 use crate::geom::form::{CylinderKey, FormKey};
@@ -375,6 +376,64 @@ fn faults_are_found_with_their_entities() {
         store(&spike).check_planar(),
         Err(CheckFault::Crossing(FaceId(0)))
     );
+}
+
+/// The planes' pass charges its faces' planes in parts of a unit,
+/// summed and rounded up once: a cube's six planes take
+/// `⌈6·rational/64⌉` units, the room for them builds every plane and the
+/// first seam bound runs out, one unit less runs out at the last plane.
+#[test]
+fn planes_are_charged_their_parts_rounded_up_once() {
+    let verts: Vec<[f64; 3]> = (0..8)
+        .map(|k| [k & 1, (k >> 1) & 1, (k >> 2) & 1].map(f64::from))
+        .collect();
+    let faces = vec![
+        vec![0, 2, 3, 1],
+        vec![4, 5, 7, 6],
+        vec![0, 1, 5, 4],
+        vec![2, 6, 7, 3],
+        vec![0, 4, 6, 2],
+        vec![1, 3, 7, 5],
+    ];
+    let planes = (6 * UNITS.record.rational).div_ceil(UNIT_PARTS);
+    assert!(planes < 6 * UNITS.record.rational.div_ceil(UNIT_PARTS));
+    let build = |units| {
+        Brep::from_polygons(
+            BodyKind::Solid,
+            &verts,
+            &faces,
+            TARGET,
+            &mut Work::new(&Budget::new(units)),
+        )
+    };
+    let built = Brep::from_polygons(
+        BodyKind::Solid,
+        &verts,
+        &faces,
+        TARGET,
+        &mut Work::new(&Budget::DEFAULT),
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(built.check_planar(), Ok(PlanarCheck::default()));
+    match build(planes) {
+        Err(PolygonError::Face {
+            face: 0,
+            why:
+                FaceError::Store(StoreError::Coedge {
+                    index: 0,
+                    why: CoedgeError::OutOfBudget(KernelError::OutOfBudget { profile, .. }),
+                }),
+        }) => assert_eq!(profile.stages[0], ("planes", planes)),
+        other => panic!("{other:?}"),
+    }
+    match build(planes - 1) {
+        Err(PolygonError::OutOfBudget(KernelError::OutOfBudget { profile, .. })) => {
+            assert_eq!(profile.stopped.stage, "planes");
+            assert_eq!(profile.stopped.at.item, 5);
+            assert_eq!(profile.stages, vec![("planes", planes - 1)]);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 /// The builder refuses faces it can't take, naming them.
