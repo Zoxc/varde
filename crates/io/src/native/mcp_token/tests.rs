@@ -139,11 +139,13 @@ fn the_relay_reads_without_writing() {
 fn a_fifo_or_symlink_doesnt_block_or_get_followed() {
     let dir = TempDir::new("mcp-token-fifo");
     let fifo = dir.0.join("fifo");
-    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
-    if !made.is_ok_and(|s| s.success()) {
-        eprintln!("no mkfifo, skipping");
-        return;
-    }
+    // Made in-process: a spawned `mkfifo` would share, until it execs,
+    // the files other tests hold locked, and they'd see their own locks
+    // still held.
+    let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `path` is a valid NUL-terminated string that outlives the call.
+    let made = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+    assert_eq!(made, 0, "mkfifo: {}", std::io::Error::last_os_error());
     let (sender, receiver) = std::sync::mpsc::channel();
     let opening = fifo.clone();
     std::thread::spawn(move || {
