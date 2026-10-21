@@ -19,6 +19,9 @@
 //! target operand's lines, arcs new, vertices the target's where they are
 //! its own, else new, each in input order. Across each piece: the other
 //! target face across a line that two target faces share, none else.
+//! Operand edges: each line the target edge it lies on, each arc the
+//! snapped edge it is a piece of, none for the rim's and the cuts' arcs;
+//! the fold reads from the stores whether they lie on an open boundary.
 
 use std::collections::BTreeMap;
 
@@ -26,13 +29,13 @@ use varde_decide::ids::{EdgeId, FaceId, VertId};
 use varde_decide::records::keys::Operand;
 
 use super::super::corner::Placement;
-use super::super::rewrite::{EdgeCurve, SnapVert};
+use super::super::rewrite::{EdgeCurve, SnapEdge, SnapVert};
 use super::run::{Setup, Snap, work};
 use crate::boolean::arrange::coincident::{
     Along as LineAlong, Arc, Coincident, CoincidentError, FaceInput, Line, Place, ZeroOf, realise,
 };
 use crate::boolean::arrange::fold::{
-    Fate, Fold, FoldError, FoldInput, Operand as FoldOperand, Source, fold,
+    Fate, Fold, FoldError, FoldInput, Operand as FoldOperand, OperandEdge, Source, fold,
 };
 use crate::geom::curve::PCurve;
 
@@ -178,6 +181,7 @@ pub(crate) fn faces(
         }
         let mut arcs_data: Vec<ArcData> = Vec::new();
         let mut arc_edges: Vec<Option<EdgeId>> = Vec::new();
+        let mut arc_on: Vec<Option<OperandEdge>> = Vec::new();
         for k in &order {
             let e = z
                 .rewrite
@@ -249,6 +253,10 @@ pub(crate) fn faces(
             };
             arcs_data.push((ix, along, wind[k]));
             arc_edges.push(along.map(|(li, _)| lines_data[li as usize].0));
+            arc_on.push(match k {
+                SnapEdge::Piece { edge, .. } => Some((s_op, *edge)),
+                _ => None,
+            });
         }
         // Each rewrite vertex the corner rule put on one of the face's own
         // vertices: a zero-length edge from that vertex, the two records of
@@ -261,6 +269,7 @@ pub(crate) fn faces(
                 joins.push(arcs_data.len() as u32);
                 arcs_data.push(([m, n], None, 0));
                 arc_edges.push(None);
+                arc_on.push(None);
             }
         }
         let lines: Vec<Line<'_>> = lines_data
@@ -309,6 +318,8 @@ pub(crate) fn faces(
             })
             .collect();
         let arc_order: Vec<u32> = (0..arcs.len() as u32).collect();
+        let line_on: Vec<Option<OperandEdge>> =
+            lines_data.iter().map(|l| Some((t_op, l.0))).collect();
         let across: Vec<u32> = realised
             .pieces
             .iter()
@@ -336,6 +347,9 @@ pub(crate) fn faces(
             arcs: &arc_order,
             verts: &vsrc,
             across: &across,
+            stores: [&s.a.brep, &s.b.brep],
+            line_edges: &line_on,
+            arc_edges: &arc_on,
             keep,
         };
         let fd = fold(&fi, &mut work()).map_err(|e| ZoneError::Fold(t, e))?;

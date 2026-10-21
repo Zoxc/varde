@@ -18,6 +18,9 @@
 //!   geometric order ([`Source`]), for the survivors;
 //! - per piece, the kept faces across its edge other than this face
 //!   ([`FoldInput::across`]), for the check;
+//! - the operands' stores and the operand edge each line and arc is a
+//!   piece of ([`FoldInput::line_edges`], [`FoldInput::arc_edges`]), for
+//!   the check on a sheet's open boundary;
 //! - the **keep rule** on windings ([`FoldInput::keep`]), the operation's.
 //!
 //! **Regions.** Between consecutive members of a bundle lies a sliver of
@@ -57,7 +60,15 @@
 //! vertices up to the identifications and one edge per pair, is
 //! connected and a tree or a cycle ([`Shape`]); and each identified edge
 //! has exactly two kept faces or none: the faces across its pieces, and
-//! this face's kept regions beside its bundle's outermost members.
+//! this face's kept regions beside its bundle's outermost members. An
+//! identified edge may instead have exactly **one** kept face when every
+//! piece identified into it is a piece of an edge on its operand's open
+//! boundary: the store a [`BodyKind::Sheet`] and the edge's coedge
+//! without a pair (`pair = NONE`), read from the store, never from
+//! positions. The edge is then on the result's open boundary. One piece
+//! on an open boundary and another not, a new piece (no operand edge),
+//! or a solid's edge with one kept face still fail. A solid has no open
+//! boundary, so on solids the rule stays two or none.
 //!
 //! **Order.** Walks are numbered `2·piece`, along the piece, and
 //! `2·piece + 1` against it; cycles in the order of their least walk;
@@ -76,6 +87,11 @@ use super::coincident::{Coincident, FaceInput, PieceOf};
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::{Internal, KernelError};
 use crate::topo::arrange2d::NONE;
+use crate::topo::brep_min::{BodyKind, Brep, CoedgeId, EdgeId};
+use varde_decide::records::keys;
+
+/// An operand's edge: the operand, its id in that operand's store.
+pub type OperandEdge = (keys::Operand, EdgeId);
 
 /// Which body an entity comes from, in survivor order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -118,6 +134,13 @@ pub struct FoldInput<'a> {
     pub verts: &'a [Source],
     /// Per piece, the kept faces across its edge other than this face.
     pub across: &'a [u32],
+    /// The operands' stores, `A`'s then `B`'s, read for open boundaries.
+    pub stores: [&'a Brep; 2],
+    /// Per line, the operand edge it is a piece of, if any.
+    pub line_edges: &'a [Option<OperandEdge>],
+    /// Per arc, the operand edge it is a piece of, if any (none for a new
+    /// curve).
+    pub arc_edges: &'a [Option<OperandEdge>],
     /// Whether a region of this winding is kept.
     pub keep: &'a (dyn Fn(i64) -> bool + Sync),
 }
@@ -168,7 +191,9 @@ pub struct Collapsed {
     pub into: u32,
     /// The pieces, ascending, the survivor among them.
     pub members: Vec<u32>,
-    /// Its kept faces: 0 or 2.
+    /// Its kept faces: 0 or 2, or 1 where every member is a piece of an
+    /// operand edge on its sheet's open boundary (the edge then on the
+    /// result's open boundary, `pair = NONE`).
     pub faces: u32,
 }
 
@@ -204,7 +229,9 @@ pub enum FoldError {
     Points(u32),
     /// This kept region's quotient is neither a tree nor a cycle.
     Quotient(u32),
-    /// This identified edge (by its survivor) has this many kept faces.
+    /// This identified edge (by its survivor) has this many kept faces:
+    /// neither two nor none, nor one with every member on an open
+    /// boundary.
     Faces {
         /// The survivor.
         edge: u32,
@@ -387,6 +414,29 @@ impl Sides<'_> {
     }
 }
 
+/// Operand `o`'s store.
+fn store<'a>(input: &FoldInput<'a>, o: keys::Operand) -> &'a Brep {
+    match o {
+        keys::Operand::A => input.stores[0],
+        keys::Operand::B => input.stores[1],
+    }
+}
+
+/// Whether piece `p` is a piece of an operand edge on its sheet's open
+/// boundary: the store a sheet, the edge's coedge without a pair.
+fn open(input: &FoldInput<'_>, c: &Coincident, p: u32) -> bool {
+    let on = match c.pieces[p as usize].of {
+        PieceOf::Line { line, .. } => input.line_edges[line as usize],
+        PieceOf::Arc { arc, .. } => input.arc_edges[arc as usize],
+    };
+    let Some((o, e)) = on else {
+        return false;
+    };
+    let s = store(input, o);
+    let ce = s.edge_coedge(e);
+    s.kind() == BodyKind::Sheet && ce != CoedgeId::NONE && s.pair(ce) == CoedgeId::NONE
+}
+
 /// The regions (module docs), on one ledger.
 fn build(input: &FoldInput<'_>, ledger: &mut Ledger<'_>) -> Res<Fold> {
     let c = input.realised;
@@ -400,6 +450,14 @@ fn build(input: &FoldInput<'_>, ledger: &mut Ledger<'_>) -> Res<Fold> {
         || input.lines.len() != face.lines.len()
         || input.arcs.len() != face.arcs.len()
         || input.verts.len() != nf
+        || input.line_edges.len() != face.lines.len()
+        || input.arc_edges.len() != face.arcs.len()
+        || !input
+            .line_edges
+            .iter()
+            .chain(input.arc_edges)
+            .flatten()
+            .all(|&(o, e)| e.index() < store(input, o).edge_count())
         || 2 * np >= NONE as usize
     {
         return fail(FoldError::Input);
@@ -699,7 +757,8 @@ fn build(input: &FoldInput<'_>, ledger: &mut Ledger<'_>) -> Res<Fold> {
                 faces = faces.saturating_add(1);
             }
         }
-        if faces != 0 && faces != 2 {
+        let sheet = faces == 1 && members.iter().all(|&p| open(input, c, p));
+        if faces != 0 && faces != 2 && !sheet {
             return fail(FoldError::Faces { edge: into, faces });
         }
         edges.push(Collapsed {

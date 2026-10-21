@@ -14,7 +14,6 @@ use super::run::{Setup, rim_cut_points};
 use super::zone::ZoneError;
 use super::*;
 use crate::boolean::arrange::coincident::CoincidentError;
-use crate::boolean::arrange::fold::FoldError;
 use crate::topo::arrange2d::ArrangeError;
 
 fn bodies(p: &Pair) -> (Body, Body) {
@@ -65,6 +64,8 @@ struct ZoneOut {
     /// regions of winding at least `keep` are kept, or why the fold
     /// refused.
     fates: Vec<Result<[usize; 2], String>>,
+    /// Per target face folded, its identified edges' kept faces, sorted.
+    kept_faces: Vec<Vec<u32>>,
 }
 
 /// A fixture's outcome.
@@ -126,9 +127,18 @@ fn run_fixture(p: &Pair, keep: i64) -> Outcome {
             .map(|(x, y)| (ids_at(sb, x), ids_at(tb, y)))
             .collect();
         let keep_rule = |w: i64| w >= keep;
-        let fates = match zone::faces(&s, z, &keep_rule) {
-            Ok(fs) => fs.iter().map(|f| Ok(f.fates())).collect(),
-            Err(ZoneError::Fold(_, e)) => vec![Err(format!("{e:?}"))],
+        let (fates, kept_faces) = match zone::faces(&s, z, &keep_rule) {
+            Ok(fs) => (
+                fs.iter().map(|f| Ok(f.fates())).collect(),
+                fs.iter()
+                    .map(|f| {
+                        let mut k: Vec<u32> = f.fold.edges.iter().map(|e| e.faces).collect();
+                        k.sort_unstable();
+                        k
+                    })
+                    .collect(),
+            ),
+            Err(ZoneError::Fold(_, e)) => (vec![Err(format!("{e:?}"))], Vec::new()),
             Err(e) => panic!("{e:?}"),
         };
         zones.push(ZoneOut {
@@ -155,6 +165,7 @@ fn run_fixture(p: &Pair, keep: i64) -> Outcome {
                 .expect("the check takes the zone")
                 .is_none(),
             fates,
+            kept_faces,
         });
     }
     Outcome {
@@ -285,7 +296,8 @@ fn a_fold_edge_on_the_box_edge_without_a_record_is_refused() {
 fn zero_area_regions_are_folded_where_kept_and_dropped_where_not() {
     // Each sliver between a target edge and the snapped edge merged into
     // it has the winding of one sheet: kept and folded on a union's rule,
-    // dropped on an intersection's (both sheets needed).
+    // dropped on an intersection's (both sheets needed). The folds lie
+    // inside the sheets and on the solids' edges: two kept faces each.
     for (name, p) in [
         ("box-edge fold", sheets::box_edge_fold(0.0)),
         ("L-corner", sheets::l_corner(0.0)),
@@ -298,6 +310,10 @@ fn zero_area_regions_are_folded_where_kept_and_dropped_where_not() {
                 assert!(fu[0] >= 1 && fu[1] == 0, "{name}: {fu:?}");
                 assert_eq!([fi[0], fi[1]], [0, fu[0]], "{name}");
             }
+            for k in &u.kept_faces {
+                assert!(!k.is_empty() && k.iter().all(|&f| f == 2), "{name}: {k:?}");
+            }
+            assert!(i.kept_faces.iter().all(Vec::is_empty), "{name}");
         }
     }
     // The flat L-corner quad: its two slivers along the L's outer edges.
@@ -307,11 +323,12 @@ fn zero_area_regions_are_folded_where_kept_and_dropped_where_not() {
 
 #[test]
 fn a_folded_sliver_on_a_sheet_s_boundary_has_one_face() {
-    // On the L-corner quad (two sheets) the slivers lie on both sheets'
-    // boundary: folded, the identified edge has the one kept face inside.
+    // On the L-corner quad (two sheets) under a union the slivers lie on
+    // both sheets' open boundary: folded, each identified edge has the one
+    // kept face inside, on the result's open boundary.
     let o = run_fixture(&sheets::l_corner_quad(0.0), 1);
-    let want = format!("{:?}", FoldError::Faces { edge: 0, faces: 1 });
-    assert_eq!(o.zones[0].fates, [Err(want)]);
+    assert_eq!(o.zones[0].fates, [Ok([2, 0])]);
+    assert_eq!(o.zones[0].kept_faces, [vec![1, 1]]);
 }
 
 #[test]

@@ -1,7 +1,9 @@
 //! The L-shaped sheet with the quad over its corner square (the snap's
 //! L-corner quad pair, the quad laid on the L): the zero-area region
 //! along the L's two outer edges at the corner folds onto a tree, or is
-//! dropped, and a fold edge with one kept face fails the check; a ring of
+//! dropped; a fold edge with one kept face passes the check where all its
+//! members lie on the sheets' open boundaries, and fails where one is an
+//! inner edge, a solid's or a new curve's; a ring of
 //! arcs along a square's sides folds onto a cycle, also pinched at a
 //! contracted corner; survivors by source; the quotient's shapes; the
 //! input's refusals; the same result whatever the arcs' order; and
@@ -11,7 +13,8 @@ use super::*;
 use crate::boolean::arrange::coincident::{self, Along, Arc, Line, Place};
 use crate::geom::curve::PCurve;
 use crate::infra::budget::{Budget, Work};
-use varde_testkit::sheets::{OFFSET, l_corner_quad};
+use crate::topo::brep_min::{BodyKind, Brep};
+use varde_testkit::sheets::{self, OFFSET, Polygons, l_corner_quad};
 
 /// The straight p-curve from `a` to `b` over `[0, 1]`.
 fn seg(a: [f64; 2], b: [f64; 2]) -> PCurve {
@@ -36,6 +39,39 @@ struct Face {
     curves: Vec<(PCurve, [u32; 2], i32, Source)>,
     arcs: Vec<(Vec<Along>, [u32; 2], i32, u32)>,
     contract: Vec<u32>,
+    /// The operands' stores (empty solids unless set).
+    stores: [Brep; 2],
+    /// Per line and per arc, the operand edge it is a piece of.
+    line_edges: Vec<Option<OperandEdge>>,
+    arc_edges: Vec<Option<OperandEdge>>,
+}
+
+/// The store of `p`, a sheet or a solid as `p` says.
+fn store_of(p: &Polygons) -> Brep {
+    let kind = if p.closed {
+        BodyKind::Solid
+    } else {
+        BodyKind::Sheet
+    };
+    Brep::from_polygons(
+        kind,
+        &p.verts,
+        &p.faces,
+        2.5e-6,
+        &mut Work::new(&Budget::DEFAULT),
+    )
+    .unwrap()
+}
+
+/// The edge of `b` from `p` to `q` either way, by its ends' positions.
+fn edge_at(b: &Brep, p: [f64; 3], q: [f64; 3]) -> EdgeId {
+    (0..b.edge_count() as u32)
+        .map(EdgeId)
+        .find(|&e| {
+            let [x, y] = b.ends(e).map(|v| b.pos(v));
+            (x, y) == (p, q) || (x, y) == (q, p)
+        })
+        .unwrap()
 }
 
 /// The fold's other inputs, per piece once the face is realised.
@@ -65,6 +101,7 @@ impl Face {
 
     fn line(&mut self, c: PCurve, ends: [u32; 2], wind: i32, s: Source) -> u32 {
         self.curves.push((c, ends, wind, s));
+        self.line_edges.push(None);
         (self.curves.len() - 1) as u32
     }
 
@@ -74,6 +111,7 @@ impl Face {
             .map(|&(line, forward)| Along { line, forward })
             .collect();
         self.arcs.push((along, ends, wind, order));
+        self.arc_edges.push(None);
         (self.arcs.len() - 1) as u32
     }
 
@@ -145,6 +183,9 @@ impl Face {
             arcs: &aord,
             verts: &self.vsrc,
             across: &across,
+            stores: [&self.stores[0], &self.stores[1]],
+            line_edges: &self.line_edges,
+            arc_edges: &self.arc_edges,
             keep: &keep,
         };
         let f = fold(&input, &mut Work::new(&budget))?;
@@ -169,7 +210,9 @@ type Spec<'a> = ([u32; 2], &'a [(u32, bool)]);
 /// `c` at the L's corner 0, `P` on side 0, `R` at the reflex corner 3,
 /// `Q` on side 5; its sides `c → P` along side 0 and `Q → c` along side
 /// 5, `P → R → Q` across the L. Arcs in `order`, a permutation of
-/// `0..4`. Returns the face and `[c, P, R, Q]`.
+/// `0..4`. The stores are the pair's two sheets, each line a piece of
+/// the L's edge, each arc of the quad's. Returns the face and
+/// `[c, P, R, Q]`.
 fn l_corner(order: [usize; 4]) -> (Face, [u32; 4]) {
     let pair = l_corner_quad(OFFSET);
     let l: Vec<[f64; 2]> = pair.a.verts.iter().map(|p| [p[0], p[1]]).collect();
@@ -212,7 +255,24 @@ fn l_corner(order: [usize; 4]) -> (Face, [u32; 4]) {
     for k in order {
         f.arc(arcs[k].0, arcs[k].1, 1, k as u32);
     }
+    f.stores = [store_of(&pair.a), store_of(&pair.b)];
+    let ring = |n: usize, k: usize| [k, (k + 1) % n];
+    for k in 0..6 {
+        let [i, j] = ring(6, k);
+        let e = edge_at(&f.stores[0], pair.a.verts[i], pair.a.verts[j]);
+        f.line_edges[k] = Some((keys::Operand::A, e));
+    }
+    for (slot, &k) in order.iter().enumerate() {
+        let [i, j] = ring(4, k);
+        let e = edge_at(&f.stores[1], pair.b.verts[i], pair.b.verts[j]);
+        f.arc_edges[slot] = Some((keys::Operand::B, e));
+    }
     (f, [c, p, r, qq])
+}
+
+/// The slot of arc `k` (its place in the geometric order) in `f`.
+fn arc_slot(f: &Face, k: u32) -> usize {
+    f.arcs.iter().position(|a| a.3 == k).unwrap()
 }
 
 /// A's face kept outside the quad (`∪` with the quad's body on it: the
@@ -271,18 +331,98 @@ fn discarded_region_is_dropped() {
     assert_eq!(fold.piece_into, ids);
 }
 
+/// Both sheets kept, no faces across (`∪` of the two sheets): each fold
+/// edge has the quad on one side and nothing on the other.
+fn sheet_union() -> Rules {
+    Rules::new(0, |w| w >= 1)
+}
+
 #[test]
-fn fold_edge_with_one_kept_face_fails() {
-    // Both sheets kept, no faces across: each fold edge has the quad on
-    // one side and nothing on the other.
+fn fold_edge_on_both_sheets_open_boundary_has_one_face() {
+    // Each fold identifies an L side with a quad side, both on their
+    // sheet's open boundary: one kept face, the edge open in the result.
     let (f, _) = l_corner([0, 1, 2, 3]);
-    let err = f.run(&Rules::new(0, |w| w >= 1)).unwrap_err();
+    let (c, fold) = f.run(&sheet_union()).unwrap();
+    assert_eq!(fold.regions.len(), 1);
+    assert_eq!(fold.regions[0].fate, Fate::Folded(Shape::Tree));
+    let side0 = piece(&c, PieceOf::Line { line: 0, part: 0 });
+    let side5 = piece(&c, PieceOf::Line { line: 5, part: 1 });
+    let into: Vec<(u32, u32)> = fold.edges.iter().map(|e| (e.into, e.faces)).collect();
+    let mut want = vec![(side0, 1), (side5, 1)];
+    want.sort_unstable();
+    assert_eq!(into, want);
+}
+
+/// The refusal of a one-face fold edge.
+fn assert_one_face_refused(f: &Face) {
+    let err = f.run(&sheet_union()).unwrap_err();
     assert!(matches!(err, FoldError::Faces { faces: 1, .. }), "{err:?}");
     assert!(err.is_inconsistent());
     assert_eq!(
         err.kernel_error(),
         Some(KernelError::Internal(Internal::Inconsistent))
     );
+}
+
+#[test]
+fn fold_edge_with_one_kept_face_and_an_inner_member_fails() {
+    // The quad with a flap hung on its side `c → P`: that side is an
+    // inner edge of its sheet (its coedge has a pair), the L's side 0 is
+    // on the L's open boundary. Mixed, so one kept face is refused.
+    let (mut f, _) = l_corner([0, 1, 2, 3]);
+    let mut b = l_corner_quad(OFFSET).b;
+    let [q0, q1] = [b.verts[0], b.verts[1]];
+    b.verts.push([q0[0], q0[1], -10.0]);
+    b.verts.push([q1[0], q1[1], -10.0]);
+    b.faces.push(vec![1, 0, 4, 5]);
+    f.stores[1] = store_of(&b);
+    let e = edge_at(&f.stores[1], q0, q1);
+    let ce = f.stores[1].edge_coedge(e);
+    assert_ne!(f.stores[1].pair(ce), CoedgeId::NONE);
+    for k in 0..4 {
+        let [i, j] = [k, (k + 1) % 4];
+        let e = edge_at(&f.stores[1], b.verts[i], b.verts[j]);
+        let slot = arc_slot(&f, k as u32);
+        f.arc_edges[slot] = Some((keys::Operand::B, e));
+    }
+    assert_one_face_refused(&f);
+}
+
+#[test]
+fn fold_edge_with_one_kept_face_on_a_solid_fails() {
+    // The L's sides as the L prism's bottom edges: a closed body has no
+    // open boundary, so one kept face is refused.
+    let (mut f, _) = l_corner([0, 1, 2, 3]);
+    let prism = sheets::l_corner(0.0).a;
+    f.stores[0] = store_of(&prism);
+    let l = l_corner_quad(OFFSET).a;
+    for k in 0..6 {
+        let e = edge_at(&f.stores[0], l.verts[k], l.verts[(k + 1) % 6]);
+        f.line_edges[k] = Some((keys::Operand::A, e));
+    }
+    assert_one_face_refused(&f);
+}
+
+#[test]
+fn fold_edge_with_one_kept_face_and_a_new_member_fails() {
+    // The quad's side `c → P` given as a new curve, no operand edge.
+    let (mut f, _) = l_corner([0, 1, 2, 3]);
+    let slot = arc_slot(&f, 0);
+    f.arc_edges[slot] = None;
+    assert_one_face_refused(&f);
+}
+
+#[test]
+fn interior_folds_keep_two_faces_or_none() {
+    // A face across each side (the L's sides inner edges of a larger
+    // body): the folds keep two faces under `∪`, the region dropped
+    // under `∩`, whatever the stores say.
+    let (f, _) = l_corner([0, 1, 2, 3]);
+    let (_, fold) = f.run(&union_rules()).unwrap();
+    assert!(fold.edges.iter().all(|e| e.faces == 2), "{:?}", fold.edges);
+    let (_, fold) = f.run(&Rules::new(1, |w| w == 2)).unwrap();
+    assert_eq!(fold.regions[0].fate, Fate::Dropped);
+    assert!(fold.edges.is_empty());
 }
 
 #[test]
@@ -431,6 +571,14 @@ fn refusals_name_their_entity() {
     // A column of the wrong length.
     let (mut f, _) = l_corner([0, 1, 2, 3]);
     f.vsrc.pop();
+    assert_eq!(f.run(&union_rules()).unwrap_err(), FoldError::Input);
+    let (mut f, _) = l_corner([0, 1, 2, 3]);
+    f.arc_edges.pop();
+    assert_eq!(f.run(&union_rules()).unwrap_err(), FoldError::Input);
+
+    // An operand edge its store doesn't have.
+    let (mut f, _) = l_corner([0, 1, 2, 3]);
+    f.line_edges[0] = Some((keys::Operand::B, EdgeId(99)));
     assert_eq!(f.run(&union_rules()).unwrap_err(), FoldError::Input);
 }
 
