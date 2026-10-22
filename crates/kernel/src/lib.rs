@@ -32,3 +32,7 @@ pub use infra::error::Stage;
 pub use infra::error::{
     Cause, FeatureKind, Import, Inconsistency, Internal, Invalid, KernelError, Storage, Unsupported,
 };
+pub use infra::ops::{
+    FeatureId, InstanceId, MAX_REPAIR_ROUNDS, MAX_WARNINGS, OpCtx, Repair, Status, Tolerance,
+    Warning, WarningKind,
+};
