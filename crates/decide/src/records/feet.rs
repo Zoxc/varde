@@ -731,26 +731,20 @@ fn exact_events(pts: &[[f64; 4]], q: DVec3, r: f64, ends: [Ordering; 2]) -> Opti
     use crate::num::poly;
     let rat = |x: f64| Rational::try_from(x).ok();
     let (zero, one) = (Rational::from(0u32), Rational::from(1u32));
-    // The Bernstein basis of the span's degree, power form.
-    let n = pts.len().checked_sub(1)?;
-    let basis: Vec<poly::Poly> = (0..=n)
-        .map(|i| {
-            let mut b = vec![zero.clone(); n + 1];
-            b[i] = one.clone();
-            poly::from_bernstein(&b)
-        })
-        .collect();
+    // The span's weight and offsets from `q`, homogeneous, in power form.
+    pts.len().checked_sub(1)?;
     let q = q.to_array().map(rat);
-    let mut w: poly::Poly = Vec::new();
-    let mut x: [poly::Poly; 3] = std::array::from_fn(|_| Vec::new());
-    for (p, b) in pts.iter().zip(&basis) {
+    let mut wb: Vec<Rational> = Vec::with_capacity(pts.len());
+    let mut xb: [Vec<Rational>; 3] = std::array::from_fn(|_| Vec::with_capacity(pts.len()));
+    for p in pts {
         let wk = rat(p[3])?;
-        w = poly::add(&w, &poly::scale(b, &wk));
         for k in 0..3 {
-            let d = (rat(p[k])? - q[k].as_ref()?) * &wk;
-            x[k] = poly::add(&x[k], &poly::scale(b, &d));
+            xb[k].push((rat(p[k])? - q[k].as_ref()?) * &wk);
         }
+        wb.push(wk);
     }
+    let w = poly::from_bernstein(&wb);
+    let x = xb.map(|b| poly::from_bernstein(&b));
     let rr = rat(r)?;
     let mut f = poly::neg(&poly::scale(&poly::mul(&w, &w), &(&rr * &rr)));
     for xk in &x {

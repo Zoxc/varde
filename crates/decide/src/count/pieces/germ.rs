@@ -51,6 +51,7 @@ use malachite::base::num::basic::traits::Zero;
 
 use super::rat;
 use crate::count::boxes::UvSpan;
+use crate::num::poly;
 use crate::records::cusp::{scompose, sdiv, srevert};
 
 /// The series orders a germ is compared to.
@@ -259,11 +260,7 @@ fn germ_of(a: &[Rational; 2], b: &[Rational; 2], w: &[Rational; 3]) -> Option<Ge
         let sq = &w[2] * &x[1] - &one;
         vec![Rational::ZERO, one, sq]
     };
-    let den = vec![
-        w[0].clone(),
-        &two * (&w[1] - &w[0]),
-        &w[0] - &two * &w[1] + &w[2],
-    ];
+    let den = poly::from_bernstein_full(w);
     if a[0] > 0 {
         let x = sdiv(&num(a), &den);
         let s = srevert(&x);

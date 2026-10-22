@@ -231,6 +231,103 @@ impl Rng {
     }
 }
 
+/// Shared by the tests of products, derivatives, the power basis and
+/// forms in any number of variables.
+pub(super) fn ints(rng: &mut Rng, n: usize) -> Poly<Q> {
+    Poly::new((0..=n).map(|_| Q::from(rng.below(201) as i64 - 100))).expect("degree in range")
+}
+
+pub(super) fn int_tensor(rng: &mut Rng, m: usize, n: usize) -> Tensor<Q> {
+    let c = (0..(m + 1) * (n + 1)).map(|_| Q::from(rng.below(201) as i64 - 100));
+    Tensor::new(m, n, c).expect("degrees in range")
+}
+
+/// A dyadic in `[0, 1]`.
+pub(super) fn dyadic(rng: &mut Rng) -> Q {
+    Q::from(rng.below(65)) / Q::from(64u32)
+}
+
+/// A level's polynomial and its true one.
+pub(super) fn poly<S: Level>(rng: &mut Rng, n: usize, errs: bool) -> (Poly<S>, Poly<Q>) {
+    let (p, truth) = rng.poly::<S>(n, errs);
+    (p, Poly::new(truth).expect("degree in range"))
+}
+
+/// A level's tensor and its true one; `weight` keeps the coefficients
+/// in `[1/64, 64]`.
+pub(super) fn tensor<S: Level>(
+    rng: &mut Rng,
+    m: usize,
+    n: usize,
+    errs: bool,
+    weight: bool,
+) -> (Tensor<S>, Tensor<Q>) {
+    let scale = rng.scale();
+    let mut c = Vec::new();
+    let mut truth = Vec::new();
+    for _ in 0..(m + 1) * (n + 1) {
+        let (hi, lo) = if weight {
+            let hi = rng.pow(-6, 5).abs();
+            (hi, hi * rng.pow(-80, -54).abs())
+        } else {
+            rng.coef(scale)
+        };
+        let mut b = S::of(hi, lo);
+        let mut x = b.val();
+        if errs && rng.below(2) == 0 {
+            let (t, r) = rng.errs(hi);
+            b = b.with_errs(t, r);
+            x += rng.lambda() * (q(t) + q(r));
+        }
+        c.push(b);
+        truth.push(x);
+    }
+    (
+        Tensor::new(m, n, c).expect("degrees in range"),
+        Tensor::new(m, n, truth).expect("degrees in range"),
+    )
+}
+
+pub(super) fn poly_holds<S: Level>(what: &str, p: &Poly<S>, truth: &Poly<Q>, stats: &mut [u32; 2]) {
+    assert_eq!(p.degree(), truth.degree(), "{what}");
+    for (b, x) in p.coefs().iter().zip(truth.coefs()) {
+        stats[1] += 1;
+        if holds(what, b, x) {
+            stats[0] += 1;
+        }
+    }
+}
+
+pub(super) fn tensor_holds<S: Level>(
+    what: &str,
+    f: &Tensor<S>,
+    truth: &Tensor<Q>,
+    stats: &mut [u32; 2],
+) {
+    assert_eq!(f.degrees(), truth.degrees(), "{what}");
+    for (b, x) in f.coefs().iter().zip(truth.coefs()) {
+        stats[1] += 1;
+        if holds(what, b, x) {
+            stats[0] += 1;
+        }
+    }
+}
+
+pub(super) fn pbits<S: Level>(p: &Poly<S>) -> Vec<String> {
+    p.coefs().iter().map(Level::bits).collect()
+}
+
+pub(super) fn tbits<S: Level>(f: &Tensor<S>) -> Vec<String> {
+    f.coefs().iter().map(Level::bits).collect()
+}
+
+/// Each coefficient's value and errors: its bits but the signs of zero
+/// parts (`x − x` is `+0` either way round, so a negated difference may
+/// differ in them).
+pub(super) fn value_and_errs<S: Level>(c: &[S]) -> Vec<(Q, (f64, f64))> {
+    c.iter().map(|x| (x.val(), x.errs())).collect()
+}
+
 /// `2ᵉ`, exactly for `e` in the `f64` range.
 pub(super) fn pow2(e: i32) -> f64 {
     let mut x = 1.0;

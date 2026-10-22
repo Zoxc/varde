@@ -11,19 +11,27 @@
 //! In [`curve`], rational spans in homogeneous coordinates
 //! ([`HomCurve`]). In [`product`], products, sums and elevation of both
 //! kinds of form with certified binomial weights, the vector products of
-//! forms, and the tangent and normal numerators; in [`compose`], spans
+//! forms, and the normal numerator; in [`deriv`], hodographs of any
+//! order, the tangent and partial numerators by the quotient rule in
+//! homogeneous form, and the derivatives of a rational form's point; in
+//! [`power`], the power basis and back; in [`nd`], forms in any number
+//! of variables ([`NdTensor`]) with their elevation; in [`compose`], spans
 //! and patches put into line and plane equations, and the shadow of a
 //! span. In [`cone`], the certified normal cone of a vector form's
 //! coefficients ([`NormalCone`]). In [`roots`], root isolation on
 //! `[0, 1]`: certified simple roots, and clusters for the rest. Every operation commutes with
 //! reversal to the bit (the tangent and normal numerators change sign
 //! with it, exactly but for the signs of zeros; the roots of the reversed
-//! form are the mirrored roots).
+//! form are the mirrored roots), and the 2D products and elevation with
+//! transposition too.
 
 pub mod compose;
 pub mod cone;
 pub mod curve;
+pub mod deriv;
+pub mod nd;
 pub mod poly;
+pub mod power;
 pub mod product;
 pub mod roots;
 pub mod scalar;
@@ -32,6 +40,8 @@ pub mod tensor;
 
 pub use cone::NormalCone;
 pub use curve::HomCurve;
+pub use deriv::Derivatives;
+pub use nd::NdTensor;
 pub use poly::{Hull, MAX_DEGREE, Poly};
 pub use product::{Form, cross, dot};
 pub use roots::{

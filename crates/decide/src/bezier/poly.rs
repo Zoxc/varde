@@ -15,6 +15,30 @@ use crate::num::bounded::Bounded;
 /// [`Scalar::int_u64`]).
 pub const MAX_DEGREE: usize = 64;
 
+/// `C(n, k)` for `k ≤ n ≤ MAX_DEGREE`, exactly: `C(64, 32) < 2⁶¹`.
+pub(crate) fn binom(n: usize, k: usize) -> u64 {
+    debug_assert!(k <= n && n <= MAX_DEGREE);
+    let k = k.min(n - k);
+    let mut r: u128 = 1;
+    for i in 0..k {
+        // Exact at every step: `r·(n − i)` is `(i + 1)·C(n, i + 1)`, below
+        // `2⁶⁷`.
+        r = r * (n - i) as u128 / (i + 1) as u128;
+    }
+    u64::try_from(r).expect("C(n, k) < 2⁶¹ for n ≤ 64")
+}
+
+/// `w·x`, with no operation for `w = 1`.
+pub(super) fn weigh<S: Scalar>(w: u64, x: S) -> S {
+    if w == 1 { x } else { S::int_u64(w, &x).mul(&x) }
+}
+
+/// `x / d`, `d` at `x`'s level (and width), with no operation for
+/// `d = 1`.
+pub(super) fn divide<S: Scalar>(x: S, d: u64) -> S {
+    if d == 1 { x } else { x.div(&S::int_u64(d, &x)) }
+}
+
 /// Coefficients stored inline up to this many (degree 10, a seam
 /// numerator's).
 pub(super) const INLINE: usize = 11;
@@ -191,7 +215,7 @@ pub(super) fn hull_of<S: Scalar>(c: &[S]) -> Hull {
 /// coefficients scaled by `2⁻⁷` (below `1/(n + 1)`) and the quotient
 /// scaled back, exactly but for subnormal coefficients (whose rounding
 /// the level carries): the result, a convex combination, is in range.
-fn elevate_once<S: Scalar>(c: &[S]) -> Coefs<S> {
+pub(super) fn elevate_once<S: Scalar>(c: &[S]) -> Coefs<S> {
     let n1 = u32::try_from(c.len()).expect("degree at most MAX_DEGREE");
     let unbounded = |x: &S| x.enclose().iter().any(|e| !e.is_finite());
     let mut out = Coefs::with_capacity(c.len() + 1);
@@ -216,10 +240,10 @@ fn elevate_once<S: Scalar>(c: &[S]) -> Coefs<S> {
 
 /// `2⁻⁷`, below `1/(MAX_DEGREE + 1)`: an elevation's numerator of
 /// coefficients scaled by it stays below the top of the range.
-const ELEVATE_DOWN: f64 = 1.0 / 128.0;
+pub(super) const ELEVATE_DOWN: f64 = 1.0 / 128.0;
 
 /// `2⁷`, scaling an elevated coefficient back.
-const ELEVATE_UP: f64 = 128.0;
+pub(super) const ELEVATE_UP: f64 = 128.0;
 
 impl Poly<Bounded<f64>> {
     /// From exact `f64` coefficients ([`Poly::new`]'s limits).

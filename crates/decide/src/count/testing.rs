@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use crate::bezier::HomPatch;
+use crate::bezier::{HomPatch, Poly};
 use crate::count::boxes::{BoxError, Corners, FaceUv, Trim, UvSpan};
 use crate::count::pieces::{Ribbon, SpanMap};
 use crate::count::s02::{
@@ -417,7 +417,10 @@ pub fn chain(spans: &[Span], q: [f64; 3], of: Operand) -> ChainRec {
             let aq = a[0] * q[0] + a[1] * q[1] + a[2] * q[2];
             sp.map(|p| p[3] * (dot(a, p) - aq))
         };
-        let power = |[b0, b1, b2]: [f64; 3]| [b0, 2.0 * (b1 - b0), b0 - 2.0 * b1 + b2];
+        let power = |b: [f64; 3]| {
+            let p = Poly::from_f64(&b).expect("a quadratic").to_power();
+            [p[0].v, p[1].v, p[2].v]
+        };
         let [c0, b, a] = power(bern(n));
         let mut ts: Vec<f64> = Vec::new();
         if a == 0.0 {

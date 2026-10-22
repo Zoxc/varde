@@ -1,7 +1,8 @@
 //! Products, sums and degree elevation of Bernstein forms: [`Poly`] by
 //! [`Poly`], [`Tensor`] by [`Tensor`], the cross and dot products of
-//! 3-vectors of forms ([`Form`]), and the numerators of a rational
-//! curve's tangent and a rational patch's normal.
+//! 3-vectors of forms ([`Form`]), and the numerator of a rational
+//! patch's normal (the tangent and partial numerators are in
+//! [`deriv`](super::deriv)).
 //!
 //! **Weights.** The product of degrees `m` and `n` has the coefficients
 //! `cₖ = Σᵢ C(m, i)·C(n, k − i)·aᵢ·bₖ₋ᵢ / C(m + n, k)`. The binomials are
@@ -10,7 +11,9 @@
 //! level holds them and certified where it doesn't (the first level
 //! above `2⁵³`, from degree 57 on). A weight of 1 is no operation: the
 //! end coefficients of a product are the products of the ends, one
-//! rounding.
+//! rounding. A tensor product's term has the product of its two
+//! directions' weights, one `u64` where it fits (a weight of 1 in one
+//! direction leaves the other's), else formed at the level.
 //!
 //! **Same bits under reversal and swap.** Each coefficient's terms are
 //! summed pairwise from both ends of their list (first with last, second
@@ -19,43 +22,26 @@
 //! terms of `cₙ₊ₘ₋ₖ` in reverse, as `b × a` does those of `cₖ`: so
 //! `a.reversed() × b.reversed()` is `(a × b).reversed()` and `b × a` is
 //! `a × b`, to the bit (the levels' `+` and `×` commute to the bit). A
-//! tensor product multiplies the lines in `v` (1D products) and combines
-//! them in `u` by the same rule: it commutes with reversal in either
-//! direction and with the swap of its operands, and its boundary lines
-//! are the 1D products of the operands' boundary lines, to the bit. With
-//! `u` and `v` transposed the order of the two stages changes, so the
-//! inner coefficients may differ in their last bits.
+//! tensor product's coefficient sums the grid of its terms, `(i₁, j₁)`
+//! over the rows and columns that meet, by the same rule in both
+//! directions at once: each term with its three mirror images, the pairs
+//! of opposite corners first, then the quarter grid again
+//! (`sym_sum2`). Reversal in either direction, transposition and the
+//! swap of the operands only mirror the grid, so they give the same
+//! bits, and a boundary line, a grid of one row or column, is the 1D
+//! product of the operands' boundary lines.
+//!
+//! **Elevation** of a tensor in both directions raises both degrees at
+//! once, one step at a time, an inner coefficient from its four
+//! neighbours paired the same way, and the boundary lines by the 1D
+//! step: the same bits under reversal and transposition, the boundary
+//! lines those of the 1D elevation.
 
 use smallvec::SmallVec;
 
-use super::curve::HomCurve;
-use super::poly::{Coefs, MAX_DEGREE, Poly};
+use super::poly::{Coefs, MAX_DEGREE, Poly, binom, divide, elevate_once, weigh};
 use super::scalar::Scalar;
 use super::tensor::{Dir, HomPatch, Tensor};
-
-/// `C(n, k)` for `k ≤ n ≤ MAX_DEGREE`, exactly: `C(64, 32) < 2⁶¹`.
-fn binom(n: usize, k: usize) -> u64 {
-    debug_assert!(k <= n && n <= MAX_DEGREE);
-    let k = k.min(n - k);
-    let mut r: u128 = 1;
-    for i in 0..k {
-        // Exact at every step: `r·(n − i)` is `(i + 1)·C(n, i + 1)`, below
-        // `2⁶⁷`.
-        r = r * (n - i) as u128 / (i + 1) as u128;
-    }
-    u64::try_from(r).expect("C(n, k) < 2⁶¹ for n ≤ 64")
-}
-
-/// `w·x`, with no operation for `w = 1`.
-fn weigh<S: Scalar>(w: u64, x: S) -> S {
-    if w == 1 { x } else { S::int_u64(w, &x).mul(&x) }
-}
-
-/// `x / d`, `d` at `x`'s level (and width), with no operation for
-/// `d = 1`.
-fn divide<S: Scalar>(x: S, d: u64) -> S {
-    if d == 1 { x } else { x.div(&S::int_u64(d, &x)) }
-}
 
 /// The terms summed in an order the reversed list gives too: the first
 /// with the last, the second with the second-last, the middle one
@@ -92,6 +78,135 @@ fn mul_coefs<S: Scalar>(a: &[S], b: &[S]) -> Coefs<S> {
         .map(|k| product_coef(m, n, k, |i, j| a[i].mul(&b[j])))
         .collect()
 }
+
+/// `wu·wv·x`, the two weights of a tensor product's term (each below
+/// `2⁶¹`): one weight where their product is a `u64` (so a weight of 1
+/// in either direction is the 1D weight), else their product at the
+/// level, which commutes, then times `x`.
+fn weigh2<S: Scalar>(wu: u64, wv: u64, x: S) -> S {
+    match u64::try_from(u128::from(wu) * u128::from(wv)) {
+        Ok(w) => weigh(w, x),
+        Err(_) => S::int_u64(wu, &x).mul(&S::int_u64(wv, &x)).mul(&x),
+    }
+}
+
+/// `x / (du·dv)`, as [`weigh2`] forms the divisor.
+fn divide2<S: Scalar>(x: S, du: u64, dv: u64) -> S {
+    match u64::try_from(u128::from(du) * u128::from(dv)) {
+        Ok(d) => divide(x, d),
+        Err(_) => {
+            let d = S::int_u64(du, &x).mul(&S::int_u64(dv, &x));
+            x.div(&d)
+        }
+    }
+}
+
+/// The terms of a `p × q` grid (row-major, non-empty) summed in an order
+/// the grid reversed in either direction, or transposed, gives too: each
+/// cell of the upper-left quarter (the middle row and column included)
+/// takes the cells it mirrors to, `(t(i, j) + t(ī, j̄)) + (t(ī, j) +
+/// t(i, j̄))` with `ī = p − 1 − i`, `j̄ = q − 1 − j` (on the middle row or
+/// column the two distinct cells, at the centre the cell), and the
+/// quarter is folded again until one cell is left. On a single row or
+/// column this is [`sym_sum`]: a line of the grid sums as the 1D product
+/// does.
+fn sym_sum2<S: Scalar>(mut t: SmallVec<[S; 9]>, mut p: usize, mut q: usize) -> S {
+    debug_assert!(p * q == t.len() && !t.is_empty());
+    while p * q > 1 {
+        let (p2, q2) = (p.div_ceil(2), q.div_ceil(2));
+        let at = |i: usize, j: usize| &t[i * q + j];
+        let mut next: SmallVec<[S; 9]> = SmallVec::with_capacity(p2 * q2);
+        for i in 0..p2 {
+            let ib = p - 1 - i;
+            for j in 0..q2 {
+                let jb = q - 1 - j;
+                next.push(match (i < ib, j < jb) {
+                    (true, true) => at(i, j).add(at(ib, jb)).add(&at(ib, j).add(at(i, jb))),
+                    (false, true) => at(i, j).add(at(i, jb)),
+                    (true, false) => at(i, j).add(at(ib, j)),
+                    (false, false) => at(i, j).clone(),
+                });
+            }
+        }
+        (t, p, q) = (next, p2, q2);
+    }
+    t.swap_remove(0)
+}
+
+/// One degree up in both directions at once (degrees `(m, n)` below
+/// [`MAX_DEGREE`]). The boundary lines are the 1D elevations of the
+/// form's (`elevate_once`), so a line shared with a neighbour stays the
+/// same bits; an inner coefficient is
+/// `((i·j)·b₍ᵢ₋₁,ⱼ₋₁₎ + (m + 1 − i)(n + 1 − j)·bᵢⱼ) + (i(n + 1 − j)·b₍ᵢ₋₁,ⱼ₎
+/// + (m + 1 − i)·j·b₍ᵢ,ⱼ₋₁₎)` over `(m + 1)(n + 1)`, its terms paired
+/// with their opposites as in [`sym_sum2`], so reversal in either
+/// direction and transposition give the same bits. Where that numerator
+/// isn't bounded the four coefficients are scaled by `2⁻¹³` (below
+/// `1/(m + 1)(n + 1)`) and the quotient back, as in 1D.
+fn elevate_both<S: Scalar>(f: &Tensor<S>) -> Tensor<S> {
+    let (m, n) = f.degrees();
+    let line = |dir: Dir, k: usize| -> Coefs<S> {
+        let c: Coefs<S> = match dir {
+            Dir::V => (0..=n).map(|j| f.get(k, j).clone()).collect(),
+            Dir::U => (0..=m).map(|i| f.get(i, k).clone()).collect(),
+        };
+        elevate_once(&c)
+    };
+    let (first_row, last_row) = (line(Dir::V, 0), line(Dir::V, m));
+    let (first_col, last_col) = (line(Dir::U, 0), line(Dir::U, n));
+    let (m1, n1) = (m as u32 + 1, n as u32 + 1);
+    let unbounded = |x: &S| x.enclose().iter().any(|e| !e.is_finite());
+    let mut c: SmallVec<[S; 9]> = SmallVec::with_capacity((m + 2) * (n + 2));
+    for i in 0..=m + 1 {
+        for j in 0..=n + 1 {
+            c.push(if i == 0 {
+                first_row[j].clone()
+            } else if i == m + 1 {
+                last_row[j].clone()
+            } else if j == 0 {
+                first_col[i].clone()
+            } else if j == n + 1 {
+                last_col[i].clone()
+            } else {
+                let (iu, ju) = (i as u32, j as u32);
+                let terms = [
+                    (iu * ju, f.get(i - 1, j - 1)),
+                    ((m1 - iu) * (n1 - ju), f.get(i, j)),
+                    (iu * (n1 - ju), f.get(i - 1, j)),
+                    ((m1 - iu) * ju, f.get(i, j - 1)),
+                ];
+                let num = |scaled: bool| {
+                    let t = terms.map(|(w, x)| {
+                        let x = if scaled {
+                            x.mul(&S::from_f64(ELEVATE_DOWN2, x))
+                        } else {
+                            x.clone()
+                        };
+                        S::int(w, &x).mul(&x)
+                    });
+                    t[0].add(&t[1]).add(&t[2].add(&t[3]))
+                };
+                let q = num(false);
+                if unbounded(&q) {
+                    let q = num(true);
+                    let q = q.div(&S::int(m1 * n1, &q));
+                    q.mul(&S::from_f64(ELEVATE_UP2, &q))
+                } else {
+                    q.div(&S::int(m1 * n1, &q))
+                }
+            });
+        }
+    }
+    Tensor::new(m + 1, n + 1, c).expect("one degree up, checked by the caller")
+}
+
+/// `2⁻¹³`, below `1/(MAX_DEGREE + 1)²`: the numerator of an inner
+/// coefficient of [`elevate_both`] of coefficients scaled by it stays
+/// below the top of the range.
+const ELEVATE_DOWN2: f64 = 1.0 / 8192.0;
+
+/// `2¹³`, scaling such a coefficient back.
+const ELEVATE_UP2: f64 = 8192.0;
 
 /// The coefficients of `a + b` or `a − b` (`sub`), both raised to the
 /// higher degree first.
@@ -142,10 +257,11 @@ impl<S: Scalar> Poly<S> {
 
 impl<S: Scalar> Tensor<S> {
     /// The product `f·g`, of degrees `(m₁ + m₂, n₁ + n₂)`, `None` past
-    /// [`MAX_DEGREE`] in either. The rows (lines in `v`) multiplied by
-    /// [`Poly::mul`], then combined in `u` with the binomial weights of
-    /// `u`: commutes with reversal in either direction and with the swap
-    /// of the operands, its boundary lines the 1D products of the
+    /// [`MAX_DEGREE`] in either. Each coefficient is the sum over the
+    /// grid of its terms, weighted by the binomials of both directions and
+    /// folded from the four corners at once (`sym_sum2`): commutes with
+    /// reversal in either direction, with the swap of the operands and
+    /// with transposition, its boundary lines the 1D products of the
     /// operands', to the bit (module docs).
     pub fn mul(&self, o: &Tensor<S>) -> Option<Tensor<S>> {
         let ((m1, n1), (m2, n2)) = (self.degrees(), o.degrees());
@@ -153,21 +269,23 @@ impl<S: Scalar> Tensor<S> {
         if m > MAX_DEGREE || n > MAX_DEGREE {
             return None;
         }
-        fn row<S: Scalar>(f: &Tensor<S>, i: usize) -> &[S] {
-            let w = f.degree(Dir::V) + 1;
-            &f.coefs()[i * w..(i + 1) * w]
-        }
-        // `rows[i₁·(m₂ + 1) + i₂]`: row `i₁` of `f` times row `i₂` of `g`.
-        let rows: SmallVec<[Coefs<S>; 9]> = (0..=m1)
-            .flat_map(|i1| (0..=m2).map(move |i2| (i1, i2)))
-            .map(|(i1, i2)| mul_coefs(row(self, i1), row(o, i2)))
-            .collect();
         let mut c: SmallVec<[S; 9]> = SmallVec::with_capacity((m + 1) * (n + 1));
         for i in 0..=m {
+            let rows = i.saturating_sub(m2)..=i.min(m1);
             for j in 0..=n {
-                c.push(product_coef(m1, m2, i, |i1, i2| {
-                    rows[i1 * (m2 + 1) + i2][j].clone()
-                }));
+                let cols = j.saturating_sub(n2)..=j.min(n1);
+                let q = cols.clone().count();
+                let mut t: SmallVec<[S; 9]> = SmallVec::new();
+                for i1 in rows.clone() {
+                    let wu = binom(m1, i1) * binom(m2, i - i1);
+                    for j1 in cols.clone() {
+                        let wv = binom(n1, j1) * binom(n2, j - j1);
+                        let x = self.get(i1, j1).mul(o.get(i - i1, j - j1));
+                        t.push(weigh2(wu, wv, x));
+                    }
+                }
+                let p = t.len() / q;
+                c.push(divide2(sym_sum2(t, p, q), binom(m, i), binom(n, j)));
             }
         }
         Tensor::new(m, n, c)
@@ -175,7 +293,8 @@ impl<S: Scalar> Tensor<S> {
 
     /// The same form at degree `deg + by` in `dir` ([`Poly::elevate`] on
     /// every line in `dir`), `None` past [`MAX_DEGREE`]. Commutes with
-    /// reversal in either direction to the bit.
+    /// reversal in either direction to the bit, and with transposition
+    /// (the other direction's elevation of the transposed form).
     pub fn elevate(&self, dir: Dir, by: usize) -> Option<Tensor<S>> {
         if self.degree(dir).checked_add(by)? > MAX_DEGREE {
             return None;
@@ -193,12 +312,23 @@ impl<S: Scalar> Tensor<S> {
         }))
     }
 
-    /// The same form at degrees `(m, n)`, elevated in `u` then `v`;
-    /// `None` below its own degrees or past [`MAX_DEGREE`].
+    /// The same form at degrees `(m, n)`, `None` below its own degrees or
+    /// past [`MAX_DEGREE`]: one degree in both directions at once while
+    /// both rise (`elevate_both`), then the rest in the one direction.
+    /// Commutes with reversal in either direction and with transposition,
+    /// its boundary lines the 1D elevations of the form's, to the bit.
     pub fn elevate_to(&self, m: usize, n: usize) -> Option<Tensor<S>> {
         let (m0, n0) = self.degrees();
-        self.elevate(Dir::U, m.checked_sub(m0)?)?
-            .elevate(Dir::V, n.checked_sub(n0)?)
+        let (a, b) = (m.checked_sub(m0)?, n.checked_sub(n0)?);
+        if m > MAX_DEGREE || n > MAX_DEGREE {
+            return None;
+        }
+        let mut f = self.clone();
+        for _ in 0..a.min(b) {
+            f = elevate_both(&f);
+        }
+        f.elevate(Dir::U, a - a.min(b))?
+            .elevate(Dir::V, b - a.min(b))
     }
 
     /// `f + g`, at the higher degree in each direction (each elevated to
@@ -319,24 +449,6 @@ impl<S: Scalar> HomPatch<S> {
         let t1 = term(&wu, &pv, &p)?;
         let t2 = term(&wv, &p, &pu)?;
         Some([0, 1, 2].map(|k| t0[k].add(&t1[k]).add(&t2[k])))
-    }
-}
-
-impl<S: Scalar, const N: usize> HomCurve<S, N> {
-    /// The tangent numerator `W·P' − W'·P`, equal to `W²·x'` for the
-    /// point `x = P / W`: with `W > 0` the tangent's direction wherever it
-    /// isn't zero. Of degree `2n − 1` for degree `n ≥ 1` (whose exact
-    /// numerator is of degree `2n − 2`, not reduced here); `None` past
-    /// [`MAX_DEGREE`]. The reversed span gives the reversed numerator
-    /// negated, to the bit but the signs of zeros.
-    pub fn tangent_numerator(&self) -> Option<[Poly<S>; N]> {
-        let d = self.derivative();
-        let (w, dw) = (self.weights(), d.weights());
-        let mut out: [Option<Poly<S>>; N] = std::array::from_fn(|_| None);
-        for (k, o) in out.iter_mut().enumerate() {
-            *o = Some(w.mul(&d.coords()[k])?.sub(&dw.mul(&self.coords()[k])?));
-        }
-        Some(out.map(|p| p.expect("filled")))
     }
 }
 

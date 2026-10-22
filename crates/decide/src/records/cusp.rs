@@ -83,6 +83,7 @@ use malachite::{Integer, Rational};
 use crate::bezier::{Dir, Dyadic, Scalar};
 use crate::num::bounded::Bounded;
 use crate::num::exact::rat;
+use crate::num::poly;
 
 /// The highest contact order the record looks for: two different conics
 /// meet with multiplicity at most 4.
@@ -468,11 +469,7 @@ fn ppow(a: &[Rational], n: usize) -> Poly {
     out
 }
 
-pub(crate) fn peval(a: &[Rational], t: &Rational) -> Rational {
-    a.iter().rev().fold(Rational::ZERO, |acc, c| acc * t + c)
-}
-
-pub(crate) fn pderiv(a: &[Rational]) -> Poly {
+fn pderiv(a: &[Rational]) -> Poly {
     if a.len() <= 1 {
         return vec![Rational::ZERO];
     }
@@ -487,27 +484,15 @@ pub(crate) fn pderiv(a: &[Rational]) -> Poly {
 /// then `p > 0` there.
 fn positive_on(p: &[Rational], t: &Rational) -> bool {
     let n = p.len() - 1;
-    // `p(t·x)` in power form, then its Bernstein coefficients on `[0, 1]`:
-    // `b_i = Σ_{j ≤ i} C(i, j)/C(n, j)·a_j`.
+    // `p(t·x)` in power form, then its Bernstein coefficients on `[0, 1]`
+    // of `p`'s length's degree.
     let mut tj = Rational::ONE;
     let mut a = Vec::with_capacity(n + 1);
     for c in p {
         a.push(c * &tj);
         tj *= t;
     }
-    let binom = |n: usize, k: usize| -> Rational {
-        let mut r = Rational::ONE;
-        for i in 0..k {
-            r = r * Rational::from((n - i) as u64) / Rational::from((i + 1) as u64);
-        }
-        r
-    };
-    (0..=n).all(|i| {
-        let b = (0..=i).fold(Rational::ZERO, |acc, j| {
-            acc + binom(i, j) / binom(n, j) * &a[j]
-        });
-        b > 0
-    })
+    poly::to_bernstein(&a, n + 1).iter().all(|b| *b > 0)
 }
 
 /// Truncated power series to order [`MAX_ORDER`].
@@ -581,14 +566,9 @@ impl Curve {
     fn new(sp: &CuspSpan, w0: &[Rational; 2], k: usize, sigma: i8) -> Curve {
         let o = 1 - k;
         let ws = [rat(sp[0][2]), rat(sp[1][2]), rat(sp[2][2])];
-        // `Σ wᵢ·xᵢ·Bᵢ(t)` in power form.
+        // `Σ wᵢ·xᵢ·Bᵢ(t)` in power form, of degree 2.
         let hom = |x: [Rational; 3]| -> Poly {
-            let (a, b, c) = (&ws[0] * &x[0], &ws[1] * &x[1], &ws[2] * &x[2]);
-            vec![
-                a.clone(),
-                Rational::from(2) * (&b - &a),
-                &a - Rational::from(2) * &b + &c,
-            ]
+            poly::from_bernstein_full(&[&ws[0] * &x[0], &ws[1] * &x[1], &ws[2] * &x[2]])
         };
         let w = hom([Rational::ONE, Rational::ONE, Rational::ONE]);
         let xk = hom([rat(sp[0][k]), rat(sp[1][k]), rat(sp[2][k])]);
@@ -601,7 +581,7 @@ impl Curve {
 
     /// `s` at the parameter `t`.
     fn s_at(&self, t: &Rational) -> Rational {
-        peval(&self.s, t) / peval(&self.w, t)
+        poly::eval(&self.s, t) / poly::eval(&self.w, t)
     }
 }
 
@@ -696,7 +676,7 @@ impl Chain {
             let t_end = if j == jc { tc } else { Dyadic::ONE };
             let within = |n: u64, e: u32| {
                 let t = Rational::from(n) / Rational::power_of_2(i64::from(e));
-                peval(&cv.s, &t) - s_beta * peval(&cv.w, &t) <= 0
+                poly::eval(&cv.s, &t) - s_beta * poly::eval(&cv.w, &t) <= 0
             };
             if within(t_end.num(), t_end.exp()) {
                 if j == jc {

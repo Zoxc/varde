@@ -96,6 +96,7 @@ use malachite::Rational;
 use malachite::base::num::arithmetic::traits::Sign as _;
 use malachite::base::num::basic::traits::{One as _, Zero as _};
 
+use crate::bezier::Tensor;
 use crate::count::boxes::UvSpan;
 use crate::count::pieces::{ExactRect, SpanMap};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
@@ -474,19 +475,16 @@ fn subst(f: &Poly2, n: &Poly, m: &Poly) -> (Poly, usize) {
 }
 
 /// The tensor Bernstein form `c[i][j]` (`i` along `u`) over `[0, 1]²` in
-/// the power basis.
+/// the power basis ([`Tensor::to_power`]): the coefficients of `vʲ`, each
+/// a polynomial in `u`.
 fn bern2(c: &[[Rational; 3]; 3]) -> Poly2 {
-    let pu: [Poly; 3] =
-        std::array::from_fn(|j| poly::from_bernstein(&[0, 1, 2].map(|i| c[i][j].clone())));
-    let mut out: Poly2 = Vec::new();
-    for (j, p) in pu.iter().enumerate() {
-        let mut b = [0, 0, 0].map(Rational::from);
-        b[j] = Rational::ONE;
-        let basis = poly::from_bernstein(&b);
-        let term: Poly2 = basis.iter().map(|bk| poly::scale(p, bk)).collect();
-        out = add2(&out, &trim2(term));
-    }
-    out
+    let f = Tensor::new(2, 2, c.iter().flatten().cloned()).expect("a biquadratic net");
+    let a = f.to_power();
+    trim2(
+        (0..3)
+            .map(|j| poly::trim((0..3).map(|i| a[3 * i + j].clone()).collect()))
+            .collect(),
+    )
 }
 
 /// A net's homogeneous coordinates and weight, exactly: `w·x`, `w`.

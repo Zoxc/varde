@@ -202,8 +202,8 @@ use crate::bezier::{
 use crate::ids::{CoedgeId, FaceId, VertId};
 use crate::num::bounded::Bounded;
 use crate::num::exact::rat;
+use crate::num::poly::{self, Poly};
 use crate::perturb::{NU, R_HAT};
-use crate::records::cusp::{Poly, pderiv, peval};
 use crate::records::keys::{Operand, Point};
 use crate::records::ray::{ChainRec, Span};
 use crate::records::side::{Sides, Want};
@@ -1553,11 +1553,11 @@ fn corner_pass(
             if t < rat(span[0]) || t > rat(span[1]) {
                 return None;
             }
-            let a = peval(&pderiv(&pk), &t);
+            let a = poly::eval(&poly::deriv(&pk), &t);
             if a == 0 {
                 return None;
             }
-            peval(&pderiv(&po), &t) / a
+            poly::eval(&poly::deriv(&po), &t) / a
         }
         // One a multiple of the other: a line through the point.
         Some(2) => &po[2] / &pk[2],
@@ -1599,11 +1599,11 @@ fn straight_cross(
         den += w * bi;
     }
     let a = num / den;
-    let dk = peval(&pderiv(&pk), &t);
+    let dk = poly::eval(&poly::deriv(&pk), &t);
     if dk == 0 {
         return None;
     }
-    let slope = peval(&pderiv(&offset(sp, o, &a)), &t) / dk;
+    let slope = poly::eval(&poly::deriv(&offset(sp, o, &a)), &t) / dk;
     Some((a, slope))
 }
 
@@ -1626,9 +1626,9 @@ fn root_against(
     let zero = Rational::from(0);
     let (pk, po) = (offset(sp, k, line), offset(sp, 1 - k, e));
     let (a, b) = (rat(span[0]), rat(span[1]));
-    let (pa, pb) = (peval(&pk, &a), peval(&pk, &b));
+    let (pa, pb) = (poly::eval(&pk, &a), poly::eval(&pk, &b));
     // The weight is positive: `x_o − e` has the sign of `po`.
-    let at = |t: &Rational| peval(&po, t).cmp(&zero);
+    let at = |t: &Rational| poly::eval(&po, t).cmp(&zero);
     if pa == 0 {
         return Some(at(&a));
     }
@@ -1668,7 +1668,7 @@ fn root_against(
             } else if c >= b {
                 Ordering::Less
             } else {
-                let pc = peval(&pk, &c);
+                let pc = poly::eval(&pk, &c);
                 if pc == 0 {
                     Ordering::Equal
                 } else if (pc > 0) == (pb > 0) {
@@ -1689,13 +1689,7 @@ fn root_against(
 /// `Σ wᵢ·(xᵢ − c)·Bᵢ(t)` of span `sp` along `axis` in power form: the
 /// weight times `x − c`, exactly.
 fn offset(sp: &UvSpan, axis: usize, c: &Rational) -> Poly {
-    let two = Rational::from(2);
-    let x: [Rational; 3] = [0, 1, 2].map(|i| rat(sp[i][2]) * (rat(sp[i][axis]) - c));
-    vec![
-        x[0].clone(),
-        &two * (&x[1] - &x[0]),
-        &x[0] - &two * &x[1] + &x[2],
-    ]
+    poly::from_bernstein_full(&[0, 1, 2].map(|i| rat(sp[i][2]) * (rat(sp[i][axis]) - c)))
 }
 
 /// Span `sp` (its weights positive) read from the point `p` it passes

@@ -10,100 +10,14 @@ use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::Exact;
 
 use super::*;
-use crate::bezier::tests::{Level, Rng, holds, q};
+use crate::bezier::HomCurve;
+use crate::bezier::tests::{
+    Level, Rng, dyadic, holds, int_tensor, ints, pbits, poly, poly_holds, q, tbits, tensor,
+    tensor_holds, value_and_errs,
+};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
-
-fn ints(rng: &mut Rng, n: usize) -> Poly<Q> {
-    Poly::new((0..=n).map(|_| Q::from(rng.below(201) as i64 - 100))).expect("degree in range")
-}
-
-fn int_tensor(rng: &mut Rng, m: usize, n: usize) -> Tensor<Q> {
-    let c = (0..(m + 1) * (n + 1)).map(|_| Q::from(rng.below(201) as i64 - 100));
-    Tensor::new(m, n, c).expect("degrees in range")
-}
-
-/// A dyadic in `[0, 1]`.
-fn dyadic(rng: &mut Rng) -> Q {
-    Q::from(rng.below(65)) / Q::from(64u32)
-}
-
-/// A level's polynomial and its true one.
-fn poly<S: Level>(rng: &mut Rng, n: usize, errs: bool) -> (Poly<S>, Poly<Q>) {
-    let (p, truth) = rng.poly::<S>(n, errs);
-    (p, Poly::new(truth).expect("degree in range"))
-}
-
-/// A level's tensor and its true one; `weight` keeps the coefficients
-/// in `[1/64, 64]`.
-fn tensor<S: Level>(
-    rng: &mut Rng,
-    m: usize,
-    n: usize,
-    errs: bool,
-    weight: bool,
-) -> (Tensor<S>, Tensor<Q>) {
-    let scale = rng.scale();
-    let mut c = Vec::new();
-    let mut truth = Vec::new();
-    for _ in 0..(m + 1) * (n + 1) {
-        let (hi, lo) = if weight {
-            let hi = rng.pow(-6, 5).abs();
-            (hi, hi * rng.pow(-80, -54).abs())
-        } else {
-            rng.coef(scale)
-        };
-        let mut b = S::of(hi, lo);
-        let mut x = b.val();
-        if errs && rng.below(2) == 0 {
-            let (t, r) = rng.errs(hi);
-            b = b.with_errs(t, r);
-            x += rng.lambda() * (q(t) + q(r));
-        }
-        c.push(b);
-        truth.push(x);
-    }
-    (
-        Tensor::new(m, n, c).expect("degrees in range"),
-        Tensor::new(m, n, truth).expect("degrees in range"),
-    )
-}
-
-fn poly_holds<S: Level>(what: &str, p: &Poly<S>, truth: &Poly<Q>, stats: &mut [u32; 2]) {
-    assert_eq!(p.degree(), truth.degree(), "{what}");
-    for (b, x) in p.coefs().iter().zip(truth.coefs()) {
-        stats[1] += 1;
-        if holds(what, b, x) {
-            stats[0] += 1;
-        }
-    }
-}
-
-fn tensor_holds<S: Level>(what: &str, f: &Tensor<S>, truth: &Tensor<Q>, stats: &mut [u32; 2]) {
-    assert_eq!(f.degrees(), truth.degrees(), "{what}");
-    for (b, x) in f.coefs().iter().zip(truth.coefs()) {
-        stats[1] += 1;
-        if holds(what, b, x) {
-            stats[0] += 1;
-        }
-    }
-}
-
-fn pbits<S: Level>(p: &Poly<S>) -> Vec<String> {
-    p.coefs().iter().map(Level::bits).collect()
-}
-
-fn tbits<S: Level>(f: &Tensor<S>) -> Vec<String> {
-    f.coefs().iter().map(Level::bits).collect()
-}
-
-/// Each coefficient's value and errors: its bits but the signs of zero
-/// parts (`x − x` is `+0` either way round, so a negated difference may
-/// differ in them).
-fn value_and_errs<S: Level>(c: &[S]) -> Vec<(Q, (f64, f64))> {
-    c.iter().map(|x| (x.val(), x.errs())).collect()
-}
 
 #[test]
 fn int_u64_is_certified() {
@@ -659,14 +573,23 @@ fn edge_operands_hold_their_bounds() {
 /// tangent numerator of degree 63, one of 33 none; a patch of degrees
 /// `(21, 1)` a normal numerator of `(62, 2)`, one of `(22, 1)` none; a
 /// constant span or a patch of degree 0 in `u` numerators of degree 0
-/// there.
+/// there. (Weights of 2: a span of weights 1 is polynomial, its tangent
+/// numerator the hodograph, of degree 31.)
 #[test]
 fn numerator_degrees_at_the_limit() {
     let one = Q::from(1u32);
+    let two = Q::from(2u32);
     let span = |n: u32| {
-        HomCurve::<Q, 2>::new((0..=n).map(|i| ([Q::from(i), one.clone()], one.clone())))
+        HomCurve::<Q, 2>::new((0..=n).map(|i| ([Q::from(i), one.clone()], two.clone())))
             .expect("degree in range")
     };
+    let polynomial =
+        HomCurve::<Q, 2>::new((0..=32u32).map(|i| ([Q::from(i), one.clone()], one.clone())))
+            .expect("degree in range");
+    assert_eq!(
+        polynomial.tangent_numerator().expect("in range")[0].degree(),
+        31
+    );
     assert_eq!(
         span(32).tangent_numerator().expect("in range")[0].degree(),
         63
@@ -785,4 +708,104 @@ fn numerators_of_mixed_widths_commute_with_reversal() {
             );
         }
     }
+}
+
+/// Products and elevation in both directions commute with
+/// transposition, to the bit; elevation in both directions commutes with
+/// reversal in either and its boundary lines are the 1D elevations of the
+/// form's.
+fn transposition<S: Level>() {
+    for seed in varde_testing::seeds(1, 16) {
+        let mut rng = Rng::new(seed);
+        for case in 0..60 {
+            let what = format!("{} seed {seed} case {case}", S::NAME);
+            let (m, n) = (case % 5, (case / 5) % 4);
+            let (f, _) = tensor::<S>(&mut rng, m, n, case % 2 == 0, false);
+            let (g, _) = tensor::<S>(&mut rng, (case / 2) % 4, (case / 3) % 3, true, false);
+            let h = f.mul(&g).expect("in range");
+            assert_eq!(
+                tbits(&f.transposed().mul(&g.transposed()).expect("in range")),
+                tbits(&h.transposed()),
+                "{what} product"
+            );
+            let (a, b) = (1 + case % 3, (case / 3) % 3);
+            let e = f.elevate_to(m + a, n + b).expect("in range");
+            assert_eq!(
+                tbits(&f.transposed().elevate_to(n + b, m + a).expect("in range")),
+                tbits(&e.transposed()),
+                "{what} elevation"
+            );
+            for dir in [Dir::U, Dir::V] {
+                assert_eq!(
+                    tbits(&f.reversed(dir).elevate_to(m + a, n + b).expect("in range")),
+                    tbits(&e.reversed(dir)),
+                    "{what} elevation reversed {dir:?}"
+                );
+            }
+            let row = |t: &Tensor<S>, i: usize| {
+                Poly::new((0..=t.degree(Dir::V)).map(|j| t.get(i, j).clone())).expect("a line")
+            };
+            let col = |t: &Tensor<S>, j: usize| {
+                Poly::new((0..=t.degree(Dir::U)).map(|i| t.get(i, j).clone())).expect("a line")
+            };
+            for (k, ek) in [(0, 0), (m, m + a)] {
+                assert_eq!(
+                    pbits(&row(&e, ek)),
+                    pbits(&row(&f, k).elevate(b).expect("in range")),
+                    "{what} row {k}"
+                );
+            }
+            for (k, ek) in [(0, 0), (n, n + b)] {
+                assert_eq!(
+                    pbits(&col(&e, ek)),
+                    pbits(&col(&f, k).elevate(a).expect("in range")),
+                    "{what} column {k}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tensors_commute_with_transposition() {
+    transposition::<Bounded<f64>>();
+    transposition::<Bounded<Dd>>();
+    transposition::<Bounded<Big>>();
+}
+
+/// Elevation in both directions of coefficients near the top of the
+/// range, where an inner numerator overflows: scaled, certified and
+/// holding the exact elevation; and up to [`MAX_DEGREE`] in both.
+#[test]
+fn elevation_in_both_directions_near_the_top_and_at_the_limit() {
+    fn check<S: Level>() {
+        let big = f64::MAX / 2.0;
+        let c = [big, big, -big, big, big, big, big, -big, big];
+        let f = Tensor::new(2, 2, c.iter().map(|&x| S::of(x, 0.0))).expect("biquadratic");
+        let fq = Tensor::new(2, 2, c.iter().map(|&x| q(x))).expect("biquadratic");
+        let mut stats = [0u32; 2];
+        let e = f.elevate_to(4, 3).expect("in range");
+        tensor_holds(
+            "near the top",
+            &e,
+            &fq.elevate_to(4, 3).expect("in range"),
+            &mut stats,
+        );
+        assert_eq!(
+            stats[0],
+            stats[1],
+            "{}: every coefficient certified",
+            S::NAME
+        );
+        let mut rng = Rng::new(3);
+        let (f, fq) = tensor::<S>(&mut rng, 2, 3, true, false);
+        let e = f.elevate_to(MAX_DEGREE, MAX_DEGREE).expect("to the limit");
+        assert_eq!(e.degrees(), (MAX_DEGREE, MAX_DEGREE));
+        let eq = fq.elevate_to(MAX_DEGREE, MAX_DEGREE).expect("to the limit");
+        tensor_holds("at the limit", &e, &eq, &mut [0, 0]);
+        assert!(f.elevate_to(MAX_DEGREE + 1, 3).is_none());
+    }
+    check::<Bounded<f64>>();
+    check::<Bounded<Dd>>();
+    check::<Bounded<Big>>();
 }

@@ -134,29 +134,21 @@ pub fn compose_affine(p: &[Rational], a: &Rational, b: &Rational) -> Poly {
 }
 
 /// The polynomial of Bernstein coefficients `b` over `[0, 1]` (degree
-/// `b.len() − 1`) in the power basis.
+/// `b.len() − 1`, at most [`MAX_DEGREE`](crate::bezier::MAX_DEGREE)) in
+/// the power basis: the exact instance of [`bezier::Poly::to_power`].
 pub fn from_bernstein(b: &[Rational]) -> Poly {
-    let n = match b.len() {
-        0 => return Vec::new(),
-        n => n - 1,
-    };
-    // `Σ bᵢ·C(n, i)·τⁱ·(1 − τ)^(n − i)`.
-    let mut out: Poly = Vec::new();
-    for (i, bi) in b.iter().enumerate() {
-        let mut term = constant(bi * Rational::from(binomial(n, i)));
-        for _ in 0..i {
-            term = mul(&term, &[Rational::ZERO, Rational::from(1u32)]);
-        }
-        for _ in i..n {
-            term = mul(&term, &[Rational::from(1u32), Rational::from(-1i32)]);
-        }
-        out = add(&out, &term);
+    if b.is_empty() {
+        return Vec::new();
     }
-    out
+    trim(from_bernstein_full(b))
 }
 
-fn binomial(n: usize, k: usize) -> u64 {
-    (0..k).fold(1u64, |c, i| c * (n - i) as u64 / (i as u64 + 1))
+/// [`from_bernstein`] of `b` (non-empty) with its trailing zeros kept:
+/// `b.len()` coefficients, whatever the true degree.
+pub fn from_bernstein_full(b: &[Rational]) -> Poly {
+    bezier::Poly::new(b.iter().cloned())
+        .expect("a degree at most MAX_DEGREE")
+        .to_power()
 }
 
 /// The remainder of `a` divided by `b` (`b` not zero).
@@ -239,18 +231,14 @@ pub fn square_free(p: &[Rational]) -> Poly {
 }
 
 /// The Bernstein coefficients over `[0, 1]` of degree `n − 1` (`n` at
-/// least the power-basis `p`'s length).
+/// least the power-basis `p`'s length, at most
+/// [`MAX_DEGREE`](crate::bezier::MAX_DEGREE) + 1): the exact instance of
+/// [`bezier::Poly::from_power`].
 pub fn to_bernstein(p: &[Rational], n: usize) -> Vec<Rational> {
-    let d = n.saturating_sub(1);
-    // `bₖ = Σ_{i ≤ k} C(k, i)/C(d, i)·aᵢ`.
-    (0..=d)
-        .map(|k| {
-            (0..=k).fold(Rational::ZERO, |s, i| match p.get(i) {
-                Some(a) => s + a * Rational::from(binomial(k, i)) / Rational::from(binomial(d, i)),
-                None => s,
-            })
-        })
-        .collect()
+    bezier::Poly::from_power(p, n.saturating_sub(1), &Rational::ZERO)
+        .expect("a degree at most MAX_DEGREE, at least p's")
+        .coefs()
+        .to_vec()
 }
 
 /// `p`'s Bernstein coefficients over `[a, b]`, of `p`'s degree.
