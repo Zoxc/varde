@@ -726,3 +726,25 @@ fn least_corner(p: &[[f64; 2]]) -> usize {
         })
         .unwrap()
 }
+
+/// The composite figure arranged on budgets running out anywhere along
+/// its passes, and the whole: the same arrangement, or the same error,
+/// cause and profile, with the items after the deciding one stopped
+/// early or run on.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn arranging_on_any_budget_is_the_same_without_early_stop() {
+    use crate::infra::budget::assert_early_stop_changes_nothing;
+    let f = composite();
+    let run = |budget| {
+        let mut work = Work::new(&Budget::new(budget));
+        let out = arrange(&f.verts, &f.edges, &mut work);
+        (out, work.used())
+    };
+    let (out, used) = run(crate::MAX_WORK);
+    assert!(out.is_ok(), "{out:?}");
+    for k in 0..=24 {
+        let (out, _) = assert_early_stop_changes_nothing(|| run(used * k / 24));
+        assert_eq!(out.is_ok(), k == 24, "{k}");
+    }
+}

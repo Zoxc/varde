@@ -15,10 +15,14 @@
 //! number of threads.
 //!
 //! While the items run, the keys whose items have finished are summed in
-//! key order as far as they go, and once that prefix decides the pass the
-//! items after its deciding key stop at their next charge: they can't
-//! change the outcome, and without stopping them a pass of `n` items could
-//! do `n` times the budget's work.
+//! key order as far as they go. Each item still running then has at most
+//! the budget left after that prefix, so its share tightens to it; and
+//! once the prefix decides the pass the items after its deciding key stop
+//! at their next charge: they can't change the outcome, and without
+//! stopping them a pass of `n` items could do `n` times the budget's
+//! work. Neither changes the outcome, the work used or the profile: an
+//! item stopped early either comes after the deciding key or is past its
+//! room already, and its ledger up to there is the same.
 //!
 //! Each ledger records its item's steps in order, each a [`Step`]: a
 //! precision step (a computation repeated at a higher precision) or any
@@ -28,8 +32,16 @@
 //! crossing.
 //!
 //! A pass deciding records ([`Work::records`]) names each item by its
-//! record's key ([`ItemAt::record`]), so running out at a record names
-//! the operand entities its key holds, not only a pass and a position.
+//! record's key ([`ItemName::record`]), so running out at a record names
+//! the operand entities its key holds, not only a pass and a position; a
+//! pass knowing where its items lie names them by a world box too
+//! ([`Work::named`]).
+//!
+//! The booleans of a batch (a union of many solids) run as nodes of one
+//! tree in a fixed post-order on one budget: run in that order through
+//! one [`Work`], their passes come one after another, so the work used,
+//! the cause and the profile follow the rule above over node, then rung,
+//! pass and key, and the batch fails at the first failure in that order.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -161,25 +173,37 @@ impl Cap {
 }
 
 /// One item of one pass of an operation: its position among the pass's
-/// key-sorted items, and the record it decides, if it decides one.
-/// Positions follow from the keys, so they are the same on every run;
-/// they number items, the record key names one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// key-sorted items, and what names it. Positions follow from the keys,
+/// so they are the same on every run; they number items, the name says
+/// which input they are about.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ItemAt {
     /// The pass, counted from 0 over the operation.
     pub pass: u64,
     /// The item's position in the pass (as [`Halt::Failed`]'s).
     pub item: usize,
+    /// What its pass knows of it, for evidence.
+    pub name: ItemName,
+}
+
+/// What names one item of a pass in a [`BudgetProfile`]: whatever its
+/// pass knows of it, from which evidence names the input entities and
+/// where they lie. Neither part is charged or changes an outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ItemName {
     /// The key of the record the item decides, in a pass deciding records
     /// ([`Work::records`]): evidence names the item by its entities
-    /// ([`RecordKey::entities`]). `None` for other items.
+    /// ([`RecordKey::entities`]).
     pub record: Option<RecordKey>,
+    /// A box `[lo, hi]` in world coordinates (mm) holding the item's
+    /// geometry, when its pass knows one ([`Work::named`]).
+    pub world: Option<[[f64; 3]; 2]>,
 }
 
 /// Where an operation stopped: the item that decided its pass, and the
 /// step of its ledger the budget ran out at, or its last step on reaching
 /// another limit (`None` if it had charged none).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stopped {
     /// The deciding item.
     pub at: ItemAt,
@@ -198,7 +222,7 @@ pub const HOTTEST: usize = 8;
 /// passes before and, in the last pass, the items up to the deciding one,
 /// that one counted up to where the budget ran out. Read from the
 /// budget's own counts (not charged); the same on any number of threads.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BudgetProfile {
     /// The limit reached.
     pub limit: Limit,
@@ -215,7 +239,8 @@ pub struct BudgetProfile {
     /// Where it stopped.
     pub stopped: Stopped,
     /// The items that took the most units, at most [`HOTTEST`], most first
-    /// (ties in pass and item order).
+    /// (ties in pass and item order): each item's units in its one pass,
+    /// never summed over passes or rungs.
     pub hottest: Vec<(ItemAt, u64)>,
 }
 
@@ -230,10 +255,10 @@ pub(crate) struct Pass {
 }
 
 /// The steps one item of a pass charged, in its own order, against its
-/// share: the budget left when the pass started.
+/// share: the budget left when the pass started, tightened to what is
+/// left after the finished items before it ([`Frontier`]).
 #[derive(Debug)]
 pub(crate) struct Ledger<'p> {
-    share: u64,
     total: u64,
     /// Runs of steps of one kind: consecutive steps of a kind merged.
     steps: Vec<(Step, u64)>,
@@ -242,8 +267,9 @@ pub(crate) struct Ledger<'p> {
     frontier: &'p Frontier,
 }
 
-/// An item went past its share, the budget left at its pass's start, so
-/// the pass runs out at it or before it; or the pass is decided at an
+/// An item went past its share, the budget left at its pass's start or
+/// after the finished items before it, so the pass runs out at it or
+/// before it; or the pass is decided at an
 /// earlier key. Either way the item must stop. Only [`Ledger::charge`]
 /// gives one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,9 +318,8 @@ impl<E: Into<KernelError>> From<Halt<E>> for KernelError {
 }
 
 impl<'p> Ledger<'p> {
-    fn new(share: u64, item: usize, frontier: &'p Frontier) -> Ledger<'p> {
+    fn new(item: usize, frontier: &'p Frontier) -> Ledger<'p> {
         Ledger {
-            share,
             total: 0,
             steps: Vec::new(),
             item,
@@ -311,7 +336,7 @@ impl<'p> Ledger<'p> {
             Some((last, run)) if *last == step => *run = run.saturating_add(units),
             _ => self.steps.push((step, units)),
         }
-        if self.total > self.share || self.frontier.decided_before(self.item) {
+        if self.total > self.frontier.share() || self.frontier.decided_before(self.item) {
             Err(Exhausted(()))
         } else {
             Ok(())
@@ -342,11 +367,18 @@ impl<'p> Ledger<'p> {
 /// The items of one running pass, summed in key order as far as they have
 /// finished, to find the deciding key while the later items still run.
 /// It only ever names the key the pass is decided at, so it stops only
-/// items whose outcome doesn't count.
+/// items whose outcome doesn't count; and it tightens the share of the
+/// items still running to the budget left after the finished prefix,
+/// never below any one's room, so it stops only items past their room.
 #[derive(Debug)]
 pub(crate) struct Frontier {
     /// The budget left at the pass start.
     left: u64,
+    /// Whether it stops items early (tests compare runs without).
+    stops: bool,
+    /// The share of every item still running: `left` less the units of
+    /// the finished prefix.
+    share: AtomicU64,
     /// Per item, [`Frontier::RUNNING`] until it finishes, then its units
     /// (at most `left + 1`, past any room) with [`Frontier::STOPPED`] if it
     /// gave no result.
@@ -361,9 +393,11 @@ impl Frontier {
     const RUNNING: u64 = u64::MAX;
     const STOPPED: u64 = 1 << 63;
 
-    fn new(left: u64, items: usize) -> Frontier {
+    fn new(left: u64, items: usize, stops: bool) -> Frontier {
         Frontier {
             left,
+            stops,
+            share: AtomicU64::new(left),
             finished: (0..items).map(|_| AtomicU64::new(Self::RUNNING)).collect(),
             prefix: Mutex::new((0, 0)),
             decided: AtomicUsize::new(usize::MAX),
@@ -375,11 +409,21 @@ impl Frontier {
         self.decided.load(Ordering::Relaxed) < item
     }
 
+    /// The share of an item still running. The items before the first
+    /// one not summed have all finished, so a running item comes at or
+    /// after it, and its room is at most what the summed ones left.
+    fn share(&self) -> u64 {
+        self.share.load(Ordering::Relaxed)
+    }
+
     /// Records that `item` finished, having charged `total`, with a result
     /// or not, and sums the finished prefix on as far as it goes: up to the
     /// first item that runs out or gives no result, which decides the
     /// pass, as in [`Work::pass`].
     fn finish(&self, item: usize, total: u64, result: bool) {
+        if !self.stops {
+            return;
+        }
         let units = total.min(self.left + 1);
         let mark = if result { 0 } else { Self::STOPPED };
         self.finished[item].store(units | mark, Ordering::Release);
@@ -398,6 +442,7 @@ impl Frontier {
             *sum += units;
             *next += 1;
         }
+        self.share.store(self.left - *sum, Ordering::Relaxed);
     }
 }
 
@@ -447,7 +492,8 @@ impl Work {
     /// came first (running out first at one key). The work used and the
     /// profile count the keys up to that one. `f` must depend only on its
     /// item, and charge each step before the work it stands for; it stops
-    /// at a charge once an earlier key decides the pass.
+    /// at a charge once an earlier key decides the pass or it is past the
+    /// budget the finished items before it left.
     pub(crate) fn pass<T, R, E, F>(
         &mut self,
         pass: Pass,
@@ -460,12 +506,12 @@ impl Work {
         E: Send,
         F: Fn(&T, &mut Ledger<'_>) -> Result<R, Stop<E>> + Sync + Send,
     {
-        self.run(pass, items, |_| None, f)
+        self.run(pass, items, |_| ItemName::default(), f)
     }
 
     /// [`Work::pass`] over a batch of a record table's keys, deciding
     /// each: charged as any pass, and each item named by its record's key
-    /// in the profile ([`ItemAt::record`]), so running out at a record
+    /// in the profile ([`ItemName::record`]), so running out at a record
     /// names its key's entities.
     #[cfg_attr(
         not(test),
@@ -486,15 +532,49 @@ impl Work {
         E: Send,
         F: Fn(&Fresh<K>, &mut Ledger<'_>) -> Result<R, Stop<E>> + Sync + Send,
     {
-        self.run(pass, keys, |k| Some(k.record()), f)
+        self.run(
+            pass,
+            keys,
+            |k| ItemName {
+                record: Some(k.record()),
+                world: None,
+            },
+            f,
+        )
     }
 
-    /// [`Work::pass`], naming each item's record by `record`.
+    /// [`Work::pass`], naming each item in the profile by `name`: what
+    /// the pass knows of it, its record and where it lies. The names are
+    /// read only for the profile, never charged.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the operations' passes that know their items' boxes call it as they land"
+        )
+    )]
+    pub(crate) fn named<T, R, E, F>(
+        &mut self,
+        pass: Pass,
+        items: &[T],
+        name: impl Fn(&T) -> ItemName,
+        f: F,
+    ) -> Result<Vec<R>, Halt<E>>
+    where
+        T: Sync,
+        R: Send,
+        E: Send,
+        F: Fn(&T, &mut Ledger<'_>) -> Result<R, Stop<E>> + Sync + Send,
+    {
+        self.run(pass, items, name, f)
+    }
+
+    /// [`Work::pass`], naming each item by `name`.
     fn run<T, R, E, F>(
         &mut self,
         pass: Pass,
         items: &[T],
-        record: impl Fn(&T) -> Option<RecordKey>,
+        name: impl Fn(&T) -> ItemName,
         f: F,
     ) -> Result<Vec<R>, Halt<E>>
     where
@@ -506,9 +586,9 @@ impl Work {
         let index = self.passes;
         self.passes = self.passes.saturating_add(1);
         let left = self.left();
-        let frontier = Frontier::new(left, items.len());
+        let frontier = Frontier::new(left, items.len(), early_stop());
         let ran = par_map_indexed(items, |i, item| {
-            let mut ledger = Ledger::new(left, i, &frontier);
+            let mut ledger = Ledger::new(i, &frontier);
             let result = f(item, &mut ledger);
             frontier.finish(i, ledger.total, result.is_ok());
             (ledger, result)
@@ -519,7 +599,7 @@ impl Work {
             let at = ItemAt {
                 pass: index,
                 item: i,
-                record: record(item),
+                name: name(item),
             };
             let room = left - sum;
             let stopped = |step| Stopped {
@@ -636,6 +716,60 @@ impl Work {
     }
 }
 
+/// Whether a pass stops its items early ([`Frontier`]): always, but tests
+/// run passes without it to show it changes nothing
+/// (`without_early_stop`).
+#[cfg(not(test))]
+fn early_stop() -> bool {
+    true
+}
+
+#[cfg(test)]
+thread_local! {
+    static EARLY_STOP: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+#[cfg(test)]
+fn early_stop() -> bool {
+    EARLY_STOP.get()
+}
+
+/// `f` run with the passes it starts on this thread not stopping their
+/// items early: each item runs until it is done or past the budget left
+/// at its pass's start.
+#[cfg(test)]
+pub(crate) fn without_early_stop<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EARLY_STOP.set(self.0);
+        }
+    }
+    let _restore = Restore(EARLY_STOP.replace(false));
+    f()
+}
+
+/// Runs `f` as [`assert_deterministic`] does, with its passes stopping
+/// items early and without ([`without_early_stop`]), and asserts all the
+/// results are the same to the bit: outcomes, work used and profiles.
+/// Returns the first.
+///
+/// [`assert_deterministic`]: super::par::assert_deterministic
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn assert_early_stop_changes_nothing<R: Send + std::fmt::Debug>(
+    f: impl Fn() -> R + Sync,
+) -> R {
+    use super::par::assert_deterministic;
+    let stopping = assert_deterministic(&f);
+    let running = assert_deterministic(|| without_early_stop(&f));
+    assert_eq!(
+        format!("{stopping:?}"),
+        format!("{running:?}"),
+        "stopping items early changes the outcome"
+    );
+    stopping
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,7 +855,7 @@ mod tests {
             ItemAt {
                 pass: 0,
                 item: 2,
-                record: None
+                name: ItemName::default(),
             }
         );
         assert_eq!(profile.stopped.step, Some(P1));
@@ -917,37 +1051,261 @@ mod tests {
             .collect()
     }
 
-    /// Passes over many items of uneven cost: a failure ends the first
+    /// How an item of [`passes_over_uneven_items`] ends, when it isn't
+    /// done or out of budget.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Clone, Copy)]
+    enum End {
+        /// It fails.
+        Fails,
+        /// It reaches a fixed limit.
+        Caps,
+        /// Its value can't be stored.
+        Unstorable,
+    }
+
+    /// Up to three attempts over 5000 items of uneven cost: item 3001 of
+    /// the first ends as `end` says, the attempt after a failure runs on
+    /// what is left. Gives each attempt's outcome and the work used after
+    /// it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn passes_over_uneven_items(budget: u64, end: End) -> Vec<(Result<usize, KernelError>, u64)> {
+        use crate::Internal;
+        use varde_decide::num::storage::Unrepresentable;
+        let items: Vec<u64> = (0..5000).collect();
+        let mut work = Work::new(&Budget::new(budget));
+        let mut outcomes = Vec::new();
+        for rung in 0..3u8 {
+            let pass = Pass {
+                stage: "uneven",
+                rung,
+            };
+            let outcome = work.pass(pass, &items, |&i, ledger| {
+                for (step, units) in uneven(i) {
+                    ledger.charge(step, units)?;
+                }
+                match end {
+                    _ if rung > 0 || i != 3001 => Ok(i),
+                    End::Fails => Err(Stop::Failed(KernelError::Internal(Internal::Inconsistent))),
+                    End::Caps => Err(Stop::Cap(Cap::SubdivisionDepth)),
+                    End::Unstorable => Err(Stop::Failed(
+                        Unrepresentable::Tolerance {
+                            eps: 0.0,
+                            eps_min: 1.0,
+                        }
+                        .into(),
+                    )),
+                }
+            });
+            let done = matches!(outcome, Ok(_) | Err(Halt::OutOfBudget(_)));
+            outcomes.push((
+                outcome.map(|v| v.len()).map_err(KernelError::from),
+                work.used(),
+            ));
+            if done {
+                break;
+            }
+        }
+        outcomes
+    }
+
+    /// Passes over many items of uneven cost: an item failing, reaching a
+    /// fixed limit or giving a value that can't be stored ends the first
     /// attempt, and by the budget, the budget runs out in it, in a retry,
     /// or never. The outcomes, the work used and the profiles are the
-    /// same on 1 and 8 threads, and with the items run backwards.
+    /// same on 1 and 8 threads, with the items run backwards, and with
+    /// the items after the deciding key stopped early or run on.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn charging_is_the_same_on_any_number_of_threads() {
-        use super::super::par::assert_deterministic;
-        let items: Vec<u64> = (0..5000).collect();
-        for budget in [50_000, 200_000, 400_000, 1_500_000, 2_000_000] {
-            assert_deterministic(|| {
-                let mut work = Work::new(&Budget::new(budget));
-                let mut outcomes = Vec::new();
-                for rung in 0..3u8 {
-                    let pass = Pass {
-                        stage: "uneven",
-                        rung,
+    fn charging_is_the_same_on_any_number_of_threads_and_without_early_stop() {
+        use crate::Internal;
+        for end in [End::Fails, End::Caps, End::Unstorable] {
+            for budget in [50_000, 200_000, 400_000, 1_500_000, 2_000_000] {
+                let out =
+                    assert_early_stop_changes_nothing(|| passes_over_uneven_items(budget, end));
+                let (last, _) = out.last().expect("an attempt");
+                // A large budget reaches item 3001 and ends there.
+                if budget == 2_000_000 {
+                    let want = match end {
+                        End::Fails => KernelError::Internal(Internal::Inconsistent),
+                        End::Caps => {
+                            assert!(matches!(
+                                last,
+                                Err(KernelError::OutOfBudget {
+                                    cause: Cause::SizeLimit,
+                                    ..
+                                })
+                            ));
+                            continue;
+                        }
+                        End::Unstorable => KernelError::Unrepresentable,
                     };
-                    let fails = |i: u64| rung == 0 && i == 3001;
-                    let outcome = work.pass(pass, &items, |&i, ledger| {
-                        run(&uneven(i), fails(i), ledger).map(|n| (i, n))
-                    });
-                    let stop = matches!(outcome, Err(Halt::OutOfBudget(_)));
-                    outcomes.push((outcome, work.used()));
-                    if stop {
-                        break;
-                    }
+                    assert_eq!(out[0].0, Err(want));
                 }
-                outcomes
-            });
+            }
         }
+    }
+
+    /// A pass ending in a fixed limit or a value that can't be stored
+    /// charges only the keys through the deciding one, however much the
+    /// items after it ran: the next attempt runs on the rest.
+    #[test]
+    fn a_pass_ending_at_a_cap_or_unstorable_value_charges_its_prefix() {
+        use varde_decide::num::storage::Unrepresentable;
+        // Items of 2, 3, 4, 5, 6, 7 units, the third ending, then the
+        // costly ones after it.
+        let items = [2u64, 3, 4, 50, 60, 70];
+        for cap in [false, true] {
+            let mut work = Work::new(&Budget::new(100));
+            let halt = work
+                .pass(PASS, &items, |&n, ledger| {
+                    ledger.charge(W, n)?;
+                    match n {
+                        4 if cap => Err(Stop::Cap(Cap::SubdivisionDepth)),
+                        4 => Err(Stop::Failed(Unrepresentable::OutOfRange {
+                            value: f64::INFINITY,
+                            magnitude: f64::INFINITY,
+                        })),
+                        n => Ok(n),
+                    }
+                })
+                .unwrap_err();
+            assert_eq!(work.used(), 9);
+            match KernelError::from(halt.clone()) {
+                KernelError::OutOfBudget { cause, profile } => {
+                    assert!(cap);
+                    assert_eq!(
+                        (cause, profile.used, profile.stopped.at.item),
+                        (Cause::SizeLimit, 9, 2)
+                    );
+                    assert_eq!(profile.stages, vec![("test", 9)]);
+                }
+                KernelError::Unrepresentable => {
+                    assert!(!cap);
+                    assert!(matches!(halt, Halt::Failed { item: 2, .. }));
+                }
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(work.left(), 91);
+        }
+    }
+
+    /// An item still running gets the share left after the finished items
+    /// before it: on one thread, after an item of 600 units on a budget
+    /// of 1000, one charging without end stops at its 401st unit, past its
+    /// room, and not at the 1001st; without early stop it runs to the
+    /// budget left at the pass's start. The outcome is the same.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_share_tightens_to_what_the_items_before_it_left() {
+        use super::super::par::on_threads;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let ran = |stops: bool| {
+            let done = AtomicU64::new(0);
+            let pass = || {
+                let mut work = Work::new(&Budget::new(1000));
+                let out = work.pass(PASS, &[600u64, 0], |&n, ledger| -> Result<(), Stop<()>> {
+                    if n > 0 {
+                        return Ok(ledger.charge(W, n)?);
+                    }
+                    loop {
+                        ledger.charge(W, 1)?;
+                        done.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+                out_of_budget(out.unwrap_err())
+            };
+            let out = on_threads(1, || {
+                if stops {
+                    pass()
+                } else {
+                    without_early_stop(pass)
+                }
+            });
+            (out, done.into_inner())
+        };
+        let (stopping, n) = ran(true);
+        assert_eq!(n, 400, "units charged before the one past the room");
+        let (running, n) = ran(false);
+        assert_eq!(n, 1000);
+        assert_eq!(stopping, running);
+        assert_eq!((stopping.1.used, stopping.1.stopped.at.item), (1000, 1));
+    }
+
+    /// A pass naming its items gives the profile each one's name: its
+    /// record and its world box, for the item it stopped at and the
+    /// hottest ones. Names are never charged.
+    #[test]
+    fn a_named_pass_names_its_items_in_the_profile() {
+        let boxed = |n: &u64| ItemName {
+            record: Some(RecordKey::Vv(vv(*n as u32))),
+            world: Some([[0.0, 0.0, *n as f64], [1.0, 1.0, *n as f64 + 1.0]]),
+        };
+        let mut work = Work::new(&Budget::new(10));
+        let halt = work
+            .named(PASS, &[3u64, 4, 5], boxed, |&n, ledger| {
+                run(&[(W, n)], false, ledger)
+            })
+            .unwrap_err();
+        let (_, profile) = out_of_budget(halt);
+        assert_eq!(profile.stopped.at.name, boxed(&5));
+        let names: Vec<(ItemName, u64)> = profile
+            .hottest
+            .iter()
+            .map(|(at, n)| (at.name, *n))
+            .collect();
+        assert_eq!(names, vec![(boxed(&4), 4), (boxed(&3), 3), (boxed(&5), 3)]);
+        assert_eq!(work.used(), 10);
+    }
+
+    /// The booleans of a batch, run in post-order on one budget: each
+    /// node's passes count on from the last node's, a node's retry runs
+    /// on what is left, and the node running out is named by its pass;
+    /// the hottest items tie in node, then pass, then key order, each
+    /// counted in its one pass.
+    #[test]
+    fn batch_nodes_in_post_order_share_one_budget() {
+        let mut work = Work::new(&Budget::new(30));
+        let node = |work: &mut Work, rung: u8, items: &[(u64, bool)]| {
+            let pass = Pass {
+                stage: "node",
+                rung,
+            };
+            work.pass(pass, items, |&(n, fail), ledger| {
+                run(&[(W, n)], fail, ledger)
+            })
+        };
+        // Node 0 in one pass; node 1 fails at its second item, retried on
+        // the rest; node 2 runs out.
+        assert!(node(&mut work, 0, &[(4, false), (5, false)]).is_ok());
+        assert!(matches!(
+            node(&mut work, 0, &[(5, false), (4, true), (9, false)]),
+            Err(Halt::Failed { item: 1, .. })
+        ));
+        assert_eq!(work.used(), 18);
+        assert!(node(&mut work, 1, &[(5, false)]).is_ok());
+        let (cause, profile) =
+            out_of_budget(node(&mut work, 0, &[(4, false), (5, false)]).unwrap_err());
+        assert_eq!(cause, Cause::Work);
+        assert_eq!((profile.used, profile.rungs.clone()), (30, vec![25, 5]));
+        assert_eq!((profile.stopped.at.pass, profile.stopped.at.item), (3, 1));
+        let hottest: Vec<(u64, usize, u64)> = profile
+            .hottest
+            .iter()
+            .map(|(at, n)| (at.pass, at.item, *n))
+            .collect();
+        assert_eq!(
+            hottest,
+            vec![
+                (0, 1, 5),
+                (1, 0, 5),
+                (2, 0, 5),
+                (0, 0, 4),
+                (1, 1, 4),
+                (3, 0, 4),
+                (3, 1, 3)
+            ]
+        );
     }
 
     /// A test record key: point `i` of `A` against vertex 0 of `B`.
@@ -1080,20 +1438,20 @@ mod tests {
             panic!("{out:?}");
         };
         let at = profile.stopped.at;
-        assert_eq!((at.item, at.record), (2, Some(RecordKey::Vv(vv(9)))));
+        assert_eq!((at.item, at.name.record), (2, Some(RecordKey::Vv(vv(9)))));
         let named = |op, v| Named {
             operand: op,
             entity: Entity::Vert(VertId(v)),
         };
         assert_eq!(
-            at.record.map(|r| r.entities()),
+            at.name.record.map(|r| r.entities()),
             Some(vec![named(Operand::A, 9), named(Operand::B, 0)])
         );
         assert!(
             profile
                 .hottest
                 .iter()
-                .all(|(at, _)| matches!(at.record, Some(RecordKey::Vv(_))))
+                .all(|(at, _)| matches!(at.name.record, Some(RecordKey::Vv(_))))
         );
     }
 
@@ -1114,7 +1472,7 @@ mod tests {
             ItemAt {
                 pass: 1 << 32,
                 item: 1,
-                record: None
+                name: ItemName::default(),
             }
         );
         assert_eq!(work.passes, (1 << 32) + 1);

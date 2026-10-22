@@ -552,3 +552,32 @@ fn holes_are_checked() {
         Err(CheckFault::Crossing(FaceId(0)))
     );
 }
+
+/// The flat fixture bodies built on budgets running out anywhere along
+/// their planes' and seams' passes, and the whole: the same store, or
+/// the same error, cause and profile, with the items after the deciding
+/// one stopped early or run on.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn building_on_any_budget_is_the_same_without_early_stop() {
+    use crate::infra::budget::assert_early_stop_changes_nothing;
+    let pairs = [sheets::l_corner(OFFSET), sheets::box_edge_fold(OFFSET)];
+    for p in pairs.iter().flat_map(|pair| [&pair.a, &pair.b]) {
+        let kind = if p.closed {
+            BodyKind::Solid
+        } else {
+            BodyKind::Sheet
+        };
+        let build = |units| {
+            let mut work = Work::new(&Budget::new(units));
+            let out = Brep::from_polygons(kind, &p.verts, &p.faces, TARGET, &mut work);
+            (out, work.used())
+        };
+        let (out, used) = build(crate::MAX_WORK);
+        assert!(out.is_ok(), "{out:?}");
+        for k in 0..=12 {
+            let (out, _) = assert_early_stop_changes_nothing(|| build(used * k / 12));
+            assert_eq!(out.is_ok(), k == 12, "{k}");
+        }
+    }
+}

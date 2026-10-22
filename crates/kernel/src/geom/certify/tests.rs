@@ -760,6 +760,25 @@ fn a_pass_past_its_budget_uses_it_up_on_any_number_of_threads() {
     }
 }
 
+/// Seam passes over copies of the arcs on budgets running out anywhere
+/// along them, at the first level and above, and the whole: the same bounds, or the
+/// same error, cause and profile, with the coedges after the deciding one
+/// stopped early or run on.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn seam_passes_are_the_same_without_early_stop() {
+    use crate::infra::budget::assert_early_stop_changes_nothing;
+    let s = base_plane();
+    let coedges: Vec<_> = arcs(&s).into_iter().cycle().take(8).collect();
+    let (out, used) = pass(&s, &coedges, TARGET, MAX_WORK);
+    assert!(out.is_ok(), "{out:?}");
+    for k in 0..=12 {
+        let (out, _) =
+            assert_early_stop_changes_nothing(|| pass(&s, &coedges, TARGET, used * k / 12));
+        assert_eq!(out.is_ok(), k == 12, "{k}");
+    }
+}
+
 #[test]
 fn calibration_cells_refuse_a_level_or_depth_the_seam_bound_lacks() {
     let s = base_plane();

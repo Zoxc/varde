@@ -694,3 +694,43 @@ fn regions_are_read_off_a_face_arrangement() {
         "{q:?}"
     );
 }
+
+/// Audits of several regions on budgets running out anywhere along them,
+/// and the whole: the same verdicts, or the same error, cause and profile,
+/// with the items after the deciding one stopped early or run on.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn audits_running_out_are_the_same_without_early_stop() {
+    use crate::infra::budget::assert_early_stop_changes_nothing;
+    let p = plane();
+    let regions = [
+        p.region(&square(0.0, 0.0, 8.0), 0),
+        p.region(&square(32.0, 0.0, 8.0), 1),
+        p.region(&square(0.0, 16.0, 8.0), 0),
+    ];
+    let solid: Vec<Tri> = [
+        cuboid([16.0, 0.0, -4.0], [24.0, 8.0, 4.0]),
+        cuboid([28.0, -4.0, -4.0], [44.0, 12.0, 4.0]),
+    ]
+    .concat();
+    let input = AuditInput {
+        tile: &p.tile,
+        regions: &regions,
+        leaves: &[],
+        ribbons: &[],
+        solid: &solid,
+        before: &[],
+        bands: BANDS,
+    };
+    let run = |budget| {
+        let mut work = Work::new(&Budget::new(budget));
+        let out = audit(&input, &mut work);
+        (out, work.used())
+    };
+    let (out, used) = run(crate::MAX_WORK);
+    assert!(out.is_ok(), "{out:?}");
+    for k in 0..=12 {
+        let (out, _) = assert_early_stop_changes_nothing(|| run(used * k / 12));
+        assert_eq!(out.is_ok(), k == 12, "{k}");
+    }
+}
