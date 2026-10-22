@@ -478,3 +478,56 @@ fn a_wrong_coverage_step_fails_the_cells_check() {
         assert!(failed > 0, "{name}");
     }
 }
+
+/// A box against a face's UV polygon (an L, so a box can sit in its
+/// notch): inside, across an edge, in the notch, apart, touching a
+/// corner, on a third of a unit (not dyadic). Every corner side is a
+/// flat predicate run of the `Orient2` kind, none other, so the box
+/// tests are charged as such; the leaves of a fixture run them.
+#[test]
+fn box_tests_are_flat_orientations_by_kind() {
+    use varde_decide::num::schedule::PredKind;
+    let l = [
+        [0.0, 0.0],
+        [2.0, 0.0],
+        [2.0, 1.0],
+        [1.0, 1.0],
+        [1.0, 2.0],
+        [0.0, 2.0],
+    ];
+    let third = Q::from(1u32) / Q::from(3u32);
+    let rect = |u: [f64; 2], v: [f64; 2]| [[q(u[0]), q(u[1])], [q(v[0]), q(v[1])]];
+    let cases = [
+        (rect([0.25, 0.5], [0.25, 0.5]), true),
+        (rect([1.5, 2.5], [0.25, 0.5]), true),
+        (rect([1.25, 1.75], [1.25, 1.75]), false),
+        (rect([3.0, 4.0], [0.0, 1.0]), false),
+        (rect([2.0, 3.0], [1.0, 2.0]), true),
+        (
+            [
+                [&third + q(1.0), &third + q(1.5)],
+                [&third + q(1.0), &third + q(1.5)],
+            ],
+            false,
+        ),
+        ([[third.clone(), q(0.5)], [third.clone(), q(0.5)]], true),
+    ];
+    for (r, want) in cases {
+        let mut runs = Runs::default();
+        assert_eq!(rect_meets_polygon(&r, &l, &mut runs), want, "{r:?}");
+        assert!(runs.of(PredKind::Orient2).filters > 0, "{r:?}");
+        assert_eq!(runs.total(), runs.of(PredKind::Orient2), "{r:?}");
+    }
+    let (a, b) = bodies(&sheets::l_corner(0.0));
+    let _ = leaves(&a, &b, B_K);
+    for body in [&a, &b] {
+        assert!(
+            body.box_tests
+                .lock()
+                .expect("runs")
+                .of(PredKind::Orient2)
+                .filters
+                > 0
+        );
+    }
+}

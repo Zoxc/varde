@@ -783,3 +783,131 @@ fn near_gap_radii_of_any_size() {
     let huge = Q::from(1u32) * Q::from(1u64 << 63) * Q::from(1u64 << 63);
     assert_eq!(at(huge), Ok(Ordering::Greater));
 }
+
+/// `s` times the sign of `by`.
+fn times(s: Ordering, by: &Q) -> Ordering {
+    match sgn(by) {
+        Ordering::Less => s.reverse(),
+        Ordering::Equal => Ordering::Equal,
+        Ordering::Greater => s,
+    }
+}
+
+/// A place along a line at a parameter against a point: the sign of `t −
+/// t_p` times that of `dir·(b − a)`, `t_p` the parameter of `p`'s place
+/// along `dir` by division; for `p` on the line (ties at its own
+/// parameter, one ulp either side) and off it; priced as an `Orient2`.
+#[test]
+fn line_places_are_parameters_compared() {
+    let mut ties = 0;
+    for seed in varde_testing::seeds(16, 256) {
+        let mut r = Rng::new(seed);
+        let (a, b, dir) = (r.ints(4), r.ints(4), r.ints(3));
+        let den = qdot(&q3(dir), &qsub(&q3(b), &q3(a)));
+        if den == 0u32 {
+            continue;
+        }
+        let s = r.int(8) / 8.0;
+        let p = if seed % 2 == 0 {
+            a + (b - a) * s
+        } else {
+            r.ints(4)
+        };
+        let tp = qdot(&q3(dir), &qsub(&q3(p), &q3(a))) / &den;
+        for t in [s, s.next_up(), s.next_down(), r.float(-3, 0)] {
+            let (got, w) = value_sign(&LinePlace {
+                dir,
+                e: [a, b],
+                t,
+                p,
+            });
+            let want = times(sgn(&(q(t) - &tp)), &den);
+            assert_eq!(got, Ok(want), "seed {seed} t {t}");
+            ties += usize::from(want == Ordering::Equal);
+            assert_eq!(w.of(PredKind::Orient2).filters, 1);
+            assert_eq!(w.total(), w.of(PredKind::Orient2));
+        }
+    }
+    assert!(ties > 0);
+}
+
+/// Two lines on one vertical plane: [`LineGap`] against `ê × axis` is
+/// the height gap of `g` above `e`'s point at `t` (by division, along the
+/// shadow line) times the sign of `axis·(g₁ − g₀)`, for either axis;
+/// exactly 0 where the lines cross; priced as a `Crossing`.
+#[test]
+fn line_gaps_are_heights_on_one_vertical_plane() {
+    let up = DVec3::new(2.0, 3.0, 32.0);
+    let axes = [DVec3::new(16.0, 0.0, -1.0), DVec3::new(-3.0, 514.0, -48.0)];
+    let mut ties = 0;
+    for seed in varde_testing::seeds(16, 256) {
+        let mut r = Rng::new(seed);
+        let (base, l) = (r.ints(3), r.ints(2));
+        let (u0, u1) = (r.int(4), r.int(4));
+        if u0 == u1 {
+            continue;
+        }
+        let [v0, v1, h0, h1, k0, k1] = [(); 6].map(|_| r.int(4));
+        // The lines crossing at `t = 1/2` of `e` on some seeds.
+        let (k0, k1) = if seed % 3 == 0 {
+            let mid = |x: f64, y: f64| (x + y) / 2.0;
+            let sm = mid(v0, v1);
+            let hm = h0 + (sm - u0) / (u1 - u0) * (h1 - h0);
+            (hm - (k1 - k0) / 2.0, hm + (k1 - k0) / 2.0)
+        } else {
+            (k0, k1)
+        };
+        let at = |s: f64, h: f64| base + l * s + up * h;
+        let (e, g) = ([at(v0, k0), at(v1, k1)], [at(u0, h0), at(u1, h1)]);
+        for axis in axes {
+            if qdot(&q3(axis), &q3(l)) == 0u32 {
+                continue;
+            }
+            let d = up.cross(axis);
+            for t in [0.5, r.int(16) / 16.0, r.float(-4, 0)] {
+                let (got, w) = value_sign(&LineGap { e, t, g, d });
+                let qt = q(t);
+                let sp = q(v0) + &qt * (q(v1) - q(v0));
+                let hg = q(h0) + (&sp - q(u0)) / (q(u1) - q(u0)) * (q(h1) - q(h0));
+                let kp = q(k0) + &qt * (q(k1) - q(k0));
+                let along_g = qdot(&q3(axis), &qsub(&q3(g[1]), &q3(g[0])));
+                let want = times(sgn(&(hg - kp)), &along_g);
+                assert_eq!(got, Ok(want), "seed {seed} t {t}");
+                ties += usize::from(want == Ordering::Equal);
+                assert_eq!(w.of(PredKind::Crossing).filters, 1);
+                assert_eq!(w.total(), w.of(PredKind::Crossing));
+            }
+        }
+    }
+    assert!(ties > 0);
+}
+
+/// A stored segment's side of an exact point of any magnitude: the 2D
+/// cross product in rationals, for dyadic points, points not dyadic (a
+/// third of the way along: ties the rationals decide) and points beyond
+/// the input bound; priced as an `Orient2`.
+#[test]
+fn orient2_of_exact_points() {
+    let mut rationals = 0;
+    for seed in varde_testing::seeds(16, 256) {
+        let mut r = Rng::new(seed);
+        let (a, b) = ([r.int(8), r.int(8)], [r.float(-2, 3), r.float(-2, 3)]);
+        let qa = [q(a[0]), q(a[1])];
+        let qb = [q(b[0]), q(b[1])];
+        let third = Q::from(1u32) / Q::from(3u32);
+        let huge = Q::from(1u64 << 63) * Q::from(1u64 << 63);
+        let c: [Q; 2] = match seed % 3 {
+            // On the line, a third of the way along.
+            0 => [0, 1].map(|k| &qa[k] + (&qb[k] - &qa[k]) * &third),
+            1 => [q(r.float(-3, 3)) * &third, q(r.float(-3, 3))],
+            _ => [huge.clone(), q(r.float(-3, 3)) * &huge],
+        };
+        let want =
+            sgn(&((&qb[0] - &qa[0]) * (&c[1] - &qa[1]) - (&qb[1] - &qa[1]) * (&c[0] - &qa[0])));
+        let (got, w) = value_sign(&Orient2Exact { a, b, c });
+        assert_eq!(got, Ok(want), "seed {seed}");
+        assert_eq!(w.total(), w.of(PredKind::Orient2));
+        rationals += w.rationals();
+    }
+    assert!(rationals > 0);
+}

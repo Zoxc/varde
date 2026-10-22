@@ -52,7 +52,7 @@
 //! | column hit on a ribbon, anchor `f` ([`ribbon_row`], [`ribbon_row_signs`]) | the hit's height, a sign condition at a root ([`crate::records::height::hit`]) | `(n_R·ΔR − n_R·Δq)·sign(n_R·ê)`, `n_R = R_t × R_λ`: the tangent plane of the ribbon at the hit |
 //! | fold of a tile at `q`'s height (the column tangent there; [`fold_side`]) | `0`: `q` on the silhouette | `n_f·(Δq − Δx)`: the side of the silhouette the moved column lies on |
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
-//! | shared-curve crossing ([`shared_crossing`], exactly at a stored point [`shared_crossing_signs`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
+//! | shared-curve crossing ([`shared_crossing`], exactly at a stored point [`shared_crossing_sign`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
 //! | shared-curve z-order at a root of `h`, anchor `g` ([`shared_zorder`]) | `ê·(C_g − C_e)`: exactly 0 | `ê·(ΔC − Δq) + (ê·T)·ṡ`, `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`, `q` the moving edge's point, `ΔC = 0` |
 //!
 //! The height and z-order rows are per anchor: their order 0 is the value
@@ -1024,27 +1024,51 @@ pub fn shared_crossing_h1<S: Scalar>(tangent: &[S; 3], rate: &[S; 3]) -> S {
     dot3(&lit3(UP, &tangent[0]), &cross3(&rescaled(tangent), rate))
 }
 
-/// The shared-curve crossing row's orders, exactly, at a stored point of
-/// the overlap (an end of it, a knot): the signs of `hₖ = ê·(T × Δₖ)`
-/// with `T` the exact tangent there (any positive multiple: at a span's
-/// end the chord to its middle control point) and `Δₖ` the moving edge's
-/// exact rates there. The first that isn't `Equal` is the sign of `h` in
-/// the moved configuration at that point (orders 2–4 decide an exact zero
-/// of `h₁`); all are `Equal` only where `T` is along `ê` (a vertical
-/// shadow tangent).
-pub fn shared_crossing_signs(
-    tangent: &[Rational; 3],
-    rates: &[[Rational; 3]; ORDERS],
-) -> [Ordering; ORDERS] {
-    let u = [UP.x, UP.y, UP.z].map(rat);
-    let zero = Rational::from(0u32);
-    rates.each_ref().map(|d| {
-        let c = [
-            &tangent[1] * &d[2] - &tangent[2] * &d[1],
-            &tangent[2] * &d[0] - &tangent[0] * &d[2],
-            &tangent[0] * &d[1] - &tangent[1] * &d[0],
-        ];
-        (&u[0] * &c[0] + &u[1] * &c[1] + &u[2] * &c[2]).cmp(&zero)
+/// The shared-curve crossing row's order `k` exactly, flat:
+/// `ê·(T × Δₖ)` with `ê` = [`UP`], `T = b − a` the exact chord of stored
+/// points along the curve's tangent at a stored point of the overlap (any
+/// positive multiple: at a span's end the chord to its middle control
+/// point, on a line the line's ends) and `Δₖ` the moving edge's exact
+/// rate there ([`preds::shadow_side`], a 3×3 determinant). An exact rate
+/// enters as it is ([`Num::rational`]): the filter rounds it with its
+/// error, the expansions take it where it is dyadic and in range, else
+/// the rational stage does, each stage charged at the kind's row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SharedCrossing<'a> {
+    /// The chord's ends `a`, `b`, along the tangent.
+    pub chord: [DVec3; 2],
+    /// The moving edge's rate along the motion.
+    pub rate: &'a Rate,
+}
+
+impl Pred for SharedCrossing<'_> {
+    fn eval<N: Num>(&self) -> N {
+        let [a, b] = self.chord.map(point::<N>);
+        preds::shadow_side(&point(UP), &sub(&b, &a), &self.rate.vec())
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
+    }
+}
+
+/// The shared-curve crossing row exactly at a stored point of the overlap
+/// (an end of it, a knot), [`SharedCrossing`] per order: the first order
+/// `k` (from 1) whose sign `hₖ = ê·(T × Δₖ)` isn't `Equal`, with that
+/// sign, the sign of `h` in the moved configuration at that point (orders
+/// 2–4 decide an exact zero of `h₁`). Each order is worked out through
+/// the stages only when the ones before are 0, its work added to `work`.
+/// `None` where every order is 0: `T` along `ê` (a vertical shadow
+/// tangent).
+pub fn shared_crossing_sign(
+    chord: [DVec3; 2],
+    rates: &[Rate; ORDERS],
+    work: &mut Work,
+) -> Option<(usize, ExactSign)> {
+    (1..).zip(rates).find_map(|(k, rate)| {
+        let (s, w) = exact::value_sign(&SharedCrossing { chord, rate });
+        *work = work.and(w);
+        (s != Ok(Ordering::Equal)).then_some((k, s))
     })
 }
 
@@ -1074,34 +1098,6 @@ pub fn shared_zorder<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) -> O
         let d = &rates[k];
         a.mul(&dot3(&t, d)).sub(&dot3(&up, d)).div(&den)
     }))
-}
-
-/// The point–curve z-order orders, exactly, at a point `q` lying on a
-/// curve with the tangent `tangent` there (any non-zero multiple): the
-/// signs of the derivatives of the curve's height above `q` along each
-/// motion, `ê·(ΔC − Δq) + (ê·T)·ṡ` with `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`
-/// (the foot sliding along the curve to stay under the moved `q`; §
-/// "Rows" in [`crate::records::height`]), `deltas[k] = Δq − ΔC` along
-/// motion `k`. Times `‖T_xy‖²·|ê|`-like positive factors that is
-/// `(u·T)(T·Δ) − (u·Δ)(T·T)`, `u` = [`UP`], which these are the exact
-/// signs of. All `Equal` where `T` is along `UP` (no foot to slide).
-pub fn point_curve_signs(
-    tangent: &[Rational; 3],
-    deltas: &[[Rational; 3]; ORDERS],
-) -> [ExactSign; ORDERS] {
-    let u = [UP.x, UP.y, UP.z].map(rat);
-    let d3 = |a: &[Rational; 3], b: &[Rational; 3]| -> Rational {
-        &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
-    };
-    let (a, tt) = (d3(&u, tangent), d3(tangent, tangent));
-    let vertical = &tt * d3(&u, &u) == &a * &a;
-    deltas.each_ref().map(|d| {
-        if vertical {
-            return Ok(Ordering::Equal);
-        }
-        let v = &a * d3(tangent, d) - d3(&u, d) * &tt;
-        Ok(v.cmp(&Rational::from(0u32)))
-    })
 }
 
 /// A curve's point at `s` and its tangent there, `W·P′ − W′·P` (`W²`

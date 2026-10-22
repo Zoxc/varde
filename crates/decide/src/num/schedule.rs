@@ -159,15 +159,18 @@ pub enum PredKind {
     Side,
     /// A 2D orientation `orient(a, b, c)`, or another sum of a few
     /// products of two differences: a dot product of two segments, a
-    /// distance squared against a radius squared.
+    /// distance squared against a radius squared, a place along a line at
+    /// a parameter against a point.
     Orient2,
     /// A 3×3 determinant of differences: a 3D orientation, a segment's
     /// side of a line, a point's side of a triangle's plane, a point
     /// against a line's shadow (`det(UP, b − a, q − a)`), a plane's height
-    /// above a point.
+    /// above a point, a shared curve's crossing row at a stored point
+    /// (`UP·(T × Δ)`, `T` a chord, `Δ` a rate).
     Orient3,
     /// Two edges' crossing along `UP`, `(UP·m)·(m·(g₀ − e₀))` with `m`
-    /// the cross product of their directions: degree four.
+    /// the cross product of their directions: degree four; also the
+    /// height gap of two lines on one vertical plane at a parameter.
     Crossing,
     /// A shadow row of homogeneous points, `X/W` with `X`, `W` exact
     /// sums of weighted control points.

@@ -761,6 +761,36 @@ fn z_order_cones_hold_the_row_over_a_box() {
     assert!(certified > 0);
 }
 
+/// The point–curve z-order orders, exactly, at a point `q` lying on a
+/// curve with the tangent `tangent` there (any non-zero multiple): the
+/// signs of the derivatives of the curve's height above `q` along each
+/// motion, `ê·(ΔC − Δq) + (ê·T)·ṡ` with `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`
+/// (the foot sliding along the curve to stay under the moved `q`; §
+/// "Rows" in [`crate::records::height`]), `deltas[k] = Δq − ΔC` along
+/// motion `k`. Times `‖T_xy‖²·|ê|`-like positive factors that is
+/// `(u·T)(T·Δ) − (u·Δ)(T·T)`, `u` = [`UP`], which these are the exact
+/// signs of: the curved row [`shared_zorder`]'s numerator, worked out
+/// exactly in rationals as the test's reference. All `Equal` where `T`
+/// is along `UP` (no foot to slide).
+fn point_curve_signs(
+    tangent: &[Rational; 3],
+    deltas: &[[Rational; 3]; ORDERS],
+) -> [ExactSign; ORDERS] {
+    let u = [UP.x, UP.y, UP.z].map(rat);
+    let d3 = |a: &[Rational; 3], b: &[Rational; 3]| -> Rational {
+        &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2]
+    };
+    let (a, tt) = (d3(&u, tangent), d3(tangent, tangent));
+    let vertical = &tt * d3(&u, &u) == &a * &a;
+    deltas.each_ref().map(|d| {
+        if vertical {
+            return Ok(Ordering::Equal);
+        }
+        let v = &a * d3(tangent, d) - d3(&u, d) * &tt;
+        Ok(v.cmp(&Rational::from(0u32)))
+    })
+}
+
 /// The point–curve z-order row's signs at a point on a curve (a tie),
 /// the point or the curve moving: the curve's height above the moved
 /// point, its foot solved again, moves with those signs.
@@ -1505,35 +1535,83 @@ fn the_shared_curve_row_is_the_motion_across_the_shadow() {
     assert_eq!(row(zero, NU).ord[0].sign(), None);
 }
 
-/// The shared-curve crossing row exactly at a stored point: the signs of
-/// `ê·(T × Δₖ)`, the normalised row's where that is certified; `h₁`
-/// exactly 0 where the motion's shadow runs along the tangent's (orders
-/// 2–4 then the translations' own, not all 0); all 0 only for a vertical
-/// tangent. The unnormalised order 1 has the row's sign where certified.
+/// `ê·(T × d)` in rationals, the reference for [`SharedCrossing`].
+fn crossing_rational(t: &[Rational; 3], d: &[Rational; 3]) -> Ordering {
+    let u = [UP.x, UP.y, UP.z].map(rat);
+    let c = [
+        &t[1] * &d[2] - &t[2] * &d[1],
+        &t[2] * &d[0] - &t[0] * &d[2],
+        &t[0] * &d[1] - &t[1] * &d[0],
+    ];
+    (&u[0] * &c[0] + &u[1] * &c[1] + &u[2] * &c[2]).cmp(&Rational::from(0u32))
+}
+
+/// The shared-curve crossing row exactly at a stored point, its tangent
+/// a chord of stored points: the signs of `ê·(T × Δₖ)`, the rationals'
+/// and the normalised row's where that is certified, for float rates and
+/// exact ones (a third: the rational stage); `h₁` exactly 0 where the
+/// motion's shadow runs along the tangent's (orders 2–4 then the
+/// translations' own, not all 0); all 0 only for a vertical tangent. The
+/// first sign that isn't 0 is worked out lazily, one filter run of the
+/// Orient3 kind per order up to it. The unnormalised order 1 has the
+/// row's sign where certified.
 #[test]
 fn the_shared_curve_signs_are_the_rows_exactly() {
     let like = Bounded::exact(0.0);
     let v = |d: DVec3| lit3(d, &like);
     let q = |d: DVec3| [d.x, d.y, d.z].map(rat);
-    let mut checked = 0;
+    let (mut checked, mut rational) = (0, 0);
     for seed in varde_testing::seeds(64, 1024) {
         let mut r = Rng::new(seed);
-        let t = r.ints(4);
+        let (base, t) = (r.ints(4), r.ints(4));
+        let chord = [base, base + t];
         let d = if seed % 3 == 0 {
             // Along the tangent in the shadow: `h₁ = 0`.
             t * r.int(3) + UP * r.int(2)
         } else {
             r.ints(4)
         };
-        let rates = [d, T[0], T[1], T[2]];
-        let exact = shared_crossing_signs(&q(t), &rates.map(q));
-        let row = shared_crossing(&v(t), &rates.map(v));
+        let third = seed % 4 == 1;
+        let own = if third {
+            Rate::exact(q(d).map(|x| x / Rational::from(3u32)))
+        } else {
+            Rate::Float(d)
+        };
+        let rates = [own, T[0].into(), T[1].into(), T[2].into()];
+        let exact: [Ordering; ORDERS] = std::array::from_fn(|k| {
+            let (s, w) = exact::value_sign(&SharedCrossing {
+                chord,
+                rate: &rates[k],
+            });
+            assert_eq!(w.of(PredKind::Orient3).filters, 1);
+            assert_eq!(w.total(), w.of(PredKind::Orient3));
+            if w.rationals() > 0 {
+                rational += 1;
+            }
+            s.expect("finite")
+        });
+        for k in 0..ORDERS {
+            let want = crossing_rational(&q(t), &rate_rational(&rates[k]));
+            assert_eq!(exact[k], want, "seed {seed} order {}", k + 1);
+        }
+        let row = shared_crossing(&v(t), &[d, T[0], T[1], T[2]].map(v));
         for k in 0..ORDERS {
             if let Some(s) = row.ord[k].sign().filter(|s| *s != Ordering::Equal) {
                 assert_eq!(exact[k], s, "seed {seed} order {}", k + 1);
                 checked += 1;
             }
         }
+        // The first sign that isn't 0, worked out up to it.
+        let mut work = Work::default();
+        let first = shared_crossing_sign(chord, &rates, &mut work);
+        let want = (1..).zip(exact).find(|&(_, s)| s != Ordering::Equal);
+        assert_eq!(first, want.map(|(k, s)| (k, Ok(s))), "seed {seed}");
+        let runs = want.map_or(ORDERS, |(k, _)| k);
+        assert_eq!(
+            work.of(PredKind::Orient3).filters as usize,
+            runs,
+            "seed {seed}"
+        );
         // The unnormalised order 1: the same sign where certified.
         let vb = |d: DVec3| [d.x, d.y, d.z].map(big);
         if let Some(o) = shared_crossing_h1(&vb(t), &vb(d)).sign() {
@@ -1543,17 +1621,19 @@ fn the_shared_curve_signs_are_the_rows_exactly() {
             || q(t)[0].clone() * rat(UP.y) == q(t)[1].clone() * rat(UP.x)
                 && q(t)[1].clone() * rat(UP.z) == q(t)[2].clone() * rat(UP.y)
                 && q(t)[0].clone() * rat(UP.z) == q(t)[2].clone() * rat(UP.x);
-        assert_eq!(
-            exact.iter().all(|s| *s == Ordering::Equal),
-            vertical,
-            "seed {seed}"
-        );
+        assert_eq!(first.is_none(), vertical, "seed {seed}");
     }
-    assert!(checked > 100, "{checked} checked");
-    assert_eq!(
-        shared_crossing_signs(&q(UP), &[DVec3::X, T[0], T[1], T[2]].map(q)),
-        [Ordering::Equal; ORDERS]
+    assert!(
+        checked > 100 && rational > 0,
+        "{checked} checked, {rational} rational"
     );
+    let rates = [DVec3::X, T[0], T[1], T[2]].map(Rate::Float);
+    let mut work = Work::default();
+    assert_eq!(
+        shared_crossing_sign([DVec3::ONE, DVec3::ONE + UP], &rates, &mut work),
+        None
+    );
+    assert_eq!(work.of(PredKind::Orient3).filters as usize, ORDERS);
 }
 
 /// The shared-curve z-order row against the moved geometry: a curve

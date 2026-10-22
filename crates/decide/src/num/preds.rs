@@ -14,9 +14,11 @@
 //! value is a positive multiple of the spatial one: a squared length, a
 //! facing of the unmoved data.
 //!
-//! **Predicates.** The types here ([`Orient2d`], [`Dot2d`], [`Orient3d`],
-//! [`Orient3Dir`], [`PlaneSide`], [`Along`], [`NearGap`]) are the forms
-//! on stored points that don't move: the certificates and checks on one
+//! **Predicates.** The types here ([`Orient2d`], [`Orient2Exact`],
+//! [`Dot2d`], [`Orient3d`], [`Orient3Dir`], [`PlaneSide`], [`Along`],
+//! [`LinePlace`], [`LineGap`], [`NearGap`]) are the forms on points that
+//! don't move, stored (an exact box corner, a stored parameter along a
+//! stored segment, [`line_point`]): the certificates and checks on one
 //! operand's geometry, never perturbed. The perturbed rows of the
 //! records (the vertex–vertex and vertex–line shadows, the heights, the
 //! edge–edge crossing; [`crate::perturb`]) are the same forms on moving
@@ -28,9 +30,11 @@
 //! per kind and stage: [`along`] and [`plane_side`] are
 //! [`PredKind::Side`] (degree 2, three products of an input and a
 //! difference or an input); [`orient2`], [`dot2`] and [`near_gap`]
-//! [`PredKind::Orient2`]; [`orient3`], [`orient3_dir`], [`shadow_side`]
-//! and [`plane_height`] [`PredKind::Orient3`]; [`crossing_height`]
-//! [`PredKind::Crossing`] (degree 4); the shadow rows of homogeneous
+//! [`PredKind::Orient2`], also [`LinePlace`] (degree 3, three products
+//! of an input and a point at a parameter); [`orient3`], [`orient3_dir`],
+//! [`shadow_side`] and [`plane_height`] [`PredKind::Orient3`];
+//! [`crossing_height`] [`PredKind::Crossing`] (degree 4), also
+//! [`LineGap`] (a 3×3 determinant with a point at a parameter, degree 4); the shadow rows of homogeneous
 //! points ([`hom_sub`]) [`PredKind::Hom`].
 
 use glam::DVec3;
@@ -115,10 +119,108 @@ pub fn hom_sub<N: Num>(p: (&V3<N>, &N), q: (&V3<N>, &N)) -> V3<N> {
     [0, 1, 2].map(|k| wq.mul(&xp[k]).sub(&wp.mul(&xq[k])))
 }
 
+/// `a + t·(b − a)`: the point at parameter `t` of the segment `a → b`,
+/// its products formed in the stages (degree 2).
+pub fn line_point<N: Num>(a: &V3<N>, b: &V3<N>, t: &N) -> V3<N> {
+    let d = sub(b, a);
+    [0, 1, 2].map(|k| a[k].add(&t.mul(&d[k])))
+}
+
 /// `r² − ‖w − q‖²`: at least zero when the points are within `r`.
 pub fn near_gap<N: Num>(r: &N, q: &V3<N>, w: &V3<N>) -> N {
     let d = sub(w, q);
     r.mul(r).sub(&dot(&d, &d))
+}
+
+/// [`orient2`] of stored points `a`, `b` and an exact point `c`: a stored
+/// segment's side of a point of any magnitude (a dyadic box corner),
+/// positive when `c` lies left of `a → b`. The corner enters as it is
+/// ([`Num::rational`]): the filter rounds it with its error, the
+/// expansions take it where it is dyadic and in range, else the rational
+/// stage does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Orient2Exact {
+    /// The segment's start.
+    pub a: [f64; 2],
+    /// Its end.
+    pub b: [f64; 2],
+    /// The point.
+    pub c: [Rational; 2],
+}
+
+impl Pred for Orient2Exact {
+    fn eval<N: Num>(&self) -> N {
+        let c = [N::rational(&self.c[0]), N::rational(&self.c[1])];
+        orient2(&point2(self.a), &point2(self.b), &c)
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
+}
+
+/// [`along`] from a stored point `p` to the point at a stored parameter
+/// `t` of a stored segment `e` ([`line_point`]): `dir·(e₀ + t·(e₁ − e₀)
+/// − p)`, positive where that point lies past `p` along `dir`. A place
+/// on a line against a point on it; of degree 3, priced as
+/// [`PredKind::Orient2`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LinePlace {
+    /// The direction (any scale).
+    pub dir: DVec3,
+    /// The segment.
+    pub e: [DVec3; 2],
+    /// The parameter on it.
+    pub t: f64,
+    /// The point measured from.
+    pub p: DVec3,
+}
+
+impl Pred for LinePlace {
+    fn eval<N: Num>(&self) -> N {
+        let [a, b] = self.e.map(point::<N>);
+        along(
+            &point(self.dir),
+            &point(self.p),
+            &line_point(&a, &b, &N::lit(self.t)),
+        )
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
+}
+
+/// [`orient3_dir`] from the point at a stored parameter `t` of a stored
+/// segment `e` ([`line_point`]) to the stored segment `g`, against a
+/// stored direction `d`: `det(g₀ − P, g₁ − P, d)`, `P = e₀ + t·(e₁ −
+/// e₀)`, formed as `det(g₀ − P, g₁ − g₀, d)`: of degree 4, priced as
+/// [`PredKind::Crossing`]. With `d = ê × a` for an axis `a ⊥ ê` and `P` on `g`'s shadow
+/// line, the height of `g` above `P` along `ê` times `a·(g₁ − g₀)`
+/// (Binet–Cauchy): the gap of two lines on one vertical plane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineGap {
+    /// The segment `P` lies on.
+    pub e: [DVec3; 2],
+    /// `P`'s parameter on it.
+    pub t: f64,
+    /// The other segment.
+    pub g: [DVec3; 2],
+    /// The direction.
+    pub d: DVec3,
+}
+
+impl Pred for LineGap {
+    fn eval<N: Num>(&self) -> N {
+        let [a, b] = self.e.map(point::<N>);
+        let [g0, g1] = self.g.map(point::<N>);
+        let p = line_point(&a, &b, &N::lit(self.t));
+        det3(&sub(&g0, &p), &sub(&g1, &g0), &point(self.d))
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Crossing
+    }
 }
 
 /// A stored 2D point as inputs.

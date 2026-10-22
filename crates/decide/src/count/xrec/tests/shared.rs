@@ -12,6 +12,8 @@
 
 use super::clusters::z_orders;
 use super::*;
+use crate::count::s02::Charge;
+use crate::num::schedule::PredKind;
 use crate::num::trig::{atan2, cos, sin};
 use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::feet::{EdgeCurve, Feet, decide_feet};
@@ -82,6 +84,11 @@ fn shared_reads(geom: &Geom) -> SharedReads<'_> {
 /// asks for filled, with its `X`; `None` where the four terms aren't
 /// decided.
 fn shared_rec(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedError>, i64)> {
+    shared_rec_cost(geom, one_curve).map(|(r, x, _)| (r, x))
+}
+
+/// [`shared_rec`] with the cost of its last search.
+fn shared_rec_cost(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedError>, i64, Cost)> {
     let recs = try_decide(geom)?;
     let mut pair = recs.pair(geom);
     pair.shared = one_curve;
@@ -91,19 +98,19 @@ fn shared_rec(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedError>
     let reads = shared_reads(geom);
     let x = x_count(&pair.terms);
     for _ in 0..32 {
-        let r = {
+        let (r, cost) = {
             let sides = recs.sides.borrow();
-            shared_clusters(&reads, geom, &sides, X, &pair)
+            shared_clusters_charged(&reads, geom, &sides, X, &pair, &Charge::xrec(u64::MAX))
         };
         match r {
             Err(SharedError::Need(ks)) => {
                 for k in ks {
                     if !recs.fill(geom, k) {
-                        return Some((Err(SharedError::Need(vec![k])), x));
+                        return Some((Err(SharedError::Need(vec![k])), x, cost));
                     }
                 }
             }
-            r => return Some((r, x)),
+            r => return Some((r, x, cost)),
         }
     }
     None
@@ -275,6 +282,67 @@ fn lines_on_one_shadow_line_cross_at_the_root_of_h() {
         crossed > 20 && checked > 40,
         "{crossed} crossed, {checked} checked"
     );
+}
+
+/// The shared-curve record charges every flat sign it reads, by kind and
+/// stage (`Cost::exact`; filter, expansion and rational runs): on one
+/// line (`g` inside `e`), the shadow-point and ends' place tests (`Side`),
+/// the shadows on one line, the lines one in height and the moved signs
+/// of `h` at the overlap's ends (`Orient3`), the overlap's ends (`g`'s)
+/// against the split positions (`Orient2`); two distinct lines also
+/// their height gap at each piece's ends (`Crossing`); on one curve the
+/// moved signs at the run's ends and inner knot's two sides alone
+/// (`Orient3`, one filter run per order up to the first that isn't 0).
+/// Exact ties take the expansions.
+#[test]
+fn the_shared_record_charges_its_flat_signs() {
+    let runs = |c: &Cost| {
+        PredKind::ALL.map(|k| {
+            let r = c.exact.of(k);
+            [r.filters, r.expansions, r.rationals]
+        })
+    };
+    let dir = lat(1.0, 2.0, 0.0);
+    let none = [0; 3];
+    for (lift, want) in [
+        (None, [[5, 0, 0], [80, 0, 0], [6, 4, 0], none, none]),
+        (
+            Some((-1.0, 1.0)),
+            [[5, 0, 0], [32, 0, 0], [5, 2, 0], [44, 5, 0], none],
+        ),
+    ] {
+        let mut geom = Geom {
+            d: dir * 0.5 + UP * 0.25,
+            field: dir,
+            ..Geom::default()
+        };
+        geom.segment(A, E, (0, dir * -1.0), (1, dir * 2.0));
+        let (h0, h1) = lift.unwrap_or((0.0, 0.0));
+        geom.segment(B, G, (2, dir * -0.5 + UP * h0), (3, dir * 1.5 + UP * h1));
+        let (r, x, cost) = shared_rec_cost(&geom, lift.is_none()).expect("decided");
+        let rec = r.expect("answered");
+        assert_eq!((rec.clusters.len(), x), (1, rec.degree()), "{lift:?}");
+        assert_eq!(runs(&cost), want, "{lift:?}");
+    }
+    let knots = model_knots(&[30.0, 150.0, 90.0, 230.0]);
+    let ix = |a: f64| knots.iter().position(|&k| k == deg(a)).expect("a knot");
+    let m = Model {
+        ei: (ix(30.0), ix(150.0)),
+        gi: (ix(90.0), ix(230.0)),
+        knots: knots.clone(),
+        phi: deg(210.0),
+        rho: deg(15.0),
+        vz: 0.2,
+        tilt: 0.8,
+        back_e: false,
+        back_g: false,
+        w: vec![1.0],
+    };
+    let (r, _, cost) = shared_rec_cost(&m.geom(), true).expect("decided");
+    r.expect("answered");
+    // One run over `e`'s spans from 90° to 150°: its two ends and the
+    // inner knot's two sides, each decided at order 1.
+    assert_eq!(runs(&cost), [none, none, [4, 1, 0], none, none]);
 }
 
 /// The shared-curve model's circle (its explainer's interactive view):

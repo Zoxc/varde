@@ -28,9 +28,11 @@
 //!
 //! **Signs at stored points.** At `P`, `Q` and each inner knot, `h`'s sign
 //! is that of the moved configuration, exactly: the first of `h₁ … h₄`
-//! that isn't 0 ([`shared_crossing_signs`]), with the exact tangent (at a
-//! span's end the chord to its middle control point; at an inner knot
-//! from both sides, which must agree) and the edge's exact rates there
+//! that isn't 0, each an Orient3-kind flat predicate worked out through
+//! its stages only when the ones before are 0 ([`shared_crossing_sign`]),
+//! with the exact tangent (at a span's end the chord to its middle
+//! control point; at an inner knot from both sides, which must agree) and
+//! the edge's exact rates there
 //! ([`XGeometry::edge_point_rates`]; on a line, at an end of `g` inside
 //! `e`, the rates of `e`'s point under it, [`XGeometry::edge_line`]). So
 //! an exact zero of `h₁` at an overlap end is decided like any tie, and
@@ -85,6 +87,13 @@
 //! **Check.** The clusters' degrees sum to the four terms' `X`; a
 //! mismatch is a rule gap, never answered ([`SharedError::Inconsistent`]).
 //!
+//! **Flat signs.** Every exact sign the record reads on stored data (the
+//! moved signs of `h` at stored points, a line run's signs and its ends'
+//! places, two lines' height gap) is a flat predicate ([`crate::num::preds`],
+//! [`SharedCrossing`](crate::perturb::SharedCrossing)) worked out through
+//! its stages, their runs in the record's cost by kind
+//! ([`Cost::exact`]), with the record or its refusal.
+//!
 //! **Cut points** ([`root_order`]). The cut point of a root cluster is
 //! keyed by the pair and its index ([`Query::Root`](crate::records::keys::Query::Root)).
 //! Against a point `w` of `e`'s curve it is ordered by the sign of `h(w)`:
@@ -105,13 +114,14 @@ use crate::count::s02::{Charge, Exhausted};
 use crate::count::xrec::{Allow, XClusterError, form_charged};
 use crate::ids::EdgeId;
 use crate::num::decide::Sign;
-use crate::num::exact::{ORDERS, rat};
+use crate::num::exact::{ORDERS, Pred, Work, rat, value_sign};
 use crate::num::level::{AtLevel, LevelScalar, at_level, ladder};
+use crate::num::preds::{self, LineGap, LinePlace, Orient3Dir};
 use crate::num::schedule::{LEVELS, Level};
 use crate::order::{Along, EntityOrder};
 use crate::perturb::{
-    Curved, NU, R_HAT, UP, between, curve_point, rate_rational, shared_crossing_h1,
-    shared_crossing_signs, shared_zorder,
+    Curved, NU, R_HAT, Rate, UP, between, curve_point, shared_crossing_h1, shared_crossing_sign,
+    shared_zorder,
 };
 use crate::records::height::HeightReads;
 use crate::records::keys::{EdgeAt, Operand, Point, RayKey, RecordKey, XKey};
@@ -187,12 +197,106 @@ struct Run {
     dir: i64,
     /// The matching piece of `g`.
     on_g: OnG,
-    /// Two distinct lines: their height gap `ê·(C_g − C_e)` as `c₀ + c₁·t`
-    /// on `e`'s parameter, exactly; `None` where the heights coincide.
-    gap: Option<[Rational; 2]>,
-    /// A line's overlap ends on `e`'s parameter, exactly: no split past
-    /// them.
-    inside: Option<[Rational; 2]>,
+    /// Two straight edges: how places along the line and their heights
+    /// are read.
+    line: Option<OnLine>,
+}
+
+impl Run {
+    /// Two distinct lines: their height gap is clear where it has one sign.
+    fn distinct(&self) -> bool {
+        self.line.as_ref().is_some_and(|l| l.gap.is_some())
+    }
+}
+
+/// The run of two straight edges `e = a → b` and `g` (module docs): the
+/// exact signs it reads at a parameter `t` of `e`, as flat predicates
+/// ([`preds`]) on the stored ends and `t`.
+#[derive(Clone, Debug)]
+struct OnLine {
+    /// `e`'s ends `a`, `b`.
+    e: [DVec3; 2],
+    /// The shadow-plane axis places along the line are read on, `r̂`, or
+    /// `ν` where `e`'s shadow is across `r̂`.
+    axis: DVec3,
+    /// The sign of `axis·(b − a)`, never `Equal`.
+    forward: Ordering,
+    /// The ends of `g` inside `e` that end the overlap, before and after:
+    /// no split past them.
+    ends: [Option<DVec3>; 2],
+    /// Two distinct lines: their height gap (module docs).
+    gap: Option<Gap>,
+}
+
+/// The height gap `ê·(C_g − C_e)` of two distinct straight edges whose
+/// shadows lie on one line, at `e`'s point `P(t)`: the sign of
+/// [`LineGap`] (`det(g₀ − P, g₁ − P, ê × axis)`, the gap times
+/// `axis·(g₁ − g₀)`, Binet–Cauchy) times that of `axis·(g₁ − g₀)`.
+#[derive(Clone, Copy, Debug)]
+struct Gap {
+    /// `g`'s ends.
+    g: [DVec3; 2],
+    /// `ê × axis`, exact (small integers).
+    across: DVec3,
+    /// The sign of `axis·(g₁ − g₀)`, never `Equal`.
+    along_g: Ordering,
+}
+
+impl OnLine {
+    /// The sign of the height gap at `t` of `e`, through the stages.
+    fn gap_at(&self, gap: &Gap, t: f64, work: &mut Work) -> Option<Ordering> {
+        let v = flat(
+            &LineGap {
+                e: self.e,
+                t,
+                g: gap.g,
+                d: gap.across,
+            },
+            work,
+        )
+        .ok()?;
+        Some(times(v, gap.along_g))
+    }
+
+    /// Whether `t` lies strictly inside the overlap's ends that are ends
+    /// of `g` (the others, `e`'s own, bound the pieces already).
+    fn inside(&self, t: f64, work: &mut Work) -> Result<bool, SharedError> {
+        for (end, want) in self.ends.iter().zip([Ordering::Greater, Ordering::Less]) {
+            if let Some(p) = end {
+                let s = flat(
+                    &LinePlace {
+                        dir: self.axis,
+                        e: self.e,
+                        t,
+                        p: *p,
+                    },
+                    work,
+                )?;
+                if times(s, self.forward) != want {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// `s` times the sign `by`.
+fn times(s: Ordering, by: Ordering) -> Ordering {
+    match by {
+        Ordering::Less => s.reverse(),
+        Ordering::Equal => Ordering::Equal,
+        Ordering::Greater => s,
+    }
+}
+
+/// The sign of a flat predicate through its stages, its work added to
+/// `work`; [`SharedError::Unsettled`] where an input isn't finite (never
+/// on stored data).
+fn flat(pred: &impl Pred, work: &mut Work) -> Result<Ordering, SharedError> {
+    let (s, w) = value_sign(pred);
+    *work = work.and(w);
+    s.map_err(|_| SharedError::Unsettled)
 }
 
 /// Where a piece of `e` lies on `g`.
@@ -262,8 +366,9 @@ pub fn shared_clusters<R: HeightReads, G: XGeometry>(
 /// and every piece the box search away from the overlap tests (its
 /// diagonal band's included, [`form_charged`]), on what the roots left.
 /// With the record, or the error, the pieces per level
-/// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) for
-/// the pass to charge ([`Charge::spent`]).
+/// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) and
+/// the flat predicates' runs ([`Cost::exact`], module docs) for the pass
+/// to charge ([`Charge::spent`]).
 pub fn shared_clusters_charged<R: HeightReads, G: XGeometry>(
     reads: &R,
     geom: &G,
@@ -292,13 +397,13 @@ fn shared_in<R: HeightReads, G: XGeometry>(
     let chains = matches!((pair.e, pair.g), (XCurve::Spans(_), XCurve::Spans(_)));
     let runs = match (pair.e, pair.g) {
         (XCurve::Line(a, b), XCurve::Line(g0, g1)) => {
-            line_run(geom, x, [a, b, g0, g1], pair.shared)?
+            line_run(geom, x, [a, b, g0, g1], pair.shared, &mut cost.exact)?
                 .into_iter()
                 .collect()
         }
         (XCurve::Spans(es), XCurve::Spans(gs)) if pair.shared => {
             aligned(reads, x, pair, es, gs)?;
-            chain_runs(geom, x.e, es, gs)?
+            chain_runs(geom, x.e, es, gs, &mut cost.exact)?
         }
         _ => return Err(SharedError::Shape),
     };
@@ -317,7 +422,17 @@ fn shared_in<R: HeightReads, G: XGeometry>(
             left: charge.share.saturating_sub(spent),
         };
         let mut evals = 0u64;
-        let r = at_level(&mut RootsAt { ctx: &ctx, allow }, level, &mut evals);
+        let mut exact = Work::default();
+        let r = at_level(
+            &mut RootsAt {
+                ctx: &ctx,
+                allow,
+                exact: &mut exact,
+            },
+            level,
+            &mut evals,
+        );
+        cost.exact = cost.exact.and(exact);
         let work = &mut cost.levels[level.index()];
         work.evals = work
             .evals
@@ -417,22 +532,19 @@ fn aligned<R: HeightReads>(
     Ok(())
 }
 
-/// The affine point of a control point, exactly.
-fn affine(p: &[f64; 4]) -> [Rational; 3] {
-    [rat(p[0]), rat(p[1]), rat(p[2])]
-}
-
-fn qsub(a: &[Rational; 3], b: &[Rational; 3]) -> [Rational; 3] {
-    [&a[0] - &b[0], &a[1] - &b[1], &a[2] - &b[2]]
+/// A control point's stored position.
+fn xyz(p: &[f64; 4]) -> DVec3 {
+    DVec3::new(p[0], p[1], p[2])
 }
 
 /// The moved sign of `h` at a stored point (module docs): the first of
-/// its orders that isn't 0; `None` where all are (a vertical tangent).
-fn moved_sign(tangent: &[Rational; 3], rates: &[crate::perturb::Rate; ORDERS]) -> Option<Sign> {
-    let d: [[Rational; 3]; ORDERS] = std::array::from_fn(|k| rate_rational(&rates[k]));
-    shared_crossing_signs(tangent, &d)
-        .into_iter()
-        .find_map(Sign::of)
+/// its orders that isn't 0, `T` along the chord `a → b`
+/// ([`shared_crossing_sign`], its work added to `work`); `None` where all
+/// are (a vertical tangent), or an input isn't finite (never on stored
+/// data).
+fn moved_sign(chord: [DVec3; 2], rates: &[Rate; ORDERS], work: &mut Work) -> Option<Sign> {
+    let (_, s) = shared_crossing_sign(chord, rates, work)?;
+    Sign::of(s.ok()?)
 }
 
 /// The runs of two chains on one curve (module docs).
@@ -441,6 +553,7 @@ fn chain_runs<G: XGeometry>(
     e: EdgeId,
     es: &[Span],
     gs: &[Span],
+    work: &mut Work,
 ) -> Result<Vec<Run>, SharedError> {
     let back = |sp: &Span| [sp[2], sp[1], sp[0]];
     let matches: Vec<Option<(u32, bool)>> = es
@@ -457,7 +570,7 @@ fn chain_runs<G: XGeometry>(
             })
         })
         .collect();
-    let rates = |k: u32, at: Dyadic| -> Result<[crate::perturb::Rate; ORDERS], SharedError> {
+    let rates = |k: u32, at: Dyadic| -> Result<[Rate; ORDERS], SharedError> {
         let p = EdgeAt::new(k, at).ok_or(SharedError::Shape)?;
         Ok(geom.edge_point_rates(Operand::A, e, p))
     };
@@ -480,15 +593,16 @@ fn chain_runs<G: XGeometry>(
         let at = |i: usize| u32::try_from(i).map_err(|_| SharedError::Shape);
         let first = &es[start];
         let p = moved_sign(
-            &qsub(&affine(&first[1]), &affine(&first[0])),
+            [xyz(&first[0]), xyz(&first[1])],
             &rates(at(start)?, Dyadic::ZERO)?,
+            work,
         )
         .ok_or(SharedError::Unsettled)?;
         let mut signs = vec![[p, p]];
         for i in start + 1..k {
             let r = rates(at(i)?, Dyadic::ZERO)?;
-            let left = moved_sign(&qsub(&affine(&es[i - 1][2]), &affine(&es[i - 1][1])), &r);
-            let right = moved_sign(&qsub(&affine(&es[i][1]), &affine(&es[i][0])), &r);
+            let left = moved_sign([xyz(&es[i - 1][1]), xyz(&es[i - 1][2])], &r, work);
+            let right = moved_sign([xyz(&es[i][0]), xyz(&es[i][1])], &r, work);
             // A vertical tangent: no rule here.
             signs.push([
                 left.ok_or(SharedError::Unsettled)?,
@@ -497,8 +611,9 @@ fn chain_runs<G: XGeometry>(
         }
         let last = &es[k - 1];
         let q = moved_sign(
-            &qsub(&affine(&last[2]), &affine(&last[1])),
+            [xyz(&last[1]), xyz(&last[2])],
             &rates(at(k - 1)?, Dyadic::ONE)?,
+            work,
         )
         .ok_or(SharedError::Unsettled)?;
         signs.push([q, q]);
@@ -509,20 +624,10 @@ fn chain_runs<G: XGeometry>(
             signs,
             dir: if rev { -1 } else { 1 },
             on_g: OnG::Spans(map),
-            gap: None,
-            inside: None,
+            line: None,
         });
     }
     Ok(runs)
-}
-
-/// The shadow coordinates `(r̂·p, ν·p)` and height `ê·p` of a point,
-/// exactly (unnormalised axes: ratios along a line are kept).
-fn frame(p: [f64; 3]) -> ([Rational; 2], Rational) {
-    let p = p.map(rat);
-    let axis = |v: DVec3| [v.x, v.y, v.z].map(rat);
-    let dot = |a: &[Rational; 3]| &a[0] * &p[0] + &a[1] * &p[1] + &a[2] * &p[2];
-    ([dot(&axis(R_HAT)), dot(&axis(NU))], dot(&axis(UP)))
 }
 
 /// The run of two straight edges `e = a→b`, `g = g0→g1` whose shadows
@@ -531,28 +636,52 @@ fn frame(p: [f64; 3]) -> ([Rational; 2], Rational) {
 /// [`SharedError::Shape`] for a pair on one curve whose shadows aren't on
 /// one line; [`SharedError::Unsettled`] for such a pair whose `e` is
 /// vertical (`T_xy = 0`).
+///
+/// Every sign it reads is a flat predicate on the stored ends, through
+/// its stages, its work added to `work`: `e`'s shadow a point (two
+/// [`Along`](preds::Along)s, `r̂` and `ν`), the shadows on one line (two
+/// [`Orient3Dir`]s against `ê`), the order of the ends along the line
+/// ([`Along`](preds::Along)s on the axis `e`'s shadow isn't across) and
+/// whether the lines coincide in height ([`Orient3Dir`]s against `ê ×
+/// axis`). Only values are rationals: the overlap's ends on `e`'s
+/// parameter and `g`'s parameter along `e`.
 fn line_run<G: XGeometry>(
     geom: &G,
     x: XKey,
-    [a, b, g0, g1]: [[f64; 3]; 4],
+    ends: [[f64; 3]; 4],
     shared: bool,
+    work: &mut Work,
 ) -> Result<Option<Run>, SharedError> {
-    let ((sa, za), (sb, zb), (s0, z0), (s1, z1)) = (frame(a), frame(b), frame(g0), frame(g1));
-    let d2 = |p: &[Rational; 2], o: &[Rational; 2]| [&p[0] - &o[0], &p[1] - &o[1]];
-    let cross = |u: &[Rational; 2], v: &[Rational; 2]| &u[0] * &v[1] - &u[1] * &v[0];
-    let dot = |u: &[Rational; 2], v: &[Rational; 2]| &u[0] * &v[0] + &u[1] * &v[1];
-    let zero = Rational::from(0u32);
-    let one = Rational::from(1u32);
-    let (de, dg) = (d2(&sb, &sa), d2(&s1, &s0));
-    let ee = dot(&de, &de);
-    if ee == zero {
+    use Ordering::{Equal, Greater, Less};
+    let [a, b, g0, g1] = ends.map(DVec3::from_array);
+    let along =
+        |dir: DVec3, q: DVec3, w: DVec3, work: &mut Work| flat(&preds::Along { dir, q, w }, work);
+    let sr = along(R_HAT, a, b, work)?;
+    let (axis, forward) = match sr {
+        Equal => (NU, along(NU, a, b, work)?),
+        s => (R_HAT, s),
+    };
+    if forward == Equal {
         return if shared {
             Err(SharedError::Unsettled)
         } else {
             Ok(None)
         };
     }
-    let collinear = cross(&de, &d2(&s0, &sa)) == zero && cross(&de, &d2(&s1, &sa)) == zero;
+    // `p`'s shadow on `e`'s shadow line; `p` on `e`'s line, with `d` = `ê
+    // × axis`.
+    let on = |p: DVec3, d: DVec3, work: &mut Work| -> Result<bool, SharedError> {
+        Ok(flat(
+            &Orient3Dir {
+                p: a,
+                a: b,
+                b: p,
+                d,
+            },
+            work,
+        )? == Equal)
+    };
+    let collinear = on(g0, UP, work)? && on(g1, UP, work)?;
     if !collinear {
         return if shared {
             Err(SharedError::Shape)
@@ -560,52 +689,54 @@ fn line_run<G: XGeometry>(
             Ok(None)
         };
     }
-    let gg = dot(&dg, &dg);
-    if gg == zero {
+    // `p`'s place on `e`'s parameter against `q`'s.
+    let cmp = |p: DVec3, q: DVec3, work: &mut Work| -> Result<Ordering, SharedError> {
+        Ok(times(along(axis, q, p, work)?, forward))
+    };
+    let dg = cmp(g1, g0, work)?;
+    if dg == Equal {
+        // `g`'s shadow a point.
         return Ok(None);
     }
-    let t0 = dot(&d2(&s0, &sa), &de) / &ee;
-    let t1 = dot(&d2(&s1, &sa), &de) / &ee;
-    let (lo, lo_at, hi, hi_at) = if t0 <= t1 {
-        (t0, g0, t1, g1)
-    } else {
-        (t1, g1, t0, g0)
-    };
-    let (lo, lo_at) = if lo > zero {
-        (lo, Some(lo_at))
-    } else {
-        (zero.clone(), None)
-    };
-    let (hi, hi_at) = if hi < one {
-        (hi, Some(hi_at))
-    } else {
-        (one.clone(), None)
-    };
-    if lo >= hi {
+    let (lo_at, hi_at) = if dg == Greater { (g0, g1) } else { (g1, g0) };
+    let lo_at = (cmp(lo_at, a, work)? == Greater).then_some(lo_at);
+    let hi_at = (cmp(hi_at, b, work)? == Less).then_some(hi_at);
+    if cmp(lo_at.unwrap_or(a), hi_at.unwrap_or(b), work)? != Less {
         return Ok(None);
     }
     // The moved signs at the overlap's ends: an end of `e`, or an end of
     // `g` over `e`, read at `e`'s point under it.
-    let tangent = qsub(&b.map(rat), &a.map(rat));
-    let sign_at = |end: Option<[f64; 3]>, last: bool| -> Result<Sign, SharedError> {
+    let mut sign_at = |end: Option<DVec3>, last: bool| -> Result<Sign, SharedError> {
         let rates = match end {
-            Some(p) => geom.edge_line(Operand::A, x.e, DVec3::from_array(p)).rates,
+            Some(p) => geom.edge_line(Operand::A, x.e, p).rates,
             None => {
                 let at = if last { Dyadic::ONE } else { Dyadic::ZERO };
                 let p = EdgeAt::new(0, at).ok_or(SharedError::Shape)?;
                 geom.edge_point_rates(Operand::A, x.e, p)
             }
         };
-        moved_sign(&tangent, &rates).ok_or(SharedError::Unsettled)
+        moved_sign([a, b], &rates, work).ok_or(SharedError::Unsettled)
     };
     let (p, q) = (sign_at(lo_at, false)?, sign_at(hi_at, true)?);
     let signs = vec![[p, p], [q, q]];
-    let dir = if dot(&de, &dg) > zero { 1 } else { -1 };
-    // `g`'s parameter at `e`'s `t`, and the heights' gap there.
-    let sg = [dot(&d2(&sa, &s0), &dg) / &gg, dot(&de, &dg) / &gg];
-    let dz = &z1 - &z0;
-    let gap = [&z0 + &sg[0] * &dz - &za, &sg[1] * &dz - (&zb - &za)];
-    let gap = (gap[0] != zero || gap[1] != zero).then_some(gap);
+    let dir = if dg == Greater { 1 } else { -1 };
+    // The places along the line, exactly: `axis·p`.
+    let pos = |p: DVec3| rat(axis.x) * rat(p.x) + rat(axis.y) * rat(p.y) + rat(axis.z) * rat(p.z);
+    let (pa, pb, p0, p1) = (pos(a), pos(b), pos(g0), pos(g1));
+    let t = |p: Option<DVec3>, or: u32| match p {
+        Some(p) => (pos(p) - &pa) / (&pb - &pa),
+        None => Rational::from(or),
+    };
+    let (lo, hi) = (t(lo_at, 0), t(hi_at, 1));
+    // `g`'s parameter at `e`'s `t`.
+    let dp = &p1 - &p0;
+    let sg = [(&pa - &p0) / &dp, (&pb - &pa) / &dp];
+    let across = UP.cross(axis);
+    let gap = (!(on(g0, across, work)? && on(g1, across, work)?)).then_some(Gap {
+        g: [g0, g1],
+        across,
+        along_g: times(dg, forward),
+    });
     let lo_f = f64::rounding_from(&lo, Floor).0;
     let hi_f = f64::rounding_from(&hi, Ceiling).0;
     Ok(Some(Run {
@@ -613,8 +744,13 @@ fn line_run<G: XGeometry>(
         signs,
         dir,
         on_g: OnG::Line(sg),
-        gap,
-        inside: Some([lo, hi]),
+        line: Some(OnLine {
+            e: [a, b],
+            axis,
+            forward,
+            ends: [lo_at, hi_at],
+            gap,
+        }),
     }))
 }
 
@@ -623,13 +759,15 @@ fn line_run<G: XGeometry>(
 struct RootsAt<'c, 'g, G> {
     ctx: &'c Ctx<'g, G>,
     allow: Allow,
+    /// The flat predicates' runs.
+    exact: &'c mut Work,
 }
 
 impl<G: XGeometry> AtLevel<u64> for RootsAt<'_, '_, G> {
     type Out = Result<Vec<Leaf>, SharedError>;
 
     fn at<S: LevelScalar>(&mut self, like: &S, evals: &mut u64) -> Self::Out {
-        roots(self.ctx, like, self.allow, evals)
+        roots(self.ctx, like, self.allow, evals, self.exact)
     }
 
     fn escalates(out: &Self::Out) -> bool {
@@ -684,8 +822,14 @@ impl<G: XGeometry> Ctx<'_, G> {
     }
 
     /// The piece split at the first canonical position (module docs)
-    /// where `h₁` is certified, `None` where none is.
-    fn split<S: Curved>(&self, p: &Piece, like: &S) -> Result<Option<[Piece; 2]>, SharedError> {
+    /// where `h₁` is certified, `None` where none is; the flat
+    /// predicates' runs added to `work`.
+    fn split<S: Curved>(
+        &self,
+        p: &Piece,
+        like: &S,
+        work: &mut Work,
+    ) -> Result<Option<[Piece; 2]>, SharedError> {
         let [lo, hi] = p.t;
         // Also where a bound isn't a number.
         #[allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -700,11 +844,10 @@ impl<G: XGeometry> Ctx<'_, G> {
             if !(lo < x && x < hi) {
                 continue;
             }
-            if let Some([a, b]) = &run.inside {
-                let q = rat(x);
-                if !(*a < q && q < *b) {
-                    continue;
-                }
+            if let Some(l) = &run.line
+                && !l.inside(x, work)?
+            {
+                continue;
             }
             if let Some(s) = self.sign_at(span, x, like)? {
                 return Ok(Some([
@@ -724,18 +867,22 @@ impl<G: XGeometry> Ctx<'_, G> {
         Ok(None)
     }
 
-    /// The z-order over the piece where it is clear (module docs).
+    /// The z-order over the piece where it is clear (module docs); the
+    /// flat predicates' runs added to `work`.
     fn clear<S: Curved>(
         &self,
         run: &Run,
         p: &Piece,
         tangent: &[S; 3],
         rates: &[[S; 3]; ORDERS],
+        work: &mut Work,
     ) -> Option<Sign> {
-        match &run.gap {
-            Some([c0, c1]) => {
-                let at = |t: f64| (c0 + c1 * rat(t)).cmp(&Rational::from(0u32));
-                let (a, b) = (at(p.t[0]), at(p.t[1]));
+        match run.line.as_ref().and_then(|l| Some((l, l.gap.as_ref()?))) {
+            Some((l, gap)) => {
+                // The gap is linear along the line: one strict sign at
+                // both ends is its sign over the piece.
+                let a = l.gap_at(gap, p.t[0], work)?;
+                let b = l.gap_at(gap, p.t[1], work)?;
                 (a == b).then(|| Sign::of(a)).flatten()
             }
             None => {
@@ -800,8 +947,12 @@ impl<G: XGeometry> Ctx<'_, G> {
             }
             OnG::Line([s0, s1]) => {
                 let at = |t: f64| s0 + s1 * rat(t);
-                let (a, b) = (at(lo), at(hi));
-                let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                // `g`'s parameter runs along `e`'s where `g` does.
+                let (a, b) = if run.dir > 0 {
+                    (at(lo), at(hi))
+                } else {
+                    (at(hi), at(lo))
+                };
                 let clamp = |x: f64| x.clamp(0.0, 1.0);
                 XPart {
                     span: 0,
@@ -832,6 +983,7 @@ fn roots<S: Curved, G: XGeometry>(
     like: &S,
     allow: Allow,
     charged: &mut u64,
+    exact: &mut Work,
 ) -> Result<Vec<Leaf>, SharedError> {
     // Breadth first, so every part of the overlap is looked at before
     // any is refined far.
@@ -866,7 +1018,7 @@ fn roots<S: Curved, G: XGeometry>(
                 },
                 degree: run.dir * i64::from(after.as_i8() - before.as_i8()) / 2,
                 z,
-                clear: run.gap.is_some(),
+                clear: run.distinct(),
                 knot: true,
             });
         }
@@ -890,12 +1042,12 @@ fn roots<S: Curved, G: XGeometry>(
             continue;
         }
         let degree = run.dir * i64::from(p.ends[1].as_i8() - p.ends[0].as_i8()) / 2;
-        if let Some(z) = ctx.clear(run, &p, &tangent, &rates) {
+        if let Some(z) = ctx.clear(run, &p, &tangent, &rates, exact) {
             if degree == 0 {
                 continue;
             }
             if p.t[1] - p.t[0] > NARROW_PIECE
-                && let Some(halves) = ctx.split(&p, like)?
+                && let Some(halves) = ctx.split(&p, like, exact)?
             {
                 work.extend(halves);
                 continue;
@@ -904,12 +1056,12 @@ fn roots<S: Curved, G: XGeometry>(
                 piece: p,
                 degree,
                 z,
-                clear: run.gap.is_some(),
+                clear: run.distinct(),
                 knot: false,
             });
             continue;
         }
-        match ctx.split(&p, like)? {
+        match ctx.split(&p, like, exact)? {
             Some(halves) => work.extend(halves),
             None => return Err(SharedError::Unsettled),
         }
@@ -1027,18 +1179,19 @@ pub fn root_order<O: EntityOrder, G: XGeometry>(
             Dyadic::ONE
         };
         let rates = geom.edge_point_rates(Operand::A, x.e, EdgeAt::new(w.span, at)?);
-        let tangent = match curve {
-            XCurve::Line(a, b) => qsub(&b.map(rat), &a.map(rat)),
+        let chord = match curve {
+            XCurve::Line(a, b) => [*a, *b].map(DVec3::from_array),
             XCurve::Spans(s) => {
                 let sp = s.get(usize::try_from(w.span).ok()?)?;
                 if w.t == 0.0 {
-                    qsub(&affine(&sp[1]), &affine(&sp[0]))
+                    [xyz(&sp[0]), xyz(&sp[1])]
                 } else {
-                    qsub(&affine(&sp[2]), &affine(&sp[1]))
+                    [xyz(&sp[1]), xyz(&sp[2])]
                 }
             }
         };
-        moved_sign(&tangent, &rates)?
+        // A read of a decided record: its flat runs aren't charged here.
+        moved_sign(chord, &rates, &mut Work::default())?
     } else {
         let ctx = Ctx {
             geom,

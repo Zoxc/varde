@@ -11,8 +11,10 @@
 //! **Leaves** ([`leaves`]): per pair of faces whose world boxes meet
 //! (closed boxes, exact), the certified flat leaves from face-sized
 //! dyadic boxes down (`start_boxes`), a box dropped when it doesn't meet
-//! its face's UV polygon (closed, exact) and split while its side exceeds
-//! half its face's UV extent.
+//! its face's UV polygon (closed, exact: its corners' sides of the
+//! polygon's edges are flat predicates, their runs kept per body,
+//! [`Body::box_tests`]) and split while its side exceeds half its face's
+//! UV extent.
 //!
 //! One cluster's snap is in [`run`], the operation's (merges, stale
 //! leaves, escalation, join) in [`op`], a zone's trim boolean on its
@@ -20,12 +22,15 @@
 //! with the exact oracle in [`oracle`].
 
 use std::cmp::Ordering;
+use std::sync::Mutex;
 
 use malachite::Rational;
 use varde_decide::bezier::{Dir, HomPatch};
 use varde_decide::count::boxes::{BoxKey, Extent};
 use varde_decide::ids::{EdgeId, FaceId, VertId};
 use varde_decide::leaves::flat::{self, BoxUse, FlatFace, Leaf};
+use varde_decide::num::exact::{Work as Runs, value_sign};
+use varde_decide::num::preds::Orient2Exact;
 use varde_decide::order::{EdgeKey, EntityOrder, FaceOrd, VertKey};
 use varde_decide::records::keys::Operand;
 use varde_testkit::sheets::Polygons;
@@ -61,6 +66,9 @@ pub(crate) struct Body {
     pub(crate) uv: Vec<Vec<[f64; 2]>>,
     /// Per face, its UV extent (the larger side of its UV bounding box).
     pub(crate) extent: Vec<f64>,
+    /// The flat predicates' runs of its boxes' tests against their faces'
+    /// polygons so far ([`rect_meets_polygon`]), for a run to charge.
+    pub(crate) box_tests: Mutex<Runs>,
 }
 
 impl Body {
@@ -113,6 +121,7 @@ impl Body {
             tiles,
             uv,
             extent,
+            box_tests: Mutex::new(Runs::default()),
         }
     }
 
@@ -191,7 +200,12 @@ impl Body {
         let rect = [u, v].map(|e: Extent| [e.lo().rational(), e.hi().rational()]);
         let tile = b.tile().map(Q::from);
         let rect = [0, 1].map(|k| [&tile[k] + &rect[k][0], &tile[k] + &rect[k][1]]);
-        if !rect_meets_polygon(&rect, &self.uv[f]) {
+        let mut runs = Runs::default();
+        let meets = rect_meets_polygon(&rect, &self.uv[f], &mut runs);
+        let mut all = self.box_tests.lock().unwrap_or_else(|e| e.into_inner());
+        *all = all.and(runs);
+        drop(all);
+        if !meets {
             return BoxUse::Drop;
         }
         let side = &rect[0][1] - &rect[0][0];
@@ -208,60 +222,71 @@ pub(crate) fn q(x: f64) -> Q {
     Q::try_from(x).expect("finite")
 }
 
-/// The sign of `(b − a) × (c − a)`, exactly.
-fn orient(a: &[Q; 2], b: &[Q; 2], c: &[Q; 2]) -> Ordering {
-    let d = (&b[0] - &a[0]) * (&c[1] - &a[1]) - (&b[1] - &a[1]) * (&c[0] - &a[0]);
-    d.cmp(&Q::from(0))
+/// The sign of `(b − a) × (c − a)` for stored `a`, `b` and an exact `c`,
+/// through the flat predicate's stages, its runs added to `runs`.
+fn orient(a: [f64; 2], b: [f64; 2], c: &[Q; 2], runs: &mut Runs) -> Ordering {
+    let (s, w) = value_sign(&Orient2Exact { a, b, c: c.clone() });
+    *runs = runs.and(w);
+    // The polygons' points are finite.
+    s.expect("finite UV points")
 }
 
 /// Whether the closed rectangle `r` (`[[u_lo, u_hi], [v_lo, v_hi]]`)
-/// meets the closed polygon `poly`, exactly.
-pub(crate) fn rect_meets_polygon(r: &[[Q; 2]; 2], poly: &[[f64; 2]]) -> bool {
-    let pts: Vec<[Q; 2]> = poly.iter().map(|p| [q(p[0]), q(p[1])]).collect();
+/// meets the closed polygon `poly`, exactly: its corners' sides of each
+/// edge whose box meets it are flat predicates ([`Orient2Exact`]), their
+/// runs added to `runs`.
+pub(crate) fn rect_meets_polygon(r: &[[Q; 2]; 2], poly: &[[f64; 2]], runs: &mut Runs) -> bool {
     let corners = [
         [r[0][0].clone(), r[1][0].clone()],
         [r[0][1].clone(), r[1][0].clone()],
         [r[0][1].clone(), r[1][1].clone()],
         [r[0][0].clone(), r[1][1].clone()],
     ];
-    let n = pts.len();
+    let n = poly.len();
     for k in 0..n {
-        let (a, b) = (&pts[k], &pts[(k + 1) % n]);
+        let (a, b) = (poly[k], poly[(k + 1) % n]);
         // The segment's box against the rectangle.
         let apart = (0..2).any(|i| {
             let (lo, hi) = if a[i] < b[i] {
-                (&a[i], &b[i])
+                (a[i], b[i])
             } else {
-                (&b[i], &a[i])
+                (b[i], a[i])
             };
-            *hi < r[i][0] || *lo > r[i][1]
+            q(hi) < r[i][0] || q(lo) > r[i][1]
         });
         if apart {
             continue;
         }
         // The rectangle's corners all strictly on one side of the line.
-        let s: Vec<Ordering> = corners.iter().map(|c| orient(a, b, c)).collect();
+        let s: Vec<Ordering> = corners.iter().map(|c| orient(a, b, c, runs)).collect();
         let all = |o: Ordering| s.iter().all(|&x| x == o);
         if !all(Ordering::Less) && !all(Ordering::Greater) {
             return true;
         }
     }
     // No edge meets it: inside the polygon or outside, as its corner is.
-    inside(&corners[0], &pts)
+    inside(&corners[0], poly, runs)
 }
 
-/// Whether `p` lies inside the polygon `pts` (not on it), by the
-/// crossings of the ray from `p` along `+u`, exactly.
-fn inside(p: &[Q; 2], pts: &[[Q; 2]]) -> bool {
-    let n = pts.len();
+/// Whether `p` lies inside the polygon `poly` (not on it), by the
+/// crossings of the ray from `p` along `+u`, exactly: an edge across
+/// `p`'s `v` crosses the ray where `p` lies on the side of it its upward
+/// run turns to, `orient(a, b, p)` of the sign of `b_v − a_v`.
+fn inside(p: &[Q; 2], poly: &[[f64; 2]], runs: &mut Runs) -> bool {
+    let n = poly.len();
     let mut odd = false;
     for k in 0..n {
-        let (a, b) = (&pts[k], &pts[(k + 1) % n]);
-        if (a[1] > p[1]) != (b[1] > p[1]) {
-            // The crossing's u: a + (p.v − a.v)/(b.v − a.v)·(b − a).
-            let t = (&p[1] - &a[1]) / (&b[1] - &a[1]);
-            let u = &a[0] + t * (&b[0] - &a[0]);
-            if u > p[0] {
+        let (a, b) = (poly[k], poly[(k + 1) % n]);
+        let (above_a, above_b) = (q(a[1]) > p[1], q(b[1]) > p[1]);
+        if above_a != above_b {
+            // `(u − p_u)·(b_v − a_v) = orient(a, b, p)`, `u` the
+            // crossing's.
+            let up = if above_b {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            };
+            if orient(a, b, p, runs) == up {
                 odd = !odd;
             }
         }
