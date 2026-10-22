@@ -16,7 +16,10 @@ serde_json.workspace = true
 # The bearer token and its text, crates/mcp/src/guard.rs.
 getrandom.workspace = true
 base64.workspace = true
-# The server's events, as a stream the app subscribes to, crates/mcp/src/server.rs.
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The server's events, as a stream the app subscribes to, crates/mcp/src/server.rs
+# (native only, as the server).
 futures.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
