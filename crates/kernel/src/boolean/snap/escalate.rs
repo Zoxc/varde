@@ -74,31 +74,11 @@ use super::corner::r_on;
 use super::stale::Abutment;
 use crate::infra::budget::{Halt, Pass, Step, Stop, Work};
 use crate::infra::error::{Internal, KernelError};
+pub use varde_decide::num::storage::eps_min;
 
 /// The escalation ladder's last rung: a check still failing there ends
 /// the ladder.
 pub const K_MAX: u8 = 4;
-
-/// The least tolerance storable at coordinate magnitude `x`: `2⁶` times
-/// the spacing of the `f64`s in `|x|`'s binade (the upper one at a power
-/// of two); for `|x|` below the normal range, the subnormal spacing.
-/// `None` for a magnitude that isn't finite.
-pub fn eps_min(x: f64) -> Option<f64> {
-    if !x.is_finite() {
-        return None;
-    }
-    // The biased exponent; 0 (zeros and subnormals) spaces as 1 does.
-    let e = ((x.abs().to_bits() >> 52) & 0x7ff).max(1);
-    let ulp = if e > 52 {
-        // `2^(e − 1075)`, a normal number.
-        f64::from_bits((e - 52) << 52)
-    } else {
-        // `2^(e − 1075) = 2^(e − 1)·2⁻¹⁰⁷⁴`, a subnormal one.
-        f64::from_bits(1u64 << (e - 1))
-    };
-    // A power of two at most `2⁹⁷¹·2⁶`: exact.
-    Some(ulp * 64.0)
-}
 
 /// The kind of a snap certificate that failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

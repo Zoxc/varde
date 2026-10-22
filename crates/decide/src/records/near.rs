@@ -5,8 +5,9 @@
 //! **One rounding bound per operation.** `ρ_op` is the first level's
 //! rounding bound of a seam evaluation (end weights about 1, no local
 //! frame) at the operation's largest operand coordinate magnitude `M`:
-//! [`SEAM_OPS`] rounded operations of unit roundoff `u = 2⁻⁵³` each, so
-//! `ρ_op = 50·u·M` (5.5·10⁻⁹ mm at `M = 10⁶` mm). It is computed once,
+//! [`SEAM_OPS`](crate::num::storage::SEAM_OPS) rounded operations of unit roundoff `u = 2⁻⁵³` each, so
+//! `ρ_op = 50·u·M` (5.5·10⁻⁹ mm at `M = 10⁶` mm;
+//! [`rho_op`](crate::num::storage::rho_op)). It is computed once,
 //! when the operation starts, from the operands alone. Every band, near
 //! radius and key reads it (the edges' bands, near radii, feet, the
 //! point–vertex records' `near`), never a precision level's own
@@ -26,12 +27,7 @@
 //! the same bits on every run and thread count.
 
 use crate::num::bounded::{add_up, mul_up};
-
-/// The rounded operations of a seam evaluation chain that `ρ_op` counts.
-pub const SEAM_OPS: f64 = 50.0;
-
-/// The unit roundoff of `f64`, `2⁻⁵³`.
-const U: f64 = 1.0 / 9_007_199_254_740_992.0;
+use crate::num::storage::{OpStart, rho_op};
 
 /// The bands of one operation (module docs).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,12 +40,15 @@ impl OpBands {
     /// magnitude is `max_coord` (its sign ignored); `None` unless it is
     /// finite.
     pub fn new(max_coord: f64) -> Option<OpBands> {
-        if !max_coord.is_finite() {
-            return None;
+        rho_op(max_coord).map(|rho_op| OpBands { rho_op })
+    }
+
+    /// The bands of an operation as it started
+    /// ([`OperandScan::start`](crate::num::storage::OperandScan::start)).
+    pub fn of(start: &OpStart) -> OpBands {
+        OpBands {
+            rho_op: start.rho_op,
         }
-        // `50·u` is exact; the product rounded upwards.
-        let rho_op = mul_up(SEAM_OPS * U, max_coord.abs());
-        rho_op.is_finite().then_some(OpBands { rho_op })
     }
 
     /// `ρ_op`.

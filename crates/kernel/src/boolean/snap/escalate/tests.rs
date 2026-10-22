@@ -106,25 +106,6 @@ const ABUT: Abutment = Abutment {
 // ---------------------------------------------------------------------
 // The storage floor.
 
-#[test]
-fn the_storage_floor_is_64_spacings_of_the_magnitude() {
-    assert_eq!(eps_min(1e6), Some(p2(-27)));
-    assert_eq!(eps_min(-1e6), Some(p2(-27)));
-    assert_eq!(eps_min(100.0), Some(p2(-40)));
-    assert_eq!(eps_min(1.0), Some(p2(-46)));
-    // At a power of two, its own (the upper) binade.
-    assert_eq!(eps_min(1024.0), Some(p2(-36)));
-    assert_eq!(eps_min(1023.9), Some(p2(-37)));
-    // Below the normal range the subnormal spacing.
-    let tiny = 64.0 * f64::from_bits(1);
-    assert_eq!(eps_min(0.0), Some(tiny));
-    assert_eq!(eps_min(f64::MIN_POSITIVE / 4.0), Some(tiny));
-    assert_eq!(eps_min(f64::MIN_POSITIVE), Some(tiny));
-    assert_eq!(eps_min(f64::MAX), Some(p2(977)));
-    assert_eq!(eps_min(f64::NAN), None);
-    assert_eq!(eps_min(f64::INFINITY), None);
-}
-
 /// The halvings a failure that keeps strictly improving gets, from
 /// `b_K = ε/2` at magnitude `x_k`, before the floor.
 fn halvings_to_floor(eps: f64, x_k: f64) -> u32 {

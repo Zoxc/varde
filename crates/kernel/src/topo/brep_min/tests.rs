@@ -1112,3 +1112,52 @@ fn the_half_cylinder_passes_the_planar_check() {
     assert_eq!(checked.unchecked_trims, caps);
     assert_eq!(caps.len(), 2);
 }
+
+#[test]
+fn the_operation_start_range_checks_bounded_positions_only() {
+    use varde_decide::num::storage::{EPS_MIN_MAX_COORD, MAX_COORD, Unrepresentable, rho_op};
+
+    let f = half_cylinder(cylinder_pcurves());
+    let b = &f.brep;
+    // The planes' tiles span a lattice cell far past `MAX_COORD`: only
+    // finite, so the body passes, its magnitude that of its vertices and
+    // curves.
+    let plane_tile = b
+        .surfaces
+        .iter()
+        .flat_map(|s| s.tiles())
+        .flat_map(|t| t.net());
+    assert!(
+        plane_tile
+            .flat_map(|p| &p[..3])
+            .any(|x| x.abs() > MAX_COORD)
+    );
+    let start = op_start(&[b, b], 1e-3).unwrap();
+    assert_eq!(start.max_coord, b.max_coord());
+    assert_eq!(start.rho_op, rho_op(R).unwrap());
+
+    // Below the storage floor at `MAX_COORD`: the tolerance's cause.
+    assert_eq!(
+        op_start(&[b], EPS_MIN_MAX_COORD / 2.0),
+        Err(Unrepresentable::Tolerance {
+            eps: EPS_MIN_MAX_COORD / 2.0,
+            eps_min: EPS_MIN_MAX_COORD,
+        })
+    );
+
+    // A vertex past `MAX_COORD` in the second operand: out of range,
+    // the value its evidence.
+    let mut far = Brep::new();
+    far.add_vert([0.0, -2.0 * MAX_COORD, 0.0]).unwrap();
+    assert_eq!(
+        op_start(&[b, &far], 1e-3),
+        Err(Unrepresentable::OutOfRange {
+            value: -2.0 * MAX_COORD,
+            magnitude: 2.0 * MAX_COORD,
+        })
+    );
+    assert_eq!(
+        KernelError::from(op_start(&[&far], 1e-3).unwrap_err()),
+        KernelError::Unrepresentable
+    );
+}

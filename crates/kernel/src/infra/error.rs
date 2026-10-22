@@ -165,3 +165,11 @@ impl std::fmt::Display for KernelError {
 }
 
 impl std::error::Error for KernelError {}
+
+/// A storage cause is [`KernelError::Unrepresentable`]; its value is the
+/// evidence.
+impl From<varde_decide::num::storage::Unrepresentable> for KernelError {
+    fn from(_: varde_decide::num::storage::Unrepresentable) -> Self {
+        KernelError::Unrepresentable
+    }
+}

@@ -48,6 +48,12 @@ impl Surface {
         &self.rect
     }
 
+    /// Every tile, row-major in `u`.
+    #[inline]
+    pub fn tiles(&self) -> &[Tile] {
+        &self.tiles
+    }
+
     /// The tile `(i, j)`, `None` outside the rectangle.
     pub fn tile(&self, i: i64, j: i64) -> Option<&Tile> {
         let (u, v) = (&self.rect.u, &self.rect.v);

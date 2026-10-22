@@ -5,7 +5,8 @@
 //! [`num::expansion`], the exact floating-point expansions,
 //! [`num::exact`], the exact flat predicates over them,
 //! [`num::decide`], every record's sign with ties broken by symbolic
-//! perturbation,
+//! perturbation, [`num::storage`], rounding to the stored `f64`s, the
+//! operand checks at an operation's start, `ρ_op` and local frames,
 //! [`num::trig`], the deterministic trigonometry, [`bezier`], the
 //! Bernstein forms over those numbers, in one and two parameters, and
 //! [`perturb`], the perturbation rows `decide` reads for each kind of

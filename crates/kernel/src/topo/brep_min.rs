@@ -61,10 +61,12 @@
 
 use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::{Curve3D, PCurve, Span3};
+use crate::geom::form::FormKey;
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Pass, Work};
 use crate::infra::error::KernelError;
 
+use varde_decide::num::storage::{OpStart, OperandScan, Unrepresentable};
 use varde_decide::records::near::OpBands;
 
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
@@ -606,6 +608,77 @@ impl Brep {
             .fold(0.0, |m, x| if x > m { x } else { m })
     }
 
+    /// The operation-start scan of the body's stored values, in a fixed
+    /// order ([`OperandScan`]): vertex positions and the control points of
+    /// the edges' curves are bounded positions (at most `MAX_COORD`); the
+    /// forms' key points (a lattice's origin, a cylinder's foot point, a
+    /// sphere's centre) are where they lie inside the box of those; every
+    /// other value (tolerances, curve weights and knots, p-curves, seam
+    /// bounds, the forms' directions and radii, the tiles' nets) need
+    /// only be finite. The first failing value is the error.
+    pub fn scan_storable(&self, scan: &mut OperandScan) -> Result<(), Unrepresentable> {
+        let mut body = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
+        let mut grow = |p: &[f64]| {
+            for k in 0..3 {
+                if p[k] < body[0][k] {
+                    body[0][k] = p[k];
+                }
+                if p[k] > body[1][k] {
+                    body[1][k] = p[k];
+                }
+            }
+        };
+        for (p, tol) in self.verts.pos.iter().zip(&self.verts.tol) {
+            scan.bounded(p)?;
+            scan.finite(&[*tol])?;
+            grow(p);
+        }
+        for c in &self.curves {
+            for p in c.spans().iter().flatten() {
+                scan.bounded(&p[..3])?;
+                scan.finite(&p[3..])?;
+                grow(&p[..3]);
+            }
+            scan.finite(c.knots())?;
+        }
+        for (t, tol) in self.edges.t_range.iter().zip(&self.edges.tol) {
+            scan.finite(t)?;
+            scan.finite(&[*tol])?;
+        }
+        for (p, b) in self.coedges.pcurve.iter().zip(&self.coedges.seam_bound) {
+            for q in p.spans().iter().flatten() {
+                scan.finite(q)?;
+            }
+            scan.finite(p.knots())?;
+            scan.finite(&[*b])?;
+        }
+        for s in &self.surfaces {
+            let l = s.lattice();
+            scan.key_point(&l.origin(), &body)?;
+            scan.finite(l.axes().as_flattened())?;
+            match l.key() {
+                FormKey::Plane(k) => {
+                    scan.finite(&k.normal())?;
+                    scan.finite(&[k.offset()])?;
+                }
+                FormKey::Cylinder(k) => {
+                    scan.key_point(&k.foot(), &body)?;
+                    scan.finite(&k.axis())?;
+                    scan.finite(&[k.radius()])?;
+                }
+                FormKey::Sphere(k) => {
+                    scan.key_point(&k.centre(), &body)?;
+                    scan.finite(&k.axis())?;
+                    scan.finite(&[k.radius()])?;
+                }
+            }
+            for t in s.tiles() {
+                scan.finite(t.net().as_flattened())?;
+            }
+        }
+        Ok(())
+    }
+
     /// An edge's near radius `r_g = 3·(tol + ρ_op)` under the operation's
     /// bands; `None` if the bands refuse its tolerance.
     pub fn edge_near_radius(&self, e: EdgeId, bands: &OpBands) -> Option<f64> {
@@ -711,6 +784,18 @@ impl Brep {
             (n != first).then_some(n)
         })
     }
+}
+
+/// An operation's start on its operands at tolerance `eps`: each
+/// operand scanned in turn ([`Brep::scan_storable`]), then the tolerance
+/// checked and `ρ_op` fixed at the operands' largest bounded magnitude
+/// ([`OperandScan::start`]).
+pub fn op_start(operands: &[&Brep], eps: f64) -> Result<OpStart, Unrepresentable> {
+    let mut scan = OperandScan::new();
+    for b in operands {
+        b.scan_storable(&mut scan)?;
+    }
+    scan.start(eps)
 }
 
 pub mod planar;

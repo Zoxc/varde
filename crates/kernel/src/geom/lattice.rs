@@ -81,7 +81,7 @@ use super::tile::{Net, Tile, TileError};
 type Exact = HomPatch<Rational>;
 
 /// The largest coordinate magnitude of a body's bounded positions (mm).
-pub const MAX_COORD: f64 = 1e6;
+pub use varde_decide::num::storage::MAX_COORD;
 
 /// The edge of a plane's cell and of a cylinder's axial cell,
 /// `2^⌈log₂(4·MAX_COORD)⌉ = 2²²`.

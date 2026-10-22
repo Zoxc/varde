@@ -63,7 +63,7 @@
 //! split) or one the first level can't settle (escalate with
 //! [`Tile::normal_cone_at`] or split). The numerator is translation
 //! invariant, so at every level it is computed in a frame centred on the
-//! tile's hull box: each homogeneous coefficient `w·(x − c)`, the affine
+//! tile's hull box (the centre on a power-of-two grid): each homogeneous coefficient `w·(x − c)`, the affine
 //! point translated first, so its rounding scales with the tile's size,
 //! not its distance from the origin (rounding `w·x` and `c·w` alone would
 //! cost `u·|c·w|`, which swamps a small or nearly flat tile far out).
@@ -75,6 +75,7 @@ use malachite::Rational;
 pub use varde_decide::bezier::NormalCone;
 use varde_decide::bezier::{Dir, HomPatch, HullBox, Partials, Scalar, Tensor};
 use varde_decide::num::bounded::Bounded;
+use varde_decide::num::storage::frame_of;
 
 use super::round::nearest;
 
@@ -259,12 +260,10 @@ impl Tile {
     }
 
     /// The origin of the frame the normal numerator is computed in: the
-    /// hull box's centre, each coordinate 0 where it isn't finite.
+    /// hull box's centre on a power-of-two grid inside the box
+    /// ([`frame_of`]), each coordinate 0 where it isn't finite.
     pub fn frame(&self) -> [f64; 3] {
-        [0, 1, 2].map(|k| {
-            let c = self.hull.lo[k] * 0.5 + self.hull.hi[k] * 0.5;
-            if c.is_finite() { c } else { 0.0 }
-        })
+        frame_of(&self.hull.lo, &self.hull.hi)
     }
 
     /// The normal numerator at the first level, of degrees `(5, 5)`

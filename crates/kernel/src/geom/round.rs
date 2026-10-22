@@ -15,9 +15,7 @@ use malachite::{Float, Rational};
 pub(crate) use varde_decide::num::exact::rat as q;
 
 /// `x` rounded to the nearest `f64`, ties to even (`±∞` past the range).
-pub(crate) fn nearest(x: &Rational) -> f64 {
-    f64::rounding_from(x, Nearest).0
-}
+pub(crate) use varde_decide::num::storage::nearest;
 
 /// `a·√b` rounded to the nearest `f64`, ties to even, for `b ≥ 0`.
 pub(crate) fn nearest_root(a: &Rational, b: &Rational) -> f64 {

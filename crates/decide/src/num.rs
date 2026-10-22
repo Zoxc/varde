@@ -5,7 +5,9 @@
 //! [`dd`], big-float in [`bigf`]) and their schedule with the unit table
 //! ([`schedule`]), the one numeric trait over the levels and the runner
 //! that steps a computation through them ([`level`]), the sign decision
-//! of every record ([`decide`]) and the `libm` wrapper ([`trig`]).
+//! of every record ([`decide`]), storage: rounding to it, the operand
+//! checks, `ρ_op` and local frames ([`storage`]), and the `libm` wrapper
+//! ([`trig`]).
 
 pub mod bigf;
 pub mod bounded;
@@ -17,4 +19,5 @@ pub mod level;
 pub mod poly;
 pub mod preds;
 pub mod schedule;
+pub mod storage;
 pub mod trig;
