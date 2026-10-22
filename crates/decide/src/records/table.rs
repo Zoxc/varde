@@ -362,6 +362,58 @@ impl<K: Key, V> Table<K, V> {
         self.range(..)
     }
 
+    /// The stored keys from `from` on, in key order: which records are
+    /// stored, not a read of any.
+    pub fn keys_from<'a>(&'a self, from: &K) -> impl Iterator<Item = &'a K> + 'a {
+        let lo = self.keys.partition_point(|x| x < from);
+        self.keys[lo..].iter()
+    }
+
+    /// Takes the stored records of `keys` out of the table, giving them
+    /// in key order (keys not stored skipped): the ladder's precision
+    /// step, which decides a key again at a finer target, every record
+    /// reading it with it. Only the owner of a kind's table, which keeps
+    /// its deciding function, takes records out; the next request hands
+    /// their keys out again.
+    pub fn take(&mut self, keys: &[K]) -> Vec<(K, V)> {
+        let mut out: Vec<K> = keys.iter().copied().filter(|k| self.contains(k)).collect();
+        out.sort_unstable();
+        out.dedup();
+        if out.is_empty() {
+            return Vec::new();
+        }
+        let n = self.keys.len();
+        let mut keys_kept = Vec::with_capacity(n - out.len());
+        let mut vals_kept = Vec::with_capacity(n - out.len());
+        let mut taken = Vec::with_capacity(out.len());
+        #[cfg(debug_assertions)]
+        let mut reads = Vec::with_capacity(n - out.len());
+        #[cfg(debug_assertions)]
+        let mut old_reads = std::mem::take(&mut self.reads).into_iter();
+        let old = std::mem::take(&mut self.keys)
+            .into_iter()
+            .zip(std::mem::take(&mut self.values));
+        for (k, v) in old {
+            #[cfg(debug_assertions)]
+            let r = old_reads.next().unwrap_or_default();
+            if out.binary_search(&k).is_ok() {
+                taken.push((k, v));
+            } else {
+                keys_kept.push(k);
+                vals_kept.push(v);
+                #[cfg(debug_assertions)]
+                reads.push(r);
+            }
+        }
+        self.keys = keys_kept;
+        self.values = vals_kept;
+        #[cfg(debug_assertions)]
+        {
+            self.reads = reads;
+        }
+        taken
+    }
+
     /// Decides every stored key again with `decide`, the function the
     /// table was filled with, and gives the first key, in key order, whose
     /// answer differs from the stored one. A check, for debug builds and

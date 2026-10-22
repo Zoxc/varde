@@ -246,3 +246,41 @@ fn a_key_holds_none_only_for_an_entity() {
     };
     assert!(at.record().holds_none());
 }
+
+/// A record inside a snapped zone has one key for its pair of elements,
+/// by the snap's canonical keys, whichever asks; it names the operand
+/// entities those keys are made of, relative to the snapped operand.
+#[test]
+fn a_zone_record_has_one_key_for_its_pair() {
+    let x = ZoneEntity::Edge(SnapEdge::Cut {
+        face: FaceId(3),
+        edge: E,
+        part: 1,
+    });
+    let y = ZoneEntity::Vert(SnapVert::Branch {
+        face: FaceId(3),
+        piece: 0,
+        index: 2,
+    });
+    let xy = ZoneKey::of(Operand::B, x, y);
+    let yx = ZoneKey::of(Operand::B, y, x);
+    assert_eq!(xy.key, yx.key);
+    assert_ne!(xy.swapped, yx.swapped);
+    let r = RecordKey::from(xy.key);
+    let named = |operand, entity: Entity| Named { operand, entity };
+    let want = [
+        named(Operand::B, FaceId(3).into()),
+        named(Operand::A, E.into()),
+    ];
+    let mut got = r.entities();
+    got.sort();
+    let mut want = want.to_vec();
+    want.sort();
+    assert_eq!(got, want);
+    // An operand's own entity, and one holding `NONE`.
+    let t = ZoneEntity::Operand(named(Operand::A, FaceId(8).into()));
+    let k = ZoneKey::of(Operand::B, t, y).key;
+    assert!(!RecordKey::Zone(k).holds_none());
+    let none = ZoneEntity::Vert(SnapVert::Vert(Operand::A, VertId(NONE)));
+    assert!(RecordKey::Zone(ZoneKey::of(Operand::B, none, y).key).holds_none());
+}

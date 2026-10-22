@@ -45,10 +45,12 @@
 //!
 //! **The records.** A height is decided in two parts ([`Heights`]). The
 //! key's value, order 0, is decided **once per key** for every anchor
-//! reading it ([`KeyRec`]): its sign, or a tie; its band class (geometric
-//! when every anchor asking it is, else flat or curved by the key's
-//! data, [`KeyValue`]); and its precision level, the first at which it
-//! was decided. So the faces at a shared vertex read one `VV(v, w)` and
+//! reading it ([`KeyRec`]): its sign, or a tie; its band (the
+//! same-surface band `β` when an anchor asking it has both its elements
+//! on one surface after a snap, a proxy at that scale; geometric when
+//! every anchor asking it is; else flat or curved by the key's data,
+//! [`KeyValue`], at the key's own target and `τ_k`, [`KeyBands`]); and
+//! its precision level, the first at which it was decided. So the faces at a shared vertex read one `VV(v, w)` and
 //! agree whenever it decides (a silhouette pair cancels). At a tie each
 //! anchor's own orders decide ([`HeightRec`]): the anchor's tangent
 //! element against the moved point ([`AnchorRow`]), so a moved vertex is
@@ -57,18 +59,28 @@
 //! hits and the edges of crossings ([`Anchor`]); a hit key is read at its
 //! own face only. Both live in [`Table`]s, decided in one charged
 //! [`Pass`] each ([`Heights::fill`]): every anchor of a key is asked in
-//! the batch that decides it, as its band is theirs.
+//! the batch that decides it, as its band is theirs. The ladder's
+//! precision step acts on keys ([`Heights::escalate`]): a curved key is
+//! decided again at a finer target from one level above its last, and
+//! every anchor reading it with it, so the records sharing a key move
+//! together.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use malachite::Rational;
+
 use crate::ids::{EdgeId, VertId};
-use crate::num::decide::{Band, BandKind, Coeff, Fail, Row, Sign, TieKey, decide};
+use crate::num::decide::{
+    Band, BandKind, Fail, KeyBands, Regime, Row, Sign, TieKey, decide_tie, decide_value,
+};
 use crate::num::exact::{self, ExactSign, ORDERS, Pred};
 use crate::num::level::{AtLevel, LevelScalar, ladder};
 use crate::num::schedule::Level;
 use crate::order::{Along, EdgeKey, EntityOrder, VertKey};
 use crate::perturb::{Curved, decide_flat_orders};
 use crate::records::feet::{Feet, NearFeet};
+use crate::records::keys::Key;
 use crate::records::keys::{
     Anchor, FootId, HKey, HeightKey, Incidence, Operand, Oriented, Point, Query, RayKey, RecordKey,
     Target, VvKey,
@@ -253,6 +265,15 @@ pub enum KeyValue<P> {
     /// An exact sign worked out on flat data otherwise (a column hit's
     /// height, a sign condition at a root: [`hit`]).
     Exact(ExactSign),
+    /// An exact value with its magnitude, the height itself (a length):
+    /// what a same-surface band compares exactly. A key that may be read
+    /// under that band gives its flat value so; a sign alone (the other
+    /// flat forms) is read there only where it is zero.
+    Value(Rational),
+    /// A tie by membership: the key's elements are members of one
+    /// storage-scale contact (certified once against `ρ_flat`), so its
+    /// value isn't read and its anchors' orders decide.
+    Member,
     /// A curved value, a length read at each precision level
     /// ([`HeightGeometry::curved_value`]).
     Curved,
@@ -333,20 +354,57 @@ pub trait HeightGeometry {
     /// truth, never a tie). A key is geometric only when every anchor
     /// reading it is.
     fn geometric(&self, k: HeightKey) -> bool;
+
+    /// Where both of anchor `k`'s elements are on one surface after a
+    /// snap, the same-surface band `β` of the pair: the larger of the two
+    /// elements' bands (an edge's `β_g`, a vertex's tolerance plus `ρ_op`,
+    /// [`OpBands::band`](crate::records::near::OpBands::band); a column
+    /// hit takes its point's). It overrides the geometric flag, and a key
+    /// read by such an anchor is decided under it ([`Regime::join`]). By
+    /// default no anchor is.
+    fn same_surface(&self, k: HeightKey) -> Option<f64> {
+        let _ = k;
+        None
+    }
+}
+
+/// Anchor `k`'s regime: the same-surface band if it has one, else
+/// geometric or ordinary.
+fn regime<G: HeightGeometry>(geom: &G, k: HeightKey) -> Regime {
+    match geom.same_surface(k) {
+        Some(beta) => Regime::SameSurface(beta),
+        None if geom.geometric(k) => Regime::Geometric,
+        None => Regime::Ordinary,
+    }
 }
 
 /// A height key's order-0 decision, shared by every anchor reading it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KeyRec {
     /// The value's sign (oriented as the key), or `None` for a tie,
     /// decided per anchor by its orders.
     pub value: Option<Sign>,
-    /// The band class the value was decided under: geometric when every
-    /// anchor is, else flat or curved by the key's data.
-    pub kind: BandKind,
+    /// The band the value was decided under: the same-surface band if an
+    /// anchor has it, geometric when every anchor is, else flat or curved
+    /// by the key's data (with the key's rung's `τ_k` and target).
+    pub band: Band,
     /// The precision level it was decided at (0 for an exact value), the
     /// level each anchor's curved orders start at.
     pub level: u8,
+}
+
+impl KeyRec {
+    /// The band class the value was decided under.
+    pub fn kind(&self) -> BandKind {
+        self.band.kind()
+    }
+
+    /// Whether the decision is a proxy at the same-surface band's scale
+    /// ([`Band::proxy`]): marked for evidence and the ladder's end
+    /// classification.
+    pub fn proxy(&self) -> bool {
+        self.band.proxy()
+    }
 }
 
 /// A height record at one anchor, oriented as the key (as read through
@@ -371,9 +429,13 @@ pub enum HeightError<E> {
     Pass(E),
     /// A pass's answers couldn't be stored (a bug of the pass).
     Table(TableError<RecordKey>),
-    /// A key decided as geometric is asked by an anchor that isn't: its
-    /// band would change after it was decided. Every anchor of a key is
-    /// asked in the batch that decides it.
+    /// A key decided by value is asked by an anchor whose regime would
+    /// change its band (a geometric key read by an anchor that isn't, a
+    /// key read by an anchor under a same-surface band it wasn't decided
+    /// under): its band would change after it was decided. Every anchor
+    /// of a key is asked in the batch that decides it; a key decided as a
+    /// tie (a shared germ key's exact zero) is read by a later anchor as
+    /// it is.
     Band(HKey),
 }
 
@@ -392,19 +454,20 @@ impl Heights {
     }
 
     /// Decides the height records of `wanted` not yet stored: first the
-    /// values of their keys not yet stored, in one pass, under the band
-    /// class of all the batch's anchors of each (curved values at the
-    /// curved band `band`, the current rung's), then the anchors, in
-    /// another, reading those.
-    pub fn fill<G, P>(
+    /// values of their keys not yet stored, in one pass, each under the
+    /// band of the regimes of all the batch's anchors of it over its
+    /// curved band at the current rung (`bands`, per key), then the
+    /// anchors, in another, reading those.
+    pub fn fill<G, B, P>(
         &mut self,
         wanted: impl IntoIterator<Item = HeightKey>,
         geom: &G,
-        band: Band,
+        bands: B,
         pass: &mut P,
     ) -> Result<(), HeightError<P::Error>>
     where
         G: HeightGeometry + Sync,
+        B: KeyBands<HKey>,
         P: Pass,
     {
         let batch = self
@@ -414,28 +477,29 @@ impl Heights {
         if batch.is_empty() {
             return Ok(());
         }
-        // A key is geometric only when every anchor asking it is.
-        let mut geometric: BTreeMap<HKey, bool> = BTreeMap::new();
+        // One band per key, over all of the batch's anchors asking it.
+        let mut regimes: BTreeMap<HKey, Regime> = BTreeMap::new();
         for k in batch.keys() {
-            let g = geom.geometric(**k);
-            *geometric.entry(k.h).or_insert(true) &= g;
+            let r = regime(geom, **k);
+            let e = regimes.entry(k.h).or_insert(Regime::Geometric);
+            *e = e.join(r);
         }
-        for (&h, &g) in &geometric {
-            if let Some(r) = self.keys.get(&h)
-                && r.kind == BandKind::Geometric
-                && !g
-            {
-                return Err(HeightError::Band(h));
+        for (&h, &r) in &regimes {
+            if let Some(rec) = self.keys.get(&h) {
+                let stored = rec.band.regime();
+                if rec.value.is_some() && stored.join(r) != stored {
+                    return Err(HeightError::Band(h));
+                }
             }
         }
         let fresh = self
             .keys
-            .missing(geometric.keys().copied())
+            .missing(regimes.keys().copied())
             .map_err(|e| HeightError::Table(table_error(e, RecordKey::Height)))?;
         if !fresh.is_empty() {
             let values = pass
                 .run(fresh.keys(), &|h: &Fresh<HKey>| {
-                    decide_key(**h, geometric[&**h], geom, band)
+                    decide_key(**h, regimes[&**h], geom, &bands, Level::L0)
                 })
                 .map_err(HeightError::Pass)?;
             self.keys
@@ -445,7 +509,114 @@ impl Heights {
         let keys = &self.keys;
         let values = pass
             .run(batch.keys(), &|k: &Fresh<HeightKey>| {
-                decide_at(**k, keys, geom, band)
+                decide_at(**k, keys, geom, &bands)
+            })
+            .map_err(HeightError::Pass)?;
+        self.at
+            .insert(batch, values)
+            .map_err(|e| HeightError::Table(table_error(e, RecordKey::HeightAt)))
+    }
+
+    /// The ladder's precision step on keys: every curved key of `keys`
+    /// that is stored is decided again at its band at the new rung
+    /// (`bands`, its finer target), under the band class it had, resuming
+    /// one precision level above the last it used (the last, if it was at
+    /// the last), and every anchor reading it is decided again from the
+    /// new value, its curved orders from the key's new level: the key and
+    /// every record sharing it move together. Flat keys (exact) and keys
+    /// not stored are left alone. Gives the keys whose decision changed
+    /// (value, band or level), in key order. If a pass fails, the records
+    /// are left as they were.
+    pub fn escalate<G, B, P>(
+        &mut self,
+        keys: impl IntoIterator<Item = HKey>,
+        geom: &G,
+        bands: B,
+        pass: &mut P,
+    ) -> Result<Vec<HKey>, HeightError<P::Error>>
+    where
+        G: HeightGeometry + Sync,
+        B: KeyBands<HKey>,
+        P: Pass,
+    {
+        let mut moving: Vec<HKey> = keys
+            .into_iter()
+            .filter(|h| self.keys.contains(h) && matches!(geom.value(*h), KeyValue::Curved))
+            .collect();
+        moving.sort_unstable();
+        moving.dedup();
+        if moving.is_empty() {
+            return Ok(Vec::new());
+        }
+        let anchors: Vec<HeightKey> = moving
+            .iter()
+            .flat_map(|&h| {
+                let from = HeightKey {
+                    h,
+                    anchor: Anchor::Face(Operand::A, crate::ids::FaceId(0)),
+                };
+                self.at
+                    .keys_from(&from)
+                    .take_while(move |k| k.h == h)
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let old_keys = self.keys.take(&moving);
+        let old_at = self.at.take(&anchors);
+        let was: BTreeMap<HKey, KeyRec> = old_keys.iter().copied().collect();
+        let redone = self.redecide(&was, &anchors, geom, &bands, pass);
+        if let Err(e) = redone {
+            // Back as they were: the new keys out, the old records in.
+            self.keys.take(&moving);
+            self.at.take(&anchors);
+            restore(&mut self.keys, old_keys, RecordKey::Height)?;
+            restore(&mut self.at, old_at, RecordKey::HeightAt)?;
+            return Err(e);
+        }
+        Ok(moving
+            .into_iter()
+            .filter(|h| self.keys.get(h).copied() != was.get(h).copied())
+            .collect())
+    }
+
+    /// Decides keys `was` again (each from one level above its last) and
+    /// then `anchors`, storing both.
+    fn redecide<G, B, P>(
+        &mut self,
+        was: &BTreeMap<HKey, KeyRec>,
+        anchors: &[HeightKey],
+        geom: &G,
+        bands: &B,
+        pass: &mut P,
+    ) -> Result<(), HeightError<P::Error>>
+    where
+        G: HeightGeometry + Sync,
+        B: KeyBands<HKey>,
+        P: Pass,
+    {
+        let fresh = self
+            .keys
+            .missing(was.keys().copied())
+            .map_err(|e| HeightError::Table(table_error(e, RecordKey::Height)))?;
+        let values = pass
+            .run(fresh.keys(), &|h: &Fresh<HKey>| {
+                let old = was[&**h];
+                let from = Level::from_index(usize::from(old.level) + 1).unwrap_or(Level::TOP);
+                decide_key(**h, old.band.regime(), geom, bands, from)
+            })
+            .map_err(HeightError::Pass)?;
+        self.keys
+            .insert(fresh, values)
+            .map_err(|e| HeightError::Table(table_error(e, RecordKey::Height)))?;
+        let batch = self
+            .at
+            .missing(anchors.iter().copied())
+            .map_err(|e| HeightError::Table(table_error(e, RecordKey::HeightAt)))?;
+        let keys = &self.keys;
+        let values = pass
+            .run(batch.keys(), &|k: &Fresh<HeightKey>| {
+                decide_at(**k, keys, geom, bands)
             })
             .map_err(HeightError::Pass)?;
         self.at
@@ -484,25 +655,49 @@ impl Heights {
         &self.at
     }
 
-    /// Decides every stored record again, on `geom` at `band`, and gives
-    /// the key of the first whose answer differs (key values first, each
-    /// table in key order). A key's band class is replayed as stored.
-    pub fn replay<G: HeightGeometry>(&self, geom: &G, band: Band) -> Result<(), RecordKey> {
+    /// Decides every stored record again, on `geom` at `bands`, and
+    /// gives the key of the first whose answer differs (key values first,
+    /// each table in key order). A key's band class is replayed as stored,
+    /// from the level it was decided at.
+    pub fn replay<G: HeightGeometry, B: KeyBands<HKey>>(
+        &self,
+        geom: &G,
+        bands: B,
+    ) -> Result<(), RecordKey> {
         let keys = &self.keys;
         replay(
             keys,
             |h| {
-                let g = keys.get(h.key()).map(|r| r.kind) == Some(BandKind::Geometric);
-                decide_key(**h, g, geom, band)
+                let Some(r) = keys.get(h.key()) else {
+                    let tie = tie_key(RecordKey::Height(**h), None);
+                    return (Err(Fail::Internal { key: tie }), Cost::default());
+                };
+                let from = Level::from_index(usize::from(r.level)).unwrap_or(Level::TOP);
+                decide_key(**h, r.band.regime(), geom, &bands, from)
             },
             RecordKey::Height,
         )?;
         replay(
             &self.at,
-            |k| decide_at(**k, keys, geom, band),
+            |k| decide_at(**k, keys, geom, &bands),
             RecordKey::HeightAt,
         )
     }
+}
+
+/// Stores `old`, records taken out of `table`, again.
+fn restore<K: Key, V, E>(
+    table: &mut Table<K, V>,
+    old: Vec<(K, V)>,
+    kind: fn(K) -> RecordKey,
+) -> Result<(), HeightError<E>> {
+    let (keys, values): (Vec<K>, Vec<V>) = old.into_iter().unzip();
+    let batch = table
+        .missing(keys)
+        .map_err(|e| HeightError::Table(table_error(e, kind)))?;
+    table
+        .insert(batch, values)
+        .map_err(|e| HeightError::Table(table_error(e, kind)))
 }
 
 /// Whether anchor `k` may read its key: a point–curve or hit key's anchor
@@ -528,51 +723,52 @@ fn tie_key(record: RecordKey, anchor: Option<Anchor>) -> TieKey {
     TieKey { row, record }
 }
 
-/// Decides key `h`'s value: exact on flat data, else at each level in
-/// turn until one decides it or calls it a tie at the target.
-fn decide_key<G: HeightGeometry>(
+/// Decides key `h`'s value under its anchors' joined regime `r`: exact
+/// on flat data, else at each level in turn from `from` until one decides
+/// it or calls it a tie at the target.
+fn decide_key<G: HeightGeometry, B: KeyBands<HKey>>(
     h: HKey,
-    geometric: bool,
+    r: Regime,
     geom: &G,
-    band: Band,
+    bands: &B,
+    from: Level,
 ) -> Decided<KeyRec> {
     let tie = tie_key(RecordKey::Height(h), None);
     let mut cost = Cost::default();
-    let exact = match geom.value(h) {
+    let value = geom.value(h);
+    // Flat values are exact: under the ordinary rules no tie band, under
+    // the same-surface band the key's target (unread by an exact value).
+    let data = bands.band(&h).map(|c| match value {
+        KeyValue::Curved => c,
+        _ => match r {
+            Regime::SameSurface(_) => c,
+            _ => Band::FLAT,
+        },
+    });
+    let Some(b) = data.and_then(|d| d.under(r)) else {
+        return (Err(Fail::Internal { key: tie }), cost);
+    };
+    let exact = |v: Result<Option<Sign>, Fail>| {
+        v.map(|value| KeyRec {
+            value,
+            band: b,
+            level: 0,
+        })
+    };
+    match value {
         KeyValue::Flat(p) => {
             let (s, work) = exact::value_sign(&p);
             cost.exact = work;
-            Some(s)
+            (exact(decide_value(&s, b, tie)), cost)
         }
-        KeyValue::Exact(s) => Some(s),
-        KeyValue::Curved => None,
-    };
-    match exact {
-        Some(s) => {
-            let kind = if geometric {
-                BandKind::Geometric
-            } else {
-                BandKind::Flat
-            };
-            let value = match s {
-                Err(_) => return (Err(Fail::Internal { key: tie }), cost),
-                Ok(o) => Sign::of(o),
-            };
-            if value.is_none() && geometric {
-                // A truth is never a tie: refining exact data can't help.
-                return (Err(Fail::Escalate { order: 0 }), cost);
-            }
-            let rec = KeyRec {
-                value,
-                kind,
-                level: 0,
-            };
-            (Ok(rec), cost)
-        }
-        None => {
-            let b = if geometric { Band::GEOMETRIC } else { band };
-            let mut at = KeyAt { h, geom, b };
-            let r = ladder(&mut at, Level::L0, &mut cost.levels);
+        KeyValue::Exact(s) => (exact(decide_value(&s, b, tie)), cost),
+        KeyValue::Value(v) => (exact(decide_value(&v, b, tie)), cost),
+        // Unread: an exact zero as far as the band goes (a truth is never
+        // a tie, so a geometric one escalates).
+        KeyValue::Member => (exact(decide_value(&Ordering::Equal, b, tie)), cost),
+        KeyValue::Curved => {
+            let mut at = KeyAt { h, geom, b, tie };
+            let r = ladder(&mut at, from, &mut cost.levels);
             (r, cost)
         }
     }
@@ -583,6 +779,7 @@ struct KeyAt<'a, G> {
     h: HKey,
     geom: &'a G,
     b: Band,
+    tie: TieKey,
 }
 
 impl<G: HeightGeometry> AtLevel<LevelWork> for KeyAt<'_, G> {
@@ -596,7 +793,11 @@ impl<G: HeightGeometry> AtLevel<LevelWork> for KeyAt<'_, G> {
         work.keys = work.keys.saturating_add(1);
         let top = like.level() == Level::TOP;
         let level = u8::try_from(like.level().index()).expect("few levels");
-        let escalate = Err(Fail::Escalate { order: 0 });
+        let rec = |value| KeyRec {
+            value,
+            band: self.b,
+            level,
+        };
         let Some(v) = self.geom.curved_value(self.h, like, work) else {
             // A hit's value can't be formed where the face's facing isn't
             // certified (a silhouette inside the face). At the last level
@@ -608,38 +809,21 @@ impl<G: HeightGeometry> AtLevel<LevelWork> for KeyAt<'_, G> {
                 && self.b.kind() != BandKind::Geometric
                 && self.geom.facing_only(self.h, like)
             {
-                return Ok(KeyRec {
-                    value: None,
-                    kind: self.b.kind(),
-                    level,
-                });
+                return Ok(rec(None));
             }
-            return escalate;
+            return Err(Fail::Escalate { order: 0 });
         };
-        let rec = |value| KeyRec {
-            value,
-            kind: self.b.kind(),
-            level,
-        };
-        if let Some(s) = v.beyond(self.b.tau()) {
-            return Ok(rec(Some(s)));
-        }
-        let err = Coeff::err(&v);
-        let at_target = err < f64::INFINITY && err <= self.b.tau_sign();
-        if self.b.kind() == BandKind::Geometric || !at_target {
-            return escalate;
-        }
-        Ok(rec(None))
+        decide_value(&v, self.b, self.tie).map(rec)
     }
 }
 
 /// Decides anchor `k`'s record from its key's stored value and, at a tie,
-/// its own orders.
-fn decide_at<G: HeightGeometry>(
+/// its own orders, curved ones at the key's target in `bands`.
+fn decide_at<G: HeightGeometry, B: KeyBands<HKey>>(
     k: HeightKey,
     keys: &Table<HKey, KeyRec>,
     geom: &G,
-    band: Band,
+    bands: &B,
 ) -> Decided<HeightRec> {
     let tie = tie_key(RecordKey::HeightAt(k), Some(k.anchor));
     let mut cost = Cost::default();
@@ -659,14 +843,15 @@ fn decide_at<G: HeightGeometry>(
     }
     let above = match geom.row(k) {
         AnchorRow::Flat(p) => {
-            let (s, work) = decide_flat_orders(std::cmp::Ordering::Equal, &p, tie);
+            let (s, work) = decide_flat_orders(Ordering::Equal, &p, tie);
             cost.exact = work;
             s.map(|s| (s, false))
         }
-        AnchorRow::Exact(ord) => {
-            decide(Ok(std::cmp::Ordering::Equal), ord, Band::FLAT, tie).map(|s| (s, false))
-        }
+        AnchorRow::Exact(ord) => decide_tie(ord, Band::FLAT, tie).map(|s| (s, false)),
         AnchorRow::Curved => {
+            let Some(band) = bands.band(&k.h) else {
+                return (internal, cost);
+            };
             let mut at = RowAt { k, geom, band, tie };
             match Level::from_index(usize::from(key.level)) {
                 Some(from) => ladder(&mut at, from, &mut cost.levels),
@@ -713,9 +898,8 @@ impl<G: HeightGeometry> AtLevel<LevelWork> for RowAt<'_, G> {
             }
             return Err(Fail::Escalate { order: 1 });
         };
-        // The value is the key's tie: zero here, the orders deciding.
-        let zero = S::int(0, like);
-        decide(zero, ord, self.band, self.tie).map(|s| (s, false))
+        // The value is the key's tie: the orders decide.
+        decide_tie(ord, self.band, self.tie).map(|s| (s, false))
     }
 }
 

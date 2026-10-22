@@ -3,8 +3,8 @@ use std::cmp::Ordering;
 use malachite::Rational;
 use varde_decide::bezier::Dyadic;
 use varde_decide::ids::{EdgeId, FaceId, VertId};
-use varde_decide::num::decide::{Fail, Row, Sign, TieKey};
-use varde_decide::records::keys::{Operand, Query, RecordKey, VvKey};
+use varde_decide::num::decide::Sign;
+use varde_decide::records::keys::Operand;
 
 use super::super::cluster::Tangency;
 use super::super::cluster::tests::{quad, work};
@@ -55,59 +55,6 @@ fn the_zone_s_labels_follow_the_coincidence_table() {
                 assert_eq!(side == Sign::Pos, lab == Outside, "{kind:?} {s:?} {op:?}");
             }
         }
-    }
-}
-
-// ---------------------------------------------------------------------
-// The same-surface band.
-
-fn key() -> TieKey {
-    TieKey {
-        row: Row::ColumnHit,
-        record: RecordKey::Vv(VvKey {
-            a: Query::Vert(VertId(1)),
-            b: Query::Vert(VertId(2)),
-        }),
-    }
-}
-
-#[test]
-fn a_value_within_the_same_surface_band_is_a_tie_the_orders_decide() {
-    let up = || [Ok(Ordering::Greater)];
-    let down = || [Ok(Ordering::Equal), Ok(Ordering::Less)];
-    // Beyond the band: the value's sign, whatever the orders.
-    assert_eq!(
-        decide_same_surface(&q(2e-3), 1e-3, down(), key()),
-        Ok(Sign::Pos)
-    );
-    assert_eq!(
-        decide_same_surface(&q(-2e-3), 1e-3, up(), key()),
-        Ok(Sign::Neg)
-    );
-    // Within it, at it included: the first order that isn't zero.
-    for g in [5e-4, -5e-4, 1e-3, -1e-3, 0.0] {
-        assert_eq!(
-            decide_same_surface(&q(g), 1e-3, up(), key()),
-            Ok(Sign::Pos),
-            "{g}"
-        );
-        assert_eq!(
-            decide_same_surface(&q(g), 1e-3, down(), key()),
-            Ok(Sign::Neg),
-            "{g}"
-        );
-    }
-    // A band of zero: only an exact zero is a tie.
-    assert_eq!(
-        decide_same_surface(&q(1e-300), 0.0, down(), key()),
-        Ok(Sign::Pos)
-    );
-    // A band that isn't finite and `≥ 0`: the guard.
-    for b in [f64::NAN, f64::INFINITY, -1e-3] {
-        assert_eq!(
-            decide_same_surface(&q(1.0), b, up(), key()),
-            Err(Fail::Internal { key: key() })
-        );
     }
 }
 
@@ -671,6 +618,11 @@ fn elements_on_the_target_read_their_places_there() {
     assert_eq!(z.lifted.verts.len(), on.verts.len());
 }
 
+/// The same-surface rule of band `beta`.
+fn same(beta: f64) -> HeightRule {
+    HeightRule::SameSurface(Band::same_surface(beta, 0.0).unwrap())
+}
+
 #[test]
 fn records_on_the_target_take_the_band_and_rim_ones_the_gap_sign() {
     let (rm, cr, r, geo, _) = snapped_bowl_with();
@@ -684,16 +636,22 @@ fn records_on_the_target_take_the_band_and_rim_ones_the_gap_sign() {
     for rec in &z.rim.edges {
         let x = ZoneEl::Edge(rec.edge);
         // Against the floor: the gap sign, whichever way round.
-        assert_eq!(z.height_rule(x, floor, &band), HeightRule::RimGap(rec.sign));
-        assert_eq!(z.height_rule(floor, x, &band), HeightRule::RimGap(rec.sign));
+        assert_eq!(
+            z.height_rule(x, floor, &band),
+            Some(HeightRule::RimGap(rec.sign))
+        );
+        assert_eq!(
+            z.height_rule(floor, x, &band),
+            Some(HeightRule::RimGap(rec.sign))
+        );
         // Against another element on the floor: the band.
         let e = r.edges.iter().find(|e| e.key == rec.edge).unwrap();
         let v = ZoneEl::Vert(e.ends[0]);
-        assert_eq!(z.height_rule(x, v, &band), HeightRule::SameSurface(3e-4));
+        assert_eq!(z.height_rule(x, v, &band), Some(same(3e-4)));
         // Against the floor at another face: none beside it.
         assert_eq!(
             z.height_rule(x, ZoneEl::TargetFace(FaceId(3)), &band),
-            HeightRule::Ordinary
+            Some(HeightRule::Ordinary)
         );
     }
     for v in &z.rim.verts {
@@ -701,9 +659,9 @@ fn records_on_the_target_take_the_band_and_rim_ones_the_gap_sign() {
         let rule = z.height_rule(x, floor, &band);
         if v.tie {
             // A branch vertex on the floor: a tie by the band.
-            assert_eq!(rule, HeightRule::SameSurface(2e-4));
+            assert_eq!(rule, Some(same(2e-4)));
         } else {
-            assert_eq!(rule, HeightRule::RimGap(v.sign));
+            assert_eq!(rule, Some(HeightRule::RimGap(v.sign)));
         }
     }
     // The kept ring's edges never are on the target.
@@ -712,10 +670,23 @@ fn records_on_the_target_take_the_band_and_rim_ones_the_gap_sign() {
         part: 0,
     });
     assert!(!z.on_t(kept));
-    assert_eq!(z.height_rule(kept, floor, &band), HeightRule::Ordinary);
+    assert_eq!(
+        z.height_rule(kept, floor, &band),
+        Some(HeightRule::Ordinary)
+    );
     assert_eq!(
         z.height_rule(ZoneEl::Off, floor, &band),
-        HeightRule::Ordinary
+        Some(HeightRule::Ordinary)
     );
+    // A band that isn't finite: no rule.
+    let bad = |x: ZoneEl| match x {
+        ZoneEl::Edge(_) => f64::INFINITY,
+        _ => 0.0,
+    };
+    for rec in &z.rim.edges {
+        let e = r.edges.iter().find(|e| e.key == rec.edge).unwrap();
+        let v = ZoneEl::Vert(e.ends[0]);
+        assert_eq!(z.height_rule(ZoneEl::Edge(rec.edge), v, &bad), None);
+    }
     assert!(!z.on_t(ZoneEl::Operand(Element::Edge(A, EdgeId(40)))));
 }

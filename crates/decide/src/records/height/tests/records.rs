@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering as AtOrd};
 use glam::DVec3;
 
 use super::*;
+use crate::num::decide::rung_target;
 use crate::num::exact::Num;
 use crate::num::schedule::PredKind;
 use crate::perturb::{Moving, PlaneHeight, PointHeight};
@@ -75,6 +76,12 @@ struct Geo {
     rows: Option<[f64; ORDERS]>,
     row_errs: Vec<f64>,
     geometric: BTreeSet<Anchor>,
+    /// The anchors under a same-surface band, with it.
+    same: BTreeMap<Anchor, f64>,
+    /// A `VV` key's value given with its magnitude instead.
+    vv_value: Option<KeyValue<Flat>>,
+    /// The `n`-th curved value evaluation's error (the last one after).
+    value_errs: Vec<f64>,
     calls: AtomicU32,
     row_calls: AtomicU32,
 }
@@ -84,6 +91,7 @@ impl HeightGeometry for Geo {
 
     fn value(&self, h: HKey) -> KeyValue<Flat> {
         match h {
+            HKey::VV { .. } if self.vv_value.is_some() => self.vv_value.clone().unwrap(),
             HKey::VV { a, b } => KeyValue::Flat(Flat::Point(PointHeight {
                 q: self.at[&Point { operand: A, q: a }].clone(),
                 w: self.at[&Point { operand: B, q: b }].clone(),
@@ -95,7 +103,9 @@ impl HeightGeometry for Geo {
     fn curved_value<S: Curved>(&self, _: HKey, like: &S, _: &mut LevelWork) -> Option<S> {
         let (v, from) = self.curved.expect("a curved key");
         let n = self.calls.fetch_add(1, AtOrd::Relaxed);
-        (n >= from).then(|| S::from_f64(v, like))
+        let err = self.value_errs.get(n as usize).or(self.value_errs.last());
+        let x = S::from_f64(v, like);
+        (n >= from).then(|| err.map_or(x.clone(), |&e| x.widened(e)))
     }
 
     fn facing_only<S: Curved>(&self, _: HKey, _: &S) -> bool {
@@ -136,6 +146,10 @@ impl HeightGeometry for Geo {
 
     fn geometric(&self, k: HeightKey) -> bool {
         self.geometric.contains(&k.anchor)
+    }
+
+    fn same_surface(&self, k: HeightKey) -> Option<f64> {
+        self.same.get(&k.anchor).copied()
     }
 }
 
@@ -211,7 +225,7 @@ fn faces_at_a_shared_vertex_read_one_value() {
         hs.key(k1.key),
         Some(KeyRec {
             value: Some(Sign::Pos),
-            kind: BandKind::Flat,
+            band: Band::FLAT,
             level: 0
         })
     );
@@ -302,7 +316,7 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
         hs.key(h),
         Some(KeyRec {
             value: None,
-            kind: BandKind::Curved,
+            band: band(),
             level: 2
         })
     );
@@ -406,13 +420,13 @@ fn a_key_is_geometric_only_when_every_anchor_is() {
     let mut hs = Heights::new();
     hs.fill([at(k, F1), at(k, F2)], &g, band(), &mut Seq::default())
         .unwrap();
-    assert_eq!(hs.key(k).unwrap().kind, BandKind::Flat);
+    assert_eq!(hs.key(k).unwrap().kind(), BandKind::Flat);
     // Alone, the geometric anchor makes it geometric; an anchor that
     // isn't, asked later, would change its band.
     let mut hs = Heights::new();
     hs.fill([at(k, F1)], &g, band(), &mut Seq::default())
         .unwrap();
-    assert_eq!(hs.key(k).unwrap().kind, BandKind::Geometric);
+    assert_eq!(hs.key(k).unwrap().kind(), BandKind::Geometric);
     let got = hs.fill([at(k, F2)], &g, band(), &mut Seq::default());
     assert_eq!(got, Err(HeightError::Band(k)));
     // A geometric value is never a tie.
@@ -494,7 +508,7 @@ fn exact_signs_decide_as_flat_predicates_do() {
             Ok(s) => {
                 got.unwrap();
                 assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, s);
-                assert_eq!(hs.key(face_key()).unwrap().kind, BandKind::Flat);
+                assert_eq!(hs.key(face_key()).unwrap().kind(), BandKind::Flat);
             }
             Err(()) => assert!(
                 matches!(got, Err(HeightError::Pass(Fail::Internal { .. }))),
@@ -502,4 +516,267 @@ fn exact_signs_decide_as_flat_predicates_do() {
             ),
         }
     }
+}
+
+fn rat(x: f64) -> Rational {
+    Rational::try_from(x).unwrap()
+}
+
+/// An anchor with both its elements on one surface after a snap decides
+/// its key under the same-surface band, for every anchor reading it and
+/// over a geometric flag: a value within `β` is a tie each face's tangent
+/// plane decides, a proxy; beyond it, the value.
+#[test]
+fn a_same_surface_anchor_decides_its_key_under_the_band() {
+    let [k, _] = ridge_keys();
+    // `v` 1e-4 below `w`, moving along `+x`: under `β = 2e-4` a tie the
+    // ridge's planes decide (under `f2`'s slope, over `f1`'s).
+    let mut g = ridge(DVec3::new(0.0, 0.0, -1e-4), DVec3::X);
+    g.vv_value = Some(KeyValue::Value(rat(1e-4)));
+    g.same.insert(Anchor::Face(B, F1), 2e-4);
+    g.geometric.insert(Anchor::Face(B, F2));
+    let mut hs = Heights::new();
+    hs.fill(
+        [at(k.key, F1), at(k.key, F2)],
+        &g,
+        band(),
+        &mut Seq::default(),
+    )
+    .unwrap();
+    let key = hs.key(k.key).unwrap();
+    assert_eq!(key.value, None);
+    assert_eq!(key.kind(), BandKind::SameSurface);
+    assert_eq!(key.band.band(), 2e-4);
+    assert!(key.proxy());
+    let above = |hs: &Heights, f| hs.get(k, Anchor::Face(B, f)).unwrap();
+    assert_eq!(above(&hs, F1).above, Sign::Neg);
+    assert_eq!(above(&hs, F2).above, Sign::Pos);
+    assert!(above(&hs, F1).by_orders);
+    hs.replay(&g, band()).unwrap();
+    // Without the band, the value decides (`w` above `v`).
+    let mut plain = ridge(DVec3::new(0.0, 0.0, -1e-4), DVec3::X);
+    plain.vv_value = Some(KeyValue::Value(rat(1e-4)));
+    let mut hs = Heights::new();
+    hs.fill(
+        [at(k.key, F1), at(k.key, F2)],
+        &plain,
+        band(),
+        &mut Seq::default(),
+    )
+    .unwrap();
+    assert_eq!(hs.key(k.key).unwrap().value, Some(Sign::Pos));
+    assert!(!hs.key(k.key).unwrap().proxy());
+    // Beyond the band, the value decides under it too.
+    g.vv_value = Some(KeyValue::Value(rat(-3e-4)));
+    let mut hs = Heights::new();
+    hs.fill(
+        [at(k.key, F1), at(k.key, F2)],
+        &g,
+        band(),
+        &mut Seq::default(),
+    )
+    .unwrap();
+    assert_eq!(hs.key(k.key).unwrap().value, Some(Sign::Neg));
+    assert_eq!(above(&hs, F2).above, Sign::Neg);
+    // A sign alone can't be compared with the band: only its zero.
+    g.vv_value = Some(KeyValue::Exact(Ok(Ordering::Greater)));
+    let got = Heights::new().fill([at(k.key, F1)], &g, band(), &mut Seq::default());
+    assert!(
+        matches!(got, Err(HeightError::Pass(Fail::Internal { .. }))),
+        "{got:?}"
+    );
+    g.vv_value = Some(KeyValue::Exact(Ok(Ordering::Equal)));
+    let mut hs = Heights::new();
+    hs.fill([at(k.key, F1)], &g, band(), &mut Seq::default())
+        .unwrap();
+    assert_eq!(hs.key(k.key).unwrap().kind(), BandKind::SameSurface);
+    assert_eq!(above(&hs, F1).above, Sign::Neg);
+}
+
+/// A later anchor reads a key decided as a tie as it is, whatever its
+/// regime; one whose regime would change the band of a key decided by
+/// value is refused.
+#[test]
+fn a_later_same_surface_anchor_reads_a_tie_but_not_a_value() {
+    let [k, _] = ridge_keys();
+    // An exact zero (a germ key): a tie under every band but geometric.
+    let mut g = ridge(DVec3::ZERO, DVec3::X);
+    g.same.insert(Anchor::Face(B, F2), 2e-4);
+    let mut hs = Heights::new();
+    hs.fill([at(k.key, F1)], &g, band(), &mut Seq::default())
+        .unwrap();
+    hs.fill([at(k.key, F2)], &g, band(), &mut Seq::default())
+        .unwrap();
+    assert_eq!(hs.key(k.key).unwrap().kind(), BandKind::Flat);
+    assert_eq!(hs.get(k, Anchor::Face(B, F2)).unwrap().above, Sign::Pos);
+    // Decided by value, the band can't change.
+    let mut g = ridge(DVec3::new(0.0, 0.0, -1e-4), DVec3::X);
+    g.vv_value = Some(KeyValue::Value(rat(1e-4)));
+    g.same.insert(Anchor::Face(B, F2), 2e-4);
+    let mut hs = Heights::new();
+    hs.fill([at(k.key, F1)], &g, band(), &mut Seq::default())
+        .unwrap();
+    let got = hs.fill([at(k.key, F2)], &g, band(), &mut Seq::default());
+    assert_eq!(got, Err(HeightError::Band(k.key)));
+}
+
+/// A key whose elements are members of one storage-scale contact is a
+/// tie by membership: its value unread, its anchors' orders decide; a
+/// geometric one escalates (a truth is never a tie).
+#[test]
+fn a_member_key_is_a_tie_its_anchors_decide() {
+    let [k, _] = ridge_keys();
+    let mut g = ridge(DVec3::new(0.0, 0.0, -1.0), DVec3::X);
+    g.vv_value = Some(KeyValue::Member);
+    let mut hs = Heights::new();
+    hs.fill(
+        [at(k.key, F1), at(k.key, F2)],
+        &g,
+        band(),
+        &mut Seq::default(),
+    )
+    .unwrap();
+    assert_eq!(hs.key(k.key).unwrap().value, None);
+    assert_eq!(hs.get(k, Anchor::Face(B, F1)).unwrap().above, Sign::Neg);
+    assert_eq!(hs.get(k, Anchor::Face(B, F2)).unwrap().above, Sign::Pos);
+    g.geometric.insert(Anchor::Face(B, F1));
+    let got = Heights::new().fill([at(k.key, F1)], &g, band(), &mut Seq::default());
+    assert_eq!(got, Err(HeightError::Pass(Fail::Escalate { order: 0 })));
+}
+
+/// A crossing key read by both its edges.
+fn x_key() -> (HKey, [HeightKey; 2]) {
+    let h = HKey::X {
+        e: EdgeId(2),
+        g: EdgeId(5),
+        c: crate::records::keys::XClusterIx(0),
+    };
+    let anchors = [Anchor::Edge(A, EdgeId(2)), Anchor::Edge(B, EdgeId(5))];
+    (h, anchors.map(|anchor| HeightKey { h, anchor }))
+}
+
+/// The ladder's precision step acts on a key: decided again at the finer
+/// target from one level above its last, and every anchor reading it
+/// moves with it, its orders from the key's new level.
+#[test]
+fn escalating_a_key_moves_every_anchor_sharing_it() {
+    let (h, anchors) = x_key();
+    // A value of 1e-12 within the first level's error (a tie at rung 0's
+    // target), decided by value at the second level's.
+    let g = Geo {
+        curved: Some((1e-12, 0)),
+        value_errs: vec![1e-11, 1e-20],
+        rows: Some([-0.25, 0.0, 0.0, 0.0]),
+        ..Geo::default()
+    };
+    let mut hs = Heights::new();
+    let mut pass = Seq::default();
+    hs.fill(anchors, &g, band(), &mut pass).unwrap();
+    assert_eq!(hs.key(h).map(|r| (r.value, r.level)), Some((None, 0)));
+    for k in anchors {
+        let r = *hs.table().get(&k).unwrap();
+        assert!(r.by_orders);
+        assert_eq!(r.above, Sign::Neg);
+    }
+    assert_eq!(pass.decided, 3);
+    let finer = Band::curved(0.0, rung_target(band().tau_sign(), 1)).unwrap();
+    let moved = hs.escalate([h, h], &g, finer, &mut pass).unwrap();
+    assert_eq!(moved, vec![h]);
+    assert_eq!(pass.decided, 6, "the key and both anchors, once each");
+    assert_eq!(
+        hs.key(h),
+        Some(KeyRec {
+            value: Some(Sign::Pos),
+            band: finer,
+            level: 1
+        })
+    );
+    for k in anchors {
+        let r = *hs.table().get(&k).unwrap();
+        assert!(!r.by_orders);
+        assert_eq!(r.above, Sign::Pos);
+    }
+    assert_eq!(g.calls.load(AtOrd::Relaxed), 2, "level 0, then level 1");
+    hs.replay(&g, finer).unwrap();
+    // Flat keys, and keys not stored, are left alone.
+    let [vk, _] = ridge_keys();
+    let flat = ridge(DVec3::ZERO, DVec3::X);
+    let mut hs = Heights::new();
+    hs.fill([at(vk.key, F1)], &flat, band(), &mut pass).unwrap();
+    let before = pass.decided;
+    let moved = hs.escalate([vk.key, h], &flat, finer, &mut pass).unwrap();
+    assert!(moved.is_empty());
+    assert_eq!(pass.decided, before);
+}
+
+/// A precision step whose pass fails leaves the records as they were.
+#[test]
+fn a_failed_precision_step_keeps_the_records() {
+    let (h, anchors) = x_key();
+    // Uncertified past the first level: escalates at every level after.
+    let g = Geo {
+        curved: Some((1e-12, 0)),
+        value_errs: vec![1e-11, f64::INFINITY],
+        rows: Some([0.25, 0.0, 0.0, 0.0]),
+        ..Geo::default()
+    };
+    let mut hs = Heights::new();
+    hs.fill(anchors, &g, band(), &mut Seq::default()).unwrap();
+    let key = hs.key(h);
+    let recs = anchors.map(|k| *hs.table().get(&k).unwrap());
+    let finer = Band::curved(0.0, rung_target(band().tau_sign(), 1)).unwrap();
+    let got = hs.escalate([h], &g, finer, &mut Seq::default());
+    assert_eq!(got, Err(HeightError::Pass(Fail::Escalate { order: 0 })));
+    assert_eq!(hs.key(h), key);
+    assert_eq!(anchors.map(|k| *hs.table().get(&k).unwrap()), recs);
+    // Stored, never in flight: asked again, nothing is decided.
+    let mut pass = Seq::default();
+    hs.fill(anchors, &g, band(), &mut pass).unwrap();
+    assert_eq!(pass.decided, 0);
+}
+
+/// `τ_k` is the ladder's input per key: a key under a wider tie band is
+/// a tie where another, its value the same, is decided by it.
+#[test]
+fn each_key_reads_its_own_tau() {
+    let h1 = face_key();
+    let h2 = HKey::Hit {
+        q: pv(),
+        f: F2,
+        sheet: crate::records::keys::Sheet::Tile([0, 0]),
+        i: crate::records::keys::HitIx(0),
+    };
+    let g = Geo {
+        curved: Some((1e-10, 0)),
+        rows: Some([-0.25, 0.0, 0.0, 0.0]),
+        ..Geo::default()
+    };
+    let target = band().tau_sign();
+    let bands = |h: &HKey| Band::curved(if *h == h1 { 1e-9 } else { 0.0 }, target);
+    let mut hs = Heights::new();
+    hs.fill([at(h1, F1), at(h2, F2)], &g, bands, &mut Seq::default())
+        .unwrap();
+    assert_eq!(hs.key(h1).unwrap().value, None);
+    assert_eq!(hs.key(h1).unwrap().band.tau(), 1e-9);
+    assert_eq!(hs.key(h2).unwrap().value, Some(Sign::Pos));
+    let own = |key| Oriented {
+        key,
+        swapped: false,
+    };
+    assert_eq!(
+        hs.get(own(h1), Anchor::Face(B, F1)).unwrap().above,
+        Sign::Neg
+    );
+    assert_eq!(
+        hs.get(own(h2), Anchor::Face(B, F2)).unwrap().above,
+        Sign::Pos
+    );
+    hs.replay(&g, bands).unwrap();
+    // A key whose band can't be made: the guard.
+    let none = |_: &HKey| None;
+    let got = Heights::new().fill([at(h1, F1)], &g, none, &mut Seq::default());
+    assert!(
+        matches!(got, Err(HeightError::Pass(Fail::Internal { .. }))),
+        "{got:?}"
+    );
 }

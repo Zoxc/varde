@@ -103,8 +103,9 @@ use malachite::Rational;
 use varde_decide::count::boxes::UvSpan;
 use varde_decide::ids::{EdgeId, Entity, FaceId, VertId};
 use varde_decide::records::keys::Operand;
+pub use varde_decide::records::keys::{SnapEdge, SnapFace, SnapVert};
 
-use super::along::{EndKind, SnapAlong};
+use super::along::SnapAlong;
 use super::corner::{Corner, Moved, Placement, RimVertKind};
 use super::rim::{self, Along, ExactSpan, Rim, RimInput, RimTrim, SnappedFace};
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
@@ -145,140 +146,21 @@ impl TargetCut<'_> {
     }
 }
 
-/// A vertex's canonical key (module docs): from the operands' ids, the
-/// rim's piece numbering and the corner rule's anchors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SnapVert {
-    /// An operand's vertex: an `S` vertex, or a target vertex.
-    Vert(Operand, VertId),
-    /// A rim vertex on this `S` edge, the start of this piece.
-    Rim { edge: EdgeId, piece: u32 },
-    /// A rim vertex on this target edge, the start of this piece.
-    RimTarget { edge: EdgeId, piece: u32 },
-    /// A rim vertex on box sides only, on this `S` face, the start of this
-    /// piece.
-    RimBox { face: FaceId, piece: u32 },
-    /// A branch vertex on this piece (on this `S` face), the `index`-th
-    /// along it.
-    Branch {
-        face: FaceId,
-        piece: u32,
-        index: u32,
-    },
-    /// This `S` edge split at this anchor by the corner rule.
-    Split { edge: EdgeId, at: (Operand, VertId) },
-    /// An end of the `index`-th `SnapAlong` piece of this `S` edge along
-    /// this target edge.
-    Bracket {
-        edge: EdgeId,
-        target: EdgeId,
-        index: u32,
-        end: EndKind,
-    },
-    /// This `S` edge crossing this target edge.
-    Cross { edge: EdgeId, cut: EdgeId },
-    /// This target edge crossing this rim piece.
-    CutRim { cut: EdgeId, piece: u32 },
-}
-
-/// An edge's canonical key (module docs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SnapEdge {
-    /// The `part`-th piece of this `S` edge from its stored start (the
-    /// whole edge where it isn't cut).
-    Piece { edge: EdgeId, part: u32 },
-    /// The `part`-th part of this rim piece (on this `S` face) along it,
-    /// a piece along box sides.
-    Rim { face: FaceId, piece: u32, part: u32 },
-    /// The `part`-th piece along it of this target edge in this `S` face:
-    /// inside the region, or a rim piece along it.
-    Cut {
-        face: FaceId,
-        edge: EdgeId,
-        part: u32,
-    },
-    /// The zero-length edge joining the rim vertices starting these two
-    /// pieces ([`Corner::zero_edges`]).
-    Zero { from: u32, to: u32 },
-}
-
-/// A face's canonical key (module docs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SnapFace {
-    /// The `part`-th outer piece of this `S` face, on its surface.
-    Kept { face: FaceId, part: u32 },
-    /// The `part`-th inner piece of this `S` face on this target face, on
-    /// the target's surface.
-    Snapped {
-        face: FaceId,
-        target: FaceId,
-        part: u32,
-    },
-}
-
-impl SnapVert {
-    /// The operand entities the key is made of, `snapped` the operand
-    /// `S`.
-    pub fn operand_ids(&self, snapped: Operand) -> Vec<(Operand, Entity)> {
-        let (s, t) = (snapped, snapped.other());
-        match *self {
-            SnapVert::Vert(o, v) => vec![(o, v.into())],
-            SnapVert::Rim { edge, .. } => vec![(s, edge.into())],
-            SnapVert::RimTarget { edge, .. } => vec![(t, edge.into())],
-            SnapVert::RimBox { face, .. } | SnapVert::Branch { face, .. } => {
-                vec![(s, face.into())]
-            }
-            SnapVert::Split { edge, at } => vec![(s, edge.into()), (at.0, at.1.into())],
-            SnapVert::Bracket { edge, target, .. } => vec![(s, edge.into()), (t, target.into())],
-            SnapVert::Cross { edge, cut } => vec![(s, edge.into()), (t, cut.into())],
-            SnapVert::CutRim { cut, .. } => vec![(t, cut.into())],
-        }
-    }
-
-    /// The naming priority (module docs), ids last.
-    fn rank(&self, snapped: Operand) -> (u8, SnapVert) {
-        let r = match self {
-            SnapVert::Vert(o, _) if *o == snapped => 0,
-            SnapVert::Vert(..) => 1,
-            SnapVert::Rim { .. } => 2,
-            SnapVert::RimTarget { .. } => 3,
-            SnapVert::RimBox { .. } => 4,
-            SnapVert::Branch { .. } => 5,
-            SnapVert::Split { .. } => 6,
-            SnapVert::Bracket { .. } => 7,
-            SnapVert::Cross { .. } => 8,
-            SnapVert::CutRim { .. } => 9,
-        };
-        (r, *self)
-    }
-}
-
-impl SnapEdge {
-    /// The operand entities the key is made of, `snapped` the operand
-    /// `S`.
-    pub fn operand_ids(&self, snapped: Operand) -> Vec<(Operand, Entity)> {
-        match *self {
-            SnapEdge::Piece { edge, .. } => vec![(snapped, edge.into())],
-            SnapEdge::Rim { face, .. } => vec![(snapped, face.into())],
-            SnapEdge::Cut { face, edge, .. } => {
-                vec![(snapped, face.into()), (snapped.other(), edge.into())]
-            }
-            SnapEdge::Zero { .. } => Vec::new(),
-        }
-    }
-}
-
-impl SnapFace {
-    /// The operand entities the key is made of, `snapped` the operand
-    /// `S`.
-    pub fn operand_ids(&self, snapped: Operand) -> Vec<(Operand, Entity)> {
-        match *self {
-            SnapFace::Kept { face, .. } => vec![(snapped, face.into())],
-            SnapFace::Snapped { face, target, .. } => {
-                vec![(snapped, face.into()), (snapped.other(), target.into())]
-            }
-        }
-    }
+/// A vertex key's naming priority (module docs), ids last.
+fn rank(v: &SnapVert, snapped: Operand) -> (u8, SnapVert) {
+    let r = match v {
+        SnapVert::Vert(o, _) if *o == snapped => 0,
+        SnapVert::Vert(..) => 1,
+        SnapVert::Rim { .. } => 2,
+        SnapVert::RimTarget { .. } => 3,
+        SnapVert::RimBox { .. } => 4,
+        SnapVert::Branch { .. } => 5,
+        SnapVert::Split { .. } => 6,
+        SnapVert::Bracket { .. } => 7,
+        SnapVert::Cross { .. } => 8,
+        SnapVert::CutRim { .. } => 9,
+    };
+    (r, *v)
 }
 
 /// Where in its parent an entity of the rewrite comes from.
@@ -1585,7 +1467,7 @@ fn edge_vertices(
     for (h, by_t) in cands {
         let mut out = BTreeMap::new();
         for (t, ns) in by_t {
-            let Some(best) = ns.into_iter().min_by_key(|n| n.0.rank(ctx.s_op)) else {
+            let Some(best) = ns.into_iter().min_by_key(|n| rank(&n.0, ctx.s_op)) else {
                 // A point on the edge no rule names: it lies where the
                 // edge meets nothing named; the faces' cells refuse it.
                 continue;
@@ -1659,7 +1541,7 @@ fn cells(
                     .cloned()
                     .map_or(fail(RewriteError::Unnamed(face)), Ok);
             }
-            info.and_then(|i| i.names.iter().min_by_key(|n| n.0.rank(s_op)).cloned())
+            info.and_then(|i| i.names.iter().min_by_key(|n| rank(&n.0, s_op)).cloned())
                 .map_or(fail(RewriteError::Unnamed(face)), Ok)
         };
 

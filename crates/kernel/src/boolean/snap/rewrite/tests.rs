@@ -7,7 +7,7 @@ use varde_decide::leaves::flat;
 use varde_decide::order::{EdgeKey, EntityOrder, VertKey};
 use varde_testkit::sheets::{self, Polygons};
 
-use super::super::along::{AlongInput, snap_along};
+use super::super::along::{AlongInput, EndKind, snap_along};
 use super::super::cluster::tests::{B_K, ext, fixture_leaves, quad, rat, rectangle, whole, work};
 use super::super::cluster::{ClusterLeaf, Tangency};
 use super::super::corner::{CornerInput, Split, corner};

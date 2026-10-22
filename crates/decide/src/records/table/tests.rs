@@ -282,3 +282,28 @@ fn parallel_reads_all_count() {
     assert_eq!(t.reads(&4), Some(8_000));
     assert_eq!(t.reads(&6), Some(0));
 }
+
+/// Records taken out (the ladder's precision step) leave the table and
+/// come back as keys to decide; the rest keep their answers and reads.
+#[test]
+fn taken_records_are_decided_again_the_rest_kept() {
+    let decided = AtomicUsize::new(0);
+    let mut t = Table::new();
+    fill(&mut t, &[1, 3, 5, 7], &decided);
+    assert_eq!(t.get(&3), Some(&9));
+    let keys: Vec<u32> = t.keys_from(&4).copied().collect();
+    assert_eq!(keys, [5, 7]);
+    let taken = t.take(&[7, 3, 4, 3]);
+    assert_eq!(taken, [(3, 9), (7, 49)]);
+    assert_eq!(t.len(), 2);
+    assert!(!t.contains(&3));
+    #[cfg(debug_assertions)]
+    assert_eq!(t.reads(&5), Some(0));
+    let batch = t.missing([1, 3, 7]).unwrap();
+    let again: Vec<u32> = batch.keys().iter().map(|k| **k).collect();
+    assert_eq!(again, [3, 7]);
+    t.insert(batch, vec![9, 49]).unwrap();
+    let all: Vec<(u32, u64)> = t.iter().map(|(&k, &v)| (k, v)).collect();
+    assert_eq!(all, [(1, 1), (3, 9), (5, 25), (7, 49)]);
+    assert!(t.take(&[]).is_empty());
+}

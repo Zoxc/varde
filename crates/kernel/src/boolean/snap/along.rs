@@ -102,6 +102,7 @@ use varde_decide::ids::{EdgeId, FaceId, VertId};
 use varde_decide::num::schedule::MAX_SUBDIV_DEPTH;
 use varde_decide::order::{self, EdgeKey, EntityOrder, Pos, VertKey};
 use varde_decide::records::keys::Operand;
+pub use varde_decide::records::keys::SnapEnd as EndKind;
 
 use super::corner::{
     Corner, Moved, Placement, d2, dist_up, dot3, exact3, larger, on_q, point_on, point_seg, sub3,
@@ -168,15 +169,6 @@ pub struct Crossing {
     pub s: Q,
     /// The fraction along `e` from its stored start, strictly inside.
     pub u: Q,
-}
-
-/// Which end of a piece, in geometric order along `h`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum EndKind {
-    /// The end nearer `h`'s lesser end.
-    Start,
-    /// The other.
-    End,
 }
 
 /// An end of a `SnapAlong` piece: a split of `h`, placed by the corner

@@ -58,11 +58,13 @@
 //! one), a vertex as `S_T(uv)` at its loop corner there. Flat targets
 //! only: each target face a plane chart.
 //!
-//! **Same-surface band** ([`Zone::height_rule`], [`decide_same_surface`]).
-//! A height record whose two elements are both on `T` compares its value
-//! with the larger of their bands, exactly: beyond it, the value's sign;
-//! within it, a tie, decided by the perturbation's orders. Never for a rim
-//! element against a target face beside it (the gap sign above).
+//! **Same-surface band** ([`Zone::height_rule`]). A height record whose
+//! two elements are both on `T` is decided under the same-surface band
+//! ([`Band::same_surface`]) of the larger of their bands, at every rung:
+//! a flat value compared with it exactly, beyond it the value's sign,
+//! within it a tie decided by the perturbation's orders ([`decide`]), a
+//! proxy at the band's scale. Never for a rim element against a target
+//! face beside it (the gap sign above).
 //!
 //! **Order.** Loops and pieces in the rim's numbering (from geometry),
 //! rim edges along each piece by their exact place on it, surfaces by
@@ -78,8 +80,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use malachite::Rational;
 use varde_decide::ids::{FaceId, VertId};
-use varde_decide::num::decide::{Band, Fail, Sign, TieKey, decide};
-use varde_decide::num::exact::ExactSign;
+use varde_decide::num::decide::{Band, Sign};
 use varde_decide::records::keys::Operand;
 
 use super::cluster::Tangency;
@@ -154,31 +155,6 @@ pub fn tie_side(kind: Tangency, sigma_a: Sign, snapped: Operand) -> Sign {
     }
 }
 
-// ---------------------------------------------------------------------
-// The same-surface band.
-
-/// The sign of a height record between two elements on the target, its
-/// value `g` exact (a flat record): beyond `band` (the larger of the two
-/// elements' bands; finite, `≥ 0`) by value, else a tie decided by the
-/// perturbation's `orders` ([`decide`]). A band that isn't finite and
-/// `≥ 0` gives the guard, [`Fail::Internal`].
-pub fn decide_same_surface<I>(g: &Q, band: f64, orders: I, key: TieKey) -> Result<Sign, Fail>
-where
-    I: IntoIterator<Item = ExactSign>,
-{
-    let b = match Q::try_from(band) {
-        Ok(b) if band >= 0.0 => b,
-        _ => return Err(Fail::Internal { key }),
-    };
-    if *g > b {
-        return Ok(Sign::Pos);
-    }
-    if *g < -&b {
-        return Ok(Sign::Neg);
-    }
-    decide(Ok(Ordering::Equal), orders, Band::FLAT, key)
-}
-
 /// An element a record in the zone reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ZoneEl {
@@ -203,9 +179,12 @@ pub enum HeightRule {
     /// A rim element against a target face beside it: this gap sign
     /// (`S − T`, positive outside the target), the record's order 0.
     RimGap(Sign),
-    /// Both elements on the target: this band
-    /// ([`decide_same_surface`]).
-    SameSurface(f64),
+    /// Both elements on the target: this same-surface band, the larger
+    /// of the two elements' ([`Band::same_surface`], the band [`decide`]
+    /// takes).
+    ///
+    /// [`decide`]: varde_decide::num::decide::decide
+    SameSurface(Band),
     /// The ordinary rules.
     Ordinary,
 }
@@ -456,19 +435,30 @@ impl Zone {
     }
 
     /// How a height-type record between `x` and `y` is decided (module
-    /// docs); `band` gives an element's band (finite, `≥ 0`).
-    pub fn height_rule(&self, x: ZoneEl, y: ZoneEl, band: &dyn Fn(ZoneEl) -> f64) -> HeightRule {
+    /// docs); `band` gives an element's band (an edge's `β_g`, a vertex's
+    /// tolerance plus `ρ_op`: [`OpBands::band`]). `None` where both are on
+    /// the target and the larger band isn't finite and `≥ 0`.
+    ///
+    /// [`OpBands::band`]: varde_decide::records::near::OpBands::band
+    pub fn height_rule(
+        &self,
+        x: ZoneEl,
+        y: ZoneEl,
+        band: &dyn Fn(ZoneEl) -> f64,
+    ) -> Option<HeightRule> {
         for (r, t) in [(x, y), (y, x)] {
             if let ZoneEl::TargetFace(f) = t
                 && let Some(s) = self.rim_gap(r, f)
             {
-                return HeightRule::RimGap(s);
+                return Some(HeightRule::RimGap(s));
             }
         }
         if self.on_t(x) && self.on_t(y) {
-            HeightRule::SameSurface(larger(band(x), band(y)))
+            // A flat value is exact: no error target.
+            let beta = larger(band(x), band(y));
+            Band::same_surface(beta, 0.0).map(HeightRule::SameSurface)
         } else {
-            HeightRule::Ordinary
+            Some(HeightRule::Ordinary)
         }
     }
 }

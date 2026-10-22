@@ -40,6 +40,11 @@
 //! lies on exactly) is worked out from the hit's exact incidence; the
 //! keys here are what it yields.
 //!
+//! **Snapped zones.** Inside a snapped zone, entities the snap made are
+//! keyed by the snap's canonical keys ([`SnapVert`], [`SnapEdge`],
+//! [`SnapFace`]: from operand ids and the rim's numbering), and a record
+//! between two of the zone's elements by the pair ([`ZoneKey`]).
+//!
 //! [`RecordKey`] is any record's key, for evidence: what
 //! [`Fail::Internal`](crate::num::decide::Fail::Internal) names, and what
 //! running out at a record names ([`RecordKey::entities`]: the operand
@@ -53,6 +58,10 @@
 
 use crate::bezier::{Dir, Dyadic};
 use crate::ids::{CoedgeId, EdgeId, Entity, FaceId, VertId};
+
+mod snap;
+
+pub use snap::{SnapEdge, SnapEnd, SnapFace, SnapVert, ZoneEntity, ZoneKey};
 
 /// One of the two operands of a boolean.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -762,6 +771,9 @@ pub enum RecordKey {
     XSide(XSideKey),
     /// An edge pair's box corner.
     XTie(XTieKey),
+    /// A record between two elements inside a snapped zone, by the snap's
+    /// canonical keys.
+    Zone(ZoneKey),
 }
 
 /// An entity of one operand that a record key holds: what evidence names
@@ -809,6 +821,7 @@ record_keys! {
     CornerKey => Corner,
     XSideKey => XSide,
     XTieKey => XTie,
+    ZoneKey => Zone,
 }
 
 impl Key for RecordKey {
@@ -915,6 +928,11 @@ impl RecordKey {
                 n.add(k.corner.operand, k.corner.face);
             }
             RecordKey::XSide(XSideKey { x, .. }) | RecordKey::XTie(XTieKey { x, .. }) => n.pair(x),
+            RecordKey::Zone(k) => {
+                for (operand, entity) in [k.x, k.y].iter().flat_map(|e| e.operand_ids(k.snapped)) {
+                    n.add(operand, entity);
+                }
+            }
         }
         n.0
     }

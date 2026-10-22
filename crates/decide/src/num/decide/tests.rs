@@ -66,15 +66,20 @@ fn unread<C>() -> impl Iterator<Item = C> {
 fn a_value_beyond_its_error_and_band_is_decided_by_it() {
     let curved = curved(0.5, 1e-3);
     assert_eq!(
-        decide(approx(-1.0, 0.1), unread(), curved, key()),
+        decide(approx(-1.0, 0.1), unread::<Ordering>(), curved, key()),
         Ok(Sign::Neg)
     );
     assert_eq!(
-        decide(exact(2.0), unread(), Band::FLAT, key()),
+        decide(exact(2.0), unread::<Ordering>(), Band::FLAT, key()),
         Ok(Sign::Pos)
     );
     assert_eq!(
-        decide(approx(1e-9, 1e-10), unread(), Band::GEOMETRIC, key()),
+        decide(
+            approx(1e-9, 1e-10),
+            unread::<Ordering>(),
+            Band::GEOMETRIC,
+            key()
+        ),
         Ok(Sign::Pos)
     );
     let (g, ord) = exact_orders(&Signs {
@@ -82,7 +87,10 @@ fn a_value_beyond_its_error_and_band_is_decided_by_it() {
         work: Default::default(),
     });
     assert_eq!(ord.count(), 0);
-    assert_eq!(decide(g, [], Band::FLAT, key()), Ok(Sign::Neg));
+    assert_eq!(
+        decide(g, unread::<Ordering>(), Band::FLAT, key()),
+        Ok(Sign::Neg)
+    );
 }
 
 /// Geometric values are truths: never a tie, the orders never read.
@@ -90,7 +98,7 @@ fn a_value_beyond_its_error_and_band_is_decided_by_it() {
 fn a_geometric_value_within_its_error_escalates() {
     for g in [exact(0.0), approx(1e-3, 1e-3), approx(0.0, 0.0)] {
         assert_eq!(
-            decide(g, unread(), Band::GEOMETRIC, key()),
+            decide(g, unread::<Ordering>(), Band::GEOMETRIC, key()),
             Err(Fail::Escalate { order: 0 })
         );
     }
@@ -103,7 +111,7 @@ fn a_geometric_value_within_its_error_escalates() {
 fn a_curved_value_is_a_tie_only_at_the_target() {
     let band = curved(0.0, 1e-3);
     assert_eq!(
-        decide(approx(1e-3, 2e-3), unread(), band, key()),
+        decide(approx(1e-3, 2e-3), unread::<Ordering>(), band, key()),
         Err(Fail::Escalate { order: 0 })
     );
     let ord = [approx(0.5, 0.0)];
@@ -130,13 +138,13 @@ fn a_curved_value_is_a_tie_only_at_the_target() {
     );
     // Beyond it, by value.
     assert_eq!(
-        decide(approx(0.7, 1e-4), unread(), wide, key()),
+        decide(approx(0.7, 1e-4), unread::<Ordering>(), wide, key()),
         Ok(Sign::Pos)
     );
     // An uncertified value escalates whatever its target.
     for g in [approx(0.0, f64::INFINITY), Bounded::new(0.0, f64::NAN, 0.0)] {
         assert_eq!(
-            decide(g, unread(), wide, key()),
+            decide(g, unread::<Ordering>(), wide, key()),
             Err(Fail::Escalate { order: 0 })
         );
     }
@@ -373,7 +381,7 @@ fn a_flat_record_with_an_input_that_isnt_finite_is_refused() {
 fn a_flat_value_that_is_not_exact_escalates() {
     for g in [approx(0.0, 1e-300), approx(1e-3, 1e-3)] {
         assert_eq!(
-            decide(g, unread(), Band::FLAT, key()),
+            decide(g, unread::<Ordering>(), Band::FLAT, key()),
             Err(Fail::Escalate { order: 0 })
         );
     }
@@ -387,7 +395,7 @@ fn a_value_that_is_not_finite_escalates() {
     for x in [f64::NAN, f64::INFINITY] {
         let x = approx(x, 0.0);
         assert_eq!(
-            decide(x, unread(), band, key()),
+            decide(x, unread::<Ordering>(), band, key()),
             Err(Fail::Escalate { order: 0 })
         );
         assert_eq!(
@@ -527,13 +535,13 @@ fn qsgn(x: &Q) -> i8 {
 /// them escalates, the guard only for exact zeros). Returns the answer
 /// and the orders read.
 fn model(g: &Option<Model>, ord: &[Option<Model>], b: Band) -> (Res, usize) {
-    let tau = Q::try_from(b.tau).expect("finite τ");
+    let tau = Q::try_from(b.band).expect("finite band");
     let tau_sign = Q::try_from(b.tau_sign).expect("finite target");
     let Some(g) = g else {
         return (Res::Escalate(0), 0);
     };
     let band = match b.kind {
-        BandKind::Curved => tau,
+        BandKind::Curved | BandKind::SameSurface => tau,
         BandKind::Geometric | BandKind::Flat => Q::from(0u32),
     };
     if g.err.clone() + band < qabs(&g.v) {
@@ -542,7 +550,9 @@ fn model(g: &Option<Model>, ord: &[Option<Model>], b: Band) -> (Res, usize) {
     let zero = |t: &Model| t.exact && t.v == 0u32;
     match b.kind {
         BandKind::Geometric => return (Res::Escalate(0), 0),
-        BandKind::Curved if tau_sign < g.err => return (Res::Escalate(0), 0),
+        BandKind::Curved | BandKind::SameSurface if tau_sign < g.err => {
+            return (Res::Escalate(0), 0);
+        }
         BandKind::Flat if !zero(g) => return (Res::Escalate(0), 0),
         _ => {}
     }
@@ -666,7 +676,12 @@ impl Draw {
     }
 
     fn kind(&mut self) -> BandKind {
-        [BandKind::Geometric, BandKind::Flat, BandKind::Curved][self.below(3)]
+        [
+            BandKind::Geometric,
+            BandKind::Flat,
+            BandKind::Curved,
+            BandKind::SameSurface,
+        ][self.below(4)]
     }
 
     /// An error split into the two parts, or whole.
@@ -727,8 +742,9 @@ fn decide_agrees_with_the_model() {
                 BandKind::Geometric => Band::GEOMETRIC,
                 BandKind::Flat => Band::FLAT,
                 BandKind::Curved => curved(tau, tau_sign),
+                BandKind::SameSurface => Band::same_surface(tau, tau_sign).expect("a valid band"),
             };
-            let (band, tau_sign) = (b.tau(), b.tau_sign());
+            let (band, tau_sign) = (b.band(), b.tau_sign());
             // Order 0 a tie half the time, so the orders are reached.
             let mut raw = [(0.0, 0.0, 0.0); ORDERS + 1];
             for (i, r) in raw.iter_mut().enumerate() {
@@ -836,7 +852,7 @@ fn an_uncertified_value_escalates_at_an_unbounded_target() {
         approx(0.0, f64::NAN),
     ] {
         assert_eq!(
-            decide(x, unread(), band, key()),
+            decide(x, unread::<Ordering>(), band, key()),
             Err(Fail::Escalate { order: 0 })
         );
         let ord = [x, exact(1.0)];
@@ -876,4 +892,158 @@ fn a_curved_band_refuses_negative_or_infinite_values() {
 /// `2ᵏ` for `k` in the normal range, exactly.
 fn p2(k: i32) -> f64 {
     f64::from_bits(u64::from((1023 + k) as u32) << 52)
+}
+
+// ---------------------------------------------------------------------
+// The same-surface band, ties by membership, one band per key.
+
+fn same(beta: f64, tau_sign: f64) -> Band {
+    Band::same_surface(beta, tau_sign).expect("a valid band")
+}
+
+fn rat(x: f64) -> Q {
+    Q::try_from(x).expect("finite")
+}
+
+/// A flat value under the same-surface band is compared with `β`
+/// exactly: beyond it the value decides, within it (at it included) a tie
+/// the orders decide; a band of zero leaves only an exact zero a tie.
+#[test]
+fn a_flat_value_within_the_same_surface_band_is_a_tie_the_orders_decide() {
+    let b = same(1e-3, 0.0);
+    let up = || [Ok(Ordering::Greater)];
+    let down = || [Ok(Ordering::Equal), Ok(Ordering::Less)];
+    assert_eq!(decide(rat(2e-3), down(), b, key()), Ok(Sign::Pos));
+    assert_eq!(decide(rat(-2e-3), up(), b, key()), Ok(Sign::Neg));
+    // A value one part in 2^60 past the band: beyond it, exactly.
+    let past = rat(1e-3) * (Q::from(1u32) + Q::from(1u32) / Q::from(1u64 << 60));
+    assert_eq!(decide(past.clone(), down(), b, key()), Ok(Sign::Pos));
+    assert_eq!(decide(-past, up(), b, key()), Ok(Sign::Neg));
+    for g in [5e-4, -5e-4, 1e-3, -1e-3, 0.0] {
+        assert_eq!(decide(rat(g), up(), b, key()), Ok(Sign::Pos), "{g}");
+        assert_eq!(decide(rat(g), down(), b, key()), Ok(Sign::Neg), "{g}");
+    }
+    let zero = same(0.0, 0.0);
+    assert_eq!(decide(rat(1e-300), down(), zero, key()), Ok(Sign::Pos));
+    assert_eq!(decide(rat(0.0), down(), zero, key()), Ok(Sign::Neg));
+    // Bands that aren't finite and `≥ 0` aren't made.
+    for x in [f64::NAN, f64::INFINITY, -1e-3] {
+        assert_eq!(Band::same_surface(x, 0.0), None);
+        assert_eq!(Band::same_surface(0.0, x), None);
+    }
+}
+
+/// An exact sign has no magnitude to compare with a band: under one, its
+/// exact zero is a tie, any other sign the guard (a caller's bug).
+#[test]
+fn an_exact_sign_under_a_same_surface_band_is_read_only_at_zero() {
+    let b = same(1e-3, 0.0);
+    let up = [Ok(Ordering::Greater)];
+    assert_eq!(decide(Ok(Ordering::Equal), up, b, key()), Ok(Sign::Pos));
+    for s in [Ordering::Less, Ordering::Greater] {
+        assert_eq!(
+            decide(Ok(s), unread::<ExactSign>(), b, key()),
+            Err(Fail::Internal { key: key() })
+        );
+        assert_eq!(
+            decide(s, unread::<Ordering>(), b, key()),
+            Err(Fail::Internal { key: key() })
+        );
+        // At a band of zero, its sign.
+        let zero = same(0.0, 0.0);
+        let want = Sign::of(s).unwrap();
+        assert_eq!(decide(Ok(s), unread::<ExactSign>(), zero, key()), Ok(want));
+    }
+}
+
+/// A curved value under the same-surface band: `β` is its tie band, at
+/// every rung, and it escalates until its error is at the target.
+#[test]
+fn a_curved_value_under_the_same_surface_band_is_a_tie_at_the_target() {
+    let b = same(1e-3, 1e-6);
+    let up = || [exact(1.0)];
+    assert_eq!(decide(approx(2e-3, 1e-7), up(), b, key()), Ok(Sign::Pos));
+    // Within `β + err`, at the target: a tie.
+    assert_eq!(decide(approx(-1e-3, 1e-7), up(), b, key()), Ok(Sign::Pos));
+    // Above the target: the key escalates.
+    assert_eq!(
+        decide(approx(5e-4, 1e-5), up(), b, key()),
+        Err(Fail::Escalate { order: 0 })
+    );
+    assert_eq!(b.tau(), 0.0);
+    assert_eq!(b.band(), 1e-3);
+    assert!(b.proxy());
+    assert!(!curved(1e-3, 1e-6).proxy());
+}
+
+/// A record between members of a storage-scale contact is a tie by
+/// membership: its value is never read, its orders decide.
+#[test]
+fn a_tie_by_membership_is_decided_by_its_orders() {
+    let flat = [Ok(Ordering::Equal), Ok(Ordering::Less)];
+    assert_eq!(decide_tie(flat, Band::FLAT, key()), Ok(Sign::Neg));
+    assert_eq!(
+        decide_tie([Ok(Ordering::Equal); ORDERS], Band::FLAT, key()),
+        Err(Fail::Internal { key: key() })
+    );
+    let b = curved(0.0, 1e-6);
+    assert_eq!(
+        decide_tie([approx(0.0, 1e-7), approx(-1.0, 1e-7)], b, key()),
+        Ok(Sign::Neg)
+    );
+    assert_eq!(
+        decide_tie([approx(1e-9, 1e-5)], b, key()),
+        Err(Fail::Escalate { order: 1 })
+    );
+    // As `decide`'s orders after a tie value.
+    assert_eq!(
+        decide_value(
+            &Ok::<_, crate::num::exact::NotFinite>(Ordering::Equal),
+            b,
+            key()
+        ),
+        Ok(None)
+    );
+}
+
+/// A key read by several anchors is decided under the join of their
+/// regimes: the same-surface band if any has it (the largest `β`), it
+/// beating the geometric flag; geometric only if every one is; else the
+/// key's own band. The join is associative and commutative, geometric
+/// its identity.
+#[test]
+fn a_key_s_band_is_the_join_of_its_anchors_regimes() {
+    use Regime::{Geometric, Ordinary, SameSurface};
+    let all = [Geometric, Ordinary, SameSurface(1e-4), SameSurface(3e-4)];
+    for a in all {
+        assert_eq!(a.join(Geometric), a);
+        for b in all {
+            assert_eq!(a.join(b), b.join(a));
+            for c in all {
+                assert_eq!(a.join(b).join(c), a.join(b.join(c)));
+            }
+        }
+    }
+    assert_eq!(Geometric.join(Ordinary), Ordinary);
+    assert_eq!(Geometric.join(SameSurface(1e-4)), SameSurface(1e-4));
+    assert_eq!(SameSurface(1e-4).join(SameSurface(3e-4)), SameSurface(3e-4));
+    let c = curved(2e-9, 1e-6);
+    assert_eq!(c.under(Geometric), Some(Band::GEOMETRIC));
+    assert_eq!(c.under(Ordinary), Some(c));
+    assert_eq!(c.under(SameSurface(1e-4)), Some(same(1e-4, 1e-6)));
+    assert_eq!(c.under(SameSurface(f64::NAN)), None);
+    assert!(matches!(Ordinary.join(SameSurface(f64::NAN)), SameSurface(x) if x.is_nan()));
+    for b in [Band::GEOMETRIC, Band::FLAT, c, same(1e-4, 1e-6)] {
+        let base = if b.kind() == BandKind::SameSurface {
+            c
+        } else {
+            b
+        };
+        assert_eq!(base.under(b.regime()), Some(b), "{b:?}");
+    }
+    // A plain band gives every key the same; a function each its own.
+    let k = key();
+    assert_eq!(KeyBands::band(&c, &k), Some(c));
+    let per = |t: &TieKey| Band::curved(if *t == k { 1e-3 } else { 0.0 }, 1e-6);
+    assert_eq!(KeyBands::band(&per, &k), Some(curved(1e-3, 1e-6)));
 }
