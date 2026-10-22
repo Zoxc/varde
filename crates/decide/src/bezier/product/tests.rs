@@ -155,6 +155,69 @@ fn degrees_are_limited() {
     assert_eq!(f.elevate(Dir::U, 0).expect("by zero"), f);
 }
 
+/// A constant operand is a plain scaling, to the bit, on either side: a
+/// degree-0 `Poly` or a degree-`(0, 0)` tensor as `scale`, a tensor
+/// constant in one direction as the 1D scaling of each line in it (the
+/// outer product of a column and a row its coefficients' products).
+fn constants<S: Level>() {
+    for seed in varde_testing::seeds(1, 16) {
+        let mut rng = Rng::new(seed);
+        for n in 0..9 {
+            let what = format!("seed {seed} degree {n}");
+            let (k, _) = poly::<S>(&mut rng, 0, true);
+            let (a, _) = poly::<S>(&mut rng, n, n % 2 == 0);
+            let kc = &k.coefs()[0];
+            let want = pbits(&a.scale(kc));
+            assert_eq!(pbits(&k.mul(&a).expect("in range")), want, "{what}");
+            assert_eq!(pbits(&a.mul(&k).expect("in range")), want, "{what}");
+
+            let (m, n2) = (n % 4, n / 2);
+            let (c, _) = tensor::<S>(&mut rng, 0, 0, true, false);
+            let (f, _) = tensor::<S>(&mut rng, m, n2, n % 2 == 1, false);
+            let want = tbits(&f.scale(c.get(0, 0)));
+            assert_eq!(tbits(&c.mul(&f).expect("in range")), want, "{what}");
+            assert_eq!(tbits(&f.mul(&c).expect("in range")), want, "{what}");
+
+            let (col, _) = tensor::<S>(&mut rng, m, 0, true, false);
+            let (row, _) = tensor::<S>(&mut rng, 0, n2, false, false);
+            let h = col.mul(&row).expect("in range");
+            assert_eq!(h.degrees(), (m, n2), "{what}");
+            for i in 0..=m {
+                for j in 0..=n2 {
+                    let x = col.get(i, 0).mul(row.get(0, j));
+                    assert_eq!(h.get(i, j).bits(), x.bits(), "{what} ({i}, {j})");
+                }
+            }
+            assert_eq!(
+                tbits(&row.mul(&col).expect("in range")),
+                tbits(&h),
+                "{what}"
+            );
+
+            // Constant in v only: each column (a line in u) is the 1D
+            // product of the operands' columns, the v-constant one's a
+            // scaling.
+            let (g, _) = tensor::<S>(&mut rng, m + 1, 0, true, false);
+            let p = g.mul(&f).expect("in range");
+            for j in 0..=n2 {
+                let line = |t: &Tensor<S>, j: usize| {
+                    Poly::new((0..=t.degrees().0).map(|i| t.get(i, j).clone()))
+                        .expect("degree in range")
+                };
+                let want = line(&g, 0).mul(&line(&f, j)).expect("in range");
+                assert_eq!(pbits(&line(&p, j)), pbits(&want), "{what} column {j}");
+            }
+        }
+    }
+}
+
+#[test]
+fn constant_operands_scale() {
+    constants::<Bounded<f64>>();
+    constants::<Bounded<Dd>>();
+    constants::<Bounded<Big>>();
+}
+
 /// Every certified coefficient of a product, sum, elevation, tangent and
 /// normal numerator holds the exact result on the true coefficients.
 fn bounds<S: Level>(seeds: std::ops::Range<u64>) {

@@ -13,7 +13,10 @@
 //! end coefficients of a product are the products of the ends, one
 //! rounding. A tensor product's term has the product of its two
 //! directions' weights, one `u64` where it fits (a weight of 1 in one
-//! direction leaves the other's), else formed at the level.
+//! direction leaves the other's), else formed at the level. A constant
+//! operand (degree 0, in a tensor's one direction) has weights that
+//! cancel with the divisor: they are left out, so a product with it is a
+//! plain scaling (in that direction), exact where `×` is.
 //!
 //! **Same bits under reversal and swap.** Each coefficient's terms are
 //! summed pairwise from both ends of their list (first with last, second
@@ -62,8 +65,12 @@ fn sym_sum<S: Scalar>(mut t: SmallVec<[S; 8]>) -> S {
 /// MAX_DEGREE`) whose term `(i, k − i)` is `x(i, k − i)`, the product of
 /// the operands' coefficients `i` and `k − i`: `Σᵢ C(m, i)·C(n, k − i)·
 /// x(i, k − i) / C(m + n, k)`, `i` over `max(0, k − n) ..= min(k, m)`,
-/// summed by [`sym_sum`].
+/// summed by [`sym_sum`]. With a constant operand (`m` or `n` 0) the
+/// weights cancel: the one term `x(i, k − i)`, unweighted.
 fn product_coef<S: Scalar>(m: usize, n: usize, k: usize, x: impl Fn(usize, usize) -> S) -> S {
+    if m == 0 || n == 0 {
+        return x(k.min(m), k - k.min(m));
+    }
     let t = (k.saturating_sub(n)..=k.min(m))
         .map(|i| weigh(binom(m, i) * binom(n, k - i), x(i, k - i)))
         .collect();
@@ -87,6 +94,27 @@ fn weigh2<S: Scalar>(wu: u64, wv: u64, x: S) -> S {
     match u64::try_from(u128::from(wu) * u128::from(wv)) {
         Ok(w) => weigh(w, x),
         Err(_) => S::int_u64(wu, &x).mul(&S::int_u64(wv, &x)).mul(&x),
+    }
+}
+
+/// A tensor product's weight `C(m₁, i₁)·C(m₂, i₂)` in one direction, 1
+/// where an operand is constant in it (the weights cancel with the
+/// divisor there, [`divisor`]).
+fn weight(m1: usize, m2: usize, i1: usize, i2: usize) -> u64 {
+    if m1 == 0 || m2 == 0 {
+        1
+    } else {
+        binom(m1, i1) * binom(m2, i2)
+    }
+}
+
+/// The divisor `C(m₁ + m₂, i)` of a tensor product's coefficient in one
+/// direction, 1 where an operand is constant in it.
+fn divisor(m1: usize, m2: usize, i: usize) -> u64 {
+    if m1 == 0 || m2 == 0 {
+        1
+    } else {
+        binom(m1 + m2, i)
     }
 }
 
@@ -289,15 +317,16 @@ impl<S: Scalar> Tensor<S> {
                 let q = cols.clone().count();
                 let mut t: SmallVec<[S; 9]> = SmallVec::new();
                 for i1 in rows.clone() {
-                    let wu = binom(m1, i1) * binom(m2, i - i1);
+                    let wu = weight(m1, m2, i1, i - i1);
                     for j1 in cols.clone() {
-                        let wv = binom(n1, j1) * binom(n2, j - j1);
+                        let wv = weight(n1, n2, j1, j - j1);
                         let x = self.get(i1, j1).mul(o.get(i - i1, j - j1));
                         t.push(weigh2(wu, wv, x));
                     }
                 }
                 let p = t.len() / q;
-                c.push(divide2(sym_sum2(t, p, q), binom(m, i), binom(n, j)));
+                let (du, dv) = (divisor(m1, m2, i), divisor(n1, n2, j));
+                c.push(divide2(sym_sum2(t, p, q), du, dv));
             }
         }
         Tensor::new(m, n, c)

@@ -473,7 +473,7 @@ fn levels_and_escalations_are_the_same_bits_everywhere() {
     }
     println!("hash of the results: {:#018x}", h.0);
     assert_eq!(
-        h.0, 0x976a_1475_c8ff_df12,
+        h.0, 0xca9f_0bb6_705d_8d3f,
         "results differ from the reference bits"
     );
 }
