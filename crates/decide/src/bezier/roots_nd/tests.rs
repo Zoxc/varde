@@ -7,13 +7,16 @@
 //! orientation the sign of the true Jacobian's determinant. Simple roots
 //! isolate, on split faces and corners too; tangential roots are clusters
 //! above the depth limit; roots on the domain's boundary are clusters
-//! reaching it; reversing a variable mirrors the result.
+//! reaching it; reversing a variable mirrors the result. The rarer
+//! outcomes of certifying a set of pending boxes (its certificate holding
+//! a root box's root, or meeting another set's box) on settled boxes laid
+//! out by hand.
 
 use malachite::Rational as Q;
 
 use super::*;
 use crate::bezier::Poly;
-use crate::bezier::tests::{Level, Rng, at_level, q};
+use crate::bezier::tests::{Level, Rng, at_level, pow2, q};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
 
@@ -528,4 +531,103 @@ fn a_system_identically_zero_is_one_cluster() {
     };
     assert_eq!(c.boxes.len(), 1);
     assert!(c.within_target && c.boundary && !c.at_depth && c.simple.is_none());
+}
+
+/// The system `(x − a, y − b)`, exactly: one root, orientation positive.
+fn point_system(a: &Q, b: &Q) -> Vec<NdTensor<Q>> {
+    let (px, py) = (factors(&[(a.clone(), 1)]), factors(&[(b.clone(), 1)]));
+    vec![
+        outer(&Q::from(1u32), &place(2, &[(0, &px)])),
+        outer(&Q::from(1u32), &place(2, &[(1, &py)])),
+    ]
+}
+
+/// `2⁻ᵉ`, exactly.
+fn tiny(e: i32) -> Q {
+    q(pow2(-e))
+}
+
+/// A cell of depths `k` and indices `j`.
+fn cell(k: [u32; 2], j: [u64; 2]) -> Cell {
+    Cell {
+        k: k.into_iter().collect(),
+        j: j.into_iter().collect(),
+    }
+}
+
+/// Settled boxes as the subdivision leaves them beside a face: a root
+/// just past the face `x = ½`, certified in the box on its side, while
+/// the box on the other side narrows onto the face (pending, within a
+/// lattice unit of the root). The pending box's certificate, widened past
+/// its cell, holds the root box's whole narrowed box: that root is the
+/// one, and the pending box has none.
+#[test]
+fn a_set_certified_around_a_root_box_holds_that_root() {
+    let (a, b) = (q(0.5) + tiny(60), q(0.375));
+    let forms = point_system(&a, &b);
+    let y = 3 * (SIDE / 8);
+    let leaves = vec![
+        Leaf {
+            cell: cell([1, 0], [0, 0]),
+            kind: Kind::Pending(smallvec![[SIDE - 1, SIDE], [y - 1, y + 1]]),
+        },
+        Leaf {
+            cell: cell([1, 0], [1, 0]),
+            kind: Kind::Root {
+                x: smallvec![[0, 1], [y - 1, y + 1]],
+                orient: Ordering::Greater,
+            },
+        },
+    ];
+    let root_box = leaves[1].cell.to_box();
+    let found = resolve(&forms, leaves, &mut Work::default());
+    assert_eq!(found.len(), 1, "{found:#?}");
+    let NdFound::Root(r) = &found[0] else {
+        panic!("a root: {found:#?}")
+    };
+    assert_eq!(r.boxes, vec![root_box]);
+    assert_eq!(r.orient, Ordering::Greater);
+    assert!(q(r.near[0][0]) <= a && a <= q(r.near[0][1]));
+}
+
+/// A pending box whose certificate, widened past its cell, meets another
+/// set's box (a deeper box past the face, not touching it) is a cluster;
+/// the other set, certified on its own, is the root. (The pending box
+/// narrowed to a quarter of its width only, so its widened certificate
+/// reaches past the face further than the `f64` bounds round.)
+#[test]
+fn a_set_certified_onto_another_sets_box_is_a_cluster() {
+    let (a, b) = (q(0.5) + tiny(8) + tiny(9), q(0.375));
+    let forms = point_system(&a, &b);
+    let mid = SIDE / 2;
+    let leaves = vec![
+        Leaf {
+            cell: cell([2, 2], [1, 1]),
+            kind: Kind::Pending(smallvec![[SIDE - (SIDE >> 2), SIDE], [mid - 1, mid + 1]]),
+        },
+        Leaf {
+            cell: cell([8, 2], [129, 1]),
+            kind: Kind::Pending(smallvec![[mid - 1, mid + 1], [mid - 1, mid + 1]]),
+        },
+    ];
+    let boxes: Vec<NdBox> = leaves.iter().map(|l| l.cell.to_box()).collect();
+    assert!(!boxes[0].meets(&boxes[1]), "apart");
+    let found = resolve(&forms, leaves, &mut Work::default());
+    assert_eq!(found.len(), 2, "{found:#?}");
+    let cluster = found.iter().find_map(|f| match f {
+        NdFound::Cluster(c) => Some(c),
+        NdFound::Root(_) => None,
+    });
+    let cluster = cluster.unwrap_or_else(|| panic!("a cluster: {found:#?}"));
+    assert_eq!(cluster.boxes, vec![boxes[0].clone()]);
+    assert_eq!(cluster.simple, Some(1));
+    let root = found.iter().find_map(|f| match f {
+        NdFound::Root(r) => Some(r),
+        NdFound::Cluster(_) => None,
+    });
+    let root = root.unwrap_or_else(|| panic!("a root: {found:#?}"));
+    assert_eq!(root.boxes, vec![boxes[1].clone()]);
+    for (n, x) in root.near.iter().zip([&a, &b]) {
+        assert!(q(n[0]) <= *x && *x <= q(n[1]), "{root:?}");
+    }
 }
