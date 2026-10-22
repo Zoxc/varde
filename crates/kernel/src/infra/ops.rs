@@ -34,6 +34,7 @@
 //! their count.
 
 use std::cmp::Ordering;
+use std::ops::RangeInclusive;
 
 use malachite::Rational;
 use varde_decide::num::exact::rat;
@@ -42,7 +43,9 @@ use varde_decide::num::storage::{EPS_RANGE, OpStart};
 /// The document's tolerance `ε` (mm): one setting, passed unchanged to
 /// every operation on the document. It lies in
 /// [`MIN`](Self::MIN)`..=`[`MAX`](Self::MAX), so it is never below the
-/// least tolerance storage allows at the largest coordinate.
+/// least tolerance storage allows at the largest coordinate. A value
+/// outside that range is refused where the tolerance is formed
+/// ([`Tolerance::new`]), so no operation starts with one.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Tolerance {
     eps: f64,
@@ -57,10 +60,16 @@ impl Tolerance {
     pub const DEFAULT: Tolerance = Tolerance { eps: 1e-3 };
 
     /// The tolerance `eps`, if it lies within
-    /// [`MIN`](Self::MIN)`..=`[`MAX`](Self::MAX) (so not if it isn't a
-    /// number).
-    pub fn new(eps: f64) -> Option<Tolerance> {
-        EPS_RANGE.contains(&eps).then_some(Tolerance { eps })
+    /// [`MIN`](Self::MIN)`..=`[`MAX`](Self::MAX); otherwise, NaN and the
+    /// infinities included, the value refused, which is
+    /// [`Invalid::Tolerance`](crate::Invalid::Tolerance) as a
+    /// [`KernelError`](crate::KernelError).
+    pub fn new(eps: f64) -> Result<Tolerance, ToleranceOutOfRange> {
+        if EPS_RANGE.contains(&eps) {
+            Ok(Tolerance { eps })
+        } else {
+            Err(ToleranceOutOfRange { given: eps })
+        }
     }
 
     /// `ε`.
@@ -85,6 +94,41 @@ impl Default for Tolerance {
         Self::DEFAULT
     }
 }
+
+/// A value given for the tolerance outside
+/// [`Tolerance::MIN`]`..=`[`Tolerance::MAX`], or not a finite number: the
+/// evidence of [`Invalid::Tolerance`](crate::Invalid::Tolerance), into
+/// which it converts as a [`KernelError`](crate::KernelError).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToleranceOutOfRange {
+    given: f64,
+}
+
+impl ToleranceOutOfRange {
+    /// The value given (mm).
+    pub fn given(self) -> f64 {
+        self.given
+    }
+
+    /// The range a tolerance lies in (mm).
+    pub fn range(self) -> RangeInclusive<f64> {
+        EPS_RANGE
+    }
+}
+
+impl std::fmt::Display for ToleranceOutOfRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the tolerance {} mm isn't from {} mm to {} mm",
+            self.given,
+            Tolerance::MIN,
+            Tolerance::MAX
+        )
+    }
+}
+
+impl std::error::Error for ToleranceOutOfRange {}
 
 /// The feature an operation builds, as the caller numbers it. Names,
 /// not positions: the kernel only compares them, and orders faces by

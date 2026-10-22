@@ -34,5 +34,5 @@ pub use infra::error::{
 };
 pub use infra::ops::{
     FeatureId, InstanceId, MAX_REPAIR_ROUNDS, MAX_WARNINGS, OpCtx, Repair, Status, Tolerance,
-    Warning, WarningKind,
+    ToleranceOutOfRange, Warning, WarningKind,
 };

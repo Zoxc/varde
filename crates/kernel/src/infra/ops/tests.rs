@@ -5,6 +5,7 @@ use varde_decide::num::storage::{
 };
 
 use super::*;
+use crate::{Invalid, KernelError, Storage};
 
 fn start(rho_op: f64) -> OpStart {
     OpStart {
@@ -21,7 +22,7 @@ fn warning(kind: WarningKind, bound: f64) -> Warning {
 fn tolerance_range_and_default() {
     assert_eq!(Tolerance::default(), Tolerance::DEFAULT);
     assert_eq!(Tolerance::DEFAULT.eps(), 1e-3);
-    assert_eq!(Tolerance::new(1e-3), Some(Tolerance::DEFAULT));
+    assert_eq!(Tolerance::new(1e-3), Ok(Tolerance::DEFAULT));
     assert_eq!((Tolerance::MIN, Tolerance::MAX), (1e-5, 1e-1));
     for eps in [Tolerance::MIN, 1e-4, 1e-2, Tolerance::MAX] {
         let t = Tolerance::new(eps).expect("in range");
@@ -41,8 +42,51 @@ fn tolerance_range_and_default() {
         f64::INFINITY,
         f64::NEG_INFINITY,
     ] {
-        assert_eq!(Tolerance::new(eps), None, "{eps}");
+        let refused = Tolerance::new(eps).expect_err("out of range");
+        assert_eq!(refused.given().to_bits(), eps.to_bits(), "{eps}");
+        assert_eq!(refused.range(), Tolerance::MIN..=Tolerance::MAX);
     }
+}
+
+/// A value outside the range, NaN and the infinities included, is an
+/// invalid input where the tolerance is formed, carrying the value and
+/// the range; it is not the storage cause, which stays the operation
+/// start's check of a tolerance below what the largest coordinate allows.
+#[test]
+fn a_tolerance_out_of_range_is_invalid_where_it_is_formed() {
+    fn formed(eps: f64) -> Result<Tolerance, KernelError> {
+        Ok(Tolerance::new(eps)?)
+    }
+    for eps in [1e-6, 0.2, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            formed(eps),
+            Err(KernelError::Invalid(Invalid::Tolerance)),
+            "{eps}"
+        );
+        let refused = Tolerance::new(eps).expect_err("out of range");
+        let text = refused.to_string();
+        assert!(text.contains(&format!("{eps}")), "{text}");
+        assert!(text.contains("0.00001 mm to 0.1 mm"), "{text}");
+    }
+    assert_eq!(
+        KernelError::Invalid(Invalid::Tolerance).to_string(),
+        "the tolerance is outside its range of 0.00001 mm to 0.1 mm"
+    );
+    // The ends are accepted.
+    for eps in [1e-5, 1e-1] {
+        assert_eq!(formed(eps).map(Tolerance::eps), Ok(eps));
+    }
+    // The storage cause is unchanged: a tolerance below the least the
+    // largest coordinate allows, non-finite included, fails the start's
+    // check as unrepresentable.
+    for eps in [EPS_MIN_MAX_COORD.next_down(), 0.0, f64::NAN] {
+        assert_eq!(
+            check_eps(eps).map_err(KernelError::from),
+            Err(KernelError::Unrepresentable(Storage::Tolerance)),
+            "{eps}"
+        );
+    }
+    assert_eq!(check_eps(EPS_MIN_MAX_COORD), Ok(()));
 }
 
 /// `3ε/4 + ρ_op` exactly, and the largest `f64` at most it.

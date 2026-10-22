@@ -15,6 +15,7 @@
 //! stage's fixed order ([`first_failure`]).
 
 use super::budget::BudgetProfile;
+use super::ops::ToleranceOutOfRange;
 
 /// Why a kernel operation gives no result. It never gives an invalid one
 /// instead.
@@ -33,7 +34,8 @@ pub enum KernelError {
     /// causes. Never for geometry at the scale of the tolerance, nor for
     /// a sign or certificate still open.
     Unrepresentable(Storage),
-    /// An operand is not a valid solid.
+    /// An operand is not a valid solid, or a value given for the
+    /// tolerance is outside its range.
     Invalid(Invalid),
     /// The input is of a kind the kernel does not take.
     Unsupported(Unsupported),
@@ -86,7 +88,8 @@ pub enum Storage {
     OutputPrecision,
 }
 
-/// How an operand fails to be a valid solid ([`KernelError::Invalid`]).
+/// How an operand fails to be a valid solid, or the tolerance given is
+/// refused ([`KernelError::Invalid`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Invalid {
     /// It breaks the solid invariant numbered `inv`.
@@ -99,6 +102,13 @@ pub enum Invalid {
     /// It intersects itself: an imported solid, or a constructed face
     /// whose surroundings are certified too tight to embed it.
     SelfIntersection,
+    /// A value given for the tolerance lies outside
+    /// [`Tolerance::MIN`](crate::Tolerance::MIN)`..=`[`Tolerance::MAX`](crate::Tolerance::MAX),
+    /// or isn't a finite number; refused where the tolerance is formed
+    /// ([`Tolerance::new`](crate::Tolerance::new)), so no operation
+    /// starts with it. The value and the range are the evidence
+    /// ([`ToleranceOutOfRange`]).
+    Tolerance,
 }
 
 /// What kind of input the kernel does not take
@@ -209,6 +219,12 @@ impl std::fmt::Display for KernelError {
             KernelError::Invalid(Invalid::SelfIntersection) => {
                 f.write_str("the solid intersects itself")
             }
+            KernelError::Invalid(Invalid::Tolerance) => write!(
+                f,
+                "the tolerance is outside its range of {} mm to {} mm",
+                crate::Tolerance::MIN,
+                crate::Tolerance::MAX
+            ),
             KernelError::Unsupported(Unsupported::Import(Import::SurfaceDegree)) => {
                 f.write_str("a surface's degree is too high to import")
             }
@@ -240,6 +256,14 @@ impl From<varde_decide::num::storage::Unrepresentable> for KernelError {
             U::OutOfRange { .. } => Storage::OutOfRange,
             U::Tolerance { .. } => Storage::Tolerance,
         })
+    }
+}
+
+/// A tolerance refused where it is formed is
+/// [`Invalid::Tolerance`]; its value and the range are the evidence.
+impl From<ToleranceOutOfRange> for KernelError {
+    fn from(_: ToleranceOutOfRange) -> Self {
+        KernelError::Invalid(Invalid::Tolerance)
     }
 }
 
