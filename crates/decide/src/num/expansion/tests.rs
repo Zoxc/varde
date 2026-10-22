@@ -6,7 +6,11 @@
 //! Geogram's, on random, degenerate and nearly degenerate inputs (4×4
 //! determinants against the rationals only: that crate's `det_4d` filter
 //! leaves the last column out of its error bound and certifies a wrong
-//! sign, see `det4_geogram_filter_misses_a_zero`). Plus sums, products and
+//! sign, see `det4_geogram_filter_misses_a_zero`; 3D orientations against
+//! its exact expansions alone, as its `orient_3d` filter certifies wrong
+//! signs too, see `orient3d_geogram_filter_certifies_a_wrong_sign`; Geogram
+//! v1.10.1's own filters, which that crate's should be, bound both
+//! soundly). Plus sums, products and
 //! scalings across the documented range, regroupings of one value that
 //! cancel to zero, and the same bits with and without hardware FMA.
 
@@ -270,6 +274,62 @@ fn det4_geogram_filter_misses_a_zero() {
     assert_eq!(g, Sign::Negative, "geogram_predicates' det_4d changed");
 }
 
+/// `det(p₁ − p₀, p₂ − p₀, p₃ − p₀)`'s sign by `geogram_predicates`' exact
+/// expansions alone: `det_compare_4d` of the rows `(pᵢ, 1)` (its last
+/// row `p₄ − p₃` with `p₃` zero), which is minus the orientation.
+fn geogram_orient3d_exact(p: &[[f64; 3]; 4]) -> Ordering {
+    let h = |i: usize| [p[i][0], p[i][1], p[i][2], 1.0];
+    sign_of(geogram_predicates::det_compare_4d(
+        &h(0),
+        &h(1),
+        &h(2),
+        &[0.0; 4],
+        &h(3),
+    ))
+    .reverse()
+}
+
+/// Difference rows `(ε, 1, 1)`, `(ε, 1, 1)` nearly parallel in their last
+/// two columns and `(ε, ε, ε)`, with the first entry of the third chosen
+/// so the exact orientation nearly cancels: `geogram_predicates` 0.4.0's
+/// `orient_3d` filter bounds the error by `1.78·10⁻¹⁵·max₁·max₂·max₃`
+/// with its third group missing `a₁₂, a₁₃, a₂₂, a₂₃`, so the term `a₃₁·(a₁₂a₂₃
+/// − a₁₃a₂₂)` and its rounding (about `u·ε`) lie outside a bound of order
+/// `ε²`, and it certifies the wrong sign. Geogram v1.10.1's generated
+/// filter (constant `5.11·10⁻¹⁵`, the third group `a₂₂, a₂₃, a₃₂, a₃₃`)
+/// leaves it to its exact stage, as the expansions here decide it. If the
+/// crate's filter is fixed, its `orient_3d` can be the oracle above again.
+#[test]
+fn orient3d_geogram_filter_certifies_a_wrong_sign() {
+    let p = [
+        [0.0, 0.0, 0.0],
+        [
+            -1.7522873058184817e-8,
+            -0.18041593380608867,
+            -0.7471274138760322,
+        ],
+        [
+            -9.398726613909101e-8,
+            -0.0946386205547942,
+            -0.39191239639951025,
+        ],
+        [
+            -9.44286628109264e-8,
+            2.1614344203940886e-7,
+            7.329057152846528e-8,
+        ],
+    ];
+    let d = |i: usize, k: usize| q(p[i][k]) - q(p[0][k]);
+    let exact = d(1, 0) * (d(2, 1) * d(3, 2) - d(2, 2) * d(3, 1))
+        - d(2, 0) * (d(1, 1) * d(3, 2) - d(1, 2) * d(3, 1))
+        + d(3, 0) * (d(1, 1) * d(2, 2) - d(1, 2) * d(2, 1));
+    let want = exact.cmp(&q(0.0));
+    assert_ne!(want, Ordering::Less);
+    assert_eq!(geogram_orient3d_exact(&p), want);
+    let g = geogram_predicates::orient_3d(&p[0], &p[1], &p[2], &p[3]);
+    assert_eq!(g, Sign::Negative, "geogram_predicates' orient_3d changed");
+}
+
 /// Points `p0`, `p1`, `p2`, and then `p3` (in `D` dimensions): random, or
 /// the last on the line `p0 p1` as rounded (in 3D on the plane of the
 /// others, as rounded), perhaps then an ulp off.
@@ -326,8 +386,8 @@ fn orientations_match_geogram() {
             let exact = qd(1, 0) * qminor(2, 3, 1, 2) - qd(2, 0) * qminor(1, 3, 1, 2)
                 + qd(3, 0) * qminor(1, 2, 1, 2);
             check(&e, &exact, "orient3d");
-            let g = geogram_predicates::orient_3d(&p[0], &p[1], &p[2], &p[3]);
-            assert_eq!(e.sign(), sign_of(g), "{p:?}");
+            let g = geogram_orient3d_exact(&p);
+            assert_eq!(e.sign(), g, "{p:?}");
         }
     }
 }

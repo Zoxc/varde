@@ -8,7 +8,9 @@
 //! another way), so the forms are positive multiples of what they claim;
 //! their orders are the exact derivatives along each motion, the first
 //! nonzero one is the perturbed sign, and every stage is reported under
-//! the form's kind.
+//! the form's kind. The forms Geogram's predicates express (all but the
+//! homogeneous and radius rows) also agree with Geogram's exact signs
+//! (`geogram_predicates`) on the set within Geogram's range.
 
 use std::cmp::Ordering;
 
@@ -910,4 +912,191 @@ fn orient2_of_exact_points() {
         rationals += w.rationals();
     }
     assert!(rationals > 0);
+}
+
+/// A Geogram sign as an ordering.
+fn geogram(s: geogram_predicates::Sign) -> Ordering {
+    match s {
+        geogram_predicates::Sign::Negative => Ordering::Less,
+        geogram_predicates::Sign::Zero => Ordering::Equal,
+        geogram_predicates::Sign::Positive => Ordering::Greater,
+    }
+}
+
+/// The sign of the 4×4 determinant of `rows` by Geogram's exact
+/// expansions alone (`det_compare_4d` with a zero `p3`: its last row is
+/// `p4 − 0`), never through a static filter of `geogram_predicates`
+/// 0.4.0 (see the expansion tests: its `orient_3d` and `det_4d` filters
+/// certify wrong signs).
+fn geogram_det4(r: [[f64; 4]; 4]) -> Ordering {
+    geogram(geogram_predicates::det_compare_4d(
+        &r[0], &r[1], &r[2], &[0.0; 4], &r[3],
+    ))
+}
+
+/// The sign of a product of values of signs `a` and `b`.
+fn side_times(a: Ordering, b: Ordering) -> Ordering {
+    match b {
+        Ordering::Less => a.reverse(),
+        Ordering::Equal => Ordering::Equal,
+        Ordering::Greater => a,
+    }
+}
+
+/// `p` with a fourth coordinate `w`.
+fn h(p: DVec3, w: f64) -> [f64; 4] {
+    [p.x, p.y, p.z, w]
+}
+
+/// The sign of `n·x − c` by Geogram: `det[(x, 1), (−n_j, n_i, 0, 0),
+/// (−n_k, 0, n_i, 0), (c, 0, 0, n_i)]` over the axes reordered `i, j, k`
+/// with `n_i ≠ 0` is `n_i²·(n·x − c)`.
+fn geogram_plane_side(n: DVec3, x: DVec3, c: f64) -> Ordering {
+    let Some(i) = (0..3).find(|&i| n[i] != 0.0) else {
+        return 0.0.partial_cmp(&c).expect("finite");
+    };
+    let (j, k) = ((i + 1) % 3, (i + 2) % 3);
+    geogram_det4([
+        [x[i], x[j], x[k], 1.0],
+        [-n[j], n[i], 0.0, 0.0],
+        [-n[k], 0.0, n[i], 0.0],
+        [c, 0.0, 0.0, n[i]],
+    ])
+}
+
+/// The form's sign by Geogram's predicates (`geogram_predicates`, a port
+/// of Geogram's PCK): `orient_2d` and `dot_compare_3d` where they are the
+/// form, else a 4×4 determinant of homogeneous rows whose expansion along
+/// the last column is the form (signs worked out in the comments); `None`
+/// for the forms with no such determinant over the inputs as they are
+/// (homogeneous differences, a radius against a distance).
+fn geogram_sign(form: Form, p: &[DVec3]) -> Option<Ordering> {
+    let two = |i: usize| [p[i].x, p[i].y];
+    let arr = |i: usize| p[i].to_array();
+    Some(match form {
+        Form::Along => geogram(geogram_predicates::dot_compare_3d(
+            &arr(0),
+            &arr(2),
+            &arr(1),
+        )),
+        Form::Orient2 => geogram(geogram_predicates::orient_2d(&two(0), &two(1), &two(2))),
+        // With `R(x, y) = (−y, x)`: `det[(b, 0, 1), (a, 0, 1), (0, 0, 1,
+        // 0), (R(d − c), 0, 0)] = −(b − a)·(d − c)`.
+        Form::Dot2 => {
+            let r = |i: usize| DVec3::new(-p[i].y, p[i].x, 0.0);
+            let flat = |i: usize| DVec3::new(p[i].x, p[i].y, 0.0);
+            geogram(geogram_predicates::det_compare_4d(
+                &h(flat(1), 1.0),
+                &h(flat(0), 1.0),
+                &[0.0, 0.0, 1.0, 0.0],
+                &h(r(2), 0.0),
+                &h(r(3), 0.0),
+            ))
+            .reverse()
+        }
+        // `det[(a, 1), (b, 1), (c, 1), (d, 1)] = −det(b − a, c − a, d − a)`.
+        Form::Orient3 => {
+            geogram_det4([h(p[0], 1.0), h(p[1], 1.0), h(p[2], 1.0), h(p[3], 1.0)]).reverse()
+        }
+        // `det[(a, 1), (b, 1), (p, 1), (d, 0)] = −det(a − p, b − p, d)`.
+        Form::Orient3Dir => {
+            geogram_det4([h(p[1], 1.0), h(p[2], 1.0), h(p[0], 1.0), h(p[3], 0.0)]).reverse()
+        }
+        Form::PlaneSide => geogram_plane_side(p[0], p[1], p[2].x),
+        // `det[(up, 0), (d, 0), (off, 0), (0, 0, 0, 1)] = det(up, d, off)`.
+        Form::ShadowSide => geogram_det4([
+            h(p[0], 0.0),
+            h(p[1], 0.0),
+            h(p[2], 0.0),
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        // `(c − n·q)·(n·up)`.
+        Form::PlaneHeight => {
+            let side = geogram_plane_side(p[0], p[2], p[1].x).reverse();
+            let facing = geogram(geogram_predicates::dot_compare_3d(
+                &arr(0),
+                &arr(3),
+                &[0.0; 3],
+            ));
+            side_times(side, facing)
+        }
+        // `up·m = det(e₁ − e₀, g₁ − g₀, up)`, minus `det[(e₁, 1), (e₀, 1),
+        // (up, 0), (g₁ − g₀, 0)]`; `m·(g₀ − e₀) = det(e₁ − e₀, g₁ − g₀,
+        // g₀ − e₀) = det[(e₀, 1), (e₁, 1), (g₀, 1), (g₁, 1)]`.
+        Form::Crossing => {
+            let up_m = geogram(geogram_predicates::det_compare_4d(
+                &h(p[2], 1.0),
+                &h(p[1], 1.0),
+                &h(p[0], 0.0),
+                &h(p[3], 0.0),
+                &h(p[4], 0.0),
+            ))
+            .reverse();
+            let m_off = geogram_det4([h(p[1], 1.0), h(p[2], 1.0), h(p[3], 1.0), h(p[4], 1.0)]);
+            side_times(up_m, m_off)
+        }
+        Form::Hom | Form::NearGap => return None,
+    })
+}
+
+/// The flat forms against Geogram's exact predicates, on the adversarial
+/// set within Geogram's range (its expansions have no underflow guard,
+/// so not [`Class::Tiny`]): every sign, through the library's stages
+/// (filter, expansions, rationals), equals Geogram's. Plus the orders of
+/// an orientation whose last point alone moves: each is the orientation
+/// against the rate as a direction, `det(b − a, c − a, ṙₖ)`, again
+/// Geogram's.
+#[test]
+fn forms_agree_with_geogram() {
+    let mut compared = [0u32; 11];
+    let mut ties = 0u32;
+    for seed in varde_testing::seeds(8, 256) {
+        let mut rng = Rng::new(seed);
+        for (f, form) in Form::ALL.iter().enumerate() {
+            for class in CLASSES {
+                if class == Class::Tiny {
+                    continue;
+                }
+                let mut p = rng.inputs(class, form.inputs());
+                if matches!(class, Class::Line | Class::Plane) {
+                    tie(*form, &mut p);
+                }
+                let Some(want) = geogram_sign(*form, &p) else {
+                    continue;
+                };
+                let case = Case {
+                    form: *form,
+                    rates: vec![[DVec3::ZERO; ORDERS]; p.len()],
+                    p,
+                };
+                let (s, _) = value_sign(&case);
+                assert_eq!(s, Ok(want), "{form:?} {class:?} seed {seed}: {:?}", case.p);
+                compared[f] += 1;
+                ties += u32::from(want == Ordering::Equal);
+            }
+            let p = rng.inputs(Class::Plane, 4);
+            let mut rates = vec![[DVec3::ZERO; ORDERS]; 4];
+            rates[3] = rng.rates(1)[0];
+            let case = Case {
+                form: Form::Orient3,
+                p,
+                rates,
+            };
+            let mut work = exact::Work::default();
+            for (k, got) in exact::order_signs(&case, &mut work).enumerate() {
+                let want = geogram_sign(
+                    Form::Orient3Dir,
+                    &[case.p[0], case.p[1], case.p[2], case.rates[3][k]],
+                );
+                assert_eq!(Some(got), want.map(Ok), "order {} seed {seed}", k + 1);
+            }
+        }
+    }
+    for (f, form) in Form::ALL.iter().enumerate() {
+        assert!(
+            compared[f] > 0 || matches!(form, Form::Hom | Form::NearGap),
+            "{form:?} never compared"
+        );
+    }
+    assert!(ties > 0, "no exact tie compared");
 }
