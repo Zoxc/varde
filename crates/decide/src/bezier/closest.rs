@@ -78,8 +78,10 @@
 //! seed mirrored) reaches the mirrored point, with the same bounds, and
 //! gets the mirrored certificate. The descent steps mirror too (the
 //! distance estimates are evaluations, a halved step truncates towards
-//! zero). A tie between seeds takes the first in the net's order, which
-//! a reversed net gives the other.
+//! zero). The default seed mirrors (a tie between control points is
+//! broken by the piece's distance beside them), except on a piece
+//! symmetric about `x`, where a single seed can't (its two mirrored
+//! feet): there the tie takes the first in the net's order.
 //!
 //! **Work.** Newton steps, Krawczyk steps, halvings and box tests are
 //! counted ([`Work`]); the caller charges them.
@@ -352,19 +354,32 @@ impl<S: Scalar> Closest<S> {
 
     /// The seed: the lattice point nearest the parameter `i/n` of the
     /// control point nearest `x` (by the control points' approximate
-    /// offsets; the first of a tie in the net's order).
+    /// offsets). A tie goes to the candidate whose piece lies nearer `x`
+    /// half a step inwards from its parameter ([`inward`]; the piece meets
+    /// its end control points, so their own parameters can't tell them
+    /// apart), which a reversed piece gives the mirrored candidate; a tie
+    /// left after that (a piece symmetric about `x`) to the first in the
+    /// net's order.
     fn seed(&self) -> Axes<u64> {
         let near = approx_dist2::<S>;
-        let mut best = (f64::INFINITY, smallvec![0; self.dims()]);
+        // The control distance, the seed and the inward point.
+        let mut best: Option<(f64, Axes<u64>, Axes<u64>)> = None;
+        let mut offer = |a: f64, seed: Axes<u64>, inner: Axes<u64>| {
+            let better = match &best {
+                None => true,
+                Some((b, _, bi)) => a < *b || (a == *b && self.dist2(&inner) < self.dist2(bi)),
+            };
+            if better {
+                best = Some((a, seed, inner));
+            }
+        };
         match &self.geom {
             Geom::Curve(c) => {
                 let n = c.degree();
                 for i in 0..=n {
                     let d = c.coords().clone().map(|p| p.coefs()[i].clone());
                     let a = near(&d, &c.weights().coefs()[i]);
-                    if a < best.0 {
-                        best = (a, smallvec![grid(i, n)]);
-                    }
+                    offer(a, smallvec![grid(i, n)], smallvec![inward(i, n)]);
                 }
             }
             Geom::Patch(p) => {
@@ -374,14 +389,16 @@ impl<S: Scalar> Closest<S> {
                     for j in 0..=n {
                         let d = [x, y, z].map(|t| t.get(i, j).clone());
                         let a = near(&d, w.get(i, j));
-                        if a < best.0 {
-                            best = (a, smallvec![grid(i, m), grid(j, n)]);
-                        }
+                        offer(
+                            a,
+                            smallvec![grid(i, m), grid(j, n)],
+                            smallvec![inward(i, m), inward(j, n)],
+                        );
                     }
                 }
             }
         }
-        best.1
+        best.map_or_else(|| smallvec![0; self.dims()], |b| b.1)
     }
 
     /// Newton's method on the lattice from `c`, safeguarded to descend
@@ -963,6 +980,17 @@ fn grid(i: usize, n: usize) -> u64 {
     let (q, r) = (num / n, num % n);
     let round_up = 2 * r > n || (2 * r == n && q % 2 == 1);
     (q + u128::from(round_up)) as u64
+}
+
+/// The lattice point half a step from `i/n` towards the middle,
+/// `(2i ± 1)/2n` (`i/n` itself at the middle): `inward(n − i, n) = SIDE −
+/// inward(i, n)`.
+fn inward(i: usize, n: usize) -> u64 {
+    match (2 * i).cmp(&n) {
+        std::cmp::Ordering::Less => grid(2 * i + 1, 2 * n),
+        std::cmp::Ordering::Greater => grid(2 * i - 1, 2 * n),
+        std::cmp::Ordering::Equal => grid(i, n),
+    }
 }
 
 /// Whether every matrix in the interval matrix `j` (`d × d`, row-major)

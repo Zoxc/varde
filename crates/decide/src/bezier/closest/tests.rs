@@ -443,6 +443,35 @@ fn uncertified_feet_keep_the_upper_bound() {
     uncertified::<Bounded<Big>>();
 }
 
+/// A cubic span whose end control points are equally far from the
+/// origin, the span bending away from it at the end.
+fn tied_ends() -> Vec<[f64; 4]> {
+    vec![
+        [1.0, 0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.25, 1.0],
+        [0.0, 3.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0, 1.0],
+    ]
+}
+
+/// A biquadratic patch whose corners are equally far from the origin,
+/// its inner points not symmetric in either direction.
+fn tied_corners() -> Vec<[f64; 4]> {
+    let mut net = Vec::new();
+    for i in 0..3 {
+        for j in 0..3 {
+            let (s, t) = (f64::from(i) - 1.0, f64::from(j) - 1.0);
+            let lift = if i == 1 || j == 1 {
+                0.5 + 0.25 * f64::from(i) + 0.125 * f64::from(j)
+            } else {
+                1.0
+            };
+            net.push([s, t, lift, 1.0]);
+        }
+    }
+    net
+}
+
 /// `1 − t`, exactly for a lattice point.
 fn flip(t: f64) -> f64 {
     let r = 1.0 - t;
@@ -501,13 +530,15 @@ fn mirror<S: Level>() {
         (cubic(), [2.0, 1.0, 1.0]),
         (cubic(), [-2.0, -1.0, 0.0]),
         (arc(1.0, [0.0, 0.0, 0.0]), [0.0, 0.0, 0.0]),
+        // The end control points tie, the span not symmetric about `x`.
+        (tied_ends(), [0.0, 0.0, 0.0]),
     ] {
         let rev: Vec<[f64; 4]> = pts.iter().rev().copied().collect();
         let a = Closest::curve(&pts, x, &l).expect("a span");
         let b = Closest::curve(&rev, x, &l).expect("a span");
-        // The arc's centre ties its end control points: there only the
-        // mirrored seeds mirror.
-        if x != [0.0; 3] {
+        // The arc's centre ties its end control points, the arc symmetric
+        // about it: there only the mirrored seeds mirror.
+        if pts != arc(1.0, [0.0; 3]) || x != [0.0; 3] {
             mirrored(
                 &a.closest(None).expect("a seed"),
                 &b.closest(None).expect("a seed"),
@@ -525,6 +556,8 @@ fn mirror<S: Level>() {
         (paraboloid(0.75, [0.0, 0.0, 0.0]), [-0.3, 0.6, 0.2]),
         (cylinder(2.0, 3.0), [0.8, 0.5, 1.0]),
         (paraboloid(1.0, [0.0, 0.0, 0.0]), [3.0, 0.2, 1.0]),
+        // Four corners tie; not symmetric about `x` in either direction.
+        (tied_corners(), [0.0, 0.0, 0.0]),
     ] {
         for axis in [0, 1] {
             let rev = reversed(&pts, axis);
