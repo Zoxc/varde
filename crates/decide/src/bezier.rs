@@ -20,7 +20,10 @@
 //! a patch along a curve in its domain (a p-curve span) with the seam
 //! numerator, and spans and patches put into an implicit equation
 //! ([`Implicit`]). In [`cone`], the certified normal cone of a vector form's
-//! coefficients ([`NormalCone`]). In [`roots`], root isolation on
+//! coefficients ([`NormalCone`]). In [`closest`], the closest point of a
+//! span or patch to a point ([`Closest`]): a certified distance upper
+//! bound, a Krawczyk certificate for the foot point, and curvature
+//! bounds. In [`roots`], root isolation on
 //! `[0, 1]`: certified simple roots, and clusters for the rest; in
 //! [`roots_nd`], the same for a system of forms in `d` variables on
 //! `[0, 1]ᵈ`, certified by Krawczyk's operator. Every operation commutes with
@@ -29,6 +32,7 @@
 //! form are the mirrored roots), and the 2D products and elevation with
 //! transposition too.
 
+pub mod closest;
 pub mod compose;
 pub mod cone;
 pub mod curve;
@@ -43,6 +47,7 @@ pub mod scalar;
 pub mod split;
 pub mod tensor;
 
+pub use closest::{Closest, Foot, FootBox, Reached};
 pub use compose::Implicit;
 pub use cone::NormalCone;
 pub use curve::HomCurve;

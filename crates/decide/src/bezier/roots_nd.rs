@@ -87,10 +87,10 @@ use crate::num::exact::rat;
 pub const MAX_VARIABLES: usize = 6;
 
 /// A box's narrowed sub-boxes are on the lattice `2^-LATTICE` of its side.
-const LATTICE: u32 = 53;
+pub(super) const LATTICE: u32 = 53;
 
 /// A box's side in lattice units.
-const SIDE: u64 = 1 << LATTICE;
+pub(super) const SIDE: u64 = 1 << LATTICE;
 
 /// The most Krawczyk steps narrowing one box.
 const NARROW_STEPS: u32 = 16;
@@ -103,10 +103,10 @@ const INFLATIONS: u32 = 12;
 /// and the iterates converge fast enough to settle it.
 const CONTRACTING: f64 = 0.5;
 
-type Axes<T> = SmallVec<[T; 4]>;
+pub(super) type Axes<T> = SmallVec<[T; 4]>;
 
 /// A box on a cell's lattice: `[lo, hi]` per variable, in `0..=SIDE`.
-type Lat = Axes<[u64; 2]>;
+pub(super) type Lat = Axes<[u64; 2]>;
 
 /// A closed dyadic box of `[0, 1]ᵈ`: `[lo, hi]` per variable.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,13 +324,13 @@ pub fn isolate_nd<S: Scalar>(
 /// A dyadic cell: per variable its level `k` and index `j`,
 /// `[j/2ᵏ, (j + 1)/2ᵏ]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Cell {
-    k: Axes<u32>,
-    j: Axes<u64>,
+pub(super) struct Cell {
+    pub(super) k: Axes<u32>,
+    pub(super) j: Axes<u64>,
 }
 
 impl Cell {
-    fn root(d: usize) -> Cell {
+    pub(super) fn root(d: usize) -> Cell {
         Cell {
             k: smallvec![0; d],
             j: smallvec![0; d],
@@ -338,14 +338,14 @@ impl Cell {
     }
 
     /// The half `side` (0 low, 1 high) in variable `a`.
-    fn child(&self, a: usize, side: u64) -> Cell {
+    pub(super) fn child(&self, a: usize, side: u64) -> Cell {
         let mut c = self.clone();
         c.k[a] += 1;
         c.j[a] = 2 * c.j[a] + side;
         c
     }
 
-    fn to_box(&self) -> NdBox {
+    pub(super) fn to_box(&self) -> NdBox {
         let dy = |j: u64, k: u32| Dyadic::new(j, k).expect("a cell is in [0, 1]");
         NdBox {
             axes: self
@@ -359,7 +359,7 @@ impl Cell {
 
     /// The lattice box `x` of this cell in `t`: bounds outwards
     /// (`outer`), else inwards.
-    fn bounds(&self, x: &Lat, outer: bool) -> Axes<[f64; 2]> {
+    pub(super) fn bounds(&self, x: &Lat, outer: bool) -> Axes<[f64; 2]> {
         let at = |k: u32, j: u64, l: u64, high: bool| {
             let n = (u128::from(j) << LATTICE) + u128::from(l);
             let [lo, hi] = int_bounds(n);
@@ -742,7 +742,7 @@ fn certify<S: Scalar>(
 }
 
 /// The outcome of [`narrow`].
-enum Narrowed {
+pub(super) enum Narrowed {
     /// No root in the starting box.
     Empty,
     /// Exactly one root, simple, in `cert` (and in the narrowed box), of
@@ -759,7 +759,7 @@ enum Narrowed {
 /// For a whole box (`leaf`), a first step that neither certifies nor
 /// contracts stops it: only then does a later certificate on a sub-box
 /// mean one root in the whole box.
-fn narrow<S: Scalar>(
+pub(super) fn narrow<S: Scalar>(
     sys: &mut Restrict<'_, S>,
     mut x: Lat,
     clip: &Lat,
@@ -1067,7 +1067,7 @@ type Piece<S> = (Axes<(u32, u64)>, Vec<NdTensor<S>>);
 
 /// The forms of a cell and their restrictions to sub-boxes of it, keeping
 /// the last step's pieces for the next.
-struct Restrict<'a, S> {
+pub(super) struct Restrict<'a, S> {
     forms: &'a [NdTensor<S>],
     /// The last step's pieces: per variable the cell (level, index below
     /// `forms`' cell) and the forms restricted to them.
@@ -1075,7 +1075,7 @@ struct Restrict<'a, S> {
 }
 
 impl<'a, S: Scalar> Restrict<'a, S> {
-    fn new(forms: &'a [NdTensor<S>]) -> Self {
+    pub(super) fn new(forms: &'a [NdTensor<S>]) -> Self {
         Restrict {
             forms,
             pieces: Vec::new(),
@@ -1088,7 +1088,7 @@ impl<'a, S: Scalar> Restrict<'a, S> {
     /// halves, from the last step's piece holding it where there is one, so
     /// a narrowing box descends once), the hull of their partial
     /// derivatives there, scaled to the cell.
-    fn jacobian(&mut self, x: &Lat, work: &mut Work) -> Vec<[f64; 2]> {
+    pub(super) fn jacobian(&mut self, x: &Lat, work: &mut Work) -> Vec<[f64; 2]> {
         let d = x.len();
         let covers: Axes<(u32, u64, u64)> = x.iter().map(|&[lo, hi]| cover(lo, hi)).collect();
         // Every combination of the cells, the first variable slowest.
@@ -1184,7 +1184,7 @@ fn holds(c: (u32, u64), n: (u32, u64)) -> bool {
 /// first and last index: the cells of the floor of `lo` and the ceiling of
 /// `hi` less one, either order (a point on a cells' boundary takes both),
 /// so the mirrored interval takes the mirrored cells.
-fn cover(lo: u64, hi: u64) -> (u32, u64, u64) {
+pub(super) fn cover(lo: u64, hi: u64) -> (u32, u64, u64) {
     let w = hi - lo;
     let mut l = LATTICE;
     while l > 0 && w > 1u64 << (LATTICE - l) {
