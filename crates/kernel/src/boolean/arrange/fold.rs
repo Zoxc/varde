@@ -85,7 +85,7 @@ use std::collections::BTreeMap;
 
 use super::coincident::{Coincident, FaceInput, PieceOf};
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
-use crate::infra::error::{Internal, KernelError};
+use crate::infra::error::{Inconsistency, Internal, KernelError};
 use crate::topo::arrange2d::NONE;
 use crate::topo::brep_min::{BodyKind, Brep, CoedgeId, EdgeId};
 use varde_decide::records::keys;
@@ -258,12 +258,15 @@ impl FoldError {
     }
 
     /// The kernel's error for it: [`Internal::Inconsistent`] where
-    /// [`Self::is_inconsistent`], the budget's where it ran out, else
-    /// `None` (the caller's input).
+    /// [`Self::is_inconsistent`], of the proxy class until the ladder
+    /// classifies the decisions it read; the budget's where it ran out;
+    /// else `None` (the caller's input).
     pub fn kernel_error(&self) -> Option<KernelError> {
         match self {
             FoldError::OutOfBudget(e) => Some(e.clone()),
-            e if e.is_inconsistent() => Some(KernelError::Internal(Internal::Inconsistent)),
+            e if e.is_inconsistent() => Some(KernelError::Internal(Internal::Inconsistent(
+                Inconsistency::Proxy,
+            ))),
             _ => None,
         }
     }

@@ -190,7 +190,9 @@ fn a_wrong_label_is_the_ladder_signal() {
     );
     assert_eq!(
         e.kernel_error(),
-        Some(KernelError::Internal(Internal::Inconsistent))
+        Some(KernelError::Internal(Internal::Inconsistent(
+            Inconsistency::Proxy
+        )))
     );
 }
 

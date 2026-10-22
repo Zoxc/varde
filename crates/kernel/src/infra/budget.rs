@@ -1070,7 +1070,7 @@ mod tests {
     /// it.
     #[cfg(not(target_arch = "wasm32"))]
     fn passes_over_uneven_items(budget: u64, end: End) -> Vec<(Result<usize, KernelError>, u64)> {
-        use crate::Internal;
+        use crate::{Inconsistency, Internal};
         use varde_decide::num::storage::Unrepresentable;
         let items: Vec<u64> = (0..5000).collect();
         let mut work = Work::new(&Budget::new(budget));
@@ -1086,7 +1086,9 @@ mod tests {
                 }
                 match end {
                     _ if rung > 0 || i != 3001 => Ok(i),
-                    End::Fails => Err(Stop::Failed(KernelError::Internal(Internal::Inconsistent))),
+                    End::Fails => Err(Stop::Failed(KernelError::Internal(Internal::Inconsistent(
+                        Inconsistency::ExactTie,
+                    )))),
                     End::Caps => Err(Stop::Cap(Cap::SubdivisionDepth)),
                     End::Unstorable => Err(Stop::Failed(
                         Unrepresentable::Tolerance {
@@ -1118,7 +1120,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn charging_is_the_same_on_any_number_of_threads_and_without_early_stop() {
-        use crate::Internal;
+        use crate::{Inconsistency, Internal, Storage};
         for end in [End::Fails, End::Caps, End::Unstorable] {
             for budget in [50_000, 200_000, 400_000, 1_500_000, 2_000_000] {
                 let out =
@@ -1127,7 +1129,9 @@ mod tests {
                 // A large budget reaches item 3001 and ends there.
                 if budget == 2_000_000 {
                     let want = match end {
-                        End::Fails => KernelError::Internal(Internal::Inconsistent),
+                        End::Fails => {
+                            KernelError::Internal(Internal::Inconsistent(Inconsistency::ExactTie))
+                        }
                         End::Caps => {
                             assert!(matches!(
                                 last,
@@ -1138,7 +1142,7 @@ mod tests {
                             ));
                             continue;
                         }
-                        End::Unstorable => KernelError::Unrepresentable,
+                        End::Unstorable => KernelError::Unrepresentable(Storage::Tolerance),
                     };
                     assert_eq!(out[0].0, Err(want));
                 }
@@ -1151,6 +1155,7 @@ mod tests {
     /// items after it ran: the next attempt runs on the rest.
     #[test]
     fn a_pass_ending_at_a_cap_or_unstorable_value_charges_its_prefix() {
+        use crate::Storage;
         use varde_decide::num::storage::Unrepresentable;
         // Items of 2, 3, 4, 5, 6, 7 units, the third ending, then the
         // costly ones after it.
@@ -1180,8 +1185,9 @@ mod tests {
                     );
                     assert_eq!(profile.stages, vec![("test", 9)]);
                 }
-                KernelError::Unrepresentable => {
+                KernelError::Unrepresentable(cause) => {
                     assert!(!cap);
+                    assert_eq!(cause, Storage::OutOfRange);
                     assert!(matches!(halt, Halt::Failed { item: 2, .. }));
                 }
                 other => panic!("{other:?}"),

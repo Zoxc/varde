@@ -62,8 +62,8 @@
 //! band settles, the kernel's own known gap, given with what led to it
 //! ([`Event`]): the bounds tried, each failure with its kind, key and
 //! quantity, or its piece per rung. It is the kernel's
-//! [`Internal::Inconsistent`], of the cluster class, until the error's
-//! evidence names it.
+//! [`Internal::Inconsistent`] of the cluster rule-gap class
+//! ([`Inconsistency::ClusterRuleGap`]).
 //!
 //! **Work.** Each halving is one item of a pass charged a unit; the
 //! retries are the caller's, charged by it.
@@ -73,7 +73,7 @@ use std::fmt::Debug;
 use super::corner::r_on;
 use super::stale::Abutment;
 use crate::infra::budget::{Halt, Pass, Step, Stop, Work};
-use crate::infra::error::{Internal, KernelError};
+use crate::infra::error::{Inconsistency, Internal, KernelError};
 pub use varde_decide::num::storage::eps_min;
 
 /// The escalation ladder's last rung: a check still failing there ends
@@ -306,9 +306,9 @@ pub struct RuleGap<K, L> {
 }
 
 impl<K, L> RuleGap<K, L> {
-    /// The kernel error it is.
+    /// The kernel error it is: a cluster rule gap.
     pub fn error(&self) -> KernelError {
-        KernelError::Internal(Internal::Inconsistent)
+        KernelError::Internal(Internal::Inconsistent(Inconsistency::ClusterRuleGap))
     }
 }
 
@@ -318,7 +318,8 @@ pub enum EscalateError<E, K, L> {
     /// A rule gap ([`RuleGap::error`]).
     RuleGap(Box<RuleGap<K, L>>),
     /// Halving would take `b_K` below the storage floor:
-    /// [`KernelError::Unrepresentable`] unless a collapse repair succeeds.
+    /// [`KernelError::Unrepresentable`] ([`Storage::Repair`](crate::Storage::Repair)) unless a
+    /// collapse repair succeeds.
     Floor {
         /// The bound that failed last.
         b_k: f64,

@@ -1158,6 +1158,6 @@ fn the_operation_start_range_checks_bounded_positions_only() {
     );
     assert_eq!(
         KernelError::from(op_start(&[&far], 1e-3).unwrap_err()),
-        KernelError::Unrepresentable
+        KernelError::Unrepresentable(crate::Storage::OutOfRange)
     );
 }

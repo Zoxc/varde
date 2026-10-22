@@ -163,7 +163,10 @@ fn the_same_failure_with_no_strict_improvement_is_a_rule_gap() {
     let mut esc = Escalation::<u32, Loc>::new(1e-3, Vec::new()).unwrap();
     let g = gap_of(esc.settle(&mut fake, &mut work()));
     assert_eq!(g.gap, Gap::Stop);
-    assert_eq!(g.error(), KernelError::Internal(Internal::Inconsistent));
+    assert_eq!(
+        g.error(),
+        KernelError::Internal(Internal::Inconsistent(Inconsistency::ClusterRuleGap))
+    );
     assert_eq!(esc.halvings(), 1);
     assert_eq!(fake.attempts, vec![1e-3, 5e-4]);
     // The evidence: each bound with its failure.

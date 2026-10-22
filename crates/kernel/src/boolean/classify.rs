@@ -122,7 +122,7 @@ use varde_decide::num::schedule::AuditUnits;
 use crate::geom::lattice::MAX_LEVEL;
 use crate::geom::tile::Tile;
 use crate::infra::budget::{Cap, Halt, Ledger, Pass, Step, Stop, Work};
-use crate::infra::error::{Internal, KernelError};
+use crate::infra::error::{Inconsistency, Internal, KernelError};
 use crate::topo::arrange2d::{Arrangement, NONE};
 
 #[cfg(doc)]
@@ -335,12 +335,15 @@ pub enum AuditError {
 
 impl AuditError {
     /// The kernel's error for it: [`Internal::Inconsistent`] for a
-    /// mismatch, the budget's where it ran out, else `None` (the caller's
-    /// input).
+    /// mismatch, of the proxy class until the ladder classifies the
+    /// decisions it read; the budget's where it ran out; else `None` (the
+    /// caller's input).
     pub fn kernel_error(&self) -> Option<KernelError> {
         match self {
             AuditError::Input(_) => None,
-            AuditError::Mismatch { .. } => Some(KernelError::Internal(Internal::Inconsistent)),
+            AuditError::Mismatch { .. } => Some(KernelError::Internal(Internal::Inconsistent(
+                Inconsistency::Proxy,
+            ))),
             AuditError::OutOfBudget(e) => Some(e.clone()),
         }
     }

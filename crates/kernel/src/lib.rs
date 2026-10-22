@@ -29,4 +29,6 @@ pub use infra::budget::{
 };
 #[cfg(feature = "staging")]
 pub use infra::error::Stage;
-pub use infra::error::{Cause, FeatureKind, Import, Internal, Invalid, KernelError, Unsupported};
+pub use infra::error::{
+    Cause, FeatureKind, Import, Inconsistency, Internal, Invalid, KernelError, Storage, Unsupported,
+};

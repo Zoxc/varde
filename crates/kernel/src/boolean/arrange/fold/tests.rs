@@ -360,7 +360,9 @@ fn assert_one_face_refused(f: &Face) {
     assert!(err.is_inconsistent());
     assert_eq!(
         err.kernel_error(),
-        Some(KernelError::Internal(Internal::Inconsistent))
+        Some(KernelError::Internal(Internal::Inconsistent(
+            Inconsistency::Proxy
+        )))
     );
 }
 

@@ -46,7 +46,7 @@ impl std::error::Error for KernelError {}
 
 /// The Varde kernel's errors as the old variants: running out of the
 /// budget or a limit, whatever the cause, is [`KernelError::TooComplex`],
-/// and decisions that contradict each other are
+/// and the kernel contradicting itself, of whichever class, is
 /// [`BooleanError::Inconsistent`]. The facade calls no operation that
 /// raises the others yet, and the old variants that would fit carry the
 /// old kernel's types, so for now they come out as
@@ -57,12 +57,12 @@ impl From<varde_kernel::KernelError> for KernelError {
         match e {
             K::OutOfBudget { .. } => KernelError::TooComplex,
             K::NotImplemented(what) => KernelError::NotImplemented(what),
-            K::Unrepresentable => {
+            K::Unrepresentable(_) => {
                 KernelError::NotImplemented("reporting a result that can't be stored")
             }
             K::Invalid(_) => KernelError::NotImplemented("reporting an invalid operand"),
             K::Unsupported(_) => KernelError::NotImplemented("reporting unsupported input"),
-            K::Internal(varde_kernel::Internal::Inconsistent) => {
+            K::Internal(varde_kernel::Internal::Inconsistent(_)) => {
                 KernelError::Boolean(BooleanError::Inconsistent)
             }
             K::Feature(kind) => match kind {},
