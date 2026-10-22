@@ -64,15 +64,19 @@ impl Pred for Flat {
 
 /// Points of both operands (`A`'s moving by `d`), planes of `B`'s faces
 /// through the origin, curved point–face keys with a value formed from
-/// the `fail`-th level on, and the anchors that are geometric.
+/// the `fail`-th level on, curved rows whose `n`-th evaluation has the
+/// `n`-th error of `row_errs` (the last one after; none without), and the
+/// anchors that are geometric.
 #[derive(Default)]
 struct Geo {
     at: BTreeMap<Point, Moving>,
     planes: BTreeMap<FaceId, DVec3>,
     curved: Option<(f64, u32)>,
     rows: Option<[f64; ORDERS]>,
+    row_errs: Vec<f64>,
     geometric: BTreeSet<Anchor>,
     calls: AtomicU32,
+    row_calls: AtomicU32,
 }
 
 impl HeightGeometry for Geo {
@@ -120,7 +124,14 @@ impl HeightGeometry for Geo {
         like: &S,
         _: &mut LevelWork,
     ) -> Option<[S; ORDERS]> {
-        self.rows.map(|r| r.map(|x| S::from_f64(x, like)))
+        let n = self.row_calls.fetch_add(1, AtOrd::Relaxed) as usize;
+        let err = self.row_errs.get(n).or(self.row_errs.last()).copied();
+        self.rows.map(|r| {
+            r.map(|x| {
+                let x = S::from_f64(x, like);
+                err.map_or(x.clone(), |e| x.widened(e))
+            })
+        })
     }
 
     fn geometric(&self, k: HeightKey) -> bool {
@@ -340,6 +351,51 @@ fn a_curved_key_is_decided_at_one_level_its_anchors_start_at() {
     let last = u8::try_from(crate::num::schedule::LEVELS - 1).unwrap();
     assert_eq!(hs.key(h).map(|r| (r.value, r.level)), Some((None, last)));
     assert_eq!(hs.get(own, Anchor::Face(B, F1)).unwrap().above, Sign::Pos);
+}
+
+/// Near-parallel curved elements at a tie: each order's gradient is
+/// tiny but not zero, within the first level's error, which is within the
+/// target, so every order is a tie there. The record escalates (not the
+/// guard) and the next level, its errors below the gradient, decides it
+/// by order 1; with errors that never shrink the escalation stands past
+/// the last level.
+#[test]
+fn a_near_parallel_curved_record_decides_at_a_finer_level() {
+    let h = face_key();
+    let own = Oriented {
+        key: h,
+        swapped: false,
+    };
+    let rows = [1e-12, -1e-13, 1e-13, -1e-13];
+    let g = Geo {
+        curved: Some((0.0, 0)),
+        rows: Some(rows),
+        row_errs: vec![1e-11, 1e-20],
+        ..Geo::default()
+    };
+    let mut hs = Heights::new();
+    let mut pass = Seq::default();
+    hs.fill([at(h, F1)], &g, band(), &mut pass).unwrap();
+    assert_eq!(hs.key(h).map(|r| (r.value, r.level)), Some((None, 0)));
+    assert_eq!(
+        hs.get(own, Anchor::Face(B, F1)),
+        Some(HeightRec {
+            above: Sign::Pos,
+            by_orders: true,
+            fold: false,
+        })
+    );
+    assert_eq!(g.row_calls.load(AtOrd::Relaxed), 2, "two levels");
+    let g = Geo {
+        curved: Some((0.0, 0)),
+        rows: Some(rows),
+        row_errs: vec![1e-11],
+        ..Geo::default()
+    };
+    let got = Heights::new().fill([at(h, F1)], &g, band(), &mut Seq::default());
+    assert_eq!(got, Err(HeightError::Pass(Fail::NEAR_DEGENERATE)));
+    let levels = u32::try_from(crate::num::schedule::LEVELS).unwrap();
+    assert_eq!(g.row_calls.load(AtOrd::Relaxed), levels);
 }
 
 #[test]

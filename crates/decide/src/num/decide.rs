@@ -22,12 +22,16 @@
 //!   as a cyclic crossing order along an edge, catch a configuration such
 //!   ties leave unrealisable). A non-zero order not yet at the target
 //!   escalates, that record alone.
-//! - If every order is passed over, the guard (symbolic perturbation by
+//! - If every order is passed over and at least one of them is a curved
+//!   tie, the record is near-degenerate (a small gradient that isn't
+//!   zero, say near-parallel curved elements), not a missing rule: it
+//!   escalates ([`Fail::NEAR_DEGENERATE`]), the record alone, to a level
+//!   whose errors certify an order, or out of budget past the last.
+//! - If every order is an exact zero, the guard (symbolic perturbation by
 //!   operand ids would be the next step) is reached: [`Fail::Internal`],
-//!   never answered by a sign. With exact orders this means the record's
-//!   motion gradient is zero, a missing perturbation row: a bug. With
-//!   curved orders it is also reached when each order is a tie at the
-//!   target.
+//!   never answered by a sign. The record's motion gradient is zero along
+//!   all four motions, which are independent, so it is zero: a missing
+//!   perturbation row, a bug.
 //! - A flat value or order with an input that isn't finite has no sign at
 //!   any level, so escalating can't help: [`Fail::Internal`] too (the
 //!   kernel's stored data is finite, so this is a caller's bug).
@@ -219,19 +223,27 @@ pub enum Fail {
     /// escalates (every record reading the value moves with it); at an
     /// order `≥ 1` the record alone.
     Escalate {
-        /// The order that escalates: 0 for the value, `k` for `gₖ`.
+        /// The order that escalates: 0 for the value, `k` for `gₖ`, and
+        /// `ORDERS + 1` when every order is passed over, at least one a
+        /// curved tie ([`Fail::NEAR_DEGENERATE`]).
         order: usize,
     },
-    /// The guard: every order passed over. With exact orders the record's
-    /// motion has no first-order effect on it, a missing perturbation
-    /// rule, a bug; with curved ones every order may also be a tie at the
-    /// target. Also an exact value or order read before that with an input
-    /// that isn't finite ([`Coeff::refused`]), a caller's bug no level
-    /// resolves. Reported with the record's key.
+    /// The guard: every order an exact zero, so the record's motion has no
+    /// first-order effect on it, a missing perturbation rule, a bug. Also
+    /// an exact value or order read before that with an input that isn't
+    /// finite ([`Coeff::refused`]), a caller's bug no level resolves.
+    /// Reported with the record's key.
     Internal {
         /// The record.
         key: TieKey,
     },
+}
+
+impl Fail {
+    /// A near-degenerate record: every order passed over, at least one a
+    /// curved tie within the target (a gradient too small for this level's
+    /// errors, not a zero one). The record escalates, as at an order.
+    pub const NEAR_DEGENERATE: Fail = Fail::Escalate { order: ORDERS + 1 };
 }
 
 /// A coefficient [`decide`] reads: the value `g` or an order `gₖ`, exact
@@ -456,7 +468,9 @@ pub fn exact_orders(signs: &Signs) -> (ExactSign, impl Iterator<Item = ExactSign
 /// 4. otherwise `g` is a tie: the first order certified non-zero
 ///    (`|gₖ| > err`) gives the sign; an order that is neither that, nor an
 ///    exact zero, nor within an error at most the target escalates;
-/// 5. every order passed over: the guard, [`Fail::Internal`];
+/// 5. every order passed over: if one was a curved tie, the record
+///    escalates ([`Fail::NEAR_DEGENERATE`]); if all were exact zeros, the
+///    guard, [`Fail::Internal`];
 ///
 /// a value or order that is [`Coeff::refused`] when reached (an exact one
 /// with an input that isn't finite) gives the guard at once.
@@ -493,6 +507,7 @@ pub fn decide<C: Coeff>(
         _ => {} // a tie, decided once
     }
     let mut passed = 0;
+    let mut curved_tie = false;
     // At most the four orders: none pulled after the last is passed over.
     for (k, t) in (1..).zip(ord.into_iter().take(ORDERS)) {
         if t.refused() {
@@ -501,13 +516,18 @@ pub fn decide<C: Coeff>(
         if let Some(s) = t.beyond(0.0) {
             return Ok(s);
         }
-        if !t.is_exact_zero() && !at_target(t.err()) {
-            return Err(Fail::Escalate { order: k });
+        if !t.is_exact_zero() {
+            if !at_target(t.err()) {
+                return Err(Fail::Escalate { order: k });
+            }
+            curved_tie = true; // a tie at this order, at the target
         }
-        // An exact zero at this order, or a curved tie at it.
         passed = k;
     }
     debug_assert_eq!(passed, ORDERS, "decide reads all {ORDERS} orders");
+    if curved_tie {
+        return Err(Fail::NEAR_DEGENERATE); // a small gradient, not a zero one
+    }
     Err(Fail::Internal { key }) // no first-order effect: the guard
 }
 

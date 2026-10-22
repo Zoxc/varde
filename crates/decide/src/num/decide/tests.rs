@@ -1,7 +1,9 @@
 //! `decide` step by step: by value, the geometric and curved escalations
 //! at order 0, ties decided by the first certified order, exact zeros and
 //! curved ties at the rung's target passed over, escalation of an order
-//! above it, the guard only when every order is passed over; flat records
+//! above it, a near-degenerate record (every order passed over, one a
+//! curved tie) escalating, the guard only when every order is an exact
+//! zero; flat records
 //! from exact predicates; the same answers at every precision level; and
 //! the crossing-order counterexample to passing over curved ties.
 
@@ -178,7 +180,7 @@ fn curved_orders_pass_over_ties_within_the_rung_target_only() {
                 let want = if order < ORDERS {
                     Ok(Sign::Pos)
                 } else {
-                    Err(Fail::Internal { key: key() })
+                    Err(Fail::NEAR_DEGENERATE)
                 };
                 assert_eq!(got, want, "rung {k}, order {order}");
             } else {
@@ -205,11 +207,10 @@ fn flat_orders_pass_over_exact_zeros_only() {
     assert_eq!(decide(exact(0.0), ord, Band::FLAT, key()), Ok(Sign::Pos));
 }
 
-/// The guard is reached only when every order is passed over: all four
-/// exact zeros (`L ≡ 0`), with the record's key. Any certified order
-/// decides instead.
+/// The guard is reached only when every order is an exact zero
+/// (`L ≡ 0`), with the record's key. Any certified order decides instead.
 #[test]
-fn the_guard_fires_only_when_every_order_is_passed_over() {
+fn the_guard_fires_only_when_every_order_is_an_exact_zero() {
     for band in [Band::FLAT, curved(0.0, 1e-3), curved(0.5, 1e-3)] {
         assert_eq!(
             decide(exact(0.0), zeros(), band, key()),
@@ -221,6 +222,78 @@ fn the_guard_fires_only_when_every_order_is_passed_over() {
             assert_eq!(decide(exact(0.0), ord, band, key()), Ok(Sign::Pos));
         }
     }
+}
+
+/// Every order passed over, at least one a curved tie at the target: a
+/// near-degenerate record (a gradient too small for the level's errors,
+/// not a zero one) escalates, the record alone, after reading all four
+/// orders; never the guard. Any mix of ties and exact zeros alike, the
+/// tie at any order, under any curved band.
+#[test]
+fn a_record_whose_orders_are_all_passed_over_with_a_curved_tie_escalates() {
+    for band in [curved(0.0, 1e-3), curved(0.5, 1e-3)] {
+        for g in [exact(0.0), approx(1e-4, 1e-3)] {
+            for mask in 1u32..(1 << ORDERS) {
+                let ord: [Bounded; ORDERS] = std::array::from_fn(|k| {
+                    if mask & (1 << k) != 0 {
+                        approx(1e-5, 1e-4)
+                    } else {
+                        exact(0.0)
+                    }
+                });
+                let read = Cell::new(0);
+                let lazy = ord
+                    .into_iter()
+                    .inspect(|_| read.set(read.get() + 1))
+                    .chain(unread());
+                assert_eq!(
+                    decide(g, lazy, band, key()),
+                    Err(Fail::NEAR_DEGENERATE),
+                    "ties {mask:04b}"
+                );
+                assert_eq!(read.get(), ORDERS);
+            }
+            // All exact zeros, the value a tie too: the guard.
+            assert_eq!(
+                decide(g, zeros(), band, key()),
+                Err(Fail::Internal { key: key() })
+            );
+        }
+    }
+    assert_eq!(Fail::NEAR_DEGENERATE, Fail::Escalate { order: ORDERS + 1 });
+}
+
+/// Near-parallel curved elements: the value is a tie (zero within its
+/// error) and the gradient along every motion is tiny but not zero,
+/// `1e-9` at order 1. At a coarse level each order's error (`1e-8`) is
+/// within the target, so every order is a tie and the record escalates;
+/// at a finer level, the same rung, the errors shrink below the gradient
+/// and order 1 decides, at every precision type.
+#[test]
+fn a_near_parallel_curved_record_decides_at_a_finer_level() {
+    let band = curved(0.0, 1e-6);
+    let w = Width::from_bits(212).expect("a width");
+    let rows = [1e-9, -3e-10, 2e-10, -1e-10];
+    let at = |err: f64| -> (Bounded, [Bounded; ORDERS]) {
+        (approx(0.0, err), rows.map(|r| approx(r, err)))
+    };
+    let (g, ord) = at(1e-8);
+    assert_eq!(decide(g, ord, band, key()), Err(Fail::NEAR_DEGENERATE));
+    let dd = |x: Bounded| -> Bounded<Dd> { x.promote() };
+    assert_eq!(
+        decide(dd(g), ord.map(dd), band, key()),
+        Err(Fail::NEAR_DEGENERATE)
+    );
+    let (g, ord) = at(1e-12);
+    assert_eq!(decide(g, ord, band, key()), Ok(Sign::Pos));
+    assert_eq!(decide(dd(g), ord.map(dd), band, key()), Ok(Sign::Pos));
+    let big = |x: Bounded| -> Bounded<Big> { x.promote().promote().widen(w) };
+    assert_eq!(decide(big(g), ord.map(big), band, key()), Ok(Sign::Pos));
+    // The gradient's sign at the first certified order, whatever the
+    // later ones say: order 1 a tie even here, order 2 decides.
+    let (g, mut ord) = at(1e-12);
+    ord[0] = approx(1e-13, 1e-12);
+    assert_eq!(decide(g, ord, band, key()), Ok(Sign::Neg));
 }
 
 /// A point against the plane `z = 0`: its height, the point moving at
@@ -448,9 +521,11 @@ fn qsgn(x: &Q) -> i8 {
 }
 
 /// The model's `decide`, transcribed: `decideOrd` over the orders, then
-/// `decideP`, plus the two intended differences (an uncertified value
+/// `decideP`, plus the intended differences (an uncertified value
 /// escalates at its order; a flat value within its error that isn't an
-/// exact zero escalates). Returns the answer and the orders read.
+/// exact zero escalates; every order passed over with a curved tie among
+/// them escalates, the guard only for exact zeros). Returns the answer
+/// and the orders read.
 fn model(g: &Option<Model>, ord: &[Option<Model>], b: Band) -> (Res, usize) {
     let tau = Q::try_from(b.tau).expect("finite τ");
     let tau_sign = Q::try_from(b.tau_sign).expect("finite target");
@@ -471,6 +546,7 @@ fn model(g: &Option<Model>, ord: &[Option<Model>], b: Band) -> (Res, usize) {
         BandKind::Flat if !zero(g) => return (Res::Escalate(0), 0),
         _ => {}
     }
+    let mut curved_tie = false;
     for (i, t) in ord.iter().enumerate() {
         let k = i + 1;
         let Some(t) = t else {
@@ -479,9 +555,15 @@ fn model(g: &Option<Model>, ord: &[Option<Model>], b: Band) -> (Res, usize) {
         if t.err < qabs(&t.v) {
             return (Res::Ok(qsgn(&t.v)), k);
         }
-        if !zero(t) && tau_sign < t.err {
-            return (Res::Escalate(k), k);
+        if !zero(t) {
+            if tau_sign < t.err {
+                return (Res::Escalate(k), k);
+            }
+            curved_tie = true;
         }
+    }
+    if curved_tie {
+        return (Res::Escalate(ORDERS + 1), ord.len());
     }
     (Res::Internal, ord.len())
 }
