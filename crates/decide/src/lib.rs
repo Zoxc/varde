@@ -26,5 +26,6 @@ pub mod ids;
 pub mod leaves;
 pub mod num;
 pub mod order;
+pub mod patch;
 pub mod perturb;
 pub mod records;

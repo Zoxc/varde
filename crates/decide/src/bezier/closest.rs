@@ -198,6 +198,15 @@ impl<S: Scalar> Closest<S> {
         Self::with(Geom::Patch(p), x, Cell::root(2))
     }
 
+    /// The patch already held in the frame centred at `x`, its net
+    /// `(W·(S − x), W)` (as [`patch`](Self::patch) forms it from affine
+    /// points; the caller's weights certified positive), set up as
+    /// [`patch`](Self::patch) does. `None` for a gradient past the degree
+    /// limit.
+    pub fn from_offset(p: HomPatch<S>, x: [f64; 3]) -> Option<Self> {
+        Self::with(Geom::Patch(p), x, Cell::root(2))
+    }
+
     fn with(geom: Geom<S>, x: [f64; 3], cell: Cell) -> Option<Self> {
         let grad = gradient(&geom)?;
         let d = grad.len();

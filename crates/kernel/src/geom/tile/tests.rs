@@ -5,6 +5,7 @@
 
 use glam::DVec3;
 use malachite::Rational as Q;
+use varde_decide::bezier::{HomCurve, Implicit};
 use varde_decide::num::bigf::{BigF, Width};
 use varde_decide::num::{bigf::Big, dd::Dd};
 use varde_testkit::rng::Rng;
@@ -365,10 +366,9 @@ fn a_cylinder_tile_is_regular() {
     }
 }
 
-#[test]
-fn a_singular_side_is_not_regular() {
-    // An octant of a unit sphere with its pole row at v = 0: the three
-    // control points of that row at the pole.
+/// An octant of a unit sphere with its pole row at `v = 0`: the three
+/// control points of that row at the pole.
+fn octant() -> Tile {
     let s = std::f64::consts::FRAC_1_SQRT_2;
     let meridian = [(1.0, 0.0, 1.0), (1.0, 1.0, s), (0.0, 1.0, 1.0)];
     let around = [(1.0, 0.0, 1.0), (1.0, 1.0, s), (0.0, 1.0, 1.0)];
@@ -378,7 +378,12 @@ fn a_singular_side_is_not_regular() {
         let p = DVec3::new(sv * cu, sv * su, cv);
         affine(p, wu * wv)
     });
-    let tile = Tile::new(net).unwrap();
+    Tile::new(net).unwrap()
+}
+
+#[test]
+fn a_singular_side_is_not_regular() {
+    let tile = octant();
     assert!(!tile.is_regular());
     assert_eq!(tile.normal_cone_level(), None);
     assert_eq!(tile.normal_cone_at(&Q::from(0u32)), None);
@@ -556,4 +561,167 @@ fn rounding_an_exact_net() {
     assert_eq!(Tile::rounded(&zero), Err(TileError::Weight { index: 4 }));
     let tiny = HomPatch::new(2, 2, net(Q::from_signeds(1, 128))).unwrap();
     assert_eq!(Tile::rounded(&tiny), Err(TileError::Weight { index: 4 }));
+}
+
+/// Every member of the patch trait on `tile` at `like`'s level against
+/// the tile's operations there: the patch at the level
+/// ([`Tile::patch_at`]) with the corners exact, the numerator in the
+/// frame, the cone search, the split, the hull box, the singular sides on
+/// the exact net and the closest point from the stored net.
+fn trait_members<S: Scalar + 'static>(tile: &Tile, like: &S) {
+    let p = tile.patch_at(like);
+    let f = |x: f64| S::from_f64(x, like);
+    assert_eq!(Patch::<S>::degrees(tile), (2, 2));
+    assert_eq!(*Patch::hom(tile, like), p);
+    let mut rng = Rng::new(11);
+    let ps = params(&mut rng);
+    for &u in &ps {
+        for &v in &ps[..4] {
+            let (bu, bv) = (f(u), f(v));
+            let e = Patch::eval(tile, &bu, &bv);
+            let d = Patch::eval_partials(tile, &bu, &bv);
+            let want = p.eval_partials(&bu, &bv);
+            assert_eq!((&d.du, &d.dv), (&want.du, &want.dv));
+            match corner(u, v) {
+                Some((i, j)) => {
+                    let c = tile.point(i, j).map(f);
+                    assert_eq!((&e, &d.p), (&c, &c));
+                }
+                None => assert_eq!((&e, &d.p), (&p.eval(&bu, &bv), &want.p)),
+            }
+            assert_eq!(
+                Patch::derivatives(tile, &bu, &bv, 2),
+                p.derivatives_at(&bu, &bv, 2)
+            );
+        }
+    }
+    for dir in [Dir::U, Dir::V] {
+        assert_eq!(Patch::<S>::split_half(tile, dir), tile.split_half(dir));
+    }
+    assert_eq!(Patch::<S>::hull_box(tile), Some(tile.hull_box()));
+
+    let n = numerator(&tile.framed(like));
+    assert_eq!(Patch::normal_numerator(tile, like).as_ref(), Some(&n));
+    let cone = Patch::normal_cone_at(tile, like);
+    assert_eq!(cone.ok(), tile.normal_cone_at(like));
+    assert_eq!(Patch::<S>::normal_cone(tile), tile.normal_cone());
+
+    let e = tile.exact();
+    for sides in [Sides::NONE, Side::V0.into(), Side::U1.into()] {
+        let proof = e.singular_sides(sides);
+        assert_eq!(Patch::singular_sides(tile, sides, like), proof);
+        assert_eq!(
+            Patch::fold_numerator(tile, sides, like),
+            proof.and_then(|s| s.quotient(&n))
+        );
+    }
+    assert_eq!(Patch::fold_numerator(tile, Sides::NONE, like), Some(n));
+
+    let c = tile.hull_box().lo.map(f);
+    let sphere = Implicit::new(
+        2,
+        c,
+        [
+            ([2, 0, 0], f(1.0)),
+            ([0, 2, 0], f(1.0)),
+            ([0, 0, 2], f(1.0)),
+            ([0, 0, 0], f(-1.0)),
+        ],
+    )
+    .expect("a quadric");
+    let composed = p.compose_implicit(&sphere);
+    assert!(composed.is_some());
+    assert_eq!(Patch::compose_implicit(tile, &sphere), composed);
+    let span = HomCurve::from_affine(
+        [([0.125, 0.0], 1.0), ([0.5, 0.75], 0.5), ([1.0, 0.5], 2.0)],
+        like,
+    )
+    .expect("a quadratic span");
+    let curve = HomCurve::from_affine(
+        [
+            (tile.point(0, 0), 1.0),
+            (tile.point(1, 1), 2.0),
+            (tile.point(2, 2), 1.0),
+        ],
+        like,
+    )
+    .expect("a quadratic curve");
+    let along = p.compose_span(&span).expect("in range");
+    assert_eq!(Patch::compose_span(tile, &span).as_ref(), Some(&along));
+    assert_eq!(
+        Patch::seam_numerator(tile, &span, &curve),
+        along.seam_numerator(&curve)
+    );
+
+    let x = tile.point(1, 1);
+    assert_eq!(
+        Patch::closest(tile, x, like),
+        Closest::patch(2, 2, tile.net(), x, like)
+    );
+}
+
+/// At the first level the members are the tile's inherent (cached)
+/// operations, to the bit.
+fn first_level_members(tile: &Tile) {
+    let like = Bounded::exact(0.0);
+    assert!(matches!(Patch::hom(tile, &like), Cow::Borrowed(p) if p == tile.patch()));
+    let mut rng = Rng::new(12);
+    let ps = params(&mut rng);
+    for &u in &ps {
+        for &v in &ps {
+            let (bu, bv) = (Bounded::exact(u), Bounded::exact(v));
+            assert_eq!(Patch::eval(tile, &bu, &bv), tile.eval(u, v));
+            assert_eq!(
+                Patch::eval_partials(tile, &bu, &bv),
+                tile.eval_partials(u, v)
+            );
+        }
+    }
+    assert_eq!(
+        Patch::normal_numerator(tile, &like).as_ref(),
+        Some(tile.normal_numerator())
+    );
+    assert_eq!(
+        Patch::normal_cone_at(tile, &like).ok(),
+        tile.normal_cone_at(&like)
+    );
+}
+
+#[test]
+fn the_patch_trait_is_the_tiles_operations() {
+    let dd = Bounded::exact(Dd::ZERO);
+    let mut all: Vec<Tile> = tiles(5).into_iter().map(|(t, _)| t).collect();
+    all.push(octant());
+    all.push(plane_tile([1.0 / (1u64 << 60) as f64, 0.5, 1.0]));
+    for tile in &all {
+        first_level_members(tile);
+        trait_members(tile, &Bounded::exact(0.0));
+        trait_members(tile, &dd);
+    }
+    // The pole row: proven singular whatever the level, the fold
+    // numerator its exact quotient's, no cone (no level helps).
+    let pole = octant();
+    let side: Sides = Side::V0.into();
+    let proof = Patch::singular_sides(&pole, side, &dd).expect("the pole row");
+    assert_eq!(
+        Patch::singular_sides(&pole, side, &Bounded::exact(0.0)),
+        Some(proof)
+    );
+    assert_eq!(
+        Patch::fold_numerator(&pole, side, &dd).map(|n| n[0].degrees()),
+        Some((5, 4))
+    );
+    assert_eq!(Patch::normal_cone_at(&pole, &dd), Err(ConeFail::Space));
+    // The needle corner: rounding decides at the first level, the next
+    // certifies the cached cone.
+    let needle = plane_tile([1.0 / (1u64 << 60) as f64, 0.5, 1.0]);
+    assert_eq!(
+        Patch::normal_cone_at(&needle, &Bounded::exact(0.0)),
+        Err(ConeFail::Precision)
+    );
+    assert_eq!(
+        Patch::normal_cone_at(&needle, &dd).ok(),
+        needle.normal_cone()
+    );
+    assert!(Patch::<Bounded<Dd>>::normal_cone(&needle).is_some());
 }

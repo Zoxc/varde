@@ -92,20 +92,31 @@
 //! rounded once each and the sum once more, the translation's rounding
 //! carried, from double-double up exact but for the sum's rounding.
 //! Every caller of the cone, at every level, uses this frame.
+//!
+//! **The patch trait.** A tile is a [`Patch`] at every level: its net
+//! formed at the level ([`Tile::patch_at`]; at the first level the cached
+//! patch and numerator), a corner's point its control point exactly, the
+//! split, hull box, frame, cone search and its cache the tile's own, the
+//! singular sides proven on the exact net, the closest point set up from
+//! the stored net; the rest the patch's operations at the level.
 
+use std::any::Any;
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::OnceLock;
 
 use malachite::Rational;
 pub use varde_decide::bezier::NormalCone;
 use varde_decide::bezier::{
-    Axis, ConeFail, Dir, HomPatch, HullBox, Partials, Scalar, Side, Tensor,
+    Axis, Closest, ConeFail, Dir, HomPatch, HullBox, Partials, Scalar, Side, Sides, SingularSides,
+    Tensor,
 };
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::expansion::two_sum;
 use varde_decide::num::level::{AtLevel, LevelScalar, ladder};
 use varde_decide::num::schedule::{LEVELS, Level};
 use varde_decide::num::storage::{frame_of, translate};
+use varde_decide::patch::Patch;
 
 use super::round::nearest;
 
@@ -128,7 +139,7 @@ pub type Net = [[f64; 4]; 9];
 pub const MAX_CONE_DEPTH: u32 = 3;
 
 /// A tile's patch at the first precision level.
-pub type Patch = HomPatch<Bounded<f64>>;
+pub type FirstLevelPatch = HomPatch<Bounded<f64>>;
 
 /// Why [`Tile::new`] refuses a net. `index` is the first offending
 /// control point's place in the [`Net`].
@@ -145,10 +156,10 @@ pub enum TileError {
 #[derive(Clone)]
 pub struct Tile {
     net: Net,
-    patch: Patch,
+    patch: FirstLevelPatch,
     hull: HullBox,
     /// The homogeneous partials in `u` and `v`.
-    partials: OnceLock<[Patch; 2]>,
+    partials: OnceLock<[FirstLevelPatch; 2]>,
     numerator: OnceLock<[Tensor<Bounded<f64>>; 3]>,
     cone: OnceLock<Option<(NormalCone, Level)>>,
     /// Whether the exact numerator is zero at a corner.
@@ -218,7 +229,7 @@ impl Tile {
     /// The patch at the first level, its coefficients `w·x` rounded once
     /// with the rounding carried ([`HomPatch::from_affine`]).
     #[inline]
-    pub fn patch(&self) -> &Patch {
+    pub fn patch(&self) -> &FirstLevelPatch {
         &self.patch
     }
 
@@ -247,7 +258,7 @@ impl Tile {
     }
 
     /// The homogeneous partial derivative in `dir`, of degree 1 in it.
-    pub fn derivative(&self, dir: Dir) -> &Patch {
+    pub fn derivative(&self, dir: Dir) -> &FirstLevelPatch {
         let [du, dv] = self
             .partials
             .get_or_init(|| [self.patch.derivative(Dir::U), self.patch.derivative(Dir::V)]);
@@ -417,6 +428,108 @@ impl Tile {
         });
         HomPatch::new(DEGREE, DEGREE, net).expect("a biquadratic net")
     }
+}
+
+/// The tile at the level of `S` (module docs).
+impl<S: Scalar + 'static> Patch<S> for Tile {
+    type SplitError = TileError;
+
+    fn degrees(&self) -> (usize, usize) {
+        (DEGREE, DEGREE)
+    }
+
+    /// [`Tile::patch_at`]; at the first level the cached [`Tile::patch`].
+    fn hom(&self, like: &S) -> Cow<'_, HomPatch<S>> {
+        match first_level(&self.patch) {
+            Some(p) => Cow::Borrowed(p),
+            None => Cow::Owned(self.patch_at(like)),
+        }
+    }
+
+    /// The patch's point at the level ([`HomPatch::eval`]), at a corner
+    /// its control point exactly: [`Tile::eval`] at every level.
+    fn eval(&self, u: &S, v: &S) -> [S; 3] {
+        match corner_at(u, v) {
+            Some((i, j)) => self.point(i, j).map(|x| S::from_f64(x, u)),
+            None => self.hom(u).eval(u, v),
+        }
+    }
+
+    /// [`HomPatch::eval_partials`] at the level, the point at a corner its
+    /// control point exactly: [`Tile::eval_partials`] at every level.
+    fn eval_partials(&self, u: &S, v: &S) -> Partials<S> {
+        let mut d = self.hom(u).eval_partials(u, v);
+        if let Some((i, j)) = corner_at(u, v) {
+            d.p = self.point(i, j).map(|x| S::from_f64(x, u));
+        }
+        d
+    }
+
+    /// [`Tile::split_half`].
+    fn split_half(&self, dir: Dir) -> Result<[Tile; 2], TileError> {
+        Tile::split_half(self, dir)
+    }
+
+    /// [`Tile::hull_box`], at every level.
+    fn hull_box(&self) -> Option<HullBox> {
+        Some(self.hull)
+    }
+
+    /// In the tile's frame ([`Tile::normal_numerator`] at the first
+    /// level, cached).
+    fn normal_numerator(&self, like: &S) -> Option<[Tensor<S>; 3]> {
+        Some(match first_level(Tile::normal_numerator(self)) {
+            Some(n) => Clone::clone(n),
+            None => numerator(&self.framed(like)),
+        })
+    }
+
+    /// The search of [`Tile::normal_cone_at`] at the level, with why it
+    /// fails: [`ConeFail::Space`] at a zero corner of the exact numerator
+    /// (no level or depth helps) or at the deepest split.
+    fn normal_cone_at(&self, like: &S) -> Result<NormalCone, ConeFail> {
+        if self.degenerate() {
+            return Err(ConeFail::Space);
+        }
+        let n = Patch::normal_numerator(self, like).expect("a biquadratic numerator");
+        cone_in_space(n)
+    }
+
+    /// [`Tile::normal_cone`]: escalated and cached.
+    fn normal_cone(&self) -> Option<NormalCone> {
+        Tile::normal_cone(self)
+    }
+
+    /// Proven on the exact net ([`Tile::exact`]), whatever the level.
+    fn singular_sides(&self, sides: Sides, _: &S) -> Option<SingularSides> {
+        self.exact().singular_sides(sides)
+    }
+
+    /// [`Closest::patch`] on the stored net.
+    fn closest(&self, x: [f64; 3], like: &S) -> Option<Closest<S>> {
+        Closest::patch(DEGREE, DEGREE, &self.net, x, like)
+    }
+}
+
+/// `x` as a `T` where it is one: the first level's caches read through
+/// the level-generic [`Patch`].
+fn first_level<A: 'static, T: 'static>(x: &A) -> Option<&T> {
+    (x as &dyn Any).downcast_ref()
+}
+
+/// The corner `(i, j)` at `(u, v)` if both are exactly 0 or 1, at any
+/// level ([`corner`]'s rule).
+fn corner_at<S: Scalar>(u: &S, v: &S) -> Option<(usize, usize)> {
+    let end = |t: &S| {
+        if t.is_int(0) {
+            Some(0)
+        } else if t.is_int(1) {
+            Some(DEGREE)
+        } else {
+            None
+        }
+    };
+    Some((end(u)?, end(v)?))
 }
 
 impl fmt::Debug for Tile {
