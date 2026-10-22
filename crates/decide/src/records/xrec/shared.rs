@@ -155,7 +155,7 @@ pub enum SharedError {
     /// The box search away from the overlap failed so.
     Away(XClusterError),
     /// The root search ran past the share it was given
-    /// ([`shared_clusters_charged`]): [`Exhausted::Work`] at the first
+    /// ([`shared_clusters`]): [`Exhausted::Work`] at the first
     /// level, [`Exhausted::Precision`] above it. (The box search away from
     /// the overlap runs out as [`SharedError::Away`].)
     OutOfBudget(Exhausted),
@@ -350,26 +350,16 @@ struct Ctx<'a, G> {
 /// order, then the clusters of the box search away from the overlap,
 /// checked against the four terms. `geom` gives `e`'s rates; `reads` the
 /// order and the ends' feet; `sides` the side records the box search
-/// reads ([`SharedError::Need`] for those missing).
-pub fn shared_clusters<R: HeightReads, G: XGeometry>(
-    reads: &R,
-    geom: &G,
-    sides: &XSides,
-    x: XKey,
-    pair: &XPair<'_>,
-) -> Result<XRec, SharedError> {
-    shared_clusters_charged(reads, geom, sides, x, pair, &Charge::xrec(u64::MAX)).0
-}
-
-/// [`shared_clusters`], charged against `charge` at its level's unit per
-/// piece ([`Charge::xrec`]): each evaluation of `h` the root search makes
-/// and every piece the box search away from the overlap tests (its
-/// diagonal band's included, [`form_charged`]), on what the roots left.
-/// With the record, or the error, the pieces per level
+/// reads ([`SharedError::Need`] for those missing). Charged against
+/// `charge` at its level's unit per piece ([`Charge::xrec`]): each
+/// evaluation of `h` the root search makes and every piece the box search
+/// away from the overlap tests (its diagonal band's included,
+/// [`form_charged`]), on what the roots left. With the record, or the
+/// error, the pieces per level
 /// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) and
 /// the flat predicates' runs ([`Cost::exact`], module docs) for the pass
 /// to charge ([`Charge::spent`]).
-pub fn shared_clusters_charged<R: HeightReads, G: XGeometry>(
+pub fn shared_clusters<R: HeightReads, G: XGeometry>(
     reads: &R,
     geom: &G,
     sides: &XSides,

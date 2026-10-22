@@ -200,6 +200,16 @@ pub(super) struct KindStats {
 }
 
 impl Stats {
+    /// One record of `kind` decided at `c`'s cost.
+    fn tally(&mut self, kind: &'static str, c: &Cost) {
+        let s = self.records.entry(kind).or_default();
+        s.decided += 1;
+        s.levels[top_level(c)] += 1;
+        if c.exact.rationals() > 0 || c.rationals > 0 {
+            s.rationals += 1;
+        }
+    }
+
     pub(super) fn add(&mut self, o: &Stats) {
         for (k, s) in &o.records {
             let e = self.records.entry(k).or_default();
@@ -258,15 +268,10 @@ impl Pass for Tally<'_> {
         keys: &[Fresh<K>],
         decide: &(dyn Fn(&Fresh<K>) -> Decided<V> + Sync),
     ) -> Result<Vec<V>, Fail> {
-        let s = self.stats.records.entry(self.kind).or_default();
         keys.iter()
             .map(|k| {
                 let (v, c) = decide(k);
-                s.decided += 1;
-                s.levels[top_level(&c)] += 1;
-                if c.exact.rationals() > 0 || c.rationals > 0 {
-                    s.rationals += 1;
-                }
+                self.stats.tally(self.kind, &c);
                 v
             })
             .collect()
@@ -1160,7 +1165,16 @@ impl World<'_> {
                         order: &self.order,
                     };
                     let rec = loop {
-                        match shared_clusters(&reads, self, &sides, x, &pair) {
+                        let (r, cost) = shared_clusters(
+                            &reads,
+                            self,
+                            &sides,
+                            x,
+                            &pair,
+                            &Charge::xrec(u64::MAX),
+                        );
+                        stats.tally("shared clusters", &cost);
+                        match r {
                             Err(SharedError::Need(ks)) if asked < 16 => {
                                 asked += 1;
                                 self.fill_x_sides(&mut sides, ks, base, band, stats, x)?;

@@ -100,7 +100,7 @@ fn shared_rec_cost(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedE
     for _ in 0..32 {
         let (r, cost) = {
             let sides = recs.sides.borrow();
-            shared_clusters_charged(&reads, geom, &sides, X, &pair, &Charge::xrec(u64::MAX))
+            shared_clusters(&reads, geom, &sides, X, &pair, &Charge::xrec(u64::MAX))
         };
         match r {
             Err(SharedError::Need(ks)) => {
@@ -754,7 +754,7 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     let reads = shared_reads(&geom);
     let sides = XSides::new();
     assert_eq!(
-        shared_clusters(&reads, &geom, &sides, X, &pair),
+        shared_clusters(&reads, &geom, &sides, X, &pair, &Charge::xrec(u64::MAX)).0,
         Ok(XRec::default())
     );
     let ray = |k| EdgeRays::Line(crate::records::shadow::RayRec { crossing: k });
@@ -763,7 +763,7 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     let x = x_count(&pair.terms);
     assert_ne!(x, 0);
     assert_eq!(
-        shared_clusters(&reads, &geom, &sides, X, &pair),
+        shared_clusters(&reads, &geom, &sides, X, &pair, &Charge::xrec(u64::MAX)).0,
         Err(SharedError::Inconsistent { clusters: 0, x })
     );
 
@@ -791,7 +791,15 @@ fn shared_pairs_the_rule_cannot_read_are_refused() {
     pair.shared = true;
     let reads = shared_reads(&geom);
     assert_eq!(
-        shared_clusters(&reads, &geom, &XSides::new(), X, &pair),
+        shared_clusters(
+            &reads,
+            &geom,
+            &XSides::new(),
+            X,
+            &pair,
+            &Charge::xrec(u64::MAX)
+        )
+        .0,
         Err(SharedError::Shape)
     );
 }

@@ -457,7 +457,6 @@ mod sides;
 
 pub use shared::{
     CurveAt, MAX_H_PIECES, MIN_H_PIECE, NARROW_PIECE, SharedError, root_order, shared_clusters,
-    shared_clusters_charged,
 };
 pub(crate) use sides::from_held;
 pub use sides::{XBase, XGeometry, XSideCrossing, XSideRec, XSides, XWant};
