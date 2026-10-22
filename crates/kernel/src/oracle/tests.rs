@@ -4,12 +4,13 @@ use varde_testkit::rng::Rng;
 
 use super::families::{FAMILIES, KERNEL_EXACT, kernel_exact_kind};
 use super::runs::{
-    Checked, Counting, Flip, Outcome, Placement, Report, check_answers, check_counted, check_with,
-    counting, near_shift, oracle_faces, par, run, run_counted, truth, truths_near,
+    Checked, Counting, Flip, Limit, Outcome, Placement, Report, cause_name, check_answers,
+    check_counted, check_with, counting, near_shift, oracle_faces, par, run, run_counted, truth,
+    truths_near,
 };
 use super::solids::{Make, Shape, Solid, Turn};
 use super::turned::TurnedEdges;
-use super::world::{Answers, Config, Refusal, Stats};
+use super::world::{Answers, Cause, Config, Refusal, Stats};
 
 type Counted = Result<Answers, Refusal>;
 
@@ -64,15 +65,189 @@ fn flip_asked() -> bool {
 
 /// Random rigid placements of every pair of solid kinds
 /// ([`Placement::random`]); with `VARDE_ORACLE_FLIP` the `±d` check too.
+/// At most [`RANDOM_LIMIT`] of them may refuse.
 #[test]
 fn random_placements_agree_with_the_oracle() {
     let n = placements(1, 40);
     let r = run(n, threads(), &Config::RUNS, flip_asked(), &|i| {
         Placement::random(i)
     });
-    eprintln!("{}", r.text());
+    eprintln!("{}{}", r.text(), r.against(RANDOM_LIMIT));
     assert!(r.mismatches.is_empty(), "{}", r.text());
     assert!(r.unresolved.is_empty(), "{}", r.text());
+    if let Err(e) = r.within("random placements", RANDOM_LIMIT) {
+        panic!("refusals over the limit: {e}");
+    }
+}
+
+/// The random placements' refusal limit: 0.5%, asserted from 1000
+/// placements.
+const RANDOM_LIMIT: Limit = Limit {
+    per_mille: 5,
+    min: 1000,
+};
+
+/// The placements a family's refusal limit needs before it is asserted.
+const FAMILY_MIN: u64 = 100;
+
+/// Each adversarial family's refusal limit, in per mille of its
+/// placements, by its name in [`FAMILIES`]: the measured rate rounded up
+/// modestly, 1% (the resolution of a 100-placement sweep) where none
+/// refused, none for the kernel-exact ties, whose answers alone check
+/// the tie direction. The stacked half cylinders' 90% is a hold until
+/// overlapping curved shadows are decided by the sign rule, then 10%.
+const FAMILY_LIMITS: [(&str, u64); 14] = [
+    ("vertex within the band of an edge", 100),
+    ("vertex on a silhouette", 30),
+    ("vertex on a curved face's tile line", 10),
+    ("vertex at a plane lattice's origin", 10),
+    ("folds inside a face (axis across UP)", 10),
+    ("acute corner (2^-6 rad knife wedge)", 10),
+    ("roof-ridge pyramid, vertex on the ridge", 10),
+    ("cusp corners (arc and its tangents)", 10),
+    ("shared corner (vertex on a vertex)", 10),
+    ("overhanging cylinder half", 10),
+    ("exact ties: axis-aligned boxes on a half grid", 10),
+    ("trim through a plane lattice's origin", 10),
+    ("stacked half cylinders (arcs on one circle)", 900),
+    (KERNEL_EXACT, 0),
+];
+
+/// The refusal limit of the family `name`.
+fn family_limit(name: &str) -> Limit {
+    let per_mille = FAMILY_LIMITS
+        .iter()
+        .find(|l| l.0 == name)
+        .unwrap_or_else(|| panic!("no refusal limit for the family {name:?}"))
+        .1;
+    Limit {
+        per_mille,
+        min: FAMILY_MIN,
+    }
+}
+
+#[test]
+fn every_family_has_one_refusal_limit() {
+    for (name, _) in FAMILIES {
+        let n = FAMILY_LIMITS.iter().filter(|l| l.0 == name).count();
+        assert_eq!(n, 1, "{name:?} has {n} refusal limits");
+    }
+    assert_eq!(FAMILY_LIMITS.len(), FAMILIES.len());
+}
+
+/// A run of `n` placements, the first `refused` of them refused as
+/// `causes` gives, the rest agreed.
+fn refusing(n: u64, refused: u64, cause: fn(u64) -> Cause) -> Report {
+    let mut r = Report::default();
+    for i in 0..n {
+        r.add(
+            i,
+            if i < refused {
+                Outcome::Refused(cause(i), format!("at {i}"))
+            } else {
+                Outcome::Agreed { ties: 0 }
+            },
+        );
+    }
+    r
+}
+
+/// The limit check passes a family at or below its limit and fails one
+/// above it, naming the family, its rate, the limit and its refusals by
+/// cause; below the placements it needs it asserts nothing.
+#[test]
+fn a_family_over_its_refusal_limit_fails() {
+    let name = "stacked half cylinders (arcs on one circle)";
+    let cause = |i: u64| {
+        if i % 3 == 0 {
+            Cause::Height
+        } else {
+            Cause::Clusters(format!(
+                "OutOfBudget {{ cause: Precision, at: Some(XBox {{ lo: [{i}, 0] }}) }}"
+            ))
+        }
+    };
+    let r = refusing(100, 9, cause);
+    assert_eq!(r.within(name, family_limit(name)), Ok(()));
+    let tight = Limit {
+        per_mille: 90,
+        ..family_limit(name)
+    };
+    assert_eq!(r.within(name, tight), Ok(()), "9% is within 9%");
+    let lowered = Limit {
+        per_mille: 80,
+        ..tight
+    };
+    let e = r.within(name, lowered).expect_err("9% is over 8%");
+    for part in [
+        name,
+        "refused 9/100 (9.0%)",
+        "limit 8%",
+        "Clusters(OutOfBudget) 6",
+        "Height 3",
+    ] {
+        assert!(e.contains(part), "{e:?} doesn't say {part:?}");
+    }
+    let exact = family_limit(KERNEL_EXACT);
+    let one = refusing(100, 1, cause);
+    let e = one
+        .within(KERNEL_EXACT, exact)
+        .expect_err("one refusal is over 0");
+    assert!(e.contains(KERNEL_EXACT), "{e}");
+    let few = refusing(99, 99, cause);
+    assert_eq!(few.within(KERNEL_EXACT, exact), Ok(()));
+    assert!(few.against(exact).contains("not asserted"));
+    let random = refusing(1000, 6, cause);
+    assert!(random.within("random placements", RANDOM_LIMIT).is_err());
+    assert_eq!(
+        refusing(1000, 5, cause).within("random placements", RANDOM_LIMIT),
+        Ok(())
+    );
+}
+
+/// A refusal's cause is named by its kinds only, without the keys, boxes
+/// or levels of its failure.
+#[test]
+fn causes_are_named_by_their_kinds() {
+    for (c, name) in [
+        (
+            Cause::Clusters(
+                "OutOfBudget { cause: Precision, at: Some(XBox { lo: [1, 2] }) }".into(),
+            ),
+            "Clusters(OutOfBudget)",
+        ),
+        (
+            Cause::Clusters("Depth(XBox { exp: 52 })".into()),
+            "Clusters(Depth)",
+        ),
+        (Cause::Clusters("Boxes".into()), "Clusters(Boxes)"),
+        (
+            Cause::Record {
+                kind: "x",
+                fail: "Escalated { level: 3 }".into(),
+            },
+            "Record(x: Escalated)",
+        ),
+        (
+            Cause::OutOfBudget("Precision".into()),
+            "OutOfBudget(Precision)",
+        ),
+        (
+            Cause::Count("Piece(Ribbon { coedge: CoedgeId(4) })".into()),
+            "Count(Piece(Ribbon))",
+        ),
+        (Cause::Count("Box(Tiles)".into()), "Count(Box(Tiles))"),
+        (Cause::Shared("Unsettled".into()), "Shared(Unsettled)"),
+        (
+            Cause::Other("corners Pinch(3)".into()),
+            "Other(corners Pinch)",
+        ),
+        (Cause::Signal("Outside".into()), "Signal(Outside)"),
+        (Cause::Height, "Height"),
+        (Cause::ZOrder, "ZOrder"),
+    ] {
+        assert_eq!(cause_name(&c), name);
+    }
 }
 
 /// Replays one placement: `VARDE_ORACLE_SEED=<seed>` (and
@@ -107,12 +282,16 @@ fn replay() {
 /// The adversarial families ([`super::families`]), each placement with
 /// the `±d` check: `VARDE_TESTS=full` or `VARDE_ORACLE_RUNS` only (some
 /// families take seconds per placement); `VARDE_ORACLE_FAMILY` picks the
-/// families whose name holds it.
+/// families whose name holds it. A family fails on a mismatch, an
+/// unresolved oracle, or refusals over its limit ([`FAMILY_LIMITS`],
+/// from [`FAMILY_MIN`] placements); the report gives each family's
+/// refusal rate against its limit.
 #[test]
 fn adversarial_families_agree_with_the_oracle() {
     let n = placements(0, 8);
     let only = std::env::var("VARDE_ORACLE_FAMILY").ok();
     let mut bad = Vec::new();
+    let mut rates = Vec::new();
     for (name, family) in FAMILIES {
         if only.as_deref().is_some_and(|o| !name.contains(o)) {
             continue;
@@ -121,12 +300,18 @@ fn adversarial_families_agree_with_the_oracle() {
         if name == KERNEL_EXACT {
             r.kinds = Some(kernel_exact_kind);
         }
-        eprintln!("== {name}\n{}", r.text());
+        let limit = family_limit(name);
+        eprintln!("== {name}\n{}{}", r.text(), r.against(limit));
+        rates.push(format!("{name}: {}", r.against(limit)));
         if !r.mismatches.is_empty() || !r.unresolved.is_empty() {
-            bad.push(name);
+            bad.push(format!("{name}: mismatches or oracle unresolved"));
+        }
+        if let Err(e) = r.within(name, limit) {
+            bad.push(format!("refusals over the limit, {e}"));
         }
     }
-    assert!(bad.is_empty(), "mismatches in {bad:?}");
+    eprintln!("== refusal rates against the limits\n{}", rates.join("\n"));
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
 /// What a variant's answers keep of the base's: per operand the sorted

@@ -876,22 +876,106 @@ impl Report {
     }
 }
 
-/// A short name for a cause, without its keys.
-fn cause_name(c: &Cause) -> String {
+/// A cause's name: its kind and the kind of the failure it carries
+/// (`Clusters(OutOfBudget)`), without keys, boxes or levels, so that one
+/// kind is one row of a report.
+pub(super) fn cause_name(c: &Cause) -> String {
     match c {
-        Cause::Record { kind, fail } => {
-            let f: String = fail.split(['{', '(']).next().unwrap_or("").into();
-            format!("Record({kind}: {f})")
+        Cause::Record { kind, fail } => format!("Record({kind}: {})", head(fail)),
+        Cause::OutOfBudget(s) => format!("OutOfBudget({})", head(s)),
+        Cause::Side(s) => format!("Side({})", head(s)),
+        Cause::Height => "Height".into(),
+        Cause::Count(s) => format!("Count({})", nested(s)),
+        Cause::Clusters(s) => format!("Clusters({})", head(s)),
+        Cause::ZOrder => "ZOrder".into(),
+        Cause::Shared(s) => format!("Shared({})", head(s)),
+        Cause::Seeds(s) => format!("Seeds({})", head(s)),
+        Cause::Signal(s) => format!("Signal({})", head(s)),
+        Cause::Other(s) => format!("Other({})", head(s)),
+    }
+}
+
+/// The text of a failure's debug form before its first `(` or `{`: its
+/// kind (a variant's name, after a word naming the step where there is
+/// one).
+fn head(s: &str) -> &str {
+    s.split(['(', '{']).next().unwrap_or("").trim()
+}
+
+/// A failure's kind and, where it wraps another failure, that one's
+/// kind: `Piece(Ribbon)` of `Piece(Ribbon { coedge: .. })`.
+fn nested(s: &str) -> String {
+    let outer = head(s);
+    match s[outer.len()..].trim_start().strip_prefix('(') {
+        Some(rest) => format!("{outer}({})", head(rest).trim_end_matches(')')),
+        None => outer.to_string(),
+    }
+}
+
+/// A refusal limit: at most `per_mille / 1000` of a run's placements
+/// refused, asserted once the run has `min` placements (fewer can't
+/// measure the rate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Limit {
+    pub per_mille: u64,
+    pub min: u64,
+}
+
+impl Limit {
+    /// The limit as a percentage.
+    pub(super) fn percent(self) -> f64 {
+        self.per_mille as f64 / 10.0
+    }
+}
+
+impl Report {
+    /// The placements the counting refused.
+    pub(super) fn refusals(&self) -> u64 {
+        self.refused.values().map(|s| s.len() as u64).sum()
+    }
+
+    /// The refused placements' rate against `limit`, as a line of the
+    /// report: `refused 9/100 (9.0%), limit 10% within`.
+    pub(super) fn against(&self, limit: Limit) -> String {
+        let (k, n) = (self.refusals(), self.placements);
+        let state = if n < limit.min {
+            format!("not asserted below {} placements", limit.min)
+        } else if self.over(limit) {
+            "OVER".into()
+        } else {
+            "within".into()
+        };
+        format!(
+            "refused {k}/{n} ({:.1}%), limit {}% {state}",
+            100.0 * k as f64 / n.max(1) as f64,
+            limit.percent()
+        )
+    }
+
+    /// Whether the refusals exceed `limit` (at any number of
+    /// placements): exactly, `refused / placements > per_mille / 1000`.
+    fn over(&self, limit: Limit) -> bool {
+        u128::from(self.refusals()) * 1000
+            > u128::from(limit.per_mille) * u128::from(self.placements)
+    }
+
+    /// `Err` naming the run `name`, its rate, the limit and the refusals
+    /// by cause if the run has at least `limit.min` placements and its
+    /// refusals exceed `limit`.
+    pub(super) fn within(&self, name: &str, limit: Limit) -> Result<(), String> {
+        if self.placements < limit.min || !self.over(limit) {
+            return Ok(());
         }
-        Cause::Clusters(s) => {
-            let k = s.split('(').next().unwrap_or("");
-            let why = s.rsplit(", ").next().unwrap_or("").trim_end_matches(')');
-            format!("Clusters({k}, {why})")
-        }
-        c => {
-            let s = format!("{c:?}");
-            s.chars().take(60).collect()
-        }
+        let causes: Vec<String> = self
+            .refused
+            .iter()
+            .map(|(c, seeds)| format!("{c} {}", seeds.len()))
+            .collect();
+        Err(format!(
+            "{name}: {}; causes {}",
+            self.against(limit),
+            causes.join(", ")
+        ))
     }
 }
 
