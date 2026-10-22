@@ -1,8 +1,8 @@
 //! Products, sums and degree elevation of Bernstein forms: [`Poly`] by
 //! [`Poly`], [`Tensor`] by [`Tensor`], the cross and dot products of
-//! 3-vectors of forms ([`Form`]), and the numerator of a rational
-//! patch's normal (the tangent and partial numerators are in
-//! [`deriv`](super::deriv)).
+//! 3-vectors of forms ([`Form`]) (the normal numerator of a rational
+//! patch is in [`normal`](super::normal), the tangent and partial
+//! numerators in [`deriv`](super::deriv)).
 //!
 //! **Weights.** The product of degrees `m` and `n` has the coefficients
 //! `cₖ = Σᵢ C(m, i)·C(n, k − i)·aᵢ·bₖ₋ᵢ / C(m + n, k)`. The binomials are
@@ -41,7 +41,7 @@ use smallvec::SmallVec;
 
 use super::poly::{Coefs, MAX_DEGREE, Poly, binom, divide, elevate_once, weigh};
 use super::scalar::Scalar;
-use super::tensor::{Dir, HomPatch, Tensor};
+use super::tensor::{Dir, Tensor};
 
 /// The terms summed in an order the reversed list gives too: the first
 /// with the last, the second with the second-last, the middle one
@@ -434,34 +434,6 @@ pub fn dot<F: Form>(a: &[F; 3], b: &[F; 3]) -> Option<F> {
             .add(&a[1].mul(&b[1])?)
             .add(&a[2].mul(&b[2])?),
     )
-}
-
-impl<S: Scalar> HomPatch<S> {
-    /// The normal numerator `N = W·(P_u × P_v) + W_u·(P_v × P) +
-    /// W_v·(P × P_u)` from the net `(P, W) = (X, Y, Z, W)`: the spatial
-    /// part of `H ∧ H_u ∧ H_v`, equal to `W³·(x_u × x_v)` for the point
-    /// `x = P / W`, so with `W > 0` a normal of the patch's orientation
-    /// wherever it isn't zero. Of degrees `(3m − 1, 3n − 1)` for degrees
-    /// `(m, n) ≥ (1, 1)`, `(5, 5)` for a biquadratic patch (whose exact
-    /// numerator is of degree `(4, 4)`, not reduced here); `None` past
-    /// [`MAX_DEGREE`]. The patch reversed in either direction gives the
-    /// reversed numerator negated, to the bit but the signs of zeros.
-    pub fn normal_numerator(&self) -> Option<[Tensor<S>; 3]> {
-        let [x, y, z, w] = self.tensors().clone();
-        let [xu, yu, zu, wu] = self.derivative(Dir::U).tensors().clone();
-        let [xv, yv, zv, wv] = self.derivative(Dir::V).tensors().clone();
-        let p = [x, y, z];
-        let pu = [xu, yu, zu];
-        let pv = [xv, yv, zv];
-        let term = |k: &Tensor<S>, a: &[Tensor<S>; 3], b: &[Tensor<S>; 3]| {
-            let c = cross(a, b)?;
-            Some([k.mul(&c[0])?, k.mul(&c[1])?, k.mul(&c[2])?])
-        };
-        let t0 = term(&w, &pu, &pv)?;
-        let t1 = term(&wu, &pv, &p)?;
-        let t2 = term(&wv, &p, &pu)?;
-        Some([0, 1, 2].map(|k| t0[k].add(&t1[k]).add(&t2[k])))
-    }
 }
 
 #[cfg(test)]

@@ -10,8 +10,11 @@
 //! ([`HomPatch`]), with partial derivatives and a certified hull box.
 //! In [`curve`], rational spans in homogeneous coordinates
 //! ([`HomCurve`]). In [`product`], products, sums and elevation of both
-//! kinds of form with certified binomial weights, the vector products of
-//! forms, and the normal numerator; in [`deriv`], hodographs of any
+//! kinds of form with certified binomial weights and the vector products
+//! of forms; in [`normal`], a rational patch's normal numerator, reduced
+//! or not, and its exact quotient by the factors of singular sides; in
+//! [`divide`], the exact divisions under it (by the linear factor of an
+//! end or a side, and degree reduction); in [`deriv`], hodographs of any
 //! order, the tangent and partial numerators by the quotient rule in
 //! homogeneous form, and the derivatives of a rational form's point; in
 //! [`power`], the power basis and back; in [`nd`], forms in any number
@@ -37,7 +40,9 @@ pub mod compose;
 pub mod cone;
 pub mod curve;
 pub mod deriv;
+pub mod divide;
 pub mod nd;
+pub mod normal;
 pub mod poly;
 pub mod power;
 pub mod product;
@@ -52,7 +57,9 @@ pub use compose::Implicit;
 pub use cone::NormalCone;
 pub use curve::HomCurve;
 pub use deriv::Derivatives;
+pub use divide::{Side, Sides};
 pub use nd::NdTensor;
+pub use normal::SingularSides;
 pub use poly::{Hull, MAX_DEGREE, Poly};
 pub use product::{Form, cross, dot};
 pub use roots::{

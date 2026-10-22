@@ -10,11 +10,11 @@ use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::Exact;
 
 use super::*;
-use crate::bezier::HomCurve;
 use crate::bezier::tests::{
     Level, Rng, dyadic, holds, int_tensor, ints, pbits, poly, poly_holds, q, tbits, tensor,
     tensor_holds, value_and_errs,
 };
+use crate::bezier::{HomCurve, HomPatch};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
