@@ -201,18 +201,19 @@ fn near(b: [f64; 2], t: f64, tol: f64) -> bool {
 
 fn spans<S: Level>() {
     let l = like::<S>();
-    // Inside the arc, off its middle; on the far side of its centre a
-    // reflected point gives the farthest point (a maximum).
-    for (r, c, x, min) in [
-        (2.0, [0.0, 0.0, 0.0], [0.7, 0.4, 0.3], true),
-        (1.5, [10.0, -3.0, 0.25], [10.5, -2.0, 0.25], true),
-        (1.0, [0.0, 0.0, 0.0], [3.0, 1.0, -1.0], true),
-        (1.0, [0.0, 0.0, 0.0], [-0.3, -0.2, 0.0], false),
+    // Inside the arc, off its middle; on the far side of its centre, on
+    // the arc's axis and seeded there, the farthest point (a maximum,
+    // where the gradient is 0 by symmetry).
+    for (r, c, x, min, seed) in [
+        (2.0, [0.0, 0.0, 0.0], [0.7, 0.4, 0.3], true, None),
+        (1.5, [10.0, -3.0, 0.25], [10.5, -2.0, 0.25], true, None),
+        (1.0, [0.0, 0.0, 0.0], [3.0, 1.0, -1.0], true, None),
+        (1.0, [0.0, 0.0, 0.0], [-0.3, -0.3, 0.0], false, Some([0.5])),
     ] {
         let pts = arc(r, c);
         let cl = Closest::curve(&pts, x, &l).expect("a span");
         let ex = Closest::curve(&pts, x, &zero()).expect("a span");
-        let reached = cl.closest(None).expect("a seed");
+        let reached = cl.closest(seed.as_ref().map(|s| &s[..])).expect("a seed");
         upper_holds(&ex, &reached);
         let f = certified(&reached);
         assert_eq!(f.minimum, min, "{} minimum", S::NAME);
@@ -226,6 +227,16 @@ fn spans<S: Level>() {
             cr.abs() < 1e-9 * dt.abs() && (dt > 0.0) == min,
             "foot direction"
         );
+    }
+    // Off the axis, Newton from beside the maximum descends to the
+    // nearer end instead (no stationary point between it and the end).
+    let pts = arc(1.0, [0.0; 3]);
+    let x = [-0.3, -0.2, 0.0];
+    let cl = Closest::curve(&pts, x, &l).expect("a span");
+    for seed in [None, Some([0.45]), Some([0.7])] {
+        let r = cl.closest(seed.as_ref().map(|s| &s[..])).expect("a seed");
+        assert_eq!(r.foot, Foot::Boundary, "{} from {seed:?}", S::NAME);
+        assert_eq!(r.local[0], 1.0, "{} from {seed:?}", S::NAME);
     }
     let pts = cubic();
     for x in [[2.0, 1.0, 1.0], [0.5, 1.5, -1.0], [3.5, 1.5, 0.0]] {
@@ -321,6 +332,27 @@ fn patches<S: Level>() {
         // (On the axis the other stationary points are a circle.)
         if S::NAME == "f64" && at.is_none() {
             subdivision_agrees(&pts, x, f);
+        }
+    }
+    // Above the curvature centre, seeded beside the maximum there: Newton
+    // descends to a minimum (at `s² + t² = 3/2`, distance `√7/2`) rather
+    // than to the maximum it starts near (seeded off the axes: along an
+    // axis the radial minimum is past the boundary).
+    let pts = paraboloid(1.0, [0.0; 3]);
+    let x = [0.0, 0.0, 2.0];
+    let cl = Closest::patch(2, 2, &pts, x, &l).expect("a patch");
+    let ex = Closest::patch(2, 2, &pts, x, &zero()).expect("a patch");
+    for seed in [[0.45, 0.46], [0.53, 0.56], [0.56, 0.45]] {
+        let reached = cl.closest(Some(&seed)).expect("a seed");
+        upper_holds(&ex, &reached);
+        assert!(
+            reached.upper < 1.33,
+            "{} from {seed:?}: {reached:?}",
+            S::NAME
+        );
+        if let Foot::Certified(f) = &reached.foot {
+            assert!(f.minimum, "{} from {seed:?}", S::NAME);
+            point_holds(&ex, &reached, f);
         }
     }
     // A cylinder: the foot of a point inside is on the radius through it.
@@ -744,10 +776,12 @@ fn random_pts(rng: &mut Rng, count: usize, rational: bool) -> Vec<[f64; 4]> {
 }
 
 /// Random spans and patches and points: the upper bound always holds,
-/// every certified foot checks exactly, and reversal mirrors.
+/// every certified foot checks exactly, and reversal mirrors; from the
+/// default seed, Newton's descent reaches a saddle or maximum rarely.
 fn random<S: Level>(seeds: std::ops::Range<u64>) {
     let l = like::<S>();
     let mut stats = [0u32; 2];
+    let mut not_min = [0u32; 2];
     let total = seeds.end - seeds.start;
     for seed in seeds {
         let mut rng = Rng::new(seed);
@@ -762,6 +796,7 @@ fn random<S: Level>(seeds: std::ops::Range<u64>) {
         upper_holds(&ex, &r);
         if let Foot::Certified(f) = &r.foot {
             stats[0] += 1;
+            not_min[0] += u32::from(!f.minimum);
             span_foot_exact(&ex, f);
             point_holds(&ex, &r, f);
         }
@@ -782,6 +817,7 @@ fn random<S: Level>(seeds: std::ops::Range<u64>) {
         upper_holds(&ex, &r);
         if let Foot::Certified(f) = &r.foot {
             stats[1] += 1;
+            not_min[1] += u32::from(!f.minimum);
             point_holds(&ex, &r, f);
         }
     }
@@ -789,6 +825,13 @@ fn random<S: Level>(seeds: std::ops::Range<u64>) {
     assert!(
         total < 24 || (u64::from(stats[0]) >= total / 3 && u64::from(stats[1]) >= total / 6),
         "{} certified: {stats:?} of {total}",
+        S::NAME
+    );
+    // Before the descent safeguard about one in ten patches' feet were
+    // saddles or maxima.
+    assert!(
+        u64::from(not_min[0] + not_min[1]) * 50 <= total,
+        "{} not minima: {not_min:?} of {total}",
         S::NAME
     );
 }

@@ -39,7 +39,17 @@
 //! domain, each step rounded to the lattice and clamped to the domain (a
 //! variable at the boundary whose step leads out is held there and the
 //! others solved without it, so Newton runs along the boundary), until a
-//! step rounds to zero or [`NEWTON_STEPS`] are taken. Around the
+//! step rounds to zero or [`NEWTON_STEPS`] are taken. Newton descends:
+//! its step is taken only where the Jacobian (estimated at the point, on
+//! the variables not held) is positive definite and the step goes down
+//! the gradient; elsewhere (near a saddle or a maximum of the distance,
+//! which plain Newton converges to as readily as to a minimum) the step
+//! goes down the gradient instead, to the minimum of the quadratic model
+//! along it where that curves up, at most half the domain, halved until
+//! the distance (estimated) decreases, and Newton stops where none does.
+//! From a seed beside a saddle or a maximum it leaves it; from one
+//! exactly at it (the gradient 0) it stays, and the certificate then
+//! says the foot isn't a minimum ([`FootBox::minimum`]). Around the
 //! point reached, Krawczyk's operator on `g` (the n-D root isolation's,
 //! [`isolate_nd`](super::isolate_nd), its Jacobian the hull of the
 //! derivative forms on the box: the hodograph Bernstein bounds) either
@@ -66,8 +76,10 @@
 //! variable negated, its Newton step the mirrored step, rounded to the
 //! lattice by ties to even: so a piece reversed in a variable (and the
 //! seed mirrored) reaches the mirrored point, with the same bounds, and
-//! gets the mirrored certificate. A tie between seeds takes the first in
-//! the net's order, which a reversed net gives the other.
+//! gets the mirrored certificate. The descent steps mirror too (the
+//! distance estimates are evaluations, a halved step truncates towards
+//! zero). A tie between seeds takes the first in the net's order, which
+//! a reversed net gives the other.
 //!
 //! **Work.** Newton steps, Krawczyk steps, halvings and box tests are
 //! counted ([`Work`]); the caller charges them.
@@ -342,13 +354,7 @@ impl<S: Scalar> Closest<S> {
     /// control point nearest `x` (by the control points' approximate
     /// offsets; the first of a tie in the net's order).
     fn seed(&self) -> Axes<u64> {
-        let near = |d: &[S; 3], w: &S| {
-            let w = mid(w);
-            d.iter().fold(0.0, |acc, c| {
-                let v = mid(c) / w;
-                acc + v * v
-            })
-        };
+        let near = approx_dist2::<S>;
         let mut best = (f64::INFINITY, smallvec![0; self.dims()]);
         match &self.geom {
             Geom::Curve(c) => {
@@ -378,7 +384,8 @@ impl<S: Scalar> Closest<S> {
         best.1
     }
 
-    /// Newton's method on the lattice from `c` (module docs).
+    /// Newton's method on the lattice from `c`, safeguarded to descend
+    /// (module docs).
     fn newton(&self, mut c: Axes<u64>, work: &mut Work) -> Newton {
         let d = self.dims();
         let mut out = Newton {
@@ -396,39 +403,101 @@ impl<S: Scalar> Closest<S> {
             // A variable at the boundary whose step leads out is held
             // there, the others solved without it: Newton along the
             // boundary.
-            let mut held: Axes<bool> = smallvec![false; d];
-            let step = loop {
-                let Some(s) = solve(&j, &g, &held) else {
-                    break None;
-                };
-                let mut more = false;
-                for a in 0..d {
-                    let out = (c[a] == 0 && s[a] > 0) || (c[a] == SIDE && s[a] < 0);
-                    if out && !held[a] {
-                        held[a] = true;
-                        more = true;
+            let newton = held_step(&c, |held| solve(&j, &g, held));
+            let step = match newton {
+                Some((s, held)) if s.iter().all(|&r| r == 0) => {
+                    out.pushed_out = held.iter().any(|&h| h);
+                    out.settled = true;
+                    break;
+                }
+                Some((s, held)) if convex(&j, &held) && along(&g, &s) > 0.0 => (s, held),
+                // Not a descent step (a saddle or a maximum attracts it,
+                // or the Jacobian is singular): down the gradient.
+                _ => match self.descent(&c, &g, &j, work) {
+                    Descent::Step(s, held) => (s, held),
+                    Descent::Held => {
+                        out.pushed_out = true;
+                        break;
                     }
-                }
-                if !more {
-                    break Some(s);
-                }
+                    Descent::Stuck => break,
+                },
             };
-            let Some(step) = step else { break };
-            out.pushed_out = held.iter().any(|&h| h);
-            if step.iter().all(|&r| r == 0) {
-                out.settled = true;
-                break;
-            }
-            let side = i128::from(SIDE);
-            c = c
-                .iter()
-                .zip(&step)
-                .map(|(&l, &r)| (i128::from(l) - r).clamp(0, side) as u64)
-                .collect();
-            out.last = step;
+            out.pushed_out = step.1.iter().any(|&h| h);
+            c = moved(&c, &step.0);
+            out.last = step.0;
         }
         out.at = c;
         out
+    }
+
+    /// A step down the gradient `g` from `c` (`j` the Jacobian there,
+    /// both estimates): the variables at the boundary it leads out of
+    /// held, the minimum of the quadratic model along `g` where its
+    /// curvature is positive, at most half the domain in any variable,
+    /// halved until the distance from `x` (estimated) decreases.
+    fn descent(&self, c: &[u64], g: &[f64], j: &[f64], work: &mut Work) -> Descent {
+        let d = g.len();
+        let found = held_step(c, |held| {
+            let free = |a: usize| !held[a];
+            let (mut gg, mut gjg, mut top) = (0.0, 0.0, 0.0f64);
+            for a in (0..d).filter(|&a| free(a)) {
+                gg += g[a] * g[a];
+                if g[a].abs() > top {
+                    top = g[a].abs();
+                }
+                for b in (0..d).filter(|&b| free(b)) {
+                    gjg += g[a] * j[a * d + b] * g[b];
+                }
+            }
+            let cap = 0.5 / top;
+            let alpha = if gjg > 0.0 && gg / gjg < cap {
+                gg / gjg
+            } else {
+                cap
+            };
+            (0..d)
+                .map(|a| {
+                    if free(a) {
+                        units(alpha * g[a])
+                    } else {
+                        Some(0)
+                    }
+                })
+                .collect()
+        });
+        let Some((mut s, held)) = found else {
+            return Descent::Stuck;
+        };
+        if held.iter().all(|&h| h) {
+            return Descent::Held;
+        }
+        let here = self.dist2(c);
+        while s.iter().any(|&r| r != 0) {
+            work.steps = work.steps.saturating_add(1);
+            if self.dist2(&moved(c, &s)) < here {
+                return Descent::Step(s, held);
+            }
+            for r in &mut s {
+                *r /= 2;
+            }
+        }
+        Descent::Stuck
+    }
+
+    /// The squared distance from `x` at the lattice point `c`, an
+    /// estimate.
+    fn dist2(&self, c: &[u64]) -> f64 {
+        let pt = self.lattice_point(c);
+        match &self.geom {
+            Geom::Curve(cv) => {
+                let (d, w) = cv.eval_hom(&pt[0]);
+                approx_dist2(&d, &w)
+            }
+            Geom::Patch(p) => {
+                let [hx, hy, hz, w] = p.eval_hom(&pt[0], &pt[1]);
+                approx_dist2(&[hx, hy, hz], &w)
+            }
+        }
     }
 
     /// The certificate around Newton's point (module docs).
@@ -583,6 +652,79 @@ struct Newton {
     settled: bool,
     /// Whether the last step held a variable at the boundary.
     pushed_out: bool,
+}
+
+/// A step down the gradient ([`Closest::descent`]).
+enum Descent {
+    /// The step (in lattice units, subtracted) and the variables held.
+    Step(Axes<i128>, Axes<bool>),
+    /// Every variable held at the boundary.
+    Held,
+    /// No step decreases the distance (or none is finite).
+    Stuck,
+}
+
+/// `step(held)` with the variables at the boundary whose step leads out
+/// held, repeated until none more is: the step and the variables held,
+/// `None` where `step` gives none.
+fn held_step(
+    c: &[u64],
+    step: impl Fn(&[bool]) -> Option<Axes<i128>>,
+) -> Option<(Axes<i128>, Axes<bool>)> {
+    let mut held: Axes<bool> = smallvec![false; c.len()];
+    loop {
+        let s = step(&held)?;
+        let mut more = false;
+        for a in 0..c.len() {
+            let out = (c[a] == 0 && s[a] > 0) || (c[a] == SIDE && s[a] < 0);
+            if out && !held[a] {
+                held[a] = true;
+                more = true;
+            }
+        }
+        if !more {
+            return Some((s, held));
+        }
+    }
+}
+
+/// `c − s` on the lattice, clamped to the domain.
+fn moved(c: &[u64], s: &[i128]) -> Axes<u64> {
+    let side = i128::from(SIDE);
+    c.iter()
+        .zip(s)
+        .map(|(&l, &r)| (i128::from(l) - r).clamp(0, side) as u64)
+        .collect()
+}
+
+/// Whether the Jacobian estimate `j` is positive definite on the
+/// variables not held (its symmetric part: the Hessian's where `g` is
+/// small), so a Newton step heads for a minimum.
+fn convex(j: &[f64], held: &[bool]) -> bool {
+    match held {
+        [false] | [false, true] => j[0] > 0.0,
+        [true, false] => j[3] > 0.0,
+        [false, false] => {
+            let off = 0.5 * (j[1] + j[2]);
+            j[0] > 0.0 && j[3] > 0.0 && j[0] * j[3] > off * off
+        }
+        _ => true,
+    }
+}
+
+/// `g·s`: positive where the step `s` (subtracted) descends.
+fn along(g: &[f64], s: &[i128]) -> f64 {
+    g.iter().zip(s).map(|(&a, &r)| a * r as f64).sum()
+}
+
+/// The squared distance of the homogeneous offset `(d, w)` from the
+/// origin, from the enclosures' middles: an estimate.
+fn approx_dist2<S: Scalar>(d: &[S; 3], w: &S) -> f64 {
+    let w = mid(w);
+    d.iter().fold(0.0, |acc, c| {
+        let v = mid(c) / w;
+        acc + v * v
+    })
 }
 
 /// [`Closest::curvature_bound`] for a patch: the better of two bounds of
