@@ -110,20 +110,32 @@ fn divide2<S: Scalar>(x: S, du: u64, dv: u64) -> S {
 /// quarter is folded again until one cell is left. On a single row or
 /// column this is [`sym_sum`]: a line of the grid sums as the 1D product
 /// does.
-fn sym_sum2<S: Scalar>(mut t: SmallVec<[S; 9]>, mut p: usize, mut q: usize) -> S {
+fn sym_sum2<S: Scalar>(t: SmallVec<[S; 9]>, p: usize, q: usize) -> S {
+    sym_fold2(t, p, q, S::add)
+}
+
+/// [`sym_sum2`] with any commutative `add`: the grid's cells folded in
+/// the same order (a composition sums its grid of terms so, skipped terms
+/// `None`).
+pub(super) fn sym_fold2<T: Clone>(
+    mut t: SmallVec<[T; 9]>,
+    mut p: usize,
+    mut q: usize,
+    add: impl Fn(&T, &T) -> T,
+) -> T {
     debug_assert!(p * q == t.len() && !t.is_empty());
     while p * q > 1 {
         let (p2, q2) = (p.div_ceil(2), q.div_ceil(2));
         let at = |i: usize, j: usize| &t[i * q + j];
-        let mut next: SmallVec<[S; 9]> = SmallVec::with_capacity(p2 * q2);
+        let mut next: SmallVec<[T; 9]> = SmallVec::with_capacity(p2 * q2);
         for i in 0..p2 {
             let ib = p - 1 - i;
             for j in 0..q2 {
                 let jb = q - 1 - j;
                 next.push(match (i < ib, j < jb) {
-                    (true, true) => at(i, j).add(at(ib, jb)).add(&at(ib, j).add(at(i, jb))),
-                    (false, true) => at(i, j).add(at(i, jb)),
-                    (true, false) => at(i, j).add(at(ib, j)),
+                    (true, true) => add(&add(at(i, j), at(ib, jb)), &add(at(ib, j), at(i, jb))),
+                    (false, true) => add(at(i, j), at(i, jb)),
+                    (true, false) => add(at(i, j), at(ib, j)),
                     (false, false) => at(i, j).clone(),
                 });
             }

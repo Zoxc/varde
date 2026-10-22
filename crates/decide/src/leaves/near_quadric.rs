@@ -105,7 +105,7 @@ use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use super::flat::{BoxUse, LeafError, LeafWork, PieceError, halve};
-use crate::bezier::{Dir, HomPatch, HullBox, Scalar, Tensor};
+use crate::bezier::{Dir, HomPatch, HullBox, Implicit, Scalar, Tensor};
 use crate::count::boxes::{BoxKey, sub_patch};
 use crate::num::bounded::{add_up, down, mul_up, up};
 use crate::perturb::dir::{Q3, max_min};
@@ -150,6 +150,31 @@ impl Quadric {
             .mul(&aa)
             .sub(&ra.mul(&ra))
             .sub(&rho.mul(&rho).mul(&aa))
+    }
+
+    /// [`implicit`](Self::implicit) as an [`Implicit`] in the frame at
+    /// the foot, its coefficients at `like`'s level (exactly for an exact
+    /// `like`): `rᵀMr − ρ²|a|²`, `M = |a|²I − aaᵀ` (`xₖ²` with
+    /// `|a|² − aₖ²`, `xₖxₗ` with `−2aₖaₗ`), for the compositions with a
+    /// span or patch ([`Implicit`]'s homogeneous form).
+    pub fn implicit_form<S: Scalar>(&self, like: &S) -> Implicit<S> {
+        let c = |x: f64| S::from_f64(x, like);
+        let a = self.axis.map(c);
+        let aa = dot(&a, &a);
+        let two = S::int(2, like);
+        let sq = |k: usize| aa.sub(&a[k].mul(&a[k]));
+        let cross = |k: usize, l: usize| two.mul(&a[k].mul(&a[l])).neg();
+        let rho = c(self.radius);
+        let terms = [
+            ([2, 0, 0], sq(0)),
+            ([1, 1, 0], cross(0, 1)),
+            ([1, 0, 1], cross(0, 2)),
+            ([0, 2, 0], sq(1)),
+            ([0, 1, 1], cross(1, 2)),
+            ([0, 0, 2], sq(2)),
+            ([0, 0, 0], rho.mul(&rho).mul(&aa).neg()),
+        ];
+        Implicit::new(2, self.foot.map(c), terms).expect("a quadric's terms")
     }
 
     /// A point of the axis, as stored.

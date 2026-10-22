@@ -16,8 +16,10 @@
 //! homogeneous form, and the derivatives of a rational form's point; in
 //! [`power`], the power basis and back; in [`nd`], forms in any number
 //! of variables ([`NdTensor`]) with their elevation; in [`compose`], spans
-//! and patches put into line and plane equations, and the shadow of a
-//! span. In [`cone`], the certified normal cone of a vector form's
+//! and patches put into line and plane equations, the shadow of a span,
+//! a patch along a curve in its domain (a p-curve span) with the seam
+//! numerator, and spans and patches put into an implicit equation
+//! ([`Implicit`]). In [`cone`], the certified normal cone of a vector form's
 //! coefficients ([`NormalCone`]). In [`roots`], root isolation on
 //! `[0, 1]`: certified simple roots, and clusters for the rest; in
 //! [`roots_nd`], the same for a system of forms in `d` variables on
@@ -41,6 +43,7 @@ pub mod scalar;
 pub mod split;
 pub mod tensor;
 
+pub use compose::Implicit;
 pub use cone::NormalCone;
 pub use curve::HomCurve;
 pub use deriv::Derivatives;

@@ -467,7 +467,7 @@ fn seam_bounds_are_tight_on_a_constant_offset() {
 #[test]
 fn weighted_arcs_escalate_to_their_target() {
     // The arcs lie exactly on the plane. In `f64` alone their bounds are
-    // about 5·10⁻⁹, 10⁻⁴ and 2·10⁹ mm, growing with the weights'
+    // about 3·10⁻⁹, 6·10⁻⁵ and 10⁹ mm, growing with the weights'
     // spread; escalated, each meets the target, weights 1 and 1 at the
     // first level.
     let s = base_plane();

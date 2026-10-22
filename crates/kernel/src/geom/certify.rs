@@ -22,11 +22,13 @@
 //! level, exact above), and so are the tile's; the spans are restricted
 //! to the piece and halved down to the cell. With the span's local
 //! homogeneous coordinates `U' = U − i·W`, `V' = V − j·W`, the tile's
-//! homogeneous net `Pₖₗ` composed with it is
+//! homogeneous net `Pₖₗ` composed with it
+//! ([`HomPatch::compose_span`](varde_decide::bezier::HomPatch::compose_span)) is
 //! `H = Σₖₗ Pₖₗ·Bₖ(U', W)·Bₗ(V', W)`, `Bₖ` the homogeneous quadratic
 //! Bernstein basis (`(W − U')²`, `2U'(W − U')`, `U'²`): degree 8, the
 //! tile's point `(H₀, H₁, H₂) / H₃`. The difference with `C = (X, W_C)`
-//! is `N / D`, `Nₘ = Hₘ·W_C − Xₘ·H₃` of degree 10 and `D = H₃·W_C`. Its
+//! is `N / D`, `Nₘ = Hₘ·W_C − Xₘ·H₃` of degree 10 and `D = H₃·W_C`
+//! ([`HomCurve::seam_numerator`]). Its
 //! length is at most `√(Σₘ max|Nₘ|²) / min D`, the maxima and the
 //! minimum certified from the Bernstein coefficients (the forms lie in
 //! their coefficients' hull), every error carried, rounded upwards. The
@@ -67,13 +69,13 @@
 //!
 //! Biquadratic tiles and Q spans only. On a plane, whose one tile spans
 //! the coordinate box (4·10⁶ mm), the first level's bound on a whole 90°
-//! arc of radius 50 is about `5·10⁻⁹` mm for weights 1, though the arc
+//! arc of radius 50 is about `3·10⁻⁹` mm for weights 1, though the arc
 //! lies exactly on the plane; it grows with the spread of a span's
 //! weights, as the bound divides the largest coefficients' rounding by
-//! the least denominator: with end weights 3 and ⅓ about `10⁻⁴` mm, with
-//! end weights 64 and 1/64 about `2·10⁹` mm. Such cells escalate.
+//! the least denominator: with end weights 3 and ⅓ about `6·10⁻⁵` mm,
+//! with end weights 64 and 1/64 about `10⁹` mm. Such cells escalate.
 
-use varde_decide::bezier::{HomCurve, Poly, Scalar};
+use varde_decide::bezier::{HomCurve, Scalar};
 use varde_decide::num::bigf::Width;
 use varde_decide::num::bounded::{add_up, div_up, down, mul_up, up};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
@@ -475,54 +477,14 @@ fn direct<S: LevelScalar>(
     c: &HomCurve<S, 3>,
     like: &S,
 ) -> Eval {
-    let [pu, pv] = p.coords();
-    let w = p.weights();
     // Tile indices below 2⁵² in magnitude (`tile_of`): exact in `f64`.
-    let shift = |x: &Poly<S>, k: i64| x.sub(&w.scale(&S::from_f64(k as f64, like)));
-    let (u, v) = (shift(pu, i), shift(pv, j));
-    let basis = |x: &Poly<S>| -> [Poly<S>; 3] {
-        let y = w.sub(x);
-        let two = S::int(2, like);
-        [
-            y.mul(&y).expect("degree 4"),
-            x.mul(&y).expect("degree 4").scale(&two),
-            x.mul(x).expect("degree 4"),
-        ]
-    };
-    let (bu, bv) = (basis(&u), basis(&v));
-    let net = tile.net();
-    // The tile's homogeneous coefficient `m` of an affine control point:
-    // `w·x` at the level ([`Scalar::product`]), or the weight.
-    let coef = |p: [f64; 4], m: usize| {
-        if m == 3 {
-            S::from_f64(p[3], like)
-        } else {
-            S::product(p[m], p[3], like)
-        }
-    };
-    // The nine products `Bₖ(U')·Bₗ(V')`, shared by the four coordinates.
-    let products: Vec<Poly<S>> = bu
-        .iter()
-        .flat_map(|a| bv.iter().map(move |b| a.mul(b).expect("degree 8")))
-        .collect();
-    let h: [Poly<S>; 4] = std::array::from_fn(|m| {
-        let mut sum: Option<Poly<S>> = None;
-        for (kl, ab) in products.iter().enumerate() {
-            let term = ab.scale(&coef(net[kl], m));
-            sum = Some(match sum {
-                Some(s) => s.add(&term),
-                None => term,
-            });
-        }
-        sum.expect("nine terms")
-    });
-    let wc = c.weights();
-    let den = h[3].mul(wc).expect("degree 10");
-    let num: [Poly<S>; 3] = std::array::from_fn(|m| {
-        h[m].mul(wc)
-            .expect("degree 10")
-            .sub(&c.coords()[m].mul(&h[3]).expect("degree 10"))
-    });
+    let corner = [S::from_f64(i as f64, like), S::from_f64(j as f64, like)];
+    let h = tile
+        .patch_at(like)
+        .compose_span(&p.translated(&corner))
+        .expect("degree 8");
+    let den = h.weights().mul(c.weights()).expect("degree 10");
+    let num = h.seam_numerator(c).expect("degree 10");
     // The certified bound.
     let den_lo = den.hull().lo;
     let bound = div_up(norm_up(num.each_ref().map(|n| n.hull().abs_max())), den_lo);

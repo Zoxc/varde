@@ -122,6 +122,33 @@ fn the_implicit_is_the_cylinders_and_bad_keys_are_refused() {
     );
 }
 
+/// The implicit's form is the implicit at every point, in the foot's
+/// frame; a cylinder tile in it is zero exactly.
+#[test]
+fn the_implicit_form_is_the_implicit() {
+    let q = Quadric::cylinder([1.5, -2.0, 0.25], [3.0, -1.0, 2.0], 7.5).unwrap();
+    let f = q.implicit_form(&Rational::from(0u32));
+    assert_eq!(f.degree(), 2);
+    let one = Rational::from(1u32);
+    for p in [[0, 0, 0], [3, 1, 4], [-7, 2, 9], [10, -10, 5]] {
+        let p = p.map(Rational::from);
+        assert_eq!(f.eval_hom(&p, &one), q.implicit(&p));
+    }
+    let tile = cylinder_tile(1, &Rational::from(0u32));
+    let g = tile
+        .compose_implicit(&cylinder().implicit_form(&Rational::from(0u32)))
+        .expect("degrees (4, 4)");
+    assert_eq!(g.degrees(), (4, 4));
+    // The tile's middle weight is `√½` rounded: off the cylinder by its
+    // rounding, every coefficient tiny against `ρ²|a|²`, not zero.
+    let scale = crate::num::exact::rat(SMOOTH_RADIUS * SMOOTH_RADIUS);
+    for c in g.coefs() {
+        assert!(c.clone() * Rational::from(1u64 << 40) < scale, "{c}");
+        assert!(-(c.clone()) * Rational::from(1u64 << 40) < scale, "{c}");
+    }
+    assert!(g.coefs().iter().any(|c| *c != 0u32));
+}
+
 /// Touching the top: Near along about `+z` when the sheet faces out as
 /// the cylinder does, Contact when it faces in, at the first level and
 /// exactly. (The touch is at the boxes' corner, so neither Empty nor

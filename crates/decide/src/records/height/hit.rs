@@ -96,7 +96,7 @@ use malachite::Rational;
 use malachite::base::num::arithmetic::traits::Sign as _;
 use malachite::base::num::basic::traits::{One as _, Zero as _};
 
-use crate::bezier::Tensor;
+use crate::bezier::{HomCurve, HomPatch, Tensor};
 use crate::count::boxes::UvSpan;
 use crate::count::pieces::{ExactRect, SpanMap};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
@@ -1237,32 +1237,14 @@ fn ribbon_polys(face: &HitFace<'_>, t: &HitTrim<'_>, span: usize) -> Option<Ribb
     let sp = &t.pspans[span];
     let tile = face.tile_of_span(sp);
     let net = face.net(tile)?;
-    let (uvw, w) = hom(sp);
-    // Local coordinates, homogeneous: `û − i·ŵ`, `v̂ − j·ŵ`; the Bernstein
-    // basis of degree two in them over the weight `ŵ`.
-    let lu = poly::sub(&uvw[0], &poly::scale(&w, &Rational::from(tile[0])));
-    let lv = poly::sub(&uvw[1], &poly::scale(&w, &Rational::from(tile[1])));
-    let basis = |l: &Poly| -> [Poly; 3] {
-        let r = poly::sub(&w, l);
-        [
-            poly::mul(&r, &r),
-            poly::scale(&poly::mul(l, &r), &Rational::from(2u32)),
-            poly::mul(l, l),
-        ]
-    };
-    let (bu, bv) = (basis(&lu), basis(&lv));
-    let (x, wn) = net_hom(net);
-    let mut p: [Poly; 3] = std::array::from_fn(|_| Vec::new());
-    let mut wp: Poly = Vec::new();
-    for i in 0..3 {
-        for j in 0..3 {
-            let b = poly::mul(&bu[i], &bv[j]);
-            for k in 0..3 {
-                p[k] = poly::add(&p[k], &poly::scale(&b, &x[k][i][j]));
-            }
-            wp = poly::add(&wp, &poly::scale(&b, &wn[i][j]));
-        }
-    }
+    let s = tile_patch(net)
+        .compose_span(&local_span(sp, tile))
+        .expect("degree 8");
+    let p = s
+        .coords()
+        .each_ref()
+        .map(|c| poly::from_bernstein(c.coefs()));
+    let wp = poly::from_bernstein(s.weights().coefs());
     let m = t.map[span];
     let (cs, wc) = hom(&t.curve[m.span as usize]);
     let (a, bb) = (rat(m.t[0]), rat(m.t[1]) - rat(m.t[0]));
@@ -1661,9 +1643,11 @@ pub enum GermAt {
 }
 
 /// `f(l_u/w, l_v/w)·w^(d_u + d_v)`, `d_u`, `d_v` `f`'s degrees in `u`
-/// and `v`: a tile polynomial along a p-span, homogeneous in its weight
-/// `w` (positive, so of the sign of `f` there).
-fn along_span(f: &Poly2, lu: &Poly, lv: &Poly, w: &Poly) -> Poly {
+/// and `v`, `(l_u, l_v, w)` the p-span `p` in the tile's local
+/// coordinates: a tile polynomial along a p-span, homogeneous in its
+/// weight `w` (positive, so of the sign of `f` there). In Bernstein form
+/// at `f`'s degrees, composed with the span ([`Tensor::compose_params`]).
+fn along_span(f: &Poly2, p: &HomCurve<Rational, 2>) -> Poly {
     let du = f
         .iter()
         .map(|c| c.len())
@@ -1671,22 +1655,35 @@ fn along_span(f: &Poly2, lu: &Poly, lv: &Poly, w: &Poly) -> Poly {
         .unwrap_or(1)
         .saturating_sub(1);
     let dv = f.len().saturating_sub(1);
-    let pow =
-        |p: &Poly, n: usize| (0..n).fold(poly::constant(Rational::ONE), |a, _| poly::mul(&a, p));
-    let mut out: Poly = Vec::new();
-    for (j, cj) in f.iter().enumerate() {
-        for (i, c) in cj.iter().enumerate() {
-            if *c == 0u32 {
-                continue;
-            }
-            let t = poly::mul(
-                &poly::mul(&pow(lu, i), &pow(lv, j)),
-                &pow(w, du - i + dv - j),
-            );
-            out = poly::add(&out, &poly::scale(&t, c));
-        }
-    }
-    out
+    let a: Vec<Rational> = (0..=du)
+        .flat_map(|i| {
+            (0..=dv).map(move |j| {
+                f.get(j)
+                    .and_then(|c| c.get(i))
+                    .cloned()
+                    .unwrap_or(Rational::ZERO)
+            })
+        })
+        .collect();
+    let t = Tensor::from_power(du, dv, &a).expect("a tile polynomial's degrees");
+    let [lu, lv] = p.coords();
+    let g = t
+        .compose_params([lu, p.weights()], [lv, p.weights()])
+        .expect("a low degree");
+    poly::from_bernstein(g.coefs())
+}
+
+/// A p-span in the local coordinates of `tile`, its control points
+/// `(w·u − i·w, w·v − j·w, w)` exactly.
+fn local_span(sp: &UvSpan, tile: [i64; 2]) -> HomCurve<Rational, 2> {
+    HomCurve::from_affine(sp.iter().map(|p| ([p[0], p[1]], p[2])), &Rational::ZERO)
+        .expect("a quadratic span")
+        .translated(&tile.map(Rational::from))
+}
+
+/// A tile's stored net as a patch, exactly.
+fn tile_patch(net: &TileNet) -> HomPatch<Rational> {
+    HomPatch::from_affine(2, 2, net.iter().copied(), &Rational::ZERO).expect("a biquadratic net")
 }
 
 impl HitFace<'_> {
@@ -1742,10 +1739,8 @@ impl HitFace<'_> {
                         let tile = self.tile_of_span(sp);
                         let (x, wt) = net_polys(self.net(tile)?);
                         let n = Tangents::of(&x, &wt).n;
-                        let (uvw, w) = hom(sp);
-                        let lu = poly::sub(&uvw[0], &poly::scale(&w, &Rational::from(tile[0])));
-                        let lv = poly::sub(&uvw[1], &poly::scale(&w, &Rational::from(tile[1])));
-                        let nt: [Poly; 3] = n.each_ref().map(|c| along_span(c, &lu, &lv, &w));
+                        let local = local_span(sp, tile);
+                        let nt: [Poly; 3] = n.each_ref().map(|c| along_span(c, &local));
                         return row(&|d| tau.sign_of(&vdot(&nt, d)));
                     }
                 }

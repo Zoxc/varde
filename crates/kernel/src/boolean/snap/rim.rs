@@ -102,7 +102,7 @@ use malachite::Rational;
 use malachite::base::num::arithmetic::traits::Floor;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor as Down, Nearest};
-use varde_decide::bezier::{Dir, Dyadic, HomPatch, Poly};
+use varde_decide::bezier::{Dir, Dyadic, HomCurve, HomPatch, Poly};
 use varde_decide::count::boxes::UvSpan;
 use varde_decide::ids::{EdgeId, FaceId, VertId};
 use varde_decide::leaves::near_quadric::Quadric;
@@ -1814,101 +1814,40 @@ struct GapData {
     zero: bool,
 }
 
-/// `Π` of linear Bernstein forms, `C(m, i)·u^i·(1 − u)^{m−i}` along the
-/// line `x(t)` from `a` to `b` (each a constant if `a == b`).
-fn basis(m: usize, a: &Q, b: &Q) -> Vec<Poly<Q>> {
-    let one = Q::from(1u32);
+/// The piece's curve on `patch` from local `a` to `b`, homogeneous: the
+/// patch along the segment ([`HomPatch::compose_params`]), a coordinate
+/// with `a == b` a constant (so of degree `m·k_u + n·k_v`, `k` 1 or 0).
+fn curve_on(patch: &HomPatch<Rational>, a: &P2, b: &P2) -> Option<[Poly<Q>; 4]> {
+    debug_assert!(
+        patch.degrees().0 > 0 && patch.degrees().1 > 0,
+        "a patch's degrees"
+    );
     let lin = |x: &Q, y: &Q| {
         if x == y {
-            Poly::new([x.clone()]).expect("a constant")
+            Poly::new([x.clone()])
         } else {
-            Poly::new([x.clone(), y.clone()]).expect("a line")
+            Poly::new([x.clone(), y.clone()])
         }
     };
-    let u = lin(a, b);
-    let v = lin(&(&one - a), &(&one - b));
-    (0..=m)
-        .map(|i| {
-            let mut p = Poly::new([Q::from(binom(m, i))]).expect("a constant");
-            for _ in 0..i {
-                p = p.mul(&u).expect("a low degree");
-            }
-            for _ in i..m {
-                p = p.mul(&v).expect("a low degree");
-            }
-            p
-        })
-        .collect()
+    let (u, v) = (lin(&a[0], &b[0])?, lin(&a[1], &b[1])?);
+    let one = Poly::new([Q::from(1u32)])?;
+    let c = patch.compose_params([&u, &one], [&v, &one])?;
+    let [x, y, z] = c.coords().clone();
+    Some([x, y, z, c.weights().clone()])
 }
 
-fn binom(m: usize, i: usize) -> u64 {
-    let mut c = 1u64;
-    for k in 0..i {
-        c = c * (m - k) as u64 / (k + 1) as u64;
-    }
-    c
-}
-
-/// The piece's curve on `patch` from local `a` to `b`, homogeneous.
-fn curve_on(patch: &HomPatch<Rational>, a: &P2, b: &P2) -> Option<[Poly<Q>; 4]> {
-    let (m, n) = patch.degrees();
-    debug_assert!(m > 0 && n > 0, "a patch's degrees");
-    let bu = basis(m, &a[0], &b[0]);
-    let bv = basis(n, &a[1], &b[1]);
-    let t = patch.tensors();
-    let mut out: [Option<Poly<Q>>; 4] = [None, None, None, None];
-    for (i, pu) in bu.iter().enumerate() {
-        for (j, pv) in bv.iter().enumerate() {
-            let b = pu.mul(pv)?;
-            for (k, o) in out.iter_mut().enumerate() {
-                let term = b.scale(t[k].get(i, j));
-                *o = Some(match o.take() {
-                    None => term,
-                    Some(p) => p.add(&term),
-                });
-            }
-        }
-    }
-    let [x, y, z, w] = out;
-    Some([x?, y?, z?, w?])
-}
-
-/// The implicit along the curve (module docs), positive outside.
+/// The implicit along the curve (module docs), positive outside: a
+/// plane's linear form ([`HomCurve::compose_linear`]), a cylinder's
+/// implicit ([`Quadric::implicit_form`], [`HomCurve::compose_implicit`]).
 fn gap_form(imp: &Implicit, c: &[Poly<Q>; 4]) -> Option<Poly<Q>> {
-    let q = |x: f64| exact(x);
+    let curve = HomCurve::from_polys([c[0].clone(), c[1].clone(), c[2].clone()], c[3].clone())?;
     match imp {
         Implicit::Plane { normal, offset } => {
-            let n = [q(normal[0])?, q(normal[1])?, q(normal[2])?];
-            let d = q(*offset)?;
-            Some(
-                c[0].scale(&n[0])
-                    .add(&c[1].scale(&n[1]))
-                    .add(&c[2].scale(&n[2]))
-                    .sub(&c[3].scale(&d)),
-            )
+            let n = [exact(normal[0])?, exact(normal[1])?, exact(normal[2])?];
+            Some(curve.compose_linear(&n, &-exact(*offset)?))
         }
         Implicit::Cylinder { quadric, outward } => {
-            let f = quadric.foot();
-            let a = quadric.axis();
-            let a = [q(a[0])?, q(a[1])?, q(a[2])?];
-            let rho = q(quadric.radius())?;
-            let r: Vec<Poly<Q>> = (0..3)
-                .map(|k| Some(c[k].sub(&c[3].scale(&q(f[k])?))))
-                .collect::<Option<_>>()?;
-            let aa = &a[0] * &a[0] + &a[1] * &a[1] + &a[2] * &a[2];
-            let ar = r[0]
-                .scale(&a[0])
-                .add(&r[1].scale(&a[1]))
-                .add(&r[2].scale(&a[2]));
-            let rr = r[0]
-                .mul(&r[0])?
-                .add(&r[1].mul(&r[1])?)
-                .add(&r[2].mul(&r[2])?);
-            let ww = c[3].mul(&c[3])?;
-            let g = rr
-                .scale(&aa)
-                .sub(&ar.mul(&ar)?)
-                .sub(&ww.scale(&(&rho * &rho * &aa)));
+            let g = curve.compose_implicit(&quadric.implicit_form(&Q::from(0u32)))?;
             Some(if *outward { g } else { g.neg() })
         }
     }
