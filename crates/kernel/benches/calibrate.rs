@@ -39,12 +39,15 @@ use varde_decide::num::bounded::Bounded;
 use varde_decide::num::decide::{Band, Fail, Sign};
 use varde_decide::num::exact::{self, ORDERS, Pred};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
-use varde_decide::num::preds::{Dot2d, NearGap, Orient2d, Orient3Dir, Orient3d, PlaneSide};
+use varde_decide::num::preds::{
+    Dot2d, LineGap, LinePlace, NearGap, Orient2Exact, Orient2d, Orient3Dir, Orient3d, PlaneSide,
+};
 use varde_decide::num::schedule::{LEVELS, Level, PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
 use varde_decide::perturb::{
     Curved, EdgeEdge, HomLineShadow, HomPairShadow, HomPoint, HomPointLineShadow, HomShadow,
-    LineShadow, Moving, NU, PlaneHeight, PointHeight, R_HAT, Rate, Seg, ShadowAxis, UP, VvShadow,
+    LineShadow, Moving, NU, PlaneHeight, PointHeight, R_HAT, Rate, Seg, ShadowAxis, SharedCrossing,
+    UP, VvShadow,
 };
 use varde_decide::records::cusp::{CuspSpan, Sharp, cusp_rec};
 use varde_decide::records::feet::{EdgeCurve, NearFeet, decide_feet};
@@ -798,6 +801,144 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
                 Some((0..n).map(|k| crossing(k, 1.0, false)).collect()),
                 Some((0..n).map(|k| crossing(k, 1.0, true)).collect()),
                 Some((0..n).map(|k| crossing(k, pow2(-400), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // A gap of two lines on one vertical plane ([`LineGap`]): `P` the
+    // middle of `e`, `g₀ = P + ½·d + ¼·dg` in the plane of `d` and `dg`;
+    // for the rationals scaled by `2⁻⁴⁰⁰`.
+    let gap = |k: u64, scale: f64, zero: bool| {
+        let [e0, e1, dg, d] = [0, 1, 2, 3].map(|i| grid(5 * k + i) * scale);
+        let g0 = if zero {
+            e0 + (e1 - e0) * 0.5 + d * 0.5 + dg * 0.25
+        } else {
+            general(k) * scale
+        };
+        LineGap {
+            e: [e0, e1],
+            t: 0.5,
+            g: [g0, g0 + dg],
+            d,
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "line gap",
+            kind: PredKind::Crossing,
+            stages: [
+                Some((0..n).map(|k| gap(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| gap(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| gap(k, pow2(-400), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // A place on a line against a point ([`LinePlace`]): `p` the middle
+    // of `e` moved across `dir` (`⅛·(d_y, −d_x, 0)`, so the terms cancel
+    // in the sum only); for the rationals scaled by `2⁻⁶⁰⁰`.
+    let place = |k: u64, scale: f64, zero: bool| {
+        let [e0, e1, dir] = [0, 1, 2].map(|i| grid(3 * k + i) * scale);
+        let p = if zero {
+            e0 + (e1 - e0) * 0.5 + DVec3::new(dir.y, -dir.x, 0.0) * 0.125
+        } else {
+            general(k) * scale
+        };
+        LinePlace {
+            dir,
+            e: [e0, e1],
+            t: 0.5,
+            p,
+        }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "line place",
+            kind: PredKind::Orient2,
+            stages: [
+                Some((0..n).map(|k| place(k, 1.0, false)).collect()),
+                Some((0..n).map(|k| place(k, 1.0, true)).collect()),
+                Some((0..n).map(|k| place(k, pow2(-600), true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // A stored segment's side of an exact corner ([`Orient2Exact`]): the
+    // middle for the expansions, `1/1031` of the way for the rationals
+    // (not dyadic: the coordinates' differences are below 1031 times
+    // their grid step).
+    let corner = |k: u64, rational: bool, zero: bool| {
+        let p = |i: u64| {
+            let g = grid(3 * k + i);
+            [g.x, g.y]
+        };
+        let (a, b) = (p(0), p(1));
+        let r = |x: f64| Rational::try_from(x).expect("finite");
+        let c = if !zero {
+            let g = general(k);
+            [r(g.x), r(g.y)]
+        } else {
+            let f = if rational {
+                Rational::from(1u32) / Rational::from(1031u32)
+            } else {
+                Rational::from(1u32) / Rational::from(2u32)
+            };
+            [0, 1].map(|i| r(a[i]) + &f * (r(b[i]) - r(a[i])))
+        };
+        Orient2Exact { a, b, c }
+    };
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "orient 2D exact",
+            kind: PredKind::Orient2,
+            stages: [
+                Some((0..n).map(|k| corner(k, false, false)).collect()),
+                Some((0..n).map(|k| corner(k, false, true)).collect()),
+                Some((0..n).map(|k| corner(k, true, true)).collect()),
+            ],
+        },
+        rows,
+    );
+    // The shared-curve crossing at a stored point ([`SharedCrossing`]):
+    // the rate along the chord in the shadow (`m·(b − a) + c·UP`) for
+    // the expansions, that over the prime 1000003 (exact, not dyadic: its
+    // components are below 1000003 times their grid step) for the
+    // rationals.
+    let chords: Vec<[DVec3; 2]> = (0..n).map(|k| [grid(2 * k), grid(2 * k + 1)]).collect();
+    let shared_rate = |k: u64, rational: bool, zero: bool| {
+        let [a, b] = chords[k as usize];
+        if !zero {
+            return Rate::Float(general(k));
+        }
+        let d = (b - a) * (dyadic(k + 3, 4) + 1.0) + UP * dyadic(k + 5, 4);
+        if rational {
+            let r = |x: f64| Rational::try_from(x).expect("finite") / Rational::from(1_000_003u32);
+            Rate::exact([r(d.x), r(d.y), r(d.z)])
+        } else {
+            Rate::Float(d)
+        }
+    };
+    let shared_rates: [Vec<Rate>; 3] = [(false, false), (false, true), (true, true)]
+        .map(|(rational, zero)| (0..n).map(|k| shared_rate(k, rational, zero)).collect());
+    fn shared<'a>(chords: &[[DVec3; 2]], rates: &'a [Rate]) -> Vec<SharedCrossing<'a>> {
+        chords
+            .iter()
+            .zip(rates)
+            .map(|(&chord, rate)| SharedCrossing { chord, rate })
+            .collect()
+    }
+    exact_pred_rows(
+        budget,
+        Fixtures {
+            name: "shared crossing",
+            kind: PredKind::Orient3,
+            stages: [
+                Some(shared(&chords, &shared_rates[0])),
+                Some(shared(&chords, &shared_rates[1])),
+                Some(shared(&chords, &shared_rates[2])),
             ],
         },
         rows,
