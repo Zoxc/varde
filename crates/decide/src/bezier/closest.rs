@@ -61,13 +61,15 @@
 //!   found), or the box couldn't stay inside the domain: the foot, if
 //!   any, is on or past this piece's boundary (a neighbour's or the
 //!   boundary curve's to find);
-//! - [`Foot::Precision`]: the operator contracts (the Jacobian is well
-//!   conditioned on the box) and Newton settled, but the value of `g` at
-//!   the point is too wide for the box at this level: the next level;
 //! - [`Foot::Subdivide`]: anything else, a Jacobian not certified regular
 //!   (a foot near a curvature centre, where Newton's error doesn't shrink
-//!   with precision; a tangency; a wide box) or Newton not settling: split
-//!   the piece ([`Closest::split_half`]) before raising the precision.
+//!   with precision; a tangency; a wide box), Newton not settling, or the
+//!   operator contracting round a settled point while the value of `g`
+//!   there is too wide for the box at this level: split the piece
+//!   ([`Closest::split_half`]) before raising the precision. The frame
+//!   centred at `x` (offsets formed before the weights) removes the known
+//!   cancellation behind that last case, so it gets no outcome of its
+//!   own.
 //!
 //! **Same bits under reversal.** A lattice point mirrors exactly
 //! (`1 − l·2⁻⁵³` is a lattice point), an evaluation there gives the
@@ -81,7 +83,10 @@
 //! zero). The default seed mirrors (a tie between control points is
 //! broken by the piece's distance beside them), except on a piece
 //! symmetric about `x`, where a single seed can't (its two mirrored
-//! feet): there the tie takes the first in the net's order.
+//! feet): there the tie takes the first in the net's order, so the
+//! default seed may reach either foot, and a caller needing mirrored
+//! feet passes mirrored seeds. Swapping `u` and `v` of a patch is not
+//! bit-symmetric (a patch evaluates in `u` first).
 //!
 //! **Work.** Newton steps, Krawczyk steps, halvings and box tests are
 //! counted ([`Work`]); the caller charges them.
@@ -154,8 +159,6 @@ pub enum Foot {
     Subdivide,
     /// The foot is on or past the piece's boundary.
     Boundary,
-    /// The next precision level.
-    Precision,
 }
 
 /// A certified foot: exactly one stationary point of the distance from
@@ -291,6 +294,11 @@ impl<S: Scalar> Closest<S> {
     /// `[0, 1]`; `None` for the parameter of the control point nearest
     /// `x`), then the certificate around the point reached (module docs).
     /// `None` for a seed of the wrong length or not finite.
+    ///
+    /// On a piece symmetric about `x` the default seed may reach either of
+    /// two mirrored feet (a tie between mirrored control points takes the
+    /// first in the net's order); a caller needing mirrored feet passes
+    /// mirrored seeds, which reach them to the bit.
     pub fn closest(&self, seed: Option<&[f64]>) -> Option<Reached> {
         let d = self.dims();
         let mut work = Work::default();
@@ -408,7 +416,6 @@ impl<S: Scalar> Closest<S> {
         let mut out = Newton {
             at: c.clone(),
             last: smallvec![0; d],
-            settled: false,
             pushed_out: false,
         };
         for _ in 0..NEWTON_STEPS {
@@ -424,7 +431,6 @@ impl<S: Scalar> Closest<S> {
             let step = match newton {
                 Some((s, held)) if s.iter().all(|&r| r == 0) => {
                     out.pushed_out = held.iter().any(|&h| h);
-                    out.settled = true;
                     break;
                 }
                 Some((s, held)) if convex(&j, &held) && along(&g, &s) > 0.0 => (s, held),
@@ -552,7 +558,6 @@ impl<S: Scalar> Closest<S> {
                 }))
             }
             Narrowed::Unsettled { .. } if touches() => Foot::Boundary,
-            Narrowed::Unsettled { contracting: true } if newton.settled => Foot::Precision,
             Narrowed::Empty | Narrowed::Unsettled { .. } => Foot::Subdivide,
         }
     }
@@ -665,8 +670,6 @@ struct Newton {
     at: Axes<u64>,
     /// The last step taken (in lattice units), zero if none.
     last: Axes<i128>,
-    /// Whether the last step rounded to zero.
-    settled: bool,
     /// Whether the last step held a variable at the boundary.
     pushed_out: bool,
 }

@@ -150,7 +150,10 @@ pub trait Patch<S: Scalar> {
     /// The closest point of the patch to `x` set up at `like`'s level
     /// ([`Closest`]: the distance bound, Newton and the foot certificate
     /// on it). `None` for a point or net that isn't finite, a weight not
-    /// certified positive, or a gradient past the degree limit.
+    /// certified positive, or a gradient past the degree limit. On a patch
+    /// symmetric about `x` the default seed may reach either of two
+    /// mirrored feet; mirrored seeds reach mirrored feet
+    /// ([`Closest::closest`]).
     fn closest(&self, x: [f64; 3], like: &S) -> Option<Closest<S>>;
 }
 

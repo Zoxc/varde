@@ -7,7 +7,8 @@
 //! against the exact distance at the point reached, the curvature bounds
 //! against the exact curvatures at samples. Feet at a curvature centre
 //! and past the boundary are not certified, the upper bound holding
-//! there too; reversal mirrors every result to the bit.
+//! there too; reversal mirrors every result to the bit, and on a piece
+//! symmetric about the query mirrored seeds reach mirrored feet.
 
 use malachite::Rational as Q;
 
@@ -580,6 +581,90 @@ fn reversal_mirrors_the_result_to_the_bit() {
     mirror::<Bounded<f64>>();
     mirror::<Bounded<Dd>>();
     mirror::<Bounded<Big>>();
+}
+
+/// The parabola `y = s²`, `s = 2u − 1` (`v` straight along `z` from −1
+/// to 1 for a patch), symmetric about `x = (0, 1, 0)`: its feet from `x`
+/// at `s = ±1/√2`, the point `s = 0` between them a maximum of the
+/// distance. The end (middle-row) control points tie.
+fn valley(patch: bool) -> Vec<[f64; 4]> {
+    let row = [[-1.0, 1.0], [0.0, -1.0], [1.0, 1.0]];
+    if !patch {
+        return row.iter().map(|&[x, y]| [x, y, 0.0, 1.0]).collect();
+    }
+    let mut net = Vec::new();
+    for [x, y] in row {
+        for z in [-1.0, 0.0, 1.0] {
+            net.push([x, y, z, 1.0]);
+        }
+    }
+    net
+}
+
+/// `b` mirrored in `x` (the coordinate negated): exactly, outward rounding
+/// being symmetric.
+fn negated(b: [f64; 2]) -> [f64; 2] {
+    [-b[1], -b[0]]
+}
+
+/// On a piece symmetric about the query, mirrored seeds reach the two
+/// mirrored feet, to the bit; the default seed reaches one of them.
+fn symmetric<S: Level>() {
+    let l = like::<S>();
+    let x = [0.0, 1.0, 0.0];
+    let feet = [0.5 - 0.5 * S2, 0.5 + 0.5 * S2];
+    for patch in [false, true] {
+        let pts = valley(patch);
+        let c = if patch {
+            Closest::patch(2, 2, &pts, x, &l)
+        } else {
+            Closest::curve(&pts, x, &l)
+        }
+        .expect("a piece");
+        let seed: &[f64] = if patch { &[0.125, 0.375] } else { &[0.125] };
+        let mut mseed = seed.to_vec();
+        mseed[0] = 1.0 - seed[0];
+        let a = c.closest(Some(seed)).expect("a seed");
+        let b = c.closest(Some(&mseed)).expect("a seed");
+        let (f, g) = (certified(&a), certified(&b));
+        assert!(f.minimum && g.minimum, "{}: minima", S::NAME);
+        assert!(near(f.near[0], feet[0], 0.0), "{}: {:?}", S::NAME, f.near);
+        assert!(near(g.near[0], feet[1], 0.0), "{}: {:?}", S::NAME, g.near);
+        assert_eq!(
+            flip(a.local[0]).to_bits(),
+            b.local[0].to_bits(),
+            "mirrored point"
+        );
+        assert_eq!(a.local[1..], b.local[1..], "same point across");
+        assert_eq!(a.upper.to_bits(), b.upper.to_bits(), "same bound");
+        assert_eq!(a.work, b.work, "same work");
+        let [n, m] = [f.near[0], g.near[0]];
+        assert_eq!([flip(n[1]), flip(n[0])], m, "mirrored box");
+        let [u, w] = [f.unique[0], g.unique[0]];
+        assert_eq!([flip(u[1]), flip(u[0])], w, "mirrored unique box");
+        assert_eq!(f.near[1..], g.near[1..]);
+        assert_eq!(f.unique[1..], g.unique[1..]);
+        assert_eq!(negated(f.point[0]), g.point[0], "mirrored point box");
+        assert_eq!(f.point[1..], g.point[1..], "same point box across");
+        assert_eq!(f.spread.to_bits(), g.spread.to_bits(), "same spread");
+        // The default seed: either foot.
+        let d = c.closest(None).expect("a seed");
+        let h = certified(&d);
+        assert!(h.minimum, "{}: a minimum", S::NAME);
+        assert!(
+            feet.iter().any(|&t| near(h.near[0], t, 0.0)),
+            "{}: one of the feet, {:?}",
+            S::NAME,
+            h.near
+        );
+    }
+}
+
+#[test]
+fn mirrored_seeds_reach_mirrored_feet() {
+    symmetric::<Bounded<f64>>();
+    symmetric::<Bounded<Dd>>();
+    symmetric::<Bounded<Big>>();
 }
 
 /// A foot found on a half is the same foot, in the original parameters.
