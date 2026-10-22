@@ -214,8 +214,17 @@ fn normal_cone_holds_every_normal() {
         for (tile, flat) in tiles(seed) {
             let cones = [tile.normal_cone(), tile.normal_cone_at(&Q::from(0u32))];
             assert_eq!(tile.is_regular(), cones[0].is_some());
-            // At the first level, the cone at a level is the cached one.
-            assert_eq!(tile.normal_cone_at(&Bounded::exact(0.0)), cones[0]);
+            assert_eq!(tile.normal_cone_level().is_some(), cones[0].is_some());
+            // At the level that certified it, the cone at a level is the
+            // cached one; below it none is certified.
+            let first = tile.normal_cone_at(&Bounded::exact(0.0));
+            match tile.normal_cone_level() {
+                Some(Level::L0) | None => assert_eq!(first, cones[0]),
+                Some(level) => {
+                    assert_eq!(first, None);
+                    assert_eq!(cone_at(&tile, level), cones[0]);
+                }
+            }
             if flat {
                 assert!(tile.is_regular(), "{tile:?}");
             } else {
@@ -239,6 +248,74 @@ fn normal_cone_holds_every_normal() {
         }
     }
     assert!(wild[1] > 0, "some wild tiles are regular: {wild:?}");
+}
+
+/// The cone at `level`, in that level's type.
+fn cone_at(tile: &Tile, level: Level) -> Option<NormalCone> {
+    match level.width() {
+        None if level == Level::L0 => tile.normal_cone_at(&Bounded::exact(0.0)),
+        None => tile.normal_cone_at(&Bounded::exact(Dd::from_f64(0.0))),
+        Some(w) => tile.normal_cone_at(&Bounded::exact(Big::from_f64(0.0, w))),
+    }
+}
+
+/// Every exact normal at a grid of points and the corners lies in `c`.
+fn holds_normals(tile: &Tile, c: &NormalCone) {
+    cone_is_consistent(c);
+    let e = exact(tile);
+    for i in 0..=8 {
+        for j in 0..=8 {
+            let (u, v) = (f64::from(i) / 8.0, f64::from(j) / 8.0);
+            assert!(
+                in_cone(c, &normal(&e, u, v)),
+                "{tile:?} at ({u}, {v}): {c:?}"
+            );
+        }
+    }
+}
+
+/// A plane tile with `x = u`, `y = v·g(u)`, `g`'s coefficients `1, −0.9,
+/// 1`: `g` is positive (`0.05` at its least), so the tile doesn't fold
+/// and its normals are all `+z`, but the numerator's coefficients (the
+/// elevation of `g`'s) are not, so the cone is certified only on the
+/// split numerator, at the first level still.
+#[test]
+fn a_tile_past_its_coefficients_is_certified_in_space() {
+    let tile = plane_tile([1.0, -0.9, 1.0]);
+    assert_eq!(NormalCone::of_form(tile.normal_numerator()), None);
+    let c = tile.normal_cone().expect("certified in space");
+    assert_eq!(tile.normal_cone_level(), Some(Level::L0));
+    assert_eq!(tile.normal_cone_at(&Bounded::exact(0.0)), Some(c));
+    assert!(c.axis[2] > 0.0 && c.cos > 1.0 - 1e-12, "{c:?}");
+    holds_normals(&tile, &c);
+    // The exact numerator is certified in space too.
+    assert!(tile.normal_cone_at(&Q::from(0u32)).is_some());
+}
+
+/// The plane tile `x = u`, `y = v·g(u)`, `z = 0` with `g`'s Bernstein
+/// coefficients `a`.
+fn plane_tile(a: [f64; 3]) -> Tile {
+    let net = std::array::from_fn(|k| {
+        let (i, j) = (k / 3, k % 3);
+        affine(DVec3::new(i as f64 / 2.0, j as f64 / 2.0 * a[i], 0.0), 1.0)
+    });
+    Tile::new(net).unwrap()
+}
+
+/// A plane tile (as above) whose side `u = 0` is `2⁻⁶⁰` long: the numerator there is
+/// below the first level's rounding (precision decides), and
+/// double-double certifies the cone, the plane's normal.
+#[test]
+fn a_needle_corner_is_certified_at_the_next_level() {
+    // `g`'s coefficients `2⁻⁶⁰, ½, 1`: positive on `[0, 1]`, so no
+    // fold, and `2⁻⁶⁰` at `u = 0`.
+    let tile = plane_tile([1.0 / (1u64 << 60) as f64, 0.5, 1.0]);
+    assert_eq!(tile.normal_cone_at(&Bounded::exact(0.0)), None);
+    let c = tile.normal_cone().expect("certified at a higher level");
+    assert_eq!(tile.normal_cone_level(), Some(Level::L1));
+    assert_eq!(cone_at(&tile, Level::L1), Some(c));
+    assert!(c.axis[2] > 0.0 && c.cos > 1.0 - 1e-12, "{c:?}");
+    holds_normals(&tile, &c);
 }
 
 #[test]
@@ -303,7 +380,12 @@ fn a_singular_side_is_not_regular() {
     });
     let tile = Tile::new(net).unwrap();
     assert!(!tile.is_regular());
+    assert_eq!(tile.normal_cone_level(), None);
     assert_eq!(tile.normal_cone_at(&Q::from(0u32)), None);
+    assert_eq!(
+        tile.normal_cone_at(&Bounded::exact(Dd::from_f64(0.0))),
+        None
+    );
     // Away from the pole the same sphere is regular.
     let [_, upper] = tile.split_half(Dir::V).unwrap();
     assert!(upper.is_regular());

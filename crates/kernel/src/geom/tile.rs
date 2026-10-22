@@ -42,8 +42,9 @@
 //!
 //! **Cached per tile** (computed once, on first use, from the net alone,
 //! so every copy of a tile has the same bits): the first-level patch, the
-//! hull box, the homogeneous partial derivatives, the normal numerator
-//! and the normal cone.
+//! hull box, the homogeneous partial derivatives, the normal numerator,
+//! the normal cone with the level that certified it, and whether a corner
+//! of the exact numerator is zero.
 //!
 //! **Normal cone and regularity.** The normal numerator
 //! `N = W·(P_u × P_v) + W_u·(P_v × P) + W_v·(P × P_u)` equals
@@ -54,28 +55,57 @@
 //! half-angle `θ < 90°` about an axis `a` (a convex cone), so does every
 //! value, and `a·N > 0` keeps it non-zero: the cone holds every unit
 //! normal of the tile and the tile is **regular** (no fold, no
-//! degenerate point). The cone is [`NormalCone::of_form`] of the
-//! numerator: about the normalised sum of the coefficients' directions,
-//! certified on their enclosures, none when one of them isn't certainly
-//! in the open half-space `a·c > 0`. A pole or apex row (a singular side) makes a whole boundary
-//! row of the numerator zero, so such a tile is never regular here; nor
-//! is one whose normals spread over more than a half-space (it must be
-//! split) or one the first level can't settle (escalate with
-//! [`Tile::normal_cone_at`] or split). The numerator is translation
-//! invariant, so at every level it is computed in a frame centred on the
-//! tile's hull box (the centre on a power-of-two grid): each homogeneous coefficient `w·(x − c)`, the affine
-//! point translated first, so its rounding scales with the tile's size,
-//! not its distance from the origin (rounding `w·x` and `c·w` alone would
-//! cost `u·|c·w|`, which swamps a small or nearly flat tile far out).
+//! degenerate point). The cone's margin is its certified `cos`.
+//!
+//! **The cone is a certificate**, found in the tile's frame, then in
+//! space, then in precision. At a level the cone is first tried on the
+//! numerator's coefficients ([`NormalCone::of_forms`] about the axis of
+//! their smallest cone); where they spread too far
+//! ([`ConeFail::Space`]) the numerator is split at ½ in both directions,
+//! up to [`MAX_CONE_DEPTH`] times, and the cone tried on all the pieces'
+//! coefficients together (about their mean direction): every value of
+//! the numerator is a combination of one piece's coefficients, and the
+//! pieces' coefficients lie closer to the values. Where rounding decides
+//! ([`ConeFail::Precision`]) the next level of the schedule follows
+//! ([`ladder`]), from the whole numerator again. A tile whose exact
+//! numerator is zero at a corner (a pole or apex row, a singular side,
+//! makes a whole boundary row zero; a corner whose two edges leave it
+//! parallel makes the corner zero) has no cone at any level or depth and
+//! is never regular here (no escalation is tried); nor is one whose
+//! normals spread over more than a half-space at the deepest split (the
+//! tile must be split) or that the top level leaves undecided. The cone
+//! and its level are cached; [`Tile::normal_cone_at`] runs the same
+//! search at one level, so it is [`Tile::normal_cone`] at the level
+//! [`Tile::normal_cone_level`] names.
+//!
+//! **One frame.** The numerator is translation invariant, so at every
+//! level it is computed in one frame centred on the tile's hull box
+//! ([`Tile::frame`]: the centre on a power-of-two grid): each
+//! homogeneous coefficient `w·(x − c)`, the affine point translated
+//! first, so its rounding scales with the tile's size, not its distance
+//! from the origin (rounding `w·x` and `c·w` alone would cost `u·|c·w|`,
+//! which swamps a small or nearly flat tile far out). The translation is
+//! formed exactly and rounded once, `x − c = t + r` with `t` the nearest
+//! `f64` and the residual `r` exact (two-sum, as
+//! [`storage::translate`](varde_decide::num::storage::translate)), and
+//! the coefficient is `w·t + w·r` at the level: at the first the products
+//! rounded once each and the sum once more, the translation's rounding
+//! carried, from double-double up exact but for the sum's rounding.
+//! Every caller of the cone, at every level, uses this frame.
 
 use std::fmt;
 use std::sync::OnceLock;
 
 use malachite::Rational;
 pub use varde_decide::bezier::NormalCone;
-use varde_decide::bezier::{Dir, HomPatch, HullBox, Partials, Scalar, Tensor};
+use varde_decide::bezier::{
+    Axis, ConeFail, Dir, HomPatch, HullBox, Partials, Scalar, Side, Tensor,
+};
 use varde_decide::num::bounded::Bounded;
-use varde_decide::num::storage::frame_of;
+use varde_decide::num::expansion::two_sum;
+use varde_decide::num::level::{AtLevel, LevelScalar, ladder};
+use varde_decide::num::schedule::{LEVELS, Level};
+use varde_decide::num::storage::{frame_of, translate};
 
 use super::round::nearest;
 
@@ -91,6 +121,11 @@ pub const MAX_WEIGHT: f64 = 64.0;
 /// A tile's affine net, `(x, y, z, w)` row-major in `u`: control point
 /// `(i, j)` at `3·i + j`, `i` along `u`.
 pub type Net = [[f64; 4]; 9];
+
+/// The most times the normal numerator is split at ½ in each direction
+/// in the search for its cone at a level (module docs): up to `4³` = 64
+/// pieces.
+pub const MAX_CONE_DEPTH: u32 = 3;
 
 /// A tile's patch at the first precision level.
 pub type Patch = HomPatch<Bounded<f64>>;
@@ -115,7 +150,9 @@ pub struct Tile {
     /// The homogeneous partials in `u` and `v`.
     partials: OnceLock<[Patch; 2]>,
     numerator: OnceLock<[Tensor<Bounded<f64>>; 3]>,
-    cone: OnceLock<Option<NormalCone>>,
+    cone: OnceLock<Option<(NormalCone, Level)>>,
+    /// Whether the exact numerator is zero at a corner.
+    degenerate: OnceLock<bool>,
 }
 
 impl Tile {
@@ -141,6 +178,7 @@ impl Tile {
             partials: OnceLock::new(),
             numerator: OnceLock::new(),
             cone: OnceLock::new(),
+            degenerate: OnceLock::new(),
         })
     }
 
@@ -259,11 +297,23 @@ impl Tile {
         self.patch_at(&Rational::from(0u32))
     }
 
-    /// The origin of the frame the normal numerator is computed in: the
-    /// hull box's centre on a power-of-two grid inside the box
-    /// ([`frame_of`]), each coordinate 0 where it isn't finite.
+    /// The origin of the frame the normal numerator is computed in, at
+    /// every level and for every caller: the hull box's centre on a
+    /// power-of-two grid inside the box ([`frame_of`]), each coordinate 0
+    /// where it isn't finite or where a control point's translation to it
+    /// isn't certified ([`translate`]: overflows).
     pub fn frame(&self) -> [f64; 3] {
-        frame_of(&self.hull.lo, &self.hull.hi)
+        let mut c = frame_of(&self.hull.lo, &self.hull.hi);
+        for k in 0..3 {
+            if !self
+                .net
+                .iter()
+                .all(|p| translate(p[k], c[k]).is_certified())
+            {
+                c[k] = 0.0;
+            }
+        }
+        c
     }
 
     /// The normal numerator at the first level, of degrees `(5, 5)`
@@ -276,46 +326,94 @@ impl Tile {
             .get_or_init(|| numerator(&self.framed(&Bounded::exact(0.0))))
     }
 
-    /// The certified normal cone at the first level, `None` where it
-    /// can't be certified there (module docs).
+    /// The certified normal cone: the first level's, else in space, else
+    /// at the levels above in turn (module docs); `None` where no level
+    /// certifies one. Computed once.
     pub fn normal_cone(&self) -> Option<NormalCone> {
-        *self
-            .cone
-            .get_or_init(|| NormalCone::of_form(self.normal_numerator()))
+        self.cone_certificate().map(|(c, _)| c)
+    }
+
+    /// The level that certified [`normal_cone`](Self::normal_cone),
+    /// `None` where none did.
+    pub fn normal_cone_level(&self) -> Option<Level> {
+        self.cone_certificate().map(|(_, l)| l)
     }
 
     /// The certified normal cone with the numerator computed at `like`'s
-    /// level (and width), in the same frame: for a tile the first level
-    /// leaves uncertified. At the first level it is
-    /// [`normal_cone`](Self::normal_cone).
+    /// level (and width), in the tile's frame, split in space as at any
+    /// level but not escalated past it (module docs): at the level
+    /// [`normal_cone_level`](Self::normal_cone_level) names it is
+    /// [`normal_cone`](Self::normal_cone). `None` where it isn't
+    /// certified at this level.
     pub fn normal_cone_at<S: Scalar>(&self, like: &S) -> Option<NormalCone> {
-        NormalCone::of_form(&numerator(&self.framed(like)))
+        if self.degenerate() {
+            return None;
+        }
+        cone_in_space(numerator(&self.framed(like))).ok()
     }
 
-    /// Whether the tile is certified regular at the first level: its
-    /// normal numerator certified non-zero, by a normal cone (module
-    /// docs). A tile with a singular side never is.
+    /// Whether the tile is certified regular: its normal numerator
+    /// certified non-zero, by a normal cone at some level (module docs).
+    /// A tile with a singular side never is.
     pub fn is_regular(&self) -> bool {
         self.normal_cone().is_some()
     }
 
+    /// The cone and the level that certified it, computed once: the
+    /// first level from the cached numerator, then the schedule's levels
+    /// in turn while rounding decides.
+    fn cone_certificate(&self) -> Option<(NormalCone, Level)> {
+        *self.cone.get_or_init(|| {
+            if self.degenerate() {
+                return None;
+            }
+            let start = match cone_in_space(self.normal_numerator().clone()) {
+                Ok(c) => return Some((c, Level::L0)),
+                Err(ConeFail::Space) => return None,
+                Err(ConeFail::Precision) => Level::L0.next()?,
+            };
+            ladder(&mut ConeStep(self), start, &mut [(); LEVELS]).ok()
+        })
+    }
+
+    /// Whether the exact normal numerator is zero at a corner: then no
+    /// cone is certified at any level or depth (module docs). The corners
+    /// are the ends of the numerator's lines on the sides `u = 0` and
+    /// `u = 1`, which depend on the net's two rows there alone
+    /// ([`HomPatch::side_numerator`]). Computed once.
+    fn degenerate(&self) -> bool {
+        *self.degenerate.get_or_init(|| {
+            let exact = self.exact();
+            [Side::U0, Side::U1].into_iter().any(|side| {
+                let line = exact
+                    .side_numerator(side)
+                    .expect("a biquadratic patch's numerator is within the degree limit");
+                let zero = |end: fn(&[Rational]) -> &Rational| {
+                    line.iter().all(|p| *end(p.coefs()) == 0u32)
+                };
+                zero(|c| &c[0]) || zero(|c| &c[c.len() - 1])
+            })
+        })
+    }
+
     /// The patch at `like`'s level translated by `−frame`: the
-    /// coefficients `w·(x − c)`, the point translated before the product,
-    /// and the weights `w`.
+    /// coefficients `w·(x − c)` as `w·t + w·r` for the translation
+    /// `x − c = t + r` rounded once (module docs), and the weights `w`.
     fn framed<S: Scalar>(&self, like: &S) -> HomPatch<S> {
         let c = self.frame();
         let net = self.net.iter().map(|p| {
-            let w = S::from_f64(p[3], like);
+            let w = p[3];
             let at = |k: usize| {
-                if c[k] == 0.0 {
-                    S::product(p[k], p[3], like)
+                // Exact: `frame` keeps only certified translations.
+                let (t, r) = two_sum(p[k], -c[k]);
+                let wt = S::product(t, w, like);
+                if r == 0.0 {
+                    wt
                 } else {
-                    S::from_f64(p[k], like)
-                        .sub(&S::from_f64(c[k], like))
-                        .mul(&w)
+                    wt.add(&S::product(r, w, like))
                 }
             };
-            [at(0), at(1), at(2), w.clone()]
+            [at(0), at(1), at(2), S::from_f64(w, like)]
         });
         HomPatch::new(DEGREE, DEGREE, net).expect("a biquadratic net")
     }
@@ -374,6 +472,60 @@ fn corner(u: f64, v: f64) -> Option<(usize, usize)> {
         }
     };
     Some((end(u)?, end(v)?))
+}
+
+/// One level of the cone search: the cone in space at the level, asking
+/// for the next while rounding decides.
+struct ConeStep<'a>(&'a Tile);
+
+impl AtLevel<()> for ConeStep<'_> {
+    type Out = Result<(NormalCone, Level), ConeFail>;
+
+    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) -> Self::Out {
+        cone_in_space(numerator(&self.0.framed(like))).map(|c| (c, like.level()))
+    }
+
+    fn escalates(out: &Self::Out) -> bool {
+        *out == Err(ConeFail::Precision)
+    }
+}
+
+/// The cone of the numerator `n` at its level, split in space while the
+/// coefficients spread too far (module docs): the whole numerator about
+/// the axis of the coefficients' smallest cone, then all pieces of each
+/// depth about their mean direction, up to [`MAX_CONE_DEPTH`]. Stops at
+/// the first failure rounding decides.
+fn cone_in_space<S: Scalar>(n: [Tensor<S>; 3]) -> Result<NormalCone, ConeFail> {
+    let mut pieces = vec![n];
+    let mut depth = 0;
+    loop {
+        let axis = if depth == 0 {
+            Axis::Smallest
+        } else {
+            Axis::Mean
+        };
+        match NormalCone::of_forms(&pieces, axis) {
+            Err(ConeFail::Space) if depth < MAX_CONE_DEPTH => {}
+            out => return out,
+        }
+        depth += 1;
+        pieces = pieces.iter().flat_map(|p| split_both(p)).collect();
+    }
+}
+
+/// The four quarters of `n` split at ½ in `u`, then each half in `v`.
+fn split_both<S: Scalar>(n: &[Tensor<S>; 3]) -> [[Tensor<S>; 3]; 4] {
+    let halves = |n: &[Tensor<S>; 3], dir| {
+        let [a, b, c] = n.each_ref().map(|f| f.split_half(dir));
+        let [a0, a1] = a;
+        let [b0, b1] = b;
+        let [c0, c1] = c;
+        [[a0, b0, c0], [a1, b1, c1]]
+    };
+    let [lo, hi] = halves(n, Dir::U);
+    let [q0, q1] = halves(&lo, Dir::V);
+    let [q2, q3] = halves(&hi, Dir::V);
+    [q0, q1, q2, q3]
 }
 
 fn numerator<S: Scalar>(p: &HomPatch<S>) -> [Tensor<S>; 3] {

@@ -54,7 +54,7 @@ pub mod tensor;
 
 pub use closest::{Closest, Foot, FootBox, Reached};
 pub use compose::Implicit;
-pub use cone::NormalCone;
+pub use cone::{Axis, ConeFail, NormalCone, Obb};
 pub use curve::HomCurve;
 pub use deriv::Derivatives;
 pub use divide::{Side, Sides};
