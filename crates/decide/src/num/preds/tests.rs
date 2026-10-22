@@ -860,6 +860,15 @@ fn line_gaps_are_heights_on_one_vertical_plane() {
             (k0, k1)
         };
         let at = |s: f64, h: f64| base + l * s + up * h;
+        // The points on the plane exactly: a crossing's heights `k0`,
+        // `k1` that aren't dyadic round there, so the lines don't cross.
+        let exact = |s: f64, h: f64| {
+            let want: Q3 = std::array::from_fn(|i| q(base[i]) + q(l[i]) * q(s) + q(up[i]) * q(h));
+            q3(at(s, h)) == want
+        };
+        if !(exact(v0, k0) && exact(v1, k1)) {
+            continue;
+        }
         let (e, g) = ([at(v0, k0), at(v1, k1)], [at(u0, h0), at(u1, h1)]);
         for axis in axes {
             if qdot(&q3(axis), &q3(l)) == 0u32 {
@@ -1060,6 +1069,14 @@ fn forms_agree_with_geogram() {
                 let mut p = rng.inputs(class, form.inputs());
                 if matches!(class, Class::Line | Class::Plane) {
                     tie(*form, &mut p);
+                }
+                // A nudge off zero is subnormal: Geogram's products
+                // underflow there.
+                let subnormal = p
+                    .iter()
+                    .any(|x| x.to_array().iter().any(|c| c.is_subnormal()));
+                if subnormal {
+                    continue;
                 }
                 let Some(want) = geogram_sign(*form, &p) else {
                     continue;

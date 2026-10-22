@@ -796,3 +796,55 @@ fn calibration_cells_refuse_a_level_or_depth_the_seam_bound_lacks() {
         Err(CellsError::Seam(SeamError::Range))
     );
 }
+
+/// The seam passes' escalations as text: per target, each coedge's
+/// bound and its ledger's steps (level, units) in order, and the units
+/// used; then budgets running out along the pass (the cause, the coedge,
+/// the step and the profile).
+fn escalations(s: &Surface, coedges: &[(Curve3D, PCurve)]) -> String {
+    let mut text = String::new();
+    for target in [TARGET, 1e-12, 0.0] {
+        let mut work = Work::new(&Budget::new(MAX_WORK));
+        let pass_at = Pass {
+            stage: "seam",
+            rung: 0,
+        };
+        let seqs = work.pass(pass_at, coedges, |(c, p), ledger| {
+            let b = seam_bound(s, c, p, target, ledger)?;
+            Ok::<_, Stop<SeamError>>((b, ledger.steps().to_vec()))
+        });
+        let used = work.used();
+        text += &format!("{target:e}: {seqs:?} {used}\n");
+        for budget in [1, seam_cell_units(0) + 1, used / 3, used / 2, used - 1] {
+            let (out, spent) = pass(s, coedges, target, budget);
+            text += &format!("{budget}: {out:?} {spent}\n");
+        }
+    }
+    text
+}
+
+/// The seam passes' escalations and charges ([`escalations`]) as bits:
+/// the same on every platform and thread count. Natively on 1 and 8
+/// threads and backwards ([`assert_deterministic`]), and `tools/ci.sh`
+/// runs it on one thread and on wasm (`wasm32-wasip1`). A change of the
+/// seam bound, the schedule or the unit table changes the hash, which
+/// then needs updating here.
+///
+/// [`assert_deterministic`]: crate::infra::par::assert_deterministic
+#[test]
+fn seam_escalations_are_the_same_bits_everywhere() {
+    let s = base_plane();
+    let coedges = arcs(&s);
+    #[cfg(not(target_arch = "wasm32"))]
+    let text = crate::infra::par::assert_deterministic(|| escalations(&s, &coedges));
+    #[cfg(target_arch = "wasm32")]
+    let text = escalations(&s, &coedges);
+    let h = text.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01B3)
+    });
+    println!("hash of the escalations: {h:#018x}");
+    assert_eq!(
+        h, 0xff34_6de7_6b3d_84ae,
+        "escalations differ from the reference bits"
+    );
+}

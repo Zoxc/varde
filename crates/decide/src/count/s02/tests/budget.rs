@@ -532,3 +532,47 @@ fn charges_are_the_same_on_every_thread() {
         assert_eq!(t, alone);
     }
 }
+
+/// FNV-1a over `bytes`.
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xCBF2_9CE4_8422_2325, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01B3)
+    })
+}
+
+/// The counts' escalations and charges as bits: per share of the thin
+/// face's count (which climbs every level and runs out at the top) its
+/// end, the work at each level and the units it spent; the settled
+/// counts' pieces and units; and the degrees each level gives. The same
+/// on every platform and thread count: `tools/ci.sh` runs it natively,
+/// on one thread, with hardware FMA and on wasm (`wasm32-wasip1`). A
+/// change of the counting, the schedule or the unit table changes the
+/// hash, which then needs updating here.
+#[test]
+fn charges_are_the_same_bits_everywhere() {
+    let mut text = String::new();
+    let shares = [0, 500, 5000, u64::MAX];
+    let runs: Vec<_> = shares
+        .iter()
+        .map(|&s| (on_thin(), Charge::new(s)))
+        .collect();
+    for ((r, cost), (_, charge)) in counts(&THIN, &runs).iter().zip(&runs) {
+        text += &format!("{r:?} {cost:?} {}\n", charge.spent(cost));
+    }
+    for (pts, q) in [
+        (&QUAD[..], column(1.5, 1.4, -0.01)),
+        (&SLIVER[..], column(1.5, 1.2502, -0.01)),
+    ] {
+        let charge = Charge::new(u64::MAX);
+        for (r, cost) in counts(pts, &[(q, charge)]) {
+            text += &format!("{r:?} {cost:?} {}\n", charge.spent(&cost));
+        }
+        text += &format!("{:?}\n", every_level(pts, &[q]));
+    }
+    let h = fnv(text.as_bytes());
+    println!("hash of the charges: {h:#018x}");
+    assert_eq!(
+        h, 0xecca_f51c_9e68_1c0a,
+        "charges differ from the reference bits"
+    );
+}

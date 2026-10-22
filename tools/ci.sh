@@ -22,10 +22,12 @@
 # in every workspace build, and a stage left reachable without the
 # feature would build there unseen.
 # `wasm` builds for the browser, then runs the same-bits tests of
-# varde-decide (trig, double-double, big floats, expansions) and
-# varde-testkit (the tests' generator) on wasm32-wasip1 under Node's WASI
-# (tools/wasi_run.mjs): their results must be the bits the native run
-# pins, and each test in SAME_BITS must have run. It needs the wasm32-unknown-unknown and
+# varde-decide (trig, double-double, big floats, expansions, Bernstein
+# forms at every precision level and the escalation through them, the
+# face count's charges), varde-kernel (the seam passes' escalations and
+# charges) and varde-testkit (the tests' generator) on wasm32-wasip1
+# under Node's WASI (tools/wasi_run.mjs): their results must be the bits
+# the native run pins, and each test in SAME_BITS must have run. It needs the wasm32-unknown-unknown and
 # wasm32-wasip1 targets (`rustup target add`) and Node.js.
 # `bans` checks clippy refuses each banned call in
 # crates/kernel/tests/ban_probe.rs, that the probe names every ban on a
@@ -44,10 +46,10 @@ KERNEL_CRATES=(-p varde-decide -p varde-kernel -p varde-testkit)
 # be ignored waiting on one. Add a capability when it lands, e.g.
 # KERNEL_LANDED=(solids extrude "curved boolean").
 KERNEL_LANDED=()
-# The tests pinning bits the web must reproduce, in varde-decide's and
-# varde-testkit's libraries: the `wasm` step runs each on wasm32-wasip1
-# (by the name filter `same_bits_everywhere`) and fails unless every one
-# here passed there.
+# The tests pinning bits the web must reproduce, in varde-decide's,
+# varde-kernel's and varde-testkit's libraries: the `wasm` step runs each
+# on wasm32-wasip1 (by the name filter `same_bits_everywhere`) and fails
+# unless every one here passed there.
 SAME_BITS=(
     num::trig::tests::sin_cos_tan_are_the_same_bits_everywhere
     num::trig::tests::asin_acos_are_the_same_bits_everywhere
@@ -56,6 +58,9 @@ SAME_BITS=(
     num::dd::tests::results_are_the_same_bits_everywhere
     num::bigf::tests::results_are_the_same_bits_everywhere
     num::expansion::tests::expansions_are_the_same_bits_everywhere
+    bezier::tests::levels::levels_and_escalations_are_the_same_bits_everywhere
+    count::s02::tests::budget::charges_are_the_same_bits_everywhere
+    geom::certify::tests::seam_escalations_are_the_same_bits_everywhere
     rng::tests::draws_are_the_same_bits_everywhere
 )
 CARGO_DENY=${CARGO_DENY:-cargo-deny}
@@ -176,9 +181,13 @@ step_wasm() {
     need node Node.js "install Node.js 22 or later"
     # Node 22 can collect garbage inside a WASI fast API call (fd_write's
     # allocation) and crash with SIGSEGV; the slow call path is safe.
+    # The tests are debug builds, whose frames are larger: a face count
+    # at the big-float widths needs more than wasm's default 1 MiB of
+    # stack there, so the tests get 8 MiB.
     local out t missing=()
     out=$(CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings --no-turbo-fast-api-calls $PWD/tools/wasi_run.mjs" \
-        cargo test --locked -p varde-decide -p varde-testkit --lib --target wasm32-wasip1 \
+        CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="-C link-arg=-zstack-size=8388608" \
+        cargo test --locked -p varde-decide -p varde-kernel -p varde-testkit --lib --target wasm32-wasip1 \
         -- same_bits_everywhere 2>&1) || {
         echo "$out" >&2
         return 1

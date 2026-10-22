@@ -814,7 +814,7 @@ pub fn tangent_plane_row<S: Curved>(
 ) -> Option<[S; ORDERS]> {
     let n = oriented(unit3(normal), &q.at[0])?;
     Some(std::array::from_fn(|k| {
-        dot3(&n, &sub3(&face_rates[k], &q.rates[k]))
+        motion3(&n, &face_rates[k], &q.rates[k])
     }))
 }
 
@@ -1012,7 +1012,13 @@ pub fn shared_crossing<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) ->
     let t = unit3(tangent);
     Coeffs {
         g: S::int(0, like),
-        ord: std::array::from_fn(|k| dot3(&up, &cross3(&t, &rates[k]))),
+        ord: std::array::from_fn(|k| {
+            if still(&rates[k]) {
+                S::int(0, like)
+            } else {
+                dot3(&up, &cross3(&t, &rates[k]))
+            }
+        }),
     }
 }
 
@@ -1096,7 +1102,11 @@ pub fn shared_zorder<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) -> O
     }
     Some(std::array::from_fn(|k| {
         let d = &rates[k];
-        a.mul(&dot3(&t, d)).sub(&dot3(&up, d)).div(&den)
+        if still(d) {
+            S::int(0, like)
+        } else {
+            a.mul(&dot3(&t, d)).sub(&dot3(&up, d)).div(&den)
+        }
     }))
 }
 
@@ -1125,8 +1135,27 @@ pub fn patch_point<S: Scalar>(f: &HomPatch<S>, u: &S, v: &S) -> ([S; 3], [S; 3])
 fn along<S: Scalar>(l: &[S; 3], plus: &MovingAt<S>, minus: &MovingAt<S>) -> Coeffs<S> {
     Coeffs {
         g: dot3(l, &sub3(&plus.at, &minus.at)),
-        ord: std::array::from_fn(|k| dot3(l, &sub3(&plus.rates[k], &minus.rates[k]))),
+        ord: std::array::from_fn(|k| motion3(l, &plus.rates[k], &minus.rates[k])),
     }
+}
+
+/// `l·(a − b)`, a curved row's order along one motion from the rates `a`,
+/// `b` of its two points there: exactly zero where both are exactly zero
+/// (neither point moves along the motion), not the level's roundings of
+/// zero, so a record no motion moves (`L ≡ 0`, a missing rule) reaches
+/// [`decide`]'s guard rather than escalating as a near-degenerate tie.
+fn motion3<S: Scalar>(l: &[S; 3], a: &[S; 3], b: &[S; 3]) -> S {
+    if still(a) && still(b) {
+        S::int(0, &l[0])
+    } else {
+        dot3(l, &sub3(a, b))
+    }
+}
+
+/// Whether a rate is exactly zero: the point doesn't move along the
+/// motion.
+fn still<S: Scalar>(d: &[S; 3]) -> bool {
+    d.iter().all(|x| x.is_int(0))
 }
 
 /// The unit vector `v` turned to `v·ê > 0`; `None` unless that sign is

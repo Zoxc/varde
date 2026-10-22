@@ -18,8 +18,9 @@ use malachite::{Float, Rational as Q};
 use super::*;
 use crate::ids::VertId;
 use crate::num::bigf::{Big, Width};
-use crate::num::decide::Row;
+use crate::num::decide::{Row, decide_tie};
 use crate::num::exact::{order_value, value};
+use crate::num::schedule::LEVELS;
 use crate::records::keys::{Query, RecordKey, VvKey};
 
 type B = Bounded<Big>;
@@ -1137,8 +1138,13 @@ fn tie_rates(r: &mut Rng, along: &[DVec3], s: f64) -> [DVec3; ORDERS] {
 /// the spatial ones, and `decide` gives the first non-zero sign, or the
 /// guard. Without a spatial value (`None`: a zero-length or vertical
 /// line, a vertical plane, parallel shadows) every order is zero and the
-/// guard is reached, never a sign.
-fn agrees_exactly<P: Pred + std::fmt::Debug>(pred: &P, h: Option<&dyn Fn(usize) -> Q>, row: Row) {
+/// guard is reached, never a sign. Returns whether the guard was
+/// reached.
+fn agrees_exactly<P: Pred + std::fmt::Debug>(
+    pred: &P,
+    h: Option<&dyn Fn(usize) -> Q>,
+    row: Row,
+) -> bool {
     let rows = [
         value(pred),
         order_value::<P, 1>(pred),
@@ -1151,7 +1157,7 @@ fn agrees_exactly<P: Pred + std::fmt::Debug>(pred: &P, h: Option<&dyn Fn(usize) 
     let Some(h) = h else {
         assert!(rows.iter().all(|x| *x == 0u32), "{pred:?}");
         assert_eq!(got, guard, "{pred:?}");
-        return;
+        return true;
     };
     let h0 = h(0);
     let spatial: [Q; 5] = std::array::from_fn(|k| if k == 0 { h0.clone() } else { h(k) - &h0 });
@@ -1171,6 +1177,7 @@ fn agrees_exactly<P: Pred + std::fmt::Debug>(pred: &P, h: Option<&dyn Fn(usize) 
     let want = spatial.iter().find(|x| **x != 0u32);
     let want = want.map_or(guard, |x| Ok(if *x > 0u32 { Sign::Pos } else { Sign::Neg }));
     assert_eq!(got, want, "{pred:?}");
+    got == guard
 }
 
 /// Every flat row against exact spatial values (shadow sides in shadow
@@ -1178,9 +1185,13 @@ fn agrees_exactly<P: Pred + std::fmt::Debug>(pred: &P, h: Option<&dyn Fn(usize) 
 /// exact ties at the value and at orders 1 to 3 (rates along the line or
 /// `UP`, or zero, the saddle's `d = 0`), points on the line, zero-length
 /// and vertical lines, vertical planes, parallel shadows, `σ_A = ±1`,
-/// tiny coordinates (the rational stage) and large ones.
+/// tiny coordinates (the rational stage) and large ones. `decide`
+/// reaches the guard exactly where the spatial gradient is identically
+/// zero (counted per row, both cases met), and is `Internal` there.
 #[test]
 fn flat_rows_are_the_spatial_values_exactly() {
+    // Per row, the records decided and those that reached the guard.
+    let mut guards = [[0u32; 2]; 4];
     for seed in varde_testing::seeds(64, 4096) {
         let mut r = Rng::new(seed);
         let s = [1.0, p2(-40), p2(-1000), p2(12)][r.below(4) as usize];
@@ -1210,7 +1221,7 @@ fn flat_rows_are_the_spatial_values_exactly() {
                 let (a, b) = (qshadow(&qat(w, &wr, k)), qshadow(&qat(q, &qr, k)));
                 &a[i] - &b[i]
             };
-            agrees_exactly(&pred, Some(&h), Row::VertexVertexShadow);
+            guards[0][usize::from(agrees_exactly(&pred, Some(&h), Row::VertexVertexShadow))] += 1;
         }
         // A line, `q` on its shadow or not.
         let a = r.ints(6) * s;
@@ -1243,11 +1254,12 @@ fn flat_rows_are_the_spatial_values_exactly() {
             (&b[0] - &a[0]) * (&q[1] - &a[1]) - (&b[1] - &a[1]) * (&q[0] - &a[0])
         };
         let flat = qshadow(&qv(dir)) == [Q::from(0u32), Q::from(0u32)];
-        agrees_exactly(
+        let guard = agrees_exactly(
             &pred,
             (!flat).then_some(&h as &dyn Fn(usize) -> Q),
             Row::VertexCurveShadow,
         );
+        guards[1][usize::from(guard)] += 1;
         // A plane through `p`, `q` on it, above or below it, or not.
         let n = match r.below(4) {
             0 => R_HAT,
@@ -1278,11 +1290,12 @@ fn flat_rows_are_the_spatial_values_exactly() {
             (qdot(&nq, &f) - qdot(&nq, &qat(q, &qr, k))) / &facing
         };
         let vertical = facing == 0u32;
-        agrees_exactly(
+        let guard = agrees_exactly(
             &pred,
             (!vertical).then_some(&h as &dyn Fn(usize) -> Q),
             Row::ColumnHit,
         );
+        guards[2][usize::from(guard)] += 1;
         // Two edges, `g` straight above or below a point of `e`, or not.
         let e0 = r.ints(6) * s;
         let ed = match r.below(5) {
@@ -1332,12 +1345,17 @@ fn flat_rows_are_the_spatial_values_exactly() {
             qdot(&qv(UP), &gap)
         };
         let parallel = det == 0u32;
-        agrees_exactly(
+        let guard = agrees_exactly(
             &pred,
             (!parallel).then_some(&h as &dyn Fn(usize) -> Q),
             Row::ZOrder,
         );
+        guards[3][usize::from(guard)] += 1;
     }
+    // Both happen for every row: the guard (with its gradient exactly
+    // zero) and a sign.
+    println!("flat rows (decided, guard): {guards:?}");
+    assert!(guards.iter().flatten().all(|&n| n > 0), "{guards:?}");
 }
 
 /// Curved rows on near-degenerate data at every level: a curve whose
@@ -1464,6 +1482,148 @@ fn curved_rows_stay_sound_near_degenerate_data() {
             meets(&third[i], w, &what);
         }
     }
+}
+
+/// What `decide` gives the curved rows at one level: per row, whether
+/// its gradient is identically zero (its points all of `B`, fixed) and
+/// the answer. The query point is the curve's point itself (a tie at the
+/// value), straight above it (a tie of the shadow rows) or anywhere.
+fn curved_decisions<S: Curved + crate::num::decide::Coeff>(
+    c: &[(DVec3, f64)],
+    net: &[(DVec3, f64)],
+    case: (u64, [bool; 2], DVec3),
+    like: &S,
+) -> Vec<(bool, Result<Sign, Fail>)> {
+    let lit = |x: f64| S::from_f64(x, like);
+    let curve =
+        HomCurve::new(c.iter().map(|(x, w)| (lit3(*x * *w, like), lit(*w)))).expect("a span");
+    let surface = HomPatch::new(
+        2,
+        2,
+        net.iter()
+            .map(|(x, w)| [x.x, x.y, x.z, 1.0].map(|v| lit(v * w))),
+    )
+    .expect("a patch");
+    let (p, t) = curve_point(&curve, &lit(0.375));
+    let (_, n) = patch_point(&surface, &lit(0.625), &lit(0.25));
+    let (at, [q_moves, foot_moves], d) = case;
+    let q = match at {
+        0 => p.clone(),
+        1 => add_lit(&p, UP * 3.0, like),
+        _ => lit3(DVec3::new(1.0, -2.0, 0.5), like),
+    };
+    let point = |x: [S; 3], moves: bool| {
+        if moves {
+            MovingAt::of_a(x, Sign::Pos, lit3(d, like))
+        } else {
+            MovingAt::fixed(x)
+        }
+    };
+    let (qa, foot) = (point(q, q_moves), point(p, foot_moves));
+    let zero = !q_moves && !foot_moves;
+    let band = Band::curved(p2(-30), p2(-40)).expect("a band");
+    let k = key(Row::VertexCurveShadow);
+    let mut out = Vec::new();
+    let mut push = |c: Coeffs<S>| out.push((zero, decide(c.g, c.ord, band, k)));
+    push(curve_shadow(&qa, &foot, &t));
+    push(vv_shadow(&qa, &foot, ShadowAxis::Side));
+    push(vv_shadow(&qa, &foot, ShadowAxis::Along));
+    let tg = [t[1].clone(), t[0].neg(), t[2].clone()];
+    if let Some(z) = z_order(&qa, &t, &foot, &tg) {
+        push(z);
+    }
+    if let Some(ord) = tangent_plane_row(&n, &foot.rates, &qa) {
+        out.push((zero, decide_tie(ord, band, k)));
+    }
+    // The shared-curve rows read the moving edge's rates alone.
+    let c = shared_crossing(&t, &qa.rates);
+    out.push((!q_moves, decide(c.g, c.ord, band, k)));
+    if let Some(ord) = shared_zorder(&t, &qa.rates) {
+        out.push((!q_moves, decide_tie(ord, band, k)));
+    }
+    out
+}
+
+/// `x + v` at `like`'s level.
+fn add_lit<S: Curved>(x: &[S; 3], v: DVec3, like: &S) -> [S; 3] {
+    let v = lit3(v, like);
+    [0, 1, 2].map(|i| x[i].add(&v[i]))
+}
+
+/// Curved rows reach `decide`'s guard only where their gradient is
+/// identically zero, at every level: a record between two points of `B`
+/// (no motion moves it) whose value is a tie is `Internal` there (its
+/// orders exact zeros, never a near-degenerate tie that escalates), and a
+/// record with a moving point (`A`'s `T₂…T₄` move every row) never is;
+/// its ties take a sign or escalate. Counted per level.
+#[test]
+fn curved_rows_reach_the_guard_only_with_no_gradient() {
+    // Per level: decided, escalated, guard.
+    let mut seen = [[0u32; 3]; LEVELS];
+    for seed in varde_testing::seeds(32, 1024) {
+        let mut r = Rng::new(seed);
+        let mut dy = |e: f64| (r.range(-e, e) * 1024.0).round() / 1024.0;
+        let c: Vec<_> = (0..3)
+            .map(|_| (DVec3::new(dy(8.0), dy(8.0), dy(8.0)), 1.0 + dy(0.5).abs()))
+            .collect();
+        let net: Vec<_> = (0..9)
+            .map(|i| {
+                let (u, v) = (f64::from(i / 3), f64::from(i % 3));
+                (
+                    DVec3::new(2.0 * u + dy(0.5), 2.0 * v + dy(0.5), dy(2.0)),
+                    1.0 + dy(0.3).abs(),
+                )
+            })
+            .collect();
+        let d = match r.below(3) {
+            0 => DVec3::ZERO,
+            1 => UP,
+            _ => r.eighths(),
+        };
+        let case = (r.below(3), [r.a_is_first(), r.a_is_first()], d);
+        let levels = [
+            curved_decisions(&c, &net, case, &Bounded::exact(0.0)),
+            curved_decisions(&c, &net, case, &Bounded::exact(Dd::from(0.0))),
+            curved_decisions(
+                &c,
+                &net,
+                case,
+                &Bounded::exact(Big::from_f64(0.0, Width::ALL[0])),
+            ),
+            curved_decisions(
+                &c,
+                &net,
+                case,
+                &Bounded::exact(Big::from_f64(0.0, Width::ALL[1])),
+            ),
+            curved_decisions(
+                &c,
+                &net,
+                case,
+                &Bounded::exact(Big::from_f64(0.0, Width::ALL[2])),
+            ),
+        ];
+        for (l, rows) in levels.iter().enumerate() {
+            for (i, (zero, got)) in rows.iter().enumerate() {
+                let what = format!("seed {seed}, level {l}, row {i}: {got:?}");
+                match got {
+                    Ok(_) => seen[l][0] += 1,
+                    Err(Fail::Escalate { order }) => {
+                        // With no motion, only the value may escalate:
+                        // its orders are exact zeros, not ties.
+                        assert!(!*zero || *order == 0, "no motion: {what}");
+                        seen[l][1] += 1;
+                    }
+                    Err(Fail::Internal { .. }) => {
+                        assert!(*zero, "the guard with a moving point: {what}");
+                        seen[l][2] += 1;
+                    }
+                }
+            }
+        }
+    }
+    println!("curved rows per level (decided, escalated, guard): {seen:?}");
+    assert!(seen.iter().all(|s| s[0] > 0 && s[2] > 0), "{seen:?}");
 }
 
 /// The face key's value where the facing has no certified sign: a zero
