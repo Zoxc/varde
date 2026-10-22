@@ -6,8 +6,8 @@
 #   tools/ci.sh kernel-ignores extrude "curved boolean"
 #                               that step alone, these capabilities landed too
 #
-# Steps: fmt, kernel-ignores, clippy, bans, test, wasm, deny, reuse,
-# attribution.
+# Steps: fmt, kernel-ignores, clippy, bans, test, staging, wasm, deny,
+# reuse, attribution.
 # `kernel-ignores` counts the tests tagged #[ignore = "kernel: <capability>"]
 # per capability and crate, and fails if one waits on a capability in
 # KERNEL_LANDED (below) or given after it.
@@ -15,6 +15,12 @@
 # one rayon thread (their results must not depend on the thread count),
 # then varde-decide's with hardware FMA on (x86_64 CPUs with FMA; the
 # same bits).
+# `staging` builds varde-kernel on its own, with and without its
+# `staging` feature (development builds: `Unsupported::Stage`), lints and
+# tests both, and fails unless each build's own error test ran: once a
+# dependent turns the feature on, cargo's feature unification turns it on
+# in every workspace build, and a stage left reachable without the
+# feature would build there unseen.
 # `wasm` builds for the browser, then runs the same-bits tests of
 # varde-decide (trig, double-double, big floats, expansions) and
 # varde-testkit (the tests' generator) on wasm32-wasip1 under Node's WASI
@@ -134,6 +140,31 @@ step_test() {
     fi
 }
 
+step_staging() {
+    cargo clippy --locked -p varde-kernel --all-targets --features staging -- -D warnings
+    kernel_test_ran infra::error::tests::a_staging_build_has_the_stages --features staging
+    # Alone, so no other package can turn the feature on.
+    cargo clippy --locked -p varde-kernel --all-targets -- -D warnings
+    kernel_test_ran infra::error::tests::a_release_build_has_no_stage
+}
+
+# Runs varde-kernel's tests (with the cargo arguments after the test's
+# name) and fails unless that test ran and passed.
+kernel_test_ran() {
+    local t=$1 out
+    shift
+    out=$(cargo test --locked -p varde-kernel "$@" 2>&1) || {
+        echo "$out" >&2
+        return 1
+    }
+    grep -E '^test result:' <<< "$out" || true
+    grep -qxF "test $t ... ok" <<< "$out" || {
+        echo "staging: test $t didn't run (cargo test -p varde-kernel $*)" >&2
+        return 1
+    }
+    echo "staging: $t passed (cargo test -p varde-kernel $*)"
+}
+
 # Whether this machine's CPU has fused multiply-add, as rustc sees it.
 host_has_fma() {
     "${RUSTC:-rustc}" --print cfg -C target-cpu=native | grep -qx 'target_feature="fma"'
@@ -207,7 +238,7 @@ step_attribution() {
     python3 tools/check_attribution.py
 }
 
-ALL=(fmt kernel-ignores clippy bans test wasm deny reuse attribution)
+ALL=(fmt kernel-ignores clippy bans test staging wasm deny reuse attribution)
 is_step() {
     local s
     for s in "${ALL[@]}"; do

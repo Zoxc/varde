@@ -93,7 +93,7 @@ cargo fmt --all                             # format, by rustfmt.toml: run befor
 cargo check --workspace --target wasm32-unknown-unknown   # web-only code paths
 cargo doc --workspace --no-deps --document-private-items  # link checks, on both targets
 cd crates/web && trunk serve                # browser build
-tools/ci.sh                                 # every check: fmt, kernel-ignores, clippy, bans, tests (kernel crates also on 1 thread), wasm, cargo-deny, reuse, attribution
+tools/ci.sh                                 # every check: fmt, kernel-ignores, clippy, bans, tests (kernel crates also on 1 thread), staging, wasm, cargo-deny, reuse, attribution
 ```
 
 GPU tests (`crates/render/tests`, viewport tests in `varde-view`) render
