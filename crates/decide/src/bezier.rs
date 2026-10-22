@@ -19,7 +19,9 @@
 //! and patches put into line and plane equations, and the shadow of a
 //! span. In [`cone`], the certified normal cone of a vector form's
 //! coefficients ([`NormalCone`]). In [`roots`], root isolation on
-//! `[0, 1]`: certified simple roots, and clusters for the rest. Every operation commutes with
+//! `[0, 1]`: certified simple roots, and clusters for the rest; in
+//! [`roots_nd`], the same for a system of forms in `d` variables on
+//! `[0, 1]ᵈ`, certified by Krawczyk's operator. Every operation commutes with
 //! reversal to the bit (the tangent and normal numerators change sign
 //! with it, exactly but for the signs of zeros; the roots of the reversed
 //! form are the mirrored roots), and the 2D products and elevation with
@@ -34,6 +36,7 @@ pub mod poly;
 pub mod power;
 pub mod product;
 pub mod roots;
+pub mod roots_nd;
 pub mod scalar;
 pub mod split;
 pub mod tensor;
@@ -48,6 +51,7 @@ pub use roots::{
     Cluster, Dyadic, Exact, ExactRoots, Found, Limits, Narrowed, Root, Roots, isolate,
     isolate_exact, narrow,
 };
+pub use roots_nd::{NdBox, NdCluster, NdFail, NdFound, NdRoot, NdRoots, isolate_nd};
 pub use scalar::Scalar;
 pub use tensor::{Dir, HomPatch, HullBox, Partials, Tensor};
 

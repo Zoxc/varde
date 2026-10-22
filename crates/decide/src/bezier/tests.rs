@@ -8,7 +8,7 @@
 
 use malachite::Rational as Q;
 use malachite::base::num::conversion::traits::RoundingFrom;
-use malachite::base::rounding_modes::RoundingMode::Nearest;
+use malachite::base::rounding_modes::RoundingMode::{Ceiling, Nearest};
 
 use super::*;
 use crate::num::bigf::{Big, BigF, Width};
@@ -21,6 +21,20 @@ pub(super) fn q(x: f64) -> Q {
 
 pub(super) fn qabs(x: Q) -> Q {
     if x < 0u32 { -x } else { x }
+}
+
+/// The rational `x` at a level: its nearest value there (an `f64`, or
+/// two), the rest as the rounding error.
+pub(super) fn at_level<S: Level>(x: &Q) -> S {
+    let hi = f64::rounding_from(x, Nearest).0;
+    let lo = f64::rounding_from(&(x - q(hi)), Nearest).0;
+    let v = S::of(hi, lo);
+    let rest = qabs(x - v.val());
+    if rest == 0u32 {
+        v
+    } else {
+        v.with_errs(0.0, f64::rounding_from(&rest, Ceiling).0)
+    }
 }
 
 /// A precision level's scalar, as the tests see it.

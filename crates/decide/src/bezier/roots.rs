@@ -157,7 +157,7 @@ impl Dyadic {
     /// itself when it is a float (`num < 2⁵³`).
     pub fn bounds(self) -> [f64; 2] {
         let s = pow2_neg(self.exp);
-        let [lo, hi] = int_bounds(self.num);
+        let [lo, hi] = int_bounds(u128::from(self.num));
         [lo * s, hi * s]
     }
 
@@ -905,8 +905,8 @@ fn derivative_range<S: Scalar>(dq: &Poly<S>, [a, b]: [f64; 2], like: &S) -> [f64
 /// kept inside the leaf's own bounds.
 fn to_t(k: u32, j: u64, [a, b]: [f64; 2]) -> [f64; 2] {
     let s = pow2_neg(k);
-    let [jl, ju] = int_bounds(j);
-    let [_, jh] = int_bounds(j + 1);
+    let [jl, ju] = int_bounds(u128::from(j));
+    let [_, jh] = int_bounds(u128::from(j) + 1);
     let lo = down(jl + a);
     let hi = up_signed(ju + b);
     // Scaling by `2⁻ᵏ` is exact unless the product is subnormal (only on
@@ -929,7 +929,7 @@ fn scaled(x: f64, s: f64, round: fn(f64) -> f64) -> f64 {
 
 /// `[lo, hi]`, `f64`s with the integer `n` between them, both `n` for
 /// `n < 2⁵³`.
-fn int_bounds(n: u64) -> [f64; 2] {
+pub(super) fn int_bounds(n: u128) -> [f64; 2] {
     // Rounds to nearest above `2⁵³`.
     let x = n as f64;
     if n < 1 << 53 {
@@ -940,27 +940,27 @@ fn int_bounds(n: u64) -> [f64; 2] {
 }
 
 /// `2⁻ᵏ` exactly, `k ≤ 1022`.
-fn pow2_neg(k: u32) -> f64 {
+pub(super) fn pow2_neg(k: u32) -> f64 {
     f64::from_bits((1023 - u64::from(k)) << 52)
 }
 
 /// An upper bound of the exact value `t` was rounded from (any sign).
-fn up_signed(t: f64) -> f64 {
+pub(super) fn up_signed(t: f64) -> f64 {
     -down(-t)
 }
 
 /// Interval sum, bounded outwards (a NaN end becomes infinite).
-fn add(x: [f64; 2], y: [f64; 2]) -> [f64; 2] {
+pub(super) fn add(x: [f64; 2], y: [f64; 2]) -> [f64; 2] {
     [down(x[0] + y[0]), up_signed(x[1] + y[1])]
 }
 
 /// Interval difference, bounded outwards.
-fn sub(x: [f64; 2], y: [f64; 2]) -> [f64; 2] {
+pub(super) fn sub(x: [f64; 2], y: [f64; 2]) -> [f64; 2] {
     [down(x[0] - y[1]), up_signed(x[1] - y[0])]
 }
 
 /// Interval product, bounded outwards.
-fn mul(x: [f64; 2], y: [f64; 2]) -> [f64; 2] {
+pub(super) fn mul(x: [f64; 2], y: [f64; 2]) -> [f64; 2] {
     let p = [x[0] * y[0], x[0] * y[1], x[1] * y[0], x[1] * y[1]];
     let mut r = [f64::INFINITY, f64::NEG_INFINITY];
     for v in p {

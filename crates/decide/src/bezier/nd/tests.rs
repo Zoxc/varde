@@ -2,7 +2,8 @@
 //! exact (a patch against a patch as a four-variable form vanishes where
 //! the two meet); at every level each certified result holds the exact
 //! one; elevation and splits commute with reversal in every variable, and
-//! in two variables evaluation is the tensor's, to the bit.
+//! in two variables evaluation is the tensor's, to the bit; one half of a
+//! split is that of the split.
 
 use malachite::Rational as Q;
 
@@ -169,6 +170,8 @@ fn levels<S: Level>(seeds: std::ops::Range<u64>) {
                 let [l0, r0] = f.split_half(axis);
                 assert_eq!(bits(&l), bits(&r0.reversed(axis)), "{what} split {axis}");
                 assert_eq!(bits(&r), bits(&l0.reversed(axis)), "{what} split {axis}");
+                assert_eq!(bits(&f.half(axis, false)), bits(&l0), "{what} half {axis}");
+                assert_eq!(bits(&f.half(axis, true)), bits(&r0), "{what} half {axis}");
             }
             let (t, _) = tensor::<S>(&mut rng, case % 3, 1 + case % 2, true, false);
             let nt = NdTensor::from_tensor(&t);

@@ -8,12 +8,10 @@
 //! clusters; the reversed polynomial gives the mirrored result.
 
 use malachite::Rational as Q;
-use malachite::base::num::conversion::traits::RoundingFrom;
-use malachite::base::rounding_modes::RoundingMode::{Ceiling, Nearest};
 use malachite::{Float, base::num::arithmetic::traits::PowerOf2};
 
 use super::*;
-use crate::bezier::tests::{Level, Rng, q, qabs};
+use crate::bezier::tests::{Level, Rng, at_level, q};
 use crate::num::bigf::{Big, BigF, Width};
 use crate::num::bounded::{Bounded, ETA};
 use crate::num::dd::Dd;
@@ -37,20 +35,6 @@ fn product(roots: &[(Q, u32)], scale: &Q) -> Poly<Q> {
         }
     }
     p
-}
-
-/// The rational `x` at a level: its nearest value there (an `f64`, or
-/// two), the rest as the rounding error.
-fn at_level<S: Level>(x: &Q) -> S {
-    let hi = f64::rounding_from(x, Nearest).0;
-    let lo = f64::rounding_from(&(x - q(hi)), Nearest).0;
-    let v = S::of(hi, lo);
-    let rest = qabs(x - v.val());
-    if rest == 0u32 {
-        v
-    } else {
-        v.with_errs(0.0, f64::rounding_from(&rest, Ceiling).0)
-    }
 }
 
 fn level<S: Level>(p: &Poly<Q>) -> Poly<S> {

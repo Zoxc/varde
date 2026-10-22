@@ -215,6 +215,40 @@ impl<S: Scalar> NdTensor<S> {
         self.split_lines(axis, Poly::split_half)
     }
 
+    /// One half at ½ in `axis`, the high one (`[½, 1]`) or the low: the
+    /// same bits as that half of [`split_half`](Self::split_half), by de
+    /// Casteljau's midpoints in place on each line.
+    pub fn half(&self, axis: usize, high: bool) -> Self {
+        let n = self.deg[axis];
+        let inner: usize = self.deg[axis + 1..].iter().map(|d| d + 1).product();
+        let len = n + 1;
+        let mut c = self.c.clone();
+        for line in c.chunks_mut(len * inner) {
+            for r in 0..inner {
+                let at = |i: usize| i * inner + r;
+                for k in 1..=n {
+                    if high {
+                        // Entry `i` becomes level `k`'s `i`: the right
+                        // side read upwards is left at the end.
+                        for i in 0..=n - k {
+                            line[at(i)] = line[at(i)].mid(&line[at(i + 1)]);
+                        }
+                    } else {
+                        // Entry `i ≥ k` becomes level `k`'s `i − k`: the
+                        // left side is left.
+                        for i in (k..=n).rev() {
+                            line[at(i)] = line[at(i - 1)].mid(&line[at(i)]);
+                        }
+                    }
+                }
+            }
+        }
+        NdTensor {
+            deg: self.deg.clone(),
+            c,
+        }
+    }
+
     /// The pieces on `[0, t]` and `[t, 1]` in `axis` ([`Poly::split_at`]).
     pub fn split_at(&self, axis: usize, t: &S) -> [Self; 2] {
         self.split_lines(axis, |p| p.split_at(t))
