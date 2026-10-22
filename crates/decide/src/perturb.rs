@@ -1110,14 +1110,20 @@ pub fn shared_zorder<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) -> O
     }))
 }
 
-/// A curve's point at `s` and its tangent there, `W·P′ − W′·P` (`W²`
-/// times the point's derivative, so of the curve's direction where the
-/// weights are positive).
+/// A curve's point at `s` and its tangent there, a positive multiple of
+/// `W·P′ − W′·P` (`W²` times the point's derivative, so of the curve's
+/// direction where the weights are positive): of `P` with `P′` and `W`
+/// with `W′` each scaled by a power of two to a largest component near 1,
+/// so it neither overflows nor underflows for huge or tiny coordinates or
+/// weights.
 pub fn curve_point<S: Scalar>(c: &HomCurve<S, 3>, s: &S) -> ([S; 3], [S; 3]) {
     let (p, w) = c.eval_hom(s);
     let (dp, dw) = c.derivative().eval_hom(s);
     let at = [0, 1, 2].map(|k| p[k].div(&w));
-    let tangent = [0, 1, 2].map(|k| w.mul(&dp[k]).sub(&dw.mul(&p[k])));
+    let ([x, y, z], [dx, dy, dz]) = (p, dp);
+    let [x, y, z, dx, dy, dz] = rescaled(&[x, y, z, dx, dy, dz]);
+    let [w, dw] = rescaled(&[w, dw]);
+    let tangent = [(x, dx), (y, dy), (z, dz)].map(|(a, d)| w.mul(&d).sub(&dw.mul(&a)));
     (at, tangent)
 }
 
@@ -1224,7 +1230,7 @@ fn unit3<S: Curved>(v: &[S; 3]) -> [S; 3] {
 /// the same direction, whose products (squared lengths, cross products
 /// of two such) neither overflow nor underflow. `v` itself where that
 /// largest bound is zero or not finite.
-fn rescaled<S: Scalar>(v: &[S; 3]) -> [S; 3] {
+fn rescaled<S: Scalar, const N: usize>(v: &[S; N]) -> [S; N] {
     let big = v
         .iter()
         .flat_map(|x| x.enclose())
@@ -1240,7 +1246,7 @@ fn rescaled<S: Scalar>(v: &[S; 3]) -> [S; 3] {
         };
         let k = f64::from_bits(((1023 - e) as u64) << 52);
         let k = S::from_f64(k, &v[0]);
-        [0, 1, 2].map(|i| v[i].mul(&k))
+        v.each_ref().map(|x| x.mul(&k))
     } else {
         v.clone()
     }

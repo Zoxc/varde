@@ -1872,3 +1872,39 @@ fn curved_rows_take_tangents_of_any_magnitude() {
         assert!(h.sign().is_some() && h.sign() == h0.sign(), "{s:e}: {h:?}");
     }
 }
+
+/// A curve's tangent at huge coordinates or weights, where `W·P′` is past
+/// `f64`'s range, is finite and of the same direction as at unit scale.
+#[test]
+fn curve_tangents_take_coordinates_and_weights_of_any_magnitude() {
+    type L = Bounded<f64>;
+    let ctrl = [
+        ([1.0, -2.0, 0.5], 1.0),
+        ([3.0, 1.0, 2.0], 2.0),
+        ([4.0, 3.0, -1.0], 0.5),
+    ];
+    let tangent = |scale: f64, weight: f64| {
+        let c = HomCurve::new(ctrl.iter().map(|(x, w)| {
+            let w = w * weight;
+            (x.map(|v| L::exact(v * scale * w)), L::exact(w))
+        }))
+        .expect("a span");
+        curve_point(&c, &L::exact(0.375)).1.map(|x| {
+            let [lo, hi] = x.enclose();
+            assert!(lo.is_finite() && hi.is_finite(), "{x:?}");
+            (lo + hi) / 2.0
+        })
+    };
+    let t0 = tangent(1.0, 1.0);
+    for (scale, weight) in [(p2(990), p2(20)), (1.0, p2(600)), (p2(-500), p2(-200))] {
+        let t = tangent(scale, weight);
+        let r = t[0] / t0[0];
+        assert!(r > 0.0, "{scale:e}, {weight:e}: {t:?}");
+        for k in 0..3 {
+            assert!(
+                (t[k] / r - t0[k]).abs() <= 1e-12 * t0[k].abs(),
+                "{scale:e}, {weight:e}: {t:?} vs {t0:?}"
+            );
+        }
+    }
+}
