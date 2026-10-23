@@ -44,11 +44,45 @@
 //! once per value, so a split moves the curve by at most that rounding,
 //! and the spans it doesn't cut keep their bits. [`Curve3D::slice`] takes
 //! the spans between two knots. The same for p-curves.
+//!
+//! **Bounded control points.** Every control point of a space curve, the
+//! middle ones included, is a bounded position: within the `MAX_COORD`
+//! box `[−MAX_COORD, MAX_COORD]³` ([`varde_decide::num::storage`]). A
+//! middle control point may lie far off its curve (about `|chord|/w₁`,
+//! 64 times the chord at the least weight), so a curve well inside the
+//! box can have one outside it. [`Curve3D::bounded`] is the chain
+//! constructors' rule for that: a span whose middle control point, as
+//! stored, would leave the box is split at the middle of its knots
+//! (the `f64` midpoint), and again, until every middle point is inside;
+//! the split takes the middle weight towards the ends' and the middle
+//! point towards the curve. The cuts are those of [`Curve3D::split`] of
+//! the given chain (its canonical points, its exact sub-spans rounded
+//! once), so the result is that split, bit for bit. A chain is refused
+//! (`Range`) where a point of the curve itself is outside the box (an
+//! end, or a cut's knot point), and where a span still fails after
+//! [`MAX_RANGE_DEPTH`] halvings (a curve touching the box's boundary
+//! from inside). The number of splits made is the spans gained. A split
+//! of a bounded chain stays bounded: its control points are convex
+//! combinations of the stored ones, rounded to nearest, and the box's
+//! bound is an `f64`.
+//!
+//! **Conic chains.** [`Curve3D::ellipse`] is the chain of an ellipse's
+//! 90° cells at a level ([`Conic::quarter_at`]; knots in quarter turns,
+//! `i·2^−L` at the start of span `i`, so a closed ellipse ends on its
+//! first point, bit for bit); [`Curve3D::conic_arcs`] the chain of a
+//! parabola's or hyperbola's arcs ([`Conic::arc`]) between consecutive
+//! parameters, the parameters its knots. Both are bounded as above, the
+//! cells' range splits the cells' own finer levels, the same bits as
+//! the lattice's.
 
 use malachite::Rational;
 use varde_decide::bezier::{HomCurve, Scalar};
 use varde_decide::num::bounded::Bounded;
 
+use varde_decide::num::storage::MAX_COORD;
+
+use super::conic::{Conic, ConicError, ConicKind};
+use super::lattice::MAX_LEVEL;
 use super::round::{nearest, q};
 
 /// The least weight of a span's control point.
@@ -56,6 +90,10 @@ pub const MIN_WEIGHT: f64 = 1.0 / 64.0;
 
 /// The greatest weight of a span's control point.
 pub const MAX_WEIGHT: f64 = 64.0;
+
+/// The most halvings of one span the range split makes
+/// ([`Curve3D::bounded`]).
+pub const MAX_RANGE_DEPTH: u32 = 16;
 
 /// A space span: three affine control points with their weights,
 /// `(x, y, z, w)`.
@@ -79,6 +117,12 @@ pub enum CurveError {
     /// Span `span`'s first control point isn't span `span − 1`'s last,
     /// bit for bit.
     Join { span: usize },
+    /// A point of span `span`'s curve lies outside the `MAX_COORD` box,
+    /// or its middle control point can't be brought inside it by
+    /// [`MAX_RANGE_DEPTH`] halvings ([`Curve3D::bounded`]).
+    Range { span: usize },
+    /// A conic chain's conic refused a span.
+    Conic(ConicError),
 }
 
 /// An edge's curve: a chain of rational quadratic spans in space (module
@@ -103,6 +147,100 @@ impl Curve3D {
     pub fn new(spans: Vec<Span3>, knots: Vec<f64>) -> Result<Curve3D, CurveError> {
         validate(&spans, &knots)?;
         Ok(Curve3D { spans, knots })
+    }
+
+    /// The chain of `spans` over `knots` as [`new`](Self::new) checks
+    /// it, every span whose middle control point would leave the
+    /// `MAX_COORD` box split at the middle of its knots until none does
+    /// (module docs): the same bits as [`split`](Self::split) at the
+    /// knots it adds. `Range` naming the given span where that fails.
+    pub fn bounded(spans: Vec<Span3>, knots: Vec<f64>) -> Result<Curve3D, CurveError> {
+        validate(&spans, &knots)?;
+        let pieces: Vec<Piece> = spans
+            .iter()
+            .zip(knots.windows(2))
+            .map(|(parent, k)| Piece {
+                parent: *parent,
+                a: k[0],
+                b: k[1],
+                t0: k[0],
+                t1: k[1],
+            })
+            .collect();
+        let (spans, knots) = bound_pieces(&pieces)?;
+        Curve3D::new(spans, knots)
+    }
+
+    /// The ellipse's chain of spans `from..to` of level `level`
+    /// ([`Conic::quarter_at`]), span `i` over `[i, i + 1]·2^−level` in
+    /// quarter turns, bounded as [`bounded`](Self::bounded) does (its
+    /// splits the cells' finer levels). `Shape` unless `from < to`, at
+    /// most a full turn (`to − from ≤ 4·2^level`) and both within
+    /// `±2⁵²`; `Conic(Kind)` for another conic, `Conic(Level)` past
+    /// [`MAX_LEVEL`]; `Range` (span index from `from`) as for
+    /// [`bounded`](Self::bounded).
+    pub fn ellipse(
+        conic: &Conic<3>,
+        level: u32,
+        from: i64,
+        to: i64,
+    ) -> Result<Curve3D, CurveError> {
+        if conic.kind() != ConicKind::Ellipse {
+            return Err(CurveError::Conic(ConicError::Kind));
+        }
+        if level > MAX_LEVEL {
+            return Err(CurveError::Conic(ConicError::Level));
+        }
+        const LIMIT: i64 = 1 << 52;
+        let turn = 4i64 << level;
+        if !(-LIMIT..=LIMIT).contains(&from)
+            || !(-LIMIT..=LIMIT).contains(&to)
+            || from >= to
+            || to - from > turn
+        {
+            return Err(CurveError::Shape);
+        }
+        // Exact: `|i| ≤ 2⁵²` and a power of two.
+        let scale = 1.0 / (1u64 << level) as f64;
+        let mut pieces = Vec::new();
+        let mut cell: Option<(i64, Span3)> = None;
+        for i in from..to {
+            let k = i >> level;
+            let parent = match cell {
+                Some((c, s)) if c == k => s,
+                _ => {
+                    let s = conic.quarter::<4>(k).map_err(CurveError::Conic)?;
+                    cell = Some((k, s));
+                    s
+                }
+            };
+            pieces.push(Piece {
+                parent,
+                a: k as f64,
+                b: (k + 1) as f64,
+                t0: i as f64 * scale,
+                t1: (i + 1) as f64 * scale,
+            });
+        }
+        let (spans, knots) = bound_pieces(&pieces)?;
+        Curve3D::new(spans, knots)
+    }
+
+    /// A parabola's or hyperbola's chain of arcs ([`Conic::arc`]) between
+    /// consecutive `params` (`s` on a hyperbola), the params its knots,
+    /// bounded as [`bounded`](Self::bounded) does. `Shape` for fewer than
+    /// two params; the arcs' refusals as `Conic(..)`; then as
+    /// [`bounded`](Self::bounded).
+    pub fn conic_arcs(conic: &Conic<3>, params: &[f64]) -> Result<Curve3D, CurveError> {
+        if params.len() < 2 {
+            return Err(CurveError::Shape);
+        }
+        let spans = params
+            .windows(2)
+            .map(|p| conic.arc::<4>(p[0], p[1]))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CurveError::Conic)?;
+        Curve3D::bounded(spans, params.to_vec())
     }
 
     /// The spans.
@@ -268,6 +406,74 @@ impl PCurve {
 
 /// A chain's spans and knots.
 type Chain<const D: usize> = (Vec<[[f64; D]; 3]>, Vec<f64>);
+
+/// The part over `[t0, t1]` of a stored span `parent` over `[a, b]`
+/// (`a ≤ t0 < t1 ≤ b`), a span of a chain [`bound_pieces`] builds.
+struct Piece {
+    parent: Span3,
+    a: f64,
+    b: f64,
+    t0: f64,
+    t1: f64,
+}
+
+/// Whether a space control point lies in the `MAX_COORD` box (false for
+/// a non-finite one).
+fn in_box(p: &[f64; 4]) -> bool {
+    p[..3].iter().all(|x| x.abs() <= MAX_COORD)
+}
+
+/// The chain of `pieces`, each the exact sub-span of its parent rounded
+/// once, its ends the parent's control points or its canonical points,
+/// as [`split_chain`] cuts; a piece whose middle control point is
+/// outside the box halved at the `f64` midpoint of its knots until none
+/// is (as [`Curve3D::bounded`]). Unchecked otherwise.
+fn bound_pieces(pieces: &[Piece]) -> Result<Chain<4>, CurveError> {
+    let mut spans = Vec::with_capacity(pieces.len());
+    let mut knots = Vec::with_capacity(pieces.len() + 1);
+    knots.extend(pieces.first().map(|p| p.t0));
+    for (span, piece) in pieces.iter().enumerate() {
+        let range = CurveError::Range { span };
+        let Piece { parent, a, b, .. } = *piece;
+        let h = parent.each_ref().map(hom_exact);
+        let point = |t: f64| -> [f64; 4] {
+            if t == a {
+                parent[0]
+            } else if t == b {
+                parent[2]
+            } else {
+                let s = local_exact(t, a, b);
+                affine_rounded(&blossom(&h, &s, &s))
+            }
+        };
+        let (p0, p1) = (point(piece.t0), point(piece.t1));
+        if !(in_box(&p0) && in_box(&p1)) {
+            return Err(range);
+        }
+        // Depth first, the lower half first, so spans come in order.
+        let mut todo = vec![(piece.t0, p0, piece.t1, p1, 0u32)];
+        while let Some((t0, p0, t1, p1, depth)) = todo.pop() {
+            let mid = affine_rounded(&blossom(&h, &local_exact(t0, a, b), &local_exact(t1, a, b)));
+            if in_box(&mid) {
+                spans.push([p0, mid, p1]);
+                knots.push(t1);
+                continue;
+            }
+            // Not `(t0 + t1) / 2`, which may overflow.
+            let tm = t0 / 2.0 + t1 / 2.0;
+            if depth == MAX_RANGE_DEPTH || !(t0 < tm && tm < t1) {
+                return Err(range);
+            }
+            let pm = point(tm);
+            if !in_box(&pm) {
+                return Err(range);
+            }
+            todo.push((tm, pm, t1, p1, depth + 1));
+            todo.push((t0, p0, tm, pm, depth + 1));
+        }
+    }
+    Ok((spans, knots))
+}
 
 /// A span's control point in homogeneous form, exactly: `(w·x, w)`.
 pub(super) fn hom_exact<const D: usize>(p: &[f64; D]) -> [Rational; D] {
