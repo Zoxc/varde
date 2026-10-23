@@ -348,41 +348,59 @@ fn regular_where_no_pole() {
     }
 }
 
-/// A tile certified regular at any level, to the finest, has a cone
-/// holding every coefficient of its exact normal numerator and facing
-/// the form's outside (a plane's normal): the first level's numerator,
-/// in the tile's own frame, never certifies a tile narrower than its
-/// coordinates' precision with a wrong normal (the first case: a
-/// cylinder tile `3·10⁻¹²` mm wide, `10⁶` mm along the axis).
+/// A cylinder found certifying a tile at level `(40, 45)` regular yet
+/// facing in, before levels were capped: the tile `3·10⁻¹²` mm wide,
+/// `10⁶` mm along the axis, far finer than its coordinates' precision.
+fn far_cylinder() -> FormKey {
+    CylinderKey::new(
+        [
+            0.010472473587766444,
+            -0.07404888804929464,
+            0.3038769313671156,
+        ],
+        [0.8071247384492171, -0.5665968612539347, -0.1658844579834785],
+        2.1702567127715007,
+    )
+    .unwrap()
+    .into()
+}
+
+/// A random level up to `cap` in each direction.
+fn level_to(cap: Level, rng: &mut Rng) -> Level {
+    Level {
+        u: (rng.next_u64() % (u64::from(cap.u) + 1)) as u32,
+        v: (rng.next_u64() % (u64::from(cap.v) + 1)) as u32,
+    }
+}
+
+/// A random tile `(i, j)` of `level` in the cells holding the
+/// coordinate box: any angle cell, a plane's cell `(0, 0)`, a cylinder's
+/// axial cell 0, a sphere's latitudes.
+fn in_box(key: &FormKey, level: Level, rng: &mut Rng) -> (i64, i64) {
+    let (hu, hv) = (1i64 << level.u, 1i64 << level.v);
+    let mut pick = |n: i64| (rng.next_u64() % n as u64) as i64;
+    match key {
+        FormKey::Plane(_) => (pick(hu), pick(hv)),
+        FormKey::Cylinder(_) => (pick(4 * hu) - 2 * hu, pick(hv)),
+        _ => (pick(4 * hu) - 2 * hu, pick(2 * hv) - hv),
+    }
+}
+
+/// A tile certified regular at any admitted level, to the cap, has a
+/// cone holding every coefficient of its exact normal numerator and
+/// facing the form's outside (a plane's normal): the first level's
+/// numerator, in the tile's own frame, never certifies a tile with a
+/// wrong normal.
 #[test]
 fn regular_tiles_face_out_at_every_level() {
-    let reproducer = (
-        FormKey::from(
-            CylinderKey::new(
-                [
-                    0.010472473587766444,
-                    -0.07404888804929464,
-                    0.3038769313671156,
-                ],
-                [0.8071247384492171, -0.5665968612539347, -0.1658844579834785],
-                2.1702567127715007,
-            )
-            .unwrap(),
-        ),
-        Level { u: 40, v: 45 },
-        -4203934108937,
-        10286876419117,
-    );
     let mut rng = Rng::new(41);
-    let mut cases = vec![reproducer];
-    for key in keys(12) {
-        for _ in 0..varde_testing::pick(8, 60) {
-            let level = Level {
-                u: (rng.next_u64() % (u64::from(MAX_LEVEL) + 1)) as u32,
-                v: (rng.next_u64() % (u64::from(MAX_LEVEL) + 1)) as u32,
-            };
-            let i = (rng.next_u64() % (4 << level.u)) as i64 - (2 << level.u);
-            let j = (rng.next_u64() % (2 << level.v)) as i64 - (1 << level.v);
+    let mut cases = Vec::new();
+    for key in keys(12).into_iter().chain([far_cylinder()]) {
+        let cap = Lattice::new(key.clone()).unwrap().cap();
+        for n in 0..varde_testing::pick(8, 60) {
+            // The cap itself first.
+            let level = if n == 0 { cap } else { level_to(cap, &mut rng) };
+            let (i, j) = in_box(&key, level, &mut rng);
             cases.push((key.clone(), level, i, j));
         }
     }
@@ -474,12 +492,24 @@ fn deepest_levels_share_rows_and_repeat() {
     let ks = keys(21);
     for key in ks.iter().take(varde_testing::pick(6, ks.len())) {
         let l = Lattice::new(key.clone()).unwrap();
+        // The cap of the cells visited: angle cells to 3, axial and plane
+        // cells to 1.
+        let cells = Rect {
+            level: Level::BASE,
+            u: -1..4,
+            v: -1..2,
+        };
+        let cap = match key {
+            FormKey::Sphere(_) => l.cap(),
+            FormKey::Cylinder(_) => l.cap_of(&Rect { u: 0..1, ..cells }).unwrap(),
+            _ => l.cap_of(&cells).unwrap(),
+        };
         for level in [
+            cap,
             Level {
-                u: MAX_LEVEL,
-                v: MAX_LEVEL,
+                u: cap.u.min(31),
+                v: cap.v.min(7),
             },
-            Level { u: 31, v: 7 },
         ] {
             let (hu, hv) = (1i64 << level.u, 1i64 << level.v);
             let vs = match key {
@@ -654,4 +684,290 @@ fn row_chains_end_at_tile_corners() {
             }
         }
     }
+}
+
+/// [`far_cylinder`]: its cap is fixed by its geometry, a constructor asking
+/// for `(40, 45)` gets the cap (a rectangle at it covering the one
+/// asked for), an explicit request there is refused with the key, the
+/// level and the cap, and the cap's tiles are regular.
+#[test]
+fn levels_beyond_the_cap_are_refused_or_coarsened() {
+    let key = far_cylinder();
+    let l = Lattice::new(key.clone()).unwrap();
+    let cap = l.cap();
+    assert_eq!(cap, Level { u: 24, v: 44 });
+    let level = Level { u: 40, v: 45 };
+    let (i, j) = (-4203934108937, 10286876419117);
+    let beyond = LatticeError::LevelBeyondCap {
+        form: Box::new(key.clone()),
+        level,
+        cap,
+    };
+    assert_eq!(l.tile(level, i, j).unwrap_err(), beyond);
+    let rect = Rect {
+        level,
+        u: i..i + 3,
+        v: j..j + 2,
+    };
+    assert_eq!(l.tiles(&rect).unwrap_err(), beyond);
+    let c = l.capped(&rect).unwrap();
+    assert_eq!(c.level, cap);
+    // The coarse rectangle covers the fine one: its ends, scaled up, lie
+    // outside the fine ends.
+    let (du, dv) = (level.u - cap.u, level.v - cap.v);
+    assert!(c.u.start << du <= rect.u.start && rect.u.end <= c.u.end << du);
+    assert!(c.v.start << dv <= rect.v.start && rect.v.end <= c.v.end << dv);
+    assert_eq!(c.u.end - c.u.start, 1);
+    for t in l.tiles(&c).unwrap() {
+        assert!(t.is_regular());
+    }
+    // One level past the cap in either direction is refused; within it
+    // a rectangle is its own coarsening.
+    for past in [
+        Level {
+            u: cap.u + 1,
+            v: cap.v,
+        },
+        Level {
+            u: cap.u,
+            v: cap.v + 1,
+        },
+    ] {
+        assert!(matches!(
+            l.tile(past, 0, 0),
+            Err(LatticeError::LevelBeyondCap { level, .. }) if level == past
+        ));
+    }
+    let within = Rect {
+        level: Level { u: 3, v: 9 },
+        u: -2..5,
+        v: 7..9,
+    };
+    assert_eq!(l.capped(&within).unwrap(), within);
+    // Above the lattice's fixed maximum a level is refused as such.
+    let deep = Rect {
+        level: Level {
+            u: MAX_LEVEL + 1,
+            v: 0,
+        },
+        ..within
+    };
+    assert_eq!(l.capped(&deep).unwrap_err(), LatticeError::Level);
+}
+
+/// The cap follows the geometry: a smaller radius or a form further out
+/// caps the turns sooner, a cell further out has a lower cap than the
+/// box's, and the cap is the deepest level whose chord is `K_CAP` times
+/// the deviation bound.
+#[test]
+fn caps_follow_the_geometry() {
+    let cyl = |p: [f64; 3], r: f64| {
+        Lattice::new(CylinderKey::new(p, [1.0, 2.0, 2.0], r).unwrap().into()).unwrap()
+    };
+    let near = cyl([0.0; 3], 1.0).cap();
+    // The axial cell's far rows set the precision: `2²¹·⅔` mm out along
+    // the axis's largest component, ulp `2⁻³²`.
+    assert_eq!(near, Level { u: 23, v: 44 });
+    let small = cyl([0.0; 3], 1e-3).cap();
+    assert!(small.u + 9 <= near.u && small.v == near.v, "{small:?}");
+    let big = cyl([0.0; 3], 1e3).cap();
+    assert!(big.u >= near.u + 9, "{big:?}");
+    let s = |c: [f64; 3], r: f64| {
+        Lattice::new(SphereKey::new(c, r, [0.0, 0.0, 1.0]).unwrap().into())
+            .unwrap()
+            .cap()
+    };
+    let unit = s([0.0; 3], 1.0);
+    let out = s([9e5, 0.0, 0.0], 1.0);
+    assert!(
+        unit.u == unit.v && out.u == out.v && out.u + 10 <= unit.u,
+        "{unit:?} {out:?}"
+    );
+    // A radius whose coordinates leave the range: no level past the base
+    // (its tiles are refused).
+    assert_eq!(s([0.0; 3], f64::MAX), Level::BASE);
+    // A plane's cell further out, a cylinder's axial cell further out.
+    let p = Lattice::new(PlaneKey::new([1.0, 2.0, 2.0], [0.0; 3]).unwrap().into()).unwrap();
+    let far = |u: std::ops::Range<i64>, v: std::ops::Range<i64>| Rect {
+        level: Level::BASE,
+        u,
+        v,
+    };
+    assert_eq!(p.cap_of(&far(0..1, 0..1)).unwrap(), p.cap());
+    let pc = p.cap_of(&far(0..1, 7..8)).unwrap();
+    assert!(pc.u < p.cap().u && pc.v < p.cap().v, "{pc:?}");
+    let c = cyl([0.0; 3], 1.0);
+    assert_eq!(c.cap_of(&far(-9..-6, 0..1)).unwrap(), c.cap());
+    let cc = c.cap_of(&far(0..1, -9..-8)).unwrap();
+    assert!(cc.u < near.u && cc.v < near.v, "{cc:?}");
+    assert!(c.tile(cc, 0, -9 << cc.v).is_ok());
+    assert!(matches!(
+        c.tile(near, 0, -9 << near.v),
+        Err(LatticeError::LevelBeyondCap { cap, .. }) if cap == cc
+    ));
+    // The bound itself: the chord at the cap holds `K_CAP·δ`, the next
+    // level's doesn't (a linear direction: the cell's extent).
+    let delta = |m: f64, rho: f64, t: f64| 3.0 * ulp(m).unwrap() + pow2(-48) * rho + pow2(-50) * t;
+    let d = delta(pow2(20), 1.0, CELL / 2.0);
+    let extent = |level: u32| CELL / pow2(level as i32);
+    assert!(extent(near.v) >= K_CAP * d && extent(near.v + 1) < K_CAP * d);
+}
+
+/// The admitted levels follow the form's tangent: at every level to the
+/// cap, every coefficient of a tile's exact normal numerator lies within
+/// `2⁻⁵` rad of the form's normal at the tile's centre, beyond the turn
+/// the tile itself spans; and the tile is regular. A sphere's tiles to
+/// 60° latitude: longitude chords shrink with the latitude's cosine,
+/// the cap reads the sphere's radius.
+#[test]
+fn tiles_follow_the_tangent_to_the_cap() {
+    let mut rng = Rng::new(43);
+    let dot = |a: &[Q; 3], b: &[Q; 3]| &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2];
+    let mut worst: f64 = 0.0;
+    for key in keys(14).into_iter().chain([far_cylinder()]) {
+        let l = Lattice::new(key.clone()).unwrap();
+        let cap = l.cap();
+        for n in 0..varde_testing::pick(6, 40) {
+            let level = match n {
+                0 => cap,
+                1 => Level {
+                    u: cap.u,
+                    v: cap.v.min(2),
+                },
+                _ => level_to(cap, &mut rng),
+            };
+            let (i, j) = in_box(&key, level, &mut rng);
+            let h = 1i64 << level.v;
+            // A sphere's longitude cells shrink towards the poles, where
+            // the cap (at the sphere's radius) leaves less margin: rows
+            // to 60° latitude, whose circles have half the radius or more.
+            let pole = matches!(key, FormKey::Sphere(_))
+                && (3 * j.abs().max((j + 1).abs())) as f64 > 2.0 * h as f64;
+            let t = l.tile(level, i, j).unwrap();
+            // The turn the tile spans, in rad, in each angle direction.
+            let turn = |lv: u32| std::f64::consts::FRAC_PI_2 / pow2(lv as i32);
+            let span = match key {
+                FormKey::Plane(_) => 0.0,
+                FormKey::Cylinder(_) => turn(level.u),
+                _ => turn(level.u) + turn(level.v),
+            };
+            if pole || span > 0.1 {
+                continue;
+            }
+            assert!(t.is_regular(), "{key:?} {level:?} ({i}, {j})");
+            let e = exact(&t);
+            let half = Q::from_signeds(1, 2);
+            let p = e.eval(&half, &half);
+            let out: [Q; 3] = match &key {
+                FormKey::Plane(k) => k.normal().map(q),
+                FormKey::Cylinder(k) => {
+                    let (f, ax) = (k.foot().map(q), k.axis().map(q));
+                    let r: [Q; 3] = std::array::from_fn(|k| &p[k] - &f[k]);
+                    let s = dot(&r, &ax) / dot(&ax, &ax);
+                    std::array::from_fn(|k| &r[k] - &s * &ax[k])
+                }
+                FormKey::Sphere(k) => {
+                    let o = k.centre().map(q);
+                    std::array::from_fn(|k| &p[k] - &o[k])
+                }
+                _ => unreachable!("a form with a lattice"),
+            };
+            let [x, y, z] = e.normal_numerator().unwrap().map(|f| f.coefs().to_vec());
+            for m in 0..x.len() {
+                let c = [x[m].clone(), y[m].clone(), z[m].clone()];
+                let d = dot(&c, &out);
+                assert!(d > 0u32, "{key:?} {level:?} ({i}, {j}) faces in");
+                let cos2 = nearest(&(&d * &d / (dot(&c, &c) * dot(&out, &out))));
+                let cos = if cos2 < 1.0 { cos2.sqrt() } else { 1.0 };
+                let angle = varde_decide::num::trig::acos(cos) - 2.0 * span;
+                worst = if angle > worst { angle } else { worst };
+                assert!(angle < pow2(-5), "{key:?} {level:?} ({i}, {j}): {angle:e}");
+            }
+        }
+    }
+    eprintln!("worst angle beyond the tile's turn: {worst:e} rad");
+}
+
+/// Every form's frame is its key's: the revolution frame about its axis
+/// at its foot point, apex or centre (the world origin for a conic-chain
+/// cylinder, whose profile's `x` runs along `e₁`); an affine image's,
+/// its source's mapped. The forms not tiled yet have no lattice.
+#[test]
+fn frames_of_every_form() {
+    use crate::geom::form::{AffineKey, ConeKey, ConicCylinderKey, RevolvedKey, TorusKey};
+    let z = [0.0, 0.0, 1.0];
+    // e_x × z = −y, z × −y = x (the sphere's in `half_surfaces`).
+    let about_z = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], z];
+    let quarter = [
+        [2.0, 0.0, 0.0, 1.0],
+        [2.0, 2.0, 0.0, 0.5],
+        [0.0, 2.0, 0.0, 1.0],
+    ];
+    let keys: [(FormKey, [f64; 3]); 4] = [
+        (
+            ConeKey::new([1.0, 2.0, 3.0], z, 1.0, 1.0).unwrap().into(),
+            [1.0, 2.0, 3.0],
+        ),
+        (
+            TorusKey::new([1.0, 2.0, 3.0], [0.0, 0.0, -2.0], 3.0, 1.0)
+                .unwrap()
+                .into(),
+            [1.0, 2.0, 3.0],
+        ),
+        (
+            RevolvedKey::new(
+                [1.0, 2.0, 3.0],
+                z,
+                &[[[1.0, 0.0, 1.0], [2.0, 1.0, 1.0], [1.0, 2.0, 1.0]]],
+            )
+            .unwrap()
+            .into(),
+            [1.0, 2.0, 0.0],
+        ),
+        (
+            ConicCylinderKey::new(z, &[quarter]).unwrap().into(),
+            [0.0; 3],
+        ),
+    ];
+    for (key, origin) in keys {
+        let f = frame(&key).unwrap();
+        assert_eq!(
+            f,
+            Frame {
+                origin,
+                axes: about_z
+            },
+            "{key:?}"
+        );
+        assert_eq!(Lattice::new(key).unwrap_err(), LatticeError::Form);
+    }
+    // A tilted conic-chain cylinder: its profile's `x` is the span
+    // points' offset along `e₁`, to rounding.
+    let a = [1.0, 2.0, 2.0];
+    let c = ConicCylinderKey::new(a, &[quarter]).unwrap();
+    let f = frame(&c.clone().into()).unwrap();
+    let [e1, e2, _] = f.axes;
+    // The chain may run reversed: each end against either.
+    let ends: Vec<[f64; 2]> = c.profile().spans()[0]
+        .iter()
+        .map(|s| [s[0], s[1]])
+        .collect();
+    for p in [quarter[0], quarter[2]] {
+        let at = |e: [f64; 3]| (0..3).map(|k| p[k] * e[k]).sum::<f64>();
+        let want = [at(e1), at(e2)];
+        assert!(
+            ends.iter()
+                .any(|e| (e[0] - want[0]).abs() < 1e-15 && (e[1] - want[1]).abs() < 1e-15),
+            "{want:?} in {ends:?}"
+        );
+    }
+    // An affine image: the source plane's frame under `2x + (1, 0, 0)`.
+    let plane: FormKey = PlaneKey::new(z, [0.0, 0.0, 3.0]).unwrap().into();
+    let src = frame(&plane).unwrap();
+    let m = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
+    let img: FormKey = AffineKey::new(plane, m, [1.0, 0.0, 0.0]).unwrap().into();
+    let f = frame(&img).unwrap();
+    assert_eq!(f.origin, [1.0, 0.0, 6.0]);
+    assert_eq!(f.axes, src.axes.map(|e| e.map(|x| 2.0 * x)));
+    assert_eq!(Lattice::new(img).unwrap_err(), LatticeError::Form);
 }

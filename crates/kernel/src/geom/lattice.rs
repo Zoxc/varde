@@ -1,18 +1,27 @@
 //! Form-anchored lattices: the grid of tiles every surface of one form
 //! lies on, fixed by the form's key alone, so coplanar faces and coaxial
 //! equal forms from any feature share their tiles bit for bit. So far
-//! the plane's, the circular cylinder's and the sphere's.
+//! the plane's, the circular cylinder's and the sphere's tiles; the
+//! frames of every form.
 //!
 //! **Frames** (a function of the stored [`FormKey`], never chosen by a
-//! constructor). The reference direction of a unit direction `n` is
-//! `normalise(e_k × n)`, `e_k` the world axis of least `|n·e_k|` (ties:
-//! the lowest `k`), each component rounded once from its exact value.
+//! constructor; [`frame`]). The reference direction of a unit direction
+//! `n` is `normalise(e_k × n)`, `e_k` the world axis of least `|n·e_k|`
+//! (ties: the lowest `k`), each component rounded once from its exact
+//! value.
 //! - plane: origin the foot of the world origin, `d·n/|n|²`; axes `u` the
 //!   reference direction of `n` and `v = n × u`, rounded once from the
 //!   stored `n` and `u` (`u × v` is `n`);
-//! - cylinder and sphere: origin the foot point or centre; axes `e₁` the
-//!   reference direction of the axis `a`, `e₂ = a × e₁` (rounded once),
-//!   and `a`.
+//! - forms about an axis `a` (cylinder, conic-chain cylinder, cone,
+//!   sphere, torus, revolved conic): axes `e₁` the reference direction
+//!   of `a`, `e₂ = a × e₁` (rounded once), and `a`; origin the foot point
+//!   (cylinder, revolved conic), the apex (cone), the centre (sphere,
+//!   torus), the world origin (conic-chain cylinder, whose profile lies
+//!   in the plane through it: `e₁`, `e₂` are its `x`, `y` directions to
+//!   rounding);
+//! - affine image: its source's frame mapped, the origin `M·o + t` and
+//!   each axis `M·e`, each component rounded once from its exact value
+//!   (axes not unit).
 //!
 //! [`Lattice::origin`] and [`Lattice::axes`] give them.
 //!
@@ -61,6 +70,38 @@
 //! sharing a row, have the same exact control points on a shared line,
 //! which round alike.
 //!
+//! **Level cap.** As a cell shrinks towards the spacing of its tile's
+//! coordinates, the tile can still certify regular yet no longer follow
+//! the form's tangent. So each direction `d` has a deepest admitted
+//! level ([`Lattice::cap`]): the largest `L` up to [`MAX_LEVEL`] with
+//! `ℓ_d(L) ≥ K_CAP·δ`, at least the base level. Here [`K_CAP`] is `2⁶`
+//! (the tile's tangents within `2⁻⁵` rad of the form's), `ℓ_d(L)` a lower
+//! bound on the chord of a level-`L` cell along `d` (the cell's extent
+//! along a line; `2ρ·sin(90°·2^−L/2)` around a circle of radius `ρ`, the
+//! form's radius), and `δ` a bound on a tile's control points' distance
+//! from the form's exact sub-patch over the cell, the same at every
+//! level:
+//! - the coordinates rounded twice (the base tile's, then the level's,
+//!   which are convex combinations of the base tile's): `3·ulp(M)` with
+//!   the plane's origin's rounding, `M` a bound on the base tile's
+//!   coordinates;
+//! - the frame's axes and the weight `√½` rounded: `2⁻⁴⁸·ρ` (an axis
+//!   off by `2⁻⁵⁰` at most, a weight's relative error moving a point by
+//!   `2⁻⁵¹` of its tile's spread), and `2⁻⁵⁰·T` along the lines, `T` the
+//!   largest distance of a control point from the origin along an axis.
+//!
+//! `δ` grows with a cell's distance from the origin, so the cap is the
+//! form's over the cells that hold the coordinate box (the plane's cell
+//! `(0, 0)`, the cylinder's axial cell 0, every cell of a sphere), and a
+//! cell further out has its own, lower one. Constructors, `extend`, torus
+//! domains and imports coarsen their rectangle to the cap
+//! ([`Lattice::capped`]: the domain need only cover the trims), so they
+//! never fail on it; an explicit request beyond it ([`Lattice::tile`],
+//! [`Lattice::tiles`]) is refused ([`LatticeError::LevelBeyondCap`]). A
+//! cylinder of radius 1 mm is capped at level 23 around its axis (tiles
+//! of about `2·10⁻⁷` mm) and 44 along it, its axial cell's far rows
+//! setting the precision wherever it lies in the box.
+//!
 //! **Surfaces** are integer rectangles of one level ([`Rect`]); a 180°
 //! surface (the canonical constructors' choice, [`Lattice::half`]) is two
 //! angle cells by one axial cell on a cylinder, two by two on a sphere
@@ -76,6 +117,7 @@ use varde_decide::bezier::{Dir, HomPatch};
 use super::form::{FormKey, dot};
 use super::round::{nearest, nearest_root, nearest_sqrt, q};
 use super::tile::{Net, Tile, TileError};
+use varde_decide::num::storage::ulp;
 
 /// A tile's exact homogeneous patch.
 type Exact = HomPatch<Rational>;
@@ -93,6 +135,10 @@ const _: () = assert!(CELL / 2.0 < 4.0 * MAX_COORD && 4.0 * MAX_COORD <= CELL);
 /// The finest level in each direction: a level's index within its base
 /// cell, times `2^−L`, is exact in `f64`.
 pub const MAX_LEVEL: u32 = 52;
+
+/// The margin of the level cap: a level's chord at least `K_CAP` times
+/// its tiles' deviation from the form (module docs).
+pub const K_CAP: f64 = 64.0;
 
 /// A lattice level: the number of ½ splits of the base cells in `u` and
 /// in `v`.
@@ -117,10 +163,18 @@ pub struct Rect {
 }
 
 /// Why a lattice, tile or rectangle can't be made.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LatticeError {
     /// A level above [`MAX_LEVEL`].
     Level,
+    /// A level beyond the form's cap in some direction (module docs):
+    /// the form's key, the level asked for and the cap of the cells
+    /// asked for.
+    LevelBeyondCap {
+        form: Box<FormKey>,
+        level: Level,
+        cap: Level,
+    },
     /// A cell outside the lattice (a sphere's latitude beyond the poles),
     /// an index whose arithmetic overflows, or a rectangle with more
     /// tiles than memory holds.
@@ -131,8 +185,9 @@ pub enum LatticeError {
     Range,
     /// A tile's net is refused: a coordinate overflows.
     Tile(TileError),
-    /// A form these lattices don't tile: a conic-chain cylinder, cone,
-    /// torus, revolved conic or affine image.
+    /// A form these lattices don't tile yet: a conic-chain cylinder,
+    /// cone, torus, revolved conic or affine image (their frames are
+    /// [`frame`]'s).
     Form,
 }
 
@@ -142,12 +197,73 @@ impl From<TileError> for LatticeError {
     }
 }
 
-/// A form's lattice: its key and the frame fixed by it (module docs).
+/// A lattice's frame: its origin and axes, a function of the form's key
+/// (module docs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    pub origin: [f64; 3],
+    pub axes: [[f64; 3]; 3],
+}
+
+/// The frame of `key`'s form (module docs), computed from the stored
+/// key: `Range` where a value rounds past the range.
+pub fn frame(key: &FormKey) -> Result<Frame, LatticeError> {
+    let (origin, axes) = match key {
+        FormKey::Plane(k) => {
+            let n = k.normal();
+            let nq = n.map(q);
+            let t = q(k.offset()) / dot(&nq, &nq);
+            let origin = nq.clone().map(|x| nearest(&(&t * x)));
+            let u = reference(&n);
+            let v = cross(&nq, &u.map(q)).map(|x| nearest(&x));
+            (origin, [u, v, n])
+        }
+        FormKey::Cylinder(k) => (k.foot(), revolution(&k.axis())),
+        FormKey::ConicCylinder(k) => ([0.0; 3], revolution(&k.axis())),
+        FormKey::Cone(k) => (k.apex(), revolution(&k.axis())),
+        FormKey::Sphere(k) => (k.centre(), revolution(&k.axis())),
+        FormKey::Torus(k) => (k.centre(), revolution(&k.axis())),
+        FormKey::Revolved(k) => (k.foot(), revolution(&k.axis())),
+        FormKey::Affine(k) => {
+            let f = frame(k.source())?;
+            let m = k.linear().map(|row| row.map(q));
+            let apply = |x: &[f64; 3]| {
+                let x = x.map(q);
+                [0, 1, 2].map(|r| dot(&m[r], &x))
+            };
+            let t = k.shift().map(q);
+            let o = apply(&f.origin);
+            let origin = [0, 1, 2].map(|c| nearest(&(&o[c] + &t[c])));
+            let axes = f.axes.map(|a| apply(&a).map(|x| nearest(&x)));
+            (origin, axes)
+        }
+    };
+    if !origin
+        .iter()
+        .chain(axes.iter().flatten())
+        .all(|x| x.is_finite())
+    {
+        return Err(LatticeError::Range);
+    }
+    Ok(Frame { origin, axes })
+}
+
+/// A form's lattice: its key, the frame fixed by it and the level cap
+/// of the cells holding the coordinate box (module docs).
 #[derive(Clone, Debug)]
 pub struct Lattice {
     key: FormKey,
     origin: [f64; 3],
     axes: [[f64; 3]; 3],
+    cap: Level,
+}
+
+/// How a lattice direction runs: along a line, or around a circle of
+/// the radius given.
+#[derive(Clone, Copy)]
+enum Run {
+    Line,
+    Turn(f64),
 }
 
 /// A weight of the lattices' tiles: `1`, `√½` or `½`.
@@ -173,30 +289,65 @@ const ARC: [Weight; 3] = [Weight::One, Weight::Root, Weight::One];
 
 impl Lattice {
     /// The lattice of `key`'s form, its frame computed from the stored
-    /// key.
+    /// key ([`frame`]); `Form` for the forms not tiled yet.
     pub fn new(key: FormKey) -> Result<Lattice, LatticeError> {
-        let (origin, axes) = match &key {
-            FormKey::Plane(k) => {
-                let n = k.normal();
-                let nq = n.map(q);
-                let t = q(k.offset()) / dot(&nq, &nq);
-                let origin = nq.clone().map(|x| nearest(&(&t * x)));
-                let u = reference(&n);
-                let v = cross(&nq, &u.map(q)).map(|x| nearest(&x));
-                (origin, [u, v, n])
-            }
-            FormKey::Cylinder(k) => (k.foot(), revolution(&k.axis())),
-            FormKey::Sphere(k) => (k.centre(), revolution(&k.axis())),
-            _ => return Err(LatticeError::Form),
-        };
-        if !origin
-            .iter()
-            .chain(axes.iter().flatten())
-            .all(|x| x.is_finite())
-        {
-            return Err(LatticeError::Range);
+        if !matches!(
+            key,
+            FormKey::Plane(_) | FormKey::Cylinder(_) | FormKey::Sphere(_)
+        ) {
+            return Err(LatticeError::Form);
         }
-        Ok(Lattice { key, origin, axes })
+        let Frame { origin, axes } = frame(&key)?;
+        let mut l = Lattice {
+            key,
+            origin,
+            axes,
+            cap: Level::BASE,
+        };
+        l.cap = l.cap_for(0, 0);
+        Ok(l)
+    }
+
+    /// The level cap of the cells holding the coordinate box: the
+    /// deepest level admitted in each direction (module docs).
+    #[inline]
+    pub fn cap(&self) -> Level {
+        self.cap
+    }
+
+    /// The level cap of `rect`'s base cells (module docs): the form's
+    /// [`cap`](Self::cap) where they hold the coordinate box, lower
+    /// further out. Errors as [`tiles`](Self::tiles) on its level and
+    /// span.
+    pub fn cap_of(&self, rect: &Rect) -> Result<Level, LatticeError> {
+        let (k, l) = self.cells(rect)?;
+        Ok(self.cap_for(k, l))
+    }
+
+    /// `rect` coarsened to the cap of its cells: at each direction's
+    /// level or the cap, whichever is coarser, the least rectangle
+    /// covering it (the same rectangle where it is within the cap). What
+    /// constructors, `extend`, torus domains and imports use instead of
+    /// a level beyond the cap (module docs). Errors as
+    /// [`tiles`](Self::tiles) on its level and span (a span of less than
+    /// a turn may cover a full one coarsened, which `tiles` refuses).
+    pub fn capped(&self, rect: &Rect) -> Result<Rect, LatticeError> {
+        let cap = self.cap_of(rect)?;
+        let level = Level {
+            u: rect.level.u.min(cap.u),
+            v: rect.level.v.min(cap.v),
+        };
+        let coarse = |r: &Range<i64>, from: u32, to: u32| {
+            let s = from - to;
+            // `end − 1 ≥ start` (a span checked), so `+ 1` stays in range
+            // once shifted (`s ≥ 1`), and is the same range at `s = 0`.
+            (r.start >> s)..(((r.end - 1) >> s) + 1)
+        };
+        Ok(Rect {
+            level,
+            u: coarse(&rect.u, rect.level.u, level.u),
+            v: coarse(&rect.v, rect.level.v, level.v),
+        })
     }
 
     /// The key the lattice is anchored to.
@@ -269,11 +420,17 @@ impl Lattice {
     }
 
     /// The tile `(i, j)` of `level`: its base tile's exact sub-patch,
-    /// rounded once (module docs).
+    /// rounded once (module docs);
+    /// `LevelBeyondCap` beyond the cell's cap.
     pub fn tile(&self, level: Level, i: i64, j: i64) -> Result<Tile, LatticeError> {
         if level.u > MAX_LEVEL || level.v > MAX_LEVEL {
             return Err(LatticeError::Level);
         }
+        self.admit(
+            level,
+            (i >> level.u).unsigned_abs(),
+            (j >> level.v).unsigned_abs(),
+        )?;
         let base = self.base_tile(i >> level.u, j >> level.v)?;
         if level == Level::BASE {
             return Ok(base);
@@ -284,16 +441,14 @@ impl Lattice {
 
     /// The tiles of `rect`, row-major in `u` (tile `(i, j)` at
     /// `(i − u.start)·v.len() + (j − v.start)`): the same bits as
-    /// [`tile`](Self::tile) gives each, a base tile's splits shared.
+    /// [`tile`](Self::tile) gives each, a base tile's splits shared;
+    /// `LevelBeyondCap` beyond the cap of its cells
+    /// ([`cap_of`](Self::cap_of)).
     pub fn tiles(&self, rect: &Rect) -> Result<Vec<Tile>, LatticeError> {
         let Level { u: lu, v: lv } = rect.level;
-        if lu > MAX_LEVEL || lv > MAX_LEVEL {
-            return Err(LatticeError::Level);
-        }
+        let (k, l) = self.cells(rect)?;
+        self.admit(rect.level, k, l)?;
         let (nu, nv) = (span(&rect.u)?, span(&rect.v)?);
-        if !matches!(self.key, FormKey::Plane(_)) && nu >= 4u64 << lu {
-            return Err(LatticeError::Span);
-        }
         let count = usize::try_from(nu)
             .ok()
             .and_then(|a| usize::try_from(nv).ok().and_then(|b| a.checked_mul(b)))
@@ -327,6 +482,89 @@ impl Lattice {
             .collect())
     }
 
+    /// The largest `|k|` and `|l|` of `rect`'s base cells, after
+    /// checking its level, its span, and a turn's span less than full.
+    fn cells(&self, rect: &Rect) -> Result<(u64, u64), LatticeError> {
+        let Level { u: lu, v: lv } = rect.level;
+        if lu > MAX_LEVEL || lv > MAX_LEVEL {
+            return Err(LatticeError::Level);
+        }
+        let nu = span(&rect.u)?;
+        span(&rect.v)?;
+        if !matches!(self.key, FormKey::Plane(_)) && nu >= 4u64 << lu {
+            return Err(LatticeError::Span);
+        }
+        let far = |r: &Range<i64>, l: u32| {
+            (r.start >> l)
+                .unsigned_abs()
+                .max(((r.end - 1) >> l).unsigned_abs())
+        };
+        Ok((far(&rect.u, lu), far(&rect.v, lv)))
+    }
+
+    /// `LevelBeyondCap` if `level` is beyond the cap of the cells to
+    /// `|k|`, `|l|`.
+    fn admit(&self, level: Level, k: u64, l: u64) -> Result<(), LatticeError> {
+        let cap = self.cap_for(k, l);
+        if level.u > cap.u || level.v > cap.v {
+            return Err(LatticeError::LevelBeyondCap {
+                form: Box::new(self.key.clone()),
+                level,
+                cap,
+            });
+        }
+        Ok(())
+    }
+
+    /// The level cap of the base cells to `|k|` in `u` and `|l|` in `v`
+    /// (module docs).
+    fn cap_for(&self, k: u64, l: u64) -> Level {
+        let o = self.origin;
+        let [a0, a1, a2] = self.axes;
+        // A bound on the distance from the origin along a line, of the
+        // cells to `|n|`.
+        let reach = |n: u64| (n as f64 + 0.5) * CELL;
+        // The base tile's bound `M` on its coordinates, its radius `ρ`,
+        // `T`, and how `u` and `v` run.
+        let (m, rho, t, runs) = match &self.key {
+            FormKey::Plane(_) => {
+                let m = (0..3)
+                    .map(|c| o[c].abs() + reach(k) * a0[c].abs() + reach(l) * a1[c].abs())
+                    .fold(0.0, larger);
+                (m, 0.0, reach(k.max(l)), [Run::Line, Run::Line])
+            }
+            FormKey::Cylinder(c) => {
+                let r = c.radius();
+                let m = (0..3)
+                    .map(|c| o[c].abs() + r * (a0[c].abs() + a1[c].abs()) + reach(l) * a2[c].abs())
+                    .fold(0.0, larger);
+                (m, r, reach(l), [Run::Turn(r), Run::Line])
+            }
+            FormKey::Sphere(s) => {
+                let r = s.radius();
+                let m = (0..3)
+                    .map(|c| o[c].abs() + r * (a0[c].abs() + a1[c].abs() + a2[c].abs()))
+                    .fold(0.0, larger);
+                (m, r, 0.0, [Run::Turn(r), Run::Turn(r)])
+            }
+            _ => unreachable!("a lattice of a tiled form"),
+        };
+        // Sums and products of positive values, each rounded: a relative
+        // `2⁻⁴⁰` covers their rounding.
+        let up = 1.0 + pow2(-40);
+        let m = m * up;
+        let delta = match ulp(m) {
+            Some(ulp) => (3.0 * ulp + pow2(-48) * rho + pow2(-50) * t) * up,
+            None => f64::INFINITY,
+        };
+        if !delta.is_finite() {
+            // Coordinates past the range: no tile is made at any level.
+            return Level::BASE;
+        }
+        let [u, v] = runs.map(|run| deepest(run, K_CAP * delta));
+        Level { u, v }
+    }
+
     /// The canonical 180° surface's rectangle at the base level, its
     /// angle cells `first` and `first + 1`: the angle cells times axial
     /// cell 0 on a cylinder, times latitudes −1 and 0 on a sphere; the
@@ -352,6 +590,40 @@ impl Lattice {
             _ => return Err(LatticeError::Form),
         })
     }
+}
+
+/// The deepest level up to [`MAX_LEVEL`] whose cells' chord along `run`
+/// is at least `min`, by a lower bound on the chord; the base level if
+/// none is.
+fn deepest(run: Run, min: f64) -> u32 {
+    let down = 1.0 - pow2(-40);
+    let chord = |level: u32| {
+        // `2^−L`, exact.
+        let s = pow2(-(level as i32));
+        match run {
+            Run::Line => CELL * s * down,
+            Run::Turn(r) => {
+                // Half the cell's turn, `x ≤ π/4·2^−L`, and `sin x ≥ x −
+                // x³/6`.
+                let x = 0.785 * s;
+                r * (2.0 * x * (1.0 - x * x / 6.0) * down)
+            }
+        }
+    };
+    (1..=MAX_LEVEL)
+        .take_while(|&level| chord(level) >= min)
+        .last()
+        .unwrap_or(0)
+}
+
+/// `2^k`, for `k` in the normal range.
+const fn pow2(k: i32) -> f64 {
+    f64::from_bits(((1023 + k) as u64) << 52)
+}
+
+/// The larger of two values not NaN.
+fn larger(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
 }
 
 /// The node indices, in half cells, of cell `k`'s three control rows:
