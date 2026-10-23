@@ -9,7 +9,7 @@
 //! no division and no root, so [`exact::sign`](super::exact::sign) works
 //! it out exactly through its stages (the `f64` filter, expansions,
 //! rationals where an expansion would leave its range), each stage
-//! reported for its kind's price ([`Work`](super::exact::Work)). A direction a form takes (the frame's
+//! reported for its kind's price ([`Work`]). A direction a form takes (the frame's
 //! `UP`, `r̂`, `ν`, a stored normal) is exact and unnormalised, so its
 //! value is a positive multiple of the spatial one: a squared length, a
 //! facing of the unmoved data.

@@ -6,11 +6,14 @@
 #   tools/ci.sh kernel-ignores extrude "curved boolean"
 #                               that step alone, these capabilities landed too
 #
-# Steps: fmt, kernel-ignores, clippy, bans, test, staging, wasm, deny,
-# reuse, attribution.
+# Steps: fmt, kernel-ignores, clippy, doc, bans, test, staging, wasm,
+# deny, reuse, attribution.
 # `kernel-ignores` counts the tests tagged #[ignore = "kernel: <capability>"]
 # per capability and crate, and fails if one waits on a capability in
 # KERNEL_LANDED (below) or given after it.
+# `doc` documents varde-decide and varde-kernel, private items too, with
+# rustdoc's warnings as errors: a broken or redundant intra-doc link, a
+# bad code block or an unclosed HTML tag in their docs fails it.
 # `test` runs the workspace's tests, then the kernel crates' again on
 # one rayon thread (their results must not depend on the thread count),
 # then varde-decide's with hardware FMA on (x86_64 CPUs with FMA; the
@@ -72,6 +75,11 @@ step_fmt() {
 
 step_clippy() {
     cargo clippy --workspace --all-targets --locked -- -D warnings
+}
+
+step_doc() {
+    RUSTDOCFLAGS="${RUSTDOCFLAGS-} -D warnings" \
+        cargo doc --locked -p varde-decide -p varde-kernel --no-deps --document-private-items
 }
 
 step_bans() {
@@ -247,7 +255,7 @@ step_attribution() {
     python3 tools/check_attribution.py
 }
 
-ALL=(fmt kernel-ignores clippy bans test staging wasm deny reuse attribution)
+ALL=(fmt kernel-ignores clippy doc bans test staging wasm deny reuse attribution)
 is_step() {
     local s
     for s in "${ALL[@]}"; do
