@@ -4,9 +4,10 @@
 //! parallel map and quadrature; and the first of its geometry: the tile
 //! ([`geom::tile`]), the forms' keys ([`geom::form`]) and their
 //! lattices of tiles ([`geom::lattice`]: plane, circular and conic-chain
-//! cylinder, cone, sphere; the constructors in [`geom::forms`]), tiled
-//! surfaces, edge and coedge curves and their seam bounds; and the
-//! minimal B-rep store counting reads ([`topo::brep_min`]); and the
+//! cylinder, cone, sphere, ring and spindle torus; the constructors in
+//! [`geom::forms`]), tiled surfaces, edge and coedge curves and their
+//! seam bounds; and the minimal B-rep store counting reads
+//! ([`topo::brep_min`]); and the
 //! boolean's first step, its tangency clusters ([`boolean::snap`]).
 //! The quadrature rules are public ([`measure::quadrature`]): the facade
 //! measures profiles' areas with them.

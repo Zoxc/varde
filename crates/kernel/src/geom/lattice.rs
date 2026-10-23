@@ -1,8 +1,9 @@
 //! Form-anchored lattices: the grid of tiles every surface of one form
 //! lies on, fixed by the form's key alone, so coplanar faces and coaxial
 //! equal forms from any feature share their tiles bit for bit. So far
-//! the plane's, the circular and conic-chain cylinders', the cone's and
-//! the sphere's tiles; the frames of every form.
+//! the plane's, the circular and conic-chain cylinders', the cone's, the
+//! sphere's and the ring and spindle torus's tiles; the frames of every
+//! form.
 //!
 //! **Frames** (a function of the stored [`FormKey`], never chosen by a
 //! constructor; [`frame`]). The reference direction of a unit direction
@@ -43,24 +44,32 @@
 //! - cone ([`super::forms::cone`]): the cylinder's angle cells times the
 //!   slant cell `[l, l + 1]·CELL`, `l ≥ 0`, of the distance from the apex
 //!   along the generators: cell `(k, 0)`'s first `v` row is the apex.
-//! - sphere: longitude as the cylinder's angle times latitude
-//!   `[l, l + 1]·90°`, `l` −1 (south) or 0 (north): the tensor product of
-//!   the longitude's quarter circle and the meridian's (weights the
-//!   products of `1, √½, 1`), the pole a whole row of the tile.
+//! - sphere ([`super::forms::sphere`]): longitude as the cylinder's angle
+//!   times latitude `[l, l + 1]·90°`, `l` −1 (south) or 0 (north): the
+//!   tensor product of the longitude's quarter circle and the meridian's
+//!   (weights the products of `1, √½, 1`), the pole a whole row of the
+//!   tile.
+//! - torus ([`super::forms::torus`]): the cylinder's angle cells times
+//!   tube arcs from the outer equator, 90° cells on a ring torus, on a
+//!   spindle torus the two halves `[−φ*, 0]`, `[0, φ*]` of its outer part
+//!   (`cos φ* = −R/r`), whose ends on the axis, the apexes, are whole
+//!   rows of the tiles; a spindle has no cell on its inner part.
 //!
 //! The tile's `u` runs along the first index, `v` along the second, and
 //! its orientation `x_u × x_v` is `n` on a plane, points out of a
-//! cylinder, cone or sphere, and is the profile's direction times the
-//! axis on a conic-chain cylinder. Angle cells `k` and `k + 4` are the
-//! same tile.
+//! cylinder, cone, sphere or torus, and is the profile's direction times
+//! the axis on a conic-chain cylinder. Angle cells `k` and `k + 4` are the
+//! same tile, as a ring torus's tube cells `l` and `l + 4`.
 //!
 //! **Control points** are exact functions of the key's and the frame's
 //! stored values and the cell, stored affine with their weights: each
 //! coordinate of the point and each weight rounded once to the nearest
 //! `f64`, ties to even (a weight `√½` rounded, `½`, 1 and a profile's
-//! weights exact). So a corner of a cylinder's or sphere's tile is its
-//! rounded point, and a sphere's pole row and a cone's apex row are one
-//! point to the bit. A boundary row is the same exact values
+//! weights exact; a spindle torus's coordinates and middle weights are
+//! quadratic irrationals, rounded once all the same). So a corner of a
+//! cylinder's or sphere's tile is its rounded point, and a sphere's pole
+//! row and a cone's or spindle torus's apex row are one point to the
+//! bit. A boundary row is the same exact values
 //! in both cells beside it, so neighbours share it bit for bit, weights
 //! included, and every cell of one key is the same bits on every surface.
 //!
@@ -88,7 +97,9 @@
 //! (the tile's tangents within `2⁻⁵` rad of the form's), `ℓ_d(L)` a lower
 //! bound on the chord of a level-`L` cell along `d` (the cell's extent
 //! along a line; `2ρ·sin(90°·2^−L/2)` around a circle of radius `ρ`, the
-//! form's radius, on a cone the radius at the cells' far row; along a
+//! form's radius, on a cone the radius at the cells' far row, on a torus
+//! its tube's radius along it and around the axis the least radius of a
+//! ring's cells or a spindle's outer equator; along a
 //! profile its spans' least chord rate times `2^−L`,
 //! [`super::forms::cyl`]), and `δ` a bound on a tile's control points' distance
 //! from the form's exact sub-patch over the cell, the same at every
@@ -105,7 +116,8 @@
 //! `δ` grows with a cell's distance from the origin, so the cap is the
 //! form's over the cells that hold the coordinate box (the plane's cell
 //! `(0, 0)`, a cylinder's axial cell 0 and a cone's slant cell 0 with
-//! every angle cell or span, every cell of a sphere), and a cell further
+//! every angle cell or span, every cell of a sphere, a torus's outer
+//! tube cell 0 with every angle cell), and a cell further
 //! out has its own, lower one. Constructors, `extend`, torus
 //! domains and imports coarsen their rectangle to the cap
 //! ([`Lattice::capped`]: the domain need only cover the trims), so they
@@ -119,9 +131,11 @@
 //! surface (the canonical constructors' choice, [`Lattice::half`]) is two
 //! angle cells by one axial cell on a cylinder or cone, two by two on a
 //! sphere (pole to pole), the one tile of a plane; a conic-chain
-//! cylinder's is its whole profile by one axial cell. An angle span must
-//! be less than a full turn, and a closed profile's less than all its
-//! spans, so no surface meets itself.
+//! cylinder's is its whole profile by one axial cell; a ring torus's two
+//! angle cells by its tube's outer half (two cells), a spindle's two by
+//! its whole outer part at tube level 1 (four arcs). An angle span (and
+//! a ring torus's tube span) must be less than a full turn, and a
+//! closed profile's less than all its spans, so no surface meets itself.
 
 use std::ops::{Range, RangeInclusive};
 
@@ -130,7 +144,7 @@ use malachite::base::num::basic::traits::One;
 use varde_decide::bezier::{Dir, HomPatch};
 
 use super::form::{FormKey, dot};
-use super::forms::{cone, cyl, plane};
+use super::forms::{cone, cyl, plane, sphere, torus};
 use super::round::{nearest, nearest_root, nearest_sqrt, q};
 use super::tile::{Net, Tile, TileError};
 use varde_decide::num::storage::ulp;
@@ -193,19 +207,22 @@ pub enum LatticeError {
     },
     /// A cell outside the lattice (a sphere's latitude beyond the poles,
     /// a cone's axial cell on the other nappe, a conic-chain cylinder's
-    /// span index outside its profile), an index whose arithmetic
+    /// span index outside its profile, a spindle torus's tube cell on its
+    /// inner part), an index whose arithmetic
     /// overflows, or a rectangle with more tiles than memory holds.
     Index,
     /// An empty rectangle, or one whose angle span is a full turn or more
-    /// (on a conic-chain cylinder: every span of a closed profile).
+    /// (on a conic-chain cylinder: every span of a closed profile; on a
+    /// ring torus also its tube span).
     Span,
     /// A frame value, rounded, is not finite.
     Range,
-    /// A tile's net is refused: a coordinate overflows, or a conic-chain
-    /// cylinder's profile has a weight outside the tiles' range.
+    /// A tile's net is refused: a coordinate overflows, or a weight lies
+    /// outside the tiles' range (a conic-chain cylinder's profile's, a
+    /// spindle torus's too close to a horn torus).
     Tile(TileError),
-    /// A form these lattices don't tile yet: a torus, revolved conic or
-    /// affine image (their frames are [`frame`]'s).
+    /// A form these lattices don't tile yet: a revolved conic or affine
+    /// image (their frames are [`frame`]'s).
     Form,
     /// A conic-chain cylinder's profile whose consecutive spans meet with
     /// different weights at their shared point: the tiles beside the
@@ -321,7 +338,7 @@ pub(in crate::geom) enum Weight {
 }
 
 impl Weight {
-    fn times(self, o: Weight) -> Weight {
+    pub(in crate::geom) fn times(self, o: Weight) -> Weight {
         match (self, o) {
             (Weight::One, w) | (w, Weight::One) => w,
             (Weight::Root, Weight::Root) => Weight::Half,
@@ -349,7 +366,11 @@ impl Lattice {
     /// weights.
     pub fn new(key: FormKey) -> Result<Lattice, LatticeError> {
         match &key {
-            FormKey::Plane(_) | FormKey::Cylinder(_) | FormKey::Cone(_) | FormKey::Sphere(_) => {}
+            FormKey::Plane(_)
+            | FormKey::Cylinder(_)
+            | FormKey::Cone(_)
+            | FormKey::Sphere(_)
+            | FormKey::Torus(_) => {}
             FormKey::ConicCylinder(c) => cyl::joints(c)?,
             _ => return Err(LatticeError::Form),
         }
@@ -416,7 +437,7 @@ impl Lattice {
 
     /// The frame's origin: the plane's foot of the world origin, the
     /// cylinder's foot point, the world origin of a conic-chain
-    /// cylinder, the cone's apex, the sphere's centre.
+    /// cylinder, the cone's apex, the sphere's or torus's centre.
     #[inline]
     pub fn origin(&self) -> [f64; 3] {
         self.origin
@@ -440,25 +461,8 @@ impl Lattice {
             FormKey::Cylinder(c) => cyl::net(&f, c, k, l)?,
             FormKey::ConicCylinder(c) => cyl::chain_net(&f, c, k, l)?,
             FormKey::Cone(c) => cone::net(&f, c, k, l)?,
-            FormKey::Sphere(s) => {
-                let o = &f.origin;
-                let [a0, a1, a2] = &f.axes;
-                // (ρ, z) on the unit meridian, and the weights.
-                let meridian: [(i32, i32); 3] = match l {
-                    -1 => [(0, -1), (1, -1), (1, 0)],
-                    0 => [(1, 0), (1, 1), (0, 1)],
-                    _ => return Err(LatticeError::Index),
-                };
-                let around = arc(a0, a1, k);
-                let r = q(s.radius());
-                std::array::from_fn(|n| {
-                    let (dir, wu) = &around[n / 3];
-                    let (rho, z) = meridian[n % 3];
-                    let (rho, z) = (Rational::from(rho), Rational::from(z));
-                    let p = [0, 1, 2].map(|c| &o[c] + &r * (&rho * &dir[c] + &z * &a2[c]));
-                    affine(&p, wu.times(ARC[n % 3]).value())
-                })
-            }
+            FormKey::Sphere(s) => sphere::net(&f, s, k, l)?,
+            FormKey::Torus(t) => torus::net(&f, t, k, l)?,
             _ => return Err(LatticeError::Form),
         };
         Ok(Tile::new(net)?)
@@ -534,13 +538,15 @@ impl Lattice {
             return Err(LatticeError::Level);
         }
         let nu = span(&rect.u)?;
-        span(&rect.v)?;
+        let nv = span(&rect.v)?;
+        let turn = |n: u64, l: u32| u128::from(n) >= 4u128 << l;
         let full = match &self.key {
             FormKey::Plane(_) => false,
             FormKey::ConicCylinder(c) => {
                 cyl::closed(c) && u128::from(nu) >= (c.profile().spans().len() as u128) << lu
             }
-            _ => nu >= 4u64 << lu,
+            FormKey::Torus(t) => turn(nu, lu) || torus::full_tube(t, nv, lv),
+            _ => turn(nu, lu),
         };
         if full {
             return Err(LatticeError::Span);
@@ -553,11 +559,13 @@ impl Lattice {
 
     /// `Index` unless the base cells `u` × `v` lie in the lattice: a
     /// cone's axial cells from the apex on, a conic-chain cylinder's
-    /// spans those of its profile (a sphere's latitudes are its base
-    /// tiles' to check).
+    /// spans those of its profile, a sphere's latitudes −1 and 0, a
+    /// spindle torus's tube cells −1 and 0.
     fn valid(&self, u: &Cells, v: &Cells) -> Result<(), LatticeError> {
         let ok = match &self.key {
             FormKey::Cone(_) => *v.start() >= 0,
+            FormKey::Sphere(_) => sphere::valid(v),
+            FormKey::Torus(t) => torus::valid(t, v),
             FormKey::ConicCylinder(c) => {
                 *u.start() >= 0 && (*u.end() as u64) < c.profile().spans().len() as u64
             }
@@ -582,7 +590,8 @@ impl Lattice {
 
     /// The base cells holding the coordinate box (module docs), in `u`
     /// and `v`: cell `(0, 0)` of a plane, axial cell 0 of a cylinder or
-    /// cone, any angle cell, every span of a profile.
+    /// cone, a torus's outer tube cell 0, any angle cell, every span of
+    /// a profile.
     fn box_cells(&self) -> (Cells, Cells) {
         match &self.key {
             FormKey::ConicCylinder(c) => (0..=(c.profile().spans().len() as i64 - 1), 0..=0),
@@ -602,19 +611,8 @@ impl Lattice {
             FormKey::Cylinder(c) => cyl::reach(&frame, c, v),
             FormKey::ConicCylinder(c) => cyl::chain_reach(&frame, c, u, v),
             FormKey::Cone(c) => cone::reach(&frame, c, v),
-            FormKey::Sphere(s) => {
-                let (o, [a0, a1, a2]) = (self.origin, self.axes);
-                let r = s.radius();
-                let m = (0..3)
-                    .map(|c| o[c].abs() + r * (a0[c].abs() + a1[c].abs() + a2[c].abs()))
-                    .fold(0.0, larger);
-                Reach {
-                    m,
-                    rho: r,
-                    t: 0.0,
-                    runs: [Run::Turn(r), Run::Turn(r)],
-                }
-            }
+            FormKey::Sphere(s) => sphere::reach(&frame, s),
+            FormKey::Torus(t) => torus::reach(&frame, t, v),
             _ => unreachable!("a lattice of a tiled form"),
         };
         // Sums and products of positive values, each rounded: a relative
@@ -636,10 +634,12 @@ impl Lattice {
     /// The canonical surface's rectangle at the base level: the 180°
     /// surface of angle cells `first` and `first + 1` times axial cell
     /// 0 on a cylinder or cone (the cone's apex row its first `v` row),
-    /// times latitudes −1 and 0 on a sphere; the plane's one cell
-    /// `(0, 0)`; every span of a conic-chain cylinder's profile times
-    /// axial cell 0 (`first` unused on these two; a closed profile's
-    /// rectangle is refused by [`tiles`](Self::tiles)).
+    /// times latitudes −1 and 0 on a sphere, times a ring torus's tube
+    /// cells −1 and 0 (its outer half); a spindle torus's at level `(0,
+    /// 1)`, its outer part's four tube arcs from apex to apex; the
+    /// plane's one cell `(0, 0)`; every span of a conic-chain cylinder's
+    /// profile times axial cell 0 (`first` unused on these two; a closed
+    /// profile's rectangle is refused by [`tiles`](Self::tiles)).
     pub fn half(&self, first: i64) -> Result<Rect, LatticeError> {
         let next = first.checked_add(2).ok_or(LatticeError::Index)?;
         Ok(match &self.key {
@@ -663,6 +663,7 @@ impl Lattice {
                 u: first..next,
                 v: -1..1,
             },
+            FormKey::Torus(t) => torus::half(t, first, next),
             _ => return Err(LatticeError::Form),
         })
     }
