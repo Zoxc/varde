@@ -1,15 +1,19 @@
 //! The forms' constructors: each form's tiles on its lattice (the base
 //! cell's net from the stored key and frame, and what the level cap
 //! reads of it, [`super::lattice`]), and the canonical surfaces built of
-//! them, so far for the [`plane`], the circular and conic-chain
-//! cylinders ([`cyl`]), the [`cone`], the [`sphere`] and the ring and
-//! spindle [`torus`].
+//! them: the [`plane`], the circular and conic-chain cylinders
+//! ([`cyl`]), the [`cone`], the [`sphere`], the ring and spindle
+//! [`torus`], the [`revolved`] conic and [`affine`] images of every form;
+//! and the [`ruled`] surfaces between two rails, which have no key and
+//! no lattice.
 //!
 //! **Exact to rounding.** Every control point of a base tile is an
 //! exact function of the stored key's values, the frame's stored values
 //! and the cell, each coordinate rounded once to the nearest `f64`, ties
 //! to even; weights are `1`, `√½` rounded, `½`, a profile's stored
-//! weights, exact, or a spindle torus's middle weights, rounded once. A
+//! weights, exact, or a spindle torus's and a revolved conic's middle
+//! weights, rounded once. An affine image's base tile is its source's,
+//! each stored coordinate mapped and rounded once more, weights kept. A
 //! finer level's tile is its base tile's exact sub-patch rounded once
 //! ([`super::lattice::Lattice::tile`]). So two constructions of one key
 //! give the same bits, and a tile's distance from the form is the
@@ -23,11 +27,16 @@
 //! angle cells by axial cell 0, which holds the coordinate box), a
 //! conic-chain cylinder's whole profile by axial cell 0, 180° of a
 //! sphere from pole to pole, 180° of a ring torus by half its tube; a
-//! spindle torus's 180° by its whole outer part is at tube level 1.
+//! spindle torus's 180° by its whole outer part is at tube level 1; a
+//! revolved conic's 180° by its whole profile; an affine image's its
+//! source's mapped.
 
+pub mod affine;
 pub mod cone;
 pub mod cyl;
 pub mod plane;
+pub mod revolved;
+pub mod ruled;
 pub mod sphere;
 pub mod torus;
 

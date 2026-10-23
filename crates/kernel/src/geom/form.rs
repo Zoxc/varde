@@ -106,6 +106,9 @@ pub enum FormError {
     Nested,
     /// An affine map that isn't invertible.
     Singular,
+    /// A revolved conic's profile span that reaches the far side of the
+    /// axis (`ρ < 0` somewhere on it) or lies on it ([`AxisContact`]).
+    Axis,
 }
 
 /// Why a key can't be made inside an operation: its inputs, or the
@@ -575,7 +578,8 @@ impl RevolvedKey {
     /// `axis` (any length, either sense) of the chain `spans`: control
     /// points `(ρ, z, w)` in a meridian half-plane, `ρ` the distance from
     /// the axis, `z` along `axis` from `point`; consecutive spans sharing
-    /// their end point.
+    /// their end point. A span may meet the axis, never cross it or lie
+    /// on it (`Axis`, [`AxisContact`]).
     pub fn new(point: [f64; 3], axis: [f64; 3], spans: &[Span2]) -> Result<RevolvedKey, FormError> {
         uncharged(|m| RevolvedKey::metered(point, axis, spans, m))
     }
@@ -589,6 +593,12 @@ impl RevolvedKey {
     ) -> Built<RevolvedKey, C> {
         finite(&point)?;
         chain(spans.iter().map(|s| s.map(|p| ([p[0], p[1], 0.0], p[2]))))?;
+        if spans
+            .iter()
+            .any(|s| axis_contact(s) == AxisContact::Crosses)
+        {
+            return Err(FormError::Axis.into());
+        }
         let line = Axis::new(&point, &axis, m)?;
         // `z` from the foot along the stored axis: `σz + p·â`.
         let a = line.exact.map(Expr::Lit);
@@ -707,6 +717,61 @@ impl Profile {
     fn values(&self) -> &[f64] {
         self.spans.as_flattened().as_flattened()
     }
+}
+
+/// How a profile span `(ρ, z, w)` of a revolved conic meets the axis
+/// `ρ = 0`, decided exactly on its stored values: its distance from the
+/// axis is `N(s)/W(s)`, `W > 0` the weights' Bernstein form and `N` that
+/// of `w₀ρ₀, w₁ρ₁, w₂ρ₂`, so it reaches the axis where `N` has a root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxisContact {
+    /// `N > 0` on the span but perhaps at an end, where the span meets
+    /// the axis **transversally** (a simple root: `N′ ≠ 0` there). Its
+    /// tiles' row on the axis is a pole where the span leaves the axis
+    /// perpendicularly (`z₁ = z₀` at the start, `z₂ = z₁` at the end),
+    /// else an apex.
+    Regular,
+    /// `N` has a double root on the span: it touches the axis
+    /// tangentially, at an end or inside, the meridian of a horn torus at
+    /// its cusp point or a conic tangent to the axis. The surface has a
+    /// cusp there, which no tile holds (a lattice refuses the span's
+    /// cells).
+    Cusp,
+    /// `N < 0` somewhere on the span (it crosses the axis) or `N ≡ 0` (it
+    /// lies on the axis): no revolved conic (a key refuses it, `Axis`).
+    Crosses,
+}
+
+/// How `span` meets the axis ([`AxisContact`]): with `a = w₀ρ₀`, `b =
+/// w₁ρ₁`, `c = w₂ρ₂` (exact), `N = a(1 − s)² + 2b·s(1 − s) + c·s²`. An end
+/// below 0, or all three 0, crosses; an end at 0 is a simple root when
+/// `b > 0`, a double one when `b = 0`, and `N` dips below 0 next to it
+/// when `b < 0`; inside, `N` has its least value `(ac − b²)/(a − 2b + c)`
+/// at `s = (a − b)/(a − 2b + c)` when `b < a` and `b < c`, else none.
+pub(crate) fn axis_contact(span: &Span2) -> AxisContact {
+    let [a, b, c] = span.map(|p| q(p[2]) * q(p[0]));
+    let zero = Rational::ZERO;
+    if a < zero || c < zero || (a == zero && b == zero && c == zero) {
+        return AxisContact::Crosses;
+    }
+    for end in [&a, &c] {
+        if *end == zero {
+            if b < zero {
+                return AxisContact::Crosses;
+            }
+            if b == zero {
+                return AxisContact::Cusp;
+            }
+        }
+    }
+    if b < a && b < c {
+        match (&b * &b).cmp(&(&a * &c)) {
+            Ordering::Greater => return AxisContact::Crosses,
+            Ordering::Equal => return AxisContact::Cusp,
+            Ordering::Less => {}
+        }
+    }
+    AxisContact::Regular
 }
 
 /// The most stored values a key holds before its profile and source.

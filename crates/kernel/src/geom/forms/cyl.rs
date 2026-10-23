@@ -38,7 +38,7 @@ use std::ops::Range;
 
 use malachite::Rational;
 
-use super::super::form::{ConicCylinderKey, CylinderKey, Span2};
+use super::super::form::{ConicCylinderKey, CylinderKey, Profile, Span2};
 use super::super::lattice::{
     CELL, Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Reach, Rect, Run, affine, arc,
     halves, larger, line_reach, pow2,
@@ -186,7 +186,13 @@ pub(in crate::geom) fn chord_rate(span: &Span2) -> f64 {
 /// `Joint` unless every two consecutive spans of the profile have the
 /// same weight, bit for bit, at their shared point (module docs).
 pub(in crate::geom) fn joints(key: &ConicCylinderKey) -> Result<(), LatticeError> {
-    let spans = key.profile().spans();
+    profile_joints(key.profile())
+}
+
+/// `Joint` unless every two consecutive spans of `profile` have the same
+/// weight, bit for bit, at their shared point.
+pub(in crate::geom) fn profile_joints(profile: &Profile) -> Result<(), LatticeError> {
+    let spans = profile.spans();
     if spans
         .windows(2)
         .all(|p| p[0][2][2].to_bits() == p[1][0][2].to_bits())
@@ -200,7 +206,13 @@ pub(in crate::geom) fn joints(key: &ConicCylinderKey) -> Result<(), LatticeError
 /// Whether the profile closes: its last span ends at its first span's
 /// start (equal values, as the key's chain compares its joints).
 pub(in crate::geom) fn closed(key: &ConicCylinderKey) -> bool {
-    let spans = key.profile().spans();
+    profile_closed(key.profile())
+}
+
+/// Whether `profile` closes: its last span ends at its first span's
+/// start.
+pub(in crate::geom) fn profile_closed(profile: &Profile) -> bool {
+    let spans = profile.spans();
     let (first, last) = (spans[0][0], spans[spans.len() - 1][2]);
     first[0] == last[0] && first[1] == last[1]
 }

@@ -891,8 +891,7 @@ fn tiles_follow_the_tangent_to_the_cap() {
 /// Every form's frame is its key's: the revolution frame about its axis
 /// at its foot point, apex or centre (the world origin for a conic-chain
 /// cylinder, whose profile's `x` runs along `e₁`); an affine image's,
-/// its source's mapped. The forms not tiled yet (revolved conic, affine
-/// image) have no lattice.
+/// its source's mapped; their lattices the same.
 #[test]
 fn frames_of_every_form() {
     use crate::geom::form::{AffineKey, ConeKey, ConicCylinderKey, RevolvedKey, TorusKey};
@@ -940,12 +939,7 @@ fn frames_of_every_form() {
             },
             "{key:?}"
         );
-        match key {
-            FormKey::Cone(_) | FormKey::ConicCylinder(_) | FormKey::Torus(_) => {
-                assert_eq!(Lattice::new(key.clone()).unwrap().axes(), about_z)
-            }
-            _ => assert_eq!(Lattice::new(key).unwrap_err(), LatticeError::Form),
-        }
+        assert_eq!(Lattice::new(key).unwrap().axes(), about_z);
     }
     // A tilted conic-chain cylinder: its profile's `x` is the span
     // points' offset along `e₁`, to rounding.
@@ -975,5 +969,6 @@ fn frames_of_every_form() {
     let f = frame(&img).unwrap();
     assert_eq!(f.origin, [1.0, 0.0, 6.0]);
     assert_eq!(f.axes, src.axes.map(|e| e.map(|x| 2.0 * x)));
-    assert_eq!(Lattice::new(img).unwrap_err(), LatticeError::Form);
+    let l = Lattice::new(img).unwrap();
+    assert_eq!((l.origin(), l.axes()), (f.origin, f.axes));
 }

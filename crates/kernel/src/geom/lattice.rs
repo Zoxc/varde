@@ -1,9 +1,9 @@
 //! Form-anchored lattices: the grid of tiles every surface of one form
 //! lies on, fixed by the form's key alone, so coplanar faces and coaxial
-//! equal forms from any feature share their tiles bit for bit. So far
-//! the plane's, the circular and conic-chain cylinders', the cone's, the
-//! sphere's and the ring and spindle torus's tiles; the frames of every
-//! form.
+//! equal forms from any feature share their tiles bit for bit: every
+//! form's, the plane's, the circular and conic-chain cylinders', the
+//! cone's, the sphere's, the ring and spindle torus's, the revolved
+//! conic's and the affine images of all of them.
 //!
 //! **Frames** (a function of the stored [`FormKey`], never chosen by a
 //! constructor; [`frame`]). The reference direction of a unit direction
@@ -54,6 +54,13 @@
 //!   spindle torus the two halves `[−φ*, 0]`, `[0, φ*]` of its outer part
 //!   (`cos φ* = −R/r`), whose ends on the axis, the apexes, are whole
 //!   rows of the tiles; a spindle has no cell on its inner part.
+//! - revolved conic ([`super::forms::revolved`]): the cylinder's angle
+//!   cells times the profile's span `l` (`0 ≤ l <` its number of spans),
+//!   the tensor product of the quarter circle and the span; a span's end
+//!   on the axis is a whole row of the tiles (a pole or an apex), and a
+//!   span tangent to the axis (a cusp) has no cell.
+//! - affine image ([`super::forms::affine`]): its source's cells, each
+//!   base tile the source's with its control points mapped.
 //!
 //! The tile's `u` runs along the first index, `v` along the second, and
 //! its orientation `x_u × x_v` is `n` on a plane, points out of a
@@ -134,7 +141,9 @@
 //! sphere (pole to pole), the one tile of a plane; a conic-chain
 //! cylinder's is its whole profile by one axial cell; a ring torus's two
 //! angle cells by its tube's outer half (two cells), a spindle's two by
-//! its whole outer part at tube level 1 (four arcs). An angle span (and
+//! its whole outer part at tube level 1 (four arcs); a revolved conic's
+//! two angle cells by its whole profile; an affine image's its source's.
+//! An angle span (and
 //! a ring torus's tube span) must be less than a full turn, and a
 //! closed profile's less than all its spans, so no surface meets itself.
 
@@ -145,7 +154,7 @@ use malachite::base::num::basic::traits::One;
 use varde_decide::bezier::{Dir, HomPatch};
 
 use super::form::{FormKey, dot};
-use super::forms::{cone, cyl, plane, sphere, torus};
+use super::forms::{affine as image, cone, cyl, plane, revolved, sphere, torus};
 use super::round::{nearest, nearest_root, nearest_sqrt, q};
 use super::tile::{Net, Tile, TileError};
 use varde_decide::num::storage::ulp;
@@ -208,13 +217,13 @@ pub enum LatticeError {
     },
     /// A cell outside the lattice (a sphere's latitude beyond the poles,
     /// a cone's axial cell on the other nappe, a conic-chain cylinder's
-    /// span index outside its profile, a spindle torus's tube cell on its
-    /// inner part), an index whose arithmetic
+    /// or revolved conic's span index outside its profile, a spindle
+    /// torus's tube cell on its inner part), an index whose arithmetic
     /// overflows, or a rectangle with more tiles than memory holds.
     Index,
     /// An empty rectangle, or one whose angle span is a full turn or more
-    /// (on a conic-chain cylinder: every span of a closed profile; on a
-    /// ring torus also its tube span).
+    /// (on a conic-chain cylinder: every span of a closed profile, on a
+    /// revolved conic also; on a ring torus also its tube span).
     Span,
     /// A frame value, rounded, is not finite.
     Range,
@@ -222,13 +231,16 @@ pub enum LatticeError {
     /// outside the tiles' range (a conic-chain cylinder's profile's, a
     /// spindle torus's too close to a horn torus).
     Tile(TileError),
-    /// A form these lattices don't tile yet: a revolved conic or affine
-    /// image (their frames are [`frame`]'s).
-    Form,
-    /// A conic-chain cylinder's profile whose consecutive spans meet with
-    /// different weights at their shared point: the tiles beside the
-    /// joint would not share their row bit for bit.
+    /// A conic-chain cylinder's or revolved conic's profile whose
+    /// consecutive spans meet with different weights at their shared
+    /// point: the tiles beside the joint would not share their row bit
+    /// for bit.
     Joint,
+    /// A revolved conic's cell whose span is tangent to the axis: the
+    /// surface has a cusp there, which no tile holds
+    /// ([`super::forms::revolved`]). A feature operation needing that
+    /// point refuses it as its own `Feature`.
+    Cusp,
     /// An extension's rectangle at another level than the surface's, or
     /// not covering its rectangle ([`Surface::extend`]).
     ///
@@ -301,6 +313,8 @@ pub struct Lattice {
     origin: [f64; 3],
     axes: [[f64; 3]; 3],
     cap: Level,
+    /// An affine image's source's lattice, whose cells it maps.
+    source: Option<Box<Lattice>>,
 }
 
 /// How a lattice direction runs: along a line (its cells `CELL` long at
@@ -367,25 +381,34 @@ pub(in crate::geom) const ARC: [Weight; 3] = [Weight::One, Weight::Root, Weight:
 
 impl Lattice {
     /// The lattice of `key`'s form, its frame computed from the stored
-    /// key ([`frame`]); `Form` for the forms not tiled yet, `Joint` for a
-    /// conic-chain cylinder whose profile's spans meet with different
-    /// weights.
+    /// key ([`frame`]); `Joint` for a conic-chain cylinder or revolved
+    /// conic whose profile's spans meet with different weights; an
+    /// affine image's errors those of its source's lattice, else its
+    /// own.
     pub fn new(key: FormKey) -> Result<Lattice, LatticeError> {
-        match &key {
+        let source = match &key {
             FormKey::Plane(_)
             | FormKey::Cylinder(_)
             | FormKey::Cone(_)
             | FormKey::Sphere(_)
-            | FormKey::Torus(_) => {}
-            FormKey::ConicCylinder(c) => cyl::joints(c)?,
-            _ => return Err(LatticeError::Form),
-        }
+            | FormKey::Torus(_) => None,
+            FormKey::ConicCylinder(c) => {
+                cyl::joints(c)?;
+                None
+            }
+            FormKey::Revolved(r) => {
+                cyl::profile_joints(r.profile())?;
+                None
+            }
+            FormKey::Affine(a) => Some(Box::new(Lattice::new(a.source().clone())?)),
+        };
         let Frame { origin, axes } = frame(&key)?;
         let mut l = Lattice {
             key,
             origin,
             axes,
             cap: Level::BASE,
+            source,
         };
         let (u, v) = l.box_cells();
         l.cap = l.cap_for(&u, &v);
@@ -442,8 +465,9 @@ impl Lattice {
     }
 
     /// The frame's origin: the plane's foot of the world origin, the
-    /// cylinder's foot point, the world origin of a conic-chain
-    /// cylinder, the cone's apex, the sphere's or torus's centre.
+    /// cylinder's or revolved conic's foot point, the world origin of a
+    /// conic-chain cylinder, the cone's apex, the sphere's or torus's
+    /// centre, an affine image's source's mapped.
     #[inline]
     pub fn origin(&self) -> [f64; 3] {
         self.origin
@@ -469,7 +493,11 @@ impl Lattice {
             FormKey::Cone(c) => cone::net(&f, c, k, l)?,
             FormKey::Sphere(s) => sphere::net(&f, s, k, l)?,
             FormKey::Torus(t) => torus::net(&f, t, k, l)?,
-            _ => return Err(LatticeError::Form),
+            FormKey::Revolved(r) => revolved::net(&f, r, k, l)?,
+            FormKey::Affine(a) => match &self.source {
+                Some(src) => image::net(a, src.base_tile(k, l)?.net()),
+                None => unreachable!("an affine image's lattice has its source's"),
+            },
         };
         Ok(Tile::new(net)?)
     }
@@ -537,8 +565,12 @@ impl Lattice {
 
     /// `rect`'s base cells in `u` and `v`, after checking its level, its
     /// span, a turn's span less than full (every span of a closed
-    /// profile not taken), and its cells in the lattice.
+    /// profile not taken), and its cells in the lattice (an affine
+    /// image's those of its source).
     fn cells(&self, rect: &Rect) -> Result<(Cells, Cells), LatticeError> {
+        if let Some(src) = &self.source {
+            return src.cells(rect);
+        }
         let Level { u: lu, v: lv } = rect.level;
         if lu > MAX_LEVEL || lv > MAX_LEVEL {
             return Err(LatticeError::Level);
@@ -552,6 +584,7 @@ impl Lattice {
                 cyl::closed(c) && u128::from(nu) >= (c.profile().spans().len() as u128) << lu
             }
             FormKey::Torus(t) => turn(nu, lu) || torus::full_tube(t, nv, lv),
+            FormKey::Revolved(r) => revolved::full(r, (nu, lu), (nv, lv)),
             _ => turn(nu, lu),
         };
         if full {
@@ -564,10 +597,14 @@ impl Lattice {
     }
 
     /// `Index` unless the base cells `u` × `v` lie in the lattice: a
-    /// cone's axial cells from the apex on, a conic-chain cylinder's
-    /// spans those of its profile, a sphere's latitudes −1 and 0, a
-    /// spindle torus's tube cells −1 and 0.
+    /// cone's axial cells from the apex on, a conic-chain cylinder's or
+    /// revolved conic's spans those of its profile, a sphere's latitudes
+    /// −1 and 0, a spindle torus's tube cells −1 and 0, an affine
+    /// image's its source's.
     fn valid(&self, u: &Cells, v: &Cells) -> Result<(), LatticeError> {
+        if let Some(src) = &self.source {
+            return src.valid(u, v);
+        }
         let ok = match &self.key {
             FormKey::Cone(_) => *v.start() >= 0,
             FormKey::Sphere(_) => sphere::valid(v),
@@ -575,6 +612,7 @@ impl Lattice {
             FormKey::ConicCylinder(c) => {
                 *u.start() >= 0 && (*u.end() as u64) < c.profile().spans().len() as u64
             }
+            FormKey::Revolved(r) => revolved::valid(r, v),
             _ => true,
         };
         if ok { Ok(()) } else { Err(LatticeError::Index) }
@@ -597,30 +635,44 @@ impl Lattice {
     /// The base cells holding the coordinate box (module docs), in `u`
     /// and `v`: cell `(0, 0)` of a plane, axial cell 0 of a cylinder or
     /// cone, a torus's outer tube cell 0, any angle cell, every span of
-    /// a profile.
+    /// a profile, an affine image's source's.
     fn box_cells(&self) -> (Cells, Cells) {
+        if let Some(src) = &self.source {
+            return src.box_cells();
+        }
         match &self.key {
             FormKey::ConicCylinder(c) => (0..=(c.profile().spans().len() as i64 - 1), 0..=0),
+            FormKey::Revolved(r) => revolved::box_cells(r),
             _ => (0..=0, 0..=0),
+        }
+    }
+
+    /// What the level cap reads of the base cells `u` × `v`: each form's
+    /// constructor's reading, an affine image's from its source's.
+    fn reach(&self, u: &Cells, v: &Cells) -> Reach {
+        let frame = Frame {
+            origin: self.origin,
+            axes: self.axes,
+        };
+        match (&self.key, &self.source) {
+            (FormKey::Plane(_), _) => plane::reach(&frame, u, v),
+            (FormKey::Cylinder(c), _) => cyl::reach(&frame, c, v),
+            (FormKey::ConicCylinder(c), _) => cyl::chain_reach(&frame, c, u, v),
+            (FormKey::Cone(c), _) => cone::reach(&frame, c, v),
+            (FormKey::Sphere(s), _) => sphere::reach(&frame, s),
+            (FormKey::Torus(t), _) => torus::reach(&frame, t, v),
+            (FormKey::Revolved(r), _) => revolved::reach(&frame, r, v),
+            (FormKey::Affine(a), Some(src)) => image::reach(a, src.reach(u, v)),
+            (FormKey::Affine(_), None) => {
+                unreachable!("an affine image's lattice has its source's")
+            }
         }
     }
 
     /// The level cap of the base cells `u` × `v` (module docs), lattice
     /// cells there.
     fn cap_for(&self, u: &Cells, v: &Cells) -> Level {
-        let frame = Frame {
-            origin: self.origin,
-            axes: self.axes,
-        };
-        let Reach { m, rho, t, runs } = match &self.key {
-            FormKey::Plane(_) => plane::reach(&frame, u, v),
-            FormKey::Cylinder(c) => cyl::reach(&frame, c, v),
-            FormKey::ConicCylinder(c) => cyl::chain_reach(&frame, c, u, v),
-            FormKey::Cone(c) => cone::reach(&frame, c, v),
-            FormKey::Sphere(s) => sphere::reach(&frame, s),
-            FormKey::Torus(t) => torus::reach(&frame, t, v),
-            _ => unreachable!("a lattice of a tiled form"),
-        };
+        let Reach { m, rho, t, runs } = self.reach(u, v);
         // Sums and products of positive values, each rounded: a relative
         // `2⁻⁴⁰` covers their rounding.
         let up = 1.0 + pow2(-40);
@@ -644,9 +696,14 @@ impl Lattice {
     /// cells −1 and 0 (its outer half); a spindle torus's at level `(0,
     /// 1)`, its outer part's four tube arcs from apex to apex; the
     /// plane's one cell `(0, 0)`; every span of a conic-chain cylinder's
-    /// profile times axial cell 0 (`first` unused on these two; a closed
-    /// profile's rectangle is refused by [`tiles`](Self::tiles)).
+    /// profile times axial cell 0 (`first` unused on these two); angle
+    /// cells `first` and `first + 1` times every span of a revolved
+    /// conic's profile (a closed profile's rectangle is refused by
+    /// [`tiles`](Self::tiles)); an affine image's source's.
     pub fn half(&self, first: i64) -> Result<Rect, LatticeError> {
+        if let Some(src) = &self.source {
+            return src.half(first);
+        }
         let next = first.checked_add(2).ok_or(LatticeError::Index)?;
         Ok(match &self.key {
             FormKey::Plane(_) => Rect {
@@ -670,7 +727,8 @@ impl Lattice {
                 v: -1..1,
             },
             FormKey::Torus(t) => torus::half(t, first, next),
-            _ => return Err(LatticeError::Form),
+            FormKey::Revolved(r) => revolved::half(r, first, next),
+            FormKey::Affine(_) => unreachable!("an affine image's lattice has its source's"),
         })
     }
 }
