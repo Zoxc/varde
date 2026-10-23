@@ -158,6 +158,24 @@ pub(crate) fn extremum_cell_units(tile: bool, level: u8) -> u64 {
     row[usize::from(level)]
 }
 
+/// The units of one point of a p-curve fit, from the unit table
+/// ([`schedule::UNITS`]).
+pub(crate) fn fit_point_units() -> u64 {
+    schedule::UNITS.fit.point
+}
+
+/// The units of one span of a p-curve fit, from the unit table
+/// ([`schedule::UNITS`]).
+pub(crate) fn fit_span_units() -> u64 {
+    schedule::UNITS.fit.span
+}
+
+/// The units of one tile line inside a fitted span's control values, from
+/// the unit table ([`schedule::UNITS`]).
+pub(crate) fn fit_line_units() -> u64 {
+    schedule::UNITS.fit.line
+}
+
 /// What [`KernelError::OutOfBudget`] reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Limit {

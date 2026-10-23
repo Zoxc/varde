@@ -76,6 +76,8 @@ use varde_kernel::geom::form::PlaneKey;
 use varde_kernel::geom::formkey::calibration as keys;
 use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
 use varde_kernel::geom::pcurve::PCurve;
+use varde_kernel::geom::pcurve_fit::SAMPLES;
+use varde_kernel::geom::pcurve_fit::calibration as fit;
 use varde_kernel::geom::query::calibration as query;
 use varde_kernel::geom::surface::Surface;
 use varde_kernel::geom::tile::calibration as fold;
@@ -124,6 +126,7 @@ fn main() -> ExitCode {
         form_key_rows(budget, &mut rows);
         bvh_rows(budget, &mut rows);
         fold_rows(budget, &mut rows);
+        fit_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -286,6 +289,37 @@ fn query_rows(budget: Duration, rows: &mut Vec<Row>) {
             kind: format!("extremum tile L{level}"),
             ns,
             units: UNITS.extremum_cell.tile[l] as f64,
+        });
+    }
+}
+
+/// A p-curve fit's points (a knot's three: its curve point, inverse and
+/// lower bound, and its two neighbours') and spans (each with its
+/// samples' points), on small circles of a sphere: inside one tile, and
+/// on a finer level crossing tile lines.
+fn fit_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let u = UNITS.fit;
+    let coarse = fit::sphere([3.0, -7.0, 11.0], 40.0, [0.6, 0.0, 0.8], 0);
+    let c = fit::small_circle(&coarse, 0.5, 0.5, 0.1, 2);
+    let ts: Vec<f64> = (0..64).map(|k| k as f64 / 16.0).collect();
+    let ns = time(budget, || fit::points(&coarse, &c, &ts));
+    rows.push(Row {
+        kind: "fit knot".into(),
+        ns,
+        units: 3.0 * u.point as f64,
+    });
+    let fine = fit::sphere([3.0, -7.0, 11.0], 40.0, [0.6, 0.0, 0.8], 5);
+    for (kind, s) in [("fit span", &coarse), ("fit span, lines", &fine)] {
+        let lines = fit::lines(s, &c);
+        let spans = (c.knots().len() - 1) as f64;
+        let ns = time(budget, || fit::spans(s, &c));
+        // Each span's samples, and its share of the knots, are points.
+        let knots = c.knots().len() as f64 / spans;
+        let points = SAMPLES as f64 + 3.0 * knots;
+        rows.push(Row {
+            kind: kind.into(),
+            ns,
+            units: u.span as f64 + points * u.point as f64 + lines as f64 / spans * u.line as f64,
         });
     }
 }

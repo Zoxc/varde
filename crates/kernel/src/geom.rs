@@ -9,9 +9,10 @@
 //! and their exact rational quadratic spans; the [`curve`]s of edges, chains of rational
 //! quadratic spans in space, and the [`pcurve`]s of coedges, chains of
 //! Q, G, linear and iso spans in a surface's UV split at its tile
-//! lines, an edge's conditioned together, and their [`pcurve_exact`]
+//! lines, an edge's conditioned together, their [`pcurve_exact`]
 //! constructions where a curve's trace on a form is rational in its
-//! parameter; and the
+//! parameter, or fitted to its edge's curve with the same parameter
+//! ([`pcurve_fit`]); and the
 //! [`certify`]d seam bound between a coedge's curve on its surface and
 //! its edge's curve, and a curve's distance to an implicit surface; each
 //! tile's [`implicit`] polynomial, and the analytic [`inverse`] from a
@@ -31,6 +32,7 @@ pub mod inverse;
 pub mod lattice;
 pub mod pcurve;
 pub mod pcurve_exact;
+pub mod pcurve_fit;
 #[allow(dead_code, reason = "moved ahead of its callers, the measures")]
 pub mod query;
 mod round;

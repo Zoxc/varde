@@ -264,6 +264,24 @@ pub struct Units {
     /// `geom::tile`): its exact part once, then the search at each
     /// level it runs at.
     pub fold: FoldUnits,
+    /// A p-curve fitted to a curve on a surface with the same parameter
+    /// (the kernel's `geom::pcurve_fit`): its points and its spans.
+    pub fit: FitUnits,
+}
+
+/// The units of a p-curve fit ([`Units::fit`]); its spans' seam bounds
+/// are charged as seam cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FitUnits {
+    /// A point of the curve, certified, its UV by the surface's analytic
+    /// inverse and, at a knot, the surface's point there and its lower
+    /// bound on the deviation.
+    pub point: u64,
+    /// A span: its least-squares middle point and the span formed.
+    pub span: u64,
+    /// A tile line inside a span's control values: its crossings found
+    /// and the span cut there, exactly.
+    pub line: u64,
 }
 
 /// The units of a tile's fold check and normal cone search
@@ -553,6 +571,11 @@ pub const UNITS: Units = Units {
         full: 600,
         level: [570, 870, 2550, 2710, 3300],
         piece: [28, 33, 120, 125, 130],
+    },
+    fit: FitUnits {
+        point: 8,
+        span: 2,
+        line: 220,
     },
 };
 
