@@ -71,6 +71,9 @@
 //! the operation's warnings; only running out of budget, or a cell with
 //! no certified bound at a limit, fails.
 //!
+//! The same refinement, charges and limits bound a curve's distance to
+//! an implicit surface by the ball condition ([`implicit`]).
+//!
 //! Biquadratic tiles, spans of every kind. On a plane, whose one tile spans
 //! the coordinate box (4·10⁶ mm), the first level's bound on a whole 90°
 //! arc of radius 50 is about `3·10⁻⁹` mm for weights 1, though the arc
@@ -98,6 +101,8 @@ use crate::infra::budget::{
 pub const TIGHT: f64 = 1.125;
 
 const _: () = assert!(LEVELS as usize == 2 + Width::ALL.len());
+
+pub mod implicit;
 
 /// A coedge's seam bound and the highest precision level it took.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -156,12 +161,30 @@ pub(crate) fn seam_bound(
     target: f64,
     ledger: &mut Ledger<'_>,
 ) -> Result<SeamBound, Stop<SeamError>> {
+    let pieces = pieces(surface, curve, pcurve).map_err(Stop::Failed)?;
+    refine(pieces.len(), target, ledger, seam_cell_units, |cell| {
+        eval(curve, pcurve, &pieces[cell.piece], cell)
+    })
+}
+
+/// The refinement of `roots` pieces towards `target` (module docs,
+/// "Escalation" to "Charges and limits"): each cell charged `units` at
+/// its level before `eval` gives its bounds, judged ([`judge`]), then
+/// done, computed again one level up or halved, depth first in order.
+/// The greatest bound of the cells done and the highest level of one.
+/// A target below 0, or a NaN, counts as 0.
+fn refine<E>(
+    roots: usize,
+    target: f64,
+    ledger: &mut Ledger<'_>,
+    units: impl Fn(u8) -> u64,
+    mut eval: impl FnMut(Cell) -> Eval,
+) -> Result<SeamBound, Stop<E>> {
     // A NaN compares false with every bound: never met, and never out of
     // reach.
     let target = if target > 0.0 { target } else { 0.0 };
-    let pieces = pieces(surface, curve, pcurve).map_err(Stop::Failed)?;
     // A stack: the next cell last.
-    let mut cells: Vec<Cell> = (0..pieces.len())
+    let mut cells: Vec<Cell> = (0..roots)
         .rev()
         .map(|piece| Cell {
             piece,
@@ -177,8 +200,8 @@ pub(crate) fn seam_bound(
     // The greatest certified lower bound of the deviation found.
     let mut lower = 0.0;
     while let Some(cell) = cells.pop() {
-        ledger.charge(level_step(cell.level), seam_cell_units(cell.level))?;
-        let e = eval(curve, pcurve, &pieces[cell.piece], cell);
+        ledger.charge(level_step(cell.level), units(cell.level))?;
+        let e = eval(cell);
         if e.lower > lower {
             lower = e.lower;
         }
@@ -304,7 +327,10 @@ struct Eval {
     value: f64,
     /// The greater deviation at the cell's ends, from the values alone.
     ends: f64,
-    /// A certified lower bound of the deviation at the cell's ends.
+    /// A certified lower bound of the deviation at the cell's ends; for
+    /// a distance to an implicit, the bound itself where that is the
+    /// certificate's own limit ([`implicit`], "The certificate's own
+    /// limit").
     lower: f64,
 }
 

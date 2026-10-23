@@ -3,7 +3,9 @@
 //! along tile lines, weights out to `1/64` and `64` at every control
 //! point, ends and knots included, near the poles, at far cells), curves with their own knots (one ulp off the p-curve's,
 //! or extra ones) and spans of one ulp, each bound checked against the
-//! deviation sampled densely and maximised locally. Weighted arcs on a
+//! deviation sampled densely and maximised locally. Exact pairs (tile
+//! rows with their iso lines on cylinders and spheres) are bounded by
+//! their rounding. Weighted arcs on a
 //! plane's 4 km tile escalate to their target, or bound a moved arc
 //! within a small factor of its deviation; the charges are the same on
 //! any number of threads, the budget running out at a precision step
@@ -869,4 +871,94 @@ fn seam_escalations_are_the_same_bits_everywhere() {
         h, 0xff34_6de7_6b3d_84ae,
         "escalations differ from the reference bits"
     );
+}
+
+/// The surfaces of the exact pairs' test: cylinders, cones and spheres
+/// at lattice levels 0 to 3 in random frames.
+fn exact_surfaces(rng: &mut Rng) -> Vec<Surface> {
+    let centre = rng.point(100.0).to_array();
+    let axis = rng.direction().to_array();
+    let r = rng.log_range(0.5, 200.0);
+    let mut out = Vec::new();
+    for l in 0..4u32 {
+        let m = 1i64 << l;
+        let k = CylinderKey::new(centre, axis, r).unwrap();
+        let rect = Rect {
+            level: Level { u: l, v: l },
+            u: -m..m,
+            v: -1..2,
+        };
+        out.push(Surface::new(Lattice::new(k.into()).unwrap(), rect).unwrap());
+        let k = SphereKey::new(centre, r, axis).unwrap();
+        let rect = Rect {
+            level: Level { u: l, v: l },
+            u: -m..m,
+            v: -m..m,
+        };
+        out.push(Surface::new(Lattice::new(k.into()).unwrap(), rect).unwrap());
+    }
+    out
+}
+
+#[test]
+fn exact_iso_seams_are_bounded_by_their_rounding() {
+    // An exact pair: a tile line's row as the edge's curve, the iso line
+    // along it as the p-curve, the same `t` (Möbius weights 1). The
+    // surface along the p-curve is the row itself, so the deviation is
+    // zero and the bound is the rounding of the composition alone: at
+    // the first level, for the usual target, within `2¹⁰` units of the
+    // last bit of the tile's coordinates (the rounding of each step
+    // carried through the degree-4 numerator, about a hundred units at
+    // most here); towards a target of 0, the top level's.
+    let mut worst: f64 = 0.0;
+    for seed in varde_testing::seeds(3, 30) {
+        let mut rng = Rng::new(seed);
+        for s in exact_surfaces(&mut rng) {
+            let rect = s.rect().clone();
+            for (along, lines, cells) in [
+                (Dir::U, rect.v.start..rect.v.end + 1, rect.u.clone()),
+                (Dir::V, rect.u.start..rect.u.end + 1, rect.v.clone()),
+            ] {
+                for at in lines {
+                    for cell in cells.clone() {
+                        let row = s.row(along, at, cell).unwrap();
+                        let Ok(c) = Curve3D::new(vec![row], vec![0.0, 1.0]) else {
+                            continue;
+                        };
+                        let fixed = match along {
+                            Dir::U => Dir::V,
+                            Dir::V => Dir::U,
+                        };
+                        let span = PSpan::Iso {
+                            fixed,
+                            at: at as f64,
+                            m: [[cell as f64, 1.0], [(cell + 1) as f64, 1.0]],
+                        };
+                        let p = PCurve::from_spans(vec![span], vec![0.0, 1.0]).unwrap();
+                        let what = format!("seed {seed}, {along:?} line {at}, cell {cell}");
+                        // The tile the row bounds, and its coordinates' scale.
+                        let (i, j) = match along {
+                            Dir::U => (cell, at.min(rect.v.end - 1)),
+                            Dir::V => (at.min(rect.u.end - 1), cell),
+                        };
+                        let scale = s.tile(i, j).unwrap().net().iter().fold(1.0f64, |m, h| {
+                            h[..3]
+                                .iter()
+                                .fold(m, |m, x| if x.abs() > m { x.abs() } else { m })
+                        });
+                        let b = seam_bound_alone(&s, &c, &p, TARGET, MAX_WORK).expect(&what);
+                        assert_eq!(b.level, 0, "{what}: {b:?}");
+                        let ulps = b.bound / (scale * f64::EPSILON);
+                        assert!(ulps <= 1024.0, "{what}: {b:?}, {ulps} ulps");
+                        if ulps > worst {
+                            worst = ulps;
+                        }
+                        let top = seam_bound_alone(&s, &c, &p, 0.0, MAX_WORK).expect(&what);
+                        assert!(top.bound <= 1e-200 * scale, "{what}: {top:?}");
+                    }
+                }
+            }
+        }
+    }
+    println!("worst first-level bound: {worst} units of the last bit");
 }

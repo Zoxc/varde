@@ -70,6 +70,7 @@ use varde_kernel::boolean::classify::{AuditInput, AuditRegion, Bands, Cover, Lea
 use varde_kernel::bvh_calibration::Tree;
 use varde_kernel::geom::certify::SeamBound;
 use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
+use varde_kernel::geom::certify::implicit::calibration as implicit;
 use varde_kernel::geom::curve::Curve3D;
 use varde_kernel::geom::form::PlaneKey;
 use varde_kernel::geom::formkey::calibration as keys;
@@ -108,6 +109,7 @@ fn main() -> ExitCode {
     let rows = pool.install(|| {
         let mut rows = Vec::new();
         seam_cells(budget, &mut rows);
+        implicit_cells(budget, &mut rows);
         count_piece_rows(budget, &mut rows);
         setup_rows(budget, &mut rows);
         xrec_rows(budget, &mut rows);
@@ -214,6 +216,32 @@ fn seam_cells(budget: Duration, rows: &mut Vec<Row>) {
             kind: format!("seam cell L{level}"),
             ns,
             units: UNITS.seam_cell[usize::from(level)] as f64,
+        });
+    }
+}
+
+/// Distance-to-implicit cells at each level, 8 to a span (a depth of 3
+/// halvings), on the arc near the sphere (a quadric) and the one near
+/// the torus (a quartic).
+fn implicit_cells(budget: Duration, rows: &mut Vec<Row>) {
+    let (sphere, near_sphere, torus, near_torus) = implicit::arcs();
+    for level in 0..LEVELS as u8 {
+        let l = usize::from(level);
+        let ns = time(budget, || {
+            implicit::cells(&sphere, &near_sphere, level, 3).unwrap()
+        });
+        rows.push(Row {
+            kind: format!("implicit cell quadric L{level}"),
+            ns,
+            units: UNITS.implicit_cell.quadric[l] as f64,
+        });
+        let ns = time(budget, || {
+            implicit::cells(&torus, &near_torus, level, 3).unwrap()
+        });
+        rows.push(Row {
+            kind: format!("implicit cell quartic L{level}"),
+            ns,
+            units: UNITS.implicit_cell.quartic[l] as f64,
         });
     }
 }

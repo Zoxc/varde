@@ -217,6 +217,11 @@ pub struct Units {
     /// tile composed with the p-curve (degree 8) and the bound formed
     /// against the curve (degree 10).
     pub seam_cell: [u64; LEVELS],
+    /// A cell of a curve's distance to an implicit surface (the kernel's
+    /// `geom::certify::implicit`) at each level: its span halved down to
+    /// it, put into the implicit, and the Bernstein net of the
+    /// implicit's squared gradient formed over its hull box, twice.
+    pub implicit_cell: ImplicitUnits,
     /// A piece of a face's count tested
     /// ([`count_pieces`](crate::count::s02::count_pieces)) at each level:
     /// a box classified against the trims, split, or tested off the
@@ -247,6 +252,18 @@ pub struct Units {
     /// The broad phase's bounding volume hierarchy (the kernel's
     /// `infra::bvh`): its leaves built, its box tests and hits, in parts.
     pub bvh: BvhUnits,
+}
+
+/// The units of a cell of a curve's distance to an implicit surface
+/// ([`Units::implicit_cell`]) at each level ([`LEVELS`]), by the
+/// implicit's degree: its squared gradient's net grows with the cube of
+/// the degree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImplicitUnits {
+    /// A plane or a quadric, degree 1 or 2.
+    pub quadric: [u64; LEVELS],
+    /// A cubic or a quartic (a torus), degree 3 or 4.
+    pub quartic: [u64; LEVELS],
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of the kernel's bounding volume
@@ -399,12 +416,19 @@ impl RecordUnits {
 /// ones scaled far below unit size for the rationals. The label audit's
 /// pieces are measured on squares of a plane face against cuboids'
 /// triangles; the operand scan's on bodies of many vertices and line
-/// edges, and of many planes' tiles. The tree's are measured on random
+/// edges, and of many planes' tiles. The distance-to-implicit cells are
+/// measured on arcs near a sphere and near a torus, under the load of
+/// other builds, scaled by the seam cells' time per unit in the same run.
+/// The tree's are measured on random
 /// boxes of sizes on a log scale: built over a thousand and over sixty
 /// thousand, queried by boxes meeting few of them (the tests) and by
 /// boxes meeting most (the hits, past the tests).
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
+    implicit_cell: ImplicitUnits {
+        quadric: [66, 150, 310, 330, 410],
+        quartic: [1200, 1900, 4700, 5250, 6600],
+    },
     count_piece: [9, 10, 40, 40, 48],
     face_setup: 32,
     xrec_piece: [9, 10, 28, 30, 34],

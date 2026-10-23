@@ -130,6 +130,19 @@ pub(crate) fn seam_cell_units(level: u8) -> u64 {
     schedule::UNITS.seam_cell[usize::from(level)]
 }
 
+/// The units of one cell of a distance to an implicit surface of degree
+/// `degree` (at most 4) at precision level `level`, from the unit table
+/// ([`schedule::UNITS`]).
+pub(crate) fn implicit_cell_units(degree: usize, level: u8) -> u64 {
+    let row = &schedule::UNITS.implicit_cell;
+    let row = if degree <= 2 {
+        row.quadric
+    } else {
+        row.quartic
+    };
+    row[usize::from(level)]
+}
+
 /// What [`KernelError::OutOfBudget`] reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Limit {

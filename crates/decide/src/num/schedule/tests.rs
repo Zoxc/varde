@@ -86,6 +86,8 @@ fn the_unit_table_grows_with_the_level() {
     let r = &UNITS.record;
     for (kind, row) in [
         ("seam cell", UNITS.seam_cell),
+        ("implicit cell, quadric", UNITS.implicit_cell.quadric),
+        ("implicit cell, quartic", UNITS.implicit_cell.quartic),
         ("count piece", UNITS.count_piece),
         ("record eval", r.eval),
         ("record root", r.root),

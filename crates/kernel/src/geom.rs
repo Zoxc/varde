@@ -11,7 +11,7 @@
 //! Q, G, linear and iso spans in a surface's UV split at its tile
 //! lines; and the
 //! [`certify`]d seam bound between a coedge's curve on its surface and
-//! its edge's curve.
+//! its edge's curve, and a curve's distance to an implicit surface.
 
 pub mod certify;
 pub mod conic;
