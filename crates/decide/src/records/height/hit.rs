@@ -56,14 +56,19 @@
 //!
 //! **Folds.** Where the column touches a tile (`(x_u × x_v)·UP = 0` at a
 //! double root) away from `q`'s height its two hits, of opposite facing
-//! at one height, cancel and none is listed. At `q`'s height (`q` on the
-//! tile's silhouette inside the face) the moved column decides: the tile
-//! there folds over in the shadow, covering the side of the silhouette
-//! its normal curvature along `ê` points to (`sign(n·S_êê)·n`), and the
-//! moved column enters the fold exactly where the lateral row `n·(Δq −
-//! Δx)` has that sign ([`Motion`]: the face's rates less the point's),
-//! its first order not zero deciding ([`fold_side`]: a motion along the
-//! silhouette at first order is decided by the fixed translations).
+//! at one height, cancel and none is listed; so does any root of even
+//! multiplicity there. At a root of odd multiplicity `≥ 3` there (the tile
+//! inflecting along `ê`) the column crosses the tile once: one hit at the
+//! root's height, facing as the tile does on either side of it, the sign
+//! of the column equations' winding round it ([`local_degree`]). At
+//! `q`'s height (`q` on the tile's silhouette inside the face) the moved
+//! column decides: the tile there folds over in the shadow, covering the
+//! side of the silhouette its normal curvature along `ê` points to
+//! (`sign(n·S_êê)·n`), and the moved column enters the fold exactly where
+//! the lateral row `n·(Δq − Δx)` has that sign ([`Motion`]: the face's
+//! rates less the point's), its first order not zero deciding
+//! ([`fold_side`]: a motion along the silhouette at first order is
+//! decided by the fixed translations).
 //! Entering, the column meets the fold's two sheets, which part as the
 //! square root of the motion while `q` moves along its column linearly:
 //! `q` lies between them. So the fold is two hits at the root, the lower
@@ -857,6 +862,118 @@ fn fold(
     Ok(enters.then_some(upper))
 }
 
+/// The local degree at the tile root `r` of the column's equations `(f1,
+/// f2)` as a map of the tile's `(u, v)`: the winding of `(F₁, F₂)` about 0
+/// round a box holding no other common zero, the hits' count, by their
+/// facings, of a column moved off `q` by a little (module docs, "Folds");
+/// at a transversal hit the sign of `det ∂(F₁, F₂)/∂(u, v)`. The box: the
+/// free coordinate's isolating interval (round a rational root, one holding
+/// no other root of the resultant), the other coordinate over `[−1, 2]`
+/// (the root's is in `[0, 1]`, and the only common zero over that interval
+/// is the root, the subresultant giving one). `None` where `r`'s
+/// coordinates separate or no such interval is found.
+fn local_degree(f1: &Poly2, f2: &Poly2, r: &TileRoot) -> Option<i64> {
+    let Place::Param { u, swapped, .. } = &r.place else {
+        return None;
+    };
+    let free = match u.rational() {
+        None => u.interval().map(|x| x.clone()),
+        Some(x) => {
+            let (a, b) = if *swapped {
+                (transpose2(f1), transpose2(f2))
+            } else {
+                (f1.clone(), f2.clone())
+            };
+            let (res, _, _) = eliminate(&a, &b)?;
+            let mut d = Rational::ONE;
+            let mut found = None;
+            for _ in 0..64 {
+                let (lo, hi) = (x - &d, x + &d);
+                // `x` the only root in the closed interval: none at its ends.
+                if poly::roots(&res, &lo, &hi).len() == 1 {
+                    found = Some([lo, hi]);
+                    break;
+                }
+                d /= Rational::from(2u32);
+            }
+            found?
+        }
+    };
+    let other = [Rational::from(-1i32), Rational::from(2u32)];
+    let (ub, vb) = if *swapped {
+        (other, free)
+    } else {
+        (free, other)
+    };
+    box_winding(f1, f2, &ub, &vb)
+}
+
+/// The winding of `(f1, f2)` about 0 round the boundary of the box `ub ×
+/// vb`, counter-clockwise in `(u, v)`; `None` where both vanish on it. The
+/// signed crossings of the ray `f1 > 0`, `f2 = 0`, a point with `f2 = 0`
+/// counting as above it (each sign change of `f2 ≥ 0` there one crossing).
+fn box_winding(f1: &Poly2, f2: &Poly2, ub: &[Rational; 2], vb: &[Rational; 2]) -> Option<i64> {
+    // `f` along `v = c`, a polynomial in `u`; along `u = c`, in `v`.
+    let at_v = |f: &Poly2, c: &Rational| -> Poly {
+        f.iter()
+            .rev()
+            .fold(Vec::new(), |acc, cj| poly::add(&poly::scale(&acc, c), cj))
+    };
+    let at_u = |f: &Poly2, c: &Rational| -> Poly {
+        poly::trim(f.iter().map(|cj| poly::eval(cj, c)).collect())
+    };
+    // The sides: bottom and right increasing, top and left decreasing.
+    let sides = [
+        (at_v(f1, &vb[0]), at_v(f2, &vb[0]), ub, true),
+        (at_u(f1, &ub[1]), at_u(f2, &ub[1]), vb, true),
+        (at_v(f1, &vb[1]), at_v(f2, &vb[1]), ub, false),
+        (at_u(f1, &ub[0]), at_u(f2, &ub[0]), vb, false),
+    ];
+    let mut w = 0;
+    for (h, g, [lo, hi], inc) in &sides {
+        w += side_crossings(g, h, lo, hi, *inc)?;
+    }
+    Some(w)
+}
+
+/// One side's crossings for [`box_winding`]: `g` the second component,
+/// `h` the first, over `[lo, hi]` run increasing (`inc`) or decreasing.
+/// A change of `g ≥ 0` into the side's start counts on the side before,
+/// one out of its end on the side after.
+fn side_crossings(g: &Poly, h: &Poly, lo: &Rational, hi: &Rational, inc: bool) -> Option<i64> {
+    if g.is_empty() {
+        return Some(0);
+    }
+    let mut w = 0;
+    for (r, m) in poly::roots(g, lo, hi) {
+        match r.sign_of(h) {
+            Ordering::Equal => return None,
+            Ordering::Less => continue,
+            Ordering::Greater => {}
+        }
+        let mut d = g.clone();
+        for _ in 0..m {
+            d = poly::deriv(&d);
+        }
+        // `g`'s sign just above the root and just below it.
+        let above = r.sign_of(&d);
+        let below = if m % 2 == 1 { above.reverse() } else { above };
+        let (before, after) = if inc { (below, above) } else { (above, below) };
+        let (at_lo, at_hi) = (
+            r.cmp_rational(lo) == Ordering::Equal,
+            r.cmp_rational(hi) == Ordering::Equal,
+        );
+        let (start, end) = if inc { (at_lo, at_hi) } else { (at_hi, at_lo) };
+        if !start && before == Ordering::Less {
+            w += 1;
+        }
+        if !end && after == Ordering::Less {
+            w -= 1;
+        }
+    }
+    Some(w)
+}
+
 fn on_tile(
     face: &HitFace<'_>,
     tile: [i64; 2],
@@ -970,13 +1087,26 @@ fn on_tile(
             Some(_) => sign_of(eval2(&dot2(&tangents().n, &up), &half, &half).sign()),
             None => sign_of(sign_at_tile(&jacobian(), &root).ok_or(bad)?),
         };
+        let facing = match facing {
+            Some(facing) => Some(facing),
+            // Tangent away from `q`'s height (module docs, "Folds"): a
+            // root of even multiplicity cancels; one of odd multiplicity
+            // is one hit, facing as the tile does on either side.
+            None if height != Ordering::Equal => {
+                if mult % 2 == 0 {
+                    continue;
+                }
+                let (f1, f2) = (bern2(&c1), bern2(&c2));
+                match local_degree(&f1, &f2, &root).ok_or(bad)? {
+                    0 => continue,
+                    1 => Some(Sign::Pos),
+                    -1 => Some(Sign::Neg),
+                    _ => return Err(bad),
+                }
+            }
+            None => None,
+        };
         let Some(facing) = facing else {
-            if height != Ordering::Equal && mult % 2 == 0 {
-                continue;
-            }
-            if height != Ordering::Equal {
-                return Err(bad);
-            }
             // The column tangent to the tile at `q`'s height: the fold
             // rule (module docs, "Folds"). A root of odd multiplicity
             // there is a tile not bending along `ê` (no hit forms).

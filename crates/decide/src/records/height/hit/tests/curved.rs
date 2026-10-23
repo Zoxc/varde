@@ -458,6 +458,106 @@ fn a_column_tangent_to_a_tile_not_bending_there_forms_no_hit() {
 }
 
 #[test]
+fn a_column_tangent_to_a_tile_inflecting_off_q_is_one_hit() {
+    // `q` moved along `ê` off `c`: the same column, tangent to the tile
+    // at `c` (a root of multiplicity three, the tile inflecting along
+    // `ê`), now off `q`'s height. It crosses the tile once there, facing
+    // as the tile does on either side; the upward count is the oracle's.
+    let up = [UP.x, UP.y, UP.z];
+    let c = DVec3::new(0.25, -0.5, 0.125);
+    for flipped in [false, true] {
+        let cf = fold_face(flat_fold_tile(c), flipped);
+        let face = cf.hit_face();
+        let oracle = cf.oracle();
+        for k in [1.0 / 4096.0, -1.0 / 4096.0, 1.0 / 16.0, -1.0 / 16.0] {
+            let q = c + UP * k;
+            let hits = face_hits(&face, q.to_array(), &motion_of(Operand::A)).expect("a hit");
+            assert_eq!(hits.len(), 1, "flipped {flipped}, k {k}: {hits:#?}");
+            let h = &hits[0];
+            assert_eq!(h.sheet, Sheet::Tile([0, 0]));
+            let want = if k > 0.0 {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+            assert_eq!(h.height, want);
+            // `(x_u × x_v)·ê ∝ 4s³ − 3s²` along the column's curve on the
+            // tile, `s = u − ½`: below zero on either side of `c`.
+            let down = if flipped { Sign::Pos } else { Sign::Neg };
+            assert_eq!(h.facing, Some(down), "flipped {flipped}, k {k}");
+            let mine = count_up(&hits).expect("heights");
+            // The ray tangent to the tile: the oracle's count of the
+            // column moved off it by `2^e` across the tile (along `ν`, its
+            // normal at `c`), its hits there within about `2^(e/3)` of `c`
+            // along `ê`, off `q`'s height.
+            let e = if k.abs() > 1.0 / 64.0 { -30 } else { -40 };
+            for d in [NU, -NU, R_HAT + NU, R_HAT - NU] {
+                let o = oracle
+                    .ray(
+                        &Shift::NONE,
+                        q.to_array(),
+                        &Shift::always(d.to_array(), e),
+                        up,
+                    )
+                    .unwrap_or_else(|e2| panic!("flipped {flipped}, k {k}, d {d:?}: {e2:?}"));
+                assert_eq!(mine, o.count, "flipped {flipped}, k {k}, d {d:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_local_degree_at_a_transversal_hit_is_its_facing() {
+    // Columns over cylinder and sphere tiles: at every root where the
+    // column crosses the tile, the winding of the column's equations
+    // round it is the sign of their Jacobian there.
+    let mut rng = Rng::new(0x1d9);
+    let [a, b, _] = frame_dirs();
+    let mut checked = 0;
+    for n in 0..24 {
+        let net = if n % 2 == 0 {
+            cylinder(&mut rng)
+        } else {
+            sphere(&mut rng)
+        };
+        for _ in 0..6 {
+            let q = net_at(&net, rng.range(0.0, 1.0), rng.range(0.0, 1.0))
+                + rng.direction() * rng.range(0.0, 0.5);
+            let qv = q.to_array().map(rat);
+            let (f1, f2) = (
+                bern2(&net_coefs(&net, &a, &qv)),
+                bern2(&net_coefs(&net, &b, &qv)),
+            );
+            let Some(roots) =
+                tile_roots(&f1, &f2, [0, 0], false).or_else(|| tile_roots(&f1, &f2, [0, 0], true))
+            else {
+                continue;
+            };
+            let jac = sub2(&mul2(&du2(&f1), &dv2(&f2)), &mul2(&dv2(&f1), &du2(&f2)));
+            let (zero, one) = (Rational::ZERO, Rational::ONE);
+            for (root, _) in roots {
+                // The tile's roots only: the box holds the other
+                // coordinate's `[0, 1]`.
+                if (0..2).any(|k| {
+                    root.coord_cmp(k, &zero) == Ordering::Less
+                        || root.coord_cmp(k, &one) == Ordering::Greater
+                }) {
+                    continue;
+                }
+                let want = match sign_at_tile(&jac, &root).expect("a sign") {
+                    Ordering::Greater => 1,
+                    Ordering::Less => -1,
+                    Ordering::Equal => continue,
+                };
+                assert_eq!(local_degree(&f1, &f2, &root), Some(want), "q {q:?}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 40, "{checked}");
+}
+
+#[test]
 fn a_fold_on_a_trim_at_q_forms_no_hit() {
     // The face trimmed at the silhouette ruling, `u = ½`: the fold the
     // moved column enters lies on the trim at `q`.
