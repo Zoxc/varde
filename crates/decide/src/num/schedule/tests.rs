@@ -79,7 +79,8 @@ fn promotion_up_the_schedule_is_exact() {
 /// cheaper than the computation it repeats. Every predicate kind prices
 /// each of its stages, a later stage dearer than the filter. The
 /// operand scan prices a position and a net, the net dearer; a form key
-/// settles exactly at no less than its top level.
+/// settles exactly at no less than its top level; a tree's leaf built
+/// costs more than a box tested.
 #[test]
 fn the_unit_table_grows_with_the_level() {
     let r = &UNITS.record;
@@ -114,6 +115,13 @@ fn the_unit_table_grows_with_the_level() {
     assert!(
         key.rational > 0 && key.settle >= key.level[LEVELS - 1],
         "{key:?}"
+    );
+    // Building a leaf is dearer than testing a box against it, which
+    // costs something.
+    let bvh = UNITS.bvh;
+    assert!(
+        bvh.hit > 0 && bvh.build > bvh.test && bvh.test > 0,
+        "{bvh:?}"
     );
 }
 

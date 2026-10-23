@@ -27,6 +27,10 @@ pub use infra::budget::{
     Budget, BudgetProfile, Cap, HOTTEST, ItemAt, ItemName, Limit, MAX_SUBDIV_DEPTH, MAX_WORK, Step,
     Stopped,
 };
+/// The broad phase's tree uncharged, for the calibration benchmark
+/// (`benches/calibrate.rs`). Not part of the kernel's interface.
+#[doc(hidden)]
+pub use infra::bvh::calibration as bvh_calibration;
 #[cfg(feature = "staging")]
 pub use infra::error::Stage;
 pub use infra::error::{

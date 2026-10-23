@@ -67,6 +67,7 @@ use varde_decide::records::xrec::{EdgeRays, XCurve, XPair, XSides, XTerms};
 use varde_kernel::MAX_WORK;
 use varde_kernel::boolean::classify::calibration as audit;
 use varde_kernel::boolean::classify::{AuditInput, AuditRegion, Bands, Cover, Leaf, Ribbon, Tri};
+use varde_kernel::bvh_calibration::Tree;
 use varde_kernel::geom::certify::SeamBound;
 use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
 use varde_kernel::geom::curve::{Curve3D, PCurve};
@@ -75,6 +76,7 @@ use varde_kernel::geom::formkey::calibration as keys;
 use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
 use varde_kernel::geom::surface::Surface;
 use varde_kernel::topo::brep_min::{Brep, calibration as scan};
+use varde_testkit::rng::Rng;
 
 /// The time one unit stands for, in nanoseconds.
 const UNIT_NS: f64 = 500.0;
@@ -114,6 +116,7 @@ fn main() -> ExitCode {
         audit_rows(budget, &mut rows);
         scan_rows(budget, &mut rows);
         form_key_rows(budget, &mut rows);
+        bvh_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -1994,5 +1997,86 @@ fn form_key_rows(budget: Duration, rows: &mut Vec<Row>) {
         kind: "form key settle".into(),
         ns,
         units: u.settle as f64 / UNIT_PARTS as f64,
+    });
+}
+
+// ---------------------------------------------------------------------
+// The broad phase's tree.
+
+/// `n` random boxes in `[0, 100]³`, sides from `lo` to `hi` on a log
+/// scale.
+fn random_boxes(rng: &mut Rng, n: usize, lo: f64, hi: f64) -> Vec<[[f64; 3]; 2]> {
+    (0..n)
+        .map(|_| {
+            let a: [f64; 3] = std::array::from_fn(|_| rng.range(0.0, 100.0));
+            let b = a.map(|x| x + rng.log_range(lo, hi));
+            [a, b]
+        })
+        .collect()
+}
+
+/// The tree's kinds: a leaf built, over a thousand boxes and over sixty
+/// thousand (one row, its spread shown); a box tested, by queries of
+/// sides up to 1 meeting few of sixty thousand boxes of sides up to 1; a
+/// hit collected, by queries holding most of four thousand boxes, the
+/// time of their count taken off (a collection walks the tree again,
+/// charged as tests).
+fn bvh_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let u = UNITS.bvh;
+    let mut rng = Rng::new(17);
+    for n in [1024, 65536] {
+        let boxes = random_boxes(&mut rng, n, 1e-3, 1.0);
+        let ns = time(budget, || {
+            black_box(Tree::new(black_box(&boxes)));
+            n as u64
+        });
+        rows.push(Row {
+            kind: format!("bvh build ({n} leaves)"),
+            ns,
+            units: u.build as f64 / UNIT_PARTS as f64,
+        });
+    }
+    let tree = Tree::new(&random_boxes(&mut rng, 65536, 1e-3, 1.0));
+    let queries = random_boxes(&mut rng, 4096, 1e-3, 1.0);
+    let tests: u64 = queries.iter().map(|&q| tree.count(q).1).sum();
+    let ns = time(budget, || {
+        for &q in &queries {
+            black_box(tree.count(black_box(q)));
+        }
+        tests
+    });
+    rows.push(Row {
+        kind: "bvh test".into(),
+        ns,
+        units: u.test as f64 / UNIT_PARTS as f64,
+    });
+    let tree = Tree::new(&random_boxes(&mut rng, 4096, 1e-3, 1.0));
+    let crowded: Vec<[[f64; 3]; 2]> = (0..16)
+        .map(|k| {
+            let lo = f64::from(k) * 0.5;
+            [[lo; 3], [lo + 95.0; 3]]
+        })
+        .collect();
+    let (hits, tests) = crowded.iter().fold((0u64, 0u64), |(h, t), &q| {
+        let (c, n) = tree.count(q);
+        (h + c as u64, t + n)
+    });
+    let count = time(budget, || {
+        for &q in &crowded {
+            black_box(tree.count(black_box(q)));
+        }
+        tests
+    });
+    let collect = time(budget, || {
+        for &q in &crowded {
+            black_box(tree.hits(black_box(q)));
+        }
+        hits
+    });
+    let walk = count * tests as f64 / hits as f64;
+    rows.push(Row {
+        kind: "bvh hit".into(),
+        ns: collect - walk,
+        units: u.hit as f64 / UNIT_PARTS as f64,
     });
 }

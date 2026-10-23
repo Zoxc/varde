@@ -244,6 +244,25 @@ pub struct Units {
     /// A form key's parameter correctly rounded (the kernel's
     /// `geom::formkey`), in parts.
     pub form_key: KeyUnits,
+    /// The broad phase's bounding volume hierarchy (the kernel's
+    /// `infra::bvh`): its leaves built, its box tests and hits, in parts.
+    pub bvh: BvhUnits,
+}
+
+/// The parts of a unit ([`UNIT_PARTS`]) of the kernel's bounding volume
+/// hierarchy over boxes: a tree of many leaves, queried by many boxes,
+/// each step far below a unit, so a build or a query charges the sum of
+/// its parts, rounded up to whole units as it goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BvhUnits {
+    /// A leaf of a tree built: its box's centre and Morton code, its
+    /// place in the sort, its internal node's range and split, its box in
+    /// the bottom-up union.
+    pub build: u64,
+    /// A box a query tests against a node, the walk to it included.
+    pub test: u64,
+    /// A hit a query collects, its place in the sorted list included.
+    pub hit: u64,
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of rounding one parameter of a
@@ -380,7 +399,10 @@ impl RecordUnits {
 /// ones scaled far below unit size for the rationals. The label audit's
 /// pieces are measured on squares of a plane face against cuboids'
 /// triangles; the operand scan's on bodies of many vertices and line
-/// edges, and of many planes' tiles.
+/// edges, and of many planes' tiles. The tree's are measured on random
+/// boxes of sizes on a log scale: built over a thousand and over sixty
+/// thousand, queried by boxes meeting few of them (the tests) and by
+/// boxes meeting most (the hits, past the tests).
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     count_piece: [9, 10, 40, 40, 48],
@@ -443,6 +465,11 @@ pub const UNITS: Units = Units {
         rational: 160,
         level: [40, 90, 250, 270, 330],
         settle: 460,
+    },
+    bvh: BvhUnits {
+        build: 24,
+        test: 2,
+        hit: 2,
     },
 };
 

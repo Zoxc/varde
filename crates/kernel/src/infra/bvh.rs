@@ -70,7 +70,7 @@ use std::cmp::Ordering::{Equal, Less};
 use std::convert::Infallible;
 
 use varde_decide::bezier::tensor::HullBox;
-use varde_decide::num::schedule::UNIT_PARTS;
+use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
 use super::budget::{Exhausted, Halt, Ledger, Pass, Step, Stop, Work};
 use super::error::KernelError;
@@ -78,16 +78,23 @@ use super::par::par_map;
 
 /// The parts of a unit ([`UNIT_PARTS`]) charged for each leaf of a tree
 /// built: its centre and code, its place in the sort, its node's range
-/// search and split, its box in the bottom-up union (about 0.2 µs a leaf
-/// on one thread, over 200 000 boxes).
-pub(crate) const BUILD_PARTS: u64 = 32;
+/// search and split, its box in the bottom-up union (the unit table's
+/// row, [`BvhUnits::build`]).
+///
+/// [`BvhUnits::build`]: varde_decide::num::schedule::BvhUnits::build
+pub(crate) const BUILD_PARTS: u64 = UNITS.bvh.build;
 
-/// The parts of a unit charged for each box a query tests against a node
-/// (about 14 ns, the walk included).
-pub(crate) const TEST_PARTS: u64 = 2;
+/// The parts of a unit charged for each box a query tests against a node,
+/// the walk included ([`BvhUnits::test`]).
+///
+/// [`BvhUnits::test`]: varde_decide::num::schedule::BvhUnits::test
+pub(crate) const TEST_PARTS: u64 = UNITS.bvh.test;
 
-/// The parts of a unit charged for each hit a query collects.
-pub(crate) const HIT_PARTS: u64 = 1;
+/// The parts of a unit charged for each hit a query collects
+/// ([`BvhUnits::hit`]).
+///
+/// [`BvhUnits::hit`]: varde_decide::num::schedule::BvhUnits::hit
+pub(crate) const HIT_PARTS: u64 = UNITS.bvh.hit;
 
 /// How many queries one item of [`Bvh::pairs`]'s passes runs.
 const CHUNK: usize = 64;
@@ -213,8 +220,11 @@ impl<const D: usize> Bvh<D> {
         Ok(Self::sorted_tree(boxes))
     }
 
-    /// The tree over `boxes`, uncharged.
-    fn sorted_tree(boxes: &[Aabb<D>]) -> Self {
+    /// The tree over `boxes`, uncharged: for a tree built with what it
+    /// indexes, as a surface's over its tiles is with the tiles (at most
+    /// `2³⁰` boxes, so node numbers fit).
+    pub(crate) fn sorted_tree(boxes: &[Aabb<D>]) -> Self {
+        let () = Self::DIMENSION;
         let kept: Vec<u32> = (0..boxes.len() as u32)
             .filter(|&i| !boxes[i as usize].is_empty())
             .collect();
@@ -682,6 +692,53 @@ fn radix_node(codes: &[u32], i: u32) -> [u32; 2] {
         }
     };
     [node(split, first), node(split + 1, last)]
+}
+
+/// The tree's steps uncharged, for the calibration benchmark
+/// (`crates/kernel/benches/calibrate.rs`), which times each against the
+/// parts it is charged ([`BUILD_PARTS`], [`TEST_PARTS`], [`HIT_PARTS`]).
+/// Not part of the kernel's interface.
+#[doc(hidden)]
+pub mod calibration {
+    use super::{Aabb, Bvh};
+
+    /// A tree over 3D boxes.
+    pub struct Tree(Bvh<3>);
+
+    impl Tree {
+        /// The tree over the boxes `[lo, hi]`, built uncharged.
+        pub fn new(boxes: &[[[f64; 3]; 2]]) -> Tree {
+            let boxes: Vec<Aabb<3>> = boxes.iter().map(|&[lo, hi]| Aabb { lo, hi }).collect();
+            Tree(Bvh::sorted_tree(&boxes))
+        }
+
+        /// A query's count, as its charged walk counts it: the boxes
+        /// meeting `[lo, hi]` and the box tests made.
+        pub fn count(&self, [lo, hi]: [[f64; 3]; 2]) -> (usize, u64) {
+            let (mut count, mut tests) = (0usize, 0u64);
+            let _ = self.0.walk(
+                &Aabb { lo, hi },
+                |_| true,
+                || {
+                    tests += 1;
+                    Ok(())
+                },
+                |_| count += 1,
+            );
+            (count, tests)
+        }
+
+        /// A query's collection, as its charged walk collects it: the
+        /// boxes meeting `[lo, hi]`, sorted.
+        pub fn hits(&self, [lo, hi]: [[f64; 3]; 2]) -> Vec<u32> {
+            let mut out = Vec::new();
+            let _ = self
+                .0
+                .walk(&Aabb { lo, hi }, |_| true, || Ok(()), |l| out.push(l));
+            out.sort_unstable();
+            out
+        }
+    }
 }
 
 #[cfg(test)]
