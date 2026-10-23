@@ -2,7 +2,8 @@
 //! point on a tile line the same bits from either tile, transposed, and
 //! as its row's span; nodes their control points; local coordinates
 //! exact but on tile −1; positions and indices; rows from either side;
-//! the tree's hits against brute force over the tiles' boxes, charged.
+//! the tree's hits against brute force over the tiles' boxes, charged;
+//! extensions keeping every tile bit for bit, coarsened past the cap.
 
 use std::convert::Infallible;
 
@@ -11,7 +12,11 @@ use varde_decide::bezier::HomCurve;
 use varde_testkit::rng::Rng;
 
 use super::*;
-use crate::geom::form::{CylinderKey, FormKey, PlaneKey, SphereKey};
+use crate::geom::conic::Conic;
+use crate::geom::curve::Span3;
+use crate::geom::form::{
+    ConeKey, ConicCylinderKey, CylinderKey, FormKey, PlaneKey, SphereKey, TorusKey,
+};
 use crate::geom::lattice::Level;
 use crate::infra::budget::{Budget, Pass, Stop, Work};
 
@@ -381,4 +386,171 @@ fn the_tree_finds_the_tiles_a_box_meets() {
             .is_err()
         );
     }
+}
+
+/// One key of every tiled form: a plane, a cylinder, an open conic-chain
+/// cylinder, a cone, a sphere, a ring and a spindle torus, off the
+/// origin and tilted.
+fn every_form() -> Vec<FormKey> {
+    let e = Conic::ellipse(
+        [0.5, -1.0, 0.0],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        [2.0, 1.0],
+    )
+    .unwrap();
+    let spans: Vec<Span3> = (0..3).map(|k| e.quarter::<4>(k).unwrap()).collect();
+    let (p, a) = ([1.0, -2.0, 0.25], [1.0, 2.0, 2.0]);
+    vec![
+        PlaneKey::new(a, p).unwrap().into(),
+        CylinderKey::new(p, a, 3.0).unwrap().into(),
+        ConicCylinderKey::new([0.0, 0.0, 1.0], &spans)
+            .unwrap()
+            .into(),
+        ConeKey::new(p, a, 1.0, 2.0).unwrap().into(),
+        SphereKey::new(p, 1.5, a).unwrap().into(),
+        TorusKey::new(p, a, 3.0, 1.25).unwrap().into(),
+        TorusKey::new(p, a, 3.0, 5.0).unwrap().into(),
+    ]
+}
+
+/// The rectangle `r` grown by `du` cells at the start and end of `u`
+/// and by `dv` in `v`.
+fn grown(r: &Rect, du: [i64; 2], dv: [i64; 2]) -> Rect {
+    Rect {
+        level: r.level,
+        u: r.u.start - du[0]..r.u.end + du[1],
+        v: r.v.start - dv[0]..r.v.end + dv[1],
+    }
+}
+
+/// Asserts that `big` holds every tile of `small` bit for bit at the
+/// same indices, its points at the same global UV the same bits, and
+/// every tile of its own the lattice's.
+fn kept(small: &Surface, big: &Surface, rng: &mut Rng, what: &str) {
+    assert_eq!(big.rect().level, small.rect().level, "{what}");
+    for (k, t) in small.tiles().iter().enumerate() {
+        let (i, j) = small.indices(k).unwrap();
+        let n = big
+            .tile(i, j)
+            .unwrap_or_else(|| panic!("{what}: tile ({i}, {j})"));
+        assert_eq!(n, t, "{what}: tile ({i}, {j})");
+    }
+    for (k, t) in big.tiles().iter().enumerate() {
+        let (i, j) = big.indices(k).unwrap();
+        let want = big.lattice().tile(big.rect().level, i, j).unwrap();
+        assert_eq!(*t, want, "{what}: the lattice's tile ({i}, {j})");
+    }
+    let (u, v) = (&small.rect().u, &small.rect().v);
+    for _ in 0..20 {
+        let uv = [
+            u.start as f64 + rng.range(0.0, (u.end - u.start) as f64),
+            v.start as f64 + rng.range(0.0, (v.end - v.start) as f64),
+        ];
+        let (a, b) = (small.eval(uv).unwrap(), big.eval(uv).unwrap());
+        assert_eq!(bits(&a), bits(&b), "{what}: the point at {uv:?}");
+    }
+}
+
+#[test]
+fn extending_keeps_every_tile_bit_for_bit() {
+    let mut rng = Rng::new(61);
+    let grows: [([i64; 2], [i64; 2]); 6] = [
+        ([1, 0], [0, 0]),
+        ([0, 1], [0, 0]),
+        ([0, 0], [1, 0]),
+        ([0, 0], [0, 1]),
+        ([1, 0], [0, 2]),
+        ([0, 0], [0, 0]),
+    ];
+    for key in every_form() {
+        let lattice = Lattice::new(key.clone()).unwrap();
+        let half = lattice.half(1).unwrap();
+        // The canonical surface and a finer one inside it.
+        let fine = Rect {
+            level: Level {
+                u: half.level.u + 1,
+                v: half.level.v + 2,
+            },
+            u: 2 * half.u.start + 1..2 * half.u.end,
+            v: 4 * half.v.start + 1..4 * half.v.end - 1,
+        };
+        for rect in [half, fine] {
+            let small = Surface::new(lattice.clone(), rect.clone()).unwrap();
+            let mut made = 0;
+            for (du, dv) in grows {
+                let what = format!("{key:?} {rect:?} grown {du:?} {dv:?}");
+                match small.extend(&grown(&rect, du, dv)) {
+                    Ok(big) => {
+                        kept(&small, &big, &mut rng, &what);
+                        // Extending again from the larger surface keeps
+                        // its tiles too.
+                        let again = big.extend(&grown(big.rect(), [0, 0], [0, 0])).unwrap();
+                        kept(&big, &again, &mut rng, &what);
+                        made += 1;
+                    }
+                    // Cells off the lattice (a sphere's or spindle's
+                    // poles, the cone's other nappe, past the profile) or
+                    // a full turn.
+                    Err(e) => assert!(
+                        matches!(e, LatticeError::Index | LatticeError::Span),
+                        "{what}: {e:?}"
+                    ),
+                }
+            }
+            assert!(made >= 3, "{key:?} {rect:?}: {made} extensions");
+        }
+    }
+}
+
+#[test]
+fn extending_refuses_a_smaller_rectangle_or_another_level() {
+    let key = CylinderKey::new([1.0, -2.0, 0.25], [1.0, 2.0, 2.0], 3.0).unwrap();
+    let s = crate::geom::forms::cyl::cylinder(key, 0).unwrap();
+    let r = s.rect().clone();
+    for bad in [
+        grown(&r, [-1, 0], [0, 0]),
+        grown(&r, [0, -1], [1, 1]),
+        grown(&r, [1, 0], [0, -1]),
+    ] {
+        assert_eq!(s.extend(&bad).unwrap_err(), LatticeError::Extend, "{bad:?}");
+    }
+    let finer = Rect {
+        level: Level { u: 1, v: 0 },
+        u: -2..6,
+        v: -1..2,
+    };
+    assert_eq!(s.extend(&finer).unwrap_err(), LatticeError::Extend);
+    // A full turn is no surface.
+    assert_eq!(
+        s.extend(&grown(&r, [1, 1], [0, 0])).unwrap_err(),
+        LatticeError::Span
+    );
+}
+
+#[test]
+fn extending_past_the_cap_coarsens() {
+    let key: FormKey = CylinderKey::new([0.0; 3], [0.0, 0.0, 1.0], 1.0)
+        .unwrap()
+        .into();
+    let lattice = Lattice::new(key).unwrap();
+    let level = Level {
+        u: lattice.cap().u,
+        v: 0,
+    };
+    let rect = Rect {
+        level,
+        u: 0..2,
+        v: 0..1,
+    };
+    let s = Surface::new(lattice.clone(), rect.clone()).unwrap();
+    // Axial cells far out: their rounding lowers the cap around the axis.
+    let far = grown(&rect, [0, 0], [0, 16]);
+    let cap = lattice.cap_of(&far).unwrap();
+    assert!(cap.u < level.u, "{cap:?}");
+    let big = s.extend(&far).unwrap();
+    assert_eq!(*big.rect(), lattice.capped(&far).unwrap());
+    assert_eq!(big.rect().level, Level { u: cap.u, v: 0 });
+    // Still covering the old domain, at the coarser level.
+    assert_eq!(big.rect().u, 0..1);
+    assert_eq!(big.rect().v, far.v);
 }

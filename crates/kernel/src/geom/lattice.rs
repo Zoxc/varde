@@ -118,9 +118,10 @@
 //! `(0, 0)`, a cylinder's axial cell 0 and a cone's slant cell 0 with
 //! every angle cell or span, every cell of a sphere, a torus's outer
 //! tube cell 0 with every angle cell), and a cell further
-//! out has its own, lower one. Constructors, `extend`, torus
-//! domains and imports coarsen their rectangle to the cap
-//! ([`Lattice::capped`]: the domain need only cover the trims), so they
+//! out has its own, lower one. Constructors, `extend`
+//! ([`super::surface::Surface::extend`]), torus domains and imports
+//! coarsen their rectangle to the cap ([`Lattice::capped`]: the domain
+//! need only cover the trims), so they
 //! never fail on it; an explicit request beyond it ([`Lattice::tile`],
 //! [`Lattice::tiles`]) is refused ([`LatticeError::LevelBeyondCap`]). A
 //! cylinder of radius 1 mm is capped at level 23 around its axis (tiles
@@ -228,6 +229,11 @@ pub enum LatticeError {
     /// different weights at their shared point: the tiles beside the
     /// joint would not share their row bit for bit.
     Joint,
+    /// An extension's rectangle at another level than the surface's, or
+    /// not covering its rectangle ([`Surface::extend`]).
+    ///
+    /// [`Surface::extend`]: super::surface::Surface::extend
+    Extend,
 }
 
 impl From<TileError> for LatticeError {

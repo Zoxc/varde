@@ -29,6 +29,16 @@
 //! row's own span evaluated there; a lattice node is its control point
 //! exactly. Off the lines the surface is its tiles' patches.
 //!
+//! **Extending** ([`Surface::extend`]). A surface is never changed; a
+//! larger one is built anew on the same lattice, over a rectangle of the
+//! same level covering the old one. A tile is a function of the form's
+//! key, its level and its indices alone, so the tiles the two share are
+//! the same bits, and p-curves, records and joins on the old surface
+//! hold on the new one unchanged. Only where the new rectangle's far
+//! cells have a lower level cap than its level is it coarsened to that
+//! cap ([`Lattice::capped`]); its tiles and global UV are then the
+//! coarser level's, which agree with the old ones only at shared nodes.
+//!
 //! **Caches.** Each tile caches what it computes from its net alone, the
 //! same bits on every copy ([`Tile`]: the first level's patch, the hull
 //! box, the partials, the normal numerator and the cone with the level
@@ -92,6 +102,41 @@ impl Surface {
             tree,
         };
         debug_assert!(s.rows_shared(), "neighbouring tiles share their rows");
+        Ok(s)
+    }
+
+    /// The surface over `rect`, at this surface's level and covering its
+    /// rectangle, on the same lattice (module docs): its tiles made anew
+    /// and checked against this surface's where they overlap, which are
+    /// the same bits, those kept (with what they have cached). Where
+    /// `rect`'s cells have a lower cap than its level, the rectangle is
+    /// coarsened to the cap ([`Lattice::capped`]) and no tile is kept:
+    /// the result's level is then coarser than this surface's. `Extend`
+    /// for a rectangle at another level or not covering this one's, else
+    /// errors as [`new`](Self::new).
+    pub fn extend(&self, rect: &Rect) -> Result<Surface, LatticeError> {
+        let covers = |a: &Range<i64>, b: &Range<i64>| a.start <= b.start && b.end <= a.end;
+        let old = &self.rect;
+        if rect.level != old.level || !covers(&rect.u, &old.u) || !covers(&rect.v, &old.v) {
+            return Err(LatticeError::Extend);
+        }
+        let rect = self.lattice.capped(rect)?;
+        let mut s = Surface::new(self.lattice.clone(), rect)?;
+        if s.rect.level != old.level {
+            return Ok(s);
+        }
+        for (k, t) in self.tiles.iter().enumerate() {
+            // Every old tile lies in the covering rectangle.
+            let at = self
+                .indices(k)
+                .and_then(|(i, j)| s.index(i, j))
+                .expect("the new rectangle covers the old one");
+            let fresh = &mut s.tiles[at];
+            debug_assert!(*fresh == *t, "an extension keeps the tiles bit for bit");
+            if *fresh == *t {
+                *fresh = t.clone();
+            }
+        }
         Ok(s)
     }
 
