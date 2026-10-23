@@ -1,8 +1,8 @@
 //! Cylinders' constructors against exact values and OCCT's nets: every
 //! control point the exact value rounded once; a conic-chain cylinder's
 //! tiles on its profile at every level, sharing rows across spans,
-//! regular and following the tangent to the cap; joints, closed profiles
-//! and the chord rate.
+//! regular and following the tangent to the cap; joints whatever their
+//! weights, closed profiles and the chord rate.
 
 use glam::DVec3;
 use malachite::Rational as Q;
@@ -17,7 +17,7 @@ use super::*;
 use crate::geom::conic::Conic;
 use crate::geom::curve::Span3;
 use crate::geom::form::FormKey;
-use crate::geom::round::{nearest, q};
+use crate::geom::round::{nearest, nearest_sqrt, q};
 
 const TOL: f64 = 1e-15;
 
@@ -189,8 +189,13 @@ fn chain_tiles_are_exact_values_rounded_once() {
         assert_eq!(l.origin(), [0.0; 3]);
         for (k, span) in key.profile().spans().iter().enumerate() {
             for c in [-1i64, 0, 2] {
+                // The span's standard weights: ends 1, the middle
+                // `w₁/√(w₀w₂)` rounded once.
+                let [w0, w1, w2] = span.map(|p| q(p[2]));
+                let mid = nearest_sqrt(&(&w1 * &w1 / (w0 * w2)));
                 let want: [([Q; 3], f64); 9] = std::array::from_fn(|n| {
-                    let [x, y, w] = span[n / 3];
+                    let [x, y, _] = span[n / 3];
+                    let w = [1.0, mid, 1.0][n / 3];
                     let t = Q::from(2 * c - 1 + (n % 3) as i64) * q(CELL) / Q::from(2u32);
                     let p =
                         std::array::from_fn(|i| &o[i] + q(x) * &e1[i] + q(y) * &e2[i] + &t * &a[i]);
@@ -232,7 +237,8 @@ fn chain_tiles_follow_the_profile_at_every_level() {
     for key in chains(4) {
         let l = Lattice::new(key.clone().into()).unwrap();
         let (_, [e1, e2, a]) = frame(&l);
-        let spans = key.profile().spans();
+        // The tiles' own spans: the profile's in standard form.
+        let spans = l.profile().unwrap();
         for level in levels {
             for _ in 0..3 {
                 let k = (rng.next_u64() % spans.len() as u64) as i64;
@@ -336,7 +342,7 @@ fn equal_chain_keys_give_equal_lattices() {
 }
 
 #[test]
-fn joints_share_their_weight() {
+fn joints_share_their_row_whatever_their_weights() {
     // Hyperbola arcs whose middle weights fall in different binades: the
     // arc ending at `s = 1` has the end weight 2, the next starts with 1.
     let h = Conic::hyperbola([0.0; 3], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], [1.0, 0.5]).unwrap();
@@ -345,20 +351,10 @@ fn joints_share_their_weight() {
         .windows(2)
         .map(|s| h.arc::<4>(s[0], s[1]).unwrap())
         .collect();
+    assert_ne!(spans[1][2][3], spans[2][0][3]);
     let key = ConicCylinderKey::new([0.0, 0.0, 1.0], &spans).unwrap();
-    assert_eq!(
-        Lattice::new(key.clone().into()).unwrap_err(),
-        LatticeError::Joint
-    );
-    assert_eq!(conic_chain(key, 0..1).unwrap_err(), LatticeError::Joint);
-    // Arcs within one binade join.
-    let ss = [1.1, 1.3, 1.6, 1.9];
-    let spans: Vec<Span3> = ss
-        .windows(2)
-        .map(|s| h.arc::<4>(s[0], s[1]).unwrap())
-        .collect();
-    let key = ConicCylinderKey::new([0.0, 0.0, 1.0], &spans).unwrap();
-    assert!(conic_chain(key, 0..3).is_ok());
+    let s = conic_chain(key, 0..3).unwrap();
+    rows_shared(s.tiles(), s.rect());
 }
 
 #[test]

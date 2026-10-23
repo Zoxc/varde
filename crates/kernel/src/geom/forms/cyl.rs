@@ -13,15 +13,17 @@
 //! (`0 ≤ k <` the number of spans, in the key's canonical direction)
 //! times the same axial cells from the world origin, the frame's origin
 //! (the profile's plane passes through it): control point `(i, j)` is
-//! `x_i·e₁ + y_i·e₂ + t_j·a` with the span's weight `w_i`, `(x_i, y_i,
-//! w_i)` the span's stored control points and `t_j` the axial cell's
-//! rows. The orientation `x_u × x_v` is the profile's direction times
-//! the axis, not an inside or outside (a face's `flipped` says which).
-//! Neighbouring spans share their end point bit for bit (the key's
-//! chain), so neighbouring tiles share their row where the spans' end
-//! weights there are equal too ([`joints`]; a lattice refuses a profile
-//! where they differ). Where the profile closes (its last span ends at
-//! its first span's start), a surface may not take every span ([`closed`]).
+//! `x_i·e₁ + y_i·e₂ + t_j·a` with the weight `w_i`, `(x_i, y_i)` the
+//! span's stored control points, `w_i` its weights in standard form
+//! (ends 1, [`super::super::condition`]: the column's Möbius
+//! conditioning), and `t_j` the axial cell's rows. The orientation
+//! `x_u × x_v` is the profile's direction times the axis, not an inside
+//! or outside (a face's `flipped` says which). Neighbouring spans share
+//! their end point bit for bit (the key's chain) and their end weight 1,
+//! so neighbouring tiles share their row bit for bit, whatever weights
+//! the profile was given with. Where the profile closes (its last span
+//! ends at its first span's start), a surface may not take every span
+//! ([`closed`]).
 //!
 //! **The level cap's chord along a profile.** A rational quadratic span
 //! `C` with control points `P₀, P₁, P₂` and weights `w₀, w₁, w₂` has the
@@ -38,6 +40,7 @@ use std::ops::Range;
 
 use malachite::Rational;
 
+use super::super::condition::standard;
 use super::super::form::{ConicCylinderKey, CylinderKey, Profile, Span2};
 use super::super::lattice::{
     CELL, Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Reach, Rect, Run, affine, arc,
@@ -99,6 +102,7 @@ pub(in crate::geom) fn chain_net(
         .ok()
         .and_then(|k| key.profile().spans().get(k))
         .ok_or(LatticeError::Index)?;
+    let span = standard(span);
     let (o, [a0, a1, a2]) = (&f.origin, &f.axes);
     let g = halves(l)?;
     let half = q(CELL) / Rational::from(2u32);
@@ -112,18 +116,13 @@ pub(in crate::geom) fn chain_net(
 }
 
 /// What the level cap reads of the conic-chain cylinder's base cells
-/// `u` (spans) × `v` (axial cells): coordinates to the spans' control
-/// points and the axial cells' reach, the radius the spans' largest
-/// `|x| + |y|`; `u` along the profile at the spans' least chord rate
-/// ([`chord_rate`]), `v` a line. Spans outside the profile are left out.
-pub(in crate::geom) fn chain_reach(
-    f: &Frame,
-    key: &ConicCylinderKey,
-    u: &Cells,
-    v: &Cells,
-) -> Reach {
+/// `u` (spans) × `v` (axial cells), its profile's spans `spans` in
+/// standard form: coordinates to the spans' control points and the axial
+/// cells' reach, the radius the spans' largest `|x| + |y|`; `u` along the
+/// profile at the spans' least chord rate ([`chord_rate`]), `v` a line.
+/// Spans outside the profile are left out.
+pub(in crate::geom) fn chain_reach(f: &Frame, spans: &[Span2], u: &Cells, v: &Cells) -> Reach {
     let (o, [a0, a1, a2]) = (f.origin, f.axes);
-    let spans = key.profile().spans();
     let from = usize::try_from(*u.start()).unwrap_or(0);
     let to = usize::try_from(*u.end()).map_or(0, |e| e.saturating_add(1).min(spans.len()));
     let t = line_reach(v);
@@ -181,26 +180,6 @@ pub(in crate::geom) fn chord_rate(span: &Span2) -> f64 {
     // orthonormal to rounding).
     let rate = 2.0 * c * short * low / (high * high) * (1.0 - pow2(-40));
     if rate.is_finite() { rate } else { 0.0 }
-}
-
-/// `Joint` unless every two consecutive spans of the profile have the
-/// same weight, bit for bit, at their shared point (module docs).
-pub(in crate::geom) fn joints(key: &ConicCylinderKey) -> Result<(), LatticeError> {
-    profile_joints(key.profile())
-}
-
-/// `Joint` unless every two consecutive spans of `profile` have the same
-/// weight, bit for bit, at their shared point.
-pub(in crate::geom) fn profile_joints(profile: &Profile) -> Result<(), LatticeError> {
-    let spans = profile.spans();
-    if spans
-        .windows(2)
-        .all(|p| p[0][2][2].to_bits() == p[1][0][2].to_bits())
-    {
-        Ok(())
-    } else {
-        Err(LatticeError::Joint)
-    }
 }
 
 /// Whether the profile closes: its last span ends at its first span's

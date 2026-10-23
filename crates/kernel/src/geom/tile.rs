@@ -42,7 +42,8 @@
 //!
 //! **Cached per tile** (computed once, on first use, from the net and
 //! the declared singular sides alone, so every copy of a tile has the
-//! same bits): the first-level patch, the hull box, the homogeneous
+//! same bits): the weight ratio `κ_w` ([`Tile::kappa_w`], at
+//! construction), the first-level patch, the hull box, the homogeneous
 //! partial derivatives, the normal numerator, the fold check's exact
 //! part, and the normal cone with the level that certified it and the
 //! work it took.
@@ -147,6 +148,7 @@ use varde_decide::num::schedule::{LEVELS, Level, UNITS};
 use varde_decide::num::storage::{frame_of, translate};
 use varde_decide::patch::Patch;
 
+use super::condition::kappa;
 use super::formkey::Charge;
 use super::round::nearest;
 use crate::infra::budget::{Step, level_step};
@@ -191,6 +193,8 @@ pub struct Tile {
     sides: Sides,
     patch: FirstLevelPatch,
     hull: HullBox,
+    /// The largest weight over the least.
+    kappa_w: f64,
     /// The homogeneous partials in `u` and `v`.
     partials: OnceLock<[FirstLevelPatch; 2]>,
     numerator: OnceLock<[Tensor<Bounded<f64>>; 3]>,
@@ -256,6 +260,7 @@ impl Tile {
             sides: Sides::NONE,
             patch,
             hull: hull_of(&net),
+            kappa_w: kappa(net.iter().map(|p| p[3])),
             partials: OnceLock::new(),
             numerator: OnceLock::new(),
             cone: OnceLock::new(),
@@ -298,6 +303,16 @@ impl Tile {
             let at = |c: &[Rational]| nearest(&(&c[i] / &w[i]));
             [at(x), at(y), at(z), nearest(&w[i])]
         }))
+    }
+
+    /// The weight ratio `κ_w`: the largest weight over the least,
+    /// rounded to the nearest `f64` ([`kappa`]), at least 1 and at most
+    /// `MAX_WEIGHT/MIN_WEIGHT`. The factor by which the weights' rounding
+    /// grows in the tile's evaluations; the lattices' weight conditioning
+    /// keeps it least ([`super::condition`]).
+    #[inline]
+    pub fn kappa_w(&self) -> f64 {
+        self.kappa_w
     }
 
     /// The stored net.

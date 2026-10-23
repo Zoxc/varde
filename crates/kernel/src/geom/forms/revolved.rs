@@ -6,17 +6,19 @@
 //! product of the angle cell's quarter circle and the span. Control
 //! point `(i, j)` is `foot + ρ_j·d_i + z_j·a`, `d_i` the quarter circle's
 //! control directions (its two radii and their corner, weights `1, √½,
-//! 1`) and `(ρ_j, z_j, w_j)` the span's stored control points, with the
-//! weight `w_j` beside a radius and `√½·w_j` beside the corner, rounded
-//! once (NURBS Book A8.1, the surface of revolution's net; a sphere's or
-//! torus's net is this one with their meridians, OCCT's
-//! `Convert_{Sphere,Torus}ToBSplineSurface` the same over a cell).
+//! 1`) and `(ρ_j, z_j)` the span's stored control points, with the
+//! weight `w_j` beside a radius and `√½·w_j` beside the corner, `w_j` the
+//! span's weights in standard form (ends 1, middle `ω`,
+//! [`super::super::condition`]: the row's Möbius conditioning), each
+//! rounded once from its exact value (NURBS Book A8.1, the surface of
+//! revolution's net; a sphere's or torus's net is this one with their
+//! meridians, OCCT's `Convert_{Sphere,Torus}ToBSplineSurface` the same
+//! over a cell).
 //!
 //! **Joints and closed profiles.** Neighbouring spans share their end
-//! point bit for bit (the key's chain), so neighbouring tiles share
-//! their row where the spans' end weights there are equal too (a lattice
-//! refuses a profile where they differ, `Joint`, as a conic-chain
-//! cylinder's). A surface over every span of a closed profile (one
+//! point bit for bit (the key's chain) and their end weight 1, so
+//! neighbouring tiles share their row bit for bit, whatever weights the
+//! profile was given with. A surface over every span of a closed profile (one
 //! whose last span ends at its first span's start: a revolved ellipse)
 //! would meet itself, and is refused (`Span`). Angle cells `k` and `k +
 //! 4` are the same tile.
@@ -57,6 +59,7 @@ use std::ops::Range;
 use malachite::Rational;
 use malachite::base::num::basic::traits::Zero;
 
+use super::super::condition::middle_square;
 use super::super::form::{AxisContact, RevolvedKey, Span2, axis_contact};
 use super::super::lattice::{
     Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Reach, Rect, Run, affine, arc, larger,
@@ -86,15 +89,19 @@ pub(in crate::geom) fn net(
     let (o, [a0, a1, a2]) = (&f.origin, &f.axes);
     let around = arc(a0, a1, k);
     let half = Rational::from_signeds(1, 2);
+    // The standard weights' squares: 1 at the ends, `ω²` in the middle.
+    let one = Rational::from(1u32);
+    let squares = [one.clone(), middle_square(span), one];
     Ok(std::array::from_fn(|n| {
         let (dir, _) = &around[n / 3];
-        let [rho, z, w] = span[n % 3];
+        let [rho, z, _] = span[n % 3];
         let (rho, z) = (q(rho), q(z));
         let p = [0, 1, 2].map(|c| &o[c] + &rho * &dir[c] + &z * &a2[c]);
+        let w2 = &squares[n % 3];
         let w = if n / 3 == 1 {
-            nearest_sqrt(&(q(w) * q(w) * &half))
+            nearest_sqrt(&(w2 * &half))
         } else {
-            w
+            nearest_sqrt(w2)
         };
         affine(&p, w)
     }))
@@ -119,14 +126,14 @@ pub(in crate::geom) fn box_cells(key: &RevolvedKey) -> (Cells, Cells) {
     (0..=0, 0..=(key.profile().spans().len() as i64 - 1))
 }
 
-/// What the level cap reads of the span cells `v` (any angle cells):
-/// coordinates to the spans' largest `|ρ|` around the axis and `|z|`
-/// along it; `u` around a circle of the spans' least radius, `v` along
-/// the profile at their least chord rate (module docs). Spans outside
-/// the profile are left out.
-pub(in crate::geom) fn reach(f: &Frame, key: &RevolvedKey, v: &Cells) -> Reach {
+/// What the level cap reads of the span cells `v` (any angle cells),
+/// the profile's spans `spans` in standard form: coordinates to the
+/// spans' largest `|ρ|` around the axis and `|z|` along it; `u` around a
+/// circle of the spans' least radius, `v` along the profile at their
+/// least chord rate (module docs). Spans outside the profile are left
+/// out.
+pub(in crate::geom) fn reach(f: &Frame, spans: &[Span2], v: &Cells) -> Reach {
     let (o, [a0, a1, a2]) = (f.origin, f.axes);
-    let spans = key.profile().spans();
     let from = usize::try_from(*v.start()).unwrap_or(0);
     let to = usize::try_from(*v.end()).map_or(0, |e| e.saturating_add(1).min(spans.len()));
     let least = |a: f64, b: f64| if b < a { b } else { a };

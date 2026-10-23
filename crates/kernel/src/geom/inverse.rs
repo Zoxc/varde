@@ -23,9 +23,10 @@
 //!   `(ρ − R, z)` from the outer equator; a spindle torus's tube arcs, the
 //!   conic spans of its apple (below), cell 0 where `z ≥ 0`, else −1;
 //! - along a profile (conic-chain cylinder in `(ξ, η)`, revolved conic in
-//!   `(ρ, z)`): span `k` plus the span's parameter (below), the span the
-//!   one of the surface's whose point at that parameter (clamped to the
-//!   span) lies nearest, ties to the lowest index;
+//!   `(ρ, z)`): span `k` plus the parameter (below) on the span in
+//!   standard form, as the lattice holds it ([`Lattice::profile`]), the
+//!   span the one of the surface's whose point at that parameter (clamped
+//!   to the span) lies nearest, ties to the lowest index;
 //! - affine image: its source's at `M⁻¹(x − t)`.
 //!
 //! A level `(L_u, L_v)`'s coordinates are those times `2^L` (its tiles
@@ -68,8 +69,12 @@
 //! lies beyond it) has no tile to evaluate: `dev` is `+∞`.
 //!
 //! **Construction-time conditioning** (a Möbius map per tile column or
-//! row) is not applied by the lattices yet: when it is, the inverse
-//! applies the same map to the coordinate it reparametrises.
+//! row, [`super::condition`]) is composed in: the angle cells and tube
+//! arcs are in standard form already (end weights equal, the maps above
+//! theirs), and a profile's parameter is read on its standard span,
+//! whose barycentric ratios and chord root are the conditioned
+//! parameter itself (the map `σ = s/(s + ρ(1 − s))` of the given span's
+//! `s`).
 
 use std::f64::consts::SQRT_2;
 use std::ops::RangeInclusive;
@@ -176,13 +181,13 @@ fn base_uv(lattice: &Lattice, x: [f64; 3], within: &Within) -> [f64; 2] {
             };
             [angle(), tube]
         }
-        FormKey::ConicCylinder(k) => [
-            along(k.profile().spans(), &within.cells[0], [xi, eta]),
+        FormKey::ConicCylinder(_) => [
+            along(profile(lattice), &within.cells[0], [xi, eta]),
             z / CELL + 0.5,
         ],
-        FormKey::Revolved(k) => [
+        FormKey::Revolved(_) => [
             angle(),
-            along(k.profile().spans(), &within.cells[1], [rho(), z]),
+            along(profile(lattice), &within.cells[1], [rho(), z]),
         ],
         FormKey::Affine(k) => {
             let src = lattice
@@ -191,6 +196,12 @@ fn base_uv(lattice: &Lattice, x: [f64; 3], within: &Within) -> [f64; 2] {
             base_uv(src, preimage(&k.linear(), &k.shift(), &x), within)
         }
     }
+}
+
+/// The lattice's profile spans in standard form (none for a form
+/// without a profile).
+fn profile(lattice: &Lattice) -> &[Span2] {
+    lattice.profile().unwrap_or(&[])
 }
 
 /// `M⁻¹(x − t)` by the adjugate, in `f64`.

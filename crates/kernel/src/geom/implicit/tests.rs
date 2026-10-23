@@ -139,7 +139,7 @@ fn degrees_by_form_and_span() {
     let want = |n: &str| match n.trim_start_matches("affine ") {
         "plane" => 1,
         "revolved flat line" => 1,
-        "cylinder" | "conic chain" | "cone" | "sphere" => 2,
+        "cylinder" | "conic chain" | "hyperbola chain" | "cone" | "sphere" => 2,
         "revolved oblique line" => 2,
         _ => 4,
     };
@@ -244,7 +244,7 @@ fn distances_of_tile_rows_are_their_rounding() {
             .map(scale)
             .fold(0.0, |m, x| if x > m { x } else { m });
         let surface = match form {
-            "plane" | "cylinder" | "cone" | "conic chain" => {
+            "plane" | "cylinder" | "cone" | "conic chain" | "hyperbola chain" => {
                 let lattice = surface.lattice().clone();
                 let r = surface.rect();
                 // The cell at the foot (the middle of base cell 0), or at

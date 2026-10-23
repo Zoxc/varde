@@ -18,8 +18,13 @@
 //! point bit for bit (the chain's rule); where each rail's spans meet
 //! with equal weights there too, tile `k`'s last `u` row and tile `k +
 //! 1`'s first are the same values, so they are the same bits. A rail
-//! whose spans meet with different weights is refused (`Joint`), as a
-//! profile's; so are rails over different knots (`Knots`: not one `t`).
+//! whose spans meet with different weights is refused (`Joint`); so are
+//! rails over different knots (`Knots`: not one `t`). The rails are taken
+//! as given: no column map is applied here, as one would have to act on
+//! both rails, and on the edges they are, at once (an edge's
+//! conditioning, [`condition_edge`], is that edge's).
+//!
+//! [`condition_edge`]: super::super::condition::condition_edge
 //!
 //! **Orientation** `x_u × x_v`: along rail 0 crossed with the ruling
 //! towards rail 1. A ruled surface is regular only where its rails and

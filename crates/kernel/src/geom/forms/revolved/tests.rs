@@ -3,8 +3,8 @@
 //! key's surface of revolution, sharing rows across spans and angle
 //! cells, its rows on the axis one point; regular off the axis and
 //! following the tangent to the cap; equal keys from other inputs the
-//! same tiles; cusps refused, as are crossing profiles, closed profiles
-//! taken whole and joints whose weights differ.
+//! same tiles; cusps refused, as are crossing profiles and closed
+//! profiles taken whole; joints whose given weights differ shared.
 
 use malachite::Rational as Q;
 use varde_decide::bezier::{HomCurve, Side, Sides};
@@ -123,14 +123,19 @@ fn tiles_are_exact_values_rounded_once() {
             let corner: [Q; 3] = std::array::from_fn(|c| &r0[c] + &r1[c]);
             let dirs = [r0.clone(), corner, r1.clone()];
             for (cell, span) in key.profile().spans().iter().enumerate() {
+                // The standard weights' squares: ends 1, the middle
+                // `w₁²/(w₀w₂)`.
+                let [w0, w1, w2] = span.map(|p| q(p[2]));
+                let squares = [Q::from(1u32), &w1 * &w1 / (w0 * w2), Q::from(1u32)];
                 let want: [([Q; 3], f64); 9] = std::array::from_fn(|n| {
-                    let [rho, z, w] = span[n % 3];
+                    let [rho, z, _] = span[n % 3];
                     let p =
                         std::array::from_fn(|c| &o[c] + q(rho) * &dirs[n / 3][c] + q(z) * &a[c]);
+                    let w2 = &squares[n % 3];
                     let w = if n / 3 == 1 {
-                        nearest_sqrt(&(q(w) * q(w) / Q::from(2u32)))
+                        nearest_sqrt(&(w2 / Q::from(2u32)))
                     } else {
-                        w
+                        nearest_sqrt(w2)
                     };
                     (p, w)
                 });
@@ -153,7 +158,8 @@ fn tiles_follow_the_profile_at_every_level() {
         let l = Lattice::new(key.clone().into()).unwrap();
         let (o, _) = frame(&l);
         let a = key.axis().map(q);
-        let spans = key.profile().spans();
+        // The tiles' own spans: the profile's in standard form.
+        let spans = l.profile().unwrap();
         for n in 0..12 {
             let k = (rng.next_u64() % 4) as i64 - 2;
             let c = (rng.next_u64() % spans.len() as u64) as i64;
@@ -549,6 +555,8 @@ fn closed_profiles_and_joints() {
     assert_eq!(l.base_tile(0, -1).unwrap_err(), LatticeError::Index);
     let mut heavy = all[..2].to_vec();
     heavy[1] = heavy[1].map(|p| [p[0], p[1], 2.0 * p[2]]);
+    // Joints whose given weights differ share their row all the same.
     let key = RevolvedKey::new([0.0; 3], Z, &heavy).unwrap();
-    assert_eq!(Lattice::new(key.into()).unwrap_err(), LatticeError::Joint);
+    let s = revolved(key, 0, 0..2).unwrap();
+    rows_shared(s.tiles(), s.rect());
 }

@@ -10,9 +10,10 @@
 //! **Exact to rounding.** Every control point of a base tile is an
 //! exact function of the stored key's values, the frame's stored values
 //! and the cell, each coordinate rounded once to the nearest `f64`, ties
-//! to even; weights are `1`, `√½` rounded, `½`, a profile's stored
-//! weights, exact, or a spindle torus's and a revolved conic's middle
-//! weights, rounded once. An affine image's base tile is its source's,
+//! to even; weights are `1`, `√½` rounded, `½`, exact, or a spindle
+//! torus's middle weights and a profile span's standard ones (ends 1,
+//! [`super::condition`]), times `√½` on a revolved conic's corner rows,
+//! rounded once. An affine image's base tile is its source's,
 //! each stored coordinate mapped and rounded once more, weights kept. A
 //! finer level's tile is its base tile's exact sub-patch rounded once
 //! ([`super::lattice::Lattice::tile`]). So two constructions of one key

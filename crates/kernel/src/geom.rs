@@ -4,12 +4,12 @@
 //! their canonical keys, each parameter correctly rounded by its
 //! [`formkey`] route; their
 //! [`lattice`]s, the grids of tiles anchored to those keys, built by
-//! each form's constructor ([`forms`]), and the tiled [`surface`]s on
-//! them; the [`conic`]s and their exact rational
-//! quadratic spans; the [`curve`]s of edges, chains of rational
+//! each form's constructor ([`forms`]) with their weights
+//! [`condition`]ed, and the tiled [`surface`]s on them; the [`conic`]s
+//! and their exact rational quadratic spans; the [`curve`]s of edges, chains of rational
 //! quadratic spans in space, and the [`pcurve`]s of coedges, chains of
 //! Q, G, linear and iso spans in a surface's UV split at its tile
-//! lines; and the
+//! lines, an edge's conditioned together; and the
 //! [`certify`]d seam bound between a coedge's curve on its surface and
 //! its edge's curve, and a curve's distance to an implicit surface; each
 //! tile's [`implicit`] polynomial, and the analytic [`inverse`] from a
@@ -18,6 +18,7 @@
 //! operation reads.
 
 pub mod certify;
+pub mod condition;
 pub mod conic;
 pub mod curve;
 pub mod form;

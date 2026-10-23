@@ -45,14 +45,16 @@ pub(crate) fn refined(s: &Surface) -> Surface {
     Surface::new(lattice, rect).unwrap()
 }
 
-/// Revolved profiles: three quarters of an ellipse off the axis, a
-/// parabola's arcs, an ellipse from pole to pole, an oblique span from
+/// Revolved profiles: three quarters of an ellipse off the axis,
+/// hyperbola arcs whose joints' given weights differ, a parabola's arcs, an ellipse from pole to pole, an oblique span from
 /// an apex, and two straight spans (a cone's and a plane's meridian).
 fn profiles(rng: &mut Rng) -> Vec<(&'static str, Vec<Span2>)> {
     let r = rng.log_range(1e-1, 1e2);
     let c = [r * rng.range(1.5, 4.0), r * rng.range(-3.0, 3.0)];
     let e = Conic::ellipse(c, MERIDIAN, [r, r * rng.range(0.3, 1.0)]).unwrap();
     let p = Conic::parabola(c, [[0.0, 1.0], [1.0, 0.0]], r).unwrap();
+    // Hyperbola arcs whose given weights differ at their joints.
+    let hyp = Conic::hyperbola(c, MERIDIAN, [r, 0.5 * r]).unwrap();
     let z = c[1];
     let poles = Conic::ellipse([0.0, z], MERIDIAN, [r, 1.5 * r]).unwrap();
     // The straight spans' values exact: a power of two and a multiple.
@@ -62,6 +64,13 @@ fn profiles(rng: &mut Rng) -> Vec<(&'static str, Vec<Span2>)> {
         (
             "ellipse",
             (0..3).map(|k| e.quarter::<3>(k).unwrap()).collect(),
+        ),
+        (
+            "hyperbola",
+            [0.6, 0.8, 1.0, 1.2]
+                .windows(2)
+                .map(|t| hyp.arc::<3>(t[0], t[1]).unwrap())
+                .collect(),
         ),
         (
             "parabola",
@@ -121,6 +130,15 @@ pub(crate) fn surfaces(seed: u64) -> Vec<Sample> {
     let spans: Vec<_> = (0..3).map(|k| ell.quarter::<4>(k).unwrap()).collect();
     keys.push((
         "conic chain".into(),
+        ConicCylinderKey::new(a2, &spans).unwrap().into(),
+    ));
+    let hyp = Conic::hyperbola(c2, [e1.to_array(), e2.to_array()], [r2, 0.5 * r2]).unwrap();
+    let spans: Vec<_> = [0.6, 0.8, 1.0, 1.2]
+        .windows(2)
+        .map(|t| hyp.arc::<4>(t[0], t[1]).unwrap())
+        .collect();
+    keys.push((
+        "hyperbola chain".into(),
         ConicCylinderKey::new(a2, &spans).unwrap().into(),
     ));
     let (p3, a3) = (p(&mut rng), d(&mut rng));
