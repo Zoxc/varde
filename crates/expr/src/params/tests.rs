@@ -334,12 +334,25 @@ fn many_unknown_names_evaluate_quickly() {
         LengthUnit::Mm,
     );
     let elapsed = start.elapsed();
-    assert!(elapsed.as_secs_f64() < 1.0, "{elapsed:?}");
-    // The first ones still get their suggestion.
-    match error(&params, &names[0]).kind {
-        ErrorKind::UnknownName { suggestion, .. } => assert!(suggestion.is_some()),
-        kind => panic!("{kind:?}"),
-    }
+    // The work is bounded by the budget, not the clock: every name is
+    // within an edit of all of them, so each search compares all of them
+    // and the budget runs out after the first ones, which get their
+    // suggestion; none after do.
+    let suggested: Vec<bool> = names
+        .iter()
+        .map(|name| match error(&params, name).kind {
+            ErrorKind::UnknownName { suggestion, .. } => suggestion.is_some(),
+            kind => panic!("{kind:?}"),
+        })
+        .collect();
+    let searched = SUGGESTION_BUDGET / MAX_PARAMS;
+    assert!(searched > 0);
+    assert!(suggested[..searched].iter().all(|&s| s));
+    assert!(!suggested[searched..].iter().any(|&s| s));
+    // A gross bound on the rest of the evaluation, with room for a loaded
+    // machine: about 0.5 s in a debug build, over 1 s when the machine is
+    // busy.
+    assert!(elapsed.as_secs_f64() < 10.0, "{elapsed:?}");
     // And a value asked for after suggests as before.
     let mm = Ask::length(LengthUnit::Mm, 1e6).with_params(&params);
     match evaluate(&format!("{stem}000"), &mm).unwrap_err().kind {

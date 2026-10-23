@@ -86,6 +86,16 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         .clone()
 }
 
+/// Submits `encoder` and waits for the device to finish it. A software
+/// driver (lavapipe) runs a submission on its own thread, compiling shaders
+/// as it draws; one still running when the binary exits races the exit
+/// handlers tearing down the compiler under it (a SIGSEGV after every test
+/// passed), so no test leaves work in flight.
+fn submit(device: &wgpu::Device, queue: &wgpu::Queue, encoder: wgpu::CommandEncoder) {
+    queue.submit([encoder.finish()]);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+}
+
 /// A frame of `mesh` and `sketches` on a 64 by 64 target.
 fn frame<'a>(
     camera: &'a Camera,
@@ -405,7 +415,7 @@ fn errors_past_the_buffer_limit_are_skipped() {
         height: 64,
     };
     renderer.render(&slot, &mut encoder, &view, clip);
-    queue.submit([encoder.finish()]);
+    submit(&device, &queue, encoder);
     // Another source is tried, even with the same parts.
     let other: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
     let errors = [parts(&other)];
@@ -436,5 +446,5 @@ fn errors_past_the_buffer_limit_are_skipped() {
     assert_eq!(renderer.prepare(&mut slot, &device, &queue, &frame), Ok(()));
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(&slot, &mut encoder, &view, clip);
-    queue.submit([encoder.finish()]);
+    submit(&device, &queue, encoder);
 }
