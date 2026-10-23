@@ -14,7 +14,8 @@ use super::super::corner::{CornerInput, Split, corner};
 use super::super::rim::{Along, Branch, Element, Implicit, SnappedFace, rim};
 use super::super::target::Map;
 use super::*;
-use crate::geom::curve::{Curve3D, PCurve};
+use crate::geom::curve::Curve3D;
+use crate::geom::pcurve::PCurve;
 
 const A: Operand = Operand::A;
 const B: Operand = Operand::B;

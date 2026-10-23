@@ -112,7 +112,7 @@ pub struct Conic<const N: usize> {
 }
 
 /// A span of a conic in `ℝᴺ`, `D = N + 1`: three affine control points
-/// with their weights ([`super::curve::Span3`], [`super::curve::Span2`]).
+/// with their weights ([`super::curve::Span3`], [`super::pcurve::Span2`]).
 pub type Span<const D: usize> = [[f64; D]; 3];
 
 impl<const N: usize> Conic<N> {

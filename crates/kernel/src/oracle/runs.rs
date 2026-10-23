@@ -99,7 +99,7 @@ pub(super) fn oracle_face(s: &Solid, f: FaceId) -> Face {
                     let p = b.pcurve(c);
                     Coedge {
                         pcurve: UvChain {
-                            spans: p.spans().to_vec(),
+                            spans: p.q_spans().expect("Q spans"),
                             knots: p.knots().to_vec(),
                         },
                         curve: chain(s, e),

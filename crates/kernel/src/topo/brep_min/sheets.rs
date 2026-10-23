@@ -15,10 +15,11 @@ use varde_testkit::sheets::{self, Diagonals, OFFSET, Pair, Polygons, SmoothPair,
 
 use super::planar::{CheckFault, FaceError, PolygonError, line, newell, plane_uv, uv_line};
 use super::*;
-use crate::geom::curve::{Span2, Span3};
+use crate::geom::curve::Span3;
 use crate::geom::form::{CylinderKey, FormKey, PlaneKey};
 use crate::geom::formkey::{Charge, KeyMeter, RouteCounts};
 use crate::geom::lattice::{CELL, Lattice};
+use crate::geom::pcurve::Span2;
 use crate::geom::tile::Tile;
 use crate::infra::budget::{Budget, Step, Work};
 
@@ -318,7 +319,7 @@ fn faults_are_found_with_their_entities() {
         let spans = p
             .spans()
             .iter()
-            .map(|s| s.map(|q| [q[0] + 1.0, q[1], q[2]]))
+            .map(|s| s.as_q().unwrap().map(|q| [q[0] + 1.0, q[1], q[2]]))
             .collect();
         *p = PCurve::new(spans, p.knots().to_vec()).unwrap();
     }

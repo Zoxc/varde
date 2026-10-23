@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::boolean::arrange::coincident::{self, Along, Arc, Line, Place};
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Budget, Work};
 use crate::topo::brep_min::{BodyKind, Brep};
 use varde_testkit::sheets::{self, OFFSET, Polygons, l_corner_quad};

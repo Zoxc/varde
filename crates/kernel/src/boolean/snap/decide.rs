@@ -92,7 +92,7 @@ use super::rewrite::{
 };
 use super::rim::{Element, Gap, Implicit, Rim};
 use super::stale::OnT;
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
 
@@ -1145,6 +1145,7 @@ struct LoopOut {
 fn lift_pcurve(chart: &Chart, face: FaceId, pc: &PCurve) -> Option<LiftedCurve> {
     let mut spans = Vec::with_capacity(pc.spans().len());
     for s in pc.spans() {
+        let s = s.as_q()?;
         let mut out: Vec<(P3, Q)> = Vec::with_capacity(3);
         for c in s {
             let uv = [Q::try_from(c[0]).ok()?, Q::try_from(c[1]).ok()?];

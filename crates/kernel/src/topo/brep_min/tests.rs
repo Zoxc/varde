@@ -16,9 +16,10 @@ use varde_testkit::rng::Rng;
 
 use super::*;
 use crate::geom::certify::{SeamError, seam_bound_alone};
-use crate::geom::curve::{CurveError, Span2, Span3};
+use crate::geom::curve::{CurveError, Span3};
 use crate::geom::form::{CylinderKey, FormKey, PlaneKey};
 use crate::geom::lattice::{CELL, Lattice};
+use crate::geom::pcurve::Span2;
 use crate::infra::budget::{Budget, Halt, MAX_WORK, Work};
 use crate::infra::error::KernelError;
 
@@ -266,13 +267,19 @@ fn deviation_sq(b: &Brep, c: CoedgeId, t: &Q) -> Q {
         &zero,
     )
     .unwrap();
-    let ps =
-        HomCurve::<Q, 2>::from_affine(p.spans()[kp].iter().map(|h| ([h[0], h[1]], h[2])), &zero)
-            .unwrap();
+    let ps = HomCurve::<Q, 2>::from_affine(
+        p.spans()[kp]
+            .as_q()
+            .unwrap()
+            .iter()
+            .map(|h| ([h[0], h[1]], h[2])),
+        &zero,
+    )
+    .unwrap();
     let x = cs.eval(&sc);
     let [u, v] = ps.eval(&sp);
     // The span's tile, by its middle control point.
-    let mid = p.spans()[kp][1];
+    let mid = p.spans()[kp].as_q().unwrap()[1];
     let rect = surface.rect();
     let i = (mid[0].floor() as i64).clamp(rect.u.start, rect.u.end - 1);
     let j = (mid[1].floor() as i64).clamp(rect.v.start, rect.v.end - 1);
@@ -510,7 +517,7 @@ fn check_ribbons_finds_the_first_broken_join() {
     // (b): the arc's p-curve ends an ulp off where the ruling starts.
     let mut f = half_cylinder(cylinder_pcurves());
     let c = CoedgeId(0);
-    let mut spans = f.brep.pcurve(c).spans().to_vec();
+    let mut spans = f.brep.pcurve(c).q_spans().unwrap();
     spans[1][2][1] = spans[1][2][1].next_up();
     let knots = f.brep.pcurve(c).knots().to_vec();
     f.brep.coedges.pcurve[0] = PCurve::new(spans, knots).unwrap();
@@ -519,7 +526,7 @@ fn check_ribbons_finds_the_first_broken_join() {
     // (e): the ruling's p-curve over another range of t.
     let mut f = half_cylinder(cylinder_pcurves());
     let c = CoedgeId(1);
-    let spans = f.brep.pcurve(c).spans().to_vec();
+    let spans = f.brep.pcurve(c).q_spans().unwrap();
     f.brep.coedges.pcurve[1] = PCurve::new(spans, vec![0.0, 0.5]).unwrap();
     assert_eq!(f.brep.check_ribbons(), Err(RibbonFault::SameT(c)));
 }
@@ -554,7 +561,7 @@ fn add_loop_refuses_bad_coedges_and_adds_nothing() {
             why: CoedgeError::SameWay
         })
     );
-    let short = PCurve::new(a0.spans().to_vec(), vec![0.0, 1.0, 1.5]).unwrap();
+    let short = PCurve::new(a0.q_spans().unwrap(), vec![0.0, 1.0, 1.5]).unwrap();
     assert_eq!(
         b.add_test_loop(face, false, vec![(e, false, short)]),
         Err(StoreError::Coedge {

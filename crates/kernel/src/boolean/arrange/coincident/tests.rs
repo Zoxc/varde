@@ -8,7 +8,7 @@
 //! running out of budget.
 
 use super::*;
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Budget, Work};
 
 /// The straight p-curve from `a` to `b` over `[0, 1]`.

@@ -12,7 +12,7 @@
 use super::*;
 use crate::boolean::arrange::coincident::{Along, Arc, FaceInput, Line, PieceOf, Place, realise};
 use crate::boolean::snap::decide::{BranchRecord, CornerRecord, RimVertRecord};
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Budget, Work};
 use varde_decide::ids::VertId;
 use varde_decide::num::decide::Sign;

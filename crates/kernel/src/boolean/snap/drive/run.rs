@@ -43,8 +43,8 @@ use super::super::rim::{
 use super::super::stale::{OnTError, OnTInput, on_t};
 use super::super::target::{Candidate, Map, Target, TargetError, choose};
 use super::{Body, Key, Order, TARGET, q};
-use crate::geom::curve::PCurve;
 use crate::geom::lattice::CELL;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Budget, Work};
 use crate::topo::brep_min::planar::UV_GRID;
 
@@ -303,10 +303,11 @@ pub(crate) fn snap_leaves(
             for c in br.loop_coedges(l) {
                 let e = br.edge(c);
                 let pc = br.pcurve(c);
+                let spans = pc.q_spans().ok_or(Stop::Rim(RimError::Trim(sf)))?;
                 own.push((
                     e,
                     br.ends(e),
-                    pc.spans().to_vec(),
+                    spans,
                     pc.knots().to_vec(),
                     br.reversed(c) == br.flipped(sf),
                 ));

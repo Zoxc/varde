@@ -70,10 +70,11 @@ use varde_kernel::boolean::classify::{AuditInput, AuditRegion, Bands, Cover, Lea
 use varde_kernel::bvh_calibration::Tree;
 use varde_kernel::geom::certify::SeamBound;
 use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
-use varde_kernel::geom::curve::{Curve3D, PCurve};
+use varde_kernel::geom::curve::Curve3D;
 use varde_kernel::geom::form::PlaneKey;
 use varde_kernel::geom::formkey::calibration as keys;
 use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
+use varde_kernel::geom::pcurve::PCurve;
 use varde_kernel::geom::surface::Surface;
 use varde_kernel::topo::brep_min::{Brep, calibration as scan};
 use varde_testkit::rng::Rng;

@@ -83,7 +83,8 @@ use super::{
     NewEdge, NewVert, P2, Pre, PreImage, Q, Rewrite, RewriteError, SnapEdge, SnapFace, SnapVert,
     TargetCut, param_in, run, units,
 };
-use crate::geom::curve::{Curve3D, PCurve, Span2, Span3};
+use crate::geom::curve::{Curve3D, Span3};
+use crate::geom::pcurve::{PCurve, Span2};
 use crate::infra::budget::{Ledger, Stop, Work};
 
 /// A point in space, exactly.

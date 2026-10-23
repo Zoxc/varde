@@ -98,22 +98,6 @@ fn spans_not_cut_keep_their_bits_and_cut_ones_stay_on_the_curve() {
 }
 
 #[test]
-fn p_curves_split_the_same_way() {
-    let p = PCurve::new(
-        vec![[[0.25, 0.25, 1.0], [0.5, 0.375, 1.5], [0.75, 0.25, 1.0]]],
-        vec![0.0, 1.0],
-    )
-    .expect("a p-curve");
-    let t = 0.3;
-    let at = p.point_at(t).expect("in range");
-    let s = p.split(&[t]).expect("a p-curve");
-    assert_eq!(s.knots(), [0.0, t, 1.0]);
-    assert_eq!(s.knot_point(1), Some(at));
-    assert_eq!(s.knot_point(0), p.knot_point(0));
-    assert_eq!(s.knot_point(2), p.knot_point(1));
-}
-
-#[test]
 fn slices_take_the_spans_between_two_knots() {
     let c = bent().split(&[2.0]).expect("a chain");
     let mid = c.slice(1.5, 3.0).expect("knots");

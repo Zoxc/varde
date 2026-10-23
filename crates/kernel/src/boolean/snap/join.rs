@@ -68,7 +68,8 @@ use varde_decide::num::exact::rat as q;
 use super::corner::{exact3, sub3, to_f64};
 
 use crate::geom::certify::{SeamError, seam_bound};
-use crate::geom::curve::{Curve3D, PCurve, Span3};
+use crate::geom::curve::{Curve3D, Span3};
+use crate::geom::pcurve::PCurve;
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;

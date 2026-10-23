@@ -6,8 +6,10 @@
 //! [`lattice`]s, the grids of tiles anchored to those keys, built by
 //! each form's constructor ([`forms`]), and the tiled [`surface`]s on
 //! them; the [`conic`]s and their exact rational
-//! quadratic spans; the [`curve`]s of edges and coedges, chains
-//! of rational quadratic spans in space and in a surface's UV; and the
+//! quadratic spans; the [`curve`]s of edges, chains of rational
+//! quadratic spans in space, and the [`pcurve`]s of coedges, chains of
+//! Q, G, linear and iso spans in a surface's UV split at its tile
+//! lines; and the
 //! [`certify`]d seam bound between a coedge's curve on its surface and
 //! its edge's curve.
 
@@ -18,6 +20,7 @@ pub mod form;
 pub mod formkey;
 pub mod forms;
 pub mod lattice;
+pub mod pcurve;
 mod round;
 pub mod surface;
 pub mod tile;

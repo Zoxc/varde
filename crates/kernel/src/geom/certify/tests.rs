@@ -1,5 +1,5 @@
-//! Seam bounds against exact rational deviations: random p-curves on
-//! planes, cylinders and spheres at several lattice levels (across and
+//! Seam bounds against exact rational deviations: random p-curves of
+//! every span kind on planes, cylinders and spheres at several lattice levels (across and
 //! along tile lines, weights out to `1/64` and `64` at every control
 //! point, ends and knots included, near the poles, at far cells), curves with their own knots (one ulp off the p-curve's,
 //! or extra ones) and spans of one ulp, each bound checked against the
@@ -17,11 +17,13 @@ use varde_testkit::rng::Rng;
 
 use super::calibration::{CellsError, arcs, base_plane, cells, on_plane, quarter};
 use super::*;
-use crate::geom::curve::{Curve3D, PCurve, Span2, Span3};
+use crate::geom::curve::{Curve3D, Span3};
 use crate::geom::form::{CylinderKey, FormKey, PlaneKey, SphereKey};
 use crate::geom::lattice::{Lattice, Level, Rect};
+use crate::geom::pcurve::{PCurve, PSpan, Span2};
 use crate::infra::budget::{Budget, Halt, Limit, MAX_WORK, Pass, Step, Work};
 use crate::infra::error::{Cause, KernelError};
+use varde_decide::bezier::Dir;
 
 /// A seam target: a quarter of the least tolerance, `10⁻⁵` mm.
 const TARGET: f64 = 2.5e-6;
@@ -67,11 +69,11 @@ fn deviation_sq(s: &Surface, c: &Curve3D, p: &PCurve, t: &Q) -> Q {
         &zero,
     )
     .unwrap();
-    let ps =
-        HomCurve::<Q, 2>::from_affine(p.spans()[kp].iter().map(|h| ([h[0], h[1]], h[2])), &zero)
-            .unwrap();
     let x = cs.eval(&sc);
-    let [u, v] = ps.eval(&sp);
+    let [u, v] = p
+        .coords_at(kp, &zero)
+        .unwrap()
+        .map(|c| c.eval(&sp)[0].clone());
     let rect = s.rect();
     let (i, j) = (cell_of(&u, &rect.u), cell_of(&v, &rect.v));
     let y = s
@@ -272,7 +274,9 @@ fn pcurve(rng: &mut Rng, s: &Surface) -> PCurve {
     // A point moved onto its tile's lower `u` line stays in the earlier
     // span's tile too: that tile is the same, or its neighbour below in
     // `v` or in `u`, whose closed square holds the line's part.
-    let spans: Vec<Span2> = (0..n)
+    // Of each kind: Q; G, Möbius in `u` or `v`; linear; iso along the
+    // tile line.
+    let spans: Vec<PSpan> = (0..n)
         .map(|k| {
             let (a, b) = (pts[k], pts[k + 1]);
             let (i, j) = tiles[k];
@@ -282,7 +286,25 @@ fn pcurve(rng: &mut Rng, s: &Surface) -> PCurve {
             } else {
                 inside(rng, (i, j))
             };
-            [[a[0], a[1], wa], [m[0], m[1], wm], [b[0], b[1], wb]]
+            match rng.next_u64() % 5 {
+                0 => PSpan::G {
+                    mobius: Dir::U,
+                    m: [[a[0], wa], [b[0], wb]],
+                    q: [[a[1], weight(rng)], [m[1], wm], [b[1], weight(rng)]],
+                },
+                1 => PSpan::G {
+                    mobius: Dir::V,
+                    m: [[a[1], wa], [b[1], wb]],
+                    q: [[a[0], weight(rng)], [m[0], wm], [b[0], weight(rng)]],
+                },
+                2 => PSpan::Linear([[a[0], a[1], wa], [b[0], b[1], wb]]),
+                3 if along.contains(&k) => PSpan::Iso {
+                    fixed: Dir::U,
+                    at: i as f64,
+                    m: [[a[1], wa], [b[1], wb]],
+                },
+                _ => PSpan::Q([[a[0], a[1], wa], [m[0], m[1], wm], [b[0], b[1], wb]]),
+            }
         })
         .collect();
     let mut knots = vec![rng.range(-2.0, 2.0)];
@@ -301,7 +323,7 @@ fn pcurve(rng: &mut Rng, s: &Surface) -> PCurve {
     }
     // Consecutive spans share their joining control point whatever its
     // weights on either side.
-    PCurve::new(spans, knots).unwrap()
+    PCurve::from_spans(spans, knots).unwrap()
 }
 
 /// A space curve near `S(p(t))`: its own knots (the p-curve's, one ulp

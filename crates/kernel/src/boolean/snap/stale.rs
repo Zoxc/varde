@@ -87,7 +87,7 @@ use super::join::{Joined, Origin};
 use super::rewrite::{
     EdgeClass, EdgeCurve, Geometry, Rewrite, SnapEdge, SnapFace, SnapVert, TargetFace, plane,
 };
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
 
@@ -409,12 +409,14 @@ impl Window {
         self.push((b.operand(), b.face()), box_rect(b));
     }
 
-    /// Adds the box of p-curve `pc`'s control points on face `face` of
-    /// `operand`.
+    /// Adds the box of p-curve `pc`'s control values ([`PSpan::hull`]) on
+    /// face `face` of `operand`.
+    ///
+    /// [`PSpan::hull`]: crate::geom::pcurve::PSpan::hull
     pub fn add_pcurve(&mut self, operand: Operand, face: FaceId, pc: &PCurve) {
         let mut lo: Option<[Q; 2]> = None;
         let mut hi: Option<[Q; 2]> = None;
-        for p in pc.spans().iter().flatten() {
+        for p in pc.spans().iter().flat_map(|s| s.hull()) {
             // Finite: a p-curve's values are.
             let (Some(u), Some(v)) = (exact(p[0]), exact(p[1])) else {
                 continue;

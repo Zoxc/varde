@@ -79,7 +79,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
 use crate::topo::arrange2d::{self, ArrangeError, Arrangement, Edge, NONE};

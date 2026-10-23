@@ -48,7 +48,7 @@ use crate::boolean::arrange::coincident::{
 use crate::boolean::arrange::fold::{
     Fate, Fold, FoldError, FoldInput, Operand as FoldOperand, OperandEdge, Source, fold,
 };
-use crate::geom::curve::PCurve;
+use crate::geom::pcurve::PCurve;
 
 /// A target face of a zone, realised and folded.
 #[derive(Debug)]

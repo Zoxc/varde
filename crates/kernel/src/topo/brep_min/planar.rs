@@ -80,10 +80,11 @@ use varde_decide::num::preds::{Dot2d, Orient2d, polygon_area_sign};
 use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
 use super::{BodyKind, Brep, CoedgeId, EdgeId, FaceId, LoopId, RibbonFault, StoreError, VertId};
-use crate::geom::curve::{Curve3D, CurveError, PCurve, Span2, Span3};
+use crate::geom::curve::{Curve3D, CurveError, Span3};
 use crate::geom::form::{FormError, FormKey, KeyError, PlaneKey};
 use crate::geom::formkey::KeyMeter;
 use crate::geom::lattice::{CELL, Lattice, LatticeError};
+use crate::geom::pcurve::{PCurve, PSpan, Span2};
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Ledger, Pass, Stop, Work};
 use crate::infra::error::KernelError;
@@ -452,7 +453,7 @@ impl Brep {
             let inside = self.coedges.pcurve[c]
                 .spans()
                 .iter()
-                .flatten()
+                .flat_map(|s| s.hull())
                 .all(|p| u0 <= p[0] && p[0] <= u1 && v0 <= p[1] && p[1] <= v1);
             if !inside {
                 return Err(CheckFault::Domain(id));
@@ -473,7 +474,7 @@ impl Brep {
                 let mut corners = Vec::new();
                 for c in self.loop_coedges(l) {
                     let p = self.pcurve(c);
-                    straight &= p.spans().iter().all(is_uv_line);
+                    straight &= p.spans().iter().all(is_straight);
                     let k = p.spans().len();
                     let at = |i: usize| p.knot_point(i).unwrap_or([f64::NAN; 2]);
                     if self.reversed(c) {
@@ -654,6 +655,17 @@ pub(super) fn uv_line(a: [f64; 2], b: [f64; 2]) -> Span2 {
 
 /// Whether a UV span is straight exactly: weights 1, the middle control
 /// point the exact midpoint of the ends (their sum exact).
+/// Whether a span is a straight UV segment between its ends: a linear or
+/// iso span, or a Q span with weights 1 and its middle point the exact
+/// midpoint of its ends ([`is_uv_line`]).
+fn is_straight(s: &PSpan) -> bool {
+    match s {
+        PSpan::Q(q) => is_uv_line(q),
+        PSpan::Linear(_) | PSpan::Iso { .. } => true,
+        PSpan::G { .. } => false,
+    }
+}
+
 fn is_uv_line(s: &Span2) -> bool {
     s.iter().all(|p| p[2] == 1.0)
         && (0..2).all(|k| {

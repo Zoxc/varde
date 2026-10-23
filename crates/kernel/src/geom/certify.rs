@@ -19,15 +19,19 @@
 //! bits). At the cell's level the spans' homogeneous coefficients are
 //! formed from their affine control points ([`Curve3D::span_at`]: each
 //! product `w·x` rounded once with its rounding carried at the first
-//! level, exact above), and so are the tile's; the spans are restricted
-//! to the piece and halved down to the cell. With the span's local
-//! homogeneous coordinates `U' = U − i·W`, `V' = V − j·W`, the tile's
-//! homogeneous net `Pₖₗ` composed with it
-//! ([`HomPatch::compose_span`](varde_decide::bezier::HomPatch::compose_span)) is
-//! `H = Σₖₗ Pₖₗ·Bₖ(U', W)·Bₗ(V', W)`, `Bₖ` the homogeneous quadratic
-//! Bernstein basis (`(W − U')²`, `2U'(W − U')`, `U'²`): degree 8, the
+//! level, exact above), the p-curve span's per coordinate, each over its
+//! own weights ([`PCurve::coords_at`]), and so are the tile's; the spans
+//! are restricted to the piece and halved down to the cell. With the
+//! span's local homogeneous coordinates `U' = U − i·W_u`,
+//! `V' = V − j·W_v`, the tile's homogeneous net `Pₖₗ` composed with it
+//! ([`HomPatch::compose_params`](varde_decide::bezier::HomPatch::compose_params)) is
+//! `H = Σₖₗ Pₖₗ·Bₖ(U', W_u)·Bₗ(V', W_v)`, `Bₖ` the homogeneous quadratic
+//! Bernstein basis (`(W − U')²`, `2U'(W − U')`, `U'²`): of degree
+//! `2·k_u + 2·k_v` for the span's degrees ([`PSpan::degrees`]: 8 for a Q
+//! span, 6 for a G span, 4 for a linear one, 2 for an iso one), the
 //! tile's point `(H₀, H₁, H₂) / H₃`. The difference with `C = (X, W_C)`
-//! is `N / D`, `Nₘ = Hₘ·W_C − Xₘ·H₃` of degree 10 and `D = H₃·W_C`
+//! is `N / D`, `Nₘ = Hₘ·W_C − Xₘ·H₃` of that degree plus `C`'s (10 for
+//! a Q span on a quadratic `C`) and `D = H₃·W_C`
 //! ([`HomCurve::seam_numerator`]). Its
 //! length is at most `√(Σₘ max|Nₘ|²) / min D`, the maxima and the
 //! minimum certified from the Bernstein coefficients (the forms lie in
@@ -67,7 +71,7 @@
 //! the operation's warnings; only running out of budget, or a cell with
 //! no certified bound at a limit, fails.
 //!
-//! Biquadratic tiles and Q spans only. On a plane, whose one tile spans
+//! Biquadratic tiles, spans of every kind. On a plane, whose one tile spans
 //! the coordinate box (4·10⁶ mm), the first level's bound on a whole 90°
 //! arc of radius 50 is about `3·10⁻⁹` mm for weights 1, though the arc
 //! lies exactly on the plane; it grows with the spread of a span's
@@ -81,7 +85,8 @@ use varde_decide::num::bounded::{add_up, div_up, down, mul_up, up};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
 use varde_decide::num::schedule::Level;
 
-use super::curve::{Curve3D, PCurve, Span2, local};
+use super::curve::{Curve3D, local};
+use super::pcurve::{PCurve, PSpan};
 use super::surface::Surface;
 use super::tile::Tile;
 use crate::infra::budget::{
@@ -351,11 +356,14 @@ fn eval_at<S: LevelScalar>(
 ) -> Eval {
     let (pk, ck) = (pcurve.knots(), curve.knots());
     let (sp, sc) = (piece.sp, piece.sc);
-    let mut p = restrict(
-        &pcurve.span_at(sp, like).expect("a span"),
+    let (pa, pb) = (
         local(piece.a, pk[sp], pk[sp + 1], like),
         local(piece.b, pk[sp], pk[sp + 1], like),
     );
+    let mut p = pcurve
+        .coords_at(sp, like)
+        .expect("a span")
+        .map(|x| restrict(&x, pa.clone(), pb.clone()));
     let mut c = restrict(
         &curve.span_at(sc, like).expect("a span"),
         local(piece.a, ck[sc], ck[sc + 1], like),
@@ -363,21 +371,23 @@ fn eval_at<S: LevelScalar>(
     );
     for bit in (0..cell.depth).rev() {
         let right = (cell.k >> bit) & 1 == 1;
-        let ([p0, p1], [c0, c1]) = (p.split_half(), c.split_half());
-        (p, c) = if right { (p1, c1) } else { (p0, c0) };
+        p = p.map(|x| {
+            let [l, r] = x.split_half();
+            if right { r } else { l }
+        });
+        let [c0, c1] = c.split_half();
+        c = if right { c1 } else { c0 };
     }
     direct(piece.tile, piece.i, piece.j, &p, &c, like)
 }
 
 /// The tile holding span `s` and its indices: `(⌊u⌋, ⌊v⌋)` of the least
-/// control point, or the one below in either direction, whichever holds
-/// every control point and lies in the domain.
-fn tile_of<'a>(surface: &'a Surface, s: &Span2) -> Option<(&'a Tile, i64, i64)> {
+/// control values, or the one below in either direction, whichever holds
+/// every control value and lies in the domain.
+fn tile_of<'a>(surface: &'a Surface, s: &PSpan) -> Option<(&'a Tile, i64, i64)> {
+    let [lo, hi] = s.hull();
     let pick = |k: usize, range: &std::ops::Range<i64>| -> Option<i64> {
-        let least = s
-            .iter()
-            .map(|p| p[k])
-            .fold(f64::INFINITY, |a, x| if x < a { x } else { a });
+        let least = lo[k];
         // Below 2⁵² in magnitude, so the candidates and the tile lines
         // about them are exact as `i64`s and as `f64`s.
         if least.is_nan() || least.abs() >= 4_503_599_627_370_496.0 {
@@ -388,8 +398,7 @@ fn tile_of<'a>(surface: &'a Surface, s: &Span2) -> Option<(&'a Tile, i64, i64)> 
             if !range.contains(&i) {
                 return false;
             }
-            let (lo, hi) = (i as f64, (i + 1) as f64);
-            s.iter().all(|p| lo <= p[k] && p[k] <= hi)
+            (i as f64) <= lo[k] && hi[k] <= (i + 1) as f64
         })
     };
     let rect = surface.rect();
@@ -473,18 +482,22 @@ fn direct<S: LevelScalar>(
     tile: &Tile,
     i: i64,
     j: i64,
-    p: &HomCurve<S, 2>,
+    p: &[HomCurve<S, 1>; 2],
     c: &HomCurve<S, 3>,
     like: &S,
 ) -> Eval {
     // Tile indices below 2⁵² in magnitude (`tile_of`): exact in `f64`.
-    let corner = [S::from_f64(i as f64, like), S::from_f64(j as f64, like)];
+    let [pu, pv] =
+        [(&p[0], i), (&p[1], j)].map(|(x, k)| x.translated(&[S::from_f64(k as f64, like)]));
     let h = tile
         .patch_at(like)
-        .compose_span(&p.translated(&corner))
-        .expect("degree 8");
-    let den = h.weights().mul(c.weights()).expect("degree 10");
-    let num = h.seam_numerator(c).expect("degree 10");
+        .compose_params(
+            [&pu.coords()[0], pu.weights()],
+            [&pv.coords()[0], pv.weights()],
+        )
+        .expect("degree at most 8");
+    let den = h.weights().mul(c.weights()).expect("degree at most 10");
+    let num = h.seam_numerator(c).expect("degree at most 10");
     // The certified bound.
     let den_lo = den.hull().lo;
     let bound = div_up(norm_up(num.each_ref().map(|n| n.hull().abs_max())), den_lo);

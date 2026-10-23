@@ -60,7 +60,8 @@
 //! tests them on the stored body.
 
 use crate::geom::certify::{SeamError, seam_bound};
-use crate::geom::curve::{Curve3D, PCurve, Span3};
+use crate::geom::curve::{Curve3D, Span3};
+use crate::geom::pcurve::PCurve;
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
@@ -683,8 +684,8 @@ impl Brep {
             scan.finite(&[*tol])?;
         }
         for (p, b) in self.coedges.pcurve.iter().zip(&self.coedges.seam_bound) {
-            for q in p.spans().iter().flatten() {
-                scan.finite(q)?;
+            for c in p.spans().iter().flat_map(|s| s.coords()) {
+                scan.finite(c.values().as_flattened())?;
             }
             scan.finite(p.knots())?;
             scan.finite(&[*b])?;

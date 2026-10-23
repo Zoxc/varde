@@ -70,6 +70,7 @@ use varde_decide::records::xrec::{
 };
 
 use super::solids::Solid;
+use crate::geom::pcurve::Span2;
 
 use Operand::{A, B};
 
@@ -323,6 +324,8 @@ struct HitTrimData {
     ends: [VertId; 2],
     along: Along,
     band: f64,
+    /// The p-curve's spans, all Q spans.
+    spans: Vec<Span2>,
     map: Vec<SpanMap>,
 }
 
@@ -386,7 +389,7 @@ impl<'s> World<'s> {
     }
 
     /// Face `f` of `op`'s hit data, plane or curved; `None` for one whose
-    /// p-curves don't fit their edges' spans.
+    /// p-curves don't fit their edges' spans or aren't Q spans.
     fn hit_data(&self, op: Operand, f: FaceId) -> Option<HitData> {
         let b = &self.solid(op).brep;
         let surf = b.surface(f);
@@ -403,6 +406,7 @@ impl<'s> World<'s> {
                     ends: [s0, s1],
                     along: Along::of(&self.order.vert_key(op, s0), &self.order.vert_key(op, s1)),
                     band: self.band(op, e),
+                    spans: b.pcurve(c).q_spans()?,
                     map,
                 });
             }
@@ -691,7 +695,7 @@ impl HeightModel for World<'_> {
                     ends: t.ends,
                     along: t.along,
                     band: t.band,
-                    pspans: b.pcurve(t.coedge).spans(),
+                    pspans: &t.spans,
                     curve: b.edge_spans(t.edge),
                     map: &t.map,
                 })
@@ -1565,6 +1569,8 @@ struct TrimSetup {
     reversed: bool,
     ends: [VertId; 2],
     band: f64,
+    /// The p-curve's spans, all Q spans.
+    spans: Vec<Span2>,
     map: Vec<SpanMap>,
 }
 
@@ -1592,12 +1598,19 @@ impl<'s> FaceSetup<'s> {
                             format!("{c:?}"),
                         )
                     })?;
+                let spans = b.pcurve(c).q_spans().ok_or_else(|| {
+                    refused(
+                        Cause::Other("a p-curve span not a Q span".into()),
+                        format!("{c:?}"),
+                    )
+                })?;
                 trims.push(TrimSetup {
                     coedge: c,
                     edge: e,
                     reversed: b.reversed(c),
                     ends: b.ends(e),
                     band: w.band(op, e),
+                    spans,
                     map,
                 });
             }
@@ -1628,14 +1641,13 @@ impl<'s> FaceSetup<'s> {
 
     /// The trims as the face's UV domain reads them, borrowing the
     /// p-curves' spans from the store.
-    fn views(&self) -> Vec<Trim<'s>> {
-        let b = &self.solid.brep;
+    fn views(&self) -> Vec<Trim<'_>> {
         self.trims
             .iter()
             .map(|t| Trim {
                 coedge: t.coedge,
                 reversed: t.reversed,
-                spans: b.pcurve(t.coedge).spans(),
+                spans: &t.spans,
                 ends: t.ends,
                 zero_length: false,
                 band: t.band,

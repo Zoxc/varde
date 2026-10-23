@@ -1,17 +1,18 @@
-//! Curves: an edge's space curve ([`Curve3D`]) and a coedge's curve in
-//! its face's global UV ([`PCurve`]), each a chain of rational quadratic
-//! spans over a parameter `t` that runs through the chain's knots.
+//! Curves: an edge's space curve ([`Curve3D`]), a chain of rational
+//! quadratic spans over a parameter `t` that runs through the chain's
+//! knots, and the rules it shares with a coedge's curve in its face's
+//! UV ([`PCurve`], the [`pcurve`](super::pcurve) module).
 //!
 //! **Storage.** A span is its three control points **affine** with their
-//! weights, `(x, y, z, w)` in space and `(u, v, w)` in UV (a point and
-//! its weight, the NURBS layout), never the products `w·x`. The span is
-//! `Σ Bᵢ·wᵢ·xᵢ / Σ Bᵢ·wᵢ`. Span `k` covers `[knots[k], knots[k + 1]]` of
-//! `t`, mapped linearly to its own `[0, 1]`. A chain is refused unless
-//! every value is finite, every weight lies in `[MIN_WEIGHT, MAX_WEIGHT]`
-//! = `[1/64, 64]`, the knots (one more than the spans) increase strictly,
-//! and consecutive spans join **bit for bit**: the last control point of
-//! span `k` and the first of span `k + 1` are the same point, the same
-//! `f64`s (their weights may differ).
+//! weights, `(x, y, z, w)` (a point and its weight, the NURBS layout),
+//! never the products `w·x`. The span is `Σ Bᵢ·wᵢ·xᵢ / Σ Bᵢ·wᵢ`. Span `k`
+//! covers `[knots[k], knots[k + 1]]` of `t`, mapped linearly to its own
+//! `[0, 1]`. A chain is refused unless every value is finite, every
+//! weight lies in `[MIN_WEIGHT, MAX_WEIGHT]` = `[1/64, 64]`, the knots
+//! (one more than the spans) increase strictly, and consecutive spans
+//! join **bit for bit**: the last control point of span `k` and the
+//! first of span `k + 1` are the same point, the same `f64`s (their
+//! weights may differ).
 //!
 //! **Points at knots.** For any positive weights a span passes exactly
 //! through its first control point at its start and its last at its
@@ -28,10 +29,6 @@
 //! level rounded once per coefficient, the rounding carried, and exact
 //! where the product is a float (a weight of 1, as on lines).
 //!
-//! A p-curve so far is Q spans only, rational quadratics in global UV;
-//! linear and iso spans are Q spans with their middle control point on
-//! the chord.
-//!
 //! **Canonical points and splits.** Where two edges share a chain and one
 //! of them ends inside it, both must see the same point there, to the
 //! bit. [`Curve3D::point_at`] is the one evaluator for that: the exact
@@ -43,7 +40,7 @@
 //! are the exact sub-spans of the stored ones (their blossoms), rounded
 //! once per value, so a split moves the curve by at most that rounding,
 //! and the spans it doesn't cut keep their bits. [`Curve3D::slice`] takes
-//! the spans between two knots. The same for p-curves.
+//! the spans between two knots. P-curves split the same way.
 //!
 //! **Bounded control points.** Every control point of a space curve, the
 //! middle ones included, is a bounded position: within the `MAX_COORD`
@@ -83,6 +80,8 @@ use varde_decide::num::storage::MAX_COORD;
 
 use super::conic::{Conic, ConicError, ConicKind};
 use super::lattice::MAX_LEVEL;
+#[cfg(doc)]
+use super::pcurve::PCurve;
 use super::round::{nearest, q};
 
 /// The least weight of a span's control point.
@@ -98,10 +97,6 @@ pub const MAX_RANGE_DEPTH: u32 = 16;
 /// A space span: three affine control points with their weights,
 /// `(x, y, z, w)`.
 pub type Span3 = [[f64; 4]; 3];
-
-/// A UV span: three affine control points with their weights,
-/// `(u, v, w)`.
-pub type Span2 = [[f64; 3]; 3];
 
 /// Why a chain can't be made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +118,9 @@ pub enum CurveError {
     Range { span: usize },
     /// A conic chain's conic refused a span.
     Conic(ConicError),
+    /// P-curve span `span` can't be cut into spans in one tile each
+    /// ([`PCurve::split_at_tile_lines`]).
+    Tile { span: usize },
 }
 
 /// An edge's curve: a chain of rational quadratic spans in space (module
@@ -130,14 +128,6 @@ pub enum CurveError {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Curve3D {
     spans: Vec<Span3>,
-    knots: Vec<f64>,
-}
-
-/// A coedge's curve in its face's global UV: a chain of Q spans (module
-/// docs).
-#[derive(Clone, Debug, PartialEq)]
-pub struct PCurve {
-    spans: Vec<Span2>,
     knots: Vec<f64>,
 }
 
@@ -310,100 +300,6 @@ impl Curve3D {
     }
 }
 
-impl PCurve {
-    /// The chain of `spans`, span `k` over `[knots[k], knots[k + 1]]`,
-    /// validated (module docs); else the first offence.
-    pub fn new(spans: Vec<Span2>, knots: Vec<f64>) -> Result<PCurve, CurveError> {
-        validate(&spans, &knots)?;
-        Ok(PCurve { spans, knots })
-    }
-
-    /// This p-curve with each span's middle control point moved by its
-    /// `offsets` entry in UV, `(u + du, v + dv, w)` in `f64`, the end
-    /// control points kept: the curve moves off
-    /// its image by up to about the offsets times the surface's speed,
-    /// while its ends, and so its joins, stay to the bit. For tests that
-    /// need ribbons of a given width. `Shape` unless there is one offset
-    /// per span; the moved chain validated as by [`new`](Self::new).
-    pub fn perturbed(&self, offsets: &[[f64; 2]]) -> Result<PCurve, CurveError> {
-        if offsets.len() != self.spans.len() {
-            return Err(CurveError::Shape);
-        }
-        let spans = self
-            .spans
-            .iter()
-            .zip(offsets)
-            .map(|(s, [du, dv])| {
-                let mut s = *s;
-                s[1][0] += du;
-                s[1][1] += dv;
-                s
-            })
-            .collect();
-        PCurve::new(spans, self.knots.clone())
-    }
-
-    /// The spans.
-    #[inline]
-    pub fn spans(&self) -> &[Span2] {
-        &self.spans
-    }
-
-    /// The knots, one more than the spans.
-    #[inline]
-    pub fn knots(&self) -> &[f64] {
-        &self.knots
-    }
-
-    /// The UV point at knot `k`: the control point there (module docs),
-    /// `None` past the last knot.
-    pub fn knot_point(&self, k: usize) -> Option<[f64; 2]> {
-        let p = knot_control(&self.spans, k)?;
-        Some([p[0], p[1]])
-    }
-
-    /// Span `k` at the first level ([`span_at`](Self::span_at)).
-    pub fn span(&self, k: usize) -> Option<HomCurve<Bounded<f64>, 2>> {
-        self.span_at(k, &Bounded::exact(0.0))
-    }
-
-    /// Span `k` in homogeneous form at `like`'s level (and width), its
-    /// coefficients `(w·u, w·v, w)` formed there
-    /// ([`HomCurve::from_affine`]).
-    pub fn span_at<S: Scalar>(&self, k: usize, like: &S) -> Option<HomCurve<S, 2>> {
-        self.spans.get(k).map(|s| hom(s, like))
-    }
-
-    /// The UV point at `t`, certified, at the first level (as
-    /// [`Curve3D::eval_at`]).
-    pub fn eval(&self, t: f64) -> Option<[Bounded<f64>; 2]> {
-        self.eval_at(t, &Bounded::exact(0.0))
-    }
-
-    /// The UV point at `t` at `like`'s level, certified, `None` outside
-    /// the knots' range (as [`Curve3D::eval_at`]).
-    pub fn eval_at<S: Scalar>(&self, t: f64, like: &S) -> Option<[S; 2]> {
-        eval_chain(&self.spans, &self.knots, t, like)
-    }
-
-    /// The canonical UV point at `t` (as [`Curve3D::point_at`]).
-    pub fn point_at(&self, t: f64) -> Option<[f64; 2]> {
-        point_chain(&self.spans, &self.knots, t)
-    }
-
-    /// The chain with knots inserted at `ts` (as [`Curve3D::split`]).
-    pub fn split(&self, ts: &[f64]) -> Result<PCurve, CurveError> {
-        let (spans, knots) = split_chain(&self.spans, &self.knots, ts);
-        PCurve::new(spans, knots)
-    }
-
-    /// The spans between knots `t0 < t1` (as [`Curve3D::slice`]).
-    pub fn slice(&self, t0: f64, t1: f64) -> Option<PCurve> {
-        let (spans, knots) = slice_chain(&self.spans, &self.knots, t0, t1)?;
-        Some(PCurve { spans, knots })
-    }
-}
-
 /// A chain's spans and knots.
 type Chain<const D: usize> = (Vec<[[f64; D]; 3]>, Vec<f64>);
 
@@ -510,7 +406,7 @@ pub(super) fn affine_rounded<const D: usize>(h: &[Rational; D]) -> [f64; D] {
 }
 
 /// The local parameter of `t` on `[a, b]`, exactly.
-fn local_exact(t: f64, a: f64, b: f64) -> Rational {
+pub(super) fn local_exact(t: f64, a: f64, b: f64) -> Rational {
     (q(t) - q(a)) / (q(b) - q(a))
 }
 
@@ -663,7 +559,7 @@ fn validate<const D: usize>(spans: &[[[f64; D]; 3]], knots: &[f64]) -> Result<()
 }
 
 /// Where `t` lies on the span [`locate`] gives.
-enum At {
+pub(super) enum At {
     Start,
     End,
     Inside,
@@ -671,7 +567,7 @@ enum At {
 
 /// The span holding `t` (the lower one at an inner knot) and where on it;
 /// `None` outside the knots' range.
-fn locate(knots: &[f64], t: f64) -> Option<(usize, At)> {
+pub(super) fn locate(knots: &[f64], t: f64) -> Option<(usize, At)> {
     let (first, last) = (knots[0], knots[knots.len() - 1]);
     // False for a NaN.
     if !(first <= t && t <= last) {

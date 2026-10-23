@@ -26,9 +26,10 @@
 use glam::DVec3;
 use varde_testkit::rng::Rng;
 
-use crate::geom::curve::{Curve3D, PCurve, Span2, Span3};
+use crate::geom::curve::{Curve3D, Span3};
 use crate::geom::form::{CylinderKey, PlaneKey, SphereKey};
 use crate::geom::lattice::{CELL, Lattice, Level, Rect};
+use crate::geom::pcurve::{PCurve, PSpan, Span2};
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Budget, Work};
 use crate::topo::brep_min::{Brep, EdgeId, FaceId, VertId};
@@ -395,9 +396,9 @@ fn reverse(spans: &[Span3], knots: &[f64]) -> (Vec<Span3>, Vec<f64>) {
 fn reverse_uv(p: &PCurve) -> PCurve {
     let k = p.knots();
     let (t0, t1) = (k[0], k[k.len() - 1]);
-    let spans = p.spans().iter().rev().map(|s| [s[2], s[1], s[0]]).collect();
+    let spans = p.spans().iter().rev().map(PSpan::reversed).collect();
     let knots = k.iter().rev().map(|&t| t0 + (t1 - t)).collect();
-    PCurve::new(spans, knots).expect("a reversed p-curve")
+    PCurve::from_spans(spans, knots).expect("a reversed p-curve")
 }
 
 /// `p` with each span's middle control point moved by up to `pert` mm
@@ -413,6 +414,7 @@ fn perturb(p: &PCurve, rect: &Rect, unit: [f64; 2], pert: f64, rng: &mut Rng) ->
         .spans()
         .iter()
         .map(|s| {
+            let s = s.as_q().expect("a Q span");
             let m = s[1];
             std::array::from_fn(|k| {
                 // The span's tile (its ends' middle's), within the face.
