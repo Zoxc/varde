@@ -158,10 +158,11 @@
 //! are found once for every level and charged when found, per tile and
 //! ribbon span searched, at their own row. A step is charged after it
 //! runs, so the one that crosses the share is the crossing: the count
-//! stops at once, [`Exhausted::Work`] at the first level and
-//! [`Exhausted::Precision`] above it, keyed by the box whose test
-//! crossed it (none where the hits did). [`MAX_LEAVES`] and
-//! [`MAX_ROUNDS`] are fixed limits, [`Exhausted::SizeLimit`]. The face's
+//! stops at once, [`Exhausted::Precision`] at every level, the first
+//! included (every piece tested is a step at a precision level), keyed
+//! by the box whose test crossed it (none where the hits did).
+//! [`MAX_LEAVES`] and [`MAX_ROUNDS`] are fixed limits,
+//! [`Exhausted::SizeLimit`]. The face's
 //! corners are its setup, built and charged once per operation
 //! ([`Corners::new`]).
 
@@ -273,10 +274,11 @@ fn hit_units(n: u32) -> u64 {
 /// What a count ran out of ([`CountError::OutOfBudget`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Exhausted {
-    /// The share, at the first level.
+    /// The share of a search that doesn't climb the levels (a seed's
+    /// clearance test, [`clear_of_pieces`](crate::count::winding::clear_of_pieces)).
     Work,
-    /// The share at a level above the first, or the last level reached
-    /// with a piece unsettled.
+    /// The share of a count or cluster search at any level, the first
+    /// included, or the last level reached with a piece unsettled.
     Precision,
     /// [`MAX_LEAVES`] or [`MAX_ROUNDS`].
     SizeLimit,
@@ -820,7 +822,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
         self.pieces = self.pieces.saturating_add(n);
         self.take_hits();
         if self.spent() > self.allow.left {
-            return Err(self.out_at(Exhausted::Work, Some(*at)));
+            return Err(self.out_at(Exhausted::Precision, Some(*at)));
         }
         Ok(())
     }
@@ -830,7 +832,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
     fn settle(&mut self) -> Result<(), CountError> {
         self.take_hits();
         if self.spent() > self.allow.left {
-            return Err(self.out_at(Exhausted::Work, None));
+            return Err(self.out_at(Exhausted::Precision, None));
         }
         Ok(())
     }
@@ -1501,20 +1503,7 @@ impl<R: HeightReads> AtLevel<LevelWork> for CountAt<'_, '_, '_, '_, R> {
                 .saturating_mul(unit)
                 .saturating_add(hit_units(done.hits)),
         );
-        match r {
-            Err(CountError::OutOfBudget {
-                cause: Exhausted::Work,
-                point,
-                face,
-                at,
-            }) if level > Level::L0 => Err(CountError::OutOfBudget {
-                cause: Exhausted::Precision,
-                point,
-                face,
-                at,
-            }),
-            r => r,
-        }
+        r
     }
 
     fn escalates(out: &Self::Out) -> bool {

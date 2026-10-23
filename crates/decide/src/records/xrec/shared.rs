@@ -99,6 +99,9 @@
 //! Against a point `w` of `e`'s curve it is ordered by the sign of `h(w)`:
 //! inside the cluster's piece, `w` lies before the root exactly where
 //! `h(w)` has the sign `h` has before it; outside, the piece decides.
+//! The ordering is a charged query: the moved sign's stages at a stored
+//! point and each level's evaluation of `h` go to the cost of the record
+//! reading it.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -117,7 +120,7 @@ use crate::num::decide::Sign;
 use crate::num::exact::{ORDERS, Pred, Work, rat, value_sign};
 use crate::num::level::{AtLevel, LevelScalar, at_level, ladder};
 use crate::num::preds::{self, LineGap, LinePlace, Orient3Dir};
-use crate::num::schedule::{LEVELS, Level};
+use crate::num::schedule::Level;
 use crate::order::{Along, EntityOrder};
 use crate::perturb::{
     Curved, NU, R_HAT, Rate, UP, between, curve_point, shared_crossing_h1, shared_crossing_sign,
@@ -126,7 +129,7 @@ use crate::perturb::{
 use crate::records::height::HeightReads;
 use crate::records::keys::{EdgeAt, Operand, Point, RayKey, RecordKey, XKey};
 use crate::records::ray::Span;
-use crate::records::shadow::Cost;
+use crate::records::shadow::{Cost, LevelWork};
 
 use super::{XCluster, XCurve, XGeometry, XPair, XPart, XRec, XSides, XWant, ZRow, x_count};
 
@@ -155,9 +158,10 @@ pub enum SharedError {
     /// The box search away from the overlap failed so.
     Away(XClusterError),
     /// The root search ran past the share it was given
-    /// ([`shared_clusters`]): [`Exhausted::Work`] at the first
-    /// level, [`Exhausted::Precision`] above it. (The box search away from
-    /// the overlap runs out as [`SharedError::Away`].)
+    /// ([`shared_clusters`]): [`Exhausted::Precision`] at every level,
+    /// the first included, since every evaluation of `h` is a step at a
+    /// precision level. (The box search away from the overlap runs out
+    /// as [`SharedError::Away`].)
     OutOfBudget(Exhausted),
     /// The clusters' degrees don't sum to the four terms' count: a gap in
     /// the rule, never answered.
@@ -354,7 +358,9 @@ struct Ctx<'a, G> {
 /// `charge` at its level's unit per piece ([`Charge::xrec`]): each
 /// evaluation of `h` the root search makes and every piece the box search
 /// away from the overlap tests (its diagonal band's included,
-/// [`form_charged`]), on what the roots left. With the record, or the
+/// [`form_charged`]), on what the roots left; the root search past the
+/// share is [`SharedError::OutOfBudget`] ([`Exhausted::Precision`] at
+/// every level, the first included). With the record, or the
 /// error, the pieces per level
 /// ([`LevelWork::evals`](crate::records::shadow::LevelWork::evals)) and
 /// the flat predicates' runs ([`Cost::exact`], module docs) for the pass
@@ -434,9 +440,6 @@ fn shared_in<R: HeightReads, G: XGeometry>(
                 break;
             }
             Err(SharedError::Unsettled) => {}
-            Err(SharedError::OutOfBudget(Exhausted::Work)) if level > Level::L0 => {
-                return Err(SharedError::OutOfBudget(Exhausted::Precision));
-            }
             Err(e) => return Err(e),
         }
     }
@@ -765,17 +768,19 @@ impl<G: XGeometry> AtLevel<u64> for RootsAt<'_, '_, G> {
     }
 }
 
-/// `h₁`'s certified sign at `x` on span `span`, at one precision level.
+/// `h₁`'s certified sign at `x` on span `span`, at one precision level:
+/// one evaluation of `h`.
 struct SignAt<'c, 'g, G> {
     ctx: &'c Ctx<'g, G>,
     span: u32,
     x: f64,
 }
 
-impl<G: XGeometry> AtLevel<()> for SignAt<'_, '_, G> {
+impl<G: XGeometry> AtLevel<LevelWork> for SignAt<'_, '_, G> {
     type Out = Option<Sign>;
 
-    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) -> Self::Out {
+    fn at<S: LevelScalar>(&mut self, like: &S, work: &mut LevelWork) -> Self::Out {
+        work.evals = work.evals.saturating_add(1);
         self.ctx.sign_at(self.span, self.x, like).ok().flatten()
     }
 
@@ -1021,7 +1026,7 @@ fn roots<S: Curved, G: XGeometry>(
         }
         *charged = charged.saturating_add(1);
         if allow.over(*charged) {
-            return Err(SharedError::OutOfBudget(Exhausted::Work));
+            return Err(SharedError::OutOfBudget(Exhausted::Precision));
         }
         let run = &ctx.runs[p.run];
         let span = run.segs[p.seg].0;
@@ -1122,7 +1127,11 @@ pub struct CurveAt {
 /// level that does. A root at a knot whose two sides' signs differ lies
 /// after that knot in the geometric order (`order` gives it). `None` for
 /// a cluster that isn't a root cluster, or where no level certifies
-/// `h(w)` (at or too near the root).
+/// `h(w)` (at or too near the root). Charged to `cost`, the reading
+/// record's: the moved sign's stages to [`Cost::exact`], each level's
+/// evaluation of `h` to that level's
+/// [`LevelWork::evals`](crate::records::shadow::LevelWork::evals), also
+/// where it gives `None`.
 pub fn root_order<O: EntityOrder, G: XGeometry>(
     order: &O,
     geom: &G,
@@ -1130,6 +1139,7 @@ pub fn root_order<O: EntityOrder, G: XGeometry>(
     curve: &XCurve<'_>,
     cl: &XCluster,
     w: CurveAt,
+    cost: &mut Cost,
 ) -> Option<Ordering> {
     let ZRow::Root { before } = cl.row else {
         return None;
@@ -1180,8 +1190,7 @@ pub fn root_order<O: EntityOrder, G: XGeometry>(
                 }
             }
         };
-        // A read of a decided record: its flat runs aren't charged here.
-        moved_sign(chord, &rates, &mut Work::default())?
+        moved_sign(chord, &rates, &mut cost.exact)?
     } else {
         let ctx = Ctx {
             geom,
@@ -1195,7 +1204,7 @@ pub fn root_order<O: EntityOrder, G: XGeometry>(
             span: w.span,
             x: w.t,
         };
-        ladder(&mut at, Level::L0, &mut [(); LEVELS])?
+        ladder(&mut at, Level::L0, &mut cost.levels)?
     };
     // `w` before the root where `h(w)` has the sign before it: the cut
     // point after `w`.

@@ -13,12 +13,13 @@
 use super::clusters::z_orders;
 use super::*;
 use crate::count::s02::Charge;
+use crate::num::exact::Work;
 use crate::num::schedule::PredKind;
 use crate::num::trig::{atan2, cos, sin};
 use crate::order::{EdgeKey, EntityOrder, VertKey};
 use crate::records::feet::{EdgeCurve, Feet, decide_feet};
 use crate::records::height::HeightReads;
-use crate::records::shadow::VvRec;
+use crate::records::shadow::{LevelWork, VvRec};
 
 /// The ends' feet on the other edge a shared-curve pair reads.
 struct SharedReads<'a> {
@@ -89,6 +90,15 @@ fn shared_rec(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedError>
 
 /// [`shared_rec`] with the cost of its last search.
 fn shared_rec_cost(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedError>, i64, Cost)> {
+    shared_rec_charged(geom, one_curve, &Charge::xrec(u64::MAX))
+}
+
+/// [`shared_rec_cost`] on the share `charge`.
+fn shared_rec_charged(
+    geom: &Geom,
+    one_curve: bool,
+    charge: &Charge,
+) -> Option<(Result<XRec, SharedError>, i64, Cost)> {
     let recs = try_decide(geom)?;
     let mut pair = recs.pair(geom);
     pair.shared = one_curve;
@@ -100,7 +110,7 @@ fn shared_rec_cost(geom: &Geom, one_curve: bool) -> Option<(Result<XRec, SharedE
     for _ in 0..32 {
         let (r, cost) = {
             let sides = recs.sides.borrow();
-            shared_clusters(&reads, geom, &sides, X, &pair, &Charge::xrec(u64::MAX))
+            shared_clusters(&reads, geom, &sides, X, &pair, charge)
         };
         match r {
             Err(SharedError::Need(ks)) => {
@@ -1158,7 +1168,8 @@ fn cut_points_order_by_h_whatever_the_stored_direction() {
                             t: 1.0,
                         }
                     };
-                    let o = root_order(&geom, &geom, X, &pair.e, c, w).expect("ordered");
+                    let mut cost = Cost::default();
+                    let o = root_order(&geom, &geom, X, &pair.e, c, w, &mut cost).expect("ordered");
                     // In stored order; along increasing angle where `e`
                     // isn't stored backwards.
                     let o = if back_e { o.reverse() } else { o };
@@ -1202,4 +1213,163 @@ fn cut_points_order_by_h_whatever_the_stored_direction() {
         }
     }
     assert_eq!(checked, 8);
+}
+
+/// Ordering a cut point is charged to the reading record's cost: against
+/// a stored point inside the cluster's piece (a vertex or knot of `e`;
+/// the piece widened to its whole span by hand)
+/// the moved sign's stages there (`Orient3`, a filter run per order
+/// tried), no level's work; against an inner point of the piece one
+/// evaluation of `h` at each level the ladder climbs from the first, no
+/// flat work; against a point outside the piece nothing.
+#[test]
+fn ordering_a_cut_point_is_charged_to_the_reading_record() {
+    let knots = model_knots(&[0.0, 250.0]);
+    let (mut at_end, mut inner) = (0, 0);
+    for phi in [10.0, 47.0, 95.0, 130.0] {
+        let m = Model {
+            knots: knots.clone(),
+            ei: (0, knots.len() - 1),
+            gi: (0, knots.len() - 1),
+            phi: deg(phi),
+            rho: deg(15.0),
+            vz: 0.2,
+            tilt: 0.8,
+            back_e: false,
+            back_g: false,
+            w: vec![1.0, 3.0],
+        };
+        let geom = m.geom();
+        let (r, _) = shared_rec(&geom, true).expect("decided");
+        let rec = r.expect("answered");
+        let recs = decide(&geom);
+        let pair = recs.pair(&geom);
+        for c in rec
+            .clusters
+            .iter()
+            .filter(|c| matches!(c.row, ZRow::Root { .. }) && c.e.t != [0.0, 0.0])
+        {
+            let [lo, hi] = c.e.t;
+            let span = c.e.span;
+            let order = |w: CurveAt| {
+                let mut cost = Cost::default();
+                let o = root_order(&geom, &geom, X, &pair.e, c, w, &mut cost);
+                (o, cost)
+            };
+            // Outside the piece: the piece decides, unpriced.
+            if lo > 0.0 {
+                let (o, cost) = order(CurveAt { span, t: lo / 2.0 });
+                assert_eq!(o, Some(Ordering::Greater), "{phi}");
+                assert_eq!(cost, Cost::default(), "{phi}");
+            }
+            // A stored point inside the piece (the cluster widened to its
+            // whole span, so both of the span's ends are): its moved
+            // sign's stages.
+            let mut whole = *c;
+            whole.e.t = [0.0, 1.0];
+            for t in [0.0, 1.0] {
+                let mut cost = Cost::default();
+                let w = CurveAt { span, t };
+                let o = root_order(&geom, &geom, X, &pair.e, &whole, w, &mut cost);
+                assert!(o.is_some(), "{phi}");
+                let r = cost.exact.of(PredKind::Orient3);
+                assert!(r.filters >= 1, "{phi}: {cost:?}");
+                assert_eq!(cost.exact.total(), r, "{phi}: {cost:?}");
+                assert!(cost.levels.iter().all(|l| *l == LevelWork::default()));
+                at_end += 1;
+            }
+            // An inner point of the piece: one evaluation of `h` per
+            // level climbed, from the first on.
+            if hi - lo > 1e-9 {
+                let (o, cost) = order(CurveAt {
+                    span,
+                    t: lo + (hi - lo) / 8.0,
+                });
+                assert_eq!(cost.exact, Work::default(), "{phi}");
+                let evals: Vec<u32> = cost.levels.iter().map(|l| l.evals).collect();
+                let climbed = evals.iter().take_while(|&&n| n == 1).count();
+                assert!(climbed >= 1, "{phi}: {evals:?}");
+                assert!(evals[climbed..].iter().all(|&n| n == 0), "{phi}: {evals:?}");
+                assert!(
+                    cost.levels.iter().all(|l| *l
+                        == LevelWork {
+                            evals: l.evals,
+                            ..LevelWork::default()
+                        }),
+                    "{phi}: {cost:?}"
+                );
+                if o.is_some() {
+                    inner += 1;
+                }
+            }
+        }
+    }
+    assert!(at_end > 0 && inner > 0, "{at_end} at an end, {inner} inner");
+}
+
+/// A shared-curve record on a share short of its full spend stops past
+/// the share at the first level, and that is a precision step there as
+/// above it ([`Exhausted::Precision`]): the root search's evaluations of
+/// `h` on one line and on one curve, and the box search away from the
+/// overlap ([`SharedError::Away`]) on a chain. Every shorter share
+/// spends past itself, no level above the first runs, and the full
+/// share answers.
+#[test]
+fn a_shared_record_past_its_share_at_the_first_level_is_precision() {
+    let dir = lat(1.0, 2.0, 0.0);
+    let mut line = Geom {
+        d: dir * 0.5 + UP * 0.25,
+        field: dir,
+        ..Geom::default()
+    };
+    line.segment(A, E, (0, dir * -1.0), (1, dir * 2.0));
+    line.segment(B, G, (2, dir * -0.5), (3, dir * 1.5));
+    let knots = model_knots(&[0.0, 250.0]);
+    let chain = Model {
+        knots: knots.clone(),
+        ei: (0, knots.len() - 1),
+        gi: (0, knots.len() - 1),
+        phi: deg(47.0),
+        rho: deg(15.0),
+        vz: 0.2,
+        tilt: 0.8,
+        back_e: false,
+        back_g: false,
+        w: vec![1.0, 3.0],
+    }
+    .geom();
+    for (geom, chains) in [(&line, false), (&chain, true)] {
+        let (full, _, cost) = shared_rec_cost(geom, true).expect("decided");
+        let full = full.expect("answered");
+        assert!(!full.clusters.is_empty(), "{chains}");
+        assert!(cost.levels[1..].iter().all(|l| l.evals == 0), "{cost:?}");
+        let n = Charge::xrec(u64::MAX).spent(&cost);
+        let roots = u64::from(cost.levels[0].evals);
+        assert!(roots > 0, "{cost:?}");
+        let mut shares: Vec<u64> = (0..8).map(|k| n * k / 8).chain([1, n - 1]).collect();
+        shares.sort_unstable();
+        shares.dedup();
+        let mut away = 0;
+        for share in shares {
+            let charge = Charge::xrec(share);
+            let (r, _, c) = shared_rec_charged(geom, true, &charge).expect("decided");
+            match r {
+                Err(SharedError::OutOfBudget(Exhausted::Precision)) => {}
+                Err(SharedError::Away(XClusterError::OutOfBudget {
+                    cause: Exhausted::Precision,
+                    ..
+                })) if chains => away += 1,
+                r => panic!("share {share} of {n}: {r:?}"),
+            }
+            assert!(charge.spent(&c) > share, "share {share}: {c:?}");
+            assert!(c.levels[1..].iter().all(|l| l.evals == 0), "{c:?}");
+        }
+        assert_eq!(
+            away > 0,
+            chains,
+            "the box search away from the overlap ran out"
+        );
+        let (r, _, c) = shared_rec_charged(geom, true, &Charge::xrec(n)).expect("decided");
+        assert_eq!((r, c), (Ok(full), cost), "the share it spent is enough");
+    }
 }

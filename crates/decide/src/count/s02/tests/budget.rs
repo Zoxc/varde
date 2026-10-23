@@ -1,8 +1,8 @@
 //! Termination and charging: a thin rectangle whose two long edges no box
 //! separates refines in space, then in precision, and ends keyed out of
 //! budget; a small share stops the count at the first level, a share
-//! spent above it is precision; a count that settles at the first level
-//! charges only there.
+//! spent there or above it is precision alike; a count that settles at
+//! the first level charges only there.
 
 use super::*;
 
@@ -126,9 +126,9 @@ fn a_thin_face_ends_out_of_budget_at_the_last_level_keyed() {
         full.levels.iter().all(|l| l.evals > 0),
         "every level ran: {full:?}"
     );
-    // A share spent at the first level is work; one spent above it,
-    // precision. Shares in units: the first level's pieces cost `u[0]`
-    // each, the next's `u[1]`.
+    // A share spent at the first level is precision, as one spent above
+    // it: every piece is a step at a precision level. Shares in units:
+    // the first level's pieces cost `u[0]` each, the next's `u[1]`.
     let u = UNITS.count_piece;
     let first = u64::from(full.levels[0].evals) * u[0];
     let runs: Vec<_> = [0, 10, first - 1, first + 2 * u[1]]
@@ -137,11 +137,15 @@ fn a_thin_face_ends_out_of_budget_at_the_last_level_keyed() {
         .collect();
     for ((r, cost), (_, charge)) in counts(&THIN, &runs).into_iter().zip(&runs) {
         assert!(charge.spent(&cost) > charge.share, "{cost:?}");
+        assert_eq!(
+            keyed(&r),
+            out(Exhausted::Precision),
+            "share {}",
+            charge.share
+        );
         if charge.share < first {
-            assert_eq!(keyed(&r), out(Exhausted::Work), "share {}", charge.share);
             assert!(cost.levels[1..].iter().all(|l| l.evals == 0), "{cost:?}");
         } else {
-            assert_eq!(keyed(&r), out(Exhausted::Precision));
             assert_eq!(cost.levels[0], full.levels[0]);
             assert!(cost.levels[1].evals > 0 && cost.levels[2].evals == 0);
         }
@@ -177,7 +181,7 @@ fn a_settled_count_charges_the_first_level_alone() {
         .try_into()
         .unwrap();
         assert_eq!(enough, Ok(p), "the share it spent is enough");
-        assert_eq!(keyed(&short), out(Exhausted::Work));
+        assert_eq!(keyed(&short), out(Exhausted::Precision));
     }
 }
 
@@ -322,7 +326,12 @@ fn each_share_of_a_settled_count_ends_the_same_way() {
             assert!(spent >= last, "work grows with the share");
             last = spent;
             if charge.share < n {
-                assert_eq!(keyed(&r), out(Exhausted::Work), "share {}", charge.share);
+                assert_eq!(
+                    keyed(&r),
+                    out(Exhausted::Precision),
+                    "share {}",
+                    charge.share
+                );
                 assert!(spent > charge.share, "stops past the share");
             } else {
                 assert_eq!(r.as_ref(), Ok(&full), "share {}", charge.share);
@@ -351,7 +360,7 @@ fn free_pieces_spend_nothing() {
 /// The thin face's count on shares at the exact end of each level's
 /// spend and a unit short of it, at the table's units: a share that
 /// covers a level ends in the next one, a unit short ends in that level;
-/// past the first level both are precision, and the levels run before
+/// both are precision at every level, and the levels run before
 /// the one that ran out did the full count's work.
 #[test]
 fn shares_at_each_level_s_end_run_out_in_the_next_level() {
@@ -378,12 +387,12 @@ fn shares_at_each_level_s_end_run_out_in_the_next_level() {
         } else {
             (level + 1).min(LEVELS - 1)
         };
-        let cause = if at == 0 {
-            Exhausted::Work
-        } else {
-            Exhausted::Precision
-        };
-        assert_eq!(keyed(&r), out(cause), "share {}", charge.share);
+        assert_eq!(
+            keyed(&r),
+            out(Exhausted::Precision),
+            "share {}",
+            charge.share
+        );
         assert_eq!(
             cost.levels[..at],
             full.levels[..at],
@@ -469,7 +478,7 @@ fn a_needle_s_setup_runs_out_at_a_run() {
 
 /// The needle counted with corners built on a share that suffices, on a
 /// share of its own: past it the count stops at the box whose test
-/// crossed it, at the first level.
+/// crossed it, at the first level, a precision step there too.
 #[test]
 fn a_needle_s_count_runs_out_at_a_box() {
     if !varde_testing::pick(false, true) {
@@ -500,7 +509,7 @@ fn a_needle_s_count_runs_out_at_a_box() {
         count_pieces(fq, &Sides::new(), &reads, &charge)
     });
     let Err(CountError::OutOfBudget {
-        cause: Exhausted::Work,
+        cause: Exhausted::Precision,
         at: Some(b),
         ..
     }) = r
@@ -572,7 +581,7 @@ fn charges_are_the_same_bits_everywhere() {
     let h = fnv(text.as_bytes());
     println!("hash of the charges: {h:#018x}");
     assert_eq!(
-        h, 0xecca_f51c_9e68_1c0a,
+        h, 0x7f33_2d8b_2392_cc6f,
         "charges differ from the reference bits"
     );
 }
