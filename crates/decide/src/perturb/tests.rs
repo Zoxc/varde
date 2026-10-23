@@ -1874,7 +1874,10 @@ fn curved_rows_take_tangents_of_any_magnitude() {
 }
 
 /// A curve's tangent at huge coordinates or weights, where `W·P′` is past
-/// `f64`'s range, is finite and of the same direction as at unit scale.
+/// `f64`'s range or its control coefficients' differences overflow
+/// (coordinates near `2¹⁰²³`), or tiny ones, is finite, certified and of
+/// the same direction as at unit scale; at moderate magnitudes it is
+/// `W·P′ − W′·P` formed as is, bit for bit.
 #[test]
 fn curve_tangents_take_coordinates_and_weights_of_any_magnitude() {
     type L = Bounded<f64>;
@@ -1883,20 +1886,40 @@ fn curve_tangents_take_coordinates_and_weights_of_any_magnitude() {
         ([3.0, 1.0, 2.0], 2.0),
         ([4.0, 3.0, -1.0], 0.5),
     ];
-    let tangent = |scale: f64, weight: f64| {
-        let c = HomCurve::new(ctrl.iter().map(|(x, w)| {
+    let curve = |scale: f64, weight: f64| {
+        HomCurve::new(ctrl.iter().map(|(x, w)| {
             let w = w * weight;
             (x.map(|v| L::exact(v * scale * w)), L::exact(w))
         }))
-        .expect("a span");
-        curve_point(&c, &L::exact(0.375)).1.map(|x| {
+        .expect("a span")
+    };
+    let s = L::exact(0.375);
+    for (scale, weight) in [(1.0, 1.0), (p2(470), p2(5)), (p2(-470), p2(-5)), (0.1, 3.0)] {
+        let c = curve(scale, weight);
+        let (p, w) = c.eval_hom(&s);
+        let (dp, dw) = c.derivative().eval_hom(&s);
+        let raw = [0, 1, 2].map(|k| w.mul(&dp[k]).sub(&dw.mul(&p[k])));
+        assert_eq!(curve_point(&c, &s).1, raw, "{scale:e}, {weight:e}");
+    }
+    let tangent = |scale: f64, weight: f64| {
+        curve_point(&curve(scale, weight), &s).1.map(|x| {
             let [lo, hi] = x.enclose();
-            assert!(lo.is_finite() && hi.is_finite(), "{x:?}");
+            assert!(
+                x.is_certified() && lo.is_finite() && hi.is_finite(),
+                "{x:?}"
+            );
             (lo + hi) / 2.0
         })
     };
     let t0 = tangent(1.0, 1.0);
-    for (scale, weight) in [(p2(990), p2(20)), (1.0, p2(600)), (p2(-500), p2(-200))] {
+    for (scale, weight) in [
+        (p2(990), p2(20)),
+        (1.0, p2(600)),
+        (p2(-500), p2(-200)),
+        (p2(1021), 1.0),
+        (p2(1000), p2(-1000)),
+        (p2(-1000), p2(-20)),
+    ] {
         let t = tangent(scale, weight);
         let r = t[0] / t0[0];
         assert!(r > 0.0, "{scale:e}, {weight:e}: {t:?}");

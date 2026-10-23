@@ -77,7 +77,7 @@ use glam::DVec3;
 use malachite::base::num::arithmetic::traits::Lcm;
 use malachite::{Natural, Rational};
 
-use crate::bezier::{HomCurve, HomPatch, Scalar};
+use crate::bezier::{HomCurve, HomPatch, Poly as Bernstein, Scalar};
 use crate::num::bigf::BigF;
 use crate::num::bounded::Bounded;
 use crate::num::dd::Dd;
@@ -1112,17 +1112,24 @@ pub fn shared_zorder<S: Curved>(tangent: &[S; 3], rates: &[[S; 3]; ORDERS]) -> O
 
 /// A curve's point at `s` and its tangent there, a positive multiple of
 /// `W·P′ − W′·P` (`W²` times the point's derivative, so of the curve's
-/// direction where the weights are positive): of `P` with `P′` and `W`
-/// with `W′` each scaled by a power of two to a largest component near 1,
-/// so it neither overflows nor underflows for huge or tiny coordinates or
-/// weights.
+/// direction where the weights are positive). [`moderated`] twice, so it
+/// neither overflows nor underflows for huge or tiny coordinates or
+/// weights: the control coefficients of `P` and of `W` before the
+/// derivative is formed ([`moderated_span`]), then `P` with `P′` and `W`
+/// with `W′`; where every group's largest bound is in [`MODERATE`] it is
+/// `W·P′ − W′·P` formed as is, the same bits.
 pub fn curve_point<S: Scalar>(c: &HomCurve<S, 3>, s: &S) -> ([S; 3], [S; 3]) {
     let (p, w) = c.eval_hom(s);
-    let (dp, dw) = c.derivative().eval_hom(s);
     let at = [0, 1, 2].map(|k| p[k].div(&w));
+    let m = moderated_span(c);
+    let (p, w) = match &m {
+        Some(m) => m.eval_hom(s),
+        None => (p, w),
+    };
+    let (dp, dw) = m.as_ref().unwrap_or(c).derivative().eval_hom(s);
     let ([x, y, z], [dx, dy, dz]) = (p, dp);
-    let [x, y, z, dx, dy, dz] = rescaled(&[x, y, z, dx, dy, dz]);
-    let [w, dw] = rescaled(&[w, dw]);
+    let [x, y, z, dx, dy, dz] = moderated(&[x, y, z, dx, dy, dz]);
+    let [w, dw] = moderated(&[w, dw]);
     let tangent = [(x, dx), (y, dy), (z, dz)].map(|(a, d)| w.mul(&d).sub(&dw.mul(&a)));
     (at, tangent)
 }
@@ -1231,25 +1238,86 @@ fn unit3<S: Curved>(v: &[S; 3]) -> [S; 3] {
 /// of two such) neither overflow nor underflow. `v` itself where that
 /// largest bound is zero or not finite.
 pub(crate) fn rescaled<S: Scalar, const N: usize>(v: &[S; N]) -> [S; N] {
-    let big = v
-        .iter()
+    match near_one(largest(v), &v[0]) {
+        Some(k) => v.each_ref().map(|x| x.mul(&k)),
+        None => v.clone(),
+    }
+}
+
+/// The range `[2⁻⁴⁸⁰, 2⁴⁸⁰]` of a group's largest bound in which
+/// [`moderated`] takes it as is: a product of two such is within `2⁹⁶⁰`
+/// and, where both are largest, at least `2⁻⁹⁶⁰`, in `f64`'s normal
+/// range; the second derivative's control coefficients of control
+/// coefficients within it are within `4·n·(n − 1)·2⁴⁸⁰`, far below
+/// `f64`'s largest.
+pub(crate) const MODERATE: std::ops::RangeInclusive<f64> =
+    f64::from_bits(((1023 - 480) as u64) << 52)..=f64::from_bits(((1023 + 480) as u64) << 52);
+
+/// `v` itself where its largest bound is in [`MODERATE`], else `v`
+/// [`rescaled`].
+pub(crate) fn moderated<S: Scalar, const N: usize>(v: &[S; N]) -> [S; N] {
+    if MODERATE.contains(&largest(v)) {
+        v.clone()
+    } else {
+        rescaled(v)
+    }
+}
+
+/// `c` with the control coefficients of `P`, and those of `W`, whose
+/// largest bound is past [`MODERATE`] each scaled by a power of two to a
+/// largest near 1 (so its derivatives' coefficients, differences times
+/// the degree, can't overflow): `P` and `W` each a positive multiple of
+/// `c`'s, so `W·P′ − W′·P` and `W·P″ − W″·P` are too. `None` where both
+/// are within it: `c` as is.
+pub(crate) fn moderated_span<S: Scalar, const N: usize>(
+    c: &HomCurve<S, N>,
+) -> Option<HomCurve<S, N>> {
+    let p = moderated_polys(c.coords());
+    let w = moderated_polys(std::array::from_ref(c.weights()));
+    if p.is_none() && w.is_none() {
+        return None;
+    }
+    let p = p.unwrap_or_else(|| c.coords().clone());
+    let [w] = w.unwrap_or_else(|| [c.weights().clone()]);
+    Some(HomCurve::from_polys(p, w).expect("of one degree"))
+}
+
+/// `ps` with every coefficient times one power of two bringing the
+/// largest bound near 1, where that bound is past [`MODERATE`] (and
+/// non-zero, finite); `None` otherwise.
+fn moderated_polys<S: Scalar, const M: usize>(ps: &[Bernstein<S>; M]) -> Option<[Bernstein<S>; M]> {
+    let big = largest(ps.iter().flat_map(Bernstein::coefs));
+    if MODERATE.contains(&big) {
+        return None;
+    }
+    let k = near_one(big, &ps[0].coefs()[0])?;
+    Some(ps.each_ref().map(|p| {
+        Bernstein::new(p.coefs().iter().map(|x| x.mul(&k))).expect("as many coefficients")
+    }))
+}
+
+/// The largest absolute bound of the enclosures of `v`.
+fn largest<'a, S: Scalar + 'a>(v: impl IntoIterator<Item = &'a S>) -> f64 {
+    v.into_iter()
         .flat_map(|x| x.enclose())
         .map(f64::abs)
-        .fold(0.0, |m: f64, x| if x > m { x } else { m });
-    if big > 0.0 && big.is_finite() {
-        // `2^−e` for `big` in `[2^e, 2^(e+1))`, exact, kept normal.
-        let e = ((big.to_bits() >> 52) & 0x7ff) as i64 - 1023;
-        let e = if big < f64::MIN_POSITIVE {
-            -1023
-        } else {
-            e.clamp(-1000, 1000)
-        };
-        let k = f64::from_bits(((1023 - e) as u64) << 52);
-        let k = S::from_f64(k, &v[0]);
-        v.each_ref().map(|x| x.mul(&k))
-    } else {
-        v.clone()
+        .fold(0.0, |m: f64, x| if x > m { x } else { m })
+}
+
+/// The power of two at `like`'s level bringing `big` near 1: `2^−e` for
+/// `big` in `[2^e, 2^(e+1))`, exact, kept normal. `None` where `big` is
+/// zero or not finite.
+fn near_one<S: Scalar>(big: f64, like: &S) -> Option<S> {
+    if !(big > 0.0 && big.is_finite()) {
+        return None;
     }
+    let e = ((big.to_bits() >> 52) & 0x7ff) as i64 - 1023;
+    let e = if big < f64::MIN_POSITIVE {
+        -1023
+    } else {
+        e.clamp(-1000, 1000)
+    };
+    Some(S::from_f64(f64::from_bits(((1023 - e) as u64) << 52), like))
 }
 
 #[cfg(test)]

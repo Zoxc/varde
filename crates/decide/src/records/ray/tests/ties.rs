@@ -304,7 +304,8 @@ fn ties_beside_a_near_end_read_alike_at_every_rung() {
 /// near `10³⁰¹`, `W·P″` past `f64`'s range), and times `2⁻⁹⁰⁰` and
 /// `2⁻¹⁰⁰` (`W·P″` below the normal range): finite, its shadow certified
 /// non-zero (so the row reads it in the tangent's place), and a power of
-/// two times the unit-scale value, exactly. At moderate magnitudes it is
+/// two times the unit-scale value, exactly; alike with coordinates times
+/// `2⁻¹⁰⁰⁰` and weights times `2⁻²⁰`. At moderate magnitudes it is
 /// `W·P″ − W″·P` formed as is, bit for bit.
 #[test]
 fn a_folds_second_derivative_takes_coordinates_and_weights_of_any_magnitude() {
@@ -322,7 +323,12 @@ fn a_folds_second_derivative_takes_coordinates_and_weights_of_any_magnitude() {
         assert!(!shadow_certified(&tangent, &like), "{scale:e}: {tangent:?}");
         second(&curve, &L::exact(0.5))
     };
-    for (scale, weight) in [(1.0, 1.0), (p2(400), p2(40)), (p2(-400), p2(-40))] {
+    for (scale, weight) in [
+        (1.0, 1.0),
+        (p2(400), p2(40)),
+        (p2(-400), p2(-40)),
+        (0.1, 3.0),
+    ] {
         let c = curve(scale, weight);
         let t = L::exact(0.5);
         let (p, w) = c.eval_hom(&t);
@@ -332,7 +338,11 @@ fn a_folds_second_derivative_takes_coordinates_and_weights_of_any_magnitude() {
     }
     let d0 = second_at(1.0, 1.0);
     assert!(shadow_certified(&d0, &like));
-    for (scale, weight) in [(p2(900), p2(100)), (p2(-900), p2(-100))] {
+    for (scale, weight) in [
+        (p2(900), p2(100)),
+        (p2(-900), p2(-100)),
+        (p2(-1000), p2(-20)),
+    ] {
         let d = second_at(scale, weight);
         assert!(shadow_certified(&d, &like), "{scale:e}, {weight:e}: {d:?}");
         let mid = |x: &L| {
@@ -354,5 +364,43 @@ fn a_folds_second_derivative_takes_coordinates_and_weights_of_any_magnitude() {
         for (a, b) in d0.iter().zip(&d) {
             assert_eq!(mid(a) * k, mid(b), "{scale:e}, {weight:e}: {d:?} vs {d0:?}");
         }
+    }
+}
+
+/// The second derivative of a zigzag span whose control points are near
+/// `±2¹⁰²²`, so the control coefficients `n·(n − 1)·(b₀ − 2b₁ + b₂)` of
+/// `P″` formed as is would be past `f64`'s range, and of one near
+/// `±2⁻¹⁰⁰⁰`: finite, certified, and a positive power of two times the
+/// value at unit scale, exactly.
+#[test]
+fn a_second_derivative_takes_control_points_near_the_ends_of_the_range() {
+    type L = Bounded<f64>;
+    let like = L::exact(0.0);
+    let ctrl = [
+        ([1.5, -1.0, 0.75], 1.0),
+        ([-1.75, 1.25, -1.5], 2.0),
+        ([1.25, -1.5, 1.0], 0.5),
+    ];
+    let at = |scale: f64| {
+        let pts = ctrl.map(|(x, w): ([f64; 3], f64)| (x.map(|v| v * scale), w));
+        let c = HomCurve::from_affine(pts, &like).expect("a span");
+        second(&c, &L::exact(0.375)).map(|x| {
+            let [lo, hi] = x.enclose();
+            assert!(
+                x.is_certified() && lo.is_finite() && hi.is_finite(),
+                "{scale:e}: {x:?}"
+            );
+            (lo + hi) / 2.0
+        })
+    };
+    let d0 = at(1.0);
+    for scale in [p2(1022), p2(-1000)] {
+        let d = at(scale);
+        let k = d[0] / d0[0];
+        assert!(
+            k > 0.0 && k.to_bits() & ((1 << 52) - 1) == 0,
+            "{scale:e}: {k:e}"
+        );
+        assert_eq!(d0.map(|x| x * k), d, "{scale:e}");
     }
 }
