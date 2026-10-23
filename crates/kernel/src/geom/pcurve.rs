@@ -858,6 +858,21 @@ fn tile_cuts(span: &PSpan, a: f64, b: f64) -> Option<Vec<Cut>> {
     Some(merged)
 }
 
+/// The knots where the exact Bernstein form `f` (degree 1 or 2 in the
+/// local parameter of a span over `[a, b]` of `t`) changes sign or
+/// touches zero strictly inside the span, placed as
+/// [`PCurve::split_at_tile_lines`] places a crossing's knot: sorted, one
+/// per `f64`; `None` where one can't be placed strictly inside.
+pub(super) fn zero_knots(f: &[Rational], a: f64, b: f64) -> Option<Vec<f64>> {
+    let mut ts = roots(f)
+        .iter()
+        .map(|root| cut_at(root, f, a, b, [None; 2]).map(|c| c.t))
+        .collect::<Option<Vec<f64>>>()?;
+    ts.sort_by(f64::total_cmp);
+    ts.dedup();
+    Some(ts)
+}
+
 /// The cut at a root of `f` (a coordinate less its line, times the
 /// weights) on a span over `[a, b]` (module docs); `None` where its knot
 /// can't be placed strictly inside.
