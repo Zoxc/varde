@@ -143,6 +143,21 @@ pub(crate) fn implicit_cell_units(degree: usize, level: u8) -> u64 {
     row[usize::from(level)]
 }
 
+/// The units of one piece of a trim membership query at precision level
+/// `level`, from the unit table ([`schedule::UNITS`]).
+pub(crate) fn trim_piece_units(level: u8) -> u64 {
+    schedule::UNITS.trim_piece[usize::from(level)]
+}
+
+/// The units of one cell of an extremum query at precision level
+/// `level`, of a tile's or a span's, from the unit table
+/// ([`schedule::UNITS`]).
+pub(crate) fn extremum_cell_units(tile: bool, level: u8) -> u64 {
+    let row = &schedule::UNITS.extremum_cell;
+    let row = if tile { row.tile } else { row.span };
+    row[usize::from(level)]
+}
+
 /// What [`KernelError::OutOfBudget`] reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Limit {

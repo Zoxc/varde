@@ -222,6 +222,14 @@ pub struct Units {
     /// it, put into the implicit, and the Bernstein net of the
     /// implicit's squared gradient formed over its hull box, twice.
     pub implicit_cell: ImplicitUnits,
+    /// A piece of a trimming span a trim membership query tests (the
+    /// kernel's `geom::query`) at each level: the span formed at the
+    /// level, halved down to the piece and put into the query point's two
+    /// lines and its near box's four.
+    pub trim_piece: [u64; LEVELS],
+    /// A cell of an extremum query (the kernel's `geom::query`) at each
+    /// level, by what it bounds.
+    pub extremum_cell: ExtremumUnits,
     /// A piece of a face's count tested
     /// ([`count_pieces`](crate::count::s02::count_pieces)) at each level:
     /// a box classified against the trims, split, or tested off the
@@ -264,6 +272,18 @@ pub struct ImplicitUnits {
     pub quadric: [u64; LEVELS],
     /// A cubic or a quartic (a torus), degree 3 or 4.
     pub quartic: [u64; LEVELS],
+}
+
+/// The units of a cell of an extremum query ([`Units::extremum_cell`])
+/// at each level ([`LEVELS`]): the form put into the direction at the
+/// level, halved down to the cell, and its coefficients' ratios and
+/// corner values bounded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExtremumUnits {
+    /// A span of a curve, in space or in UV.
+    pub span: [u64; LEVELS],
+    /// A tile, biquadratic.
+    pub tile: [u64; LEVELS],
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of the kernel's bounding volume
@@ -419,6 +439,9 @@ impl RecordUnits {
 /// edges, and of many planes' tiles. The distance-to-implicit cells are
 /// measured on arcs near a sphere and near a torus, under the load of
 /// other builds, scaled by the seam cells' time per unit in the same run.
+/// The non-decision queries' trim pieces and extremum cells are measured
+/// 16 halvings deep, on a circle in UV, a weighted quarter arc and a
+/// sphere's tiles.
 /// The tree's are measured on random
 /// boxes of sizes on a log scale: built over a thousand and over sixty
 /// thousand, queried by boxes meeting few of them (the tests) and by
@@ -428,6 +451,11 @@ pub const UNITS: Units = Units {
     implicit_cell: ImplicitUnits {
         quadric: [66, 150, 310, 330, 410],
         quartic: [1200, 1900, 4700, 5250, 6600],
+    },
+    trim_piece: [31, 39, 150, 160, 165],
+    extremum_cell: ExtremumUnits {
+        span: [15, 19, 82, 86, 94],
+        tile: [55, 71, 370, 370, 400],
     },
     count_piece: [9, 10, 40, 40, 48],
     face_setup: 32,

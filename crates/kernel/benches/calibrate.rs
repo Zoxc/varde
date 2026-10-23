@@ -76,6 +76,7 @@ use varde_kernel::geom::form::PlaneKey;
 use varde_kernel::geom::formkey::calibration as keys;
 use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
 use varde_kernel::geom::pcurve::PCurve;
+use varde_kernel::geom::query::calibration as query;
 use varde_kernel::geom::surface::Surface;
 use varde_kernel::topo::brep_min::{Brep, calibration as scan};
 use varde_testkit::rng::Rng;
@@ -110,6 +111,7 @@ fn main() -> ExitCode {
         let mut rows = Vec::new();
         seam_cells(budget, &mut rows);
         implicit_cells(budget, &mut rows);
+        query_rows(budget, &mut rows);
         count_piece_rows(budget, &mut rows);
         setup_rows(budget, &mut rows);
         xrec_rows(budget, &mut rows);
@@ -242,6 +244,46 @@ fn implicit_cells(budget: Duration, rows: &mut Vec<Row>) {
             kind: format!("implicit cell quartic L{level}"),
             ns,
             units: UNITS.implicit_cell.quartic[l] as f64,
+        });
+    }
+}
+
+/// The non-decision queries' pieces and cells at each level, 16 per span
+/// or tile, 16 halvings deep (the depth of a piece of a unit span near a
+/// point at `10⁻⁵`): a trim piece of a circle against a point next to
+/// it, an extremum cell of the weighted quarter arc and of a sphere's
+/// tiles.
+fn query_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let circle = query::circle([0.5, 0.5], 0.25);
+    let arc = quarter(3.0);
+    let halves = query::sphere();
+    let tiles: Vec<_> = halves.iter().flat_map(|s| s.tiles()).collect();
+    let dir = [0.48, 0.6, 0.64];
+    for level in 0..LEVELS as u8 {
+        let l = usize::from(level);
+        let ns = time(budget, || {
+            query::trim_pieces(&circle, [0.75, 0.5], [1e-9; 2], level, 16, 16)
+        });
+        rows.push(Row {
+            kind: format!("trim piece L{level}"),
+            ns,
+            units: UNITS.trim_piece[l] as f64,
+        });
+        let ns = time(budget, || {
+            query::extremum_cells(Some(&arc), &[], dir, level, 16, 16)
+        });
+        rows.push(Row {
+            kind: format!("extremum span L{level}"),
+            ns,
+            units: UNITS.extremum_cell.span[l] as f64,
+        });
+        let ns = time(budget, || {
+            query::extremum_cells(None, &tiles, dir, level, 16, 16)
+        });
+        rows.push(Row {
+            kind: format!("extremum tile L{level}"),
+            ns,
+            units: UNITS.extremum_cell.tile[l] as f64,
         });
     }
 }
