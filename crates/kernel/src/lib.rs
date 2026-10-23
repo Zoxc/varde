@@ -2,8 +2,9 @@
 //! `varde-kernel-compat`. So far its infrastructure: the [`Budget`] and
 //! the charging of work against it, the errors ([`KernelError`]), the
 //! parallel map and quadrature; and the first of its geometry: the tile
-//! ([`geom::tile`]), the forms' keys ([`geom::form`]: plane, cylinder,
-//! sphere) and their lattices of tiles ([`geom::lattice`]), tiled
+//! ([`geom::tile`]), the forms' keys ([`geom::form`]) and their
+//! lattices of tiles ([`geom::lattice`]: plane, circular and conic-chain
+//! cylinder, cone, sphere; the constructors in [`geom::forms`]), tiled
 //! surfaces, edge and coedge curves and their seam bounds; and the
 //! minimal B-rep store counting reads ([`topo::brep_min`]); and the
 //! boolean's first step, its tangency clusters ([`boolean::snap`]).
