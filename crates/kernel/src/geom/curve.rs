@@ -270,14 +270,18 @@ impl PCurve {
 type Chain<const D: usize> = (Vec<[[f64; D]; 3]>, Vec<f64>);
 
 /// A span's control point in homogeneous form, exactly: `(w·x, w)`.
-fn hom_exact<const D: usize>(p: &[f64; D]) -> [Rational; D] {
+pub(super) fn hom_exact<const D: usize>(p: &[f64; D]) -> [Rational; D] {
     let w = q(p[D - 1]);
     std::array::from_fn(|k| if k + 1 == D { w.clone() } else { q(p[k]) * &w })
 }
 
 /// The blossom of a quadratic span's homogeneous control points at
 /// `(a, b)`: `(1 − a)(1 − b)·H₀ + ((1 − a)b + a(1 − b))·H₁ + ab·H₂`.
-fn blossom<const D: usize>(h: &[[Rational; D]; 3], a: &Rational, b: &Rational) -> [Rational; D] {
+pub(super) fn blossom<const D: usize>(
+    h: &[[Rational; D]; 3],
+    a: &Rational,
+    b: &Rational,
+) -> [Rational; D] {
     let one = Rational::from(1u32);
     let (ma, mb) = (&one - a, &one - b);
     let c0 = &ma * &mb;
@@ -288,7 +292,7 @@ fn blossom<const D: usize>(h: &[[Rational; D]; 3], a: &Rational, b: &Rational) -
 
 /// A homogeneous point as a stored control point, its point and weight
 /// rounded to the nearest `f64`s.
-fn affine_rounded<const D: usize>(h: &[Rational; D]) -> [f64; D] {
+pub(super) fn affine_rounded<const D: usize>(h: &[Rational; D]) -> [f64; D] {
     let w = &h[D - 1];
     std::array::from_fn(|k| {
         if k + 1 == D {
