@@ -7,7 +7,7 @@
 //! taken whole and joints whose weights differ.
 
 use malachite::Rational as Q;
-use varde_decide::bezier::HomCurve;
+use varde_decide::bezier::{HomCurve, Side, Sides};
 use varde_testkit::rng::Rng;
 
 use super::super::testing::{
@@ -246,9 +246,50 @@ fn axis_rows_are_one_point() {
                                 })
                                 .collect();
                             assert!(pts.iter().all(|x| *x == pts[0]), "{key:?} {level:?}");
+                            // A singular side, which the fold check
+                            // divides out.
+                            let side = if end == 0 { Side::V0 } else { Side::V1 };
+                            assert!(t.singular().contains(side), "{key:?} {level:?}");
+                            assert!(t.is_regular(), "{key:?} {level:?} ({i}, {j})");
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Every tile of the canonical surfaces is regular, at the base level
+/// and finer, those on the axis with their pole or apex rows as declared
+/// singular sides and no other tile with any.
+#[test]
+fn canonical_tiles_are_regular_poles_and_apexes_included() {
+    for key in keys(13, true) {
+        let l = Lattice::new(key.clone().into()).unwrap();
+        let spans = key.profile().spans();
+        for extra in [Level::BASE, Level { u: 1, v: 2 }] {
+            let half = l.half(-1).unwrap();
+            let rect = Rect {
+                level: extra,
+                u: half.u.start << extra.u..half.u.end << extra.u,
+                v: half.v.start << extra.v..half.v.end << extra.v,
+            };
+            let nv = (rect.v.end - rect.v.start) as usize;
+            for (n, t) in l.tiles(&rect).unwrap().iter().enumerate() {
+                let j = rect.v.start + (n % nv) as i64;
+                let span = &spans[(j >> extra.v) as usize];
+                let first = j & ((1 << extra.v) - 1) == 0;
+                let last = j & ((1 << extra.v) - 1) == (1 << extra.v) - 1;
+                let mut want = Sides::NONE;
+                if first && span[0][0] == 0.0 {
+                    want = want.with(Side::V0);
+                }
+                if last && span[2][0] == 0.0 {
+                    want = want.with(Side::V1);
+                }
+                let what = format!("{key:?} {extra:?} tile {n}");
+                assert_eq!(t.singular(), want, "{what}");
+                assert!(t.is_regular(), "{what}");
             }
         }
     }

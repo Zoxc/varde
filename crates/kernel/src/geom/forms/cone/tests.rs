@@ -4,6 +4,7 @@
 //! following the tangent to the cap.
 
 use malachite::Rational as Q;
+use varde_decide::bezier::Side;
 use varde_decide::num::trig::{cos, sin};
 use varde_testkit::rng::Rng;
 
@@ -159,7 +160,9 @@ fn the_apex_row_is_the_apex_at_every_level() {
                     let w = [0, 1, 2].map(|k| t.net()[3 * k][3]);
                     assert_eq!(w, [1.0, std::f64::consts::FRAC_1_SQRT_2, 1.0]);
                 }
-                assert!(!t.is_regular(), "an apex row is not regular here");
+                // A singular side, which the fold check divides out.
+                assert_eq!(t.singular(), Side::V0.into(), "{key:?} {level:?} {i}");
+                assert!(t.is_regular(), "{key:?} {level:?} {i}");
             }
         }
     }
@@ -177,6 +180,8 @@ fn the_canonical_cone_is_half_a_turn_from_the_apex() {
         rows_shared(s.tiles(), s.rect());
         for t in s.tiles() {
             assert_eq!(t.point(1, 0), key.apex());
+            assert_eq!(t.singular(), Side::V0.into());
+            assert!(t.is_regular(), "{t:?}");
         }
     }
     // The other nappe is not the cone's.

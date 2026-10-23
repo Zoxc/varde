@@ -195,7 +195,8 @@ fn tiles_lie_on_the_image_at_every_level() {
 }
 
 /// Rows shared across cells at every level; a row that is one point in
-/// the source (a pole or apex) is one point in the image.
+/// the source (a pole or apex) is one point in the image, and a singular
+/// side of its tiles as of the source's; every tile regular.
 #[test]
 fn rows_shared_and_axis_rows_one_point() {
     for key in images(4) {
@@ -219,6 +220,8 @@ fn rows_shared_and_axis_rows_one_point() {
                 [x[0], x[1], x[2]].map(f64::to_bits)
             };
             for (a, b) in src.tiles(&rect).unwrap().iter().zip(&tiles) {
+                assert_eq!(b.singular(), a.singular(), "{key:?} {level:?}");
+                assert!(b.is_regular(), "{key:?} {level:?}");
                 for row in [0, 2] {
                     if (0..3).all(|i| point(a, i, row) == point(a, 0, row)) {
                         assert!(

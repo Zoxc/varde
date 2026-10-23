@@ -260,6 +260,31 @@ pub struct Units {
     /// The broad phase's bounding volume hierarchy (the kernel's
     /// `infra::bvh`): its leaves built, its box tests and hits, in parts.
     pub bvh: BvhUnits,
+    /// A tile's fold check and normal cone search (the kernel's
+    /// `geom::tile`): its exact part once, then the search at each
+    /// level it runs at.
+    pub fold: FoldUnits,
+}
+
+/// The units of a tile's fold check and normal cone search
+/// ([`Units::fold`]): the exact numerator's lines (or the whole
+/// numerator) formed on the stored net once, then at each level the
+/// search runs at the numerator formed in the tile's frame and divided by
+/// its singular sides, and each piece of it whose cone is tested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldUnits {
+    /// A line of the exact numerator on a side of the tile, from the
+    /// net's two rows there, in rationals.
+    pub line: u64,
+    /// The whole exact numerator and its quotient, in rationals (only a
+    /// corner between two singular sides needs it).
+    pub full: u64,
+    /// The numerator formed at each precision level ([`LEVELS`]) in the
+    /// tile's frame, divided by its singular sides.
+    pub level: [u64; LEVELS],
+    /// A piece of the numerator whose cone is tested at each level, its
+    /// split from its parent included.
+    pub piece: [u64; LEVELS],
 }
 
 /// The units of a cell of a curve's distance to an implicit surface
@@ -522,6 +547,12 @@ pub const UNITS: Units = Units {
         build: 24,
         test: 2,
         hit: 2,
+    },
+    fold: FoldUnits {
+        line: 160,
+        full: 600,
+        level: [570, 870, 2550, 2710, 3300],
+        piece: [28, 33, 120, 125, 130],
     },
 };
 

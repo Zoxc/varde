@@ -1,8 +1,10 @@
 //! The sphere's constructor against exact values and OCCT's net: every
 //! control point the exact value rounded once, the canonical surface
-//! from pole to pole, no latitude past the poles.
+//! from pole to pole, its tiles regular with the pole rows as singular
+//! sides, at every level to `(8, 8)`; no latitude past the poles.
 
 use malachite::Rational as Q;
+use varde_decide::bezier::Side;
 use varde_decide::num::trig::{cos, sin};
 use varde_testkit::rng::Rng;
 
@@ -113,6 +115,38 @@ fn tiles_are_occt_s_nets() {
     }
 }
 
+/// Every sphere's tiles at levels to `(8, 8)` are regular, those at a
+/// pole with its row as a singular side.
+#[test]
+fn tiles_are_regular_with_the_poles() {
+    for key in spheres(5) {
+        let l = Lattice::new(key.into()).unwrap();
+        for level in [
+            Level::BASE,
+            Level { u: 1, v: 1 },
+            Level { u: 3, v: 5 },
+            Level { u: 8, v: 8 },
+        ] {
+            let h = 1i64 << level.v;
+            for j in [-h, -h + 1, -1, 0, h - 2, h - 1] {
+                for i in [-1i64, 0, (1 << level.u) - 1, 3 << level.u] {
+                    let t = l.tile(level, i, j).unwrap();
+                    let want = if j == -h {
+                        Side::V0.into()
+                    } else if j == h - 1 {
+                        Side::V1.into()
+                    } else {
+                        varde_decide::bezier::Sides::NONE
+                    };
+                    let what = format!("{key:?} {level:?} ({i}, {j})");
+                    assert_eq!(t.singular(), want, "{what}");
+                    assert!(t.is_regular(), "{what}");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn the_canonical_sphere_is_half_a_turn_pole_to_pole() {
     let key = SphereKey::new([1.0, -2.0, 0.25], 1.5, [1.0, 2.0, 2.0]).unwrap();
@@ -127,12 +161,19 @@ fn the_canonical_sphere_is_half_a_turn_pole_to_pole() {
             (first..first + 2, -1..1)
         );
         rows_shared(s.tiles(), s.rect());
-        // Row-major in `u`: the south tile, then the north one.
+        // Row-major in `u`: the south tile, then the north one; the pole
+        // rows singular sides, and every tile regular.
         for (n, t) in s.tiles().iter().enumerate() {
-            let (side, row) = if n % 2 == 0 { (-1, 0) } else { (1, 2) };
+            let (side, row, singular) = if n % 2 == 0 {
+                (-1, 0, Side::V0)
+            } else {
+                (1, 2, Side::V1)
+            };
             for k in 0..3 {
                 assert_eq!(t.point(k, row), pole(side), "{first} tile {n}");
             }
+            assert_eq!(t.singular(), singular.into(), "{first} tile {n}");
+            assert!(t.is_regular(), "{first} tile {n}");
         }
     }
     // No latitude past the poles, at any level.

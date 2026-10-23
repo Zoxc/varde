@@ -325,23 +325,27 @@ fn half_surfaces() {
     }
 }
 
+/// Every tile of a canonical surface is regular, a sphere's with its
+/// pole rows as singular sides; and at level `(0, 1)`, where only the
+/// tiles at the poles reach them.
 #[test]
-fn regular_where_no_pole() {
+fn regular_with_the_poles() {
     for key in keys(7) {
         let l = Lattice::new(key.clone()).unwrap();
         let r = l.half(0).unwrap();
         for (n, t) in l.tiles(&r).unwrap().iter().enumerate() {
-            match key {
-                // The pole rows make a sphere's base tiles singular.
-                FormKey::Sphere(_) => assert!(!t.is_regular()),
-                _ => assert!(t.is_regular(), "{key:?} tile {n}"),
-            }
+            assert!(t.is_regular(), "{key:?} tile {n}");
         }
         if let FormKey::Sphere(_) = key {
-            // Away from the poles, at level (0, 1).
             let level = Level { u: 0, v: 1 };
-            for j in [-2 + 1, 0] {
+            for (j, sides) in [
+                (-2, Side::V0.into()),
+                (-1, Sides::NONE),
+                (0, Sides::NONE),
+                (1, Side::V1.into()),
+            ] {
                 let t = l.tile(level, 0, j).unwrap();
+                assert_eq!(t.singular(), sides, "{key:?} ({j})");
                 assert!(t.is_regular(), "{key:?} ({j})");
             }
         }
@@ -414,7 +418,12 @@ fn regular_tiles_face_out_at_every_level() {
         let a = c.axis.map(q);
         let (aa, cos2) = (dot(&a, &a), q(c.cos) * q(c.cos));
         let e = exact(&t);
-        let [x, y, z] = e.normal_numerator().unwrap().map(|f| f.coefs().to_vec());
+        // The numerator the fold check reads: divided by the pole rows'
+        // factors, else zero on them.
+        let [x, y, z] = t
+            .fold_numerator_at(&Q::from(0u32))
+            .unwrap()
+            .map(|f| f.coefs().to_vec());
         for m in 0..x.len() {
             let n = [x[m].clone(), y[m].clone(), z[m].clone()];
             let d = dot(&a, &n);
@@ -576,7 +585,8 @@ fn tiles_round_their_exact_sub_patch() {
                     level.u,
                     i,
                 );
-                assert_eq!(t, Tile::rounded(&v_first).unwrap(), "{key:?} {level:?}");
+                let rounded = Tile::rounded(&v_first).unwrap();
+                assert_eq!(t, rounded.with_singular(t.singular()), "{key:?} {level:?}");
                 let e = base.exact();
                 for (a, b) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
                     let (pi, pj) = (i + a, j + b);

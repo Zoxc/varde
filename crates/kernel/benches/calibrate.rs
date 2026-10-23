@@ -78,6 +78,7 @@ use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
 use varde_kernel::geom::pcurve::PCurve;
 use varde_kernel::geom::query::calibration as query;
 use varde_kernel::geom::surface::Surface;
+use varde_kernel::geom::tile::calibration as fold;
 use varde_kernel::topo::brep_min::{Brep, calibration as scan};
 use varde_testkit::rng::Rng;
 
@@ -122,6 +123,7 @@ fn main() -> ExitCode {
         scan_rows(budget, &mut rows);
         form_key_rows(budget, &mut rows);
         bvh_rows(budget, &mut rows);
+        fold_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -2150,4 +2152,43 @@ fn bvh_rows(budget: Duration, rows: &mut Vec<Row>) {
         ns: collect - walk,
         units: u.hit as f64 / UNIT_PARTS as f64,
     });
+}
+
+// ---------------------------------------------------------------------
+// The fold check and the cone search.
+
+/// A tile's fold check: its exact part on a pole tile (three lines) and
+/// on a corner between two singular sides (lines and the whole
+/// numerator), and the cone search at each level on the pole tile (its
+/// quotient, few pieces) and on a folded tile (every piece of every
+/// depth), each against the units charged for it.
+fn fold_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let u = UNITS.fold;
+    let (pole, corner, folded) = (fold::pole(), fold::corner(), fold::folded());
+    for (kind, tile) in [("fold exact, pole", &pole), ("fold exact, corner", &corner)] {
+        let (lines, full) = fold::fold_check(tile);
+        let ns = time(budget, || {
+            black_box(fold::fold_check(black_box(tile)));
+            1
+        });
+        rows.push(Row {
+            kind: kind.into(),
+            ns,
+            units: (u64::from(lines) * u.line + if full { u.full } else { 0 }) as f64,
+        });
+    }
+    for level in 0..LEVELS {
+        for (kind, tile) in [("pole", &pole), ("folded", &folded)] {
+            let pieces = fold::search_at(tile, level).expect("a level and a check that runs");
+            let ns = time(budget, || {
+                black_box(fold::search_at(black_box(tile), level));
+                1
+            });
+            rows.push(Row {
+                kind: format!("cone search L{level}, {kind} ({pieces})"),
+                ns,
+                units: (u.level[level] + pieces * u.piece[level]) as f64,
+            });
+        }
+    }
 }

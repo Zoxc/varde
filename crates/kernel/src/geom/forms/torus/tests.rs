@@ -8,7 +8,7 @@
 
 use malachite::Rational as Q;
 use malachite::base::rounding_modes::RoundingMode::Nearest;
-use varde_decide::bezier::HomPatch;
+use varde_decide::bezier::{HomPatch, Side, Sides};
 use varde_decide::num::trig::{acos, atan2, cos, sin, tan};
 use varde_testkit::rng::Rng;
 
@@ -372,7 +372,21 @@ fn the_apex_rows_are_the_apexes_at_every_level() {
                     assert_eq!(north.point(k, 2), apex(1), "{key:?} {level:?} {i}");
                     assert_eq!(south.point(k, 0), apex(-1), "{key:?} {level:?} {i}");
                 }
-                assert!(!north.is_regular() && !south.is_regular());
+                // Singular sides, which the fold check divides out.
+                assert_eq!(north.singular(), Side::V1.into());
+                assert_eq!(south.singular(), Side::V0.into());
+                // At the cap an angle cell next to an apex may turn
+                // less than the coordinates' spacing there (the cap reads
+                // the outer equator's radius): each control row across
+                // the angle rounds to one point, the stored tile is no
+                // surface, and its fold check stops. To `(8, 8)` the
+                // tiles are regular.
+                if level.u <= 8 {
+                    assert!(
+                        north.is_regular() && south.is_regular(),
+                        "{key:?} {level:?} {i}"
+                    );
+                }
             }
         }
     }
@@ -584,9 +598,10 @@ fn the_canonical_ring_is_half_a_turn_by_half_the_tube() {
 }
 
 /// A ring's tiles are regular at the base level, outer and inner; a
-/// spindle's at its canonical level where they don't reach an apex.
+/// spindle's at its canonical level, those reaching an apex with it as a
+/// singular side.
 #[test]
-fn regular_off_the_apexes() {
+fn regular_with_the_apexes() {
     for key in tori(7) {
         let l = Lattice::new(key.into()).unwrap();
         if spindle(&key) {
@@ -594,8 +609,15 @@ fn regular_off_the_apexes() {
             let nv = (r.v.end - r.v.start) as usize;
             for (n, t) in l.tiles(&r).unwrap().iter().enumerate() {
                 let j = r.v.start + (n % nv) as i64;
-                let apex = j == r.v.start || j == r.v.end - 1;
-                assert_eq!(t.is_regular(), !apex, "{key:?} tile {n}");
+                let sides = if j == r.v.start {
+                    Side::V0.into()
+                } else if j == r.v.end - 1 {
+                    Side::V1.into()
+                } else {
+                    Sides::NONE
+                };
+                assert_eq!(t.singular(), sides, "{key:?} tile {n}");
+                assert!(t.is_regular(), "{key:?} tile {n}");
             }
         } else {
             for v in [-1i64, 1] {

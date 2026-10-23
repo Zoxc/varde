@@ -40,11 +40,12 @@
 //! share their middle row, and neighbours sharing a boundary row and
 //! split in the same direction share the halves of that row.
 //!
-//! **Cached per tile** (computed once, on first use, from the net alone,
-//! so every copy of a tile has the same bits): the first-level patch, the
-//! hull box, the homogeneous partial derivatives, the normal numerator,
-//! the normal cone with the level that certified it, and whether a corner
-//! of the exact numerator is zero.
+//! **Cached per tile** (computed once, on first use, from the net and
+//! the declared singular sides alone, so every copy of a tile has the
+//! same bits): the first-level patch, the hull box, the homogeneous
+//! partial derivatives, the normal numerator, the fold check's exact
+//! part, and the normal cone with the level that certified it and the
+//! work it took.
 //!
 //! **Normal cone and regularity.** The normal numerator
 //! `N = W·(P_u × P_v) + W_u·(P_v × P) + W_v·(P × P_u)` equals
@@ -57,26 +58,53 @@
 //! normal of the tile and the tile is **regular** (no fold, no
 //! degenerate point). The cone's margin is its certified `cos`.
 //!
+//! **Singular sides.** A side of the tile that is one point in space (a
+//! sphere's pole row, a cone's or spindle torus's apex row, a revolved
+//! conic's pole or apex row) makes `N` zero along it, so no cone of `N`
+//! exists. Its constructor declares it ([`Tile::with_singular`]; the
+//! lattice does, per form), and the **fold check** proves it on the
+//! exact net (the numerator's line there exactly zero,
+//! [`HomPatch::singular_sides`]) and divides its linear factor (`u`,
+//! `1 − u`, `v` or `1 − v`) out of `N` at each level, exactly in
+//! Bernstein form ([`SingularSides::quotient`]): the cone is that of the
+//! quotient, a positive multiple of `N` inside the square whose limit on
+//! the side is the normal there. A side declared but not singular, or a
+//! corner where the exact numerator the check reads is zero (an
+//! undeclared pole or apex row, a corner whose edges leave it parallel,
+//! a cusp), **stops** the check: no cone at any level or depth, and none
+//! is tried ([`Tile::fold_stops`]). The corners are read on the exact
+//! numerator's side lines, which depend on the net's two rows there
+//! alone: a corner on no singular side the line's end, one next to a
+//! singular side the coefficient beside it on the other side's line
+//! (the quotient's corner, up to a positive factor), and one between two
+//! singular sides the corner of the whole exact quotient.
+//!
 //! **The cone is a certificate**, found in the tile's frame, then in
-//! space, then in precision. At a level the cone is first tried on the
-//! numerator's coefficients ([`NormalCone::of_forms`] about the axis of
-//! their smallest cone); where they spread too far
-//! ([`ConeFail::Space`]) the numerator is split at ½ in both directions,
-//! up to [`MAX_CONE_DEPTH`] times, and the cone tried on all the pieces'
-//! coefficients together (about their mean direction): every value of
-//! the numerator is a combination of one piece's coefficients, and the
-//! pieces' coefficients lie closer to the values. Where rounding decides
-//! ([`ConeFail::Precision`]) the next level of the schedule follows
-//! ([`ladder`]), from the whole numerator again. A tile whose exact
-//! numerator is zero at a corner (a pole or apex row, a singular side,
-//! makes a whole boundary row zero; a corner whose two edges leave it
-//! parallel makes the corner zero) has no cone at any level or depth and
-//! is never regular here (no escalation is tried); nor is one whose
-//! normals spread over more than a half-space at the deepest split (the
-//! tile must be split) or that the top level leaves undecided. The cone
-//! and its level are cached; [`Tile::normal_cone_at`] runs the same
-//! search at one level, so it is [`Tile::normal_cone`] at the level
-//! [`Tile::normal_cone_level`] names.
+//! space, then in precision, on the numerator the fold check reads. At a
+//! level the cone is first tried on its coefficients
+//! ([`NormalCone::of_forms`] about the axis of their smallest cone);
+//! where they spread too far ([`ConeFail::Space`]) the numerator is split
+//! at ½ in both directions, up to [`MAX_CONE_DEPTH`] times, and the cone
+//! tried on all the pieces' coefficients together (about their mean
+//! direction): every value of the numerator is a combination of one
+//! piece's coefficients, and the pieces' coefficients lie closer to the
+//! values. Where rounding decides ([`ConeFail::Precision`]) the next
+//! level of the schedule follows ([`ladder`]), from the whole numerator
+//! again. A tile whose normals spread over more than a half-space at the
+//! deepest split is not regular (it must be split), nor one the top
+//! level leaves undecided. The cone and its level are cached;
+//! [`Tile::normal_cone_at`] runs the same search at one level, so it is
+//! [`Tile::normal_cone`] at the level [`Tile::normal_cone_level`] names.
+//!
+//! **Work.** The search counts its work ([`ConeWork`]): the exact lines
+//! formed, and the pieces tested at each level. An operation reading a
+//! tile's cone charges it ([`Tile::normal_cone_charged`]; the unit
+//! table's fold row): the exact part as work, each level's numerator and
+//! pieces as that level's step, a precision step above the first. The
+//! search runs whole and is cached before it is charged: it is bounded
+//! (the levels times `1 + 4 + 16 + 64` pieces), and every call charges
+//! the same, cached or not, so where a pass runs out doesn't depend on
+//! which of its items asked first.
 //!
 //! **One frame.** The numerator is translation invariant, so at every
 //! level it is computed in one frame centred on the tile's hull box
@@ -97,8 +125,9 @@
 //! formed at the level ([`Tile::patch_at`]; at the first level the cached
 //! patch and numerator), a corner's point its control point exactly, the
 //! split, hull box, frame, cone search and its cache the tile's own, the
-//! singular sides proven on the exact net, the closest point set up from
-//! the stored net; the rest the patch's operations at the level.
+//! singular sides proven on the exact net (whichever sides are asked;
+//! the cone reads the declared ones), the closest point set up from the
+//! stored net; the rest the patch's operations at the level.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -108,17 +137,19 @@ use std::sync::OnceLock;
 use malachite::Rational;
 pub use varde_decide::bezier::NormalCone;
 use varde_decide::bezier::{
-    Axis, Closest, ConeFail, Dir, HomPatch, HullBox, Partials, Scalar, Side, Sides, SingularSides,
-    Tensor,
+    Axis, Closest, ConeFail, Dir, HomPatch, HullBox, Partials, Poly, Scalar, Side, Sides,
+    SingularSides, Tensor,
 };
 use varde_decide::num::bounded::Bounded;
 use varde_decide::num::expansion::two_sum;
-use varde_decide::num::level::{AtLevel, LevelScalar, ladder};
-use varde_decide::num::schedule::{LEVELS, Level};
+use varde_decide::num::level::{AtLevel, LevelScalar, at_level, ladder};
+use varde_decide::num::schedule::{LEVELS, Level, UNITS};
 use varde_decide::num::storage::{frame_of, translate};
 use varde_decide::patch::Patch;
 
+use super::formkey::Charge;
 use super::round::nearest;
+use crate::infra::budget::{Step, level_step};
 
 /// The degree of a tile in each direction.
 pub const DEGREE: usize = 2;
@@ -156,14 +187,52 @@ pub enum TileError {
 #[derive(Clone)]
 pub struct Tile {
     net: Net,
+    /// The declared singular sides.
+    sides: Sides,
     patch: FirstLevelPatch,
     hull: HullBox,
     /// The homogeneous partials in `u` and `v`.
     partials: OnceLock<[FirstLevelPatch; 2]>,
     numerator: OnceLock<[Tensor<Bounded<f64>>; 3]>,
-    cone: OnceLock<Option<(NormalCone, Level)>>,
-    /// Whether the exact numerator is zero at a corner.
-    degenerate: OnceLock<bool>,
+    cone: OnceLock<Cone>,
+    /// The fold check's exact part.
+    fold: OnceLock<Fold>,
+}
+
+/// The fold check's exact part, on the stored net (module docs).
+#[derive(Clone, Copy, Debug)]
+struct Fold {
+    /// The proof of the declared sides (`Some(None)` for no sides);
+    /// `None` where a declared side isn't singular or the numerator the
+    /// check reads is zero at a corner: no cone at any level.
+    proof: Option<Option<SingularSides>>,
+    /// The exact numerator's lines formed and whether it was formed in
+    /// full.
+    lines: u32,
+    full: bool,
+}
+
+/// The cone search's outcome and its work, computed once.
+#[derive(Clone, Copy, Debug)]
+struct Cone {
+    found: Option<(NormalCone, Level)>,
+    work: ConeWork,
+}
+
+/// The work of a tile's fold check and cone search, as it ran: what
+/// [`Tile::normal_cone_charged`] charges, and the counts per level that
+/// calibrate it. A function of the tile alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConeWork {
+    /// The exact numerator's lines formed on the stored net: the
+    /// singular sides' proof and the corner test.
+    pub exact_lines: u32,
+    /// Whether the exact numerator was formed in full (a corner between
+    /// two singular sides).
+    pub exact_full: bool,
+    /// The pieces whose cone was tested at each level, 0 at a level the
+    /// search didn't run at.
+    pub pieces: [u64; LEVELS],
 }
 
 impl Tile {
@@ -184,13 +253,33 @@ impl Tile {
             .expect("a biquadratic net");
         Ok(Tile {
             net,
+            sides: Sides::NONE,
             patch,
             hull: hull_of(&net),
             partials: OnceLock::new(),
             numerator: OnceLock::new(),
             cone: OnceLock::new(),
-            degenerate: OnceLock::new(),
+            fold: OnceLock::new(),
         })
+    }
+
+    /// The tile with `sides` declared singular (a pole or an apex row
+    /// each; module docs): its fold check proves them on the exact net
+    /// and divides their factors out of the numerator. A side declared
+    /// but not singular leaves the tile not regular.
+    pub fn with_singular(mut self, sides: Sides) -> Tile {
+        if sides != self.sides {
+            self.sides = sides;
+            self.cone = OnceLock::new();
+            self.fold = OnceLock::new();
+        }
+        self
+    }
+
+    /// The declared singular sides.
+    #[inline]
+    pub fn singular(&self) -> Sides {
+        self.sides
     }
 
     /// The tile whose net is the exact homogeneous `patch`'s rounded:
@@ -297,10 +386,19 @@ impl Tile {
     /// bits wherever the same net is split: halves share their middle
     /// row, and neighbours sharing a boundary row and split in the same
     /// direction share the halves of that row. Weights stay in range; an
-    /// error only where a value rounds past the range.
+    /// error only where a value rounds past the range. A declared
+    /// singular side stays declared on the halves it bounds.
     pub fn split_half(&self, dir: Dir) -> Result<[Tile; 2], TileError> {
         let [a, b] = self.exact().split_half(dir);
-        Ok([Tile::rounded(&a)?, Tile::rounded(&b)?])
+        let (lo, hi) = match dir {
+            Dir::U => (Side::U1, Side::U0),
+            Dir::V => (Side::V1, Side::V0),
+        };
+        let keep = |off: Side| self.sides.iter().filter(|&s| s != off).collect();
+        Ok([
+            Tile::rounded(&a)?.with_singular(keep(lo)),
+            Tile::rounded(&b)?.with_singular(keep(hi)),
+        ])
     }
 
     /// The exact homogeneous patch of the stored net.
@@ -338,73 +436,152 @@ impl Tile {
     }
 
     /// The certified normal cone: the first level's, else in space, else
-    /// at the levels above in turn (module docs); `None` where no level
-    /// certifies one. Computed once.
+    /// at the levels above in turn (module docs), of the numerator the
+    /// fold check reads (divided by the singular sides); `None` where no
+    /// level certifies one. Computed once.
     pub fn normal_cone(&self) -> Option<NormalCone> {
-        self.cone_certificate().map(|(c, _)| c)
+        self.cone_certificate().found.map(|(c, _)| c)
     }
 
     /// The level that certified [`normal_cone`](Self::normal_cone),
     /// `None` where none did.
     pub fn normal_cone_level(&self) -> Option<Level> {
-        self.cone_certificate().map(|(_, l)| l)
+        self.cone_certificate().found.map(|(_, l)| l)
+    }
+
+    /// [`normal_cone`](Self::normal_cone), its work charged to `c`
+    /// ([`ConeWork`]: the exact part's lines, then each level's
+    /// numerator and pieces, a level above the first as a precision
+    /// step). The search runs whole and is cached, then charged: it is
+    /// bounded (the levels times [`MAX_CONE_DEPTH`]'s pieces), and every
+    /// call charges the same, cached or not, so where a pass runs out
+    /// doesn't depend on which item asked first.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the passes reading a tile's cone in an operation call it as they land"
+        )
+    )]
+    pub(crate) fn normal_cone_charged<C: Charge>(
+        &self,
+        c: &mut C,
+    ) -> Result<Option<NormalCone>, C::Err> {
+        let cone = self.cone_certificate();
+        let u = UNITS.fold;
+        let w = &cone.work;
+        let exact = u64::from(w.exact_lines) * u.line + if w.exact_full { u.full } else { 0 };
+        if exact > 0 {
+            c.charge(Step::Work, exact)?;
+        }
+        for (l, &pieces) in w.pieces.iter().enumerate() {
+            if pieces > 0 {
+                let units = u.level[l].saturating_add(pieces.saturating_mul(u.piece[l]));
+                c.charge(level_step(l as u8), units)?;
+            }
+        }
+        Ok(cone.found.map(|(n, _)| n))
+    }
+
+    /// The work [`normal_cone`](Self::normal_cone) did (computing it if
+    /// it hasn't run): the counts per level.
+    pub fn cone_work(&self) -> ConeWork {
+        self.cone_certificate().work
     }
 
     /// The certified normal cone with the numerator computed at `like`'s
-    /// level (and width), in the tile's frame, split in space as at any
-    /// level but not escalated past it (module docs): at the level
+    /// level (and width), in the tile's frame, divided by the singular
+    /// sides, split in space as at any level but not escalated past it
+    /// (module docs): at the level
     /// [`normal_cone_level`](Self::normal_cone_level) names it is
     /// [`normal_cone`](Self::normal_cone). `None` where it isn't
     /// certified at this level.
     pub fn normal_cone_at<S: Scalar>(&self, like: &S) -> Option<NormalCone> {
-        if self.degenerate() {
-            return None;
-        }
-        cone_in_space(numerator(&self.framed(like))).ok()
+        let n = self.fold_numerator_at(like)?;
+        cone_in_space(n).0.ok()
     }
 
-    /// Whether the tile is certified regular: its normal numerator
-    /// certified non-zero, by a normal cone at some level (module docs).
-    /// A tile with a singular side never is.
+    /// Whether the tile is certified regular: the numerator the fold
+    /// check reads certified non-zero, by a normal cone at some level
+    /// (module docs). Up to its singular sides, which the cone's
+    /// quotient covers in the limit.
     pub fn is_regular(&self) -> bool {
         self.normal_cone().is_some()
     }
 
-    /// The cone and the level that certified it, computed once: the
-    /// first level from the cached numerator, then the schedule's levels
-    /// in turn while rounding decides.
-    fn cone_certificate(&self) -> Option<(NormalCone, Level)> {
-        *self.cone.get_or_init(|| {
-            if self.degenerate() {
-                return None;
-            }
-            let start = match cone_in_space(self.normal_numerator().clone()) {
-                Ok(c) => return Some((c, Level::L0)),
-                Err(ConeFail::Space) => return None,
-                Err(ConeFail::Precision) => Level::L0.next()?,
+    /// The proof of the declared singular sides on the exact net
+    /// ([`HomPatch::singular_sides`]); `None` for no sides and where the
+    /// fold check stops ([`fold_stops`](Self::fold_stops)). Computed once.
+    pub fn singular_proof(&self) -> Option<SingularSides> {
+        self.fold().proof.flatten()
+    }
+
+    /// Whether the fold check stops before any level: a declared side
+    /// isn't singular, or the numerator the check reads is zero at a
+    /// corner of the exact net (module docs). Then no cone is certified
+    /// at any level or depth, and none is tried. Computed once.
+    pub fn fold_stops(&self) -> bool {
+        self.fold().proof.is_none()
+    }
+
+    /// The numerator the fold check reads at `like`'s level (and width):
+    /// the normal numerator in the tile's frame (as
+    /// [`normal_numerator`](Self::normal_numerator) at the first level),
+    /// divided by the linear factors of the singular sides
+    /// ([`SingularSides::quotient`]); of degrees `(5, 5)` less one per
+    /// singular side in its direction. `None` where the fold check stops
+    /// ([`fold_stops`](Self::fold_stops)).
+    pub fn fold_numerator_at<S: Scalar>(&self, like: &S) -> Option<[Tensor<S>; 3]> {
+        self.fold_of(numerator(&self.framed(like)))
+    }
+
+    /// The normal numerator `n` divided by the singular sides' factors;
+    /// `None` where the fold check stops.
+    fn fold_of<S: Scalar>(&self, n: [Tensor<S>; 3]) -> Option<[Tensor<S>; 3]> {
+        match self.fold().proof? {
+            None => Some(n),
+            Some(p) => p.quotient(&n),
+        }
+    }
+
+    /// The cone, the level that certified it and the work, computed
+    /// once: the first level from the cached numerator, then the
+    /// schedule's levels in turn while rounding decides.
+    fn cone_certificate(&self) -> &Cone {
+        self.cone.get_or_init(|| {
+            let fold = self.fold();
+            let mut work = ConeWork {
+                exact_lines: fold.lines,
+                exact_full: fold.full,
+                pieces: [0; LEVELS],
             };
-            ladder(&mut ConeStep(self), start, &mut [(); LEVELS]).ok()
+            let Some(n) = self.fold_of(self.normal_numerator().clone()) else {
+                return Cone { found: None, work };
+            };
+            let (out, pieces) = cone_in_space(n);
+            work.pieces[0] = pieces;
+            let found = match out {
+                Ok(c) => Some((c, Level::L0)),
+                Err(ConeFail::Space) => None,
+                Err(ConeFail::Precision) => match Level::L0.next() {
+                    Some(start) => ladder(&mut ConeStep(self), start, &mut work.pieces).ok(),
+                    None => None,
+                },
+            };
+            Cone { found, work }
         })
     }
 
-    /// Whether the exact normal numerator is zero at a corner: then no
-    /// cone is certified at any level or depth (module docs). The corners
-    /// are the ends of the numerator's lines on the sides `u = 0` and
-    /// `u = 1`, which depend on the net's two rows there alone
-    /// ([`HomPatch::side_numerator`]). Computed once.
-    fn degenerate(&self) -> bool {
-        *self.degenerate.get_or_init(|| {
-            let exact = self.exact();
-            [Side::U0, Side::U1].into_iter().any(|side| {
-                let line = exact
-                    .side_numerator(side)
-                    .expect("a biquadratic patch's numerator is within the degree limit");
-                let zero = |end: fn(&[Rational]) -> &Rational| {
-                    line.iter().all(|p| *end(p.coefs()) == 0u32)
-                };
-                zero(|c| &c[0]) || zero(|c| &c[c.len() - 1])
-            })
-        })
+    /// The fold check's exact part (module docs), computed once: the
+    /// declared sides proven on the exact net, and the numerator the
+    /// check reads tested for an exact zero at each corner. A corner on
+    /// no singular side reads the end of a side's numerator line; next
+    /// to one singular side, the coefficient beside it on the other
+    /// side's line (the quotient's corner, up to a positive factor);
+    /// between two, the quotient of the whole exact numerator.
+    fn fold(&self) -> &Fold {
+        self.fold
+            .get_or_init(|| check_fold(&self.exact(), self.sides))
     }
 
     /// The patch at `like`'s level translated by `−frame`: the
@@ -484,15 +661,13 @@ impl<S: Scalar + 'static> Patch<S> for Tile {
         })
     }
 
-    /// The search of [`Tile::normal_cone_at`] at the level, with why it
-    /// fails: [`ConeFail::Space`] at a zero corner of the exact numerator
-    /// (no level or depth helps) or at the deepest split.
+    /// The search of [`Tile::normal_cone_at`] at the level, on the
+    /// numerator the fold check reads, with why it fails:
+    /// [`ConeFail::Space`] where the fold check stops (no level or depth
+    /// helps, [`Tile::fold_stops`]) or at the deepest split.
     fn normal_cone_at(&self, like: &S) -> Result<NormalCone, ConeFail> {
-        if self.degenerate() {
-            return Err(ConeFail::Space);
-        }
         let n = Patch::normal_numerator(self, like).expect("a biquadratic numerator");
-        cone_in_space(n)
+        cone_in_space(self.fold_of(n).ok_or(ConeFail::Space)?).0
     }
 
     /// [`Tile::normal_cone`]: escalated and cached.
@@ -508,6 +683,74 @@ impl<S: Scalar + 'static> Patch<S> for Tile {
     /// [`Closest::patch`] on the stored net.
     fn closest(&self, x: [f64; 3], like: &S) -> Option<Closest<S>> {
         Closest::patch(DEGREE, DEGREE, &self.net, x, like)
+    }
+}
+
+/// The fold check's exact part on the exact net `exact` with the
+/// declared singular sides `sides` ([`Tile::singular_proof`]).
+fn check_fold(exact: &HomPatch<Rational>, sides: Sides) -> Fold {
+    let mut lines = sides.iter().count() as u32;
+    let proof = if sides.is_empty() {
+        None
+    } else {
+        match exact.singular_sides(sides) {
+            Some(p) => Some(p),
+            None => {
+                return Fold {
+                    proof: None,
+                    lines,
+                    full: false,
+                };
+            }
+        }
+    };
+    let mut line: [Option<[Poly<Rational>; 3]>; 4] = Default::default();
+    let mut zero = false;
+    let mut full = false;
+    for su in [Side::U0, Side::U1] {
+        for sv in [Side::V0, Side::V1] {
+            let (du, dv) = (sides.contains(su), sides.contains(sv));
+            // The line read and the place on it, counted from the
+            // end at the other side.
+            let (on, from, at) = match (du, dv) {
+                (false, false) => (su, sv, 0),
+                (false, true) => (su, sv, 1),
+                (true, false) => (sv, su, 1),
+                (true, true) => {
+                    full = true;
+                    continue;
+                }
+            };
+            let l = line[on as usize].get_or_insert_with(|| {
+                lines += 1;
+                exact
+                    .side_numerator(on)
+                    .expect("a biquadratic patch's numerator is within the degree limit")
+            });
+            zero |= l.iter().all(|p| {
+                let c = p.coefs();
+                let k = if from.at_one() { c.len() - 1 - at } else { at };
+                c[k] == 0u32
+            });
+        }
+    }
+    if full {
+        let n = exact
+            .normal_numerator()
+            .expect("a biquadratic patch's numerator is within the degree limit");
+        let q = proof
+            .expect("two singular sides")
+            .quotient(&n)
+            .expect("the proven patch's numerator");
+        let (m, k) = q[0].degrees();
+        zero |= [(0, 0), (0, k), (m, 0), (m, k)]
+            .into_iter()
+            .any(|(i, j)| q.iter().all(|f| *f.get(i, j) == 0u32));
+    }
+    Fold {
+        proof: if zero { None } else { Some(proof) },
+        lines,
+        full,
     }
 }
 
@@ -536,18 +779,22 @@ impl fmt::Debug for Tile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Tile")
             .field("net", &self.net)
+            .field("sides", &self.sides)
             .finish_non_exhaustive()
     }
 }
 
-/// Tiles are equal when their nets are, bit for bit.
+/// Tiles are equal when their nets are, bit for bit, and their declared
+/// singular sides.
 impl PartialEq for Tile {
     fn eq(&self, o: &Self) -> bool {
-        self.net
-            .iter()
-            .flatten()
-            .zip(o.net.iter().flatten())
-            .all(|(a, b)| a.to_bits() == b.to_bits())
+        self.sides == o.sides
+            && self
+                .net
+                .iter()
+                .flatten()
+                .zip(o.net.iter().flatten())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
     }
 }
 
@@ -587,15 +834,19 @@ fn corner(u: f64, v: f64) -> Option<(usize, usize)> {
     Some((end(u)?, end(v)?))
 }
 
-/// One level of the cone search: the cone in space at the level, asking
-/// for the next while rounding decides.
+/// One level of the cone search: the cone in space at the level of the
+/// numerator the fold check reads, asking for the next while rounding
+/// decides; the pieces tested in the level's slot.
 struct ConeStep<'a>(&'a Tile);
 
-impl AtLevel<()> for ConeStep<'_> {
+impl AtLevel<u64> for ConeStep<'_> {
     type Out = Result<(NormalCone, Level), ConeFail>;
 
-    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) -> Self::Out {
-        cone_in_space(numerator(&self.0.framed(like))).map(|c| (c, like.level()))
+    fn at<S: LevelScalar>(&mut self, like: &S, pieces: &mut u64) -> Self::Out {
+        let n = self.0.fold_numerator_at(like).ok_or(ConeFail::Space)?;
+        let (out, tested) = cone_in_space(n);
+        *pieces = tested;
+        out.map(|c| (c, like.level()))
     }
 
     fn escalates(out: &Self::Out) -> bool {
@@ -607,19 +858,21 @@ impl AtLevel<()> for ConeStep<'_> {
 /// coefficients spread too far (module docs): the whole numerator about
 /// the axis of the coefficients' smallest cone, then all pieces of each
 /// depth about their mean direction, up to [`MAX_CONE_DEPTH`]. Stops at
-/// the first failure rounding decides.
-fn cone_in_space<S: Scalar>(n: [Tensor<S>; 3]) -> Result<NormalCone, ConeFail> {
+/// the first failure rounding decides. With the pieces tested.
+fn cone_in_space<S: Scalar>(n: [Tensor<S>; 3]) -> (Result<NormalCone, ConeFail>, u64) {
     let mut pieces = vec![n];
     let mut depth = 0;
+    let mut tested = 0u64;
     loop {
         let axis = if depth == 0 {
             Axis::Smallest
         } else {
             Axis::Mean
         };
+        tested += pieces.len() as u64;
         match NormalCone::of_forms(&pieces, axis) {
             Err(ConeFail::Space) if depth < MAX_CONE_DEPTH => {}
-            out => return out,
+            out => return (out, tested),
         }
         depth += 1;
         pieces = pieces.iter().flat_map(|p| split_both(p)).collect();
@@ -644,6 +897,87 @@ fn split_both<S: Scalar>(n: &[Tensor<S>; 3]) -> [[Tensor<S>; 3]; 4] {
 fn numerator<S: Scalar>(p: &HomPatch<S>) -> [Tensor<S>; 3] {
     p.normal_numerator()
         .expect("a biquadratic patch's numerator is within the degree limit")
+}
+
+/// Hooks for the unit table's calibration benchmark
+/// (`crates/kernel/benches/calibrate.rs`), which times the fold check's
+/// exact part and the cone search per precision level against the units
+/// charged for them ([`ConeWork`]), on fixtures it shares with this
+/// module's tests. Not part of the kernel's interface.
+#[doc(hidden)]
+pub mod calibration {
+    use super::*;
+
+    /// An octant of the unit sphere, its pole row at `v = 0` declared
+    /// singular: the exact part forms three lines, the search divides
+    /// the numerator by `v`.
+    pub fn pole() -> Tile {
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = [(1.0, 0.0, 1.0), (1.0, 1.0, s), (0.0, 1.0, 1.0)];
+        let net = std::array::from_fn(|k| {
+            let ((cu, su, wu), (cv, sv, wv)) = (arc[k / 3], arc[k % 3]);
+            [sv * cu, sv * su, cv, wu * wv]
+        });
+        Tile::new(net)
+            .expect("a valid net")
+            .with_singular(Side::V0.into())
+    }
+
+    /// A plane tile folding over in `u`: no cone at any depth, every
+    /// piece of every depth tested (`1 + 4 + 16 + 64`).
+    pub fn folded() -> Tile {
+        let xs = [0.0, 2.0, 1.0];
+        Tile::new(std::array::from_fn(|k| {
+            [xs[k / 3], (k % 3) as f64, 0.0, 1.0]
+        }))
+        .expect("a valid net")
+    }
+
+    /// `x = (u·v, u·v², u²·v)` with its sides `u = 0` and `v = 0`
+    /// declared singular: the exact part forms the whole numerator.
+    pub fn corner() -> Tile {
+        let (a, b) = ([0.0, 0.5, 1.0], [0.0, 0.0, 1.0]);
+        let net = std::array::from_fn(|k| {
+            let (i, j) = (k / 3, k % 3);
+            [a[i] * a[j], a[i] * b[j], b[i] * a[j], 1.0]
+        });
+        Tile::new(net)
+            .expect("a valid net")
+            .with_singular(Sides::NONE.with(Side::U0).with(Side::V0))
+    }
+
+    /// The fold check's exact part run afresh on `tile`: the lines
+    /// formed and whether the whole numerator was.
+    pub fn fold_check(tile: &Tile) -> (u32, bool) {
+        let f = check_fold(&tile.exact(), tile.sides);
+        (f.lines, f.full)
+    }
+
+    /// The cone search at precision level `level` (from 0) run afresh on
+    /// `tile`, its numerator formed there: the pieces tested; `None` for
+    /// a level the schedule doesn't have or where the fold check stops.
+    pub fn search_at(tile: &Tile, level: usize) -> Option<u64> {
+        let level = Level::from_index(level)?;
+        let mut pieces = 0;
+        at_level(&mut Search(tile), level, &mut pieces)?;
+        Some(pieces)
+    }
+
+    struct Search<'a>(&'a Tile);
+
+    impl AtLevel<u64> for Search<'_> {
+        type Out = Option<()>;
+
+        fn at<S: LevelScalar>(&mut self, like: &S, pieces: &mut u64) -> Option<()> {
+            let n = self.0.fold_numerator_at(like)?;
+            *pieces = cone_in_space(n).1;
+            Some(())
+        }
+
+        fn escalates(_: &Option<()>) -> bool {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

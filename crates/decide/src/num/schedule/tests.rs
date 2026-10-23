@@ -80,7 +80,8 @@ fn promotion_up_the_schedule_is_exact() {
 /// each of its stages, a later stage dearer than the filter. The
 /// operand scan prices a position and a net, the net dearer; a form key
 /// settles exactly at no less than its top level; a tree's leaf built
-/// costs more than a box tested.
+/// costs more than a box tested; a fold check's whole exact numerator
+/// more than one of its lines, a level's numerator more than a piece.
 #[test]
 fn the_unit_table_grows_with_the_level() {
     let r = &UNITS.record;
@@ -97,6 +98,8 @@ fn the_unit_table_grows_with_the_level() {
         ("at end", r.at_end),
         ("z-order box", r.zorder_box),
         ("form key level", UNITS.form_key.level),
+        ("fold level", UNITS.fold.level),
+        ("fold piece", UNITS.fold.piece),
     ] {
         assert!(row[0] > 0, "{kind}: {row:?}");
         assert!(row.windows(2).all(|w| w[0] <= w[1]), "{kind}: {row:?}");
@@ -124,6 +127,14 @@ fn the_unit_table_grows_with_the_level() {
     assert!(
         bvh.hit > 0 && bvh.build > bvh.test && bvh.test > 0,
         "{bvh:?}"
+    );
+    // The fold check's exact part costs something, the whole numerator
+    // more than one of its lines; a level's numerator more than a piece.
+    let fold = UNITS.fold;
+    assert!(fold.line > 0 && fold.full > fold.line, "{fold:?}");
+    assert!(
+        (0..LEVELS).all(|l| fold.level[l] > fold.piece[l]),
+        "{fold:?}"
     );
 }
 

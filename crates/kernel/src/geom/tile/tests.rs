@@ -381,9 +381,14 @@ fn octant() -> Tile {
     Tile::new(net).unwrap()
 }
 
+/// Undeclared, a pole row stops the fold check (the exact numerator is
+/// zero at its corners): no cone at any level.
 #[test]
-fn a_singular_side_is_not_regular() {
+fn an_undeclared_singular_side_is_not_regular() {
     let tile = octant();
+    assert_eq!(tile.singular(), Sides::NONE);
+    assert!(tile.fold_stops());
+    assert_eq!(tile.singular_proof(), None);
     assert!(!tile.is_regular());
     assert_eq!(tile.normal_cone_level(), None);
     assert_eq!(tile.normal_cone_at(&Q::from(0u32)), None);
@@ -391,9 +396,177 @@ fn a_singular_side_is_not_regular() {
         tile.normal_cone_at(&Bounded::exact(Dd::from_f64(0.0))),
         None
     );
+    // No level was tried; the corners' lines were formed.
+    let work = tile.cone_work();
+    assert_eq!(work.pieces, [0; LEVELS]);
+    assert_eq!((work.exact_lines, work.exact_full), (2, false));
     // Away from the pole the same sphere is regular.
     let [_, upper] = tile.split_half(Dir::V).unwrap();
     assert!(upper.is_regular());
+}
+
+/// Declared, the pole row is proven singular on the exact net and
+/// divided out: the tile is regular, its cone holding every normal
+/// inside and the pole's normal, the quotient's limit there.
+#[test]
+fn a_declared_singular_side_is_regular() {
+    let tile = octant().with_singular(Side::V0.into());
+    assert_eq!(tile.singular(), Side::V0.into());
+    assert!(!tile.fold_stops());
+    let proof = tile.singular_proof().expect("a proven side");
+    assert_eq!(proof.sides(), Side::V0.into());
+    let c = tile.normal_cone().expect("regular");
+    assert!(tile.is_regular());
+    cone_is_consistent(&c);
+    // Every normal off the pole row (where `x_u × x_v` is zero).
+    let e = exact(&tile);
+    let mut rng = Rng::new(3);
+    let ps = params(&mut rng);
+    for &u in ps.iter().chain(&[0.0, 1.0]) {
+        for &v in ps.iter().chain(&[1.0 / (1u64 << 40) as f64, 1.0]) {
+            if v > 0.0 {
+                assert!(in_cone(&c, &normal(&e, u, v)), "({u}, {v})");
+            }
+        }
+    }
+    // The exact quotient's coefficients lie in the cone too, and with
+    // them its values on the pole row, the normal's limit there.
+    let [x, y, z] = tile
+        .fold_numerator_at(&Q::from(0u32))
+        .unwrap()
+        .map(|f| f.coefs().to_vec());
+    assert_eq!(x.len(), 6 * 5);
+    for m in 0..x.len() {
+        assert!(in_cone(&c, &[x[m].clone(), y[m].clone(), z[m].clone()]));
+    }
+    // Every level certifies it alike.
+    assert!(tile.normal_cone_at(&Q::from(0u32)).is_some());
+    assert!(cone_at(&tile, Level::L1).is_some());
+    // A declared side that isn't singular (the equator) stops the check.
+    let wrong = octant().with_singular(Side::V1.into());
+    assert!(wrong.fold_stops());
+    assert!(!wrong.is_regular());
+    assert_eq!(wrong.normal_cone_at(&Q::from(0u32)), None);
+    // Equal nets with other sides are other tiles.
+    assert_ne!(tile, octant());
+    assert_eq!(tile, octant().with_singular(Side::V0.into()));
+}
+
+/// The pole row stays declared on the halves it bounds, and both
+/// halves are regular.
+#[test]
+fn splits_keep_the_singular_sides_they_bound() {
+    let tile = octant().with_singular(Side::V0.into());
+    let [lo, hi] = tile.split_half(Dir::V).unwrap();
+    assert_eq!(
+        (lo.singular(), hi.singular()),
+        (Side::V0.into(), Sides::NONE)
+    );
+    let [a, b] = tile.split_half(Dir::U).unwrap();
+    assert_eq!(
+        (a.singular(), b.singular()),
+        (Side::V0.into(), Side::V0.into())
+    );
+    for t in [lo, hi, a, b] {
+        assert!(t.is_regular(), "{t:?}");
+    }
+    // The transposed octant, its pole row at `u = 0`.
+    let net = *octant().net();
+    let t = Tile::new(std::array::from_fn(|k| net[3 * (k % 3) + k / 3]))
+        .unwrap()
+        .with_singular(Side::U0.into());
+    assert!(t.is_regular());
+    let [lo, hi] = t.split_half(Dir::U).unwrap();
+    assert_eq!(
+        (lo.singular(), hi.singular()),
+        (Side::U0.into(), Sides::NONE)
+    );
+}
+
+/// A corner between two singular sides reads the whole exact quotient:
+/// on `x = (u·v, u·v², u²·v)` the rows `u = 0` and `v = 0` are each one
+/// point and `x_u × x_v = u·v·(−3u·v, u, v)`, whose quotient is zero at
+/// that corner, so the check stops there.
+#[test]
+fn a_corner_between_two_singular_sides_reads_the_whole_quotient() {
+    // The Bernstein coefficients of `t` and `t²`.
+    let (a, b) = ([0.0, 0.5, 1.0], [0.0, 0.0, 1.0]);
+    let net = std::array::from_fn(|k| {
+        let (i, j) = (k / 3, k % 3);
+        affine(DVec3::new(a[i] * a[j], a[i] * b[j], b[i] * a[j]), 1.0)
+    });
+    let t = Tile::new(net).unwrap();
+    let both = t.with_singular(Sides::NONE.with(Side::U0).with(Side::V0));
+    assert!(exact(&both).singular_sides(both.singular()).is_some());
+    assert!(both.fold_stops());
+    assert!(!both.is_regular());
+    let work = both.cone_work();
+    assert!(work.exact_full, "{work:?}");
+    assert_eq!(work.pieces, [0; LEVELS]);
+}
+
+/// The charges of a cone search, in order.
+#[derive(Default)]
+struct Record(Vec<(Step, u64)>);
+
+impl Charge for Record {
+    type Err = std::convert::Infallible;
+
+    fn charge(&mut self, step: Step, units: u64) -> Result<(), Self::Err> {
+        self.0.push((step, units));
+        Ok(())
+    }
+}
+
+/// The cone search charges its work: the exact lines, then each level it
+/// ran at, its numerator and pieces, as a precision step above the
+/// first; the same on every call, cached or not, and on every copy.
+#[test]
+fn the_cone_search_is_charged_by_its_work() {
+    let needle = plane_tile([1.0 / (1u64 << 60) as f64, 0.5, 1.0]);
+    let xs = [0.0, 2.0, 1.0];
+    let fold = Tile::new(std::array::from_fn(|k| {
+        affine(DVec3::new(xs[k / 3], (k % 3) as f64, 0.0), 1.0)
+    }))
+    .unwrap();
+    let u = UNITS.fold;
+    for tile in [
+        needle,
+        fold,
+        octant(),
+        octant().with_singular(Side::V0.into()),
+        plane_tile([1.0, -0.9, 1.0]),
+    ] {
+        let fresh = Tile::new(*tile.net())
+            .unwrap()
+            .with_singular(tile.singular());
+        let mut first = Record::default();
+        let Ok(cone) = fresh.normal_cone_charged(&mut first);
+        let mut again = Record::default();
+        let Ok(cached) = fresh.normal_cone_charged(&mut again);
+        assert_eq!((cone, &first.0), (cached, &again.0));
+        assert_eq!(cone, tile.normal_cone());
+        let w = fresh.cone_work();
+        assert_eq!(w, tile.cone_work());
+        let mut want = vec![(Step::Work, u64::from(w.exact_lines) * u.line)];
+        for (l, &p) in w.pieces.iter().enumerate() {
+            if p > 0 {
+                want.push((level_step(l as u8), u.level[l] + p * u.piece[l]));
+            }
+        }
+        assert_eq!(first.0, want, "{tile:?}");
+    }
+    // The needle: one piece at the first level, which rounding decides,
+    // then double-double.
+    let w = plane_tile([1.0 / (1u64 << 60) as f64, 0.5, 1.0]).cone_work();
+    assert_eq!(w.pieces[..3], [1, 1, 0]);
+    // The fold: every depth at the first level, `1 + 4 + 16 + 64`.
+    let w = Tile::new(std::array::from_fn(|k| {
+        affine(DVec3::new(xs[k / 3], (k % 3) as f64, 0.0), 1.0)
+    }))
+    .unwrap()
+    .cone_work();
+    assert_eq!(w.pieces, [85, 0, 0, 0, 0]);
 }
 
 #[test]
@@ -692,6 +865,7 @@ fn the_patch_trait_is_the_tiles_operations() {
     let dd = Bounded::exact(Dd::ZERO);
     let mut all: Vec<Tile> = tiles(5).into_iter().map(|(t, _)| t).collect();
     all.push(octant());
+    all.push(octant().with_singular(Side::V0.into()));
     all.push(plane_tile([1.0 / (1u64 << 60) as f64, 0.5, 1.0]));
     for tile in &all {
         first_level_members(tile);

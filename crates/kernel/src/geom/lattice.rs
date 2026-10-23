@@ -76,7 +76,16 @@
 //! quadratic irrationals, rounded once all the same). So a corner of a
 //! cylinder's or sphere's tile is its rounded point, and a sphere's pole
 //! row and a cone's or spindle torus's apex row are one point to the
-//! bit. A boundary row is the same exact values
+//! bit.
+//!
+//! **Singular sides.** Those rows on the axis (a sphere's poles, a
+//! cone's apex, a spindle torus's apexes, a revolved conic's poles and
+//! apexes where a span ends on the axis) are declared singular sides of
+//! their tiles ([`Lattice::singular`]; [`Tile::with_singular`]), on the
+//! tiles of every level whose cell reaches the row: the fold check
+//! proves them on the exact net and divides their factors out of the
+//! normal numerator, so these tiles certify regular. An affine image's
+//! are its source's. A boundary row is the same exact values
 //! in both cells beside it, so neighbours share it bit for bit, weights
 //! included, and every cell of one key is the same bits on every surface.
 //!
@@ -151,7 +160,7 @@ use std::ops::{Range, RangeInclusive};
 
 use malachite::Rational;
 use malachite::base::num::basic::traits::One;
-use varde_decide::bezier::{Dir, HomPatch};
+use varde_decide::bezier::{Dir, HomPatch, Side, Sides};
 
 use super::form::{FormKey, dot};
 use super::forms::{affine as image, cone, cyl, plane, revolved, sphere, torus};
@@ -499,7 +508,47 @@ impl Lattice {
                 None => unreachable!("an affine image's lattice has its source's"),
             },
         };
-        Ok(Tile::new(net)?)
+        Ok(Tile::new(net)?.with_singular(self.singular(l)))
+    }
+
+    /// The declared singular sides of the base cells `(k, l)`, the same
+    /// for every `k` (module docs): a sphere's latitude −1's first `v`
+    /// row and latitude 0's last, a cone's slant cell 0's first, a
+    /// spindle torus's tube cell −1's first and 0's last, a revolved
+    /// conic's span's end rows where the span ends on the axis (`ρ = 0`),
+    /// an affine image's its source's; none on other forms and cells.
+    pub fn singular(&self, l: i64) -> Sides {
+        if let Some(src) = &self.source {
+            return src.singular(l);
+        }
+        let none = Sides::NONE;
+        let ends = match &self.key {
+            FormKey::Cone(_) => return if l == 0 { Side::V0.into() } else { none },
+            FormKey::Sphere(_) => true,
+            FormKey::Torus(t) => torus::spindle(t),
+            FormKey::Revolved(r) => {
+                let Some(span) = usize::try_from(l)
+                    .ok()
+                    .and_then(|l| r.profile().spans().get(l))
+                else {
+                    return none;
+                };
+                let mut s = none;
+                if span[0][0] == 0.0 {
+                    s = s.with(Side::V0);
+                }
+                if span[2][0] == 0.0 {
+                    s = s.with(Side::V1);
+                }
+                return s;
+            }
+            _ => false,
+        };
+        match l {
+            -1 if ends => Side::V0.into(),
+            0 if ends => Side::V1.into(),
+            _ => none,
+        }
     }
 
     /// The tile `(i, j)` of `level`: its base tile's exact sub-patch,
@@ -517,7 +566,8 @@ impl Lattice {
             return Ok(base);
         }
         let t = descend(base.exact(), Dir::U, level.u, i);
-        Ok(Tile::rounded(&descend(t, Dir::V, level.v, j))?)
+        let sides = within(base.singular(), level, i, j);
+        Ok(Tile::rounded(&descend(t, Dir::V, level.v, j))?.with_singular(sides))
     }
 
     /// The tiles of `rect`, row-major in `u` (tile `(i, j)` at
@@ -552,7 +602,8 @@ impl Lattice {
                         // Below `count` by construction: i and j lie in
                         // the rectangle.
                         let at = i.abs_diff(rect.u.start) * nv + j.abs_diff(rect.v.start);
-                        out[at as usize] = Some(Tile::rounded(&t)?);
+                        let sides = within(base.singular(), rect.level, i, j);
+                        out[at as usize] = Some(Tile::rounded(&t)?.with_singular(sides));
                     }
                 }
             }
@@ -731,6 +782,27 @@ impl Lattice {
             FormKey::Affine(_) => unreachable!("an affine image's lattice has its source's"),
         })
     }
+}
+
+/// The singular sides `base` of a base cell that tile `(i, j)` of
+/// `level` in it reaches: a side at 0 where the index's low bits are all
+/// 0, at 1 where they are all 1.
+fn within(base: Sides, level: Level, i: i64, j: i64) -> Sides {
+    let low = |x: i64, l: u32| x & ((1i64 << l) - 1);
+    let full = |l: u32| (1i64 << l) - 1;
+    base.iter()
+        .filter(|&s| {
+            let (x, l) = match s.dir() {
+                Dir::U => (i, level.u),
+                Dir::V => (j, level.v),
+            };
+            if s.at_one() {
+                low(x, l) == full(l)
+            } else {
+                low(x, l) == 0
+            }
+        })
+        .collect()
 }
 
 /// The deepest level up to [`MAX_LEVEL`] whose cells' chord along `run`
