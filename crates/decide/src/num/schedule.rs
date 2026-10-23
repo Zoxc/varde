@@ -234,6 +234,25 @@ pub struct Units {
     /// The near/far distance certificate of a square of the kernel's
     /// label audit, in parts.
     pub audit: AuditUnits,
+    /// An operation's scan of its operands' stored values at its start
+    /// ([`OperandScan`](super::storage::OperandScan)), in parts.
+    pub operand_scan: ScanUnits,
+}
+
+/// The parts of a unit ([`UNIT_PARTS`]) of each value an operation's
+/// start scan of its operands visits ([`ScanSize`](super::storage::ScanSize)):
+/// a few comparisons each, so a body's scan charges the sum of its
+/// parts, rounded up to whole units once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanUnits {
+    /// A stored position or an entity's few values: a vertex (its
+    /// position and tolerance), an edge (its range and tolerance), a
+    /// control point of a curve or p-curve (with its weight and knot), a
+    /// surface's form (its lattice's origin and axes, its key's points,
+    /// directions and radius).
+    pub position: u64,
+    /// A tile's net of control points and weights.
+    pub net: u64,
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of each piece of the near/far
@@ -333,7 +352,8 @@ impl RecordUnits {
 /// the filter, exactly degenerate ones for the expansions, degenerate
 /// ones scaled far below unit size for the rationals. The label audit's
 /// pieces are measured on squares of a plane face against cuboids'
-/// triangles.
+/// triangles; the operand scan's on bodies of many vertices and line
+/// edges, and of many planes' tiles.
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     count_piece: [9, 10, 40, 40, 48],
@@ -387,6 +407,10 @@ pub const UNITS: Units = Units {
         test: 1,
         triangle: 840,
         ribbon: 192,
+    },
+    operand_scan: ScanUnits {
+        position: 1,
+        net: 8,
     },
 };
 

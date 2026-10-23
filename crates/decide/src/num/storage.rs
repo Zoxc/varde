@@ -43,7 +43,9 @@
 //! These two, with a repair that fails, are the only ways a result is
 //! unrepresentable; each carries its evidence (the value and its
 //! magnitude, or `ε` and the floor). The scan's largest magnitude `M`
-//! over the bounded positions fixes `ρ_op`.
+//! over the bounded positions fixes `ρ_op`. The scan is a charged loop
+//! of the operation's work: one step per stored position and per tile
+//! net it visits, at the unit table's operand-scan row ([`ScanSize`]).
 //!
 //! **`ρ_op`** ([`rho_op`]): the first level's rounding bound of a seam
 //! evaluation (end weights about 1, no frame) at `M`: [`SEAM_OPS`]
@@ -72,6 +74,7 @@ use super::bounded::{Bounded, U, add_up, mul_up, up};
 use super::exact::rat;
 use super::expansion::two_sum;
 use super::level::LevelScalar;
+use super::schedule::{UNIT_PARTS, UNITS};
 
 /// The largest coordinate magnitude of a body's bounded positions (mm).
 pub const MAX_COORD: f64 = 1e6;
@@ -363,6 +366,14 @@ impl OperandScan {
         OperandScan::default()
     }
 
+    /// Adds a scan of other operands, as if visited after this one's:
+    /// `M` the greater of the two.
+    pub fn merge(&mut self, other: &OperandScan) {
+        if other.max > self.max {
+            self.max = other.max;
+        }
+    }
+
     /// A bounded position (a vertex position, a space curve's control
     /// point): finite and within [`MAX_COORD`].
     pub fn bounded(&mut self, p: &[f64]) -> Result<(), Unrepresentable> {
@@ -406,6 +417,31 @@ impl OperandScan {
             max_coord: self.max,
             rho_op,
         })
+    }
+}
+
+/// The values an operand's start scan visits ([`OperandScan`]), as its
+/// charge counts them: the stored positions and an entity's few values
+/// ([`ScanUnits::position`](super::schedule::ScanUnits::position)), and
+/// the tile nets.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanSize {
+    /// The positions.
+    pub positions: u64,
+    /// The tile nets.
+    pub nets: u64,
+}
+
+impl ScanSize {
+    /// The units of the scan: its positions' and nets' parts at the unit
+    /// table's operand-scan row, summed and rounded up to whole units
+    /// once (saturating, past any budget).
+    pub fn units(&self) -> u64 {
+        let u = UNITS.operand_scan;
+        self.positions
+            .saturating_mul(u.position)
+            .saturating_add(self.nets.saturating_mul(u.net))
+            .div_ceil(UNIT_PARTS)
     }
 }
 

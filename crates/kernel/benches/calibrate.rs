@@ -69,6 +69,10 @@ use varde_kernel::boolean::classify::{AuditInput, AuditRegion, Bands, Cover, Lea
 use varde_kernel::geom::certify::SeamBound;
 use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
 use varde_kernel::geom::curve::{Curve3D, PCurve};
+use varde_kernel::geom::form::PlaneKey;
+use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
+use varde_kernel::geom::surface::Surface;
+use varde_kernel::topo::brep_min::{Brep, calibration as scan};
 
 /// The time one unit stands for, in nanoseconds.
 const UNIT_NS: f64 = 500.0;
@@ -106,6 +110,7 @@ fn main() -> ExitCode {
         record_rows(budget, &mut rows);
         record_kind_rows(budget, &mut rows);
         audit_rows(budget, &mut rows);
+        scan_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -1814,4 +1819,74 @@ fn audit_rows(budget: Duration, rows: &mut Vec<Row>) {
             units: units as f64 / 3.0,
         });
     }
+}
+
+// ---------------------------------------------------------------------
+// Operand scan.
+
+/// The operation-start scan of an operand, per position and per net: a
+/// body of 4096 vertices on a helix joined by line edges (a vertex, an
+/// edge and its curve's three control points a link), scanned whole and
+/// timed against its units per position; then a body of 16 planes of 256
+/// tiles each, the time of its positions (a form each) at the first
+/// row's taken off, timed per net.
+fn scan_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let u = UNITS.operand_scan;
+    let n = 4096;
+    let mut chain = Brep::new();
+    let verts: Vec<VertId> = (0..n)
+        .map(|k| {
+            let a = k as f64 / 64.0;
+            let p = [100.0 * trig::cos(a), 100.0 * trig::sin(a), k as f64 / 8.0];
+            chain.add_vert(p).expect("a vertex")
+        })
+        .collect();
+    for w in verts.windows(2) {
+        let (a, z) = (chain.pos(w[0]), chain.pos(w[1]));
+        let mid = [0, 1, 2].map(|k| a[k] * 0.5 + z[k] * 0.5);
+        let line = vec![[
+            [a[0], a[1], a[2], 1.0],
+            [mid[0], mid[1], mid[2], 1.0],
+            [z[0], z[1], z[2], 1.0],
+        ]];
+        let c = chain
+            .add_curve(Curve3D::new(line, vec![0.0, 1.0]).expect("a line"))
+            .expect("a curve");
+        chain.add_edge(c, [0.0, 1.0], w[0], w[1]).expect("an edge");
+    }
+    let mut planes = Brep::new();
+    for k in 0..16 {
+        let key = PlaneKey::new([0.0, 0.0, 1.0], [0.0, 0.0, k as f64]).expect("a plane");
+        let lat = Lattice::new(key.into()).expect("a lattice");
+        let rect = Rect {
+            level: TileLevel { u: 4, v: 4 },
+            u: 0..16,
+            v: 0..16,
+        };
+        let s = Surface::new(lat, rect).expect("a surface");
+        planes.add_surface(s).expect("a surface added");
+    }
+    let timed = |b: &Brep| {
+        let (out, units) = scan::op_start_on(&[b], 1e-3, MAX_WORK);
+        assert!(out.is_ok(), "the body passes its scan");
+        assert_eq!(units, b.scan_size().units());
+        time(budget, || {
+            let _ = black_box(scan::op_start_on(&[b], 1e-3, MAX_WORK));
+            1
+        })
+    };
+    let size = chain.scan_size();
+    let per = timed(&chain) / size.positions as f64;
+    rows.push(Row {
+        kind: "operand scan position".into(),
+        ns: per,
+        units: u.position as f64 / UNIT_PARTS as f64,
+    });
+    let size = planes.scan_size();
+    let ns = timed(&planes) - per * size.positions as f64;
+    rows.push(Row {
+        kind: "operand scan net".into(),
+        ns: ns / size.nets as f64,
+        units: u.net as f64 / UNIT_PARTS as f64,
+    });
 }

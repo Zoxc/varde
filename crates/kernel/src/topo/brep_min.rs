@@ -63,10 +63,10 @@ use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::{Curve3D, PCurve, Span3};
 use crate::geom::form::FormKey;
 use crate::geom::surface::Surface;
-use crate::infra::budget::{Halt, Pass, Work};
+use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
 
-use varde_decide::num::storage::{OpStart, OperandScan, Unrepresentable};
+use varde_decide::num::storage::{OpStart, OperandScan, ScanSize, Unrepresentable};
 use varde_decide::records::near::OpBands;
 
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
@@ -608,15 +608,53 @@ impl Brep {
             .fold(0.0, |m, x| if x > m { x } else { m })
     }
 
+    /// What the operation-start scan of the body visits, as its charge
+    /// counts it ([`ScanSize`]): a position per vertex, per edge, per
+    /// control point of a curve or p-curve and per surface's form; a net
+    /// per tile.
+    pub fn scan_size(&self) -> ScanSize {
+        let points = |spans: usize| spans.saturating_mul(3) as u64;
+        let curves: u64 = self.curves.iter().map(|c| points(c.spans().len())).sum();
+        let pcurves: u64 = self
+            .coedges
+            .pcurve
+            .iter()
+            .map(|p| points(p.spans().len()))
+            .sum();
+        let positions = [
+            self.verts.pos.len() as u64,
+            self.edges.curve.len() as u64,
+            self.surfaces.len() as u64,
+            curves,
+            pcurves,
+        ];
+        ScanSize {
+            positions: positions.iter().fold(0, |a, &b| a.saturating_add(b)),
+            nets: self.surfaces.iter().map(|s| s.tiles().len() as u64).sum(),
+        }
+    }
+
     /// The operation-start scan of the body's stored values, in a fixed
-    /// order ([`OperandScan`]): vertex positions and the control points of
-    /// the edges' curves are bounded positions (at most `MAX_COORD`); the
-    /// forms' key points (a lattice's origin, a cylinder's foot point, a
-    /// sphere's centre) are where they lie inside the box of those; every
-    /// other value (tolerances, curve weights and knots, p-curves, seam
-    /// bounds, the forms' directions and radii, the tiles' nets) need
-    /// only be finite. The first failing value is the error.
-    pub fn scan_storable(&self, scan: &mut OperandScan) -> Result<(), Unrepresentable> {
+    /// order ([`OperandScan`]), charged to `ledger` before it runs: the
+    /// units of its [`scan_size`](Self::scan_size), one step. Vertex
+    /// positions and the control points of the edges' curves are bounded
+    /// positions (at most `MAX_COORD`); the forms' key points (a
+    /// lattice's origin, a cylinder's foot point, a sphere's centre) are
+    /// where they lie inside the box of those; every other value
+    /// (tolerances, curve weights and knots, p-curves, seam bounds, the
+    /// forms' directions and radii, the tiles' nets) need only be finite.
+    /// The first failing value is the error.
+    pub(crate) fn scan_storable(
+        &self,
+        scan: &mut OperandScan,
+        ledger: &mut Ledger<'_>,
+    ) -> Result<(), Stop<Unrepresentable>> {
+        ledger.charge(Step::Work, self.scan_size().units())?;
+        self.scan_values(scan).map_err(Stop::Failed)
+    }
+
+    /// [`scan_storable`](Self::scan_storable)'s scan, uncharged.
+    fn scan_values(&self, scan: &mut OperandScan) -> Result<(), Unrepresentable> {
         let mut body = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
         let mut grow = |p: &[f64]| {
             for k in 0..3 {
@@ -786,16 +824,88 @@ impl Brep {
     }
 }
 
-/// An operation's start on its operands at tolerance `eps`: each
-/// operand scanned in turn ([`Brep::scan_storable`]), then the tolerance
-/// checked and `ρ_op` fixed at the operands' largest bounded magnitude
-/// ([`OperandScan::start`]).
-pub fn op_start(operands: &[&Brep], eps: f64) -> Result<OpStart, Unrepresentable> {
-    let mut scan = OperandScan::new();
-    for b in operands {
-        b.scan_storable(&mut scan)?;
+/// Why an operation can't start (`op_start`), with its evidence.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StartError {
+    /// Operand `index` holds a value that can't be stored: the first one
+    /// its scan visits, of the first such operand.
+    Operand {
+        /// The operand's position among the operation's.
+        index: usize,
+        /// The value and its magnitude ([`Unrepresentable::OutOfRange`]).
+        why: Unrepresentable,
+    },
+    /// The tolerance is below the storage floor at `MAX_COORD`
+    /// ([`Unrepresentable::Tolerance`]).
+    Tolerance(Unrepresentable),
+    /// The scan ran out of budget ([`KernelError::OutOfBudget`]).
+    OutOfBudget(KernelError),
+}
+
+impl From<StartError> for KernelError {
+    fn from(e: StartError) -> Self {
+        match e {
+            StartError::Operand { why, .. } | StartError::Tolerance(why) => why.into(),
+            StartError::OutOfBudget(e) => e,
+        }
     }
-    scan.start(eps)
+}
+
+/// An operation's start on its operands at tolerance `eps`: each
+/// operand scanned ([`Brep::scan_storable`]) in one pass of `work`, an
+/// item per operand in their order, then the tolerance checked and
+/// `ρ_op` fixed at the operands' largest bounded magnitude
+/// ([`OperandScan::start`]). The first operand failing its scan, or
+/// running out, is the error, as if scanned in turn.
+pub(crate) fn op_start(
+    operands: &[&Brep],
+    eps: f64,
+    work: &mut Work,
+) -> Result<OpStart, StartError> {
+    let pass = Pass {
+        stage: "operand scan",
+        rung: 0,
+    };
+    let scans = work
+        .pass(pass, operands, |b, ledger| {
+            let mut scan = OperandScan::new();
+            b.scan_storable(&mut scan, ledger)?;
+            Ok(scan)
+        })
+        .map_err(|halt| match halt {
+            Halt::Failed { item, error } => StartError::Operand {
+                index: item,
+                why: error,
+            },
+            Halt::OutOfBudget(e) => StartError::OutOfBudget(e),
+        })?;
+    let mut scan = OperandScan::new();
+    for s in &scans {
+        scan.merge(s);
+    }
+    scan.start(eps).map_err(StartError::Tolerance)
+}
+
+/// Hooks for the unit table's calibration benchmark
+/// (`crates/kernel/benches/calibrate.rs`), which times the operand scan
+/// against the units charged for it. Not part of the kernel's
+/// interface.
+#[doc(hidden)]
+pub mod calibration {
+    use super::*;
+    use crate::infra::budget::Budget;
+
+    /// The operation start (`op_start`) on a fresh budget of `budget`
+    /// units: its outcome and the units used.
+    pub fn op_start_on(
+        operands: &[&Brep],
+        eps: f64,
+        budget: u64,
+    ) -> (Result<OpStart, StartError>, u64) {
+        let mut work = Work::new(&Budget::new(budget));
+        let out = op_start(operands, eps, &mut work);
+        (out, work.used())
+    }
 }
 
 pub mod planar;

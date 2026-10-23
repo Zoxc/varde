@@ -292,3 +292,40 @@ fn translation_near_the_centre_is_exact() {
     }
     assert!(!translate(f64::MAX, -f64::MAX).is_certified());
 }
+
+#[test]
+fn scans_merge_to_the_greater_magnitude() {
+    let (mut a, mut b) = (OperandScan::new(), OperandScan::new());
+    a.bounded(&[3.0, -7.0, 0.0]).unwrap();
+    b.bounded(&[0.0, 5.0, 0.0]).unwrap();
+    let mut ab = a;
+    ab.merge(&b);
+    assert_eq!(ab.max_coord(), 7.0);
+    b.merge(&a);
+    assert_eq!(b.max_coord(), 7.0);
+    // As one scan visiting both.
+    let mut one = OperandScan::new();
+    one.bounded(&[3.0, -7.0, 0.0]).unwrap();
+    one.bounded(&[0.0, 5.0, 0.0]).unwrap();
+    assert_eq!(one, ab);
+}
+
+/// A scan's units are its positions' and nets' parts summed and rounded
+/// up once: nothing for an empty scan, a whole unit for one position,
+/// saturating past any budget.
+#[test]
+fn a_scan_charges_its_parts_rounded_up_once() {
+    use crate::num::schedule::{UNIT_PARTS, UNITS};
+    let u = UNITS.operand_scan;
+    let units = |positions, nets| ScanSize { positions, nets }.units();
+    assert_eq!(units(0, 0), 0);
+    assert_eq!(units(1, 0), 1);
+    assert_eq!(units(0, 1), 1);
+    let (p, n) = (1000, 37);
+    assert_eq!(
+        units(p, n),
+        (p * u.position + n * u.net).div_ceil(UNIT_PARTS)
+    );
+    assert!(units(p, n) <= units(p, 0) + units(0, n));
+    assert_eq!(units(u64::MAX, u64::MAX), u64::MAX.div_ceil(UNIT_PARTS));
+}

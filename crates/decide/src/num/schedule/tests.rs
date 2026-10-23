@@ -77,7 +77,8 @@ fn promotion_up_the_schedule_is_exact() {
 /// Every kind with levels costs at least as much at a level as at the one
 /// below, and something at each: a precision step is never free, nor
 /// cheaper than the computation it repeats. Every predicate kind prices
-/// each of its stages, a later stage dearer than the filter.
+/// each of its stages, a later stage dearer than the filter. The
+/// operand scan prices a position and a net, the net dearer.
 #[test]
 fn the_unit_table_grows_with_the_level() {
     let r = &UNITS.record;
@@ -102,6 +103,9 @@ fn the_unit_table_grows_with_the_level() {
     }
     assert!(r.rational > 0 && r.hit > 0);
     const { assert!(UNITS.face_setup > 0) };
+    // A net is a tile's nine control points: dearer than one position.
+    let scan = UNITS.operand_scan;
+    assert!(scan.position > 0 && scan.net > scan.position, "{scan:?}");
 }
 
 /// The kinds index their rows in order, each once.

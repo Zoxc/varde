@@ -1128,9 +1128,14 @@ fn the_half_cylinder_passes_the_planar_check() {
     assert_eq!(caps.len(), 2);
 }
 
+/// [`op_start`] on a fresh default budget.
+fn op_start_alone(operands: &[&Brep], eps: f64) -> Result<OpStart, StartError> {
+    op_start(operands, eps, &mut Work::new(&Budget::DEFAULT))
+}
+
 #[test]
 fn the_operation_start_range_checks_bounded_positions_only() {
-    use varde_decide::num::storage::{EPS_MIN_MAX_COORD, MAX_COORD, Unrepresentable, rho_op};
+    use varde_decide::num::storage::{EPS_MIN_MAX_COORD, MAX_COORD, rho_op};
 
     let f = half_cylinder(cylinder_pcurves());
     let b = &f.brep;
@@ -1147,32 +1152,93 @@ fn the_operation_start_range_checks_bounded_positions_only() {
             .flat_map(|p| &p[..3])
             .any(|x| x.abs() > MAX_COORD)
     );
-    let start = op_start(&[b, b], 1e-3).unwrap();
+    let start = op_start_alone(&[b, b], 1e-3).unwrap();
     assert_eq!(start.max_coord, b.max_coord());
     assert_eq!(start.rho_op, rho_op(R).unwrap());
 
     // Below the storage floor at `MAX_COORD`: the tolerance's cause.
+    let low = Unrepresentable::Tolerance {
+        eps: EPS_MIN_MAX_COORD / 2.0,
+        eps_min: EPS_MIN_MAX_COORD,
+    };
     assert_eq!(
-        op_start(&[b], EPS_MIN_MAX_COORD / 2.0),
-        Err(Unrepresentable::Tolerance {
-            eps: EPS_MIN_MAX_COORD / 2.0,
-            eps_min: EPS_MIN_MAX_COORD,
-        })
+        op_start_alone(&[b], EPS_MIN_MAX_COORD / 2.0),
+        Err(StartError::Tolerance(low))
+    );
+    assert_eq!(
+        KernelError::from(StartError::Tolerance(low)),
+        KernelError::Unrepresentable(crate::Storage::Tolerance)
     );
 
     // A vertex past `MAX_COORD` in the second operand: out of range,
-    // the value its evidence.
+    // the operand and the value its evidence, before the tolerance.
     let mut far = Brep::new();
     far.add_vert([0.0, -2.0 * MAX_COORD, 0.0]).unwrap();
+    let why = Unrepresentable::OutOfRange {
+        value: -2.0 * MAX_COORD,
+        magnitude: 2.0 * MAX_COORD,
+    };
     assert_eq!(
-        op_start(&[b, &far], 1e-3),
-        Err(Unrepresentable::OutOfRange {
-            value: -2.0 * MAX_COORD,
-            magnitude: 2.0 * MAX_COORD,
-        })
+        op_start_alone(&[b, &far, &far], EPS_MIN_MAX_COORD / 2.0),
+        Err(StartError::Operand { index: 1, why })
     );
     assert_eq!(
-        KernelError::from(op_start(&[&far], 1e-3).unwrap_err()),
+        KernelError::from(op_start_alone(&[&far], 1e-3).unwrap_err()),
         KernelError::Unrepresentable(crate::Storage::OutOfRange)
     );
 }
+
+/// The scan is charged its positions and nets: the half cylinder's 4
+/// vertices, 6 edges, 4 surfaces, 24 control points of its curves (two
+/// arcs of two spans, four lines) and 48 of its p-curves (16 coedges,
+/// the four on arcs of two spans), and its five tiles' nets (two on the
+/// cylinder, one per plane). Each operand is
+/// an item of the one "operand scan" pass, its parts rounded up on its
+/// own; a scan that fails is charged whole.
+#[test]
+fn the_operation_start_scan_is_charged_per_position_and_net() {
+    use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
+    use varde_decide::num::storage::MAX_COORD;
+
+    let f = half_cylinder(cylinder_pcurves());
+    let b = &f.brep;
+    let size = b.scan_size();
+    assert_eq!(size.positions, 4 + 6 + 4 + 24 + 48);
+    let nets: usize = b.surfaces.iter().map(|s| s.tiles().len()).sum();
+    assert_eq!(size.nets, nets as u64);
+    assert_eq!(nets, NETS);
+    let u = UNITS.operand_scan;
+    let one = (86 * u.position + NETS as u64 * u.net).div_ceil(UNIT_PARTS);
+    assert_eq!(size.units(), one);
+    assert_eq!(one, ONE_SCAN);
+
+    let mut work = Work::new(&Budget::DEFAULT);
+    op_start(&[b, b], 1e-3, &mut work).unwrap();
+    assert_eq!(work.used(), 2 * ONE_SCAN);
+
+    // A failing operand is charged its whole scan, the ones after it
+    // nothing.
+    let mut far = Brep::new();
+    far.add_vert([0.0, 2.0 * MAX_COORD, 0.0]).unwrap();
+    assert_eq!(far.scan_size().units(), 1);
+    let mut work = Work::new(&Budget::DEFAULT);
+    assert!(op_start(&[b, &far, b], 1e-3, &mut work).is_err());
+    assert_eq!(work.used(), ONE_SCAN + 1);
+
+    // Out of budget in the second operand's scan: the scan's stage and
+    // that item named.
+    let mut work = Work::new(&Budget::new(ONE_SCAN + 1));
+    match op_start(&[b, b], 1e-3, &mut work).map_err(KernelError::from) {
+        Err(KernelError::OutOfBudget { cause, profile }) => {
+            assert_eq!(cause, crate::Cause::Work);
+            assert_eq!(profile.stopped.stage, "operand scan");
+            assert_eq!(profile.stopped.at.item, 1);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The half cylinder's tiles, and the units of its scan at the unit
+/// table's prices.
+const NETS: usize = 5;
+const ONE_SCAN: u64 = 2;
