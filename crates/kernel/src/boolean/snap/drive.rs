@@ -128,7 +128,7 @@ impl Body {
     /// Face `f`'s key: its plane's.
     pub(crate) fn face_key(&self, f: FaceId) -> Key {
         FaceOrd {
-            form: Some(*self.brep.surface(f).lattice().key()),
+            form: Some(self.brep.surface(f).lattice().key().clone()),
             name: (),
         }
     }

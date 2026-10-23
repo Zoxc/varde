@@ -57,6 +57,7 @@ fn radius(key: &FormKey) -> f64 {
         FormKey::Plane(_) => 1.0,
         FormKey::Cylinder(c) => c.radius(),
         FormKey::Sphere(s) => s.radius(),
+        _ => unreachable!("a form with a lattice"),
     }
 }
 
@@ -81,7 +82,7 @@ fn on_form(key: &FormKey, t: &Tile, m: f64, rng: &mut Rng) -> f64 {
     for u in &ts {
         for v in &ts {
             let x = p.eval(u, v);
-            let f = key.implicit(&x).abs();
+            let f = key.implicit(&x).expect("an implicit").abs();
             let d = nearest(&(f / (&rho * &aa))) / m;
             worst = if d > worst { d } else { worst };
         }
@@ -106,7 +107,7 @@ fn cell_covers_the_coordinate_box() {
     // their offsets from the origin along u and v lie within CELL/2.
     for key in keys(1) {
         let FormKey::Plane(_) = key else { continue };
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         let [u, v, _] = l.axes();
         let o = l.origin();
         for c in 0..8 {
@@ -152,7 +153,7 @@ fn frames_follow_the_key() {
     );
     // Orthonormal to rounding.
     for key in keys(2) {
-        let axes = Lattice::new(key).unwrap().axes().map(|a| a.map(q));
+        let axes = Lattice::new(key.clone()).unwrap().axes().map(|a| a.map(q));
         for i in 0..3 {
             for j in 0..3 {
                 let want = Q::from(u32::from(i == j));
@@ -168,7 +169,7 @@ fn tiles_lie_on_their_forms() {
     let mut rng = Rng::new(4);
     let mut worst: f64 = 0.0;
     for key in keys(3) {
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         // The 180° surface, a cell further along each lattice direction.
         let mut cells = vec![(-3, 0)];
         let base = l.half(1).unwrap();
@@ -229,7 +230,7 @@ fn rows_shared(tiles: &[Tile], rect: &Rect) {
 #[test]
 fn neighbours_share_rows_to_the_bit() {
     for key in keys(5) {
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         for level in LEVELS {
             // A block straddling base-cell lines in both directions (less
             // than a turn in u).
@@ -269,7 +270,7 @@ fn angle_cells_repeat_every_full_turn() {
         if let FormKey::Plane(_) = key {
             continue;
         }
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         for level in [Level::BASE, Level { u: 2, v: 1 }] {
             for i in [-5, 0, 3, 7] {
                 let a = l.tile(level, i, 0).unwrap();
@@ -327,7 +328,7 @@ fn half_surfaces() {
 #[test]
 fn regular_where_no_pole() {
     for key in keys(7) {
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         let r = l.half(0).unwrap();
         for (n, t) in l.tiles(&r).unwrap().iter().enumerate() {
             match key {
@@ -382,12 +383,15 @@ fn regular_tiles_face_out_at_every_level() {
             };
             let i = (rng.next_u64() % (4 << level.u)) as i64 - (2 << level.u);
             let j = (rng.next_u64() % (2 << level.v)) as i64 - (1 << level.v);
-            cases.push((key, level, i, j));
+            cases.push((key.clone(), level, i, j));
         }
     }
     let dot = |a: &[Q; 3], b: &[Q; 3]| &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2];
     for (key, level, i, j) in cases {
-        let t = Lattice::new(key).unwrap().tile(level, i, j).unwrap();
+        let t = Lattice::new(key.clone())
+            .unwrap()
+            .tile(level, i, j)
+            .unwrap();
         let Some(c) = t.normal_cone() else { continue };
         let a = c.axis.map(q);
         let (aa, cos2) = (dot(&a, &a), q(c.cos) * q(c.cos));
@@ -416,6 +420,7 @@ fn regular_tiles_face_out_at_every_level() {
                 let o = k.centre().map(q);
                 std::array::from_fn(|k| &p[k] - &o[k])
             }
+            _ => unreachable!("a form with a lattice"),
         };
         assert!(
             dot(&a, &out) > 0u32,
@@ -468,7 +473,7 @@ fn deepest_levels_share_rows_and_repeat() {
     // levels: shared rows, `tiles` as `tile`, period 4 cells.
     let ks = keys(21);
     for key in ks.iter().take(varde_testing::pick(6, ks.len())) {
-        let l = Lattice::new(*key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         for level in [
             Level {
                 u: MAX_LEVEL,
@@ -520,7 +525,7 @@ fn local(i: i64, level: u32) -> Q {
 fn tiles_round_their_exact_sub_patch() {
     let mut rng = Rng::new(31);
     for key in keys(8).into_iter().take(varde_testing::pick(9, 21)) {
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         for level in [
             Level { u: 1, v: 1 },
             Level { u: 5, v: 2 },
@@ -572,7 +577,7 @@ fn tiles_round_their_exact_sub_patch() {
 #[test]
 fn rows_are_shared_at_levels_to_eight() {
     for key in keys(9).into_iter().take(varde_testing::pick(9, 21)) {
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         for lu in 0..=8 {
             let level = Level { u: lu, v: 8 - lu };
             let (hu, hv) = (1i64 << level.u, 1i64 << level.v);
@@ -598,7 +603,7 @@ fn rows_are_shared_at_levels_to_eight() {
 fn pole_rows_are_one_point() {
     for key in keys(10) {
         let FormKey::Sphere(s) = key else { continue };
-        let l = Lattice::new(key).unwrap();
+        let l = Lattice::new(key.clone()).unwrap();
         let (c, a, r) = (s.centre().map(q), s.axis().map(q), q(s.radius()));
         let pole = |sign: i32| -> [f64; 3] {
             std::array::from_fn(|k| nearest(&(&c[k] + Q::from(sign) * &r * &a[k])))
@@ -626,7 +631,7 @@ fn row_chains_end_at_tile_corners() {
     let key: FormKey = SphereKey::new([0.3, -1.7, 2.25], 3.5, [1.0, 2.0, 2.0])
         .unwrap()
         .into();
-    let l = Lattice::new(key).unwrap();
+    let l = Lattice::new(key.clone()).unwrap();
     for level in [Level { u: 3, v: 2 }, Level { u: 6, v: 5 }] {
         let n = 1i64 << level.u;
         // The rows `v = j` (low side of tile j) and the columns `u = i`.

@@ -71,6 +71,7 @@ use varde_kernel::geom::certify::SeamBound;
 use varde_kernel::geom::certify::calibration::{self, arcs, base_plane, quarter};
 use varde_kernel::geom::curve::{Curve3D, PCurve};
 use varde_kernel::geom::form::PlaneKey;
+use varde_kernel::geom::formkey::calibration as keys;
 use varde_kernel::geom::lattice::{Lattice, Level as TileLevel, Rect};
 use varde_kernel::geom::surface::Surface;
 use varde_kernel::topo::brep_min::{Brep, calibration as scan};
@@ -112,6 +113,7 @@ fn main() -> ExitCode {
         record_kind_rows(budget, &mut rows);
         audit_rows(budget, &mut rows);
         scan_rows(budget, &mut rows);
+        form_key_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -1942,5 +1944,55 @@ fn scan_rows(budget: Duration, rows: &mut Vec<Row>) {
         kind: "operand scan net".into(),
         ns: ns / size.nets as f64,
         units: u.net as f64 / UNIT_PARTS as f64,
+    });
+}
+
+// ---------------------------------------------------------------------
+// Form keys.
+
+/// A form key's parameter rounded, by step: the exact value formed, each
+/// level of the loop, a round of settling exactly; on the components of
+/// general unit directions (none rational).
+fn form_key_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let u = UNITS.form_key;
+    let comps: Vec<keys::Component> = (1..=64u64)
+        .flat_map(|k| {
+            let d = general(k).to_array();
+            (0..3).map(move |c| keys::Component::new(d, c))
+        })
+        .collect();
+    let each = |f: &dyn Fn(&keys::Component) -> bool| {
+        time(budget, || {
+            for c in &comps {
+                black_box(f(black_box(c)));
+            }
+            comps.len() as u64
+        })
+    };
+    assert!(comps.iter().all(|c| !c.rational()));
+    rows.push(Row {
+        kind: "form key rational".into(),
+        ns: each(&|c| c.rational()),
+        units: u.rational as f64 / UNIT_PARTS as f64,
+    });
+    for (level, parts) in u.level.into_iter().enumerate() {
+        rows.push(Row {
+            kind: format!("form key level {level}"),
+            ns: each(&|c| c.level(level).expect("a level")),
+            units: parts as f64 / UNIT_PARTS as f64,
+        });
+    }
+    let exact: Vec<keys::Exact> = comps.iter().map(keys::Exact::of).collect();
+    assert!(exact.iter().all(|e| e.settle()));
+    let ns = time(budget, || {
+        for e in &exact {
+            black_box(black_box(e).settle());
+        }
+        exact.len() as u64
+    });
+    rows.push(Row {
+        kind: "form key settle".into(),
+        ns,
+        units: u.settle as f64 / UNIT_PARTS as f64,
     });
 }

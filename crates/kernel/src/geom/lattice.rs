@@ -131,6 +131,9 @@ pub enum LatticeError {
     Range,
     /// A tile's net is refused: a coordinate overflows.
     Tile(TileError),
+    /// A form these lattices don't tile: a conic-chain cylinder, cone,
+    /// torus, revolved conic or affine image.
+    Form,
 }
 
 impl From<TileError> for LatticeError {
@@ -184,6 +187,7 @@ impl Lattice {
             }
             FormKey::Cylinder(k) => (k.foot(), revolution(&k.axis())),
             FormKey::Sphere(k) => (k.centre(), revolution(&k.axis())),
+            _ => return Err(LatticeError::Form),
         };
         if !origin
             .iter()
@@ -259,6 +263,7 @@ impl Lattice {
                     affine(&p, wu.times(ARC[n % 3]))
                 })
             }
+            _ => return Err(LatticeError::Form),
         };
         Ok(Tile::new(net)?)
     }
@@ -344,6 +349,7 @@ impl Lattice {
                 u: first..next,
                 v: -1..1,
             },
+            _ => return Err(LatticeError::Form),
         })
     }
 }

@@ -248,11 +248,11 @@ fn the_smooth_pair_passes_the_planar_check() {
     // cylinder at its corners and middle, `gap` above it there.
     let cone = s.sheet.normal_cone().expect("a regular sheet");
     assert!(cone.axis[2] > 0.0, "{cone:?}");
-    let key = *s.cylinder.surface(FaceId(0)).lattice().key();
+    let key = s.cylinder.surface(FaceId(0)).lattice().key().clone();
     for (u, v) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5)] {
         let p = s.sheet.eval(u, v).map(|b| b.v);
         let exact = p.map(|x| malachite::Rational::try_from(x).expect("finite"));
-        assert!(key.implicit(&exact) > 0u32, "{p:?}");
+        assert!(key.implicit(&exact).expect("an implicit") > 0u32, "{p:?}");
     }
     let mid = s.sheet.eval(0.5, 0.5);
     assert!(

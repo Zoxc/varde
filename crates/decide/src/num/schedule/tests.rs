@@ -78,7 +78,8 @@ fn promotion_up_the_schedule_is_exact() {
 /// below, and something at each: a precision step is never free, nor
 /// cheaper than the computation it repeats. Every predicate kind prices
 /// each of its stages, a later stage dearer than the filter. The
-/// operand scan prices a position and a net, the net dearer.
+/// operand scan prices a position and a net, the net dearer; a form key
+/// settles exactly at no less than its top level.
 #[test]
 fn the_unit_table_grows_with_the_level() {
     let r = &UNITS.record;
@@ -92,6 +93,7 @@ fn the_unit_table_grows_with_the_level() {
         ("key at", r.key_at),
         ("at end", r.at_end),
         ("z-order box", r.zorder_box),
+        ("form key level", UNITS.form_key.level),
     ] {
         assert!(row[0] > 0, "{kind}: {row:?}");
         assert!(row.windows(2).all(|w| w[0] <= w[1]), "{kind}: {row:?}");
@@ -106,6 +108,13 @@ fn the_unit_table_grows_with_the_level() {
     // A net is a tile's nine control points: dearer than one position.
     let scan = UNITS.operand_scan;
     assert!(scan.position > 0 && scan.net > scan.position, "{scan:?}");
+    // Settling exactly is dearer than any level; forming the exact value
+    // costs something.
+    let key = UNITS.form_key;
+    assert!(
+        key.rational > 0 && key.settle >= key.level[LEVELS - 1],
+        "{key:?}"
+    );
 }
 
 /// The kinds index their rows in order, each once.

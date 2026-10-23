@@ -1,7 +1,8 @@
 //! The kernel's geometry: the [`tile`], one biquadratic rational patch
 //! of a tiled surface, with its certified evaluation, splits, hull box
-//! and normal cone; the [`form`]s a surface can be exactly (plane,
-//! cylinder, sphere so far), named by their canonical keys; their
+//! and normal cone; the [`form`]s a surface can be exactly, named by
+//! their canonical keys, each parameter correctly rounded by its
+//! [`formkey`] route; their
 //! [`lattice`]s, the grids of tiles anchored to those keys, and the
 //! tiled [`surface`]s on them; the [`curve`]s of edges and coedges, chains
 //! of rational quadratic spans in space and in a surface's UV; and the
@@ -11,6 +12,7 @@
 pub mod certify;
 pub mod curve;
 pub mod form;
+pub mod formkey;
 pub mod lattice;
 mod round;
 pub mod surface;

@@ -227,7 +227,7 @@ fn a_flush_quad_on_the_l_is_one_near_cluster() {
     assert_eq!(c.key().corner().get(), [0.0, 0.0, 0.0]);
     let z0 = face_key(&pair.a, 0);
     assert_eq!(c.key().target(), &z0);
-    assert_eq!(c.key().pair(), &[z0, z0]);
+    assert_eq!(c.key().pair(), &[z0.clone(), z0]);
 }
 
 #[test]

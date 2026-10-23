@@ -61,7 +61,6 @@
 
 use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::{Curve3D, PCurve, Span3};
-use crate::geom::form::FormKey;
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
 use crate::infra::error::KernelError;
@@ -694,22 +693,10 @@ impl Brep {
             let l = s.lattice();
             scan.key_point(&l.origin(), &body)?;
             scan.finite(l.axes().as_flattened())?;
-            match l.key() {
-                FormKey::Plane(k) => {
-                    scan.finite(&k.normal())?;
-                    scan.finite(&[k.offset()])?;
-                }
-                FormKey::Cylinder(k) => {
-                    scan.key_point(&k.foot(), &body)?;
-                    scan.finite(&k.axis())?;
-                    scan.finite(&[k.radius()])?;
-                }
-                FormKey::Sphere(k) => {
-                    scan.key_point(&k.centre(), &body)?;
-                    scan.finite(&k.axis())?;
-                    scan.finite(&[k.radius()])?;
-                }
+            for p in l.key().points() {
+                scan.key_point(&p, &body)?;
             }
+            scan.finite(&l.key().values())?;
             for t in s.tiles() {
                 scan.finite(t.net().as_flattened())?;
             }

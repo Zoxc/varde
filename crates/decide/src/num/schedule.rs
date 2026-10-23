@@ -241,6 +241,29 @@ pub struct Units {
     /// An operation's scan of its operands' stored values at its start
     /// ([`OperandScan`](super::storage::OperandScan)), in parts.
     pub operand_scan: ScanUnits,
+    /// A form key's parameter correctly rounded (the kernel's
+    /// `geom::formkey`), in parts.
+    pub form_key: KeyUnits,
+}
+
+/// The parts of a unit ([`UNIT_PARTS`]) of rounding one parameter of a
+/// form's key to its nearest `f64`: a key is a few such parameters,
+/// each far below a unit at the first levels, so a key's construction
+/// charges the sum of its parts, rounded up to whole units as it goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyUnits {
+    /// The parameter's exact value formed in rationals and its route
+    /// read off: rounded there if it is rational (no radicand, or an
+    /// exact square), else the irrational route's inputs.
+    pub rational: u64,
+    /// A step of the irrational route's loop at each precision level
+    /// ([`LEVELS`]): the parameter's formula evaluated there and its two
+    /// midpoint tests.
+    pub level: [u64; LEVELS],
+    /// A round of settling a parameter left open at the top level
+    /// exactly: its root enclosed at a doubled precision and both ends
+    /// rounded.
+    pub settle: u64,
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of each value an operation's
@@ -415,6 +438,11 @@ pub const UNITS: Units = Units {
     operand_scan: ScanUnits {
         position: 1,
         net: 8,
+    },
+    form_key: KeyUnits {
+        rational: 160,
+        level: [40, 90, 250, 270, 330],
+        settle: 460,
     },
 };
 
