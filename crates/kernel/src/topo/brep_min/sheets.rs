@@ -5,19 +5,22 @@
 //! surface yet). Every body passes the planar check, relabelled too;
 //! each fault the check names is found on a store broken for it.
 
+use std::convert::Infallible;
+
 use varde_decide::num::exact::Runs;
 use varde_decide::num::schedule::{PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
 use varde_testkit::rng::Rng;
 use varde_testkit::sheets::{self, Diagonals, OFFSET, Pair, Polygons, SmoothPair, Wavy};
 
-use super::planar::{CheckFault, FaceError, PolygonError, line, plane_uv, uv_line};
+use super::planar::{CheckFault, FaceError, PolygonError, line, newell, plane_uv, uv_line};
 use super::*;
 use crate::geom::curve::{Span2, Span3};
-use crate::geom::form::{CylinderKey, FormKey};
+use crate::geom::form::{CylinderKey, FormKey, PlaneKey};
+use crate::geom::formkey::{Charge, KeyMeter, RouteCounts};
 use crate::geom::lattice::{CELL, Lattice};
 use crate::geom::tile::Tile;
-use crate::infra::budget::{Budget, Work};
+use crate::infra::budget::{Budget, Step, Work};
 
 /// The fixtures' seam target (mm): a quarter of a tolerance of `10⁻⁵`.
 pub(crate) const TARGET: f64 = 2.5e-6;
@@ -380,44 +383,44 @@ fn faults_are_found_with_their_entities() {
     );
 }
 
-/// The planes' pass charges its faces' planes in parts of a unit,
-/// summed and rounded up once: a cube's six planes take
-/// `⌈6·rational/64⌉` units, the room for them builds every plane and the
-/// first seam bound runs out, one unit less runs out at the last plane.
-#[test]
-fn planes_are_charged_their_parts_rounded_up_once() {
-    let verts: Vec<[f64; 3]> = (0..8)
-        .map(|k| [k & 1, (k >> 1) & 1, (k >> 2) & 1].map(f64::from))
-        .collect();
-    let faces = vec![
-        vec![0, 2, 3, 1],
-        vec![4, 5, 7, 6],
-        vec![0, 1, 5, 4],
-        vec![2, 6, 7, 3],
-        vec![0, 4, 6, 2],
-        vec![1, 3, 7, 5],
-    ];
-    let planes = (6 * UNITS.record.rational).div_ceil(UNIT_PARTS);
-    assert!(planes < 6 * UNITS.record.rational.div_ceil(UNIT_PARTS));
+/// A meter's charge with nothing to run out of: the units it charged.
+#[derive(Default)]
+struct Tally(u64);
+
+impl Charge for Tally {
+    type Err = Infallible;
+
+    fn charge(&mut self, _: Step, units: u64) -> Result<(), Infallible> {
+        self.0 += units;
+        Ok(())
+    }
+}
+
+/// The units the planes' pass charges for face `f` of `verts`'s plane,
+/// and the routes its key's parameters took: its key metered alone.
+fn plane_charge(verts: &[[f64; 3]], f: &[u32]) -> (u64, RouteCounts) {
+    let pts: Vec<[f64; 3]> = f.iter().map(|&v| verts[v as usize]).collect();
+    let mut tally = Tally::default();
+    let mut m = KeyMeter::new(&mut tally);
+    PlaneKey::metered(newell(&pts), pts[0], &mut m).unwrap_or_else(|e| panic!("{e:?}"));
+    let counts = m.counts();
+    (tally.0, counts)
+}
+
+/// Builds `faces` of `verts` as a solid on `units`, asserting the
+/// planes' stage is charged `planes` units, the sum of its faces' metered
+/// keys: on that room every plane is built and the first seam bound runs
+/// out; on one unit less the pass runs out at its last face.
+fn assert_planes_charged(verts: &[[f64; 3]], faces: &[Vec<u32>], planes: u64) {
     let build = |units| {
         Brep::from_polygons(
             BodyKind::Solid,
-            &verts,
-            &faces,
+            verts,
+            faces,
             TARGET,
             &mut Work::new(&Budget::new(units)),
         )
     };
-    let built = Brep::from_polygons(
-        BodyKind::Solid,
-        &verts,
-        &faces,
-        TARGET,
-        &mut Work::new(&Budget::DEFAULT),
-    )
-    .unwrap_or_else(|e| panic!("{e:?}"));
-    let checked = built.check_planar().unwrap_or_else(|f| panic!("{f:?}"));
-    assert!(checked.unchecked_trims.is_empty(), "{checked:?}");
     match build(planes) {
         Err(PolygonError::Face {
             face: 0,
@@ -432,10 +435,83 @@ fn planes_are_charged_their_parts_rounded_up_once() {
     match build(planes - 1) {
         Err(PolygonError::OutOfBudget(KernelError::OutOfBudget { profile, .. })) => {
             assert_eq!(profile.stopped.stage, "planes");
-            assert_eq!(profile.stopped.at.item, 5);
+            assert_eq!(profile.stopped.at.item, faces.len() - 1);
             assert_eq!(profile.stages, vec![("planes", planes - 1)]);
         }
         other => panic!("{other:?}"),
+    }
+}
+
+/// The planes' pass charges each face's key as its meter rounds it, by
+/// route: a cube's planes are axis-aligned, so each key's three normal
+/// components and its offset take the rational route, `⌈4·rational/64⌉`
+/// units a face; a tetrahedron's slanted face (normal `(1, 1, 1)`) takes
+/// the irrational route's loop, its other faces the rational one. The
+/// pass charges the sum of the faces' units.
+#[test]
+fn planes_are_charged_their_keys_metered_by_route() {
+    let cube: Vec<[f64; 3]> = (0..8)
+        .map(|k| [k & 1, (k >> 1) & 1, (k >> 2) & 1].map(f64::from))
+        .collect();
+    let cube_faces = vec![
+        vec![0, 2, 3, 1],
+        vec![4, 5, 7, 6],
+        vec![0, 1, 5, 4],
+        vec![2, 6, 7, 3],
+        vec![0, 4, 6, 2],
+        vec![1, 3, 7, 5],
+    ];
+    let face = (4 * UNITS.form_key.rational).div_ceil(UNIT_PARTS);
+    for f in &cube_faces {
+        let (units, counts) = plane_charge(&cube, f);
+        assert_eq!(units, face, "{f:?}");
+        assert_eq!(counts.rational, 4, "{f:?}: {counts:?}");
+    }
+    let built = Brep::from_polygons(
+        BodyKind::Solid,
+        &cube,
+        &cube_faces,
+        TARGET,
+        &mut Work::new(&Budget::DEFAULT),
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    let checked = built.check_planar().unwrap_or_else(|f| panic!("{f:?}"));
+    assert!(checked.unchecked_trims.is_empty(), "{checked:?}");
+    assert_planes_charged(&cube, &cube_faces, 6 * face);
+
+    let tet = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let tet_faces = vec![vec![0, 2, 1], vec![0, 1, 3], vec![0, 3, 2], vec![1, 2, 3]];
+    let charges: Vec<(u64, RouteCounts)> =
+        tet_faces.iter().map(|f| plane_charge(&tet, f)).collect();
+    for (units, counts) in &charges[..3] {
+        assert_eq!((*units, counts.rational), (face, 4), "{counts:?}");
+    }
+    let (slanted, counts) = charges[3];
+    assert!(counts.levels.iter().sum::<u32>() > 0, "{counts:?}");
+    assert!(slanted > face, "{slanted} {counts:?}");
+    assert_planes_charged(&tet, &tet_faces, charges.iter().map(|c| c.0).sum());
+}
+
+/// The store's planes are the keys of their faces' Newell normals
+/// through their first corners, bit for bit, as built outside an
+/// operation: the planes' charge leaves the keys as they were.
+#[test]
+fn planes_are_their_faces_keys_bit_for_bit() {
+    for (name, pair) in flat() {
+        for p in [&pair.a, &pair.b] {
+            let b = store(p);
+            for (k, f) in p.faces.iter().enumerate() {
+                let pts: Vec<[f64; 3]> = f.iter().map(|&v| p.verts[v as usize]).collect();
+                let want = PlaneKey::new(newell(&pts), pts[0]).expect("a plane");
+                let got = b.surface(FaceId(k as u32)).lattice().key();
+                assert_eq!(*got, FormKey::Plane(want), "{name}: face {k}");
+            }
+        }
     }
 }
 
