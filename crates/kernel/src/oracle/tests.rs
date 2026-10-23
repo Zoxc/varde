@@ -926,6 +926,44 @@ fn kernel_exact_ties_follow_the_direction() {
     assert!(text.contains("answered by kind: "), "{text}");
 }
 
+/// The kernel-exact family's silhouette placements (seeds `7 mod 10`): a
+/// corner of `A` exactly on an exact half cylinder's face at the tile
+/// corner nearest its silhouette, at angle levels 0, 3 and 5. Each
+/// agrees with the oracle (no tie-scale allowance), and its counts with
+/// `d` and `−d` differ, as the oracle's at `±2^-28·d` do, each equal to
+/// the oracle's on its side. Seed 7 by default (seconds), ten with
+/// `VARDE_TESTS=full`.
+#[test]
+fn kernel_exact_silhouettes_flip_with_the_direction() {
+    let seeds: Vec<u64> = (0..varde_testing::pick(1, 10))
+        .map(|i| 7 + 10 * i)
+        .collect();
+    let family = family_named(KERNEL_EXACT);
+    let outs = par(seeds.len() as u64, threads(), &|i| {
+        let seed = seeds[i as usize];
+        assert_eq!(kernel_exact_kind(seed), "corner of A at a silhouette of B");
+        let c = check_with(&family(seed), &Config::RUNS, &mut Stats::default(), true);
+        (seed, c)
+    });
+    for (seed, c) in outs {
+        assert!(
+            matches!(c.outcome, Outcome::Agreed { .. }),
+            "seed {seed}: {c:?}"
+        );
+        assert!(
+            matches!(
+                c.flip,
+                Some(Flip::Checked {
+                    counted: true,
+                    truth: true,
+                    sides: [true, true],
+                })
+            ),
+            "seed {seed}: {c:?}"
+        );
+    }
+}
+
 /// The `±2^-28·d` shift is relative to the data: `d` at max-norm 1,
 /// `2^-28` of the binade of the largest coordinate.
 #[test]
@@ -1254,6 +1292,10 @@ fn kernel_exact_kinds_are_reported_with_their_answered_rates() {
         let p = family(seed);
         let (a, b) = (p.a.build(&p.make_a), p.b.build(&p.make_b));
         let kind = kernel_exact_kind(seed);
+        if kind == "corner of A at a silhouette of B" {
+            assert!(silhouette_corner(&p, &a, &b), "seed {seed}: {kind}");
+            continue;
+        }
         let (turned, cube) = if kind == "corner of B on a face of A" {
             (&b, &a)
         } else {
@@ -1317,6 +1359,57 @@ fn kernel_exact_kinds_are_reported_with_their_answered_rates() {
         "answered by kind: corner of A on a face of B 1/2 (50.0%); corner of B on a face of A 1/1 (100.0%)\n"
     );
     assert!(r.text().contains("answered by kind: "));
+}
+
+/// Whether a silhouette placement of the kernel-exact family has `A`'s
+/// corner exactly on a corner of `B`'s cylinder tiles at its level,
+/// inside the face (between its rulings and caps), its tangent plane
+/// there within `6°` of `UP` and within half a tile's angle at levels
+/// past 0 (`45°·2^-L`).
+fn silhouette_corner(p: &Placement, a: &Solid, b: &Solid) -> bool {
+    let Shape::HalfCylinder { axis, z, .. } = &p.b else {
+        return false;
+    };
+    let k = axis
+        .iter()
+        .position(|&c| c == 1.0)
+        .expect("an axis along x or y");
+    let Shape::Box { o: q, .. } = p.a else {
+        return false;
+    };
+    if !a.verts().iter().any(|&v| a.brep.pos(v) == q) {
+        return false;
+    }
+    let Some(f) = b.faces().into_iter().find(|&f| {
+        matches!(
+            b.brep.surface(f).lattice().key(),
+            crate::geom::form::FormKey::Cylinder(_)
+        )
+    }) else {
+        return false;
+    };
+    let s = b.brep.surface(f);
+    let level = s.rect().level.u;
+    let up = DVec3::new(2.0, 3.0, 32.0);
+    let inner = (s.rect().u.start + 1)..s.rect().u.end;
+    let on = inner.into_iter().find_map(|i| {
+        let t = s.tile(i, 0)?;
+        let c = t.point(0, 0);
+        let same = (0..3).all(|j| j == k || c[j] == q[j]);
+        let tu = DVec3::from_array(t.point(1, 0)) - DVec3::from_array(c);
+        let m = tu.cross(DVec3::from_array(*axis));
+        same.then(|| (m.dot(up) / (m.length() * up.length())).abs())
+    });
+    // The sine of the angle between the tangent plane and `UP`.
+    let Some(graze) = on else {
+        return false;
+    };
+    let mut deg = 6.0;
+    if level > 0 && 45.0 / f64::from(1u32 << level) < deg {
+        deg = 45.0 / f64::from(1u32 << level);
+    }
+    let limit = varde_decide::num::trig::sin(deg.to_radians());
+    q[k] > z[0] && q[k] < z[1] && graze <= limit
 }
 
 /// The kernel-exact placements of seeds `0..n` whose cube edge crosses

@@ -6,6 +6,7 @@
 //! function of a seed.
 
 use glam::DVec3;
+use malachite::Rational;
 use varde_decide::num::trig;
 use varde_testkit::rng::Rng;
 
@@ -13,7 +14,7 @@ use super::runs::Placement;
 use super::solids::{Make, Shape, rotation};
 use crate::geom::curve::Span3;
 use crate::geom::form::{CylinderKey, SphereKey};
-use crate::geom::lattice::Lattice;
+use crate::geom::lattice::{Lattice, Level};
 
 const UP: DVec3 = DVec3::new(2.0, 3.0, 32.0);
 
@@ -545,6 +546,18 @@ fn cube() -> Shape {
     }
 }
 
+/// A point's coordinates as rationals.
+fn rational(p: [f64; 3]) -> [Rational; 3] {
+    p.map(|x| Rational::try_from(x).expect("finite"))
+}
+
+/// The cube's corners ([`cube`]).
+fn cube_corners() -> Vec<[f64; 3]> {
+    (0..8)
+        .map(|i| [i & 1, i >> 1 & 1, i >> 2 & 1].map(|b| 2.0 * f64::from(b)))
+        .collect()
+}
+
 fn int(rng: &mut Rng, lo: i64, hi: i64) -> i64 {
     lo + (rng.next_u64() % (hi - lo + 1) as u64) as i64
 }
@@ -559,14 +572,21 @@ fn icross(a: [i64; 3], b: [i64; 3]) -> [i64; 3] {
 
 /// A turned box's edges, exactly: integer vectors `u`, `v = u × t` and
 /// `w = u × v` (orthogonal, right-handed), each scaled by a power of two
-/// to a length in `[0.75, 1.5)`, so the box's corners are exact sums.
+/// to a length in `[0.75, 1.5)`, so the box's corners are exact sums
+/// where `o` is a short dyadic.
 /// No component is zero (no face parallel to a coordinate plane) but
 /// `u`'s on axis `flat`, if given (an edge in that coordinate plane).
-/// The box has its corner at `o`, and none of the cube's corners lies
-/// on the plane of one of its faces: a turned face's key plane is
-/// rounded, so such a corner would be tied only in the oracle's tiles,
-/// within their misfit, not in the counting's records.
-fn exact_axes(rng: &mut Rng, flat: Option<usize>, o: [f64; 3]) -> [[f64; 3]; 3] {
+/// The box has its corner at `o`, and none of the points `avoid` (the
+/// other solid's vertices) lies on the plane of one of its faces: a
+/// turned face's key plane is rounded, so such a vertex would be tied
+/// only in the oracle's tiles, within their misfit, not in the
+/// counting's records.
+fn exact_axes(
+    rng: &mut Rng,
+    flat: Option<usize>,
+    o: [f64; 3],
+    avoid: &[[f64; 3]],
+) -> [[f64; 3]; 3] {
     loop {
         let mut u = [0, 1, 2].map(|_| int(rng, -4, 4));
         if let Some(k) = flat {
@@ -587,18 +607,16 @@ fn exact_axes(rng: &mut Rng, flat: Option<usize>, o: [f64; 3]) -> [[f64; 3]; 3] 
             }
             DVec3::from_array(x.map(|c| c as f64 * s))
         });
-        // Every value here is a short dyadic: the products are exact.
-        let o = DVec3::from_array(o);
+        // The axes are short dyadics (their cross products exact); `o`
+        // may not be, so the planes are tested in rationals.
         let on_a_face = (0..3).any(|k| {
-            let n = axes[(k + 1) % 3].cross(axes[(k + 2) % 3]);
-            [o, o + axes[k]].iter().any(|&c| {
-                (0..8).any(|i| {
-                    let p = DVec3::new(
-                        f64::from(i & 1),
-                        f64::from(i >> 1 & 1),
-                        f64::from(i >> 2 & 1),
-                    ) * 2.0;
-                    n.dot(p - c) == 0.0
+            let n = rational(axes[(k + 1) % 3].cross(axes[(k + 2) % 3]).to_array());
+            let (o, step) = (rational(o), rational(axes[k].to_array()));
+            let far = [0, 1, 2].map(|i| &o[i] + &step[i]);
+            [o, far].iter().any(|c| {
+                avoid.iter().any(|&p| {
+                    let p = rational(p);
+                    (0..3).map(|i| &n[i] * (&p[i] - &c[i])).sum::<Rational>() == 0
                 })
             })
         });
@@ -618,8 +636,9 @@ fn on_cube_face(rng: &mut Rng, k: usize) -> [f64; 3] {
 
 /// Ties exact in the counting's own records, not only in the oracle's
 /// tiles: the cube (its faces on their key planes, every p-curve
-/// unperturbed) and a box turned by an exact frame, all corners exact,
-/// with
+/// unperturbed) and a box turned by an exact frame, all corners exact
+/// (but at a silhouette: there its corner on `B` is kept, the others
+/// snapped), with
 /// - a corner of `A` on a face of `B` (a point–face height of 0 on the
 ///   key plane);
 /// - a corner of `B` on a face of `A` (the cube as `A`);
@@ -628,7 +647,11 @@ fn on_cube_face(rng: &mut Rng, k: usize) -> [f64; 3] {
 /// - a corner of `A` whose upward ray passes through a point of an edge
 ///   of `B` (a ray record's tie);
 /// - a corner of `A` exactly on an edge of `B` (its column hits on the
-///   two faces there read the edge's germ key).
+///   two faces there read the edge's germ key);
+/// - a corner of `A` exactly on the curved face of an exact half
+///   cylinder `B`, at the tile corner nearest a silhouette
+///   ([`silhouette`]): the column grazes the face there, and the
+///   corner's winding turns with the side of the face `d` moves it to.
 ///
 /// Moving `A` by `δ·d` settles each; counting with `d` and `−d` must
 /// differ exactly where the oracle's answers at `±2^-28·d` do.
@@ -636,15 +659,21 @@ fn kernel_exact(seed: u64) -> Placement {
     let mut rng = Rng::new(seed);
     let k = int(&mut rng, 0, 2) as usize;
     let kind = exact_kind(seed);
+    let mut levels = [0, 0];
     let (a, b) = match kind {
         ExactKind::CornerOnFace | ExactKind::EdgeInPlane => {
             let o = on_cube_face(&mut rng, k);
-            let axes = exact_axes(&mut rng, (kind == ExactKind::EdgeInPlane).then_some(k), o);
+            let axes = exact_axes(
+                &mut rng,
+                (kind == ExactKind::EdgeInPlane).then_some(k),
+                o,
+                &cube_corners(),
+            );
             (Shape::Box { o, axes }, cube())
         }
         ExactKind::CubeCornerOnFace => {
             let o = on_cube_face(&mut rng, k);
-            let axes = exact_axes(&mut rng, None, o);
+            let axes = exact_axes(&mut rng, None, o, &cube_corners());
             (cube(), Shape::Box { o, axes })
         }
         ExactKind::RayThroughEdge => {
@@ -654,7 +683,7 @@ fn kernel_exact(seed: u64) -> Placement {
             p[k] = int(&mut rng, 3, 13) as f64 / 8.0;
             let s = [1.0 / 32.0, 1.0 / 64.0][int(&mut rng, 0, 1) as usize];
             let o = (DVec3::from_array(p) - UP * s).to_array();
-            let axes = exact_axes(&mut rng, None, o);
+            let axes = exact_axes(&mut rng, None, o, &cube_corners());
             (Shape::Box { o, axes }, cube())
         }
         ExactKind::CornerOnEdge => {
@@ -662,15 +691,27 @@ fn kernel_exact(seed: u64) -> Placement {
             // `k`.
             let mut o = [0, 1, 2].map(|_| 2.0 * int(&mut rng, 0, 1) as f64);
             o[k] = int(&mut rng, 3, 13) as f64 / 8.0;
-            let axes = exact_axes(&mut rng, None, o);
+            let axes = exact_axes(&mut rng, None, o, &cube_corners());
             (Shape::Box { o, axes }, cube())
+        }
+        ExactKind::CornerOnSilhouette => {
+            let (b, level, o) = silhouette(&mut rng);
+            let verts = b.build(&Make::PLAIN);
+            let verts: Vec<[f64; 3]> = verts.verts().iter().map(|&v| verts.brep.pos(v)).collect();
+            let axes = exact_axes(&mut rng, None, o, &verts);
+            levels = [level, 0];
+            (Shape::Box { o, axes }, b)
         }
     };
     let mut make = || Make {
         ids: Some(rng.next_u64()),
         ..Make::PLAIN
     };
-    let (make_a, make_b) = (make(), make());
+    let (mut make_a, mut make_b) = (make(), make());
+    make_b.levels = levels;
+    // `A`'s corner on `B`'s tile corner, which isn't on `A`'s snapping
+    // grid ([`Make::keep_first`]).
+    make_a.keep_first = kind == ExactKind::CornerOnSilhouette;
     Placement {
         a,
         b,
@@ -678,6 +719,71 @@ fn kernel_exact(seed: u64) -> Placement {
         make_b,
         d: rng.direction(),
     }
+}
+
+/// The levels [`silhouette`] draws its cylinder's angle tiles at.
+const SILHOUETTE_LEVELS: [u32; 3] = [0, 3, 5];
+
+/// An exact half cylinder about an axis along `x` or `y` (its key, frame
+/// and tiles exact: dyadic foot and radius) at an angle level drawn from
+/// [`SILHOUETTE_LEVELS`], its half about one of its silhouettes seen
+/// along `UP` (the rulings whose tangent plane holds `UP`), and the
+/// point of its face on the tile line inside the half nearest that
+/// silhouette: a corner of the stored tiles, exactly on them (a tile's
+/// corner is its control point; the line is straight along the axis, so
+/// any dyadic axial position stays on it). The silhouette itself lies
+/// at no `f64` point of the tiles (their angle cells are conics whose
+/// tangents run along `UP`'s shadow only at irrational parameters), so
+/// the point is on the face exactly with the column grazing it, the
+/// face's facing there small but not zero. Also the level.
+fn silhouette(rng: &mut Rng) -> (Shape, u32, [f64; 3]) {
+    let k = int(rng, 0, 1) as usize;
+    let mut axis = [0.0; 3];
+    axis[k] = 1.0;
+    let radius = int(rng, 6, 10) as f64 / 8.0;
+    let h = int(rng, 12, 20) as f64 / 8.0;
+    let mut point = [0, 1, 2].map(|_| int(rng, -4, 4) as f64 / 8.0);
+    point[k] = 0.0;
+    let level = SILHOUETTE_LEVELS[int(rng, 0, SILHOUETTE_LEVELS.len() as i64 - 1) as usize];
+    let lat = Lattice::new(CylinderKey::new(point, axis, radius).unwrap().into()).unwrap();
+    let a = DVec3::from_array(axis);
+    // A silhouette's outward normal, `⊥ a` and `⊥ UP`, and the angle
+    // cell `c` holding it: the half has it inside, the cell boundary
+    // nearer it its middle ruling.
+    let sign = if int(rng, 0, 1) == 0 { 1.0 } else { -1.0 };
+    let n = a.cross(UP) * sign;
+    let c = (0..4)
+        .find(|&c| quarter(&lat, c).dot(n) > 0.0 && quarter(&lat, c + 1).dot(n) > 0.0)
+        .expect("a cell holds the normal");
+    let first = if quarter(&lat, c).dot(n) > quarter(&lat, c + 1).dot(n) {
+        (c - 1).rem_euclid(4)
+    } else {
+        c
+    };
+    // The tile lines inside the half at the level, the one whose tile
+    // corner's tangent plane is nearest to holding `UP`.
+    let at = Level { u: level, v: 0 };
+    let tiles = ((first << level) + 1)..((first + 2) << level);
+    let graze = |i: i64| {
+        let t = lat.tile(at, i, 0).expect("a tile");
+        let (p0, p1) = (t.point(0, 0), t.point(1, 0));
+        let tu = DVec3::from_array(p1) - DVec3::from_array(p0);
+        let m = tu.cross(a);
+        (m.dot(UP) / (m.length() * UP.length())).abs()
+    };
+    let i = tiles
+        .min_by(|&x, &y| graze(x).total_cmp(&graze(y)))
+        .expect("a tile line inside the half");
+    let mut q = lat.tile(at, i, 0).expect("a tile").point(0, 0);
+    q[k] = int(rng, -2, 2) as f64 / 8.0;
+    let b = Shape::HalfCylinder {
+        point,
+        axis,
+        radius,
+        z: [-0.5 * h, 0.5 * h],
+        first,
+    };
+    (b, level, q)
 }
 
 /// The kinds of [`kernel_exact`]'s placements.
@@ -693,9 +799,15 @@ enum ExactKind {
     RayThroughEdge,
     /// A corner of `A` on an edge of `B`.
     CornerOnEdge,
+    /// A corner of `A` on a cylinder face of `B`, at the tile corner
+    /// nearest its silhouette.
+    CornerOnSilhouette,
 }
 
 fn exact_kind(seed: u64) -> ExactKind {
+    if seed % 10 == 7 {
+        return ExactKind::CornerOnSilhouette;
+    }
     match seed % 5 {
         0 | 2 if seed % 4 == 2 => ExactKind::EdgeInPlane,
         0 | 2 => ExactKind::CornerOnFace,
@@ -713,5 +825,6 @@ pub(super) fn kernel_exact_kind(seed: u64) -> &'static str {
         ExactKind::CubeCornerOnFace => "corner of B on a face of A",
         ExactKind::RayThroughEdge => "ray through an edge",
         ExactKind::CornerOnEdge => "corner of A on an edge of B",
+        ExactKind::CornerOnSilhouette => "corner of A at a silhouette of B",
     }
 }
