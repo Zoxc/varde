@@ -489,6 +489,13 @@ impl Lattice {
         self.axes
     }
 
+    /// An affine image's source's lattice, whose cells it maps; `None`
+    /// for every other form.
+    #[inline]
+    pub fn source(&self) -> Option<&Lattice> {
+        self.source.as_deref()
+    }
+
     /// The base level's tile of cell `(k, l)` (module docs).
     pub fn base_tile(&self, k: i64, l: i64) -> Result<Tile, LatticeError> {
         let f = ExactFrame {

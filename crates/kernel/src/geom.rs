@@ -11,9 +11,11 @@
 //! Q, G, linear and iso spans in a surface's UV split at its tile
 //! lines; and the
 //! [`certify`]d seam bound between a coedge's curve on its surface and
-//! its edge's curve, and a curve's distance to an implicit surface; and
-//! the non-decision [`query`]s the measures read: trim membership and
-//! extrema, which no decision of an operation reads.
+//! its edge's curve, and a curve's distance to an implicit surface; each
+//! tile's [`implicit`] polynomial, and the analytic [`inverse`] from a
+//! point to its surface's UV; and the non-decision [`query`]s the
+//! measures read: trim membership and extrema, which no decision of an
+//! operation reads.
 
 pub mod certify;
 pub mod conic;
@@ -21,10 +23,14 @@ pub mod curve;
 pub mod form;
 pub mod formkey;
 pub mod forms;
+pub mod implicit;
+pub mod inverse;
 pub mod lattice;
 pub mod pcurve;
 #[allow(dead_code, reason = "moved ahead of its callers, the measures")]
 pub mod query;
 mod round;
+#[cfg(test)]
+mod samples;
 pub mod surface;
 pub mod tile;
