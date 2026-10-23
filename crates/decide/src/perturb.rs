@@ -1230,7 +1230,7 @@ fn unit3<S: Curved>(v: &[S; 3]) -> [S; 3] {
 /// the same direction, whose products (squared lengths, cross products
 /// of two such) neither overflow nor underflow. `v` itself where that
 /// largest bound is zero or not finite.
-fn rescaled<S: Scalar, const N: usize>(v: &[S; N]) -> [S; N] {
+pub(crate) fn rescaled<S: Scalar, const N: usize>(v: &[S; N]) -> [S; N] {
     let big = v
         .iter()
         .flat_map(|x| x.enclose())

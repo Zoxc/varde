@@ -3,9 +3,10 @@
 //! decided at targets far below `f64` parameter spacing; points in the
 //! fold columns of circles and ellipses in vertical planes (the shadow's
 //! tangent along `UP` at the foot, at a vertex, a knot or inside a span),
-//! the plane across the ray line, oblique or along it; and the ties
-//! beside a near end decided alike at the first rungs' bands, the band of
-//! the point fixed.
+//! the plane across the ray line, oblique or along it, and the second
+//! derivative read there at coordinates and weights of any magnitude; and
+//! the ties beside a near end decided alike at the first rungs' bands,
+//! the band of the point fixed.
 
 use super::*;
 
@@ -293,6 +294,65 @@ fn ties_beside_a_near_end_read_alike_at_every_rung() {
                     }
                 }
             }
+        }
+    }
+}
+
+/// The second derivative at the fold inside the span of
+/// [`points_in_a_fold_column_inside_a_span`] (its tangent along `UP`),
+/// with coordinates times `2⁹⁰⁰` and weights times `2¹⁰⁰` (`P` and `P″`
+/// near `10³⁰¹`, `W·P″` past `f64`'s range), and times `2⁻⁹⁰⁰` and
+/// `2⁻¹⁰⁰` (`W·P″` below the normal range): finite, its shadow certified
+/// non-zero (so the row reads it in the tangent's place), and a power of
+/// two times the unit-scale value, exactly. At moderate magnitudes it is
+/// `W·P″ − W″·P` formed as is, bit for bit.
+#[test]
+fn a_folds_second_derivative_takes_coordinates_and_weights_of_any_magnitude() {
+    type L = Bounded<f64>;
+    let like = L::exact(0.0);
+    let c = lat(-1.0, 0.5, 0.25);
+    let ctrl = [(c + NU - UP, 1.5), (c + NU * 2.0, 0.5), (c + NU + UP, 1.5)];
+    let curve = |scale: f64, weight: f64| {
+        let pts = ctrl.map(|(x, w)| ((x * scale).to_array(), w * weight));
+        HomCurve::from_affine(pts, &like).expect("a span")
+    };
+    let second_at = |scale: f64, weight: f64| {
+        let curve = curve(scale, weight);
+        let (_, tangent) = curve_point(&curve, &L::exact(0.5));
+        assert!(!shadow_certified(&tangent, &like), "{scale:e}: {tangent:?}");
+        second(&curve, &L::exact(0.5))
+    };
+    for (scale, weight) in [(1.0, 1.0), (p2(400), p2(40)), (p2(-400), p2(-40))] {
+        let c = curve(scale, weight);
+        let t = L::exact(0.5);
+        let (p, w) = c.eval_hom(&t);
+        let (d2p, d2w) = c.derivative().derivative().eval_hom(&t);
+        let raw = [0, 1, 2].map(|k| w.mul(&d2p[k]).sub(&d2w.mul(&p[k])));
+        assert_eq!(second(&c, &t), raw, "{scale:e}, {weight:e}");
+    }
+    let d0 = second_at(1.0, 1.0);
+    assert!(shadow_certified(&d0, &like));
+    for (scale, weight) in [(p2(900), p2(100)), (p2(-900), p2(-100))] {
+        let d = second_at(scale, weight);
+        assert!(shadow_certified(&d, &like), "{scale:e}, {weight:e}: {d:?}");
+        let mid = |x: &L| {
+            let [lo, hi] = x.enclose();
+            assert!(lo.is_finite() && hi.is_finite(), "{scale:e}: {x:?}");
+            (lo + hi) / 2.0
+        };
+        // A positive power of two times the unit-scale value.
+        let k = d0
+            .iter()
+            .zip(&d)
+            .find(|(a, _)| mid(a) != 0.0)
+            .map(|(a, b)| mid(b) / mid(a))
+            .expect("a non-zero component");
+        assert!(
+            k > 0.0 && k.to_bits() & ((1 << 52) - 1) == 0,
+            "{scale:e}: {k:e}"
+        );
+        for (a, b) in d0.iter().zip(&d) {
+            assert_eq!(mid(a) * k, mid(b), "{scale:e}, {weight:e}: {d:?} vs {d0:?}");
         }
     }
 }

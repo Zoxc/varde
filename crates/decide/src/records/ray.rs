@@ -210,7 +210,7 @@ use crate::num::level::{AtLevel, LevelScalar, ladder};
 use crate::num::schedule::Level;
 use crate::perturb::{
     Curved, HomLineShadow, HomPoint, HomPointLineShadow, LineShadow, Moving, MovingAt, NU,
-    QueryPoint, R_HAT, Rate, Seg, ShadowAxis, UP, curve_point, curve_shadow, decide_flat,
+    QueryPoint, R_HAT, Rate, Seg, ShadowAxis, UP, curve_point, curve_shadow, decide_flat, rescaled,
     vv_shadow,
 };
 use crate::records::keys::{KnotKey, Operand, Point, RayKey, RecordKey, SpanKey, VvKey};
@@ -1628,13 +1628,43 @@ fn shadow_certified<S: Scalar>(v: &[S; 3], like: &S) -> bool {
         .any(|x| matches!(x.sign(), Some(o) if o != std::cmp::Ordering::Equal))
 }
 
-/// `W·P″ − W″·P` of `c` at `s`: where the tangent numerator `W·P′ − W′·P`
-/// is 0, `W²` times the point's second derivative, so of the direction a
-/// curve with positive weights leaves a point where its tangent vanishes.
+/// `W·P″ − W″·P` of `c` at `s` up to a positive power of two: where the
+/// tangent numerator `W·P′ − W′·P` is 0, `W²` times the point's second
+/// derivative, so of the direction a curve with positive weights leaves a
+/// point where its tangent vanishes. `P` with `P″`, and `W` with `W″`,
+/// whose largest bound is past [`MODERATE`] are each first scaled by a
+/// power of two to a largest component near 1, as [`curve_point`]'s
+/// tangent is, so it neither overflows nor underflows for huge or tiny
+/// coordinates or weights; within it the value is formed as is, the same
+/// bits.
 fn second<S: Scalar>(c: &HomCurve<S, 3>, s: &S) -> [S; 3] {
     let (p, w) = c.eval_hom(s);
     let (d2p, d2w) = c.derivative().derivative().eval_hom(s);
-    [0, 1, 2].map(|k| w.mul(&d2p[k]).sub(&d2w.mul(&p[k])))
+    let ([x, y, z], [dx, dy, dz]) = (p, d2p);
+    let [x, y, z, dx, dy, dz] = moderated(&[x, y, z, dx, dy, dz]);
+    let [w, dw] = moderated(&[w, d2w]);
+    [(x, dx), (y, dy), (z, dz)].map(|(a, d)| w.mul(&d).sub(&dw.mul(&a)))
+}
+
+/// The range `[2⁻⁴⁸⁰, 2⁴⁸⁰]` of a group's largest bound in which
+/// [`second`] takes it as is: a product of two such is within `2⁹⁶⁰` and,
+/// where both are largest, at least `2⁻⁹⁶⁰`, in `f64`'s normal range.
+const MODERATE: std::ops::RangeInclusive<f64> =
+    f64::from_bits(((1023 - 480) as u64) << 52)..=f64::from_bits(((1023 + 480) as u64) << 52);
+
+/// `v` itself where its largest bound is in [`MODERATE`], else `v`
+/// [`rescaled`].
+fn moderated<S: Scalar, const N: usize>(v: &[S; N]) -> [S; N] {
+    let big = v
+        .iter()
+        .flat_map(|x| x.enclose())
+        .map(f64::abs)
+        .fold(0.0, |m: f64, x| if x > m { x } else { m });
+    if MODERATE.contains(&big) {
+        v.clone()
+    } else {
+        rescaled(v)
+    }
 }
 
 /// Whether `b − a` is along [`UP`] (or 0), exactly: its shadow 0.
