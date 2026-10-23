@@ -41,6 +41,7 @@ use varde_decide::num::exact::{self, ORDERS, Pred};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
 use varde_decide::num::preds::{
     Dot2d, LineGap, LinePlace, NearGap, Orient2Exact, Orient2d, Orient3Dir, Orient3d, PlaneSide,
+    polygon_area_sign,
 };
 use varde_decide::num::schedule::{LEVELS, Level, PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
@@ -840,9 +841,10 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         },
         rows,
     );
-    // A place on a line against a point ([`LinePlace`]): `p` the middle
-    // of `e` moved across `dir` (`⅛·(d_y, −d_x, 0)`, so the terms cancel
-    // in the sum only); for the rationals scaled by `2⁻⁶⁰⁰`.
+    // A place on a line against a point ([`LinePlace`], degree 3, an
+    // `Orient3`): `p` the middle of `e` moved across `dir` (`⅛·(d_y,
+    // −d_x, 0)`, so the terms cancel in the sum only); for the rationals
+    // scaled by `2⁻⁶⁰⁰`.
     let place = |k: u64, scale: f64, zero: bool| {
         let [e0, e1, dir] = [0, 1, 2].map(|i| grid(3 * k + i) * scale);
         let p = if zero {
@@ -861,7 +863,7 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         budget,
         Fixtures {
             name: "line place",
-            kind: PredKind::Orient2,
+            kind: PredKind::Orient3,
             stages: [
                 Some((0..n).map(|k| place(k, 1.0, false)).collect()),
                 Some((0..n).map(|k| place(k, 1.0, true)).collect()),
@@ -1059,6 +1061,58 @@ fn exact_rows(budget: Duration, rows: &mut Vec<Row>) {
         },
         rows,
     );
+    area_rows(budget, rows);
+}
+
+/// A polygon's signed area ([`polygon_area_sign`]), a predicate of
+/// variable length charged per term at `Orient2`, at 4 and 32 corners:
+/// a convex polygon about a grid point for the filter; corners on one
+/// line through it (`a + s·d`, `s` on a grid) for the expansions; those
+/// scaled by `2⁻⁶⁰⁰` for the rationals.
+fn area_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let polygon = |k: u64, corners: u64, scale: f64, zero: bool| -> Vec<[f64; 2]> {
+        let (c, d) = (grid(2 * k), grid(2 * k + 1) / 8.0);
+        (0..corners)
+            .map(|i| {
+                let p = if zero {
+                    c + d * dyadic(k * corners + i, 6)
+                } else {
+                    let a = std::f64::consts::TAU * i as f64 / corners as f64;
+                    c + DVec3::new(trig::cos(a), trig::sin(a), 0.0) * (10.0 + dyadic(k + i, 4))
+                };
+                [p.x * scale, p.y * scale]
+            })
+            .collect()
+    };
+    for corners in [4, 32] {
+        let stages = [(1.0, false), (1.0, true), (pow2(-600), true)]
+            .map(|(scale, zero)| (0..64).map(|k| polygon(k, corners, scale, zero)).collect());
+        for (stage, polys) in stages.iter().enumerate() {
+            let polys: &Vec<Vec<[f64; 2]>> = polys;
+            let work = polys
+                .iter()
+                .fold(exact::Work::default(), |w, p| w.and(polygon_area_sign(p).1));
+            let r = work.of(PredKind::Orient2);
+            let ran = [r.filters, r.expansions, r.rationals];
+            let want = polys.len() as u32 * corners as u32;
+            assert!(
+                ran[stage] == want && ran[stage + 1..].iter().all(|&n| n == 0),
+                "polygon area {corners} {}: {work:?}",
+                STAGES[stage]
+            );
+            let ns = time(budget, || {
+                for p in polys {
+                    let _ = black_box(polygon_area_sign(p));
+                }
+                polys.len() as u64
+            });
+            rows.push(Row {
+                kind: format!("exact Orient2 {}, polygon area {corners}", STAGES[stage]),
+                ns,
+                units: parts(&Cost::exact(work)) / polys.len() as f64,
+            });
+        }
+    }
 }
 
 /// Polynomials of degree 4 on `[0, 1]`, their roots near `¼` and `¾`

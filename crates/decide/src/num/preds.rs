@@ -4,19 +4,20 @@
 //! **Forms.** Each predicate is written once, as a function over
 //! [`Num`] ([`along`], [`orient2`], [`dot2`], [`orient3`],
 //! [`orient3_dir`], [`plane_side`], [`shadow_side`], [`plane_height`],
-//! [`crossing_height`], [`hom_sub`], [`near_gap`]): unnormalised and
-//! sign-equivalent, of fixed degree, with no division and no root, so
-//! [`exact::sign`](super::exact::sign) works it out exactly through its
-//! stages (the `f64` filter, expansions, rationals where an expansion
-//! would leave its range), each stage reported for its kind's price
-//! ([`Work`](super::exact::Work)). A direction a form takes (the frame's
+//! [`crossing_height`], [`hom_sub`], [`near_gap`]; [`polygon_area`], of
+//! any length): unnormalised and sign-equivalent, of fixed degree, with
+//! no division and no root, so [`exact::sign`](super::exact::sign) works
+//! it out exactly through its stages (the `f64` filter, expansions,
+//! rationals where an expansion would leave its range), each stage
+//! reported for its kind's price ([`Work`](super::exact::Work)). A direction a form takes (the frame's
 //! `UP`, `r̂`, `ν`, a stored normal) is exact and unnormalised, so its
 //! value is a positive multiple of the spatial one: a squared length, a
 //! facing of the unmoved data.
 //!
 //! **Predicates.** The types here ([`Orient2d`], [`Orient2Exact`],
 //! [`Dot2d`], [`Orient3d`], [`Orient3Dir`], [`PlaneSide`], [`Along`],
-//! [`LinePlace`], [`LineGap`], [`NearGap`]) are the forms on points that
+//! [`LinePlace`], [`LineGap`], [`NearGap`], and a polygon's area,
+//! [`polygon_area_sign`]) are the forms on points that
 //! don't move, stored (an exact box corner, a stored parameter along a
 //! stored segment, [`line_point`]): the certificates and checks on one
 //! operand's geometry, never perturbed. The perturbed rows of the
@@ -30,17 +31,22 @@
 //! per kind and stage: [`along`] and [`plane_side`] are
 //! [`PredKind::Side`] (degree 2, three products of an input and a
 //! difference or an input); [`orient2`], [`dot2`] and [`near_gap`]
-//! [`PredKind::Orient2`], also [`LinePlace`] (degree 3, three products
-//! of an input and a point at a parameter); [`orient3`], [`orient3_dir`],
-//! [`shadow_side`] and [`plane_height`] [`PredKind::Orient3`];
-//! [`crossing_height`] [`PredKind::Crossing`] (degree 4), also
-//! [`LineGap`] (a 3×3 determinant with a point at a parameter, degree 4); the shadow rows of homogeneous
-//! points ([`hom_sub`]) [`PredKind::Hom`].
+//! [`PredKind::Orient2`]; [`orient3`], [`orient3_dir`], [`shadow_side`]
+//! and [`plane_height`] [`PredKind::Orient3`] (degree 3), also
+//! [`LinePlace`] (three products of an input and a point at a
+//! parameter, degree 3); [`crossing_height`] [`PredKind::Crossing`]
+//! (degree 4), also [`LineGap`] (a 3×3 determinant with a point at a
+//! parameter, degree 4); the shadow rows of homogeneous points
+//! ([`hom_sub`]) [`PredKind::Hom`]. A form of variable length is priced
+//! per term at its term's kind: a polygon's area ([`polygon_area`]) as
+//! one [`PredKind::Orient2`] per side.
 
 use glam::DVec3;
 use malachite::Rational;
 
-use super::exact::{Num, Pred, V3, cross, det3, dot, point, sub};
+use super::exact::{
+    ExactSign, Num, Pred, Runs, V3, Work, cross, det3, dot, point, sub, value_sign,
+};
 use super::schedule::PredKind;
 
 /// `dir·(w − q)`: how far `w` lies past `q` along `dir`, times `|dir|`.
@@ -132,6 +138,51 @@ pub fn near_gap<N: Num>(r: &N, q: &V3<N>, w: &V3<N>) -> N {
     r.mul(r).sub(&dot(&d, &d))
 }
 
+/// `Σ (a_x·b_y − b_x·a_y)` over the sides `a → b` of the polygon `c`
+/// (the last corner back to the first): twice its signed area, positive
+/// when it runs counter-clockwise. One term per side, each a 2×2
+/// determinant of two corners (degree 2).
+pub fn polygon_area<N: Num>(c: &[[N; 2]]) -> N {
+    let mut sum = N::lit(0.0);
+    for (k, a) in c.iter().enumerate() {
+        let b = &c[(k + 1) % c.len()];
+        sum = sum.add(&a[0].mul(&b[1]).sub(&b[0].mul(&a[1])));
+    }
+    sum
+}
+
+/// The sign of [`polygon_area`] of stored corners `c`, exactly, and its
+/// work: a form of variable length, so each stage it ran is charged as
+/// one run of [`PredKind::Orient2`] per term, `c.len()` of them (module
+/// docs). An empty polygon has area zero.
+pub fn polygon_area_sign(c: &[[f64; 2]]) -> (ExactSign, Work) {
+    let (s, mut work) = value_sign(&PolygonArea(c));
+    let terms = u32::try_from(c.len()).unwrap_or(u32::MAX);
+    let r = &mut work.runs[PredKind::Orient2.index()];
+    *r = Runs {
+        filters: r.filters.saturating_mul(terms),
+        expansions: r.expansions.saturating_mul(terms),
+        rationals: r.rationals.saturating_mul(terms),
+    };
+    (s, work)
+}
+
+/// [`polygon_area`] of stored corners, as one predicate; private, so it
+/// is priced only through [`polygon_area_sign`], per term.
+struct PolygonArea<'a>(&'a [[f64; 2]]);
+
+impl Pred for PolygonArea<'_> {
+    fn eval<N: Num>(&self) -> N {
+        let c: Vec<[N; 2]> = self.0.iter().map(|&p| point2(p)).collect();
+        polygon_area(&c)
+    }
+
+    /// The kind of each term; [`polygon_area_sign`] charges one per side.
+    fn kind(&self) -> PredKind {
+        PredKind::Orient2
+    }
+}
+
 /// [`orient2`] of stored points `a`, `b` and an exact point `c`: a stored
 /// segment's side of a point of any magnitude (a dyadic box corner),
 /// positive when `c` lies left of `a → b`. The corner enters as it is
@@ -163,7 +214,7 @@ impl Pred for Orient2Exact {
 /// `t` of a stored segment `e` ([`line_point`]): `dir·(e₀ + t·(e₁ − e₀)
 /// − p)`, positive where that point lies past `p` along `dir`. A place
 /// on a line against a point on it; of degree 3, priced as
-/// [`PredKind::Orient2`].
+/// [`PredKind::Orient3`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LinePlace {
     /// The direction (any scale).
@@ -187,7 +238,7 @@ impl Pred for LinePlace {
     }
 
     fn kind(&self) -> PredKind {
-        PredKind::Orient2
+        PredKind::Orient3
     }
 }
 

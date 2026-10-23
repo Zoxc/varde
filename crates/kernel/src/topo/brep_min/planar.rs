@@ -64,15 +64,17 @@
 //!
 //! Not checked here: shells and regions (not stored yet), the tile-line
 //! joins (c) and (d), the seam bounds' recomputation, and the
-//! certificates of contacts and embedding. The check is a validator and
-//! charges no budget.
+//! certificates of contacts and embedding. The check charges its exact
+//! predicates' runs at their kinds' rows ([`PlanarCheck::work`], each
+//! loop's signed area per term: an `n`-gon's as `n` `Orient2` runs per
+//! stage), for its caller's budget; its other items are integer and
+//! comparison passes linear in the entities, uncharged.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use varde_decide::num::exact::{MAX_INPUT, Num, Pred, value_sign};
-use varde_decide::num::preds::{Dot2d, Orient2d};
-use varde_decide::num::schedule::PredKind;
+use varde_decide::num::exact::{self, ExactSign, MAX_INPUT, Pred, value_sign};
+use varde_decide::num::preds::{Dot2d, Orient2d, polygon_area_sign};
 use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
 
 use super::{BodyKind, Brep, CoedgeId, EdgeId, FaceId, LoopId, RibbonFault, StoreError, VertId};
@@ -169,6 +171,19 @@ pub struct PlanarCheck {
     /// The faces whose trims weren't checked (item 4): a p-curve not
     /// straight, or a UV beyond the predicates' range.
     pub unchecked_trims: Vec<FaceId>,
+    /// The exact predicates' runs of the trims' item, by kind: each
+    /// loop's signed area one `Orient2` run per corner and stage
+    /// ([`polygon_area_sign`]), the segment, fold and nesting tests one
+    /// run each.
+    pub work: exact::Work,
+}
+
+impl PlanarCheck {
+    /// The units [`Self::work`] is charged: its parts at the record
+    /// units' rows, rounded up once for the pass.
+    pub fn units(&self) -> u64 {
+        self.work.parts(&UNITS.record).div_ceil(UNIT_PARTS)
+    }
 }
 
 /// A face's plane, made in the planes' pass.
@@ -275,15 +290,19 @@ impl Brep {
         Ok(b)
     }
 
-    /// The planar subset of `check` (module docs): what it passed, or the
-    /// first fault.
+    /// The planar subset of `check` (module docs): what it passed, with
+    /// its exact predicates' work, or the first fault.
     pub fn check_planar(&self) -> Result<PlanarCheck, CheckFault> {
         self.check_topology()?;
         self.check_ribbons().map_err(CheckFault::Ribbon)?;
         self.check_domain()?;
-        let unchecked_trims = self.check_trims()?;
+        let mut work = exact::Work::default();
+        let unchecked_trims = self.check_trims(&mut work)?;
         self.check_seams()?;
-        Ok(PlanarCheck { unchecked_trims })
+        Ok(PlanarCheck {
+            unchecked_trims,
+            work,
+        })
     }
 
     /// Item 1.
@@ -442,8 +461,9 @@ impl Brep {
         Ok(())
     }
 
-    /// Item 4: the faces left unchecked, or the first fault.
-    fn check_trims(&self) -> Result<Vec<FaceId>, CheckFault> {
+    /// Item 4: the faces left unchecked, or the first fault; the exact
+    /// predicates' runs added to `work`.
+    fn check_trims(&self, work: &mut exact::Work) -> Result<Vec<FaceId>, CheckFault> {
         let mut unchecked = Vec::new();
         for f in 0..self.faces.surface.len() {
             let id = FaceId(f as u32);
@@ -472,16 +492,18 @@ impl Brep {
                 unchecked.push(id);
                 continue;
             }
-            self.check_face_trims(id, &loops)?;
+            self.check_face_trims(id, &loops, work)?;
         }
         Ok(unchecked)
     }
 
-    /// Item 4 on one face's loops, as polygons of their corners.
+    /// Item 4 on one face's loops, as polygons of their corners, the
+    /// exact predicates' runs added to `work`.
     fn check_face_trims(
         &self,
         f: FaceId,
         loops: &[(LoopId, Vec<[f64; 2]>)],
+        work: &mut exact::Work,
     ) -> Result<(), CheckFault> {
         let crossing = Err(CheckFault::Crossing(f));
         // (loop, index in it, start, end)
@@ -497,11 +519,11 @@ impl Brep {
             for t in &segs[k + 1..] {
                 let len = loops[s.0].1.len();
                 let meets = if s.0 == t.0 && t.1 == s.1 + 1 {
-                    folds(s.2, s.3, t.3)
+                    folds(s.2, s.3, t.3, work)
                 } else if s.0 == t.0 && s.1 == 0 && t.1 == len - 1 {
-                    folds(t.2, t.3, s.3)
+                    folds(t.2, t.3, s.3, work)
                 } else {
-                    segments_meet(s.2, s.3, t.2, t.3)
+                    segments_meet(s.2, s.3, t.2, t.3, work)
                 };
                 if meets {
                     return crossing;
@@ -519,7 +541,7 @@ impl Brep {
             } else {
                 ccw.reverse()
             };
-            if sign(&Area(c)) != Some(want) {
+            if charged(polygon_area_sign(c), work) != Some(want) {
                 return Err(CheckFault::Orientation(*l));
             }
         }
@@ -534,8 +556,8 @@ impl Brep {
             let in_others = loops
                 .iter()
                 .enumerate()
-                .any(|(o, (_, other))| o != h && o != outer && inside(p, other));
-            if !inside(p, &loops[outer].1) || in_others {
+                .any(|(o, (_, other))| o != h && o != outer && inside(p, other, work));
+            if !inside(p, &loops[outer].1, work) || in_others {
                 return Err(CheckFault::Nesting(*l));
             }
         }
@@ -664,54 +686,41 @@ fn same_point(a: [f64; 2], b: [f64; 2]) -> bool {
     a[0] == b[0] && a[1] == b[1]
 }
 
-/// The exact sign of a predicate on stored UVs; `None` for an input that
-/// isn't finite.
-fn sign(p: &impl Pred) -> Option<Ordering> {
-    value_sign(p).0.ok()
+/// The exact sign of a predicate on stored UVs, its runs added to
+/// `work`; `None` for an input that isn't finite.
+fn sign(p: &impl Pred, work: &mut exact::Work) -> Option<Ordering> {
+    charged(value_sign(p), work)
 }
 
-/// Twice a polygon's signed area: positive when it runs
-/// counter-clockwise.
-struct Area<'a>(&'a [[f64; 2]]);
-
-impl Pred for Area<'_> {
-    fn eval<N: Num>(&self) -> N {
-        let c = self.0;
-        let mut sum = N::lit(0.0);
-        for (k, a) in c.iter().enumerate() {
-            let b = c[(k + 1) % c.len()];
-            let term = N::lit(a[0])
-                .mul(&N::lit(b[1]))
-                .sub(&N::lit(b[0]).mul(&N::lit(a[1])));
-            sum = sum.add(&term);
-        }
-        sum
-    }
-
-    /// Of any length, so no kind's price fits it: the check charges no
-    /// budget.
-    fn kind(&self) -> PredKind {
-        PredKind::Orient2
-    }
+/// The sign of an exact run, its work added to `work`.
+fn charged((s, w): (ExactSign, exact::Work), work: &mut exact::Work) -> Option<Ordering> {
+    *work = work.and(w);
+    s.ok()
 }
 
 /// Whether the segments `a → b` and `b → c`, consecutive, fold back:
 /// collinear with `c` not ahead of `b`.
-fn folds(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
-    match sign(&Orient2d([a, b, c])) {
-        Some(Ordering::Equal) => sign(&Dot2d([a, b, b, c])) != Some(Ordering::Greater),
+fn folds(a: [f64; 2], b: [f64; 2], c: [f64; 2], work: &mut exact::Work) -> bool {
+    match sign(&Orient2d([a, b, c]), work) {
+        Some(Ordering::Equal) => sign(&Dot2d([a, b, b, c]), work) != Some(Ordering::Greater),
         Some(_) => false,
         None => true,
     }
 }
 
 /// Whether the closed segments `a b` and `c d` share a point, exactly.
-fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+fn segments_meet(
+    a: [f64; 2],
+    b: [f64; 2],
+    c: [f64; 2],
+    d: [f64; 2],
+    work: &mut exact::Work,
+) -> bool {
     let o = [
-        sign(&Orient2d([a, b, c])),
-        sign(&Orient2d([a, b, d])),
-        sign(&Orient2d([c, d, a])),
-        sign(&Orient2d([c, d, b])),
+        sign(&Orient2d([a, b, c]), work),
+        sign(&Orient2d([a, b, d]), work),
+        sign(&Orient2d([c, d, a]), work),
+        sign(&Orient2d([c, d, b]), work),
     ];
     let [Some(o1), Some(o2), Some(o3), Some(o4)] = o else {
         return true;
@@ -742,8 +751,8 @@ fn in_box(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> bool {
 /// Whether `p`, on no segment of the polygon, lies inside it: the parity
 /// of its crossings with the ray from `p` along `+u`, each decided
 /// exactly (a segment counts where one end lies strictly above `p`'s
-/// line and the other not).
-fn inside(p: [f64; 2], poly: &[[f64; 2]]) -> bool {
+/// line and the other not), its runs added to `work`.
+fn inside(p: [f64; 2], poly: &[[f64; 2]], work: &mut exact::Work) -> bool {
     let mut odd = false;
     for (k, a) in poly.iter().enumerate() {
         let b = poly[(k + 1) % poly.len()];
@@ -752,7 +761,7 @@ fn inside(p: [f64; 2], poly: &[[f64; 2]]) -> bool {
         }
         // The crossing lies right of `p` where `p` is left of the
         // upward-directed segment.
-        let o = sign(&Orient2d([*a, b, p]));
+        let o = sign(&Orient2d([*a, b, p]), work);
         let up = b[1] > a[1];
         if (up && o == Some(Ordering::Greater)) || (!up && o == Some(Ordering::Less)) {
             odd = !odd;

@@ -288,8 +288,8 @@ fn lines_on_one_shadow_line_cross_at_the_root_of_h() {
 /// stage (`Cost::exact`; filter, expansion and rational runs): on one
 /// line (`g` inside `e`), the shadow-point and ends' place tests (`Side`),
 /// the shadows on one line, the lines one in height and the moved signs
-/// of `h` at the overlap's ends (`Orient3`), the overlap's ends (`g`'s)
-/// against the split positions (`Orient2`); two distinct lines also
+/// of `h` at the overlap's ends, and the overlap's ends (`g`'s) against
+/// the split positions (`Orient3`, of degree 3); two distinct lines also
 /// their height gap at each piece's ends (`Crossing`); on one curve the
 /// moved signs at the run's ends and inner knot's two sides alone
 /// (`Orient3`, one filter run per order up to the first that isn't 0).
@@ -305,10 +305,10 @@ fn the_shared_record_charges_its_flat_signs() {
     let dir = lat(1.0, 2.0, 0.0);
     let none = [0; 3];
     for (lift, want) in [
-        (None, [[5, 0, 0], [80, 0, 0], [6, 4, 0], none, none]),
+        (None, [[5, 0, 0], none, [86, 4, 0], none, none]),
         (
             Some((-1.0, 1.0)),
-            [[5, 0, 0], [32, 0, 0], [5, 2, 0], [44, 5, 0], none],
+            [[5, 0, 0], none, [37, 2, 0], [44, 5, 0], none],
         ),
     ] {
         let mut geom = Geom {

@@ -5,11 +5,13 @@
 //! surface yet). Every body passes the planar check, relabelled too;
 //! each fault the check names is found on a store broken for it.
 
-use varde_decide::num::schedule::{UNIT_PARTS, UNITS};
+use varde_decide::num::exact::Runs;
+use varde_decide::num::schedule::{PredKind, UNIT_PARTS, UNITS};
+use varde_decide::num::trig;
 use varde_testkit::rng::Rng;
 use varde_testkit::sheets::{self, Diagonals, OFFSET, Pair, Polygons, SmoothPair, Wavy};
 
-use super::planar::{CheckFault, FaceError, PlanarCheck, PolygonError, line, plane_uv, uv_line};
+use super::planar::{CheckFault, FaceError, PolygonError, line, plane_uv, uv_line};
 use super::*;
 use crate::geom::curve::{Span2, Span3};
 use crate::geom::form::{CylinderKey, FormKey};
@@ -414,7 +416,8 @@ fn planes_are_charged_their_parts_rounded_up_once() {
         &mut Work::new(&Budget::DEFAULT),
     )
     .unwrap_or_else(|e| panic!("{e:?}"));
-    assert_eq!(built.check_planar(), Ok(PlanarCheck::default()));
+    let checked = built.check_planar().unwrap_or_else(|f| panic!("{f:?}"));
+    assert!(checked.unchecked_trims.is_empty(), "{checked:?}");
     match build(planes) {
         Err(PolygonError::Face {
             face: 0,
@@ -433,6 +436,43 @@ fn planes_are_charged_their_parts_rounded_up_once() {
             assert_eq!(profile.stages, vec![("planes", planes - 1)]);
         }
         other => panic!("{other:?}"),
+    }
+}
+
+/// The planar check charges its exact predicates by kind, a loop's
+/// signed area per term: on a convex `n`-gon sheet, 3 to 9 corners, the
+/// area is `n` `Orient2` filter runs, beside one per consecutive pair of
+/// sides (the fold test) and four per other pair (the segments' test);
+/// nothing reaches the expansions or another kind. The units are those
+/// runs' parts rounded up once.
+#[test]
+fn the_planar_check_charges_a_polygons_area_per_term() {
+    for n in 3..=9u32 {
+        let verts: Vec<[f64; 3]> = (0..n)
+            .map(|k| {
+                let a = std::f64::consts::TAU * f64::from(k) / f64::from(n);
+                [10.0 * trig::cos(a), 10.0 * trig::sin(a), 0.0]
+            })
+            .collect();
+        let gon = Polygons {
+            closed: false,
+            verts,
+            faces: vec![(0..n).collect()],
+        };
+        let checked = store(&gon)
+            .check_planar()
+            .unwrap_or_else(|f| panic!("{n}-gon: {f:?}"));
+        assert!(checked.unchecked_trims.is_empty(), "{n}-gon");
+        let (area, folds, others) = (n, n, n * (n - 3) / 2);
+        let want = Runs {
+            filters: area + folds + 4 * others,
+            ..Runs::default()
+        };
+        let orient2 = checked.work.of(PredKind::Orient2);
+        assert_eq!(orient2, want, "{n}-gon");
+        assert_eq!(checked.work.total(), orient2, "{n}-gon");
+        let parts = u64::from(want.filters) * UNITS.record.of(PredKind::Orient2).filter;
+        assert_eq!(checked.units(), parts.div_ceil(UNIT_PARTS), "{n}-gon");
     }
 }
 

@@ -798,7 +798,8 @@ fn times(s: Ordering, by: &Q) -> Ordering {
 /// A place along a line at a parameter against a point: the sign of `t −
 /// t_p` times that of `dir·(b − a)`, `t_p` the parameter of `p`'s place
 /// along `dir` by division; for `p` on the line (ties at its own
-/// parameter, one ulp either side) and off it; priced as an `Orient2`.
+/// parameter, one ulp either side) and off it; priced as an `Orient3`,
+/// the kind of its degree.
 #[test]
 fn line_places_are_parameters_compared() {
     let mut ties = 0;
@@ -826,11 +827,62 @@ fn line_places_are_parameters_compared() {
             let want = times(sgn(&(q(t) - &tp)), &den);
             assert_eq!(got, Ok(want), "seed {seed} t {t}");
             ties += usize::from(want == Ordering::Equal);
-            assert_eq!(w.of(PredKind::Orient2).filters, 1);
-            assert_eq!(w.total(), w.of(PredKind::Orient2));
+            assert_eq!(w.of(PredKind::Orient3).filters, 1);
+            assert_eq!(w.total(), w.of(PredKind::Orient3));
         }
     }
     assert!(ties > 0);
+}
+
+/// A polygon's signed area ([`polygon_area_sign`]) is the sign of the
+/// shoelace sum worked out in rationals, for polygons of 3 to 12
+/// corners: small integers (some sums 0), and corners on one line
+/// through a point (`a + s·d`, exactly 0, past the filter). Each stage
+/// it runs is charged one `Orient2` run per corner, nothing at another
+/// kind: an `n`-gon's filter `n` filter runs, its expansions `n` more.
+#[test]
+fn polygon_areas_are_charged_per_term() {
+    let (mut zeros, mut exact) = (0, 0);
+    for seed in varde_testing::seeds(16, 256) {
+        let mut r = Rng::new(seed);
+        let n = 3 + r.below(10) as usize;
+        let line = seed % 3 == 0;
+        let (a, d) = (r.ints(64), r.ints(8));
+        let c: Vec<[f64; 2]> = (0..n)
+            .map(|_| {
+                let p = if line { a + d * r.int(16) } else { r.ints(4) };
+                [p.x, p.y]
+            })
+            .collect();
+        let want = sgn(&(0..n).fold(zero(), |s, k| {
+            let (p, w) = (c[k], c[(k + 1) % n]);
+            s + q(p[0]) * q(w[1]) - q(w[0]) * q(p[1])
+        }));
+        let (got, w) = polygon_area_sign(&c);
+        assert_eq!(got, Ok(want), "seed {seed}: {c:?}");
+        let runs = w.of(PredKind::Orient2);
+        let terms = n as u32;
+        assert_eq!(runs.filters, terms, "seed {seed}");
+        assert!(
+            runs.expansions == 0 || runs.expansions == terms,
+            "seed {seed}"
+        );
+        assert_eq!(runs.rationals, 0, "seed {seed}");
+        assert_eq!(w.total(), runs, "seed {seed}");
+        zeros += usize::from(want == Ordering::Equal);
+        exact += usize::from(runs.expansions > 0);
+        if line {
+            assert_eq!((want, runs.expansions), (Ordering::Equal, terms));
+        }
+    }
+    assert!(
+        zeros > 0 && exact > 0,
+        "{zeros} zero, {exact} past the filter"
+    );
+    assert_eq!(
+        polygon_area_sign(&[]),
+        (Ok(Ordering::Equal), exact::Work::default())
+    );
 }
 
 /// Two lines on one vertical plane: [`LineGap`] against `ê × axis` is

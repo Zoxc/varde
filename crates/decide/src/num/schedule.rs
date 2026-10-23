@@ -30,7 +30,9 @@
 //! units by its kind and level ([`UNITS`]), one unit about half a
 //! microsecond on the reference machine. Exact flat predicates are
 //! priced per predicate kind ([`PredKind`]): each [`Pred`] names its
-//! kind, and its filter and exact runs are charged at that kind's row.
+//! kind, and its filter and exact runs are charged at that kind's row; a
+//! predicate of variable length (a polygon's signed area) is charged per
+//! term at its term's kind.
 //!
 //! [`Pred`]: super::exact::Pred
 
@@ -146,8 +148,8 @@ pub const MAX_SUBDIV_DEPTH: u32 = 48;
 pub const UNIT_PARTS: u64 = 64;
 
 /// The kind of an exact flat predicate, for its price: predicates of one
-/// kind have one shape and degree, so their filter and exact runs cost
-/// about the same, within the calibration's band. Each
+/// kind have one degree and about one size, so their filter and exact
+/// runs cost about the same, within the calibration's band. Each
 /// [`Pred`](super::exact::Pred) names its own; the calibration benchmark
 /// times each kind's stages on its predicates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -159,14 +161,16 @@ pub enum PredKind {
     Side,
     /// A 2D orientation `orient(a, b, c)`, or another sum of a few
     /// products of two differences: a dot product of two segments, a
-    /// distance squared against a radius squared, a place along a line at
-    /// a parameter against a point.
+    /// distance squared against a radius squared; also each term of a
+    /// polygon's signed area, a form of any length charged per term.
     Orient2,
     /// A 3×3 determinant of differences: a 3D orientation, a segment's
     /// side of a line, a point's side of a triangle's plane, a point
     /// against a line's shadow (`det(UP, b − a, q − a)`), a plane's height
     /// above a point, a shared curve's crossing row at a stored point
-    /// (`UP·(T × Δ)`, `T` a chord, `Δ` a rate).
+    /// (`UP·(T × Δ)`, `T` a chord, `Δ` a rate); also another form of
+    /// degree three, a place along a line at a parameter against a point
+    /// (`dir·(e₀ + t·(e₁ − e₀) − p)`).
     Orient3,
     /// Two edges' crossing along `UP`, `(UP·m)·(m·(g₀ − e₀))` with `m`
     /// the cross product of their directions: degree four; also the
