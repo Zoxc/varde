@@ -834,6 +834,46 @@ fn line_places_are_parameters_compared() {
     assert!(ties > 0);
 }
 
+/// A plane's side of a point at parameters of a parallelogram: the sign
+/// of `n·x − c` with the point `x = o + s·(a − o) + t·(b − o)` formed in
+/// rationals, for parameters off a corner at a tile index; with `c` put
+/// through the point (ties, the parameters exact quarters) and one ulp
+/// off it; priced as an `Orient3`, the kind of its degree.
+#[test]
+fn parallelogram_sides_are_the_point_formed() {
+    let mut ties = 0;
+    for seed in varde_testing::seeds(16, 256) {
+        let mut r = Rng::new(seed);
+        let (o, a, b, n) = (r.ints(8), r.ints(8), r.ints(8), r.ints(3));
+        let corner = [r.int(4), r.int(4)];
+        let uv = [0, 1].map(|k| corner[k] + r.int(4) / 4.0);
+        let [s, t] = [0, 1].map(|k| q(uv[k]) - q(corner[k]));
+        let (qo, qa, qb) = (q3(o), q3(a), q3(b));
+        let x: Q3 =
+            std::array::from_fn(|k| &qo[k] + &s * (&qa[k] - &qo[k]) + &t * (&qb[k] - &qo[k]));
+        let on = qdot(&q3(n), &x);
+        // Small integers and quarters: `n·x` is an `f64` exactly.
+        let c = f64::try_from(&on).unwrap();
+        for offset in [c, c.next_up(), c.next_down(), r.int(8)] {
+            let (got, w) = value_sign(&ParallelogramSide {
+                normal: n,
+                offset,
+                o,
+                a,
+                b,
+                uv,
+                corner,
+            });
+            let want = sgn(&(on.clone() - q(offset)));
+            assert_eq!(got, Ok(want), "seed {seed} offset {offset}");
+            ties += usize::from(want == Ordering::Equal);
+            assert_eq!(w.of(PredKind::Orient3).filters, 1);
+            assert_eq!(w.total(), w.of(PredKind::Orient3));
+        }
+    }
+    assert!(ties > 0);
+}
+
 /// A polygon's signed area ([`polygon_area_sign`]) is the sign of the
 /// shoelace sum worked out in rationals, for polygons of 3 to 12
 /// corners: small integers (some sums 0), and corners on one line

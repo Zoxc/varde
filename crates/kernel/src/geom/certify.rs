@@ -410,7 +410,7 @@ fn eval_at<S: LevelScalar>(
 /// The tile holding span `s` and its indices: `(⌊u⌋, ⌊v⌋)` of the least
 /// control values, or the one below in either direction, whichever holds
 /// every control value and lies in the domain.
-fn tile_of<'a>(surface: &'a Surface, s: &PSpan) -> Option<(&'a Tile, i64, i64)> {
+pub(crate) fn tile_of<'a>(surface: &'a Surface, s: &PSpan) -> Option<(&'a Tile, i64, i64)> {
     let [lo, hi] = s.hull();
     let pick = |k: usize, range: &std::ops::Range<i64>| -> Option<i64> {
         let least = lo[k];

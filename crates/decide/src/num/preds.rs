@@ -15,8 +15,9 @@
 //! facing of the unmoved data.
 //!
 //! **Predicates.** The types here ([`Orient2d`], [`Orient2Exact`],
-//! [`Dot2d`], [`Orient3d`], [`Orient3Dir`], [`PlaneSide`], [`Along`],
-//! [`LinePlace`], [`LineGap`], [`NearGap`], and a polygon's area,
+//! [`Dot2d`], [`Orient3d`], [`Orient3Dir`], [`PlaneSide`],
+//! [`ParallelogramSide`], [`Along`], [`LinePlace`], [`LineGap`],
+//! [`NearGap`], and a polygon's area,
 //! [`polygon_area_sign`]) are the forms on points that
 //! don't move, stored (an exact box corner, a stored parameter along a
 //! stored segment, [`line_point`]): the certificates and checks on one
@@ -34,7 +35,8 @@
 //! [`PredKind::Orient2`]; [`orient3`], [`orient3_dir`], [`shadow_side`]
 //! and [`plane_height`] [`PredKind::Orient3`] (degree 3), also
 //! [`LinePlace`] (three products of an input and a point at a
-//! parameter, degree 3); [`crossing_height`] [`PredKind::Crossing`]
+//! parameter, degree 3) and [`ParallelogramSide`] (a plane's side of a
+//! point at parameters of a parallelogram, degree 3); [`crossing_height`] [`PredKind::Crossing`]
 //! (degree 4), also [`LineGap`] (a 3×3 determinant with a point at a
 //! parameter, degree 4); the shadow rows of homogeneous points
 //! ([`hom_sub`]) [`PredKind::Hom`]. A form of variable length is priced
@@ -375,6 +377,45 @@ impl Pred for PlaneSide {
 
     fn kind(&self) -> PredKind {
         PredKind::Side
+    }
+}
+
+/// [`plane_side`] of the point at the parameters `(s, t) = uv − corner`
+/// of the parallelogram `o + s·(a − o) + t·(b − o)` against a stored
+/// plane `n·x = c`: `n·(o + s·(a − o) + t·(b − o)) − c`, positive on the
+/// side `n` points to. A point given by its parameters on a stored affine
+/// patch (a plane's tile, its corners `o`, `a`, `b` at `(0, 0)`, `(1, 0)`,
+/// `(0, 1)`, the parameters local to the tile at `corner`), never formed
+/// as a point; of degree 3, priced as [`PredKind::Orient3`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParallelogramSide {
+    /// The plane's normal `n` (any scale).
+    pub normal: DVec3,
+    /// The offset `c`.
+    pub offset: f64,
+    /// The corner at `(0, 0)`.
+    pub o: DVec3,
+    /// The corner at `(1, 0)`.
+    pub a: DVec3,
+    /// The corner at `(0, 1)`.
+    pub b: DVec3,
+    /// The parameters, before the corner's are taken off.
+    pub uv: [f64; 2],
+    /// The parameters of the corner `o`.
+    pub corner: [f64; 2],
+}
+
+impl Pred for ParallelogramSide {
+    fn eval<N: Num>(&self) -> N {
+        let o = point::<N>(self.o);
+        let (da, db) = (sub(&point(self.a), &o), sub(&point(self.b), &o));
+        let [s, t] = [0, 1].map(|k| N::lit(self.uv[k]).sub(&N::lit(self.corner[k])));
+        let x = [0, 1, 2].map(|k| o[k].add(&s.mul(&da[k])).add(&t.mul(&db[k])));
+        plane_side(&point(self.normal), &N::lit(self.offset), &x)
+    }
+
+    fn kind(&self) -> PredKind {
+        PredKind::Orient3
     }
 }
 
