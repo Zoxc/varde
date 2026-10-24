@@ -48,7 +48,9 @@
 //! are read off the columns, never by walking links, so they are formed
 //! on a body whose topology is broken (the check of such a body reports
 //! invariant 1); a link naming no entity counts as missing there. Forming
-//! them is charged one unit per entity and per coedge.
+//! them is charged one unit per entity and per coedge, and the counts the
+//! hooks read (the rows naming each loop, face, shell and region) one more
+//! per loop, face and shell.
 //!
 //! Every pass is a [`Work::pass`]: its items run in parallel and are
 //! decided in key order, so the failure, the work used and where the
@@ -77,8 +79,9 @@
 //! **Stages.** A body needing a part of an invariant this build doesn't
 //! certify yet (a contact record, a curved trim, a non-adjacent near
 //! pair) is refused, never passed ([`Finding::Unbuilt`]). This build has
-//! no invariant's hook yet: each refuses every face as unbuilt, so only a
-//! body without faces passes.
+//! the hooks of invariants 1 to 3 (the [`topo`] module); each later one
+//! refuses every face as unbuilt, so only a body without faces passes the
+//! whole check.
 //!
 //! **Outcomes** ([`CheckError::outcome`]): what a failure means depends
 //! on whose body it is ([`Role`]): an operand is invalid; a constructed
@@ -404,7 +407,18 @@ impl Invariant for Unbuilt {
 }
 
 /// The hooks this build checks with.
-const BUILT: Invariants<'static> = [&Unbuilt; 10];
+const BUILT: Invariants<'static> = [
+    &topo::Topology,
+    &topo::Joins,
+    &topo::Domain,
+    &Unbuilt,
+    &Unbuilt,
+    &Unbuilt,
+    &Unbuilt,
+    &Unbuilt,
+    &Unbuilt,
+    &Unbuilt,
+];
 
 /// What an operation changed: its new and modified faces, and its new
 /// edges and vertices. Ids naming no entity of the body are ignored.
@@ -434,22 +448,16 @@ pub(crate) enum Scope<'a> {
     Changed(&'a Changed),
 }
 
-/// What a hook reads: the body, and which items the check covers.
+/// What a hook reads: the body, what its coedges say of the entities
+/// they meet, and which items the check covers.
 pub(crate) struct Cx<'a> {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the invariants' hooks read it as they land")
-    )]
     body: &'a Brep,
+    inc: &'a Incidence,
     scope: Option<&'a InScope>,
 }
 
 impl Cx<'_> {
     /// The body.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the invariants' hooks read it as they land")
-    )]
     pub(crate) fn body(&self) -> &Brep {
         self.body
     }
@@ -514,6 +522,7 @@ pub(crate) fn run(
         };
         let cx = Cx {
             body,
+            inc: &inc,
             scope: covered,
         };
         let hook = invariants[usize::from(inv.number() - 1)];
@@ -584,12 +593,16 @@ fn pass_ids<R: Send>(
     })
 }
 
-/// What the coedges say of the entities they meet, read off the columns
-/// alone (a link naming no entity left out), each list sorted and
-/// without repeats.
+/// What the coedges say of the entities they meet, and how many rows
+/// name each loop, face, shell and region, read off the columns alone (a
+/// link naming no entity left out), each list sorted and without
+/// repeats.
 struct Incidence {
     /// Per vertex, the faces of the coedges starting or ending there.
     vert_faces: Vec<Vec<FaceId>>,
+    /// Per vertex, its corners: the coedges ending there, in their own
+    /// direction.
+    vert_corners: Vec<Vec<CoedgeId>>,
     /// Per edge, its coedges.
     edge_coedges: Vec<Vec<CoedgeId>>,
     /// Per face, the vertices of its coedges.
@@ -598,6 +611,14 @@ struct Incidence {
     face_edges: Vec<Vec<EdgeId>>,
     /// Per loop, the vertices of its coedges.
     loop_verts: Vec<Vec<VertId>>,
+    /// Per loop, the number of coedges naming it.
+    loop_sizes: Vec<usize>,
+    /// Per face, the number of loops naming it.
+    face_loops: Vec<usize>,
+    /// Per shell, the number of faces' sides naming it.
+    shell_sides: Vec<usize>,
+    /// Per region, the number of shells naming it.
+    region_shells: Vec<usize>,
 }
 
 /// One coedge's incidences: its edge, its two vertices (in its own
@@ -636,18 +657,47 @@ impl Incidence {
                 lp: get(&cs.lp, c).filter(|l| l.index() < nl),
             }
         })?;
+        let ns = body.shell_count();
+        let nr = body.region_count();
+        let loop_faces = pass_ids(work, rung, nl, |l| {
+            get(&body.loops.face, l).filter(|f| f.index() < nf)
+        })?;
+        let face_shells = pass_ids(work, rung, nf, |f| {
+            body.faces.shells[f].map(|s| (s.index() < ns).then_some(s))
+        })?;
+        let shell_regions = pass_ids(work, rung, ns, |s| {
+            get(&body.shells.region, s).filter(|r| r.index() < nr)
+        })?;
         let mut inc = Incidence {
             vert_faces: vec![Vec::new(); nv],
+            vert_corners: vec![Vec::new(); nv],
             edge_coedges: vec![Vec::new(); ne],
             face_verts: vec![Vec::new(); nf],
             face_edges: vec![Vec::new(); nf],
             loop_verts: vec![Vec::new(); nl],
+            loop_sizes: vec![0; nl],
+            face_loops: vec![0; nf],
+            shell_sides: vec![0; ns],
+            region_shells: vec![0; nr],
         };
+        for f in loop_faces.into_iter().flatten() {
+            inc.face_loops[f.index()] += 1;
+        }
+        for s in face_shells.into_iter().flatten().flatten() {
+            inc.shell_sides[s.index()] += 1;
+        }
+        for r in shell_regions.into_iter().flatten() {
+            inc.region_shells[r.index()] += 1;
+        }
         for (c, ci) in incs.iter().enumerate() {
             let ends = ci.ends.iter().flatten();
+            // Coedge ids fit in `u32`: the store hands out no more.
+            let id = CoedgeId(c as u32);
             if let Some(e) = ci.edge {
-                // Coedge ids fit in `u32`: the store hands out no more.
-                inc.edge_coedges[e.index()].push(CoedgeId(c as u32));
+                inc.edge_coedges[e.index()].push(id);
+            }
+            if let Some(v) = ci.ends[1] {
+                inc.vert_corners[v.index()].push(id);
             }
             if let Some(f) = ci.face {
                 for &v in ends.clone() {
@@ -658,6 +708,7 @@ impl Incidence {
             }
             if let Some(l) = ci.lp {
                 inc.loop_verts[l.index()].extend(ends);
+                inc.loop_sizes[l.index()] += 1;
             }
         }
         inc.vert_faces.iter_mut().for_each(sort_dedup);
@@ -665,6 +716,7 @@ impl Incidence {
         inc.face_verts.iter_mut().for_each(sort_dedup);
         inc.loop_verts.iter_mut().for_each(sort_dedup);
         inc.edge_coedges.iter_mut().for_each(sort_dedup);
+        inc.vert_corners.iter_mut().for_each(sort_dedup);
         Ok(inc)
     }
 }
@@ -1008,6 +1060,8 @@ impl InScope {
         }
     }
 }
+
+mod topo;
 
 #[cfg(test)]
 mod tests;
