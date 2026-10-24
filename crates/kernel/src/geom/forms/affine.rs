@@ -77,7 +77,7 @@ pub(in crate::geom) fn reach(key: &AffineKey, source: Reach) -> Reach {
 /// A lower bound on the map's least singular value, `|det M|/‖adj M‖_F`
 /// (`‖M⁻¹‖₂ ≤ ‖M⁻¹‖_F`), rounded down; 0 where the determinant is
 /// below the normal range or a value overflows.
-fn least_stretch(key: &AffineKey) -> f64 {
+pub(in crate::geom) fn least_stretch(key: &AffineKey) -> f64 {
     let m = key.linear().map(|row| row.map(q));
     let minor = |r0: usize, r1: usize, c0: usize, c1: usize| {
         &m[r0][c0] * &m[r1][c1] - &m[r0][c1] * &m[r1][c0]

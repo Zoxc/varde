@@ -281,11 +281,23 @@ fn caps_follow_the_map() {
         let base = d.half(0).unwrap();
         let (k, l) = (base.u.start >> base.level.u, base.v.start >> base.level.v);
         let at = |level: Level| d.tile(level, k << level.u, l << level.v);
-        assert!(at(d.cap()).is_ok(), "{s:?}");
-        if d.cap().u < crate::geom::lattice::MAX_LEVEL {
+        // The cap of the corner tile at the form's cap: lower around
+        // the axis beside a pole or apex.
+        let deep = d.cap();
+        let one = |n: i64, lv: u32| (n << lv)..(n << lv) + 1;
+        let cap = d
+            .cap_of(&Rect {
+                level: deep,
+                u: one(k, deep.u),
+                v: one(l, deep.v),
+            })
+            .unwrap();
+        assert!(cap.v == deep.v && cap.u <= deep.u, "{s:?} {cap:?}");
+        assert!(at(cap).is_ok(), "{s:?}");
+        if cap.u < crate::geom::lattice::MAX_LEVEL {
             let past = Level {
-                u: d.cap().u + 1,
-                v: d.cap().v,
+                u: cap.u + 1,
+                v: cap.v,
             };
             assert!(
                 matches!(at(past), Err(LatticeError::LevelBeyondCap { .. })),

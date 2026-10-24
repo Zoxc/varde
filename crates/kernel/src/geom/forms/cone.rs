@@ -23,14 +23,15 @@
 //! **Level cap.** Along `v` the cells are lines (their generators'
 //! direction is unit to rounding). Around the axis the chord is taken at
 //! the radius `sin·t` of the cells' far row, the largest of the cells
-//! asked for: near the apex a cell's chord shrinks to 0 at any level,
-//! which the apex row's singular side, not the cap, accounts for.
+//! asked for. Near the apex a cell's chord shrinks to 0: there a slant
+//! tile's own cap reads the radius of its far row ([`pole`], the
+//! lattice's docs).
 
 use malachite::Rational;
 
 use super::super::form::ConeKey;
 use super::super::lattice::{
-    ARC, CELL, Cells, ExactFrame, Frame, Lattice, LatticeError, Reach, Run, affine, arc, far,
+    ARC, CELL, Cells, ExactFrame, Frame, Lattice, LatticeError, Pole, Reach, Run, affine, arc, far,
     larger,
 };
 use super::super::round::q;
@@ -87,6 +88,17 @@ pub(in crate::geom) fn reach(f: &Frame, key: &ConeKey, v: &Cells) -> Reach {
         rho: t * sin,
         t,
         runs: [Run::Turn(t * sin), Run::Line],
+    }
+}
+
+/// Slant cell 0's distance from the axis from the apex (module docs):
+/// `sin·t` along the cell, a line to `sin·CELL`.
+pub(in crate::geom) fn pole(key: &ConeKey) -> Pole {
+    let end = key.sin() * CELL;
+    Pole {
+        corner: end * 0.5,
+        end,
+        w: 1.0,
     }
 }
 

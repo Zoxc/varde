@@ -1,5 +1,6 @@
 //! Checks across every form at once, each over the sample surfaces of
-//! every form ([`super::samples`]) at levels from the base to the cap:
+//! every form ([`super::samples`]) at levels from the base to the cap
+//! (beside a pole or an apex, each tile's own: [`capped_tile`]):
 //! tiles on their implicits within `10⁻¹⁵` of their base tile's
 //! coordinate scale, every tile regular, equal keys from other
 //! construction frames giving the same lattice bit for bit, and `extend`
@@ -20,7 +21,7 @@ use super::form::{
 use super::lattice::{Lattice, LatticeError, Level, Rect};
 use super::pcurve::PCurve;
 use super::round::nearest;
-use super::samples::{Sample, surfaces};
+use super::samples::{Sample, capped_tile, surfaces};
 use super::surface::Surface;
 use super::tile::Tile;
 use crate::infra::budget::MAX_WORK;
@@ -152,8 +153,8 @@ fn tiles_lie_on_their_implicits_to_the_cap() {
             let mut count = 0;
             for level in levels(rect, cap) {
                 for (i, j) in tiles_at(rect, level, 3, &mut rng) {
+                    let (level, i, j, tile) = capped_tile(lattice, level, i, j);
                     let what = format!("seed {seed}, {name}, {level:?} ({i}, {j})");
-                    let tile = lattice.tile(level, i, j).expect(&what);
                     let (k, l) = (i >> level.u, j >> level.v);
                     let b = rect.level;
                     let s0 = scale(&lattice.base_tile(k, l).expect(&what));
@@ -198,18 +199,14 @@ fn tiles_lie_on_their_implicits_to_the_cap() {
 
 /// Every tile of every form is regular, at levels from the base to the
 /// cap: the fold check certifies its normal cone (dividing out the
-/// declared singular sides). Not yet beside a pole or an apex at levels
-/// deep in both directions: there a cell's rows next to the singular one
-/// turn by less than their coordinates' spacing (their chord is the
-/// row's radius, a small part of the form's radius the cap reads, times
-/// the cell's angle), round to one point, and the fold check stops. Those
-/// tiles are counted and printed apart; every other tile must be
-/// regular, and those must all be of that kind.
+/// declared singular sides). Beside a pole or an apex a tile deep in
+/// both directions is coarsened around the axis to its own cap, read at
+/// its far row's radius ([`capped_tile`]): those are counted apart, and
+/// must be regular too.
 #[test]
 fn every_tile_is_regular_to_the_cap() {
     let mut failed = Vec::new();
-    let mut beside = Vec::new();
-    let mut total = 0;
+    let (mut total, mut beside, mut coarsened) = (0, 0, 0);
     for seed in varde_testing::seeds(1, 8) {
         let mut rng = Rng::new(2000 + seed);
         for Sample { name, surface } in canonical(seed) {
@@ -218,29 +215,24 @@ fn every_tile_is_regular_to_the_cap() {
             let cap = lattice.cap_of(rect).unwrap();
             for level in levels(rect, cap) {
                 for (i, j) in tiles_at(rect, level, 2, &mut rng) {
-                    let tile = lattice.tile(level, i, j).unwrap();
+                    let (at, i, j, tile) = capped_tile(lattice, level, i, j);
                     total += 1;
-                    if tile.is_regular() {
-                        continue;
-                    }
-                    let what = format!("seed {seed}, {name}, cap {cap:?}, {level:?} ({i}, {j})");
-                    if tile.singular() != Sides::NONE && tile.fold_stops() {
-                        beside.push(what);
-                    } else {
-                        failed.push(what);
+                    beside += usize::from(tile.singular() != Sides::NONE);
+                    coarsened += usize::from(at != level);
+                    if !tile.is_regular() {
+                        failed.push(format!(
+                            "seed {seed}, {name}, cap {cap:?}, {at:?} ({i}, {j})"
+                        ));
                     }
                 }
             }
         }
     }
     println!(
-        "{total} tiles: {} not regular beside a singular side, {} others",
-        beside.len(),
+        "{total} tiles: {beside} beside a singular side, {coarsened} coarsened to their \
+         own cap, {} not regular",
         failed.len()
     );
-    for f in &beside {
-        println!("  beside: {f}");
-    }
     assert!(failed.is_empty(), "not regular: {failed:#?}");
 }
 
@@ -380,6 +372,14 @@ fn equal_keys_from_other_frames_give_the_same_lattice() {
             let cap = a.cap_of(&rect).unwrap();
             for level in levels(&rect, cap) {
                 for (i, j) in tiles_at(&rect, level, 2, &mut rng) {
+                    let one = Rect {
+                        level,
+                        u: i..i + 1,
+                        v: j..j + 1,
+                    };
+                    let c = a.capped(&one).unwrap();
+                    assert_eq!(c, b.capped(&one).unwrap(), "{what}: {level:?} ({i}, {j})");
+                    let (level, i, j) = (c.level, c.u.start, c.v.start);
                     let (ta, tb) = (a.tile(level, i, j), b.tile(level, i, j));
                     assert_eq!(ta, tb, "{what}: {level:?} ({i}, {j})");
                     assert_eq!(

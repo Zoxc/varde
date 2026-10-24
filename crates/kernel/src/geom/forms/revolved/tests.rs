@@ -18,6 +18,7 @@ use crate::geom::conic::Conic;
 use crate::geom::form::{CylinderKey, FormError, FormKey};
 use crate::geom::lattice::larger;
 use crate::geom::round::{nearest, nearest_sqrt, q};
+use crate::geom::samples::capped_tile;
 
 const TOL: f64 = 1e-15;
 
@@ -176,8 +177,10 @@ fn tiles_follow_the_profile_at_every_level() {
             };
             let i = (k << level.u) + (rng.next_u64() % (1 << level.u)) as i64;
             let j = (c << level.v) + (rng.next_u64() % (1 << level.v)) as i64;
+            // The cell's own cap around the axis beside a pole or apex.
+            let (level, i, j, t) = capped_tile(&l, level, i, j);
             let m = scale(&l.base_tile(k, c).unwrap());
-            let e = exact(&l.tile(level, i, j).unwrap());
+            let e = exact(&t);
             for (u, v) in [(0, 0), (1, 3), (2, 2), (4, 1), (4, 4)] {
                 let (u, v) = (Q::from_signeds(u, 4), Q::from_signeds(v, 4));
                 let p = e.eval(&u, &v);
@@ -297,6 +300,42 @@ fn canonical_tiles_are_regular_poles_and_apexes_included() {
                 assert_eq!(t.singular(), want, "{what}");
                 assert!(t.is_regular(), "{what}");
             }
+        }
+    }
+}
+
+/// Beside the axis the cap around it is each span tile's own, read at
+/// its far row's radius: a span with both ends on the axis (a lemon's
+/// meridian, `ρ = 2t(1 − t)·½/(1 − t + t²)`, `⅓` at its middle) reads its
+/// middle at the base level and at level 1 (each half's far row), less
+/// next to either apex; every tile at its cap is regular.
+#[test]
+fn caps_beside_both_apexes_of_a_span() {
+    let span = [[0.0, -1.0, 1.0], [1.0, 0.0, 0.5], [0.0, 1.0, 1.0]];
+    let key = RevolvedKey::new([3.0, -2.0, 1.0], [0.0, 0.6, 0.8], &[span]).unwrap();
+    let l = Lattice::new(key.clone().into()).unwrap();
+    assert_eq!(l.singular(0), Sides::NONE.with(Side::V0).with(Side::V1));
+    let one = |level: Level, j: i64| Rect {
+        level,
+        u: 0..1,
+        v: j..j + 1,
+    };
+    let at = |lv: u32, j: i64| l.cap_of(&one(Level { u: 0, v: lv }, j)).unwrap();
+    let middle = at(0, 0);
+    assert!(middle.u < l.cap().u, "{middle:?} {:?}", l.cap());
+    assert_eq!((at(1, 0), at(1, 1)), (middle, middle));
+    for lv in [3, 9, 20] {
+        let h = 1i64 << lv;
+        let (south, north) = (at(lv, 0), at(lv, h - 1));
+        assert_eq!(south, north);
+        assert!(
+            south.u + lv - 3 <= middle.u && south.u < middle.u,
+            "{lv} {south:?}"
+        );
+        for j in [0, h / 2 - 1, h / 2, h - 1] {
+            let deep = Level { u: 40, v: lv };
+            let (level, i, j, t) = capped_tile(&l, deep, 5, j);
+            assert!(t.is_regular(), "{level:?} ({i}, {j})");
         }
     }
 }

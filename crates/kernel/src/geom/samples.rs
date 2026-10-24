@@ -12,6 +12,7 @@ use super::form::{
 };
 use super::lattice::{Lattice, Level, Rect};
 use super::surface::Surface;
+use super::tile::Tile;
 
 /// The `(ρ, z)` axes of a meridian plane.
 const MERIDIAN: [[f64; 2]; 2] = [[1.0, 0.0], [0.0, 1.0]];
@@ -43,6 +44,26 @@ pub(crate) fn refined(s: &Surface) -> Surface {
     let lattice = s.lattice().clone();
     let rect = lattice.capped(&fine).unwrap();
     Surface::new(lattice, rect).unwrap()
+}
+
+/// Tile `(i, j)` of `level` on `lattice`, coarsened to its cell's cap
+/// where it is beyond it (beside a singular row, deep in both
+/// directions; [`Lattice::capped`]): the level, the indices and the
+/// tile at them.
+pub(crate) fn capped_tile(
+    lattice: &Lattice,
+    level: Level,
+    i: i64,
+    j: i64,
+) -> (Level, i64, i64, Tile) {
+    let one = Rect {
+        level,
+        u: i..i + 1,
+        v: j..j + 1,
+    };
+    let c = lattice.capped(&one).unwrap();
+    let tile = lattice.tile(c.level, c.u.start, c.v.start).unwrap();
+    (c.level, c.u.start, c.v.start, tile)
 }
 
 /// Revolved profiles: three quarters of an ellipse off the axis,

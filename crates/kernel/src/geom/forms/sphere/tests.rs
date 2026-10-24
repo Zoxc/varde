@@ -197,3 +197,88 @@ fn the_canonical_sphere_is_half_a_turn_pole_to_pole() {
     };
     assert_eq!(l.tiles(&all).unwrap().len(), 16);
 }
+
+/// Beside a pole the longitude cap is each latitude tile's own, read at
+/// its far row's radius: a sphere capped at 38 (at the equator) coarsens
+/// a request at `(16, 30)` next to a pole around the axis, refuses it
+/// asked for explicitly, and its tiles there are regular; a level
+/// further from the pole gets a deeper longitude cap, and next to the
+/// equator the sphere's own.
+#[test]
+fn longitude_caps_shrink_towards_the_poles() {
+    let key = SphereKey::new([100.0, 0.0, 0.0], 1.0, [0.0, 0.0, 1.0]).unwrap();
+    let l = Lattice::new(key.into()).unwrap();
+    let cap = l.cap();
+    assert_eq!(cap, Level { u: 38, v: 38 });
+    let level = Level { u: 16, v: 30 };
+    let h = 1i64 << level.v;
+    let one = |i: i64, j: i64| Rect {
+        level,
+        u: i..i + 1,
+        v: j..j + 1,
+    };
+    for (i, j) in [(5, h - 1), (-7, -h)] {
+        let near = l.cap_of(&one(i, j)).unwrap();
+        // The far row `2⁻³⁰` of a quarter turn from the pole: its radius
+        // about `√2·2⁻³⁰`, so `L_u + L_v` stays near the cap.
+        assert!(near.v == cap.v && near.u < level.u, "{near:?}");
+        assert!(near.u + level.v <= cap.u + 1, "{near:?}");
+        assert_eq!(
+            l.tile(level, i, j).unwrap_err(),
+            LatticeError::LevelBeyondCap {
+                form: Box::new(key.into()),
+                level,
+                cap: near,
+            }
+        );
+        let c = l.capped(&one(i, j)).unwrap();
+        assert_eq!(c.level, Level { u: near.u, ..level });
+        assert_eq!(
+            (c.u.start << (level.u - near.u), c.v.start),
+            (i & !((1 << (level.u - near.u)) - 1), j)
+        );
+        let t = l.tile(c.level, c.u.start, c.v.start).unwrap();
+        assert!(t.singular() != varde_decide::bezier::Sides::NONE);
+        assert!(t.is_regular(), "{c:?}");
+        // One level finer around the axis is refused.
+        let past = Level {
+            u: near.u + 1,
+            ..level
+        };
+        assert!(matches!(
+            l.tile(past, c.u.start, j),
+            Err(LatticeError::LevelBeyondCap { .. })
+        ));
+        // A rectangle reaching the pole takes its tile's cap.
+        let rows = Rect {
+            level,
+            u: 0..4,
+            v: if j < 0 { -h..-h + 8 } else { h - 8..h },
+        };
+        assert_eq!(l.cap_of(&rows).unwrap(), near);
+    }
+    // Further from the pole a deeper cap, and next to the equator (its
+    // far row the pole's other end) the sphere's own.
+    let pole = l.cap_of(&one(0, h - 1)).unwrap();
+    let off = l.cap_of(&one(0, h - (1 << 10))).unwrap();
+    let mid = l.cap_of(&one(0, h / 2)).unwrap();
+    assert!(
+        off.u == pole.u + 10 && mid.u == cap.u,
+        "{pole:?} {off:?} {mid:?}"
+    );
+    for j in [-1, 0] {
+        assert_eq!(l.cap_of(&one(0, j)).unwrap(), cap);
+        assert!(
+            l.tile(Level { u: cap.u, ..level }, 3, j)
+                .unwrap()
+                .is_regular()
+        );
+    }
+    // At the base latitude level, the sphere's own cap.
+    let base = Rect {
+        level: Level { u: 3, v: 0 },
+        u: 0..8,
+        v: -1..1,
+    };
+    assert_eq!(l.cap_of(&base).unwrap(), cap);
+}

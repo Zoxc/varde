@@ -51,19 +51,21 @@
 //! for, each span's bounded below by `min N/max w` (`N` as
 //! [`AxisContact`]'s, its least value on the span exactly); a span
 //! reaching the axis takes its largest radius instead, as a sphere's
-//! equator (towards the axis a cell's chord shrinks to 0, which the pole
-//! or apex row's singular side, not the cap, accounts for).
+//! equator. Towards the axis a cell's chord shrinks to 0: there a span
+//! tile's own cap reads the radius of its far row ([`pole`], the
+//! lattice's docs).
 
 use std::ops::Range;
 
 use malachite::Rational;
 use malachite::base::num::basic::traits::Zero;
+use varde_decide::bezier::Side;
 
 use super::super::condition::middle_square;
 use super::super::form::{AxisContact, RevolvedKey, Span2, axis_contact};
 use super::super::lattice::{
-    Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Reach, Rect, Run, affine, arc, larger,
-    pow2,
+    Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Pole, Reach, Rect, Run, affine, arc,
+    larger, pow2,
 };
 use super::super::round::{nearest, nearest_sqrt, q};
 use super::super::surface::Surface;
@@ -176,6 +178,19 @@ fn least_radius(span: &Span2) -> f64 {
     let high = span.iter().map(|p| p[2]).fold(0.0, larger);
     // One rounding of the quotient, and the margin.
     nearest(&(low / q(high))) * (1.0 - pow2(-40))
+}
+
+/// The standard span `span`'s distance from the axis from its end
+/// `side` on the axis (`ρ = 0`; module docs): its `|ρ|` from that end,
+/// with its weights.
+pub(in crate::geom) fn pole(span: &Span2, side: Side) -> Pole {
+    let [a, b, c] = span.map(|p| p[0].abs());
+    let end = if side == Side::V0 { c } else { a };
+    Pole {
+        corner: b,
+        end,
+        w: span[1][2],
+    }
 }
 
 /// The canonical rectangle at the base level ([`Lattice::half`]): angle

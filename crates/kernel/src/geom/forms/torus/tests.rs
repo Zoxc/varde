@@ -16,6 +16,7 @@ use super::super::testing::{dot, exact, frame, level_to, local, normal_angle, ro
 use super::*;
 use crate::geom::form::FormKey;
 use crate::geom::lattice::Level;
+use crate::geom::samples::capped_tile;
 use crate::geom::tile::{Tile, TileError};
 
 const TOL: f64 = 1e-15;
@@ -368,8 +369,9 @@ fn the_apex_rows_are_the_apexes_at_every_level() {
             };
             let h = 1i64 << level.v;
             for i in [0i64, 1, (3 << level.u) - 1, -5] {
-                let north = l.tile(level, i, h - 1).unwrap();
-                let south = l.tile(level, i, -h).unwrap();
+                // Deep in both directions, at the cap beside the apexes.
+                let (_, _, _, north) = capped_tile(&l, level, i, h - 1);
+                let (_, _, _, south) = capped_tile(&l, level, i, -h);
                 for k in 0..3 {
                     assert_eq!(north.point(k, 2), apex(1), "{key:?} {level:?} {i}");
                     assert_eq!(south.point(k, 0), apex(-1), "{key:?} {level:?} {i}");
@@ -377,18 +379,10 @@ fn the_apex_rows_are_the_apexes_at_every_level() {
                 // Singular sides, which the fold check divides out.
                 assert_eq!(north.singular(), Side::V1.into());
                 assert_eq!(south.singular(), Side::V0.into());
-                // At the cap an angle cell next to an apex may turn
-                // less than the coordinates' spacing there (the cap reads
-                // the outer equator's radius): each control row across
-                // the angle rounds to one point, the stored tile is no
-                // surface, and its fold check stops. To `(8, 8)` the
-                // tiles are regular.
-                if level.u <= 8 {
-                    assert!(
-                        north.is_regular() && south.is_regular(),
-                        "{key:?} {level:?} {i}"
-                    );
-                }
+                assert!(
+                    north.is_regular() && south.is_regular(),
+                    "{key:?} {level:?} {i}"
+                );
             }
         }
     }
@@ -663,6 +657,9 @@ fn tiles_follow_the_tangent_to_the_cap() {
             let (hu, hv) = (1i64 << level.u, 1i64 << level.v);
             let i = (rng.next_u64() % (4 * hu) as u64) as i64 - 2 * hu;
             let j = (cell << level.v) + (rng.next_u64() % hv as u64) as i64;
+            // The cell's own cap around the axis beside an apex.
+            let (level, i, j, t) = capped_tile(&l, level, i, j);
+            let (hu, hv) = (1i64 << level.u, 1i64 << level.v);
             let tube = if spindle(&key) {
                 acos(-big / small)
             } else {
@@ -672,7 +669,6 @@ fn tiles_follow_the_tangent_to_the_cap() {
             if turn > 0.1 {
                 continue;
             }
-            let t = l.tile(level, i, j).unwrap();
             let half = Q::from_signeds(1, 2);
             let p = exact(&t).eval(&half, &half).map(|x| nearest(&x));
             let r: [f64; 3] = std::array::from_fn(|k| p[k] - c[k]);

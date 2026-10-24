@@ -60,9 +60,9 @@
 //! cells, wider than 90°, have longer chords than the bound reads).
 //! Around the axis, a ring's least radius over the cells asked for:
 //! `R` on the outer half, `R − r` where an inner cell is asked for; a
-//! spindle's outer equator `R + r`, as a sphere's equator (towards an
-//! apex a cell's chord shrinks to 0, which the apex rows' singular
-//! sides, not the cap, account for).
+//! spindle's outer equator `R + r`, as a sphere's equator. Towards an
+//! apex a cell's chord shrinks to 0: there a tube tile's own cap reads
+//! the radius of its far row ([`pole`], the lattice's docs).
 
 use malachite::base::num::arithmetic::traits::CheckedSqrt;
 use malachite::base::rounding_modes::RoundingMode::{Ceiling, Floor};
@@ -70,7 +70,7 @@ use malachite::{Float, Rational};
 
 use super::super::form::TorusKey;
 use super::super::lattice::{
-    Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Reach, Rect, Run, arc, larger,
+    Cells, ExactFrame, Frame, Lattice, LatticeError, Level, Pole, Reach, Rect, Run, arc, larger,
 };
 use super::super::round::{nearest, nearest_sqrt, q};
 use super::super::surface::Surface;
@@ -240,6 +240,19 @@ pub(in crate::geom) fn reach(f: &Frame, key: &TorusKey, v: &Cells) -> Reach {
         rho: outer + z,
         t: 0.0,
         runs: [Run::Turn(turn), Run::Turn(small)],
+    }
+}
+
+/// A spindle's tube cell's distance from the axis from its apex
+/// (module docs): the arc's `ρ`, `0, R + r, R + r` with weights `1,
+/// cos(φ*/2), 1`.
+pub(in crate::geom) fn pole(key: &TorusKey) -> Pole {
+    let (big, small) = (q(key.major()), q(key.minor()));
+    let outer = key.major() + key.minor();
+    Pole {
+        corner: outer,
+        end: outer,
+        w: nearest_sqrt(&((&small - &big) / (Rational::from(2u32) * &small))),
     }
 }
 

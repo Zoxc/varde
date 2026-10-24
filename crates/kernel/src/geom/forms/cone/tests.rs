@@ -15,6 +15,7 @@ use super::*;
 use crate::geom::form::FormKey;
 use crate::geom::lattice::{Level, Rect};
 use crate::geom::round::nearest;
+use crate::geom::samples::capped_tile;
 
 const TOL: f64 = 1e-15;
 
@@ -147,7 +148,8 @@ fn the_apex_row_is_the_apex_at_every_level() {
             Level { u: 20, v: 30 },
         ] {
             for i in [0i64, 1, (3 << level.u) - 1, -5] {
-                let t = l.tile(level, i, 0).unwrap();
+                // Deep in both directions, at the cap beside the apex.
+                let (level, i, _, t) = capped_tile(&l, level, i, 0);
                 for k in 0..3 {
                     assert_eq!(
                         t.point(k, 0).map(f64::to_bits),
@@ -313,11 +315,12 @@ fn tiles_follow_the_tangent_to_the_cap() {
             let (hu, hv) = (1i64 << level.u, 1i64 << level.v);
             let i = (rng.next_u64() % (4 * hu) as u64) as i64 - 2 * hu;
             let j = hv / 2 + (rng.next_u64() % (hv / 2).max(1) as u64) as i64;
+            // The cell's own cap around the axis, at its far row.
+            let (level, i, j, t) = capped_tile(&l, level, i, j);
             let turn = std::f64::consts::FRAC_PI_2 / (1u64 << level.u) as f64;
             if turn > 0.1 {
                 continue;
             }
-            let t = l.tile(level, i, j).unwrap();
             let what = format!("{key:?} {level:?} ({i}, {j})");
             assert!(t.is_regular(), "{what}");
             let half = Q::from_signeds(1, 2);

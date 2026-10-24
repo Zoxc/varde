@@ -146,7 +146,24 @@
 //! `(0, 0)`, a cylinder's axial cell 0 and a cone's slant cell 0 with
 //! every angle cell or span, every cell of a sphere, a torus's outer
 //! tube cell 0 with every angle cell), and a cell further
-//! out has its own, lower one. Constructors, `extend`
+//! out has its own, lower one.
+//!
+//! **Beside a singular row** the chord around the axis shrinks with the
+//! distance to the row, so the form's radius overstates it: in a base
+//! row with a singular side the `u` cap is taken per `v` tile, that of a
+//! level-`L_v` tile being the deepest `L_u` whose chord around the axis
+//! at the radius of the tile's **far row** (its boundary row away from
+//! the singular one; at most the base row's middle where both of its
+//! sides are singular) is at least `K_CAP·δ`. That radius shrinks with
+//! the tile towards the singular row, so this is a joint limit on `L_u +
+//! L_v` there, and the rows next to a pole never round to one point;
+//! the `v` cap and every other base row keep the form's. The radius is
+//! a lower bound on the row's distance from the axis along the base
+//! row, a rational quadratic from `0` at the singular row ([`Pole`]: a
+//! sphere's or spindle torus's meridian arc, a cone's generator, a
+//! revolved conic's span), at the far row's parameter; an affine
+//! image's its source's times the map's least stretch. So every tile
+//! admitted is regular, beside singular rows too. Constructors, `extend`
 //! ([`super::surface::Surface::extend`]), torus domains and imports
 //! coarsen their rectangle to the cap ([`Lattice::capped`]: the domain
 //! need only cover the trims), so they
@@ -428,7 +445,9 @@ impl Lattice {
     }
 
     /// The level cap of the cells holding the coordinate box: the
-    /// deepest level admitted in each direction (module docs).
+    /// deepest level admitted in each direction (module docs), away from
+    /// the singular rows (beside them [`cap_of`](Self::cap_of) is lower
+    /// around the axis).
     #[inline]
     pub fn cap(&self) -> Level {
         self.cap
@@ -436,15 +455,19 @@ impl Lattice {
 
     /// The level cap of `rect`'s base cells (module docs): the form's
     /// [`cap`](Self::cap) where they hold the coordinate box, lower
-    /// further out. Errors as [`tiles`](Self::tiles) on its level, span
-    /// and cells.
+    /// further out; beside a singular row, the `u` cap of `rect`'s `v`
+    /// tiles at its `v` level or the `v` cap, whichever is coarser.
+    /// Errors as [`tiles`](Self::tiles) on its level, span and cells.
     pub fn cap_of(&self, rect: &Rect) -> Result<Level, LatticeError> {
         let (u, v) = self.cells(rect)?;
-        Ok(self.cap_for(&u, &v))
+        Ok(self.cap_at(&u, &v, rect.level.v, &rect.v))
     }
 
-    /// `rect` coarsened to the cap of its cells: at each direction's
-    /// level or the cap, whichever is coarser, the least rectangle
+    /// `rect` coarsened to the cap of its cells
+    /// ([`cap_of`](Self::cap_of); beside a singular row the cap around
+    /// the axis of its `v` tiles, `v` coarsened first): at each
+    /// direction's level or the cap, whichever is coarser, the least
+    /// rectangle
     /// covering it (the same rectangle where it is within the cap). What
     /// constructors, `extend`, torus domains and imports use instead of
     /// a level beyond the cap (module docs). Errors as
@@ -456,12 +479,6 @@ impl Lattice {
         let level = Level {
             u: rect.level.u.min(cap.u),
             v: rect.level.v.min(cap.v),
-        };
-        let coarse = |r: &Range<i64>, from: u32, to: u32| {
-            let s = from - to;
-            // `end − 1 ≥ start` (a span checked), so `+ 1` stays in range
-            // once shifted (`s ≥ 1`), and is the same range at `s = 0`.
-            (r.start >> s)..(((r.end - 1) >> s) + 1)
         };
         Ok(Rect {
             level,
@@ -579,7 +596,8 @@ impl Lattice {
         }
         let (k, l) = (i >> level.u, j >> level.v);
         self.valid(&(k..=k), &(l..=l))?;
-        self.admit(level, &(k..=k), &(l..=l))?;
+        let row = j..j.checked_add(1).ok_or(LatticeError::Index)?;
+        self.admit(level, &(k..=k), &(l..=l), &row)?;
         let base = self.base_tile(k, l)?;
         if level == Level::BASE {
             return Ok(base);
@@ -597,7 +615,7 @@ impl Lattice {
     pub fn tiles(&self, rect: &Rect) -> Result<Vec<Tile>, LatticeError> {
         let Level { u: lu, v: lv } = rect.level;
         let (cu, cv) = self.cells(rect)?;
-        self.admit(rect.level, &cu, &cv)?;
+        self.admit(rect.level, &cu, &cv, &rect.v)?;
         let (nu, nv) = (span(&rect.u)?, span(&rect.v)?);
         let count = usize::try_from(nu)
             .ok()
@@ -689,9 +707,16 @@ impl Lattice {
     }
 
     /// `LevelBeyondCap` if `level` is beyond the cap of the base cells
-    /// `u` × `v`.
-    fn admit(&self, level: Level, u: &Cells, v: &Cells) -> Result<(), LatticeError> {
-        let cap = self.cap_for(u, v);
+    /// `u` × `v`, the `v` tiles `rows` at `level`
+    /// ([`cap_at`](Self::cap_at)).
+    fn admit(
+        &self,
+        level: Level,
+        u: &Cells,
+        v: &Cells,
+        rows: &Range<i64>,
+    ) -> Result<(), LatticeError> {
+        let cap = self.cap_at(u, v, level.v, rows);
         if level.u > cap.u || level.v > cap.v {
             return Err(LatticeError::LevelBeyondCap {
                 form: Box::new(self.key.clone()),
@@ -745,23 +770,122 @@ impl Lattice {
     }
 
     /// The level cap of the base cells `u` × `v` (module docs), lattice
-    /// cells there.
+    /// cells there: the form's, as away from a singular row.
     fn cap_for(&self, u: &Cells, v: &Cells) -> Level {
+        self.deviation(u, v).map_or(Level::BASE, |(_, cap)| cap)
+    }
+
+    /// The level cap of the base cells `u` × `v` whose `v` tiles at
+    /// level `lv` are `rows` (module docs), lattice cells there: the
+    /// form's ([`cap_for`](Self::cap_for)), and beside a singular row
+    /// the `u` cap of those tiles at `lv` or the `v` cap, whichever is
+    /// coarser, from the radius of their far rows
+    /// ([`far_radius`](Self::far_radius)).
+    fn cap_at(&self, u: &Cells, v: &Cells, lv: u32, rows: &Range<i64>) -> Level {
+        let Some((delta, mut cap)) = self.deviation(u, v) else {
+            return Level::BASE;
+        };
+        let at = lv.min(cap.v);
+        if let Some(r) = self.far_radius(at, &coarse(rows, lv, at)) {
+            cap.u = cap.u.min(deepest(Run::Turn(r), K_CAP * delta));
+        }
+        cap
+    }
+
+    /// The bound `δ` on the tiles' control points' distance from the
+    /// form's exact sub-patch over the base cells `u` × `v` (module
+    /// docs), and the form's cap there; `None` where coordinates leave
+    /// the range (no tile is made at any level).
+    fn deviation(&self, u: &Cells, v: &Cells) -> Option<(f64, Level)> {
         let Reach { m, rho, t, runs } = self.reach(u, v);
         // Sums and products of positive values, each rounded: a relative
         // `2⁻⁴⁰` covers their rounding.
         let up = 1.0 + pow2(-40);
         let m = m * up;
-        let delta = match ulp(m) {
-            Some(ulp) => (3.0 * ulp + pow2(-48) * rho + pow2(-50) * t) * up,
-            None => f64::INFINITY,
-        };
+        let delta = (3.0 * ulp(m)? + pow2(-48) * rho + pow2(-50) * t) * up;
         if !delta.is_finite() {
-            // Coordinates past the range: no tile is made at any level.
-            return Level::BASE;
+            return None;
         }
         let [u, v] = runs.map(|run| deepest(run, K_CAP * delta));
-        Level { u, v }
+        Some((delta, Level { u, v }))
+    }
+
+    /// A lower bound on the distance from the axis of the far rows of
+    /// the `v` tiles `rows` of level `lv` that lie in a base row with a
+    /// singular side (module docs): for each such side, the far row of
+    /// the tile nearest to it (its boundary row away from it, at most
+    /// the base row's middle where both of its sides are singular), the
+    /// least of these; `None` where no tile lies in such a row. An
+    /// affine image's is its source's times the map's least stretch.
+    fn far_radius(&self, lv: u32, rows: &Range<i64>) -> Option<f64> {
+        if let FormKey::Affine(a) = &self.key {
+            let src = self.source.as_deref()?;
+            return src
+                .far_radius(lv, rows)
+                .map(|r| r * image::least_stretch(a));
+        }
+        let candidates: Range<i64> = match &self.key {
+            FormKey::Sphere(_) => -1..1,
+            FormKey::Torus(t) if torus::spindle(t) => -1..1,
+            FormKey::Cone(_) => 0..1,
+            FormKey::Revolved(r) => 0..r.profile().spans().len() as i64,
+            _ => return None,
+        };
+        let (lo, hi) = (i128::from(rows.start), i128::from(rows.end));
+        let n = 1i128 << lv;
+        let step = pow2(-(lv as i32));
+        let mut least: Option<f64> = None;
+        for l in candidates {
+            let sides = self.singular(l);
+            if sides == Sides::NONE {
+                continue;
+            }
+            // The tiles of `rows` in base row `l`, as indices within it.
+            let first = i128::from(l) * n;
+            let (a, b) = (lo.max(first) - first, hi.min(first + n) - first);
+            if a >= b {
+                continue;
+            }
+            let both = sides.contains(Side::V0) && sides.contains(Side::V1);
+            for side in [Side::V0, Side::V1] {
+                if !sides.contains(side) {
+                    continue;
+                }
+                let Some(pole) = self.pole(l, side) else {
+                    continue;
+                };
+                // The far row of the tile nearest to `side`, in tiles
+                // from it: exact in `f64` (`n ≤ 2⁵²`).
+                let tiles = if side == Side::V0 { a + 1 } else { n - (b - 1) };
+                let mut t = tiles as f64 * step;
+                if both && t > 0.5 {
+                    t = 0.5;
+                }
+                let r = pole.radius(t);
+                least = Some(match least {
+                    Some(x) if x <= r => x,
+                    _ => r,
+                });
+            }
+        }
+        least
+    }
+
+    /// The distance from the axis along the base row `l`, from its
+    /// singular side `side` ([`Pole`]; `side` one of
+    /// [`singular`](Self::singular)`(l)`); `None` on a form without
+    /// singular rows or a span outside the profile.
+    fn pole(&self, l: i64, side: Side) -> Option<Pole> {
+        match &self.key {
+            FormKey::Sphere(s) => Some(sphere::pole(s)),
+            FormKey::Torus(t) => Some(torus::pole(t)),
+            FormKey::Cone(c) => Some(cone::pole(c)),
+            FormKey::Revolved(_) => {
+                let span = self.spans().get(usize::try_from(l).ok()?)?;
+                Some(revolved::pole(span, side))
+            }
+            _ => None,
+        }
     }
 
     /// The canonical surface's rectangle at the base level: the 180°
@@ -827,6 +951,40 @@ fn within(base: Sides, level: Level, i: i64, j: i64) -> Sides {
             }
         })
         .collect()
+}
+
+/// A base row's distance from the axis along `v`, from a singular side
+/// (`ρ = 0`) to its other side: the rational quadratic with values `0`,
+/// `corner` and `end` and weights `1`, `w` and `1` (a standard span;
+/// every value positive).
+#[derive(Clone, Copy, Debug)]
+pub(in crate::geom) struct Pole {
+    pub(in crate::geom) corner: f64,
+    pub(in crate::geom) end: f64,
+    pub(in crate::geom) w: f64,
+}
+
+impl Pole {
+    /// A lower bound on the distance at parameter `t` (in `[0, 1]`,
+    /// `1 − t` exact) from the singular side.
+    fn radius(self, t: f64) -> f64 {
+        let s = 1.0 - t;
+        let num = 2.0 * t * s * self.w * self.corner + t * t * self.end;
+        let den = s * s + 2.0 * t * s * self.w + t * t;
+        // Sums and products of positive values, each rounded, and the
+        // values' own rounding: a relative `2⁻⁴⁰` covers both.
+        let r = num / den * (1.0 - pow2(-40));
+        if r.is_finite() { r } else { 0.0 }
+    }
+}
+
+/// The least range of tiles of level `to` covering the tiles `r` of
+/// level `from` (`to ≤ from`, `r` not empty).
+fn coarse(r: &Range<i64>, from: u32, to: u32) -> Range<i64> {
+    let s = from - to;
+    // `end − 1 ≥ start`, so `+ 1` stays in range once shifted (`s ≥ 1`),
+    // and is the same range at `s = 0`.
+    (r.start >> s)..(((r.end - 1) >> s) + 1)
 }
 
 /// The deepest level up to [`MAX_LEVEL`] whose cells' chord along `run`

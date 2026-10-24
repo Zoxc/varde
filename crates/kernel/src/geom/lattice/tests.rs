@@ -11,6 +11,7 @@ use varde_testkit::rng::Rng;
 
 use super::*;
 use crate::geom::form::{CylinderKey, PlaneKey, SphereKey};
+use crate::geom::samples::capped_tile;
 
 const TOL: f64 = 1e-15;
 
@@ -410,10 +411,8 @@ fn regular_tiles_face_out_at_every_level() {
     }
     let dot = |a: &[Q; 3], b: &[Q; 3]| &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2];
     for (key, level, i, j) in cases {
-        let t = Lattice::new(key.clone())
-            .unwrap()
-            .tile(level, i, j)
-            .unwrap();
+        // The cell's own cap beside a pole.
+        let (_, _, _, t) = capped_tile(&Lattice::new(key.clone()).unwrap(), level, i, j);
         let Some(c) = t.normal_cone() else { continue };
         let a = c.axis.map(q);
         let (aa, cos2) = (dot(&a, &a), q(c.cos) * q(c.cos));
@@ -528,11 +527,15 @@ fn deepest_levels_share_rows_and_repeat() {
             };
             for v in vs {
                 for u in [-1..1, 3 * hu - 1..3 * hu + 1] {
-                    let rect = Rect {
-                        level,
-                        u: u.clone(),
-                        v: v.clone(),
-                    };
+                    // Beside a pole, at the cap of its rows.
+                    let rect = l
+                        .capped(&Rect {
+                            level,
+                            u: u.clone(),
+                            v: v.clone(),
+                        })
+                        .unwrap();
+                    let (level, hu) = (rect.level, 1i64 << rect.level.u);
                     let tiles = l.tiles(&rect).unwrap();
                     rows_shared(&tiles, &rect);
                     let nv = (rect.v.end - rect.v.start) as usize;
@@ -847,13 +850,14 @@ fn tiles_follow_the_tangent_to_the_cap() {
                 _ => level_to(cap, &mut rng),
             };
             let (i, j) = in_box(&key, level, &mut rng);
+            // The cell's own cap beside a pole.
+            let (level, i, j, t) = capped_tile(&l, level, i, j);
             let h = 1i64 << level.v;
             // A sphere's longitude cells shrink towards the poles, where
-            // the cap (at the sphere's radius) leaves less margin: rows
-            // to 60° latitude, whose circles have half the radius or more.
+            // the cap leaves less margin: rows to 60° latitude, whose
+            // circles have half the radius or more.
             let pole = matches!(key, FormKey::Sphere(_))
                 && (3 * j.abs().max((j + 1).abs())) as f64 > 2.0 * h as f64;
-            let t = l.tile(level, i, j).unwrap();
             // The turn the tile spans, in rad, in each angle direction.
             let turn = |lv: u32| std::f64::consts::FRAC_PI_2 / pow2(lv as i32);
             let span = match key {

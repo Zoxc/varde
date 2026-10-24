@@ -16,15 +16,17 @@
 //! `x_u × x_v` points out of the sphere.
 //!
 //! **Level cap.** Both directions run around circles of the sphere's
-//! radius: the longitude chord is taken at the equator, as a meridian's
-//! (towards a pole a cell's longitude chord shrinks, which the pole
-//! rows' singular sides, not the cap, account for).
+//! radius: the longitude chord is taken at the equator, as a meridian's.
+//! Towards a pole a cell's longitude chord shrinks: there a latitude
+//! tile's own cap reads the radius of its far row ([`pole`], the
+//! lattice's docs).
 
 use malachite::Rational;
 
 use super::super::form::SphereKey;
 use super::super::lattice::{
-    ARC, Cells, ExactFrame, Frame, Lattice, LatticeError, Reach, Run, affine, arc, larger,
+    ARC, Cells, ExactFrame, Frame, Lattice, LatticeError, Pole, Reach, Run, Weight, affine, arc,
+    larger,
 };
 use super::super::round::q;
 use super::super::surface::Surface;
@@ -75,6 +77,17 @@ pub(in crate::geom) fn reach(f: &Frame, key: &SphereKey) -> Reach {
         rho: r,
         t: 0.0,
         runs: [Run::Turn(r), Run::Turn(r)],
+    }
+}
+
+/// A latitude cell's distance from the axis from its pole (module
+/// docs): the meridian's `ρ`, `0, r, r` with weights `1, √½, 1`.
+pub(in crate::geom) fn pole(key: &SphereKey) -> Pole {
+    let r = key.radius();
+    Pole {
+        corner: r,
+        end: r,
+        w: Weight::Root.value(),
     }
 }
 
