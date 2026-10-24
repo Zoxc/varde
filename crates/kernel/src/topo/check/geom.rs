@@ -44,35 +44,18 @@
 //!   curve one point) is a mixed crease; a mixed crease claims nothing;
 //!   curvature continuity holds on an edge of the same form (a join its
 //!   construction declares so isn't recorded: not built); a tangent edge
-//!   states an angle within the tangent threshold, 1° (its certificate is
-//!   not built); a convex or concave crease is certified below.
+//!   states an angle within the tangent threshold, 1°, that its
+//!   certificate reaches again on every cell, no point showing a larger
+//!   one; a convex or concave crease holds its sign on every cell, no
+//!   point showing the other. Both certificates are the continuity's
+//!   ([`Join`]: the cells, their levels and halving, charged as seam
+//!   cells; past the top level, the deepest subdivision or the cells an
+//!   edge may compute the certificate is still open, [`Cap`]); an edge
+//!   with one face has no crease, and isn't tangent.
 //!
 //! The surfaces' tile lines are `G¹` by construction: every surface is its
 //! form's lattice ([`Surface`]), the exact form's tiles each rounded once,
 //! so its tiles join as the form does, within its resolution.
-//!
-//! **The crease certificate.** Along the edge, with `c` one of its coedges
-//! on face `f₁`, the other on `f₂`, the sign of `(n₁ × n₂)·T` is the
-//! crease's: positive convex, negative concave, `nₖ` the faces' outward
-//! normals and `T` the curve's tangent in `c`'s direction. As in the seam
-//! bound, the edge is cut at the knots of both p-curves and of the curve
-//! inside its range, each piece in one span of each and one tile of each
-//! surface. On a cell of a piece the fold numerator `N` of each tile (a
-//! positive multiple of its orientation's normal,
-//! [`Tile::fold_numerator_at`]) is composed with the p-curve's span in the
-//! tile's local coordinates ([`compose_params`]: a positive multiple
-//! again), and the curve's tangent numerator `T' = W·X' − W'·X` taken;
-//! `det[N₁, N₂, T']` is then a Bernstein form whose sign, with the faces'
-//! `flipped` and the coedge's direction, is the crease's (degree `2·(5·k₁ + 5·k₂) + 2n − 1`, 43 for
-//! quadratic spans). The cell holds when every coefficient has the claimed
-//! sign, certified; the label is a defect when a coefficient at an end of
-//! the cell (the value there) is certified of the other sign. Otherwise the
-//! cell is computed again one level up where every coefficient's value has
-//! the claimed sign (rounding decides), else halved, as the seam bound's
-//! cells, charged as its cells are; past the top level or the deepest
-//! subdivision the certificate is still open ([`Cap`]).
-//!
-//! [`compose_params`]: varde_decide::bezier::Tensor::compose_params
 //!
 //! **7. Forms and fits** ([`Forms`]). A surface lies on its form, and is
 //! injective on its closed domain, by construction: its tiles are its
@@ -84,7 +67,7 @@
 //! **Work.** Every item is charged one unit, one more per coedge, edge,
 //! span, tile or corner read; a seam bound as its refinement charges, a
 //! tile's fold check as [`Tile::normal_cone_charged`] charges, a crease
-//! cell as a seam cell at its level, a vertex's evaluation one unit per
+//! or tangent cell as a seam cell at its level, a vertex's evaluation one unit per
 //! level (a precision step above the first).
 //!
 //! **Reading a broken body.** Where an id a hook follows names nothing, a
@@ -92,30 +75,28 @@
 //! the item passes that part, the earlier invariants' to refuse; a seam
 //! bound that can't be refined there is no certificate.
 
-use varde_decide::bezier::{Dir, HomCurve, Poly, Side as TileSide, cross, dot};
+use varde_decide::bezier::{Dir, Side as TileSide};
 use varde_decide::num::bounded::{add_up, mul_up, up};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
 use varde_decide::num::schedule::Level;
 
 use super::{Cx, Fault, Finding, Invariant, Item, ItemKind};
-use crate::geom::certify::{restrict, seam_bound, tile_of};
-use crate::geom::curve::{Curve3D, local};
-use crate::geom::pcurve::{PCurve, PSpan};
+use crate::geom::certify::{seam_bound, tile_of};
+use crate::geom::pcurve::PSpan;
 use crate::geom::surface::Surface;
 use crate::geom::tile::Tile;
-use crate::infra::budget::{
-    Cap, LEVELS, Ledger, MAX_SUBDIV_DEPTH, Step, Stop, level_step, seam_cell_units,
-};
+use crate::infra::budget::{Cap, LEVELS, Ledger, Step, Stop, level_step};
 use crate::topo::brep::{
     Brep, ClusterKind, CoedgeId, Continuity, Convexity, EdgeId, EdgeKind, EdgeTag, FaceId, Origin,
     PlainOrigin, VertId,
 };
+use crate::topo::continuity::{
+    CreaseCheck, Join, THETA_TAN, Tangency, coedge_face, edge_curve, face_surface, knot_index,
+    pcurve, same_bits, zero_length,
+};
 
 #[cfg(test)]
 mod tests;
-
-/// The tangent threshold: 1° (radians).
-const THETA_TAN: f64 = std::f64::consts::PI / 180.0;
 
 /// The checks of invariant 5, numbered in the hook's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,44 +174,15 @@ fn charge(ledger: &mut Ledger<'_>, n: usize) -> Checked {
     Ok(())
 }
 
-fn same_bits<const N: usize>(a: &[f64; N], b: &[f64; N]) -> bool {
-    a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
-}
-
 /// A coedge's edge, `None` where its id names nothing.
 fn coedge_edge(b: &Brep, c: CoedgeId) -> Option<EdgeId> {
     at(&b.coedges.edge, c.0).filter(|e| e.index() < b.edge_count())
-}
-
-/// A coedge's face, `None` where its id names nothing.
-fn coedge_face(b: &Brep, c: CoedgeId) -> Option<FaceId> {
-    at(&b.coedges.face, c.0).filter(|f| f.index() < b.face_count())
-}
-
-/// A coedge's p-curve, `None` where an id names nothing.
-fn pcurve(b: &Brep, c: CoedgeId) -> Option<&PCurve> {
-    b.pcurves.get(at(&b.coedges.pcurve, c.0)?.index())
-}
-
-/// A face's surface, `None` where an id names nothing.
-fn face_surface(b: &Brep, f: FaceId) -> Option<&Surface> {
-    b.surfaces.surface.get(at(&b.faces.surface, f.0)?.index())
-}
-
-/// An edge's curve, `None` where its id names nothing.
-fn edge_curve(b: &Brep, e: EdgeId) -> Option<&Curve3D> {
-    b.curves3.get(at(&b.edges.curve, e.0)?.index())
 }
 
 /// Whether coedge `c` is singular: unpaired on a singular edge.
 fn is_singular(b: &Brep, c: CoedgeId) -> bool {
     at(&b.coedges.pair, c.0).is_some_and(CoedgeId::is_none)
         && coedge_edge(b, c).is_some_and(|e| b.edges.kind[e.index()] == EdgeKind::Singular)
-}
-
-/// The position of `t` among `knots`, bit for bit.
-fn knot_index(knots: &[f64], t: f64) -> Option<usize> {
-    knots.iter().position(|k| k.to_bits() == t.to_bits())
 }
 
 /// Invariant 5, the seams (module docs).
@@ -594,24 +546,6 @@ fn same_form(cx: &Cx<'_>, e: EdgeId, ledger: &mut Ledger<'_>) -> Checked {
     )
 }
 
-/// Whether edge `e`'s curve is one point over its range: a zero-length
-/// edge.
-fn zero_length(b: &Brep, e: EdgeId) -> bool {
-    let Some(curve) = edge_curve(b, e) else {
-        return false;
-    };
-    let [t0, t1] = b.edges.t_range[e.index()];
-    let (Some(i), Some(j)) = (knot_index(curve.knots(), t0), knot_index(curve.knots(), t1)) else {
-        return false;
-    };
-    let Some(spans) = curve.spans().get(i..j) else {
-        return false;
-    };
-    let mut points = spans.iter().flatten().map(|p| [p[0], p[1], p[2]]);
-    let first = points.next();
-    first.is_some_and(|f| points.all(|p| same_bits(&p, &f)))
-}
-
 fn continuity(cx: &Cx<'_>, e: EdgeId, ledger: &mut Ledger<'_>) -> Checked {
     use RegularityCheck as R;
     let b = cx.body();
@@ -631,267 +565,45 @@ fn continuity(cx: &Cx<'_>, e: EdgeId, ledger: &mut Ledger<'_>) -> Checked {
         Continuity::Crease(Convexity::Mixed) => Ok(()),
         Continuity::Tangent { angle } => {
             need((0.0..=THETA_TAN).contains(&angle), R::Tangent as u32)?;
-            fault(R::Tangent as u32, Finding::Unbuilt)
+            let Some(join) = join(cx, e, ledger)? else {
+                // Tangent to nothing: an edge with one face.
+                return fail(R::Tangent as u32);
+            };
+            match join.tangent(angle, angle, ledger)? {
+                Tangency::Within(_) => Ok(()),
+                Tangency::Beyond => fail(R::Tangent as u32),
+                Tangency::Degree => fault(R::Tangent as u32, Finding::Unbuilt),
+                Tangency::Cap(cap) => Err(Stop::Cap(cap)),
+            }
         }
         Continuity::Curvature if matches!(kind, EdgeKind::SameForm { .. }) => Ok(()),
         Continuity::Curvature => fault(R::Curvature as u32, Finding::Unbuilt),
-        Continuity::Crease(sign) => match two_faces(cx, e) {
-            Some((coedges, faces)) => crease(b, e, coedges, faces, sign, ledger),
+        Continuity::Crease(sign) => {
             // An open boundary has no crease to certify.
-            None => Ok(()),
-        },
-    }
-}
-
-/// A piece of an edge: `[a, b]` of `t`, in span `sp[k]` of p-curve `k`
-/// on tile `tiles[k]` (with its indices) and span `sc` of the curve.
-struct Piece<'a> {
-    tiles: [(&'a Tile, i64, i64); 2],
-    sp: [usize; 2],
-    sc: usize,
-    a: f64,
-    b: f64,
-}
-
-/// Part `k` of `2^depth` of a piece, at a precision level.
-#[derive(Clone, Copy)]
-struct Cell {
-    piece: usize,
-    k: u64,
-    depth: u32,
-    level: u8,
-}
-
-/// What a crease cell shows.
-enum Verdict {
-    /// The claimed sign, certified.
-    Holds,
-    /// The other sign, certified at an end of the cell.
-    Wrong,
-    /// A tile whose fold check stops: no normal to certify with.
-    Folded,
-    /// A form past the greatest degree.
-    Degree,
-    /// Compute it again one level up.
-    Precision,
-    /// Halve it.
-    Space,
-}
-
-/// The crease certificate of edge `e` between `faces`, its coedge
-/// `coedges[0]`'s direction its tangent's (module docs).
-fn crease(
-    b: &Brep,
-    e: EdgeId,
-    coedges: [CoedgeId; 2],
-    faces: [FaceId; 2],
-    sign: Convexity,
-    ledger: &mut Ledger<'_>,
-) -> Checked {
-    let check = RegularityCheck::Crease as u32;
-    let (Some(curve), Some(p1), Some(p2)) = (
-        edge_curve(b, e),
-        pcurve(b, coedges[0]),
-        pcurve(b, coedges[1]),
-    ) else {
-        return Ok(());
-    };
-    let (Some(s1), Some(s2)) = (face_surface(b, faces[0]), face_surface(b, faces[1])) else {
-        return Ok(());
-    };
-    let p = [p1, p2];
-    let [t0, t1] = b.edges.t_range[e.index()];
-    let ck = curve.knots();
-    let over = |pk: &[f64]| {
-        pk.first().map(|t| t.to_bits()) == Some(t0.to_bits())
-            && pk.last().map(|t| t.to_bits()) == Some(t1.to_bits())
-    };
-    if !(over(p1.knots()) && over(p2.knots())) || knot_index(ck, t0).is_none() {
-        return Ok(());
-    }
-    let mut cuts: Vec<f64> = p1
-        .knots()
-        .iter()
-        .chain(p2.knots())
-        .chain(ck.iter().filter(|&&t| t0 < t && t < t1))
-        .copied()
-        .collect();
-    cuts.sort_by(f64::total_cmp);
-    cuts.dedup();
-    charge(ledger, cuts.len())?;
-    let mut pieces = Vec::with_capacity(cuts.len());
-    for w in cuts.windows(2) {
-        let (a, z) = (w[0], w[1]);
-        let span = |knots: &[f64]| knots.partition_point(|&k| k <= a) - 1;
-        let sp = [span(p1.knots()), span(p2.knots())];
-        let (Some(a1), Some(a2)) = (
-            tile_of(s1, &p1.spans()[sp[0]]),
-            tile_of(s2, &p2.spans()[sp[1]]),
-        ) else {
-            return Ok(());
-        };
-        pieces.push(Piece {
-            tiles: [a1, a2],
-            sp,
-            sc: span(ck),
-            a,
-            b: z,
-        });
-    }
-    // The sign `det[N₁, N₂, T']` has where the crease is convex.
-    let flipped = |f: FaceId| b.faces.flipped[f.index()];
-    let positive = (sign == Convexity::Convex)
-        ^ flipped(faces[0])
-        ^ flipped(faces[1])
-        ^ b.coedges.reversed[coedges[0].index()];
-    // A stack: the next cell last.
-    let mut cells: Vec<Cell> = (0..pieces.len())
-        .rev()
-        .map(|piece| Cell {
-            piece,
-            k: 0,
-            depth: 0,
-            level: 0,
-        })
-        .collect();
-    while let Some(cell) = cells.pop() {
-        ledger.charge(level_step(cell.level), seam_cell_units(cell.level))?;
-        let level = Level::from_index(usize::from(cell.level)).unwrap_or(Level::TOP);
-        let mut at = CreaseAt {
-            curve,
-            p,
-            piece: &pieces[cell.piece],
-            cell,
-            positive,
-        };
-        match at_level(&mut at, level, &mut ()) {
-            Verdict::Holds => {}
-            Verdict::Wrong | Verdict::Folded => return fail(check),
-            Verdict::Degree => return fault(check, Finding::Unbuilt),
-            Verdict::Precision if cell.level + 1 < LEVELS => cells.push(Cell {
-                level: cell.level + 1,
-                ..cell
-            }),
-            Verdict::Precision => return Err(Stop::Cap(Cap::PrecisionBits)),
-            Verdict::Space if cell.depth < MAX_SUBDIV_DEPTH => {
-                // The left half on top.
-                for k in [2 * cell.k + 1, 2 * cell.k] {
-                    cells.push(Cell {
-                        k,
-                        depth: cell.depth + 1,
-                        ..cell
-                    });
-                }
+            let Some(join) = join(cx, e, ledger)? else {
+                return Ok(());
+            };
+            match join.check_crease(sign, ledger)? {
+                CreaseCheck::Holds => Ok(()),
+                CreaseCheck::Wrong => fail(R::Crease as u32),
+                CreaseCheck::Degree => fault(R::Crease as u32, Finding::Unbuilt),
+                CreaseCheck::Cap(cap) => Err(Stop::Cap(cap)),
             }
-            Verdict::Space => return Err(Stop::Cap(Cap::SubdivisionDepth)),
         }
     }
-    Ok(())
 }
 
-/// One crease cell at one level.
-struct CreaseAt<'c, 'p> {
-    curve: &'c Curve3D,
-    p: [&'c PCurve; 2],
-    piece: &'c Piece<'p>,
-    cell: Cell,
-    positive: bool,
-}
-
-/// `c` halved down to `cell`: the halves `cell.k`'s bits name, from the
-/// top.
-fn halved<S: LevelScalar, const N: usize>(mut c: HomCurve<S, N>, cell: Cell) -> HomCurve<S, N> {
-    for bit in (0..cell.depth).rev() {
-        let [l, r] = c.split_half();
-        c = if (cell.k >> bit) & 1 == 1 { r } else { l };
-    }
-    c
-}
-
-impl AtLevel<()> for CreaseAt<'_, '_> {
-    type Out = Verdict;
-
-    fn at<S: LevelScalar>(&mut self, like: &S, _: &mut ()) -> Verdict {
-        let piece = self.piece;
-        let mut normals: Vec<[Poly<S>; 3]> = Vec::with_capacity(2);
-        for side in 0..2 {
-            let (p, sp) = (self.p[side], piece.sp[side]);
-            let pk = p.knots();
-            let (a, z) = (
-                local(piece.a, pk[sp], pk[sp + 1], like),
-                local(piece.b, pk[sp], pk[sp + 1], like),
-            );
-            let coords = p
-                .coords_at(sp, like)
-                .expect("a span of the piece")
-                .map(|x| halved(restrict(&x, a.clone(), z.clone()), self.cell));
-            let (tile, i, j) = piece.tiles[side];
-            // Tile indices below 2⁵² in magnitude (`tile_of`): exact.
-            let [pu, pv] = [(&coords[0], i), (&coords[1], j)]
-                .map(|(x, k)| x.translated(&[S::from_f64(k as f64, like)]));
-            let Some(n) = tile.fold_numerator_at(like) else {
-                return Verdict::Folded;
-            };
-            let composed: Option<Vec<Poly<S>>> = n
-                .iter()
-                .map(|t| {
-                    t.compose_params(
-                        [&pu.coords()[0], pu.weights()],
-                        [&pv.coords()[0], pv.weights()],
-                    )
-                })
-                .collect();
-            let Some([x, y, z]) = composed.and_then(|v| <[Poly<S>; 3]>::try_from(v).ok()) else {
-                return Verdict::Degree;
-            };
-            normals.push([x, y, z]);
-        }
-        let ck = self.curve.knots();
-        let sc = piece.sc;
-        let c = self.curve.span_at(sc, like).expect("a span of the piece");
-        let c = halved(
-            restrict(
-                &c,
-                local(piece.a, ck[sc], ck[sc + 1], like),
-                local(piece.b, ck[sc], ck[sc + 1], like),
-            ),
-            self.cell,
-        );
-        let g = c
-            .tangent_numerator()
-            .and_then(|t| dot(&cross(&normals[0], &normals[1])?, &t));
-        let Some(g) = g else {
-            return Verdict::Degree;
-        };
-        classify(g.coefs(), self.positive)
-    }
-
-    /// The caller climbs the levels and halves the cells itself.
-    fn escalates(_: &Verdict) -> bool {
-        false
-    }
-}
-
-/// The verdict on a cell whose sign form has the coefficients `coefs`,
-/// claimed positive or negative (module docs).
-fn classify<S: LevelScalar>(coefs: &[S], positive: bool) -> Verdict {
-    // Each enclosure turned so that the claimed sign is positive.
-    let turned = |c: &S| {
-        let [lo, hi] = c.enclose();
-        if positive { [lo, hi] } else { [-hi, -lo] }
-    };
-    if coefs.iter().all(|c| turned(c)[0] > 0.0) {
-        return Verdict::Holds;
-    }
-    let ends = [coefs.first(), coefs.last()];
-    if ends.into_iter().flatten().any(|c| turned(c)[1] < 0.0) {
-        return Verdict::Wrong;
-    }
-    let value = |c: &S| if positive { c.approx() } else { -c.approx() };
-    if coefs.iter().all(|c| value(c) > 0.0) {
-        Verdict::Precision
-    } else {
-        Verdict::Space
+/// The join of edge `e` between its two faces, its coedge of the lower id
+/// first; `None` with fewer or more faces, or where the body can't be
+/// read so.
+fn join<'c>(
+    cx: &'c Cx<'_>,
+    e: EdgeId,
+    ledger: &mut Ledger<'_>,
+) -> Result<Option<Join<'c>>, Stop<Fault>> {
+    match two_faces(cx, e) {
+        Some((coedges, faces)) => Join::new(cx.body(), e, coedges, faces, ledger),
+        None => Ok(None),
     }
 }
 

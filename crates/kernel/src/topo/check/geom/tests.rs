@@ -2,9 +2,10 @@
 //! seeded into one is caught by the check that names it (a seam bound
 //! that certifies nothing, tolerances over their targets, a vertex off
 //! its faces, stale same-form edges and seam tags, crease labels of the
-//! wrong sign, a trim on a singular side), or refused as not built (a
-//! tangent edge, a declared curvature-continuous join, a moved join's
-//! target, a fitted surface).
+//! wrong sign or tangent on a crease, a trim on a singular side), or
+//! refused as not built (a declared curvature-continuous join, a moved
+//! join's target, a fitted surface); seams taken off their form pass with
+//! their certified tangent labels.
 
 use super::*;
 use crate::build::primitives::{Primitive, build};
@@ -292,8 +293,8 @@ fn stale_same_form_edges_and_seam_tags_are_caught() {
     );
 }
 
-/// A crease labelled of the wrong sign is caught; a mixed one claims
-/// nothing; tangent and declared curvature-continuous joins aren't built.
+/// A crease labelled of the wrong sign or tangent is caught; a mixed one
+/// claims nothing; declared curvature-continuous joins aren't built.
 #[test]
 fn crease_labels_are_certified() {
     use RegularityCheck as R;
@@ -316,12 +317,14 @@ fn crease_labels_are_certified() {
         );
         assert_eq!(check(&with(Continuity::Crease(Convexity::Mixed))), Ok(()));
         let tangent = |angle| with(Continuity::Tangent { angle });
+        for angle in [1e-3, THETA_TAN, 0.1] {
+            assert_eq!(
+                fails(&tangent(angle)),
+                (Inv::Regularity, R::Tangent as u32, Finding::Defect)
+            );
+        }
         assert_eq!(
-            fails(&tangent(1e-3)),
-            (Inv::Regularity, R::Tangent as u32, Finding::Unbuilt)
-        );
-        assert_eq!(
-            fails(&tangent(0.1)),
+            fails(&tangent(-1.0)),
             (Inv::Regularity, R::Tangent as u32, Finding::Defect)
         );
         assert_eq!(
@@ -329,6 +332,39 @@ fn crease_labels_are_certified() {
             (Inv::Regularity, R::Curvature as u32, Finding::Unbuilt)
         );
     }
+}
+
+/// The cylinder's seams taken off their form: their faces are tangent,
+/// and the labels the continuity certifies pass.
+#[test]
+fn certified_tangent_labels_pass() {
+    use crate::infra::budget::Pass;
+    let mut b = cylinder();
+    let seams: Vec<usize> = (0..b.edge_count())
+        .filter(|&e| matches!(b.edges.kind[e], EdgeKind::SameForm { .. }))
+        .collect();
+    for &e in &seams {
+        b.edges.kind[e] = EdgeKind::Regular;
+        b.edges.tag[e] = None;
+    }
+    let edges: Vec<EdgeId> = (0..b.edge_count() as u32).map(EdgeId).collect();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let pass = Pass {
+        stage: "continuity",
+        rung: 0,
+    };
+    let labels = work
+        .pass(pass, &edges, |&e, ledger| {
+            crate::topo::continuity::certify::<()>(&b, e, ledger)
+        })
+        .expect("certified");
+    b.edges.cont = labels;
+    assert!(
+        seams
+            .iter()
+            .all(|&e| matches!(b.edges.cont[e], Continuity::Tangent { .. }))
+    );
+    assert_eq!(check(&b), Ok(()));
 }
 
 /// The box turned inside out (every face's normal and every coedge's
