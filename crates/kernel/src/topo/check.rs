@@ -83,11 +83,13 @@
 //! pair) is refused, never passed ([`Finding::Unbuilt`]). This build has
 //! the hooks of invariants 1 to 3 (the [`topo`] module), of 4 on linear
 //! trims (the [`trims`] module, which refuses a face with a curved trim as
-//! unbuilt) and of 5 to 7 (the [`geom`] module, which refuses a moved
+//! unbuilt), of 5 to 7 (the [`geom`] module, which refuses a moved
 //! join's target, a tangent edge, a declared curvature-continuous join
-//! and a fitted surface as unbuilt); the later ones refuse what they
-//! don't certify yet (8 and 10 every face) as unbuilt, so only a body
-//! without faces passes the whole check.
+//! and a fitted surface as unbuilt) and of 8 by signed volumes (the
+//! [`orient`] module, which refuses a shell whose volume's sign it can't
+//! certify as unbuilt); the later ones refuse what they don't certify
+//! yet (10 every face) as unbuilt, so only a body without faces passes
+//! the whole check.
 //!
 //! **Outcomes** ([`CheckError::outcome`]): what a failure means depends
 //! on whose body it is ([`Role`]): an operand is invalid; a constructed
@@ -421,7 +423,7 @@ const BUILT: Invariants<'static> = [
     &geom::Seams,
     &geom::Regularity,
     &geom::Forms,
-    &Unbuilt,
+    &orient::Orientation,
     &super::adjacent::Embedding,
     &Unbuilt,
 ];
@@ -1111,6 +1113,7 @@ impl InScope {
 }
 
 mod geom;
+mod orient;
 mod topo;
 mod trims;
 
