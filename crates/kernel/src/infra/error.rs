@@ -14,8 +14,8 @@
 //! kernel's contradiction; at one key and kind, the check first in the
 //! stage's fixed order ([`first_failure`]).
 
-use super::budget::BudgetProfile;
 use super::ops::ToleranceOutOfRange;
+use crate::evidence::budget_profile::BudgetProfile;
 
 /// Why a kernel operation gives no result. It never gives an invalid one
 /// instead.

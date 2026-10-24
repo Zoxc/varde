@@ -10,11 +10,14 @@
 //! seam bounds; the B-rep store with every field a body keeps
 //! ([`topo::brep`]) and the minimal store counting reads
 //! ([`topo::brep_min`]); and the
-//! boolean's first step, its tangency clusters ([`boolean::snap`]).
+//! boolean's first step, its tangency clusters ([`boolean::snap`]); and
+//! the first of what it reports beside an outcome ([`evidence`]): the
+//! profile of its work when it runs out ([`BudgetProfile`]).
 //! The quadrature rules are public ([`measure::quadrature`]): the facade
 //! measures profiles' areas with them.
 
 pub mod boolean;
+pub mod evidence;
 pub mod geom;
 // Moved ahead of the code that calls them: the kernel's operations and
 // measures, as they land, are their first callers.
@@ -27,10 +30,11 @@ pub mod topo;
 #[cfg(test)]
 mod oracle;
 
-pub use infra::budget::{
-    Budget, BudgetProfile, Cap, HOTTEST, ItemAt, ItemName, Limit, MAX_SUBDIV_DEPTH, MAX_WORK, Step,
-    Stopped,
+pub use evidence::EVIDENCE_WORK;
+pub use evidence::budget_profile::{
+    BudgetProfile, HOTTEST, ItemAt, ItemName, ProfileDefect, Stopped, WarningEvidence,
 };
+pub use infra::budget::{Budget, Cap, Limit, MAX_SUBDIV_DEPTH, MAX_WORK, Step};
 /// The broad phase's tree uncharged, for the calibration benchmark
 /// (`benches/calibrate.rs`). Not part of the kernel's interface.
 #[doc(hidden)]

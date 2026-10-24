@@ -9,8 +9,9 @@
 //! cumulative cost goes past the budget (the budget runs out there), or,
 //! if earlier, at the first key that failed; at one key, running out comes
 //! first. Only that prefix of keys counts: towards the work used, which
-//! the next attempt runs on, and towards the [`BudgetProfile`]; the items
-//! after it are as if never run. Each item depends only on itself and the
+//! the next attempt runs on, and towards the
+//! [`BudgetProfile`](crate::BudgetProfile); the items after it are as if
+//! never run. Each item depends only on itself and the
 //! share, so the outcome, the work used and the profile are the same on any
 //! number of threads.
 //!
@@ -47,11 +48,12 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use varde_decide::num::schedule;
-use varde_decide::records::keys::{Key, RecordKey};
+use varde_decide::records::keys::Key;
 use varde_decide::records::table::Fresh;
 
 use super::error::{Cause, KernelError};
 use super::par::par_map_indexed;
+use crate::evidence::budget_profile::{Counts, ItemAt, ItemName, Stopped};
 
 /// The most work one operation may do, in the units of [`Budget`]: about
 /// two seconds of work on one thread of the reference machine, less on
@@ -216,78 +218,6 @@ impl Cap {
             | Cap::Refinement => Cause::SizeLimit,
         }
     }
-}
-
-/// One item of one pass of an operation: its position among the pass's
-/// key-sorted items, and what names it. Positions follow from the keys,
-/// so they are the same on every run; they number items, the name says
-/// which input they are about.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ItemAt {
-    /// The pass, counted from 0 over the operation.
-    pub pass: u64,
-    /// The item's position in the pass (as [`Halt::Failed`]'s).
-    pub item: usize,
-    /// What its pass knows of it, for evidence.
-    pub name: ItemName,
-}
-
-/// What names one item of a pass in a [`BudgetProfile`]: whatever its
-/// pass knows of it, from which evidence names the input entities and
-/// where they lie. Neither part is charged or changes an outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct ItemName {
-    /// The key of the record the item decides, in a pass deciding records
-    /// ([`Work::records`]): evidence names the item by its entities
-    /// ([`RecordKey::entities`]).
-    pub record: Option<RecordKey>,
-    /// A box `[lo, hi]` in world coordinates (mm) holding the item's
-    /// geometry, when its pass knows one ([`Work::named`]).
-    pub world: Option<[[f64; 3]; 2]>,
-}
-
-/// Where an operation stopped: the item that decided its pass, and the
-/// step of its ledger the budget ran out at, or its last step on reaching
-/// another limit (`None` if it had charged none).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Stopped {
-    /// The deciding item.
-    pub at: ItemAt,
-    /// The stage of the item's pass.
-    pub stage: &'static str,
-    /// The attempt (rung of the escalation ladder) of the item's pass.
-    pub rung: u8,
-    /// The step.
-    pub step: Option<Step>,
-}
-
-/// The most items [`BudgetProfile::hottest`] lists.
-pub const HOTTEST: usize = 8;
-
-/// Where an operation's work went, up to the point it ran out: over the
-/// passes before and, in the last pass, the items up to the deciding one,
-/// that one counted up to where the budget ran out. Read from the
-/// budget's own counts (not charged); the same on any number of threads.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BudgetProfile {
-    /// The limit reached.
-    pub limit: Limit,
-    /// The units used.
-    pub used: u64,
-    /// The units of steps that are not precision steps.
-    pub work: u64,
-    /// The units of precision steps, by precision level.
-    pub precision: Vec<u64>,
-    /// The units by stage, in the order the stages first charged.
-    pub stages: Vec<(&'static str, u64)>,
-    /// The units by attempt (rung), from rung 0.
-    pub rungs: Vec<u64>,
-    /// Where it stopped.
-    pub stopped: Stopped,
-    /// The items that took the most units, at most [`HOTTEST`], most first
-    /// (ties in pass and item order): each item's units in its one pass,
-    /// never summed over passes or rungs.
-    pub hottest: Vec<(ItemAt, u64)>,
 }
 
 /// One pass of an operation: one stage's map over its key-sorted items at
@@ -500,11 +430,7 @@ pub(crate) struct Work {
     budget: u64,
     used: u64,
     passes: u64,
-    work: u64,
-    precision: Vec<u64>,
-    stages: Vec<(&'static str, u64)>,
-    rungs: Vec<u64>,
-    hottest: Vec<(ItemAt, u64)>,
+    counts: Counts,
 }
 
 impl Work {
@@ -513,11 +439,7 @@ impl Work {
             budget: budget.work,
             used: 0,
             passes: 0,
-            work: 0,
-            precision: Vec::new(),
-            stages: Vec::new(),
-            rungs: Vec::new(),
-            hottest: Vec::new(),
+            counts: Counts::default(),
         }
     }
 
@@ -702,62 +624,14 @@ impl Work {
     /// Adds the first `units` of `ledger`'s charges, those of item `at`
     /// of `pass`, to the profile's counts.
     fn count(&mut self, pass: Pass, at: ItemAt, ledger: &Ledger<'_>, units: u64) {
-        if units == 0 {
-            return;
-        }
-        let mut left = units;
-        for &(step, run) in &ledger.steps {
-            let take = run.min(left);
-            match step {
-                Step::Work => self.work += take,
-                Step::Precision { level } => {
-                    let level = usize::from(level);
-                    if self.precision.len() <= level {
-                        self.precision.resize(level + 1, 0);
-                    }
-                    self.precision[level] += take;
-                }
-            }
-            left -= take;
-            if left == 0 {
-                break;
-            }
-        }
-        match self
-            .stages
-            .iter_mut()
-            .find(|(stage, _)| *stage == pass.stage)
-        {
-            Some((_, n)) => *n += units,
-            None => self.stages.push((pass.stage, units)),
-        }
-        let rung = usize::from(pass.rung);
-        if self.rungs.len() <= rung {
-            self.rungs.resize(rung + 1, 0);
-        }
-        self.rungs[rung] += units;
-        // Most units first, ties in key order; items come in key order,
-        // so a new one goes after those with as many units.
-        let place = self.hottest.partition_point(|&(_, n)| n >= units);
-        if place < HOTTEST {
-            self.hottest.insert(place, (at, units));
-            self.hottest.truncate(HOTTEST);
-        }
+        self.counts
+            .add(pass.stage, pass.rung, at, &ledger.steps, units);
     }
 
     fn out_of_budget(&self, cause: Cause, limit: Limit, stopped: Stopped) -> KernelError {
         KernelError::OutOfBudget {
             cause,
-            profile: Box::new(BudgetProfile {
-                limit,
-                used: self.used,
-                work: self.work,
-                precision: self.precision.clone(),
-                stages: self.stages.clone(),
-                rungs: self.rungs.clone(),
-                stopped,
-                hottest: self.hottest.clone(),
-            }),
+            profile: Box::new(self.counts.profile(limit, self.used, stopped)),
         }
     }
 }
@@ -819,8 +693,9 @@ pub(crate) fn assert_early_stop_changes_nothing<R: Send + std::fmt::Debug>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence::budget_profile::BudgetProfile;
     use varde_decide::ids::{Entity, VertId};
-    use varde_decide::records::keys::{Named, Operand, Point, Query, VvKey};
+    use varde_decide::records::keys::{Named, Operand, Point, Query, RecordKey, VvKey};
     use varde_decide::records::table::{FillError, Table};
 
     /// The schedule: `f64`, double-double and the big-float widths, the
