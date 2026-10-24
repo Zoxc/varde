@@ -7,7 +7,8 @@
 //! cylinder, cone, sphere, ring and spindle torus, revolved conic, affine
 //! images; the constructors in [`geom::forms`], ruled surfaces' there
 //! too), tiled surfaces, edge and coedge curves and their
-//! seam bounds; and the minimal B-rep store counting reads
+//! seam bounds; the B-rep store with every field a body keeps
+//! ([`topo::brep`]) and the minimal store counting reads
 //! ([`topo::brep_min`]); and the
 //! boolean's first step, its tangency clusters ([`boolean::snap`]).
 //! The quadrature rules are public ([`measure::quadrature`]): the facade
