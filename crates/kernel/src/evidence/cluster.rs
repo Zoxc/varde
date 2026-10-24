@@ -17,10 +17,16 @@
 //! the failure that ended the ladder and those it was compared with
 //! being the ones that tell; past the allowance, the earlier steps are
 //! dropped and counted.
+//!
+//! As a [`Failure`] ([`ClusterEvidence::failure`]) it is the detail of
+//! the site [`InternalSite::Cluster`], the caller's keys and locators
+//! given as text.
 
 use super::Allowance;
+use super::failure::{Detail, Evidence, Failure, InternalSite, Site};
 use crate::boolean::snap::corner::r_on;
-use crate::boolean::snap::escalate::{Cert, Event, Gap, RuleGap};
+use crate::boolean::snap::escalate::{Cert, Event, Failed, Gap, RuleGap, Signal};
+use crate::infra::ops::OpCtx;
 
 /// The evidence of a cluster rule gap ([`ClusterEvidence::build`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -52,10 +58,6 @@ pub struct ClusterStep<K, L> {
 impl<K: Clone, L: Clone> ClusterEvidence<K, L> {
     /// The evidence of `gap`, from `allowance`: a unit per bound, then
     /// per step a unit and one per placement, the last step first.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the boolean's snap driver calls it as it lands")
-    )]
     pub(crate) fn build(gap: &RuleGap<K, L>, allowance: &mut Allowance) -> ClusterEvidence<K, L> {
         let mut truncated = 0u32;
         let tried = bounds(&gap.events);
@@ -92,6 +94,75 @@ impl<K: Clone, L: Clone> ClusterEvidence<K, L> {
             bounds,
             steps,
             truncated,
+        }
+    }
+}
+
+impl<K: Clone + std::fmt::Debug, L: Clone + std::fmt::Debug> ClusterEvidence<K, L> {
+    /// The failure of the rule gap `gap` in operation `op`, at rung
+    /// `rung` with tie band `tau`: the kernel's own known gap at the
+    /// cluster ([`Site::Internal`] of [`InternalSite::Cluster`]), its
+    /// evidence built from `allowance` ([`ClusterEvidence::build`]), the
+    /// caller's keys and locators as their text. Replayed in full.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the boolean's snap driver calls it as it lands")
+    )]
+    pub(crate) fn failure(
+        gap: &RuleGap<K, L>,
+        op: OpCtx,
+        rung: u8,
+        tau: f64,
+        allowance: &mut Allowance,
+    ) -> Failure {
+        let ev = ClusterEvidence::build(gap, allowance);
+        let mut evidence = Evidence::new(op, Site::Internal(InternalSite::Cluster));
+        evidence.rung = rung;
+        evidence.tau = tau;
+        evidence.truncated = ev.truncated;
+        evidence.detail = Some(Detail::Cluster(Box::new(ev.texts())));
+        Failure::new(gap.error(), evidence, "snap")
+    }
+
+    /// The evidence with the keys and locators as their text.
+    fn texts(&self) -> ClusterEvidence<String, String> {
+        let text = |x: &dyn std::fmt::Debug| format!("{x:?}");
+        let event = |e: &Event<K, L>| match e {
+            Event::Failed { b_k, failed } => Event::Failed {
+                b_k: *b_k,
+                failed: Failed {
+                    cert: failed.cert,
+                    key: text(&failed.key),
+                    quantity: failed.quantity,
+                    pins: failed.pins.clone(),
+                },
+            },
+            Event::Simple { b_k, leaves } => Event::Simple {
+                b_k: *b_k,
+                leaves: *leaves,
+            },
+            Event::Halved { b_k } => Event::Halved { b_k: *b_k },
+            Event::Passed { b_k } => Event::Passed { b_k: *b_k },
+            Event::Signal { b_k, rung, signal } => Event::Signal {
+                b_k: *b_k,
+                rung: *rung,
+                signal: Signal {
+                    check: signal.check,
+                    level_set: signal.level_set.clone(),
+                    locator: text(&signal.locator),
+                },
+            },
+        };
+        ClusterEvidence {
+            gap: self.gap,
+            bounds: self.bounds.clone(),
+            steps: (self.steps.iter())
+                .map(|s| ClusterStep {
+                    event: event(&s.event),
+                    r_on: s.r_on.clone(),
+                })
+                .collect(),
+            truncated: self.truncated,
         }
     }
 }

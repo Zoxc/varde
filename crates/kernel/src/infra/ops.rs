@@ -29,9 +29,11 @@
 //! contacts were settled (zones), the edges whose tolerance is above the
 //! contract (bounds), the touching faces newly joined, notes (such as
 //! regions the label audit skipped and a move's rounding), the entities'
-//! history through the operation, and the evidence attached to each
-//! warning. The evidence never changes the warnings, their bounds or
-//! their count.
+//! history through the operation. The evidence attached to its
+//! warnings ([`WarningEvidence`], built after the outcome is fixed) is
+//! kept on it; it never changes the warnings, their bounds or their
+//! count, and a status compares the same without it
+//! ([`Status::same_outcome`]).
 
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
@@ -39,6 +41,8 @@ use std::ops::RangeInclusive;
 use malachite::Rational;
 use varde_decide::num::exact::rat;
 use varde_decide::num::storage::{EPS_RANGE, OpStart};
+
+use crate::evidence::budget_profile::WarningEvidence;
 
 /// The document's tolerance `ε` (mm): one setting, passed unchanged to
 /// every operation on the document. It lies in
@@ -246,6 +250,7 @@ pub struct Status {
     warnings: Vec<Warning>,
     count: u64,
     max_deviation: f64,
+    evidence: Option<Box<WarningEvidence>>,
 }
 
 impl Status {
@@ -258,6 +263,7 @@ impl Status {
             warnings: Vec::new(),
             count: 0,
             max_deviation: 0.0,
+            evidence: None,
         }
     }
 
@@ -310,6 +316,35 @@ impl Status {
     /// How many warnings were added, listed or not.
     pub fn warning_count(&self) -> u64 {
         self.count
+    }
+
+    /// The evidence of the listed warnings, once built: one entry per
+    /// listed warning, in their order.
+    pub fn warning_evidence(&self) -> Option<&WarningEvidence> {
+        self.evidence.as_deref()
+    }
+
+    /// Keeps `evidence`, built for this status's listed warnings (one
+    /// entry each, in their order), in place of any before. Changes
+    /// nothing else.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the operations' warnings call it as they land")
+    )]
+    pub(crate) fn attach_evidence(&mut self, evidence: WarningEvidence) {
+        debug_assert_eq!(evidence.items.len(), self.warnings.len());
+        self.evidence = Some(Box::new(evidence));
+    }
+
+    /// Whether `other` is the same status but for the evidence attached
+    /// to the warnings: the tolerance, `ρ_op`, the warnings, their bounds
+    /// and count, the approximate flag and the largest deviation.
+    pub fn same_outcome(&self, other: &Status) -> bool {
+        self.eps == other.eps
+            && self.rho_op.to_bits() == other.rho_op.to_bits()
+            && self.warnings == other.warnings
+            && self.count == other.count
+            && self.max_deviation.to_bits() == other.max_deviation.to_bits()
     }
 }
 

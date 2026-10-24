@@ -12,8 +12,10 @@
 //! ([`topo::brep_min`]); the names of faces, edges and vertices
 //! ([`names`]); and the
 //! boolean's first step, its tangency clusters ([`boolean::snap`]); and
-//! the first of what it reports beside an outcome ([`evidence`]): the
-//! profile of its work when it runs out ([`BudgetProfile`]).
+//! what it reports beside an outcome ([`evidence`]): a [`Failure`]'s
+//! [`Evidence`] (its [`Site`], the input entities by name, the faces cut
+//! out as sheets) and the profile of its work when it runs out
+//! ([`BudgetProfile`]).
 //! The measures ([`measure`]): a body's certified mass properties, and
 //! the quadrature rules, public as the facade measures profiles' areas
 //! with them.
@@ -36,6 +38,10 @@ mod oracle;
 pub use evidence::EVIDENCE_WORK;
 pub use evidence::budget_profile::{
     BudgetProfile, HOTTEST, ItemAt, ItemName, ProfileDefect, Stopped, WarningEvidence,
+};
+pub use evidence::{
+    Evidence, Failure, InputRef, Item, ItemRole, Leaf, MAX_EVIDENCE_ITEMS, MAX_SNIPPET,
+    SheetSnippet, Site,
 };
 pub use infra::budget::{Budget, Cap, Limit, MAX_SUBDIV_DEPTH, MAX_WORK, Step};
 /// The broad phase's tree uncharged, for the calibration benchmark

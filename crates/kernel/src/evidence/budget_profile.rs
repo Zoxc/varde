@@ -21,11 +21,14 @@
 //! allowance degrades the warnings after that point to their names
 //! (kind and bound, in the status) and counts them; the warnings, their
 //! bounds, their count, the approximate flag and the largest deviation
-//! are the same whatever the allowance.
+//! are the same whatever the allowance. Once built, it is kept on the
+//! status ([`Status::attach_evidence`]), which still compares equal on
+//! everything else ([`Status::same_outcome`]).
 
 use varde_decide::records::keys::{Named, RecordKey};
 
 use super::Allowance;
+use super::failure::Evidence;
 #[cfg(doc)]
 use crate::infra::budget::{Halt, Work};
 use crate::infra::budget::{Limit, Step};
@@ -285,7 +288,7 @@ impl Counts {
 /// and bound, in the status) and counted in
 /// [`truncated`](Self::truncated). Never changes the status.
 #[derive(Debug, Clone, PartialEq)]
-pub struct WarningEvidence<E> {
+pub struct WarningEvidence<E = Evidence> {
     /// Per listed warning, its evidence, or `None` where it is degraded
     /// to its name.
     pub items: Vec<Option<E>>,
