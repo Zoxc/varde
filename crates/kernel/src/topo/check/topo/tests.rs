@@ -22,7 +22,7 @@ use crate::topo::brep::{ExactRows, FaceKey, FacePart, PoleEnd, VertTag};
 use crate::topo::build::{Builder, Use};
 use crate::topo::check::{CheckError, CheckFailure, Inv, Invariants, Scope, run};
 
-fn status() -> Status {
+pub(in crate::topo::check) fn status() -> Status {
     let start = OpStart {
         max_coord: 4.0,
         rho_op: 0.0,
@@ -30,7 +30,7 @@ fn status() -> Status {
     Status::new(Tolerance::new(1e-3).expect("in range"), &start)
 }
 
-fn key(j: usize) -> FaceKey {
+pub(in crate::topo::check) fn key(j: usize) -> FaceKey {
     FaceKey {
         feature: FeatureId(1),
         part: FacePart::Primitive(j as u32),
@@ -38,13 +38,13 @@ fn key(j: usize) -> FaceKey {
     }
 }
 
-fn line(a: [f64; 3], b: [f64; 3]) -> Curve3D {
+pub(in crate::topo::check) fn line(a: [f64; 3], b: [f64; 3]) -> Curve3D {
     let m = [0, 1, 2].map(|k| (a[k] + b[k]) * 0.5);
     let pt = |p: [f64; 3]| [p[0], p[1], p[2], 1.0];
     Curve3D::new(vec![[pt(a), pt(m), pt(b)]], vec![0.0, 1.0]).expect("a line")
 }
 
-fn uv_line(a: [f64; 2], b: [f64; 2]) -> PCurve {
+pub(in crate::topo::check) fn uv_line(a: [f64; 2], b: [f64; 2]) -> PCurve {
     let m = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
     let span: Span2 = [[a[0], a[1], 1.0], [m[0], m[1], 1.0], [b[0], b[1], 1.0]];
     PCurve::new(vec![span], vec![0.0, 1.0]).expect("a UV line")
@@ -64,18 +64,18 @@ fn newell(pts: &[[f64; 3]]) -> [f64; 3] {
 /// A face of a polyhedron: its loops as vertex indices, counter-clockwise
 /// seen from outside, the outer first; and its component, whose edges
 /// are its own.
-struct PolyFace {
-    loops: Vec<Vec<usize>>,
-    part: usize,
+pub(in crate::topo::check) struct PolyFace {
+    pub(in crate::topo::check) loops: Vec<Vec<usize>>,
+    pub(in crate::topo::check) part: usize,
 }
 
 /// Planar faces on vertex positions.
-struct Poly {
-    pos: Vec<[f64; 3]>,
-    faces: Vec<PolyFace>,
+pub(in crate::topo::check) struct Poly {
+    pub(in crate::topo::check) pos: Vec<[f64; 3]>,
+    pub(in crate::topo::check) faces: Vec<PolyFace>,
 }
 
-fn faces(lists: &[&[usize]]) -> Vec<PolyFace> {
+pub(in crate::topo::check) fn faces(lists: &[&[usize]]) -> Vec<PolyFace> {
     lists
         .iter()
         .map(|l| PolyFace {
@@ -91,7 +91,7 @@ fn faces(lists: &[&[usize]]) -> Vec<PolyFace> {
 /// and p-curves lines; per component a shell of the faces' `Out` sides and
 /// one of their `In` sides, on a solid the first an island of the
 /// unbounded region and the second a lump's outer shell.
-fn build(p: &Poly, kind: BodyKind) -> Brep {
+pub(in crate::topo::check) fn build(p: &Poly, kind: BodyKind) -> Brep {
     let mut b = Builder::new(kind, status());
     let verts: Vec<VertId> = p.pos.iter().map(|&x| b.add_vert(x).unwrap()).collect();
     let mut edges: BTreeMap<(usize, usize, usize), EdgeId> = BTreeMap::new();
@@ -156,7 +156,7 @@ fn build(p: &Poly, kind: BodyKind) -> Brep {
 }
 
 /// The unit cube.
-fn cube() -> Poly {
+pub(in crate::topo::check) fn cube() -> Poly {
     let pos = (0..8)
         .map(|i| [(i & 1) as f64, ((i >> 1) & 1) as f64, ((i >> 2) & 1) as f64])
         .collect();
@@ -172,7 +172,7 @@ fn cube() -> Poly {
 }
 
 /// The pinched vertex of [`pinched`]: the L's reflex corner.
-const PINCH: usize = 3;
+pub(in crate::topo::check) const PINCH: usize = 3;
 
 /// An L-prism `[0, 4]² ∖ [2, 4]²` of height 2 whose bottom is two
 /// faces: the square `[1, 2]²` at the reflex corner, and the rest, whose
@@ -180,7 +180,7 @@ const PINCH: usize = 3;
 /// one loop the rest's two corners there lie on the corner's one fan
 /// cycle; `split`, the loop is an outer loop and a hole, each with its own
 /// corner there, and the corner has two fans.
-fn pinched(split: bool) -> Poly {
+pub(in crate::topo::check) fn pinched(split: bool) -> Poly {
     let outline = [
         [0.0, 0.0],
         [4.0, 0.0],
@@ -244,7 +244,7 @@ const SQUARE: [[f64; 3]; 4] = [
 ];
 
 /// The unit square as a sheet of two triangles.
-fn square() -> Poly {
+pub(in crate::topo::check) fn square() -> Poly {
     Poly {
         pos: SQUARE.to_vec(),
         faces: faces(&[&[0, 1, 2], &[0, 2, 3]]),
@@ -252,7 +252,7 @@ fn square() -> Poly {
 }
 
 /// A square sheet `[0, 3]²` with the square hole `[1, 2]²`.
-fn frame() -> Poly {
+pub(in crate::topo::check) fn frame() -> Poly {
     let mut pos: Vec<[f64; 3]> = SQUARE.iter().map(|p| p.map(|x| 3.0 * x)).collect();
     pos.extend(SQUARE.iter().map(|p| [1.0 + p[0], 1.0 + p[1], 0.0]));
     Poly {
@@ -284,7 +284,7 @@ fn bowtie() -> Poly {
 /// edge, the meridian `u = 1` up, the north pole's singular edge and the
 /// meridian `u = −1` down, every p-curve iso, the meridians on the
 /// rectangle's sides.
-fn half_sphere() -> Brep {
+pub(in crate::topo::check) fn half_sphere() -> Brep {
     let sphere = SphereKey::new([0.0; 3], 1.0, [0.0, 0.0, 1.0]).unwrap();
     let lattice = Lattice::new(sphere.into()).unwrap();
     let surface = Surface::new(lattice.clone(), lattice.half(-1).unwrap()).unwrap();
@@ -352,7 +352,7 @@ fn half_sphere() -> Brep {
 }
 
 /// A hook passing everything.
-struct Passing;
+pub(in crate::topo::check) struct Passing;
 
 impl Invariant for Passing {
     fn kinds(&self) -> &[ItemKind] {
@@ -398,7 +398,7 @@ fn check13(b: &Brep) -> Result<(), CheckError> {
     return check_with(b, &Topology, None);
 }
 
-fn failure(r: Result<(), CheckError>) -> CheckFailure {
+pub(in crate::topo::check) fn failure(r: Result<(), CheckError>) -> CheckFailure {
     match r {
         Err(CheckError::Failed(f)) => f,
         other => panic!("not a failure: {other:?}"),
@@ -430,7 +430,12 @@ fn domain(c: DomainCheck) -> (Inv, u32) {
 
 /// The coedge running from vertex `a` to `z` (input indices, which the
 /// builder keeps as ids), on the face numbered `face` if given.
-fn coedge_at(b: &Brep, a: usize, z: usize, face: Option<usize>) -> CoedgeId {
+pub(in crate::topo::check) fn coedge_at(
+    b: &Brep,
+    a: usize,
+    z: usize,
+    face: Option<usize>,
+) -> CoedgeId {
     (0..b.coedge_count() as u32)
         .map(CoedgeId)
         .find(|&c| {

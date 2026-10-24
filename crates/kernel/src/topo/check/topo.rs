@@ -701,4 +701,4 @@ fn iso_where_on_side(span: &PSpan, sides: &[[f64; 2]; 2]) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

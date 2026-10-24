@@ -79,9 +79,10 @@
 //! **Stages.** A body needing a part of an invariant this build doesn't
 //! certify yet (a contact record, a curved trim, a non-adjacent near
 //! pair) is refused, never passed ([`Finding::Unbuilt`]). This build has
-//! the hooks of invariants 1 to 3 (the [`topo`] module); each later one
-//! refuses every face as unbuilt, so only a body without faces passes the
-//! whole check.
+//! the hooks of invariants 1 to 3 (the [`topo`] module) and of 4 on
+//! linear trims (the [`trims`] module, which refuses a face with a curved
+//! trim as unbuilt); each later one refuses every face as unbuilt, so only
+//! a body without faces passes the whole check.
 //!
 //! **Outcomes** ([`CheckError::outcome`]): what a failure means depends
 //! on whose body it is ([`Role`]): an operand is invalid; a constructed
@@ -411,7 +412,7 @@ const BUILT: Invariants<'static> = [
     &topo::Topology,
     &topo::Joins,
     &topo::Domain,
-    &Unbuilt,
+    &trims::Trims,
     &Unbuilt,
     &Unbuilt,
     &Unbuilt,
@@ -603,6 +604,8 @@ struct Incidence {
     /// Per vertex, its corners: the coedges ending there, in their own
     /// direction.
     vert_corners: Vec<Vec<CoedgeId>>,
+    /// Per vertex, the edges of the coedges starting or ending there.
+    vert_edges: Vec<Vec<EdgeId>>,
     /// Per edge, its coedges.
     edge_coedges: Vec<Vec<CoedgeId>>,
     /// Per face, the vertices of its coedges.
@@ -671,6 +674,7 @@ impl Incidence {
         let mut inc = Incidence {
             vert_faces: vec![Vec::new(); nv],
             vert_corners: vec![Vec::new(); nv],
+            vert_edges: vec![Vec::new(); nv],
             edge_coedges: vec![Vec::new(); ne],
             face_verts: vec![Vec::new(); nf],
             face_edges: vec![Vec::new(); nf],
@@ -695,6 +699,9 @@ impl Incidence {
             let id = CoedgeId(c as u32);
             if let Some(e) = ci.edge {
                 inc.edge_coedges[e.index()].push(id);
+                for &v in ends.clone() {
+                    inc.vert_edges[v.index()].push(e);
+                }
             }
             if let Some(v) = ci.ends[1] {
                 inc.vert_corners[v.index()].push(id);
@@ -717,6 +724,7 @@ impl Incidence {
         inc.loop_verts.iter_mut().for_each(sort_dedup);
         inc.edge_coedges.iter_mut().for_each(sort_dedup);
         inc.vert_corners.iter_mut().for_each(sort_dedup);
+        inc.vert_edges.iter_mut().for_each(sort_dedup);
         Ok(inc)
     }
 }
@@ -1062,6 +1070,7 @@ impl InScope {
 }
 
 mod topo;
+mod trims;
 
 #[cfg(test)]
 mod tests;
