@@ -1,7 +1,7 @@
 //! The store on a square sheet face and on single rows: every column of
 //! a kind as long as the kind, the links read back as added, the rows
 //! refused for what they refer to, and the rules of the edge origins,
-//! the tolerances, the touching report and the face keys' order.
+//! the tolerances and the touching report.
 
 use varde_decide::num::storage::OpStart;
 
@@ -9,6 +9,7 @@ use super::*;
 use crate::geom::form::PlaneKey;
 use crate::geom::lattice::Lattice;
 use crate::geom::pcurve::Span2;
+use crate::infra::ops::{FeatureId, InstanceId};
 
 fn status(eps: f64) -> Status {
     let start = OpStart {
@@ -499,33 +500,6 @@ fn touching_lists_pairs_lesser_key_first_up_to_the_cap() {
     let mut s = BodyStatus::new(status(1e-3));
     s.touching_mut().add(a, b);
     assert_eq!(s.touching().pairs(), [(a, b)]);
-}
-
-#[test]
-fn face_keys_order_by_feature_then_copy_then_part() {
-    let side = FacePart::Side {
-        curve: 0,
-        segment: 0,
-    };
-    let cap = FacePart::StartCap { region: 9 };
-    let mut keys = vec![
-        key(2, 0, cap),
-        key(1, 1, cap),
-        key(1, 0, side),
-        key(1, 1, side),
-        key(1, 0, cap),
-    ];
-    keys.sort();
-    assert_eq!(
-        keys,
-        [
-            key(1, 0, cap),
-            key(1, 0, side),
-            key(1, 1, cap),
-            key(1, 1, side),
-            key(2, 0, cap),
-        ]
-    );
 }
 
 #[test]

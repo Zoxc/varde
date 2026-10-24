@@ -9,7 +9,8 @@
 //! too), tiled surfaces, edge and coedge curves and their
 //! seam bounds; the B-rep store with every field a body keeps
 //! ([`topo::brep`]) and the minimal store counting reads
-//! ([`topo::brep_min`]); and the
+//! ([`topo::brep_min`]); the names of faces, edges and vertices
+//! ([`names`]); and the
 //! boolean's first step, its tangency clusters ([`boolean::snap`]); and
 //! the first of what it reports beside an outcome ([`evidence`]): the
 //! profile of its work when it runs out ([`BudgetProfile`]).
@@ -25,6 +26,7 @@ pub mod geom;
 mod infra;
 #[allow(dead_code, reason = "moved ahead of its callers")]
 pub mod measure;
+pub mod names;
 pub mod topo;
 
 #[cfg(test)]

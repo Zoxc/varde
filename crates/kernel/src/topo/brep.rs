@@ -62,10 +62,12 @@
 use crate::geom::curve::{Curve3D, Span3};
 use crate::geom::pcurve::PCurve;
 use crate::geom::surface::Surface;
-use crate::infra::ops::{FeatureId, InstanceId, MAX_WARNINGS, Status, Tolerance};
+use crate::infra::ops::{MAX_WARNINGS, Status, Tolerance};
+use crate::names::keys::TermTable;
 
 use varde_decide::num::decide::Sign;
 
+pub use crate::names::keys::{Digest, EdgeTag, FaceKey, FacePart, PoleEnd, VertTag};
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
 
 macro_rules! store_ids {
@@ -138,33 +140,6 @@ pub enum VertKind {
     /// A singular point of a surface (a pole or an apex), the end of its
     /// singular edges.
     Pole,
-}
-
-/// Which pole of a form: towards its key's sign-ruled axis direction
-/// (`N`) or away from it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PoleEnd {
-    /// Towards the axis direction.
-    N,
-    /// Away from it.
-    S,
-}
-
-/// A vertex's tag: kept by name, through operations, while the vertex
-/// lasts (a pole snapped away keeps it with kind [`VertKind::Regular`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VertTag {
-    /// A sphere's, torus's or revolved form's pole.
-    Pole(PoleEnd),
-    /// A cone's apex.
-    Apex,
-}
-
-/// An edge's tag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum EdgeTag {
-    /// A seam: an edge of the same form between faces of one key.
-    Seam,
 }
 
 /// An edge's kind, derived from its two faces at the assembly of the
@@ -465,67 +440,18 @@ pub struct ExactRows {}
 pub struct Provenance {}
 
 /// The body's name tables: aliases per key, the digests' term table and
-/// the interned attribute sets. The store keeps their place; their
-/// content comes with the names.
+/// the interned attribute sets. The store keeps their place; so far the
+/// term table is filled in, the rest comes with the names.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct NameTables {}
-
-/// A 128-bit digest of a name, by which a key refers to other names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Digest(pub u128);
-
-/// What part of its feature a face is, from what the feature was given.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum FacePart {
-    /// The cap an extrusion or a turn starts at; `region` the least
-    /// sketch region tag of the profile loop it closes, 0 untagged.
-    StartCap { region: u32 },
-    /// The cap it ends at.
-    EndCap { region: u32 },
-    /// The wall swept by segment `segment` of profile curve `curve`.
-    Side { curve: u64, segment: u32 },
-    /// A helical sweep's wall: profile curve `curve`, turn `turn` of the
-    /// path.
-    Turn { curve: u64, turn: u32 },
-    /// A primitive's face, by its number in the primitive.
-    Primitive(u32),
-    /// A blend's face along the chain named `chain`.
-    Blend { chain: Digest },
-    /// A blend's corner: the digest of its blended edges' names, the
-    /// ordinal `k` among corners with that digest.
-    BlendCorner { edges: Digest, k: u32 },
-    /// An offset of the face whose key has digest `of`.
-    Offset { of: Digest },
-    /// A loft's face through span `span` of section curve `curve`.
-    Loft { curve: u64, span: u32 },
-    /// A tapered wall behind the neutral plane.
-    BackSide { curve: u64, segment: u32 },
+pub struct NameTables {
+    pub(crate) terms: TermTable,
 }
 
-/// A face's key: the feature, the copy of it and the part, from what the
-/// caller gave the operation, never a kernel count or an id. Keys order
-/// by the leaf order (feature, then copy), then by part.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct FaceKey {
-    /// The feature.
-    pub feature: FeatureId,
-    /// The part of it.
-    pub part: FacePart,
-    /// The copy of it.
-    pub instance: InstanceId,
-}
-
-impl Ord for FaceKey {
-    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
-        (self.feature, self.instance, self.part).cmp(&(o.feature, o.instance, o.part))
-    }
-}
-
-impl PartialOrd for FaceKey {
-    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(o))
+impl NameTables {
+    /// What the digests the body's keys hold stand for.
+    pub fn terms(&self) -> &TermTable {
+        &self.terms
     }
 }
 
