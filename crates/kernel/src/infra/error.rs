@@ -189,10 +189,14 @@ impl Inconsistency {
 }
 
 /// What a feature operation can't build ([`KernelError::Feature`]). It
-/// gains a variant for each refusal as the feature operations land; until
-/// then none can be raised.
+/// gains a variant for each refusal as the feature operations land.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FeatureKind {}
+pub enum FeatureKind {
+    /// A primitive's dimensions make no solid of its kind: a size, height
+    /// or thickness not above the least a solid keeps apart, or radii
+    /// its form doesn't take.
+    Dimension,
+}
 
 impl std::fmt::Display for KernelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -239,7 +243,9 @@ impl std::fmt::Display for KernelError {
                 Inconsistency::SosGuard => "the kernel's tie-breaking reached its guard",
                 Inconsistency::ClusterRuleGap => "the kernel's rules don't settle a tangency",
             }),
-            KernelError::Feature(kind) => match *kind {},
+            KernelError::Feature(FeatureKind::Dimension) => {
+                f.write_str("a dimension is too small, or the dimensions make no solid")
+            }
             KernelError::NotImplemented(what) => write!(f, "{what} isn't implemented yet"),
         }
     }

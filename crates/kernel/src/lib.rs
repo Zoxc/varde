@@ -18,9 +18,10 @@
 //! ([`BudgetProfile`]).
 //! The measures ([`measure`]): a body's certified mass properties, and
 //! the quadrature rules, public as the facade measures profiles' areas
-//! with them.
+//! with them. The constructions ([`build`]): so far the primitives.
 
 pub mod boolean;
+pub mod build;
 pub mod evidence;
 pub mod geom;
 // Moved ahead of the code that calls them: the kernel's operations and

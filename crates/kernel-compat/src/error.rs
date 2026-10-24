@@ -65,7 +65,9 @@ impl From<varde_kernel::KernelError> for KernelError {
             K::Internal(varde_kernel::Internal::Inconsistent(_)) => {
                 KernelError::Boolean(BooleanError::Inconsistent)
             }
-            K::Feature(kind) => match kind {},
+            K::Feature(varde_kernel::FeatureKind::Dimension) => {
+                KernelError::NotImplemented("reporting a refused dimension")
+            }
         }
     }
 }
