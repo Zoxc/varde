@@ -3,9 +3,10 @@
 //! ball round a vertex) a local certificate says so; outside it the
 //! pair's leaves do, as for faces that share nothing. This module holds
 //! the local certificates: the **ruled-surface certificate** of an edge
-//! and the **separating plane** of a vertex; the tube itself (its radius,
-//! the window it must fall in, the join zone it must contain) and the
-//! leaves beyond it are the next part's ([`Embedding`], below).
+//! and the **separating plane** of a vertex; and the tube round an edge,
+//! the radius its **window** gives ([`window`]). The leaves beyond the
+//! tube, and the ball round a vertex, are later parts ([`Embedding`],
+//! below).
 //!
 //! **The ruled-surface certificate** (one for every kind of edge:
 //! creases, convex, concave or mixed, tangent and curvature-continuous
@@ -84,6 +85,44 @@
 //! ([`VertCert`]). The plane is proposed from the sectors' far points (a
 //! cone containment, [`propose_axis`]) and only certified here.
 //!
+//! **The window** ([`window::certify_window`]), per edge: the tube's
+//! radius `ρ_adj`, a power of two with `ρ_min ≤ ρ_adj ≤ ρ_graph` and `r₀ <
+//! ρ_adj`, else the window is empty.
+//! - **`ρ_min`**: from it on the faces are apart by more than `δ =
+//!   ε_exc·(1 + 2⁻⁸)` (`ε_exc = ε/8`), so that the leaves beyond the tube
+//!   certify them apart. On a cell where `sin²α` (the angle between the
+//!   normals) has a certified positive lower bound, a crease's
+//!   `δ/sin α_min`; elsewhere (tangent and curvature-continuous joins, a
+//!   G² joint of different surfaces, any order) the separation itself: each
+//!   face's strip against the other face's surface across the edge (its
+//!   tile's implicit `F`, the form extended), box by box, a box apart where
+//!   `|F|` exceeds `δ` times a bound of `|∇F|` around it
+//!   ([`window::separation`]); `ρ_min` bounds the distance from the curve of
+//!   every box not shown apart. The edge's is its cells' largest. Faces
+//!   on **one surface** (one surface object, or a
+//!   [`SameForm`](EdgeKind::SameForm) edge) lie on either side of their
+//!   common p-curve on one injective surface: no certificate, `ρ_min` 0,
+//!   and `ρ_adj` the least power of two above their ribbons; beyond it
+//!   their trims' disjointness in the surface's UV decides, a later part.
+//! - **`ρ_graph`**: the tube may reach no other edge of the two faces
+//!   (but those sharing an end with it, the vertices' balls'), and the
+//!   strips must reach out of it: the curve against those edges and
+//!   against each strip's far side, by control boxes
+//!   ([`window::apart`]); and no failing point of the certificate.
+//! - **`r₀`**: the join zone's points (the strip short of `s₀`, the
+//!   ribbon included) lie within it of the curve's point at their `t`.
+//! - **The search.** The strips start about twice as wide as the nearest
+//!   other edge is far. Where the certificate fails at a point, no tube
+//!   reaching it holds: the strip narrows below it, and the point's
+//!   distance bounds `ρ_graph` from above. The window is **certified
+//!   empty** where no power of two lies between a lower bound of `ρ_min`
+//!   (a crease's angle at a cell's middle) and an upper bound of
+//!   `ρ_graph` (a failing point's distance, two points of the curve and
+//!   another edge): [`Finding::EmptyWindow`], a settled fact. Else `ρ_adj` is the least
+//!   power of two at least `ρ_min` and above `r₀`, doubled while the other
+//!   edges and the far sides stay beyond it. A window neither empty nor
+//!   holding a tube is unsettled ([`Cap::PrecisionBits`]).
+//!
 //! **Precision and work.** Every cell and box is computed at a level of
 //! the escalation schedule from the stored values, and escalates where
 //! rounding decides (its values settled but its enclosures not), else is
@@ -99,12 +138,14 @@
 use std::cmp::Ordering;
 
 use malachite::Rational;
-use varde_decide::bezier::{Dir, HomCurve, Poly, Scalar, Tensor, cone::propose_axis, cross, dot};
-use varde_decide::num::bounded::{div_up, down, up};
+use varde_decide::bezier::{
+    Dir, HomCurve, HomPatch, Poly, Scalar, Tensor, cone::propose_axis, cross, dot,
+};
+use varde_decide::num::bounded::{Bounded, div_up, down, up};
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level};
 use varde_decide::num::schedule::{Level, UNITS};
 
-use super::brep::{Brep, CoedgeId, EdgeId, EdgeKind, FaceId, VertId, VertKind};
+use super::brep::{Brep, CoedgeId, EdgeId, EdgeKind, FaceId, SurfId, VertId, VertKind};
 use super::check::{Cx, Fault, Finding, Invariant, Item, ItemKind};
 use crate::geom::certify::restrict;
 use crate::geom::curve::{Curve3D, local};
@@ -118,13 +159,14 @@ use crate::infra::budget::{Cap, LEVELS, Ledger, MAX_SUBDIV_DEPTH, Step, Stop, le
 
 /// Invariant 9's hook (the check's driver, [`super::check`]): contact
 /// records, then edges and vertices (the adjacent part), then faces (the
-/// non-adjacent part). This build certifies no contact record and no
-/// non-adjacent pair, and the adjacent part's certificates need the tube
-/// the window gives ([`window`]): so a body with a contact record, a pair
-/// of faces across an edge or at a vertex alone, or a face, needs a part
-/// this build doesn't have ([`Finding::Unbuilt`]). An edge without a pair
-/// of faces (singular, or a sheet's open boundary) and a vertex whose
-/// faces all share edges there need nothing here.
+/// non-adjacent part, and the adjacent pairs beyond their tubes). An
+/// edge's faces are certified inside its tube (module docs, "The
+/// window"); this build certifies no contact record, no ball round a
+/// vertex and no pair by its leaves: so a body with a contact record, a
+/// pair of faces at a vertex alone, or a face, needs a part this build
+/// doesn't have ([`Finding::Unbuilt`]). An edge without a pair of faces
+/// (singular, or a sheet's open boundary) and a vertex whose faces all
+/// share edges there need nothing here.
 pub(crate) struct Embedding;
 
 /// The checks of invariant 9, numbered in the hook's order.
@@ -164,7 +206,7 @@ impl Invariant for Embedding {
         match item {
             Item::Contact(_) => unbuilt(EmbedCheck::Contact),
             Item::Edge(e) => match edge_of(b, e) {
-                Ok(_) => window(EmbedCheck::Edge),
+                Ok(edge) => edge_tube(cx, e, &edge, ledger),
                 Err(Skip::Staged) => unbuilt(EmbedCheck::Edge),
                 Err(Skip::NoPair | Skip::Unreadable) => Ok(()),
             },
@@ -173,7 +215,7 @@ impl Invariant for Embedding {
                     return unbuilt(EmbedCheck::Vertex);
                 }
                 if vertex_pairs(cx, v).next().is_some() {
-                    window(EmbedCheck::Vertex)
+                    ball(EmbedCheck::Vertex)
                 } else {
                     Ok(())
                 }
@@ -184,12 +226,195 @@ impl Invariant for Embedding {
     }
 }
 
-/// The tube's window and the leaves beyond it, for an edge or vertex
-/// whose local certificate the tube decides: the next part of this
-/// invariant. Until it lands, the item needs a part this build doesn't
-/// have.
-fn window(check: EmbedCheck) -> Result<(), Stop<Fault>> {
+/// The ball round a vertex whose faces meet there alone, and its
+/// radius's window: a part this build doesn't have.
+fn ball(check: EmbedCheck) -> Result<(), Stop<Fault>> {
     unbuilt(check)
+}
+
+/// The window's threshold for `body`: `ε_exc = ε/8`, with the margin of
+/// `ρ_min`. A result's check reads `ε′ = min(ε_exc, b_K,min/2)` in its
+/// place (its operation's least cluster band), which the operations
+/// pass as they land.
+pub(crate) fn window_delta(body: &Brep) -> f64 {
+    body.eps().eps().eps() * 0.125 * window::MARGIN
+}
+
+/// The tube of edge `e` (`edge` its faces) on the check's body: the
+/// window between `ρ_min` and `ρ_graph` with the faces' other edges
+/// ([`near`]), the inside certificate on the strips it reaches. The
+/// outside part (the faces' leaves beyond the tube) is the non-adjacent
+/// pass's ([`EmbedCheck::Apart`]), which reads the tube ([`window_of`]):
+/// a pair beyond its tube is checked as a pair sharing nothing. A window
+/// certified empty fails ([`Finding::EmptyWindow`]); one unsettled stops
+/// at its cap; a curve the earlier invariants refuse is theirs to report.
+/// The faces' edges it reads are charged a unit each.
+fn edge_tube(
+    cx: &Cx<'_>,
+    e: EdgeId,
+    edge: &Edge<'_>,
+    ledger: &mut Ledger<'_>,
+) -> Result<(), Stop<Fault>> {
+    let b = cx.body();
+    let faces = edge_faces(b, e);
+    let read: usize = faces.iter().map(|&f| cx.face_edges(f).len()).sum();
+    ledger.charge(Step::Work, read as u64)?;
+    let near = near(
+        b,
+        e,
+        faces.iter().flat_map(|&f| cx.face_edges(f).iter().copied()),
+    );
+    match window::certify_window(edge, &near, window_delta(b), ledger) {
+        Ok(window::Window::Tube(_)) | Err(Stop::Failed(_)) => Ok(()),
+        Ok(window::Window::Empty { .. }) => Err(Stop::Failed(Fault {
+            check: EmbedCheck::Edge as u32,
+            finding: Finding::EmptyWindow,
+        })),
+        Err(Stop::Cap(c)) => Err(Stop::Cap(c)),
+        Err(Stop::Exhausted(x)) => Err(Stop::Exhausted(x)),
+    }
+}
+
+/// The faces of edge `e`'s coedges, read guarded.
+fn edge_faces(b: &Brep, e: EdgeId) -> Vec<FaceId> {
+    let cs = &b.coedges;
+    let Some(&c0) = b.edges.coedge.get(e.index()) else {
+        return Vec::new();
+    };
+    let c1 = cs.pair.get(c0.index()).copied();
+    [Some(c0), c1]
+        .into_iter()
+        .flatten()
+        .filter_map(|c| cs.face.get(c.index()).copied())
+        .filter(|f| f.index() < b.face_count())
+        .collect()
+}
+
+/// The other edges among `edges` near which edge `e`'s tube may not
+/// reach (module docs, "The window"): each once, but `e` and the edges
+/// sharing an end with it (by id or by position, bit for bit: the
+/// vertex's ball takes those), their spans at the first level, in the
+/// order of their end points (so the distance a search meets first
+/// doesn't depend on the ids).
+fn near(b: &Brep, e: EdgeId, edges: impl Iterator<Item = EdgeId>) -> Vec<window::Arc3> {
+    let es = &b.edges;
+    let ends = |g: EdgeId| -> Option<[VertId; 2]> {
+        Some([*es.v_start.get(g.index())?, *es.v_end.get(g.index())?])
+    };
+    let pos = |v: VertId| b.verts.pos.get(v.index()).map(|p| p.map(f64::to_bits));
+    let Some(mine) = ends(e) else {
+        return Vec::new();
+    };
+    let mine_at = mine.map(pos);
+    let mut ids: Vec<EdgeId> = edges.filter(|&g| g != e).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut out = Vec::new();
+    for g in ids {
+        let Some(theirs) = ends(g) else { continue };
+        let touches = theirs
+            .iter()
+            .any(|&v| mine.contains(&v) || (pos(v).is_some() && mine_at.contains(&pos(v))));
+        if touches {
+            continue;
+        }
+        let Some(&c) = es.curve.get(g.index()) else {
+            continue;
+        };
+        if c.index() >= b.curve_count() {
+            continue;
+        }
+        if let Some(a) = window::arcs(b.curve(c), es.t_range[g.index()]) {
+            out.extend(a);
+        }
+    }
+    let ends = |a: &window::Arc3| -> [f64; 6] {
+        let p = |k: usize| {
+            let i = if k == 0 { 0 } else { a.degree() };
+            let w = a.weights().coefs()[i].v;
+            [0, 1, 2].map(|c| a.coords()[c].coefs()[i].v / w)
+        };
+        let (s, e) = (p(0), p(1));
+        [s[0], s[1], s[2], e[0], e[1], e[2]]
+    };
+    out.sort_by(|x, y| {
+        let (a, b) = (ends(x), ends(y));
+        (0..6)
+            .map(|k| a[k].total_cmp(&b[k]))
+            .find(|o| o.is_ne())
+            .unwrap_or(Ordering::Equal)
+    });
+    out
+}
+
+/// The window of edge `e` of `body` recomputed for its evidence on a
+/// budget of `units`: its two faces, and a certified lower bound of
+/// `ρ_min` and an upper bound of `ρ_graph` where it is certified empty
+/// within them.
+pub(crate) fn empty_window(body: &Brep, e: EdgeId, units: u64) -> Option<([FaceId; 2], [f64; 2])> {
+    use crate::infra::budget::{Budget, Pass, Work};
+    let [f, g] = <[FaceId; 2]>::try_from(edge_faces(body, e)).ok()?;
+    let mut work = Work::new(&Budget::new(units));
+    let pass = Pass {
+        stage: "check 9 evidence",
+        rung: 0,
+    };
+    let out = work
+        .pass(pass, &[()], |_, ledger| window_of(body, e, ledger))
+        .ok()?;
+    match out.first()? {
+        window::Window::Empty { rho_min, rho_graph } => Some(([f, g], [*rho_min, *rho_graph])),
+        window::Window::Tube(_) => None,
+    }
+}
+
+/// The window of edge `e` of `body` as the check certifies it, the
+/// faces' other edges read off their loops (guarded).
+pub(crate) fn window_of(
+    body: &Brep,
+    e: EdgeId,
+    ledger: &mut Ledger<'_>,
+) -> Result<window::Window, Stop<Skip>> {
+    let edge = edge_of(body, e).map_err(Stop::Failed)?;
+    let edges: Vec<EdgeId> = edge_faces(body, e)
+        .iter()
+        .flat_map(|&f| loop_edges(body, f))
+        .collect();
+    ledger.charge(Step::Work, edges.len() as u64)?;
+    let near = near(body, e, edges.into_iter());
+    window::certify_window(&edge, &near, window_delta(body), ledger)
+}
+
+/// The edges of face `f`'s loops, walked guarded (each loop at most as
+/// many steps as the body has coedges).
+fn loop_edges(b: &Brep, f: FaceId) -> Vec<EdgeId> {
+    let (cs, ls) = (&b.coedges, &b.loops);
+    let mut out = Vec::new();
+    let Some(&first) = b.faces.first_loop.get(f.index()) else {
+        return out;
+    };
+    let mut l = first;
+    for _ in 0..b.loop_count() {
+        let Some(&start) = ls.first_coedge.get(l.index()) else {
+            break;
+        };
+        let mut c = start;
+        for _ in 0..b.coedge_count() {
+            let Some(&e) = cs.edge.get(c.index()) else {
+                break;
+            };
+            out.push(e);
+            match cs.next.get(c.index()) {
+                Some(&n) if n != start => c = n,
+                _ => break,
+            }
+        }
+        match ls.next_loop.get(l.index()) {
+            Some(&n) if n != first && !n.is_none() => l = n,
+            _ => break,
+        }
+    }
+    out
 }
 
 /// The pairs of faces at `v` that share no edge there, each once (the
@@ -255,6 +480,8 @@ pub(crate) struct Side<'a> {
     pub(crate) flipped: bool,
     /// Whether its coedge runs against the edge's curve.
     pub(crate) reversed: bool,
+    /// Its coedge's seam bound: the width of its ribbon.
+    pub(crate) seam: f64,
 }
 
 impl Side<'_> {
@@ -276,6 +503,11 @@ pub(crate) struct Edge<'a> {
     pub(crate) t_range: [f64; 2],
     /// The two faces: `[0]` with `G > 0`, `[1]` with `G < 0`.
     pub(crate) sides: [Side<'a>; 2],
+    /// Whether the faces lie on one surface: one surface object, or
+    /// surfaces of bit-identical form keys (a
+    /// [`SameForm`](EdgeKind::SameForm) edge). Their window needs no
+    /// certificate ([`window`]).
+    pub(crate) one_surface: bool,
 }
 
 /// Edge `e` of `body` with its two faces, or why it has none to
@@ -313,7 +545,7 @@ pub(crate) fn edge_of(body: &Brep, e: EdgeId) -> Result<Edge<'_>, Skip> {
     {
         return Err(Skip::Staged);
     }
-    let side = |c: CoedgeId| -> Result<Side<'_>, Skip> {
+    let side = |c: CoedgeId| -> Result<(Side<'_>, SurfId), Skip> {
         let f = cs.face[c.index()];
         let p = cs.pcurve[c.index()];
         if f.index() >= body.face_count() || p.index() >= body.pcurve_count() {
@@ -323,22 +555,26 @@ pub(crate) fn edge_of(body: &Brep, e: EdgeId) -> Result<Edge<'_>, Skip> {
         if s.index() >= body.surface_count() {
             return Err(Skip::Unreadable);
         }
-        Ok(Side {
+        let side = Side {
             surface: body.surface(s),
             pcurve: body.pcurve(p),
             flipped: body.faces.flipped[f.index()],
             reversed: cs.reversed[c.index()],
-        })
+            seam: cs.seam_bound[c.index()],
+        };
+        Ok((side, s))
     };
-    let (a, b) = (side(c0)?, side(c1)?);
+    let ((a, sa), (b, sb)) = (side(c0)?, side(c1)?);
     if a.reversed == b.reversed {
         return Err(Skip::Unreadable);
     }
     let sides = if a.reversed { [b, a] } else { [a, b] };
+    let same_form = matches!(body.edge_kind(e), EdgeKind::SameForm { .. });
     let edge = Edge {
         curve,
         t_range,
         sides,
+        one_surface: sa == sb || same_form,
     };
     if edge.pieces().is_none() {
         return Err(Skip::Unreadable);
@@ -430,7 +666,7 @@ pub(crate) struct Strip {
 }
 
 /// What the certificate showed on its strips.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Held {
     /// Per face, the greatest `s₀` (in global UV along `ν`): beyond it
     /// the face is on its side of the ruled surface (or plane).
@@ -438,10 +674,23 @@ pub(crate) struct Held {
     /// Per face, the least strip width a cell kept (cut to its tile):
     /// the certificate covers the strip up to this width everywhere.
     pub(crate) reach: [f64; 2],
+    /// Per face, a certified upper bound of the join zone's distance from
+    /// the curve: of every point of the strip short of `s₀` from the
+    /// curve's point at the same `t` (the ribbon included), `r₀`.
+    pub(crate) r0: [f64; 2],
+    /// A certified upper bound of `ρ_min` (module docs, "The window"),
+    /// the largest of its cells'; `∞` where a cell's is unsettled.
+    pub(crate) rho_min: f64,
+    /// A certified lower bound of `ρ_min`: the largest of its creases'
+    /// at their cells' middles; 0 where no cell is a certified crease.
+    pub(crate) rho_min_lo: f64,
+    /// Per face, the strips' far sides (`s` at their width), cell by
+    /// cell in `t` order, at the first level: the tube's outer wall.
+    pub(crate) far: [Vec<HomCurve<Bounded<f64>, 3>>; 2],
 }
 
 /// The edge certificate's outcome.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum EdgeCert {
     /// It holds on the strips.
     Held(Held),
@@ -455,20 +704,33 @@ pub(crate) enum EdgeCert {
         t: f64,
         /// How far into the face.
         s: f64,
+        /// A certified upper bound of the distance from the curve of the
+        /// point it fails at: no tube reaching that far holds.
+        dist: f64,
+        /// A certified lower bound of `ρ_min` from the cells settled
+        /// before it, as [`Held::rho_min_lo`].
+        rho_min_lo: f64,
     },
 }
 
 /// The ruled-surface certificate of `edge` on the strips `strip`
-/// (module docs), each cell and box charged to `ledger`.
+/// (module docs), each cell and box charged to `ledger`; with the
+/// window's bounds on the strips that hold (module docs, "The window"):
+/// the faces counted apart by more than `delta` beyond `ρ_min`.
 pub(crate) fn certify_edge(
     edge: &Edge<'_>,
     strip: &Strip,
+    delta: f64,
     ledger: &mut Ledger<'_>,
 ) -> Result<EdgeCert, Stop<Skip>> {
     let pieces = edge.pieces().ok_or(Stop::Failed(Skip::Unreadable))?;
     let mut held = Held {
         s0: [0.0; 2],
         reach: strip.width,
+        r0: [0.0; 2],
+        rho_min: 0.0,
+        rho_min_lo: 0.0,
+        far: [Vec::new(), Vec::new()],
     };
     for piece in &pieces {
         // A stack of field cells: the next last.
@@ -492,7 +754,14 @@ pub(crate) fn certify_edge(
             };
             match run_at(&mut at, cell.level) {
                 FieldOut::Ready(frame) => {
-                    if let Some(fails) = settle(edge, piece, cell, &frame, &mut held, ledger)? {
+                    let at = Settle {
+                        edge,
+                        piece,
+                        cell,
+                        frame: &frame,
+                        delta,
+                    };
+                    if let Some(fails) = settle(&at, &mut held, ledger)? {
                         return Ok(fails);
                     }
                 }
@@ -574,6 +843,10 @@ struct Frame {
     /// The plane of the fast path, if the piece's curve span gives one:
     /// its normal, oriented as `m × C′` at the middle, and a point.
     plane: Option<([f64; 3], [f64; 3])>,
+    /// `sin²` of the angle between the faces' normals: a certified lower
+    /// bound over the cell (0 where none is positive: the faces may be
+    /// tangent there), and a certified upper bound at its middle.
+    sin2: [f64; 2],
 }
 
 /// A field cell's outcome.
@@ -937,7 +1210,37 @@ fn field_at<S: LevelScalar>(
         h,
         tile,
         plane,
+        sin2: sin2_bounds(&n, like),
     }))
+}
+
+/// `sin²` of the angle between the normals `n` over a cell (module docs,
+/// "The window"): `|N₁ × N₂|² / (|N₁|²·|N₂|²)`, its lower bound over the
+/// cell from the Bernstein hulls (0 where that isn't positive) and its
+/// upper bound at the middle; `[0, ∞]` where the products pass the
+/// largest degree.
+fn sin2_bounds<S: LevelScalar>(n: &[[Poly<S>; 3]; 2], like: &S) -> [f64; 2] {
+    let parts = || -> Option<(Poly<S>, Poly<S>)> {
+        let c = cross(&n[0], &n[1])?;
+        let num = dot(&c, &c)?;
+        let den = dot(&n[0], &n[0])?.mul(&dot(&n[1], &n[1])?)?;
+        Some((num, den))
+    };
+    let Some((num, den)) = parts() else {
+        return [0.0, f64::INFINITY];
+    };
+    let (nh, dh) = (num.hull(), den.hull());
+    let lo = if nh.lo > 0.0 && dh.hi.is_finite() && dh.hi > 0.0 {
+        let q = down(down(nh.lo) / up(dh.hi));
+        if q > 0.0 { q } else { 0.0 }
+    } else {
+        0.0
+    };
+    let half = S::from_f64(0.5, like);
+    let [_, a] = num.eval(&half).enclose();
+    let [b, _] = den.eval(&half).enclose();
+    let hi = if a >= 0.0 { div_up(a, b) } else { 0.0 };
+    [lo, if hi.is_nan() { f64::INFINITY } else { hi }]
 }
 
 /// The polynomial of the `f64` coefficients `c` at `like`'s level.
@@ -1068,6 +1371,13 @@ trait SignFn {
 
     /// The units of one box at level `level`.
     fn units(&self, level: u8) -> u64;
+
+    /// A certified upper bound of the distance from the edge's curve of
+    /// box `b`'s points, at the first level (a failing corner's); `∞`
+    /// where it has none.
+    fn reach(&self, _b: &SBox) -> f64 {
+        f64::INFINITY
+    }
 }
 
 /// One box of `f` at its level.
@@ -1157,11 +1467,12 @@ fn judge<S: LevelScalar>(g: &Tensor<S>, w: &Tensor<S>, b: &SBox) -> BoxOut {
 }
 
 /// The strip outcome: holds beyond `s₀` (relative), or fails at a point
-/// `(t, s)` relative to the cell and the strip.
+/// `(t, s)` relative to the cell and the strip, at most the third value
+/// from the curve.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum StripOut {
     Holds(f64),
-    Fails(f64, f64),
+    Fails(f64, f64, f64),
 }
 
 /// Decides `f`'s strip box by box (module docs), from cell depth
@@ -1187,7 +1498,7 @@ fn decide_strip<F: SignFn>(
                 }
             }
             BoxOut::Fails { t, s } => {
-                return Ok((!fast).then_some(StripOut::Fails(t, s)));
+                return Ok((!fast).then(|| StripOut::Fails(t, s, f.reach(&b))));
             }
             BoxOut::Precision => {
                 if fast && b.level >= 1 {
@@ -1272,21 +1583,65 @@ fn lift<S: Scalar>(p: &Poly<S>) -> Tensor<S> {
     Tensor::new(p.degree(), 0, p.coefs().iter().cloned()).expect("its degree")
 }
 
+/// Face `side`'s strip over part `kt` of `2^dt` of field cell `cell` in
+/// `t` and `s ∈ [s_a, s_b]` of the strip (`s·h` exact, `h` dyadic): the
+/// tile's patch over the strip's map, a patch in `(t, σ)`, with the
+/// cell's spans over that part, at `like`'s level; `None` where it can't
+/// be formed.
+#[allow(clippy::too_many_arguments, reason = "one strip's coordinates")]
+fn strip_patch<S: LevelScalar>(
+    edge: &Edge<'_>,
+    piece: &Piece,
+    cell: TCell,
+    frame: &Frame,
+    side: usize,
+    (kt, dt): (u64, u32),
+    s: [f64; 2],
+    like: &S,
+) -> Option<(HomPatch<S>, Spans<S>)> {
+    let (k, depth) = ((cell.k << dt) + kt, cell.depth + dt);
+    let sp = spans_at(edge, piece, k, depth, like);
+    let (ti, tj) = frame.tile[side];
+    let tile = edge.sides[side].surface.tile(ti, tj)?;
+    let p = &sp.p[side];
+    let (pu, pv) = (moved(&p[0], ti, like), moved(&p[1], tj, like));
+    let (h, nu) = (frame.h[side], frame.nu[side]);
+    let [uu, du] = strip_coord(&pu, nu[0], h, s, like);
+    let [vv, dv] = strip_coord(&pv, nu[1], h, s, like);
+    let x = tile.patch_at(like).compose_map([&uu, &du], [&vv, &dv])?;
+    Some((x, sp))
+}
+
+/// A certified upper bound of `|X(t, σ) − C(t)|` over a strip's patch
+/// `x` and the curve's span `c` over the same `t` (the numerator
+/// `H·W_C − X_C·H₃` over `H₃·W_C`): how far from the curve the patch's
+/// points lie; `None` where it can't be formed or bounded.
+fn reach_bound<S: LevelScalar>(x: &HomPatch<S>, c: &HomCurve<S, 3>) -> Option<f64> {
+    let [hx, hy, hz, hw] = x.tensors();
+    let wc = lift(c.weights());
+    let xc = c.coords().each_ref().map(lift);
+    let mut sum = 0.0;
+    for (h, xk) in [hx, hy, hz].into_iter().zip(&xc) {
+        let m = h.mul(&wc)?.sub(&xk.mul(hw)?).hull().abs_max();
+        sum = up(sum + up(m * m));
+    }
+    let r = div_up(up(sum.sqrt()), hw.mul(&wc)?.hull().lo);
+    r.is_finite().then_some(r)
+}
+
 impl SignFn for EdgeStrip<'_, '_> {
     fn forms<S: LevelScalar>(&self, b: &SBox, like: &S) -> Option<(Tensor<S>, Tensor<S>)> {
-        let (k, depth) = ((self.cell.k << b.dt) + b.kt, self.cell.depth + b.dt);
-        let sp = spans_at(self.edge, self.piece, k, depth, like);
         let i = self.side;
-        let side = &self.edge.sides[i];
-        let (ti, tj) = self.frame.tile[i];
-        let tile = side.surface.tile(ti, tj)?;
-        let p = &sp.p[i];
-        let (pu, pv) = (moved(&p[0], ti, like), moved(&p[1], tj, like));
-        let s = b.s_range();
-        let (h, nu) = (self.frame.h[i], self.frame.nu[i]);
-        let [uu, du] = strip_coord(&pu, nu[0], h, s, like);
-        let [vv, dv] = strip_coord(&pv, nu[1], h, s, like);
-        let x = tile.patch_at(like).compose_map([&uu, &du], [&vv, &dv])?;
+        let (x, sp) = strip_patch(
+            self.edge,
+            self.piece,
+            self.cell,
+            self.frame,
+            i,
+            (b.kt, b.dt),
+            b.s_range(),
+            like,
+        )?;
         let [hx, hy, hz, hw] = x.tensors();
         let g = if self.plane {
             let (n, p0) = self.frame.plane?;
@@ -1319,6 +1674,23 @@ impl SignFn for EdgeStrip<'_, '_> {
         Some((g, hw.clone()))
     }
 
+    fn reach(&self, b: &SBox) -> f64 {
+        let like = Bounded::exact(0.0);
+        let s = b.s_range();
+        strip_patch(
+            self.edge,
+            self.piece,
+            self.cell,
+            self.frame,
+            self.side,
+            (b.kt, b.dt),
+            s,
+            &like,
+        )
+        .and_then(|(x, sp)| reach_bound(&x, &sp.c))
+        .unwrap_or(f64::INFINITY)
+    }
+
     fn units(&self, level: u8) -> u64 {
         let row = if self.plane {
             &UNITS.adjacent.plane
@@ -1331,17 +1703,33 @@ impl SignFn for EdgeStrip<'_, '_> {
     }
 }
 
+/// A ready field cell to settle, and the window's threshold `δ`.
+struct Settle<'a, 'e> {
+    edge: &'a Edge<'e>,
+    piece: &'a Piece,
+    cell: TCell,
+    frame: &'a Frame,
+    delta: f64,
+}
+
 /// Settles both faces' strips over a ready field cell: the plane first
 /// where the frame has one, else (or where it doesn't settle at once) the
-/// ruled surface; `Some` failure ends the certificate.
+/// ruled surface; `Some` failure ends the certificate. Where both hold,
+/// the cell's part of the window: `ρ_min` (a crease's from its angle,
+/// else the faces' separation, [`window::separation`]), `r₀` and the far
+/// sides.
 fn settle(
-    edge: &Edge<'_>,
-    piece: &Piece,
-    cell: TCell,
-    frame: &Frame,
+    at: &Settle<'_, '_>,
     held: &mut Held,
     ledger: &mut Ledger<'_>,
 ) -> Result<Option<EdgeCert>, Stop<Skip>> {
+    let &Settle {
+        edge,
+        piece,
+        cell,
+        frame,
+        delta,
+    } = at;
     let strip = |side, plane| EdgeStrip {
         edge,
         piece,
@@ -1369,6 +1757,13 @@ fn settle(
                 .expect("decided in full");
         }
     }
+    let crease = frame.sin2[0] > 0.0;
+    if crease {
+        let lo = window::crease_lo(delta, frame.sin2[1]);
+        if lo > held.rho_min_lo {
+            held.rho_min_lo = lo;
+        }
+    }
     let width = pow2(-(cell.depth as i32));
     for side in 0..2 {
         let h = frame.h[side];
@@ -1382,14 +1777,50 @@ fn settle(
                     held.reach[side] = h;
                 }
             }
-            StripOut::Fails(t, s) => {
+            StripOut::Fails(t, s, dist) => {
                 let at = (cell.k as f64 + t) * width;
                 return Ok(Some(EdgeCert::Fails {
                     side,
                     t: piece.a + (piece.b - piece.a) * at,
                     s: s * h,
+                    dist,
+                    rho_min_lo: held.rho_min_lo,
                 }));
             }
+        }
+    }
+    // The cell's part of the window, at the first level.
+    let rho = if crease {
+        window::crease_hi(delta, frame.sin2[0])
+    } else {
+        let mut r: f64 = 0.0;
+        for side in 0..2 {
+            let x = window::separation(at, side, ledger)?;
+            if x > r || x.is_nan() {
+                r = x;
+            }
+        }
+        r
+    };
+    if rho > held.rho_min || rho.is_nan() {
+        held.rho_min = rho;
+    }
+    let like = Bounded::exact(0.0);
+    for side in 0..2 {
+        let StripOut::Holds(s0) = out[side] else {
+            unreachable!("both strips hold here");
+        };
+        let whole = (0, 0);
+        let r0 = strip_patch(edge, piece, cell, frame, side, whole, [0.0, s0], &like)
+            .and_then(|(x, sp)| reach_bound(&x, &sp.c))
+            .unwrap_or(f64::INFINITY);
+        if r0 > held.r0[side] || r0.is_nan() {
+            held.r0[side] = r0;
+        }
+        match strip_patch(edge, piece, cell, frame, side, whole, [1.0, 1.0], &like) {
+            Some((x, _)) => held.far[side].push(x.iso_line(Dir::V, 0.0)),
+            // No wall: the window can't be certified on this strip.
+            None => held.r0[side] = f64::INFINITY,
         }
     }
     Ok(None)
@@ -1413,6 +1844,10 @@ pub(crate) struct Germ<'a> {
 }
 
 /// The vertex certificate's outcome.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the vertex's ball runs it as it lands")
+)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum VertCert {
     /// The plane through the vertex with normal `normal` separates the
@@ -1698,6 +2133,10 @@ impl SignFn for SectorSign<'_> {
 /// The vertex certificate of two germs at the vertex `v` (module docs),
 /// each face's sectors cut to the width `radius[i]` in its global UV,
 /// each box charged to `ledger`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the vertex's ball runs it as it lands")
+)]
 pub(crate) fn certify_vertex(
     v: [f64; 3],
     germs: [&Germ<'_>; 2],
@@ -1759,7 +2198,7 @@ pub(crate) fn certify_vertex(
 /// its loops; `None` where an id or a span can't be read.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the tube's window reads the germs as it lands")
+    expect(dead_code, reason = "the vertex's ball reads the germs as it lands")
 )]
 pub(crate) fn germ_of(body: &Brep, f: FaceId, v: VertId) -> Option<Germ<'_>> {
     let surface = body.face_surface(f);
@@ -1886,11 +2325,13 @@ pub mod calibration {
                 pcurve,
                 flipped: false,
                 reversed,
+                seam: 0.0,
             };
             Edge {
                 curve,
                 t_range: [0.0, 1.0],
                 sides: [side(false), side(true)],
+                one_surface: false,
             }
         }
     }
@@ -1996,6 +2437,8 @@ pub mod calibration {
         1 << depth
     }
 }
+
+pub(crate) mod window;
 
 #[cfg(test)]
 mod tests;

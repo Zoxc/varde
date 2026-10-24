@@ -9,11 +9,8 @@
 //! regions and their windings; and [`adjacent`], the local certificates
 //! of faces sharing an edge or a vertex (the check's invariant 9).
 
-pub mod arrange2d;
-// The edge and vertex certificates run once the tube's window lands; the
-// check's hook reads the edges and vertices already.
-#[allow(dead_code, reason = "moved ahead of the tube's window that runs it")]
 pub mod adjacent;
+pub mod arrange2d;
 pub mod brep;
 pub mod brep_min;
 // Its callers are the constructions and the assembly, as they land.

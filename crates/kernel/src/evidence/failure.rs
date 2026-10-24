@@ -591,10 +591,51 @@ impl Failure {
                 }
             }
         }
+        if let (Finding::EmptyWindow, CheckItem::Edge(e)) = (f.finding, f.item) {
+            window_evidence(&mut ev, leaf, e, &faces, allowance);
+        }
         if f.finding != Finding::Unbuilt {
             ev.geometry.add(leaf, &faces, Some(f.inv), allowance);
         }
         Some(Failure::new(error, ev, "check"))
+    }
+}
+
+/// The units an empty window's evidence may spend recomputing it, of the
+/// pass's allowance.
+const WINDOW_EVIDENCE: u64 = super::EVIDENCE_WORK / 2;
+
+/// The evidence of edge `e`'s window certified empty: its two faces by
+/// name (a constructed body's name the construction's inputs, the
+/// profile curves or the path whose faces meet there), and the window
+/// recomputed on [`WINDOW_EVIDENCE`] of the allowance: a certified lower
+/// bound of `ρ_min` and an upper bound of `ρ_graph` (left out where it
+/// doesn't settle within them).
+fn window_evidence(
+    ev: &mut Evidence,
+    leaf: &Leaf<'_>,
+    e: EdgeId,
+    faces: &[FaceId],
+    allowance: &mut Allowance,
+) {
+    for &face in faces {
+        let subject = Some(InputRef::of(leaf, Entity::Face(face)));
+        let item = Item::new(subject, ItemRole::Partner, "a face across the edge");
+        ev.push_item(item, allowance);
+    }
+    if !allowance.afford(WINDOW_EVIDENCE) {
+        return;
+    }
+    if let Some((_, [rho_min, rho_graph])) =
+        crate::topo::adjacent::empty_window(leaf.body, e, WINDOW_EVIDENCE)
+    {
+        let item = Item::new(
+            None,
+            ItemRole::Value,
+            "the edge's window: a lower bound of rho_min, an upper bound of rho_graph (mm)",
+        )
+        .with_values([rho_min, rho_graph].map(Bounded::exact));
+        ev.push_item(item, allowance);
     }
 }
 

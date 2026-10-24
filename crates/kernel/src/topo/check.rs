@@ -496,6 +496,14 @@ impl Cx<'_> {
         self.scope
             .is_none_or(|s| get(&s.new_edges, e.index()) == Some(true))
     }
+
+    /// The edges of `f`'s coedges, sorted.
+    pub(crate) fn face_edges(&self, f: FaceId) -> &[EdgeId] {
+        self.inc
+            .face_edges
+            .get(f.index())
+            .map_or(&[], Vec::as_slice)
+    }
 }
 
 impl Brep {
