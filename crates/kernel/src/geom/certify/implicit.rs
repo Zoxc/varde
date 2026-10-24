@@ -50,14 +50,23 @@
 //! bound less the one from the values alone) against the hull (that
 //! value less `|F|` over `|∇F|` at the cell's ends, from the values
 //! alone: what halving may come down to) decides between the next level
-//! and halving (`|∇F|` or `W^d` positive in value but not certified so:
-//! the next level; the ball condition unmet in value too: halving), each
-//! cell charged before it runs (`UNITS.implicit_cell` at its level, by
-//! the implicit's degree), the stop at [`MAX_SUBDIV_DEPTH`] or the top
-//! level with the bound reached, or [`Cap::SubdivisionDepth`] /
+//! and halving. A cell with no bound goes to the next level where its
+//! failure is rounding's: `|∇F|²`'s net or `W^d` positive in value but
+//! not certified so, or the net not positive in value either while no
+//! coefficient is certified at most 0 and its rounding is more than a
+//! small part of its size (far from the implicit's origin the first
+//! level's terms cancel to noise); else (the ball condition unmet: a
+//! coefficient certified at most 0, the box reaching where `∇F` is
+//! small, or the ball leaving the box) it is halved. Each cell is
+//! charged before it runs (`UNITS.implicit_cell` at its level, by the
+//! implicit's degree), the stop at [`MAX_SUBDIV_DEPTH`] or the top level
+//! with the bound reached, or [`Cap::SubdivisionDepth`] /
 //! [`Cap::PrecisionBits`] without one: a curve through a point where
 //! `∇F` vanishes, or far enough inside a closed surface that no ball
-//! about it avoids such a point, has no bound.
+//! about it avoids such a point, has no bound. The boxes lie along the
+//! world's axes, so a long cell along an oblique axis holds the axis
+//! (where a cylinder's `∇F` vanishes) until it is about the radius long:
+//! a ruling a lattice cell long halves until the budget runs out.
 //!
 //! **The certificate's own limit.** Unlike a seam's, this bound doesn't
 //! come down to the distance as cells shrink: at a point `x` it stays at
@@ -273,11 +282,7 @@ fn eval_at<S: LevelScalar, F: ImplicitAt>(f: &F, curve: &Curve3D, cell: Cell, li
     // `m₀` on the hull box, then `m` on the box grown by `ρ`.
     let first = grad.net(&hull, 0.0, like);
     if first.lo.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        return open(if first.least > 0.0 {
-            0.0
-        } else {
-            f64::INFINITY
-        });
+        return first.open();
     }
     let m0 = down0(first.lo.sqrt());
     // The radius: `f/m₀` with an eighth to spare, then once more from the
@@ -290,11 +295,7 @@ fn eval_at<S: LevelScalar, F: ImplicitAt>(f: &F, curve: &Curve3D, cell: Cell, li
         }
         let grown = grad.net(&hull, rho, like);
         if grown.lo.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-            return open(if grown.least > 0.0 {
-                0.0
-            } else {
-                f64::INFINITY
-            });
+            return grown.open();
         }
         let bound = div_up(f_up, down0(grown.lo.sqrt()));
         if bound <= rho {
@@ -390,11 +391,32 @@ struct SquaredGradient<S> {
 }
 
 /// The Bernstein net of `|∇F|²` over a box: its least and greatest
-/// coefficients certified, and its least value alone.
+/// coefficients certified, its least value alone, whether a coefficient
+/// is certified at most 0, and the widest coefficient's rounding and the
+/// greatest value's magnitude.
 struct NetHull {
     lo: f64,
     hi: f64,
     least: f64,
+    nonpositive: bool,
+    rounding: f64,
+    size: f64,
+}
+
+impl NetHull {
+    /// What a net not certified positive asks for: the next level where
+    /// it is positive in value, or where no coefficient is certified at
+    /// most 0 and the rounding is more than a small part of the net's
+    /// size (its values are rounding's, not the geometry's); else
+    /// halving (the box reaches where `∇F` is small).
+    fn open(&self) -> Eval {
+        let rounding = !self.nonpositive && self.rounding * SMALL > self.size;
+        open(if self.least > 0.0 || rounding {
+            0.0
+        } else {
+            f64::INFINITY
+        })
+    }
 }
 
 impl<S: Scalar> SquaredGradient<S> {
@@ -535,6 +557,9 @@ impl<S: Scalar> SquaredGradient<S> {
             lo: f64::INFINITY,
             hi: f64::NEG_INFINITY,
             least: f64::INFINITY,
+            nonpositive: false,
+            rounding: 0.0,
+            size: 0.0,
         };
         for x in &net {
             // A plane's constant gradient, or a zero polynomial: no term
@@ -554,6 +579,16 @@ impl<S: Scalar> SquaredGradient<S> {
             }
             if hi > out.hi {
                 out.hi = hi;
+            }
+            if hi <= 0.0 {
+                out.nonpositive = true;
+            }
+            let width = hi - lo;
+            if width > out.rounding {
+                out.rounding = width;
+            }
+            if v.abs() > out.size {
+                out.size = v.abs();
             }
             if v.is_nan() || v < out.least {
                 out.least = if v.is_nan() { f64::NEG_INFINITY } else { v };

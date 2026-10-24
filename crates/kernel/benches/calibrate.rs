@@ -4,7 +4,8 @@
 //! predicate per predicate kind and stage, on each of the kind's
 //! predicates), and
 //! compares the time per unit charged with the target of half a
-//! microsecond per unit. A kind more than 4× off fails the run, so a
+//! microsecond per unit. A kind more than 4× off fails the run (one
+//! charged the least charge, one part, only when dearer), so a
 //! change that makes a kind much cheaper or dearer, or a machine much
 //! unlike the reference one, shows here. It also runs a seam pass that
 //! uses up `MAX_WORK` and fails unless it takes seconds.
@@ -137,7 +138,10 @@ fn main() -> ExitCode {
     for r in &rows {
         let per_unit = r.ns / r.units;
         let ratio = per_unit / UNIT_NS;
-        let off = !(1.0 / DRIFT..=DRIFT).contains(&ratio);
+        // A kind charged one part, the least charge, can't be charged
+        // less: only dearer counts as drift there.
+        let floor = r.units * UNIT_PARTS as f64 <= 1.0;
+        let off = ratio > DRIFT || (ratio < 1.0 / DRIFT && !floor);
         let suggest = (r.ns / UNIT_NS).round();
         let suggest = if suggest > 1.0 { suggest } else { 1.0 };
         println!(
@@ -147,7 +151,13 @@ fn main() -> ExitCode {
             r.units,
             per_unit,
             suggest,
-            if off { "  DRIFT" } else { "" }
+            if off {
+                "  DRIFT"
+            } else if ratio < 1.0 / DRIFT {
+                "  (one part)"
+            } else {
+                ""
+            }
         );
         if off {
             failed.push(r.kind.clone());

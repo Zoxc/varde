@@ -232,9 +232,10 @@ fn distances_of_tile_rows_are_their_rounding() {
         // leaving out rows that are one point (poles, apexes) and those
         // from such a point. A plane's
         // and the forms' along a line take a cell `2⁻²⁰` of the base one,
-        // at the axis's foot (the cone's at its apex): the base cells
-        // reach `CELL/2` along the line, where the distance's first level
-        // can't tell its rounding from the geometry.
+        // at the axis's foot (the cone's at its apex): a base cell's rows
+        // along the line are `CELL` long, and on an oblique axis their
+        // boxes along the world's axes hold the axis, where the gradient
+        // vanishes, until halved to about the radius.
         let form = name.trim_start_matches("affine ");
         // A lattice tile's deviation is its base tile's (plus a rounding):
         // the scale is the base tiles'.

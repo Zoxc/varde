@@ -1,12 +1,13 @@
 //! Exact p-curves against the certified seam bound: plane sections of
 //! cylinders, cones and conic-chain cylinders (and an affine image) give
 //! G spans, conics and lines on planes Q and linear spans, and circles
-//! about the axis, rulings and meridians of every form of revolution
-//! iso spans, each at lattice levels 0 to 2, the curves reparametrised by
-//! Möbius maps and split at random knots so that their spans cross the
-//! cells' lines; every seam bound is the rounding, a few hundred units
-//! of the last bit of the tiles' coordinates. Knot points are the
-//! inverse's, fixed iso values bit for bit; the refusals.
+//! about the axis (spindle tori and revolved conics included), rulings
+//! and meridians of every form of revolution iso spans, each at lattice
+//! levels 0 to 2, the curves reparametrised by Möbius maps and split at
+//! random knots so that their spans cross the cells' lines; every seam
+//! bound is the rounding, refined to eight units of the last bit of the
+//! tiles' coordinates. Knot points are the inverse's, fixed iso values
+//! bit for bit; the refusals.
 
 use std::f64::consts::TAU;
 
@@ -30,7 +31,7 @@ use crate::infra::budget::MAX_WORK;
 /// bound of an exact p-curve may be: the rounding of the tiles, the
 /// curve's control points, the p-curve's values and the certificate's
 /// own arithmetic.
-const ULPS: f64 = 4096.0;
+const ULPS: f64 = 64.0;
 
 /// The larger of two values not NaN.
 fn larger(a: f64, b: f64) -> f64 {
@@ -612,6 +613,34 @@ fn circles_about_the_axis_and_rulings_are_isos() {
         worst = larger(
             worst,
             iso_check(&lat, &c, Dir::V, false, &what("torus circle")),
+        );
+        // Spindle torus: a circle about the axis on its outer part.
+        let small = r * rng.range(0.2, 0.8);
+        let lat = Lattice::new(TorusKey::new(p, axis, small, r).unwrap().into()).unwrap();
+        let (o, a) = (dv(lat.origin()), dv(lat.axes()[2]));
+        let psi = acos(-small / r) * rng.range(-0.8, 0.8);
+        let c = about(
+            &mut rng,
+            &lat,
+            o + r * sin(psi) * a,
+            small + r * cos(psi),
+            2,
+        );
+        worst = larger(
+            worst,
+            iso_check(&lat, &c, Dir::V, false, &what("spindle circle")),
+        );
+        // Revolved ellipse: the circle through its profile's first joint,
+        // `(cr, cz + r/2)` from the given point along the given axis.
+        let (cr, cz) = (r * rng.range(1.5, 3.0), rng.range(-50.0, 50.0));
+        let prof = Conic::ellipse([cr, cz], [[1.0, 0.0], [0.0, 1.0]], [r, 0.5 * r]).unwrap();
+        let spans: Vec<_> = (0..3).map(|k| prof.quarter::<3>(k).unwrap()).collect();
+        let lat = Lattice::new(RevolvedKey::new(p, axis, &spans).unwrap().into()).unwrap();
+        let a = dv(axis).normalize();
+        let c = about(&mut rng, &lat, dv(p) + (cz + 0.5 * r) * a, cr, 2);
+        worst = larger(
+            worst,
+            iso_check(&lat, &c, Dir::V, false, &what("revolved circle")),
         );
     }
     println!("worst: {worst} units of the last bit");

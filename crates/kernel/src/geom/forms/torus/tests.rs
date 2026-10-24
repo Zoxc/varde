@@ -33,6 +33,8 @@ fn tori(seed: u64) -> Vec<TorusKey> {
     let mut out = vec![
         TorusKey::new([0.0; 3], [0.0, 0.0, 1.0], 3.0, 1.0).unwrap(),
         lemon_spindle(),
+        // A pocket's bottom fillet, `R = 1`, `r = 2`.
+        TorusKey::new([0.0; 3], [0.0, 0.0, 1.0], 1.0, 2.0).unwrap(),
         // `√(r² − R²) = 4`: a spindle whose coordinates are rational.
         TorusKey::new([0.5, -1.0, 2.0], [1.0, 2.0, 2.0], 3.0, 5.0).unwrap(),
     ];

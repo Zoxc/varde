@@ -39,4 +39,6 @@ mod round;
 #[cfg(test)]
 mod samples;
 pub mod surface;
+#[cfg(test)]
+mod tests;
 pub mod tile;

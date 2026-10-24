@@ -495,6 +495,46 @@ fn the_ball_condition_refuses_a_curve_through_the_centre() {
 }
 
 #[test]
+fn rows_far_along_a_profile_cylinder_escalate_instead_of_halving() {
+    // A conic-chain cylinder's base tiles reach `CELL/2` along its axis:
+    // there the first level's `|∇F|²` net and `|F|` are rounding (the
+    // span's conic read through the dual basis cancels `2·10⁶` mm along
+    // the axis), not geometry. Their profile rows take the next level and
+    // are bounded there by their rounding, in a few cells. The profile's
+    // plane at random to the axis.
+    use crate::geom::conic::Conic;
+    use crate::geom::form::ConicCylinderKey;
+    use crate::geom::lattice::Lattice;
+    let mut rng = Rng::new(17);
+    for _ in 0..4 {
+        let a = rng.direction();
+        let (e1, e2) = rng.direction().any_orthonormal_pair();
+        let r = rng.log_range(0.1, 100.0);
+        let c = rng.point(1e3).to_array();
+        let e = Conic::ellipse(c, [e1.to_array(), e2.to_array()], [r, 0.6 * r]).unwrap();
+        let spans: Vec<_> = (0..3).map(|k| e.quarter::<4>(k).unwrap()).collect();
+        let key = ConicCylinderKey::new(a.to_array(), &spans).unwrap();
+        let lattice = Lattice::new(key.into()).unwrap();
+        for k in 0..3 {
+            let tile = lattice.base_tile(k, 0).unwrap();
+            let imp = lattice.implicit(k, 0).unwrap();
+            let net = tile.net();
+            for row in [[0, 3, 6], [2, 5, 8]] {
+                let span = row.map(|n| net[n]);
+                let curve = Curve3D::new(vec![span], vec![0.0, 1.0]).unwrap();
+                let (b, used) = alone(&imp, &curve, 1e-8, MAX_WORK);
+                let b = b.unwrap_or_else(|| panic!("cell {k} row {row:?}: no bound"));
+                assert!(
+                    b.bound <= 1e-8 && b.level >= 1,
+                    "cell {k} row {row:?}: {b:?}"
+                );
+                assert!(used < 20_000, "cell {k} row {row:?}: {used} units");
+            }
+        }
+    }
+}
+
+#[test]
 fn far_weighted_arcs_settle_within_tight_of_their_distance() {
     // The fixtures' arcs, their middle control point moved by 10⁻³ mm:
     // out of reach of the target, each bound settles within `TIGHT` of
