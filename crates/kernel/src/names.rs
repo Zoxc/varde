@@ -8,6 +8,9 @@
 //!   ([`EdgeTag::Seam`], [`VertTag::Pole`], [`VertTag::Apex`]).
 //! - [`derive`](mod@derive): edges' and vertices' names, derived from the keys of
 //!   their faces ([`Between`], [`Meet`]).
+//! - [`topology`]: the user topology, the faces, edges and corners a user
+//!   sees ([`Topology`]: regions, chains, corners, flush groups), derived
+//!   from the keys and the edges' fields, never stored.
 //!
 //! **Identity is not a name.** Ids order an operation's work and pair its
 //! entities, but they change whenever an upstream change adds or removes
@@ -65,8 +68,10 @@
 
 pub mod derive;
 pub mod keys;
+pub mod topology;
 
 pub use derive::{Between, EdgeName, Meet, Name, VertName, edge_name, edge_names, vert_names};
 pub use keys::{
     Digest, DigestCollision, EdgeTag, FaceKey, FacePart, PoleEnd, Term, TermTable, VertTag,
 };
+pub use topology::{Chain, Corner, EdgeClass, FlushGroup, Region, Strength, Topology};

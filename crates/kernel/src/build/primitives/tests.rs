@@ -33,17 +33,21 @@ fn built(p: &Primitive) -> Brep {
 }
 
 /// The check passes but for the parts this build doesn't certify yet:
-/// curved trims (4) and the invariants from 9 on. With 4 left out, so is
-/// every invariant before 9.
+/// curved trims (4) and faces apart (9). With 4 left out, so is every
+/// invariant before 9; with 9 left out, every invariant but 4.
 #[track_caller]
 fn passes_check(b: &Brep) {
     let budget = Budget::DEFAULT;
-    for r in [b.check(&budget), b.check_except(Inv::Trims, &budget)] {
+    for r in [
+        b.check(&budget),
+        b.check_except(Inv::Trims, &budget),
+        b.check_except(Inv::Embedding, &budget),
+    ] {
         match r {
             Ok(()) => {}
             Err(CheckError::Failed(f))
                 if f.finding == Finding::Unbuilt
-                    && (f.inv == Inv::Trims || f.inv >= Inv::Embedding) => {}
+                    && (f.inv == Inv::Trims || f.inv == Inv::Embedding) => {}
             Err(e) => panic!("check: {e:?}"),
         }
     }

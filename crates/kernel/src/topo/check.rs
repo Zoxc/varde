@@ -85,11 +85,13 @@
 //! trims (the [`trims`] module, which refuses a face with a curved trim as
 //! unbuilt), of 5 to 7 (the [`geom`] module, which refuses a moved
 //! join's target, a tangent edge, a declared curvature-continuous join
-//! and a fitted surface as unbuilt) and of 8 by signed volumes (the
+//! and a fitted surface as unbuilt), of 8 by signed volumes (the
 //! [`orient`] module, which refuses a shell whose volume's sign it can't
-//! certify as unbuilt); the later ones refuse what they don't certify
-//! yet (10 every face) as unbuilt, so only a body without faces passes
-//! the whole check.
+//! certify as unbuilt), of 9 on the faces across an edge (refusing a
+//! contact record, faces meeting at a vertex alone and every face's
+//! non-adjacent part as unbuilt, so only a body without faces passes the
+//! whole check) and of 10 (the [`names`] module, which refuses a tag on a
+//! regular vertex as unbuilt).
 //!
 //! **Outcomes** ([`CheckError::outcome`]): what a failure means depends
 //! on whose body it is ([`Role`]): an operand is invalid; a constructed
@@ -396,24 +398,6 @@ pub(crate) trait Invariant: Sync {
 /// The hooks of the ten invariants, in order.
 pub(crate) type Invariants<'a> = [&'a dyn Invariant; 10];
 
-/// An invariant whose hook this build doesn't have yet: every face
-/// needs it.
-struct Unbuilt;
-
-impl Invariant for Unbuilt {
-    fn kinds(&self) -> &[ItemKind] {
-        &[ItemKind::Face]
-    }
-
-    fn check(&self, _: &Cx<'_>, _: Item, ledger: &mut Ledger<'_>) -> Result<(), Stop<Fault>> {
-        ledger.charge(Step::Work, 1)?;
-        Err(Stop::Failed(Fault {
-            check: 0,
-            finding: Finding::Unbuilt,
-        }))
-    }
-}
-
 /// The hooks this build checks with.
 const BUILT: Invariants<'static> = [
     &topo::Topology,
@@ -425,7 +409,7 @@ const BUILT: Invariants<'static> = [
     &geom::Forms,
     &orient::Orientation,
     &super::adjacent::Embedding,
-    &Unbuilt,
+    &names::Names,
 ];
 
 /// What an operation changed: its new and modified faces, and its new
@@ -497,6 +481,19 @@ impl Cx<'_> {
     pub(crate) fn is_new(&self, e: EdgeId) -> bool {
         self.scope
             .is_none_or(|s| get(&s.new_edges, e.index()) == Some(true))
+    }
+
+    /// The edges of the coedges starting or ending at `v`, sorted.
+    pub(crate) fn vert_edges(&self, v: VertId) -> &[EdgeId] {
+        self.inc
+            .vert_edges
+            .get(v.index())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a contact record names edge `e` as a member.
+    pub(crate) fn is_contact_member(&self, e: EdgeId) -> bool {
+        get(&self.inc.contact_edges, e.index()) == Some(true)
     }
 
     /// The edges of `f`'s coedges, sorted.
@@ -660,6 +657,8 @@ struct Incidence {
     shell_sides: Vec<usize>,
     /// Per region, the number of shells naming it.
     region_shells: Vec<usize>,
+    /// Per edge, whether a contact record names it as a member.
+    contact_edges: Vec<bool>,
 }
 
 /// One coedge's incidences: its edge, its two vertices (in its own
@@ -709,6 +708,19 @@ impl Incidence {
         let shell_regions = pass_ids(work, rung, ns, |s| {
             get(&body.shells.region, s).filter(|r| r.index() < nr)
         })?;
+        let members = pass_ids(work, rung, body.contacts.len(), |k| {
+            let c = &body.contacts[k];
+            (c.members.iter().flatten())
+                .filter_map(|m| match *m {
+                    Member::Edge(e) if e.index() < ne => Some(e),
+                    _ => None,
+                })
+                .collect::<Vec<EdgeId>>()
+        })?;
+        let mut contact_edges = vec![false; ne];
+        for e in members.into_iter().flatten() {
+            contact_edges[e.index()] = true;
+        }
         let mut inc = Incidence {
             vert_faces: vec![Vec::new(); nv],
             vert_corners: vec![Vec::new(); nv],
@@ -721,6 +733,7 @@ impl Incidence {
             face_loops: vec![0; nf],
             shell_sides: vec![0; ns],
             region_shells: vec![0; nr],
+            contact_edges,
         };
         for f in loop_faces.into_iter().flatten() {
             inc.face_loops[f.index()] += 1;
@@ -1113,6 +1126,7 @@ impl InScope {
 }
 
 mod geom;
+mod names;
 mod orient;
 mod topo;
 mod trims;
