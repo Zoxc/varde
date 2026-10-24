@@ -13,7 +13,7 @@ use crate::infra::ops::{FeatureId, InstanceId};
 use crate::measure::mass::{MassProps, mass_props};
 use crate::names::{edge_name, vert_names};
 use crate::topo::brep::{CoedgeId, VertKind};
-use crate::topo::check::{CheckError, Finding};
+use crate::topo::check::{CheckError, Finding, Inv};
 
 const FEATURE: FeatureId = FeatureId(7);
 
@@ -32,14 +32,20 @@ fn built(p: &Primitive) -> Brep {
     build_with(p, Tolerance::DEFAULT).unwrap_or_else(|e| panic!("{p:?}: {e:?}"))
 }
 
-/// The check passes but for the invariants this build doesn't certify
-/// yet: a failure must be one of theirs.
+/// The check passes but for the parts this build doesn't certify yet:
+/// curved trims (4) and the invariants from 8 on. With 4 left out, so is
+/// every invariant before 8.
 #[track_caller]
 fn passes_check(b: &Brep) {
-    match b.check(&Budget::DEFAULT) {
-        Ok(()) => {}
-        Err(CheckError::Failed(f)) if f.finding == Finding::Unbuilt => {}
-        Err(e) => panic!("check: {e:?}"),
+    let budget = Budget::DEFAULT;
+    for r in [b.check(&budget), b.check_except(Inv::Trims, &budget)] {
+        match r {
+            Ok(()) => {}
+            Err(CheckError::Failed(f))
+                if f.finding == Finding::Unbuilt
+                    && (f.inv == Inv::Trims || f.inv >= Inv::Orientation) => {}
+            Err(e) => panic!("check: {e:?}"),
+        }
     }
 }
 

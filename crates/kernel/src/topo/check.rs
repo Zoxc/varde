@@ -66,7 +66,9 @@
 //! edges and the changed vertices, the coedges and loops of those faces,
 //! the shells holding one of those faces, the regions of those shells and
 //! the contact records with a member among them. A face carried bit for
-//! bit has passed already.
+//! bit has passed already. The checks of new edges (their tolerance
+//! targets and continuity, 5 and 6) cover every edge in a full check, the
+//! changed edges in a scoped one.
 //!
 //! **Sheets.** A sheet's check is the open-shell variant: every invariant
 //! but 8 (the hooks of 1 take the open boundaries from the body's kind).
@@ -79,10 +81,13 @@
 //! **Stages.** A body needing a part of an invariant this build doesn't
 //! certify yet (a contact record, a curved trim, a non-adjacent near
 //! pair) is refused, never passed ([`Finding::Unbuilt`]). This build has
-//! the hooks of invariants 1 to 3 (the [`topo`] module) and of 4 on
-//! linear trims (the [`trims`] module, which refuses a face with a curved
-//! trim as unbuilt); each later one refuses every face as unbuilt, so only
-//! a body without faces passes the whole check.
+//! the hooks of invariants 1 to 3 (the [`topo`] module), of 4 on linear
+//! trims (the [`trims`] module, which refuses a face with a curved trim as
+//! unbuilt) and of 5 to 7 (the [`geom`] module, which refuses a moved
+//! join's target, a tangent edge, a declared curvature-continuous join
+//! and a fitted surface as unbuilt); the later ones refuse what they
+//! don't certify yet (8 and 10 every face) as unbuilt, so only a body
+//! without faces passes the whole check.
 //!
 //! **Outcomes** ([`CheckError::outcome`]): what a failure means depends
 //! on whose body it is ([`Role`]): an operand is invalid; a constructed
@@ -413,9 +418,9 @@ const BUILT: Invariants<'static> = [
     &topo::Joins,
     &topo::Domain,
     &trims::Trims,
-    &Unbuilt,
-    &Unbuilt,
-    &Unbuilt,
+    &geom::Seams,
+    &geom::Regularity,
+    &geom::Forms,
     &Unbuilt,
     &super::adjacent::Embedding,
     &Unbuilt,
@@ -483,6 +488,13 @@ impl Cx<'_> {
             .vert_corners
             .get(v.index())
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the scoped invariants check `e` as a new edge: every edge
+    /// in a full check, else the changed edges (module docs).
+    pub(crate) fn is_new(&self, e: EdgeId) -> bool {
+        self.scope
+            .is_none_or(|s| get(&s.new_edges, e.index()) == Some(true))
     }
 }
 
@@ -988,6 +1000,8 @@ struct InScope {
     shells: Vec<bool>,
     regions: Vec<bool>,
     contacts: Vec<bool>,
+    /// The changed edges.
+    new_edges: Vec<bool>,
 }
 
 impl InScope {
@@ -1015,8 +1029,10 @@ impl InScope {
                 edges[e.index()] = true;
             }
         }
+        let mut new_edges = vec![false; ne];
         for e in changed.edges.iter().filter(|e| e.index() < ne) {
             edges[e.index()] = true;
+            new_edges[e.index()] = true;
         }
         let mut verts = vec![false; nv];
         for e in (0..ne).filter(|&e| edges[e]) {
@@ -1066,6 +1082,7 @@ impl InScope {
             shells,
             regions,
             contacts,
+            new_edges,
         }
     }
 
@@ -1085,6 +1102,7 @@ impl InScope {
     }
 }
 
+mod geom;
 mod topo;
 mod trims;
 

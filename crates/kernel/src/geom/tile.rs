@@ -471,13 +471,6 @@ impl Tile {
     /// bounded (the levels times [`MAX_CONE_DEPTH`]'s pieces), and every
     /// call charges the same, cached or not, so where a pass runs out
     /// doesn't depend on which item asked first.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the passes reading a tile's cone in an operation call it as they land"
-        )
-    )]
     pub(crate) fn normal_cone_charged<C: Charge>(
         &self,
         c: &mut C,
