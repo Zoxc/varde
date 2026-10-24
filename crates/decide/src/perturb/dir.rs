@@ -37,6 +37,12 @@
 //! it as an exact [`Rate`], whatever its size (a knife edge's equal
 //! offsets grow as the faces close).
 //!
+//! **Work.** The exact solves are counted ([`DirWork`]: the small
+//! systems solved, the constraint rows checked, the simplex's tableau
+//! rows pivoted) for the caller to charge at the unit table's row
+//! ([`DirectionUnits`]); [`max_min`] and [`equal_offsets`] alone are
+//! the uncounted forms, for callers that charge a program as a whole.
+//!
 //! **Curved elements** keep unit directions at a precision level,
 //! certified ([`Curved`]): a face point `n̂` ([`face`]); an edge point
 //! `unit(n̂₁ + n̂₂)` of its faces' normals at the same point ([`edge`]); a
@@ -74,6 +80,7 @@ use malachite::base::rounding_modes::RoundingMode::Nearest;
 
 use super::{Curved, Rate, dot3, lit3, unit3};
 use crate::bezier::Scalar;
+use crate::num::schedule::DirectionUnits;
 use crate::num::trig;
 
 /// An exact vector.
@@ -112,6 +119,58 @@ impl FlatDir {
     }
 }
 
+/// What a direction's exact solves took, for the caller to charge at
+/// [`DirectionUnits`] ([`DirWork::parts`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DirWork {
+    /// Small exact linear systems solved: an equal-offset system, a
+    /// candidate point of a max–min program's optimal face, at most three
+    /// unknowns each.
+    pub solves: u32,
+    /// Constraint rows checked against a point exactly (a dot product
+    /// each): a candidate against the program, an edge of a group, a
+    /// face's corner against a partner's cone.
+    pub checks: u32,
+    /// Tableau rows a simplex pivot updated (a pivot updates every row).
+    pub pivots: u32,
+}
+
+impl DirWork {
+    /// This work and `o`'s together.
+    pub fn and(self, o: DirWork) -> DirWork {
+        DirWork {
+            solves: self.solves.saturating_add(o.solves),
+            checks: self.checks.saturating_add(o.checks),
+            pivots: self.pivots.saturating_add(o.pivots),
+        }
+    }
+
+    /// This work in parts of a unit
+    /// ([`UNIT_PARTS`](crate::num::schedule::UNIT_PARTS)) at `u`'s prices.
+    pub fn parts(&self, u: &DirectionUnits) -> u64 {
+        [
+            (self.solves, u.solve),
+            (self.checks, u.check),
+            (self.pivots, u.pivot),
+        ]
+        .into_iter()
+        .fold(0u64, |s, (n, p)| {
+            s.saturating_add(u64::from(n).saturating_mul(p))
+        })
+    }
+
+    fn solve(&mut self, rows: usize) {
+        self.solves = self.solves.saturating_add(1);
+        self.check(rows);
+    }
+
+    pub(crate) fn check(&mut self, rows: usize) {
+        self.checks = self
+            .checks
+            .saturating_add(u32::try_from(rows).unwrap_or(u32::MAX));
+    }
+}
+
 /// `v` exactly; `None` unless every component is finite.
 pub fn exact(v: DVec3) -> Option<Q3> {
     let c = |x: f64| Rational::try_from(x).ok();
@@ -133,8 +192,8 @@ pub fn scaled_normal(n: DVec3) -> Option<Q3> {
 /// normals (module docs): equal offsets, else the max–min direction,
 /// else a saddle. The order of the normals and repeats (parallel ones
 /// alike) don't matter. `None` without a face or for a zero normal, or
-/// one that isn't finite.
-pub fn flat(normals: &[DVec3]) -> Option<FlatDir> {
+/// one that isn't finite. The solves are counted in `work`.
+pub fn flat(normals: &[DVec3], work: &mut DirWork) -> Option<FlatDir> {
     let mut ns = normals
         .iter()
         .map(|&n| scaled_normal(n))
@@ -144,22 +203,47 @@ pub fn flat(normals: &[DVec3]) -> Option<FlatDir> {
     }
     ns.sort();
     ns.dedup();
-    if let Some(d) = equal_offsets(&ns) {
+    if let Some(d) = equal_offsets_counted(&ns, work) {
         return Some(FlatDir::EqualOffsets(d));
     }
-    let (d, min) = max_min(&ns);
-    Some(if min > 0u32 {
-        FlatDir::MaxMin { d, min }
-    } else {
-        FlatDir::Saddle
-    })
+    Some(max_min_dir(&ns, work).unwrap_or(FlatDir::Saddle))
+}
+
+/// The max–min direction alone of the faces' stored outward normals,
+/// scaled to max-norm 1, equal ones once: [`FlatDir::MaxMin`] where its
+/// minimum is `> 0`, else [`FlatDir::Saddle`] (no direction agrees with
+/// every face). The direction of a group or a flush patch, which takes
+/// the program whether or not equal offsets solve. `None` without a face
+/// or for a zero normal, or one that isn't finite. Counted in `work`.
+pub fn max_min_flat(normals: &[DVec3], work: &mut DirWork) -> Option<FlatDir> {
+    let mut ns = normals
+        .iter()
+        .map(|&n| scaled_normal(n))
+        .collect::<Option<Vec<_>>>()?;
+    if ns.is_empty() {
+        return None;
+    }
+    ns.sort();
+    ns.dedup();
+    Some(max_min_dir(&ns, work).unwrap_or(FlatDir::Saddle))
+}
+
+/// [`max_min_counted`] as a direction, if its minimum is `> 0`.
+fn max_min_dir(ns: &[Q3], work: &mut DirWork) -> Option<FlatDir> {
+    let (d, min) = max_min_counted(ns, work);
+    (min > 0u32).then_some(FlatDir::MaxMin { d, min })
 }
 
 /// The least `d` with `n·d = 1` for every `n` of `ns` (non-zero), if
-/// there is one (`least_on`).
+/// there is one (`least_on`); uncounted ([`equal_offsets_counted`]).
 pub fn equal_offsets(ns: &[Q3]) -> Option<Q3> {
+    equal_offsets_counted(ns, &mut DirWork::default())
+}
+
+/// [`equal_offsets`], its solve counted in `work`.
+pub fn equal_offsets_counted(ns: &[Q3], work: &mut DirWork) -> Option<Q3> {
     let rows: Vec<Half> = ns.iter().map(|n| (n.clone(), Rational::from(1))).collect();
-    least_on(&rows.iter().collect::<Vec<_>>())
+    least_on(&rows.iter().collect::<Vec<_>>(), work)
 }
 
 /// A constraint `a·d ≥ b` (or, in [`least_on`], `a·d = b`).
@@ -187,8 +271,9 @@ fn basis<'a>(rows: &[&'a Half]) -> Vec<&'a Half> {
 /// The least `d` with `a·d = b` on every row, if there is one: the
 /// solution in the span of a basis of the `a` (the Gram system
 /// `G·c = b`, `d = Σ cⱼ·aⱼ`), checked against all the rows. No rows give
-/// `d = 0`.
-fn least_on(rows: &[&Half]) -> Option<Q3> {
+/// `d = 0`. One solve, its rows checked, counted in `work`.
+fn least_on(rows: &[&Half], work: &mut DirWork) -> Option<Q3> {
+    work.solve(rows.len());
     let b = basis(rows);
     let k = b.len();
     // `[G | b]`, eliminated without pivoting: `G` is positive definite.
@@ -227,10 +312,16 @@ fn least_on(rows: &[&Half]) -> Option<Q3> {
 /// The max–min direction of the normals `ns` (non-empty): `d` maximising
 /// `min_n n·d` over `‖d‖∞ ≤ 1`, the least such `d`, and that minimum,
 /// exactly ([`max_min_in`] on that box). The minimum is never below zero
-/// (`d = 0`), and is zero exactly when no direction agrees.
+/// (`d = 0`), and is zero exactly when no direction agrees. Uncounted
+/// ([`max_min_counted`]).
 pub fn max_min(ns: &[Q3]) -> (Q3, Rational) {
+    max_min_counted(ns, &mut DirWork::default())
+}
+
+/// [`max_min`], its pivots and solves counted in `work`.
+pub fn max_min_counted(ns: &[Q3], work: &mut DirWork) -> (Q3, Rational) {
     let one = || [0, 1, 2].map(|_| Rational::from(1));
-    max_min_in(ns, &one().map(|x| -x), &one())
+    max_min_in(ns, &one().map(|x| -x), &one(), work)
 }
 
 /// `d` maximising `min_n n·d` over the box `lo ≤ d ≤ hi` (`lo ≤ hi`, a
@@ -247,8 +338,10 @@ pub fn max_min(ns: &[Q3]) -> (Q3, Rational) {
 /// by `E` and at most `3 − rank E` more constraints tight there; so `x*`
 /// is the least of the points `least_on` gives for `E` and each such
 /// set that lie in `F` (each candidate lies in `F`, and `x*` is one).
-pub fn max_min_in(ns: &[Q3], lo: &Q3, hi: &Q3) -> (Q3, Rational) {
-    let (t, tight) = simplex(ns, lo, hi);
+/// Counted in `work`: the simplex's pivots, each candidate's solve and
+/// check.
+pub fn max_min_in(ns: &[Q3], lo: &Q3, hi: &Q3, work: &mut DirWork) -> (Q3, Rational) {
+    let (t, tight) = simplex(ns, lo, hi, work);
     // `n·d ≥ t*`, then `−dᵢ ≥ −hiᵢ`, then `dᵢ ≥ loᵢ`.
     let unit = |i: usize, x: i32| {
         let mut a = zero();
@@ -270,7 +363,11 @@ pub fn max_min_in(ns: &[Q3], lo: &Q3, hi: &Q3) -> (Q3, Rational) {
     let mut consider = |extra: &[&Half]| {
         let mut set = eq.clone();
         set.extend_from_slice(extra);
-        if let Some(d) = least_on(&set).filter(|d| inside(d)) {
+        let d = least_on(&set, work);
+        if d.is_some() {
+            work.check(rows.len());
+        }
+        if let Some(d) = d.filter(|d| inside(d)) {
             let len = dot(&d, &d);
             if best.as_ref().is_none_or(|(l, _)| len < *l) {
                 best = Some((len, d));
@@ -306,8 +403,8 @@ pub fn max_min_in(ns: &[Q3], lo: &Q3, hi: &Q3) -> (Q3, Rational) {
 /// every optimal point: at the end `s = s* − Σ c̄ⱼ·xⱼ` over the non-basic
 /// variables with reduced costs `c̄ⱼ ≥ 0`, so a feasible point is optimal
 /// exactly when every `xⱼ` with `c̄ⱼ > 0` is zero (a slack: its row tight;
-/// a `yᵢ`: `dᵢ = loᵢ`).
-fn simplex(ns: &[Q3], lo: &Q3, hi: &Q3) -> (Rational, Vec<bool>) {
+/// a `yᵢ`: `dᵢ = loᵢ`). Each pivot counts its tableau's rows in `work`.
+fn simplex(ns: &[Q3], lo: &Q3, hi: &Q3, work: &mut DirWork) -> (Rational, Vec<bool>) {
     let t0 = ns
         .iter()
         .map(|n| -dot(n, lo))
@@ -359,6 +456,9 @@ fn simplex(ns: &[Q3], lo: &Q3, hi: &Q3) -> (Rational, Vec<bool>) {
         // Bounded (`y` in the box, `s` by any face's row): some row always
         // limits the column.
         let Some((r, _)) = leave else { break };
+        work.pivots = work
+            .pivots
+            .saturating_add(u32::try_from(rows + 1).unwrap_or(u32::MAX));
         let p = tab[r][j].clone();
         for x in &mut tab[r] {
             *x /= &p;
@@ -416,15 +516,20 @@ pub fn weight_flat(a: &Q3, x: &Q3, r_a: f64) -> Rational {
 /// normalised. `d_a` is vertex `a`'s direction, `d_x` that of the element
 /// `x` lies on (an edge or face of `a`'s star).
 pub fn blend_flat(d_a: &Q3, d_x: &Q3, a: &Q3, x: &Q3, r_a: f64) -> Q3 {
-    let l = weight_flat(a, x, r_a);
-    if l == 0u32 {
+    mix_flat(d_a, d_x, &weight_flat(a, x, r_a))
+}
+
+/// `(1 − λ)·d_a + λ·d_x` for a weight `λ` in `[0, 1]`, exactly: `d_a`
+/// itself at `0`, `d_x` at `1`.
+pub fn mix_flat(d_a: &Q3, d_x: &Q3, l: &Rational) -> Q3 {
+    if *l == 0u32 {
         return d_a.clone();
     }
-    if l == 1u32 {
+    if *l == 1u32 {
         return d_x.clone();
     }
-    let k = Rational::from(1) - &l;
-    add(&scale(d_a, &k), &scale(d_x, &l))
+    let k = Rational::from(1) - l;
+    add(&scale(d_a, &k), &scale(d_x, l))
 }
 
 /// A curved element's direction at a precision level.
@@ -489,7 +594,7 @@ pub struct Corner<S> {
 
 /// Whether `n·d > 0` for every `n`: `Some(true)` certified, `Some(false)`
 /// when some `n·d ≤ 0` certainly, `None` when the level settles neither.
-fn verdict<S: Curved>(d: &[S; 3], normals: &[[S; 3]]) -> Option<bool> {
+pub(crate) fn verdict<S: Curved>(d: &[S; 3], normals: &[[S; 3]]) -> Option<bool> {
     let mut all = true;
     for n in normals {
         let v = dot3(n, d);
@@ -520,8 +625,9 @@ pub const SUM_MARGIN: f64 = 1.0 / (1u64 << 30) as f64;
 /// when on every face of the box `‖d‖∞ ≤ 1` the max–min value of the
 /// normals' enclosure midpoints is below zero by more than their
 /// distance from the normals can account for. Where the level settles
-/// neither whether a candidate agrees nor the saddle, escalate.
-pub fn vertex<S: Curved>(star: &[Corner<S>]) -> CurvedDir<S> {
+/// neither whether a candidate agrees nor the saddle, escalate. The exact
+/// programs are counted in `work`.
+pub fn vertex<S: Curved>(star: &[Corner<S>], work: &mut DirWork) -> CurvedDir<S> {
     let Some(like) = star.first().map(|c| c.normal[0].clone()) else {
         return CurvedDir::Escalate;
     };
@@ -559,7 +665,7 @@ pub fn vertex<S: Curved>(star: &[Corner<S>]) -> CurvedDir<S> {
             unit3(&rescale(&sum))
         } else {
             let approx: Option<Vec<Q3>> = star.iter().map(|c| scaled_normal(c.approx)).collect();
-            let Some((d, min)) = approx.map(|ns| max_min(&ns)) else {
+            let Some((d, min)) = approx.map(|ns| max_min_counted(&ns, work)) else {
                 continue;
             };
             if min <= 0u32 {
@@ -574,25 +680,38 @@ pub fn vertex<S: Curved>(star: &[Corner<S>]) -> CurvedDir<S> {
             None => return CurvedDir::Escalate,
         }
     }
+    if certified_saddle(&normals, work) {
+        CurvedDir::Saddle
+    } else {
+        CurvedDir::Escalate
+    }
+}
+
+/// Whether no direction agrees with `normals` (curved, at a level),
+/// certified: on every face of the box `‖d‖∞ ≤ 1` the max–min value of
+/// the normals' enclosure midpoints is below zero by more than their
+/// distance from the normals can account for. `false` where the level
+/// doesn't settle it. The programs are counted in `work`.
+pub(crate) fn certified_saddle<S: Curved>(normals: &[[S; 3]], work: &mut DirWork) -> bool {
     // The midpoints `m` and their distances `e` from the unit normals,
     // as exact rationals.
-    let mut mids = Vec::with_capacity(star.len());
+    let mut mids = Vec::with_capacity(normals.len());
     let mut spread = Rational::default();
-    for n in &normals {
+    for n in normals {
         let u = unit3(n);
         let mut m = zero();
         let mut e = Rational::default();
         for k in 0..3 {
             let [lo, hi] = u[k].enclose();
             let (Ok(lo), Ok(hi)) = (Rational::try_from(lo), Rational::try_from(hi)) else {
-                return CurvedDir::Escalate;
+                return false;
             };
             m[k] = (&lo + &hi) / Rational::from(2);
             e += (hi - lo) / Rational::from(2);
         }
         let c = m.iter().map(abs).max().unwrap_or_default();
         if c == 0u32 {
-            return CurvedDir::Escalate;
+            return false;
         }
         // Scaled to max-norm 1, as is its distance.
         mids.push(m.map(|x| x / &c));
@@ -610,14 +729,10 @@ pub fn vertex<S: Curved>(star: &[Corner<S>]) -> CurvedDir<S> {
         );
         lo[i] = side.clone();
         hi[i] = side;
-        let (min, _) = simplex(&mids, &lo, &hi);
+        let (min, _) = simplex(&mids, &lo, &hi, work);
         saddle &= min + &spread < 0u32;
     }
-    if saddle {
-        CurvedDir::Saddle
-    } else {
-        CurvedDir::Escalate
-    }
+    saddle
 }
 
 /// The corner angle between a face's two edge tangents `a` and `b` at a
@@ -669,12 +784,42 @@ pub fn blend<S: Curved>(d_a: &[S; 3], d_x: &[S; 3], l: f64) -> [S; 3] {
     unit3(&sum)
 }
 
+/// The direction of a flat ribbon point at `s` across the ribbon
+/// (module docs): `(1 − s)·n̄_f + s·d_e`, exact and not normalised, with
+/// `n̄_f` the face's stored normal scaled to max-norm 1 ([`scaled_normal`])
+/// and `d_e` the edge's direction there; `s` is clamped to `[0, 1]`.
+/// `None` for a zero normal or one that isn't finite.
+pub fn ribbon_flat(normal: DVec3, d_e: &Q3, s: &Rational) -> Option<Q3> {
+    let n = scaled_normal(normal)?;
+    let s = s.clone().clamp(Rational::from(0), Rational::from(1));
+    let k = Rational::from(1) - &s;
+    Some(add(&scale(&n, &k), &scale(d_e, &s)))
+}
+
+/// The direction of a curved ribbon point at `s` across the ribbon
+/// (module docs): `unit((1 − s)·n̂_f + s·d_e)` at a level, `n̂_f` the unit
+/// normal from the face's normal `n` there (any positive multiple) and
+/// `d_e` the edge's unit direction there, `s` in `f64` (clamped to `[0,
+/// 1]`, a NaN taken as 0), the same at every level. Uncertified where the
+/// blend can't be normalised (`d_e` nearly `−n̂_f`, which no agreeing
+/// edge direction is).
+pub fn ribbon<S: Curved>(n: &[S; 3], d_e: &[S; 3], s: f64) -> [S; 3] {
+    let s = if s >= 1.0 {
+        1.0
+    } else if s > 0.0 {
+        s
+    } else {
+        0.0
+    };
+    blend(&unit3(&rescale(n)), d_e, s)
+}
+
 /// `v` times a power of two bringing its largest component near 1
 /// (exactly where the level allows): a positive multiple, so no direction
 /// or sign changes, without the overflow or underflow of squaring a huge
 /// or tiny vector. `v` itself where the level doesn't give its size as a
 /// positive `f64`.
-fn rescale<S: Scalar>(v: &[S; 3]) -> [S; 3] {
+pub(crate) fn rescale<S: Scalar>(v: &[S; 3]) -> [S; 3] {
     let m = max_abs(v.iter().flat_map(|x| x.enclose()));
     if !(m > 0.0 && m.is_finite()) {
         return v.clone();
@@ -708,7 +853,7 @@ fn max_abs(xs: impl IntoIterator<Item = f64>) -> f64 {
     m
 }
 
-fn zero() -> Q3 {
+pub(crate) fn zero() -> Q3 {
     [0, 1, 2].map(|_| Rational::default())
 }
 
@@ -728,11 +873,11 @@ pub(crate) fn cross(a: &Q3, b: &Q3) -> Q3 {
     ]
 }
 
-fn add(a: &Q3, b: &Q3) -> Q3 {
+pub(crate) fn add(a: &Q3, b: &Q3) -> Q3 {
     [0, 1, 2].map(|i| &a[i] + &b[i])
 }
 
-fn scale(a: &Q3, s: &Rational) -> Q3 {
+pub(crate) fn scale(a: &Q3, s: &Rational) -> Q3 {
     [0, 1, 2].map(|i| &a[i] * s)
 }
 

@@ -81,7 +81,8 @@ fn promotion_up_the_schedule_is_exact() {
 /// operand scan prices a position and a net, the net dearer; a form key
 /// settles exactly at no less than its top level; a tree's leaf built
 /// costs more than a box tested; a fold check's whole exact numerator
-/// more than one of its lines, a level's numerator more than a piece.
+/// more than one of its lines, a level's numerator more than a piece; a
+/// direction's solve more than a row checked or pivoted.
 #[test]
 fn the_unit_table_grows_with_the_level() {
     let r = &UNITS.record;
@@ -132,6 +133,13 @@ fn the_unit_table_grows_with_the_level() {
     // more than one of its lines; a level's numerator more than a piece.
     let fold = UNITS.fold;
     assert!(fold.line > 0 && fold.full > fold.line, "{fold:?}");
+    // A direction's small solve is dearer than one row checked or
+    // pivoted, which cost something.
+    let dir = UNITS.direction;
+    assert!(
+        dir.check > 0 && dir.pivot > 0 && dir.solve > dir.check && dir.solve > dir.pivot,
+        "{dir:?}"
+    );
     assert!(
         (0..LEVELS).all(|l| fold.level[l] > fold.piece[l]),
         "{fold:?}"

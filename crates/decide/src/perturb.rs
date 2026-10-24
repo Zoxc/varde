@@ -8,7 +8,9 @@
 //! still, to first order in `δ`: `σ_A = +1` for a union, `−1` for an
 //! intersection or difference;
 //! `d` the direction field on `A` (the moved-vertex blend of the vertex,
-//! edge and face directions); `T₂, T₃, T₄` ([`T`]) fixed, generic,
+//! edge, face and ribbon directions, [`dir`]; a vertex group's, a flush
+//! patch's or a saddle partner's direction at a vertex, [`vertex`]);
+//! `T₂, T₃, T₄` ([`T`]) fixed, generic,
 //! linearly independent translations of all of `A`. A record's value `g`
 //! then moves as `g + δ·(g₁ + η·g₂ + η²·g₃ + η³·g₄)`, `gₖ` its derivative
 //! along motion `k` (motion 1 `σ_A·d`, motion `k ≥ 2` `Tₖ`), and its sign
@@ -54,6 +56,7 @@
 //! | edge–edge z-order, anchor `g` ([`EdgeEdge`], [`z_order`]) | `m·(C_g(s) − C_e(t))`, `m ∥ T_e × T_g`, `m·ê > 0` | `m·(Δg − Δe)` |
 //! | shared-curve crossing ([`shared_crossing`], exactly at a stored point [`shared_crossing_sign`]) | `0`: the shadows coincide on the overlap | `ê·(T × Δₖ)`, `T` the curve's unit tangent, `Δₖ` the moving edge's rates there |
 //! | shared-curve z-order at a root of `h`, anchor `g` ([`shared_zorder`]) | `ê·(C_g − C_e)`: exactly 0 | `ê·(ΔC − Δq) + (ê·T)·ṡ`, `ṡ = T_xy·(Δq − ΔC)_xy/‖T_xy‖²`, `q` the moving edge's point, `ΔC = 0` |
+//! | crossing order along an edge (`OrderRec`; [`order_rec`]) | `‖C′‖·(t₂ − t₁)` | `‖C′‖·(ṫ₂ − ṫ₁)`, `ṫᵢ = (nᵢ·Δfᵢ − nᵢ·Δe)/(nᵢ·C′)` |
 //!
 //! The height and z-order rows are per anchor: their order 0 is the value
 //! of the record's height key, decided once for every anchor reading it,
@@ -90,6 +93,8 @@ use crate::num::preds;
 use crate::num::schedule::PredKind;
 
 pub mod dir;
+pub mod order_rec;
+pub mod vertex;
 
 /// The projection direction, Varde's `(2, 3, 32)`, unnormalised: heights
 /// are measured along it, shadows taken across it.

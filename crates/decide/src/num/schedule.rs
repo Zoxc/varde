@@ -267,6 +267,25 @@ pub struct Units {
     /// A p-curve fitted to a curve on a surface with the same parameter
     /// (the kernel's `geom::pcurve_fit`): its points and its spans.
     pub fit: FitUnits,
+    /// A perturbation direction's exact solves
+    /// ([`DirWork`](crate::perturb::dir::DirWork)), in parts.
+    pub direction: DirectionUnits,
+}
+
+/// The parts of a unit ([`UNIT_PARTS`]) of each step of a perturbation
+/// direction's exact work ([`DirWork`](crate::perturb::dir::DirWork)):
+/// rationals of a few normals' size, so a direction charges the sum of
+/// its parts, rounded up to whole units once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirectionUnits {
+    /// A small system solved: a Gram system of at most three unknowns
+    /// formed and eliminated, its point formed.
+    pub solve: u64,
+    /// A constraint row checked against a point: one exact dot product
+    /// and comparison.
+    pub check: u64,
+    /// A tableau row a simplex pivot updates.
+    pub pivot: u64,
 }
 
 /// The units of a p-curve fit ([`Units::fit`]); its spans' seam bounds
@@ -488,7 +507,10 @@ impl RecordUnits {
 /// The tree's are measured on random
 /// boxes of sizes on a log scale: built over a thousand and over sixty
 /// thousand, queried by boxes meeting few of them (the tests) and by
-/// boxes meeting most (the hits, past the tests).
+/// boxes meeting most (the hits, past the tests). A direction's solves,
+/// checks and pivots are measured on vertex stars of random `f64` normals
+/// (three faces, and pyramids of four and six) and on a group's chain of
+/// edges.
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     implicit_cell: ImplicitUnits {
@@ -576,6 +598,11 @@ pub const UNITS: Units = Units {
         point: 8,
         span: 2,
         line: 220,
+    },
+    direction: DirectionUnits {
+        solve: 5120,
+        check: 128,
+        pivot: 224,
     },
 };
 

@@ -46,6 +46,8 @@ use varde_decide::num::preds::{
 };
 use varde_decide::num::schedule::{LEVELS, Level, PredKind, UNIT_PARTS, UNITS};
 use varde_decide::num::trig;
+use varde_decide::perturb::dir::{self as pdir, DirWork};
+use varde_decide::perturb::vertex::{Blended, vertex_groups};
 use varde_decide::perturb::{
     Curved, EdgeEdge, HomLineShadow, HomPairShadow, HomPoint, HomPointLineShadow, HomShadow,
     LineShadow, Moving, NU, PlaneHeight, PointHeight, R_HAT, Rate, Seg, ShadowAxis, SharedCrossing,
@@ -128,6 +130,7 @@ fn main() -> ExitCode {
         bvh_rows(budget, &mut rows);
         fold_rows(budget, &mut rows);
         fit_rows(budget, &mut rows);
+        direction_rows(budget, &mut rows);
         rows
     });
     println!(
@@ -213,6 +216,81 @@ fn time(budget: Duration, mut f: impl FnMut() -> u64) -> f64 {
         }
     }
     best
+}
+
+// ---------------------------------------------------------------------
+// Perturbation directions.
+
+/// A direction's work as the units it is charged, in parts summed.
+fn direction_units(w: &DirWork) -> f64 {
+    w.parts(&UNITS.direction) as f64 / UNIT_PARTS as f64
+}
+
+/// Flat directions of vertex stars from random `f64` normals (the stored
+/// normals of a vertex's planes): three faces (equal offsets, one solve),
+/// and pyramids of four to six faces about a random axis (equal offsets
+/// failing, the max–min program and its least-norm candidates), each
+/// against the units its counted work is charged; and a group closure's
+/// edges (checks alone).
+fn direction_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let mut rng = Rng::new(29);
+    let corner: Vec<Vec<DVec3>> = (0..256)
+        .map(|_| (0..3).map(|_| rng.direction()).collect())
+        .collect();
+    let mut pyramid = |k: usize| -> Vec<Vec<DVec3>> {
+        (0..256)
+            .map(|_| {
+                let axis = rng.direction();
+                (0..k)
+                    .map(|_| (axis * 1.5 + rng.direction()).normalize())
+                    .collect()
+            })
+            .collect()
+    };
+    let sets = [
+        ("direction, 3 faces", corner),
+        ("direction, 4 faces", pyramid(4)),
+        ("direction, 6 faces", pyramid(6)),
+    ];
+    for (kind, stars) in sets {
+        let mut work = DirWork::default();
+        for s in &stars {
+            black_box(pdir::flat(s, &mut work));
+        }
+        let ns = time(budget, || {
+            let mut w = DirWork::default();
+            for s in &stars {
+                black_box(pdir::flat(black_box(s), &mut w));
+            }
+            stars.len() as u64
+        });
+        println!("  {kind}: {:?} per {} stars", work, stars.len());
+        rows.push(Row {
+            kind: kind.into(),
+            ns,
+            units: direction_units(&work) / stars.len() as f64,
+        });
+    }
+    // A chain of short edges: each a check.
+    let verts: Vec<Blended> = (0..4096)
+        .map(|i| Blended {
+            at: DVec3::new(f64::from(i) * 0.75, rng.range(-0.1, 0.1), 0.0),
+            r: 0.25 + rng.range(0.0, 0.1),
+        })
+        .collect();
+    let edges: Vec<[usize; 2]> = (1..verts.len()).map(|i| [i - 1, i]).collect();
+    let mut work = DirWork::default();
+    black_box(vertex_groups(&verts, &edges, &mut work));
+    let ns = time(budget, || {
+        let mut w = DirWork::default();
+        black_box(vertex_groups(black_box(&verts), &edges, &mut w));
+        edges.len() as u64
+    });
+    rows.push(Row {
+        kind: "direction, group edge".into(),
+        ns,
+        units: direction_units(&work) / edges.len() as f64,
+    });
 }
 
 // ---------------------------------------------------------------------

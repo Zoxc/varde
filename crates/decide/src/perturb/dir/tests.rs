@@ -16,6 +16,16 @@ use crate::num::decide::Sign;
 use crate::num::exact::{self, Signs};
 use crate::perturb::{Moving, MovingAt, PlaneHeight, UP};
 
+/// [`super::flat`], its work dropped.
+fn flat(normals: &[DVec3]) -> Option<FlatDir> {
+    super::flat(normals, &mut DirWork::default())
+}
+
+/// [`super::vertex`], its work dropped.
+fn vertex<S: Curved>(star: &[Corner<S>]) -> CurvedDir<S> {
+    super::vertex(star, &mut DirWork::default())
+}
+
 struct Rng(varde_testkit::rng::Rng);
 
 impl Rng {
@@ -998,4 +1008,111 @@ fn curved_directions_of_huge_and_tiny_normals() {
     check(&Bounded::exact(0.0));
     check(&Bounded::exact(Dd::from(0.0)));
     check(&Bounded::exact(Big::from_f64(0.0, Width::ALL[0])));
+}
+
+/// A ribbon point's direction: the face's scaled normal on the face
+/// (`s = 0`), the edge's direction on the edge (`s = 1`), between them a
+/// blend agreeing with the face, exactly (flat) or certified at every
+/// level (curved, one field: the levels' enclosures overlap); `s` clamped.
+#[test]
+fn ribbon_directions_agree_with_their_face() {
+    let mut checked = 0;
+    for seed in varde_testing::seeds(8, 128) {
+        let mut r = Rng::new(seed);
+        for kind in KINDS {
+            let s = star(&mut r, kind);
+            let k = s.edges.len();
+            let i = r.below(k as u64) as usize;
+            let faces = s.edge_faces(i);
+            let Some(FlatDir::EqualOffsets(d_e) | FlatDir::MaxMin { d: d_e, .. }) = flat(&faces)
+            else {
+                continue;
+            };
+            let face = faces[r.below(2) as usize];
+            let n = scaled_normal(face).unwrap();
+            let at = |x: f64| ribbon_flat(face, &d_e, &q(x)).unwrap();
+            assert_eq!(at(0.0), n);
+            assert_eq!(at(-1.0), n);
+            assert_eq!(at(1.0), d_e);
+            assert_eq!(at(2.0), d_e);
+            let t = r.range(0.0, 1.0);
+            assert!(agrees(&[face], &at(t)), "{s:?} {t}");
+            // Curved: unit, agreeing, one field over the levels.
+            let d_ef = d_e.each_ref().map(|x| f64::rounding_from(x, Nearest).0);
+            let d_ef = DVec3::from_array(d_ef).normalize();
+            let f = Bounded::exact(0.0);
+            let dd = Bounded::exact(Dd::from(0.0));
+            let big = Bounded::exact(Big::from_f64(0.0, Width::ALL[0]));
+            let encl = [
+                ribbon(&lit3(face, &f), &lit3(d_ef, &f), t).map(|c| c.enclose()),
+                ribbon(&lit3(face, &dd), &lit3(d_ef, &dd), t).map(|c| c.enclose()),
+                ribbon(&lit3(face, &big), &lit3(d_ef, &big), t).map(|c| c.enclose()),
+            ];
+            let n = face.normalize();
+            if n.dot(d_ef) <= 1e-6 {
+                continue;
+            }
+            for e in &encl {
+                // Its lowest `n·d` over the enclosure is above zero.
+                let low: f64 = (0..3)
+                    .map(|j| {
+                        if n[j] >= 0.0 {
+                            n[j] * e[j][0]
+                        } else {
+                            n[j] * e[j][1]
+                        }
+                    })
+                    .sum();
+                assert!(low > 0.0, "{s:?} {t} {e:?}");
+                for f in &encl {
+                    assert!((0..3).all(|j| e[j][0] <= f[j][1]), "{encl:?}");
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 20, "{checked} checked");
+}
+
+/// The exact solves are counted: equal offsets one solve; a program its
+/// pivots and its candidates' solves and checks, the same direction as
+/// uncounted; a curved vertex's programs too; the parts priced by the
+/// unit table's row, more work never cheaper.
+#[test]
+fn direction_work_is_counted() {
+    let units = crate::num::schedule::UNITS.direction;
+    let mut w = DirWork::default();
+    super::flat(&[DVec3::X, DVec3::Y, DVec3::Z], &mut w).unwrap();
+    assert_eq!((w.solves, w.pivots), (1, 0));
+    let one = w.parts(&units);
+    assert!(one > 0);
+    let apex = [
+        DVec3::new(2.0, 0.0, 1.0),
+        DVec3::new(0.0, 1.0, 1.0),
+        DVec3::new(-1.0, 0.0, 1.0),
+        DVec3::new(0.0, -1.0, 1.0),
+    ];
+    let mut lp = DirWork::default();
+    let d = super::flat(&apex, &mut lp).unwrap();
+    assert!(matches!(d, FlatDir::MaxMin { .. }));
+    assert_eq!(Some(d), flat(&apex));
+    assert!(lp.pivots > 0 && lp.solves > 1 && lp.checks > 0, "{lp:?}");
+    assert!(lp.parts(&units) > one);
+    assert_eq!(w.and(lp).parts(&units), one + lp.parts(&units));
+    let ns: Vec<Q3> = apex.iter().map(|&n| scaled_normal(n).unwrap()).collect();
+    let mut counted = DirWork::default();
+    assert_eq!(max_min_counted(&ns, &mut counted), max_min(&ns));
+    assert!(counted.pivots > 0);
+    let like = Bounded::exact(0.0);
+    let corners: Vec<Corner<Bounded<f64>>> = [DVec3::X, -DVec3::X, DVec3::Y]
+        .iter()
+        .map(|&n| Corner {
+            normal: lit3(n, &like),
+            approx: n,
+            angle: 1.0,
+        })
+        .collect();
+    let mut cw = DirWork::default();
+    assert_eq!(super::vertex(&corners, &mut cw), CurvedDir::Escalate);
+    assert!(cw.pivots > 0, "{cw:?}");
 }
