@@ -14,8 +14,9 @@
 //! boolean's first step, its tangency clusters ([`boolean::snap`]); and
 //! the first of what it reports beside an outcome ([`evidence`]): the
 //! profile of its work when it runs out ([`BudgetProfile`]).
-//! The quadrature rules are public ([`measure::quadrature`]): the facade
-//! measures profiles' areas with them.
+//! The measures ([`measure`]): a body's certified mass properties, and
+//! the quadrature rules, public as the facade measures profiles' areas
+//! with them.
 
 pub mod boolean;
 pub mod evidence;
