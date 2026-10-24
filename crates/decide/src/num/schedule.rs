@@ -270,6 +270,37 @@ pub struct Units {
     /// A perturbation direction's exact solves
     /// ([`DirWork`](crate::perturb::dir::DirWork)), in parts.
     pub direction: DirectionUnits,
+    /// The local certificates of faces sharing an edge or a vertex (the
+    /// kernel's `topo::adjacent`), per cell or box at each level.
+    pub adjacent: AdjacentUnits,
+}
+
+/// The units of the adjacent pairs' local certificates
+/// ([`Units::adjacent`]) at each level ([`LEVELS`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdjacentUnits {
+    /// A cell of an edge's field where a face's p-curve span is
+    /// quadratic in a coordinate: the spans restricted and halved down to
+    /// it, both faces' normal numerators formed at the level and put along
+    /// their p-curves, the field and its two products with them formed,
+    /// the strips' tiles chosen on the cell's control values.
+    pub field: [u64; LEVELS],
+    /// The same where both faces' spans are linear or iso.
+    pub field_low: [u64; LEVELS],
+    /// A box of an edge face's strip against the ruled surface where a
+    /// face's span is quadratic in a coordinate: the spans restricted to
+    /// it, the tile over the strip's map, the field halved down to it and
+    /// the sign function (of degrees (28, 4) for quadratic spans and a
+    /// conic) formed and judged.
+    pub sign: [u64; LEVELS],
+    /// The same where both faces' spans are linear or iso.
+    pub sign_low: [u64; LEVELS],
+    /// A box of an edge face's strip against the curve's plane: the tile
+    /// over the strip's map in the plane's equation.
+    pub plane: [u64; LEVELS],
+    /// A box of a vertex sector: the tile over the sector's triangle in
+    /// the plane's equation.
+    pub sector: [u64; LEVELS],
 }
 
 /// The parts of a unit ([`UNIT_PARTS`]) of each step of a perturbation
@@ -510,7 +541,9 @@ impl RecordUnits {
 /// boxes meeting most (the hits, past the tests). A direction's solves,
 /// checks and pivots are measured on vertex stars of random `f64` normals
 /// (three faces, and pyramids of four and six) and on a group's chain of
-/// edges.
+/// edges. The adjacent pairs' cells and boxes are measured on a quarter
+/// arc's edge and a straight one's on a plane, both faces on it, and on a
+/// corner's sector there.
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     implicit_cell: ImplicitUnits {
@@ -603,6 +636,14 @@ pub const UNITS: Units = Units {
         solve: 5120,
         check: 128,
         pivot: 224,
+    },
+    adjacent: AdjacentUnits {
+        field: [5900, 9600, 25800, 27700, 34300],
+        field_low: [2800, 4200, 11000, 11800, 13600],
+        sign: [2400, 3800, 9700, 10200, 12100],
+        sign_low: [1000, 1350, 4000, 4300, 4900],
+        plane: [1100, 1550, 4000, 4400, 5400],
+        sector: [300, 410, 1550, 1700, 2000],
     },
 };
 

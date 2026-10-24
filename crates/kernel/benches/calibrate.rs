@@ -84,6 +84,7 @@ use varde_kernel::geom::pcurve_fit::calibration as fit;
 use varde_kernel::geom::query::calibration as query;
 use varde_kernel::geom::surface::Surface;
 use varde_kernel::geom::tile::calibration as fold;
+use varde_kernel::topo::adjacent::calibration as adjacent;
 use varde_kernel::topo::brep_min::{Brep, calibration as scan};
 use varde_testkit::rng::Rng;
 
@@ -116,6 +117,7 @@ fn main() -> ExitCode {
     let rows = pool.install(|| {
         let mut rows = Vec::new();
         seam_cells(budget, &mut rows);
+        adjacent_rows(budget, &mut rows);
         implicit_cells(budget, &mut rows);
         query_rows(budget, &mut rows);
         count_piece_rows(budget, &mut rows);
@@ -312,6 +314,37 @@ fn seam_cells(budget: Duration, rows: &mut Vec<Row>) {
             ns,
             units: UNITS.seam_cell[usize::from(level)] as f64,
         });
+    }
+}
+
+/// The adjacent pairs' certificates at each level, 8 to a piece (a
+/// depth of 3 halvings): field cells and the strips' boxes against the
+/// ruled surface on the quarter arc and on a straight edge, against the
+/// plane on the arc, sector boxes at a corner.
+fn adjacent_rows(budget: Duration, rows: &mut Vec<Row>) {
+    let f = adjacent::fixture();
+    for level in 0..LEVELS as u8 {
+        let l = usize::from(level);
+        let u = &UNITS.adjacent;
+        let mut row = |kind: &str, ns: f64, units: u64| {
+            rows.push(Row {
+                kind: format!("adjacent {kind} L{level}"),
+                ns,
+                units: units as f64,
+            })
+        };
+        let ns = time(budget, || adjacent::field_cells(&f, level, 3, false));
+        row("field", ns, u.field[l]);
+        let ns = time(budget, || adjacent::field_cells(&f, level, 3, true));
+        row("field low", ns, u.field_low[l]);
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, false, false));
+        row("sign", ns, u.sign[l]);
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, false, true));
+        row("sign low", ns, u.sign_low[l]);
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, true, false));
+        row("plane", ns, u.plane[l]);
+        let ns = time(budget, || adjacent::sector_boxes(&f, level, 3));
+        row("sector", ns, u.sector[l]);
     }
 }
 

@@ -6,9 +6,14 @@
 //! and faces) and the bit-exact joins its ribbons need;
 //! and [`arrange2d`], a face's arrangement in its UV on straight spans:
 //! rotation order, face cycles, nesting by a containment certificate,
-//! regions and their windings.
+//! regions and their windings; and [`adjacent`], the local certificates
+//! of faces sharing an edge or a vertex (the check's invariant 9).
 
 pub mod arrange2d;
+// The edge and vertex certificates run once the tube's window lands; the
+// check's hook reads the edges and vertices already.
+#[allow(dead_code, reason = "moved ahead of the tube's window that runs it")]
+pub mod adjacent;
 pub mod brep;
 pub mod brep_min;
 // Its callers are the constructions and the assembly, as they land.

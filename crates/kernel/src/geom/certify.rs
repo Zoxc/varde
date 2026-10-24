@@ -434,7 +434,11 @@ pub(crate) fn tile_of<'a>(surface: &'a Surface, s: &PSpan) -> Option<(&'a Tile, 
 }
 
 /// The span `c` restricted to `[sa, sb]`, as a span on `[0, 1]`.
-fn restrict<S: Scalar, const N: usize>(c: &HomCurve<S, N>, sa: S, sb: S) -> HomCurve<S, N> {
+pub(crate) fn restrict<S: Scalar, const N: usize>(
+    c: &HomCurve<S, N>,
+    sa: S,
+    sb: S,
+) -> HomCurve<S, N> {
     let left = if sb.is_int(1) {
         c.clone()
     } else {

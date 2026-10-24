@@ -2,7 +2,8 @@
 //! equation, the linear image of a span (such as its shadow on a plane),
 //! a patch along a curve in its parameter domain (a p-curve span: the
 //! surface's point along it, and the seam numerator against a space
-//! curve), and a patch or a span put into an implicit equation of any
+//! curve) or over a map of a square into it (a strip beside a p-curve),
+//! and a patch or a span put into an implicit equation of any
 //! degree. Each result is a polynomial (a tensor for a patch), its
 //! degrees computed from the operands', exact on rationals and certified
 //! at every level.
@@ -36,7 +37,14 @@
 //! from its four corners at once as a tensor product's coefficients are
 //! (`sym_fold2`). So the composition along the reversed curve is the
 //! reversed composition, and the transposed patch along the curve with
-//! its parameters swapped is the same composition, to the bit.
+//! its parameters swapped is the same composition, to the bit. Over a
+//! map of a square, `u = U/D_u` and `v = V/D_v` with `U`, `D_u`, `V`,
+//! `D_v` tensors in the square's parameters `(t, s)`, the same sum is a
+//! tensor, of degrees `m·p_u + n·p_v` in `t` and `m·q_u + n·q_v` in `s`
+//! for `u`'s pair of degrees `(p_u, q_u)` and `v`'s `(p_v, q_v)`
+//! ([`HomPatch::compose_map`]): a p-curve span moved off its curve by
+//! `s` along a constant direction is of degree 1 in `s`, so a quadratic
+//! span's strip on a biquadratic tile is of degrees `(8, 4)`.
 //!
 //! **Implicits** ([`Implicit`]): a polynomial `F` of degree `d` in the
 //! point relative to the implicit's own origin `o` (its exact frame), in
@@ -153,6 +161,12 @@ trait Built<S: Scalar>: Clone + Sized {
     fn constant(&self) -> Option<&S>;
     fn mul(&self, o: &Self) -> Option<Self>;
     fn add(&self, o: &Self) -> Self;
+    fn sub(&self, o: &Self) -> Self;
+    /// Both forms at the higher degrees (each direction's), `None` past
+    /// [`MAX_DEGREE`].
+    fn raised(&self, o: &Self) -> Option<(Self, Self)>;
+    /// The zero form of this one's degrees, at `z`'s level.
+    fn zero_as(&self, z: &S) -> Self;
     fn scale(&self, k: &S) -> Self;
     fn neg(&self) -> Self;
     /// The zero form at `d` times this one's degrees, at `z`'s level.
@@ -175,6 +189,19 @@ impl<S: Scalar> Built<S> for Poly<S> {
 
     fn add(&self, o: &Self) -> Self {
         Poly::add(self, o)
+    }
+
+    fn sub(&self, o: &Self) -> Self {
+        Poly::sub(self, o)
+    }
+
+    fn raised(&self, o: &Self) -> Option<(Self, Self)> {
+        let k = self.degree().max(o.degree());
+        Some((self.elevate(k - self.degree())?, o.elevate(k - o.degree())?))
+    }
+
+    fn zero_as(&self, z: &S) -> Self {
+        Poly::from_coefs(self.coefs().iter().map(|_| S::int(0, z)).collect())
     }
 
     fn scale(&self, k: &S) -> Self {
@@ -221,6 +248,21 @@ impl<S: Scalar> Built<S> for Tensor<S> {
 
     fn add(&self, o: &Self) -> Self {
         Tensor::add(self, o)
+    }
+
+    fn sub(&self, o: &Self) -> Self {
+        Tensor::sub(self, o)
+    }
+
+    fn raised(&self, o: &Self) -> Option<(Self, Self)> {
+        let ((m1, n1), (m2, n2)) = (self.degrees(), o.degrees());
+        let (m, n) = (m1.max(m2), n1.max(n2));
+        Some((self.elevate_to(m, n)?, o.elevate_to(m, n)?))
+    }
+
+    fn zero_as(&self, z: &S) -> Self {
+        let (m, n) = self.degrees();
+        Tensor::new(m, n, self.coefs().iter().map(|_| S::int(0, z))).expect("its degrees")
     }
 
     fn scale(&self, k: &S) -> Self {
@@ -329,24 +371,21 @@ fn power<F>(p: &[F], e: usize) -> Option<&F> {
 
 /// The homogeneous Bernstein basis of degree `m` at the rational
 /// parameter `num / den`: `C(m, a)·(den − num)^(m−a)·num^a` for
-/// `a = 0..=m`, of degree `m·k` (`k` the higher of the two degrees, the
-/// other raised to it first); `None` in place of the constant 1
-/// (`m = 0`). `None` past [`MAX_DEGREE`].
-fn basis<S: Scalar>(m: usize, num: &Poly<S>, den: &Poly<S>) -> Option<Vec<Option<Poly<S>>>> {
-    let k = num.degree().max(den.degree());
-    let (num, den) = (
-        &num.elevate(k - num.degree())?,
-        &den.elevate(k - den.degree())?,
-    );
-    let s = den.sub(num);
-    let (ps, pn) = (powers(&s, m)?, powers(num, m)?);
+/// `a = 0..=m`, of `m` times the higher of the two's degrees (the other
+/// raised to them first; a polynomial's degree, or a tensor's in each
+/// direction); `None` in place of the constant 1 (`m = 0`). `None` past
+/// [`MAX_DEGREE`].
+fn basis<S: Scalar, F: Built<S>>(m: usize, num: &F, den: &F) -> Option<Vec<Option<F>>> {
+    let (num, den) = num.raised(den)?;
+    let s = den.sub(&num);
+    let (ps, pn) = (powers(&s, m)?, powers(&num, m)?);
     (0..=m)
         .map(|a| {
             let b = times_opt(power(&ps, m - a), power(&pn, a))?;
             let c = binom(m, a);
             Some(match b {
                 Some(b) if c != 1 => {
-                    let k = S::int_u64(c, &b.coefs()[0]);
+                    let k = S::int_u64(c, b.first());
                     Some(b.scale(&k))
                 }
                 b => b,
@@ -357,11 +396,11 @@ fn basis<S: Scalar>(m: usize, num: &Poly<S>, den: &Poly<S>) -> Option<Vec<Option
 
 /// The products `Bₐ(u)·Bᵦ(v)` of the two directions' bases, row-major in
 /// `u` as a patch's net (`None` for the constant 1).
-fn grid<S: Scalar>(
+fn grid<S: Scalar, F: Built<S>>(
     (m, n): (usize, usize),
-    u: [&Poly<S>; 2],
-    v: [&Poly<S>; 2],
-) -> Option<Vec<Option<Poly<S>>>> {
+    u: [&F; 2],
+    v: [&F; 2],
+) -> Option<Vec<Option<F>>> {
     let (bu, bv) = (basis(m, u[0], u[1])?, basis(n, v[0], v[1])?);
     let mut out = Vec::with_capacity(bu.len() * bv.len());
     for a in &bu {
@@ -373,20 +412,22 @@ fn grid<S: Scalar>(
 }
 
 /// `Σₐᵦ fₐᵦ·gridₐᵦ`, the terms weighted by [`weighted`] and summed by
-/// `sym_fold2` over the `(m + 1) × (n + 1)` grid; the zero polynomial at
-/// the composition's degree, at `like`'s level, if every term is left
-/// out.
-fn along<S: Scalar>(f: &Tensor<S>, grid: &[Option<Poly<S>>], like: &S) -> Poly<S> {
+/// `sym_fold2` over the `(m + 1) × (n + 1)` grid; the zero form at the
+/// composition's degrees, at `like`'s level, if every term is left out
+/// (`zero` the constant zero where the grid is all constants).
+fn along<S: Scalar, F: Built<S>>(f: &Tensor<S>, grid: &[Option<F>], like: &S) -> F {
     let (m, n) = f.degrees();
-    let terms: SmallVec<[Option<Poly<S>>; 9]> = f
+    let terms: SmallVec<[Option<F>; 9]> = f
         .coefs()
         .iter()
         .zip(grid)
-        .map(|(c, g)| weighted(c, g.as_ref(), Poly::constant_of))
+        .map(|(c, g)| weighted(c, g.as_ref(), F::constant_of))
         .collect();
-    let deg = grid.iter().flatten().map(Poly::degree).next().unwrap_or(0);
     let sum = sym_fold2(terms, m + 1, n + 1, add_opt);
-    sum.unwrap_or_else(|| Poly::from_coefs((0..=deg).map(|_| S::int(0, like)).collect()))
+    sum.unwrap_or_else(|| match grid.iter().flatten().next() {
+        Some(g) => g.zero_as(like),
+        None => F::constant_of(&S::int(0, like)),
+    })
 }
 
 impl<S: Scalar> Tensor<S> {
@@ -399,6 +440,21 @@ impl<S: Scalar> Tensor<S> {
     /// the curve and with transposition (the parameters swapped) to the
     /// bit; exact on rationals.
     pub fn compose_params(&self, u: [&Poly<S>; 2], v: [&Poly<S>; 2]) -> Option<Poly<S>> {
+        let g = grid(self.degrees(), u, v)?;
+        Some(along(self, &g, &self.coefs()[0]))
+    }
+
+    /// The form over the map `(u, v) = (U/D_u, V/D_v)` of a square into
+    /// its domain, each part a tensor in the square's own parameters
+    /// `(t, s)` (each pair at its higher degrees, `(p_u, q_u)` and
+    /// `(p_v, q_v)`), times `D_u^m·D_v^n`: the tensor
+    /// `Σₐᵦ fₐᵦ·Bₐ(U, D_u)·Bᵦ(V, D_v)` of degrees
+    /// `(m·p_u + n·p_v, m·q_u + n·q_v)`, as [`compose_params`] along a
+    /// curve. Its sign is the form's over the map where `D_u^m·D_v^n` is
+    /// positive. `None` past [`MAX_DEGREE`]. Exact on rationals.
+    ///
+    /// [`compose_params`]: Self::compose_params
+    pub fn compose_map(&self, u: [&Tensor<S>; 2], v: [&Tensor<S>; 2]) -> Option<Tensor<S>> {
         let g = grid(self.degrees(), u, v)?;
         Some(along(self, &g, &self.coefs()[0]))
     }
@@ -416,6 +472,18 @@ impl<S: Scalar> HomPatch<S> {
         let like = &t[3].coefs()[0];
         let [x, y, z, w] = [0, 1, 2, 3].map(|k| along(&t[k], &g, like));
         HomCurve::from_polys([x, y, z], w)
+    }
+
+    /// The patch over the map `(u, v) = (U/D_u, V/D_v)` of a square into
+    /// its domain ([`Tensor::compose_map`] of each coordinate tensor, the
+    /// basis products shared): the patch `(X, Y, Z, W)` over the square
+    /// whose point is this patch's at the map's. `None` past
+    /// [`MAX_DEGREE`].
+    pub fn compose_map(&self, u: [&Tensor<S>; 2], v: [&Tensor<S>; 2]) -> Option<HomPatch<S>> {
+        let g = grid(self.degrees(), u, v)?;
+        let t = self.tensors();
+        let like = &t[3].coefs()[0];
+        HomPatch::from_tensors([0, 1, 2, 3].map(|k| along(&t[k], &g, like)))
     }
 
     /// The patch along a p-curve span `(U, V, W)` in its local

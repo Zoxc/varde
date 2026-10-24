@@ -399,6 +399,57 @@ fn pow(x: &Q, n: usize) -> Q {
     (0..n).fold(Q::from(1u32), |a, _| a * x)
 }
 
+fn int_tensor(rng: &mut Rng, m: usize, n: usize) -> Tensor<Q> {
+    Tensor::new(m, n, (0..(m + 1) * (n + 1)).map(|_| int(rng))).expect("degrees in range")
+}
+
+fn den_tensor(rng: &mut Rng, m: usize, n: usize) -> Tensor<Q> {
+    Tensor::new(
+        m,
+        n,
+        (0..(m + 1) * (n + 1)).map(|_| Q::from(rng.below(9) + 1)),
+    )
+    .expect("degrees in range")
+}
+
+/// On rationals: the patch over a map of a square is the patch's point
+/// at the map's times `D_u^m·D_v^n`, of degrees `m·(p_u, q_u) +
+/// n·(p_v, q_v)`; a coordinate tensor's own composition is the patch's
+/// coordinate.
+#[test]
+fn patches_over_maps_are_exact() {
+    for seed in varde_testing::seeds(1, 16) {
+        let mut rng = Rng::new(seed);
+        for case in 0..24 {
+            let (m, n) = (case % 3, (case / 3) % 3);
+            let (pu, qu) = (rng.below(3) as usize, rng.below(2) as usize);
+            let (pv, qv) = (rng.below(3) as usize, rng.below(2) as usize);
+            let patch = int_patch(&mut rng, m, n);
+            let (uu, du) = (int_tensor(&mut rng, pu, qu), den_tensor(&mut rng, pu, 0));
+            let (vv, dv) = (int_tensor(&mut rng, pv, qv), den_tensor(&mut rng, pv, 0));
+            let a = patch.compose_map([&uu, &du], [&vv, &dv]).expect("in range");
+            assert_eq!(
+                a.degrees(),
+                (m * pu + n * pv, m * qu + n * qv),
+                "seed {seed} case {case}"
+            );
+            let y = patch.tensors()[1].compose_map([&uu, &du], [&vv, &dv]);
+            assert_eq!(y.as_ref(), Some(&a.tensors()[1]));
+            for _ in 0..3 {
+                let (t, r) = (dyadic(&mut rng), dyadic(&mut rng));
+                let (du_t, dv_t) = (du.eval(&t, &r), dv.eval(&t, &r));
+                let (u, v) = (uu.eval(&t, &r) / &du_t, vv.eval(&t, &r) / &dv_t);
+                let h = patch.eval_hom(&u, &v);
+                let f = pow(&du_t, m) * pow(&dv_t, n);
+                let x = a.eval_hom(&t, &r);
+                for k in 0..4 {
+                    assert_eq!(x[k], &h[k] * &f, "seed {seed} case {case}");
+                }
+            }
+        }
+    }
+}
+
 /// The seam degrees of §3.4's biquadratic table: Q 10 over 8 + 2, G 8
 /// over 6 + 2, a straight UV line 6 over 4 + 2, an iso line 4 over 2 + 2.
 #[test]

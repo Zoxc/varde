@@ -417,7 +417,7 @@ const BUILT: Invariants<'static> = [
     &Unbuilt,
     &Unbuilt,
     &Unbuilt,
-    &Unbuilt,
+    &super::adjacent::Embedding,
     &Unbuilt,
 ];
 
@@ -467,6 +467,22 @@ impl Cx<'_> {
     /// a full check, else those near what changed (module docs).
     pub(crate) fn in_scope(&self, item: Item) -> bool {
         self.scope.is_none_or(|s| s.contains(item))
+    }
+
+    /// The faces of the coedges starting or ending at `v`, sorted.
+    pub(crate) fn vert_faces(&self, v: VertId) -> &[FaceId] {
+        self.inc
+            .vert_faces
+            .get(v.index())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The coedges ending at `v` (its corners), sorted.
+    pub(crate) fn vert_corners(&self, v: VertId) -> &[CoedgeId] {
+        self.inc
+            .vert_corners
+            .get(v.index())
+            .map_or(&[], Vec::as_slice)
     }
 }
 
