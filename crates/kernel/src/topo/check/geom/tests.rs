@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::build::primitives::{Primitive, build};
+use crate::geom::fit_types::{ImportRef, Intent};
 use crate::infra::budget::{Budget, Work};
 use crate::infra::ops::{FeatureId, OpCtx, Tolerance, Warning, WarningKind};
 use crate::topo::brep::{Fit, SurfId};
@@ -411,7 +412,13 @@ fn a_trim_on_a_singular_side_is_caught() {
 #[test]
 fn a_fitted_surface_is_not_built() {
     let mut b = cylinder();
-    b.surfaces.fit[0] = Some(Fit::default());
+    b.surfaces.fit[0] = Some(Fit {
+        intent: Intent::Import {
+            entity: ImportRef(1),
+        },
+        dev: varde_decide::num::bounded::Bounded::exact(0.0),
+        recheckable: false,
+    });
     assert_eq!(
         fails(&b),
         (Inv::Forms, FormCheck::Fit as u32, Finding::Unbuilt)

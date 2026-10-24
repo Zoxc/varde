@@ -620,6 +620,81 @@ fn geometry_is_collected_from_its_roots() {
     assert_eq!(b.dangling(), None);
 }
 
+/// A fitted surface's intent and exact rows are roots: what they name is
+/// kept, and their ids follow the compaction; an intent naming a surface
+/// not below its own is refused, and found dangling.
+#[test]
+fn fits_keep_what_they_name() {
+    use crate::geom::fit_types::{Affine3, Intent, Law};
+    use crate::topo::brep::{ExactRow, Fit};
+    use varde_decide::bezier::Dir;
+    use varde_decide::num::bounded::Bounded;
+    let mut p = square();
+    let plain = |b: &mut Builder| b.add_surface(plane(), None, ExactRows::default()).unwrap();
+    let (s1, s2) = (plain(&mut p.b), plain(&mut p.b));
+    let lone = p.b.add_curve(line([0.0; 3], [1.0; 3])).unwrap();
+    let spine = p.b.add_curve(line([0.0; 3], [2.0; 3])).unwrap();
+    let row = p.b.add_curve(line([0.0; 3], [3.0; 3])).unwrap();
+    let ball = |supports, spine| Intent::RollingBall {
+        supports,
+        radius: Law::Constant(0.5),
+        spine,
+    };
+    let map = Affine3 {
+        linear: [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        shift: [0.0; 3],
+    };
+    let fit = |intent| Fit {
+        intent,
+        dev: Bounded::exact(0.0),
+        recheckable: false,
+    };
+    let rows = |curve| {
+        ExactRows::new(vec![ExactRow {
+            along: Dir::U,
+            at: 0,
+            first: 0,
+            curve,
+        }])
+    };
+    let affine = |supports, spine| Intent::Affine {
+        map,
+        inner: Box::new(ball(supports, spine)),
+    };
+    let s0 = p.surface;
+    // Naming itself (the next id) or a curve not added is refused.
+    let next = SurfId(p.b.brep().surface_count() as u32);
+    for (supports, spine) in [([s2, next], spine), ([s2, s0], CurveId(99))] {
+        let f = Some(fit(affine(supports, spine)));
+        let r = p.b.add_surface(plane(), f, ExactRows::default());
+        assert_eq!(r, Err(BuildError::Store(StoreError::Id)));
+    }
+    let r = p.b.add_surface(plane(), None, rows(CurveId(99)));
+    assert_eq!(r, Err(BuildError::Store(StoreError::Id)));
+    let s3 = (p.b)
+        .add_surface(plane(), Some(fit(affine([s2, s0], spine))), rows(row))
+        .unwrap();
+    p.b.add_face(s3, false, key(7)).unwrap();
+    p.b.collect_geometry();
+    let (b, map) = p.b.clone().finish().unwrap();
+    assert_eq!(map.surfaces(s1), SurfId::NONE);
+    assert_eq!(map.curves(lone), CurveId::NONE);
+    let [s2, s3] = [s2, s3].map(|s| map.surfaces(s));
+    let [spine, row] = [spine, row].map(|c| map.curves(c));
+    assert_eq!([s2, s3], [SurfId(1), SurfId(2)]);
+    assert_eq!(b.fit(s3).map(|f| &f.intent), Some(&affine([s2, s0], spine)));
+    assert_eq!(b.exact_rows(s3), &rows(row));
+    assert_eq!(b.dangling(), None);
+    // An intent naming its own surface is dangling.
+    let mut c = b.clone();
+    c.surfaces.fit[s2.index()] = Some(fit(ball([s0, s2], spine)));
+    let dangling = Dangling {
+        row: Row::Surface(s2),
+        field: "fit",
+    };
+    assert_eq!(c.dangling(), Some(dangling));
+}
+
 #[test]
 fn seam_bounds_are_certified_in_one_pass() {
     let mut p = Poly::new(BodyKind::Sheet, &SQUARE);

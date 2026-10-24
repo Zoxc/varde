@@ -3,8 +3,9 @@
 //! for "no entity".
 //!
 //! **Geometry** is immutable once an entity refers to it, and may be
-//! shared: tiled surfaces (with a fitted surface's [`Fit`] and its exact
-//! rows), space curves ([`Curve3D`], control points stored affine with
+//! shared: tiled surfaces (with a fitted surface's [`Fit`] and its
+//! [`ExactRows`]; what an intent names is a surface added before it, or a
+//! curve), space curves ([`Curve3D`], control points stored affine with
 //! their weights) and p-curves ([`PCurve`], one per coedge). Every stored
 //! scalar is an `f64`, rounded once where it was computed at higher
 //! precision.
@@ -54,12 +55,13 @@
 //!
 //! The store hands out ids below `NONE` in order of addition, so a kind's
 //! ids are `0..count`. Adding a row checks only what it refers to below
-//! itself (an edge's curve and vertices, a coedge's edge and p-curve, a
-//! face's surface) and the edge's own canonical form; links within the
+//! itself (a surface's intent and exact rows, an edge's curve and
+//! vertices, a coedge's edge and p-curve, a face's surface) and the edge's own canonical form; links within the
 //! topology (`next`, `pair`, loops, shells, regions) may be set in any
 //! order and are checked by the body's check.
 
 use crate::geom::curve::{Curve3D, Span3};
+use crate::geom::fit_types::IntentId;
 use crate::geom::pcurve::PCurve;
 use crate::geom::surface::Surface;
 use crate::infra::ops::{MAX_WARNINGS, Status, Tolerance};
@@ -67,6 +69,7 @@ use crate::names::keys::TermTable;
 
 use varde_decide::num::decide::Sign;
 
+pub use crate::geom::fit_types::{ExactRow, ExactRows, Fit};
 pub use crate::names::keys::{Digest, EdgeTag, FaceKey, FacePart, PoleEnd, VertTag};
 pub use varde_decide::ids::{CoedgeId, CurveId, EdgeId, FaceId, LoopId, NONE, SurfId, VertId};
 
@@ -419,19 +422,6 @@ pub struct Contact {
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ContactCert {}
-
-/// A fitted surface's intent and certified deviation from it. The store
-/// keeps its place; its content comes with the fitted surfaces.
-#[non_exhaustive]
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Fit {}
-
-/// A surface's rows equal to a space curve bit for bit. The store keeps
-/// their place; their content comes with the constructions that make
-/// them.
-#[non_exhaustive]
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ExactRows {}
 
 /// The body's provenance of its faces, edges and vertices. The store
 /// keeps its place; its content comes with the names.
@@ -884,14 +874,34 @@ impl Brep {
         }
     }
 
-    /// Adds a surface.
+    /// Adds a surface; what its fit's intent and exact rows name must be
+    /// below it (a surface added before, a curve).
     pub(crate) fn push_surface(&mut self, row: SurfaceRow) -> Result<SurfId, StoreError> {
         let id = next_id(self.surfaces.surface.len())?;
+        if !self.surface_refs_below(row.fit.as_ref(), &row.exact_rows, id as usize) {
+            return Err(StoreError::Id);
+        }
         let s = &mut self.surfaces;
         s.surface.push(row.surface);
         s.fit.push(row.fit);
         s.exact_rows.push(row.exact_rows);
         Ok(SurfId(id))
+    }
+
+    /// Whether every id `fit` and `rows` name is a surface below `below`
+    /// or a curve of the body.
+    pub(crate) fn surface_refs_below(
+        &self,
+        fit: Option<&Fit>,
+        rows: &ExactRows,
+        below: usize,
+    ) -> bool {
+        let curves = self.curves3.len();
+        let ids = fit.map(|f| f.intent.ids()).unwrap_or_default();
+        ids.iter().all(|id| match *id {
+            IntentId::Surface(s) => s.index() < below,
+            IntentId::Curve(c) => c.index() < curves,
+        }) && rows.rows().iter().all(|r| r.curve.index() < curves)
     }
 
     /// Adds a space curve.

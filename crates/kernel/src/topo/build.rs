@@ -39,8 +39,9 @@
 //! **Geometry collection.** [`Builder::collect_geometry`] removes every
 //! surface, curve and p-curve no remaining entity refers to. Its roots: a
 //! face's surface, an edge's curve and the surfaces of its origin's
-//! clusters (kept so the cluster can run again), a coedge's p-curve. A
-//! surface's [`Fit`] holds no intent yet, so names no surface.
+//! clusters (kept so the cluster can run again), a coedge's p-curve, and
+//! what a kept surface's [`Fit`] intent and exact rows name (the surfaces
+//! and curves an intent is built on, which a refit or a measure reads).
 //!
 //! **Finishing.** [`Builder::finish`] compacts the columns: the remaining
 //! rows keep their order, so their ids only move down, and an edge stays
@@ -60,6 +61,7 @@ use super::brep::{
 };
 use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::Curve3D;
+use crate::geom::fit_types::IntentId;
 use crate::geom::pcurve::PCurve;
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Halt, Pass, Work};
@@ -891,6 +893,24 @@ impl Builder {
                 keep(&mut pcurves, b.pcurve_id(c).index());
             }
         }
+        // An intent names only surfaces below its own, so one pass from
+        // the top keeps every surface a kept one leads to.
+        for i in (0..b.surface_count()).rev() {
+            if surfaces[i] {
+                continue;
+            }
+            if let Some(fit) = &b.surfaces.fit[i] {
+                for id in fit.intent.ids() {
+                    match id {
+                        IntentId::Surface(s) => keep(&mut surfaces, s.index()),
+                        IntentId::Curve(c) => keep(&mut curves, c.index()),
+                    }
+                }
+            }
+            for r in b.surfaces.exact_rows[i].rows() {
+                keep(&mut curves, r.curve.index());
+            }
+        }
         let or = |old: &[bool], new: Vec<bool>| -> Vec<bool> {
             new.into_iter()
                 .enumerate()
@@ -994,6 +1014,22 @@ fn remap_rows(b: &mut Brep, map: &Remap) -> Result<(), Dangling> {
     }
     let kept = |m: &[u32], i: usize| m[i] != NONE;
 
+    for i in (0..b.surface_count()).filter(|&i| kept(&map.surfaces, i)) {
+        let row = Row::Surface(SurfId(i as u32));
+        let s = &mut b.surfaces;
+        let mut surface = |x: SurfId| SurfId(look(&map.surfaces, x.0)).filter_some();
+        let mut curve = |x: CurveId| CurveId(look(&map.curves, x.0)).filter_some();
+        if let Some(fit) = &mut s.fit[i] {
+            fit.intent = fit
+                .intent
+                .remap(&mut surface, &mut curve)
+                .ok_or(Dangling { row, field: "fit" })?;
+        }
+        s.exact_rows[i] = s.exact_rows[i].remap(&mut curve).ok_or(Dangling {
+            row,
+            field: "exact_rows",
+        })?;
+    }
     for i in (0..b.vert_count()).filter(|&i| kept(&map.verts, i)) {
         let row = Row::Vert(VertId(i as u32));
         let c = &mut b.verts.coedge[i];
@@ -1189,7 +1225,7 @@ macro_rules! filter_some {
     )*};
 }
 
-filter_some!(SurfId, VertId, EdgeId, FaceId);
+filter_some!(SurfId, CurveId, VertId, EdgeId, FaceId);
 
 impl Brep {
     /// The vertex a use of `e` (`reversed` or not) ends at (`end`) or
@@ -1200,9 +1236,10 @@ impl Brep {
     }
 
     /// The first stored id that names no row (past its kind's rows, or
-    /// `NONE` where the field must name one), by kind (vertices, edges,
-    /// coedges, loops, faces, shells, regions, contacts), then row, then
-    /// field; none if every id names a row. A store sanity check: what
+    /// `NONE` where the field must name one, or a surface not below the
+    /// surface whose intent names it), by kind (surfaces, vertices,
+    /// edges, coedges, loops, faces, shells, regions, contacts), then row,
+    /// then field; none if every id names a row. A store sanity check: what
     /// the rows say of each other is the body's check's.
     pub(crate) fn dangling(&self) -> Option<Dangling> {
         // Whether `id` names a row of a kind with `n`, or is `NONE` where
@@ -1221,6 +1258,20 @@ impl Brep {
                 .find(|(_, good)| !good)
                 .map(|&(field, _)| Dangling { row, field })
         };
+        for i in 0..self.surface_count() {
+            let s = &self.surfaces;
+            let fit = s.fit[i]
+                .as_ref()
+                .is_none_or(|f| self.surface_refs_below(Some(f), &ExactRows::default(), i));
+            let rows = self.surface_refs_below(None, &s.exact_rows[i], i);
+            let found = first(
+                Row::Surface(SurfId(i as u32)),
+                &[("fit", fit), ("exact_rows", rows)],
+            );
+            if found.is_some() {
+                return found;
+            }
+        }
         for (i, c) in self.verts.coedge.iter().enumerate() {
             let row = Row::Vert(VertId(i as u32));
             let found = first(row, &[("coedge", ok(c.0, nc, true))]);

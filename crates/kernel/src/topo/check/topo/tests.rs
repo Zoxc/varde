@@ -12,7 +12,7 @@ use varde_decide::bezier::Dir;
 use varde_decide::num::storage::OpStart;
 
 use super::*;
-use crate::geom::curve::Curve3D;
+use crate::geom::curve::{Curve3D, Span3};
 use crate::geom::form::{PlaneKey, SphereKey};
 use crate::geom::lattice::{CELL, Lattice};
 use crate::geom::pcurve::Span2;
@@ -834,6 +834,55 @@ fn join_defects_are_caught() {
     let spans = b.pcurves[id.index()].q_spans().unwrap();
     b.pcurves[id.index()] = PCurve::new(spans, vec![0.0, 2.0]).unwrap();
     assert_eq!(fails(&b), joins(J::SameT));
+}
+
+/// A surface's exact rows pass where they are their curves' spans bit
+/// for bit, along either direction, and fail where a weight, the cell or
+/// the line differs.
+#[test]
+fn exact_rows_are_their_curves() {
+    use crate::topo::brep::ExactRow;
+    let solid = build(&cube(), BodyKind::Solid);
+    let s = solid.faces.surface[0];
+    let surface = solid.surface(s).clone();
+    let r = surface.rect().clone();
+    let with = |rows: Vec<(Dir, i64, i64, Vec<Span3>)>| {
+        let mut b = solid.clone();
+        let rows = rows
+            .into_iter()
+            .map(|(along, at, first, spans)| {
+                let n = spans.len();
+                let knots = (0..=n).map(|k| k as f64).collect();
+                b.curves3.push(Curve3D::new(spans, knots).unwrap());
+                let curve = crate::topo::brep::CurveId((b.curves3.len() - 1) as u32);
+                ExactRow {
+                    along,
+                    at,
+                    first,
+                    curve,
+                }
+            })
+            .collect();
+        b.surfaces.exact_rows[s.index()] = ExactRows::new(rows);
+        b
+    };
+    let row = |along, at, cell| surface.row(along, at, cell).unwrap();
+    let (u0, v0) = (r.u.start, r.v.start);
+    let along_u: Vec<Span3> = r.u.clone().map(|i| row(Dir::U, v0, i)).collect();
+    let along_v = vec![row(Dir::V, r.u.end, v0)];
+    let b = with(vec![
+        (Dir::U, v0, u0, along_u.clone()),
+        (Dir::V, r.u.end, v0, along_v.clone()),
+    ]);
+    assert_eq!(check13(&b), Ok(()));
+    // A weight off by an ulp.
+    let mut off = along_v.clone();
+    off[0][1][3] = f64::from_bits(off[0][1][3].to_bits() + 1);
+    let b = with(vec![(Dir::V, r.u.end, v0, off)]);
+    assert_eq!(fails(&b), joins(JoinCheck::ExactRows));
+    // Past the rectangle, by one cell.
+    let b = with(vec![(Dir::U, v0, u0 + 1, along_u)]);
+    assert_eq!(fails(&b), joins(JoinCheck::ExactRows));
 }
 
 /// A loop outside its surface's rectangle, and a span along its side

@@ -47,14 +47,16 @@
 //! - a coedge's p-curve ends (in the coedge's direction) at the point the
 //!   next coedge's starts at (b), lies span by span in one tile, so that
 //!   each breakpoint on a tile line has its integer coordinate exactly
-//!   (c), and runs over its edge's `t_range` exactly (e).
+//!   (c), and runs over its edge's `t_range` exactly (e);
+//! - a face's surface's exact rows are their curves' spans, affine
+//!   control points and weights, span `k` the row at cell `first + k`
+//!   (d, [`ExactRows`](crate::geom::fit_types::ExactRows)).
 //!
 //! The rest of the invariant holds by the types' own rules, which refuse
 //! anything else: consecutive spans of a curve or p-curve share their
 //! joining control point (f, [`Curve3D`](crate::geom::curve::Curve3D),
 //! [`PCurve`]), neighbouring tiles of a surface their boundary rows (d,
-//! [`Surface`]); a surface's exact rows
-//! hold nothing yet.
+//! [`Surface`]).
 //!
 //! **3. Domain** ([`Domain`]): a coedge's p-curve lies in its face's
 //! surface's closed lattice rectangle (its spans' control values do, so
@@ -150,6 +152,8 @@ pub(crate) enum JoinCheck {
     Tiles,
     /// A coedge's p-curve doesn't run over its edge's `t_range`.
     SameT,
+    /// A face's surface's exact row isn't its curve's spans.
+    ExactRows,
 }
 
 /// The checks of invariant 3, numbered in the hook's order.
@@ -565,7 +569,7 @@ pub(crate) struct Joins;
 
 impl Invariant for Joins {
     fn kinds(&self) -> &[ItemKind] {
-        &[ItemKind::Edge, ItemKind::Coedge]
+        &[ItemKind::Edge, ItemKind::Coedge, ItemKind::Face]
     }
 
     fn check(&self, cx: &Cx<'_>, item: Item, ledger: &mut Ledger<'_>) -> Checked {
@@ -573,9 +577,39 @@ impl Invariant for Joins {
         match item {
             Item::Edge(e) => edge_ends(cx.body(), e),
             Item::Coedge(c) => coedge_joins(cx.body(), c, ledger),
+            Item::Face(f) => exact_rows(cx.body(), f, ledger),
             _ => Ok(()),
         }
     }
+}
+
+/// (d) at face `f`: its surface's exact rows are their curves' spans.
+fn exact_rows(b: &Brep, f: FaceId, ledger: &mut Ledger<'_>) -> Checked {
+    let Some(s) = at(&b.faces.surface, f.0) else {
+        return Ok(());
+    };
+    let (Some(surface), Some(rows)) = (
+        b.surfaces.surface.get(s.index()),
+        b.surfaces.exact_rows.get(s.index()),
+    ) else {
+        return Ok(());
+    };
+    for r in rows.rows() {
+        // A curve naming nothing is the store's to refuse.
+        let Some(curve) = b.curves3.get(r.curve.index()) else {
+            continue;
+        };
+        charge(ledger, curve.spans().len())?;
+        let equal = curve.spans().iter().enumerate().all(|(k, span)| {
+            let row = i64::try_from(k)
+                .ok()
+                .and_then(|k| r.first.checked_add(k))
+                .and_then(|cell| surface.row(r.along, r.at, cell));
+            row.is_some_and(|row| row.iter().zip(span).all(|(p, q)| same_bits(p, q)))
+        });
+        need(equal, JoinCheck::ExactRows as u32)?;
+    }
+    Ok(())
 }
 
 /// (a): canonical, the range two knots, the curve's points there the

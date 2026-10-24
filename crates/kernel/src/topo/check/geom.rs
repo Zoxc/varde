@@ -61,8 +61,8 @@
 //! injective on its closed domain, by construction: its tiles are its
 //! form's lattice's over a rectangle the lattice admits (the torus domain
 //! rule among its rules). A fitted surface's deviation would be
-//! certified again here or its construction certificate read: fits hold
-//! no intent yet, so a face on a fitted surface is not built.
+//! certified again here from its intent, or its construction certificate
+//! read: neither is built, so a face on a fitted surface is not built.
 //!
 //! **Work.** Every item is charged one unit, one more per coedge, edge,
 //! span, tile or corner read; a seam bound as its refinement charges, a
