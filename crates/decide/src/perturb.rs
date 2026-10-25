@@ -9,7 +9,8 @@
 //! intersection or difference;
 //! `d` the direction field on `A` (the moved-vertex blend of the vertex,
 //! edge, face and ribbon directions, [`dir`]; a vertex group's, a flush
-//! patch's or a saddle partner's direction at a vertex, [`vertex`]);
+//! patch's or a saddle partner's direction at a vertex, [`vertex`]; a
+//! coincidence group's, the same for every member, [`groups`]);
 //! `T₂, T₃, T₄` ([`T`]) fixed, generic,
 //! linearly independent translations of all of `A`. A record's value `g`
 //! then moves as `g + δ·(g₁ + η·g₂ + η²·g₃ + η³·g₄)`, `gₖ` its derivative
@@ -93,6 +94,7 @@ use crate::num::preds;
 use crate::num::schedule::PredKind;
 
 pub mod dir;
+pub mod groups;
 pub mod order_rec;
 pub mod vertex;
 
