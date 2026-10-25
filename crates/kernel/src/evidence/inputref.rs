@@ -13,15 +13,36 @@
 //!
 //! The entities a record key holds ([`Named`]: an operand and an id) are
 //! named so through the operation's leaves ([`ItemName::inputs`]), the
-//! budget profile's exhausting key among them. Entities an operation
-//! made inside itself (split or snapped edges, rim vertices, a batch
-//! node's results) map to their leaves through the operation's own maps;
-//! they are named here once mapped.
+//! budget profile's exhausting key among them.
+//!
+//! **Parts of an entity** ([`Window`]): a sub-edge is its parent edge
+//! with the parameter range it covers ([`InputRef::sub_edge`]); a tile, a
+//! span or a dyadic box of a face is the face with the UV window it
+//! covers ([`InputRef::face_window`]); an edge-pair record (`XRec`,
+//! `OrderRec`) both edges with their parameter boxes ([`edge_pair`]).
+//! The point is then the part's: the curve at the middle of the range,
+//! the surface at the window's centre.
+//!
+//! **Entities an operation made inside itself** map to their leaves
+//! through the operation's own maps, never by distance: a snap's rim
+//! vertices, split or snapped edges and kept or snapped faces through its
+//! [`SnapMap`] to their operand parent and pre-image ([`through_snap`]:
+//! a parameter or range of the parent edge, a point, segment or region of
+//! the parent face's UV); a batch node's results through the node's
+//! history (with the batch).
+//!
+//! **The result's own entities** are named only in warnings, which
+//! describe a result the caller holds: by the result's ids, as the leaf
+//! [`Leaf::RESULT`].
 
 use varde_decide::ids::Entity;
 use varde_decide::num::bounded::Bounded;
 use varde_decide::records::keys::{Named, Operand};
 
+use malachite::Rational;
+use varde_decide::num::storage::nearest;
+
+use crate::boolean::snap::rewrite::{Pre, PreImage, SnapMap};
 use crate::evidence::budget_profile::ItemName;
 use crate::infra::ops::InstanceId;
 use crate::names::{Between, EdgeName, FaceKey, Meet, Name, VertName};
@@ -42,6 +63,10 @@ pub struct Leaf<'a> {
 }
 
 impl<'a> Leaf<'a> {
+    /// The place that stands for the operation's result in an
+    /// [`InputRef`]: a warning naming the result's own entities.
+    pub const RESULT: u32 = u32::MAX;
+
     /// Leaf `index`, the original of its feature.
     pub fn new(index: u32, body: &'a Brep) -> Leaf<'a> {
         Leaf {
@@ -79,8 +104,26 @@ pub struct InputRef {
     /// edge's (a coedge's) curve at the middle of its parameter range, a
     /// loop's first vertex, a face's (a surface's) surface at the centre
     /// of its lattice rectangle, a curve's middle; `None` where the body
-    /// has none.
+    /// has none. A part's point where it names a part.
     pub point: Option<[f64; 3]>,
+    /// The part of the entity it names, if not all of it.
+    pub window: Option<Window>,
+}
+
+/// The part of an input entity an [`InputRef`] names (module docs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Window {
+    /// The stretch of an edge's curve between two parameters, the lesser
+    /// first.
+    Edge {
+        /// The parameter range.
+        t: [f64; 2],
+    },
+    /// The part of a face in a box of its global UV.
+    Face {
+        /// The box's least and greatest corners.
+        uv: [[f64; 2]; 2],
+    },
 }
 
 impl InputRef {
@@ -93,7 +136,50 @@ impl InputRef {
             name: name(b, id),
             id,
             point: point(b, id),
+            window: None,
         }
+    }
+
+    /// The stretch of edge `edge` of `leaf` between parameters `t` (in
+    /// either order): a sub-edge mapped to its parent.
+    pub fn sub_edge(leaf: &Leaf<'_>, edge: EdgeId, t: [f64; 2]) -> InputRef {
+        let t = if t[1] < t[0] { [t[1], t[0]] } else { t };
+        let mut r = InputRef::of(leaf, Entity::Edge(edge));
+        let curve =
+            get(&leaf.body.edges.curve, edge.0).and_then(|c| leaf.body.curves3.get(c.index()));
+        r.point = curve
+            .and_then(|c| c.point_at(t[0] * 0.5 + t[1] * 0.5))
+            .filter(|p| p.iter().all(|x| x.is_finite()));
+        r.window = Some(Window::Edge { t });
+        r
+    }
+
+    /// The part of face `face` of `leaf` in the global UV box `uv`
+    /// (corners in any order): a tile, span or dyadic box of the face.
+    pub fn face_window(leaf: &Leaf<'_>, face: FaceId, uv: [[f64; 2]; 2]) -> InputRef {
+        let lo = [0, 1].map(|k| {
+            if uv[1][k] < uv[0][k] {
+                uv[1][k]
+            } else {
+                uv[0][k]
+            }
+        });
+        let hi = [0, 1].map(|k| {
+            if uv[1][k] < uv[0][k] {
+                uv[0][k]
+            } else {
+                uv[1][k]
+            }
+        });
+        let mut r = InputRef::of(leaf, Entity::Face(face));
+        let b = leaf.body;
+        r.point = get(&b.faces.surface, face.0)
+            .and_then(|s| b.surfaces.surface.get(s.index()))
+            .and_then(|s| s.eval([lo[0] * 0.5 + hi[0] * 0.5, lo[1] * 0.5 + hi[1] * 0.5]))
+            .map(|p| p.map(|x| x.v))
+            .filter(|p| p.iter().all(|x| x.is_finite()));
+        r.window = Some(Window::Face { uv: [lo, hi] });
+        r
     }
 
     /// Entity `id` of the leaf at `index` among `leaves`; unnamed and
@@ -107,6 +193,7 @@ impl InputRef {
                 name: None,
                 id,
                 point: None,
+                window: None,
             },
         }
     }
@@ -127,6 +214,82 @@ impl ItemName {
     }
 }
 
+/// The two edges of an edge-pair record (`XRec`, `OrderRec`) with their
+/// parameter boxes, each through the operation's `leaves` by its
+/// operand.
+pub fn edge_pair(leaves: &[Leaf<'_>], edges: [(Operand, EdgeId, [f64; 2]); 2]) -> [InputRef; 2] {
+    edges.map(|(operand, e, t)| {
+        let index = Leaf::of_operand(operand);
+        match leaves.iter().find(|l| l.index == index) {
+            Some(leaf) => InputRef::sub_edge(leaf, e, t),
+            None => InputRef {
+                window: Some(Window::Edge { t }),
+                ..InputRef::among(leaves, index, Entity::Edge(e))
+            },
+        }
+    })
+}
+
+/// An entity a snap made, named through its pre-image `pre` in the
+/// snap's [`SnapMap`]: its operand parent through the operation's
+/// `leaves`, with the part of the parent it comes from (a parameter or
+/// a range of an edge; a point, a segment or a region of a face's global
+/// UV, as the box of its points, each at its nearest `f64`); the parent
+/// whole for a vertex.
+pub fn through_snap(leaves: &[Leaf<'_>], pre: &Pre) -> InputRef {
+    let (operand, entity) = pre.parent;
+    let index = Leaf::of_operand(operand);
+    let Some(leaf) = leaves.iter().find(|l| l.index == index) else {
+        return InputRef::among(leaves, index, entity);
+    };
+    let uv_box = |pts: &mut dyn Iterator<Item = &[Rational; 2]>| -> Option<[[f64; 2]; 2]> {
+        let mut lo = [f64::INFINITY; 2];
+        let mut hi = [f64::NEG_INFINITY; 2];
+        for p in pts {
+            for k in 0..2 {
+                let x = nearest(&p[k]);
+                if x < lo[k] {
+                    lo[k] = x;
+                }
+                if x > hi[k] {
+                    hi[k] = x;
+                }
+            }
+        }
+        (lo[0] <= hi[0] && lo[1] <= hi[1]).then_some([lo, hi])
+    };
+    match (&pre.at, entity) {
+        (PreImage::Param(t), Entity::Edge(e)) => InputRef::sub_edge(leaf, e, [nearest(t); 2]),
+        (PreImage::Range([a, z]), Entity::Edge(e)) => {
+            InputRef::sub_edge(leaf, e, [nearest(a), nearest(z)])
+        }
+        (PreImage::Point(p), Entity::Face(f)) => {
+            let p = [nearest(&p[0]), nearest(&p[1])];
+            InputRef::face_window(leaf, f, [p, p])
+        }
+        (PreImage::Segment(s), Entity::Face(f)) => match uv_box(&mut s.iter()) {
+            Some(uv) => InputRef::face_window(leaf, f, uv),
+            None => InputRef::of(leaf, entity),
+        },
+        (PreImage::Region(loops), Entity::Face(f)) => match uv_box(&mut loops.iter().flatten()) {
+            Some(uv) => InputRef::face_window(leaf, f, uv),
+            None => InputRef::of(leaf, entity),
+        },
+        _ => InputRef::of(leaf, entity),
+    }
+}
+
+/// Every entity of a snap's map named through its pre-image
+/// ([`through_snap`]): vertices, edges, faces, each in key order.
+pub fn snap_inputs(leaves: &[Leaf<'_>], map: &SnapMap) -> Vec<InputRef> {
+    let pres = map
+        .verts
+        .values()
+        .chain(map.edges.values())
+        .chain(map.faces.values());
+    pres.map(|pre| through_snap(leaves, pre)).collect()
+}
+
 /// What an [`Item`] is to its failure.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -145,6 +308,9 @@ pub enum ItemRole {
     Exhausting,
     /// An input of a construction (a profile curve, a path), by name.
     Construction,
+    /// An entity a repair changed or absorbed: of the result (leaf
+    /// [`Leaf::RESULT`]) or an operand's.
+    Repaired,
     /// A value given, with no entity (the tolerance refused).
     Value,
 }

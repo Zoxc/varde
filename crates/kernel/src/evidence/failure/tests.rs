@@ -468,3 +468,72 @@ fn warnings_evidence_is_kept_on_the_status_which_compares_the_same() {
     assert_eq!(kept, vec![0, 2, 3]);
     assert!(status.warning_evidence().is_none());
 }
+
+/// A repair's evidence names its site's entities (the result's under the
+/// result's leaf, the operands') with the repair's detail and no site;
+/// as a failure it is a storage refusal replayed in full; the allowance
+/// only degrades its items, and a `Repair` warning's evidence rides on
+/// the status without changing it.
+#[test]
+fn a_repair_names_its_site() {
+    let b = cube();
+    let leaf = Leaf::new(0, &b);
+    let result = InputRef {
+        leaf: Leaf::RESULT,
+        ..InputRef::of(&leaf, Entity::Vert(crate::topo::brep::VertId(2)))
+    };
+    let site = vec![
+        result,
+        InputRef::of(&leaf, Entity::Edge(crate::topo::brep::EdgeId(1))),
+    ];
+    let detail = RepairDetail {
+        kind: Repair::Reorder,
+        order: "x(v2) < x(e1) unrounded".into(),
+        chosen: vec![1.0, 1.0 + f64::EPSILON],
+        bound: 2e-16,
+        rounds: None,
+    };
+    let ev = Evidence::of_repair(
+        op(),
+        site.clone(),
+        detail.clone(),
+        &mut Allowance::default(),
+    );
+    assert_eq!(ev.site, Site::None);
+    assert_eq!(ev.items.len(), 2);
+    assert!(ev.items.iter().all(|i| i.role == ItemRole::Repaired));
+    assert_eq!(
+        ev.items[0].subject.as_ref().map(|s| s.leaf),
+        Some(Leaf::RESULT)
+    );
+    assert_eq!(ev.detail, Some(Detail::Repair(Box::new(detail.clone()))));
+    let failed = Failure::of_repair(
+        op(),
+        site.clone(),
+        RepairDetail {
+            rounds: Some(8),
+            ..detail.clone()
+        },
+        &mut Allowance::default(),
+    );
+    assert_eq!(failed.error, KernelError::Unrepresentable(Storage::Repair));
+    assert_eq!(failed.check(), Ok(()));
+    assert_eq!(failed.evidence.replay.kind(), ReplayKind::Full);
+    let poor = Evidence::of_repair(op(), site, detail.clone(), &mut Allowance::new(0));
+    assert_eq!(poor.truncated, 2);
+    let start = OpStart {
+        max_coord: 2.0,
+        rho_op: 0.0,
+    };
+    let mut status = Status::new(Tolerance::DEFAULT, &start);
+    status.warn(Warning::new(WarningKind::Repair(Repair::Reorder), detail.bound).unwrap());
+    let mut s = status.clone();
+    let ev = WarningEvidence::build(
+        &s,
+        &mut Allowance::default(),
+        |_, _| 1,
+        |_, _| Evidence::of_repair(op(), Vec::new(), detail.clone(), &mut Allowance::default()),
+    );
+    s.attach_evidence(ev);
+    assert!(s.same_outcome(&status));
+}

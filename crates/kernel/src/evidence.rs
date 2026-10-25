@@ -16,7 +16,8 @@
 //!   [`Evidence`], whose [`Site`] refines the error's cause; a body's
 //!   check failing, by role ([`Failure::of_check`]).
 //! - [`inputref`]: the input entities evidence names ([`InputRef`]: leaf,
-//!   copy, name, id, a point), and the [`Item`]s it lists.
+//!   copy, name, id, a point, the part named), the mapping of parts and
+//!   of an operation's own entities to them, and the [`Item`]s it lists.
 //! - [`snippet`]: the geometry, faces of the leaves cut out as sheets
 //!   ([`SheetSnippet`]) that pass the check with the failing invariant
 //!   left out.
@@ -33,9 +34,9 @@ pub mod snippet;
 
 pub use failure::{
     AuditSite, BudgetRow, Detail, Evidence, EvidenceDefect, Failure, FullReplay, InternalSite,
-    LadderStep, MAX_EVIDENCE_ITEMS, Replay, ReplayKind, Site, SnapSite,
+    LadderStep, MAX_EVIDENCE_ITEMS, RepairDetail, Replay, ReplayKind, Site, SnapSite,
 };
-pub use inputref::{InputRef, Item, ItemRole, Leaf};
+pub use inputref::{InputRef, Item, ItemRole, Leaf, Window, edge_pair, snap_inputs, through_snap};
 pub use snippet::{CutError, MAX_SNIPPET, Piece, SheetSnippet};
 
 /// The units, as the [`Budget`](crate::Budget)'s, one evidence pass may

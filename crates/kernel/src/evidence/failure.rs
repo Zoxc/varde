@@ -38,7 +38,7 @@ use crate::infra::budget::{Cap, Limit};
 use crate::infra::error::{
     Cause, Inconsistency, Internal, Invalid, KernelError, Storage, Unsupported,
 };
-use crate::infra::ops::{OpCtx, ToleranceOutOfRange};
+use crate::infra::ops::{OpCtx, Repair, ToleranceOutOfRange};
 use crate::topo::brep::{Brep, CoedgeId, EdgeId, FaceId, Member};
 use crate::topo::check::{CheckError, Finding, Inv, Item as CheckItem, Outcome, Role};
 use varde_decide::ids::Entity;
@@ -366,6 +366,29 @@ pub enum Detail {
     /// A tangency cluster no rule settles: its route, bounds and steps,
     /// keys and locators as text.
     Cluster(Box<ClusterEvidence<String, String>>),
+    /// A repair of a rounded result: a `Repair` warning's, or a repair
+    /// failing ([`Storage::Repair`]).
+    Repair(Box<RepairDetail>),
+}
+
+/// What a repair's evidence holds beyond its items, which name the
+/// site's entities (the result's and the operands', role
+/// [`ItemRole::Repaired`]): the repair, the certified unrounded order or
+/// the failing certificate, the values chosen and the achieved bound;
+/// for a repair failing, the rounds tried.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RepairDetail {
+    /// The repair.
+    pub kind: Repair,
+    /// The certified unrounded order the rounding broke, or the
+    /// certificate failing on the stored values, as text.
+    pub order: String,
+    /// The values chosen (stored), in the site's order.
+    pub chosen: Vec<f64>,
+    /// The achieved deviation bound (mm).
+    pub bound: f64,
+    /// The rounds tried, for a repair failing.
+    pub rounds: Option<u32>,
 }
 
 /// How an [`Evidence`] doesn't hold together ([`Failure::check`]).
@@ -424,7 +447,56 @@ impl Evidence {
     }
 }
 
+impl Evidence {
+    /// The evidence of a repair (a `Repair` warning, or with its rounds a
+    /// repair failing) of operation `op`: no site, the entities `site`
+    /// (the result's under [`Leaf::RESULT`], the operands') as items in
+    /// their order, from `allowance`, and `detail`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the repair of rounded results calls it as it lands"
+        )
+    )]
+    pub(crate) fn of_repair(
+        op: OpCtx,
+        site: Vec<InputRef>,
+        detail: RepairDetail,
+        allowance: &mut Allowance,
+    ) -> Evidence {
+        let mut ev = Evidence::new(op, Site::None);
+        let text = format!("repair {:?}", detail.kind);
+        for subject in site {
+            let item = Item::new(Some(subject), ItemRole::Repaired, text.clone());
+            ev.push_item(item, allowance);
+        }
+        ev.detail = Some(Detail::Repair(Box::new(detail)));
+        ev
+    }
+}
+
 impl Failure {
+    /// A repair failing after `detail.rounds` rounds
+    /// ([`Storage::Repair`], cause 3): its evidence as a repair's
+    /// ([`Evidence::of_repair`]), replayed in full.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the repair of rounded results calls it as it lands"
+        )
+    )]
+    pub(crate) fn of_repair(
+        op: OpCtx,
+        site: Vec<InputRef>,
+        detail: RepairDetail,
+        allowance: &mut Allowance,
+    ) -> Failure {
+        let ev = Evidence::of_repair(op, site, detail, allowance);
+        Failure::new(KernelError::Unrepresentable(Storage::Repair), ev, "repair")
+    }
+
     /// The failure of `error` with `evidence`, replayed as the error says
     /// ([`ReplayKind::of`]): a local replay at `stage`.
     pub fn new(error: KernelError, mut evidence: Evidence, stage: &'static str) -> Failure {
