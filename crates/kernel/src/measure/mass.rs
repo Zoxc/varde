@@ -167,6 +167,10 @@ pub(crate) enum Integrand {
     /// The flux `∫ (xₖ − oₖ)·((x − o)·n) dA`: four times the face's
     /// share of the first moment about `o` along axis `k`.
     Moment(usize),
+    /// The flux `∫ (xᵢ − oᵢ)(xⱼ − oⱼ)·((x − o)·n) dA`: five times the
+    /// face's share of the second moment `∫ (xᵢ − oᵢ)(xⱼ − oⱼ) dV` about
+    /// `o`, as `div((xᵢ − oᵢ)(xⱼ − oⱼ)(x − o)) = 5(xᵢ − oᵢ)(xⱼ − oⱼ)`.
+    Second(usize, usize),
     /// The area `∫ dA`.
     Area,
 }
@@ -203,13 +207,25 @@ fn faces_summed(
     let faces: Vec<FaceId> = (0..brep.face_count())
         .map(|f| FaceId(u32::try_from(f).expect("ids below NONE")))
         .collect();
+    faces_summed_over(brep, &faces, o, set, budget)
+}
+
+/// The integrals `set` summed over `faces`, in their order, the faces the
+/// items of one pass on `budget`.
+pub(super) fn faces_summed_over(
+    brep: &Brep,
+    faces: &[FaceId],
+    o: [f64; 3],
+    set: &[Integrand],
+    budget: &Budget,
+) -> Result<Vec<B>, KernelError> {
     let mut work = Work::new(budget);
     let pass = Pass {
         stage: "measure",
         rung: 0,
     };
     let per_face = work
-        .pass(pass, &faces, |&f, ledger| {
+        .pass(pass, faces, |&f, ledger| {
             face_integrals(brep, f, o, set, ledger)
         })
         .map_err(KernelError::from)?;
@@ -224,7 +240,7 @@ fn faces_summed(
 
 /// The centre of the box of every edge curve's control points, the
 /// origin of the integrands; the world origin for a body without edges.
-fn centre(brep: &Brep) -> [f64; 3] {
+pub(super) fn centre(brep: &Brep) -> [f64; 3] {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
     for e in 0..brep.edge_count() {
@@ -395,6 +411,7 @@ pub(crate) fn face_integrals(
             let e = match which {
                 Integrand::Volume => mul_up(area, reach),
                 Integrand::Moment(_) => mul_up(area, mul_up(reach, reach)),
+                Integrand::Second(..) => mul_up(area, pow_up(reach, 3)),
                 Integrand::Area => area,
             };
             *s = s.with_trunc(e);
@@ -487,6 +504,7 @@ fn cells(
         }
     };
     let (nu, nv) = (split(Dir::U), split(Dir::V));
+    let second = set.iter().any(|w| matches!(w, Integrand::Second(..)));
     let mut out = Vec::new();
     let mut lus = Lus::default();
     let mut fits = Fits::default();
@@ -510,7 +528,7 @@ fn cells(
                     let (s_lo, s_hi) = (cut(&u_lo, &u_hi, pu, nu), cut(&u_lo, &u_hi, pu + 1, nu));
                     let clo = [s_lo, r_lo.clone()];
                     let chi = [s_hi, r_hi.clone()];
-                    let forms = Forms::new(tile, [i, j], &clo, &chi, o);
+                    let forms = Forms::new(tile, [i, j], &clo, &chi, o, second);
                     fits.next_cell();
                     let mut g = Vec::with_capacity(set.len());
                     let mut resid = Vec::with_capacity(set.len());
@@ -549,7 +567,7 @@ fn cells(
 }
 
 /// `a` if `c`, else `b`.
-fn pick(c: bool, a: f64, b: f64) -> f64 {
+pub(super) fn pick(c: bool, a: f64, b: f64) -> f64 {
     if c { a } else { b }
 }
 
@@ -570,6 +588,8 @@ struct Forms {
     det: Tensor<B>,
     /// `W`, `W²`, `W³` and `W⁴`.
     w: [Tensor<B>; 4],
+    /// `W⁵`, formed where a second moment is integrated.
+    w5: Option<Tensor<B>>,
     /// A lower bound of `W` on the cell, positive where certified.
     w_min: f64,
     /// `m·m`, `m` the normal numerator with the singular sides' factors
@@ -584,6 +604,7 @@ impl Forms {
         lo: &[Rational; 2],
         hi: &[Rational; 2],
         o: [f64; 3],
+        second: bool,
     ) -> Forms {
         let one = Rational::from(1u32);
         let mut exact = tile.exact();
@@ -637,6 +658,7 @@ impl Forms {
         let w2 = w1.mul(&w1).expect("degree 4");
         let w3 = w2.mul(&w1).expect("degree 6");
         let w4 = w2.mul(&w2).expect("degree 8");
+        let w5 = second.then(|| w4.mul(&w1).expect("degree 10"));
         let w_min = w1.hull().lo;
         let area = patch.normal_numerator().and_then(|n| {
             let m = if sides.is_empty() {
@@ -650,6 +672,7 @@ impl Forms {
             patch,
             det,
             w: [w1, w2, w3, w4],
+            w5,
             w_min,
             area,
         }
@@ -675,7 +698,7 @@ impl Forms {
 
 /// `x` raised to `k`, rounded downwards: a lower bound of the power of
 /// any value at least `x ≥ 0`; 0 for a negative `x`.
-fn pow_down(x: f64, k: u32) -> f64 {
+pub(super) fn pow_down(x: f64, k: u32) -> f64 {
     if x.is_nan() || x <= 0.0 {
         return 0.0;
     }
@@ -687,7 +710,7 @@ fn pow_down(x: f64, k: u32) -> f64 {
 }
 
 /// `x` raised to `k`, rounded upwards.
-fn pow_up(x: f64, k: u32) -> f64 {
+pub(super) fn pow_up(x: f64, k: u32) -> f64 {
     let mut p = 1.0;
     for _ in 0..k {
         p = mul_up(p, x);
@@ -700,14 +723,14 @@ const MAX_FIT: usize = 24;
 
 /// The target of a fit of `1/Wᵏ`: the relative residual `|1 − A·Wᵏ|`,
 /// above the rounding the residual's own coefficients carry.
-const DEN_TAU: f64 = 1.0 / 4_398_046_511_104.0; // 2⁻⁴²
+pub(super) const DEN_TAU: f64 = 1.0 / 4_398_046_511_104.0; // 2⁻⁴²
 
 /// The target of a fit of `√a`, relative to its largest node value.
-const ROOT_TAU: f64 = 1.0 / 17_592_186_044_416.0; // 2⁻⁴⁴
+pub(super) const ROOT_TAU: f64 = 1.0 / 17_592_186_044_416.0; // 2⁻⁴⁴
 
 /// The deepest halving of a residual for its bound (each halving along
 /// the direction of the higher degree).
-const RESID_DEPTH: u32 = 4;
+pub(super) const RESID_DEPTH: u32 = 4;
 
 /// The next degree tried after `k`.
 fn next_degree(k: usize) -> usize {
@@ -718,25 +741,25 @@ fn next_degree(k: usize) -> usize {
 /// A polynomial fit: its Bernstein form, degrees and certified residual
 /// bound.
 #[derive(Clone)]
-struct Fit {
-    p: Tensor<B>,
-    k: [usize; 2],
-    e: f64,
+pub(super) struct Fit {
+    pub(super) p: Tensor<B>,
+    pub(super) k: [usize; 2],
+    pub(super) e: f64,
 }
 
 /// The fits of a face's cells: those of the cell at hand (`1/W³`,
-/// `1/W⁴` and `√a`, each formed once), and the degrees each ended at on
-/// the last cell, where the next cell's search starts.
+/// `1/W⁴`, `√a` and `1/W⁵`, each formed once), and the degrees each
+/// ended at on the last cell, where the next cell's search starts.
 #[derive(Default)]
 struct Fits {
-    start: [[usize; 2]; 3],
-    cell: [Option<Fit>; 3],
+    start: [[usize; 2]; 4],
+    cell: [Option<Fit>; 4],
 }
 
 impl Fits {
     /// Forgets the last cell's fits, keeping their degrees.
     fn next_cell(&mut self) {
-        self.cell = [None, None, None];
+        self.cell = [None, None, None, None];
     }
 
     /// The polynomial standing in for the integrand `which` on the cell
@@ -760,6 +783,13 @@ impl Fits {
                 Some(n) => (n, 4),
                 None => return Ok(none()),
             },
+            Integrand::Second(i, j) => {
+                let t = forms.patch.tensors();
+                match t[i].mul(&t[j]).and_then(|p| p.mul(&forms.det)) {
+                    Some(n) => (n, 5),
+                    None => return Ok(none()),
+                }
+            }
             Integrand::Area => {
                 let Some((a, sides)) = &forms.area else {
                     return Ok(none());
@@ -791,13 +821,19 @@ impl Fits {
         lus: &mut Lus,
         ledger: &mut Ledger<'_>,
     ) -> Result<Fit, Stop<MassError>> {
-        let den = &forms.w[pow as usize - 1];
-        let slot = if pow == 3 { 0 } else { 1 };
+        let (den, slot) = match pow {
+            3 => (&forms.w[2], 0),
+            4 => (&forms.w[3], 1),
+            _ => match &forms.w5 {
+                Some(w5) => (w5, 3),
+                None => unreachable!("W⁵ is formed for the second moments"),
+            },
+        };
         if let Some(f) = &self.cell[slot] {
             return Ok(f.clone());
         }
         let one = Tensor::from_f64(0, 0, &[1.0]).expect("a constant");
-        let fit = search(self.start[slot], ledger, |k| {
+        let fit = search(self.start[slot], 2, ledger, |k| {
             let (a, _) = interpolate(k, lus, |x, y| {
                 let (bx, by) = (B::exact(x), B::exact(y));
                 1.0 / den.eval(&bx, &by).v
@@ -822,7 +858,7 @@ impl Fits {
         if let Some(f) = &self.cell[2] {
             return Ok(f.clone());
         }
-        let fit = search(self.start[2], ledger, |k| {
+        let fit = search(self.start[2], 2, ledger, |k| {
             let (s, scale) = interpolate(k, lus, |x, y| {
                 let v = a.eval(&B::exact(x), &B::exact(y)).v;
                 pick(v > 0.0, v, 0.0).sqrt()
@@ -843,9 +879,12 @@ impl Fits {
 /// within 1024 times the target, three rounds in a row fail to halve
 /// the residual; the best fit found.
 /// `fit` gives the polynomial, its residual bound and its target, `None`
-/// where it can't be formed; each is charged before it is formed.
-fn search(
+/// where it can't be formed; each is charged before it is formed. The
+/// first `dims` directions are raised: `u` alone for a curve's fits
+/// (degree 0 in `v`), both for a surface's.
+pub(super) fn search(
     start: [usize; 2],
+    dims: usize,
     ledger: &mut Ledger<'_>,
     mut fit: impl FnMut([usize; 2]) -> Option<(Tensor<B>, f64, f64)>,
 ) -> Result<Fit, Stop<MassError>> {
@@ -868,7 +907,7 @@ fn search(
     let mut stall = 0;
     while best.e.is_nan() || best.e > target {
         let mut cand: Option<(Fit, f64)> = None;
-        for d in 0..2 {
+        for d in 0..dims {
             if k[d] >= MAX_FIT {
                 continue;
             }
@@ -928,7 +967,7 @@ fn reduced(num: &Tensor<B>) -> (Tensor<B>, f64) {
 /// A bound of `|t|` on `[0, 1]²` towards `target`: its coefficient hull,
 /// or where that is above the target the greater of its halves' bounds,
 /// down to `depth` halvings.
-fn sup_abs(t: &Tensor<B>, target: f64, depth: u32) -> f64 {
+pub(super) fn sup_abs(t: &Tensor<B>, target: f64, depth: u32) -> f64 {
     let h = t.hull().abs_max();
     if h <= target || depth == 0 {
         return h;
@@ -943,7 +982,13 @@ fn sup_abs(t: &Tensor<B>, target: f64, depth: u32) -> f64 {
 
 /// A bound of `|√a − S| = |r|/(√a + S)` (`r = a − S²`) on `[0, 1]²`
 /// towards `target`, halving as [`sup_abs`] does.
-fn sup_root(r: &Tensor<B>, a: &Tensor<B>, s: &Tensor<B>, target: f64, depth: u32) -> f64 {
+pub(super) fn sup_root(
+    r: &Tensor<B>,
+    a: &Tensor<B>,
+    s: &Tensor<B>,
+    target: f64,
+    depth: u32,
+) -> f64 {
     let (a_lo, s_lo) = (a.hull().lo, s.hull().lo);
     let root = if a_lo > 0.0 { down(a_lo.sqrt()) } else { 0.0 };
     let den = down(root + pick(s_lo > 0.0, s_lo, 0.0));
@@ -974,7 +1019,7 @@ fn fit_units(k: [usize; 2]) -> u64 {
 /// The polynomial of degrees `k` interpolating `f` at the
 /// Chebyshev–Lobatto points, and the largest `|f|` there; `None` where a
 /// value isn't finite or a solve fails.
-fn interpolate(
+pub(super) fn interpolate(
     k: [usize; 2],
     lus: &mut Lus,
     f: impl Fn(f64, f64) -> f64,
@@ -1054,7 +1099,7 @@ fn lobatto(k: usize) -> Vec<f64> {
 
 /// The Bernstein–Vandermonde factorisations by degree, formed once.
 #[derive(Default)]
-struct Lus(Vec<Option<Option<Lu>>>);
+pub(super) struct Lus(Vec<Option<Option<Lu>>>);
 
 impl Lus {
     fn get(&mut self, k: usize) -> Option<&Lu> {
@@ -1368,7 +1413,7 @@ fn span_units(d: usize) -> u64 {
 
 /// The mean of a polynomial's Bernstein coefficients: its integral over
 /// `[0, 1]`.
-fn mean(p: &Poly<B>) -> B {
+pub(super) fn mean(p: &Poly<B>) -> B {
     let mut s = B::exact(0.0);
     for c in p.coefs() {
         s = s + *c;
