@@ -318,10 +318,13 @@ fn seam_cells(budget: Duration, rows: &mut Vec<Row>) {
 }
 
 /// The adjacent pairs' certificates at each level, 8 to a piece (a
-/// depth of 3 halvings): field cells and the strips' boxes against the
-/// ruled surface on the quarter arc and on a straight edge, against the
-/// plane on the arc, sector boxes at a corner.
+/// depth of 3 halvings): field cells on a bend across a cylinder, on its
+/// ruling and on a quarter arc of a plane (the dearest on two planes),
+/// the strips' boxes against the ruled surface on the bend and the
+/// ruling, against the curve's plane on the arc and on a straight edge
+/// of the plane, sector boxes at a corner.
 fn adjacent_rows(budget: Duration, rows: &mut Vec<Row>) {
+    use adjacent::Which::{Arc, Bend, Line, Ruling};
     let f = adjacent::fixture();
     for level in 0..LEVELS as u8 {
         let l = usize::from(level);
@@ -333,16 +336,20 @@ fn adjacent_rows(budget: Duration, rows: &mut Vec<Row>) {
                 units: units as f64,
             })
         };
-        let ns = time(budget, || adjacent::field_cells(&f, level, 3, false));
+        let ns = time(budget, || adjacent::field_cells(&f, level, 3, Bend));
         row("field", ns, u.field[l]);
-        let ns = time(budget, || adjacent::field_cells(&f, level, 3, true));
+        let ns = time(budget, || adjacent::field_cells(&f, level, 3, Ruling));
         row("field low", ns, u.field_low[l]);
-        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, false, false));
+        let ns = time(budget, || adjacent::field_cells(&f, level, 3, Arc));
+        row("field flat", ns, u.field_flat[l]);
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, false, Bend));
         row("sign", ns, u.sign[l]);
-        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, false, true));
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, false, Ruling));
         row("sign low", ns, u.sign_low[l]);
-        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, true, false));
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, true, Arc));
         row("plane", ns, u.plane[l]);
+        let ns = time(budget, || adjacent::sign_boxes(&f, level, 3, true, Line));
+        row("plane low", ns, u.plane_low[l]);
         let ns = time(budget, || adjacent::sector_boxes(&f, level, 3));
         row("sector", ns, u.sector[l]);
     }

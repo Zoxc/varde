@@ -10,6 +10,9 @@ publish = false
 # Development builds: `Unsupported::Stage`, for the cases the kernel's
 # current stage of development leaves out. A release build has none.
 staging = []
+# Test support for other crates' tests: bodies from closed triangle
+# meshes (`build::polyhedron`). No release build turns it on.
+testkit = []
 
 [dependencies]
 varde-decide.workspace = true

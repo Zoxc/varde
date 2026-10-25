@@ -285,8 +285,12 @@ pub struct AdjacentUnits {
     /// their p-curves, the field and its two products with them formed,
     /// the strips' tiles chosen on the cell's control values.
     pub field: [u64; LEVELS],
-    /// The same where both faces' spans are linear or iso.
+    /// The same where both faces' spans are linear or iso and the faces
+    /// lie on curved surfaces.
     pub field_low: [u64; LEVELS],
+    /// The same on two planes: each face's normal one value, so the field
+    /// and its products constants.
+    pub field_flat: [u64; LEVELS],
     /// A box of an edge face's strip against the ruled surface where a
     /// face's span is quadratic in a coordinate: the spans restricted to
     /// it, the tile over the strip's map, the field halved down to it and
@@ -295,9 +299,12 @@ pub struct AdjacentUnits {
     pub sign: [u64; LEVELS],
     /// The same where both faces' spans are linear or iso.
     pub sign_low: [u64; LEVELS],
-    /// A box of an edge face's strip against the curve's plane: the tile
-    /// over the strip's map in the plane's equation.
+    /// A box of an edge face's strip against the curve's plane where a
+    /// face's span is quadratic in a coordinate: the tile over the strip's
+    /// map in the plane's equation.
     pub plane: [u64; LEVELS],
+    /// The same where both faces' spans are linear or iso.
+    pub plane_low: [u64; LEVELS],
     /// A box of a vertex sector: the tile over the sector's triangle in
     /// the plane's equation.
     pub sector: [u64; LEVELS],
@@ -541,9 +548,13 @@ impl RecordUnits {
 /// boxes meeting most (the hits, past the tests). A direction's solves,
 /// checks and pivots are measured on vertex stars of random `f64` normals
 /// (three faces, and pyramids of four and six) and on a group's chain of
-/// edges. The adjacent pairs' cells and boxes are measured on a quarter
-/// arc's edge and a straight one's on a plane, both faces on it, and on a
-/// corner's sector there.
+/// edges. The adjacent pairs' cells and boxes are measured with both
+/// faces on one surface: on a quarter arc's edge and a straight one's on
+/// a plane (two planes' rows, and the curve's plane), on a cylinder's
+/// ruling (linear spans on a curved surface), and on a corner's sector on
+/// the plane; the quadratic rows on curved surfaces were measured on the
+/// arc before the planes' rows split off (a bend across the cylinder now
+/// takes up to 1.7 times as long, within the drift).
 pub const UNITS: Units = Units {
     seam_cell: [190, 310, 840, 890, 1060],
     implicit_cell: ImplicitUnits {
@@ -639,10 +650,12 @@ pub const UNITS: Units = Units {
     },
     adjacent: AdjacentUnits {
         field: [5900, 9600, 25800, 27700, 34300],
-        field_low: [2800, 4200, 11000, 11800, 13600],
+        field_low: [700, 3100, 8000, 9100, 10800],
+        field_flat: [120, 180, 530, 610, 650],
         sign: [2400, 3800, 9700, 10200, 12100],
-        sign_low: [1000, 1350, 4000, 4300, 4900],
+        sign_low: [370, 490, 1510, 1570, 1770],
         plane: [1100, 1550, 4000, 4400, 5400],
+        plane_low: [350, 510, 1830, 2060, 2430],
         sector: [300, 410, 1550, 1700, 2000],
     },
 };

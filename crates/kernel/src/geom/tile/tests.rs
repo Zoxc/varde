@@ -335,6 +335,40 @@ fn a_plane_tile_has_the_plane_normal() {
     assert!(c.sin < 1e-5, "{c:?}");
 }
 
+/// An oblique plane's tile is flat: its numerator's one value holds the
+/// exact numerator everywhere on the tile; a cylinder's tile isn't flat.
+#[test]
+fn a_plane_tile_is_flat_and_a_cylinder_tile_is_not() {
+    use crate::geom::form::PlaneKey;
+    use crate::geom::lattice::Lattice;
+    use crate::geom::surface::Surface;
+    let key = PlaneKey::new([1.0, 2.0, 3.0], [7.0, -1.0, 0.5]).unwrap();
+    let lattice = Lattice::new(key.into()).unwrap();
+    let rect = lattice.half(0).unwrap();
+    let surface = Surface::new(lattice, rect).unwrap();
+    let tile = &surface.tiles()[0];
+    let flat = tile.flat_normal().expect("flat");
+    let n = exact(tile).normal_numerator().expect("in range");
+    let mut rng = Rng::new(11);
+    for _ in 0..20 {
+        let (u, v) = (q(rng.range(0.0, 1.0)), q(rng.range(0.0, 1.0)));
+        for k in 0..3 {
+            holds("flat normal", &flat[k], &n[k].eval(&u, &v));
+        }
+    }
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let arc = [
+        (DVec3::new(10.0, 0.0, 0.0), 1.0),
+        (DVec3::new(10.0, 10.0, 0.0), s),
+        (DVec3::new(0.0, 10.0, 0.0), 1.0),
+    ];
+    let net = std::array::from_fn(|k| {
+        let (p, w) = arc[k / 3];
+        affine(p + DVec3::Z * (2.0 * (k % 3) as f64), w)
+    });
+    assert_eq!(Tile::new(net).unwrap().flat_normal(), None);
+}
+
 #[test]
 fn a_cylinder_tile_is_regular() {
     // A quarter of a cylinder about z, radius 10 and height 4.

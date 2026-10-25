@@ -313,13 +313,13 @@ fn dimension() -> KernelError {
 
 /// A primitive's own defect: a construction the validated input should
 /// always allow failed.
-fn defect() -> KernelError {
+pub(super) fn defect() -> KernelError {
     KernelError::Internal(Internal::Inconsistent(Inconsistency::ResultDefect))
 }
 
 /// A key the validated input should always give: `OutOfRange` where a
 /// parameter rounds past the range, else the primitive's defect.
-fn form<K>(k: Result<K, FormError>) -> Result<K, KernelError> {
+pub(super) fn form<K>(k: Result<K, FormError>) -> Result<K, KernelError> {
     k.map_err(|e| match e {
         FormError::Range | FormError::NotFinite => {
             KernelError::Unrepresentable(Storage::OutOfRange)
@@ -330,7 +330,7 @@ fn form<K>(k: Result<K, FormError>) -> Result<K, KernelError> {
 
 /// A lattice or surface: `OutOfRange` where a value rounds past the
 /// range, else the primitive's defect.
-fn lattice<T>(r: Result<T, LatticeError>) -> Result<T, KernelError> {
+pub(super) fn lattice<T>(r: Result<T, LatticeError>) -> Result<T, KernelError> {
     r.map_err(|e| match e {
         LatticeError::Range => KernelError::Unrepresentable(Storage::OutOfRange),
         _ => defect(),
@@ -344,7 +344,7 @@ fn curve<T, E>(r: Result<T, E>) -> Result<T, KernelError> {
 
 /// A builder's refusal: running out of budget as it is, else the
 /// primitive's defect.
-fn built(e: BuildError) -> KernelError {
+pub(super) fn built(e: BuildError) -> KernelError {
     match e {
         BuildError::OutOfBudget(e) => e,
         _ => defect(),
@@ -389,7 +389,7 @@ fn half_circle(c: &[f64; 3], e: &[[f64; 3]; 3], r: f64, from: i64) -> Curve3D {
 
 /// The line from `a` to `b`, its middle control point rounded, knots
 /// `0, 1`.
-fn line(a: [f64; 3], b: [f64; 3]) -> Curve3D {
+pub(super) fn line(a: [f64; 3], b: [f64; 3]) -> Curve3D {
     let m = [0, 1, 2].map(|k| nearest(&((q(a[k]) + q(b[k])) / Rational::from(2u32))));
     let pt = |p: [f64; 3]| [p[0], p[1], p[2], 1.0];
     Curve3D::new(vec![[pt(a), pt(m), pt(b)]], vec![0.0, 1.0]).expect("a line")
@@ -437,7 +437,7 @@ fn iso(fixed: Dir, at: f64, a: f64, b: f64, t: f64) -> PCurve {
 
 /// A plane's global UV of `x`: `(x − o)·axis/CELL + ½` per axis, exact
 /// and rounded once.
-fn plane_uv(l: &Lattice, x: &[f64; 3]) -> [f64; 2] {
+pub(super) fn plane_uv(l: &Lattice, x: &[f64; 3]) -> [f64; 2] {
     let (o, axes) = (l.origin(), l.axes());
     let half = Rational::from_signeds(1i32, 2i32);
     let cell = q(CELL);

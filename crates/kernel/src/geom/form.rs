@@ -271,6 +271,49 @@ impl PlaneKey {
         Ok(PlaneKey { normal, offset })
     }
 
+    /// The plane through the points `p`, not on one line: its normal the
+    /// exact `(p₁ − p₀) × (p₂ − p₀)`, its offset the exact `n̂·p₀`, each
+    /// rounded once. Three points of one exact plane, in either turn,
+    /// give the same key; [`FormError::ZeroDirection`] for points on one
+    /// line.
+    pub fn through(p: [[f64; 3]; 3]) -> Result<PlaneKey, FormError> {
+        uncharged(|m| PlaneKey::through_metered(p, m))
+    }
+
+    /// [`through`](Self::through), each parameter's rounding charged to
+    /// `m`.
+    pub(crate) fn through_metered<C: Charge>(
+        p: [[f64; 3]; 3],
+        m: &mut KeyMeter<'_, C>,
+    ) -> Built<PlaneKey, C> {
+        for x in &p {
+            finite(x)?;
+        }
+        let e = p.map(|x| x.map(Expr::Lit));
+        let d =
+            |i: usize| -> [Expr; 3] { std::array::from_fn(|k| e[i][k].clone() - e[0][k].clone()) };
+        let (a, b) = (d(1), d(2));
+        let x = |i: usize, j: usize| a[i].clone() * b[j].clone() - a[j].clone() * b[i].clone();
+        let n = [x(1, 2), x(2, 0), x(0, 1)];
+        let nn = Expr::dot(&n, &n);
+        if nn.at(&Rational::ZERO) == 0u32 {
+            return Err(FormError::ZeroDirection.into());
+        }
+        let mut normal = [0.0; 3];
+        for (c, n) in normal.iter_mut().zip(&n) {
+            *c = m
+                .irrational(&Quadratic::ratio(n.clone(), nn.clone()))
+                .map_err(KeyError::Budget)?;
+        }
+        let offset = Quadratic::ratio(Expr::dot(&n, &e[0]), nn);
+        let offset = m.irrational(&offset).map_err(KeyError::Budget)?;
+        stored(&normal)?;
+        stored(&[offset])?;
+        let (normal, flip) = sign_rule(normal);
+        let offset = zero(if flip { -offset } else { offset });
+        Ok(PlaneKey { normal, offset })
+    }
+
     /// The unit normal `n`, first non-zero component positive.
     #[inline]
     pub fn normal(&self) -> [f64; 3] {

@@ -89,6 +89,26 @@ fn constructions_of_one_form_agree() {
     assert_eq!(a.axis(), [0.6, 0.0, 0.8]);
 }
 
+/// A plane through three points is their exact plane rounded once: any
+/// three of its points, in either turn, give the same key, the key of
+/// its exact normal.
+#[test]
+fn a_plane_through_three_points_is_their_exact_plane() {
+    let a = PlaneKey::through([[0.0, 0.0, 5.0], [1.0, 0.0, 5.0], [0.0, 1.0, 5.0]]).unwrap();
+    let b = PlaneKey::new([0.0, 0.0, 1.0], [0.0, 0.0, 5.0]).unwrap();
+    assert_eq!(bits(&a.into()), bits(&b.into()));
+    // On x + 2y + 3z = 6.
+    let a = PlaneKey::through([[6.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 2.0]]).unwrap();
+    let b = PlaneKey::through([[1.0, 1.0, 1.0], [0.0, 0.0, 2.0], [4.0, 1.0, 0.0]]).unwrap();
+    let c = PlaneKey::new([1.0, 2.0, 3.0], [6.0, 0.0, 0.0]).unwrap();
+    assert_eq!(bits(&a.into()), bits(&b.into()));
+    assert_eq!(bits(&a.into()), bits(&c.into()));
+    assert_eq!(
+        PlaneKey::through([[0.0; 3], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]).unwrap_err(),
+        FormError::ZeroDirection
+    );
+}
+
 #[test]
 fn zeros_and_signs_are_canonical_after_rounding() {
     // A sphere given a −0 centre component is the sphere at +0.

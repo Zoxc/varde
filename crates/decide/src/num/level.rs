@@ -40,8 +40,10 @@ use crate::perturb::Curved;
 
 /// A value at one of the schedule's precision levels (module docs): a
 /// [`Bounded`] `f64`, double-double or big-float, with the operations
-/// every curved computation is written in.
-pub trait LevelScalar: Curved + Coeff {
+/// every curved computation is written in. Owned (`'static`), so a
+/// computation generic over the level can read a first-level cache by
+/// its type.
+pub trait LevelScalar: Curved + Coeff + 'static {
     /// The level the value is at.
     fn level(&self) -> Level;
 
@@ -74,7 +76,7 @@ impl LevelScalar for Bounded<Dd> {
     }
 }
 
-impl<B: BigF> LevelScalar for Bounded<B> {
+impl<B: BigF + 'static> LevelScalar for Bounded<B> {
     #[inline]
     fn level(&self) -> Level {
         Level::of_width(self.v.width())

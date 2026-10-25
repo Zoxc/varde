@@ -312,11 +312,14 @@ fn sign_degrees(edge: &Edge<'_>, strip: &Strip) -> [(usize, usize); 2] {
 }
 
 /// Quadratic p-curve spans on both faces and a conic curve give the
-/// sign function of degrees (28, 4): the field 16, the strip 8 (and 4 in
-/// `s`, the strip moving both coordinates), the curve 2 and its tangent
-/// 2. A straight UV line on the support and an iso line on the fillet,
-/// along a straight curve, give lower degrees, each from its operands:
-/// the field 8 (the line's), the curve 2 and its constant tangent 0, the
+/// sign function of degrees (28, 4) on curved faces: the field 16, the
+/// strip 8 (and 4 in `s`, the strip moving both coordinates), the curve 2
+/// and its tangent 2; on two planes the field is a constant (each
+/// normal its tile's one value), so (12, 4). A straight UV line on the
+/// support and an iso line on the fillet, along a straight curve, give
+/// lower degrees, each from its operands:
+/// the field 4 (the cylinder's normal along its line; the plane's is a
+/// constant), the curve 2 and its constant tangent 0, the
 /// strip 4 on the plane and 2 on the cylinder (whose strip moves `u`
 /// alone, so 2 in `s`).
 #[test]
@@ -353,13 +356,13 @@ fn degrees_are_computed_from_the_spans() {
     let strip = Strip {
         width: [1.0 / 1_048_576.0; 2],
     };
-    assert_eq!(sign_degrees(&edge, &strip), [(28, 4); 2]);
+    assert_eq!(sign_degrees(&edge, &strip), [(12, 4); 2]);
 
     let f = fillet(0.25, true, (1.0, 0.0));
     let (edge, fillet_side) = f.edge();
     let d = sign_degrees(&edge, &f.strip());
-    assert_eq!(d[fillet_side], (2 + 2 + 8, 2));
-    assert_eq!(d[1 - fillet_side].0, 4 + 2 + 8);
+    assert_eq!(d[fillet_side], (2 + 2 + 4, 2));
+    assert_eq!(d[1 - fillet_side].0, 4 + 2 + 4);
 }
 
 // ---------------------------------------------------------------------

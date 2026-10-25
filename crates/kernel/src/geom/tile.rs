@@ -122,6 +122,13 @@
 //! carried, from double-double up exact but for the sum's rounding.
 //! Every caller of the cone, at every level, uses this frame.
 //!
+//! **Flat tiles.** Where the numerator the fold check reads is constant
+//! to within [`FLAT`] of its size (a plane's tile, its net rounded), it is
+//! also read as one value per component with the spread as its error
+//! ([`Tile::flat_normal`]): every value over the tile lies within it, so
+//! a certificate reading only the normal's values (its sign against a
+//! field, the angle between two faces) reads that one value.
+//!
 //! **The patch trait.** A tile is a [`Patch`] at every level: its net
 //! formed at the level ([`Tile::patch_at`]; at the first level the cached
 //! patch and numerator), a corner's point its control point exactly, the
@@ -141,7 +148,7 @@ use varde_decide::bezier::{
     Axis, Closest, ConeFail, Dir, HomPatch, HullBox, Partials, Poly, Scalar, Side, Sides,
     SingularSides, Tensor,
 };
-use varde_decide::num::bounded::Bounded;
+use varde_decide::num::bounded::{Bounded, up};
 use varde_decide::num::expansion::two_sum;
 use varde_decide::num::level::{AtLevel, LevelScalar, at_level, ladder};
 use varde_decide::num::schedule::{LEVELS, Level, UNITS};
@@ -171,6 +178,11 @@ pub type Net = [[f64; 4]; 9];
 /// pieces.
 pub const MAX_CONE_DEPTH: u32 = 3;
 
+/// The most a flat tile's normal numerator spreads, per component,
+/// relative to its largest component ([`Tile::flat_normal`]): `2⁻²⁶`,
+/// far above a plane's rounding and far below any curved tile's turn.
+pub const FLAT: f64 = 1.0 / 67_108_864.0;
+
 /// A tile's patch at the first precision level.
 pub type FirstLevelPatch = HomPatch<Bounded<f64>>;
 
@@ -198,6 +210,11 @@ pub struct Tile {
     /// The homogeneous partials in `u` and `v`.
     partials: OnceLock<[FirstLevelPatch; 2]>,
     numerator: OnceLock<[Tensor<Bounded<f64>>; 3]>,
+    /// The fold check's numerator at the first level, at its true
+    /// degrees.
+    fold_reduced: OnceLock<Option<[Tensor<Bounded<f64>>; 3]>>,
+    /// That numerator as one value where it is that close to constant.
+    flat: OnceLock<Option<[Bounded<f64>; 3]>>,
     cone: OnceLock<Cone>,
     /// The fold check's exact part.
     fold: OnceLock<Fold>,
@@ -263,6 +280,8 @@ impl Tile {
             kappa_w: kappa(net.iter().map(|p| p[3])),
             partials: OnceLock::new(),
             numerator: OnceLock::new(),
+            fold_reduced: OnceLock::new(),
+            flat: OnceLock::new(),
             cone: OnceLock::new(),
             fold: OnceLock::new(),
         })
@@ -275,6 +294,8 @@ impl Tile {
     pub fn with_singular(mut self, sides: Sides) -> Tile {
         if sides != self.sides {
             self.sides = sides;
+            self.fold_reduced = OnceLock::new();
+            self.flat = OnceLock::new();
             self.cone = OnceLock::new();
             self.fold = OnceLock::new();
         }
@@ -541,6 +562,67 @@ impl Tile {
     /// ([`fold_stops`](Self::fold_stops)).
     pub fn fold_numerator_at<S: Scalar>(&self, like: &S) -> Option<[Tensor<S>; 3]> {
         self.fold_of(numerator(&self.framed(like)))
+    }
+
+    /// [`fold_numerator_at`](Self::fold_numerator_at) reduced to its
+    /// true degrees where it is an elevation (in `u`, then in `v`; as it
+    /// is where either doesn't reduce): of degrees `(0, 0)` on a plane's
+    /// tile. At the first level computed once.
+    pub fn fold_numerator_reduced_at<S: Scalar + 'static>(
+        &self,
+        like: &S,
+    ) -> Option<[Tensor<S>; 3]> {
+        fn reduced<S: Scalar>(n: [Tensor<S>; 3]) -> [Tensor<S>; 3] {
+            let reduce = |f: &Tensor<S>| f.reduced(Dir::U)?.reduced(Dir::V);
+            match [reduce(&n[0]), reduce(&n[1]), reduce(&n[2])] {
+                [Some(a), Some(b), Some(c)] => [a, b, c],
+                _ => n,
+            }
+        }
+        let first = self.fold_reduced.get_or_init(|| {
+            let n = self.fold_of(self.normal_numerator().clone())?;
+            Some(reduced(n))
+        });
+        match first_level::<_, Option<[Tensor<S>; 3]>>(first) {
+            Some(n) => n.clone(),
+            None => self.fold_numerator_at(like).map(reduced),
+        }
+    }
+
+    /// The numerator the fold check reads, at the first level, as one
+    /// value per component where it is that close to constant: the middle
+    /// `c` of its coefficients' enclosures, with the farthest any of them
+    /// reaches from `c` as its error. Every value of the numerator over
+    /// the tile lies in the coefficients' convex hull, so in it. `None`
+    /// where a component's spread passes [`FLAT`] of the largest middle
+    /// (a curved tile) or the fold check stops. A plane's tile is flat to
+    /// its net's rounding. Computed once.
+    pub fn flat_normal(&self) -> Option<[Bounded<f64>; 3]> {
+        *self.flat.get_or_init(|| {
+            let n = self.fold_numerator_reduced_at(&Bounded::exact(0.0))?;
+            let parts = n.each_ref().map(|t| {
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for c in t.coefs() {
+                    let [a, b] = c.enclose();
+                    if a < lo {
+                        lo = a;
+                    }
+                    if b > hi {
+                        hi = b;
+                    }
+                }
+                let c = lo * 0.5 + hi * 0.5;
+                let (a, b) = (up(c - lo), up(hi - c));
+                (c, if a > b { a } else { b })
+            });
+            let big = parts
+                .iter()
+                .fold(0.0f64, |m, &(c, _)| if c.abs() > m { c.abs() } else { m });
+            let flat = parts
+                .iter()
+                .all(|&(c, e)| c.is_finite() && e.is_finite() && e <= FLAT * big);
+            (flat && big > 0.0).then(|| parts.map(|(c, e)| Bounded::exact(c).with_trunc(e)))
+        })
     }
 
     /// The normal numerator `n` divided by the singular sides' factors;

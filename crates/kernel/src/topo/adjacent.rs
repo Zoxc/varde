@@ -24,7 +24,10 @@
 //!   to a factor √2 it would tilt `m` out of the normals at creases past
 //!   about 110°): rational, of degree `4k_u +
 //!   4k_v` for a span of degrees `(k_u, k_v)`, the higher of the two
-//!   faces' (16 for Q spans), constructed once per cell: its Bernstein
+//!   faces' (16 for Q spans); on a flat tile (a plane's) the numerator is
+//!   its one value, which holds every value over the tile
+//!   ([`Tile::flat_normal`]), so between two planes `m` is a constant;
+//!   constructed once per cell: its Bernstein
 //!   coefficients rounded once to `f64`, the field the strips read being
 //!   that polynomial exactly. It is required between the two normals:
 //!   `m·N₁ > 0` and `m·N₂ > 0`, certified by Bernstein signs. A cell where
@@ -128,7 +131,10 @@
 //! rounding decides (its values settled but its enclosures not), else is
 //! halved; each is charged before it runs (the unit table's
 //! [`adjacent`](varde_decide::num::schedule::Units::adjacent) row, a
-//! precision step above the first level). A cell still open at the top
+//! precision step above the first level: a field cell's by whether both
+//! faces lie on planes, else whether a span is quadratic; a box's by
+//! whether a span is quadratic). A tile's numerator at the first level is
+//! formed once, the tile's own ([`Tile::fold_numerator_reduced_at`]). A cell still open at the top
 //! level stops the certificate at [`Cap::PrecisionBits`], one past
 //! [`MAX_SUBDIV_DEPTH`] halvings at [`Cap::SubdivisionDepth`]. Cells and
 //! boxes run depth first in `t` order, then `s`, the face whose coedge
@@ -149,6 +155,7 @@ use super::brep::{Brep, CoedgeId, EdgeId, EdgeKind, FaceId, SurfId, VertId, Vert
 use super::check::{Cx, Fault, Finding, Invariant, Item, ItemKind};
 use crate::geom::certify::restrict;
 use crate::geom::curve::{Curve3D, local};
+use crate::geom::form::FormKey;
 use crate::geom::pcurve::{PCurve, PSpan};
 use crate::geom::surface::Surface;
 use crate::geom::tile::Tile;
@@ -740,7 +747,9 @@ pub(crate) fn certify_edge(
             level: 0,
         }];
         while let Some(cell) = cells.pop() {
-            let row = if quadratic(edge, piece) {
+            let row = if flat(edge) {
+                &UNITS.adjacent.field_flat
+            } else if quadratic(edge, piece) {
                 &UNITS.adjacent.field
             } else {
                 &UNITS.adjacent.field_low
@@ -783,6 +792,15 @@ fn quadratic(edge: &Edge<'_>, piece: &Piece) -> bool {
     (0..2).any(|i| {
         let span = &edge.sides[i].pcurve.spans()[piece.sp[i]];
         span.degrees().contains(&2)
+    })
+}
+
+/// Whether both faces lie on planes, their normals their tiles' one
+/// values ([`Tile::flat_normal`]): the cheapest row of the unit table.
+fn flat(edge: &Edge<'_>) -> bool {
+    edge.sides.iter().all(|s| {
+        matches!(s.surface.lattice().key(), FormKey::Plane(_))
+            && s.surface.tiles().iter().all(|t| t.flat_normal().is_some())
     })
 }
 
@@ -1013,14 +1031,11 @@ fn strip_width(range: [[f64; 2]; 2], tile: (i64, i64), nu: [f64; 2], width: f64)
 }
 
 /// The tile's normal numerator the fold check reads at `like`'s level,
-/// reduced to its true degrees where it is an elevation (module docs).
-fn numerator<S: Scalar>(tile: &Tile, like: &S) -> Option<[Tensor<S>; 3]> {
-    let n = tile.fold_numerator_at(like)?;
-    let reduce = |f: &Tensor<S>| f.reduced(Dir::U)?.reduced(Dir::V);
-    match [reduce(&n[0]), reduce(&n[1]), reduce(&n[2])] {
-        [Some(a), Some(b), Some(c)] => Some([a, b, c]),
-        _ => Some(n),
-    }
+/// reduced to its true degrees where it is an elevation (module docs),
+/// at the first level the tile's own, computed once
+/// ([`Tile::fold_numerator_reduced_at`]).
+fn numerator<S: Scalar + 'static>(tile: &Tile, like: &S) -> Option<[Tensor<S>; 3]> {
+    tile.fold_numerator_reduced_at(like)
 }
 
 /// A coordinate span moved to tile index `i`'s local coordinate.
@@ -1030,23 +1045,31 @@ fn moved<S: Scalar>(x: &HomCurve<S, 1>, i: i64, like: &S) -> HomCurve<S, 1> {
 }
 
 /// Face `side`'s outward normal numerator along its p-curve span `p` on
-/// tile `(i, j)`.
-fn normal_along<S: Scalar>(
+/// tile `(i, j)`; on a flat tile its one value ([`Tile::flat_normal`]),
+/// a constant whose error holds every value over the tile.
+fn normal_along<S: LevelScalar>(
     side: &Side<'_>,
     tile: &Tile,
     (i, j): (i64, i64),
     p: &[HomCurve<S, 1>; 2],
     like: &S,
 ) -> Option<[Poly<S>; 3]> {
-    let n = numerator(tile, like)?;
-    let (pu, pv) = (moved(&p[0], i, like), moved(&p[1], j, like));
-    let u = [&pu.coords()[0], pu.weights()];
-    let v = [&pv.coords()[0], pv.weights()];
-    let a = [
-        n[0].compose_params(u, v)?,
-        n[1].compose_params(u, v)?,
-        n[2].compose_params(u, v)?,
-    ];
+    let a = match tile.flat_normal() {
+        Some(n) => {
+            n.map(|c| Poly::new([S::from_f64(c.v, like).widened(c.err())]).expect("a constant"))
+        }
+        None => {
+            let n = numerator(tile, like)?;
+            let (pu, pv) = (moved(&p[0], i, like), moved(&p[1], j, like));
+            let u = [&pu.coords()[0], pu.weights()];
+            let v = [&pv.coords()[0], pv.weights()];
+            [
+                n[0].compose_params(u, v)?,
+                n[1].compose_params(u, v)?,
+                n[2].compose_params(u, v)?,
+            ]
+        }
+    };
     Some(if side.flipped { a.map(|x| x.neg()) } else { a })
 }
 
@@ -1693,7 +1716,11 @@ impl SignFn for EdgeStrip<'_, '_> {
 
     fn units(&self, level: u8) -> u64 {
         let row = if self.plane {
-            &UNITS.adjacent.plane
+            if quadratic(self.edge, self.piece) {
+                &UNITS.adjacent.plane
+            } else {
+                &UNITS.adjacent.plane_low
+            }
         } else if quadratic(self.edge, self.piece) {
             &UNITS.adjacent.sign
         } else {
@@ -2241,19 +2268,41 @@ fn end_span(p: &PCurve, reversed: bool, end: bool) -> Option<PSpan> {
 #[doc(hidden)]
 pub mod calibration {
     use super::*;
-    use crate::geom::form::PlaneKey;
+    use crate::geom::form::{CylinderKey, PlaneKey};
+    use crate::geom::forms::cyl;
     use crate::geom::lattice::{CELL, Lattice};
 
     /// An edge along a quarter circle of radius 50 on the plane `z = 0`
-    /// (quadratic spans on both faces, a conic curve: sign functions of
-    /// degrees (28, 4)), and a corner's germ on the plane.
+    /// (quadratic spans on both faces, a conic curve), a straight edge on
+    /// the plane, a ruling of a cylinder of radius 50 (iso spans on a
+    /// curved surface), a bend across the cylinder (quadratic spans on a
+    /// curved surface: sign functions of degrees (28, 4)), and a corner's
+    /// germ on the plane.
     pub struct Fixture {
         surface: Surface,
         curve: Curve3D,
         pcurve: PCurve,
         line: Curve3D,
         on_line: PCurve,
+        cylinder: Surface,
+        ruling: Curve3D,
+        on_ruling: PCurve,
+        bend: Curve3D,
+        on_bend: PCurve,
         corner: [PSpan; 2],
+    }
+
+    /// Which of the fixture's edges.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Which {
+        /// The quarter arc on the plane.
+        Arc,
+        /// The ruling on the cylinder.
+        Ruling,
+        /// The straight edge on the plane.
+        Line,
+        /// The bend across the cylinder.
+        Bend,
     }
 
     /// The fixture.
@@ -2295,6 +2344,38 @@ pub mod calibration {
             vec![0.0, 1.0],
         )
         .expect("a UV line");
+        let key = CylinderKey::new([0.0; 3], [0.0, 0.0, 1.0], r).expect("a cylinder");
+        let cylinder = cyl::cylinder(key, 0).expect("a cylinder's half");
+        let (u0, v0, v1) = (0.5, 0.5, 0.5 + 64.0 / CELL);
+        let at = |v: f64| {
+            let p = cylinder.eval([u0, v]).expect("on the cylinder");
+            [p[0].v, p[1].v, p[2].v, 1.0]
+        };
+        let (p0, p1) = (at(v0), at(v1));
+        let m = [0, 1, 2, 3].map(|k| (p0[k] + p1[k]) * 0.5);
+        let ruling = Curve3D::new(vec![[p0, m, p1]], vec![0.0, 1.0]).expect("a ruling");
+        let on_ruling = PCurve::from_spans(
+            vec![PSpan::Iso {
+                fixed: Dir::U,
+                at: u0,
+                m: [[v0, 1.0], [v1, 1.0]],
+            }],
+            vec![0.0, 1.0],
+        )
+        .expect("an iso span");
+        // A parabola in the cylinder's UV, its curve through the points
+        // of its control values (near the surface, as far as timing goes).
+        let q = [
+            [0.25, v0, 1.0],
+            [0.5, v0 + 32.0 / CELL, 1.0],
+            [0.75, v0, 1.0],
+        ];
+        let on_bend = PCurve::new(vec![q], vec![0.0, 1.0]).expect("a Q span");
+        let p = |k: usize| {
+            let x = cylinder.eval([q[k][0], q[k][1]]).expect("on the cylinder");
+            [x[0].v, x[1].v, x[2].v, 1.0]
+        };
+        let bend = Curve3D::new(vec![[p(0), p(1), p(2)]], vec![0.0, 1.0]).expect("a bend");
         let at = uv([0.0; 3]);
         let ray = |d: [f64; 2]| {
             PSpan::Linear([
@@ -2308,20 +2389,26 @@ pub mod calibration {
             pcurve,
             line,
             on_line,
+            cylinder,
+            ruling,
+            on_ruling,
+            bend,
+            on_bend,
             corner: [ray([1.0, 0.0]), ray([0.0, 1.0])],
         }
     }
 
     impl Fixture {
-        /// The arc's edge, or (`low`) the straight one's.
-        fn edge(&self, low: bool) -> Edge<'_> {
-            let (curve, pcurve) = if low {
-                (&self.line, &self.on_line)
-            } else {
-                (&self.curve, &self.pcurve)
+        /// The edge `which`.
+        fn edge(&self, which: Which) -> Edge<'_> {
+            let (surface, curve, pcurve) = match which {
+                Which::Arc => (&self.surface, &self.curve, &self.pcurve),
+                Which::Line => (&self.surface, &self.line, &self.on_line),
+                Which::Ruling => (&self.cylinder, &self.ruling, &self.on_ruling),
+                Which::Bend => (&self.cylinder, &self.bend, &self.on_bend),
             };
             let side = |reversed| Side {
-                surface: &self.surface,
+                surface,
                 pcurve,
                 flipped: false,
                 reversed,
@@ -2339,10 +2426,10 @@ pub mod calibration {
     const WIDTH: f64 = 1.0 / 1_048_576.0;
 
     /// Evaluates every field cell `depth` halvings deep at precision
-    /// level `level`, as the certificate does, on the arc's edge or
-    /// (`low`) the straight one's; the number of cells.
-    pub fn field_cells(f: &Fixture, level: u8, depth: u32, low: bool) -> u64 {
-        let edge = f.edge(low);
+    /// level `level`, as the certificate does, on the edge `which`; the
+    /// number of cells.
+    pub fn field_cells(f: &Fixture, level: u8, depth: u32, which: Which) -> u64 {
+        let edge = f.edge(which);
         let pieces = edge.pieces().expect("pieces");
         let mut n = 0;
         for k in 0..1u64 << depth {
@@ -2360,10 +2447,10 @@ pub mod calibration {
 
     /// Evaluates every box `depth` halvings deep in `t` of both faces'
     /// strips at precision level `level`, against the ruled surface or
-    /// (`plane`) the curve's plane, on the arc's edge or (`low`) the
-    /// straight one's; the number of boxes.
-    pub fn sign_boxes(f: &Fixture, level: u8, depth: u32, plane: bool, low: bool) -> u64 {
-        let edge = f.edge(low);
+    /// (`plane`) the curve's plane, on the edge `which`; the number of
+    /// boxes.
+    pub fn sign_boxes(f: &Fixture, level: u8, depth: u32, plane: bool, which: Which) -> u64 {
+        let edge = f.edge(which);
         let pieces = edge.pieces().expect("pieces");
         let cell = TCell {
             k: 0,
