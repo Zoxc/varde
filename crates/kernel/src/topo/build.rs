@@ -26,7 +26,8 @@
 //! the caller's: [`Builder::seam_bounds`] certifies a loop's in one
 //! charged pass. Shells join faces' sides ([`Builder::add_shell`]) and
 //! regions shells ([`Builder::add_region`]); a side or a shell takes one
-//! of each.
+//! of each. A solid's shells and regions are derived data:
+//! [`Builder::fill_regions`] sets them from its faces and edges.
 //!
 //! **Removing.** [`Builder::remove_loop`] and [`Builder::remove_face`]
 //! remove what they own (a loop's coedges; a face's loops and its sides in
@@ -59,6 +60,7 @@ use super::brep::{
     Member, NONE, Origin, PCurveId, RegionId, RegionKind, RegionRow, ShellId, ShellKind, ShellRow,
     Side, StoreError, SurfId, SurfaceRow, VertId, VertKind, VertRow, VertTag,
 };
+use super::regions::{RegionError, derive};
 use crate::geom::certify::{SeamError, seam_bound};
 use crate::geom::curve::Curve3D;
 use crate::geom::fit_types::IntentId;
@@ -153,6 +155,8 @@ pub enum BuildError {
     OutOfBudget(KernelError),
     /// A stored id names a removed row ([`Builder::finish`]).
     Dangling(Dangling),
+    /// The body's regions can't be derived ([`Builder::fill_regions`]).
+    Regions(RegionError),
 }
 
 impl From<StoreError> for BuildError {
@@ -858,6 +862,44 @@ impl Builder {
         }
         self.removed.shells = vec![true; b.shell_count()];
         self.removed.regions = vec![true; b.region_count()];
+    }
+
+    /// Replaces a solid's shells and regions by those derived from its
+    /// faces, edges and contact records ([`super::regions`]), the
+    /// derivation's passes charged to `work`. The body must have no
+    /// removed vertex, edge, coedge, loop or face (a construction's, or
+    /// an edited body after [`Self::finish`]): a removed one is
+    /// [`StoreError::Id`].
+    pub fn fill_regions(&mut self, work: &mut Work) -> Result<(), BuildError> {
+        let r = &self.removed;
+        if [&r.verts, &r.edges, &r.coedges, &r.loops, &r.faces]
+            .iter()
+            .any(|m| m.iter().any(|&x| x))
+        {
+            return Err(StoreError::Id.into());
+        }
+        self.clear_shells();
+        let d = derive(&self.brep, work).map_err(|h| match h {
+            Halt::OutOfBudget(e) => BuildError::OutOfBudget(e),
+            Halt::Failed { error, .. } => BuildError::Regions(error),
+        })?;
+        let mut shells = Vec::with_capacity(d.shells.len());
+        for (sides, kind) in d.shells {
+            shells.push(self.add_shell(kind, sides)?);
+        }
+        let mut regions: Vec<RegionId> = Vec::with_capacity(d.regions.len());
+        for r in &d.regions {
+            let outer = r.outer.map_or(ShellId::NONE, |s| shells[s]);
+            let islands = r.islands.iter().map(|&s| shells[s]).collect();
+            regions.push(self.add_region(r.kind, outer, islands, RegionId::NONE)?);
+        }
+        // A container may come after its lump.
+        for (r, at) in d.regions.iter().zip(&regions) {
+            if let Some(c) = r.container {
+                self.brep.regions.container[at.index()] = regions[c];
+            }
+        }
+        Ok(())
     }
 
     /// Removes every surface, curve and p-curve no remaining entity

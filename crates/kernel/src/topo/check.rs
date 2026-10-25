@@ -85,9 +85,10 @@
 //! trims (the [`trims`] module, which refuses a face with a curved trim as
 //! unbuilt), of 5 to 7 (the [`geom`] module, which refuses a moved
 //! join's target, a tangent edge, a declared curvature-continuous join
-//! and a fitted surface as unbuilt), of 8 by signed volumes (the
-//! [`orient`] module, which refuses a shell whose volume's sign it can't
-//! certify as unbuilt), of 9 on the faces across an edge (refusing a
+//! and a fitted surface as unbuilt), of 8 by the side graph, signed
+//! volumes and box exclusions (the [`orient`] module, which refuses a
+//! contact record's glue, a shell whose volume's sign it can't certify
+//! and an island the boxes don't place as unbuilt), of 9 on the faces across an edge (refusing a
 //! contact record, faces meeting at a vertex alone and every face's
 //! non-adjacent part as unbuilt, so only a body without faces passes the
 //! whole check) and of 10 (the [`names`] module, which refuses a tag on a
@@ -369,7 +370,7 @@ impl CheckError {
 }
 
 /// The error of a body needing a part of the check this build lacks.
-fn unbuilt() -> KernelError {
+pub(crate) fn unbuilt() -> KernelError {
     #[cfg(feature = "staging")]
     {
         use crate::infra::error::{Stage, Unsupported};

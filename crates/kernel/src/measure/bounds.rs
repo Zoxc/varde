@@ -150,9 +150,15 @@ pub fn tight_box(
         stage: "measure",
         rung: 0,
     };
+    let id = |i: usize| u32::try_from(i).expect("ids below NONE");
+    let part = Part {
+        verts: (0..brep.vert_count()).map(|v| VertId(id(v))).collect(),
+        edges: (0..brep.edge_count()).map(|e| EdgeId(id(e))).collect(),
+        faces: (0..brep.face_count()).map(|f| FaceId(id(f))).collect(),
+    };
     let ext = work
         .pass(pass, &dirs, |&(k, neg), ledger| {
-            greatest(brep, k, neg, res, ledger)
+            greatest(brep, &part, k, neg, res, ledger)
         })
         .map_err(KernelError::from)?;
     Ok(Some(TightBox {
@@ -179,10 +185,72 @@ fn max(a: f64, b: f64) -> f64 {
     pick(b > a, b, a)
 }
 
-/// The enclosure `[lo, hi]` of the greatest `±xₖ` over the body (module
-/// docs), `−xₖ` if `neg`.
+/// What a box bounds: some faces of a body, with the edges and vertices
+/// bounding them (all of the body's for its tight box).
+struct Part {
+    verts: Vec<VertId>,
+    edges: Vec<EdgeId>,
+    faces: Vec<FaceId>,
+}
+
+/// A certified box holding the faces `faces` of `brep` (each face with
+/// its trims, `face_edges[f]` the edges of face `f`), each side refined
+/// to `res` (mm) as [`tight_box`] does, the six directions in turn on
+/// `ledger`: `[lo, hi]`, empty (`lo > hi`) for no faces. For a shell's
+/// box in the check's and the regions' placement (`topo::regions`).
+pub(crate) fn faces_box(
+    brep: &Brep,
+    faces: &[FaceId],
+    face_edges: &[Vec<EdgeId>],
+    res: f64,
+    ledger: &mut Ledger<'_>,
+) -> Result<[[f64; 3]; 2], Stop<BoundsError>> {
+    let mut edges: Vec<EdgeId> = faces
+        .iter()
+        .filter_map(|f| face_edges.get(f.index()))
+        .flatten()
+        .copied()
+        .filter(|e| e.index() < brep.edge_count())
+        .collect();
+    edges.sort_unstable();
+    edges.dedup();
+    let mut verts: Vec<VertId> = edges
+        .iter()
+        .flat_map(|&e| brep.ends(e))
+        .filter(|v| v.index() < brep.vert_count())
+        .collect();
+    verts.sort_unstable();
+    verts.dedup();
+    let mut faces = faces.to_vec();
+    faces.sort_unstable();
+    faces.dedup();
+    let part = Part {
+        verts,
+        edges,
+        faces,
+    };
+    let res = if res > 0.0 && res.is_finite() {
+        res
+    } else {
+        f64::MIN_POSITIVE
+    };
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    if part.verts.is_empty() {
+        return Ok([lo, hi]);
+    }
+    for k in 0..3 {
+        hi[k] = greatest(brep, &part, k, false, res, ledger)?[1];
+        lo[k] = -greatest(brep, &part, k, true, res, ledger)?[1];
+    }
+    Ok([lo, hi])
+}
+
+/// The enclosure `[lo, hi]` of the greatest `±xₖ` over the part `part`
+/// of the body (module docs), `−xₖ` if `neg`.
 fn greatest(
     brep: &Brep,
+    part: &Part,
     k: usize,
     neg: bool,
     res: f64,
@@ -193,14 +261,12 @@ fn greatest(
     dir[k] = sign;
     let mut best = f64::NEG_INFINITY;
     let mut upper = f64::NEG_INFINITY;
-    for v in 0..brep.vert_count() {
-        let v = VertId(u32::try_from(v).expect("ids below NONE"));
+    for &v in &part.verts {
         let x = sign * brep.pos(v)[k];
         best = max(best, x);
         upper = max(upper, x);
     }
-    for e in 0..brep.edge_count() {
-        let e = EdgeId(u32::try_from(e).expect("ids below NONE"));
+    for &e in &part.edges {
         let Some(curve) = edge_part(brep, e) else {
             continue;
         };
@@ -217,8 +283,8 @@ fn greatest(
         faces: Vec::new(),
         heap: BinaryHeap::new(),
     };
-    for f in 0..brep.face_count() {
-        search.add_face(FaceId(u32::try_from(f).expect("ids below NONE")))?;
+    for &f in &part.faces {
+        search.add_face(f)?;
     }
     search.run(ledger)?;
     Ok([search.best, max(search.upper, search.best)])

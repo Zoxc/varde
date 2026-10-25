@@ -51,8 +51,9 @@
 //! radii, a spindle too close to a horn torus for its tiles' weights),
 //! are [`FeatureKind::Dimension`].
 //!
-//! **Shells and regions.** One lump: the faces' inner sides its outer
-//! shell, their outer sides an island of the unbounded region.
+//! **Shells and regions** are derived from the faces
+//! ([`Builder::fill_regions`]): one lump, the faces' inner sides its
+//! outer shell, their outer sides an island of the unbounded region.
 //!
 //! [`Accuracy`]: crate::WarningKind::Accuracy
 
@@ -73,10 +74,10 @@ use crate::infra::error::{FeatureKind, Inconsistency, Internal, KernelError, Sto
 use crate::infra::ops::{OpCtx, Status, Tolerance, Warning, WarningKind};
 use crate::topo::brep::{
     BodyKind, Brep, Continuity, Convexity, EdgeId, EdgeKind, EdgeTag, ExactRows, FaceId, FaceKey,
-    FacePart, PoleEnd, RegionId, RegionKind, ShellId, ShellKind, Side, VertId, VertTag,
+    FacePart, PoleEnd, VertId, VertTag,
 };
 use crate::topo::build::{BuildError, Builder, Use};
-use crate::topo::check::{Outcome, Role, Scope};
+use crate::topo::check::{Outcome, Role, Scope, unbuilt};
 
 #[cfg(test)]
 mod tests;
@@ -342,11 +343,15 @@ fn curve<T, E>(r: Result<T, E>) -> Result<T, KernelError> {
     r.map_err(|_| defect())
 }
 
-/// A builder's refusal: running out of budget as it is, else the
-/// primitive's defect.
+/// A builder's refusal: running out of budget as it is, regions needing
+/// a part of the check not built yet as that, else the construction's
+/// defect.
 pub(super) fn built(e: BuildError) -> KernelError {
+    use crate::topo::regions::RegionError as R;
     match e {
         BuildError::OutOfBudget(e) => e,
+        // Regions whose derivation needs a part not built yet.
+        BuildError::Regions(R::Contact | R::Unsigned | R::Unplaced) => unbuilt(),
         _ => defect(),
     }
 }
@@ -1083,25 +1088,11 @@ impl Make<'_> {
         self.wall(inner, &circle(1, 1.0), &circle(0, 3.0), inner_ms, WHOLE)
     }
 
-    /// The faces' sides joined into the one lump's shells and regions;
+    /// The shells and regions derived (the one lump's);
     /// the edges above `ε_seam` listed as accuracy warnings, in
     /// edge order; the body finished.
     fn finish(mut self) -> Result<Brep, KernelError> {
-        let side = |s| self.faces.iter().map(|&f| (f, s)).collect::<Vec<_>>();
-        let (outs, ins) = (side(Side::Out), side(Side::In));
-        let island = self.b.add_shell(ShellKind::Island, outs).map_err(built)?;
-        let outer = self.b.add_shell(ShellKind::Outer, ins).map_err(built)?;
-        self.b
-            .add_region(
-                RegionKind::Empty,
-                ShellId::NONE,
-                vec![island],
-                RegionId::NONE,
-            )
-            .map_err(built)?;
-        self.b
-            .add_region(RegionKind::Material, outer, Vec::new(), RegionId::NONE)
-            .map_err(built)?;
+        self.b.fill_regions(self.work).map_err(built)?;
         let tols: Vec<f64> = (0..self.b.brep().edge_count())
             .map(|i| self.b.brep().edge_tol(EdgeId(i as u32)))
             .collect();

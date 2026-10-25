@@ -10,6 +10,7 @@ use super::*;
 use crate::infra::ops::{FeatureId, InstanceId};
 use crate::measure::mass::mass_props;
 use crate::topo::adjacent::EmbedCheck;
+use crate::topo::brep::{RegionId, RegionKind, Side};
 use crate::topo::check::{CheckError, Finding, Inv};
 use varde_decide::num::storage::nearest;
 use varde_decide::num::trig;
@@ -55,6 +56,30 @@ impl Tris {
             v += dot(&a, &cross(&b, &c));
         }
         v / Rational::from(6u32)
+    }
+
+    /// The mesh moved by `d`.
+    fn moved(mut self, d: [f64; 3]) -> Tris {
+        for p in &mut self.verts {
+            *p = std::array::from_fn(|k| p[k] + d[k]);
+        }
+        self
+    }
+
+    /// The mesh turned inside out: its triangles the other way round.
+    fn inverted(mut self) -> Tris {
+        for t in &mut self.tris {
+            t.swap(1, 2);
+        }
+        self
+    }
+
+    /// The two meshes as one, in pieces.
+    fn and(mut self, o: &Tris) -> Tris {
+        let n = self.verts.len();
+        self.verts.extend(&o.verts);
+        self.tris.extend(o.tris.iter().map(|t| t.map(|i| i + n)));
+        self
     }
 
     /// The mesh with each quad `[a, b, c, d]` (counter-clockwise) as two
@@ -409,14 +434,30 @@ fn bad_meshes_are_refused() {
             verts: [i, m.verts.len() - 1]
         }
     );
-    // Two cubes apart.
+    // Two cubes sharing a corner vertex.
     let mut m = cube();
+    let shared = m
+        .verts
+        .iter()
+        .position(|p| *p == [10.0; 3])
+        .expect("a corner");
+    let mut other = cube().moved([10.0; 3]);
     let n = m.verts.len();
-    let other = cube();
-    m.verts
-        .extend(other.verts.iter().map(|p| [p[0] + 20.0, p[1], p[2]]));
-    m.tris.extend(other.tris.iter().map(|t| t.map(|i| i + n)));
-    assert_eq!(refused(&m), PolyhedronError::Pieces);
+    let low = other
+        .verts
+        .iter()
+        .position(|p| *p == [10.0; 3])
+        .expect("a corner");
+    // Its own copy of the corner unused, out of the way.
+    other.verts[low] = [100.0; 3];
+    m.verts.extend(&other.verts);
+    m.tris.extend(
+        other
+            .tris
+            .iter()
+            .map(|t| t.map(|i| if i == low { shared } else { i + n })),
+    );
+    assert_eq!(refused(&m), PolyhedronError::Pieces { vert: shared });
     let mut m = cube();
     let far = [1e300, 0.0, 0.0];
     m.verts.push(far);
@@ -441,4 +482,70 @@ fn a_knife_edge_is_refused() {
         m.build().expect_err("a knife"),
         PolyhedronError::Knife { edge: [0, 1] }
     );
+}
+
+/// A cube with a cubic cavity: four shells, one lump whose island is the
+/// cavity's material side, a void, and the outside holding the lump's
+/// outer sides; the lump's container is none (its empty islands lie in
+/// the unbounded region). It passes its check and holds its volume.
+#[test]
+fn a_cube_with_a_cavity_has_a_lump_and_a_void() {
+    let mesh = cube().and(&cells(1, 2.0, |_| true).moved([4.0; 3]).inverted());
+    let b = mesh.body();
+    assert_eq!(b.shell_count(), 4);
+    assert_eq!(b.region_count(), 3);
+    let regions: Vec<RegionId> = (0..3).map(RegionId).collect();
+    let kinds: Vec<(RegionKind, bool, usize)> = regions
+        .iter()
+        .map(|&r| {
+            (
+                b.region_kind(r),
+                b.outer_shell(r).is_none(),
+                b.island_shells(r).len(),
+            )
+        })
+        .collect();
+    // The outside first, then the box's lump and the cavity's void (the
+    // shells in order of their least face: the box's faces come first).
+    assert_eq!(
+        kinds,
+        [
+            (RegionKind::Empty, true, 1),
+            (RegionKind::Material, false, 1),
+            (RegionKind::Empty, false, 0),
+        ]
+    );
+    for &r in &regions {
+        assert_eq!(b.container(r), RegionId::NONE);
+    }
+    // The lump's island is the cavity's walls' material side.
+    let island = b.island_shells(regions[1])[0];
+    assert!(
+        b.shell_sides(island)
+            .iter()
+            .all(|&(f, s)| s == Side::In && f.index() >= 6)
+    );
+    // Named by the least key of its faces: the box's first face for the
+    // lump and the outside, the cavity's first for the void.
+    let key = |f: u32| Some(*b.key(FaceId(f)));
+    let names: Vec<Option<FaceKey>> = regions.iter().map(|&r| b.region_key(r).copied()).collect();
+    assert_eq!(names, [key(0), key(0), key(6)]);
+    passes_check(&b);
+    volume_exact(&b, &mesh, 1e-12);
+}
+
+/// Two cubes apart: two lumps, both cubes' outer sides islands of the
+/// outside.
+#[test]
+fn two_cubes_apart_are_two_lumps() {
+    let mesh = cube().and(&cube().moved([20.0, 0.0, 0.0]));
+    let b = mesh.body();
+    assert_eq!(b.region_count(), 3);
+    assert_eq!(b.island_shells(RegionId(0)).len(), 2);
+    for r in [1, 2] {
+        assert_eq!(b.region_kind(RegionId(r)), RegionKind::Material);
+        assert_eq!(b.container(RegionId(r)), RegionId::NONE);
+    }
+    passes_check(&b);
+    volume_exact(&b, &mesh, 1e-12);
 }

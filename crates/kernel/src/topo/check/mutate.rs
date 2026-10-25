@@ -29,7 +29,8 @@
 //! - 6: a wrong continuity (a crease labelled tangent, a crease's sign
 //!   flipped), an edge of the same form between faces of different
 //!   forms, a seam tag on an edge of different forms;
-//! - 8: a solid turned inside out;
+//! - 8: a solid turned inside out, a face's side in another side-shell's
+//!   shell, a lump's container not its empty islands' region;
 //! - 10: a seam edge untagged, a pole untagged, a face key's digest the
 //!   body's terms don't hold, an attribute set the body doesn't keep, an
 //!   alias equal to its region's primary and one naming no key of its
@@ -67,7 +68,8 @@ use crate::names::keys::{Digest, FaceKey};
 use crate::names::topology::Topology;
 use crate::names::topology::tests::primitive;
 use crate::topo::brep::{
-    AttrSetId, Brep, CoedgeId, Continuity, Convexity, EdgeId, EdgeKind, FaceId, FacePart, VertId,
+    AttrSetId, Brep, CoedgeId, Continuity, Convexity, EdgeId, EdgeKind, FaceId, FacePart, Side,
+    VertId,
 };
 use crate::topo::check::geom::{RegularityCheck, SeamCheck};
 use crate::topo::check::names::NameCheck;
@@ -577,6 +579,39 @@ fn a_solid_turned_inside_out_is_rejected() {
         "a solid inside out",
         Inv::Orientation,
         OrientCheck::Sign as u32,
+    );
+    rejects(&valid, &b, m, &at);
+}
+
+#[test]
+fn region_defects_are_rejected() {
+    let valid = cuboid();
+    let f = FaceId(2);
+    let island = valid.face_shell(f, Side::Out);
+    let outer = valid.face_shell(f, Side::In);
+    let (b, at) = seeded(&valid, |b| {
+        // A face's `Out` side linked to the lump's shell, both lists kept
+        // in step with the face.
+        b.shells.sides[island.index()].retain(|&(g, _)| g != f);
+        b.shells.sides[outer.index()].push((f, Side::Out));
+        b.faces.shells[f.index()][Side::Out.index()] = outer;
+        vec![Item::Body]
+    });
+    let m = mutant(
+        "a side in another side-shell's shell",
+        Inv::Orientation,
+        OrientCheck::Shells as u32,
+    );
+    rejects(&valid, &b, m, &at);
+    let lump = valid.shell_region(outer);
+    let (b, at) = seeded(&valid, |b| {
+        b.regions.container[lump.index()] = b.shells.region[island.index()];
+        vec![Item::Region(lump)]
+    });
+    let m = mutant(
+        "a lump's container not its empty islands' region",
+        Inv::Orientation,
+        OrientCheck::Container as u32,
     );
     rejects(&valid, &b, m, &at);
 }

@@ -18,6 +18,7 @@ pub mod brep_min;
 #[allow(dead_code, reason = "moved ahead of the operations that build bodies")]
 pub(crate) mod build;
 pub mod check;
+pub(crate) mod regions;
 // Its callers are the constructions and the assembly, as they land.
 #[allow(dead_code, reason = "moved ahead of the operations that build edges")]
 pub(crate) mod continuity;

@@ -5,10 +5,12 @@
 //! **The mesh.** Vertices are `f64` points taken exactly as given, each
 //! a distinct position; triangles are vertex index triples turning
 //! counter-clockwise seen from outside. It must be a closed oriented
-//! surface in one piece: every directed edge of a triangle met once, by
-//! the reverse edge of one other triangle, and every triangle reached
-//! from every other across edges. A triangle whose corners lie on one
-//! line is refused, decided exactly.
+//! surface: every directed edge of a triangle met once, by the reverse
+//! edge of one other triangle. It may be in several pieces (the triangles
+//! reached from each other across edges), such as a cavity's walls
+//! turned inwards, but no vertex may join two pieces: the body would
+//! touch itself there, a contact this constructor doesn't record. A
+//! triangle whose corners lie on one line is refused, decided exactly.
 //!
 //! **Faces.** Triangles across an edge are merged into one face where
 //! they lie on one plane, facing one way: the far corner of the one on
@@ -37,9 +39,12 @@
 //! are refused.
 //!
 //! **Names.** Face `k` (faces in the order of their least triangle) is
-//! keyed `Primitive(k)` of the caller's [`OpCtx`]. One lump: the faces'
-//! inner sides its outer shell, their outer sides an island of the
-//! unbounded region, as a primitive's.
+//! keyed `Primitive(k)` of the caller's [`OpCtx`]. Shells and regions
+//! are derived from the faces ([`Builder::fill_regions`]): each piece's
+//! sides make two shells, the lumps, voids and their islands follow from
+//! the shells' signed volumes, and an island's placement must be settled
+//! by the boxes the regions' derivation reads (`topo::regions`), else
+//! the body is refused there.
 //!
 //! **Work.** The planes' keys, one per triangle, and the coplanarity
 //! tests, one per edge, run in charged passes; then the seam bounds.
@@ -66,7 +71,7 @@ use crate::infra::error::{KernelError, Storage};
 use crate::infra::ops::{OpCtx, Status, Tolerance, Warning, WarningKind};
 use crate::topo::brep::{
     BodyKind, Brep, Continuity, Convexity, EdgeId, EdgeKind, ExactRows, FaceId, FaceKey, FacePart,
-    RegionId, RegionKind, ShellId, ShellKind, Side, VertId,
+    VertId,
 };
 use crate::topo::build::{Builder, Use};
 use crate::topo::check::{Outcome, Role, Scope};
@@ -98,8 +103,11 @@ pub enum PolyhedronError {
         /// The edge's vertices, in its direction.
         edge: [usize; 2],
     },
-    /// The mesh is in more than one piece.
-    Pieces,
+    /// Vertex `vert` joins two pieces of the mesh.
+    Pieces {
+        /// The vertex.
+        vert: usize,
+    },
     /// A face's boundary meets itself at vertex `vert`, or the face has
     /// other than one outer loop (then `vert` is its least vertex).
     Pinched {
@@ -174,20 +182,8 @@ pub(crate) fn build(
         let k = u32::try_from(k).map_err(|_| KernelError::Unrepresentable(Storage::OutOfRange))?;
         ids.push(m.face(f, FaceKey::new(ctx, FacePart::Primitive(k)), work)?);
     }
-    let side = |s| ids.iter().map(|&f| (f, s)).collect::<Vec<_>>();
-    let (outs, ins) = (side(Side::Out), side(Side::In));
     let b = &mut m.b;
-    let island = b.add_shell(ShellKind::Island, outs).map_err(built)?;
-    let outer = b.add_shell(ShellKind::Outer, ins).map_err(built)?;
-    b.add_region(
-        RegionKind::Empty,
-        ShellId::NONE,
-        vec![island],
-        RegionId::NONE,
-    )
-    .map_err(built)?;
-    b.add_region(RegionKind::Material, outer, Vec::new(), RegionId::NONE)
-        .map_err(built)?;
+    b.fill_regions(work).map_err(built)?;
     let accuracy = eps.eps() / 4.0;
     let tols: Vec<f64> = (0..b.brep().edge_count())
         .map(|i| b.brep().edge_tol(EdgeId(i as u32)))
@@ -275,8 +271,17 @@ impl<'a> Mesh<'a> {
         for (&(a, b), &t) in &mesh.half {
             parts.join(t, mesh.half[&(b, a)]);
         }
-        if (0..tris.len()).any(|t| parts.root(t) != parts.root(0)) {
-            return Err(PolyhedronError::Pieces);
+        // Each vertex's triangles in one piece.
+        let mut piece = vec![usize::MAX; verts.len()];
+        for (t, tri) in tris.iter().enumerate() {
+            let r = parts.root(t);
+            for &v in tri {
+                if piece[v] == usize::MAX {
+                    piece[v] = r;
+                } else if piece[v] != r {
+                    return Err(PolyhedronError::Pieces { vert: v });
+                }
+            }
         }
         Ok(mesh)
     }

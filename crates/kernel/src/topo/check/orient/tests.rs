@@ -1,7 +1,9 @@
-//! Invariant 8 on the primitives: each passes; a shell of the wrong
-//! sign, a side facing away from its region and a volume whose sign
-//! isn't certified are caught where they are; the empty solid passes the
-//! whole check; running out names the invariant.
+//! Invariant 8 on the primitives and a box with a cavity: each passes; a
+//! shell of the wrong sign, a side facing away from its region, a volume
+//! whose sign isn't certified, a side in another side-shell's shell, an
+//! island in a region that can't hold it and a wrong container are
+//! caught where they are; the empty solid passes the whole check;
+//! running out names the invariant.
 
 use varde_decide::num::storage::OpStart;
 
@@ -9,9 +11,10 @@ use super::*;
 use crate::build::primitives::{Primitive, build};
 use crate::infra::budget::{Budget, Work};
 use crate::infra::ops::{FeatureId, OpCtx, Status, Tolerance};
-use crate::topo::brep::{BodyKind, RegionId, RegionRow};
+use crate::topo::brep::{BodyKind, Brep, RegionRow};
 use crate::topo::check::topo::tests::{Passing, failure};
 use crate::topo::check::{CheckError, Inv, Invariants, Scope, run};
+use crate::topo::regions::tests::cavity;
 
 /// Invariant 8, the others passing.
 fn table() -> Invariants<'static> {
@@ -210,4 +213,80 @@ fn running_out_names_the_invariant() {
         Err(CheckError::OutOfBudget { inv, .. }) => assert_eq!(inv, Some(Inv::Orientation)),
         other => panic!("{other:?}"),
     }
+}
+
+/// The box with a cavity passes: its four shells are its side graph's
+/// components, each island where the boxes place it, no container.
+#[test]
+fn a_box_with_a_cavity_passes() {
+    assert_eq!(check(&cavity()), Ok(()));
+}
+
+/// A box face's `Out` side moved into the lump's shell (the links kept
+/// consistent): the side graph's component of `Out` sides is split
+/// across two shells.
+#[test]
+fn a_side_in_another_shell_is_caught() {
+    let mut b = cuboid();
+    let [island, outer] = shells(&b);
+    let f = FaceId(2);
+    b.shells.sides[island.index()].retain(|&(g, _)| g != f);
+    b.shells.sides[outer.index()].push((f, Side::Out));
+    b.faces.shells[f.index()][Side::Out.index()] = outer;
+    assert_eq!(
+        fails(&b),
+        (Item::Body, OrientCheck::Shells as u32, Finding::Defect)
+    );
+}
+
+/// The box's outer sides moved from the outside into the cavity's void
+/// (the lump's container with them): the cavity's box leaves them out.
+#[test]
+fn an_island_its_region_cannot_hold_is_caught() {
+    let mut b = cavity();
+    let outside = RegionId(0);
+    let void = RegionId(2);
+    let island = b.regions.islands[outside.index()].remove(0);
+    b.regions.islands[void.index()].push(island);
+    b.shells.region[island.index()] = void;
+    // The lump's container follows its empty islands.
+    b.regions.container[1] = void;
+    assert_eq!(
+        fails(&b),
+        (
+            Item::Region(void),
+            OrientCheck::Place as u32,
+            Finding::Defect
+        )
+    );
+}
+
+/// The lump's container set to the void (another empty region, as
+/// invariant 1 asks), or on the box to the outside: its empty islands lie
+/// in the outside, so it has none.
+#[test]
+fn a_wrong_container_is_caught() {
+    let mut b = cavity();
+    let lump = RegionId(1);
+    b.regions.container[lump.index()] = RegionId(2);
+    assert_eq!(
+        fails(&b),
+        (
+            Item::Region(lump),
+            OrientCheck::Container as u32,
+            Finding::Defect
+        )
+    );
+    let mut b = cuboid();
+    let [island, outer] = shells(&b);
+    let lump = b.shell_region(outer);
+    b.regions.container[lump.index()] = b.shell_region(island);
+    assert_eq!(
+        fails(&b),
+        (
+            Item::Region(lump),
+            OrientCheck::Container as u32,
+            Finding::Defect
+        )
+    );
 }
