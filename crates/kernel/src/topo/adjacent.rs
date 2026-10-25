@@ -88,6 +88,9 @@
 //! ([`VertCert`]). The plane is proposed from the sectors' far points (a
 //! cone containment, [`propose_axis`]) and only certified here.
 //!
+//! **The join zone's embedding** ([`join::certify_join`]), per edge: the
+//! `embedded_join` flag, never a validity condition.
+//!
 //! **The window** ([`window::certify_window`]), per edge: the tube's
 //! radius `ρ_adj`, a power of two with `ρ_min ≤ ρ_adj ≤ ρ_graph` and `r₀ <
 //! ρ_adj`, else the window is empty.
@@ -2525,6 +2528,7 @@ pub mod calibration {
     }
 }
 
+pub(crate) mod join;
 pub(crate) mod window;
 
 #[cfg(test)]

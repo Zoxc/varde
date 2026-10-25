@@ -44,7 +44,9 @@
 //! sides make two shells, the lumps, voids and their islands follow from
 //! the shells' signed volumes, and an island's placement must be settled
 //! by the boxes the regions' derivation reads (`topo::regions`), else
-//! the body is refused there.
+//! the body is refused there. Each edge's join zone is certified
+//! ([`Builder::certify_joins`]): flagged where both faces' ribbons lie
+//! on their sides of the plane between them.
 //!
 //! **Work.** The planes' keys, one per triangle, and the coplanarity
 //! tests, one per edge, run in charged passes; then the seam bounds.
@@ -184,6 +186,8 @@ pub(crate) fn build(
     }
     let b = &mut m.b;
     b.fill_regions(work).map_err(built)?;
+    let edges: Vec<EdgeId> = (0..b.brep().edge_count() as u32).map(EdgeId).collect();
+    b.certify_joins(&edges, work).map_err(built)?;
     let accuracy = eps.eps() / 4.0;
     let tols: Vec<f64> = (0..b.brep().edge_count())
         .map(|i| b.brep().edge_tol(EdgeId(i as u32)))

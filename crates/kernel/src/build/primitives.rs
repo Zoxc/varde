@@ -54,6 +54,8 @@
 //! **Shells and regions** are derived from the faces
 //! ([`Builder::fill_regions`]): one lump, the faces' inner sides its
 //! outer shell, their outer sides an island of the unbounded region.
+//! Each edge's join zone is certified where it can be
+//! ([`Builder::certify_joins`]): a box's edges are flagged.
 //!
 //! [`Accuracy`]: crate::WarningKind::Accuracy
 
@@ -1088,11 +1090,14 @@ impl Make<'_> {
         self.wall(inner, &circle(1, 1.0), &circle(0, 3.0), inner_ms, WHOLE)
     }
 
-    /// The shells and regions derived (the one lump's);
+    /// The shells and regions derived (the one lump's); the edges' join
+    /// zones certified;
     /// the edges above `ε_seam` listed as accuracy warnings, in
     /// edge order; the body finished.
     fn finish(mut self) -> Result<Brep, KernelError> {
         self.b.fill_regions(self.work).map_err(built)?;
+        let edges: Vec<EdgeId> = (0..self.b.brep().edge_count() as u32).map(EdgeId).collect();
+        self.b.certify_joins(&edges, self.work).map_err(built)?;
         let tols: Vec<f64> = (0..self.b.brep().edge_count())
             .map(|i| self.b.brep().edge_tol(EdgeId(i as u32)))
             .collect();

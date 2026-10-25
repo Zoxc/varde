@@ -54,6 +54,7 @@
 //! remaining coedge leaving it (using it), or none. In debug builds the
 //! finished store is checked for dangling ids ([`Brep::dangling`]).
 
+use super::adjacent::join::certify_join;
 use super::brep::{
     AttrSetId, BodyKind, BodyStatus, Brep, CoedgeId, CoedgeRow, Contact, Continuity, CurveId,
     EdgeId, EdgeKind, EdgeRow, EdgeTag, ExactRows, FaceId, FaceKey, FaceRow, Fit, LoopId, LoopRow,
@@ -765,6 +766,35 @@ impl Builder {
     pub fn set_embedded_join(&mut self, e: EdgeId, embedded: bool) {
         debug_assert!(self.has_edge(e), "edge {e:?} is there");
         self.brep.edges.embedded_join[e.index()] = embedded;
+    }
+
+    /// Certifies the join zones of the edges `edges` ([`certify_join`]),
+    /// each edge's `embedded_join` set where certified and cleared where
+    /// not (a flag a changed face no longer certifies is cleared), in one
+    /// pass of `work` over them in order. An edge removed or naming no
+    /// pair of faces is left unset; only running out of the budget fails.
+    pub fn certify_joins(&mut self, edges: &[EdgeId], work: &mut Work) -> Result<(), BuildError> {
+        let edges: Vec<EdgeId> = edges
+            .iter()
+            .copied()
+            .filter(|&e| self.has_edge(e))
+            .collect();
+        let b = &self.brep;
+        let pass = Pass {
+            stage: "joins",
+            rung: 0,
+        };
+        let flags = work
+            .pass(pass, &edges, |&e, ledger| certify_join(b, e, ledger))
+            .map_err(|halt| match halt {
+                Halt::OutOfBudget(e) => BuildError::OutOfBudget(e),
+                // The certificate fails only by running out.
+                Halt::Failed { .. } => BuildError::Store(StoreError::Id),
+            })?;
+        for (e, flag) in edges.into_iter().zip(flags) {
+            self.brep.edges.embedded_join[e.index()] = flag;
+        }
+        Ok(())
     }
 
     // Removing.
