@@ -195,7 +195,7 @@ fn body(cx: &Cx<'_>, ledger: &mut Ledger<'_>) -> Checked {
 
 /// Every alias of region `r` differs from its primary and is the key of
 /// one of its faces.
-fn aliases(b: &Brep, r: &Region) -> Checked {
+pub(super) fn aliases(b: &Brep, r: &Region) -> Checked {
     need(
         r.aliases.iter().all(|a| *a != r.primary),
         NameCheck::AliasPrimary,

@@ -1132,4 +1132,6 @@ mod topo;
 mod trims;
 
 #[cfg(test)]
+mod mutate;
+#[cfg(test)]
 mod tests;
