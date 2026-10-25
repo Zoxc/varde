@@ -20,6 +20,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::fmt;
 
 use crate::infra::ops::{FeatureId, InstanceId, OpCtx};
 
@@ -102,6 +103,54 @@ impl Mix {
         let hi = finalize(self.a ^ self.b.rotate_left(29));
         let lo = finalize(self.b ^ hi);
         Digest((u128::from(hi) << 64) | u128::from(lo))
+    }
+}
+
+/// The digest of a text written into it ([`fmt::Write`]): a tag word,
+/// then the text's bytes in 8-byte little-endian words (the last padded
+/// with zeros), then its length in bytes, mixed as a name's words are.
+/// The tag keeps a text's digest apart from any name's.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TextDigest {
+    mix: Mix,
+    word: u64,
+    len: u64,
+}
+
+/// The tag word a [`TextDigest`] starts with: "text" in ASCII.
+const TEXT_TAG: u64 = 0x7465_7874;
+
+impl TextDigest {
+    pub(crate) fn new() -> TextDigest {
+        let mut mix = Mix::new();
+        mix.push(TEXT_TAG);
+        TextDigest {
+            mix,
+            word: 0,
+            len: 0,
+        }
+    }
+
+    pub(crate) fn finish(mut self) -> Digest {
+        if self.len % 8 != 0 {
+            self.mix.push(self.word);
+        }
+        self.mix.push(self.len);
+        self.mix.finish()
+    }
+}
+
+impl fmt::Write for TextDigest {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for &byte in s.as_bytes() {
+            self.word |= u64::from(byte) << (8 * (self.len % 8));
+            self.len = self.len.wrapping_add(1);
+            if self.len % 8 == 0 {
+                self.mix.push(self.word);
+                self.word = 0;
+            }
+        }
+        Ok(())
     }
 }
 

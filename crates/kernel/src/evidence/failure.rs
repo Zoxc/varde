@@ -31,6 +31,7 @@
 use super::Allowance;
 use super::cluster::ClusterEvidence;
 use super::inputref::{InputRef, Item, ItemRole, Leaf};
+use super::replay::FullReplay;
 use super::snippet::{MAX_SNIPPET, SheetSnippet};
 use crate::boolean::snap::escalate::K_MAX;
 use crate::evidence::budget_profile::BudgetProfile;
@@ -341,13 +342,6 @@ impl Replay {
     }
 }
 
-/// What a full replay needs: the operands' digests and the operation's
-/// parameters, and in-process the operands themselves. The place is
-/// kept; its content comes with the replay.
-#[non_exhaustive]
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct FullReplay {}
-
 /// One attempt of the escalation ladder before the failure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LadderStep {
@@ -498,7 +492,9 @@ impl Failure {
     }
 
     /// The failure of `error` with `evidence`, replayed as the error says
-    /// ([`ReplayKind::of`]): a local replay at `stage`.
+    /// ([`ReplayKind::of`]): a local replay at `stage`; a full replay
+    /// with nothing to replay yet, which the operation's entry fills in
+    /// ([`mod@super::replay`]).
     pub fn new(error: KernelError, mut evidence: Evidence, stage: &'static str) -> Failure {
         evidence.replay = match ReplayKind::of(&error, &evidence.site) {
             ReplayKind::None => Replay::None,

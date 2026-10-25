@@ -25,18 +25,26 @@
 //!   the evidence of a result's warnings, kept on its status
 //!   ([`WarningEvidence`](budget_profile::WarningEvidence)).
 //! - [`cluster`]: the evidence of a tangency cluster no rule settles.
+//! - [`replay`](mod@replay): a failure replayed in full, in process: the operation
+//!   it came from, its parameters and its operands' digests, the
+//!   operands themselves when captured ([`EvidenceMode::Capture`]).
 
 pub mod budget_profile;
 pub mod cluster;
 pub mod failure;
 pub mod inputref;
+pub mod replay;
 pub mod snippet;
 
 pub use failure::{
-    AuditSite, BudgetRow, Detail, Evidence, EvidenceDefect, Failure, FullReplay, InternalSite,
-    LadderStep, MAX_EVIDENCE_ITEMS, RepairDetail, Replay, ReplayKind, Site, SnapSite,
+    AuditSite, BudgetRow, Detail, Evidence, EvidenceDefect, Failure, InternalSite, LadderStep,
+    MAX_EVIDENCE_ITEMS, RepairDetail, Replay, ReplayKind, Site, SnapSite,
 };
 pub use inputref::{InputRef, Item, ItemRole, Leaf, Window, edge_pair, snap_inputs, through_snap};
+pub use replay::{
+    Captured, Checked, EvidenceMode, FullReplay, Operation, Params, ReplayError, check_body,
+    digest, replay, replay_with,
+};
 pub use snippet::{CutError, MAX_SNIPPET, Piece, SheetSnippet};
 
 /// The units, as the [`Budget`](crate::Budget)'s, one evidence pass may
