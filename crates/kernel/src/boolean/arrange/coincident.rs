@@ -76,8 +76,14 @@
 //! **Work.** One pass on the operation's budget, one item: a unit per
 //! vertex, line, arc, piece, pin's join, bend, arrangement span and step
 //! looking up an arc's end on a line; then the arrangement's passes.
+//!
+//! **On a body** ([`body`]): a face of an operand with its coedges as the
+//! lines, the operand edges each result edge is a piece of, their
+//! `touch`, and the joins across an opposed coincidence.
 
 use std::collections::BTreeMap;
+
+pub mod body;
 
 use crate::geom::pcurve::PCurve;
 use crate::infra::budget::{Halt, Ledger, Pass, Step, Stop, Work};
