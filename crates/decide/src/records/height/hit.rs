@@ -103,6 +103,7 @@ use malachite::base::num::basic::traits::{One as _, Zero as _};
 
 use crate::bezier::{HomCurve, HomPatch, Tensor};
 use crate::count::boxes::UvSpan;
+use crate::count::flat::plane_normal;
 use crate::count::pieces::{ExactRect, SpanMap};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
 use crate::num::bounded::mul_up;
@@ -745,29 +746,6 @@ fn separate_roots(f1: &Poly2, f2: &Poly2, tile: [i64; 2]) -> Option<Vec<(TileRoo
     Some(out)
 }
 
-/// The exact normal of a net whose control points all lie on one plane
-/// (any orientation); `None` where they don't, or lie on a line.
-fn planar_normal(net: &TileNet) -> Option<Q3> {
-    let p: Vec<Q3> = net.iter().map(|c| [c[0], c[1], c[2]].map(rat)).collect();
-    let sub = |a: &Q3, b: &Q3| -> Q3 { std::array::from_fn(|k| &a[k] - &b[k]) };
-    let cross = |a: &Q3, b: &Q3| -> Q3 {
-        [
-            &a[1] * &b[2] - &a[2] * &b[1],
-            &a[2] * &b[0] - &a[0] * &b[2],
-            &a[0] * &b[1] - &a[1] * &b[0],
-        ]
-    };
-    let dot = |a: &Q3, b: &Q3| &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2];
-    // The corners `(0, 0)`, `(2, 0)`, `(0, 2)`: row-major in `u`.
-    let n = cross(&sub(&p[6], &p[0]), &sub(&p[2], &p[0]));
-    if n.iter().all(|x| *x == 0u32) {
-        return None;
-    }
-    p.iter()
-        .all(|x| dot(&n, &sub(x, &p[0])) == 0u32)
-        .then_some(n)
-}
-
 /// A tile's homogeneous partials `X_u·W − X·W_u`, `X_v·W − X·W_v`
 /// (`W²` times `x_u`, `x_v`) and their cross product `n`, `W⁴` times the
 /// normal `x_u × x_v`.
@@ -994,7 +972,7 @@ fn on_tile(
     let (x, w) = net_polys(net);
     // A planar tile: the column's hit is its plane's, exactly; the tile's
     // local coordinates there solve two of its coordinates.
-    let planar = planar_normal(net);
+    let planar = plane_normal(net);
     let (roots, flat_height) = match &planar {
         Some(n) => {
             let dot = |a: &Q3, b: &Q3| &a[0] * &b[0] + &a[1] * &b[1] + &a[2] * &b[2];

@@ -1280,3 +1280,69 @@ fn a_cancelled_tangency_next_to_the_column_counts_as_the_oracle() {
 /// The half-width of the wider enclosure of the cancelled tangency in
 /// [`a_cancelled_tangency_next_to_the_column_counts_as_the_oracle`].
 const WIDE_TOUCH: f64 = 1.0 / 1024.0;
+
+/// The count of the polygon `f` on the plane `z = 0` against a vertex
+/// of `A` at `q`, at any level, and the pieces it tested.
+fn polygon_count(f: &FaceData, order: &Order, q: [f64; 3]) -> (i64, u64) {
+    let geom = Planar {
+        face: f,
+        order,
+        plane: Some((DVec3::Z, 0.0)),
+        q,
+        band: f.trims[0].band,
+        memo: None,
+    };
+    let rays = |t: &TrimData| chain(&t.curve, q, Operand::A);
+    let (n, _, pieces) = model_count_pieces(f, &geom, true, [1.0, 1.0], &rays);
+    (n, pieces)
+}
+
+/// Columns through a plane face's inside, a hair off it, or through it
+/// exactly: every hit is a tile hit clear of the edges, so the face is
+/// counted by its hits, no box tested; at the hit's height its own
+/// record decides. A column past the face misses its hull: 0, one piece
+/// tested.
+#[test]
+fn plane_faces_count_by_their_hits() {
+    let mut order = Order::default();
+    let pts = [[0.25, 0.2], [1.7, 0.3], [1.5, 1.6], [0.3, 1.4]];
+    let f = polygon(&pts, 1.0 / 4096.0, &mut order);
+    let hair = 1.0 / 1_099_511_627_776.0;
+    for (xy, inside) in [([0.9, 0.8], true), ([1.0, 1.1], true), ([1.9, 0.1], false)] {
+        for z in [-hair, hair, 0.0] {
+            let q = [xy[0], xy[1], z];
+            let (n, pieces) = polygon_count(&f, &order, q);
+            if z != 0.0 {
+                assert_eq!(n, i64::from(inside && z < 0.0), "q = {q:?}");
+            }
+            assert_eq!(pieces, u64::from(!inside), "q = {q:?}");
+        }
+    }
+}
+
+/// Columns within an edge's near radius of a plane face, a hair off it:
+/// the boxes count the face, and a near core box on its plane tile stops
+/// once its hit is settled strictly inside it, not refined towards the
+/// hair round it (refined so, these columns test over 10000 pieces).
+#[test]
+fn near_boxes_on_a_plane_face_stop_at_their_hit() {
+    let mut order = Order::default();
+    let pts = [[0.25, 0.2], [1.7, 0.3], [1.5, 1.6], [0.3, 1.4]];
+    let f = polygon(&pts, 1.0 / 4096.0, &mut order);
+    let hair = 1.0 / 1_099_511_627_776.0;
+    let mut tested = 0;
+    for (xy, inside) in [
+        ([0.2754, 0.8], true),
+        ([0.2746, 0.8], false),
+        ([1.0, 0.252], true),
+        ([1.0, 0.2514], false),
+    ] {
+        for z in [-hair, hair] {
+            let q = [xy[0], xy[1], z];
+            let (n, pieces) = polygon_count(&f, &order, q);
+            assert_eq!(n, i64::from(inside && z < 0.0), "q = {q:?}");
+            tested += pieces;
+        }
+    }
+    assert!(tested <= 6000, "{tested} pieces");
+}

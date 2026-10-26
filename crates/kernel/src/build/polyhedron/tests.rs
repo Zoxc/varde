@@ -10,7 +10,7 @@ use super::*;
 use crate::infra::ops::{FeatureId, InstanceId};
 use crate::measure::mass::mass_props;
 use crate::topo::adjacent::EmbedCheck;
-use crate::topo::brep::{RegionId, RegionKind, Side};
+use crate::topo::brep::{PCurveId, RegionId, RegionKind, Side};
 use crate::topo::check::{CheckError, Finding, Inv};
 use varde_decide::num::storage::nearest;
 use varde_decide::num::trig;
@@ -24,9 +24,9 @@ fn ctx() -> OpCtx {
 
 /// A mesh: vertices and counter-clockwise triangles.
 #[derive(Clone, Debug, Default)]
-struct Tris {
-    verts: Vec<[f64; 3]>,
-    tris: Vec<[usize; 3]>,
+pub(crate) struct Tris {
+    pub(crate) verts: Vec<[f64; 3]>,
+    pub(crate) tris: Vec<[usize; 3]>,
 }
 
 impl Tris {
@@ -43,7 +43,7 @@ impl Tris {
         Ok((b, work.used()))
     }
 
-    fn body(&self) -> Brep {
+    pub(crate) fn body(&self) -> Brep {
         self.build().unwrap_or_else(|e| panic!("{e:?}")).0
     }
 
@@ -59,7 +59,7 @@ impl Tris {
     }
 
     /// The mesh moved by `d`.
-    fn moved(mut self, d: [f64; 3]) -> Tris {
+    pub(crate) fn moved(mut self, d: [f64; 3]) -> Tris {
         for p in &mut self.verts {
             *p = std::array::from_fn(|k| p[k] + d[k]);
         }
@@ -146,12 +146,12 @@ fn cells(n: usize, s: f64, cell: impl Fn([usize; 3]) -> bool) -> Tris {
     Tris::quads(verts, &quads)
 }
 
-fn cube() -> Tris {
+pub(crate) fn cube() -> Tris {
     cells(1, 10.0, |_| true)
 }
 
 /// The Menger sponge of `level` (1 or 2), 27 mm across.
-fn sponge(level: u32) -> Tris {
+pub(crate) fn sponge(level: u32) -> Tris {
     let n = 3usize.pow(level);
     let s = 27.0 / n as f64;
     cells(n, s, |c| {
@@ -166,11 +166,11 @@ fn sponge(level: u32) -> Tris {
 
 /// A staircase of `steps` steps in `x`, each 1 mm deep and high, 2 mm
 /// wide: concave creases between the treads and risers.
-fn stairs(steps: usize) -> Tris {
+pub(crate) fn stairs(steps: usize) -> Tris {
     cells(steps, 1.0, |[x, _, z]| z <= x)
 }
 
-fn tetrahedron() -> Tris {
+pub(crate) fn tetrahedron() -> Tris {
     Tris {
         verts: vec![
             [-1.0, -1.0, 1.0],
@@ -182,7 +182,7 @@ fn tetrahedron() -> Tris {
     }
 }
 
-fn octahedron() -> Tris {
+pub(crate) fn octahedron() -> Tris {
     let verts = vec![
         [1.0, 0.0, 0.0],
         [-1.0, 0.0, 0.0],
@@ -548,4 +548,40 @@ fn two_cubes_apart_are_two_lumps() {
     }
     passes_check(&b);
     volume_exact(&b, &mesh, 1e-12);
+}
+
+/// Every p-curve of the corpus' bodies is read by the counting as its
+/// exact degree elevation: each line's UV midpoint is exact in `f64`
+/// (the face's UV on its grid), whatever the vertices' rounding.
+#[test]
+fn every_pcurve_line_has_an_exact_midpoint() {
+    let corpus = [
+        tetrahedron(),
+        octahedron(),
+        prism(7),
+        stairs(3),
+        sponge(1),
+        octahedron().moved([0.1, -1.0 / 3.0, 0.7]),
+    ];
+    for t in &corpus {
+        let b = t.body();
+        let mut lines = 0;
+        for p in 0..b.pcurve_count() {
+            for s in b.pcurve(PCurveId(p as u32)).spans() {
+                if matches!(s, PSpan::Linear(_)) {
+                    lines += 1;
+                    assert!(s.to_q().is_some(), "{s:?}");
+                }
+            }
+        }
+        assert!(lines > 0);
+    }
+    // Without the grid, a rounded vertex's line has a midpoint that
+    // rounds: the grid is what makes it exact.
+    let (a, b) = (0.5 + f64::EPSILON / 2.0, 0.25 + f64::EPSILON / 4.0);
+    assert_ne!(q(0.5 * (a + b)) * Rational::from(2u32), q(a) + q(b));
+    let g = uv_grid([[a, 0.0], [b, 0.0]]);
+    let (a, b) = (on_grid(a, g[0]), on_grid(b, g[0]));
+    assert_eq!(q(0.5 * (a + b)) * Rational::from(2u32), q(a) + q(b));
+    assert_eq!(g[1], None);
 }

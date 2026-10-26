@@ -17,7 +17,12 @@
 //! **column hits** are exact points on the stored tiles and ribbons
 //! ([`hit`](crate::records::height::hit)), which need no box size to
 //! hold them apart, and boxes refined that far are mostly height-clear,
-//! which costs less than their hits. A core
+//! which costs less than their hits. On flat data, where the hits cost
+//! little and need no subdivision ([`super::flat`]), a near core box on
+//! a plane tile whose hits are settled, each strictly inside it, stops
+//! at once; a leaf so stopped that is split again for its degree refines
+//! as above.
+//! A core
 //! leaf is a piece of its own, its degree its box's
 //! ([`box_degree_sided`]); where the level doesn't certify that (a side
 //! inside a tile not certified off `q_xy`, too long for its turn or
@@ -113,6 +118,19 @@
 //! hit whose facing isn't formed, or on the face's boundary at `q` (which
 //! the moved column may miss), leaves the pieces' answer.
 //!
+//! **Plane faces** ([`super::flat`]). A face whose tiles are all planes,
+//! given its nets, holds no hit where its column misses its edges'
+//! hull padded by their near radii ([`column_misses`]: one piece
+//! tested). Else it finds its
+//! column's hits first (cheap there: a tile's
+//! hit is its plane's point, a ribbon's a root of a low-degree
+//! polynomial); where every one is clear ([`clear_hit`]: a tile hit, its
+//! facing formed, outside every edge's near radius), or there is none,
+//! the face is counted by them alone, no box tested ("By the hits": a
+//! hit at `q`'s height reads its own record).
+//! Otherwise its boxes run as above, its near boxes stopping at their
+//! settled hits.
+//!
 //! **The lobe fallback** ([`FacePieces::count`]'s `lobe`). Where the
 //! winding the hits give leaves `{0, 1}` at a point within an edge `g`'s
 //! near radius (the faces at `g` overshooting each other there, so their
@@ -178,6 +196,7 @@ use super::boxes::{
     sub_patch, within_band,
 };
 use super::degree::{SidedError, box_degree_counted};
+use super::flat::{FlatFace, clear_hit, column_misses};
 use super::pieces::{ExactRect, PieceError, Ribbon, UvRect, exact_rect, strip_degree_counted};
 use crate::bezier::{Dir, HomPatch, Scalar};
 use crate::ids::{CoedgeId, EdgeId, FaceId, VertId};
@@ -442,6 +461,9 @@ struct Leaf {
     /// The column's hits in its closed box, by index (with the face's nets,
     /// found for a near leaf; `None` until asked for).
     hits: Option<SmallVec<[u32; 2]>>,
+    /// Stopped at its hits on flat data, not at its size (module docs,
+    /// "Pieces"): split again, its halves refine to their size.
+    flat: bool,
 }
 
 /// Whether a set of hits is settled for one piece: at most one, or all at
@@ -731,6 +753,11 @@ fn components(n: usize, linked: impl Fn(usize, usize) -> bool) -> Vec<Vec<usize>
 struct HitCell {
     hits: OnceCell<Result<Vec<Hit>, HitError>>,
     charged: std::cell::Cell<bool>,
+    /// Which parts of the face are flat, found when first asked for.
+    flat: OnceCell<FlatFace>,
+    /// Whether the count asked for the hits ([`Flat::hits`]), not only
+    /// the plane face's test for clear ones ([`Flat::clear`]).
+    asked: std::cell::Cell<bool>,
 }
 
 /// A face's exact data and the column's hits on it, found when
@@ -745,8 +772,15 @@ struct Flat<'a, 'h> {
 }
 
 impl Flat<'_, '_> {
-    /// The column's hits on the face.
+    /// The column's hits on the face, asked for (`found` holds them).
     fn hits(&self) -> Result<&[Hit], CountError> {
+        self.cell.asked.set(true);
+        self.peek()
+    }
+
+    /// The column's hits on the face, looked at only: unless the count
+    /// asks for them too ([`Flat::hits`]), `found` holds none.
+    fn peek(&self) -> Result<&[Hit], CountError> {
         self.cell
             .hits
             .get_or_init(|| face_hits(&self.face, self.at, self.motion))
@@ -767,6 +801,36 @@ impl Flat<'_, '_> {
             },
             e => CountError::Hits(e),
         }
+    }
+
+    /// Which parts of the face are flat ([`FlatFace`]).
+    fn parts(&self) -> &FlatFace {
+        self.cell.flat.get_or_init(|| FlatFace::of(&self.face))
+    }
+
+    /// The column's hits if the count asked for them ([`Flat::hits`]):
+    /// hits a plane face's test found ([`Flat::clear`]) and the boxes
+    /// never asked for neither check nor replace the boxes' answer.
+    fn found(&self) -> Option<&Result<Vec<Hit>, HitError>> {
+        self.cell
+            .asked
+            .get()
+            .then(|| self.cell.hits.get())
+            .flatten()
+    }
+
+    /// Whether the face is a plane face and the column's hits on it are all
+    /// clear ([`clear_hit`]); a face whose hits aren't formed isn't.
+    fn clear(&self) -> bool {
+        self.parts().all
+            && self
+                .peek()
+                .is_ok_and(|hits| hits.iter().all(|h| clear_hit(&self.face, h)))
+    }
+
+    /// Whether tile `tile` of the face is a plane ([`super::flat`]).
+    fn plane_at(&self, tile: [i64; 2]) -> bool {
+        self.parts().plane_at(&self.face, tile)
     }
 
     /// The tiles and ribbon spans whose hits the column's search forms.
@@ -904,13 +968,18 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
             .fold(f64::INFINITY, |m, b| if b < m { b } else { m })
     }
 
-    /// Refines `b` (with the spans `among` its parent met) into leaves.
+    /// Refines `b` (with the spans `among` its parent met) into leaves;
+    /// with `early`, a near box on flat data stops at its settled hits
+    /// (module docs, "Pieces"). The halves of a leaf so stopped that the
+    /// rounds split again refine without (its sides, not its size, were
+    /// what didn't settle).
     fn refine(
         &mut self,
         b: BoxKey,
         among: Option<SmallVec<[SpanRef; 8]>>,
         splits: [u32; 2],
         out: &mut Vec<Leaf>,
+        early: bool,
     ) -> Result<(), CountError> {
         let mut stack = vec![(b, among, splits)];
         while let Some((b, among, splits)) = stack.pop() {
@@ -954,6 +1023,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                         met: r.met,
                         splits,
                         hits: None,
+                        flat: false,
                     });
                 }
                 continue;
@@ -980,6 +1050,37 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                 pad
             };
             let mut small = box_hull(patch, &b).is_some_and(|hb| within_band(&hb, size));
+            let mut flat = false;
+            // On flat data the hits need no subdivision: a near core box on
+            // a plane tile whose hits are settled, each strictly inside it,
+            // is a piece at once ([`super::flat`]; a hit on its side is a
+            // shadow tie of the side, which the boxes' size settles).
+            if early
+                && !small
+                && !thin
+                && h.is_none()
+                && owner == Owner::Core
+                && let Some(f) = &self.flat
+                && f.plane_at(b.tile())
+            {
+                // Looked at, not asked for: hits a box doesn't stop at
+                // neither check nor replace the boxes' answer (`found`).
+                let all = f.peek()?;
+                let r = rect(&b);
+                let ix: SmallVec<[u32; 2]> = (0u32..)
+                    .zip(all)
+                    .filter(|(_, h)| h.in_rect(&f.face, &r))
+                    .map(|(k, _)| k)
+                    .collect();
+                small = settled(all, &ix)
+                    && ix
+                        .iter()
+                        .all(|&k| all[k as usize].in_rect_open(&f.face, &r));
+                if small {
+                    f.cell.asked.set(true);
+                    flat = true;
+                }
+            }
             // With the face's nets a near box at its last split holding settled
             // hits (a hit at `q`'s height, which no box size clears), or a
             // vertex's hits (one point of the ideal face, which the near
@@ -1008,6 +1109,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
                     met: r.met,
                     splits,
                     hits,
+                    flat,
                 });
                 continue;
             }
@@ -1030,7 +1132,7 @@ impl<'a, S: Scalar> Ctx<'_, 'a, '_, S> {
         for l in taken.into_iter().rev() {
             let (halves, next) = self.split(&l.b, l.splits)?;
             for h in halves {
-                self.refine(h, Some(l.met.clone()), next, leaves)?;
+                self.refine(h, Some(l.met.clone()), next, leaves, !l.flat)?;
             }
         }
         Ok(())
@@ -1303,7 +1405,7 @@ fn hit_targets<R: HeightReads>(
 ) -> Result<Vec<HitTarget>, CountError> {
     let f = &flat.face;
     let missing = |g: EdgeId| CountError::Key(KeyError::Missing(RecordKey::Ray(RayKey { q, g })));
-    let Some(hits) = flat.cell.hits.get() else {
+    let Some(hits) = flat.found() else {
         return Ok(Vec::new());
     };
     let hits = hits.as_deref().map_err(|e| flat.error(*e))?;
@@ -1582,7 +1684,25 @@ fn pieces_within<S: Scalar, R: HeightReads>(
         allow,
         flat,
     };
-    let r = rounds(&mut ctx);
+    // A plane face whose hits are all clear (module docs, "Plane faces")
+    // is counted by them, no box tested.
+    let r = match &ctx.flat {
+        Some(f) if f.parts().all && column_misses(&f.face, f.at) => {
+            ctx.pieces = ctx.pieces.saturating_add(1);
+            Ok(FacePieces {
+                point: fq.point,
+                face: f.face.face,
+                above: 0,
+                below: 0,
+                near: Vec::new(),
+                hits: Vec::new(),
+                unformed: false,
+                pieces: 1,
+            })
+        }
+        Some(f) if f.clear() => by_hits(reads, fq.point, f, Err(CountError::Unsettled)),
+        _ => rounds(&mut ctx),
+    };
     let r = match r {
         Err(e @ CountError::OutOfBudget { .. }) => Err(e),
         r => by_hits_where(&ctx, reads, r),
@@ -1626,7 +1746,7 @@ fn by_hits_where<S, R: HeightReads>(
     // boxes and the hits disagree (a column within rounding of an edge,
     // the boxes' records at a level the hits are exact past) and the
     // hits decide.
-    if let Some(Ok(hits)) = f.cell.hits.get() {
+    if let Some(Ok(hits)) = f.found() {
         let facings: Option<i64> = hits
             .iter()
             .map(|h| h.facing.map(|s| i64::from(s.as_i8())))
@@ -1738,7 +1858,7 @@ fn hit_face<'a, S, O: EntityOrder>(
 fn rounds<S: Scalar>(ctx: &mut Ctx<'_, '_, '_, S>) -> Result<FacePieces, CountError> {
     let mut leaves: Vec<Leaf> = Vec::new();
     for b in ctx.fq.face.tile_boxes() {
-        ctx.refine(b, None, [0, 0], &mut leaves)?;
+        ctx.refine(b, None, [0, 0], &mut leaves, true)?;
     }
 
     let mut cache = Cache::new();

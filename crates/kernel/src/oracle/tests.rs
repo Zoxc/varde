@@ -603,7 +603,10 @@ fn placements_once_refused_agree() {
 /// cube, the near strip's cut next to it never certified off the ray
 /// however small the boxes beside it, all clear of its height: those
 /// join the near run once refined as far as they go) and half-grid seeds
-/// 1, 4 and 7 (corner pieces next to a face's vertex).
+/// 1, 4 and 7 (corner pieces next to a face's vertex); half-grid seeds
+/// 25 and 60, once out of refining rounds where near core boxes on a
+/// plane stopped at their hit and were split again a level a round for
+/// their degree (a leaf split again now refines as far as before).
 /// Seed 31 only by default (each takes seconds).
 #[test]
 fn adversarial_placements_once_miscounted_agree() {
@@ -631,6 +634,8 @@ fn adversarial_placements_once_miscounted_agree() {
             ("half grid", 1),
             ("half grid", 4),
             ("half grid", 7),
+            ("half grid", 25),
+            ("half grid", 60),
         ],
     );
     let outs = par(cases.len() as u64, threads(), &|i| {
@@ -1426,6 +1431,33 @@ fn crossed_turned_edges(n: u64) -> Vec<(u64, TurnedEdges)> {
         .collect()
 }
 
+/// A body of the store as the counting reads it: which edges are
+/// straight, and per face its UV unit lengths (chords of its first
+/// tile).
+fn stored(brep: crate::topo::brep::Brep) -> Solid {
+    use super::solids::is_line;
+    let straight = (0..brep.edge_count() as u32)
+        .map(|e| is_line(brep.edge_spans(crate::topo::brep::EdgeId(e))))
+        .collect();
+    let scale = (0..brep.face_count() as u32)
+        .map(|f| {
+            let s = brep.face_surface(crate::topo::brep::FaceId(f));
+            let r = s.rect();
+            let net = s.tile(r.u.start, r.v.start).expect("a tile").net();
+            let chord = |k: usize| {
+                let [a, b] = [net[0], net[k]].map(|p| DVec3::new(p[0], p[1], p[2]));
+                (b - a).length()
+            };
+            [chord(6), chord(2)]
+        })
+        .collect();
+    Solid {
+        brep,
+        straight,
+        scale,
+    }
+}
+
 /// Bodies the constructions build count from their store as the
 /// oracle's solids do: a box and a cylinder from the primitives (linear
 /// p-curves on the planes, iso lines on the walls, seams of one form
@@ -1433,41 +1465,21 @@ fn crossed_turned_edges(n: u64) -> Vec<(u64, TurnedEdges)> {
 /// other, at generic offsets, agree with the oracle.
 #[test]
 fn constructed_primitives_count_from_their_store() {
-    use super::solids::is_line;
     use crate::build::primitives::{Primitive, build};
     use crate::infra::budget::{Budget, Work};
     use crate::infra::ops::{FeatureId, OpCtx, Tolerance};
 
     let built = |p: Primitive| {
         let eps = Tolerance::new(1e-5).expect("a tolerance");
-        let brep = build(
-            &p,
-            OpCtx::new(FeatureId(1)),
-            eps,
-            &mut Work::new(&Budget::DEFAULT),
+        stored(
+            build(
+                &p,
+                OpCtx::new(FeatureId(1)),
+                eps,
+                &mut Work::new(&Budget::DEFAULT),
+            )
+            .expect("a primitive"),
         )
-        .expect("a primitive");
-        let straight = (0..brep.edge_count() as u32)
-            .map(|e| is_line(brep.edge_spans(crate::topo::brep::EdgeId(e))))
-            .collect();
-        // Per face its UV unit lengths: chords of its first tile.
-        let scale = (0..brep.face_count() as u32)
-            .map(|f| {
-                let s = brep.face_surface(crate::topo::brep::FaceId(f));
-                let r = s.rect();
-                let net = s.tile(r.u.start, r.v.start).expect("a tile").net();
-                let chord = |k: usize| {
-                    let [a, b] = [net[0], net[k]].map(|p| DVec3::new(p[0], p[1], p[2]));
-                    (b - a).length()
-                };
-                [chord(6), chord(2)]
-            })
-            .collect();
-        Solid {
-            brep,
-            straight,
-            scale,
-        }
     };
     let cuboid = built(Primitive::Cuboid {
         min: [0.3125, -0.40625, -0.21875],
@@ -1497,6 +1509,72 @@ fn constructed_primitives_count_from_their_store() {
         let t = truth(a, b, d, &oracle_faces(a), &oracle_faces(b)).expect("the oracle settles");
         assert_eq!(
             super::runs::compare(&answers, &t, &TurnedEdges::of(a, b, false)),
+            None,
+            "{name}"
+        );
+        assert!(
+            answers.winding.iter().flatten().any(|&w| w == 1),
+            "{name}: a vertex inside"
+        );
+    }
+}
+
+/// Kernel-exact placements whose columns run exactly through an edge of
+/// the cube (seeds 28, 63, 98, 38, 93) or past a face's corner (3, 13):
+/// plane faces whose hits the plane-face test or a near box looked at
+/// but did not count by (a hit on an edge's curve) are counted by their
+/// boxes as before, the hits checking them only where the boxes asked
+/// for them, so each face takes the side its records give the moved
+/// column (once both faces at the edge took a hit there, by their
+/// facings).
+#[test]
+fn columns_through_edges_of_plane_faces_take_their_records_side() {
+    let seeds = [28, 63, 98, 38, 93, 3, 13];
+    let outs = par(seeds.len() as u64, threads(), &|i| {
+        let seed = seeds[i as usize];
+        let f = family_named(KERNEL_EXACT);
+        (
+            seed,
+            check_answers(&f(seed), &Config::RUNS, &mut Stats::default()).0,
+        )
+    });
+    for (seed, o) in outs {
+        assert!(matches!(o, Outcome::Agreed { .. }), "seed {seed}: {o:?}");
+    }
+}
+
+/// Bodies of the flat corpus built from their meshes (merged plane
+/// faces, straight edges) counted against each other from their store,
+/// with faces and vertices on each other's planes: a staircase's treads
+/// under an octahedron's vertices, a cube's face on a sponge's tunnel
+/// wall, a tetrahedron through a cube's corner. Every per-vertex winding
+/// and crossing count agrees with the oracle (the counting's identities
+/// on flat data, exact end to end).
+#[test]
+fn flat_corpus_bodies_count_from_their_store() {
+    use crate::build::polyhedron::tests::{cube, octahedron, sponge, stairs, tetrahedron};
+
+    let d = DVec3::new(0.3, -0.7, 0.62);
+    for (name, a, b) in [
+        (
+            "stairs, octahedron",
+            stairs(3),
+            octahedron().moved([1.25, 1.5, 2.0]),
+        ),
+        (
+            "octahedron, stairs",
+            octahedron().moved([1.25, 1.5, 2.0]),
+            stairs(3),
+        ),
+        ("tetrahedron, cube", tetrahedron(), cube()),
+        ("cube, sponge", cube().moved([9.0, 9.0, -5.0]), sponge(1)),
+    ] {
+        let (a, b) = (stored(a.body()), stored(b.body()));
+        let answers = counting(&a, &b, d, &Config::RUNS, &mut Stats::default())
+            .unwrap_or_else(|r| panic!("{name}: refused {r:?}"));
+        let t = truth(&a, &b, d, &oracle_faces(&a), &oracle_faces(&b)).expect("the oracle settles");
+        assert_eq!(
+            super::runs::compare(&answers, &t, &TurnedEdges::of(&a, &b, false)),
             None,
             "{name}"
         );

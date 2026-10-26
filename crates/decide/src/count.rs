@@ -16,11 +16,14 @@
 //! [`cross`], the edge–face crossing counts `x12`, `x21` from those and
 //! the edge pairs' `s11` by identity; and [`winding`], each vertex's
 //! winding number in the other operand, from one seed per connected
-//! component carried along every edge by its crossings.
+//! component carried along every edge by its crossings; and [`flat`],
+//! which parts of a face are flat, where a piece needs no refining to be
+//! counted by its exact hits.
 
 pub mod boxes;
 pub mod cross;
 pub mod degree;
+pub mod flat;
 pub mod pieces;
 pub mod s02;
 pub mod winding;

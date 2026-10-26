@@ -30,7 +30,9 @@
 //! **Geometry.** A face lies on its plane's surface (the key's lattice,
 //! its one tile), flipped where its outward normal is against the key's;
 //! its edges are the lines between their vertices, their p-curves the
-//! lines between the vertices' UV on the plane (each rounded once), and
+//! lines between the vertices' UV on the plane (each rounded once, then
+//! onto the face's UV grid, [`uv_grid`], so that each line's midpoint is
+//! exact: a p-curve the counting reads as its exact degree elevation), and
 //! the seam bounds are certified as a primitive's
 //! ([`super::primitives::seam_target`]), so a ribbon is the rounding of a
 //! vertex off its face's stored plane. Edges are creases, convex or
@@ -79,7 +81,7 @@ use crate::topo::build::{Builder, Use};
 use crate::topo::check::{Outcome, Role, Scope};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Why a mesh makes no body.
 #[derive(Clone, Debug, PartialEq)]
@@ -526,13 +528,25 @@ impl Make<'_> {
             .add_surface(surface, None, ExactRows::default())
             .map_err(built)?;
         let id = self.b.add_face(s, flipped, key).map_err(built)?;
+        let uv: BTreeMap<usize, [f64; 2]> = {
+            let at: Vec<(usize, [f64; 2])> = f
+                .loops
+                .iter()
+                .flatten()
+                .map(|&v| (v, plane_uv(&l, &self.mesh.verts[v])))
+                .collect();
+            let grid = uv_grid(at.iter().map(|(_, p)| *p));
+            at.into_iter()
+                .map(|(v, p)| (v, std::array::from_fn(|k| on_grid(p[k], grid[k]))))
+                .collect()
+        };
         for (k, ring) in f.loops.iter().enumerate() {
             let mut pairs = Vec::with_capacity(ring.len());
             let mut reversed = Vec::with_capacity(ring.len());
             for i in 0..ring.len() {
                 let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
                 let (lo, hi) = (a.min(b), a.max(b));
-                let [p, r] = [lo, hi].map(|v| plane_uv(&l, &self.mesh.verts[v]));
+                let [p, r] = [lo, hi].map(|v| uv[&v]);
                 let pcurve = PCurve::from_spans(
                     vec![PSpan::Linear([[p[0], p[1], 1.0], [r[0], r[1], 1.0]])],
                     vec![0.0, 1.0],
@@ -562,4 +576,38 @@ impl Make<'_> {
         }
         Ok(id)
     }
+}
+
+/// Per UV coordinate, the grid `2^(E − 52)` of a face's UV points, `2^E`
+/// the least power of two above every value's magnitude (`None` where
+/// all are zero or one isn't finite). Two values on it sum exactly and
+/// their half is exact: each a multiple of the grid below `2^52` grids,
+/// their sum below `2^53` of them, the half below `2^53` half grids.
+fn uv_grid(points: impl IntoIterator<Item = [f64; 2]>) -> [Option<f64>; 2] {
+    let mut m = [0.0f64; 2];
+    let mut finite = true;
+    for p in points {
+        for k in 0..2 {
+            finite &= p[k].is_finite();
+            if p[k].abs() > m[k] {
+                m[k] = p[k].abs();
+            }
+        }
+    }
+    m.map(|m| {
+        if !finite || m == 0.0 || m < f64::MIN_POSITIVE {
+            return None;
+        }
+        // `2^E > m`, from the exponent bits of `m`.
+        let e = ((m.to_bits() >> 52) & 0x7ff) as i64 - 1023 + 1;
+        // Within the normal range (`m` normal and below `2^1024`).
+        (e - 52 >= -1022 && e <= 1023).then(|| f64::from_bits(((e - 52 + 1023) as u64) << 52))
+    })
+}
+
+/// `x` rounded to the nearest multiple of `grid` (half away from zero),
+/// exactly: `x / grid` is exact for a power of two in the normal range;
+/// `x` itself without a grid.
+fn on_grid(x: f64, grid: Option<f64>) -> f64 {
+    grid.map_or(x, |g| (x / g).round() * g)
 }
