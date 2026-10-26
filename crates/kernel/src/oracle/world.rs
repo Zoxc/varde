@@ -366,7 +366,7 @@ impl<'s> World<'s> {
                     .into_iter()
                     .map(|e| {
                         let [t0, t1] = s.brep.t_range(e);
-                        let p = s.brep.curve(e).eval(0.5 * (t0 + t1)).expect("a point");
+                        let p = s.brep.edge_curve(e).eval(0.5 * (t0 + t1)).expect("a point");
                         p.map(|c| c.v)
                     })
                     .collect()
@@ -392,12 +392,16 @@ impl<'s> World<'s> {
     /// p-curves don't fit their edges' spans or aren't Q spans.
     fn hit_data(&self, op: Operand, f: FaceId) -> Option<HitData> {
         let b = &self.solid(op).brep;
-        let surf = b.surface(f);
+        let surf = b.face_surface(f);
         let mut trims = Vec::new();
         for l in b.loops(f) {
             for c in b.loop_coedges(l) {
                 let e = b.edge(c);
-                let map = span_map(b.pcurve(c).knots(), b.curve(e).knots(), b.t_range(e))?;
+                let map = span_map(
+                    b.coedge_pcurve(c).knots(),
+                    b.edge_curve(e).knots(),
+                    b.t_range(e),
+                )?;
                 let [s0, s1] = b.ends(e);
                 trims.push(HitTrimData {
                     coedge: c,
@@ -406,7 +410,7 @@ impl<'s> World<'s> {
                     ends: [s0, s1],
                     along: Along::of(&self.order.vert_key(op, s0), &self.order.vert_key(op, s1)),
                     band: self.band(op, e),
-                    spans: b.pcurve(c).q_spans()?,
+                    spans: b.coedge_pcurve(c).q_chain()?,
                     map,
                 });
             }
@@ -571,7 +575,7 @@ impl FeetGeometry for World<'_> {
 impl SideGeometry for World<'_> {
     fn tile_edge(&self, e: &TileEdge) -> Option<Span> {
         let s = self.solid(e.operand);
-        let surf = s.brep.surface(e.face);
+        let surf = s.brep.face_surface(e.face);
         let r = surf.rect();
         let (u, v) = (&r.u, &r.v);
         // The tile on the line's upper side if the face has it, else the
@@ -610,7 +614,7 @@ impl SideGeometry for World<'_> {
 
     fn corner(&self, _: Point, c: &TileCorner) -> Option<Moving> {
         let s = self.solid(c.operand);
-        let surf = s.brep.surface(c.face);
+        let surf = s.brep.face_surface(c.face);
         let r = surf.rect();
         let [cu, cv] = c.at;
         let pick = |x: i64, range: &std::ops::Range<i64>| {
@@ -632,7 +636,7 @@ impl SideGeometry for World<'_> {
     }
 
     fn tile_net(&self, operand: Operand, face: FaceId, [i, j]: [i64; 2]) -> Option<TileNet> {
-        let surf = self.solid(operand).brep.surface(face);
+        let surf = self.solid(operand).brep.face_surface(face);
         let r = surf.rect();
         if !r.u.contains(&i) || !r.v.contains(&j) {
             return None;
@@ -785,8 +789,8 @@ fn foot_at(a: DVec3, b: DVec3, q: DVec3) -> DVec3 {
 
 /// A plane face's plane `n·x = c`, its normal outward; `None` for a
 /// curved face.
-fn plane_of(b: &crate::topo::brep_min::Brep, f: FaceId) -> Option<(DVec3, f64)> {
-    let crate::geom::form::FormKey::Plane(k) = b.surface(f).lattice().key() else {
+fn plane_of(b: &crate::topo::brep::Brep, f: FaceId) -> Option<(DVec3, f64)> {
+    let crate::geom::form::FormKey::Plane(k) = b.face_surface(f).lattice().key() else {
         return None;
     };
     let (n, c) = (DVec3::from_array(k.normal()), k.offset());
@@ -1591,14 +1595,18 @@ impl<'s> FaceSetup<'s> {
         for l in b.loops(f) {
             for c in b.loop_coedges(l) {
                 let e = b.edge(c);
-                let map = span_map(b.pcurve(c).knots(), b.curve(e).knots(), b.t_range(e))
-                    .ok_or_else(|| {
-                        refused(
-                            Cause::Other("p-curve knots off the edge's spans".into()),
-                            format!("{c:?}"),
-                        )
-                    })?;
-                let spans = b.pcurve(c).q_spans().ok_or_else(|| {
+                let map = span_map(
+                    b.coedge_pcurve(c).knots(),
+                    b.edge_curve(e).knots(),
+                    b.t_range(e),
+                )
+                .ok_or_else(|| {
+                    refused(
+                        Cause::Other("p-curve knots off the edge's spans".into()),
+                        format!("{c:?}"),
+                    )
+                })?;
+                let spans = b.coedge_pcurve(c).q_chain().ok_or_else(|| {
                     refused(
                         Cause::Other("a p-curve span not a Q span".into()),
                         format!("{c:?}"),
@@ -1615,7 +1623,7 @@ impl<'s> FaceSetup<'s> {
                 });
             }
         }
-        let surf = b.surface(f);
+        let surf = b.face_surface(f);
         let r = surf.rect();
         let mut patches = Vec::new();
         for i in r.u.clone() {
@@ -1664,7 +1672,7 @@ impl<'s> FaceSetup<'s> {
         scale: [f64; 2],
     ) -> Result<FaceUv<'t>, Refusal> {
         let b = &self.solid.brep;
-        let r = b.surface(f).rect();
+        let r = b.face_surface(f).rect();
         FaceUv::new(
             op,
             f,

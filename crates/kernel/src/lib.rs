@@ -8,8 +8,9 @@
 //! images; the constructors in [`geom::forms`], ruled surfaces' there
 //! too), tiled surfaces, edge and coedge curves and their
 //! seam bounds; the B-rep store with every field a body keeps
-//! ([`topo::brep`]) and the minimal store counting reads
-//! ([`topo::brep_min`]); the names of faces, edges and vertices
+//! ([`topo::brep`]), which the counting reads, and the minimal store
+//! the snap and the arrangement passes still read ([`topo::brep_min`]);
+//! the names of faces, edges and vertices
 //! ([`names`]); and the
 //! boolean's first step, its tangency clusters ([`boolean::snap`]); and
 //! what it reports beside an outcome ([`evidence`]): a [`Failure`]'s

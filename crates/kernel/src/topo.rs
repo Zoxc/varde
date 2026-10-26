@@ -1,9 +1,10 @@
 //! The kernel's topology: the B-rep store with every field a body keeps
 //! ([`brep`]), its building and editing ([`build`]) and its check
 //! ([`check`]: the invariants in order, the first failure in the
-//! geometric order); [`brep_min`], the minimal store that counting reads
-//! (vertices, edges, coedges with their p-curves and seam bounds, loops
-//! and faces) and the bit-exact joins its ribbons need;
+//! geometric order); [`brep_min`], the minimal store the snap and the
+//! arrangement passes read (vertices, edges, coedges with their p-curves
+//! and seam bounds, loops and faces) and the bit-exact joins its ribbons
+//! need;
 //! and [`arrange2d`], a face's arrangement in its UV on straight spans:
 //! rotation order, face cycles, nesting by a containment certificate,
 //! regions and their windings; [`adjacent`], the local certificates

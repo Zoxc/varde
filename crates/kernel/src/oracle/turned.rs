@@ -12,7 +12,7 @@ use malachite::base::num::basic::traits::Zero as _;
 
 use super::solids::Solid;
 use crate::geom::form::FormKey;
-use crate::topo::brep_min::{EdgeId, FaceId};
+use crate::topo::brep::{EdgeId, FaceId};
 
 /// Per edge of one operand (a row of `x12` or `x21`), the groups of the
 /// other operand's faces whose crossing counts are checked by their sum:
@@ -132,7 +132,7 @@ fn edge_faces(s: &Solid) -> Vec<Vec<usize>> {
 /// coordinate plane (whose tile is its key's plane exactly, through its
 /// exact vertices), or its p-curves perturbed.
 fn rounded(s: &Solid, f: FaceId, exact_ribbons: bool) -> bool {
-    let lat = s.brep.surface(f).lattice();
+    let lat = s.brep.face_surface(f).lattice();
     let flat = matches!(lat.key(), FormKey::Plane(_))
         && lat.axes()[2].iter().filter(|&&c| c == 0.0).count() == 2;
     !(flat && exact_ribbons)

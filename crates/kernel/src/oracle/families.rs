@@ -107,7 +107,7 @@ fn near_edge(seed: u64) -> Placement {
     let g = edges[(rng.next_u64() % edges.len() as u64) as usize];
     let [t0, t1] = sb.brep.t_range(g);
     let t = rng.range(t0, t1);
-    let curve = sb.brep.curve(g);
+    let curve = sb.brep.edge_curve(g);
     let p = curve.eval(t).expect("a point").map(|c| c.v);
     let along = [0.0, 0.25, 0.5, 0.999][(seed % 4) as usize];
     let knot = if along == 0.0 && !sb.straight[g.index()] {
@@ -279,7 +279,7 @@ fn on_plane_origin(seed: u64) -> Placement {
     };
     let sb = b.build(&Make::PLAIN);
     let f = sb.faces()[(seed % 6) as usize];
-    let lat = sb.brep.surface(f).lattice().clone();
+    let lat = sb.brep.face_surface(f).lattice().clone();
     let a = box_at(&mut rng, DVec3::from_array(lat.origin()));
     placement(&mut rng, a, b)
 }

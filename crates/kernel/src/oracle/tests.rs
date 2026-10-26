@@ -1382,13 +1382,13 @@ fn silhouette_corner(p: &Placement, a: &Solid, b: &Solid) -> bool {
     }
     let Some(f) = b.faces().into_iter().find(|&f| {
         matches!(
-            b.brep.surface(f).lattice().key(),
+            b.brep.face_surface(f).lattice().key(),
             crate::geom::form::FormKey::Cylinder(_)
         )
     }) else {
         return false;
     };
-    let s = b.brep.surface(f);
+    let s = b.brep.face_surface(f);
     let level = s.rect().level.u;
     let up = DVec3::new(2.0, 3.0, 32.0);
     let inner = (s.rect().u.start + 1)..s.rect().u.end;
@@ -1424,4 +1424,85 @@ fn crossed_turned_edges(n: u64) -> Vec<(u64, TurnedEdges)> {
             (t.count() > 0).then_some((seed, t))
         })
         .collect()
+}
+
+/// Bodies the constructions build count from their store as the
+/// oracle's solids do: a box and a cylinder from the primitives (linear
+/// p-curves on the planes, iso lines on the walls, seams of one form
+/// between the walls' halves) against a half cylinder and against each
+/// other, at generic offsets, agree with the oracle.
+#[test]
+fn constructed_primitives_count_from_their_store() {
+    use super::solids::is_line;
+    use crate::build::primitives::{Primitive, build};
+    use crate::infra::budget::{Budget, Work};
+    use crate::infra::ops::{FeatureId, OpCtx, Tolerance};
+
+    let built = |p: Primitive| {
+        let eps = Tolerance::new(1e-5).expect("a tolerance");
+        let brep = build(
+            &p,
+            OpCtx::new(FeatureId(1)),
+            eps,
+            &mut Work::new(&Budget::DEFAULT),
+        )
+        .expect("a primitive");
+        let straight = (0..brep.edge_count() as u32)
+            .map(|e| is_line(brep.edge_spans(crate::topo::brep::EdgeId(e))))
+            .collect();
+        // Per face its UV unit lengths: chords of its first tile.
+        let scale = (0..brep.face_count() as u32)
+            .map(|f| {
+                let s = brep.face_surface(crate::topo::brep::FaceId(f));
+                let r = s.rect();
+                let net = s.tile(r.u.start, r.v.start).expect("a tile").net();
+                let chord = |k: usize| {
+                    let [a, b] = [net[0], net[k]].map(|p| DVec3::new(p[0], p[1], p[2]));
+                    (b - a).length()
+                };
+                [chord(6), chord(2)]
+            })
+            .collect();
+        Solid {
+            brep,
+            straight,
+            scale,
+        }
+    };
+    let cuboid = built(Primitive::Cuboid {
+        min: [0.3125, -0.40625, -0.21875],
+        size: [1.25, 0.6875, 0.5625],
+    });
+    let cylinder = built(Primitive::Cylinder {
+        base: [0.53125, 0.15625, -0.65625],
+        radius: 0.4375,
+        height: 1.1875,
+    });
+    let half = Shape::HalfCylinder {
+        point: [0.0, 0.0, 0.0],
+        axis: [0.6, 0.0, 0.8],
+        radius: 0.75,
+        z: [-1.0, 1.0],
+        first: 3,
+    }
+    .build(&Make::PLAIN);
+    let d = DVec3::new(0.3, -0.7, 0.62);
+    for (name, a, b) in [
+        ("box, half cylinder", &cuboid, &half),
+        ("half cylinder, cylinder", &half, &cylinder),
+        ("box, cylinder", &cuboid, &cylinder),
+    ] {
+        let answers = counting(a, b, d, &Config::RUNS, &mut Stats::default())
+            .unwrap_or_else(|r| panic!("{name}: refused {r:?}"));
+        let t = truth(a, b, d, &oracle_faces(a), &oracle_faces(b)).expect("the oracle settles");
+        assert_eq!(
+            super::runs::compare(&answers, &t, &TurnedEdges::of(a, b, false)),
+            None,
+            "{name}"
+        );
+        assert!(
+            answers.winding.iter().flatten().any(|&w| w == 1),
+            "{name}: a vertex inside"
+        );
+    }
 }

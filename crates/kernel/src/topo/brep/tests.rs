@@ -1,7 +1,8 @@
 //! The store on a square sheet face and on single rows: every column of
 //! a kind as long as the kind, the links read back as added, the rows
 //! refused for what they refer to, and the rules of the edge origins,
-//! the tolerances and the touching report.
+//! the tolerances and the touching report, and what the counting reads:
+//! the magnitude and the near radii.
 
 use varde_decide::num::storage::OpStart;
 
@@ -514,4 +515,45 @@ fn only_a_same_form_edge_marked_touch_is_a_touch() {
     }
     assert_eq!(Side::Out.index(), 0);
     assert_eq!(Side::In.index(), 1);
+}
+
+/// The store's magnitude is its largest coordinate of vertex positions
+/// and curve control points, weights aside; each vertex's near radius is
+/// the greatest of its edges', each `3·(tol + ρ_op)` rounded up; an edge
+/// tolerance the bands refuse gives none.
+#[test]
+fn magnitude_and_near_radii() {
+    let mut s = square();
+    assert_eq!(s.brep.max_coord(), 1.0);
+    // A curve's middle control point beyond every vertex, heavy.
+    let far = Curve3D::new(
+        vec![[
+            [0.0, 0.0, 0.0, 1.0],
+            [0.5, -70.0, 0.0, 8.0],
+            [1.0, 0.0, 0.0, 1.0],
+        ]],
+        vec![0.0, 1.0],
+    )
+    .unwrap();
+    s.brep.push_curve(far).unwrap();
+    assert_eq!(s.brep.max_coord(), 70.0);
+
+    let tols = [1e-6, 4e-6, 0.0, 2e-6];
+    for (e, t) in s.edges.iter().zip(tols) {
+        s.brep.edges.tol[e.index()] = t;
+    }
+    let bands = OpBands::new(s.brep.max_coord()).unwrap();
+    let radius = |t: f64| bands.near_radius(t).unwrap();
+    for (e, t) in s.edges.iter().zip(tols) {
+        assert_eq!(s.brep.edge_near_radius(*e, &bands), Some(radius(t)));
+    }
+    // Edges (0, 1), (1, 2), (2, 3), (0, 3): the greater tolerance gives
+    // the greater radius.
+    let want = [radius(2e-6), radius(4e-6), radius(4e-6), radius(2e-6)];
+    assert_eq!(s.brep.vert_near_radii(&bands), Some(want.to_vec()));
+    assert!(want.iter().all(|&r| r >= 3.0 * bands.rho_op()));
+
+    s.brep.edges.tol[s.edges[2].index()] = f64::NAN;
+    assert_eq!(s.brep.edge_near_radius(s.edges[2], &bands), None);
+    assert_eq!(s.brep.vert_near_radii(&bands), None);
 }

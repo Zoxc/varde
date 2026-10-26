@@ -413,6 +413,21 @@ const BUILT: Invariants<'static> = [
     &names::Names,
 ];
 
+/// A hook checking nothing ([`Brep::check_through`]).
+#[cfg(test)]
+struct Skipped;
+
+#[cfg(test)]
+impl Invariant for Skipped {
+    fn kinds(&self) -> &[ItemKind] {
+        &[]
+    }
+
+    fn check(&self, _: &Cx<'_>, _: Item, _: &mut Ledger<'_>) -> Result<(), Stop<Fault>> {
+        Ok(())
+    }
+}
+
 /// What an operation changed: its new and modified faces, and its new
 /// edges and vertices. Ids naming no entity of the body are ignored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -516,6 +531,17 @@ impl Brep {
     /// The full check with invariant `inv` left out (module docs).
     pub fn check_except(&self, inv: Inv, budget: &Budget) -> Result<(), CheckError> {
         self.check_in(Scope::Full, Some(inv), &mut Work::new(budget), 0)
+    }
+
+    /// The full check of invariants 1 to `last` only, on a budget of its
+    /// own: for test bodies whose later invariants aren't built for them.
+    #[cfg(test)]
+    pub(crate) fn check_through(&self, last: Inv, budget: &Budget) -> Result<(), CheckError> {
+        let mut table = BUILT;
+        for hook in &mut table[usize::from(last.number())..] {
+            *hook = &Skipped;
+        }
+        run(self, Scope::Full, None, &table, &mut Work::new(budget), 0)
     }
 
     /// The check over `scope`, invariant `except` left out, charged to an

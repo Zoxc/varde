@@ -68,6 +68,7 @@ use crate::infra::ops::{MAX_WARNINGS, Status, Tolerance};
 use crate::names::keys::TermTable;
 
 use varde_decide::num::decide::Sign;
+use varde_decide::records::near::OpBands;
 
 pub use crate::geom::fit_types::{ExactRow, ExactRows, Fit};
 pub use crate::names::keys::{Digest, EdgeTag, FaceKey, FacePart, PoleEnd, VertTag};
@@ -1040,6 +1041,22 @@ impl Brep {
         self.kind
     }
 
+    /// The largest coordinate magnitude of the stored geometry: vertex
+    /// positions and the control points of the space curves (weights
+    /// aside). Its operands' greatest is an operation's magnitude, which
+    /// fixes its rounding bound ([`OpBands`]).
+    pub fn max_coord(&self) -> f64 {
+        let verts = self.verts.pos.iter().flatten();
+        let curves = self
+            .curves3
+            .iter()
+            .flat_map(|c| c.spans().iter().flatten().flat_map(|p| &p[..3]));
+        verts
+            .chain(curves)
+            .map(|x| x.abs())
+            .fold(0.0, |m, x| if x > m { x } else { m })
+    }
+
     /// The number of surfaces; their ids are `0..n`.
     pub fn surface_count(&self) -> usize {
         self.surfaces.surface.len()
@@ -1231,6 +1248,29 @@ impl Brep {
     /// An edge's attributes.
     pub fn edge_attrs(&self, e: EdgeId) -> AttrSetId {
         self.edges.attrs[e.index()]
+    }
+
+    /// An edge's near radius `r_g = 3·(tol + ρ_op)` under an operation's
+    /// bands; `None` if the bands refuse its tolerance.
+    pub fn edge_near_radius(&self, e: EdgeId, bands: &OpBands) -> Option<f64> {
+        bands.near_radius(self.edge_tol(e))
+    }
+
+    /// Every vertex's near radius, by id: the greatest of its edges'
+    /// ([`edge_near_radius`](Self::edge_near_radius)), 0 at a vertex
+    /// without edges; `None` if the bands refuse an edge's tolerance.
+    pub fn vert_near_radii(&self, bands: &OpBands) -> Option<Vec<f64>> {
+        let mut out = vec![0.0; self.verts.pos.len()];
+        for e in 0..self.edges.curve.len() {
+            let r = self.edge_near_radius(EdgeId(e as u32), bands)?;
+            for v in [self.edges.v_start[e], self.edges.v_end[e]] {
+                let m = &mut out[v.index()];
+                if r > *m {
+                    *m = r;
+                }
+            }
+        }
+        Some(out)
     }
 
     // Coedges.

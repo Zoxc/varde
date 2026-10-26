@@ -15,7 +15,7 @@ use varde_testkit::rng::Rng;
 use super::solids::{Make, Shape, Solid};
 use super::turned::{TurnedEdges, fold, group_of};
 use super::world::{Answers, Cause, Config, Refusal, Stats, World};
-use crate::topo::brep_min::{EdgeId, FaceId};
+use crate::topo::brep::{EdgeId, FaceId};
 
 /// A placement: the two shapes, how each is built, and `A`'s direction.
 #[derive(Clone, Debug, PartialEq)]
@@ -82,7 +82,7 @@ pub(super) fn oracle_faces(s: &Solid) -> Vec<ExactFace> {
 
 pub(super) fn oracle_face(s: &Solid, f: FaceId) -> Face {
     let b = &s.brep;
-    let surf = b.surface(f);
+    let surf = b.face_surface(f);
     let r = surf.rect();
     let mut tiles = Vec::new();
     for i in r.u.clone() {
@@ -96,10 +96,10 @@ pub(super) fn oracle_face(s: &Solid, f: FaceId) -> Face {
             b.loop_coedges(l)
                 .map(|c| {
                     let e = b.edge(c);
-                    let p = b.pcurve(c);
+                    let p = b.coedge_pcurve(c);
                     Coedge {
                         pcurve: UvChain {
-                            spans: p.q_spans().expect("Q spans"),
+                            spans: p.q_chain().expect("Q spans"),
                             knots: p.knots().to_vec(),
                         },
                         curve: chain(s, e),
@@ -114,7 +114,7 @@ pub(super) fn oracle_face(s: &Solid, f: FaceId) -> Face {
 }
 
 fn chain(s: &Solid, e: EdgeId) -> Chain {
-    let c = s.brep.curve(e);
+    let c = s.brep.edge_curve(e);
     Chain {
         spans: c.spans().to_vec(),
         knots: c.knots().to_vec(),

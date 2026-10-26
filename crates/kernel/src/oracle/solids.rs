@@ -1,5 +1,5 @@
 //! The solids the runs count: a box, a half cylinder and a half sphere
-//! zone, each a closed body in the minimal store on plane, cylinder and
+//! zone, each a closed body in the B-rep store on plane, cylinder and
 //! sphere tiles, at any rigid placement and lattice level, with every
 //! p-curve's middle control point perturbed (the ribbons then have
 //! width).
@@ -32,7 +32,14 @@ use crate::geom::lattice::{CELL, Lattice, Level, Rect};
 use crate::geom::pcurve::{PCurve, PSpan, Span2};
 use crate::geom::surface::Surface;
 use crate::infra::budget::{Budget, Work};
-use crate::topo::brep_min::{Brep, EdgeId, FaceId, VertId};
+use crate::infra::ops::{FeatureId, OpCtx, Status, Tolerance};
+use crate::topo::brep::{
+    BodyKind, Brep, EdgeId, ExactRows, FaceId, FaceKey, FacePart, PCurveId, RegionId, RegionKind,
+    ShellId, ShellKind, Side, VertId,
+};
+use crate::topo::build::{Builder, Use};
+use crate::topo::check::Inv;
+use varde_decide::num::storage::OperandScan;
 
 const ROOT_HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
@@ -318,12 +325,15 @@ impl Parts {
                 id.swap(k, j);
             }
         }
-        let mut b = Brep::new();
-        let mut by_id = vec![[0.0; 3]; n];
-        for (k, p) in self.verts.iter().enumerate() {
-            by_id[id[k]] = *p;
-        }
-        let vs: Vec<VertId> = by_id
+        let verts: Vec<[f64; 3]> = {
+            let mut by_id = vec![[0.0; 3]; n];
+            for (k, p) in self.verts.iter().enumerate() {
+                by_id[id[k]] = *p;
+            }
+            by_id
+        };
+        let mut b = Builder::new(BodyKind::Solid, status(&verts));
+        let vs: Vec<VertId> = verts
             .iter()
             .map(|&p| b.add_vert(p).expect("a vertex"))
             .collect();
@@ -348,41 +358,88 @@ impl Parts {
                 .expect("a curve id");
             let (v0, v1) = if reversed { (hi, lo) } else { (lo, hi) };
             edges.push(
-                b.add_edge(c, [knots[0], t1], vs[v0], vs[v1])
+                b.add_edge(c, [knots[0], t1], [vs[v0], vs[v1]])
                     .expect("an edge"),
             );
             flip.push(reversed);
         }
         let mut scales = Vec::new();
-        for (surface, unit, flipped, uses) in self.faces {
+        for (k, (surface, unit, flipped, uses)) in self.faces.into_iter().enumerate() {
             let rect = surface.rect().clone();
-            let s = b.add_surface(surface).expect("a surface");
-            let f = b.add_face(s, flipped).expect("a face");
-            let uses = uses
-                .into_iter()
-                .map(|(e, rev, p)| {
-                    let p = if flip[e] { reverse_uv(&p) } else { p };
-                    let p = perturb(&p, &rect, unit, make.pert, &mut rng);
-                    (edges[e], rev != flip[e], p)
+            let s = b
+                .add_surface(surface, None, ExactRows::default())
+                .expect("a surface");
+            let key = FaceKey::new(OpCtx::new(FeatureId(1)), FacePart::Primitive(k as u32));
+            let f = b.add_face(s, flipped, key).expect("a face");
+            let mut shown = Vec::new();
+            let mut ps = Vec::new();
+            for (e, rev, p) in uses {
+                let p = if flip[e] { reverse_uv(&p) } else { p };
+                let p = perturb(&p, &rect, unit, make.pert, &mut rng);
+                shown.push(p.spans().to_vec());
+                let pc = b.add_pcurve(p).expect("a p-curve");
+                ps.push((edges[e], rev != flip[e], pc));
+            }
+            let shown = format!("{rect:?} {shown:?}");
+            let pairs: Vec<(EdgeId, PCurveId)> = ps.iter().map(|&(e, _, p)| (e, p)).collect();
+            let bounds = b
+                .seam_bounds(s, &pairs, SEAM_TARGET, &mut Work::new(&Budget::DEFAULT))
+                .unwrap_or_else(|e| panic!("seam bounds: {e:?} {shown}"));
+            let uses: Vec<Use> = ps
+                .iter()
+                .zip(bounds)
+                .map(|(&(edge, reversed, pcurve), seam_bound)| Use {
+                    edge,
+                    reversed,
+                    pcurve,
+                    seam_bound,
                 })
-                .collect::<Vec<(EdgeId, bool, PCurve)>>();
-            let shown = format!(
-                "{rect:?} {:?}",
-                uses.iter()
-                    .map(|u| u.2.spans().to_vec())
-                    .collect::<Vec<_>>()
-            );
-            b.add_loop(f, true, uses, SEAM_TARGET, &mut Work::new(&Budget::DEFAULT))
+                .collect();
+            b.add_loop(f, true, &uses)
                 .unwrap_or_else(|e| panic!("a loop: {e:?} {shown}"));
             scales.push(unit);
         }
-        debug_assert_eq!(b.check_ribbons(), Ok(()));
+        // One closed shell bounding one lump, its faces outward: the
+        // regions `fill_regions` derives (the `Out` sides an island of the
+        // unbounded region, the `In` sides the lump's outer shell), set
+        // here without the shells' volumes, which on perturbed curved
+        // trims cost more than a body's budget.
+        let faces: Vec<FaceId> = (0..b.brep().face_count() as u32).map(FaceId).collect();
+        let sides = |side| faces.iter().map(|&f| (f, side)).collect();
+        let out = b
+            .add_shell(ShellKind::Island, sides(Side::Out))
+            .expect("a shell");
+        let inner = b
+            .add_shell(ShellKind::Outer, sides(Side::In))
+            .expect("a shell");
+        b.add_region(RegionKind::Empty, ShellId::NONE, vec![out], RegionId::NONE)
+            .expect("the unbounded region");
+        b.add_region(RegionKind::Material, inner, Vec::new(), RegionId::NONE)
+            .expect("the lump");
+        let (brep, _) = b.finish().expect("a body");
+        debug_assert_eq!(
+            brep.check_through(Inv::Joins, &Budget::DEFAULT),
+            Ok(()),
+            "a solid's topology and joins"
+        );
         Solid {
-            brep: b,
+            brep,
             straight,
             scale: scales,
         }
     }
+}
+
+/// The status of the operation building a solid with vertices `verts`:
+/// the tolerance `10⁻⁵` its seam target is a quarter of, the start from
+/// the vertices' magnitude.
+fn status(verts: &[[f64; 3]]) -> Status {
+    let mut scan = OperandScan::new();
+    for p in verts {
+        scan.bounded(p).expect("a storable vertex");
+    }
+    let eps = Tolerance::new(4.0 * SEAM_TARGET).expect("a tolerance");
+    Status::new(eps, &scan.start(eps.eps()).expect("a start"))
 }
 
 /// A chain run the other way, over the same knots reflected.

@@ -8,7 +8,9 @@
 //! halved; values past the exact integers and crossings within an ulp
 //! are refused; random chains of every kind come out in one tile per
 //! span, close to the original, the spans already in a tile and the
-//! original knots kept, and splitting again changes nothing.
+//! original knots kept, and splitting again changes nothing. A linear or
+//! iso span read as a Q span is the same curve, or refused where its
+//! middle control point would round.
 
 use malachite::Rational as Q;
 use varde_testkit::rng::Rng;
@@ -476,4 +478,45 @@ fn random_chains_split_into_tiles_close_to_the_original() {
     // Refusals need crossings within an ulp or spans that won't halve
     // into a tile: none on these.
     assert_eq!(refused, 0, "{refused} of {total} refused");
+}
+
+/// Linear and iso spans of equal end weights read as Q spans the same
+/// curve over the same parameter, exactly; a midpoint that would round,
+/// unequal weights or a graph span is no Q span.
+#[test]
+fn straight_spans_read_as_q_spans_exactly() {
+    let mut rng = Rng::new(31);
+    // Multiples of 2^-20 below 2^10: their sums and halves are exact.
+    let mut grid = || (rng.next_u64() % (1 << 30)) as f64 / (1u64 << 20) as f64 - 512.0;
+    for _ in 0..50 {
+        let w = [1.0, 0.75, 3.0][(grid().abs() as usize) % 3];
+        let linear = PSpan::Linear([[grid(), grid(), w], [grid(), grid(), w]]);
+        let iso = PSpan::Iso {
+            fixed: if grid() > 0.0 { Dir::U } else { Dir::V },
+            at: grid(),
+            m: [[grid(), w], [grid(), w]],
+        };
+        for span in [linear, iso] {
+            let raised = PCurve::new(vec![span.to_q().expect("a Q span")], vec![0.0, 1.0])
+                .expect("a p-curve");
+            let held = PCurve::from_spans(vec![span], vec![0.0, 1.0]).expect("a p-curve");
+            assert_eq!(held.q_chain(), Some(raised.q_spans().expect("Q spans")));
+            for s in [0u32, 1, 3, 7] {
+                let s = Q::from(s) / Q::from(7u32);
+                assert_eq!(exact_at(&raised, 0, &s), exact_at(&held, 0, &s), "{span:?}");
+            }
+        }
+    }
+    let tiny = f64::EPSILON / 2.0;
+    assert_eq!(
+        PSpan::Linear([[1.0, 0.0, 1.0], [tiny, 0.0, 1.0]]).to_q(),
+        None,
+        "1 + 2^-53 rounds"
+    );
+    assert_eq!(
+        PSpan::Linear([[0.0, 0.0, 1.0], [1.0, 0.0, 2.0]]).to_q(),
+        None
+    );
+    let q = [[0.0, 0.0, 1.0], [0.5, 1.0, 1.0], [1.0, 0.0, 1.0]];
+    assert_eq!(PSpan::Q(q).to_q(), Some(q));
 }

@@ -268,6 +268,36 @@ impl PSpan {
         }
     }
 
+    /// The span as a Q span, the same curve over the same parameter: a Q
+    /// span as stored; a linear or iso span of equal end weights raised to
+    /// degree 2, its middle control point the ends' midpoint, where that
+    /// is exact in `f64`; `None` otherwise (a graph span, unequal weights,
+    /// a midpoint that rounds).
+    pub fn to_q(&self) -> Option<Span2> {
+        let ends = match *self {
+            PSpan::Q(s) => return Some(s),
+            PSpan::G { .. } => return None,
+            PSpan::Linear(e) => e,
+            PSpan::Iso { fixed, at, m } => {
+                let [[x0, w0], [x1, w1]] = m;
+                match fixed {
+                    Dir::U => [[at, x0, w0], [at, x1, w1]],
+                    Dir::V => [[x0, at, w0], [x1, at, w1]],
+                }
+            }
+        };
+        let [a, b] = ends;
+        if a[2].to_bits() != b[2].to_bits() {
+            return None;
+        }
+        let mid = |x: f64, y: f64| {
+            let m = 0.5 * (x + y);
+            let q = |z: f64| Rational::try_from(z).ok();
+            (q(m)? + q(m)? == q(x)? + q(y)?).then_some(m)
+        };
+        Some([a, [mid(a[0], b[0])?, mid(a[1], b[1])?, a[2]], b])
+    }
+
     /// The span run the other way: its control values reversed.
     pub fn reversed(&self) -> PSpan {
         let r = |c: Coord| {
@@ -429,6 +459,11 @@ impl PCurve {
     /// The spans' control points if every span is a Q span, else `None`.
     pub fn q_spans(&self) -> Option<Vec<Span2>> {
         self.spans.iter().map(|s| s.as_q().copied()).collect()
+    }
+
+    /// Every span as a Q span ([`PSpan::to_q`]), else `None`.
+    pub fn q_chain(&self) -> Option<Vec<Span2>> {
+        self.spans.iter().map(PSpan::to_q).collect()
     }
 
     /// The knots, one more than the spans.
