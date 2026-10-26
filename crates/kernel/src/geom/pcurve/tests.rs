@@ -520,3 +520,48 @@ fn straight_spans_read_as_q_spans_exactly() {
     let q = [[0.0, 0.0, 1.0], [0.5, 1.0, 1.0], [1.0, 0.0, 1.0]];
     assert_eq!(PSpan::Q(q).to_q(), Some(q));
 }
+
+/// A span on one iso line whose midpoint rounds is read as a Q span of
+/// the same points: its fixed coordinate exact, its moving one's middle
+/// value between its ends, every point it passes on the stored segment
+/// and the parameter moved by no more than the rounding; a slanted line
+/// whose midpoint rounds and a graph span are not read.
+#[test]
+fn iso_lines_read_as_q_spans_of_the_same_points() {
+    let iso = PSpan::Iso {
+        fixed: Dir::U,
+        at: 2.0,
+        m: [[0.1, 1.0], [0.7, 1.0]],
+    };
+    assert_eq!(iso.to_q(), None, "0.1 + 0.7 rounds");
+    let q = iso.read_q().expect("read");
+    assert!(q.iter().all(|p| p[0] == 2.0));
+    assert!(0.1 < q[1][1] && q[1][1] < 0.7 && q[1][2] == 1.0);
+    let held = PCurve::from_spans(vec![iso], vec![0.0, 1.0]).expect("a p-curve");
+    let read = PCurve::new(vec![q], vec![0.0, 1.0]).expect("a p-curve");
+    for s in [0u32, 1, 3, 7] {
+        let s = Q::from(s) / Q::from(7u32);
+        let (a, b) = (exact_at(&held, 0, &s), exact_at(&read, 0, &s));
+        assert_eq!(a[0], b[0]);
+        let (off, eps) = (&a[1] - &b[1], Q::try_from(f64::EPSILON).expect("finite"));
+        assert!(off <= eps && -off <= eps, "{s}");
+    }
+    // Unequal weights: the same segment.
+    let mobius = PSpan::Iso {
+        fixed: Dir::V,
+        at: -0.3,
+        m: [[0.1, 1.0], [0.7, 3.0]],
+    };
+    let q = mobius.read_q().expect("read");
+    assert!(q.iter().all(|p| p[1] == -0.3));
+    assert!(0.1 <= q[1][0] && q[1][0] <= 0.7 && q[1][2] == 2.0);
+    // A linear span along `v = 0`.
+    let tiny = f64::EPSILON / 2.0;
+    let flat = PSpan::Linear([[1.0, 0.0, 1.0], [tiny, 0.0, 1.0]]);
+    assert!(flat.read_q().is_some_and(|q| q.iter().all(|p| p[1] == 0.0)));
+    // Slanted: not read.
+    assert_eq!(
+        PSpan::Linear([[0.1, 0.1, 1.0], [0.7, 0.7, 1.0]]).read_q(),
+        None
+    );
+}

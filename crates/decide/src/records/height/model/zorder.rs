@@ -33,8 +33,9 @@
 //!
 //! **Near ties.** A curved edge–edge value is exactly 0 only where an end
 //! of one edge in the cluster's box lies exactly on the other edge's
-//! piece there (decided on the stored data): then the orders decide, as
-//! at a straight shared corner. Any other value is decided by its sign,
+//! piece there, or where the two spans cross in one plane (below; both
+//! decided on the stored data): then the orders decide, as at a straight
+//! shared corner. Any other value is decided by its sign,
 //! never a tie (the column hits and corners it must agree with are
 //! exact, so a band tie here would mix a perturbed z-order with exact
 //! neighbours), and only where certified farther than the curved
@@ -42,6 +43,18 @@
 //! other records (a curved ray record's band tie at a near end) may have
 //! taken as a tie, so it escalates, and past the last level the count is
 //! refused, never answered from a mix.
+//!
+//! **Coplanar crossings.** Where the cluster's two spans (a line's
+//! segment, a curve's span) have every control point in one plane,
+//! exactly, whose normal isn't across `UP` (so the shadow maps the plane
+//! one to one), and the cluster holds a crossing of their shadows (its
+//! degree not 0), the spans meet in 3D where their shadows cross: an
+//! edge on a face's plane crossing a circle in that plane (a box's
+//! bottom edges on a torus's top circle, a box's side edge across a
+//! sphere's meridian in the side's plane). The crossing point is
+//! irrational in general, so no precision level certifies the gap's
+//! sign; the plane does, exactly: the value is exactly 0 and the
+//! orders decide.
 //!
 //! **Shared corners.** Where an end of each edge in the cluster's box is
 //! the same point (a vertex on a vertex) and one edge is straight, that
@@ -152,6 +165,53 @@ impl<'a, M: HeightModel + XGeometry> XHeights<'a, M> {
             || ends(&z.g, &z.cl.g)
                 .into_iter()
                 .any(|p| on(&z.e, &z.cl.e, p))
+    }
+
+    /// Whether the cluster's two spans lie in one plane, exactly, that
+    /// the shadow maps one to one (its normal not across `UP`), and the
+    /// cluster holds a crossing of their shadows (its degree not 0): the
+    /// spans then meet where their shadows cross, so the curved
+    /// edge–edge value is exactly 0 (module docs, "Coplanar crossings").
+    fn coplanar(z: &ZAt<'_>) -> bool {
+        if z.cl.degree == 0 {
+            return false;
+        }
+        let points = |c: &XCurve<'_>, span: u32| -> Option<Vec<[Rational; 3]>> {
+            match c {
+                XCurve::Line(a, b) => Some(vec![a.map(rat), b.map(rat)]),
+                XCurve::Spans(s) => {
+                    let sp = s.get(usize::try_from(span).ok()?)?;
+                    Some(sp.iter().map(|p| [p[0], p[1], p[2]].map(rat)).collect())
+                }
+            }
+        };
+        let (Some(mut pts), Some(g)) = (points(&z.e, z.cl.e.span), points(&z.g, z.cl.g.span))
+        else {
+            return false;
+        };
+        pts.extend(g);
+        let o = pts[0].clone();
+        let rel: Vec<[Rational; 3]> = pts
+            .iter()
+            .map(|p| std::array::from_fn(|k| &p[k] - &o[k]))
+            .collect();
+        let zero = Rational::from(0u32);
+        // A normal from the first two independent directions.
+        let mut normal = None;
+        'found: for i in 0..rel.len() {
+            for j in i + 1..rel.len() {
+                let n = qcross(&rel[i], &rel[j]);
+                if n.iter().any(|x| *x != zero) {
+                    normal = Some(n);
+                    break 'found;
+                }
+            }
+        }
+        let Some(n) = normal else {
+            return false;
+        };
+        let up = [UP.x, UP.y, UP.z].map(rat);
+        qdot(&n, &up) != zero && rel.iter().all(|r| qdot(&n, r) == zero)
     }
 
     /// Whether an end of each edge in the cluster's box is the same point,
@@ -633,7 +693,9 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
             // (module docs, "Shared corners").
             ZRow::EdgeEdge if Self::curved_corner(&z) => KeyValue::Curved,
             // An end on the other edge: exactly 0.
-            ZRow::EdgeEdge if Self::incident(&z) => KeyValue::Exact(Ok(Ordering::Equal)),
+            ZRow::EdgeEdge if Self::incident(&z) || Self::coplanar(&z) => {
+                KeyValue::Exact(Ok(Ordering::Equal))
+            }
             ZRow::EdgeEdge => KeyValue::Curved,
         }
     }
@@ -701,7 +763,7 @@ impl<M: HeightModel + XGeometry> HeightGeometry for XHeights<'_, M> {
         // its sign, never a tie: the column hits it agrees with are exact.
         match self.cluster(k.h) {
             Some(z) if z.cl.row == ZRow::EdgeEdge && !Self::flat(&z) => {
-                Self::curved_corner(&z) || !Self::incident(&z)
+                Self::curved_corner(&z) || !(Self::incident(&z) || Self::coplanar(&z))
             }
             // An exact 0 at the root, the orders deciding: never a truth.
             Some(z) if matches!(z.cl.row, ZRow::Root { .. }) => false,

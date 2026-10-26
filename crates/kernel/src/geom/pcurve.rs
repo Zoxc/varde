@@ -298,6 +298,58 @@ impl PSpan {
         Some([a, [mid(a[0], b[0])?, mid(a[1], b[1])?, a[2]], b])
     }
 
+    /// The span as the counting reads it: [`to_q`](Self::to_q) where that
+    /// is exact; else, for a span on one iso line (an iso span, or a
+    /// linear one whose ends share a coordinate) with positive weights,
+    /// raised to degree 2 with its middle control point rounded: the
+    /// fixed coordinate exact and the moving one's middle value clamped
+    /// between its ends, so its points are the stored span's exactly and
+    /// only its parameter moves, by the rounding (well within the edge's
+    /// band, which holds `ρ_op`). `None` otherwise (a graph span, a
+    /// slanted line whose midpoint rounds).
+    pub fn read_q(&self) -> Option<Span2> {
+        if let Some(q) = self.to_q() {
+            return Some(q);
+        }
+        let ([a, b], fixed) = match *self {
+            PSpan::Q(_) | PSpan::G { .. } => return None,
+            PSpan::Iso { fixed, at, m } => {
+                let [[x0, w0], [x1, w1]] = m;
+                let ends = match fixed {
+                    Dir::U => [[at, x0, w0], [at, x1, w1]],
+                    Dir::V => [[x0, at, w0], [x1, at, w1]],
+                };
+                (ends, fixed)
+            }
+            PSpan::Linear([a, b]) if a[0].to_bits() == b[0].to_bits() => ([a, b], Dir::U),
+            PSpan::Linear([a, b]) if a[1].to_bits() == b[1].to_bits() => ([a, b], Dir::V),
+            PSpan::Linear(_) => return None,
+        };
+        let (w0, w1) = (a[2], b[2]);
+        let ok = |w: f64| w.is_finite() && w > 0.0;
+        if !(ok(w0) && ok(w1)) {
+            return None;
+        }
+        let (k, j) = match fixed {
+            Dir::U => (1, 0),
+            Dir::V => (0, 1),
+        };
+        let (x0, x1) = (a[k], b[k]);
+        if !(x0.is_finite() && x1.is_finite() && a[j].is_finite()) {
+            return None;
+        }
+        let (lo, hi) = if x0 < x1 { (x0, x1) } else { (x1, x0) };
+        let x = ((w0 * x0 + w1 * x1) / (w0 + w1)).clamp(lo, hi);
+        let w = 0.5 * (w0 + w1);
+        if !(x.is_finite() && ok(w)) {
+            return None;
+        }
+        let mut mid = [0.0, 0.0, w];
+        mid[k] = x;
+        mid[j] = a[j];
+        Some([a, mid, b])
+    }
+
     /// The span run the other way: its control values reversed.
     pub fn reversed(&self) -> PSpan {
         let r = |c: Coord| {
@@ -461,9 +513,10 @@ impl PCurve {
         self.spans.iter().map(|s| s.as_q().copied()).collect()
     }
 
-    /// Every span as a Q span ([`PSpan::to_q`]), else `None`.
+    /// Every span as a Q span as the counting reads it
+    /// ([`PSpan::read_q`]), else `None`.
     pub fn q_chain(&self) -> Option<Vec<Span2>> {
-        self.spans.iter().map(PSpan::to_q).collect()
+        self.spans.iter().map(PSpan::read_q).collect()
     }
 
     /// The knots, one more than the spans.

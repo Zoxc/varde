@@ -1432,8 +1432,8 @@ fn crossed_turned_edges(n: u64) -> Vec<(u64, TurnedEdges)> {
 }
 
 /// A body of the store as the counting reads it: which edges are
-/// straight, and per face its UV unit lengths (chords of its first
-/// tile).
+/// straight, and per face its UV unit lengths (the surface's rates at the
+/// middle of the face).
 fn stored(brep: crate::topo::brep::Brep) -> Solid {
     use super::solids::is_line;
     let straight = (0..brep.edge_count() as u32)
@@ -1441,14 +1441,40 @@ fn stored(brep: crate::topo::brep::Brep) -> Solid {
         .collect();
     let scale = (0..brep.face_count() as u32)
         .map(|f| {
-            let s = brep.face_surface(crate::topo::brep::FaceId(f));
-            let r = s.rect();
-            let net = s.tile(r.u.start, r.v.start).expect("a tile").net();
-            let chord = |k: usize| {
-                let [a, b] = [net[0], net[k]].map(|p| DVec3::new(p[0], p[1], p[2]));
-                (b - a).length()
+            let f = crate::topo::brep::FaceId(f);
+            let s = brep.face_surface(f);
+            // The surface's rates at the middle of the face's trims' UV
+            // box: a face may be a sliver of its tiles (a cone's wall a
+            // millionth of its lattice row), so its tiles' chords would
+            // misjudge which way its boxes are long.
+            let mut lo = [f64::INFINITY; 2];
+            let mut hi = [f64::NEG_INFINITY; 2];
+            for l in brep.loops(f) {
+                for c in brep.loop_coedges(l) {
+                    for sp in brep.coedge_pcurve(c).spans() {
+                        let h = sp.hull();
+                        for k in 0..2 {
+                            if h[0][k] < lo[k] {
+                                lo[k] = h[0][k];
+                            }
+                            if h[1][k] > hi[k] {
+                                hi[k] = h[1][k];
+                            }
+                        }
+                    }
+                }
+            }
+            let mid = [0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1])];
+            let p = s.eval_partials(mid).expect("a point of the face");
+            let len = |d: &[varde_decide::num::bounded::Bounded<f64>; 3]| {
+                d.iter().map(|x| x.v * x.v).sum::<f64>().sqrt()
             };
-            [chord(6), chord(2)]
+            let rates = [len(&p.du), len(&p.dv)];
+            assert!(
+                rates.iter().all(|r| r.is_finite() && *r > 0.0),
+                "{f:?}: rates {rates:?}"
+            );
+            rates
         })
         .collect();
     Solid {
@@ -1583,4 +1609,222 @@ fn flat_corpus_bodies_count_from_their_store() {
             "{name}: a vertex inside"
         );
     }
+}
+
+/// A primitive built from its parameters in the store, `None` where the
+/// construction refuses it.
+fn primitive(p: crate::build::primitives::Primitive) -> Option<Solid> {
+    use crate::build::primitives::build;
+    use crate::infra::budget::{Budget, Work};
+    use crate::infra::ops::{FeatureId, OpCtx, Tolerance};
+    let eps = Tolerance::new(1e-5).expect("a tolerance");
+    build(
+        &p,
+        OpCtx::new(FeatureId(1)),
+        eps,
+        &mut Work::new(&Budget::DEFAULT),
+    )
+    .ok()
+    .map(stored)
+}
+
+/// The counting of `a` against `b` along `d` checked against the oracle:
+/// `None` where they agree, else what went wrong.
+fn disagreement(a: &Solid, b: &Solid, d: DVec3) -> Option<String> {
+    let turned = TurnedEdges::of(a, b, false);
+    let answers = match counting(a, b, d, &Config::RUNS, &mut Stats::default()) {
+        Ok(x) => x,
+        Err(r) => return Some(format!("refused {:?} {}", r.cause, r.at)),
+    };
+    let t = match truth(a, b, d, &oracle_faces(a), &oracle_faces(b)) {
+        Ok(t) => t,
+        Err(e) => return Some(format!("oracle unresolved {e}")),
+    };
+    super::runs::compare(&answers, &t, &turned)
+}
+
+/// A random constructed primitive about the origin, its dimensions on the
+/// grid `1/64` (so faces, circles and poles of two of them often lie on
+/// each other's planes): sphere, cone to an apex (up or down), torus,
+/// cylinder, frustum, box.
+fn random_primitive(rng: &mut Rng) -> crate::build::primitives::Primitive {
+    use crate::build::primitives::Primitive;
+    let mut q = |lo: f64, hi: f64| (rng.range(lo, hi) * 64.0).round() / 64.0;
+    let kind = (q(0.0, 6.99) as u64).min(6);
+    let c = [q(-0.5, 0.5), q(-0.5, 0.5), q(-0.5, 0.5)];
+    match kind {
+        0 => Primitive::Sphere {
+            centre: c,
+            radius: q(0.5, 1.2),
+        },
+        1 => Primitive::Cone {
+            base: c,
+            radii: [q(0.4, 1.0), 0.0],
+            height: q(0.5, 1.5),
+        },
+        2 => Primitive::Cone {
+            base: c,
+            radii: [0.0, q(0.4, 1.0)],
+            height: q(0.5, 1.5),
+        },
+        3 => Primitive::Torus {
+            centre: c,
+            major: q(0.6, 1.0),
+            minor: q(0.2, 0.4),
+        },
+        4 => Primitive::Cylinder {
+            base: c,
+            radius: q(0.3, 1.0),
+            height: q(0.5, 1.5),
+        },
+        5 => Primitive::Cone {
+            base: c,
+            radii: [q(0.65, 1.0), q(0.2, 0.6)],
+            height: q(0.5, 1.5),
+        },
+        _ => Primitive::Cuboid {
+            min: c,
+            size: [q(0.5, 1.5), q(0.5, 1.5), q(0.5, 1.5)],
+        },
+    }
+}
+
+/// Pairs of constructed curved primitives (spheres with their poles,
+/// cones with their apexes, tori, cylinders, frusta, boxes) at random
+/// overlapping placements on a coarse grid, counted from their store
+/// along a random direction: silhouettes, folds of the walls under the
+/// column, a torus overhanging itself, poles and apexes as ordinary
+/// vertices, and on the grid circles and edges crossing in a common
+/// plane. Every count answered agrees with the oracle, and refusals stay
+/// within the random placements' limit (`0.5%`; at 400 placements one,
+/// seed 384, a z-order of a frustum's circle and a cone's line refused
+/// at the last level).
+#[test]
+fn constructed_curved_primitives_count_against_the_oracle() {
+    let n = placements(8, 400);
+    let outs = par(n, threads(), &|seed| {
+        let mut rng = Rng::new(seed + 1000);
+        let (pa, pb) = (random_primitive(&mut rng), random_primitive(&mut rng));
+        let d = rng.direction();
+        let (Some(a), Some(b)) = (primitive(pa), primitive(pb)) else {
+            return Some(format!("seed {seed}: not built {pa:?} {pb:?}"));
+        };
+        disagreement(&a, &b, d).map(|m| format!("seed {seed}: {m} | {pa:?} {pb:?} d {d:?}"))
+    });
+    let bad: Vec<String> = outs.into_iter().flatten().collect();
+    let (refused, wrong): (Vec<&String>, Vec<&String>) =
+        bad.iter().partition(|m| m.contains(": refused "));
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(refused.len() as u64 * 200 <= n, "{refused:#?}");
+}
+
+/// Curved and straight edges crossing exactly in a common plane (a box's
+/// bottom edges on a torus's top circle, a box's side edges across a
+/// sphere's meridian circle in the side's plane, a cone's base circle on
+/// a box's top): the crossing points are irrational, no precision level
+/// certifies the z-order's sign, the common plane makes it exactly 0 and
+/// the orders decide. With poles, apexes and rims resting on faces, every
+/// count agrees with the oracle, for directions either way.
+#[test]
+fn coplanar_crossings_and_resting_poles_count_by_their_orders() {
+    use crate::build::primitives::Primitive;
+    let torus = Primitive::Torus {
+        centre: [0.0, 0.0, 0.0],
+        major: 0.75,
+        minor: 0.25,
+    };
+    let plate = Primitive::Cuboid {
+        min: [-1.5, -1.25, -1.0],
+        size: [3.0, 3.0, 1.0],
+    };
+    let sphere = Primitive::Sphere {
+        centre: [0.0, 0.0, 1.0],
+        radius: 1.0,
+    };
+    let cases = [
+        (
+            "box on a torus's top circle",
+            Primitive::Cuboid {
+                min: [-0.25, 0.5, 0.25],
+                size: [0.75, 0.75, 0.75],
+            },
+            torus,
+        ),
+        (
+            "box across a torus's top circle",
+            Primitive::Cuboid {
+                min: [0.296875, -0.140625, 0.25],
+                size: [0.734375, 0.96875, 0.53125],
+            },
+            Primitive::Torus {
+                centre: [0.328125, 0.109375, -0.109375],
+                major: 0.953125,
+                minor: 0.359375,
+            },
+        ),
+        (
+            "box side through a sphere's meridian",
+            Primitive::Cuboid {
+                min: [0.21875, -0.28125, -0.484375],
+                size: [0.609375, 1.03125, 0.8125],
+            },
+            Primitive::Sphere {
+                centre: [0.21875, 0.078125, 0.28125],
+                radius: 0.953125,
+            },
+        ),
+        ("sphere's pole on a plate", sphere, plate),
+        ("plate under a sphere's pole", plate, sphere),
+        (
+            "apex on a plate",
+            Primitive::Cone {
+                base: [0.0, 0.0, -1.0],
+                radii: [0.5, 0.0],
+                height: 1.0,
+            },
+            Primitive::Cuboid {
+                min: [-1.5, -1.25, 0.0],
+                size: [3.0, 3.0, 1.0],
+            },
+        ),
+        (
+            "cylinder's rim on a box's top",
+            Primitive::Cylinder {
+                base: [0.0, 0.0, 0.0],
+                radius: 0.5,
+                height: 1.0,
+            },
+            Primitive::Cuboid {
+                min: [-0.25, -0.25, -1.0],
+                size: [1.0, 1.0, 1.0],
+            },
+        ),
+        (
+            "coaxial cylinders",
+            Primitive::Cylinder {
+                base: [0.0, 0.0, 0.0],
+                radius: 0.5,
+                height: 1.0,
+            },
+            Primitive::Cylinder {
+                base: [0.0, 0.0, 0.5],
+                radius: 0.75,
+                height: 1.0,
+            },
+        ),
+    ];
+    let ds = [
+        DVec3::new(0.3, -0.7, 0.62),
+        DVec3::new(-0.3, 0.7, -0.62),
+        DVec3::new(0.6, 0.5, -0.1),
+    ];
+    let outs = par((cases.len() * ds.len()) as u64, threads(), &|i| {
+        let (name, pa, pb) = cases[i as usize / ds.len()];
+        let d = ds[i as usize % ds.len()].normalize();
+        let a = primitive(pa).expect("built");
+        let b = primitive(pb).expect("built");
+        disagreement(&a, &b, d).map(|m| format!("{name}, d {d:?}: {m}"))
+    });
+    let bad: Vec<String> = outs.into_iter().flatten().collect();
+    assert!(bad.is_empty(), "{bad:#?}");
 }
